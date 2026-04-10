@@ -1,6 +1,6 @@
 import { useMemo, memo } from "react";
 import { ReactFlowProvider } from "@xyflow/react";
-import type { OAuthFlowState } from "@/lib/oauth/state-machines/types";
+import type { OAuthFlowState } from "@mcpjam/sdk/browser";
 import { DiagramLayout, buildNodesAndEdges, type Action } from "./index";
 
 interface OAuthSequenceDiagramContentProps {

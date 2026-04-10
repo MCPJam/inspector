@@ -20,7 +20,10 @@
     "paths": {
       "@/*": ["./src/*"],
       "@/shared/*": ["../shared/*"],
-      "@repo/assets/*": ["./src/assets/*"]
+      "@repo/assets/*": ["./src/assets/*"],
+      "@mcpjam/sdk": ["../../sdk/src/index.ts"],
+      "@mcpjam/sdk/browser": ["../../sdk/src/browser.ts"],
+      "@mcpjam/sdk/*": ["../../sdk/src/*"]
     }
   },
   "include": ["src", "../shared/**/*.ts"],

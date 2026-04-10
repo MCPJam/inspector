@@ -12,10 +12,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
-import type {
-  LogErrorDetails,
-  OAuthFlowStep,
-} from "@/lib/oauth/state-machines/types";
+import type { LogErrorDetails, OAuthFlowStep } from "@mcpjam/sdk/browser";
 
 interface HTTPHistoryEntryProps {
   method: string;

@@ -8,12 +8,10 @@ import { InfoLogEntry } from "@/components/oauth/InfoLogEntry";
 import {
   getStepInfo,
   getStepIndex,
-} from "@/lib/oauth/state-machines/shared/step-metadata";
-import {
   type HttpHistoryEntry,
   type OAuthFlowState,
   type OAuthFlowStep,
-} from "@/lib/oauth/state-machines/types";
+} from "@mcpjam/sdk/browser";
 import { cn } from "@/lib/utils";
 import {
   AlertCircle,

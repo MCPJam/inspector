@@ -33,7 +33,7 @@ export const STEP_ORDER: OAuthFlowStep[] = [
 export const STEP_METADATA: Record<OAuthFlowStep, OAuthStepInfo> = {
   idle: {
     title: "Idle",
-    summary: "The debugger is ready to start the OAuth sequence.",
+    summary: "The OAuth flow is ready to start.",
     teachableMoments: [
       "Review your server selection and OAuth configuration before starting.",
     ],
@@ -41,7 +41,7 @@ export const STEP_METADATA: Record<OAuthFlowStep, OAuthStepInfo> = {
   request_without_token: {
     title: "Initial MCP Request",
     summary:
-      "Inspector sends an unauthenticated initialize request to discover whether OAuth is required.",
+      "The client sends an unauthenticated initialize request to discover whether OAuth is required.",
     teachableMoments: [
       "OAuth flows usually begin with a protected resource request that deliberately lacks credentials.",
       "The response determines which discovery path the client must follow.",
@@ -70,7 +70,7 @@ export const STEP_METADATA: Record<OAuthFlowStep, OAuthStepInfo> = {
   request_resource_metadata: {
     title: "Request Resource Metadata",
     summary:
-      "Inspector requests RFC9728 resource metadata to learn which authorization server to use.",
+      "The client requests RFC9728 resource metadata to learn which authorization server to use.",
     teachableMoments: [
       "Protected resource metadata links the resource to one or more authorization servers.",
       "If this step fails, check the MCP server's well-known configuration and headers.",
@@ -87,7 +87,7 @@ export const STEP_METADATA: Record<OAuthFlowStep, OAuthStepInfo> = {
   request_authorization_server_metadata: {
     title: "Fetch Authorization Server Metadata",
     summary:
-      "Inspector queries the authorization server's well-known endpoint (RFC8414 or OIDC).",
+      "The client queries the authorization server's well-known endpoint (RFC8414 or OIDC).",
     teachableMoments: [
       "Different protocol versions prioritize different discovery strategies (path insertion, appending, etc.).",
       "Failure here often points to misconfigured issuer URLs or CORS/proxy issues.",
@@ -121,7 +121,7 @@ export const STEP_METADATA: Record<OAuthFlowStep, OAuthStepInfo> = {
   cimd_metadata_response: {
     title: "CIMD Validated",
     summary:
-      "Inspector confirms the authorization server successfully read the client metadata document.",
+      "The client confirms the authorization server successfully read the client metadata document.",
     teachableMoments: [
       "Ensure redirect URIs declared in the document match the environment you're testing.",
     ],
@@ -129,7 +129,7 @@ export const STEP_METADATA: Record<OAuthFlowStep, OAuthStepInfo> = {
   request_client_registration: {
     title: "Dynamic Client Registration",
     summary:
-      "Inspector submits metadata to register a public client with the authorization server.",
+      "The client submits metadata to register a public client with the authorization server.",
     teachableMoments: [
       "Dynamic registration is optional in draft flows but required in earlier specs unless you pre-register.",
       "Watch for HTTP 4xx responses that indicate validation failures.",
@@ -138,7 +138,7 @@ export const STEP_METADATA: Record<OAuthFlowStep, OAuthStepInfo> = {
   received_client_credentials: {
     title: "Client Credentials Ready",
     summary:
-      "Inspector stores client_id (and optionally client_secret) for the remainder of the flow.",
+      "The client stores client_id (and optionally client_secret) for the remainder of the flow.",
     teachableMoments: [
       "Keep an eye on whether the server returned a secret; public clients should use PKCE instead.",
     ],
@@ -146,7 +146,7 @@ export const STEP_METADATA: Record<OAuthFlowStep, OAuthStepInfo> = {
   generate_pkce_parameters: {
     title: "Generate PKCE Parameters",
     summary:
-      "Inspector creates a code verifier and challenge to protect the authorization code exchange.",
+      "The client creates a code verifier and challenge to protect the authorization code exchange.",
     teachableMoments: [
       "PKCE S256 is required in draft specs and strongly recommended everywhere else.",
     ],
@@ -154,7 +154,7 @@ export const STEP_METADATA: Record<OAuthFlowStep, OAuthStepInfo> = {
   authorization_request: {
     title: "Authorization Request Ready",
     summary:
-      "Inspector composes the authorization URL and waits for the user to approve access.",
+      "The client composes the authorization URL and waits for the user to approve access.",
     teachableMoments: [
       "Inspect the URL to ensure scopes and redirect URI are what you expect.",
     ],
@@ -162,7 +162,7 @@ export const STEP_METADATA: Record<OAuthFlowStep, OAuthStepInfo> = {
   received_authorization_code: {
     title: "Authorization Code Received",
     summary:
-      "The user completed consent and Inspector captured the returned authorization code.",
+      "The user completed consent and the client captured the returned authorization code.",
     teachableMoments: [
       "State mismatches here usually indicate multiple concurrent authorizations or stale popups.",
     ],
@@ -170,7 +170,7 @@ export const STEP_METADATA: Record<OAuthFlowStep, OAuthStepInfo> = {
   token_request: {
     title: "Exchange Authorization Code",
     summary:
-      "Inspector calls the token endpoint with the authorization code and PKCE verifier.",
+      "The client calls the token endpoint with the authorization code and PKCE verifier.",
     teachableMoments: [
       "Token endpoint errors often reveal scope or client configuration problems.",
     ],
@@ -178,7 +178,7 @@ export const STEP_METADATA: Record<OAuthFlowStep, OAuthStepInfo> = {
   received_access_token: {
     title: "Tokens Received",
     summary:
-      "Inspector stores access/refresh tokens for subsequent authenticated MCP requests.",
+      "The client stores access and refresh tokens for subsequent authenticated MCP requests.",
     teachableMoments: [
       "Check the token type and expiry to confirm the server honored offline access or refresh tokens.",
     ],
@@ -186,7 +186,7 @@ export const STEP_METADATA: Record<OAuthFlowStep, OAuthStepInfo> = {
   authenticated_mcp_request: {
     title: "Authenticated MCP Request",
     summary:
-      "Inspector retries the MCP initialize call with the freshly issued access token.",
+      "The client retries the MCP initialize call with the freshly issued access token.",
     teachableMoments: [
       "Use this step to validate that MCP servers accept OAuth tokens and return capabilities.",
     ],
@@ -194,7 +194,7 @@ export const STEP_METADATA: Record<OAuthFlowStep, OAuthStepInfo> = {
   complete: {
     title: "Flow Complete",
     summary:
-      "Inspector verified the server with OAuth credentials and recorded the final response.",
+      "The client verified the server with OAuth credentials and recorded the final response.",
     teachableMoments: [
       "Continue exploring with authenticated requests or reset to run the flow again.",
     ],

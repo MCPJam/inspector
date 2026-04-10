@@ -1,101 +1,60 @@
 /**
- * OAuth 2.0 State Machine for MCP - 2025-11-25 Protocol (Draft)
+ * OAuth 2.0 State Machine for MCP - 2025-06-18 Protocol
  *
- * This implementation follows the 2025-11-25 MCP OAuth specification:
- * - Registration priority: CIMD (SHOULD) > Pre-registered > DCR (MAY)
- * - Discovery: OAuth 2.0 (RFC8414) OR OpenID Connect Discovery 1.0 with path insertion priority
- * - PKCE: REQUIRED - MUST verify code_challenge_methods_supported
- * - Client ID Metadata Documents (CIMD) support per draft-parecki-oauth-client-id-metadata-document-03
+ * This implementation follows the 2025-06-18 MCP OAuth specification:
+ * - Registration priority: DCR (SHOULD) > Pre-registered
+ * - Discovery: OAuth 2.0 (RFC8414) ONLY - no OIDC Discovery support
+ * - PKCE: Recommended but not strictly verified
+ * - No Client ID Metadata Documents support
  */
 
-import { decodeJWT, formatJWTTimestamp } from "../jwt-decoder";
-import { MCPJAM_CLIENT_ID } from "../constants";
-import { EMPTY_OAUTH_FLOW_STATE } from "./types";
+import { decodeJWT, formatJWTTimestamp } from "./shared/jwt.js";
+import { EMPTY_OAUTH_FLOW_STATE } from "./types.js";
 import type {
+  BaseOAuthStateMachineConfig,
   OAuthFlowStep,
   OAuthFlowState,
   OAuthStateMachine,
   HttpHistoryEntry,
-  RegistrationStrategy2025_11_25,
-} from "./types";
-import type { DiagramAction } from "./shared/types";
+  RegistrationStrategy2025_06_18,
+} from "./types.js";
+import type { DiagramAction } from "./shared/types.js";
 import {
-  proxyFetch,
   addInfoLog,
-  generateRandomString,
-  generateCodeChallenge,
-  loadPreregisteredCredentials,
-  buildResourceMetadataUrl,
   markLatestHttpEntryAsError,
   toLogErrorDetails,
+} from "./shared/logging.js";
+import {
   mergeHeaders,
   mergeHeadersForAuthServer,
   mergeHeadersForResourceMetadataRequest,
-} from "./shared/helpers";
+  normalizeHeaders,
+} from "./shared/headers.js";
+import {
+  generateRandomString,
+  generateCodeChallenge,
+} from "./shared/pkce.js";
+import { buildResourceMetadataUrl } from "./shared/urls.js";
 import { discoverOAuthProtectedResourceMetadata } from "@modelcontextprotocol/sdk/client/auth.js";
-
-/**
- * Canonicalize a URL for use as a resource parameter per RFC 8707
- * - Lowercase scheme and host
- * - Remove fragment
- * - Remove trailing slash (unless path is just "/")
- */
-function canonicalizeResourceUrl(url: string): string {
-  try {
-    const parsed = new URL(url);
-
-    // Lowercase scheme and host
-    parsed.protocol = parsed.protocol.toLowerCase();
-    parsed.hostname = parsed.hostname.toLowerCase();
-
-    // Remove fragment
-    parsed.hash = "";
-
-    // Remove trailing slash unless it's the root path
-    if (parsed.pathname !== "/" && parsed.pathname.endsWith("/")) {
-      parsed.pathname = parsed.pathname.slice(0, -1);
-    }
-
-    return parsed.toString();
-  } catch (error) {
-    console.warn("Failed to canonicalize resource URL:", url, error);
-    return url; // Return original if parsing fails
-  }
-}
 
 // Re-export types for backward compatibility
 export type { OAuthFlowStep, OAuthFlowState };
 export { EMPTY_OAUTH_FLOW_STATE };
 
-// Legacy type alias
-export type OauthFlowStateJune2025 = OAuthFlowState;
-
-// Legacy state export
-export const EMPTY_OAUTH_FLOW_STATE_V2: OauthFlowStateJune2025 =
-  EMPTY_OAUTH_FLOW_STATE;
-
-// Configuration for creating the state machine (2025-11-25 specific)
-export interface DebugOAuthStateMachineConfig {
-  state: OauthFlowStateJune2025;
-  getState?: () => OauthFlowStateJune2025;
-  updateState: (updates: Partial<OauthFlowStateJune2025>) => void;
-  serverUrl: string;
-  serverName: string;
-  redirectUrl?: string;
-  fetchFn?: typeof fetch;
-  customScopes?: string;
-  customHeaders?: Record<string, string>;
-  registrationStrategy?: RegistrationStrategy2025_11_25; // cimd | dcr | preregistered
+// Configuration for creating the state machine (2025-06-18 specific)
+export interface DebugOAuthStateMachineConfig
+  extends BaseOAuthStateMachineConfig {
+  registrationStrategy?: RegistrationStrategy2025_06_18; // dcr | preregistered only
 }
 
 /**
- * Build the sequence of actions for the 2025-11-25 OAuth flow
+ * Build the sequence of actions for the 2025-06-18 OAuth flow
  * This function creates the visual representation of the OAuth flow steps
  * that will be displayed in the sequence diagram.
  */
-export function buildActions_2025_11_25(
+export function buildActions_2025_06_18(
   flowState: OAuthFlowState,
-  registrationStrategy: "cimd" | "dcr" | "preregistered",
+  registrationStrategy: "dcr" | "preregistered",
 ): DiagramAction[] {
   return [
     {
@@ -154,14 +113,13 @@ export function buildActions_2025_11_25(
     {
       id: "request_authorization_server_metadata",
       label: "GET Authorization server metadata endpoint",
-      description:
-        "Try OAuth path insertion, OIDC path insertion, OIDC path appending",
+      description: "Try RFC8414 path, then RFC8414 root (no OIDC support)",
       from: "client",
       to: "authServer",
       details: flowState.authorizationServerUrl
         ? [
             { label: "URL", value: flowState.authorizationServerUrl },
-            { label: "Protocol", value: "2025-11-25" },
+            { label: "Protocol", value: "2025-06-18" },
           ]
         : undefined,
     },
@@ -188,155 +146,71 @@ export function buildActions_2025_11_25(
           ]
         : undefined,
     },
-    // CIMD steps
-    ...(registrationStrategy === "cimd"
+    // Client registration steps (no CIMD support in 2025-06-18)
+    ...(registrationStrategy === "dcr"
       ? [
           {
-            id: "cimd_prepare",
-            label: "Client uses HTTPS URL as client_id",
+            id: "request_client_registration",
+            label: "POST /register (2025-06-18)",
             description:
-              "Client prepares to use URL-based client identification",
-            from: "client",
-            to: "client",
-            details: flowState.clientId
-              ? [
-                  {
-                    label: "client_id (URL)",
-                    value: flowState.clientId.includes("http")
-                      ? flowState.clientId
-                      : "https://www.mcpjam.com/.well-known/oauth/client-metadata.json",
-                  },
-                  {
-                    label: "Method",
-                    value: "Client ID Metadata Document (CIMD)",
-                  },
-                ]
-              : [
-                  {
-                    label: "Note",
-                    value: "HTTPS URL points to metadata document",
-                  },
-                ],
-          },
-          {
-            id: "cimd_fetch_request",
-            label: "Fetch metadata from client_id URL",
-            description:
-              "Authorization Server fetches client metadata from the URL",
-            from: "authServer",
-            to: "client",
-            details: [
-              {
-                label: "Action",
-                value: "GET client_id URL",
-              },
-              {
-                label: "Note",
-                value: "Server initiates metadata fetch during authorization",
-              },
-            ],
-          },
-          {
-            id: "cimd_metadata_response",
-            label: "JSON metadata document",
-            description:
-              "Client hosting returns metadata with redirect_uris and client info",
+              "Client registers dynamically with Authorization Server",
             from: "client",
             to: "authServer",
             details: [
               {
-                label: "Content-Type",
-                value: "application/json",
-              },
-              {
-                label: "Contains",
-                value: "client_id, client_name, redirect_uris, etc.",
+                label: "Note",
+                value: "Dynamic client registration (DCR)",
               },
             ],
           },
           {
             id: "received_client_credentials",
-            label: "Validate metadata and redirect_uris",
-            description: "Authorization Server validates fetched metadata",
+            label: "Client Credentials",
+            description:
+              "Authorization Server returns client ID and credentials",
             from: "authServer",
-            to: "authServer",
-            details: [
-              {
-                label: "Validates",
-                value: "client_id matches URL, redirect_uris are valid",
-              },
-              {
-                label: "Security",
-                value: "SSRF protection, domain trust policies",
-              },
-            ],
+            to: "client",
+            details: flowState.clientId
+              ? [
+                  {
+                    label: "client_id",
+                    value: flowState.clientId.substring(0, 20) + "...",
+                  },
+                ]
+              : undefined,
           },
         ]
-      : registrationStrategy === "dcr"
-        ? [
-            {
-              id: "request_client_registration",
-              label: "POST /register (2025-11-25)",
-              description:
-                "Client registers dynamically with Authorization Server",
-              from: "client",
-              to: "authServer",
-              details: [
-                {
-                  label: "Note",
-                  value: "Dynamic client registration (DCR)",
-                },
-              ],
-            },
-            {
-              id: "received_client_credentials",
-              label: "Client Credentials",
-              description:
-                "Authorization Server returns client ID and credentials",
-              from: "authServer",
-              to: "client",
-              details: flowState.clientId
-                ? [
-                    {
-                      label: "client_id",
-                      value: flowState.clientId.substring(0, 20) + "...",
-                    },
-                  ]
-                : undefined,
-            },
-          ]
-        : [
-            {
-              id: "received_client_credentials",
-              label: "Use Pre-registered Client (2025-11-25)",
-              description:
-                "Client uses pre-configured credentials (skipped DCR)",
-              from: "client",
-              to: "client",
-              details: flowState.clientId
-                ? [
-                    {
-                      label: "client_id",
-                      value: flowState.clientId.substring(0, 20) + "...",
-                    },
-                    {
-                      label: "Note",
-                      value: "Pre-registered (no DCR needed)",
-                    },
-                  ]
-                : [
-                    {
-                      label: "Note",
-                      value: "Pre-registered client credentials",
-                    },
-                  ],
-            },
-          ]),
+      : [
+          {
+            id: "received_client_credentials",
+            label: "Use Pre-registered Client (2025-06-18)",
+            description: "Client uses pre-configured credentials (skipped DCR)",
+            from: "client",
+            to: "client",
+            details: flowState.clientId
+              ? [
+                  {
+                    label: "client_id",
+                    value: flowState.clientId.substring(0, 20) + "...",
+                  },
+                  {
+                    label: "Note",
+                    value: "Pre-registered (no DCR needed)",
+                  },
+                ]
+              : [
+                  {
+                    label: "Note",
+                    value: "Pre-registered client credentials",
+                  },
+                ],
+          },
+        ]),
     {
       id: "generate_pkce_parameters",
-      label: "Generate PKCE (REQUIRED)\nInclude resource parameter",
+      label: "Generate PKCE parameters",
       description:
-        "Client generates code verifier and challenge (REQUIRED), includes resource parameter",
+        "Client generates code verifier and challenge (recommended), includes resource parameter",
       from: "client",
       to: "client",
       details: flowState.codeChallenge
@@ -349,13 +223,8 @@ export function buildActions_2025_11_25(
               label: "method",
               value: flowState.codeChallengeMethod || "S256",
             },
-            {
-              label: "resource",
-              value: flowState.serverUrl
-                ? canonicalizeResourceUrl(flowState.serverUrl)
-                : "—",
-            },
-            { label: "Protocol", value: "2025-11-25" },
+            { label: "resource", value: flowState.serverUrl || "—" },
+            { label: "Protocol", value: "2025-06-18" },
           ]
         : undefined,
     },
@@ -373,12 +242,7 @@ export function buildActions_2025_11_25(
               value:
                 flowState.codeChallenge?.substring(0, 12) + "..." || "S256",
             },
-            {
-              label: "resource",
-              value: flowState.serverUrl
-                ? canonicalizeResourceUrl(flowState.serverUrl)
-                : "",
-            },
+            { label: "resource", value: flowState.serverUrl || "" },
           ]
         : undefined,
     },
@@ -432,12 +296,7 @@ export function buildActions_2025_11_25(
       details: flowState.codeVerifier
         ? [
             { label: "grant_type", value: "authorization_code" },
-            {
-              label: "resource",
-              value: flowState.serverUrl
-                ? canonicalizeResourceUrl(flowState.serverUrl)
-                : "",
-            },
+            { label: "resource", value: flowState.serverUrl || "" },
           ]
         : undefined,
     },
@@ -489,28 +348,24 @@ export function buildActions_2025_11_25(
   ];
 }
 
-// Helper: Build authorization server metadata URLs to try (RFC 8414 + OIDC Discovery)
-// 2025-11-25 spec: Path insertion first, then path appending (NO root fallback for paths)
+// Helper: Build authorization server metadata URLs to try (RFC 8414 ONLY)
+// 2025-06-18 spec: Only requires RFC8414, does NOT support OIDC Discovery
 function buildAuthServerMetadataUrls(authServerUrl: string): string[] {
   const url = new URL(authServerUrl);
   const urls: string[] = [];
 
   if (url.pathname === "/" || url.pathname === "") {
-    // Root path - standard endpoints
+    // Root path - only RFC8414
     urls.push(
       new URL("/.well-known/oauth-authorization-server", url.origin).toString(),
     );
-    urls.push(
-      new URL("/.well-known/openid-configuration", url.origin).toString(),
-    );
   } else {
-    // Path-aware discovery
+    // Path-aware discovery - only RFC8414
     const pathname = url.pathname.endsWith("/")
       ? url.pathname.slice(0, -1)
       : url.pathname;
 
-    // 2025-11-25 spec: OAuth path insertion, OIDC path insertion, OIDC path appending
-    // Key difference: NO root fallback
+    // 2025-06-18 spec: RFC8414 with path, then root fallback
     urls.push(
       new URL(
         `/.well-known/oauth-authorization-server${pathname}`,
@@ -518,23 +373,14 @@ function buildAuthServerMetadataUrls(authServerUrl: string): string[] {
       ).toString(),
     );
     urls.push(
-      new URL(
-        `/.well-known/openid-configuration${pathname}`,
-        url.origin,
-      ).toString(),
-    );
-    urls.push(
-      new URL(
-        `${pathname}/.well-known/openid-configuration`,
-        url.origin,
-      ).toString(),
+      new URL("/.well-known/oauth-authorization-server", url.origin).toString(),
     );
   }
 
   return urls;
 }
 
-// Factory function to create the 2025-11-25 state machine
+// Factory function to create the 2025-06-18 state machine
 export const createDebugOAuthStateMachine = (
   config: DebugOAuthStateMachineConfig,
 ): OAuthStateMachine => {
@@ -545,21 +391,37 @@ export const createDebugOAuthStateMachine = (
     serverUrl,
     serverName,
     redirectUrl,
-    fetchFn = fetch,
+    requestExecutor,
+    scheduleAutoAdvance,
+    loadPreregisteredCredentials,
+    dynamicRegistration,
     customScopes,
     customHeaders,
-    registrationStrategy = "cimd", // Default to CIMD for 2025-11-25
+    registrationStrategy = "dcr", // Default to DCR for 2025-06-18
   } = config;
 
-  // Canonicalize the server URL once at initialization (per RFC 8707)
-  const canonicalServerUrl = canonicalizeResourceUrl(serverUrl);
+  const redirectUri = redirectUrl;
+  const dynamicRegistrationDefaults = dynamicRegistration ?? {};
 
-  // Use provided redirectUrl or default to the origin + /oauth/callback/debug
-  const redirectUri =
-    redirectUrl || `${window.location.origin}/oauth/callback/debug`;
+  if (
+    registrationStrategy === "dcr" &&
+    !dynamicRegistrationDefaults.client_name
+  ) {
+    throw new Error(
+      "Dynamic registration metadata must include client_name",
+    );
+  }
 
   // Helper to get current state (use getState if provided, otherwise use initial state)
   const getCurrentState = () => (getState ? getState() : initialState);
+
+  const executeRequest = (url: string, options: RequestInit = {}) =>
+    requestExecutor({
+      url,
+      method: options.method || "GET",
+      headers: normalizeHeaders(options.headers as HeadersInit | undefined),
+      body: options.body as any,
+    });
 
   // Create machine object that can reference itself
   const machine: OAuthStateMachine = {
@@ -571,6 +433,12 @@ export const createDebugOAuthStateMachine = (
       const state = getCurrentState();
 
       updateState({ isInitiatingAuth: true });
+
+      const autoAdvance = (delayMs: number) => {
+        scheduleAutoAdvance?.(() => {
+          void machine.proceedToNextStep();
+        }, delayMs);
+      };
 
       try {
         switch (state.currentStep) {
@@ -588,7 +456,7 @@ export const createDebugOAuthStateMachine = (
                 jsonrpc: "2.0",
                 method: "initialize",
                 params: {
-                  protocolVersion: "2025-11-25",
+                  protocolVersion: "2024-11-05",
                   capabilities: {},
                   clientInfo: {
                     name: "MCPJam Inspector",
@@ -617,7 +485,7 @@ export const createDebugOAuthStateMachine = (
             });
 
             // Automatically proceed to make the actual request
-            setTimeout(() => machine.proceedToNextStep(), 50);
+            autoAdvance(50);
             return;
           }
 
@@ -629,7 +497,7 @@ export const createDebugOAuthStateMachine = (
 
             try {
               // Use backend proxy to bypass CORS and capture all headers
-              const response = await proxyFetch(state.serverUrl, {
+              const response = await executeRequest(state.serverUrl, {
                 method: "POST",
                 headers: mergeHeaders(customHeaders, {
                   "Content-Type": "application/json",
@@ -638,7 +506,7 @@ export const createDebugOAuthStateMachine = (
                   jsonrpc: "2.0",
                   method: "initialize",
                   params: {
-                    protocolVersion: "2025-11-25",
+                    protocolVersion: "2024-11-05",
                     capabilities: {},
                     clientInfo: {
                       name: "MCPJam Inspector",
@@ -782,7 +650,7 @@ export const createDebugOAuthStateMachine = (
             });
 
             // Automatically proceed to make the actual request
-            setTimeout(() => machine.proceedToNextStep(), 50);
+            autoAdvance(50);
             return;
 
           case "request_resource_metadata":
@@ -791,6 +659,7 @@ export const createDebugOAuthStateMachine = (
               throw new Error("No server URL available");
             }
 
+            // Reuse any placeholder history entry for this request
             const historyWithoutPlaceholder = [...(state.httpHistory || [])];
             let pendingHistoryEntry =
               historyWithoutPlaceholder.length > 0 &&
@@ -808,7 +677,11 @@ export const createDebugOAuthStateMachine = (
             ): Record<string, string> => {
               if (!headers) return {};
               if (headers instanceof Headers) {
-                return Object.fromEntries(headers.entries());
+                const normalized: Record<string, string> = {};
+                headers.forEach((value, key) => {
+                  normalized[key] = value;
+                });
+                return normalized;
               }
               if (Array.isArray(headers)) {
                 return Object.fromEntries(headers);
@@ -859,7 +732,7 @@ export const createDebugOAuthStateMachine = (
               attempts.push(historyEntry);
 
               try {
-                const response = await proxyFetch(requestUrl, {
+                const response = await executeRequest(requestUrl, {
                   method: init.method || "GET",
                   headers: mergedHeaders,
                   body: init.body as any,
@@ -873,6 +746,7 @@ export const createDebugOAuthStateMachine = (
                 };
                 historyEntry.duration = Date.now() - historyEntry.timestamp;
 
+                // Return a real Response object for the SDK helper
                 const responseInit: ResponseInit = {
                   status: response.status,
                   statusText: response.statusText,
@@ -984,7 +858,7 @@ export const createDebugOAuthStateMachine = (
             });
 
             // Automatically proceed to make the actual request
-            setTimeout(() => machine.proceedToNextStep(), 50);
+            autoAdvance(50);
             return;
 
           case "request_authorization_server_metadata":
@@ -998,8 +872,6 @@ export const createDebugOAuthStateMachine = (
             );
             let authServerMetadata = null;
             let lastError = null;
-            let successUrl = "";
-            let finalRequestHeaders = {};
             let finalResponseHeaders: Record<string, string> = {};
             let finalResponseData: any = null;
 
@@ -1032,15 +904,13 @@ export const createDebugOAuthStateMachine = (
                 });
 
                 // Use backend proxy to bypass CORS
-                const response = await proxyFetch(url, {
+                const response = await executeRequest(url, {
                   method: "GET",
                   headers: mergeHeadersForAuthServer(customHeaders, {}),
                 });
 
                 if (response.ok) {
                   authServerMetadata = response.body;
-                  successUrl = url;
-                  finalRequestHeaders = requestHeaders;
                   finalResponseHeaders = response.headers;
                   finalResponseData = response;
 
@@ -1098,25 +968,13 @@ export const createDebugOAuthStateMachine = (
             // Update the last history entry with the response
             const updatedHistoryFinal = [...(state.httpHistory || [])];
             if (updatedHistoryFinal.length > 0) {
-              const lastEntry =
-                updatedHistoryFinal[updatedHistoryFinal.length - 1];
-              lastEntry.response = authServerResponseData;
-              lastEntry.duration =
-                Date.now() - (lastEntry.timestamp || Date.now());
+              updatedHistoryFinal[updatedHistoryFinal.length - 1].response =
+                authServerResponseData;
             }
 
-            // Validate PKCE support (REQUIRED for 2025-11-25)
+            // Validate PKCE support (recommended but not strictly required in 2025-06-18)
             const supportedMethods =
               authServerMetadata.code_challenge_methods_supported || [];
-
-            // 2025-11-25 spec: MUST verify PKCE support
-            if (!supportedMethods || supportedMethods.length === 0) {
-              throw new Error(
-                "PKCE is REQUIRED for 2025-11-25 protocol, but authorization server " +
-                  "does not advertise code_challenge_methods_supported. " +
-                  "Server is not compliant with 2025-11-25 spec.",
-              );
-            }
 
             // Add info log for Authorization Server Metadata
             const metadata: Record<string, any> = {
@@ -1183,27 +1041,19 @@ export const createDebugOAuthStateMachine = (
             break;
 
           case "received_authorization_server_metadata":
-            // Step 5: Client Registration (CIMD > Pre-registered > DCR)
+            // Step 5: Dynamic Client Registration (if registration_endpoint exists)
             if (!state.authorizationServerMetadata) {
               throw new Error("No authorization server metadata available");
             }
 
-            // Check registration strategy - 2025-11-25 priority: CIMD > Pre-registered > DCR
-            if (registrationStrategy === "cimd") {
-              // CIMD Step 1: Prepare client_id URL
-              updateState({
-                currentStep: "cimd_prepare",
-                clientId: MCPJAM_CLIENT_ID,
-                isInitiatingAuth: false,
-              });
-
-              // Auto-proceed to next step
-              setTimeout(() => machine.proceedToNextStep(), 800);
-              return;
-            } else if (registrationStrategy === "preregistered") {
+            // Check registration strategy
+            if (registrationStrategy === "preregistered") {
               // Skip DCR - load pre-registered client credentials from localStorage
               const { clientId, clientSecret } =
-                loadPreregisteredCredentials(serverName);
+                (await loadPreregisteredCredentials?.({
+                  serverName,
+                  serverUrl,
+                })) ?? {};
 
               if (!clientId) {
                 updateState({
@@ -1254,12 +1104,18 @@ export const createDebugOAuthStateMachine = (
                 state.authorizationServerMetadata.scopes_supported;
 
               const clientMetadata: Record<string, any> = {
-                client_name: "MCPJam Inspector Debug Client",
-                logo_uri: "https://www.mcpjam.com/mcp_jam_2row.png",
-                redirect_uris: [redirectUri],
-                grant_types: ["authorization_code", "refresh_token"],
-                response_types: ["code"],
-                token_endpoint_auth_method: "none", // Public client (no client secret)
+                ...dynamicRegistrationDefaults,
+                redirect_uris:
+                  dynamicRegistrationDefaults.redirect_uris ?? [redirectUri],
+                grant_types: dynamicRegistrationDefaults.grant_types ?? [
+                  "authorization_code",
+                  "refresh_token",
+                ],
+                response_types:
+                  dynamicRegistrationDefaults.response_types ?? ["code"],
+                token_endpoint_auth_method:
+                  dynamicRegistrationDefaults.token_endpoint_auth_method ??
+                  "none",
               };
 
               // Include scopes if supported by the server
@@ -1293,7 +1149,7 @@ export const createDebugOAuthStateMachine = (
               });
 
               // Automatically proceed to make the actual request
-              setTimeout(() => machine.proceedToNextStep(), 50);
+              autoAdvance(50);
               return;
             } else {
               // No registration endpoint and DCR strategy - skip to PKCE generation with a mock client ID
@@ -1318,7 +1174,7 @@ export const createDebugOAuthStateMachine = (
 
             try {
               // Make actual POST request to registration endpoint via backend proxy
-              const response = await proxyFetch(
+              const response = await executeRequest(
                 state.authorizationServerMetadata.registration_endpoint,
                 {
                   method: "POST",
@@ -1448,126 +1304,6 @@ export const createDebugOAuthStateMachine = (
             }
             break;
 
-          case "cimd_prepare":
-            // CIMD Step 2: Simulate server detecting URL-formatted client_id and fetching metadata
-            updateState({
-              currentStep: "cimd_fetch_request",
-              isInitiatingAuth: false,
-            });
-
-            // Auto-proceed to next step
-            setTimeout(() => machine.proceedToNextStep(), 800);
-            return;
-
-          case "cimd_fetch_request":
-            // CIMD Step 3: Fetch and validate the CIMD document
-            const cimdSupported = (state.authorizationServerMetadata as any)
-              ?.client_id_metadata_document_supported;
-
-            try {
-              // Fetch the CIMD document (simulating what the auth server does)
-              const cimdResponse = await proxyFetch(MCPJAM_CLIENT_ID, {
-                method: "GET",
-              });
-
-              if (!cimdResponse.ok) {
-                throw new Error(
-                  `CIMD endpoint returned HTTP ${cimdResponse.status}`,
-                );
-              }
-
-              const cimdDoc = cimdResponse.body;
-
-              // Store metadata for next step
-              updateState({
-                currentStep: "cimd_metadata_response",
-                isInitiatingAuth: false,
-              });
-
-              // Auto-proceed to validation step
-              setTimeout(() => machine.proceedToNextStep(), 800);
-              return;
-            } catch (error) {
-              updateState({
-                error:
-                  `CIMD metadata fetch failed: ${error instanceof Error ? error.message : String(error)}. ` +
-                  "Try using 'dcr' or 'preregistered' registration strategy instead.",
-                isInitiatingAuth: false,
-              });
-              return;
-            }
-
-          case "cimd_metadata_response":
-            // CIMD Step 4: Validate the fetched metadata and complete registration
-            try {
-              // Re-fetch to validate
-              const cimdResponse = await proxyFetch(MCPJAM_CLIENT_ID, {
-                method: "GET",
-              });
-
-              if (!cimdResponse.ok) {
-                throw new Error(
-                  `CIMD endpoint returned HTTP ${cimdResponse.status}`,
-                );
-              }
-
-              const cimdDoc = cimdResponse.body;
-
-              // Validate CIMD document
-              if (cimdDoc.client_id !== MCPJAM_CLIENT_ID) {
-                throw new Error("CIMD client_id mismatch");
-              }
-
-              // Add info log for CIMD validation
-              const cimdSupported = (state.authorizationServerMetadata as any)
-                ?.client_id_metadata_document_supported;
-
-              const cimdInfo: Record<string, any> = {
-                "Client ID": MCPJAM_CLIENT_ID,
-                "Registration Method": "Client ID Metadata Document (CIMD)",
-                "Client Name": cimdDoc.client_name || "MCPJam",
-                "Redirect URIs": cimdDoc.redirect_uris || [],
-                "Token Auth Method":
-                  cimdDoc.token_endpoint_auth_method || "none",
-                Validation: "✓ Metadata fetched and validated",
-                Note: "Server fetched and validated client metadata from URL",
-              };
-
-              if (cimdSupported) {
-                cimdInfo["Server Support"] =
-                  "✓ Advertised in metadata (client_id_metadata_document_supported: true)";
-              } else {
-                cimdInfo["Server Support"] =
-                  "⚠ Not advertised (attempting anyway)";
-              }
-
-              const infoLogs = addInfoLog(
-                getCurrentState(),
-                "received_client_credentials",
-                "cimd",
-                "Client ID Metadata Document",
-                cimdInfo,
-              );
-
-              updateState({
-                currentStep: "received_client_credentials",
-                clientId: MCPJAM_CLIENT_ID,
-                clientSecret: undefined, // Public client with CIMD
-                tokenEndpointAuthMethod: "none",
-                infoLogs,
-                isInitiatingAuth: false,
-              });
-            } catch (error) {
-              updateState({
-                error:
-                  `CIMD validation failed: ${error instanceof Error ? error.message : String(error)}. ` +
-                  "Try using 'dcr' or 'preregistered' registration strategy instead.",
-                isInitiatingAuth: false,
-              });
-              return;
-            }
-            break;
-
           case "received_client_credentials":
             // Step 7: Generate PKCE parameters
 
@@ -1584,7 +1320,7 @@ export const createDebugOAuthStateMachine = (
               {
                 code_challenge: codeChallenge,
                 method: "S256",
-                resource: canonicalServerUrl,
+                resource: state.serverUrl || "Unknown",
               },
             );
 
@@ -1620,7 +1356,9 @@ export const createDebugOAuthStateMachine = (
             );
             authUrl.searchParams.set("code_challenge_method", "S256");
             authUrl.searchParams.set("state", state.state || "");
-            authUrl.searchParams.set("resource", canonicalServerUrl);
+            if (state.serverUrl) {
+              authUrl.searchParams.set("resource", state.serverUrl);
+            }
 
             // Add scopes to request refresh tokens and other capabilities
             // If custom scopes are provided, use them exclusively
@@ -1632,13 +1370,18 @@ export const createDebugOAuthStateMachine = (
                 state.resourceMetadata?.scopes_supported ||
                 state.authorizationServerMetadata.scopes_supported;
 
-              // Build scope string using only server-advertised scopes
+              // Build scope string following OAuth 2.1 best practices
               const scopes = new Set<string>();
 
-              // Add all server-advertised scopes (MCP-specific, OIDC, or other)
-              // This ensures we only request scopes the server explicitly supports
+              // 1. Add server-advertised scopes first (MCP-specific like tasks.read, read-mcp, etc.)
               if (scopesSupported && scopesSupported.length > 0) {
                 scopesSupported.forEach((scope) => scopes.add(scope));
+              }
+
+              // 2. Request offline_access for refresh tokens ONLY if server supports it
+              // Per OAuth 2.1, this is required to get refresh tokens
+              if (scopesSupported?.includes("offline_access")) {
+                scopes.add("offline_access");
               }
 
               // Set scope parameter - use only scopes the server actually supports
@@ -1719,7 +1462,9 @@ export const createDebugOAuthStateMachine = (
               tokenRequestBodyObj.code_verifier = state.codeVerifier;
             }
 
-            tokenRequestBodyObj.resource = canonicalServerUrl;
+            if (state.serverUrl) {
+              tokenRequestBodyObj.resource = state.serverUrl;
+            }
 
             const tokenRequest = {
               method: "POST",
@@ -1749,7 +1494,7 @@ export const createDebugOAuthStateMachine = (
             });
 
             // Automatically proceed to make the actual request
-            setTimeout(() => machine.proceedToNextStep(), 50);
+            autoAdvance(50);
             return;
 
           case "token_request":
@@ -1783,11 +1528,13 @@ export const createDebugOAuthStateMachine = (
                 tokenRequestBody.set("client_secret", state.clientSecret);
               }
 
-              // Add resource parameter (canonicalized per RFC 8707)
-              tokenRequestBody.set("resource", canonicalServerUrl);
+              // Add resource parameter if available
+              if (state.serverUrl) {
+                tokenRequestBody.set("resource", state.serverUrl);
+              }
 
               // Make the token request via backend proxy
-              const response = await proxyFetch(
+              const response = await executeRequest(
                 state.authorizationServerMetadata.token_endpoint,
                 {
                   method: "POST",
@@ -1848,8 +1595,8 @@ export const createDebugOAuthStateMachine = (
                   ...tokenInfoLogs,
                   {
                     id: "auth-code",
+                    step: "token_request",
                     level: "info",
-                    step: "authorization_request",
                     label: "Authorization Code",
                     data: {
                       code: state.authorizationCode,
@@ -1872,8 +1619,8 @@ export const createDebugOAuthStateMachine = (
                   ...tokenInfoLogs,
                   {
                     id: "oauth-tokens",
-                    level: "info",
                     step: "token_request",
+                    level: "info",
                     label: "OAuth Tokens",
                     data: tokenData,
                     timestamp: Date.now(),
@@ -1930,8 +1677,8 @@ export const createDebugOAuthStateMachine = (
                     ...tokenInfoLogs,
                     {
                       id: "token",
-                      level: "info",
                       step: "token_request",
+                      level: "info",
                       label: "Access Token (Decoded JWT)",
                       data: audienceNote,
                       timestamp: Date.now(),
@@ -1967,8 +1714,8 @@ export const createDebugOAuthStateMachine = (
                     ...tokenInfoLogs,
                     {
                       id: "id-token",
-                      level: "info",
                       step: "token_request",
+                      level: "info",
                       label: "ID Token (OIDC - Decoded JWT)",
                       data: formattedIdToken,
                       timestamp: Date.now(),
@@ -2030,13 +1777,13 @@ export const createDebugOAuthStateMachine = (
               headers: {
                 Authorization: `Bearer ${state.accessToken}`,
                 "Content-Type": "application/json",
-                "MCP-Protocol-Version": "2025-11-25",
+                "MCP-Protocol-Version": "2025-06-18",
               },
               body: {
                 jsonrpc: "2.0",
                 method: "initialize",
                 params: {
-                  protocolVersion: "2025-11-25",
+                  protocolVersion: "2025-06-18",
                   capabilities: {},
                   clientInfo: {
                     name: "MCPJam Inspector",
@@ -2055,7 +1802,7 @@ export const createDebugOAuthStateMachine = (
               "Authenticated MCP Initialize Request",
               {
                 Request: "MCP initialize with OAuth bearer token",
-                "Protocol Version": "2025-11-25",
+                "Protocol Version": "2025-06-18",
                 Client: "MCPJam Inspector v1.0.0",
                 Endpoint: state.serverUrl,
               },
@@ -2079,7 +1826,7 @@ export const createDebugOAuthStateMachine = (
             });
 
             // Automatically proceed to make the actual request
-            setTimeout(() => machine.proceedToNextStep(), 50);
+            autoAdvance(50);
             return;
 
           case "authenticated_mcp_request":
@@ -2089,7 +1836,7 @@ export const createDebugOAuthStateMachine = (
             }
 
             try {
-              const response = await proxyFetch(state.serverUrl, {
+              const response = await executeRequest(state.serverUrl, {
                 method: "POST",
                 headers: mergeHeaders(customHeaders, {
                   Authorization: `Bearer ${state.accessToken}`,
@@ -2099,7 +1846,7 @@ export const createDebugOAuthStateMachine = (
                   jsonrpc: "2.0",
                   method: "initialize",
                   params: {
-                    protocolVersion: "2025-11-25",
+                    protocolVersion: "2024-11-05",
                     capabilities: {},
                     clientInfo: {
                       name: "MCPJam Inspector",
@@ -2241,29 +1988,49 @@ export const createDebugOAuthStateMachine = (
                 isInitiatingAuth: false,
               });
             } catch (error) {
-              // Capture the error
+              const errorDetails = toLogErrorDetails(error);
               const errorResponse = {
                 status: 0,
                 statusText: "Network Error",
                 headers: {},
                 body: {
-                  error: error instanceof Error ? error.message : String(error),
+                  error: errorDetails.message,
+                  details: errorDetails.details,
                 },
               };
 
               const updatedHistoryError = [...(state.httpHistory || [])];
               if (updatedHistoryError.length > 0) {
-                const lastEntry =
-                  updatedHistoryError[updatedHistoryError.length - 1];
-                lastEntry.response = errorResponse;
-                lastEntry.duration =
-                  Date.now() - (lastEntry.timestamp || Date.now());
+                const lastEntry = {
+                  ...updatedHistoryError[updatedHistoryError.length - 1],
+                  response: errorResponse,
+                  duration:
+                    Date.now() -
+                    (updatedHistoryError[updatedHistoryError.length - 1]
+                      ?.timestamp || Date.now()),
+                  error: errorDetails,
+                };
+                updatedHistoryError[updatedHistoryError.length - 1] = lastEntry;
               }
+
+              const currentState = getCurrentState();
+              const infoLogs = addInfoLog(
+                currentState,
+                "authenticated_mcp_request",
+                `error-authenticated_mcp_request-${Date.now()}`,
+                "Authenticated MCP request failed",
+                {
+                  request: currentState.lastRequest,
+                  error: errorDetails,
+                },
+                { level: "error", error: errorDetails },
+              );
 
               updateState({
                 lastResponse: errorResponse,
                 httpHistory: updatedHistoryError,
-                error: `Authenticated MCP request failed: ${error instanceof Error ? error.message : String(error)}`,
+                infoLogs,
+                error: `Authenticated MCP request failed: ${errorDetails.message}`,
                 isInitiatingAuth: false,
               });
             }
@@ -2294,6 +2061,7 @@ export const createDebugOAuthStateMachine = (
           },
           { level: "error", error: errorDetails },
         );
+
         const updatedHistory = markLatestHttpEntryAsError(
           currentState.httpHistory,
           errorDetails,
@@ -2324,7 +2092,7 @@ export const createDebugOAuthStateMachine = (
     // Reset the flow to initial state
     resetFlow: () => {
       updateState({
-        ...EMPTY_OAUTH_FLOW_STATE_V2,
+        ...EMPTY_OAUTH_FLOW_STATE,
         lastRequest: undefined,
         lastResponse: undefined,
         httpHistory: [],
