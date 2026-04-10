@@ -6,7 +6,9 @@ import {
   type ChangeEvent,
 } from "react";
 import type { FormEvent, KeyboardEvent } from "react";
+import { usePostHog } from "posthog-js/react";
 import { cn } from "@/lib/chat-utils";
+import { standardEventProps } from "@/lib/PosthogUtils";
 import { Button } from "@/components/ui/button";
 import { TextareaAutosize } from "@/components/ui/textarea-autosize";
 import { PromptsPopover } from "@/components/chat-v2/chat-input/prompts/mcp-prompts-popover";
@@ -203,7 +205,17 @@ export function ChatInput({
     string | null
   >(null);
   const [fileError, setFileError] = useState<string | null>(null);
+  const posthog = usePostHog();
   const [plusPopoverOpen, setPlusPopoverOpen] = useState(false);
+  const handlePlusPopoverOpenChange = (nextOpen: boolean) => {
+    if (nextOpen && !plusPopoverOpen) {
+      posthog?.capture(
+        "chat_options_plus_clicked",
+        standardEventProps("chat_input"),
+      );
+    }
+    setPlusPopoverOpen(nextOpen);
+  };
   const [addServerModalOpen, setAddServerModalOpen] = useState(false);
   const [systemPromptOpen, setSystemPromptOpen] = useState(false);
 
@@ -569,7 +581,7 @@ export function ChatInput({
               {!minimalMode && (
                 <Popover
                   open={plusPopoverOpen}
-                  onOpenChange={setPlusPopoverOpen}
+                  onOpenChange={handlePlusPopoverOpenChange}
                 >
                   <Tooltip>
                     <TooltipTrigger asChild>
@@ -726,6 +738,10 @@ export function ChatInput({
                           type="button"
                           className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-sm hover:bg-muted/60 cursor-pointer"
                           onClick={() => {
+                            posthog?.capture(
+                              "chat_attachment_button_clicked",
+                              standardEventProps("chat_input"),
+                            );
                             setPlusPopoverOpen(false);
                             openFilePicker();
                           }}

@@ -7,6 +7,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { Copy, Loader2, ScanSearch } from "lucide-react";
 import { toast } from "sonner";
+import { usePostHog } from "posthog-js/react";
+import { standardEventProps } from "@/lib/PosthogUtils";
 import { JsonEditor } from "@/components/ui/json-editor";
 import { Button } from "@/components/ui/button";
 import {
@@ -62,6 +64,7 @@ export function TraceRawView({
   /** Parent owns scroll (e.g. StickToBottom); JSON height grows with payload. */
   growWithContent?: boolean;
 }) {
+  const posthog = usePostHog();
   const jsonHeight = growWithContent ? "auto" : "100%";
   const requestPayloadEntries = requestPayloadHistory?.entries ?? [];
   const hasUiMessages = requestPayloadHistory?.hasUiMessages ?? false;
@@ -237,7 +240,13 @@ export function TraceRawView({
           <Button
             variant="ghost"
             size="icon"
-            onClick={() => copyToClipboard(trace, "Trace")}
+            onClick={() => {
+              posthog?.capture(
+                "trace_raw_copied",
+                standardEventProps("trace_raw_view"),
+              );
+              copyToClipboard(trace, "Trace");
+            }}
             className="h-7 w-7"
             aria-label="Copy trace"
           >

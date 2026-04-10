@@ -39,7 +39,11 @@ import type { LoadingIndicatorVariant } from "@/components/chat-v2/shared/loadin
 import { ServerWithName } from "@/hooks/use-app-state";
 import { MCPJamFreeModelsPrompt } from "@/components/chat-v2/mcpjam-free-models-prompt";
 import { usePostHog, useFeatureFlagEnabled } from "posthog-js/react";
-import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
+import {
+  detectEnvironment,
+  detectPlatform,
+  standardEventProps,
+} from "@/lib/PosthogUtils";
 import { ErrorBox } from "@/components/chat-v2/error";
 import { StickToBottom } from "use-stick-to-bottom";
 import { type MCPPromptResult } from "@/components/chat-v2/chat-input/prompts/mcp-prompts-popover";
@@ -1542,9 +1546,10 @@ export function ChatTabV2({
   }, [clearMultiModelUiState]);
 
   const handleResetAllChats = useCallback(() => {
+    posthog.capture("chat_cleared", standardEventProps("chat_tab"));
     baseResetChat();
     resetMultiModelSessions();
-  }, [baseResetChat, resetMultiModelSessions]);
+  }, [baseResetChat, posthog, resetMultiModelSessions]);
 
   const handleSingleModelChange = useCallback(
     (model: ModelDefinition) => {
@@ -1774,6 +1779,10 @@ export function ChatTabV2({
   };
 
   const handleStarterPrompt = async (prompt: string) => {
+    posthog.capture(
+      "chat_starter_prompt_clicked",
+      standardEventProps("chat_tab"),
+    );
     if (submitBlocked || inputDisabled) {
       setInput(prompt);
       return;

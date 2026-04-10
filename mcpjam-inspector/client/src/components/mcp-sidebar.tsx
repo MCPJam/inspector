@@ -20,6 +20,7 @@ import {
   Puzzle,
 } from "lucide-react";
 import { usePostHog, useFeatureFlagEnabled } from "posthog-js/react";
+import { standardEventProps } from "@/lib/PosthogUtils";
 
 import { NavMain } from "@/components/sidebar/nav-main";
 import {
@@ -596,9 +597,12 @@ export function MCPSidebar({
         localStorage.setItem(APP_BUILDER_VISITED_KEY, "true");
         setHasVisitedAppBuilder(true);
       }
-      // Track skills tab opened
+      posthog.capture("sidebar_nav_clicked", {
+        section,
+        ...standardEventProps("mcp_sidebar"),
+      });
       if (section === "skills") {
-        posthog.capture("skills_tab_opened");
+        posthog.capture("skills_tab_opened", standardEventProps("mcp_sidebar"));
       }
       onNavigate(section);
     } else {

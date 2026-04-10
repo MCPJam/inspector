@@ -8,6 +8,8 @@ import {
   type KeyboardEvent,
 } from "react";
 import { motion, useReducedMotion } from "framer-motion";
+import { usePostHog } from "posthog-js/react";
+import { standardEventProps } from "@/lib/PosthogUtils";
 import {
   AlertCircle,
   Bot,
@@ -1728,6 +1730,7 @@ export function TraceTimeline({
     onExpandedStepIdsChange ?? setInternalExpandedStepIds;
 
   const [selectedRowKey, setSelectedRowKey] = useState<string | null>(null);
+  const posthog = usePostHog();
 
   const axisHeaderMeasureRef = useRef<HTMLDivElement>(null);
   const [axisColumnWidthPx, setAxisColumnWidthPx] = useState(-1);
@@ -2261,7 +2264,14 @@ export function TraceTimeline({
                       row,
                       spanShowsFailure,
                     );
-                    const selectRow = () => setSelectedRowKey(row.key);
+                    const selectRow = () => {
+                      posthog?.capture("trace_span_clicked", {
+                        span_kind: row.kind,
+                        span_key: row.key,
+                        ...standardEventProps("trace_timeline"),
+                      });
+                      setSelectedRowKey(row.key);
+                    };
                     const leftCellClass = isSelected
                       ? cn("bg-transparent", borderAccent)
                       : "border-l-transparent bg-background group-hover:bg-muted/20 hover:bg-muted/20";

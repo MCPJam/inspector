@@ -1,6 +1,8 @@
 import { useMemo, useState } from "react";
 import { Check, X } from "lucide-react";
 import { useConvexAuth } from "convex/react";
+import { usePostHog } from "posthog-js/react";
+import { standardEventProps } from "@/lib/PosthogUtils";
 import { Button } from "@/components/ui/button";
 import {
   Popover,
@@ -148,6 +150,16 @@ export function ModelSelector({
   maxSelectedModels = 3,
 }: ModelSelectorProps) {
   const [isOpen, setIsOpen] = useState(false);
+  const posthog = usePostHog();
+  const handleOpenChange = (nextOpen: boolean) => {
+    if (nextOpen && !isOpen) {
+      posthog?.capture(
+        "chat_model_selector_clicked",
+        standardEventProps("chat_input"),
+      );
+    }
+    setIsOpen(nextOpen);
+  };
   const { isAuthenticated } = useConvexAuth();
 
   const selectedModelsData =
@@ -400,7 +412,7 @@ export function ModelSelector({
 
   return (
     <>
-      <Popover open={isOpen} onOpenChange={setIsOpen}>
+      <Popover open={isOpen} onOpenChange={handleOpenChange}>
         <Tooltip>
           <TooltipTrigger asChild>
             <PopoverTrigger asChild>
