@@ -454,7 +454,7 @@ describe("POST /api/mcp/chat-v2", () => {
           system: expect.stringContaining("You are a helpful assistant"),
         }),
       );
-      expect(streamText).toHaveBeenCalledWith(
+      expect(streamText).not.toHaveBeenCalledWith(
         expect.objectContaining({
           system: expect.stringContaining("## Connected MCP Tools"),
         }),

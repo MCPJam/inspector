@@ -139,7 +139,6 @@ describe("web routes — chat-v2 hosted mode", () => {
     expect(prepareChatV2Mock).toHaveBeenCalledWith(
       expect.objectContaining({
         selectedServers: ["server-1"],
-        includeMcpToolInventory: true,
       }),
     );
     expect(persistChatSessionToConvexMock).toHaveBeenCalledWith(
