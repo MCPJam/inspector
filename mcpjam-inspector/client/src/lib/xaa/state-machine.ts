@@ -1,9 +1,4 @@
-import {
-  addInfoLog,
-  buildResourceMetadataUrl,
-  mergeHeadersForAuthServer,
-  toLogErrorDetails,
-} from "@/lib/oauth/state-machines/shared/helpers";
+import type { InfoLogLevel, LogErrorDetails } from "@mcpjam/sdk/browser";
 import { decodeJWTParts, formatJWTTimestamp } from "@/lib/oauth/jwt-decoder";
 import {
   NEGATIVE_TEST_MODE_DETAILS,
@@ -14,11 +9,117 @@ import type {
   BaseXAAStateMachineConfig,
   XAADecodedJwt,
   XAAFlowState,
+  XAAFlowStep,
   XAAJWTInspectionIssue,
+  XAAInfoLogEntry,
   XAARequestResult,
   XAAStateMachine,
 } from "./types";
 import { createInitialXAAFlowState } from "./types";
+
+interface AddInfoLogOptions {
+  level?: InfoLogLevel;
+  error?: LogErrorDetails;
+}
+
+function addInfoLog(
+  state: XAAFlowState,
+  step: XAAFlowStep,
+  id: string,
+  label: string,
+  data: any,
+  options: AddInfoLogOptions = {},
+): Array<XAAInfoLogEntry> {
+  const { level = "info", error } = options;
+
+  return [
+    ...(state.infoLogs || []),
+    {
+      id,
+      step,
+      label,
+      data,
+      timestamp: Date.now(),
+      level,
+      error,
+    },
+  ];
+}
+
+function toLogErrorDetails(error: unknown): LogErrorDetails {
+  if (error instanceof Error) {
+    return {
+      message: error.message,
+      details: {
+        name: error.name,
+        stack: error.stack,
+      },
+    };
+  }
+
+  if (typeof error === "string") {
+    return { message: error };
+  }
+
+  return {
+    message: "Unexpected error",
+    details: error,
+  };
+}
+
+function mergeHeadersForAuthServer(
+  customHeaders: Record<string, string> | undefined,
+  requestHeaders: Record<string, string> = {},
+): Record<string, string> {
+  const merged: Record<string, string> = {};
+  const keysByLowercase = new Map<string, string>();
+
+  const applyHeaders = (headers: Record<string, string> | undefined) => {
+    if (!headers) return;
+
+    for (const [key, value] of Object.entries(headers)) {
+      const lowerKey = key.toLowerCase();
+      const previousKey = keysByLowercase.get(lowerKey);
+
+      if (previousKey && previousKey !== key) {
+        delete merged[previousKey];
+      }
+
+      keysByLowercase.set(lowerKey, key);
+      merged[key] = value;
+    }
+  };
+
+  applyHeaders(customHeaders);
+  applyHeaders(requestHeaders);
+
+  for (const key of Object.keys(merged)) {
+    if (key.toLowerCase() === "authorization") {
+      delete merged[key];
+    }
+  }
+
+  return merged;
+}
+
+function buildResourceMetadataUrl(serverUrl: string): string {
+  const url = new URL(serverUrl);
+
+  if (url.pathname !== "/" && url.pathname !== "") {
+    const pathname = url.pathname.endsWith("/")
+      ? url.pathname.slice(0, -1)
+      : url.pathname;
+    return new URL(
+      `/.well-known/oauth-protected-resource${pathname}`,
+      url.origin,
+    ).toString();
+  }
+
+  return new URL(
+    "/.well-known/oauth-protected-resource",
+    url.origin,
+  ).toString();
+}
 
 function canonicalizeResourceUrl(url: string): string {
   try {
@@ -308,7 +409,7 @@ export function createXAAStateMachine(
     id: string,
     label: string,
     data: any,
-    options?: Parameters<typeof addInfoLog>[5],
+    options?: AddInfoLogOptions,
   ) => {
     machine.updateState({
       infoLogs: addInfoLog(currentState(), step, id, label, data, options),

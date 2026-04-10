@@ -1,7 +1,4 @@
-import type {
-  HttpHistoryEntry,
-  InfoLogEntry,
-} from "@/lib/oauth/state-machines/types";
+import type { InfoLogLevel, LogErrorDetails } from "@mcpjam/sdk/browser";
 import {
   DEFAULT_NEGATIVE_TEST_MODE,
   type NegativeTestMode,
@@ -36,6 +33,35 @@ export interface XAADecodedJwt {
   payload: Record<string, unknown> | null;
   signature: string;
   issues: XAAJWTInspectionIssue[];
+}
+
+export interface XAAInfoLogEntry {
+  id: string;
+  step: XAAFlowStep;
+  label: string;
+  data: any;
+  timestamp: number;
+  level: InfoLogLevel;
+  error?: LogErrorDetails;
+}
+
+export interface XAAHttpHistoryEntry {
+  step: XAAFlowStep;
+  timestamp: number;
+  duration?: number;
+  request: {
+    method: string;
+    url: string;
+    headers: Record<string, string>;
+    body?: any;
+  };
+  response?: {
+    status: number;
+    statusText: string;
+    headers: Record<string, string>;
+    body: any;
+  };
+  error?: LogErrorDetails;
 }
 
 export interface XAAFlowState {
@@ -83,8 +109,8 @@ export interface XAAFlowState {
     headers: Record<string, string>;
     body: any;
   };
-  httpHistory?: Array<HttpHistoryEntry>;
-  infoLogs?: Array<InfoLogEntry>;
+  httpHistory?: Array<XAAHttpHistoryEntry>;
+  infoLogs?: Array<XAAInfoLogEntry>;
   error?: string;
 }
 

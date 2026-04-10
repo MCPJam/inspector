@@ -1,6 +1,6 @@
 import { HOSTED_MODE } from "@/lib/config";
 import { authFetch } from "@/lib/session-token";
-import { proxyFetch } from "@/lib/oauth/state-machines/shared/helpers";
+import { createDebugRequestExecutor } from "@/lib/oauth/debug-state-machine-adapter";
 import { createXAAStateMachine } from "./state-machine";
 import type {
   BaseXAAStateMachineConfig,
@@ -13,6 +13,23 @@ const XAA_API_BASE = HOSTED_MODE ? "/api/web/xaa" : "/api/mcp/xaa";
 
 function responseHeadersToRecord(response: Response): Record<string, string> {
   return Object.fromEntries(response.headers.entries());
+}
+
+function normalizeHeaders(
+  headers?: HeadersInit | Record<string, string>,
+): Record<string, string> {
+  if (!headers) return {};
+  if (headers instanceof Headers) {
+    return Object.fromEntries(headers.entries());
+  }
+  if (Array.isArray(headers)) {
+    return Object.fromEntries(
+      headers.map(([key, value]) => [key, String(value)]),
+    );
+  }
+  return Object.fromEntries(
+    Object.entries(headers).map(([key, value]) => [key, String(value)]),
+  );
 }
 
 async function readResponseBody(response: Response): Promise<any> {
@@ -34,6 +51,8 @@ async function readResponseBody(response: Response): Promise<any> {
 }
 
 export function createXAADebugRequestExecutor(): XAARequestExecutor {
+  const debugRequestExecutor = createDebugRequestExecutor();
+
   return {
     internalRequest: async (
       path: string,
@@ -54,14 +73,12 @@ export function createXAADebugRequestExecutor(): XAARequestExecutor {
       url: string,
       init?: RequestInit,
     ): Promise<XAARequestResult> => {
-      const response = await proxyFetch(url, init);
-      return {
-        status: response.status,
-        statusText: response.statusText,
-        headers: response.headers,
-        body: response.body,
-        ok: response.ok,
-      };
+      return debugRequestExecutor({
+        url,
+        method: init?.method || "GET",
+        headers: normalizeHeaders(init?.headers),
+        body: init?.body,
+      });
     },
   };
 }
