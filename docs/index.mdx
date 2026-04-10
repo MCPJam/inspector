@@ -1,40 +1,39 @@
 ---
 title: "Introduction"
-description: "MCPJam is the local inspector for ChatGPT apps, MCP Apps (ext-apps), and MCP servers."
+description: "MCPJam is the fastest way to test, debug, and evaluate MCP servers, MCP apps, and ChatGPT apps."
 icon: "book-open"
 ---
 
-MCPJam inspector is the local testing tool for ChatGPT apps and MCP servers. Build your apps locally with MCPJam's widget emulator and test against any LLM in the playground. Inspect your MCP server’s tools, resources, prompts, and OAuth flows. No more ngrok or ChatGPT subscription needed.
+MCPJam is the development platform for MCP servers, MCP apps, and ChatGPT apps. Debug every JSON-RPC message and OAuth exchange, run evaluations across multiple LLMs, and track accuracy over time — so you catch regressions early, improve your server with every iteration, and ship with confidence.
 
 <Frame>
   <img
     className="block"
     src="/images/mcpjam-banner.png"
-    alt="MCPJam Inspector Logo"
+    alt="MCPJam Inspector"
     width="1000"
   />
 </Frame>
 
 ## Quick Start
 
-Start up the MCPJam inspector with a bash command
-
 <Card
-  title="Start MCPJam Inspector"
+  title="Get Started"
   icon="rocket"
   href="/getting-started"
   horizontal
 >
-  Start testing your MCP servers immediately
+  Start testing your MCP server in seconds
 </Card>
 
 ## Key features
 
-| Capability           | Description                                                                                                                                                                                                                                                                                        |
-| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| ChatGPT Apps SDK     | Local development for ChatGPT Apps SDK support. Full support for the `windows.openai` API: `widgetState`, `callTool`, `structuredContent`, `sendFollowUpMessage`, `displayMode`, CSP, and more. No more ngrok or ChatGPT subscription needed. [Read more](https://www.mcpjam.com/blog/app-builder) |
-| MCP ext-apps (Claude)   | Full local development for MCP Apps (SEP-1865). Support for all JSON-RPC message types, such as `tools/call`, `ui/initialize`, `ui/message`, `ui/open-link`, and more. [Read more](https://www.mcpjam.com/blog/mcp-apps-preview)                                                                   |
-| OAuth Debugger       | Debug your MCP server's OAuth implementation at every step. Visually inspect every network message. Supports all protocol versions (03-26, 06-18, and 11-25). Support for client pre-registration, DCR, and CIMD. [Read more](https://www.mcpjam.com/blog/oauth-debugger)                          |
-| LLM playground       | Chat with your MCP server against any LLM in the playground. We provide frontier models such as GPT-5 and Claude Sonnet for free, or bring your own API key. Playground supports ChatGPT apps and MCP Apps. [Read more](https://www.mcpjam.com/blog/frontier-models)                               |
-| MCP server debugging | Connect to and test any MCP server local or remote. Manually invoke MCP tools, resources, resource templates, and elicitation flows. View all JSON-RPC logs. Support for all features from the official MCP inspector.                                                                             |
-| Server info          | View server icons, version, capabilities, instructions, and ChatGPT widget metadata exposed by the server. [Read more](https://www.mcpjam.com/blog/server-instructions)                                                                                                                            |
+| Capability | Description |
+| --- | --- |
+| App Builder | Local emulator for ChatGPT apps and MCP apps. Like Chrome DevTools for your widgets — exposes all `window.openai` API calls, JSON-RPC traffic, CSP, device viewports, locale, and more. [Read more](/inspector/app-builder) |
+| LLM Playground | Free frontier models like GPT-5, Claude Sonnet, and Gemini 2.5 included — or bring your own API key. 1:1 emulation with ChatGPT. Supports MCP apps, elicitation, and MCP prompts. [Read more](/inspector/llm-playground) |
+| OAuth Debugger | Visualize and debug your MCP authorization flow at every step. Supports all protocol versions (03-26, 06-18, 11-25), client pre-registration, DCR, and CIMD. [Read more](/inspector/guided-oauth) |
+| MCP Server Debugging | Connect to any local or remote MCP server. Manually invoke tools, resources, resource templates, and elicitation flows. Full JSON-RPC observability. |
+| Skills | Load and use agent skills in the App Builder. Not available in the web app. [Read more](/inspector/skills) |
+| Workspaces | Group your MCP servers into workspaces and share them with your team. Real-time sync — invite a teammate and they're ready instantly. [Read more](/inspector/workspaces) |
+| Evals | Coming soon... |
