@@ -18,6 +18,7 @@ import moonshotLightLogo from "/moonshot_light.png";
 import moonshotDarkLogo from "/moonshot_dark.png";
 import zAiLogo from "/z-ai.png";
 import minimaxLogo from "/minimax_logo.svg";
+import qwenLogo from "/qwen_logo.png";
 
 export type ThemeMode = "light" | "dark" | "system";
 
@@ -81,6 +82,8 @@ export const getProviderLogo = (
       return zAiLogo;
     case "minimax":
       return minimaxLogo;
+    case "qwen":
+      return qwenLogo;
     default:
       return null;
   }
@@ -117,6 +120,8 @@ export const getProviderColor = (provider: string): string => {
       return "text-cyan-600 dark:text-cyan-400";
     case "minimax":
       return "text-pink-600 dark:text-pink-400";
+    case "qwen":
+      return "text-yellow-600 dark:text-yellow-400";
     default:
       return "text-gray-600 dark:text-gray-400";
   }

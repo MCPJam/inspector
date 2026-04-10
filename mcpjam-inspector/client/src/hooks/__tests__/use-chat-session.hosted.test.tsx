@@ -37,19 +37,19 @@ const mockState = vi.hoisted(() => ({
 let lastTransportOptions: any;
 
 const guestModel = {
-  id: "openai/gpt-5-mini",
-  name: "GPT-5 Mini",
-  provider: "openai" as const,
-};
-const freeParityGuestModel = {
-  id: "openai/gpt-oss-120b",
-  name: "GPT OSS 120B",
-  provider: "openai" as const,
+  id: "anthropic/claude-haiku-4.5",
+  name: "Claude Haiku 4.5",
+  provider: "anthropic" as const,
 };
 const premiumModel = {
   id: "anthropic/claude-sonnet-4.5",
   name: "Claude Sonnet 4.5",
   provider: "anthropic" as const,
+};
+const signInOnlyHostedModel = {
+  id: "qwen/qwen3.6-plus",
+  name: "Qwen 3.6 Plus",
+  provider: "qwen" as const,
 };
 const nonGuestMcpjamModel = {
   id: "openai/gpt-4o-mini",
@@ -64,8 +64,8 @@ vi.mock("@/lib/config", () => ({
 vi.mock("@/components/chat-v2/shared/model-helpers", () => ({
   buildAvailableModels: vi.fn(() => [
     premiumModel,
+    signInOnlyHostedModel,
     nonGuestMcpjamModel,
-    freeParityGuestModel,
     guestModel,
   ]),
   getDefaultModel: vi.fn((models: Array<typeof guestModel>) => models[0]),
@@ -90,9 +90,9 @@ vi.mock("@/hooks/use-custom-providers", () => ({
 
 vi.mock("@/hooks/use-persisted-model", () => ({
   usePersistedModel: () => ({
-    selectedModelId: "openai/gpt-5-mini",
+    selectedModelId: "anthropic/claude-haiku-4.5",
     setSelectedModelId: mockState.setSelectedModelId,
-    selectedModelIds: ["openai/gpt-5-mini"],
+    selectedModelIds: ["anthropic/claude-haiku-4.5"],
     setSelectedModelIds: vi.fn(),
     multiModelEnabled: false,
     setMultiModelEnabled: vi.fn(),
@@ -312,7 +312,7 @@ describe("useChatSession hosted mode", () => {
     unmount();
   });
 
-  it("shows ALL MCPJam models to anonymous shared-chat viewers (no guest-allowed filtering)", async () => {
+  it("keeps only claude-haiku-4.5 available to anonymous hosted viewers", async () => {
     mockState.convexAuth.isAuthenticated = false;
     mockState.getAccessToken.mockRejectedValue(new Error("LoginRequiredError"));
 
@@ -329,13 +329,33 @@ describe("useChatSession hosted mode", () => {
       expect(result.current.disableForAuthentication).toBe(false);
     });
 
-    // All MCPJam-provided models should be available, including ones
-    // that were previously excluded from the guest-allowed list
+    // Guests should only see the hosted model that remains guest-allowed.
     expect(result.current.availableModels.map((model) => model.id)).toEqual([
-      "openai/gpt-4o-mini",
-      "openai/gpt-oss-120b",
-      "openai/gpt-5-mini",
+      "anthropic/claude-haiku-4.5",
     ]);
+    unmount();
+  });
+
+  it("hides newly added sign-in-only hosted models from anonymous viewers", async () => {
+    mockState.convexAuth.isAuthenticated = false;
+    mockState.getAccessToken.mockRejectedValue(new Error("LoginRequiredError"));
+
+    const { result, unmount } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        hostedWorkspaceId: "workspace-1",
+        hostedSelectedServerIds: ["server-id-1"],
+        hostedShareToken: "share-token",
+      }),
+    );
+
+    await waitFor(() => {
+      expect(result.current.disableForAuthentication).toBe(false);
+    });
+
+    expect(result.current.availableModels.map((model) => model.id)).not.toContain(
+      "qwen/qwen3.6-plus",
+    );
     unmount();
   });
 
@@ -356,13 +376,29 @@ describe("useChatSession hosted mode", () => {
       expect(result.current.disableForAuthentication).toBe(false);
     });
 
-    // All MCPJam-provided models are now available (no guest-allowed filtering)
+    // Shared-chat guests resolve to the same guest-visible hosted set.
     expect(result.current.availableModels.map((model) => model.id)).toEqual([
-      "openai/gpt-4o-mini",
-      "openai/gpt-oss-120b",
-      "openai/gpt-5-mini",
+      "anthropic/claude-haiku-4.5",
     ]);
     expect(result.current.isAuthReady).toBe(true);
+    unmount();
+  });
+
+  it("keeps sign-in-only hosted models available for authenticated viewers", async () => {
+    const { result, unmount } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        hostedWorkspaceId: "workspace-1",
+        hostedSelectedServerIds: ["server-id-1"],
+        hostedShareToken: "share-token",
+      }),
+    );
+
+    await waitFor(() => {
+      expect(result.current.availableModels.map((model) => model.id)).toContain(
+        "qwen/qwen3.6-plus",
+      );
+    });
     unmount();
   });
 });

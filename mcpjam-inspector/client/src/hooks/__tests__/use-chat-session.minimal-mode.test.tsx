@@ -29,10 +29,10 @@ const mcpJamModel = {
   name: "GPT-5 Mini",
   provider: "openai" as const,
 };
-const guestParityMcpJamModel = {
-  id: "openai/gpt-oss-120b",
-  name: "GPT OSS 120B",
-  provider: "openai" as const,
+const guestAllowedMcpJamModel = {
+  id: "anthropic/claude-haiku-4.5",
+  name: "Claude Haiku 4.5",
+  provider: "anthropic" as const,
 };
 const mockModelState = {
   availableModels: [baseModel],
@@ -335,9 +335,9 @@ describe("useChatSession minimal mode parity", () => {
     expect(mockAuthFetch).not.toHaveBeenCalled();
   });
 
-  it("keeps guest-parity MCPJam models on the unauthenticated non-hosted path", async () => {
-    mockModelState.availableModels = [guestParityMcpJamModel];
-    mockModelState.selectedModelId = guestParityMcpJamModel.id;
+  it("keeps only claude-haiku-4.5 on the unauthenticated non-hosted path", async () => {
+    mockModelState.availableModels = [guestAllowedMcpJamModel];
+    mockModelState.selectedModelId = guestAllowedMcpJamModel.id;
     mockConvexAuth.isAuthenticated = false;
     mockGetAccessToken.mockResolvedValue(null);
     const selectedServers = ["server-1"];
@@ -360,6 +360,9 @@ describe("useChatSession minimal mode parity", () => {
       await resolveConfig(latestTransport.options.headers),
     ).toBeUndefined();
     expect(result.current.disableForAuthentication).toBe(false);
+    expect(result.current.availableModels.map((model) => model.id)).toEqual([
+      "anthropic/claude-haiku-4.5",
+    ]);
     expect(mockAuthFetch).not.toHaveBeenCalled();
   });
 });

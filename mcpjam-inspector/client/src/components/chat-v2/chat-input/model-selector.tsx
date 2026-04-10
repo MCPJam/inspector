@@ -102,6 +102,8 @@ const getProviderDisplayName = (groupKey: GroupKey): string => {
       return "Zhipu AI";
     case "minimax":
       return "MiniMax";
+    case "qwen":
+      return "Qwen";
     default:
       return groupKey;
   }

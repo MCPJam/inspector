@@ -41,7 +41,11 @@ import {
   buildAvailableModels,
   getDefaultModel,
 } from "@/components/chat-v2/shared/model-helpers";
-import { isMCPJamProvidedModel } from "@/shared/types";
+import {
+  isMCPJamGuestAllowedModel,
+  isMCPJamProvidedModel,
+  isMCPJamSignInRequiredModel,
+} from "@/shared/types";
 import {
   detectOllamaModels,
   detectOllamaToolCapableModels,
@@ -655,16 +659,32 @@ export function useChatSession({
       getAzureBaseUrl,
       customProviders,
     });
+    const visibleModels = !isAuthenticated
+      ? models.filter(
+          (model) =>
+            !isMCPJamProvidedModel(String(model.id)) ||
+            isMCPJamGuestAllowedModel(String(model.id)),
+        )
+      : models;
     if (HOSTED_MODE) {
-      return models.filter((model) => isMCPJamProvidedModel(String(model.id)));
+      const hostedModels = visibleModels.filter((model) =>
+        isMCPJamProvidedModel(String(model.id)),
+      );
+      if (!isAuthenticated) {
+        return hostedModels.filter(
+          (model) => !isMCPJamSignInRequiredModel(String(model.id)),
+        );
+      }
+      return hostedModels;
     }
-    return models;
+    return visibleModels;
   }, [
     hasToken,
     getOpenRouterSelectedModels,
     isOllamaRunning,
     ollamaModels,
     getAzureBaseUrl,
+    isAuthenticated,
     customProviders,
   ]);
 
