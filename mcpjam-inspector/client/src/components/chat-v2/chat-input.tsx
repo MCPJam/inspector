@@ -445,152 +445,159 @@ export function ChatInput({
 
   return (
     <>
-    <form ref={formRef} className={cn("w-full", className)} onSubmit={onSubmit}>
-      <div
-        ref={containerRef}
-        className={cn(
-          "relative flex w-full flex-col px-2 pt-2 pb-2",
-          composerClasses,
-        )}
+      <form
+        ref={formRef}
+        className={cn("w-full", className)}
+        onSubmit={onSubmit}
       >
-        <PromptsPopover
-          anchor={caret}
-          selectedServers={selectedServers}
-          onPromptSelected={onMCPPromptSelected}
-          onSkillSelected={onSkillSelected}
-          actionTrigger={mcpPromptPopoverKeyTrigger}
-          setActionTrigger={setMcpPromptPopoverKeyTrigger}
-          value={value}
-          caretIndex={caretIndex}
-          minimalMode={minimalMode}
-        />
-
-        {minimalMode &&
-        sandboxAttachableServers &&
-        sandboxAttachableServers.length > 0 &&
-        onAttachSandboxServer ? (
-          <div className="flex flex-wrap items-center gap-2 px-4 pb-1 pt-0.5">
-            <Popover>
-              <PopoverTrigger asChild>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="h-8 gap-1 rounded-full border-dashed px-3 text-xs"
-                  disabled={disabled}
-                  aria-label="Add optional server"
-                >
-                  <Plus className="h-3.5 w-3.5" />
-                  Add server
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent className="w-72 p-1" align="start">
-                <p className="px-2 py-1.5 text-xs text-muted-foreground">
-                  Connect an optional server. You may be asked to authorize.
-                </p>
-                <div className="max-h-48 overflow-y-auto">
-                  {sandboxAttachableServers.map((s) => (
-                    <button
-                      key={s.serverId}
-                      type="button"
-                      className="flex w-full items-center justify-between rounded-md px-2 py-2 text-left text-sm hover:bg-muted/80"
-                      onClick={() => onAttachSandboxServer(s.serverId)}
-                    >
-                      <span className="truncate font-medium">
-                        {s.serverName}
-                      </span>
-                      {s.useOAuth ? (
-                        <span className="shrink-0 text-[10px] text-muted-foreground">
-                          OAuth
-                        </span>
-                      ) : null}
-                    </button>
-                  ))}
-                </div>
-              </PopoverContent>
-            </Popover>
-          </div>
-        ) : null}
-
-        {/* Hidden file input */}
-        <input
-          ref={fileInputRef}
-          type="file"
-          multiple
-          accept={getFileInputAccept()}
-          onChange={handleFileInputChange}
-          className="hidden"
-          aria-hidden="true"
-        />
-
-        {/* File Attachment Cards */}
-        {renderFileAttachmentCards()}
-
-        {/* MCP Prompts and Skills Cards */}
-        {renderResultCards()}
-
-        {/* File validation error */}
-        {fileError && (
-          <div className="px-4 py-1">
-            <p className="text-xs text-destructive whitespace-pre-line">
-              {fileError}
-            </p>
-          </div>
-        )}
-
-        <TextareaAutosize
-          ref={textareaRef}
-          value={value}
-          onChange={(e) => {
-            onChange(e.target.value);
-            setCaretIndex(e.target.selectionStart);
-          }}
-          onKeyDown={handleKeyDown}
-          onKeyUp={(e) => setCaretIndex(e.currentTarget.selectionStart)}
-          placeholder={placeholder}
-          disabled={disabled}
-          readOnly={disabled}
-          minRows={2}
+        <div
+          ref={containerRef}
           className={cn(
-            "max-h-32 min-h-[64px] w-full resize-none border-none bg-transparent dark:bg-transparent px-4",
-            "pt-2 pb-3 text-base text-foreground placeholder:text-muted-foreground/70",
-            "outline-none focus-visible:outline-none focus-visible:ring-0 shadow-none focus-visible:shadow-none",
-            disabled ? "cursor-not-allowed text-muted-foreground" : "",
+            "relative flex w-full flex-col px-2 pt-2 pb-2",
+            composerClasses,
           )}
-          autoFocus={!disabled}
-        />
+        >
+          <PromptsPopover
+            anchor={caret}
+            selectedServers={selectedServers}
+            onPromptSelected={onMCPPromptSelected}
+            onSkillSelected={onSkillSelected}
+            actionTrigger={mcpPromptPopoverKeyTrigger}
+            setActionTrigger={setMcpPromptPopoverKeyTrigger}
+            value={value}
+            caretIndex={caretIndex}
+            minimalMode={minimalMode}
+          />
 
-        <div className="@container/toolbar flex items-center justify-between gap-2 px-2 min-w-0">
-          <div className="flex items-center gap-1 min-w-0 flex-shrink overflow-hidden">
-            {!minimalMode && (
-              <Popover open={plusPopoverOpen} onOpenChange={setPlusPopoverOpen}>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <PopoverTrigger asChild>
-                      <Button
+          {minimalMode &&
+          sandboxAttachableServers &&
+          sandboxAttachableServers.length > 0 &&
+          onAttachSandboxServer ? (
+            <div className="flex flex-wrap items-center gap-2 px-4 pb-1 pt-0.5">
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-8 gap-1 rounded-full border-dashed px-3 text-xs"
+                    disabled={disabled}
+                    aria-label="Add optional server"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    Add server
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-72 p-1" align="start">
+                  <p className="px-2 py-1.5 text-xs text-muted-foreground">
+                    Connect an optional server. You may be asked to authorize.
+                  </p>
+                  <div className="max-h-48 overflow-y-auto">
+                    {sandboxAttachableServers.map((s) => (
+                      <button
+                        key={s.serverId}
                         type="button"
-                        variant="ghost"
-                        size="icon"
-                        className="h-8 w-8 rounded-full"
-                        disabled={disabled}
-                        aria-label="Options"
+                        className="flex w-full items-center justify-between rounded-md px-2 py-2 text-left text-sm hover:bg-muted/80"
+                        onClick={() => onAttachSandboxServer(s.serverId)}
                       >
-                        <Plus className="h-4 w-4" />
-                      </Button>
-                    </PopoverTrigger>
-                  </TooltipTrigger>
-                  <TooltipContent>Options</TooltipContent>
-                </Tooltip>
-                <PopoverContent
-                  className="w-72 p-0"
-                  align="start"
-                  side="top"
-                  sideOffset={8}
+                        <span className="truncate font-medium">
+                          {s.serverName}
+                        </span>
+                        {s.useOAuth ? (
+                          <span className="shrink-0 text-[10px] text-muted-foreground">
+                            OAuth
+                          </span>
+                        ) : null}
+                      </button>
+                    ))}
+                  </div>
+                </PopoverContent>
+              </Popover>
+            </div>
+          ) : null}
+
+          {/* Hidden file input */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            accept={getFileInputAccept()}
+            onChange={handleFileInputChange}
+            className="hidden"
+            aria-hidden="true"
+          />
+
+          {/* File Attachment Cards */}
+          {renderFileAttachmentCards()}
+
+          {/* MCP Prompts and Skills Cards */}
+          {renderResultCards()}
+
+          {/* File validation error */}
+          {fileError && (
+            <div className="px-4 py-1">
+              <p className="text-xs text-destructive whitespace-pre-line">
+                {fileError}
+              </p>
+            </div>
+          )}
+
+          <TextareaAutosize
+            ref={textareaRef}
+            value={value}
+            onChange={(e) => {
+              onChange(e.target.value);
+              setCaretIndex(e.target.selectionStart);
+            }}
+            onKeyDown={handleKeyDown}
+            onKeyUp={(e) => setCaretIndex(e.currentTarget.selectionStart)}
+            placeholder={placeholder}
+            disabled={disabled}
+            readOnly={disabled}
+            minRows={2}
+            className={cn(
+              "max-h-32 min-h-[64px] w-full resize-none border-none bg-transparent dark:bg-transparent px-4",
+              "pt-2 pb-3 text-base text-foreground placeholder:text-muted-foreground/70",
+              "outline-none focus-visible:outline-none focus-visible:ring-0 shadow-none focus-visible:shadow-none",
+              disabled ? "cursor-not-allowed text-muted-foreground" : "",
+            )}
+            autoFocus={!disabled}
+          />
+
+          <div className="@container/toolbar flex items-center justify-between gap-2 px-2 min-w-0">
+            <div className="flex items-center gap-1 min-w-0 flex-shrink overflow-hidden">
+              {!minimalMode && (
+                <Popover
+                  open={plusPopoverOpen}
+                  onOpenChange={setPlusPopoverOpen}
                 >
-                  {(onAddServer ||
-                    (allServerConfigs &&
-                      onServerToggle &&
-                      Object.keys(allServerConfigs).length > 0)) && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <PopoverTrigger asChild>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 rounded-full"
+                          disabled={disabled}
+                          aria-label="Options"
+                        >
+                          <Plus className="h-4 w-4" />
+                        </Button>
+                      </PopoverTrigger>
+                    </TooltipTrigger>
+                    <TooltipContent>Options</TooltipContent>
+                  </Tooltip>
+                  <PopoverContent
+                    className="w-72 p-0"
+                    align="start"
+                    side="top"
+                    sideOffset={8}
+                  >
+                    {(onAddServer ||
+                      (allServerConfigs &&
+                        onServerToggle &&
+                        Object.keys(allServerConfigs).length > 0)) && (
                       <div className="px-1 pt-1 pb-0">
                         <p className="px-2 py-1.5 text-[11px] font-medium text-muted-foreground uppercase tracking-wider">
                           Servers
@@ -598,95 +605,98 @@ export function ChatInput({
                         {allServerConfigs &&
                           onServerToggle &&
                           Object.keys(allServerConfigs).length > 0 && (
-                        <div className="max-h-48 overflow-y-auto">
-                          {Object.entries(allServerConfigs)
-                            .sort(([aName, a], [bName, b]) => {
-                              const statusOrder: Record<string, number> = {
-                                connected: 0,
-                                connecting: 1,
-                                failed: 2,
-                              };
-                              const aOrder = statusOrder[a.connectionStatus] ?? 3;
-                              const bOrder = statusOrder[b.connectionStatus] ?? 3;
-                              if (aOrder !== bOrder) return aOrder - bOrder;
-                              return aName.localeCompare(bName);
-                            })
-                            .map(([name, server]) => {
-                              const isSelected =
-                                selectedServers?.includes(name) ?? false;
-                              const isConnected =
-                                server.connectionStatus === "connected";
-                              const isConnecting =
-                                server.connectionStatus === "connecting";
-                              const isFailed =
-                                server.connectionStatus === "failed";
-                              const statusColor = isConnected
-                                ? "bg-green-500 dark:bg-green-400"
-                                : isConnecting
-                                  ? "bg-yellow-500 dark:bg-yellow-400 animate-pulse"
-                                  : isFailed
-                                    ? "bg-red-500 dark:bg-red-400"
-                                    : "bg-muted-foreground";
+                            <div className="max-h-48 overflow-y-auto">
+                              {Object.entries(allServerConfigs)
+                                .sort(([aName, a], [bName, b]) => {
+                                  const statusOrder: Record<string, number> = {
+                                    connected: 0,
+                                    connecting: 1,
+                                    failed: 2,
+                                  };
+                                  const aOrder =
+                                    statusOrder[a.connectionStatus] ?? 3;
+                                  const bOrder =
+                                    statusOrder[b.connectionStatus] ?? 3;
+                                  if (aOrder !== bOrder) return aOrder - bOrder;
+                                  return aName.localeCompare(bName);
+                                })
+                                .map(([name, server]) => {
+                                  const isSelected =
+                                    selectedServers?.includes(name) ?? false;
+                                  const isConnected =
+                                    server.connectionStatus === "connected";
+                                  const isConnecting =
+                                    server.connectionStatus === "connecting";
+                                  const isFailed =
+                                    server.connectionStatus === "failed";
+                                  const statusColor = isConnected
+                                    ? "bg-green-500 dark:bg-green-400"
+                                    : isConnecting
+                                      ? "bg-yellow-500 dark:bg-yellow-400 animate-pulse"
+                                      : isFailed
+                                        ? "bg-red-500 dark:bg-red-400"
+                                        : "bg-muted-foreground";
 
-                              return (
-                                <div
-                                  key={name}
-                                  className="flex items-center justify-between gap-2 rounded-md px-2 py-2 hover:bg-muted/60"
-                                >
-                                  <div className="flex items-center gap-2 min-w-0">
+                                  return (
                                     <div
-                                      className={cn(
-                                        "w-2 h-2 rounded-full shrink-0",
-                                        statusColor,
-                                      )}
-                                    />
-                                    <span
-                                      className={cn(
-                                        "text-sm font-medium truncate",
-                                        !isConnected &&
-                                          !isConnecting &&
-                                          "text-muted-foreground",
-                                      )}
+                                      key={name}
+                                      className="flex items-center justify-between gap-2 rounded-md px-2 py-2 hover:bg-muted/60"
                                     >
-                                      {name}
-                                    </span>
-                                    <span className="text-[10px] text-muted-foreground shrink-0">
-                                      {server.config.command ? "STDIO" : "HTTP"}
-                                    </span>
-                                  </div>
-                                  <div className="flex items-center shrink-0">
-                                    {isConnecting ? (
-                                      <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
-                                    ) : isConnected ? (
-                                      <Switch
-                                        checked={isSelected}
-                                        onCheckedChange={() =>
-                                          onServerToggle(name)
-                                        }
-                                      />
-                                    ) : (
-                                      <button
-                                        type="button"
-                                        className="text-xs font-medium text-primary hover:text-primary/80 transition-colors cursor-pointer px-1.5 py-0.5 rounded hover:bg-primary/5"
-                                        onClick={() => {
-                                          if (!isSelected) {
-                                            onServerToggle(name);
-                                          }
-                                          onReconnectServer?.(name).catch(
-                                            () => {},
-                                          );
-                                        }}
-                                      >
-                                        {isFailed ? "Retry" : "Connect"}
-                                      </button>
-                                    )}
-                                  </div>
-                                </div>
-                              );
-                            },
+                                      <div className="flex items-center gap-2 min-w-0">
+                                        <div
+                                          className={cn(
+                                            "w-2 h-2 rounded-full shrink-0",
+                                            statusColor,
+                                          )}
+                                        />
+                                        <span
+                                          className={cn(
+                                            "text-sm font-medium truncate",
+                                            !isConnected &&
+                                              !isConnecting &&
+                                              "text-muted-foreground",
+                                          )}
+                                        >
+                                          {name}
+                                        </span>
+                                        <span className="text-[10px] text-muted-foreground shrink-0">
+                                          {server.config.command
+                                            ? "STDIO"
+                                            : "HTTP"}
+                                        </span>
+                                      </div>
+                                      <div className="flex items-center shrink-0">
+                                        {isConnecting ? (
+                                          <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+                                        ) : isConnected ? (
+                                          <Switch
+                                            checked={isSelected}
+                                            onCheckedChange={() =>
+                                              onServerToggle(name)
+                                            }
+                                          />
+                                        ) : (
+                                          <button
+                                            type="button"
+                                            className="text-xs font-medium text-primary hover:text-primary/80 transition-colors cursor-pointer px-1.5 py-0.5 rounded hover:bg-primary/5"
+                                            onClick={() => {
+                                              if (!isSelected) {
+                                                onServerToggle(name);
+                                              }
+                                              onReconnectServer?.(name).catch(
+                                                () => {},
+                                              );
+                                            }}
+                                          >
+                                            {isFailed ? "Retry" : "Connect"}
+                                          </button>
+                                        )}
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                            </div>
                           )}
-                        </div>
-                        )}
                         {onAddServer && (
                           <button
                             type="button"
@@ -703,183 +713,183 @@ export function ChatInput({
                       </div>
                     )}
 
-                  <div
-                    className={cn(
-                      "px-1 pb-1",
-                      allServerConfigs &&
-                        Object.keys(allServerConfigs).length > 0 &&
-                        "border-t border-border mt-1 pt-1",
-                    )}
-                  >
-                    {onChangeFileAttachments && (
+                    <div
+                      className={cn(
+                        "px-1 pb-1",
+                        allServerConfigs &&
+                          Object.keys(allServerConfigs).length > 0 &&
+                          "border-t border-border mt-1 pt-1",
+                      )}
+                    >
+                      {onChangeFileAttachments && (
+                        <button
+                          type="button"
+                          className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-sm hover:bg-muted/60 cursor-pointer"
+                          onClick={() => {
+                            setPlusPopoverOpen(false);
+                            openFilePicker();
+                          }}
+                        >
+                          <Paperclip className="h-4 w-4 text-muted-foreground" />
+                          Attach files
+                        </button>
+                      )}
+
                       <button
                         type="button"
                         className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-sm hover:bg-muted/60 cursor-pointer"
                         onClick={() => {
                           setPlusPopoverOpen(false);
-                          openFilePicker();
+                          setSystemPromptOpen(true);
                         }}
                       >
-                        <Paperclip className="h-4 w-4 text-muted-foreground" />
-                        Attach files
+                        <Settings2 className="h-4 w-4 text-muted-foreground" />
+                        System Prompt & Temperature
                       </button>
-                    )}
 
-                    <button
-                      type="button"
-                      className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-sm hover:bg-muted/60 cursor-pointer"
-                      onClick={() => {
-                        setPlusPopoverOpen(false);
-                        setSystemPromptOpen(true);
-                      }}
-                    >
-                      <Settings2 className="h-4 w-4 text-muted-foreground" />
-                      System Prompt & Temperature
-                    </button>
-
-                    {onRequireToolApprovalChange && (
-                      <div className="flex items-center justify-between gap-2 rounded-md px-2 py-2 hover:bg-muted/60">
-                        <div className="flex items-center gap-2 text-sm">
-                          <ShieldCheck className="h-4 w-4 text-muted-foreground" />
-                          Tool Approval
+                      {onRequireToolApprovalChange && (
+                        <div className="flex items-center justify-between gap-2 rounded-md px-2 py-2 hover:bg-muted/60">
+                          <div className="flex items-center gap-2 text-sm">
+                            <ShieldCheck className="h-4 w-4 text-muted-foreground" />
+                            Tool Approval
+                          </div>
+                          <Switch
+                            checked={requireToolApproval}
+                            onCheckedChange={(checked) =>
+                              onRequireToolApprovalChange(checked)
+                            }
+                          />
                         </div>
-                        <Switch
-                          checked={requireToolApproval}
-                          onCheckedChange={(checked) =>
-                            onRequireToolApprovalChange(checked)
-                          }
-                        />
-                      </div>
-                    )}
-                  </div>
-                </PopoverContent>
-              </Popover>
-            )}
-            {!minimalMode && (
-              <ModelSelector
-                currentModel={currentModel}
-                availableModels={availableModels}
-                onModelChange={onModelChange}
-                isLoading={isLoading}
-                hasMessages={hasMessages}
-                enableMultiModel={enableMultiModel}
-                multiModelEnabled={multiModelEnabled}
-                selectedModels={effectiveSelectedModels}
-                onSelectedModelsChange={onSelectedModelsChange}
-                onMultiModelEnabledChange={onMultiModelEnabledChange}
-              />
-            )}
-          </div>
+                      )}
+                    </div>
+                  </PopoverContent>
+                </Popover>
+              )}
+              {!minimalMode && (
+                <ModelSelector
+                  currentModel={currentModel}
+                  availableModels={availableModels}
+                  onModelChange={onModelChange}
+                  isLoading={isLoading}
+                  hasMessages={hasMessages}
+                  enableMultiModel={enableMultiModel}
+                  multiModelEnabled={multiModelEnabled}
+                  selectedModels={effectiveSelectedModels}
+                  onSelectedModelsChange={onSelectedModelsChange}
+                  onMultiModelEnabledChange={onMultiModelEnabledChange}
+                />
+              )}
+            </div>
 
-          <div className="flex items-center gap-2 flex-shrink-0">
-            {!minimalMode && !hideContextPopover && (
-              <Context
-                usedTokens={tokenUsage?.totalTokens ?? 0}
-                usage={
-                  tokenUsage && tokenUsage.totalTokens > 0
-                    ? {
-                        inputTokens: tokenUsage.inputTokens,
-                        outputTokens: tokenUsage.outputTokens,
-                        totalTokens: tokenUsage.totalTokens,
-                        inputTokenDetails: {
-                          noCacheTokens: undefined,
-                          cacheReadTokens: undefined,
-                          cacheWriteTokens: undefined,
-                        },
-                        outputTokenDetails: {
-                          textTokens: undefined,
-                          reasoningTokens: undefined,
-                        },
-                      }
-                    : undefined
-                }
-                modelId={`${currentModel.id}`}
-                selectedServers={selectedServers}
-                mcpToolsTokenCount={mcpToolsTokenCount}
-                mcpToolsTokenCountLoading={mcpToolsTokenCountLoading}
-                connectedOrConnectingServerConfigs={
-                  connectedOrConnectingServerConfigs
-                }
-                systemPromptTokenCount={systemPromptTokenCount}
-                systemPromptTokenCountLoading={systemPromptTokenCountLoading}
-                hasMessages={hasMessages}
-              >
-                <ContextTrigger />
-                {/* Only render popover content when there's something to show */}
-                {(hasMessages && tokenUsage && tokenUsage.totalTokens > 0) ||
-                (systemPromptTokenCount && systemPromptTokenCount > 0) ||
-                systemPromptTokenCountLoading ||
-                (mcpToolsTokenCount &&
-                  Object.keys(mcpToolsTokenCount).length > 0) ||
-                mcpToolsTokenCountLoading ? (
-                  <ContextContent>
-                    {hasMessages &&
-                      tokenUsage &&
-                      tokenUsage.totalTokens > 0 && <ContextContentHeader />}
-                    <ContextContentBody>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              {!minimalMode && !hideContextPopover && (
+                <Context
+                  usedTokens={tokenUsage?.totalTokens ?? 0}
+                  usage={
+                    tokenUsage && tokenUsage.totalTokens > 0
+                      ? {
+                          inputTokens: tokenUsage.inputTokens,
+                          outputTokens: tokenUsage.outputTokens,
+                          totalTokens: tokenUsage.totalTokens,
+                          inputTokenDetails: {
+                            noCacheTokens: undefined,
+                            cacheReadTokens: undefined,
+                            cacheWriteTokens: undefined,
+                          },
+                          outputTokenDetails: {
+                            textTokens: undefined,
+                            reasoningTokens: undefined,
+                          },
+                        }
+                      : undefined
+                  }
+                  modelId={`${currentModel.id}`}
+                  selectedServers={selectedServers}
+                  mcpToolsTokenCount={mcpToolsTokenCount}
+                  mcpToolsTokenCountLoading={mcpToolsTokenCountLoading}
+                  connectedOrConnectingServerConfigs={
+                    connectedOrConnectingServerConfigs
+                  }
+                  systemPromptTokenCount={systemPromptTokenCount}
+                  systemPromptTokenCountLoading={systemPromptTokenCountLoading}
+                  hasMessages={hasMessages}
+                >
+                  <ContextTrigger />
+                  {/* Only render popover content when there's something to show */}
+                  {(hasMessages && tokenUsage && tokenUsage.totalTokens > 0) ||
+                  (systemPromptTokenCount && systemPromptTokenCount > 0) ||
+                  systemPromptTokenCountLoading ||
+                  (mcpToolsTokenCount &&
+                    Object.keys(mcpToolsTokenCount).length > 0) ||
+                  mcpToolsTokenCountLoading ? (
+                    <ContextContent>
                       {hasMessages &&
                         tokenUsage &&
-                        tokenUsage.totalTokens > 0 && (
-                          <>
-                            <ContextInputUsage />
-                            <ContextOutputUsage />
-                          </>
-                        )}
-                      <ContextSystemPromptUsage />
-                      <ContextMCPServerUsage />
-                    </ContextContentBody>
-                  </ContextContent>
-                ) : null}
-              </Context>
-            )}
-            {isLoading ? (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    type="button"
-                    size="icon"
-                    variant="secondary"
-                    className="size-[34px] rounded-full transition-colors"
-                    aria-label="Stop generating"
-                    onClick={() => stop()}
-                  >
-                    <Square size={16} />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>Stop generating</TooltipContent>
-              </Tooltip>
-            ) : (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    type="submit"
-                    size="icon"
-                    aria-label="Send message"
-                    className={cn(
-                      "size-[34px] rounded-full transition-colors shadow-none",
-                      (value.trim() || hasResults) &&
-                        !disabled &&
-                        !submitDisabled
-                        ? activeSubmitButtonClasses
-                        : inactiveSubmitButtonClasses,
-                      pulseSubmit && "animate-onboarding-pulse",
-                    )}
-                    disabled={
-                      (!value.trim() && !hasResults) ||
-                      disabled ||
-                      submitDisabled
-                    }
-                  >
-                    <ArrowUp size={16} />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>Send message</TooltipContent>
-              </Tooltip>
-            )}
+                        tokenUsage.totalTokens > 0 && <ContextContentHeader />}
+                      <ContextContentBody>
+                        {hasMessages &&
+                          tokenUsage &&
+                          tokenUsage.totalTokens > 0 && (
+                            <>
+                              <ContextInputUsage />
+                              <ContextOutputUsage />
+                            </>
+                          )}
+                        <ContextSystemPromptUsage />
+                        <ContextMCPServerUsage />
+                      </ContextContentBody>
+                    </ContextContent>
+                  ) : null}
+                </Context>
+              )}
+              {isLoading ? (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      type="button"
+                      size="icon"
+                      variant="secondary"
+                      className="size-[34px] rounded-full transition-colors"
+                      aria-label="Stop generating"
+                      onClick={() => stop()}
+                    >
+                      <Square size={16} />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Stop generating</TooltipContent>
+                </Tooltip>
+              ) : (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      type="submit"
+                      size="icon"
+                      aria-label="Send message"
+                      className={cn(
+                        "size-[34px] rounded-full transition-colors shadow-none",
+                        (value.trim() || hasResults) &&
+                          !disabled &&
+                          !submitDisabled
+                          ? activeSubmitButtonClasses
+                          : inactiveSubmitButtonClasses,
+                        pulseSubmit && "animate-onboarding-pulse",
+                      )}
+                      disabled={
+                        (!value.trim() && !hasResults) ||
+                        disabled ||
+                        submitDisabled
+                      }
+                    >
+                      <ArrowUp size={16} />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Send message</TooltipContent>
+                </Tooltip>
+              )}
+            </div>
           </div>
         </div>
-      </div>
-    </form>
+      </form>
 
       {onAddServer && (
         <AddServerModal
