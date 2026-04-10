@@ -16,8 +16,8 @@ export interface SharedServerTargetOptions {
   accessToken?: string;
   header?: string[];
   command?: string;
-  commandArgs?: string;
-  env?: string;
+  commandArgs?: string[];
+  env?: string[];
   timeout?: number;
 }
 
@@ -37,10 +37,15 @@ export function addSharedServerOptions(command: Command): Command {
     )
     .option("--command <command>", "Command for a stdio MCP server")
     .option(
-      "--command-args <args>",
-      "Comma-separated stdio command arguments",
+      "--command-args <arg>",
+      "Stdio command argument. Repeat to pass multiple arguments.",
+      collectString,
     )
-    .option("--env <env>", "Comma-separated KEY=VALUE pairs for stdio env");
+    .option(
+      "--env <env>",
+      'Stdio environment assignment in "KEY=VALUE" format. Repeat to pass multiple assignments.',
+      collectString,
+    );
 }
 
 export function getGlobalOptions(command: Command): GlobalOptions {
@@ -120,7 +125,10 @@ export function parseServerConfig(
   }
 
   if (hasUrl && url) {
-    if (options.commandArgs || options.env) {
+    if (
+      (options.commandArgs?.length ?? 0) > 0 ||
+      (options.env?.length ?? 0) > 0
+    ) {
       throw usageError(
         "--command-args and --env can only be used together with --command.",
       );
@@ -153,7 +161,7 @@ export function parseServerConfig(
 
   return {
     command,
-    args: parseCommaSeparatedList(options.commandArgs),
+    args: parseCommandArgs(options.commandArgs),
     env: parseEnvironmentOption(options.env),
     stderr: "ignore",
     timeout: options.timeout,
@@ -194,37 +202,23 @@ function parseHeader(entry: string): [string, string] {
   return [key, value];
 }
 
-function parseCommaSeparatedList(value: string | undefined): string[] | undefined {
-  if (!value) {
+function parseCommandArgs(values: string[] | undefined): string[] | undefined {
+  if (!values || values.length === 0) {
     return undefined;
   }
 
-  const entries = value
-    .split(",")
-    .map((entry) => entry.trim())
-    .filter(Boolean);
-
-  return entries.length > 0 ? entries : undefined;
+  return values;
 }
 
 function parseEnvironmentOption(
-  value: string | undefined,
+  values: string[] | undefined,
 ): Record<string, string> | undefined {
-  if (!value) {
-    return undefined;
-  }
-
-  const entries = value
-    .split(",")
-    .map((entry) => entry.trim())
-    .filter(Boolean);
-
-  if (entries.length === 0) {
+  if (!values || values.length === 0) {
     return undefined;
   }
 
   return Object.fromEntries(
-    entries.map((entry) => {
+    values.map((entry) => {
       const separatorIndex = entry.indexOf("=");
       if (separatorIndex <= 0) {
         throw usageError(

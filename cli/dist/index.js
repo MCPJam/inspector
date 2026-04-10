@@ -98,9 +98,14 @@ function addSharedServerOptions(command) {
     collectString,
     []
   ).option("--command <command>", "Command for a stdio MCP server").option(
-    "--command-args <args>",
-    "Comma-separated stdio command arguments"
-  ).option("--env <env>", "Comma-separated KEY=VALUE pairs for stdio env");
+    "--command-args <arg>",
+    "Stdio command argument. Repeat to pass multiple arguments.",
+    collectString
+  ).option(
+    "--env <env>",
+    'Stdio environment assignment in "KEY=VALUE" format. Repeat to pass multiple assignments.',
+    collectString
+  );
 }
 function getGlobalOptions(command) {
   const options = command.optsWithGlobals();
@@ -157,7 +162,7 @@ function parseServerConfig(options) {
     throw usageError("Specify exactly one target: either --url or --command.");
   }
   if (hasUrl && url) {
-    if (options.commandArgs || options.env) {
+    if ((options.commandArgs?.length ?? 0) > 0 || (options.env?.length ?? 0) > 0) {
       throw usageError(
         "--command-args and --env can only be used together with --command."
       );
@@ -185,7 +190,7 @@ function parseServerConfig(options) {
   }
   return {
     command,
-    args: parseCommaSeparatedList(options.commandArgs),
+    args: parseCommandArgs(options.commandArgs),
     env: parseEnvironmentOption(options.env),
     stderr: "ignore",
     timeout: options.timeout
@@ -218,23 +223,18 @@ function parseHeader(entry) {
   }
   return [key, value];
 }
-function parseCommaSeparatedList(value) {
-  if (!value) {
+function parseCommandArgs(values) {
+  if (!values || values.length === 0) {
     return void 0;
   }
-  const entries = value.split(",").map((entry) => entry.trim()).filter(Boolean);
-  return entries.length > 0 ? entries : void 0;
+  return values;
 }
-function parseEnvironmentOption(value) {
-  if (!value) {
-    return void 0;
-  }
-  const entries = value.split(",").map((entry) => entry.trim()).filter(Boolean);
-  if (entries.length === 0) {
+function parseEnvironmentOption(values) {
+  if (!values || values.length === 0) {
     return void 0;
   }
   return Object.fromEntries(
-    entries.map((entry) => {
+    values.map((entry) => {
       const separatorIndex = entry.indexOf("=");
       if (separatorIndex <= 0) {
         throw usageError(

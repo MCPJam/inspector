@@ -27,8 +27,8 @@ test("parseServerConfig builds an HTTP config with access token and headers", ()
 test("parseServerConfig builds a stdio config with args and env", () => {
   const config = parseServerConfig({
     command: "node",
-    commandArgs: "server.js,--flag",
-    env: "FOO=bar,BAZ=qux",
+    commandArgs: ["server.js", "--flag"],
+    env: ["FOO=bar", "BAZ=qux"],
     timeout: 5000,
   });
 
@@ -41,6 +41,24 @@ test("parseServerConfig builds a stdio config with args and env", () => {
   });
   assert.equal(config.stderr, "ignore");
   assert.equal(config.timeout, 5000);
+});
+
+test("parseServerConfig preserves commas inside stdio args and env values", () => {
+  const config = parseServerConfig({
+    command: "node",
+    commandArgs: ['{"a":1,"b":2}', "--list=one,two"],
+    env: [
+      "NO_PROXY=127.0.0.1,localhost",
+      'JSON_PAYLOAD={"a":1,"b":2}',
+    ],
+  });
+
+  assert.equal("command" in config, true);
+  assert.deepEqual(config.args, ['{"a":1,"b":2}', "--list=one,two"]);
+  assert.deepEqual(config.env, {
+    NO_PROXY: "127.0.0.1,localhost",
+    JSON_PAYLOAD: '{"a":1,"b":2}',
+  });
 });
 
 test("parseServerConfig rejects missing and mixed targets", () => {
