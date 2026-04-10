@@ -4,6 +4,7 @@ import {
   hasUnresolvedToolCalls,
 } from "@/shared/http-tool-calls";
 import { handleMCPJamFreeChatModel } from "../mcpjam-stream-handler";
+import { createHostedRpcLogCollector } from "../../routes/web/hosted-rpc-logs.js";
 
 let lastExecution: Promise<void> | null = null;
 let writtenChunks: any[] = [];
@@ -631,6 +632,93 @@ describe("mcpjam-stream-handler", () => {
       outputTokens: 5,
       totalTokens: 15,
     });
+  });
+
+  it("flushes buffered hosted rpc logs first and streams live hosted rpc logs as data parts", async () => {
+    let resolveFetch: ((response: Response) => void) | undefined;
+    global.fetch = vi.fn().mockImplementation(
+      () =>
+        new Promise<Response>((resolve) => {
+          resolveFetch = resolve;
+        }),
+    );
+
+    const collector = createHostedRpcLogCollector({
+      selectedServerIds: ["srv-notion"],
+      selectedServerNames: ["Notion"],
+    });
+
+    collector.rpcLogger({
+      direction: "send",
+      serverId: "srv-notion",
+      message: {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/list",
+      },
+    });
+
+    await handleMCPJamFreeChatModel({
+      messages: [{ role: "user", content: "Say hello" }] as any,
+      modelId: "openai/gpt-5-mini",
+      systemPrompt: "You are helpful",
+      tools: {},
+      mcpClientManager: {
+        getAllToolsMetadata: vi.fn().mockReturnValue({}),
+      } as any,
+      onStreamWriterReady: (writer) => collector.attachStreamWriter(writer),
+    });
+
+    expect(writtenChunks[0]).toMatchObject({
+      type: "data-rpc-log",
+      data: expect.objectContaining({
+        serverId: "srv-notion",
+        serverName: "Notion",
+        direction: "send",
+      }),
+    });
+
+    collector.rpcLogger({
+      direction: "receive",
+      serverId: "srv-notion",
+      message: {
+        jsonrpc: "2.0",
+        id: 1,
+        result: { tools: [] },
+      },
+    });
+
+    resolveFetch?.(
+      createSseResponse([
+        {
+          type: "finish",
+          finishReason: "stop",
+          totalUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        },
+      ]),
+    );
+
+    await lastExecution;
+
+    const rpcChunks = writtenChunks.filter(
+      (chunk) => chunk?.type === "data-rpc-log",
+    );
+    expect(rpcChunks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          data: expect.objectContaining({
+            serverName: "Notion",
+            direction: "send",
+          }),
+        }),
+        expect.objectContaining({
+          data: expect.objectContaining({
+            serverName: "Notion",
+            direction: "receive",
+          }),
+        }),
+      ]),
+    );
   });
 
   it("emits tool trace events when local tool execution runs after a streamed call", async () => {

@@ -38,8 +38,17 @@ export function webError(
   code: ErrorCode,
   message: string,
   details?: Record<string, unknown>,
+  extras?: object,
 ) {
-  return c.json({ code, message, ...(details ? { details } : {}) }, status);
+  return c.json(
+    {
+      code,
+      message,
+      ...(details ? { details } : {}),
+      ...(extras ?? {}),
+    },
+    status,
+  );
 }
 
 export function parseErrorMessage(error: unknown): string {

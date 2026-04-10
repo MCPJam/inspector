@@ -119,6 +119,7 @@ export function buildGuestServerRequest(
   config: unknown,
   oauthAccessToken?: string,
   clientCapabilities?: Record<string, unknown>,
+  serverName?: string,
 ): Record<string, unknown> {
   const httpConfig = config as {
     url?: string | URL;
@@ -134,6 +135,7 @@ export function buildGuestServerRequest(
   const headers = httpConfig.requestInit?.headers;
   return {
     serverUrl: urlStr,
+    ...(serverName ? { serverName } : {}),
     ...(headers && Object.keys(headers).length > 0
       ? { serverHeaders: headers }
       : {}),
@@ -286,6 +288,7 @@ export function buildHostedServerRequest(
       config,
       oauthToken,
       hostedApiContext.clientCapabilities,
+      serverNameOrId,
     );
   }
 
@@ -299,6 +302,10 @@ export function buildHostedServerRequest(
   return {
     workspaceId: getHostedWorkspaceId(),
     serverId,
+    serverName:
+      hostedApiContext.serverIdsByName[serverNameOrId] !== undefined
+        ? serverNameOrId
+        : (findHostedServerName(serverId) ?? serverNameOrId),
     ...(oauthToken ? { oauthAccessToken: oauthToken } : {}),
     ...(hostedApiContext.clientCapabilities
       ? { clientCapabilities: hostedApiContext.clientCapabilities }
@@ -312,6 +319,7 @@ export function buildHostedServerRequest(
 export function buildHostedServerBatchRequest(serverNamesOrIds: string[]): {
   workspaceId: string;
   serverIds: string[];
+  serverNames: string[];
   clientCapabilities?: Record<string, unknown>;
   oauthTokens?: Record<string, string>;
   accessScope?: HostedAccessScope;
@@ -319,9 +327,9 @@ export function buildHostedServerBatchRequest(serverNamesOrIds: string[]): {
   sandboxToken?: string;
 } {
   assertHostedClientConfigSynced();
-  const serverIds = resolveHostedServerEntries(serverNamesOrIds).map(
-    (entry) => entry.serverId,
-  );
+  const serverEntries = resolveHostedServerEntries(serverNamesOrIds);
+  const serverIds = serverEntries.map((entry) => entry.serverId);
+  const serverNames = serverEntries.map((entry) => entry.serverName);
   const oauthTokens = buildHostedOAuthTokensMap(serverIds);
   const shareToken = getHostedShareToken();
   const sandboxToken = getHostedSandboxToken();
@@ -329,6 +337,7 @@ export function buildHostedServerBatchRequest(serverNamesOrIds: string[]): {
   return {
     workspaceId: getHostedWorkspaceId(),
     serverIds,
+    serverNames,
     ...(hostedApiContext.clientCapabilities
       ? { clientCapabilities: hostedApiContext.clientCapabilities }
       : {}),

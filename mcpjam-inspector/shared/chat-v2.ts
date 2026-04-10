@@ -6,6 +6,7 @@ export interface ChatV2Request {
   chatSessionId?: string;
   directVisibility?: "private" | "workspace";
   surface?: "preview" | "share_link";
+  serverName?: string;
   serverUrl?: string;
   serverHeaders?: Record<string, string>;
   oauthAccessToken?: string;
@@ -25,6 +26,7 @@ export interface ChatV2Request {
     apiKey?: string;
   }>;
   selectedServers?: string[];
+  selectedServerNames?: string[];
   requireToolApproval?: boolean;
   /** Workspace ID for direct-chat history persistence */
   workspaceId?: string;

@@ -56,6 +56,7 @@ interface RpcEventMessage {
 interface RenderableRpcItem {
   id: string;
   serverId: string;
+  serverName?: string;
   direction: string;
   method: string;
   timestamp: string;
@@ -90,6 +91,23 @@ function normalizePayload(
   if (payload !== null && typeof payload === "object")
     return payload as Record<string, unknown>;
   return { value: payload } as Record<string, unknown>;
+}
+
+function getDisplayServerLabel(item: {
+  serverId: string;
+  serverName?: string;
+}): string {
+  return item.serverName ?? item.serverId;
+}
+
+function getDisplayServerTitle(item: {
+  serverId: string;
+  serverName?: string;
+}): string {
+  if (item.serverName && item.serverName !== item.serverId) {
+    return `${item.serverName} (${item.serverId})`;
+  }
+  return getDisplayServerLabel(item);
 }
 
 function DirectionLabel({
@@ -151,6 +169,7 @@ export function LoggerView({
     return uiLogItems.map((item: UiLogEvent) => ({
       id: item.id,
       serverId: item.serverId,
+      serverName: item.serverName,
       direction: item.direction === "ui-to-host" ? "UI→HOST" : "HOST→UI",
       method: item.method,
       timestamp: item.timestamp,
@@ -166,6 +185,7 @@ export function LoggerView({
     return mcpServerRpcItems.map((item) => ({
       id: item.id,
       serverId: item.serverId,
+      serverName: item.serverName,
       direction: item.direction,
       method: item.method,
       timestamp: item.timestamp,
@@ -211,6 +231,7 @@ export function LoggerView({
       timestamp: item.timestamp,
       source: item.source,
       serverId: item.serverId,
+      serverName: item.serverName,
       direction: item.direction,
       method: item.method,
       payload: item.payload,
@@ -249,7 +270,11 @@ export function LoggerView({
     // Filter by serverIds if provided
     if (serverIds && serverIds.length > 0) {
       const serverIdSet = new Set(serverIds);
-      result = result.filter((item) => serverIdSet.has(item.serverId));
+      result = result.filter(
+        (item) =>
+          serverIdSet.has(item.serverId) ||
+          (!!item.serverName && serverIdSet.has(item.serverName)),
+      );
     }
 
     // Filter by search query
@@ -257,7 +282,7 @@ export function LoggerView({
       const queryLower = searchQuery.toLowerCase();
       result = result.filter((item) => {
         return (
-          item.serverId.toLowerCase().includes(queryLower) ||
+          getDisplayServerLabel(item).toLowerCase().includes(queryLower) ||
           item.method.toLowerCase().includes(queryLower) ||
           item.direction.toLowerCase().includes(queryLower) ||
           JSON.stringify(item.payload).toLowerCase().includes(queryLower)
@@ -517,9 +542,9 @@ export function LoggerView({
                     </span>
                     <span
                       className="hidden sm:inline text-muted-foreground truncate max-w-[120px] text-[11px]"
-                      title={it.serverId}
+                      title={getDisplayServerTitle(it)}
                     >
-                      {it.serverId}
+                      {getDisplayServerLabel(it)}
                     </span>
                     <span className="text-muted-foreground font-mono text-[11px] whitespace-nowrap tabular-nums">
                       {new Date(it.timestamp).toLocaleTimeString()}

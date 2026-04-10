@@ -1,8 +1,12 @@
 import { z } from "zod";
 import { MCPClientManager } from "@mcpjam/sdk";
-import type { HttpServerConfig } from "@mcpjam/sdk";
+import type { HttpServerConfig, RpcLogger } from "@mcpjam/sdk";
 import { WEB_CALL_TIMEOUT_MS } from "../../config.js";
 import { validateUrl, OAuthProxyError } from "../../utils/oauth-proxy.js";
+import {
+  attachHostedRpcLogs,
+  createHostedRpcLogCollector,
+} from "./hosted-rpc-logs.js";
 import {
   ErrorCode,
   WebRouteError,
@@ -39,6 +43,7 @@ export const workspaceServerSchema = refineHostedTokens(
   z.object({
     workspaceId: z.string().min(1),
     serverId: z.string().min(1),
+    serverName: z.string().min(1).optional(),
     clientCapabilities: clientCapabilitiesSchema.optional(),
     oauthAccessToken: z.string().optional(),
     accessScope: z.enum(["workspace_member", "chat_v2"]).optional(),
@@ -74,6 +79,7 @@ export const promptsListMultiSchema = refineHostedTokens(
   z.object({
     workspaceId: z.string().min(1),
     serverIds: z.array(z.string().min(1)).min(1),
+    serverNames: z.array(z.string().min(1)).optional(),
     clientCapabilities: clientCapabilitiesSchema.optional(),
     oauthTokens: z.record(z.string(), z.string()).optional(),
     accessScope: z.enum(["workspace_member", "chat_v2"]).optional(),
@@ -94,6 +100,7 @@ export const hostedChatSchema = refineHostedTokens(
     .object({
       workspaceId: z.string().min(1),
       selectedServerIds: z.array(z.string().min(1)),
+      selectedServerNames: z.array(z.string().min(1)).optional(),
       clientCapabilities: clientCapabilitiesSchema.optional(),
       chatSessionId: z.string().min(1).optional(),
       surface: z.enum(["preview", "share_link"]).optional(),
@@ -109,6 +116,7 @@ export const hostedChatSchema = refineHostedTokens(
 
 export const guestServerInputSchema = z.object({
   serverUrl: z.string().min(1),
+  serverName: z.string().min(1).optional(),
   serverHeaders: z.record(z.string(), z.string()).optional(),
   clientCapabilities: clientCapabilitiesSchema.optional(),
 });
@@ -274,6 +282,7 @@ export async function createAuthorizedManager(
     accessScope?: "workspace_member" | "chat_v2";
     shareToken?: string;
     sandboxToken?: string;
+    rpcLogger?: RpcLogger;
   },
 ): Promise<AuthorizedManagerResult> {
   const uniqueServerIds = Array.from(new Set(serverIds));
@@ -314,6 +323,7 @@ export async function createAuthorizedManager(
 
   const manager = new MCPClientManager(Object.fromEntries(configEntries), {
     defaultTimeout: timeoutMs,
+    rpcLogger: options?.rpcLogger,
   });
   return { manager, oauthServerUrls };
 }
@@ -412,11 +422,16 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
     manager: InstanceType<typeof MCPClientManager>,
     body: z.infer<S>,
   ) => Promise<T>,
-  options?: { timeoutMs?: number },
+  options?: { timeoutMs?: number; rpcLogs?: boolean },
 ) {
-  return handleRoute(c, async () => {
+  let rpcCollector: ReturnType<typeof createHostedRpcLogCollector> | undefined;
+
+  try {
     // Read body once — Hono streams can only be consumed once
     const rawBody = await readJsonBody<Record<string, unknown>>(c);
+    if (options?.rpcLogs !== false) {
+      rpcCollector = createHostedRpcLogCollector(rawBody);
+    }
 
     // Detect guest requests by body shape: presence of serverUrl without workspaceId.
     // This is more robust than relying solely on guestId from middleware, which
@@ -424,6 +439,8 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
     // sends a guest-shaped body.
     const isGuestRequest =
       typeof rawBody.serverUrl === "string" && !rawBody.workspaceId;
+
+    let result: T;
 
     if (isGuestRequest) {
       // ── Guest path: direct connection, no Convex ────────────────
@@ -491,55 +508,71 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
 
       const manager = new MCPClientManager(
         { __guest__: httpConfig },
-        { defaultTimeout: timeoutMs },
+        {
+          defaultTimeout: timeoutMs,
+          rpcLogger: rpcCollector?.rpcLogger,
+        },
       );
 
       try {
-        return await fn(manager, body as z.infer<S>);
+        result = await fn(manager, body as z.infer<S>);
       } finally {
         await manager.disconnectAllServers();
       }
+    } else {
+      // ── Authenticated path: Convex authorization ──────────────────
+      const bearerToken = assertBearerToken(c);
+      const body = parseWithSchema(schema, rawBody);
+      // Cast for internal plumbing — all web schemas include workspaceId + serverId(s).
+      // The strongly-typed `body` is passed through to `fn` unchanged.
+      const raw = body as Record<string, unknown>;
+      const { serverIds, oauthTokens } = resolveConnectionParams(raw);
+      const timeoutMs = options?.timeoutMs ?? WEB_CALL_TIMEOUT_MS;
+      const accessScope =
+        raw.accessScope === "workspace_member" || raw.accessScope === "chat_v2"
+          ? raw.accessScope
+          : undefined;
+      const shareToken =
+        typeof raw.shareToken === "string" && raw.shareToken.trim()
+          ? raw.shareToken
+          : undefined;
+      const sandboxToken =
+        typeof raw.sandboxToken === "string" && raw.sandboxToken.trim()
+          ? raw.sandboxToken
+          : undefined;
+
+      result = await withManager(
+        createAuthorizedManager(
+          bearerToken,
+          raw.workspaceId as string,
+          serverIds,
+          timeoutMs,
+          oauthTokens,
+          (raw.clientCapabilities as Record<string, unknown> | undefined) ??
+            undefined,
+          {
+            accessScope,
+            shareToken,
+            sandboxToken,
+            rpcLogger: rpcCollector?.rpcLogger,
+          },
+        ),
+        (manager) => fn(manager, body as z.infer<S>),
+      );
     }
 
-    // ── Authenticated path: Convex authorization ──────────────────
-    const bearerToken = assertBearerToken(c);
-    const body = parseWithSchema(schema, rawBody);
-    // Cast for internal plumbing — all web schemas include workspaceId + serverId(s).
-    // The strongly-typed `body` is passed through to `fn` unchanged.
-    const raw = body as Record<string, unknown>;
-    const { serverIds, oauthTokens } = resolveConnectionParams(raw);
-    const timeoutMs = options?.timeoutMs ?? WEB_CALL_TIMEOUT_MS;
-    const accessScope =
-      raw.accessScope === "workspace_member" || raw.accessScope === "chat_v2"
-        ? raw.accessScope
-        : undefined;
-    const shareToken =
-      typeof raw.shareToken === "string" && raw.shareToken.trim()
-        ? raw.shareToken
-        : undefined;
-    const sandboxToken =
-      typeof raw.sandboxToken === "string" && raw.sandboxToken.trim()
-        ? raw.sandboxToken
-        : undefined;
-
-    return withManager(
-      createAuthorizedManager(
-        bearerToken,
-        raw.workspaceId as string,
-        serverIds,
-        timeoutMs,
-        oauthTokens,
-        (raw.clientCapabilities as Record<string, unknown> | undefined) ??
-          undefined,
-        {
-          accessScope,
-          shareToken,
-          sandboxToken,
-        },
-      ),
-      (manager) => fn(manager, body as z.infer<S>),
+    return c.json(attachHostedRpcLogs(result, rpcCollector), 200);
+  } catch (error) {
+    const routeError = mapRuntimeError(error);
+    return webError(
+      c,
+      routeError.status,
+      routeError.code,
+      routeError.message,
+      routeError.details,
+      rpcCollector?.buildEnvelope(),
     );
-  });
+  }
 }
 
 // Re-export commonly used error utilities for convenience

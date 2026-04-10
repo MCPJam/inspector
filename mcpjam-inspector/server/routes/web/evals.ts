@@ -91,20 +91,28 @@ const hostedTraceRepairStopSchema = z.object({
 });
 
 evals.post("/run", async (c) =>
-  withEphemeralConnection(c, hostedRunEvalsSchema, (manager, body) =>
-    runEvalsWithManager(manager, {
-      ...body,
-      convexAuthToken: assertBearerToken(c),
-    }),
+  withEphemeralConnection(
+    c,
+    hostedRunEvalsSchema,
+    (manager, body) =>
+      runEvalsWithManager(manager, {
+        ...body,
+        convexAuthToken: assertBearerToken(c),
+      }),
+    { rpcLogs: false },
   ),
 );
 
 evals.post("/run-test-case", async (c) =>
-  withEphemeralConnection(c, hostedRunTestCaseSchema, (manager, body) =>
-    runEvalTestCaseWithManager(manager, {
-      ...body,
-      convexAuthToken: assertBearerToken(c),
-    }),
+  withEphemeralConnection(
+    c,
+    hostedRunTestCaseSchema,
+    (manager, body) =>
+      runEvalTestCaseWithManager(manager, {
+        ...body,
+        convexAuthToken: assertBearerToken(c),
+      }),
+    { rpcLogs: false },
   ),
 );
 
@@ -164,11 +172,15 @@ evals.post("/stream-test-case", async (c) => {
 });
 
 evals.post("/generate-tests", async (c) =>
-  withEphemeralConnection(c, hostedGenerateTestsSchema, (manager, body) =>
-    generateEvalTestsWithManager(manager, {
-      ...body,
-      convexAuthToken: assertBearerToken(c),
-    }),
+  withEphemeralConnection(
+    c,
+    hostedGenerateTestsSchema,
+    (manager, body) =>
+      generateEvalTestsWithManager(manager, {
+        ...body,
+        convexAuthToken: assertBearerToken(c),
+      }),
+    { rpcLogs: false },
   ),
 );
 
@@ -181,6 +193,7 @@ evals.post("/generate-negative-tests", async (c) =>
         ...body,
         convexAuthToken: assertBearerToken(c),
       }),
+    { rpcLogs: false },
   ),
 );
 

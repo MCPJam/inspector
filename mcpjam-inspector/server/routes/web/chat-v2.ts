@@ -25,6 +25,10 @@ import {
   webError,
   mapRuntimeError,
 } from "./auth.js";
+import {
+  attachHostedRpcLogs,
+  createHostedRpcLogCollector,
+} from "./hosted-rpc-logs.js";
 
 const chatV2 = new Hono();
 
@@ -34,9 +38,11 @@ chatV2.post("/", async (c) => {
   // serialize the Response object as '{}' instead of forwarding the stream.
   // Track OAuth server URLs so we can enrich auth errors with redirect info
   let oauthServerUrls: Record<string, string> = {};
+  let rpcCollector: ReturnType<typeof createHostedRpcLogCollector> | undefined;
   try {
     const bearerToken = assertBearerToken(c);
     const rawBody = await readJsonBody<Record<string, unknown>>(c);
+    rpcCollector = createHostedRpcLogCollector(rawBody);
 
     // Detect guest request by body shape: no workspaceId means guest-direct
     // (matching the pattern from withEphemeralConnection in auth.ts)
@@ -54,6 +60,7 @@ chatV2.post("/", async (c) => {
       }
 
       const body = rawBody as unknown as ChatV2Request & {
+        serverName?: string;
         serverUrl?: string;
         serverHeaders?: Record<string, string>;
         oauthAccessToken?: string;
@@ -144,13 +151,19 @@ chatV2.post("/", async (c) => {
 
         manager = new MCPClientManager(
           { __guest__: httpConfig },
-          { defaultTimeout: WEB_STREAM_TIMEOUT_MS },
+          {
+            defaultTimeout: WEB_STREAM_TIMEOUT_MS,
+            rpcLogger: rpcCollector.rpcLogger,
+          },
         );
       } else {
         // Guest without servers — empty manager for plain LLM chat
         manager = new MCPClientManager(
           {},
-          { defaultTimeout: WEB_STREAM_TIMEOUT_MS },
+          {
+            defaultTimeout: WEB_STREAM_TIMEOUT_MS,
+            rpcLogger: rpcCollector.rpcLogger,
+          },
         );
       }
 
@@ -217,6 +230,8 @@ chatV2.post("/", async (c) => {
               }
             : undefined,
           onStreamComplete: () => manager.disconnectAllServers(),
+          onStreamWriterReady: (writer) =>
+            rpcCollector?.attachStreamWriter(writer),
         });
       } catch (error) {
         await manager.disconnectAllServers();
@@ -275,6 +290,7 @@ chatV2.post("/", async (c) => {
         accessScope: "chat_v2",
         shareToken,
         sandboxToken,
+        rpcLogger: rpcCollector.rpcLogger,
       },
     );
     oauthServerUrls = urls;
@@ -368,6 +384,8 @@ chatV2.post("/", async (c) => {
             }
           : undefined,
         onStreamComplete: () => manager.disconnectAllServers(),
+        onStreamWriterReady: (writer) =>
+          rpcCollector?.attachStreamWriter(writer),
       });
     } catch (error) {
       await manager.disconnectAllServers();
@@ -378,10 +396,17 @@ chatV2.post("/", async (c) => {
     if (isMCPAuthError(error) && Object.keys(oauthServerUrls).length > 0) {
       const firstUrl = Object.values(oauthServerUrls)[0];
       const msg = error instanceof Error ? error.message : String(error);
-      return webError(c, 401, ErrorCode.UNAUTHORIZED, msg, {
-        oauthRequired: true,
-        serverUrl: firstUrl,
-      });
+      return webError(
+        c,
+        401,
+        ErrorCode.UNAUTHORIZED,
+        msg,
+        {
+          oauthRequired: true,
+          serverUrl: firstUrl,
+        },
+        rpcCollector?.buildEnvelope(),
+      );
     }
     const routeError = mapRuntimeError(error);
     return webError(
@@ -390,6 +415,7 @@ chatV2.post("/", async (c) => {
       routeError.code,
       routeError.message,
       routeError.details,
+      rpcCollector?.buildEnvelope(),
     );
   }
 });
