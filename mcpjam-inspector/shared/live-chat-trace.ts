@@ -1,5 +1,6 @@
 import type { ModelMessage } from "ai";
 import type { EvalTraceBlobV1, EvalTraceSpan } from "./eval-trace";
+import type { ResolvedModelRequestPayload } from "./model-request-payload";
 
 export type LiveChatTraceUsage = {
   inputTokens?: number;
@@ -31,11 +32,19 @@ export type LiveChatTraceTurnSummary = {
   actualToolCalls?: LiveChatTraceToolCall[];
 };
 
+export type LiveChatTraceRequestPayloadEntry = {
+  turnId: string;
+  promptIndex: number;
+  stepIndex: number;
+  payload: ResolvedModelRequestPayload;
+};
+
 export type LiveChatTraceEnvelope = EvalTraceBlobV1 & {
   usage?: LiveChatTraceUsage;
   actualToolCalls?: LiveChatTraceToolCall[];
   events?: LiveChatTraceEvent[];
   turns?: LiveChatTraceTurnSummary[];
+  requestPayloads?: LiveChatTraceRequestPayloadEntry[];
   /**
    * Wall-clock bounds for the merged timeline (first turn_start through last span offset).
    * Used by TraceTimeline the same way as eval iteration timestamps.
@@ -78,6 +87,13 @@ export type LiveChatTraceEvent =
       output?: unknown;
       errorText?: string;
       serverId?: string;
+    }
+  | {
+      type: "request_payload";
+      turnId: string;
+      promptIndex: number;
+      stepIndex: number;
+      payload: ResolvedModelRequestPayload;
     }
   | {
       type: "trace_snapshot";

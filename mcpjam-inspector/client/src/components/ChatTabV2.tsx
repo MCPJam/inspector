@@ -65,7 +65,6 @@ import { CollapsedPanelStrip } from "@/components/ui/collapsed-panel-strip";
 import { useChatSession } from "@/hooks/use-chat-session";
 import type { ChatSessionResetReason } from "@/hooks/use-chat-session";
 import { useDirectChatSessionSubscription } from "@/hooks/use-direct-chat-session-subscription";
-import { useDebouncedXRayPayload } from "@/hooks/use-debounced-x-ray-payload";
 import { addTokenToUrl, authFetch } from "@/lib/session-token";
 import { cn } from "@/lib/utils";
 import { WebApiError } from "@/lib/apis/web/base";
@@ -329,6 +328,7 @@ export function ChatTabV2({
     resumedVersion,
     restoredToolRenderOverrides,
     liveTraceEnvelope,
+    requestPayloadHistory,
     hasTraceSnapshot,
     hasLiveTimelineContent,
     traceViewsSupported,
@@ -1524,16 +1524,6 @@ export function ChatTabV2({
     traceVersion: 1 as const,
     messages: [],
   };
-  const rawTraceXRayMirror = useDebouncedXRayPayload({
-    systemPrompt,
-    messages,
-    selectedServers: selectedConnectedServerNames,
-    enabled:
-      traceViewsSupported &&
-      !minimalMode &&
-      !isThreadEmpty &&
-      showLiveTraceDiagnostics,
-  });
   const resetMultiModelSessions = useCallback(() => {
     clearMultiModelUiState();
     setMultiModelSessionGeneration((previous) => previous + 1);
@@ -1949,12 +1939,9 @@ export function ChatTabV2({
                       liveTraceEnvelope?.traceStartedAtMs ?? null
                     }
                     traceEndedAtMs={liveTraceEnvelope?.traceEndedAtMs ?? null}
-                    rawXRayMirror={{
-                      payload: rawTraceXRayMirror.payload,
-                      loading: rawTraceXRayMirror.loading,
-                      error: rawTraceXRayMirror.error,
-                      refetch: rawTraceXRayMirror.refetch,
-                      hasUiMessages: rawTraceXRayMirror.hasMessages,
+                    rawRequestPayloadHistory={{
+                      entries: requestPayloadHistory,
+                      hasUiMessages: effectiveHasMessages,
                     }}
                     rawEmptyTestId="chat-live-raw-pending"
                     timelineEmptyTestId="chat-live-trace-pending"
@@ -2185,13 +2172,9 @@ export function ChatTabV2({
                                       setRevealedInChat(true);
                                     }}
                                     rawGrowWithContent
-                                    rawXRayMirror={{
-                                      payload: rawTraceXRayMirror.payload,
-                                      loading: rawTraceXRayMirror.loading,
-                                      error: rawTraceXRayMirror.error,
-                                      refetch: rawTraceXRayMirror.refetch,
-                                      hasUiMessages:
-                                        rawTraceXRayMirror.hasMessages,
+                                    rawRequestPayloadHistory={{
+                                      entries: requestPayloadHistory,
+                                      hasUiMessages: !isThreadEmpty,
                                     }}
                                   />
                                 )}
@@ -2225,12 +2208,9 @@ export function ChatTabV2({
                                   setTraceViewMode("chat");
                                   setRevealedInChat(true);
                                 }}
-                                rawXRayMirror={{
-                                  payload: rawTraceXRayMirror.payload,
-                                  loading: rawTraceXRayMirror.loading,
-                                  error: rawTraceXRayMirror.error,
-                                  refetch: rawTraceXRayMirror.refetch,
-                                  hasUiMessages: rawTraceXRayMirror.hasMessages,
+                                rawRequestPayloadHistory={{
+                                  entries: requestPayloadHistory,
+                                  hasUiMessages: !isThreadEmpty,
                                 }}
                               />
                             )}

@@ -510,6 +510,7 @@ describe("mcpjam-stream-handler", () => {
 
     expect(traceEvents.map((event) => event.type)).toEqual([
       "turn_start",
+      "request_payload",
       "text_delta",
       "trace_snapshot",
       "turn_finish",
@@ -519,7 +520,17 @@ describe("mcpjam-stream-handler", () => {
       type: "turn_start",
       promptIndex: 0,
     });
-    expect(traceEvents[2]).toMatchObject({
+    expect(traceEvents[1]).toMatchObject({
+      type: "request_payload",
+      promptIndex: 0,
+      stepIndex: 0,
+      payload: {
+        system: "You are helpful",
+        tools: {},
+        messages: [{ role: "user", content: "Say hello" }],
+      },
+    });
+    expect(traceEvents[3]).toMatchObject({
       type: "trace_snapshot",
       snapshot: {
         messages: [
@@ -536,7 +547,7 @@ describe("mcpjam-stream-handler", () => {
         },
       },
     });
-    expect(traceEvents[2].snapshot.spans).toEqual(
+    expect(traceEvents[3].snapshot.spans).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           category: "step",
@@ -545,7 +556,7 @@ describe("mcpjam-stream-handler", () => {
         }),
       ]),
     );
-    expect(traceEvents[3]).toMatchObject({
+    expect(traceEvents[4]).toMatchObject({
       type: "turn_finish",
       usage: {
         inputTokens: 2,
@@ -691,10 +702,14 @@ describe("mcpjam-stream-handler", () => {
     const traceEvents = writtenChunks
       .filter((chunk) => chunk?.type === "data-trace-event")
       .map((chunk) => chunk.data);
+    const requestPayloadEvents = traceEvents.filter(
+      (event) => event.type === "request_payload",
+    );
 
     expect(traceEvents.map((event) => event.type)).toEqual(
       expect.arrayContaining([
         "turn_start",
+        "request_payload",
         "tool_call",
         "tool_result",
         "trace_snapshot",
@@ -721,5 +736,42 @@ describe("mcpjam-stream-handler", () => {
         }),
       ]),
     );
+    expect(requestPayloadEvents).toHaveLength(2);
+    expect(requestPayloadEvents.map((event) => event.stepIndex)).toEqual([
+      0, 1,
+    ]);
+    expect(requestPayloadEvents[0]).toMatchObject({
+      payload: {
+        messages: [{ role: "user", content: "Fetch the docs" }],
+      },
+    });
+    expect(requestPayloadEvents[1]).toMatchObject({
+      payload: {
+        messages: [
+          { role: "user", content: "Fetch the docs" },
+          {
+            role: "assistant",
+            content: [
+              {
+                type: "tool-call",
+                toolCallId: "call-1",
+                toolName: "read_docs",
+                input: { topic: "latency" },
+              },
+            ],
+          },
+          {
+            role: "tool",
+            content: [
+              expect.objectContaining({
+                type: "tool-result",
+                toolCallId: "call-1",
+                toolName: "read_docs",
+              }),
+            ],
+          },
+        ],
+      },
+    });
   });
 });

@@ -90,7 +90,6 @@ import {
   SandboxHostThemeProvider,
 } from "@/contexts/sandbox-host-style-context";
 import { useComposerOnboarding } from "@/hooks/use-composer-onboarding";
-import { useDebouncedXRayPayload } from "@/hooks/use-debounced-x-ray-payload";
 import { HandDrawnSendHint } from "./HandDrawnSendHint";
 import { LiveTraceTimelineEmptyState } from "@/components/evals/live-trace-timeline-empty";
 import { LiveTraceRawEmptyState } from "@/components/evals/live-trace-raw-empty";
@@ -365,6 +364,7 @@ export function PlaygroundMain({
     resetChat,
     startChatWithMessages,
     liveTraceEnvelope,
+    requestPayloadHistory,
     hasTraceSnapshot,
     hasLiveTimelineContent,
     traceViewsSupported,
@@ -1071,15 +1071,6 @@ export function PlaygroundMain({
     traceVersion: 1 as const,
     messages: [],
   };
-  const playgroundRawXRayMirror = useDebouncedXRayPayload({
-    systemPrompt,
-    messages,
-    selectedServers,
-    enabled:
-      traceViewsSupported &&
-      showLiveTraceDiagnostics &&
-      (isMultiModelMode ? !effectiveHasMessages : !isThreadEmpty),
-  });
   const showLiveTracePending =
     activeTraceViewMode === "timeline" &&
     !hasLiveTimelineContent &&
@@ -1447,12 +1438,9 @@ export function PlaygroundMain({
                 toolServerMap={toolServerMap}
                 traceStartedAtMs={liveTraceEnvelope?.traceStartedAtMs ?? null}
                 traceEndedAtMs={liveTraceEnvelope?.traceEndedAtMs ?? null}
-                rawXRayMirror={{
-                  payload: playgroundRawXRayMirror.payload,
-                  loading: playgroundRawXRayMirror.loading,
-                  error: playgroundRawXRayMirror.error,
-                  refetch: playgroundRawXRayMirror.refetch,
-                  hasUiMessages: playgroundRawXRayMirror.hasMessages,
+                rawRequestPayloadHistory={{
+                  entries: requestPayloadHistory,
+                  hasUiMessages: effectiveHasMessages,
                 }}
                 rawEmptyTestId="playground-multi-empty-raw-pending"
                 timelineEmptyTestId="playground-multi-empty-trace-pending"
@@ -1619,13 +1607,9 @@ export function PlaygroundMain({
                                     setTraceViewMode("chat")
                                   }
                                   rawGrowWithContent
-                                  rawXRayMirror={{
-                                    payload: playgroundRawXRayMirror.payload,
-                                    loading: playgroundRawXRayMirror.loading,
-                                    error: playgroundRawXRayMirror.error,
-                                    refetch: playgroundRawXRayMirror.refetch,
-                                    hasUiMessages:
-                                      playgroundRawXRayMirror.hasMessages,
+                                  rawRequestPayloadHistory={{
+                                    entries: requestPayloadHistory,
+                                    hasUiMessages: !isThreadEmpty,
                                   }}
                                 />
                               )}
@@ -1651,13 +1635,9 @@ export function PlaygroundMain({
                               onRevealNavigateToChat={() =>
                                 setTraceViewMode("chat")
                               }
-                              rawXRayMirror={{
-                                payload: playgroundRawXRayMirror.payload,
-                                loading: playgroundRawXRayMirror.loading,
-                                error: playgroundRawXRayMirror.error,
-                                refetch: playgroundRawXRayMirror.refetch,
-                                hasUiMessages:
-                                  playgroundRawXRayMirror.hasMessages,
+                              rawRequestPayloadHistory={{
+                                entries: requestPayloadHistory,
+                                hasUiMessages: !isThreadEmpty,
                               }}
                             />
                           )}
