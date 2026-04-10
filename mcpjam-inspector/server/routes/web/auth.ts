@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { MCPClientManager } from "@mcpjam/sdk";
+import { MCPClientManager, withDisposableManager } from "@mcpjam/sdk";
 import type { HttpServerConfig, RpcLogger } from "@mcpjam/sdk";
 import { WEB_CALL_TIMEOUT_MS } from "../../config.js";
 import { validateUrl, OAuthProxyError } from "../../utils/oauth-proxy.js";
@@ -335,11 +335,7 @@ export async function withManager<T>(
   const result = await managerPromise;
   const manager =
     "manager" in result ? result.manager : (result as MCPClientManager);
-  try {
-    return await fn(manager);
-  } finally {
-    await manager.disconnectAllServers();
-  }
+  return withDisposableManager(manager, fn);
 }
 
 export async function handleRoute<T>(
