@@ -370,21 +370,40 @@ describe("POST /api/mcp/chat-v2", () => {
       const traceEvents = capturedStreamEvents
         .filter((event) => event?.type === "data-trace-event")
         .map((event) => event.data?.type);
+      const requestPayloadEvents = capturedStreamEvents.filter(
+        (event) =>
+          event?.type === "data-trace-event" &&
+          event.data?.type === "request_payload",
+      );
 
       expect(traceEvents).toEqual(
         expect.arrayContaining([
           "turn_start",
+          "request_payload",
           "text_delta",
           "trace_snapshot",
           "turn_finish",
         ]),
       );
       expect(traceEvents.indexOf("turn_start")).toBeLessThan(
+        traceEvents.indexOf("request_payload"),
+      );
+      expect(traceEvents.indexOf("request_payload")).toBeLessThan(
         traceEvents.indexOf("trace_snapshot"),
       );
       expect(traceEvents.indexOf("trace_snapshot")).toBeLessThan(
         traceEvents.indexOf("turn_finish"),
       );
+      expect(requestPayloadEvents).toHaveLength(1);
+      expect(requestPayloadEvents[0]?.data).toMatchObject({
+        promptIndex: 0,
+        stepIndex: 0,
+        payload: {
+          system: expect.any(String),
+          tools: expect.any(Object),
+          messages: [{ role: "user", content: "Hello" }],
+        },
+      });
     });
 
     it("uses provided temperature", async () => {

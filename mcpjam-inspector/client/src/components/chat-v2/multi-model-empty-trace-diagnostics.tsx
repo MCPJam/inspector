@@ -7,6 +7,7 @@ import type { TraceEnvelope } from "@/components/evals/trace-viewer-adapter";
 import { LiveTraceRawEmptyState } from "@/components/evals/live-trace-raw-empty";
 import { LiveTraceTimelineEmptyState } from "@/components/evals/live-trace-timeline-empty";
 import { TraceViewer } from "@/components/evals/trace-viewer";
+import type { TraceRawRequestPayloadHistory } from "@/components/evals/trace-raw-view";
 
 export type MultiModelEmptyTraceMode = "chat" | "timeline" | "raw";
 
@@ -20,13 +21,7 @@ export interface MultiModelEmptyTraceDiagnosticsPanelProps {
   toolServerMap: ToolServerMap;
   traceStartedAtMs: number | null;
   traceEndedAtMs: number | null;
-  rawXRayMirror: {
-    payload: unknown;
-    loading: boolean;
-    error: string | null;
-    refetch: () => void;
-    hasUiMessages: boolean;
-  };
+  rawRequestPayloadHistory: TraceRawRequestPayloadHistory;
   rawEmptyTestId: string;
   timelineEmptyTestId: string;
   onRevealNavigateToChat: () => void;
@@ -49,7 +44,7 @@ export function MultiModelEmptyTraceDiagnosticsPanel({
   toolServerMap,
   traceStartedAtMs,
   traceEndedAtMs,
-  rawXRayMirror,
+  rawRequestPayloadHistory,
   rawEmptyTestId,
   timelineEmptyTestId,
   onRevealNavigateToChat,
@@ -82,7 +77,7 @@ export function MultiModelEmptyTraceDiagnosticsPanel({
                     fillContent
                     onRevealNavigateToChat={onRevealNavigateToChat}
                     rawGrowWithContent
-                    rawXRayMirror={rawXRayMirror}
+                    rawRequestPayloadHistory={rawRequestPayloadHistory}
                   />
                 )}
               </div>
@@ -107,7 +102,7 @@ export function MultiModelEmptyTraceDiagnosticsPanel({
                 hideToolbar
                 fillContent
                 onRevealNavigateToChat={onRevealNavigateToChat}
-                rawXRayMirror={rawXRayMirror}
+                rawRequestPayloadHistory={rawRequestPayloadHistory}
               />
             )}
           </div>

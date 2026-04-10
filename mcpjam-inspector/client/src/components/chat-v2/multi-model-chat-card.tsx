@@ -18,7 +18,6 @@ import {
   formatErrorMessage,
 } from "@/components/chat-v2/shared/chat-helpers";
 import { useChatSession } from "@/hooks/use-chat-session";
-import { useDebouncedXRayPayload } from "@/hooks/use-debounced-x-ray-payload";
 import type { ModelDefinition } from "@/shared/types";
 
 type ChatTraceViewMode = "chat" | "timeline" | "raw";
@@ -125,11 +124,11 @@ export function MultiModelChatCard({
     toolsMetadata,
     toolServerMap,
     liveTraceEnvelope,
+    requestPayloadHistory,
     hasLiveTimelineContent,
     traceViewsSupported,
     isStreaming,
     addToolApprovalResponse,
-    systemPrompt,
     startChatWithMessages,
   } = useChatSession({
     selectedServers,
@@ -172,12 +171,6 @@ export function MultiModelChatCard({
     traceVersion: 1 as const,
     messages: [],
   };
-  const cardRawXRayMirror = useDebouncedXRayPayload({
-    systemPrompt,
-    messages,
-    selectedServers,
-    enabled: showLiveTraceDiagnostics && !isThreadEmpty && traceViewsSupported,
-  });
   const errorMessage = formatErrorMessage(error);
 
   const latestTurn = liveTraceEnvelope?.turns?.at(-1);
@@ -550,12 +543,9 @@ export function MultiModelChatCard({
                     fillContent
                     onRevealNavigateToChat={navigateTraceRevealToChat}
                     rawGrowWithContent
-                    rawXRayMirror={{
-                      payload: cardRawXRayMirror.payload,
-                      loading: cardRawXRayMirror.loading,
-                      error: cardRawXRayMirror.error,
-                      refetch: cardRawXRayMirror.refetch,
-                      hasUiMessages: cardRawXRayMirror.hasMessages,
+                    rawRequestPayloadHistory={{
+                      entries: requestPayloadHistory,
+                      hasUiMessages: !isThreadEmpty,
                     }}
                   />
                 </StickToBottom.Content>
@@ -580,12 +570,9 @@ export function MultiModelChatCard({
                   enableFullscreenChatOverlay
                   fullscreenChatPlaceholder={placeholder}
                   onToolApprovalResponse={addToolApprovalResponse}
-                  rawXRayMirror={{
-                    payload: cardRawXRayMirror.payload,
-                    loading: cardRawXRayMirror.loading,
-                    error: cardRawXRayMirror.error,
-                    refetch: cardRawXRayMirror.refetch,
-                    hasUiMessages: cardRawXRayMirror.hasMessages,
+                  rawRequestPayloadHistory={{
+                    entries: requestPayloadHistory,
+                    hasUiMessages: !isThreadEmpty,
                   }}
                 />
               </div>
@@ -612,12 +599,9 @@ export function MultiModelChatCard({
                     hideToolbar
                     fillContent
                     onRevealNavigateToChat={navigateTraceRevealToChat}
-                    rawXRayMirror={{
-                      payload: cardRawXRayMirror.payload,
-                      loading: cardRawXRayMirror.loading,
-                      error: cardRawXRayMirror.error,
-                      refetch: cardRawXRayMirror.refetch,
-                      hasUiMessages: cardRawXRayMirror.hasMessages,
+                    rawRequestPayloadHistory={{
+                      entries: requestPayloadHistory,
+                      hasUiMessages: !isThreadEmpty,
                     }}
                   />
                 )}

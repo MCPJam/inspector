@@ -27,6 +27,7 @@ import {
   wrapToolSetForEvalTrace,
 } from "../../services/evals/eval-trace-capture";
 import {
+  emitRequestPayload,
   emitTraceSnapshot,
   generateLiveTraceTurnId,
   getPromptIndex,
@@ -36,6 +37,7 @@ import {
   toTraceRecord,
   writeTraceEvent,
 } from "../../utils/live-chat-trace-stream";
+import { buildResolvedModelRequestPayload } from "../../utils/model-request-payload";
 import {
   mergeLiveChatTraceUsage,
   type LiveChatTraceUsage,
@@ -210,6 +212,17 @@ function streamDirectChatWithLiveTrace(options: {
         turnId: traceTurn.turnId,
         promptIndex: traceTurn.promptIndex,
         startedAtMs: traceTurn.turnStartedAt,
+      });
+
+      emitRequestPayload(writer, {
+        turnId: traceTurn.turnId,
+        promptIndex: traceTurn.promptIndex,
+        stepIndex: 0,
+        payload: buildResolvedModelRequestPayload({
+          systemPrompt,
+          tools,
+          messages: messageHistory,
+        }),
       });
 
       const tracedTools = wrapToolSetForEvalTrace(

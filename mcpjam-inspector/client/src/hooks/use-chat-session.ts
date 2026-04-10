@@ -72,6 +72,7 @@ import {
   rebaseTraceSpans,
   type LiveChatTraceEnvelope,
   type LiveChatTraceEvent,
+  type LiveChatTraceRequestPayloadEntry,
   type LiveChatTraceToolCall,
   type LiveChatTraceUsage,
 } from "@/shared/live-chat-trace";
@@ -234,6 +235,7 @@ export interface UseChatSessionReturn {
 
   // Live trace state
   liveTraceEnvelope: LiveChatTraceEnvelope | null;
+  requestPayloadHistory: LiveChatTraceRequestPayloadEntry[];
   hasTraceSnapshot: boolean;
   /** True when Timeline can show recorded and/or preview waterfall rows. */
   hasLiveTimelineContent: boolean;
@@ -261,6 +263,7 @@ interface LiveTraceAccumulatorState {
   turns: Record<string, LiveTraceTurnState>;
   messages: ModelMessage[];
   events: LiveChatTraceEvent[];
+  requestPayloadHistory: LiveChatTraceRequestPayloadEntry[];
   activeTurnId: string | null;
   activeTurnHasSnapshot: boolean;
   anySnapshotSeen: boolean;
@@ -286,6 +289,7 @@ function createEmptyLiveTraceState(): LiveTraceAccumulatorState {
     turns: {},
     messages: [],
     events: [],
+    requestPayloadHistory: [],
     activeTurnId: null,
     activeTurnHasSnapshot: false,
     anySnapshotSeen: false,
@@ -334,6 +338,25 @@ function dedupeTraceToolCalls(
   return deduped;
 }
 
+function upsertRequestPayloadEntry(
+  entries: LiveChatTraceRequestPayloadEntry[],
+  nextEntry: LiveChatTraceRequestPayloadEntry,
+): LiveChatTraceRequestPayloadEntry[] {
+  const existingIndex = entries.findIndex(
+    (entry) =>
+      entry.turnId === nextEntry.turnId &&
+      entry.stepIndex === nextEntry.stepIndex,
+  );
+
+  if (existingIndex < 0) {
+    return [...entries, nextEntry];
+  }
+
+  return entries.map((entry, index) =>
+    index === existingIndex ? nextEntry : entry,
+  );
+}
+
 function applyLiveTraceEvent(
   state: LiveTraceAccumulatorState,
   event: LiveChatTraceEvent,
@@ -380,6 +403,32 @@ function applyLiveTraceEvent(
         },
         activeTurnId: event.turnId,
         activeTurnHasSnapshot: false,
+      };
+    }
+    case "request_payload": {
+      const turnState = ensureTurnState(event.turnId, event.promptIndex);
+      const turnExists = baseState.turnOrder.includes(event.turnId);
+      return {
+        ...baseState,
+        turnOrder: turnExists
+          ? baseState.turnOrder
+          : [...baseState.turnOrder, event.turnId],
+        turns: {
+          ...baseState.turns,
+          [event.turnId]: {
+            ...turnState,
+            promptIndex: event.promptIndex,
+          },
+        },
+        requestPayloadHistory: upsertRequestPayloadEntry(
+          baseState.requestPayloadHistory,
+          {
+            turnId: event.turnId,
+            promptIndex: event.promptIndex,
+            stepIndex: event.stepIndex,
+            payload: event.payload,
+          },
+        ),
       };
     }
     case "trace_snapshot": {
@@ -502,6 +551,10 @@ function buildLiveTraceEnvelope(
     actualToolCalls: dedupeTraceToolCalls(actualToolCalls),
     events: state.events,
     turns,
+    requestPayloads:
+      state.requestPayloadHistory.length > 0
+        ? state.requestPayloadHistory
+        : undefined,
   };
 
   if (
@@ -1687,6 +1740,7 @@ export function useChatSession({
 
     // Live trace state
     liveTraceEnvelope,
+    requestPayloadHistory: liveTraceState.requestPayloadHistory,
     hasTraceSnapshot,
     hasLiveTimelineContent,
     traceViewsSupported,
