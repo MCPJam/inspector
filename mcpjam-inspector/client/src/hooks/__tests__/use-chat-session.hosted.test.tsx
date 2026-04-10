@@ -34,6 +34,7 @@ const mockState = vi.hoisted(() => ({
     tokenCounts: null,
   })),
   countTextTokens: vi.fn(async () => null),
+  selectedModelId: "anthropic/claude-haiku-4.5",
 }));
 let lastTransportOptions: any;
 
@@ -44,19 +45,34 @@ async function resolveConfig<T>(value: T | (() => T | Promise<T>)) {
 }
 
 const guestModel = {
-  id: "openai/gpt-5-mini",
-  name: "GPT-5 Mini",
-  provider: "openai" as const,
-};
-const freeParityGuestModel = {
-  id: "openai/gpt-oss-120b",
-  name: "GPT OSS 120B",
-  provider: "openai" as const,
-};
-const premiumModel = {
-  id: "anthropic/claude-sonnet-4.5",
-  name: "Claude Sonnet 4.5",
+  id: "anthropic/claude-haiku-4.5",
+  name: "Claude Haiku 4.5",
   provider: "anthropic" as const,
+};
+const gatedAnthropicModel = {
+  id: "anthropic/claude-opus-4.6",
+  name: "Claude Opus 4.6",
+  provider: "anthropic" as const,
+};
+const allowedHostedModel = {
+  id: "qwen/qwen3.6-plus",
+  name: "Qwen 3.6 Plus",
+  provider: "qwen" as const,
+};
+const allowedOpenAiModel = {
+  id: "openai/gpt-4o-mini",
+  name: "GPT-4o Mini",
+  provider: "openai" as const,
+};
+const gatedOpenAiModel = {
+  id: "openai/gpt-5.4-pro",
+  name: "GPT-5.4 Pro",
+  provider: "openai" as const,
+};
+const gatedGoogleModel = {
+  id: "google/gemini-3.1-pro-preview",
+  name: "Gemini 3.1 Pro Preview",
+  provider: "google" as const,
 };
 
 vi.mock("@/lib/config", () => ({
@@ -65,8 +81,11 @@ vi.mock("@/lib/config", () => ({
 
 vi.mock("@/components/chat-v2/shared/model-helpers", () => ({
   buildAvailableModels: vi.fn(() => [
-    premiumModel,
-    freeParityGuestModel,
+    gatedAnthropicModel,
+    gatedGoogleModel,
+    gatedOpenAiModel,
+    allowedHostedModel,
+    allowedOpenAiModel,
     guestModel,
   ]),
   getDefaultModel: vi.fn((models: Array<typeof guestModel>) => models[0]),
@@ -91,9 +110,9 @@ vi.mock("@/hooks/use-custom-providers", () => ({
 
 vi.mock("@/hooks/use-persisted-model", () => ({
   usePersistedModel: () => ({
-    selectedModelId: "openai/gpt-5-mini",
+    selectedModelId: mockState.selectedModelId,
     setSelectedModelId: mockState.setSelectedModelId,
-    selectedModelIds: ["openai/gpt-5-mini"],
+    selectedModelIds: [mockState.selectedModelId],
     setSelectedModelIds: vi.fn(),
     multiModelEnabled: false,
     setMultiModelEnabled: vi.fn(),
@@ -238,6 +257,7 @@ describe("useChatSession hosted mode", () => {
     mockState.getAccessToken.mockResolvedValue("access-token");
     mockState.getGuestBearerToken.mockReset();
     mockState.getGuestBearerToken.mockResolvedValue("guest-token");
+    mockState.selectedModelId = "anthropic/claude-haiku-4.5";
   });
 
   it("includes chatSessionId in the hosted transport body", async () => {
@@ -556,7 +576,7 @@ describe("useChatSession hosted mode", () => {
     unmount();
   });
 
-  it("treats anonymous shared-chat viewers as guest users", async () => {
+  it("keeps only the three premium hosted models disabled for anonymous hosted viewers", async () => {
     mockState.convexAuth.isAuthenticated = false;
     mockState.getAccessToken.mockRejectedValue(new Error("LoginRequiredError"));
 
@@ -574,8 +594,101 @@ describe("useChatSession hosted mode", () => {
     });
 
     expect(result.current.availableModels.map((model) => model.id)).toEqual([
-      "openai/gpt-oss-120b",
-      "openai/gpt-5-mini",
+      "anthropic/claude-opus-4.6",
+      "google/gemini-3.1-pro-preview",
+      "openai/gpt-5.4-pro",
+      "qwen/qwen3.6-plus",
+      "openai/gpt-4o-mini",
+      "anthropic/claude-haiku-4.5",
+    ]);
+    expect(
+      result.current.availableModels.find(
+        (model) => model.id === "anthropic/claude-haiku-4.5",
+      )?.disabled,
+    ).toBeUndefined();
+    expect(
+      result.current.availableModels.find(
+        (model) => model.id === "anthropic/claude-opus-4.6",
+      ),
+    ).toMatchObject({
+      disabled: true,
+      disabledReason: "Sign in to use MCPJam provided models",
+    });
+    expect(
+      result.current.availableModels.find(
+        (model) => model.id === "google/gemini-3.1-pro-preview",
+      ),
+    ).toMatchObject({
+      disabled: true,
+      disabledReason: "Sign in to use MCPJam provided models",
+    });
+    expect(
+      result.current.availableModels.find(
+        (model) => model.id === "openai/gpt-5.4-pro",
+      ),
+    ).toMatchObject({
+      disabled: true,
+      disabledReason: "Sign in to use MCPJam provided models",
+    });
+    expect(
+      result.current.availableModels.find(
+        (model) => model.id === "qwen/qwen3.6-plus",
+      )?.disabled,
+    ).toBeUndefined();
+    expect(
+      result.current.availableModels.find(
+        (model) => model.id === "openai/gpt-4o-mini",
+      )?.disabled,
+    ).toBeUndefined();
+    unmount();
+  });
+
+  it("falls back when an anonymous hosted viewer has a gated model persisted", async () => {
+    mockState.convexAuth.isAuthenticated = false;
+    mockState.getAccessToken.mockRejectedValue(new Error("LoginRequiredError"));
+    mockState.selectedModelId = "google/gemini-3.1-pro-preview";
+
+    const { result, unmount } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        hostedWorkspaceId: "workspace-1",
+        hostedSelectedServerIds: ["server-id-1"],
+        hostedShareToken: "share-token",
+      }),
+    );
+
+    await waitFor(() => {
+      expect(result.current.disableForAuthentication).toBe(false);
+    });
+
+    expect(result.current.selectedModel.id).toBe("qwen/qwen3.6-plus");
+    unmount();
+  });
+  it("treats anonymous shared-chat viewers as guest users", async () => {
+    mockState.convexAuth.isAuthenticated = false;
+    mockState.getAccessToken.mockRejectedValue(new Error("LoginRequiredError"));
+
+    const { result, unmount } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        hostedWorkspaceId: "workspace-1",
+        hostedSelectedServerIds: ["server-id-1"],
+        hostedShareToken: "share-token",
+      }),
+    );
+
+    await waitFor(() => {
+      expect(result.current.disableForAuthentication).toBe(false);
+    });
+
+    expect(
+      result.current.availableModels.filter((model) => !model.disabled).map(
+        (model) => model.id,
+      ),
+    ).toEqual([
+      "qwen/qwen3.6-plus",
+      "openai/gpt-4o-mini",
+      "anthropic/claude-haiku-4.5",
     ]);
     expect(result.current.isAuthReady).toBe(true);
     unmount();
@@ -583,7 +696,6 @@ describe("useChatSession hosted mode", () => {
 
   it("passes persisted widget snapshot tool call ids to the capture hook after loading history", async () => {
     mockState.useSharedChatWidgetCapture.mockClear();
-
     const { result, unmount } = renderHook(() =>
       useChatSession({
         selectedServers: ["server-1"],
@@ -623,6 +735,29 @@ describe("useChatSession hosted mode", () => {
       );
     });
 
+    unmount();
+  });
+
+  it("keeps even gated hosted models available for authenticated viewers", async () => {
+    const { result, unmount } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        hostedWorkspaceId: "workspace-1",
+        hostedSelectedServerIds: ["server-id-1"],
+        hostedShareToken: "share-token",
+      }),
+    );
+
+    await waitFor(() => {
+      expect(result.current.availableModels.map((model) => model.id)).toContain(
+        "openai/gpt-5.4-pro",
+      );
+    });
+    expect(
+      result.current.availableModels.find(
+        (model) => model.id === "openai/gpt-5.4-pro",
+      )?.disabled,
+    ).toBeUndefined();
     unmount();
   });
 });

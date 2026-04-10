@@ -106,62 +106,72 @@ export type ModelProvider =
   | "openrouter"
   | "z-ai"
   | "minimax"
+  | "qwen"
   | "custom";
 
-// Premium models (e.g. claude-sonnet-4.5, gpt-5, gpt-5.1) were removed to reduce free tier costs.
-// See: https://github.com/MCPJam/inspector/pull/1391
-// We may add them back as a premium offering in the future.
 const MCPJAM_PROVIDED_MODEL_IDS: string[] = [
   "openai/gpt-oss-120b",
   "openai/gpt-4o-mini",
   "openai/gpt-5-nano",
   "anthropic/claude-haiku-4.5",
+  "anthropic/claude-opus-4.5",
+  "anthropic/claude-sonnet-4.5",
+  "anthropic/claude-opus-4.6-fast",
+  "anthropic/claude-sonnet-4.6",
+  "anthropic/claude-opus-4.6",
   "openai/gpt-5.1-codex-mini",
   "openai/gpt-5-mini",
+  "openai/gpt-5.4",
+  "openai/gpt-5.4-mini",
+  "openai/gpt-5.4-pro",
+  "openai/gpt-5.4-nano",
+  "openai/gpt-5.3-codex",
+  "openai/gpt-5.3-chat",
   "moonshotai/kimi-k2-thinking",
   "moonshotai/kimi-k2-0905",
   "google/gemini-2.5-flash",
+  "z-ai/glm-4.6",
+  "google/gemini-3.1-flash-lite-preview",
+  "google/gemini-3.1-pro-preview",
+  "google/gemma-4-31b-it",
   "x-ai/grok-code-fast-1",
   "deepseek/deepseek-v3.2",
   "google/gemini-3-flash-preview",
   "meta-llama/llama-4-scout",
   "moonshotai/kimi-k2.5",
   "x-ai/grok-4.1-fast",
+  "x-ai/grok-4-fast",
+  "x-ai/grok-4.20",
   "z-ai/glm-4.7",
   "z-ai/glm-4.7-flash",
   "minimax/minimax-m2.1",
+  "minimax/minimax-m2.7",
+  "qwen/qwen3.6-plus",
+  "qwen/qwen3.5-9b",
+  "qwen/qwen3.5-35b-a3b",
+  "qwen/qwen3.5-27b",
+  "qwen/qwen3.5-122b-a10b",
+  "qwen/qwen3.5-flash-02-23",
+  "qwen/qwen3-max-thinking",
 ];
+
+const MCPJAM_GUEST_GATED_MODEL_IDS = [
+  "openai/gpt-5.4-pro",
+  "anthropic/claude-opus-4.6",
+  "google/gemini-3.1-pro-preview",
+] as const;
+
+const gatedGuestModelIds = new Set<string>(MCPJAM_GUEST_GATED_MODEL_IDS);
+
+const MCPJAM_GUEST_ALLOWED_MODEL_IDS: string[] =
+  MCPJAM_PROVIDED_MODEL_IDS.filter((modelId) => !gatedGuestModelIds.has(modelId));
 
 export const isMCPJamProvidedModel = (modelId: string): boolean => {
   return MCPJAM_PROVIDED_MODEL_IDS.includes(modelId);
 };
 
-// Models available to guest (unauthenticated) users.
-// Duplicated from backend GUEST_ALLOWED_MODELS — kept in sync manually
-// since the repos are separate. Backend is the authoritative enforcement.
-export const GUEST_ALLOWED_MODEL_IDS: string[] = [
-  "meta-llama/llama-4-scout",
-  "openai/gpt-oss-120b",
-  "openai/gpt-5-nano",
-  "anthropic/claude-haiku-4.5",
-  "openai/gpt-5.1-codex-mini",
-  "openai/gpt-5-mini",
-  "moonshotai/kimi-k2-thinking",
-  "moonshotai/kimi-k2-0905",
-  "moonshotai/kimi-k2.5",
-  "google/gemini-2.5-flash",
-  "z-ai/glm-4.6",
-  "z-ai/glm-4.7",
-  "z-ai/glm-4.7-flash",
-  "google/gemini-3-flash-preview",
-  "x-ai/grok-4.1-fast",
-  "x-ai/grok-code-fast-1",
-  "deepseek/deepseek-v3.2",
-  "minimax/minimax-m2.1",
-];
-
-export const isGuestAllowedModel = (modelId: string): boolean => {
-  return GUEST_ALLOWED_MODEL_IDS.includes(modelId);
+export const isMCPJamGuestAllowedModel = (modelId: string): boolean => {
+  return MCPJAM_GUEST_ALLOWED_MODEL_IDS.includes(modelId);
 };
 
 export const isGPT5Model = (modelId: string | Model): boolean => {
@@ -213,7 +223,6 @@ export enum Model {
   DEEPSEEK_CHAT = "deepseek-chat",
   DEEPSEEK_REASONER = "deepseek-reasoner",
   // Google Gemini models
-  GEMINI_3_PRO = "gemini-3-pro-preview",
   GEMINI_2_5_PRO = "gemini-2.5-pro",
   GEMINI_2_5_FLASH = "gemini-2.5-flash",
   GEMINI_2_5_FLASH_LITE = "gemini-2.5-flash-lite",
@@ -240,6 +249,18 @@ export enum Model {
   GROK_4_FAST_NON_REASONING = "grok-4-fast-non-reasoning",
   GROK_4_FAST_REASONING = "grok-4-fast-reasoning",
 }
+
+const freeModel = (
+  id: string,
+  name: string,
+  provider: ModelProvider,
+  contextLength?: number,
+): ModelDefinition => ({
+  id,
+  name: `${name} (Free)`,
+  provider,
+  ...(contextLength !== undefined ? { contextLength } : {}),
+});
 
 export const SUPPORTED_MODELS: ModelDefinition[] = [
   {
@@ -383,12 +404,6 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
   },
   // Google Gemini models (latest first)
   {
-    id: Model.GEMINI_3_PRO,
-    name: "Gemini 3 Pro (Preview)",
-    provider: "google",
-    contextLength: 1000000,
-  },
-  {
     id: Model.GEMINI_2_5_PRO,
     name: "Gemini 2.5 Pro",
     provider: "google",
@@ -412,6 +427,7 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
     provider: "openai",
     contextLength: 131072,
   },
+  freeModel("openai/gpt-4o-mini", "GPT-4o Mini", "openai", 128000),
   {
     id: "openai/gpt-5-nano",
     name: "GPT-5 Nano (Free)",
@@ -424,6 +440,23 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
     provider: "anthropic",
     contextLength: 200000,
   },
+  freeModel("anthropic/claude-opus-4.5", "Claude Opus 4.5", "anthropic"),
+  freeModel(
+    "anthropic/claude-sonnet-4.5",
+    "Claude Sonnet 4.5",
+    "anthropic",
+  ),
+  freeModel(
+    "anthropic/claude-opus-4.6-fast",
+    "Claude Opus 4.6 Fast",
+    "anthropic",
+  ),
+  freeModel(
+    "anthropic/claude-sonnet-4.6",
+    "Claude Sonnet 4.6",
+    "anthropic",
+  ),
+  freeModel("anthropic/claude-opus-4.6", "Claude Opus 4.6", "anthropic"),
   {
     id: "openai/gpt-5.1-codex-mini",
     name: "GPT-5.1 Codex Mini (Free)",
@@ -436,6 +469,12 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
     provider: "openai",
     contextLength: 128000,
   },
+  freeModel("openai/gpt-5.4", "GPT-5.4", "openai"),
+  freeModel("openai/gpt-5.4-mini", "GPT-5.4 Mini", "openai"),
+  freeModel("openai/gpt-5.4-pro", "GPT-5.4 Pro", "openai"),
+  freeModel("openai/gpt-5.4-nano", "GPT-5.4 Nano", "openai"),
+  freeModel("openai/gpt-5.3-codex", "GPT-5.3 Codex", "openai"),
+  freeModel("openai/gpt-5.3-chat", "GPT-5.3 Chat", "openai"),
   {
     id: "moonshotai/kimi-k2-thinking",
     name: "Kimi K2 Thinking (Free)",
@@ -454,6 +493,18 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
     provider: "google",
     contextLength: 1048576,
   },
+  freeModel("z-ai/glm-4.6", "GLM 4.6", "z-ai", 200000),
+  freeModel(
+    "google/gemini-3.1-flash-lite-preview",
+    "Gemini 3.1 Flash Lite Preview",
+    "google",
+  ),
+  freeModel(
+    "google/gemini-3.1-pro-preview",
+    "Gemini 3.1 Pro Preview",
+    "google",
+  ),
+  freeModel("google/gemma-4-31b-it", "Gemma 4 31B Instruct", "google"),
   {
     id: "x-ai/grok-code-fast-1",
     name: "Grok Code Fast 1 (Free)",
@@ -490,6 +541,8 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
     provider: "xai",
     contextLength: 2000000,
   },
+  freeModel("x-ai/grok-4-fast", "Grok 4 Fast", "xai"),
+  freeModel("x-ai/grok-4.20", "Grok 4.20", "xai"),
   {
     id: "z-ai/glm-4.7",
     name: "GLM 4.7 (Free)",
@@ -508,6 +561,14 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
     provider: "minimax",
     contextLength: 128000,
   },
+  freeModel("minimax/minimax-m2.7", "MiniMax M2.7", "minimax"),
+  freeModel("qwen/qwen3.6-plus", "Qwen 3.6 Plus", "qwen"),
+  freeModel("qwen/qwen3.5-9b", "Qwen 3.5 9B", "qwen"),
+  freeModel("qwen/qwen3.5-35b-a3b", "Qwen 3.5 35B A3B", "qwen"),
+  freeModel("qwen/qwen3.5-27b", "Qwen 3.5 27B", "qwen"),
+  freeModel("qwen/qwen3.5-122b-a10b", "Qwen 3.5 122B A10B", "qwen"),
+  freeModel("qwen/qwen3.5-flash-02-23", "Qwen 3.5 Flash 02-23", "qwen"),
+  freeModel("qwen/qwen3-max-thinking", "Qwen 3 Max Thinking", "qwen"),
   // Mistral models
   {
     id: Model.MISTRAL_LARGE_LATEST,

@@ -9,7 +9,10 @@ import {
 } from "ai";
 import type { ChatV2Request } from "@/shared/chat-v2";
 import { createLlmModel } from "../../utils/chat-helpers";
-import { isMCPJamProvidedModel, isGuestAllowedModel } from "@/shared/types";
+import {
+  isMCPJamGuestAllowedModel,
+  isMCPJamProvidedModel,
+} from "@/shared/types";
 import type { ModelProvider } from "@/shared/types";
 import { getProductionGuestAuthHeader } from "../../utils/guest-auth.js";
 import { logger } from "../../utils/logger";
@@ -449,6 +452,22 @@ chatV2.post("/", async (c) => {
       return c.json({ error: "model is not supported" }, 400);
     }
 
+    const requestAuthHeader = c.req.header("authorization");
+    if (
+      modelDefinition.id &&
+      isMCPJamProvidedModel(modelDefinition.id) &&
+      !requestAuthHeader &&
+      !isMCPJamGuestAllowedModel(modelDefinition.id)
+    ) {
+      return c.json(
+        {
+          error:
+            "This MCPJam model is not available for guest access. Sign in to continue.",
+        },
+        403,
+      );
+    }
+
     let prepared;
     try {
       prepared = await prepareChatV2({
@@ -480,6 +499,8 @@ chatV2.post("/", async (c) => {
 
     // MCPJam-provided models: delegate to stream handler
     if (modelDefinition.id && isMCPJamProvidedModel(modelDefinition.id)) {
+      let authHeader = requestAuthHeader;
+
       if (!process.env.CONVEX_HTTP_URL) {
         return c.json(
           { error: "Server missing CONVEX_HTTP_URL configuration" },
@@ -489,19 +510,7 @@ chatV2.post("/", async (c) => {
 
       // Resolve auth header: use client-provided token (WorkOS) if present,
       // otherwise fetch a production guest token for guest-allowed models.
-      let authHeader = c.req.header("authorization");
-
       if (!authHeader) {
-        if (!isGuestAllowedModel(String(modelDefinition.id))) {
-          return c.json(
-            {
-              error:
-                "This MCPJam model is not available for guest access. Sign in to continue.",
-            },
-            403,
-          );
-        }
-
         try {
           authHeader = (await getProductionGuestAuthHeader()) ?? undefined;
         } catch {

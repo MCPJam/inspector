@@ -215,33 +215,87 @@ describe("web routes — chat-v2 guest mode", () => {
     );
   });
 
-  it("allows hosted guests to use MCPJam free-tier models beyond the previous guest subset", async () => {
-    const { app } = createWebTestApp();
-    const { token } = issueGuestToken();
+  it.each([
+    {
+      id: "openai/gpt-oss-120b",
+      provider: "openai",
+      name: "GPT-OSS 120B (Free)",
+    },
+    {
+      id: "openai/gpt-4o-mini",
+      provider: "openai",
+      name: "GPT-4o Mini",
+    },
+  ])(
+    "streams hosted guest chat for MCPJam guest model $id",
+    async ({ id, provider, name }) => {
+      const { app } = createWebTestApp();
+      const { token } = issueGuestToken();
 
-    const response = await postJson(
-      app,
-      "/api/web/chat-v2",
-      {
-        messages: [{ role: "user", parts: [{ type: "text", text: "hey" }] }],
-        model: {
-          id: "openai/gpt-oss-120b",
-          provider: "openai",
-          name: "GPT-OSS 120B (Free)",
+      const response = await postJson(
+        app,
+        "/api/web/chat-v2",
+        {
+          messages: [{ role: "user", parts: [{ type: "text", text: "hey" }] }],
+          model: { id, provider, name },
         },
-      },
-      token,
-    );
+        token,
+      );
 
-    expect(response.status).toBe(200);
-    expect(await response.text()).toBe("ok");
-    expect(handleMCPJamFreeChatModelMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        modelId: "openai/gpt-oss-120b",
-        authHeader: `Bearer ${token}`,
-      }),
-    );
-  });
+      expect(response.status).toBe(200);
+      expect(await response.text()).toBe("ok");
+      expect(handleMCPJamFreeChatModelMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          modelId: id,
+          authHeader: `Bearer ${token}`,
+          selectedServers: [],
+        }),
+      );
+    },
+  );
+
+  it.each([
+    {
+      id: "openai/gpt-5.4-pro",
+      provider: "openai",
+      name: "GPT-5.4 Pro (Free)",
+    },
+    {
+      id: "anthropic/claude-opus-4.6",
+      provider: "anthropic",
+      name: "Claude Opus 4.6 (Free)",
+    },
+    {
+      id: "google/gemini-3.1-pro-preview",
+      provider: "google",
+      name: "Gemini 3.1 Pro Preview (Free)",
+    },
+  ])(
+    "rejects gated MCPJam guest model $id before forwarding",
+    async ({ id, provider, name }) => {
+      const { app } = createWebTestApp();
+      const { token } = issueGuestToken();
+
+      const response = await postJson(
+        app,
+        "/api/web/chat-v2",
+        {
+          messages: [{ role: "user", parts: [{ type: "text", text: "hey" }] }],
+          model: { id, provider, name },
+        },
+        token,
+      );
+
+      const { status, data } = await expectJson<{
+        code: string;
+        message: string;
+      }>(response);
+      expect(status).toBe(403);
+      expect(data.code).toBe("FORBIDDEN");
+      expect(data.message).toContain("Sign in to continue.");
+      expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
+    },
+  );
 
   it("accepts a hosted guest token in development when local signing is disabled", async () => {
     process.env.NODE_ENV = "development";
