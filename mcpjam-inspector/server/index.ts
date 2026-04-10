@@ -97,6 +97,7 @@ import {
   ALLOWED_HOSTS,
 } from "./config";
 import "./types/hono"; // Type extensions
+import { initXAAIdpKeyPair } from "./services/xaa-idp-keypair";
 
 // Utility function to extract MCP server config from environment variables
 function getMCPConfigFromEnv() {
@@ -187,6 +188,7 @@ warnOnConvexDevMisconfiguration(loadedEnv);
 
 // Generate session token for API authentication
 generateSessionToken();
+initXAAIdpKeyPair();
 
 startGuestAuthProvisioningInBackground();
 const app = new Hono().onError((err, c) => {

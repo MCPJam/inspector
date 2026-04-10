@@ -208,6 +208,7 @@ describe("getHostedNavigationSections", () => {
             billingFeature: "evals",
           },
           { title: "OAuth Debugger", url: "#oauth-flow", icon: FakeIcon },
+          { title: "XAA Debugger", url: "#xaa-flow", icon: FakeIcon },
         ],
       },
     ]);
@@ -230,6 +231,11 @@ describe("getHostedNavigationSections", () => {
       {
         title: "OAuth Debugger",
         url: "#oauth-flow",
+        icon: FakeIcon,
+      },
+      {
+        title: "XAA Debugger",
+        url: "#xaa-flow",
         icon: FakeIcon,
       },
     ]);

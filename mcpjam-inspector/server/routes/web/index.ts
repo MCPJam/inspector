@@ -11,6 +11,7 @@ import sandboxes from "./sandboxes.js";
 import apps from "./apps.js";
 import evals from "./evals.js";
 import oauthWeb from "./oauth.js";
+import xaaWeb from "./xaa.js";
 import exporter from "./export.js";
 import guestSession from "./guest-session.js";
 import chatHistory from "./chat-history.js";
@@ -48,6 +49,7 @@ web.route("/export", exporter);
 web.route("/chat-v2", chatV2);
 web.route("/apps", apps);
 web.route("/oauth", oauthWeb);
+web.route("/xaa", xaaWeb);
 web.route("/guest-session", guestSession);
 web.route("/chat-history", chatHistory);
 

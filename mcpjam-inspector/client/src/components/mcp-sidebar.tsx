@@ -19,6 +19,7 @@ import {
   GitBranch,
   Puzzle,
   UserPlus,
+  ShieldCheck,
 } from "lucide-react";
 import { usePostHog, useFeatureFlagEnabled } from "posthog-js/react";
 import { standardEventProps } from "@/lib/PosthogUtils";
@@ -249,6 +250,11 @@ const navigationSections: NavSection[] = [
         title: "OAuth Debugger",
         url: "#oauth-flow",
         icon: Workflow,
+      },
+      {
+        title: "XAA Debugger",
+        url: "#xaa-flow",
+        icon: ShieldCheck,
       },
       // {
       //   title: "Tracing",
