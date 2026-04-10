@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { EMPTY_OAUTH_FLOW_STATE, type OAuthFlowState } from "@mcpjam/sdk/browser";
+import {
+  EMPTY_OAUTH_FLOW_STATE,
+  type OAuthFlowState,
+} from "@mcpjam/sdk/browser";
 import { createInspectorOAuthStateMachine } from "../debug-state-machine-adapter";
 
 vi.mock("@/lib/session-token", () => ({
