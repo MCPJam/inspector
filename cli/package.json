@@ -15,7 +15,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@mcpjam/sdk": "^0.8.16",
+    "@mcpjam/sdk": "^0.9.0",
     "commander": "^12.1.0"
   },
   "devDependencies": {
