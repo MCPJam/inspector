@@ -220,6 +220,23 @@ describe("listTools", () => {
     expect(result.tools).toEqual([]);
     expect(result.nextCursor).toBe("next-page");
   });
+
+  it("does not leak extra protocol fields", async () => {
+    const manager = createMockManager({
+      listTools: jest.fn().mockResolvedValue({
+        tools: [{ name: "echo" }],
+        nextCursor: "next-page",
+        _meta: { protocol: "extra" },
+      }),
+    });
+
+    const result = await listTools(manager, { serverId: "srv" });
+
+    expect(result).toEqual({
+      tools: [{ name: "echo" }],
+      nextCursor: "next-page",
+    });
+  });
 });
 
 // ── withEphemeralClient ─────────────────────────────────────────────

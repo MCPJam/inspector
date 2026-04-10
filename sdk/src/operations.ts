@@ -151,7 +151,6 @@ export async function listTools(
     params.cursor ? { cursor: params.cursor } : undefined,
   );
   return {
-    ...result,
     tools: result.tools ?? [],
     nextCursor: result.nextCursor,
   };
