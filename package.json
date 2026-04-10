@@ -1,4 +1,7 @@
 {
+  "scripts": {
+    "test": "npm --prefix ./sdk test && npm --prefix ./cli test && npm --prefix ./mcpjam-inspector test"
+  },
   "devDependencies": {
     "@types/dagre": "^0.7.54"
   }

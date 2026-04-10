@@ -1,7 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 
-vi.mock("@mcpjam/sdk", () => {
+vi.mock("@mcpjam/sdk", async () => {
+  const actual = await vi.importActual<typeof import("@mcpjam/sdk")>(
+    "@mcpjam/sdk",
+  );
+
   class MockMCPClientManager {
     private readonly rpcLogger?: (event: {
       direction: "send" | "receive";
@@ -72,6 +76,7 @@ vi.mock("@mcpjam/sdk", () => {
   }
 
   return {
+    ...actual,
     MCPClientManager: MockMCPClientManager,
     isMCPAuthError: vi.fn().mockReturnValue(false),
   };
