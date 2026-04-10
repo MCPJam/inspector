@@ -9,7 +9,7 @@ import {
 } from "ai";
 import type { ChatV2Request } from "@/shared/chat-v2";
 import { createLlmModel } from "../../utils/chat-helpers";
-import { isMCPJamProvidedModel } from "@/shared/types";
+import { isMCPJamProvidedModel, isGuestAllowedModel } from "@/shared/types";
 import type { ModelProvider } from "@/shared/types";
 import { getProductionGuestAuthHeader } from "../../utils/guest-auth.js";
 import { logger } from "../../utils/logger";
@@ -115,6 +115,22 @@ function toLiveChatTraceUsage(
   return Object.keys(next).length > 0 ? next : undefined;
 }
 
+function toPersistedUsage(
+  usage: LiveChatTraceUsage | undefined,
+): { inputTokens: number; outputTokens: number } | undefined {
+  if (
+    typeof usage?.inputTokens !== "number" ||
+    typeof usage.outputTokens !== "number"
+  ) {
+    return undefined;
+  }
+
+  return {
+    inputTokens: usage.inputTokens,
+    outputTokens: usage.outputTokens,
+  };
+}
+
 function collectStepToolCallIds(
   toolCalls: Array<{ toolCallId?: string } | undefined> | null | undefined,
 ): Set<string> {
@@ -215,6 +231,7 @@ function streamDirectChatWithLiveTrace(options: {
             modelId,
             promptIndex: traceTurn.promptIndex,
           });
+          return {};
         },
         onChunk: async ({ chunk }) => {
           if (chunk.type === "text-delta") {
@@ -366,7 +383,9 @@ function streamDirectChatWithLiveTrace(options: {
               finishReason: event.finishReason,
             });
           } catch (error) {
-            logger.warn("[mcp/chat-v2] onFinish ingestion error", error);
+            logger.warn("[mcp/chat-v2] onFinish ingestion error", {
+              error: error instanceof Error ? error.message : String(error),
+            });
           }
         },
       });
@@ -381,7 +400,7 @@ function streamDirectChatWithLiveTrace(options: {
             };
           }
         },
-        onError: writer.onError,
+        onError: (error) => formatStreamError(error, provider),
       })) {
         writer.write(chunk);
       }
@@ -427,6 +446,7 @@ chatV2.post("/", async (c) => {
         temperature,
         requireToolApproval,
         customProviders: body.customProviders,
+        includeMcpToolInventory: true,
       });
     } catch (error) {
       // prepareChatV2 throws on Anthropic validation errors — return 400.
@@ -460,6 +480,16 @@ chatV2.post("/", async (c) => {
       let authHeader = c.req.header("authorization");
 
       if (!authHeader) {
+        if (!isGuestAllowedModel(String(modelDefinition.id))) {
+          return c.json(
+            {
+              error:
+                "This MCPJam model is not available for guest access. Sign in to continue.",
+            },
+            403,
+          );
+        }
+
         try {
           authHeader = (await getProductionGuestAuthHeader()) ?? undefined;
         } catch {
@@ -479,6 +509,8 @@ chatV2.post("/", async (c) => {
       const modelMessages = await convertToModelMessages(messages);
       const sessionStartedAt = Date.now();
 
+      const chatSessionId = body.chatSessionId;
+
       return handleMCPJamFreeChatModel({
         messages: modelMessages as ModelMessage[],
         modelId: String(modelDefinition.id),
@@ -489,17 +521,26 @@ chatV2.post("/", async (c) => {
         mcpClientManager,
         selectedServers,
         requireToolApproval,
-        onConversationComplete: body.chatSessionId
+        onConversationComplete: chatSessionId
           ? async (fullHistory) => {
               await persistChatSessionToConvex({
-                chatSessionId: body.chatSessionId,
+                chatSessionId,
                 modelId: String(modelDefinition.id),
                 modelSource: "mcpjam",
                 sourceType: "direct",
+                directVisibility: body.directVisibility,
                 authHeader,
                 sessionMessages: fullHistory,
                 startedAt: sessionStartedAt,
                 lastActivityAt: Date.now(),
+                ...(body.workspaceId ? { workspaceId: body.workspaceId } : {}),
+                resumeConfig: {
+                  systemPrompt,
+                  temperature,
+                  requireToolApproval,
+                  selectedServers,
+                },
+                expectedVersion: body.expectedVersion,
               });
             }
           : undefined,
@@ -521,6 +562,7 @@ chatV2.post("/", async (c) => {
 
     const streamStartedAt = Date.now();
     const authHeader = c.req.header("authorization");
+    const chatSessionId = body.chatSessionId;
 
     const scrubbedModelMessages = scrubMessages(
       modelMessages as ModelMessage[],
@@ -534,39 +576,44 @@ chatV2.post("/", async (c) => {
       systemPrompt: enhancedSystemPrompt,
       temperature: resolvedTemperature,
       tools: allTools as ToolSet,
-      onPersist: async ({
-        responseMessages,
-        assistantText,
-        toolCalls,
-        toolResults,
-        usage,
-        finishReason,
-      }) => {
-        await persistChatSessionToConvex({
-          chatSessionId: body.chatSessionId,
-          modelId: String(modelDefinition.id),
-          modelSource: "byok",
-          sourceType: "direct",
-          messages: modelMessages as ModelMessage[],
-          systemPrompt: enhancedSystemPrompt,
-          ...(responseMessages.length > 0 ? { responseMessages } : {}),
-          assistantText,
-          toolCalls,
-          toolResults,
-          ...(usage
-            ? {
-                usage: {
-                  inputTokens: usage.inputTokens,
-                  outputTokens: usage.outputTokens,
-                },
-              }
-            : {}),
-          finishReason,
-          authHeader,
-          startedAt: streamStartedAt,
-          lastActivityAt: Date.now(),
-        });
-      },
+      onPersist: chatSessionId
+        ? async ({
+            responseMessages,
+            assistantText,
+            toolCalls,
+            toolResults,
+            usage,
+            finishReason,
+          }) => {
+            const persistedUsage = toPersistedUsage(usage);
+            await persistChatSessionToConvex({
+              chatSessionId,
+              modelId: String(modelDefinition.id),
+              modelSource: "byok",
+              sourceType: "direct",
+              directVisibility: body.directVisibility,
+              messages: modelMessages as ModelMessage[],
+              systemPrompt: enhancedSystemPrompt,
+              ...(responseMessages.length > 0 ? { responseMessages } : {}),
+              assistantText,
+              toolCalls,
+              toolResults,
+              ...(persistedUsage ? { usage: persistedUsage } : {}),
+              finishReason,
+              authHeader,
+              startedAt: streamStartedAt,
+              lastActivityAt: Date.now(),
+              ...(body.workspaceId ? { workspaceId: body.workspaceId } : {}),
+              resumeConfig: {
+                systemPrompt,
+                temperature,
+                requireToolApproval,
+                selectedServers,
+              },
+              expectedVersion: body.expectedVersion,
+            });
+          }
+        : undefined,
     });
   } catch (error) {
     logger.error("[mcp/chat-v2] failed to process chat request", error);

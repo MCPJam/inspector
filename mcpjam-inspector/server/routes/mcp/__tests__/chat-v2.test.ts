@@ -8,12 +8,14 @@ import {
 } from "./helpers/index.js";
 import type { Hono } from "hono";
 import { APICallError } from "@ai-sdk/provider";
+import type { ModelMessage } from "ai";
 
 // Track stream events for testing
 let capturedStreamEvents: any[] = [];
 let mockWriter: { write: ReturnType<typeof vi.fn> };
 let lastStreamExecution: Promise<void> | null = null;
 let capturedCreateUiStreamOnError: ((error: unknown) => string) | undefined;
+type ErrorResponse = { error: string };
 
 const buildSsePayload = (events: any[]) =>
   `${events
@@ -144,11 +146,10 @@ vi.mock("../../../utils/chat-helpers", async () => {
     typeof import("../../../utils/chat-helpers")
   >("../../../utils/chat-helpers");
   return {
+    ...actual,
     createLlmModel: vi.fn().mockReturnValue({}),
     scrubMcpAppsToolResultsForBackend: vi.fn((messages) => messages),
     scrubChatGPTAppsToolResultsForBackend: vi.fn((messages) => messages),
-    isAnthropicCompatibleModel: actual.isAnthropicCompatibleModel,
-    getInvalidAnthropicToolNames: actual.getInvalidAnthropicToolNames,
   };
 });
 
@@ -156,6 +157,7 @@ vi.mock("../../../utils/chat-helpers", async () => {
 vi.mock("@/shared/types", () => ({
   isGPT5Model: vi.fn().mockReturnValue(false),
   isMCPJamProvidedModel: vi.fn().mockReturnValue(false),
+  isGuestAllowedModel: vi.fn().mockReturnValue(true),
 }));
 
 vi.mock("../../../utils/guest-auth.js", () => ({
@@ -198,7 +200,7 @@ describe("POST /api/mcp/chat-v2", () => {
       const res = await postJson(app, "/api/mcp/chat-v2", {
         model: { id: "gpt-4", provider: "openai" },
       });
-      const { status, data } = await expectJson(res);
+      const { status, data } = await expectJson<ErrorResponse>(res);
 
       expect(status).toBe(400);
       expect(data.error).toBe("messages are required");
@@ -209,7 +211,7 @@ describe("POST /api/mcp/chat-v2", () => {
         messages: [],
         model: { id: "gpt-4", provider: "openai" },
       });
-      const { status, data } = await expectJson(res);
+      const { status, data } = await expectJson<ErrorResponse>(res);
 
       expect(status).toBe(400);
       expect(data.error).toBe("messages are required");
@@ -220,7 +222,7 @@ describe("POST /api/mcp/chat-v2", () => {
         messages: "not an array",
         model: { id: "gpt-4", provider: "openai" },
       });
-      const { status, data } = await expectJson(res);
+      const { status, data } = await expectJson<ErrorResponse>(res);
 
       expect(status).toBe(400);
       expect(data.error).toBe("messages are required");
@@ -230,7 +232,7 @@ describe("POST /api/mcp/chat-v2", () => {
       const res = await postJson(app, "/api/mcp/chat-v2", {
         messages: [{ role: "user", content: "Hello" }],
       });
-      const { status, data } = await expectJson(res);
+      const { status, data } = await expectJson<ErrorResponse>(res);
 
       expect(status).toBe(400);
       expect(data.error).toBe("model is not supported");
@@ -252,7 +254,7 @@ describe("POST /api/mcp/chat-v2", () => {
         },
         apiKey: "test-key",
       });
-      const { status, data } = await expectJson(res);
+      const { status, data } = await expectJson<ErrorResponse>(res);
 
       expect(status).toBe(400);
       expect(data.error).toContain("Invalid tool name(s) for Anthropic");
@@ -286,7 +288,7 @@ describe("POST /api/mcp/chat-v2", () => {
           },
         ],
       });
-      const { status, data } = await expectJson(res);
+      const { status, data } = await expectJson<ErrorResponse>(res);
 
       expect(status).toBe(400);
       expect(data.error).toContain("Invalid tool name(s) for Anthropic");
@@ -430,7 +432,12 @@ describe("POST /api/mcp/chat-v2", () => {
 
       expect(streamText).toHaveBeenCalledWith(
         expect.objectContaining({
-          system: "You are a helpful assistant",
+          system: expect.stringContaining("You are a helpful assistant"),
+        }),
+      );
+      expect(streamText).toHaveBeenCalledWith(
+        expect.objectContaining({
+          system: expect.stringContaining("## Connected MCP Tools"),
         }),
       );
     });
@@ -447,7 +454,7 @@ describe("POST /api/mcp/chat-v2", () => {
         model: { id: "gpt-4", provider: "openai" },
         apiKey: "test-key",
       });
-      const { status, data } = await expectJson(res);
+      const { status, data } = await expectJson<ErrorResponse>(res);
 
       expect(status).toBe(500);
       expect(data.error).toBe("Unexpected error");
@@ -728,6 +735,7 @@ describe("POST /api/mcp/chat-v2", () => {
           messages: [{ role: "user", content: "Hello" }],
           model: { id: "google/gemini-2.5-flash", provider: "google" },
           chatSessionId: "chat-session-1",
+          directVisibility: "workspace",
         });
 
         expect(res.status).toBe(200);
@@ -751,6 +759,7 @@ describe("POST /api/mcp/chat-v2", () => {
           modelId: "google/gemini-2.5-flash",
           modelSource: "mcpjam",
           sourceType: "direct",
+          directVisibility: "workspace",
         });
         expect(body.sessionMessages).toEqual([
           { role: "user", content: "Hello" },
@@ -811,47 +820,6 @@ describe("POST /api/mcp/chat-v2", () => {
         global.fetch = originalFetch;
       }
     });
-
-    it("does NOT reject MCPJam models that are outside the old guest-allowed list", async () => {
-      const { isMCPJamProvidedModel } = await import("@/shared/types");
-      vi.mocked(isMCPJamProvidedModel).mockReturnValue(true);
-
-      const originalFetch = global.fetch;
-      global.fetch = vi
-        .fn()
-        .mockImplementation(async (input: RequestInfo | URL) => {
-          const url = String(input);
-          if (url === "https://test-convex.example.com/stream") {
-            return createSseResponse([
-              {
-                type: "finish",
-                finishReason: "stop",
-                messageMetadata: {
-                  inputTokens: 1,
-                  outputTokens: 1,
-                  totalTokens: 2,
-                },
-              },
-            ]);
-          }
-          if (url === "https://test-convex.example.com/ingest-chat") {
-            return new Response(null, { status: 200 });
-          }
-          throw new Error(`Unexpected fetch URL: ${url}`);
-        });
-
-      try {
-        const res = await postJson(app, "/api/mcp/chat-v2", {
-          messages: [{ role: "user", content: "Hello" }],
-          model: { id: "openai/gpt-4o-mini", provider: "openai" },
-        });
-
-        // Should succeed, not return 403
-        expect(res.status).toBe(200);
-      } finally {
-        global.fetch = originalFetch;
-      }
-    });
   });
 
   describe("unresolved tool calls from aborted requests (MCPJam models)", () => {
@@ -879,23 +847,23 @@ describe("POST /api/mcp/chat-v2", () => {
         hasUnresolvedCallCount++;
         return hasUnresolvedCallCount === 1;
       });
-      vi.mocked(executeToolCallsFromMessages).mockImplementation(
-        async (messages: any[]) => {
-          // Simulate adding tool result to messages
-          const toolResultMsg = {
-            role: "tool",
-            content: [
-              {
-                type: "tool-result",
-                toolCallId: "orphaned-call-123",
-                output: { type: "json", value: { result: "executed" } },
-              },
-            ],
-          };
-          messages.push(toolResultMsg);
-          return [toolResultMsg];
-        },
-      );
+      vi.mocked(executeToolCallsFromMessages).mockImplementation((async (
+        messages: any[],
+      ) => {
+        // Simulate adding tool result to messages
+        const toolResultMsg = {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "orphaned-call-123",
+              output: { type: "json", value: { result: "executed" } },
+            },
+          ],
+        } as unknown as ModelMessage;
+        messages.push(toolResultMsg);
+        return [toolResultMsg];
+      }) as any);
 
       // Mock fetch for CONVEX_HTTP_URL - return fresh response each time
       const originalFetch = global.fetch;
@@ -979,7 +947,7 @@ describe("POST /api/mcp/chat-v2", () => {
       // No unresolved tool calls - all are resolved
       vi.mocked(hasUnresolvedToolCalls).mockReturnValue(false);
       vi.mocked(executeToolCallsFromMessages).mockImplementation(
-        async () => {},
+        (async () => []) as any,
       );
 
       // Mock fetch for CONVEX_HTTP_URL
@@ -1051,31 +1019,33 @@ describe("POST /api/mcp/chat-v2", () => {
         hasUnresolvedCallCount++;
         return hasUnresolvedCallCount === 1;
       });
-      vi.mocked(executeToolCallsFromMessages).mockImplementation(
-        async (messages: any[]) => {
-          // Simulate adding tool results for both calls
-          messages.push({
-            role: "tool",
-            content: [
-              {
-                type: "tool-result",
-                toolCallId: "call-1",
-                output: { type: "json", value: { result: "result1" } },
-              },
-            ],
-          });
-          messages.push({
-            role: "tool",
-            content: [
-              {
-                type: "tool-result",
-                toolCallId: "call-2",
-                output: { type: "json", value: { result: "result2" } },
-              },
-            ],
-          });
-        },
-      );
+      vi.mocked(executeToolCallsFromMessages).mockImplementation((async (
+        messages: any[],
+      ) => {
+        // Simulate adding tool results for both calls
+        const firstToolResult = {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "call-1",
+              output: { type: "json", value: { result: "result1" } },
+            },
+          ],
+        } as unknown as ModelMessage;
+        const secondToolResult = {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "call-2",
+              output: { type: "json", value: { result: "result2" } },
+            },
+          ],
+        } as unknown as ModelMessage;
+        messages.push(firstToolResult, secondToolResult);
+        return [firstToolResult, secondToolResult];
+      }) as any);
 
       // Mock fetch for CONVEX_HTTP_URL - return fresh response each time
       const originalFetch = global.fetch;
@@ -1159,32 +1129,32 @@ describe("POST /api/mcp/chat-v2", () => {
         hasUnresolvedCallCount++;
         return hasUnresolvedCallCount === 1;
       });
-      vi.mocked(executeToolCallsFromMessages).mockImplementation(
-        async (messages: any[]) => {
-          const msg1 = {
-            role: "tool",
-            content: [
-              {
-                type: "tool-result",
-                toolCallId: "batch-call-1",
-                output: { type: "json", value: { stops: ["Berryessa"] } },
-              },
-            ],
-          };
-          const msg2 = {
-            role: "tool",
-            content: [
-              {
-                type: "tool-result",
-                toolCallId: "batch-call-2",
-                output: { type: "json", value: { stops: ["Montgomery"] } },
-              },
-            ],
-          };
-          messages.push(msg1, msg2);
-          return [msg1, msg2];
-        },
-      );
+      vi.mocked(executeToolCallsFromMessages).mockImplementation((async (
+        messages: any[],
+      ) => {
+        const msg1 = {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "batch-call-1",
+              output: { type: "json", value: { stops: ["Berryessa"] } },
+            },
+          ],
+        } as unknown as ModelMessage;
+        const msg2 = {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "batch-call-2",
+              output: { type: "json", value: { stops: ["Montgomery"] } },
+            },
+          ],
+        } as unknown as ModelMessage;
+        messages.push(msg1, msg2);
+        return [msg1, msg2];
+      }) as any);
 
       const originalFetch = global.fetch;
       let fetchCallCount = 0;
@@ -1287,23 +1257,23 @@ describe("POST /api/mcp/chat-v2", () => {
         // Second call: false (tool result added, no more unresolved)
         return hasUnresolvedCallCount === 1;
       });
-      vi.mocked(executeToolCallsFromMessages).mockImplementation(
-        async (messages: any[]) => {
-          // Simulate adding tool result for the new tool call
-          const toolResultMsg = {
-            role: "tool",
-            content: [
-              {
-                type: "tool-result",
-                toolCallId: "new-call-from-step",
-                output: { type: "json", value: { result: "done" } },
-              },
-            ],
-          };
-          messages.push(toolResultMsg);
-          return [toolResultMsg];
-        },
-      );
+      vi.mocked(executeToolCallsFromMessages).mockImplementation((async (
+        messages: any[],
+      ) => {
+        // Simulate adding tool result for the new tool call
+        const toolResultMsg = {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "new-call-from-step",
+              output: { type: "json", value: { result: "done" } },
+            },
+          ],
+        } as unknown as ModelMessage;
+        messages.push(toolResultMsg);
+        return [toolResultMsg];
+      }) as any);
 
       const originalFetch = global.fetch;
       let fetchCallCount = 0;
@@ -1371,37 +1341,37 @@ describe("POST /api/mcp/chat-v2", () => {
         return unresolvedChecks <= 2;
       });
 
-      vi.mocked(executeToolCallsFromMessages).mockImplementation(
-        async (messages: any[]) => {
-          const latestAssistantWithToolCall = [...messages]
-            .reverse()
-            .find(
-              (msg) =>
-                msg?.role === "assistant" &&
-                Array.isArray(msg.content) &&
-                msg.content.some((part: any) => part?.type === "tool-call"),
-            );
-
-          const latestToolCall = latestAssistantWithToolCall?.content?.find(
-            (part: any) => part?.type === "tool-call",
+      vi.mocked(executeToolCallsFromMessages).mockImplementation((async (
+        messages: any[],
+      ) => {
+        const latestAssistantWithToolCall = [...messages]
+          .reverse()
+          .find(
+            (msg) =>
+              msg?.role === "assistant" &&
+              Array.isArray(msg.content) &&
+              msg.content.some((part: any) => part?.type === "tool-call"),
           );
 
-          if (!latestToolCall?.toolCallId) return [];
+        const latestToolCall = latestAssistantWithToolCall?.content?.find(
+          (part: any) => part?.type === "tool-call",
+        );
 
-          const toolResultMsg = {
-            role: "tool",
-            content: [
-              {
-                type: "tool-result",
-                toolCallId: latestToolCall.toolCallId,
-                output: { type: "json", value: { ok: true } },
-              },
-            ],
-          };
-          messages.push(toolResultMsg);
-          return [toolResultMsg];
-        },
-      );
+        if (!latestToolCall?.toolCallId) return [];
+
+        const toolResultMsg = {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: latestToolCall.toolCallId,
+              output: { type: "json", value: { ok: true } },
+            },
+          ],
+        } as unknown as ModelMessage;
+        messages.push(toolResultMsg);
+        return [toolResultMsg];
+      }) as any);
 
       const originalFetch = global.fetch;
       let fetchCallCount = 0;

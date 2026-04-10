@@ -1014,6 +1014,19 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
     );
   }
 
+  if (sortedViews.length === 0) {
+    return (
+      <div className="p-6">
+        <EmptyState
+          icon={Layers}
+          title="No saved views yet"
+          description="Save tool executions from Chat or App Builder to create reusable views."
+          className="h-[calc(100vh-200px)]"
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="h-full flex flex-col overflow-hidden">
       <ResizablePanelGroup
@@ -1022,7 +1035,7 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
       >
         {/* Left Panel - Views List or Editor */}
         <ResizablePanel
-          defaultSize={40}
+          defaultSize={55}
           minSize={30}
           maxSize={70}
           className="border-r bg-muted/30 flex flex-col"
@@ -1072,7 +1085,7 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
 
         {/* Right Panel - UI Preview or Empty State */}
         <ResizablePanel
-          defaultSize={60}
+          defaultSize={50}
           className="flex flex-col overflow-hidden"
         >
           {!selectedView ? (
