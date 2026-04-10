@@ -38,14 +38,14 @@ export function webError(
   code: ErrorCode,
   message: string,
   details?: Record<string, unknown>,
-  extras?: object,
+  extras?: Record<string, unknown>,
 ) {
   return c.json(
     {
+      ...(extras ?? {}),
       code,
       message,
       ...(details ? { details } : {}),
-      ...(extras ?? {}),
     },
     status,
   );

@@ -1,5 +1,6 @@
 import type { UIMessageChunk } from "ai";
 import type { RpcLogger } from "@mcpjam/sdk";
+import { logger } from "../../utils/logger.js";
 import type {
   HostedRpcLogEvent,
   HostedRpcLogsEnvelope,
@@ -135,8 +136,17 @@ export class HostedRpcLogCollector {
     }
 
     while (this.streamedCount < this.logs.length) {
-      writeHostedRpcLogDataPart(this.writer, this.logs[this.streamedCount]);
-      this.streamedCount += 1;
+      try {
+        writeHostedRpcLogDataPart(this.writer, this.logs[this.streamedCount]);
+        this.streamedCount += 1;
+      } catch (error) {
+        logger.warn(
+          "Hosted RPC log stream write failed; falling back to envelope delivery",
+          { error },
+        );
+        this.writer = null;
+        return;
+      }
     }
   }
 }

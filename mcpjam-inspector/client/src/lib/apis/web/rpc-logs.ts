@@ -21,25 +21,26 @@ export function stripHostedRpcLogs<T>(payload: T): {
   payload: T;
   rpcLogs: HostedRpcLogEvent[];
 } {
-  const rpcLogs = extractEnvelopeLogs(payload);
-
-  if (
-    rpcLogs.length === 0 ||
-    !payload ||
-    typeof payload !== "object" ||
-    Array.isArray(payload)
-  ) {
-    return { payload, rpcLogs };
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return { payload, rpcLogs: [] };
   }
 
-  const { _rpcLogs: _discarded, ...rest } = payload as Record<string, unknown>;
+  const candidate = payload as Record<string, unknown>;
+  if (!("_rpcLogs" in candidate)) {
+    return { payload, rpcLogs: [] };
+  }
+
+  const rpcLogs = Array.isArray(candidate._rpcLogs)
+    ? candidate._rpcLogs.filter(isHostedRpcLogEvent)
+    : [];
+  const { _rpcLogs: _discarded, ...rest } = candidate;
   return {
     payload: rest as T,
     rpcLogs,
   };
 }
 
-export function ingestHostedRpcLogsFromPayload(payload: unknown): void {
+function ingestHostedRpcLogsFromPayload(payload: unknown): void {
   ingestHostedRpcLogs(extractEnvelopeLogs(payload));
 }
 

@@ -1,5 +1,6 @@
 import { authFetch } from "@/lib/session-token";
-import { ingestHostedRpcLogsFromPayload, stripHostedRpcLogs } from "./rpc-logs";
+import { stripHostedRpcLogs } from "./rpc-logs";
+import { ingestHostedRpcLogs } from "@/stores/traffic-log-store";
 
 export class WebApiError extends Error {
   code: string | null;
@@ -30,8 +31,8 @@ export async function webPost<TRequest, TResponse>(
     // ignored
   }
 
-  const { payload: sanitizedPayload } = stripHostedRpcLogs(body);
-  ingestHostedRpcLogsFromPayload(body);
+  const { payload: sanitizedPayload, rpcLogs } = stripHostedRpcLogs(body);
+  ingestHostedRpcLogs(rpcLogs);
 
   if (!response.ok) {
     const errBody = sanitizedPayload as Record<string, unknown> | null;

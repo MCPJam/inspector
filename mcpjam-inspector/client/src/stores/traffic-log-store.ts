@@ -72,19 +72,6 @@ export const useTrafficLogStore = create<TrafficLogState>((set) => ({
   clear: () => set({ items: [], mcpServerItems: [] }),
 }));
 
-function extractRpcMethod(message: unknown): string {
-  const msg = message as {
-    method?: string;
-    result?: unknown;
-    error?: unknown;
-  };
-
-  if (typeof msg?.method === "string") return msg.method;
-  if (msg?.result !== undefined) return "result";
-  if (msg?.error !== undefined) return "error";
-  return "unknown";
-}
-
 export function ingestHostedRpcLogs(logs: HostedRpcLogEvent[]): void {
   if (!Array.isArray(logs) || logs.length === 0) {
     return;
@@ -96,7 +83,7 @@ export function ingestHostedRpcLogs(logs: HostedRpcLogEvent[]): void {
       serverId: log.serverId,
       serverName: log.serverName,
       direction: log.direction.toUpperCase(),
-      method: extractRpcMethod(log.message),
+      method: extractMethod(log.message),
       timestamp: log.timestamp,
       payload: log.message,
     });
@@ -143,7 +130,7 @@ export function subscribeToRpcStream(): () => void {
           serverId: typeof serverId === "string" ? serverId : "unknown",
           direction:
             typeof direction === "string" ? direction.toUpperCase() : "",
-          method: extractRpcMethod(message),
+          method: extractMethod(message),
           timestamp: timestamp ?? new Date().toISOString(),
           payload: message,
         });

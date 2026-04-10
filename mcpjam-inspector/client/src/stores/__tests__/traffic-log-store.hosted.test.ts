@@ -17,11 +17,16 @@ describe("traffic-log-store hosted mode", () => {
 
   it("does not create the local rpc EventSource subscription in hosted mode", () => {
     const eventSourceSpy = vi.fn();
+    const originalEventSource = globalThis.EventSource;
     Object.assign(globalThis, { EventSource: eventSourceSpy });
 
-    const unsubscribe = subscribeToRpcStream();
+    try {
+      const unsubscribe = subscribeToRpcStream();
 
-    expect(eventSourceSpy).not.toHaveBeenCalled();
-    expect(typeof unsubscribe).toBe("function");
+      expect(eventSourceSpy).not.toHaveBeenCalled();
+      expect(typeof unsubscribe).toBe("function");
+    } finally {
+      Object.assign(globalThis, { EventSource: originalEventSource });
+    }
   });
 });
