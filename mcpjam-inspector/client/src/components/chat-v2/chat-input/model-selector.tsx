@@ -1,5 +1,7 @@
 import { useMemo, useState } from "react";
 import { Check, X } from "lucide-react";
+import { usePostHog } from "posthog-js/react";
+import { standardEventProps } from "@/lib/PosthogUtils";
 import { Button } from "@/components/ui/button";
 import {
   Popover,
@@ -152,6 +154,19 @@ export function ModelSelector({
   const [hoveredLockedModelId, setHoveredLockedModelId] = useState<string | null>(
     null,
   );
+  const posthog = usePostHog();
+  const handleOpenChange = (nextOpen: boolean) => {
+    if (nextOpen && !isOpen) {
+      posthog.capture(
+        "chat_model_selector_clicked",
+        standardEventProps("chat_input"),
+      );
+    }
+    setIsOpen(nextOpen);
+    if (!nextOpen) {
+      setHoveredLockedModelId(null);
+    }
+  };
 
   const selectedModelsData =
     selectedModels && selectedModels.length > 0
@@ -419,15 +434,7 @@ export function ModelSelector({
 
   return (
     <>
-      <Popover
-        open={isOpen}
-        onOpenChange={(nextOpen) => {
-          setIsOpen(nextOpen);
-          if (!nextOpen) {
-            setHoveredLockedModelId(null);
-          }
-        }}
-      >
+      <Popover open={isOpen} onOpenChange={handleOpenChange}>
         <Tooltip>
           <TooltipTrigger asChild>
             <PopoverTrigger asChild>
