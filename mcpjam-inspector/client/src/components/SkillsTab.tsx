@@ -18,6 +18,7 @@ import {
   Eye,
 } from "lucide-react";
 import { usePostHog } from "posthog-js/react";
+import { standardEventProps } from "@/lib/PosthogUtils";
 import { EmptyState } from "./ui/empty-state";
 import {
   listSkills,
@@ -188,7 +189,10 @@ export function SkillsTab() {
     setIsDeleting(true);
     try {
       await deleteSkill(skillToDelete);
-      posthog.capture("skill_deleted", { skill_name: skillToDelete });
+      posthog.capture("skill_deleted", {
+        ...standardEventProps("skills_tab"),
+        skill_name: skillToDelete,
+      });
       // Refresh skills list
       await fetchSkills();
       // Clear selection if deleted skill was selected
@@ -222,7 +226,10 @@ export function SkillsTab() {
     setSelectedFilePath("SKILL.md");
     setRawMode(false);
     setDescriptionExpanded(false);
-    posthog.capture("skill_viewed", { skill_name: name });
+    posthog.capture("skill_viewed", {
+      ...standardEventProps("skills_tab"),
+      skill_name: name,
+    });
     fetchFileContent(name, "SKILL.md");
   };
 
