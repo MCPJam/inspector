@@ -225,3 +225,25 @@ export type {
   OAuthConformanceConfig,
   StepResult,
 } from "./oauth-conformance/index.js";
+
+// MCP Operations (pure functions for common MCP workflows)
+export {
+  listResources,
+  readResource,
+  listPrompts,
+  listPromptsMulti,
+  getPrompt,
+  listTools,
+  withEphemeralClient,
+  withDisposableManager,
+} from "./operations.js";
+
+export type {
+  ListResourcesParams,
+  ReadResourceParams,
+  ListPromptsParams,
+  ListPromptsMultiParams,
+  GetPromptParams,
+  ListToolsParams,
+  WithEphemeralClientOptions,
+} from "./operations.js";

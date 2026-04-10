@@ -1,4 +1,5 @@
 import { Command } from "commander";
+import { listTools } from "@mcpjam/sdk";
 import { withEphemeralManager } from "../lib/ephemeral";
 import {
   addSharedServerOptions,
@@ -27,16 +28,8 @@ export function registerToolsCommands(program: Command): void {
 
     const result = await withEphemeralManager(
       config,
-      async (manager, serverId) => {
-        const response = await manager.listTools(
-          serverId,
-          options.cursor ? { cursor: options.cursor } : undefined,
-        );
-        return {
-          tools: response.tools ?? [],
-          nextCursor: response.nextCursor,
-        };
-      },
+      (manager, serverId) =>
+        listTools(manager, { serverId, cursor: options.cursor }),
       { timeout: globalOptions.timeout },
     );
 

@@ -1,4 +1,5 @@
 import { Command } from "commander";
+import { listPrompts, getPrompt } from "@mcpjam/sdk";
 import { withEphemeralManager } from "../lib/ephemeral";
 import {
   addSharedServerOptions,
@@ -27,17 +28,8 @@ export function registerPromptCommands(program: Command): void {
 
     const result = await withEphemeralManager(
       config,
-      async (manager, serverId) => {
-        const response = await manager.listPrompts(
-          serverId,
-          options.cursor ? { cursor: options.cursor } : undefined,
-        );
-
-        return {
-          prompts: response.prompts ?? [],
-          nextCursor: response.nextCursor,
-        };
-      },
+      (manager, serverId) =>
+        listPrompts(manager, { serverId, cursor: options.cursor }),
       { timeout: globalOptions.timeout },
     );
 
@@ -60,12 +52,12 @@ export function registerPromptCommands(program: Command): void {
 
     const result = await withEphemeralManager(
       config,
-      async (manager, serverId) => ({
-        content: await manager.getPrompt(serverId, {
+      (manager, serverId) =>
+        getPrompt(manager, {
+          serverId,
           name: options.name as string,
           arguments: promptArguments,
         }),
-      }),
       { timeout: globalOptions.timeout },
     );
 

@@ -1,4 +1,5 @@
 import { Command } from "commander";
+import { listResources, readResource } from "@mcpjam/sdk";
 import { withEphemeralManager } from "../lib/ephemeral";
 import {
   addSharedServerOptions,
@@ -26,17 +27,8 @@ export function registerResourcesCommands(program: Command): void {
 
     const result = await withEphemeralManager(
       config,
-      async (manager, serverId) => {
-        const response = await manager.listResources(
-          serverId,
-          options.cursor ? { cursor: options.cursor } : undefined,
-        );
-
-        return {
-          resources: response.resources ?? [],
-          nextCursor: response.nextCursor,
-        };
-      },
+      (manager, serverId) =>
+        listResources(manager, { serverId, cursor: options.cursor }),
       { timeout: globalOptions.timeout },
     );
 
@@ -57,11 +49,8 @@ export function registerResourcesCommands(program: Command): void {
 
     const result = await withEphemeralManager(
       config,
-      async (manager, serverId) => ({
-        content: await manager.readResource(serverId, {
-          uri: options.uri as string,
-        }),
-      }),
+      (manager, serverId) =>
+        readResource(manager, { serverId, uri: options.uri as string }),
       { timeout: globalOptions.timeout },
     );
 

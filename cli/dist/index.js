@@ -393,24 +393,11 @@ function parseAuthMode(value) {
   );
 }
 async function withEphemeralManager(config, fn, options) {
-  const serverId = "__cli__";
-  const manager = new sdk.MCPClientManager(
-    {},
-    {
-      defaultTimeout: options?.timeout ?? 3e4,
-      defaultClientName: "mcpjam",
-      lazyConnect: true
-    }
-  );
-  try {
-    await manager.connectToServer(serverId, config);
-    return await fn(manager, serverId);
-  } finally {
-    try {
-      await manager.disconnectAllServers();
-    } catch {
-    }
-  }
+  return sdk.withEphemeralClient(config, fn, {
+    serverId: "__cli__",
+    clientName: "mcpjam",
+    timeout: options?.timeout ?? 3e4
+  });
 }
 
 // src/commands/prompts.ts
@@ -426,16 +413,7 @@ function registerPromptCommands(program) {
     });
     const result = await withEphemeralManager(
       config,
-      async (manager, serverId) => {
-        const response = await manager.listPrompts(
-          serverId,
-          options.cursor ? { cursor: options.cursor } : void 0
-        );
-        return {
-          prompts: response.prompts ?? [],
-          nextCursor: response.nextCursor
-        };
-      },
+      (manager, serverId) => sdk.listPrompts(manager, { serverId, cursor: options.cursor }),
       { timeout: globalOptions.timeout }
     );
     writeResult(result, globalOptions.format);
@@ -451,19 +429,16 @@ function registerPromptCommands(program) {
     const promptArguments = parsePromptArguments(options.promptArgs);
     const result = await withEphemeralManager(
       config,
-      async (manager, serverId) => ({
-        content: await manager.getPrompt(serverId, {
-          name: options.name,
-          arguments: promptArguments
-        })
+      (manager, serverId) => sdk.getPrompt(manager, {
+        serverId,
+        name: options.name,
+        arguments: promptArguments
       }),
       { timeout: globalOptions.timeout }
     );
     writeResult(result, globalOptions.format);
   });
 }
-
-// src/commands/resources.ts
 function registerResourcesCommands(program) {
   const resources = program.command("resources").description("List and read MCP resources");
   addSharedServerOptions(
@@ -476,16 +451,7 @@ function registerResourcesCommands(program) {
     });
     const result = await withEphemeralManager(
       config,
-      async (manager, serverId) => {
-        const response = await manager.listResources(
-          serverId,
-          options.cursor ? { cursor: options.cursor } : void 0
-        );
-        return {
-          resources: response.resources ?? [],
-          nextCursor: response.nextCursor
-        };
-      },
+      (manager, serverId) => sdk.listResources(manager, { serverId, cursor: options.cursor }),
       { timeout: globalOptions.timeout }
     );
     writeResult(result, globalOptions.format);
@@ -500,11 +466,7 @@ function registerResourcesCommands(program) {
     });
     const result = await withEphemeralManager(
       config,
-      async (manager, serverId) => ({
-        content: await manager.readResource(serverId, {
-          uri: options.uri
-        })
-      }),
+      (manager, serverId) => sdk.readResource(manager, { serverId, uri: options.uri }),
       { timeout: globalOptions.timeout }
     );
     writeResult(result, globalOptions.format);
@@ -538,8 +500,6 @@ function registerServerCommands(program) {
     writeResult(result, globalOptions.format);
   });
 }
-
-// src/commands/tools.ts
 function registerToolsCommands(program) {
   const tools = program.command("tools").description("List and invoke MCP server tools");
   addSharedServerOptions(
@@ -552,16 +512,7 @@ function registerToolsCommands(program) {
     });
     const result = await withEphemeralManager(
       config,
-      async (manager, serverId) => {
-        const response = await manager.listTools(
-          serverId,
-          options.cursor ? { cursor: options.cursor } : void 0
-        );
-        return {
-          tools: response.tools ?? [],
-          nextCursor: response.nextCursor
-        };
-      },
+      (manager, serverId) => sdk.listTools(manager, { serverId, cursor: options.cursor }),
       { timeout: globalOptions.timeout }
     );
     writeResult(result, globalOptions.format);
