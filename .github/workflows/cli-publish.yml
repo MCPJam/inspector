@@ -33,15 +33,19 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-      - name: Get published version
-        id: version
-        run: echo "version=$(node -p "require('./package.json').version")" >> $GITHUB_OUTPUT
+      - name: Get published package metadata
+        id: package
+        run: |
+          echo "name=$(node -p "require('./package.json').name")" >> $GITHUB_OUTPUT
+          echo "version=$(node -p "require('./package.json').version")" >> $GITHUB_OUTPUT
+          echo "url=https://www.npmjs.com/package/$(node -p "encodeURIComponent(require('./package.json').name)")" >> $GITHUB_OUTPUT
 
       - name: Create success summary
         run: |
           echo "## CLI Published Successfully!" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Package:** [mcpjam](https://www.npmjs.com/package/mcpjam)" >> $GITHUB_STEP_SUMMARY
-          echo "**Version:** ${{ steps.version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Package:** [${{ steps.package.outputs.name }}](${{ steps.package.outputs.url }})" >> $GITHUB_STEP_SUMMARY
+          echo "**Version:** ${{ steps.package.outputs.version }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Install with: \`npm install -g mcpjam\`" >> $GITHUB_STEP_SUMMARY
+          echo "Run with: \`npx ${{ steps.package.outputs.name }} --help\`" >> $GITHUB_STEP_SUMMARY
+          echo "Global install: \`npm install -g ${{ steps.package.outputs.name }}\`" >> $GITHUB_STEP_SUMMARY
