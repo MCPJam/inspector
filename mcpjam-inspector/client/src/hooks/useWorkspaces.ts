@@ -111,15 +111,6 @@ export function filterWorkspacesForOrganization(
 ) {
   if (!workspaces || !organizationId) return workspaces;
 
-  // Keep the legacy unscoped behavior until every returned workspace has been
-  // backfilled with an organizationId.
-  const allWorkspacesAreScoped = workspaces.every(
-    (workspace) => workspace.organizationId !== undefined,
-  );
-  if (!allWorkspacesAreScoped) {
-    return workspaces;
-  }
-
   return workspaces.filter(
     (workspace) => workspace.organizationId === organizationId,
   );
@@ -127,22 +118,15 @@ export function filterWorkspacesForOrganization(
 
 export function useWorkspaceQueries({
   isAuthenticated,
-  organizationId,
 }: {
   isAuthenticated: boolean;
-  organizationId?: string;
 }) {
-  const queriedWorkspaces = useQuery(
+  const workspaces = useQuery(
     "workspaces:getMyWorkspaces" as any,
     isAuthenticated ? ({} as any) : "skip",
   ) as RemoteWorkspace[] | undefined;
 
-  const isLoading = isAuthenticated && queriedWorkspaces === undefined;
-
-  const workspaces = useMemo(
-    () => filterWorkspacesForOrganization(queriedWorkspaces, organizationId),
-    [queriedWorkspaces, organizationId],
-  );
+  const isLoading = isAuthenticated && workspaces === undefined;
 
   const sortedWorkspaces = useMemo(() => {
     if (!workspaces) return [];
@@ -150,12 +134,10 @@ export function useWorkspaceQueries({
   }, [workspaces]);
 
   return {
-    allWorkspaces: queriedWorkspaces,
     workspaces,
     sortedWorkspaces,
     isLoading,
     hasWorkspaces: (workspaces?.length ?? 0) > 0,
-    hasAnyWorkspaces: (queriedWorkspaces?.length ?? 0) > 0,
   };
 }
 

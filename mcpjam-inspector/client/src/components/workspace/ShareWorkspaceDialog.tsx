@@ -229,6 +229,7 @@ export function ShareWorkspaceDialog({
         currentWorkspaceId = await createWorkspace({
           name: workspaceName,
           servers: serializedServers,
+          organizationId,
           visibility: currentVisibility,
         });
 

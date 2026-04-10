@@ -324,6 +324,7 @@ describe("ShareWorkspaceDialog", () => {
       expect(mockCreateWorkspace).toHaveBeenCalledWith({
         name: "Acme",
         servers: {},
+        organizationId: "org-1",
         visibility: "private",
       });
     });

@@ -43,15 +43,25 @@ describe("filterWorkspacesForOrganization", () => {
     expect(filterWorkspacesForOrganization(workspaces)).toEqual(workspaces);
   });
 
-  it("keeps legacy unscoped results while any workspace is missing organizationId", () => {
+  it("keeps only workspaces that match the selected org", () => {
     const workspaces = [
       createWorkspace("ws-1", { organizationId: "org-1" }),
+      createWorkspace("ws-2", { organizationId: "org-2" }),
+      createWorkspace("ws-3"),
+    ];
+
+    expect(filterWorkspacesForOrganization(workspaces, "org-1")).toEqual([
+      workspaces[0],
+    ]);
+  });
+
+  it("returns an empty list when no workspaces match the selected org", () => {
+    const workspaces = [
+      createWorkspace("ws-1", { organizationId: "org-2" }),
       createWorkspace("ws-2"),
     ];
 
-    expect(filterWorkspacesForOrganization(workspaces, "org-1")).toEqual(
-      workspaces,
-    );
+    expect(filterWorkspacesForOrganization(workspaces, "org-1")).toEqual([]);
   });
 
   it("filters by organization once all workspaces are org-scoped", () => {
@@ -80,16 +90,13 @@ describe("useWorkspaceQueries", () => {
     const { result } = renderHook(() =>
       useWorkspaceQueries({
         isAuthenticated: true,
-        organizationId: "org-1",
       }),
     );
 
     expect(result.current.isLoading).toBe(true);
-    expect(result.current.allWorkspaces).toBeUndefined();
     expect(result.current.workspaces).toBeUndefined();
     expect(result.current.sortedWorkspaces).toEqual([]);
     expect(result.current.hasWorkspaces).toBe(false);
-    expect(result.current.hasAnyWorkspaces).toBe(false);
     expect(mockUseQuery).toHaveBeenCalledWith("workspaces:getMyWorkspaces", {});
   });
 });

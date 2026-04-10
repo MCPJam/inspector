@@ -23,7 +23,6 @@ const {
   updateWorkspaceMock: vi.fn(),
   deleteWorkspaceMock: vi.fn(),
   workspaceQueryState: {
-    allWorkspaces: undefined as any,
     workspaces: undefined as any,
     isLoading: false,
   },
@@ -47,6 +46,18 @@ vi.mock("sonner", () => ({
 }));
 
 vi.mock("../useWorkspaces", () => ({
+  filterWorkspacesForOrganization: (
+    workspaces: Array<{ organizationId?: string }> | undefined,
+    organizationId?: string,
+  ) => {
+    if (!workspaces || !organizationId) {
+      return workspaces;
+    }
+
+    return workspaces.filter(
+      (workspace) => workspace.organizationId === organizationId,
+    );
+  },
   useWorkspaceQueries: () => workspaceQueryState,
   useWorkspaceMutations: () => ({
     createWorkspace: createWorkspaceMock,
@@ -166,7 +177,7 @@ describe("useWorkspaceState automatic workspace creation", () => {
     updateClientConfigMock.mockResolvedValue(undefined);
     updateWorkspaceMock.mockResolvedValue("remote-workspace-id");
     deleteWorkspaceMock.mockResolvedValue(undefined);
-    workspaceQueryState.allWorkspaces = [];
+    workspaceQueryState.workspaces = [];
     workspaceQueryState.workspaces = [];
     workspaceQueryState.isLoading = false;
     organizationBillingStatusState.value = undefined;
@@ -191,7 +202,7 @@ describe("useWorkspaceState automatic workspace creation", () => {
   });
 
   it("ensures one initial workspace per empty organization and dedupes rerenders", async () => {
-    workspaceQueryState.allWorkspaces = [
+    workspaceQueryState.workspaces = [
       {
         _id: "remote-1",
         name: "Existing workspace",
@@ -253,7 +264,7 @@ describe("useWorkspaceState automatic workspace creation", () => {
   });
 
   it("prefers the route organization for workspace actions while active org state catches up", async () => {
-    workspaceQueryState.allWorkspaces = [
+    workspaceQueryState.workspaces = [
       {
         _id: "remote-1",
         name: "Existing workspace",
@@ -287,6 +298,131 @@ describe("useWorkspaceState automatic workspace creation", () => {
 
     expect(createWorkspaceMock).toHaveBeenCalledWith({
       organizationId: "org-route",
+      name: "Workspace Two",
+      clientConfig: undefined,
+      servers: {},
+    });
+  });
+
+  it("scopes effective workspaces to the selected organization", async () => {
+    workspaceQueryState.workspaces = [
+      {
+        _id: "remote-a",
+        name: "Org A Workspace",
+        servers: {},
+        ownerId: "user-1",
+        organizationId: "org-a",
+        createdAt: 1,
+        updatedAt: 2,
+      },
+      {
+        _id: "remote-b",
+        name: "Org B Workspace",
+        servers: {},
+        ownerId: "user-1",
+        organizationId: "org-b",
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ];
+    localStorage.setItem("convex-active-workspace-id", "remote-b");
+
+    const appState = createAppState({
+      default: createSyntheticDefaultWorkspace(),
+    });
+    const { result } = renderUseWorkspaceState({
+      appState,
+      activeOrganizationId: "org-a",
+    });
+
+    expect(Object.keys(result.current.effectiveWorkspaces)).toEqual(["remote-a"]);
+    expect(result.current.effectiveActiveWorkspaceId).toBe("remote-a");
+
+    await waitFor(() => {
+      expect(localStorage.getItem("convex-active-workspace-id")).toBe(
+        "remote-a",
+      );
+    });
+  });
+
+  it("falls back to the active synced workspace org when no explicit org is selected", () => {
+    workspaceQueryState.workspaces = [
+      {
+        _id: "remote-a",
+        name: "Org A Workspace",
+        servers: {},
+        ownerId: "user-1",
+        organizationId: "org-a",
+        createdAt: 1,
+        updatedAt: 1,
+      },
+      {
+        _id: "remote-b-1",
+        name: "Org B Workspace One",
+        servers: {},
+        ownerId: "user-1",
+        organizationId: "org-b",
+        createdAt: 1,
+        updatedAt: 2,
+      },
+      {
+        _id: "remote-b-2",
+        name: "Org B Workspace Two",
+        servers: {},
+        ownerId: "user-1",
+        organizationId: "org-b",
+        createdAt: 1,
+        updatedAt: 3,
+      },
+    ];
+    localStorage.setItem("convex-active-workspace-id", "remote-b-2");
+
+    const appState = createAppState({
+      default: createSyntheticDefaultWorkspace(),
+    });
+    const { result } = renderUseWorkspaceState({ appState });
+
+    expect(Object.keys(result.current.effectiveWorkspaces)).toHaveLength(2);
+    expect(Object.keys(result.current.effectiveWorkspaces)).toEqual(
+      expect.arrayContaining(["remote-b-1", "remote-b-2"]),
+    );
+    expect(result.current.effectiveActiveWorkspaceId).toBe("remote-b-2");
+  });
+
+  it("creates workspaces inside the active synced workspace org when no explicit org is selected", async () => {
+    workspaceQueryState.workspaces = [
+      {
+        _id: "remote-a",
+        name: "Org A Workspace",
+        servers: {},
+        ownerId: "user-1",
+        organizationId: "org-a",
+        createdAt: 1,
+        updatedAt: 1,
+      },
+      {
+        _id: "remote-b",
+        name: "Org B Workspace",
+        servers: {},
+        ownerId: "user-1",
+        organizationId: "org-b",
+        createdAt: 1,
+        updatedAt: 2,
+      },
+    ];
+    localStorage.setItem("convex-active-workspace-id", "remote-b");
+
+    const appState = createAppState({
+      default: createSyntheticDefaultWorkspace(),
+    });
+    const { result } = renderUseWorkspaceState({ appState });
+
+    await act(async () => {
+      await result.current.handleCreateWorkspace("Workspace Two");
+    });
+
+    expect(createWorkspaceMock).toHaveBeenCalledWith({
+      organizationId: "org-b",
       name: "Workspace Two",
       clientConfig: undefined,
       servers: {},
@@ -342,6 +478,30 @@ describe("useWorkspaceState automatic workspace creation", () => {
     expect(ensureDefaultWorkspaceMock).not.toHaveBeenCalled();
   });
 
+  it("does not ensure or create synced workspaces without any org context", async () => {
+    workspaceQueryState.workspaces = [];
+
+    const appState = createAppState({
+      default: createSyntheticDefaultWorkspace(),
+    });
+    const { result } = renderUseWorkspaceState({ appState });
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(ensureDefaultWorkspaceMock).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await result.current.handleCreateWorkspace("Workspace Two");
+    });
+
+    expect(createWorkspaceMock).not.toHaveBeenCalled();
+    expect(toast.error).toHaveBeenCalledWith(
+      "Select an organization to create workspaces.",
+    );
+  });
+
   it("treats the empty synthetic default as ensure-default only, not a migration candidate", async () => {
     const appState = createAppState({
       default: createSyntheticDefaultWorkspace(),
@@ -378,18 +538,18 @@ describe("useWorkspaceState automatic workspace creation", () => {
       hostContext: {},
     };
 
-    workspaceQueryState.allWorkspaces = [
+    workspaceQueryState.workspaces = [
       {
         _id: "remote-1",
         name: "Remote workspace",
         servers: {},
         ownerId: "user-1",
+        organizationId: "org-client-config",
         createdAt: 1,
         updatedAt: 1,
         clientConfig: undefined,
       },
     ];
-    workspaceQueryState.workspaces = [...workspaceQueryState.allWorkspaces];
     localStorage.setItem("convex-active-workspace-id", "remote-1");
 
     const appState = createAppState({
@@ -414,13 +574,12 @@ describe("useWorkspaceState automatic workspace creation", () => {
     expect(useClientConfigStore.getState().isAwaitingRemoteEcho).toBe(true);
     expect(resolved).toBe(false);
 
-    workspaceQueryState.allWorkspaces = [
+    workspaceQueryState.workspaces = [
       {
-        ...workspaceQueryState.allWorkspaces[0],
+        ...workspaceQueryState.workspaces[0],
         clientConfig: savedConfig,
       },
     ];
-    workspaceQueryState.workspaces = [...workspaceQueryState.allWorkspaces];
     rerender({ organizationId: undefined });
 
     await waitFor(() => {
@@ -443,18 +602,18 @@ describe("useWorkspaceState automatic workspace creation", () => {
       hostContext: {},
     };
 
-    workspaceQueryState.allWorkspaces = [
+    workspaceQueryState.workspaces = [
       {
         _id: "remote-1",
         name: "Remote workspace",
         servers: {},
         ownerId: "user-1",
+        organizationId: "org-client-config",
         createdAt: 1,
         updatedAt: 1,
         clientConfig: undefined,
       },
     ];
-    workspaceQueryState.workspaces = [...workspaceQueryState.allWorkspaces];
     localStorage.setItem("convex-active-workspace-id", "remote-1");
 
     const appState = createAppState({
@@ -484,7 +643,7 @@ describe("useWorkspaceState automatic workspace creation", () => {
   });
 
   it("formats workspace create billing errors for organization owners", async () => {
-    workspaceQueryState.allWorkspaces = [
+    workspaceQueryState.workspaces = [
       {
         _id: "remote-1",
         name: "Existing workspace",
@@ -495,7 +654,6 @@ describe("useWorkspaceState automatic workspace creation", () => {
         updatedAt: 1,
       },
     ];
-    workspaceQueryState.workspaces = [...workspaceQueryState.allWorkspaces];
     organizationBillingStatusState.value = {
       canManageBilling: true,
     };
@@ -527,7 +685,7 @@ describe("useWorkspaceState automatic workspace creation", () => {
   });
 
   it("formats workspace create billing errors for non-billing-admin members", async () => {
-    workspaceQueryState.allWorkspaces = [
+    workspaceQueryState.workspaces = [
       {
         _id: "remote-1",
         name: "Existing workspace",
@@ -538,7 +696,6 @@ describe("useWorkspaceState automatic workspace creation", () => {
         updatedAt: 1,
       },
     ];
-    workspaceQueryState.workspaces = [...workspaceQueryState.allWorkspaces];
     organizationBillingStatusState.value = {
       canManageBilling: false,
     };
@@ -619,18 +776,18 @@ describe("useWorkspaceState automatic workspace creation", () => {
       hostContext: {},
     };
 
-    workspaceQueryState.allWorkspaces = [
+    workspaceQueryState.workspaces = [
       {
         _id: "remote-1",
         name: "Remote workspace",
         servers: {},
         ownerId: "user-1",
+        organizationId: "org-client-config",
         createdAt: 1,
         updatedAt: 1,
         clientConfig: undefined,
       },
     ];
-    workspaceQueryState.workspaces = [...workspaceQueryState.allWorkspaces];
     localStorage.setItem("convex-active-workspace-id", "remote-1");
 
     const appState = createAppState({

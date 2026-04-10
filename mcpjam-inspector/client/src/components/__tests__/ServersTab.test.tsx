@@ -186,12 +186,10 @@ vi.mock("@/hooks/useWorkspaces", async (importOriginal) => {
       serversRecord: {},
     }),
     useWorkspaceQueries: () => ({
-      allWorkspaces: undefined,
       workspaces: [],
       sortedWorkspaces: [],
       isLoading: false,
       hasWorkspaces: false,
-      hasAnyWorkspaces: false,
     }),
   };
 });
