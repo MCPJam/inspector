@@ -746,8 +746,8 @@ export default function App() {
       ? isLoadingOrganizations
         ? "Loading organizations..."
         : sortedOrganizations.length === 0
-        ? "Create or join an organization to create workspaces"
-        : "Select an organization to create workspaces"
+          ? "Create or join an organization to create workspaces"
+          : "Select an organization to create workspaces"
       : (workspaceCreationGate.denialMessage ?? undefined);
   const [trialModalDismissedForOrg, setTrialModalDismissedForOrg] = useState<
     string | null
