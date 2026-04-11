@@ -14,6 +14,21 @@ test("buildOAuthConformanceConfig defaults to headless auth", () => {
   assert.equal(config.registrationStrategy, "cimd");
 });
 
+test("buildOAuthConformanceConfig can default login flows to interactive auth", () => {
+  const config = buildOAuthConformanceConfig(
+    {
+      url: "https://example.com/mcp",
+      protocolVersion: "2025-11-25",
+      registration: "cimd",
+    },
+    {
+      defaultAuthMode: "interactive",
+    },
+  );
+
+  assert.equal(config.auth?.mode, "interactive");
+});
+
 test("buildOAuthConformanceConfig maps preregistered client settings", () => {
   const config = buildOAuthConformanceConfig({
     url: "https://example.com/mcp",

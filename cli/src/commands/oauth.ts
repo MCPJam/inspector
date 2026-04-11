@@ -1,5 +1,9 @@
 import type { OAuthConformanceConfig, OAuthVerificationConfig } from "@mcpjam/sdk";
-import { OAuthConformanceTest, OAuthConformanceSuite } from "@mcpjam/sdk";
+import {
+  OAuthConformanceTest,
+  OAuthConformanceSuite,
+  runOAuthLogin,
+} from "@mcpjam/sdk";
 import { Command } from "commander";
 import {
   executeDebugOAuthProxy,
@@ -78,7 +82,68 @@ interface OAuthProxyCommandOptions {
 export function registerOAuthCommands(program: Command): void {
   const oauth = program
     .command("oauth")
-    .description("Run MCP OAuth conformance flows");
+    .description("Run MCP OAuth login, proxy, and conformance flows");
+
+  oauth
+    .command("login")
+    .description("Run an OAuth login flow against an HTTP MCP server")
+    .requiredOption("--url <url>", "MCP server URL")
+    .requiredOption(
+      "--protocol-version <version>",
+      "OAuth protocol version: 2025-03-26, 2025-06-18, or 2025-11-25",
+    )
+    .requiredOption(
+      "--registration <strategy>",
+      "Registration strategy: dcr, preregistered, or cimd",
+    )
+    .option(
+      "--auth-mode <mode>",
+      "Authorization mode: headless, interactive, or client_credentials",
+      "interactive",
+    )
+    .option(
+      "--header <header>",
+      'HTTP header in "Key: Value" format. Repeat to send multiple headers.',
+      (value: string, previous: string[] = []) => [...previous, value],
+      [],
+    )
+    .option("--client-id <id>", "OAuth client ID")
+    .option("--client-secret <secret>", "OAuth client secret")
+    .option(
+      "--client-metadata-url <url>",
+      "Client metadata URL used for CIMD registration",
+    )
+    .option("--redirect-url <url>", "OAuth redirect URL to use for the flow")
+    .option("--scopes <scopes>", "Space-separated scope string")
+    .option(
+      "--step-timeout <ms>",
+      "Per-step timeout in milliseconds",
+      (value: string) => parsePositiveInteger(value, "Step timeout"),
+      30_000,
+    )
+    .option(
+      "--verify-tools",
+      "After OAuth succeeds, verify the token by listing MCP tools",
+    )
+    .option(
+      "--verify-call-tool <name>",
+      "After listing tools, also call the named tool",
+    )
+    .action(async (options, command) => {
+      const format = getStructuredOAuthFormat(command);
+      const config = buildOAuthConformanceConfig(
+        options as OAuthCommandOptions,
+        {
+          defaultAuthMode: "interactive",
+        },
+      );
+      const result = await runOAuthLogin(config);
+
+      writeResult(result, format);
+      if (!result.completed) {
+        setProcessExitCode(1);
+      }
+    });
 
   oauth
     .command("conformance")
@@ -228,13 +293,18 @@ export function registerOAuthCommands(program: Command): void {
 
 export function buildOAuthConformanceConfig(
   options: OAuthCommandOptions,
+  defaults?: {
+    defaultAuthMode?: "headless" | "interactive" | "client_credentials";
+  },
 ): OAuthConformanceConfig {
   const serverUrl = options.url.trim();
   assertValidUrl(serverUrl, "server URL");
 
   const protocolVersion = parseProtocolVersion(options.protocolVersion);
   const registrationStrategy = parseRegistrationStrategy(options.registration);
-  const authMode = parseAuthMode(options.authMode ?? "headless");
+  const authMode = parseAuthMode(
+    options.authMode ?? defaults?.defaultAuthMode ?? "headless",
+  );
 
   if (
     protocolVersion !== "2025-11-25" &&

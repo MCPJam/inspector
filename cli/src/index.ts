@@ -19,7 +19,7 @@ async function main(argv: readonly string[] = process.argv): Promise<number> {
     new Command()
       .name("mcpjam")
       .description(
-        "Stateless MCP server debugging and OAuth conformance commands backed by @mcpjam/sdk",
+        "Stateless MCP server probing, debugging, OAuth login, and conformance commands backed by @mcpjam/sdk",
       )
       .allowExcessArguments(false)
       .exitOverride()

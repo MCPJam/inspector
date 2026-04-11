@@ -16,6 +16,9 @@ export interface SharedServerTargetOptions {
   url?: string;
   accessToken?: string;
   oauthAccessToken?: string;
+  refreshToken?: string;
+  clientId?: string;
+  clientSecret?: string;
   header?: string[];
   clientCapabilities?: string | Record<string, unknown>;
   command?: string;
@@ -41,6 +44,18 @@ export function addSharedServerOptions(command: Command): Command {
     .option(
       "--oauth-access-token <token>",
       "OAuth bearer access token for HTTP servers",
+    )
+    .option(
+      "--refresh-token <token>",
+      "OAuth refresh token for HTTP servers",
+    )
+    .option(
+      "--client-id <id>",
+      "OAuth client ID used with --refresh-token",
+    )
+    .option(
+      "--client-secret <secret>",
+      "OAuth client secret used with --refresh-token",
     )
     .option(
       "--header <header>",
@@ -178,9 +193,32 @@ export function parseServerConfig(
 
     const headers = parseHeadersOption(options.header);
     const accessToken = resolveHttpAccessToken(options);
+    const refreshToken = options.refreshToken?.trim();
+    const clientId = options.clientId?.trim();
+    const clientSecret = options.clientSecret?.trim();
+
+    if (refreshToken && accessToken) {
+      throw usageError(
+        "--refresh-token cannot be used together with --access-token or --oauth-access-token.",
+      );
+    }
+
+    if (refreshToken && !clientId) {
+      throw usageError("--client-id is required when --refresh-token is used.");
+    }
+
+    if (!refreshToken && (clientId || clientSecret)) {
+      throw usageError(
+        "--client-id and --client-secret can only be used together with --refresh-token.",
+      );
+    }
+
     return {
       url,
       ...(accessToken ? { accessToken } : {}),
+      ...(refreshToken ? { refreshToken } : {}),
+      ...(clientId ? { clientId } : {}),
+      ...(clientSecret ? { clientSecret } : {}),
       ...(clientCapabilities ? { clientCapabilities } : {}),
       requestInit: headers ? { headers } : undefined,
       timeout: options.timeout,
@@ -194,10 +232,13 @@ export function parseServerConfig(
   if (
     options.accessToken ||
     options.oauthAccessToken ||
+    options.refreshToken ||
+    options.clientId ||
+    options.clientSecret ||
     (options.header?.length ?? 0) > 0
   ) {
     throw usageError(
-      "--access-token, --oauth-access-token, and --header can only be used together with --url.",
+      "--access-token, --oauth-access-token, --refresh-token, --client-id, --client-secret, and --header can only be used together with --url.",
     );
   }
 
@@ -351,6 +392,9 @@ function parseServerTargetEntry(
     url: readOptionalString(record.url),
     accessToken: readOptionalString(record.accessToken),
     oauthAccessToken: readOptionalString(record.oauthAccessToken),
+    refreshToken: readOptionalString(record.refreshToken),
+    clientId: readOptionalString(record.clientId),
+    clientSecret: readOptionalString(record.clientSecret),
     header: headerEntries,
     clientCapabilities: parseUnknownRecord(
       record.clientCapabilities,
@@ -388,7 +432,7 @@ function resolveClientCapabilities(
   return parseUnknownRecord(value, "Client capabilities");
 }
 
-function resolveHttpAccessToken(
+export function resolveHttpAccessToken(
   options: Pick<SharedServerTargetOptions, "accessToken" | "oauthAccessToken">,
 ): string | undefined {
   const accessToken = options.accessToken?.trim();

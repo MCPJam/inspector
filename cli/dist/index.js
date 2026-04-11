@@ -450,6 +450,15 @@ function addSharedServerOptions(command) {
     "--oauth-access-token <token>",
     "OAuth bearer access token for HTTP servers"
   ).option(
+    "--refresh-token <token>",
+    "OAuth refresh token for HTTP servers"
+  ).option(
+    "--client-id <id>",
+    "OAuth client ID used with --refresh-token"
+  ).option(
+    "--client-secret <secret>",
+    "OAuth client secret used with --refresh-token"
+  ).option(
     "--header <header>",
     'HTTP header in "Key: Value" format. Repeat to send multiple headers.',
     collectString,
@@ -547,9 +556,28 @@ function parseServerConfig(options) {
     }
     const headers = parseHeadersOption(options.header);
     const accessToken = resolveHttpAccessToken(options);
+    const refreshToken = options.refreshToken?.trim();
+    const clientId = options.clientId?.trim();
+    const clientSecret = options.clientSecret?.trim();
+    if (refreshToken && accessToken) {
+      throw usageError(
+        "--refresh-token cannot be used together with --access-token or --oauth-access-token."
+      );
+    }
+    if (refreshToken && !clientId) {
+      throw usageError("--client-id is required when --refresh-token is used.");
+    }
+    if (!refreshToken && (clientId || clientSecret)) {
+      throw usageError(
+        "--client-id and --client-secret can only be used together with --refresh-token."
+      );
+    }
     return {
       url,
       ...accessToken ? { accessToken } : {},
+      ...refreshToken ? { refreshToken } : {},
+      ...clientId ? { clientId } : {},
+      ...clientSecret ? { clientSecret } : {},
       ...clientCapabilities ? { clientCapabilities } : {},
       requestInit: headers ? { headers } : void 0,
       timeout: options.timeout
@@ -558,9 +586,9 @@ function parseServerConfig(options) {
   if (!command) {
     throw usageError("Missing stdio command.");
   }
-  if (options.accessToken || options.oauthAccessToken || (options.header?.length ?? 0) > 0) {
+  if (options.accessToken || options.oauthAccessToken || options.refreshToken || options.clientId || options.clientSecret || (options.header?.length ?? 0) > 0) {
     throw usageError(
-      "--access-token, --oauth-access-token, and --header can only be used together with --url."
+      "--access-token, --oauth-access-token, --refresh-token, --client-id, --client-secret, and --header can only be used together with --url."
     );
   }
   return {
@@ -666,6 +694,9 @@ function parseServerTargetEntry(value, index) {
     url: readOptionalString(record.url),
     accessToken: readOptionalString(record.accessToken),
     oauthAccessToken: readOptionalString(record.oauthAccessToken),
+    refreshToken: readOptionalString(record.refreshToken),
+    clientId: readOptionalString(record.clientId),
+    clientSecret: readOptionalString(record.clientSecret),
     header: headerEntries,
     clientCapabilities: parseUnknownRecord(
       record.clientCapabilities,
@@ -1468,7 +1499,50 @@ function writeOAuthOutput(output) {
 `);
 }
 function registerOAuthCommands(program) {
-  const oauth = program.command("oauth").description("Run MCP OAuth conformance flows");
+  const oauth = program.command("oauth").description("Run MCP OAuth login, proxy, and conformance flows");
+  oauth.command("login").description("Run an OAuth login flow against an HTTP MCP server").requiredOption("--url <url>", "MCP server URL").requiredOption(
+    "--protocol-version <version>",
+    "OAuth protocol version: 2025-03-26, 2025-06-18, or 2025-11-25"
+  ).requiredOption(
+    "--registration <strategy>",
+    "Registration strategy: dcr, preregistered, or cimd"
+  ).option(
+    "--auth-mode <mode>",
+    "Authorization mode: headless, interactive, or client_credentials",
+    "interactive"
+  ).option(
+    "--header <header>",
+    'HTTP header in "Key: Value" format. Repeat to send multiple headers.',
+    (value, previous = []) => [...previous, value],
+    []
+  ).option("--client-id <id>", "OAuth client ID").option("--client-secret <secret>", "OAuth client secret").option(
+    "--client-metadata-url <url>",
+    "Client metadata URL used for CIMD registration"
+  ).option("--redirect-url <url>", "OAuth redirect URL to use for the flow").option("--scopes <scopes>", "Space-separated scope string").option(
+    "--step-timeout <ms>",
+    "Per-step timeout in milliseconds",
+    (value) => parsePositiveInteger(value, "Step timeout"),
+    3e4
+  ).option(
+    "--verify-tools",
+    "After OAuth succeeds, verify the token by listing MCP tools"
+  ).option(
+    "--verify-call-tool <name>",
+    "After listing tools, also call the named tool"
+  ).action(async (options, command) => {
+    const format = getStructuredOAuthFormat(command);
+    const config = buildOAuthConformanceConfig(
+      options,
+      {
+        defaultAuthMode: "interactive"
+      }
+    );
+    const result = await sdk.runOAuthLogin(config);
+    writeResult(result, format);
+    if (!result.completed) {
+      setProcessExitCode(1);
+    }
+  });
   oauth.command("conformance").description("Run OAuth conformance against an HTTP MCP server").requiredOption("--url <url>", "MCP server URL").requiredOption(
     "--protocol-version <version>",
     "OAuth protocol version: 2025-03-26, 2025-06-18, or 2025-11-25"
@@ -1563,12 +1637,14 @@ function registerOAuthCommands(program) {
     writeResult(result, getStructuredOAuthFormat(command));
   });
 }
-function buildOAuthConformanceConfig(options) {
+function buildOAuthConformanceConfig(options, defaults) {
   const serverUrl = options.url.trim();
   assertValidUrl2(serverUrl, "server URL");
   const protocolVersion = parseProtocolVersion(options.protocolVersion);
   const registrationStrategy = parseRegistrationStrategy(options.registration);
-  const authMode = parseAuthMode(options.authMode ?? "headless");
+  const authMode = parseAuthMode(
+    options.authMode ?? defaults?.defaultAuthMode ?? "headless"
+  );
   if (protocolVersion !== "2025-11-25" && registrationStrategy === "cimd") {
     throw usageError(
       `CIMD registration is not supported for protocol version ${protocolVersion}.`
@@ -1967,10 +2043,52 @@ function withRpcLogsIfRequested3(value, collector, options) {
   }
   return attachCliRpcLogs(value, collector);
 }
-
-// src/commands/server.ts
 function registerServerCommands(program) {
   const server = program.command("server").description("Inspect MCP server connectivity and capabilities");
+  server.command("probe").description("Probe an HTTP MCP server without using the full client connect flow").requiredOption("--url <url>", "HTTP MCP server URL").option("--access-token <token>", "Bearer access token for HTTP servers").option(
+    "--oauth-access-token <token>",
+    "OAuth bearer access token for HTTP servers"
+  ).option(
+    "--header <header>",
+    'HTTP header in "Key: Value" format. Repeat to send multiple headers.',
+    (value, previous = []) => [...previous, value],
+    []
+  ).option(
+    "--client-capabilities <json>",
+    "Client capabilities advertised in the initialize probe as a JSON object"
+  ).option(
+    "--protocol-version <version>",
+    "OAuth/MCP protocol version hint used for the initialize probe",
+    "2025-11-25"
+  ).option(
+    "--timeout <ms>",
+    "Request timeout in milliseconds",
+    (value) => parsePositiveInteger(value, "Timeout")
+  ).action(async (options, command) => {
+    const globalOptions = getGlobalOptions(command);
+    const accessToken = resolveHttpAccessToken(options);
+    const protocolVersion = options.protocolVersion;
+    if (protocolVersion !== "2025-03-26" && protocolVersion !== "2025-06-18" && protocolVersion !== "2025-11-25") {
+      throw usageError(
+        `Invalid protocol version "${options.protocolVersion}".`
+      );
+    }
+    const result = await sdk.probeMcpServer({
+      url: options.url,
+      protocolVersion,
+      headers: parseHeadersOption(options.header),
+      accessToken,
+      clientCapabilities: parseJsonRecord(
+        options.clientCapabilities,
+        "Client capabilities"
+      ),
+      timeoutMs: options.timeout ?? globalOptions.timeout
+    });
+    writeResult(result, globalOptions.format);
+    if (result.status === "error") {
+      setProcessExitCode(1);
+    }
+  });
   addSharedServerOptions(
     server.command("info").description("Get initialization info for an MCP server")
   ).action(async (options, command) => {
@@ -2165,7 +2283,7 @@ function withRpcLogsIfRequested5(value, collector, options) {
 async function main(argv = process.argv) {
   const program = addGlobalOptions(
     new commander.Command().name("mcpjam").description(
-      "Stateless MCP server debugging and OAuth conformance commands backed by @mcpjam/sdk"
+      "Stateless MCP server probing, debugging, OAuth login, and conformance commands backed by @mcpjam/sdk"
     ).allowExcessArguments(false).exitOverride().configureOutput({
       writeOut: (value) => process.stdout.write(value),
       writeErr: () => {

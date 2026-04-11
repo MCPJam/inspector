@@ -1,3 +1,4 @@
+import { probeMcpServer } from "@mcpjam/sdk";
 import { Command } from "commander";
 import { withEphemeralManager } from "../lib/ephemeral";
 import { attachCliRpcLogs, createCliRpcLogCollector } from "../lib/rpc-logs";
@@ -6,14 +7,83 @@ import {
   addSharedServerOptions,
   describeTarget,
   getGlobalOptions,
+  parseHeadersOption,
+  parseJsonRecord,
   parseServerConfig,
+  parsePositiveInteger,
+  resolveHttpAccessToken,
 } from "../lib/server-config";
-import { operationalError, writeResult } from "../lib/output";
+import { operationalError, setProcessExitCode, usageError, writeResult } from "../lib/output";
 
 export function registerServerCommands(program: Command): void {
   const server = program
     .command("server")
     .description("Inspect MCP server connectivity and capabilities");
+
+  server
+    .command("probe")
+    .description("Probe an HTTP MCP server without using the full client connect flow")
+    .requiredOption("--url <url>", "HTTP MCP server URL")
+    .option("--access-token <token>", "Bearer access token for HTTP servers")
+    .option(
+      "--oauth-access-token <token>",
+      "OAuth bearer access token for HTTP servers",
+    )
+    .option(
+      "--header <header>",
+      'HTTP header in "Key: Value" format. Repeat to send multiple headers.',
+      (value: string, previous: string[] = []) => [...previous, value],
+      [],
+    )
+    .option(
+      "--client-capabilities <json>",
+      "Client capabilities advertised in the initialize probe as a JSON object",
+    )
+    .option(
+      "--protocol-version <version>",
+      "OAuth/MCP protocol version hint used for the initialize probe",
+      "2025-11-25",
+    )
+    .option(
+      "--timeout <ms>",
+      "Request timeout in milliseconds",
+      (value: string) => parsePositiveInteger(value, "Timeout"),
+    )
+    .action(async (options, command) => {
+      const globalOptions = getGlobalOptions(command);
+      const accessToken = resolveHttpAccessToken(options);
+      const protocolVersion = options.protocolVersion as
+        | "2025-03-26"
+        | "2025-06-18"
+        | "2025-11-25";
+
+      if (
+        protocolVersion !== "2025-03-26" &&
+        protocolVersion !== "2025-06-18" &&
+        protocolVersion !== "2025-11-25"
+      ) {
+        throw usageError(
+          `Invalid protocol version "${options.protocolVersion}".`,
+        );
+      }
+
+      const result = await probeMcpServer({
+        url: options.url as string,
+        protocolVersion,
+        headers: parseHeadersOption(options.header),
+        accessToken,
+        clientCapabilities: parseJsonRecord(
+          options.clientCapabilities,
+          "Client capabilities",
+        ),
+        timeoutMs: options.timeout ?? globalOptions.timeout,
+      });
+
+      writeResult(result, globalOptions.format);
+      if (result.status === "error") {
+        setProcessExitCode(1);
+      }
+    });
 
   addSharedServerOptions(
     server
