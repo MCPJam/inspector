@@ -4,11 +4,11 @@ description: "Connect to multiple MCP servers with different transport methods"
 icon: "plug"
 ---
 
-You can connect to MCP servers using all transports: STDIO, SSE, and Streamable HTTP. With OAuth 2 and Dynamic Client Registration (DCR) support.
+You can connect to MCP servers over **STDIO** or **Streamable HTTP**, with OAuth 2 and Dynamic Client Registration (DCR) support. Multiple servers can be connected at once within a workspace.
 
 ## Manage connections
 
-You can connect to multiple MCP servers simultaneously. To manage connections, go to the "MCP Servers" tab in the MCPJam inspector.
+You can connect to multiple MCP servers simultaneously. To manage connections, go to the **Servers** tab in the MCPJam sidebar.
 
 <Frame>
   <img
@@ -39,7 +39,7 @@ Each connected server card displays:
 
 - **Server icon and version**: If provided by the server, the icon and version number appear in the card header
 - **Connection status**: Real-time indicator showing connected, connecting, or failed status with retry count
-- **Transport type**: Shows whether the server uses STDIO, SSE, or Streamable HTTP
+- **Transport type**: Shows whether the server uses STDIO or Streamable HTTP
 
 Click "Show details" to expand additional server information:
 
@@ -56,7 +56,7 @@ Servers that provide OpenAI-compatible tool metadata display an OpenAI logo indi
 - **OpenAI Tool Metadata tab**: Detailed metadata for each tool including read/write permissions and widget configuration
 
 <Note>
-  Using the [hosted app](https://app.mcpjam.com)? Only SSE and Streamable HTTP connections are available. STDIO and HTTP (non-HTTPS) connections require the [local inspector](/installation). See [Hosted App](/hosted/overview) for details.
+  Using the [hosted app](https://app.mcpjam.com)? Only HTTPS connections are available. STDIO and plain HTTP connections require the [local inspector](/installation). See [Hosted App](/hosted/overview) for details.
 </Note>
 
 ## STDIO servers
@@ -85,11 +85,9 @@ node /path/to/your/server.js
 
 You can configure environment variables with STDIO. Click "Add Variable" in the Environment Variables section. This is often used to pass dynamic values like API tokens to a STDIO server.
 
-## SSE / Streamable HTTP servers
+## HTTP servers
 
-Connect to SSE and Streamable HTTP servers. To do this, click the transport dropdown and select `SSE/HTTP`. They connect the same way: pass in a URL.
-
-SSE server URLs typically end with `/sse` and Streamable HTTP servers typically end with `/mcp`.
+Connect to any Streamable HTTP MCP server by selecting **HTTP** in the transport dropdown and pasting in the URL — typically ending in `/mcp`.
 
 <Frame>
   <img
@@ -100,13 +98,21 @@ SSE server URLs typically end with `/sse` and Streamable HTTP servers typically 
   />
 </Frame>
 
-### OAuth 2
+### Custom headers
 
-MCPJam is compliant with the MCP OAuth spec and Dynamic Client Registration (DCR). You can:
+Expand **Custom Headers** to add arbitrary request headers (for example, proxy auth or tenant identifiers). Headers are sent on every request to the server.
 
-1. Choose `No Authentication`
-2. Choose `Bearer Token`. Use this if you already have an API token and don't need to go through DCR.
-3. Choose `OAuth 2.0`. This will take you through [MCP Authorization](https://modelcontextprotocol.io/specification/draft/basic/authorization) to fetch a bearer token. You can also configure OAuth Scopes or custom OAuth credentials.
+### Authentication
+
+MCPJam is compliant with the MCP authorization spec and supports Dynamic Client Registration (DCR), client pre-registration, and Client ID Metadata Documents (CIMD). You can:
+
+1. Choose **No Authentication**
+2. Choose **Bearer Token** — use this if you already have an API token and don't need to register an OAuth client.
+3. Choose **OAuth** — follow [MCP Authorization](https://modelcontextprotocol.io/specification/draft/basic/authorization) to obtain a bearer token. You can optionally set scopes or a custom client ID and secret. For step-by-step debugging, see the [OAuth Debugger](/inspector/guided-oauth).
+
+### Request timeout
+
+Expand **Additional Configuration** to override the request timeout (default `10000` ms). Increase this when talking to slow or cold-start servers.
 
 ## Tunneling
 

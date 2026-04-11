@@ -1,85 +1,61 @@
 ---
 title: "Getting Started"
-description: "Start testing your MCP servers in minutes"
+description: "Start testing your MCP server in minutes"
 icon: "rocket"
 ---
 
-## Quick Start
+## 1. Open MCPJam
 
-Start MCPJam Inspector with a single command:
+**Web**: HTTPS only, runs in the browser with no install. Server links can be shared with teammates. **Terminal** and **Desktop**: HTTP/S and local STDIO.
 
-```bash
-npx @mcpjam/inspector@latest
+<CardGroup cols={3}>
+  <Card title="Web App" icon="globe" href="https://app.mcpjam.com">
+    HTTPS only. No install. Share with your team.
+  </Card>
+  <Card title="Terminal" icon="terminal">
+    `npx @mcpjam/inspector@latest`. HTTP/S and local STDIO.
+  </Card>
+  <Card title="Desktop App" icon="monitor" href="/installation">
+    Mac or Windows. HTTP/S and local STDIO.
+  </Card>
+</CardGroup>
+
+## 2. Draw something
+
+On first launch, MCPJam connects the Excalidraw sample server (diagramming MCP app) and opens **App Builder** with this prompt:
+
+```
+Draw me an MCP architecture diagram
 ```
 
-After installation completes, you'll see a link to `localhost`. Open that link in your browser to access the inspector.
+Press **Send**. The diagram renders in the app. No API key, ngrok, or paid subscription. Sequence: tool call → widget → inspect.
 
-<Note>
-  Don't have Node.js installed? Download our desktop app for [Mac](https://github.com/MCPJam/inspector/releases/latest/download/MCPJam.Inspector.dmg) or [Windows](https://github.com/MCPJam/inspector/releases/latest/download/MCPJam-Inspector-Setup.exe), or use the [hosted app](https://app.mcpjam.com) in your browser — no installation needed.
-</Note>
+<Tip>
+  Use the widget debug icons to open tool input/output, CSP activity, widget state, and JSON-RPC for that result.
+</Tip>
 
-## Connect Your First MCP Server
+## 3. Connect your own server
 
-Click "Add server" and connect to an MCP server. For this example, we'll use Anthropic's sample server:
+Open **Servers** in the left sidebar. Click **Add server**.
 
-```bash
-npx -y @modelcontextprotocol/server-everything
-```
+- **HTTP**: Paste a URL ending in `/mcp`. The web app accepts **HTTPS** URLs only. Desktop and Terminal accept **HTTP** or **HTTPS**. Add a bearer token or use the [OAuth Debugger](/inspector/guided-oauth) if the server requires auth.
+- **STDIO** (Desktop and Terminal only): Paste a command such as `npx -y @modelcontextprotocol/server-everything`. Not available in the web app. See [Hosted App](/hosted/overview).
 
-<Frame>
-  <img src="/images/everything-demo.png" alt="Server everything demo" />
-</Frame>
+Each **Connected** server is available in App Builder, Chat, Tools, Prompts, and Resources. Connect more from **Servers** anytime.
 
-Once you submit, the connection status should show "Connected". You can connect to multiple MCP servers simultaneously on MCPJam.
-
-## Test an MCP Tool
-
-Navigate to the "Tools" tab to see all available tools from `server-everything`. This tab lets you manually test individual tools with custom parameters.
-
-Try the `add` tool:
-1. Select the `add` tool from the list
-2. Set parameters for `a` and `b`
-3. Click "Execute"
-4. View the tool's return value at the bottom
-
-<Frame>
-  <img src="/images/tool-add.png" alt="Add tool demo" />
-</Frame>
-
-## Explore More Features
-
-Now that you've connected a server and tested a tool, explore the full power of MCPJam Inspector:
+## 4. Where to go next
 
 <CardGroup cols={2}>
-  <Card
-    title="App Builder"
-    icon="anvil"
-    href="/inspector/app-builder"
-  >
-    Build and test ChatGPT apps and MCP apps with a full widget emulator
+  <Card title="App Builder" icon="anvil" href="/inspector/app-builder">
+    Debug your MCP server against a model. Renders OpenAI Apps SDK and MCP app UIs as well as plain text tool results. Run individual tool calls, use the in-panel chat, or mix both, and switch between the Chat view, Trace, and Raw. When a tool returns a widget, use the emulator (iframe, `window.openai`, CSP, device frames, locale, widget debugging).
   </Card>
-
-  <Card
-    title="LLM Playground"
-    icon="message-circle"
-    href="/inspector/llm-playground"
-  >
-    Chat with your MCP server using frontier models like GPT-5 and Claude Sonnet
+  <Card title="Chat" icon="message-circle" href="/inspector/chat">
+    Host-style chat (like ChatGPT or Claude): enable one or more MCP servers, then switch between the Chat view, Trace, and Raw as you go. Compare up to 3 frontier models on the same prompt.
   </Card>
-
-  <Card
-    title="OAuth Debugger"
-    icon="workflow"
-    href="/inspector/guided-oauth"
-  >
-    Debug your OAuth implementation with step-by-step guidance
+  <Card title="OAuth Debugger" icon="shield-check" href="/inspector/guided-oauth">
+    Step through your MCP authorization flow and inspect each stage. Check conformance across protocol versions (03-26, 06-18, 11-25) and client registration paths: Dynamic Client Registration (DCR), client pre-registration, and CIMD.
   </Card>
-
-  <Card
-    title="MCP Inspector"
-    icon="hammer"
-    href="/inspector/tools-prompts-resources"
-  >
-    Manually test tools, resources, and prompts with full JSON-RPC logging
+  <Card title="Workspaces" icon="folder" href="/inspector/workspaces">
+    Group servers; share configuration with your team
   </Card>
 </CardGroup>
