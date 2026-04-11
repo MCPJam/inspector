@@ -64,12 +64,10 @@ function writeError(error, format = DEFAULT_OUTPUT_FORMAT) {
   return payload;
 }
 function parseOutputFormat(value) {
-  if (value === "json" || value === "human" || value === "junit-xml") {
+  if (value === "json" || value === "human") {
     return value;
   }
-  throw usageError(
-    `Invalid output format "${value}". Use "json", "human", or "junit-xml".`
-  );
+  throw usageError(`Invalid output format "${value}". Use "json" or "human".`);
 }
 function detectOutputFormatFromArgv(argv) {
   for (let index = 0; index < argv.length; index += 1) {
@@ -113,7 +111,7 @@ function addSharedServerOptions(command) {
 function getGlobalOptions(command) {
   const options = command.optsWithGlobals();
   return {
-    format: options.format ?? "json",
+    format: parseOutputFormat(options.format ?? "json"),
     timeout: options.timeout ?? 3e4
   };
 }
@@ -205,12 +203,7 @@ function addGlobalOptions(program) {
     "Request timeout in milliseconds",
     (value) => parsePositiveInteger(value, "Timeout"),
     3e4
-  ).option(
-    "--format <format>",
-    "Output format: json or human",
-    parseOutputFormat,
-    "json"
-  );
+  ).option("--format <format>", "Output format", "json");
 }
 function parseHeader(entry) {
   const separatorIndex = entry.indexOf(":");
@@ -255,6 +248,8 @@ function parseEnvironmentOption(values) {
     })
   );
 }
+
+// src/lib/oauth-enums.ts
 var VALID_PROTOCOL_VERSIONS = /* @__PURE__ */ new Set([
   "2025-03-26",
   "2025-06-18",
@@ -378,7 +373,7 @@ function flowToTestSuite(result) {
   const failures = result.steps.filter((s) => s.status === "failed").length;
   const skipped = result.steps.filter((s) => s.status === "skipped").length;
   const time = (result.durationMs / 1e3).toFixed(3);
-  const classname = result.serverUrl;
+  const classname = escapeXml(result.serverUrl);
   const cases = result.steps.map((step) => stepToTestCase(step, classname)).join("\n");
   return `  <testsuite name="${name}" tests="${tests}" failures="${failures}" skipped="${skipped}" time="${time}">
 ${cases}
@@ -419,6 +414,18 @@ function singleResultToJUnitXml(result, label) {
 // src/commands/oauth.ts
 var DYNAMIC_CLIENT_ID_PLACEHOLDER = "__dynamic_registration_client__";
 var DYNAMIC_CLIENT_SECRET_PLACEHOLDER = "__dynamic_registration_secret__";
+function parseOAuthOutputFormat(value) {
+  if (value === "json" || value === "human" || value === "junit-xml") {
+    return value;
+  }
+  throw usageError(
+    `Invalid output format "${value}". Use "json", "human", or "junit-xml".`
+  );
+}
+function getOAuthFormat(command) {
+  const opts = command.optsWithGlobals();
+  return parseOAuthOutputFormat(opts.format ?? "json");
+}
 function registerOAuthCommands(program) {
   const oauth = program.command("oauth").description("Run MCP OAuth conformance flows");
   oauth.command("conformance").description("Run OAuth conformance against an HTTP MCP server").requiredOption("--url <url>", "MCP server URL").requiredOption(
@@ -451,13 +458,13 @@ function registerOAuthCommands(program) {
     "--verify-call-tool <name>",
     "After listing tools, also call the named tool"
   ).action(async (options, command) => {
-    const globalOptions = getGlobalOptions(command);
+    const format = getOAuthFormat(command);
     const config = buildOAuthConformanceConfig(options);
     const result = await new sdk.OAuthConformanceTest(config).run();
-    if (globalOptions.format === "junit-xml") {
+    if (format === "junit-xml") {
       process.stdout.write(singleResultToJUnitXml(result));
     } else {
-      writeResult(result, globalOptions.format);
+      writeResult(result, format);
     }
     if (!result.passed) {
       setProcessExitCode(1);
@@ -472,7 +479,7 @@ function registerOAuthCommands(program) {
     "--verify-call-tool <name>",
     "Also call the named tool after listing"
   ).action(async (options, command) => {
-    const globalOptions = getGlobalOptions(command);
+    const format = getOAuthFormat(command);
     const config = loadSuiteConfig(options.config);
     if (options.verifyTools || options.verifyCallTool) {
       const verification = {
@@ -484,10 +491,10 @@ function registerOAuthCommands(program) {
     }
     const suite = new sdk.OAuthConformanceSuite(config);
     const result = await suite.run();
-    if (globalOptions.format === "junit-xml") {
+    if (format === "junit-xml") {
       process.stdout.write(suiteResultToJUnitXml(result));
     } else {
-      writeResult(result, globalOptions.format);
+      writeResult(result, format);
     }
     if (!result.passed) {
       setProcessExitCode(1);
@@ -577,27 +584,27 @@ function assertValidUrl2(value, label) {
   }
 }
 function parseProtocolVersion(value) {
-  if (value === "2025-03-26" || value === "2025-06-18" || value === "2025-11-25") {
+  if (VALID_PROTOCOL_VERSIONS.has(value)) {
     return value;
   }
   throw usageError(
-    `Invalid protocol version "${value}". Use 2025-03-26, 2025-06-18, or 2025-11-25.`
+    `Invalid protocol version "${value}". Use ${[...VALID_PROTOCOL_VERSIONS].join(", ")}.`
   );
 }
 function parseRegistrationStrategy(value) {
-  if (value === "cimd" || value === "dcr" || value === "preregistered") {
+  if (VALID_REGISTRATION_STRATEGIES.has(value)) {
     return value;
   }
   throw usageError(
-    `Invalid registration strategy "${value}". Use cimd, dcr, or preregistered.`
+    `Invalid registration strategy "${value}". Use ${[...VALID_REGISTRATION_STRATEGIES].join(", ")}.`
   );
 }
 function parseAuthMode(value) {
-  if (value === "headless" || value === "interactive" || value === "client_credentials") {
+  if (VALID_AUTH_MODES.has(value)) {
     return value;
   }
   throw usageError(
-    `Invalid auth mode "${value}". Use headless, interactive, or client_credentials.`
+    `Invalid auth mode "${value}". Use ${[...VALID_AUTH_MODES].join(", ")}.`
   );
 }
 async function withEphemeralManager(config, fn, options) {

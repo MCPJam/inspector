@@ -102,11 +102,6 @@ export function registerOAuthCommands(program: Command): void {
       "--verify-call-tool <name>",
       "After listing tools, also call the named tool",
     )
-    .option(
-      "--format <format>",
-      "Output format: json, human, or junit-xml",
-      "json",
-    )
     .action(async (options, command) => {
       const format = getOAuthFormat(command);
       const config = buildOAuthConformanceConfig(options as OAuthCommandOptions);
@@ -136,24 +131,25 @@ export function registerOAuthCommands(program: Command): void {
       "--verify-call-tool <name>",
       "Also call the named tool after listing",
     )
-    .option(
-      "--format <format>",
-      "Output format: json, human, or junit-xml",
-      "json",
-    )
     .action(async (options, command) => {
       const format = getOAuthFormat(command);
       const config = loadSuiteConfig(options.config as string);
 
       if (options.verifyTools || options.verifyCallTool) {
-        const verification: OAuthVerificationConfig = {
-          ...config.defaults?.verification,
+        const cliVerification: OAuthVerificationConfig = {
           listTools: true,
           ...(options.verifyCallTool
             ? { callTool: { name: options.verifyCallTool as string } }
             : {}),
         };
-        config.defaults = { ...config.defaults, verification };
+        // Apply to every flow so per-flow overrides can't bypass the CLI flag
+        for (const flow of config.flows) {
+          flow.verification = { ...flow.verification, ...cliVerification };
+        }
+        config.defaults = {
+          ...config.defaults,
+          verification: { ...config.defaults?.verification, ...cliVerification },
+        };
       }
 
       const suite = new OAuthConformanceSuite(config);

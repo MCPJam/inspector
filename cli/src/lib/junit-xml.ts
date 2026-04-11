@@ -48,7 +48,7 @@ function flowToTestSuite(
   const failures = result.steps.filter((s) => s.status === "failed").length;
   const skipped = result.steps.filter((s) => s.status === "skipped").length;
   const time = (result.durationMs / 1000).toFixed(3);
-  const classname = escapeXml(result.serverUrl);
+  const classname = result.serverUrl;
 
   const cases = result.steps
     .map((step) => stepToTestCase(step, classname))
