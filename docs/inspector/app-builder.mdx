@@ -4,7 +4,7 @@ description: "Build and test ChatGPT apps and MCP apps locally with a full widge
 icon: "anvil"
 ---
 
-The App Builder is a local development environment for building [ChatGPT apps](https://developers.openai.com/apps-sdk/) and [MCP apps](https://modelcontextprotocol.io/docs/extensions/apps). It provides widget emulation with debugging tools that help you see what's happening under the hood in your server — all running locally without needing ngrok or a ChatGPT/Claude subscription.
+The App Builder is a local development environment for building [ChatGPT apps](https://developers.openai.com/apps-sdk/) and [MCP apps](https://modelcontextprotocol.io/docs/extensions/apps). It emulates how a host like ChatGPT or Claude would render your widgets, and wraps them in a full suite of debugging tools — widget state, model context, CSP violations, device viewports, themes, locales, and more — so you can see exactly what's happening under the hood. Everything runs locally, without needing ngrok or a ChatGPT/Claude subscription.
 
 <Frame>
   <img
@@ -15,15 +15,46 @@ The App Builder is a local development environment for building [ChatGPT apps](h
   />
 </Frame>
 
+## Key Features
+
+- **Widget Emulator** - Render widgets exposed via `openai/outputTemplate` (ChatGPT Apps) or `ui.resourceUri` (MCP Apps) the same way a real host would, with support for Inline, Picture-in-Picture, and Fullscreen display modes
+- **Chat with your Server** - Talk to your MCP server from inside the App Builder using frontier models (Claude, GPT, Gemini, and more) at no cost, with no API key required — widgets render inline in the thread as tools get called
+- **Manual Tool Invocation** - Invoke any tool directly from the Tools list with your own inputs to iterate on widgets without having to prompt a model
+- **Protocol Toggle** - For apps that declare both `openai/outputTemplate` and `ui.resourceUri`, flip between the `window.openai` host bridge and the `ui/*` JSON-RPC host bridge to see how each protocol renders the same widget
+- **Display Context Controls** - Test across device viewports (desktop, tablet, mobile, custom), light/dark themes, Claude vs ChatGPT host styles, locales, timezones, CSP modes, device capabilities, and safe area insets
+- **Per-Widget Debugging** - Inspect raw tool input/output, `widgetState`, model context updates, and CSP violations for every tool call from a row of icons above each widget
+- **Traces and X-Ray** - Replay any conversation as a timestamped timeline with per-step latency and token counts, or open X-Ray to see the exact JSON payload sent to the model
+- **JSON-RPC Logger** - Real-time feed of every message between the inspector and your server, including tool calls, `window.openai` API calls, widget state updates, and `ui/*` messages
+- **Save as a View** - Snapshot any tool execution to the [Views](/inspector/views) tab to browse, edit, and share offline
+
 ## Getting Started
 
 To start building apps with MCPJam:
 
 1. **Connect your MCP server** - Use the Servers tab to connect to your MCP server that returns widget-enabled tools
 2. **Navigate to App Builder** - Switch to the App Builder tab in the inspector
-3. **Invoke a tool** - Either manually invoke a tool from the Tools list, or chat with your server
+3. **Render a widget** - Either manually invoke a tool from the Tools list on the left, or chat with your server from the chat input at the bottom and let the model call the tool for you
 
-When a tool returns a widget (either via `openai/outputTemplate` for ChatGPT apps or `ui.resourceUri` for MCP apps), it will render immediately in the widget emulator.
+When a tool returns a widget (either via `openai/outputTemplate` for ChatGPT apps or `ui.resourceUri` for MCP apps), it renders immediately in the widget emulator, and a row of debugging icons appears above it so you can inspect state, model context, data, and CSP violations for that exact call.
+
+## App Builder Layout
+
+The App Builder uses a split-panel interface:
+
+**Widget Emulator (Center)**
+- Renders the active widget inside a device-accurate viewport
+- Display mode, device type, theme, host style, locale, timezone, CSP mode, device capabilities, and safe area controls live in the toolbar above
+- Debug panels (data, widget state, model context, CSP) open below the widget
+
+**Left Panel**
+- **Tools list** - Every tool exposed by your connected servers, with a protocol toggle for apps that support both ChatGPT and MCP host bridges
+- **Chat thread** - Conversation history with inline tool calls and widgets; each tool result has its own row of debugging icons
+- **JSON-RPC logger** - Real-time feed of MCP protocol messages at the bottom of the panel
+
+**Chat Input (Bottom)**
+- Send messages to the model, attach files, and pick skills or prompts with `/`
+- Configure the model, system prompt, temperature, and tool approval
+- Open X-Ray with the scan-search icon to inspect the raw payload sent to the model
 
 ## Display Context
 
