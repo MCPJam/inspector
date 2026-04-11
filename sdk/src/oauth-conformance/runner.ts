@@ -5,7 +5,10 @@ import {
   getConformanceClientCredentialsDynamicRegistrationMetadata,
 } from "../oauth/client-identity.js";
 import { createOAuthStateMachine } from "../oauth/state-machines/factory.js";
-import { getStepInfo } from "../oauth/state-machines/shared/step-metadata.js";
+import {
+  getStepInfo,
+  type OAuthStepInfo,
+} from "../oauth/state-machines/shared/step-metadata.js";
 import {
   EMPTY_OAUTH_FLOW_STATE,
   type HttpHistoryEntry,
@@ -19,16 +22,24 @@ import {
   createInteractiveAuthorizationSession,
   type InteractiveAuthorizationSession,
 } from "./auth-strategies/interactive.js";
+import {
+  runInvalidClientCheck,
+  runInvalidRedirectCheck,
+} from "./checks/oauth-negative.js";
+import { runTokenFormatCheck } from "./checks/oauth-token-format.js";
 import type { HttpServerConfig } from "../mcp-client-manager/index.js";
 import { withEphemeralClient, listTools } from "../operations.js";
-import type {
-  ClientCredentialsResult,
-  ConformanceResult,
-  NormalizedOAuthConformanceConfig,
-  OAuthConformanceConfig,
-  StepResult,
-  TrackedRequestFn,
-  VerificationResult,
+import {
+  CONFORMANCE_CHECK_METADATA,
+  type ConformanceStepId,
+  type ClientCredentialsResult,
+  type ConformanceResult,
+  type NormalizedOAuthConformanceConfig,
+  type OAuthConformanceCheckId,
+  type OAuthConformanceConfig,
+  type StepResult,
+  type TrackedRequestFn,
+  type VerificationResult,
 } from "./types.js";
 import { normalizeOAuthConformanceConfig } from "./validation.js";
 
@@ -135,6 +146,19 @@ function resolveAttempts(
   return (state.httpHistory ?? []).slice(stateHistoryBefore);
 }
 
+function isConformanceCheckId(
+  step: ConformanceStepId,
+): step is OAuthConformanceCheckId {
+  return step in CONFORMANCE_CHECK_METADATA;
+}
+
+function resolveStepInfo(step: ConformanceStepId): OAuthStepInfo {
+  if (isConformanceCheckId(step)) {
+    return CONFORMANCE_CHECK_METADATA[step];
+  }
+  return getStepInfo(step);
+}
+
 function buildStepResult(
   step: StepResult["step"],
   status: StepResult["status"],
@@ -143,11 +167,7 @@ function buildStepResult(
   httpAttempts: StepResult["httpAttempts"],
   error?: StepResult["error"],
 ): StepResult {
-  const metadata = getStepInfo(step);
-  const normalizedAttempts = httpAttempts.map((attempt) => ({
-    ...attempt,
-    step,
-  }));
+  const metadata = resolveStepInfo(step);
   return {
     step,
     title: metadata.title,
@@ -155,8 +175,8 @@ function buildStepResult(
     status,
     durationMs,
     logs,
-    http: normalizedAttempts[normalizedAttempts.length - 1],
-    httpAttempts: normalizedAttempts,
+    http: httpAttempts[httpAttempts.length - 1],
+    httpAttempts,
     error,
     teachableMoments: metadata.teachableMoments,
   };
@@ -231,11 +251,56 @@ export class OAuthConformanceTest {
     let state = cloneEmptyFlowState();
     let interactiveSession: InteractiveAuthorizationSession | undefined;
     let activeCollector: RunCollector | undefined;
+    let redirectUrl: string | undefined;
 
     const updateState = (updates: Partial<OAuthFlowState>) => {
       state = { ...state, ...updates };
     };
     const getState = () => state;
+    const recordOAuthCheck = async (
+      fallbackStep: StepResult["step"],
+      execute: () => Promise<{
+        step: StepResult["step"];
+        status: StepResult["status"];
+        durationMs: number;
+        error?: StepResult["error"];
+      }>,
+    ) => {
+      const beforeHistory = state.httpHistory?.length ?? 0;
+      activeCollector = { attempts: [] };
+
+      try {
+        const outcome = await execute();
+        const attempts = resolveAttempts(activeCollector, beforeHistory, state);
+        steps.push(
+          buildStepResult(
+            outcome.step,
+            outcome.status,
+            outcome.durationMs,
+            [],
+            attempts,
+            outcome.error,
+          ),
+        );
+      } catch (error) {
+        const attempts = resolveAttempts(activeCollector, beforeHistory, state);
+        steps.push(
+          buildStepResult(
+            fallbackStep,
+            "failed",
+            0,
+            [],
+            attempts,
+            {
+              message: error instanceof Error ? error.message : String(error),
+              details: error,
+            },
+          ),
+        );
+      } finally {
+        activeCollector = undefined;
+      }
+    };
 
     try {
       if (this.config.auth.mode === "interactive") {
@@ -247,7 +312,7 @@ export class OAuthConformanceTest {
         });
       }
 
-      const redirectUrl =
+      redirectUrl =
         interactiveSession?.redirectUrl ??
         this.config.redirectUrl ??
         (this.deps.createDefaultRedirectUrl ?? createDefaultRedirectUrl)();
@@ -558,6 +623,49 @@ export class OAuthConformanceTest {
           buildStepResult(state.currentStep, "failed", 0, [], [], {
             message: "OAuth conformance runner exceeded its step guard",
           }),
+        );
+      }
+
+      if (
+        state.currentStep === "complete" &&
+        steps.every((step) => step.status !== "failed") &&
+        this.config.oauthConformanceChecks &&
+        redirectUrl
+      ) {
+        const oauthCheckRedirectUrl = redirectUrl;
+        await recordOAuthCheck("oauth_invalid_client", () =>
+          runInvalidClientCheck({
+            config: this.config,
+            state,
+            trackedRequest,
+            redirectUrl: oauthCheckRedirectUrl,
+          }),
+        );
+        await recordOAuthCheck("oauth_invalid_redirect", () =>
+          runInvalidRedirectCheck({
+            config: this.config,
+            state,
+            trackedRequest,
+            redirectUrl: oauthCheckRedirectUrl,
+          }),
+        );
+
+        const tokenRequestStep = [...steps]
+          .reverse()
+          .find((step) => step.step === "token_request");
+        const tokenFormatOutcome = runTokenFormatCheck({
+          tokenRequestStep,
+          state,
+        });
+        steps.push(
+          buildStepResult(
+            tokenFormatOutcome.step,
+            tokenFormatOutcome.status,
+            tokenFormatOutcome.durationMs,
+            [],
+            [],
+            tokenFormatOutcome.error,
+          ),
         );
       }
     } finally {

@@ -529,4 +529,114 @@ describe("OAuthConformanceTest", () => {
     expect(result.verification).toBeUndefined();
     expect(result.steps.map((s) => s.step)).not.toContain("verify_list_tools");
   });
+
+  it("runs OAuth negative and token-format checks after a successful flow", async () => {
+    const serverUrl = "https://mcp.example.com/mcp";
+    const redirectUrl = "http://127.0.0.1:3333/callback";
+    const resourceMetadataUrl =
+      "https://mcp.example.com/.well-known/oauth-protected-resource/mcp";
+    const authServerUrl = "https://auth.example.com";
+    const tokenBodies: string[] = [];
+
+    const fetchFn: typeof fetch = jest.fn(async (input, init) => {
+      const url = String(input);
+      const headers = new Headers(init?.headers);
+
+      if (url === serverUrl && !headers.get("Authorization")) {
+        return new Response(null, {
+          status: 401,
+          headers: {
+            "WWW-Authenticate": `Bearer resource_metadata="${resourceMetadataUrl}"`,
+          },
+        });
+      }
+
+      if (url === resourceMetadataUrl) {
+        return jsonResponse({
+          resource: serverUrl,
+          authorization_servers: [authServerUrl],
+          scopes_supported: ["openid", "mcp"],
+        });
+      }
+
+      if (url === `${authServerUrl}/.well-known/oauth-authorization-server`) {
+        return jsonResponse({
+          issuer: authServerUrl,
+          authorization_endpoint: `${authServerUrl}/authorize`,
+          token_endpoint: `${authServerUrl}/token`,
+          registration_endpoint: `${authServerUrl}/register`,
+          response_types_supported: ["code"],
+          grant_types_supported: ["authorization_code", "refresh_token"],
+          code_challenge_methods_supported: ["S256"],
+          client_id_metadata_document_supported: true,
+        });
+      }
+
+      if (url === DEFAULT_MCPJAM_CLIENT_ID_METADATA_URL) {
+        return jsonResponse({
+          client_id: DEFAULT_MCPJAM_CLIENT_ID_METADATA_URL,
+          client_name: "MCPJam SDK OAuth Conformance",
+          redirect_uris: [redirectUrl],
+        });
+      }
+
+      if (url === `${authServerUrl}/token`) {
+        const body = String(init?.body ?? "");
+        tokenBodies.push(body);
+
+        if (body.includes("client_id=invalid-client-id")) {
+          return jsonResponse({ error: "invalid_client" }, 401);
+        }
+
+        if (
+          body.includes(
+            "redirect_uri=http%3A%2F%2F127.0.0.1%3A3333%2Fcallback%3Finvalid%3D1",
+          )
+        ) {
+          return jsonResponse({ error: "invalid_grant" }, 400);
+        }
+
+        return jsonResponse({
+          access_token: "access-token",
+          refresh_token: "refresh-token",
+          token_type: "Bearer",
+          expires_in: 3600,
+        });
+      }
+
+      if (url === serverUrl && headers.get("Authorization") === "Bearer access-token") {
+        return createMcpInitializeResponse("2025-11-25");
+      }
+
+      return jsonResponse({ error: "not found" }, 404);
+    }) as typeof fetch;
+
+    const test = new OAuthConformanceTest(
+      {
+        serverUrl,
+        protocolVersion: "2025-11-25",
+        registrationStrategy: "cimd",
+        auth: { mode: "headless" },
+        fetchFn,
+        redirectUrl,
+        oauthConformanceChecks: true,
+      },
+      {
+        completeHeadlessAuthorization: jest.fn(async () => ({
+          code: "auth-code",
+        })),
+      },
+    );
+
+    const result = await test.run();
+    const statuses = Object.fromEntries(
+      result.steps.map((step) => [step.step, step.status]),
+    );
+
+    expect(result.passed).toBe(true);
+    expect(tokenBodies).toHaveLength(3);
+    expect(statuses.oauth_invalid_client).toBe("passed");
+    expect(statuses.oauth_invalid_redirect).toBe("passed");
+    expect(statuses.oauth_token_format).toBe("passed");
+  });
 });
