@@ -51,6 +51,40 @@ test("buildOAuthConformanceConfig allows DCR client_credentials without explicit
   assert.equal(config.auth.clientSecret, "__dynamic_registration_secret__");
 });
 
+test("buildOAuthConformanceConfig adds verification when --verify-tools is set", () => {
+  const config = buildOAuthConformanceConfig({
+    url: "https://example.com/mcp",
+    protocolVersion: "2025-11-25",
+    registration: "cimd",
+    verifyTools: true,
+  });
+
+  assert.equal(config.verification?.listTools, true);
+  assert.equal(config.verification?.callTool, undefined);
+});
+
+test("buildOAuthConformanceConfig adds callTool when --verify-call-tool is set", () => {
+  const config = buildOAuthConformanceConfig({
+    url: "https://example.com/mcp",
+    protocolVersion: "2025-06-18",
+    registration: "dcr",
+    verifyCallTool: "execute_sql",
+  });
+
+  assert.equal(config.verification?.listTools, true);
+  assert.deepEqual(config.verification?.callTool, { name: "execute_sql" });
+});
+
+test("buildOAuthConformanceConfig omits verification when flags not set", () => {
+  const config = buildOAuthConformanceConfig({
+    url: "https://example.com/mcp",
+    protocolVersion: "2025-11-25",
+    registration: "cimd",
+  });
+
+  assert.equal(config.verification, undefined);
+});
+
 test("buildOAuthConformanceConfig rejects unsupported combinations", () => {
   assert.throws(
     () =>

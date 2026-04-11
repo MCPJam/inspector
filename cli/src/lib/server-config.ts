@@ -51,7 +51,7 @@ export function addSharedServerOptions(command: Command): Command {
 export function getGlobalOptions(command: Command): GlobalOptions {
   const options = command.optsWithGlobals() as Partial<GlobalOptions>;
   return {
-    format: options.format ?? "json",
+    format: parseOutputFormat(options.format as string ?? "json"),
     timeout: options.timeout ?? 30_000,
   };
 }
@@ -176,12 +176,7 @@ export function addGlobalOptions(program: Command): Command {
       (value: string) => parsePositiveInteger(value, "Timeout"),
       30_000,
     )
-    .option(
-      "--format <format>",
-      "Output format: json or human",
-      parseOutputFormat,
-      "json",
-    );
+    .option("--format <format>", "Output format", "json");
 }
 
 function parseHeader(entry: string): [string, string] {

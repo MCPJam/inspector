@@ -28,6 +28,8 @@ export const STEP_ORDER: OAuthFlowStep[] = [
   "received_access_token",
   "authenticated_mcp_request",
   "complete",
+  "verify_list_tools",
+  "verify_call_tool",
 ];
 
 export const STEP_METADATA: Record<OAuthFlowStep, OAuthStepInfo> = {
@@ -197,6 +199,22 @@ export const STEP_METADATA: Record<OAuthFlowStep, OAuthStepInfo> = {
       "The client verified the server with OAuth credentials and recorded the final response.",
     teachableMoments: [
       "Continue exploring with authenticated requests or reset to run the flow again.",
+    ],
+  },
+  verify_list_tools: {
+    title: "Verify: List Tools",
+    summary:
+      "Connect to the MCP server with the obtained token and list available tools.",
+    teachableMoments: [
+      "This step confirms the OAuth token is actually usable for MCP operations.",
+    ],
+  },
+  verify_call_tool: {
+    title: "Verify: Call Tool",
+    summary:
+      "Execute a tool on the MCP server to confirm end-to-end functionality.",
+    teachableMoments: [
+      "Calling a tool validates not just authentication but also authorization scopes.",
     ],
   },
 };

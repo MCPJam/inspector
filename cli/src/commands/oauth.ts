@@ -1,15 +1,42 @@
-import type { OAuthConformanceConfig } from "@mcpjam/sdk";
-import { OAuthConformanceTest } from "@mcpjam/sdk";
+import type { OAuthConformanceConfig, OAuthVerificationConfig } from "@mcpjam/sdk";
+import { OAuthConformanceTest, OAuthConformanceSuite } from "@mcpjam/sdk";
 import { Command } from "commander";
 import {
-  getGlobalOptions,
   parseHeadersOption,
   parsePositiveInteger,
 } from "../lib/server-config";
-import { setProcessExitCode, usageError, writeResult } from "../lib/output";
+import {
+  VALID_PROTOCOL_VERSIONS,
+  VALID_REGISTRATION_STRATEGIES,
+  VALID_AUTH_MODES,
+} from "../lib/oauth-enums";
+import {
+  setProcessExitCode,
+  usageError,
+  writeResult,
+  type OutputFormat,
+} from "../lib/output";
+import { loadSuiteConfig } from "../lib/config-file";
+import { singleResultToJUnitXml, suiteResultToJUnitXml } from "../lib/junit-xml";
 
 const DYNAMIC_CLIENT_ID_PLACEHOLDER = "__dynamic_registration_client__";
 const DYNAMIC_CLIENT_SECRET_PLACEHOLDER = "__dynamic_registration_secret__";
+
+type OAuthOutputFormat = OutputFormat | "junit-xml";
+
+function parseOAuthOutputFormat(value: string): OAuthOutputFormat {
+  if (value === "json" || value === "human" || value === "junit-xml") {
+    return value;
+  }
+  throw usageError(
+    `Invalid output format "${value}". Use "json", "human", or "junit-xml".`,
+  );
+}
+
+function getOAuthFormat(command: Command): OAuthOutputFormat {
+  const opts = command.optsWithGlobals() as { format?: string };
+  return parseOAuthOutputFormat(opts.format ?? "json");
+}
 
 export interface OAuthCommandOptions {
   url: string;
@@ -22,6 +49,8 @@ export interface OAuthCommandOptions {
   scopes?: string;
   stepTimeout?: number;
   header?: string[];
+  verifyTools?: boolean;
+  verifyCallTool?: string;
 }
 
 export function registerOAuthCommands(program: Command): void {
@@ -65,16 +94,76 @@ export function registerOAuthCommands(program: Command): void {
       (value: string) => parsePositiveInteger(value, "Step timeout"),
       30_000,
     )
+    .option(
+      "--verify-tools",
+      "After OAuth succeeds, verify the token by listing MCP tools",
+    )
+    .option(
+      "--verify-call-tool <name>",
+      "After listing tools, also call the named tool",
+    )
     .action(async (options, command) => {
-    const globalOptions = getGlobalOptions(command);
-    const config = buildOAuthConformanceConfig(options as OAuthCommandOptions);
-    const result = await new OAuthConformanceTest(config).run();
+      const format = getOAuthFormat(command);
+      const config = buildOAuthConformanceConfig(options as OAuthCommandOptions);
+      const result = await new OAuthConformanceTest(config).run();
 
-    writeResult(result, globalOptions.format);
-    if (!result.passed) {
-      setProcessExitCode(1);
-    }
-  });
+      if (format === "junit-xml") {
+        process.stdout.write(singleResultToJUnitXml(result));
+      } else {
+        writeResult(result, format);
+      }
+      if (!result.passed) {
+        setProcessExitCode(1);
+      }
+    });
+
+  oauth
+    .command("conformance-suite")
+    .description(
+      "Run a matrix of OAuth conformance flows from a JSON config file",
+    )
+    .requiredOption("--config <path>", "Path to JSON config file")
+    .option(
+      "--verify-tools",
+      "Enable post-auth tool listing verification on all flows",
+    )
+    .option(
+      "--verify-call-tool <name>",
+      "Also call the named tool after listing",
+    )
+    .action(async (options, command) => {
+      const format = getOAuthFormat(command);
+      const config = loadSuiteConfig(options.config as string);
+
+      if (options.verifyTools || options.verifyCallTool) {
+        const cliVerification: OAuthVerificationConfig = {
+          listTools: true,
+          ...(options.verifyCallTool
+            ? { callTool: { name: options.verifyCallTool as string } }
+            : {}),
+        };
+        // Apply to every flow so per-flow overrides can't bypass the CLI flag
+        for (const flow of config.flows) {
+          flow.verification = { ...flow.verification, ...cliVerification };
+        }
+        config.defaults = {
+          ...config.defaults,
+          verification: { ...config.defaults?.verification, ...cliVerification },
+        };
+      }
+
+      const suite = new OAuthConformanceSuite(config);
+      const result = await suite.run();
+
+      if (format === "junit-xml") {
+        process.stdout.write(suiteResultToJUnitXml(result));
+      } else {
+        writeResult(result, format);
+      }
+      if (!result.passed) {
+        setProcessExitCode(1);
+      }
+    });
 }
 
 export function buildOAuthConformanceConfig(
@@ -140,6 +229,16 @@ export function buildOAuthConformanceConfig(
     client.clientIdMetadataUrl = clientMetadataUrl;
   }
 
+  const verification: OAuthVerificationConfig | undefined =
+    options.verifyTools || options.verifyCallTool
+      ? {
+          listTools: options.verifyTools ?? !!options.verifyCallTool,
+          ...(options.verifyCallTool
+            ? { callTool: { name: options.verifyCallTool } }
+            : {}),
+        }
+      : undefined;
+
   return {
     serverUrl,
     protocolVersion,
@@ -149,6 +248,7 @@ export function buildOAuthConformanceConfig(
     scopes: options.scopes?.trim() || undefined,
     customHeaders,
     stepTimeout: options.stepTimeout ?? 30_000,
+    verification,
   };
 }
 
@@ -193,43 +293,35 @@ function assertValidUrl(value: string, label: string): void {
 function parseProtocolVersion(
   value: string,
 ): "2025-03-26" | "2025-06-18" | "2025-11-25" {
-  if (
-    value === "2025-03-26" ||
-    value === "2025-06-18" ||
-    value === "2025-11-25"
-  ) {
-    return value;
+  if (VALID_PROTOCOL_VERSIONS.has(value)) {
+    return value as "2025-03-26" | "2025-06-18" | "2025-11-25";
   }
 
   throw usageError(
-    `Invalid protocol version "${value}". Use 2025-03-26, 2025-06-18, or 2025-11-25.`,
+    `Invalid protocol version "${value}". Use ${[...VALID_PROTOCOL_VERSIONS].join(", ")}.`,
   );
 }
 
 function parseRegistrationStrategy(
   value: string,
 ): "cimd" | "dcr" | "preregistered" {
-  if (value === "cimd" || value === "dcr" || value === "preregistered") {
-    return value;
+  if (VALID_REGISTRATION_STRATEGIES.has(value)) {
+    return value as "cimd" | "dcr" | "preregistered";
   }
 
   throw usageError(
-    `Invalid registration strategy "${value}". Use cimd, dcr, or preregistered.`,
+    `Invalid registration strategy "${value}". Use ${[...VALID_REGISTRATION_STRATEGIES].join(", ")}.`,
   );
 }
 
 function parseAuthMode(
   value: string,
 ): "headless" | "interactive" | "client_credentials" {
-  if (
-    value === "headless" ||
-    value === "interactive" ||
-    value === "client_credentials"
-  ) {
-    return value;
+  if (VALID_AUTH_MODES.has(value)) {
+    return value as "headless" | "interactive" | "client_credentials";
   }
 
   throw usageError(
-    `Invalid auth mode "${value}". Use headless, interactive, or client_credentials.`,
+    `Invalid auth mode "${value}". Use ${[...VALID_AUTH_MODES].join(", ")}.`,
   );
 }
