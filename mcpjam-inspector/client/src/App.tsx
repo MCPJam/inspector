@@ -263,8 +263,10 @@ export default function App() {
     useState<EvalChatHandoff | null>(null);
   const [activeOrganizationSection, setActiveOrganizationSection] =
     useState<OrganizationRouteSection>("overview");
-  const [optimisticallyDeletedOrganizationIds, setOptimisticallyDeletedOrganizationIds] =
-    useState<string[]>([]);
+  const [
+    optimisticallyDeletedOrganizationIds,
+    setOptimisticallyDeletedOrganizationIds,
+  ] = useState<string[]>([]);
   const [chatHasMessages, setChatHasMessages] = useState(false);
   const [appBuilderOnboarding, setAppBuilderOnboarding] = useState(false);
   const [callbackCompleted, setCallbackCompleted] = useState(false);
@@ -376,7 +378,9 @@ export default function App() {
         sortedOrganizations.some((org) => org._id === organizationId),
       );
       return nextIds.length === currentIds.length &&
-        nextIds.every((organizationId, index) => organizationId === currentIds[index])
+        nextIds.every(
+          (organizationId, index) => organizationId === currentIds[index],
+        )
         ? currentIds
         : nextIds;
     });
@@ -803,7 +807,7 @@ export default function App() {
     ? "Sign in to create more workspaces"
     : noOrganizationsAvailable
       ? "Create or join an organization to create workspaces"
-    : (workspaceCreationGate.denialMessage ?? undefined);
+      : (workspaceCreationGate.denialMessage ?? undefined);
   const [trialModalDismissedForOrg, setTrialModalDismissedForOrg] = useState<
     string | null
   >(null);

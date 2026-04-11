@@ -48,7 +48,9 @@ describe("resolveBillingGateState", () => {
       isAuthenticated: true,
     });
     mockUseFeatureFlagEnabled.mockReturnValue(true);
-    mockUseOrganizationBilling.mockReturnValue(createUseOrganizationBillingResult());
+    mockUseOrganizationBilling.mockReturnValue(
+      createUseOrganizationBillingResult(),
+    );
   });
 
   it("resolves denied feature gates with upgrade guidance", () => {

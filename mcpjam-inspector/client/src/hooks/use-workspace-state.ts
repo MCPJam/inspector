@@ -137,13 +137,13 @@ export function useWorkspaceState({
     }
   }, []);
 
-  const {
-    servers: activeWorkspaceServersFlat,
-    isLoading: isLoadingServers,
-  } = useWorkspaceServers({
-    workspaceId: shouldTreatRemoteWorkspacesAsEmpty ? null : convexActiveWorkspaceId,
-    isAuthenticated,
-  });
+  const { servers: activeWorkspaceServersFlat, isLoading: isLoadingServers } =
+    useWorkspaceServers({
+      workspaceId: shouldTreatRemoteWorkspacesAsEmpty
+        ? null
+        : convexActiveWorkspaceId,
+      isAuthenticated,
+    });
 
   const clearPendingClientConfigSync = useCallback((error?: Error) => {
     const pending = pendingClientConfigSyncRef.current;

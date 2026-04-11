@@ -124,7 +124,10 @@ export function useWorkspaceBillingGate({
   const billingUiFlag = useFeatureFlagEnabled("billing-entitlements-ui");
   const billingUiEnabled = billingUiFlag === true;
   const shouldResolve =
-    isAuthenticated && billingUiFlag !== false && !!workspaceId && !!organizationId;
+    isAuthenticated &&
+    billingUiFlag !== false &&
+    !!workspaceId &&
+    !!organizationId;
   const resolvedOrganizationId = shouldResolve ? organizationId : null;
   const {
     billingStatus,
