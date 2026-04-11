@@ -1,4 +1,4 @@
-import type { MCPClientCheckDefinition } from "../types.js";
+import type { MCPClientCheckContext, MCPClientCheckDefinition } from "../types.js";
 import {
   errorMessage,
   failedResult,
@@ -8,19 +8,6 @@ import {
 function selectCompletionReference(ctx: Parameters<
   MCPClientCheckDefinition["run"]
 >[0]) {
-  if (ctx.availablePrompts.includes("test_prompt_with_arguments")) {
-    return {
-      ref: {
-        type: "ref/prompt" as const,
-        name: "test_prompt_with_arguments",
-      },
-      argument: {
-        name: "arg1",
-        value: "par",
-      },
-    };
-  }
-
   if (ctx.availablePrompts[0]) {
     return {
       ref: {
@@ -48,6 +35,38 @@ function selectCompletionReference(ctx: Parameters<
   }
 
   return undefined;
+}
+
+function checkCapabilityConsistency(
+  caps: Record<string, unknown>,
+  ctx: MCPClientCheckContext,
+  mismatches: string[],
+) {
+  const hasToolsCap = !!caps.tools;
+  const hasTools = ctx.availableTools.length > 0;
+  if (hasTools && !hasToolsCap) {
+    mismatches.push(
+      "Server returned tools but does not advertise capabilities.tools",
+    );
+  }
+
+  const hasPromptsCap = !!caps.prompts;
+  const hasPrompts = ctx.availablePrompts.length > 0;
+  if (hasPrompts && !hasPromptsCap) {
+    mismatches.push(
+      "Server returned prompts but does not advertise capabilities.prompts",
+    );
+  }
+
+  const hasResourcesCap = !!caps.resources;
+  const hasResources =
+    ctx.availableResources.length > 0 ||
+    ctx.availableResourceTemplates.length > 0;
+  if (hasResources && !hasResourcesCap) {
+    mismatches.push(
+      "Server returned resources but does not advertise capabilities.resources",
+    );
+  }
 }
 
 export const CORE_CHECKS: MCPClientCheckDefinition[] = [
@@ -205,6 +224,40 @@ export const CORE_CHECKS: MCPClientCheckDefinition[] = [
           error,
         );
       }
+    },
+  },
+  {
+    id: "capabilities-consistent",
+    category: "core",
+    title: "Capabilities Consistent",
+    description:
+      "Advertised server capabilities match the features actually exposed.",
+    async run(ctx) {
+      const startedAt = Date.now();
+      const caps = ctx.initializationInfo?.serverCapabilities;
+      if (!caps) {
+        return failedResult(
+          this,
+          Date.now() - startedAt,
+          "Server capabilities are unavailable after initialization",
+        );
+      }
+
+      const mismatches: string[] = [];
+      checkCapabilityConsistency(caps, ctx, mismatches);
+
+      if (mismatches.length > 0) {
+        return failedResult(
+          this,
+          Date.now() - startedAt,
+          `Capability mismatches: ${mismatches.join("; ")}`,
+          { mismatches },
+        );
+      }
+
+      return passedResult(this, Date.now() - startedAt, {
+        advertisedCapabilities: Object.keys(caps),
+      });
     },
   },
 ];

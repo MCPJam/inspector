@@ -19,8 +19,8 @@ describe("MCPConformanceTest", () => {
       expect(result.passed).toBe(true);
       expect(result.checks).toHaveLength(MCP_CHECK_IDS.length);
       expect(result.checks.every((check) => check.status === "passed")).toBe(true);
-      expect(result.categorySummary.core.passed).toBe(4);
-      expect(result.categorySummary.tools.passed).toBe(1);
+      expect(result.categorySummary.core.passed).toBe(6);
+      expect(result.categorySummary.tools.passed).toBe(2);
       expect(result.categorySummary.prompts.passed).toBe(1);
       expect(result.categorySummary.resources.passed).toBe(1);
       expect(result.categorySummary.security.passed).toBe(2);

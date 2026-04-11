@@ -46,4 +46,84 @@ export const TOOL_CHECKS: MCPClientCheckDefinition[] = [
       }
     },
   },
+  {
+    id: "tools-input-schemas-valid",
+    category: "tools",
+    title: "Tool Input Schemas Valid",
+    description:
+      "Every tool's inputSchema has type \"object\" and valid properties/required fields.",
+    async run(ctx) {
+      const startedAt = Date.now();
+      try {
+        const result = await ctx.manager.listTools(ctx.serverId);
+        const tools = result.tools ?? [];
+
+        if (tools.length === 0) {
+          return passedResult(this, Date.now() - startedAt, {
+            toolCount: 0,
+          });
+        }
+
+        const violations: Array<{ tool: string; reason: string }> = [];
+
+        for (const tool of tools) {
+          const schema = tool.inputSchema as Record<string, unknown> | undefined;
+          if (!schema) {
+            violations.push({ tool: tool.name, reason: "missing inputSchema" });
+            continue;
+          }
+
+          if (schema.type !== "object") {
+            violations.push({
+              tool: tool.name,
+              reason: `inputSchema.type is "${String(schema.type)}", expected "object"`,
+            });
+          }
+
+          if (
+            schema.properties !== undefined &&
+            (typeof schema.properties !== "object" ||
+              schema.properties === null ||
+              Array.isArray(schema.properties))
+          ) {
+            violations.push({
+              tool: tool.name,
+              reason: "inputSchema.properties is not a plain object",
+            });
+          }
+
+          if (
+            schema.required !== undefined &&
+            !Array.isArray(schema.required)
+          ) {
+            violations.push({
+              tool: tool.name,
+              reason: "inputSchema.required is not an array",
+            });
+          }
+        }
+
+        if (violations.length > 0) {
+          return failedResult(
+            this,
+            Date.now() - startedAt,
+            `${violations.length} tool(s) have invalid inputSchema: ${violations.map((v) => `${v.tool} (${v.reason})`).join(", ")}`,
+            { violations },
+          );
+        }
+
+        return passedResult(this, Date.now() - startedAt, {
+          toolCount: tools.length,
+        });
+      } catch (error) {
+        return failedResult(
+          this,
+          Date.now() - startedAt,
+          errorMessage(error),
+          undefined,
+          error,
+        );
+      }
+    },
+  },
 ];

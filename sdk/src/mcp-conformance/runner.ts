@@ -7,6 +7,7 @@ import {
 } from "../operations.js";
 import { CORE_CHECKS } from "./checks/core.js";
 import { RESOURCE_CHECKS } from "./checks/resources.js";
+import { runProtocolChecks } from "./checks/protocol.js";
 import { runSecurityChecks } from "./checks/security.js";
 import { runTransportChecks } from "./checks/transport.js";
 import { TOOL_CHECKS } from "./checks/tools.js";
@@ -38,6 +39,7 @@ const CLIENT_CHECKS = [
 const RAW_CHECK_CATEGORY_ENTRIES: ReadonlyArray<
   readonly [MCPCheckId, MCPCheckCategory]
 > = [
+  ["protocol-invalid-method-error", "core"],
   ["localhost-host-rebinding-rejected", "security"],
   ["localhost-host-valid-accepted", "security"],
   ["server-sse-polling-session", "transport"],
@@ -250,12 +252,13 @@ export class MCPConformanceTest {
       fetchFn: this.config.fetchFn,
     };
 
-    const [securityChecks, transportChecks] = await Promise.all([
+    const [protocolChecks, securityChecks, transportChecks] = await Promise.all([
+      runProtocolChecks(rawContext, selectedCheckIds),
       runSecurityChecks(rawContext, selectedCheckIds),
       runTransportChecks(rawContext, selectedCheckIds),
     ]);
 
-    const checks = [...clientChecks, ...securityChecks, ...transportChecks];
+    const checks = [...clientChecks, ...protocolChecks, ...securityChecks, ...transportChecks];
     const categorySummary = summarizeChecks(checks);
 
     return {
