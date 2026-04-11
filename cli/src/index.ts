@@ -1,4 +1,5 @@
 import { Command, CommanderError } from "commander";
+import { registerProtocolCommands } from "./commands/conformance";
 import { registerOAuthCommands } from "./commands/oauth";
 import { registerPromptCommands } from "./commands/prompts";
 import { registerResourcesCommands } from "./commands/resources";
@@ -34,6 +35,7 @@ async function main(argv: readonly string[] = process.argv): Promise<number> {
   registerResourcesCommands(program);
   registerPromptCommands(program);
   registerOAuthCommands(program);
+  registerProtocolCommands(program);
 
   if (argv.length <= 2) {
     program.outputHelp();

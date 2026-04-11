@@ -16,6 +16,11 @@
       "import": "./dist/browser.mjs",
       "require": "./dist/browser.js"
     },
+    "./operations": {
+      "types": "./dist/operations.d.ts",
+      "import": "./dist/operations.mjs",
+      "require": "./dist/operations.js"
+    },
     "./skill-reference": {
       "types": "./dist/skill-reference.d.ts",
       "import": "./dist/skill-reference.mjs",

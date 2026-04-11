@@ -146,7 +146,6 @@ async function loadSentry(): Promise<LoadedSentry | null> {
         }
 
         const client = new sentry.NodeClient({
-          defaultIntegrations: false,
           dsn: sdkSentryDsn,
           integrations: [],
           release: SDK_RELEASE,

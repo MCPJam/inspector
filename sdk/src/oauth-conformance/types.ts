@@ -10,6 +10,49 @@ import type {
   RegistrationStrategy2025_06_18,
   RegistrationStrategy2025_11_25,
 } from "../oauth/state-machines/types.js";
+import type { OAuthStepInfo } from "../oauth/state-machines/shared/step-metadata.js";
+
+// ── Conformance-only check identifiers ────────────────────────────────
+// These are post-flow validation checks that do NOT belong in OAuthFlowStep
+// (the interactive debugger state machine never enters these states).
+
+export type OAuthConformanceCheckId =
+  | "oauth_invalid_client"
+  | "oauth_invalid_redirect"
+  | "oauth_token_format";
+
+/** A step in a conformance result: either a real flow step or a post-flow check. */
+export type ConformanceStepId = OAuthFlowStep | OAuthConformanceCheckId;
+
+export const CONFORMANCE_CHECK_METADATA: Record<
+  OAuthConformanceCheckId,
+  OAuthStepInfo
+> = {
+  oauth_invalid_client: {
+    title: "OAuth Check: Invalid Client",
+    summary:
+      "Send a token request with an invalid client identifier and confirm the authorization server rejects it.",
+    teachableMoments: [
+      "Authorization servers should reject malformed or unknown clients instead of issuing tokens.",
+    ],
+  },
+  oauth_invalid_redirect: {
+    title: "OAuth Check: Invalid Redirect URI",
+    summary:
+      "Send a token request with a mismatched redirect URI and confirm the authorization server rejects it.",
+    teachableMoments: [
+      "Redirect URI validation prevents authorization code injection and token leakage.",
+    ],
+  },
+  oauth_token_format: {
+    title: "OAuth Check: Token Response Format",
+    summary:
+      "Validate that the successful token response includes the expected access token fields.",
+    teachableMoments: [
+      "Token responses should include a usable bearer token, token type, and expiration metadata.",
+    ],
+  },
+};
 
 export type OAuthRegistrationStrategy =
   | RegistrationStrategy2025_03_26
@@ -53,10 +96,11 @@ export interface OAuthConformanceConfig {
   fetchFn?: typeof fetch;
   stepTimeout?: number;
   verification?: OAuthVerificationConfig;
+  oauthConformanceChecks?: boolean;
 }
 
 export interface StepResult {
-  step: OAuthFlowStep;
+  step: ConformanceStepId;
   title: string;
   summary: string;
   status: "passed" | "failed" | "skipped";
@@ -95,6 +139,7 @@ export interface NormalizedOAuthConformanceConfig {
   fetchFn: typeof fetch;
   stepTimeout: number;
   verification: OAuthVerificationConfig;
+  oauthConformanceChecks: boolean;
 }
 
 export interface TrackedRequestOptions {
@@ -146,6 +191,14 @@ export interface VerificationResult {
     durationMs: number;
     error?: string;
   };
+}
+
+export interface OAuthConformanceStepExecution {
+  step: ConformanceStepId;
+  status: StepResult["status"];
+  durationMs: number;
+  httpAttempts: HttpHistoryEntry[];
+  error?: StepResult["error"];
 }
 
 // ── Suite ─────────────────────────────────────────────────────────────
