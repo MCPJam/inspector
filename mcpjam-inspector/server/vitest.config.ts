@@ -13,7 +13,7 @@ export default defineConfig({
     hookTimeout: 30000,
     server: {
       deps: {
-        inline: ["@mcpjam/sdk"],
+        inline: ["@mcpjam/sdk", "@mcpjam/sdk/operations"],
       },
     },
     coverage: {
