@@ -217,7 +217,12 @@ export { injectOpenAICompat } from "./widget-helpers.js";
 export { EXPLORE_TO_SDK_EVALS_SKILL_MD, SKILL_MD } from "./skill-reference.js";
 
 // OAuth conformance
-export { OAuthConformanceTest, OAuthConformanceSuite } from "./oauth-conformance/index.js";
+export {
+  OAuthConformanceTest,
+  OAuthConformanceSuite,
+  formatOAuthConformanceHuman,
+  formatOAuthConformanceSuiteHuman,
+} from "./oauth-conformance/index.js";
 export type {
   ConformanceResult,
   OAuthConformanceAuthConfig,

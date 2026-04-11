@@ -196,11 +196,15 @@ npx @mcpjam/cli-preview oauth conformance \
   --protocol-version 2025-11-25 \
   --registration preregistered \
   --auth-mode client_credentials \
+  --redirect-url https://app.example.com/oauth/callback \
   --client-id "$CLIENT_ID" --client-secret "$CLIENT_SECRET" \
   --verify-tools
 
 # Suite from config file
 npx @mcpjam/cli-preview oauth conformance-suite --config ./oauth-tests.json
+
+# Force human-readable output
+npx @mcpjam/cli-preview oauth conformance --url https://your-server.com/mcp --protocol-version 2025-11-25 --registration dcr --format human
 
 # JUnit XML for CI
 npx @mcpjam/cli-preview oauth conformance-suite --config ./oauth-tests.json --format junit-xml > report.xml
