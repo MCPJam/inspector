@@ -1,10 +1,10 @@
 ---
 title: "Chat"
-description: "Chat with your MCP server using MCPJam free models or your own provider"
+description: "Chat with your MCP server(s) (including MCP apps and ChatGPT apps) using frontier models"
 icon: "message-circle"
 ---
 
-The Chat tab lets you chat with your MCP server using MCPJam-provided free models or, if needed, your own provider. Test how different models interact with your tools, simulate agent behaviors, and render supported ChatGPT apps and MCP apps inline in the conversation.
+The Chat tab lets you chat with your MCP server(s) using frontier models, switch between Chat, Trace, and Raw views for profound analytics, and compare how multiple models respond to the same prompt side by side.
 
 <Frame>
   <img
@@ -17,32 +17,40 @@ The Chat tab lets you chat with your MCP server using MCPJam-provided free model
 
 ## Key Features
 
-- **MCPJam Free Models** - Start immediately with MCPJam-provided models without configuring your own provider
+- **Free Frontier Models** - Chat with models like Claude Opus 4.6, Claude Sonnet 4.6, Claude Haiku 4.5, DeepSeek V3.2, Gemini 2.5 Flash, etc. at no cost, no API key required
+- **Chat, Trace, and Raw Views** - Switch between the normal Chat view, a Trace timeline of every step with per-step latency and tokens, and the Raw JSON payload sent to the model — all without leaving the conversation
+- **Multi-Model Compare Mode** - Send one prompt to up to 3 models and get a split-screen App Builder for each one, so you can compare how each model interacts with your MCP server(s) side by side
 - **Inline Tool Results and Widgets** - See tool calls, results, and supported app UIs directly in the chat thread
 - **Real-time Debugging** - Split-panel view with chat on the left and JSON-RPC logs on the right
 - **Skills and Prompts** - Use `/` to inject skills and MCP prompts directly into chat
-- **Elicitation Support** - Interactive prompts and forms from your MCP server
-- **Agent Controls** - Tune system prompt, temperature, tool approval, context usage, and X-Ray from the chat toolbar
+- **Elicitation Support** - Interactive prompts and forms from your MCP server(s)
+- **Agent Controls** - Tune system prompt, temperature, tool approval, and context usage from the chat toolbar
 
 ## Setup
 
 Start with MCPJam free models:
 
 1. **Open the Chat tab** - Connect your server and open Chat.
-2. **Select a model** - Choose an MCPJam-provided model from the model dropdown.
-3. **Start chatting** - Send a message and inspect tool calls, prompts, widgets, and logs inline.
+2. **Pick a model (or a few)** - Choose one model from the dropdown, or toggle Multiple models on to run several side by side.
+3. **Send a message** - Type into the chat input and watch your MCP server(s) respond.
 
 ## ChatGPT Apps and MCP Apps
 
-Chat can render custom UI components from both [ChatGPT apps](https://developers.openai.com/apps-sdk) and [MCP apps](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/1865):
+Chat can render custom UI components from both [ChatGPT apps](https://developers.openai.com/apps-sdk) and [MCP apps](https://modelcontextprotocol.io/extensions/apps/overview).
 
-**ChatGPT Apps**
-Tools with `openai/outputTemplate` metadata render custom HTML interfaces in an isolated iframe with access to the `window.openai` API.
+Widgets can display interactive visualizations, trigger tool calls, send follow-up messages, and open external links. Whenever a widget is rendered, MCPJam gives you a row of [debugging tools](/inspector/app-builder#debugging-tools) to inspect and debug it directly from the chat thread.
 
-**MCP Apps**
-Tools with `ui.resourceUri` metadata render custom UI components inline in the chat.
+## Chat, Trace, and Raw Views
 
-Widgets can display interactive visualizations, trigger tool calls, send follow-up messages, and open external links.
+The chat surface has three views you can switch between at any time, so you can inspect a conversation from different angles without leaving it:
+
+- **Chat** - The normal conversation view with inline messages, tool calls, and widgets. This is where you actually talk to the model and see tool results and rendered widgets
+- **Trace** - A timestamped timeline of every step in the conversation (user turns, agent turns, tool calls) with both per-step and total latency and token counts. Expand any step to inspect its raw input and output payloads
+- **Raw** - The JSON payload sent to the model (system prompt, tool definitions, and chat messages). Your live request appears after you send a message. Useful for debugging tool schemas or verifying what the model actually sees
+
+## Multi-Model Compare Mode
+
+Compare Mode lets you send a single prompt to up to 3 models at once. It's like having one [App Builder](/inspector/app-builder) per model. To enable it, open the model picker and toggle **Multiple models** on, then select the models you want to compare.
 
 ## Chat Layout
 
@@ -56,41 +64,40 @@ The Chat tab uses a split-panel interface:
 
 **JSON-RPC Logger (Right)**
 - Real-time view of MCP protocol messages
-- Inspect requests and responses between the inspector and your servers
+- Inspect requests and responses between MCPJam and your servers
 - Debug tool invocations and error responses
 
 Resize panels by dragging the divider to focus on chat or debugging as needed.
 
-## Chat Controls
+## Input Bar Controls
 
-Use the chat input toolbar to customize and inspect model behavior:
+Click the **+** button on the left of the chat input bar to manage servers, attach files, and tune how the model behaves:
 
-- **Context Usage** - Open the context meter to see how much of the selected model's context window is being used
-- **System Prompt** - Set instructions and context for the LLM
-- **Temperature** - Control randomness (0 = deterministic, higher = more creative)
-- **Tool Approval** - Require manual approval before the model runs a tool
-- **X-Ray** - Open a read-only JSON view of what Chat sends to the model
+**Servers**
+A list of every server in your workspace, sorted by status. Each row shows the server name and its transport type — `HTTP` or `stdio`(npx/desktop only). Connect or disconnect a server inline, or toggle it on and off for the current chat.
 
-<Info>
-  Higher temperature settings may cause more hallucinations with MCP tool interactions. Start with default values.
-</Info>
+- **+ Add server** — Register a brand-new server without leaving Chat. Opens the add-server modal directly from the popover.
 
-Open the context meter in the toolbar to inspect the token breakdown for the current conversation, including input, output, system prompt, and MCP tools usage.
+**Attach files**
+Opens the file picker to upload supported files (images, PDFs, text, JSON, CSV, XLSX, etc.) into the conversation.
 
-When X-Ray is open, the chat thread is replaced with a raw payload view so you can inspect the system prompt, tools, and message history being sent to the model.
+**System Prompt & Temperature**
+Opens a dialog where you can edit the system prompt (the instructions the model sees before your messages) and adjust the temperature slider (0 = deterministic, higher = more creative).
 
-## Skills and Prompts
+**Tool Approval**
+A toggle that, when on, pauses the model before each tool call so you can manually approve or deny it.
 
-Type `/` in chat to open the picker for skills and MCP prompts. Skills help the model use tools and complete workflows more effectively, and prompts let you insert reusable MCP prompt templates directly into the conversation.
+The input bar also has a **context meter** on the right side. Open it to inspect the token breakdown for the current conversation, including input, output, system prompt, and MCP tools usage.
 
-When you select a prompt, it appears as an expandable card showing:
+## Skills
 
-- Server name and description
-- Required and optional arguments
-- Preview of the prompt content
+MCPJam lets you observe how your skills behave when paired with your MCP servers. See the [Skills](/inspector/skills) tab for setup and management.
 
-Selected skills and prompts appear above the input before you send your message, so you can review or remove them first.
+There are two ways a skill ends up in a conversation:
 
-### Optional: Bring Your Own Provider
+- **Inferred** — The model picks a skill on its own based on your prompt, loads its instructions, and runs it against your MCP tools. You observe how the skill behaves end-to-end without having to invoke it manually.
+- **Explicit** — Type `/` in the input and pick a skill from the **SKILLS** section of the picker. The skill content is front-loaded before your message instead of waiting for the model to decide.
 
-If you need a specific external model, go to **Settings** and configure your own provider. MCPJam supports built-in configuration for OpenAI, Anthropic, Google, DeepSeek, Mistral, xAI, Ollama, OpenRouter, and Azure OpenAI.
+## Prompts
+
+Prompts are MCP prompt templates exposed by your servers via `prompts/list`. Type `/` in the input to open the picker (the same one used for skills) and pick one from the **PROMPTS** section. Selected prompts appear as expandable cards above the input — showing the source server ID, the prompt description, its arguments (required ones marked with `*`), and a preview of the first message — so you can review or remove them before sending.
