@@ -117,7 +117,7 @@ export function normalizeOAuthConformanceConfig(
     fetchFn: config.fetchFn ?? fetch,
     stepTimeout: config.stepTimeout ?? 30_000,
     verification: {
-      listTools: config.verification?.listTools ?? false,
+      listTools: config.verification?.listTools ?? !!config.verification?.callTool,
       callTool: config.verification?.callTool,
       timeout: config.verification?.timeout ?? 30_000,
     },

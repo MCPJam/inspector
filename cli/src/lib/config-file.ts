@@ -1,24 +1,11 @@
 import { readFileSync } from "node:fs";
 import type { OAuthConformanceSuiteConfig } from "@mcpjam/sdk";
 import { usageError } from "./output";
-
-const VALID_PROTOCOL_VERSIONS = new Set([
-  "2025-03-26",
-  "2025-06-18",
-  "2025-11-25",
-]);
-
-const VALID_REGISTRATION_STRATEGIES = new Set([
-  "cimd",
-  "dcr",
-  "preregistered",
-]);
-
-const VALID_AUTH_MODES = new Set([
-  "headless",
-  "interactive",
-  "client_credentials",
-]);
+import {
+  VALID_PROTOCOL_VERSIONS,
+  VALID_REGISTRATION_STRATEGIES,
+  VALID_AUTH_MODES,
+} from "./oauth-enums";
 
 function assertValidUrl(value: unknown, label: string): void {
   if (typeof value !== "string" || !value.trim()) {
