@@ -1,7 +1,12 @@
-import { probeMcpServer } from "@mcpjam/sdk";
+import { probeMcpServer, runServerDoctor } from "@mcpjam/sdk";
 import { Command } from "commander";
+import { writeDebugArtifact } from "../lib/debug-artifact";
 import { withEphemeralManager } from "../lib/ephemeral";
 import { attachCliRpcLogs, createCliRpcLogCollector } from "../lib/rpc-logs";
+import {
+  formatServerDoctorHuman,
+  summarizeServerDoctorTarget,
+} from "../lib/server-doctor";
 import { exportServerSnapshot } from "../lib/server-ops";
 import {
   addSharedServerOptions,
@@ -84,6 +89,52 @@ export function registerServerCommands(program: Command): void {
         setProcessExitCode(1);
       }
     });
+
+  addSharedServerOptions(
+    server
+      .command("doctor")
+      .description("Run a stateless diagnostic sweep against an MCP server")
+      .option("--out <path>", "Write the doctor JSON artifact to a file"),
+  ).action(async (options, command) => {
+    const globalOptions = getGlobalOptions(command);
+    const target = describeTarget(options);
+    const collector = globalOptions.rpc
+      ? createCliRpcLogCollector({ __cli__: target })
+      : undefined;
+    const config = parseServerConfig({
+      ...options,
+      timeout: globalOptions.timeout,
+    });
+    const doctorTarget = summarizeServerDoctorTarget(target, config);
+
+    const result = await runServerDoctor(
+      {
+        config,
+        target: doctorTarget,
+        timeout: globalOptions.timeout,
+        rpcLogger: collector?.rpcLogger,
+      },
+    );
+
+    const jsonPayload = globalOptions.rpc
+      ? attachCliRpcLogs(result, collector)
+      : result;
+    const artifactPath = options.out
+      ? await writeDebugArtifact(options.out as string, jsonPayload)
+      : undefined;
+
+    if (globalOptions.format === "human") {
+      process.stdout.write(
+        `${formatServerDoctorHuman(result, { artifactPath })}\n`,
+      );
+    } else {
+      writeResult(jsonPayload, globalOptions.format);
+    }
+
+    if (result.status !== "ready") {
+      setProcessExitCode(1);
+    }
+  });
 
   addSharedServerOptions(
     server

@@ -94,6 +94,21 @@ export type {
   ProbeOAuthDetails,
   ProbeTransportResult,
 } from "./server-probe.js";
+export {
+  runServerDoctor,
+  collectConnectedServerDoctorState,
+  normalizeServerDoctorError,
+} from "./server-doctor.js";
+export type {
+  ServerDoctorError,
+  ServerDoctorCheck,
+  ServerDoctorChecks,
+  ServerDoctorConnection,
+  ServerDoctorResult,
+  ConnectedServerDoctorState,
+  RunServerDoctorInput,
+  ServerDoctorDependencies,
+} from "./server-doctor.js";
 export { runOAuthLogin } from "./oauth-login.js";
 export type {
   OAuthLoginConfig,

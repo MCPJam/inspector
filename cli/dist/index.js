@@ -4,6 +4,12 @@
 var commander = require('commander');
 var sdk = require('@mcpjam/sdk');
 var fs = require('fs');
+var promises = require('fs/promises');
+var path = require('path');
+
+function _interopDefault (e) { return e && e.__esModule ? e : { default: e }; }
+
+var path__default = /*#__PURE__*/_interopDefault(path);
 
 // src/lib/output.ts
 var DEFAULT_OUTPUT_FORMAT = "json";
@@ -301,8 +307,41 @@ function attachCliRpcLogs(payload, collector) {
   }
   return {
     ...payload,
-    _rpcLogs: collector.getLogs()
+    _rpcLogs: redactCliRpcLogs(collector.getLogs())
   };
+}
+function redactCliRpcLogs(logs) {
+  return logs.map((event) => ({
+    ...event,
+    message: redactSensitiveValue(event.message)
+  }));
+}
+function redactSensitiveValue(value) {
+  if (Array.isArray(value)) {
+    return value.map((entry) => redactSensitiveValue(entry));
+  }
+  if (!value || typeof value !== "object") {
+    return typeof value === "string" ? redactSensitiveString(value) : value;
+  }
+  return Object.fromEntries(
+    Object.entries(value).map(([key, entryValue]) => [
+      key,
+      shouldRedactKey(key) ? "[REDACTED]" : redactSensitiveValue(entryValue)
+    ])
+  );
+}
+function redactSensitiveString(value) {
+  return value.replace(/\bBearer\s+[^\s",]+/giu, "Bearer [REDACTED]").replace(
+    /\b(access_token|refresh_token|client_secret|id_token)=([^&\s]+)/giu,
+    "$1=[REDACTED]"
+  ).replace(
+    /(["']?(?:access_token|refresh_token|client_secret|id_token)["']?\s*:\s*["'])[^"']*(["'])/giu,
+    "$1[REDACTED]$2"
+  );
+}
+function shouldRedactKey(key) {
+  const normalized = key.toLowerCase().replace(/[^a-z0-9]/gu, "");
+  return normalized === "authorization" || normalized === "proxyauthorization" || normalized === "cookie" || normalized === "setcookie" || normalized === "accesstoken" || normalized === "refreshtoken" || normalized === "clientsecret" || normalized === "idtoken" || normalized === "apikey" || normalized === "xapikey" || normalized.endsWith("token") || normalized.endsWith("secret");
 }
 
 // src/lib/server-config.ts
@@ -1598,6 +1637,112 @@ function withRpcLogsIfRequested3(value, collector, options) {
   }
   return attachCliRpcLogs(value, collector);
 }
+async function writeDebugArtifact(outputPath, payload) {
+  const resolvedPath = path__default.default.resolve(process.cwd(), outputPath);
+  try {
+    await promises.mkdir(path__default.default.dirname(resolvedPath), { recursive: true });
+    await promises.writeFile(
+      resolvedPath,
+      `${JSON.stringify(payload, null, 2)}
+`,
+      "utf8"
+    );
+  } catch (error) {
+    throw operationalError(
+      `Failed to write debug artifact to "${resolvedPath}".`,
+      {
+        source: error instanceof Error ? error.message : String(error)
+      }
+    );
+  }
+  return resolvedPath;
+}
+
+// src/lib/server-doctor.ts
+function summarizeServerDoctorTarget(target, config) {
+  if ("url" in config) {
+    return {
+      kind: "http",
+      label: target,
+      url: config.url,
+      commandArgs: [],
+      envKeys: [],
+      headerNames: Object.keys(extractHeaders(config.requestInit?.headers)),
+      timeoutMs: config.timeout,
+      hasAccessToken: Boolean(config.accessToken),
+      hasRefreshToken: Boolean(config.refreshToken),
+      hasClientSecret: Boolean(config.clientSecret),
+      ...config.clientCapabilities ? { clientCapabilities: config.clientCapabilities } : {}
+    };
+  }
+  return {
+    kind: "stdio",
+    label: target,
+    command: config.command,
+    commandArgs: config.args ?? [],
+    envKeys: Object.keys(config.env ?? {}),
+    headerNames: [],
+    timeoutMs: config.timeout,
+    hasAccessToken: false,
+    hasRefreshToken: false,
+    hasClientSecret: false,
+    ...config.clientCapabilities ? { clientCapabilities: config.clientCapabilities } : {}
+  };
+}
+function formatServerDoctorHuman(result, options = {}) {
+  const lines = [`Status: ${result.status}`, `Target: ${result.target.label}`];
+  if (result.probe) {
+    const transport = result.probe.transport.selected ?? (result.probe.transport.attempts.length > 0 ? "attempted" : "none");
+    lines.push(`Probe: ${result.probe.status} (${transport})`);
+  } else {
+    lines.push("Probe: skipped");
+  }
+  lines.push(
+    `Connection: ${result.connection.status} (${result.connection.detail})`
+  );
+  lines.push(
+    `Counts: tools ${result.tools.length}, resources ${result.resources.length}, resourceTemplates ${result.resourceTemplates.length}, prompts ${result.prompts.length}`
+  );
+  if (result.status === "oauth_required" && result.probe) {
+    const strategies = result.probe.oauth.registrationStrategies.join(", ") || "none";
+    lines.push(`OAuth: required (${strategies})`);
+    lines.push(
+      `Next: run \`mcpjam oauth login --url ${result.target.url ?? result.target.label}\``
+    );
+  } else if (result.error) {
+    lines.push(`Error: ${result.error.code}: ${result.error.message}`);
+  }
+  lines.push("Checks:");
+  for (const [name, check] of Object.entries(result.checks)) {
+    lines.push(`- ${name}: ${check.status} (${check.detail})`);
+  }
+  if (options.artifactPath) {
+    lines.push(`Artifact: ${options.artifactPath}`);
+  }
+  return lines.join("\n");
+}
+function extractHeaders(headers) {
+  if (!headers) {
+    return {};
+  }
+  if (headers instanceof Headers) {
+    const normalized = {};
+    headers.forEach((value, key) => {
+      normalized[key] = value;
+    });
+    return normalized;
+  }
+  if (Array.isArray(headers)) {
+    return Object.fromEntries(
+      headers.map(([key, value]) => [key, String(value)])
+    );
+  }
+  return Object.fromEntries(
+    Object.entries(headers).map(([key, value]) => [key, String(value)])
+  );
+}
+
+// src/commands/server.ts
 function registerServerCommands(program) {
   const server = program.command("server").description("Inspect MCP server connectivity and capabilities");
   server.command("probe").description("Probe an HTTP MCP server without using the full client connect flow").requiredOption("--url <url>", "HTTP MCP server URL").option("--access-token <token>", "Bearer access token for HTTP servers").option(
@@ -1641,6 +1786,39 @@ function registerServerCommands(program) {
     });
     writeResult(result, globalOptions.format);
     if (result.status === "error") {
+      setProcessExitCode(1);
+    }
+  });
+  addSharedServerOptions(
+    server.command("doctor").description("Run a stateless diagnostic sweep against an MCP server").option("--out <path>", "Write the doctor JSON artifact to a file")
+  ).action(async (options, command) => {
+    const globalOptions = getGlobalOptions(command);
+    const target = describeTarget(options);
+    const collector = globalOptions.rpc ? createCliRpcLogCollector({ __cli__: target }) : void 0;
+    const config = parseServerConfig({
+      ...options,
+      timeout: globalOptions.timeout
+    });
+    const doctorTarget = summarizeServerDoctorTarget(target, config);
+    const result = await sdk.runServerDoctor(
+      {
+        config,
+        target: doctorTarget,
+        timeout: globalOptions.timeout,
+        rpcLogger: collector?.rpcLogger
+      }
+    );
+    const jsonPayload = globalOptions.rpc ? attachCliRpcLogs(result, collector) : result;
+    const artifactPath = options.out ? await writeDebugArtifact(options.out, jsonPayload) : void 0;
+    if (globalOptions.format === "human") {
+      process.stdout.write(
+        `${formatServerDoctorHuman(result, { artifactPath })}
+`
+      );
+    } else {
+      writeResult(jsonPayload, globalOptions.format);
+    }
+    if (result.status !== "ready") {
       setProcessExitCode(1);
     }
   });
