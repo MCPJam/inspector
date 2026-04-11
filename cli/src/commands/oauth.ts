@@ -13,29 +13,25 @@ import {
 import {
   setProcessExitCode,
   usageError,
-  writeResult,
-  type OutputFormat,
 } from "../lib/output";
 import { loadSuiteConfig } from "../lib/config-file";
-import { singleResultToJUnitXml, suiteResultToJUnitXml } from "../lib/junit-xml";
+import {
+  renderOAuthConformanceResult,
+  renderOAuthConformanceSuiteResult,
+  resolveOAuthOutputFormat,
+  type OAuthOutputFormat,
+} from "../lib/oauth-output";
 
 const DYNAMIC_CLIENT_ID_PLACEHOLDER = "__dynamic_registration_client__";
 const DYNAMIC_CLIENT_SECRET_PLACEHOLDER = "__dynamic_registration_secret__";
 
-type OAuthOutputFormat = OutputFormat | "junit-xml";
-
-function parseOAuthOutputFormat(value: string): OAuthOutputFormat {
-  if (value === "json" || value === "human" || value === "junit-xml") {
-    return value;
-  }
-  throw usageError(
-    `Invalid output format "${value}". Use "json", "human", or "junit-xml".`,
-  );
-}
-
 function getOAuthFormat(command: Command): OAuthOutputFormat {
   const opts = command.optsWithGlobals() as { format?: string };
-  return parseOAuthOutputFormat(opts.format ?? "json");
+  return resolveOAuthOutputFormat(opts.format, process.stdout.isTTY);
+}
+
+function writeOAuthOutput(output: string): void {
+  process.stdout.write(output.endsWith("\n") ? output : `${output}\n`);
 }
 
 export interface OAuthCommandOptions {
@@ -46,6 +42,7 @@ export interface OAuthCommandOptions {
   clientId?: string;
   clientSecret?: string;
   clientMetadataUrl?: string;
+  redirectUrl?: string;
   scopes?: string;
   stepTimeout?: number;
   header?: string[];
@@ -87,6 +84,7 @@ export function registerOAuthCommands(program: Command): void {
       "--client-metadata-url <url>",
       "Client metadata URL used for CIMD registration",
     )
+    .option("--redirect-url <url>", "OAuth redirect URL to use for the flow")
     .option("--scopes <scopes>", "Space-separated scope string")
     .option(
       "--step-timeout <ms>",
@@ -107,11 +105,7 @@ export function registerOAuthCommands(program: Command): void {
       const config = buildOAuthConformanceConfig(options as OAuthCommandOptions);
       const result = await new OAuthConformanceTest(config).run();
 
-      if (format === "junit-xml") {
-        process.stdout.write(singleResultToJUnitXml(result));
-      } else {
-        writeResult(result, format);
-      }
+      writeOAuthOutput(renderOAuthConformanceResult(result, format));
       if (!result.passed) {
         setProcessExitCode(1);
       }
@@ -155,11 +149,7 @@ export function registerOAuthCommands(program: Command): void {
       const suite = new OAuthConformanceSuite(config);
       const result = await suite.run();
 
-      if (format === "junit-xml") {
-        process.stdout.write(suiteResultToJUnitXml(result));
-      } else {
-        writeResult(result, format);
-      }
+      writeOAuthOutput(renderOAuthConformanceSuiteResult(result, format));
       if (!result.passed) {
         setProcessExitCode(1);
       }
@@ -187,13 +177,14 @@ export function buildOAuthConformanceConfig(
 
   if (authMode === "client_credentials" && registrationStrategy === "cimd") {
     throw usageError(
-      "client_credentials is not supported with --registration cimd.",
+      "--auth-mode client_credentials cannot be used with --registration cimd. CIMD is a browser-based registration flow and only works with --auth-mode headless or --auth-mode interactive. For client_credentials, use --registration dcr or --registration preregistered instead.",
     );
   }
 
   const clientId = options.clientId?.trim();
   const clientSecret = options.clientSecret;
   const clientMetadataUrl = options.clientMetadataUrl?.trim();
+  const redirectUrl = options.redirectUrl?.trim();
 
   if (registrationStrategy === "preregistered" && !clientId) {
     throw usageError(
@@ -213,6 +204,10 @@ export function buildOAuthConformanceConfig(
 
   if (clientMetadataUrl) {
     assertValidUrl(clientMetadataUrl, "client metadata URL");
+  }
+
+  if (redirectUrl) {
+    assertValidUrl(redirectUrl, "redirect URL");
   }
 
   const customHeaders = parseHeadersOption(options.header);
@@ -247,6 +242,7 @@ export function buildOAuthConformanceConfig(
     client,
     scopes: options.scopes?.trim() || undefined,
     customHeaders,
+    redirectUrl,
     stepTimeout: options.stepTimeout ?? 30_000,
     verification,
   };

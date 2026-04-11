@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { createServer, type Server } from "node:http";
 import type { AuthorizationCodeResult } from "../types.js";
 
@@ -16,9 +17,47 @@ function isLoopbackHostname(hostname: string): boolean {
   return hostname === "127.0.0.1" || hostname === "localhost";
 }
 
-async function defaultOpenUrl(url: string): Promise<void> {
-  const { default: open } = await import("open");
-  await open(url);
+function getBrowserOpenCommand(
+  url: string,
+): {
+  command: string;
+  args: string[];
+} {
+  switch (process.platform) {
+    case "darwin":
+      return {
+        command: "open",
+        args: [url],
+      };
+    case "win32":
+      return {
+        command: "cmd",
+        args: ["/c", "start", "", url],
+      };
+    default:
+      return {
+        command: "xdg-open",
+        args: [url],
+      };
+  }
+}
+
+export async function openUrlInBrowser(url: string): Promise<void> {
+  const { command, args } = getBrowserOpenCommand(url);
+
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(command, args, {
+      detached: true,
+      stdio: "ignore",
+    });
+
+    child.once("error", reject);
+    child.once("spawn", () => {
+      child.removeListener("error", reject);
+      child.unref();
+      resolve();
+    });
+  });
 }
 
 function closeServer(server: Server): Promise<void> {
@@ -127,7 +166,7 @@ export async function createInteractiveAuthorizationSession(options?: {
       authorizationUrl,
       expectedState,
       timeoutMs,
-      openUrl = defaultOpenUrl,
+      openUrl = openUrlInBrowser,
     }) {
       if (pendingResolve || pendingReject) {
         throw new Error("Interactive authorization is already in progress");

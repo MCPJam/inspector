@@ -48,6 +48,7 @@ npx @mcpjam/cli-preview oauth conformance \
   --protocol-version 2025-11-25 \
   --registration dcr \
   --auth-mode headless \
+  --redirect-url https://app.example.com/oauth/callback \
   --verify-tools
 ```
 
@@ -62,12 +63,43 @@ npx @mcpjam/cli-preview oauth conformance \
 | `--client-id <id>` | No | — | OAuth client ID (required for `preregistered`) |
 | `--client-secret <s>` | No | — | OAuth client secret |
 | `--client-metadata-url <url>` | No | — | Client metadata URL for CIMD |
+| `--redirect-url <url>` | No | Auto-generated | OAuth redirect URL to use for the run |
 | `--scopes <scopes>` | No | — | Space-separated scope string |
 | `--header <header>` | No | — | Custom HTTP header (`Key: Value`). Repeatable. |
 | `--step-timeout <ms>` | No | `30000` | Per-step timeout in milliseconds |
 | `--verify-tools` | No | — | After OAuth, connect and list tools |
 | `--verify-call-tool <name>` | No | — | Also call the named tool after listing |
-| `--format <fmt>` | No | `json` | `json`, `human`, or `junit-xml` |
+| `--format <fmt>` | No | `human` on TTY, `json` otherwise | `json`, `human`, or `junit-xml` |
+
+### Human vs JSON output
+
+- Interactive terminal runs default to `--format human`, which prints a compact OAuth-specific report.
+- Piped or redirected runs default to `--format json`, so CI, `jq`, and agent workflows still receive the full raw result unchanged.
+- `--format json`, `--format human`, and `--format junit-xml` always override the default.
+
+### Redirect URL behavior
+
+- `--redirect-url` is passed directly to `OAuthConformanceConfig.redirectUrl`.
+- For `interactive` auth mode, the SDK still enforces loopback redirects only: `http://localhost/.../callback` or `http://127.0.0.1/.../callback`.
+- For `headless` and `client_credentials`, the CLI only validates that the value is a syntactically valid URL.
+
+### Example human-readable failure output
+
+```text
+OAuth conformance: FAILED
+Server: https://mcp.asana.com/v2/mcp
+Flow: 2025-06-18 / dcr
+Summary: OAuth conformance failed at received_authorization_code: Headless authorization requires auto-consent. The authorization endpoint returned a 200 response instead of redirecting back with a code.
+
+Failure
+Step: received_authorization_code
+HTTP: 200 OK
+URL: https://app.asana.com/-/oauth_authorize?...
+Content-Type: text/html; charset=utf-8
+Page title: Log in - Asana
+Snippet: Welcome to Asana To get started, please sign in ...
+Hint: Authorization endpoint returned an HTML login page instead of redirecting back to the callback URL.
+```
 
 ### Client credentials (M2M)
 
@@ -141,7 +173,7 @@ Each flow inherits from `defaults` and can override any field. The `serverUrl` i
 # JSON output (for agents)
 npx @mcpjam/cli-preview oauth conformance-suite --config ./oauth-tests.json
 
-# Pretty-printed
+# Human-readable
 npx @mcpjam/cli-preview oauth conformance-suite --config ./oauth-tests.json --format human
 
 # JUnit XML (for CI)
@@ -155,7 +187,7 @@ npx @mcpjam/cli-preview oauth conformance-suite --config ./oauth-tests.json --fo
 | `--config <path>` | Yes | — | Path to JSON config file |
 | `--verify-tools` | No | — | Enable tool listing on all flows |
 | `--verify-call-tool <name>` | No | — | Call the named tool after listing |
-| `--format <fmt>` | No | `json` | `json`, `human`, or `junit-xml` |
+| `--format <fmt>` | No | `human` on TTY, `json` otherwise | `json`, `human`, or `junit-xml` |
 
 ---
 

@@ -176,7 +176,7 @@ export function addGlobalOptions(program: Command): Command {
       (value: string) => parsePositiveInteger(value, "Timeout"),
       30_000,
     )
-    .option("--format <format>", "Output format", "json");
+    .option("--format <format>", "Output format");
 }
 
 function parseHeader(entry: string): [string, string] {
