@@ -269,8 +269,10 @@ export function useSharedChatWidgetCapture({
     if (persistedSnapshotToolCallIdsRef.current.has(toolCallId)) {
       return;
     }
-    // serverId is required by the snapshot schema for all modes
-    if (!toolSource.serverId) {
+    // serverId is required by the snapshot schema for all modes.
+    // "__guest__" is a synthetic sentinel used for direct-guest connections
+    // and is not a valid Convex document ID.
+    if (!toolSource.serverId || toolSource.serverId === "__guest__") {
       return;
     }
 
