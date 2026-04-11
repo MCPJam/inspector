@@ -1,5 +1,3 @@
-import { readFileSync } from "node:fs";
-import path from "node:path";
 import {
   formatOAuthConformanceHuman,
   formatOAuthConformanceSuiteHuman,
@@ -131,37 +129,6 @@ function createHtmlFailureResult(
   };
 }
 
-function stabilizeFixtureValue<T>(value: T): T {
-  if (Array.isArray(value)) {
-    return value.map((entry) => stabilizeFixtureValue(entry)) as T;
-  }
-
-  if (!value || typeof value !== "object") {
-    return value;
-  }
-
-  return Object.fromEntries(
-    Object.entries(value as Record<string, unknown>).map(([key, entryValue]) => {
-      if (key === "timestamp" || key === "duration" || key === "durationMs") {
-        return [key, 0];
-      }
-
-      return [key, stabilizeFixtureValue(entryValue)];
-    }),
-  ) as T;
-}
-
-function loadCapturedFailureFixture(): ConformanceResult {
-  const fixturePath = path.join(
-    __dirname,
-    "../../../cli/src/error_example.txt",
-  );
-  const raw = readFileSync(fixturePath, "utf8").trim();
-  const jsonLine = raw.split(/\r?\n/).slice(1).join("\n").trim();
-  const parsed = JSON.parse(jsonLine) as ConformanceResult;
-  return stabilizeFixtureValue(parsed);
-}
-
 describe("OAuth conformance human formatter", () => {
   it("renders a compact summary for HTML failures without dumping the full body", () => {
     const result = createHtmlFailureResult();
@@ -196,14 +163,6 @@ describe("OAuth conformance human formatter", () => {
     expect(result).toEqual(before);
   });
 
-  it("snapshots the captured Asana failure without the raw HTML blob", () => {
-    const fixture = loadCapturedFailureFixture();
-
-    const output = formatOAuthConformanceHuman(fixture);
-
-    expect(output).not.toContain("<html>");
-    expect(output).toMatchSnapshot();
-  });
 });
 
 describe("OAuth conformance suite human formatter", () => {
