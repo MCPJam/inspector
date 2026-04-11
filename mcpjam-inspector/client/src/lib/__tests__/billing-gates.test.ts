@@ -1,7 +1,56 @@
-import { describe, expect, it } from "vitest";
-import { BILLING_GATES, resolveBillingGateState } from "../billing-gates";
+import { renderHook } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const {
+  mockUseConvexAuth,
+  mockUseFeatureFlagEnabled,
+  mockUseOrganizationBilling,
+} = vi.hoisted(() => ({
+  mockUseConvexAuth: vi.fn(),
+  mockUseFeatureFlagEnabled: vi.fn(),
+  mockUseOrganizationBilling: vi.fn(),
+}));
+
+vi.mock("convex/react", () => ({
+  useConvexAuth: (...args: unknown[]) => mockUseConvexAuth(...args),
+}));
+
+vi.mock("posthog-js/react", () => ({
+  useFeatureFlagEnabled: (...args: unknown[]) =>
+    mockUseFeatureFlagEnabled(...args),
+}));
+
+vi.mock("@/hooks/useOrganizationBilling", () => ({
+  useOrganizationBilling: (...args: unknown[]) =>
+    mockUseOrganizationBilling(...args),
+}));
+
+import {
+  BILLING_GATES,
+  resolveBillingGateState,
+  useWorkspaceBillingGate,
+} from "../billing-gates";
+
+function createUseOrganizationBillingResult() {
+  return {
+    billingStatus: undefined,
+    organizationPremiumness: undefined,
+    workspacePremiumness: undefined,
+    isLoadingBilling: false,
+    isLoadingOrganizationPremiumness: false,
+    isLoadingWorkspacePremiumness: false,
+  };
+}
 
 describe("resolveBillingGateState", () => {
+  beforeEach(() => {
+    mockUseConvexAuth.mockReturnValue({
+      isAuthenticated: true,
+    });
+    mockUseFeatureFlagEnabled.mockReturnValue(true);
+    mockUseOrganizationBilling.mockReturnValue(createUseOrganizationBillingResult());
+  });
+
   it("resolves denied feature gates with upgrade guidance", () => {
     const gate = resolveBillingGateState({
       billingUiEnabled: true,
@@ -140,5 +189,35 @@ describe("resolveBillingGateState", () => {
 
     expect(gate.isDenied).toBe(false);
     expect(gate.upgradePlan).toBe("starter");
+  });
+
+  it("skips workspace billing queries when organization context is missing", () => {
+    const { result } = renderHook(() =>
+      useWorkspaceBillingGate({
+        workspaceId: "shared-ws-1",
+        organizationId: null,
+        gate: BILLING_GATES.serverCreation,
+      }),
+    );
+
+    expect(mockUseOrganizationBilling).toHaveBeenCalledWith(null, {
+      workspaceId: null,
+    });
+    expect(result.current.organizationId).toBeNull();
+    expect(result.current.isLoading).toBe(false);
+  });
+
+  it("only resolves workspace billing when both workspace and organization are present", () => {
+    renderHook(() =>
+      useWorkspaceBillingGate({
+        workspaceId: "shared-ws-1",
+        organizationId: "org-1",
+        gate: BILLING_GATES.serverCreation,
+      }),
+    );
+
+    expect(mockUseOrganizationBilling).toHaveBeenCalledWith("org-1", {
+      workspaceId: "shared-ws-1",
+    });
   });
 });

@@ -261,15 +261,30 @@ describe("SandboxesTab", () => {
   });
 
   it("shows a workspace prompt when no workspace is selected", () => {
-    render(<SandboxesTab workspaceId={null} />);
+    render(<SandboxesTab workspaceId={null} organizationId={null} />);
 
     expect(
       screen.getByText("Select a workspace to manage sandboxes."),
     ).toBeInTheDocument();
   });
 
+  it("shows a full-tab loading state while billing context is pending", () => {
+    render(
+      <SandboxesTab
+        workspaceId="ws-1"
+        organizationId="org-1"
+        isBillingContextPending={true}
+      />,
+    );
+
+    expect(
+      screen.getByTestId("sandboxes-billing-context-pending"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Sandboxes")).not.toBeInTheDocument();
+  });
+
   it("renders the sandbox index once the builder experience loads", async () => {
-    render(<SandboxesTab workspaceId="ws-1" />);
+    render(<SandboxesTab workspaceId="ws-1" organizationId="org-1" />);
 
     expect(
       await screen.findByRole(
@@ -283,7 +298,7 @@ describe("SandboxesTab", () => {
   });
 
   it("opens the clicked sandbox in the builder view", async () => {
-    render(<SandboxesTab workspaceId="ws-1" />);
+    render(<SandboxesTab workspaceId="ws-1" organizationId="org-1" />);
 
     fireEvent.click(await screen.findByText("Beta", {}, { timeout: 3000 }));
 
@@ -293,7 +308,7 @@ describe("SandboxesTab", () => {
   });
 
   it("opens the starter launcher from the new sandbox action", async () => {
-    render(<SandboxesTab workspaceId="ws-1" />);
+    render(<SandboxesTab workspaceId="ws-1" organizationId="org-1" />);
 
     fireEvent.click(await screen.findByRole("button", { name: "New sandbox" }));
 
@@ -303,7 +318,7 @@ describe("SandboxesTab", () => {
   });
 
   it("starts a blank sandbox draft after choosing blank from the launcher", async () => {
-    render(<SandboxesTab workspaceId="ws-1" />);
+    render(<SandboxesTab workspaceId="ws-1" organizationId="org-1" />);
 
     fireEvent.click(await screen.findByRole("button", { name: "New sandbox" }));
     fireEvent.click(await screen.findByText("Blank sandbox"));
@@ -321,7 +336,7 @@ describe("SandboxesTab", () => {
       viewMode: "preview",
     });
 
-    render(<SandboxesTab workspaceId="ws-1" />);
+    render(<SandboxesTab workspaceId="ws-1" organizationId="org-1" />);
 
     expect(await screen.findByText("Builder view")).toBeInTheDocument();
     expect(screen.getByText("Sandbox: sbx-2")).toBeInTheDocument();
@@ -329,7 +344,7 @@ describe("SandboxesTab", () => {
   });
 
   it("returns to the sandbox index after leaving the builder", async () => {
-    render(<SandboxesTab workspaceId="ws-1" />);
+    render(<SandboxesTab workspaceId="ws-1" organizationId="org-1" />);
 
     fireEvent.click(await screen.findByRole("button", { name: "New sandbox" }));
     fireEvent.click(await screen.findByText("Blank sandbox"));
@@ -371,7 +386,7 @@ describe("SandboxesTab", () => {
       isLoadingWorkspacePremiumness: false,
     });
 
-    render(<SandboxesTab workspaceId="ws-1" />);
+    render(<SandboxesTab workspaceId="ws-1" organizationId="org-1" />);
 
     expect(
       await screen.findByTestId("billing-upsell-gate"),
@@ -419,7 +434,7 @@ describe("SandboxesTab", () => {
       isLoadingWorkspacePremiumness: false,
     });
 
-    render(<SandboxesTab workspaceId="ws-1" />);
+    render(<SandboxesTab workspaceId="ws-1" organizationId="org-1" />);
 
     expect(
       await screen.findByTestId("billing-upsell-gate"),
@@ -472,7 +487,7 @@ describe("SandboxesTab", () => {
       isLoadingWorkspacePremiumness: false,
     });
 
-    render(<SandboxesTab workspaceId="ws-1" />);
+    render(<SandboxesTab workspaceId="ws-1" organizationId="org-1" />);
 
     expect(
       await screen.findByTestId("sandbox-limit-upsell"),
@@ -536,7 +551,7 @@ describe("SandboxesTab", () => {
       isLoadingWorkspacePremiumness: false,
     });
 
-    render(<SandboxesTab workspaceId="ws-1" />);
+    render(<SandboxesTab workspaceId="ws-1" organizationId="org-1" />);
 
     expect(
       await screen.findByTestId("sandbox-limit-upsell"),

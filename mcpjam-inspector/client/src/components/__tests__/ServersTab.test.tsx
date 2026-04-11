@@ -399,6 +399,8 @@ describe("ServersTab shared detail modal", () => {
     onRemove: vi.fn(),
     workspaces,
     activeWorkspaceId: "workspace-1",
+    organizationId: "org-1",
+    isBillingContextPending: false,
     onSwitchWorkspace: vi.fn(),
     onCreateWorkspace: vi.fn().mockResolvedValue("workspace-2"),
     onUpdateWorkspace: vi.fn(),
@@ -442,6 +444,29 @@ describe("ServersTab shared detail modal", () => {
     expect(screen.getByTestId("modal-default-tab")).toHaveTextContent(
       "configuration",
     );
+  });
+
+  it("shows a full-tab loading state while billing context is pending", () => {
+    render(<ServersTab {...defaultProps} isBillingContextPending={true} />);
+
+    expect(
+      screen.getByTestId("servers-billing-context-pending"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Add Server")).not.toBeInTheDocument();
+  });
+
+  it("shows a no-workspace state when there is no selected workspace", () => {
+    render(
+      <ServersTab
+        {...defaultProps}
+        workspaces={{}}
+        activeWorkspaceId="none"
+        workspaceServers={{}}
+      />,
+    );
+
+    expect(screen.getByTestId("servers-no-workspace")).toBeInTheDocument();
+    expect(screen.queryByText("Add Your First Server")).not.toBeInTheDocument();
   });
 
   it("keeps the shared modal open after saving without a rename", async () => {

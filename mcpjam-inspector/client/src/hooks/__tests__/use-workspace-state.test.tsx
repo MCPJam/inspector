@@ -114,11 +114,15 @@ function renderUseWorkspaceState({
   activeOrganizationId,
   routeOrganizationId,
   isAuthenticated = true,
+  hasOrganizations = true,
+  isLoadingOrganizations = false,
 }: {
   appState: AppState;
   activeOrganizationId?: string;
   routeOrganizationId?: string;
   isAuthenticated?: boolean;
+  hasOrganizations?: boolean;
+  isLoadingOrganizations?: boolean;
 }) {
   const dispatch = vi.fn<(action: AppAction) => void>();
   const logger = {
@@ -134,6 +138,8 @@ function renderUseWorkspaceState({
         dispatch,
         isAuthenticated,
         isAuthLoading: false,
+        hasOrganizations,
+        isLoadingOrganizations,
         activeOrganizationId: organizationId,
         routeOrganizationId,
         logger,
@@ -428,6 +434,40 @@ describe("useWorkspaceState automatic workspace creation", () => {
     });
 
     await savePromise;
+  });
+
+  it("treats the authenticated zero-org state as empty remote workspaces and clears stale synced selection", async () => {
+    workspaceQueryState.allWorkspaces = [
+      {
+        _id: "remote-1",
+        name: "Deleted org workspace",
+        servers: {},
+        ownerId: "user-1",
+        organizationId: "deleted-org",
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ];
+    workspaceQueryState.workspaces = [...workspaceQueryState.allWorkspaces];
+    localStorage.setItem("convex-active-workspace-id", "remote-1");
+
+    const appState = createAppState({
+      default: createSyntheticDefaultWorkspace(),
+    });
+    const { result } = renderUseWorkspaceState({
+      appState,
+      activeOrganizationId: undefined,
+      hasOrganizations: false,
+      isLoadingOrganizations: false,
+    });
+
+    await waitFor(() => {
+      expect(result.current.effectiveWorkspaces).toEqual({});
+      expect(result.current.effectiveActiveWorkspaceId).toBe("none");
+    });
+
+    expect(localStorage.getItem("convex-active-workspace-id")).toBeNull();
+    expect(ensureDefaultWorkspaceMock).not.toHaveBeenCalled();
   });
 
   it("fails authenticated client-config saves when the remote echo times out", async () => {

@@ -24,9 +24,13 @@ interface ActiveOrganizationSelection {
 export function useAppState({
   currentUserId,
   routeOrganizationId,
+  hasOrganizations,
+  isLoadingOrganizations,
 }: {
   currentUserId: string | null;
   routeOrganizationId?: string;
+  hasOrganizations: boolean;
+  isLoadingOrganizations: boolean;
 }) {
   const logger = useLogger("Connections");
   const [appState, dispatch] = useReducer(appReducer, initialAppState);
@@ -101,6 +105,8 @@ export function useAppState({
     dispatch,
     isAuthenticated,
     isAuthLoading,
+    hasOrganizations,
+    isLoadingOrganizations,
     activeOrganizationId,
     routeOrganizationId,
     logger,
@@ -123,6 +129,7 @@ export function useAppState({
   const {
     effectiveWorkspaces,
     setConvexActiveWorkspaceId,
+    clearConvexActiveWorkspaceSelection,
     useLocalFallback,
     remoteWorkspaces,
     isLoadingRemoteWorkspaces,
@@ -228,6 +235,7 @@ export function useAppState({
     isCloudSyncActive,
     activeOrganizationId,
     setActiveOrganizationId,
+    clearConvexActiveWorkspaceSelection,
 
     workspaceServers: serverState.workspaceServers,
     connectedOrConnectingServerConfigs:

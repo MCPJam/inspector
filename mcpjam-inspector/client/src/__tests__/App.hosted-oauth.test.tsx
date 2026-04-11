@@ -77,6 +77,8 @@ const {
     handleRefreshTokensFromOAuthFlow: vi.fn(),
     activeOrganizationId: undefined,
     setActiveOrganizationId: vi.fn(),
+    clearConvexActiveWorkspaceSelection: vi.fn(),
+    isCloudSyncActive: false,
   });
 
   return {
@@ -482,6 +484,108 @@ describe("App hosted OAuth callback handling", () => {
     expect(entitlementsCall?.[1]).toBe("skip");
     expect(orgPremiumnessCall?.[1]).toBe("skip");
     expect(wsPremiumnessCall?.[1]).toBe("skip");
+  });
+
+  it("skips workspace billing and clears stale synced selection when the active workspace is missing", async () => {
+    const clearConvexActiveWorkspaceSelection = vi.fn();
+    mockUseAppState.mockImplementation(() => ({
+      ...createAppStateMock(),
+      isCloudSyncActive: true,
+      activeOrganizationId: "org-1",
+      activeWorkspaceId: "ws-missing",
+      clearConvexActiveWorkspaceSelection,
+    }));
+    mockUseQuery.mockImplementation((name: string) => {
+      if (name === "users:getCurrentUser") {
+        return null;
+      }
+
+      if (name === "organizations:getMyOrganizations") {
+        return [
+          {
+            _id: "org-1",
+            name: "Org One",
+            updatedAt: 1,
+            createdAt: 1,
+            createdBy: "user-1",
+            myRole: "owner",
+          },
+        ];
+      }
+
+      return undefined;
+    });
+
+    render(<App />);
+
+    const wsPremiumnessCall = mockUseQuery.mock.calls.find(
+      ([name]) => name === "billing:getWorkspacePremiumness",
+    );
+
+    expect(wsPremiumnessCall?.[1]).toBe("skip");
+    await waitFor(() => {
+      expect(clearConvexActiveWorkspaceSelection).toHaveBeenCalled();
+    });
+  });
+
+  it("skips workspace billing and clears synced selection when the active workspace org no longer matches the current org", async () => {
+    const clearConvexActiveWorkspaceSelection = vi.fn();
+    mockUseAppState.mockImplementation(() => ({
+      ...createAppStateMock(),
+      isCloudSyncActive: true,
+      activeOrganizationId: "org-1",
+      clearConvexActiveWorkspaceSelection,
+      workspaces: {
+        ws_local: {
+          id: "ws_local",
+          name: "Workspace Two",
+          sharedWorkspaceId: "shared-ws-2",
+          organizationId: "org-2",
+          servers: {},
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+      },
+    }));
+    mockUseQuery.mockImplementation((name: string) => {
+      if (name === "users:getCurrentUser") {
+        return null;
+      }
+
+      if (name === "organizations:getMyOrganizations") {
+        return [
+          {
+            _id: "org-1",
+            name: "Org One",
+            updatedAt: 2,
+            createdAt: 1,
+            createdBy: "user-1",
+            myRole: "owner",
+          },
+          {
+            _id: "org-2",
+            name: "Org Two",
+            updatedAt: 1,
+            createdAt: 1,
+            createdBy: "user-1",
+            myRole: "owner",
+          },
+        ];
+      }
+
+      return undefined;
+    });
+
+    render(<App />);
+
+    const wsPremiumnessCall = mockUseQuery.mock.calls.find(
+      ([name]) => name === "billing:getWorkspacePremiumness",
+    );
+
+    expect(wsPremiumnessCall?.[1]).toBe("skip");
+    await waitFor(() => {
+      expect(clearConvexActiveWorkspaceSelection).toHaveBeenCalled();
+    });
   });
 
   it("does not auto-select the first organization without an explicit org route", async () => {
@@ -1097,12 +1201,235 @@ describe("App hosted OAuth callback handling", () => {
     });
   });
 
+  it("optimistically switches to the first owned org after deleting the current org", async () => {
+    clearHostedOAuthPendingState();
+    clearSandboxSession();
+    window.history.replaceState({}, "", "/#organizations/org-deleted");
+
+    const setActiveOrganizationId = vi.fn();
+    const clearConvexActiveWorkspaceSelection = vi.fn();
+    mockUseAppState.mockImplementation(() => ({
+      ...createAppStateMock(),
+      activeOrganizationId: "org-deleted",
+      setActiveOrganizationId,
+      clearConvexActiveWorkspaceSelection,
+      workspaces: {
+        ws_local: {
+          id: "ws_local",
+          name: "Deleted Workspace",
+          sharedWorkspaceId: "shared-ws-deleted",
+          organizationId: "org-deleted",
+          servers: {},
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+      },
+    }));
+    mockUseQuery.mockImplementation((name: string) => {
+      if (name === "users:getCurrentUser") {
+        return null;
+      }
+
+      if (name === "organizations:getMyOrganizations") {
+        return [
+          {
+            _id: "org-deleted",
+            name: "Deleted Org",
+            updatedAt: 3,
+            createdAt: 1,
+            createdBy: "user-1",
+            myRole: "owner",
+          },
+          {
+            _id: "org-owned",
+            name: "Owned Org",
+            updatedAt: 2,
+            createdAt: 1,
+            createdBy: "user-1",
+            myRole: "owner",
+          },
+          {
+            _id: "org-member",
+            name: "Member Org",
+            updatedAt: 1,
+            createdAt: 1,
+            createdBy: "user-2",
+            myRole: "member",
+          },
+        ];
+      }
+
+      return undefined;
+    });
+    mockOrganizationsTab.mockImplementation(
+      (props: { onOrganizationDeleted?: (organizationId: string) => void }) => (
+        <button
+          type="button"
+          data-testid="delete-org"
+          onClick={() => props.onOrganizationDeleted?.("org-deleted")}
+        >
+          Delete org
+        </button>
+      ),
+    );
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByTestId("delete-org"));
+
+    await waitFor(() => {
+      expect(setActiveOrganizationId).toHaveBeenLastCalledWith("org-owned");
+    });
+
+    expect(clearConvexActiveWorkspaceSelection).toHaveBeenCalled();
+    expect(window.location.hash).toBe("#servers");
+  });
+
+  it("falls back to the first remaining org when no owned org remains after delete", async () => {
+    clearHostedOAuthPendingState();
+    clearSandboxSession();
+    window.history.replaceState({}, "", "/#organizations/org-deleted");
+
+    const setActiveOrganizationId = vi.fn();
+    mockUseAppState.mockImplementation(() => ({
+      ...createAppStateMock(),
+      activeOrganizationId: "org-deleted",
+      setActiveOrganizationId,
+    }));
+    mockUseQuery.mockImplementation((name: string) => {
+      if (name === "users:getCurrentUser") {
+        return null;
+      }
+
+      if (name === "organizations:getMyOrganizations") {
+        return [
+          {
+            _id: "org-deleted",
+            name: "Deleted Org",
+            updatedAt: 4,
+            createdAt: 1,
+            createdBy: "user-1",
+            myRole: "member",
+          },
+          {
+            _id: "org-first",
+            name: "First Remaining Org",
+            updatedAt: 3,
+            createdAt: 1,
+            createdBy: "user-2",
+            myRole: "member",
+          },
+          {
+            _id: "org-second",
+            name: "Second Remaining Org",
+            updatedAt: 2,
+            createdAt: 1,
+            createdBy: "user-3",
+            myRole: "guest",
+          },
+        ];
+      }
+
+      return undefined;
+    });
+    mockOrganizationsTab.mockImplementation(
+      (props: { onOrganizationDeleted?: (organizationId: string) => void }) => (
+        <button
+          type="button"
+          data-testid="delete-org-no-owner"
+          onClick={() => props.onOrganizationDeleted?.("org-deleted")}
+        >
+          Delete org with no owner fallback
+        </button>
+      ),
+    );
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByTestId("delete-org-no-owner"));
+
+    await waitFor(() => {
+      expect(setActiveOrganizationId).toHaveBeenLastCalledWith("org-first");
+    });
+
+    expect(window.location.hash).toBe("#servers");
+  });
+
+  it("clears org and synced workspace selection when deleting the last org", async () => {
+    clearHostedOAuthPendingState();
+    clearSandboxSession();
+    window.history.replaceState({}, "", "/#organizations/org-deleted");
+
+    const setActiveOrganizationId = vi.fn();
+    const clearConvexActiveWorkspaceSelection = vi.fn();
+    mockUseAppState.mockImplementation(() => ({
+      ...createAppStateMock(),
+      activeOrganizationId: "org-deleted",
+      setActiveOrganizationId,
+      clearConvexActiveWorkspaceSelection,
+      workspaces: {
+        ws_local: {
+          id: "ws_local",
+          name: "Deleted Workspace",
+          sharedWorkspaceId: "shared-ws-deleted",
+          organizationId: "org-deleted",
+          servers: {},
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+      },
+    }));
+    mockUseQuery.mockImplementation((name: string) => {
+      if (name === "users:getCurrentUser") {
+        return null;
+      }
+
+      if (name === "organizations:getMyOrganizations") {
+        return [
+          {
+            _id: "org-deleted",
+            name: "Deleted Org",
+            updatedAt: 1,
+            createdAt: 1,
+            createdBy: "user-1",
+            myRole: "owner",
+          },
+        ];
+      }
+
+      return undefined;
+    });
+    mockOrganizationsTab.mockImplementation(
+      (props: { onOrganizationDeleted?: (organizationId: string) => void }) => (
+        <button
+          type="button"
+          data-testid="delete-last-org"
+          onClick={() => props.onOrganizationDeleted?.("org-deleted")}
+        >
+          Delete last org
+        </button>
+      ),
+    );
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByTestId("delete-last-org"));
+
+    await waitFor(() => {
+      expect(setActiveOrganizationId).toHaveBeenLastCalledWith(undefined);
+    });
+
+    expect(clearConvexActiveWorkspaceSelection).toHaveBeenCalled();
+    expect(window.location.hash).toBe("#servers");
+  });
+
   it("still renders the sandboxes tab when workspace premiumness denies sandbox creation", async () => {
     clearHostedOAuthPendingState();
     clearSandboxSession();
     window.history.replaceState({}, "", "/#sandboxes");
     mockUseAppState.mockImplementation(() => ({
       ...createAppStateMock(),
+      isCloudSyncActive: true,
       workspaces: {
         ws_local: {
           id: "ws_local",
@@ -1158,6 +1485,15 @@ describe("App hosted OAuth callback handling", () => {
     });
 
     render(<App />);
+
+    const wsPremiumnessCall = mockUseQuery.mock.calls.find(
+      ([name]) => name === "billing:getWorkspacePremiumness",
+    );
+
+    expect(wsPremiumnessCall?.[1]).toEqual({
+      organizationId: "org-1",
+      workspaceId: "shared-ws-1",
+    });
 
     // Sandboxes tab is NOT blocked at tab level — creation is gated inline
     await waitFor(() => {
@@ -1428,6 +1764,7 @@ describe("App hosted OAuth callback handling", () => {
     mockHandleOAuthCallback.mockReset();
     mockUseAppState.mockImplementation(() => ({
       ...createAppStateMock(),
+      isCloudSyncActive: true,
       workspaces: {
         ws_local: {
           id: "ws_local",
@@ -1488,6 +1825,15 @@ describe("App hosted OAuth callback handling", () => {
     });
 
     render(<App />);
+
+    const wsPremiumnessCall = mockUseQuery.mock.calls.find(
+      ([name]) => name === "billing:getWorkspacePremiumness",
+    );
+
+    expect(wsPremiumnessCall?.[1]).toEqual({
+      organizationId: "org-1",
+      workspaceId: "shared-ws-1",
+    });
 
     await waitFor(() => {
       expect(screen.getByText("Servers Tab")).toBeInTheDocument();
