@@ -219,16 +219,44 @@ export { EXPLORE_TO_SDK_EVALS_SKILL_MD, SKILL_MD } from "./skill-reference.js";
 // OAuth conformance
 export { OAuthConformanceTest, OAuthConformanceSuite } from "./oauth-conformance/index.js";
 export type {
+  ConformanceResult as OAuthConformanceResult,
+  ConformanceStepId as OAuthConformanceStepId,
+  OAuthConformanceCheckId,
+  StepResult as OAuthConformanceStepResult,
+  VerificationResult as OAuthVerificationResult,
+} from "./oauth-conformance/index.js";
+
+// MCP conformance
+export { MCPConformanceTest, MCPConformanceSuite } from "./mcp-conformance/index.js";
+export type {
+  MCPCheckCategory,
+  MCPCheckId,
+  MCPCheckResult,
+  MCPCheckStatus,
+  MCPConformanceConfig,
+  MCPConformanceResult,
+  MCPConformanceSuiteConfig,
+  MCPConformanceSuiteResult,
+} from "./mcp-conformance/index.js";
+export {
+  MCP_CHECK_CATEGORIES,
+  MCP_CHECK_IDS,
+} from "./mcp-conformance/index.js";
+export type {
   ConformanceResult,
+  ConformanceStepId,
   OAuthConformanceAuthConfig,
   OAuthConformanceClientConfig,
   OAuthConformanceConfig,
   OAuthConformanceSuiteConfig,
+  OAuthConformanceSuiteDefaults,
+  OAuthConformanceSuiteFlow,
   OAuthConformanceSuiteResult,
   OAuthVerificationConfig,
   StepResult,
   VerificationResult,
 } from "./oauth-conformance/index.js";
+export { CONFORMANCE_CHECK_METADATA } from "./oauth-conformance/index.js";
 
 // MCP Operations (pure functions for common MCP workflows)
 export {
