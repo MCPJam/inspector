@@ -36,19 +36,95 @@ Each conformance run walks through:
 | `interactive` | Local dev — opens browser for consent | Browser popup |
 | `client_credentials` | Machine-to-machine (M2M) service accounts | None |
 
+### Compatibility
+
+Not every combination is valid. The runner rejects unsupported pairs before making any HTTP requests.
+
+| Registration | `headless` | `interactive` | `client_credentials` |
+|--------------|:----------:|:-------------:|:--------------------:|
+| `cimd` (2025-11-25 only) | ✅ | ✅ | ❌ |
+| `dcr` | ✅ | ✅ | ✅ (secret returned by DCR) |
+| `preregistered` | ✅ | ✅ | ✅ (requires `--client-secret`) |
+
+`cimd` + `client_credentials` is explicitly rejected: CIMD identifies a public client by a metadata URL and has no client secret to authenticate an M2M token request.
+
 ---
 
 ## CLI Usage
 
-### Single flow
+<Note>
+  All examples use `npx -y @mcpjam/cli-preview@latest` so each run picks up the
+  newest preview build and `-y` auto-accepts the install prompt in non-interactive
+  shells (CI, scripted agents). Drop `@latest` if you want npx's cached copy.
+</Note>
+
+### Quick start — interactive DCR (local dev)
+
+The simplest one-liner. Opens a browser for consent, registers a fresh client via DCR, then verifies the token by listing tools.
 
 ```bash
-npx @mcpjam/cli-preview oauth conformance \
+npx -y @mcpjam/cli-preview@latest oauth conformance \
+  --url https://your-server.com/mcp \
+  --protocol-version 2025-11-25 \
+  --registration dcr \
+  --auth-mode interactive \
+  --verify-tools
+```
+
+### Headless DCR (CI against an auto-consenting auth server)
+
+```bash
+npx -y @mcpjam/cli-preview@latest oauth conformance \
   --url https://your-server.com/mcp \
   --protocol-version 2025-11-25 \
   --registration dcr \
   --auth-mode headless \
-  --redirect-url https://app.example.com/oauth/callback \
+  --verify-tools
+```
+
+### Preregistered + interactive
+
+Use this when the auth server doesn't support DCR and you've already registered a client out-of-band. Pass the exact `--redirect-url` that's allow-listed on the client record.
+
+```bash
+npx -y @mcpjam/cli-preview@latest oauth conformance \
+  --url https://your-server.com/mcp \
+  --protocol-version 2025-11-25 \
+  --registration preregistered \
+  --auth-mode interactive \
+  --client-id "$OAUTH_CLIENT_ID" \
+  --client-secret "$OAUTH_CLIENT_SECRET" \
+  --redirect-url http://localhost:6274/oauth/callback \
+  --verify-tools
+```
+
+<Warning>
+  Prefer environment variables for `--client-secret`. Passing it inline leaks it
+  to shell history and process listings.
+</Warning>
+
+### CIMD (2025-11-25)
+
+Client ID Metadata Document registration — the server fetches your client's identity from `--client-metadata-url`. If omitted, the runner falls back to mcpjam's public metadata document, so you can try a CIMD flow with zero CIMD config:
+
+```bash
+npx -y @mcpjam/cli-preview@latest oauth conformance \
+  --url https://your-server.com/mcp \
+  --protocol-version 2025-11-25 \
+  --registration cimd \
+  --auth-mode interactive \
+  --verify-tools
+```
+
+To publish and test your own metadata document:
+
+```bash
+npx -y @mcpjam/cli-preview@latest oauth conformance \
+  --url https://your-server.com/mcp \
+  --protocol-version 2025-11-25 \
+  --registration cimd \
+  --auth-mode interactive \
+  --client-metadata-url https://your-app.com/.well-known/oauth-client \
   --verify-tools
 ```
 
@@ -106,7 +182,7 @@ Hint: Authorization endpoint returned an HTML login page instead of redirecting 
 For CI pipelines where no browser is available and your auth server supports `client_credentials`:
 
 ```bash
-npx @mcpjam/cli-preview oauth conformance \
+npx -y @mcpjam/cli-preview@latest oauth conformance \
   --url https://your-server.com/mcp \
   --protocol-version 2025-11-25 \
   --registration preregistered \
@@ -171,14 +247,20 @@ Each flow inherits from `defaults` and can override any field. The `serverUrl` i
 
 ```bash
 # JSON output (for agents)
-npx @mcpjam/cli-preview oauth conformance-suite --config ./oauth-tests.json --format json
+npx -y @mcpjam/cli-preview@latest oauth conformance-suite --config ./oauth-tests.json --format json
 
 # Human-readable (default on a TTY)
-npx @mcpjam/cli-preview oauth conformance-suite --config ./oauth-tests.json --format human
+npx -y @mcpjam/cli-preview@latest oauth conformance-suite --config ./oauth-tests.json --format human
 
 # JUnit XML (for CI)
-npx @mcpjam/cli-preview oauth conformance-suite --config ./oauth-tests.json --format junit-xml > report.xml
+npx -y @mcpjam/cli-preview@latest oauth conformance-suite --config ./oauth-tests.json --format junit-xml > report.xml
 ```
+
+<Note>
+  `--verify-tools` and `--verify-call-tool` on the suite command are forced onto
+  **every** flow (and the suite defaults). Per-flow `verification` entries in
+  the config file cannot disable them once the CLI flag is set.
+</Note>
 
 ### Suite options
 
@@ -199,7 +281,7 @@ npx @mcpjam/cli-preview oauth conformance-suite --config ./oauth-tests.json --fo
 oauth-conformance:
   stage: test
   script:
-    - npx @mcpjam/cli-preview oauth conformance-suite
+    - npx -y @mcpjam/cli-preview@latest oauth conformance-suite
         --config ./oauth-tests.json
         --format junit-xml > report.xml
   artifacts:
@@ -212,7 +294,7 @@ oauth-conformance:
 ```yaml
 - name: OAuth Conformance
   run: |
-    npx @mcpjam/cli-preview oauth conformance \
+    npx -y @mcpjam/cli-preview@latest oauth conformance \
       --url ${{ secrets.MCP_SERVER_URL }} \
       --protocol-version 2025-11-25 \
       --registration preregistered \
@@ -266,18 +348,45 @@ console.log(result.steps);    // Step-by-step results with HTTP traces
 | `auth` | `OAuthConformanceAuthConfig` | No | `{ mode: "interactive" }` | Auth mode config |
 | `client` | `OAuthConformanceClientConfig` | No | `{}` | Client credentials config |
 | `verification` | `OAuthVerificationConfig` | No | `{}` | Post-auth verification config |
-| `scopes` | `string` | No | — | Space-separated scope string |
+| `scopes` | `string` | No | — | Space-separated scope string (e.g. `"read:tools write:tools"`) |
 | `customHeaders` | `Record<string, string>` | No | — | Extra HTTP headers |
 | `redirectUrl` | `string` | No | Auto-generated | OAuth redirect URL |
 | `fetchFn` | `typeof fetch` | No | `fetch` | Custom fetch (useful for testing) |
 | `stepTimeout` | `number` | No | `30000` | Per-step timeout in ms |
 
+### OAuthConformanceAuthConfig
+
+A discriminated union on `mode`:
+
+```typescript
+type OAuthConformanceAuthConfig =
+  | { mode: "interactive"; openUrl?: (url: string) => Promise<void> }
+  | { mode: "headless" }
+  | {
+      mode: "client_credentials";
+      clientId: string;
+      clientSecret: string;
+    };
+```
+
+- `interactive.openUrl` — override how the consent URL is opened. Default is to launch the system browser. Useful for custom launchers or pointing an automated browser (Playwright, etc.) at the URL.
+- `client_credentials` requires both `clientId` and `clientSecret` on the auth object itself, even when `registrationStrategy` is `dcr` (in which case the values are replaced at runtime by the DCR response).
+
+### OAuthConformanceClientConfig
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `preregistered.clientId` | `string` | Required when `registrationStrategy === "preregistered"` |
+| `preregistered.clientSecret` | `string` | Required for `preregistered` + `client_credentials`; optional otherwise |
+| `dynamicRegistration` | `Partial<OAuthDynamicRegistrationMetadata>` | Overrides sent during DCR (e.g. `client_name`, `logo_uri`, `scope`). SDK-only — not exposed via CLI |
+| `clientIdMetadataUrl` | `string` | CIMD metadata document URL. If omitted for `cimd` runs, the runner falls back to a default mcpjam-hosted metadata document |
+
 ### OAuthVerificationConfig
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
-| `listTools` | `boolean` | `false` | Connect to the MCP server and list tools after auth |
-| `callTool` | `{ name, params? }` | — | Also call the named tool |
+| `listTools` | `boolean` | `false` (or `true` if `callTool` is set) | Connect to the MCP server and list tools after auth |
+| `callTool` | `{ name, params? }` | — | Also call the named tool. Implicitly enables `listTools`. |
 | `timeout` | `number` | `30000` | Verification timeout in ms |
 
 ### Suite
@@ -324,13 +433,27 @@ for (const flow of result.results) {
 
 | Property | Type | Description |
 |----------|------|-------------|
-| `step` | `string` | Step identifier |
+| `step` | `OAuthFlowStep` | Step identifier (e.g. `"discovery"`, `"received_authorization_code"`) |
 | `title` | `string` | Human-readable step name |
+| `summary` | `string` | Short result summary for this step |
 | `status` | `"passed" \| "failed" \| "skipped"` | Step outcome |
 | `durationMs` | `number` | Step duration |
-| `httpAttempts` | `HttpHistoryEntry[]` | HTTP request/response traces |
+| `logs` | `InfoLogEntry[]` | Structured log entries emitted during the step |
+| `http` | `HttpHistoryEntry` | The primary HTTP exchange for the step (if any) |
+| `httpAttempts` | `HttpHistoryEntry[]` | All HTTP request/response traces, including retries |
 | `error` | `{ message, details? }` | Error info (if failed) |
 | `teachableMoments` | `string[]` | Educational notes for this step |
+
+### OAuthConformanceSuiteResult
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `name` | `string` | Suite name from config |
+| `serverUrl` | `string` | Shared server URL |
+| `passed` | `boolean` | `true` iff every flow passed |
+| `results` | `Array<ConformanceResult & { label: string }>` | Per-flow results |
+| `summary` | `string` | Human-readable suite summary |
+| `durationMs` | `number` | Total suite duration |
 
 ---
 
