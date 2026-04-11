@@ -52,10 +52,11 @@ export function normalizeCliError(error: unknown): CliError {
   }
 
   if (
-    lower.includes("connect") ||
-    lower.includes("connection") ||
-    lower.includes("refused") ||
-    lower.includes("econn")
+    /\bconnection (refused|reset|closed)\b/.test(lower) ||
+    /\bconnect\b/.test(lower) ||
+    lower.includes("econnrefused") ||
+    lower.includes("econnreset") ||
+    lower.includes("enotfound")
   ) {
     return cliError("SERVER_UNREACHABLE", message);
   }
