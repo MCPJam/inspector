@@ -79,21 +79,14 @@ export function registerToolsCommands(program: Command): void {
     const params = parseJsonRecord(options.params, "Tool parameters") ?? {};
     const targetSummary = summarizeServerDoctorTarget(target, config);
 
-    let result:
-      | {
-          status: "completed";
-          result: unknown;
-        }
-      | undefined;
+    let result: unknown;
     let commandError: unknown;
 
     try {
       result = await withEphemeralManager(
         config,
-        async (manager, serverId) => ({
-          status: "completed" as const,
-          result: await manager.executeTool(serverId, options.name as string, params),
-        }),
+        (manager, serverId) =>
+          manager.executeTool(serverId, options.name as string, params),
         {
           timeout: globalOptions.timeout,
           rpcLogger: primaryCollector?.rpcLogger,

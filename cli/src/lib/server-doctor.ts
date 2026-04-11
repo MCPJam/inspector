@@ -80,7 +80,7 @@ export function formatServerDoctorHuman(
     const strategies = result.probe.oauth.registrationStrategies.join(", ") || "none";
     lines.push(`OAuth: required (${strategies})`);
     lines.push(
-      `Next: run \`mcpjam oauth login --url ${result.target.url ?? result.target.label}\``,
+      `Next: run \`mcpjam oauth login --url '${result.target.url ?? result.target.label}'\``,
     );
   } else if (result.error) {
     lines.push(`Error: ${result.error.code}: ${result.error.message}`);

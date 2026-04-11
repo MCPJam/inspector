@@ -120,8 +120,9 @@ async function runGuestDoctor(
 
   const guestInput = parseWithSchema(guestServerInputSchema, rawBody);
 
+  let validatedUrl: URL;
   try {
-    await validateUrl(guestInput.serverUrl, true);
+    ({ url: validatedUrl } = await validateUrl(guestInput.serverUrl, true));
   } catch (error) {
     if (error instanceof OAuthProxyError) {
       throw new WebRouteError(
@@ -133,6 +134,7 @@ async function runGuestDoctor(
     throw error;
   }
 
+  const canonicalUrl = validatedUrl.toString();
   const headers: Record<string, string> = {
     ...(guestInput.serverHeaders ?? {}),
   };
@@ -147,7 +149,7 @@ async function runGuestDoctor(
 
   return runServerDoctor({
     config: {
-      url: guestInput.serverUrl,
+      url: canonicalUrl,
       capabilities: guestInput.clientCapabilities,
       requestInit: { headers },
       timeout: timeoutMs,
@@ -155,8 +157,8 @@ async function runGuestDoctor(
     target: {
       kind: "http",
       scope: "guest",
-      label: guestInput.serverName ?? guestInput.serverUrl,
-      url: guestInput.serverUrl,
+      label: guestInput.serverName ?? canonicalUrl,
+      url: canonicalUrl,
     },
     timeout: timeoutMs,
     rpcLogger,

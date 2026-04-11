@@ -102,8 +102,7 @@ test("attachCliRpcLogs redacts sensitive auth values", () => {
   assert.equal(message.body.clientSecret, "[REDACTED]");
   assert.equal(message.body.nested.accessToken, "[REDACTED]");
   assert.equal(message.body.tokenCount, 42);
-  assert.match(message.note, /Bearer \[REDACTED\]/);
-  assert.match(message.note, /refresh_token=\[REDACTED\]/);
+  assert.match(message.note, /Authorization: \[REDACTED\]/);
 });
 
 test("attachCliRpcLogs preserves challenge headers and boolean summaries", () => {

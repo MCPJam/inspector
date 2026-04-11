@@ -10,7 +10,7 @@ import {
 } from "@mcpjam/sdk";
 import { cliError } from "./output";
 
-type Manager = InstanceType<typeof MCPClientManager>;
+type Manager = MCPClientManager;
 
 type CspMode = "permissive" | "widget-declared";
 

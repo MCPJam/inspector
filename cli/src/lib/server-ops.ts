@@ -1,6 +1,6 @@
 import type { MCPClientManager } from "@mcpjam/sdk";
 
-type Manager = InstanceType<typeof MCPClientManager>;
+type Manager = MCPClientManager;
 
 export async function listToolsWithMetadata(
   manager: Manager,

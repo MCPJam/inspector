@@ -20,15 +20,19 @@ export function redactSensitiveValue(value: unknown): unknown {
 function redactSensitiveString(value: string): string {
   return value
     .replace(
+      /\b(authorization|proxy-authorization|cookie|set-cookie)\s*:\s*[^\r\n]*/giu,
+      (_match, headerName: string) => `${headerName}: [REDACTED]`,
+    )
+    .replace(
       /\bBearer\s+(?![A-Za-z_][A-Za-z0-9_-]*=)([A-Za-z0-9\-._~+/]+=*)/giu,
       "Bearer [REDACTED]",
     )
     .replace(
-      /\b(access_token|refresh_token|client_secret|id_token|accessToken|refreshToken|clientSecret|idToken)=([^&\s]+)/giu,
+      /\b(access_token|refresh_token|client_secret|id_token|code|code_verifier|accessToken|refreshToken|clientSecret|idToken|codeVerifier)=([^&\s]+)/giu,
       "$1=[REDACTED]",
     )
     .replace(
-      /(["']?(?:access_token|refresh_token|client_secret|id_token|accessToken|refreshToken|clientSecret|idToken)["']?\s*:\s*["'])[^"']*(["'])/giu,
+      /(["']?(?:access_token|refresh_token|client_secret|id_token|code|code_verifier|accessToken|refreshToken|clientSecret|idToken|codeVerifier)["']?\s*:\s*["'])[^"']*(["'])/giu,
       "$1[REDACTED]$2",
     );
 }
