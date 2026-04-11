@@ -10,8 +10,4 @@ export {
   buildCspMetaContent,
   buildChatGptRuntimeHead,
 } from "@mcpjam/sdk";
-export type {
-  CspMode,
-  WidgetCspMeta,
-  CspConfig,
-} from "@mcpjam/sdk";
+export type { CspMode, WidgetCspMeta, CspConfig } from "@mcpjam/sdk";
