@@ -7,6 +7,7 @@ import {
 } from "../lib/debug-artifact";
 import { withEphemeralManager } from "../lib/ephemeral";
 import { attachCliRpcLogs, createCliRpcLogCollector } from "../lib/rpc-logs";
+import { withRpcLogsIfRequested } from "../lib/rpc-helpers";
 import {
   formatServerDoctorHuman,
   summarizeServerDoctorTarget,
@@ -420,16 +421,4 @@ export function registerServerCommands(program: Command): void {
 
     writeResult(withRpcLogsIfRequested(result, collector, globalOptions), globalOptions.format);
   });
-}
-
-function withRpcLogsIfRequested(
-  value: unknown,
-  collector: ReturnType<typeof createCliRpcLogCollector> | undefined,
-  options: { format: string; rpc: boolean },
-) {
-  if (!options.rpc || options.format !== "json") {
-    return value;
-  }
-
-  return attachCliRpcLogs(value, collector);
 }

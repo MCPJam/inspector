@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   exportServerSnapshot,
-  listPromptsMulti,
   listToolsWithMetadata,
 } from "../src/lib/server-ops";
 
@@ -99,22 +98,3 @@ test("exportServerSnapshot includes capabilities, metadata, and templates", asyn
   assert.equal(result.prompts[0]?.name, "prompt-1");
 });
 
-test("listPromptsMulti returns prompts and errors per server", async () => {
-  const manager = createMockManager({
-    listPrompts: async (serverId: string) => {
-      if (serverId === "bad") {
-        throw new Error("Connection failed");
-      }
-
-      return { prompts: [{ name: `${serverId}-prompt` }] };
-    },
-  });
-
-  const result = await listPromptsMulti(manager, ["good", "bad"]);
-
-  assert.deepEqual((result.prompts as Record<string, unknown[]>).good, [
-    { name: "good-prompt" },
-  ]);
-  assert.deepEqual((result.prompts as Record<string, unknown[]>).bad, []);
-  assert.deepEqual(result.errors, { bad: "Connection failed" });
-});

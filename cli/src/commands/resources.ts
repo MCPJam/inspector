@@ -1,7 +1,8 @@
 import { Command } from "commander";
 import { listResources, readResource } from "@mcpjam/sdk";
 import { withEphemeralManager } from "../lib/ephemeral";
-import { attachCliRpcLogs, createCliRpcLogCollector } from "../lib/rpc-logs";
+import { createCliRpcLogCollector } from "../lib/rpc-logs";
+import { withRpcLogsIfRequested } from "../lib/rpc-helpers";
 import {
   addSharedServerOptions,
   describeTarget,
@@ -104,16 +105,4 @@ export function registerResourcesCommands(program: Command): void {
 
     writeResult(withRpcLogsIfRequested(result, collector, globalOptions), globalOptions.format);
   });
-}
-
-function withRpcLogsIfRequested(
-  value: unknown,
-  collector: ReturnType<typeof createCliRpcLogCollector> | undefined,
-  options: { format: string; rpc: boolean },
-) {
-  if (!options.rpc || options.format !== "json") {
-    return value;
-  }
-
-  return attachCliRpcLogs(value, collector);
 }

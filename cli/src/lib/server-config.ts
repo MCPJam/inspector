@@ -27,12 +27,6 @@ export interface SharedServerTargetOptions {
   timeout?: number;
 }
 
-export interface ParsedServerTarget {
-  id: string;
-  name?: string;
-  config: MCPServerConfig;
-}
-
 function collectString(value: string, previous: string[] = []): string[] {
   return [...previous, value];
 }
@@ -264,34 +258,6 @@ export function addGlobalOptions(program: Command): Command {
     .option("--format <format>", "Output format");
 }
 
-export function parseServerTargets(value: string): ParsedServerTarget[] {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(value);
-  } catch (error) {
-    throw usageError("Servers must be valid JSON.", {
-      source: error instanceof Error ? error.message : String(error),
-    });
-  }
-
-  if (!Array.isArray(parsed) || parsed.length === 0) {
-    throw usageError("Servers must be a non-empty JSON array.");
-  }
-
-  const targets = parsed.map((entry, index) =>
-    parseServerTargetEntry(entry, index),
-  );
-  const seenIds = new Set<string>();
-  for (const target of targets) {
-    if (seenIds.has(target.id)) {
-      throw usageError(`Duplicate server id "${target.id}" in --servers.`);
-    }
-    seenIds.add(target.id);
-  }
-
-  return targets;
-}
-
 export function describeTarget(
   options: Pick<SharedServerTargetOptions, "url" | "command">,
 ): string {
@@ -354,70 +320,6 @@ function parseEnvironmentOption(
   );
 }
 
-function parseServerTargetEntry(
-  value: unknown,
-  index: number,
-): ParsedServerTarget {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw usageError(`Server entry ${index + 1} must be an object.`);
-  }
-
-  const record = value as Record<string, unknown>;
-  const idValue = record.id ?? record.serverId;
-  if (typeof idValue !== "string" || idValue.trim().length === 0) {
-    throw usageError(`Server entry ${index + 1} is missing a non-empty "id".`);
-  }
-
-  const headerEntries =
-    Array.isArray(record.header) && record.header.every((item) => typeof item === "string")
-      ? (record.header as string[])
-      : record.headers
-        ? recordToHeaderEntries(parseUnknownRecord(record.headers, "headers"))
-        : undefined;
-
-  const envEntries = Array.isArray(record.env)
-    ? coerceStringArray(record.env, "env")
-    : record.env
-      ? recordToEnvEntries(parseUnknownRecord(record.env, "env"))
-      : undefined;
-
-  const timeout =
-    typeof record.timeout === "number"
-      ? record.timeout
-      : typeof record.timeout === "string"
-        ? parsePositiveInteger(record.timeout, "Server timeout")
-        : undefined;
-
-  const config = parseServerConfig({
-    url: readOptionalString(record.url),
-    accessToken: readOptionalString(record.accessToken),
-    oauthAccessToken: readOptionalString(record.oauthAccessToken),
-    refreshToken: readOptionalString(record.refreshToken),
-    clientId: readOptionalString(record.clientId),
-    clientSecret: readOptionalString(record.clientSecret),
-    header: headerEntries,
-    clientCapabilities: parseUnknownRecord(
-      record.clientCapabilities,
-      "clientCapabilities",
-    ),
-    command: readOptionalString(record.command),
-    commandArgs: Array.isArray(record.commandArgs)
-      ? coerceStringArray(record.commandArgs, "commandArgs")
-      : Array.isArray(record.args)
-        ? coerceStringArray(record.args, "args")
-        : undefined,
-    env: envEntries,
-    timeout,
-  });
-
-  const name = readOptionalString(record.name);
-  return {
-    id: idValue.trim(),
-    ...(name ? { name } : {}),
-    config,
-  };
-}
-
 function resolveClientCapabilities(
   value: string | Record<string, unknown> | undefined,
 ): Record<string, unknown> | undefined {
@@ -449,48 +351,4 @@ export function resolveHttpAccessToken(
   }
 
   return accessToken ?? oauthAccessToken;
-}
-
-function readOptionalString(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim().length > 0
-    ? value.trim()
-    : undefined;
-}
-
-function coerceStringArray(values: unknown[], label: string): string[] {
-  if (values.some((entry) => typeof entry !== "string")) {
-    throw usageError(`${label} must be an array of strings.`);
-  }
-
-  return values as string[];
-}
-
-function recordToHeaderEntries(
-  value: Record<string, unknown> | undefined,
-): string[] | undefined {
-  if (!value) {
-    return undefined;
-  }
-
-  return Object.entries(value).map(([key, entryValue]) => {
-    if (typeof entryValue !== "string") {
-      throw usageError("headers values must be strings.");
-    }
-    return `${key}: ${entryValue}`;
-  });
-}
-
-function recordToEnvEntries(
-  value: Record<string, unknown> | undefined,
-): string[] | undefined {
-  if (!value) {
-    return undefined;
-  }
-
-  return Object.entries(value).map(([key, entryValue]) => {
-    if (typeof entryValue !== "string") {
-      throw usageError("env values must be strings.");
-    }
-    return `${key}=${entryValue}`;
-  });
 }

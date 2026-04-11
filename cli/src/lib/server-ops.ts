@@ -1,5 +1,4 @@
 import type { MCPClientManager } from "@mcpjam/sdk";
-import { listPromptsMulti as listPromptsMultiBase } from "@mcpjam/sdk";
 
 type Manager = InstanceType<typeof MCPClientManager>;
 
@@ -72,13 +71,6 @@ export async function exportServerSnapshot(
       arguments: prompt.arguments,
     })),
   };
-}
-
-export async function listPromptsMulti(
-  manager: Manager,
-  serverIds: string[],
-) {
-  return listPromptsMultiBase(manager, { serverIds });
 }
 
 function estimateTokensFromChars(text: string): number {

@@ -1,7 +1,8 @@
 import { Command } from "commander";
 import { writeCommandDebugArtifact } from "../lib/debug-artifact";
 import { withEphemeralManager } from "../lib/ephemeral";
-import { attachCliRpcLogs, createCliRpcLogCollector } from "../lib/rpc-logs";
+import { createCliRpcLogCollector } from "../lib/rpc-logs";
+import { withRpcLogsIfRequested } from "../lib/rpc-helpers";
 import { listToolsWithMetadata } from "../lib/server-ops";
 import { summarizeServerDoctorTarget } from "../lib/server-doctor";
 import {
@@ -142,16 +143,4 @@ export function registerToolsCommands(program: Command): void {
       globalOptions.format,
     );
   });
-}
-
-function withRpcLogsIfRequested(
-  value: unknown,
-  collector: ReturnType<typeof createCliRpcLogCollector> | undefined,
-  options: { format: string; rpc: boolean },
-) {
-  if (!options.rpc || options.format !== "json") {
-    return value;
-  }
-
-  return attachCliRpcLogs(value, collector);
 }
