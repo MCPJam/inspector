@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildOAuthConformanceConfig } from "../src/commands/oauth";
+import {
+  buildOAuthConformanceConfig,
+  buildOAuthLoginSnapshotConfig,
+  summarizeOAuthLoginCommandInput,
+} from "../src/commands/oauth";
 import { CliError } from "../src/lib/output";
 
 test("buildOAuthConformanceConfig defaults to headless auth", () => {
@@ -12,6 +16,21 @@ test("buildOAuthConformanceConfig defaults to headless auth", () => {
 
   assert.equal(config.auth?.mode, "headless");
   assert.equal(config.registrationStrategy, "cimd");
+});
+
+test("buildOAuthConformanceConfig can default login flows to interactive auth", () => {
+  const config = buildOAuthConformanceConfig(
+    {
+      url: "https://example.com/mcp",
+      protocolVersion: "2025-11-25",
+      registration: "cimd",
+    },
+    {
+      defaultAuthMode: "interactive",
+    },
+  );
+
+  assert.equal(config.auth?.mode, "interactive");
 });
 
 test("buildOAuthConformanceConfig maps preregistered client settings", () => {
@@ -152,4 +171,96 @@ test("buildOAuthConformanceConfig rejects an invalid redirectUrl", () => {
       error instanceof CliError &&
       error.message.includes("Invalid redirect URL"),
   );
+});
+
+test("summarizeOAuthLoginCommandInput captures header names and auth flags", () => {
+  const summary = summarizeOAuthLoginCommandInput({
+    url: "https://example.com/mcp",
+    protocolVersion: "2025-11-25",
+    registration: "dcr",
+    authMode: "interactive",
+    clientId: "client-id",
+    clientSecret: "client-secret",
+    header: ["Authorization: Bearer top-secret", "X-Test: 1"],
+    verifyTools: true,
+    verifyCallTool: "echo",
+  });
+
+  assert.equal(summary.serverUrl, "https://example.com/mcp");
+  assert.equal(summary.hasClientId, true);
+  assert.equal(summary.hasClientSecret, true);
+  assert.deepEqual(summary.headerNames, ["Authorization", "X-Test"]);
+  assert.equal(summary.verifyTools, true);
+  assert.equal(summary.verifyCallTool, "echo");
+});
+
+test("buildOAuthLoginSnapshotConfig prefers access tokens over refresh tokens", () => {
+  const config = buildOAuthConformanceConfig({
+    url: "https://example.com/mcp",
+    protocolVersion: "2025-11-25",
+    registration: "dcr",
+    authMode: "interactive",
+    header: ["X-Test: 1"],
+  });
+
+  const snapshotConfig = buildOAuthLoginSnapshotConfig(config, {
+    completed: true,
+    serverUrl: "https://example.com/mcp",
+    protocolVersion: "2025-11-25",
+    registrationStrategy: "dcr",
+    authMode: "interactive",
+    redirectUrl: "https://app.example.com/callback",
+    currentStep: "complete",
+    credentials: {
+      accessToken: "access-token",
+      refreshToken: "refresh-token",
+      clientId: "client-id",
+    },
+    state: {
+      currentStep: "complete",
+      httpHistory: [],
+      infoLogs: [],
+    } as any,
+  });
+
+  assert.equal("url" in snapshotConfig, true);
+  assert.equal(snapshotConfig.accessToken, "access-token");
+  assert.equal(snapshotConfig.refreshToken, undefined);
+  assert.deepEqual(snapshotConfig.requestInit?.headers, {
+    "X-Test": "1",
+  });
+});
+
+test("buildOAuthLoginSnapshotConfig falls back to refresh-token auth when needed", () => {
+  const config = buildOAuthConformanceConfig({
+    url: "https://example.com/mcp",
+    protocolVersion: "2025-06-18",
+    registration: "preregistered",
+    authMode: "interactive",
+    clientId: "client-id",
+    clientSecret: "client-secret",
+  });
+
+  const snapshotConfig = buildOAuthLoginSnapshotConfig(config, {
+    completed: false,
+    serverUrl: "https://example.com/mcp",
+    protocolVersion: "2025-06-18",
+    registrationStrategy: "preregistered",
+    authMode: "interactive",
+    redirectUrl: "https://app.example.com/callback",
+    currentStep: "received_access_token",
+    credentials: {
+      refreshToken: "refresh-token",
+    },
+    state: {
+      currentStep: "received_access_token",
+      httpHistory: [],
+      infoLogs: [],
+    } as any,
+  });
+
+  assert.equal("url" in snapshotConfig, true);
+  assert.equal(snapshotConfig.refreshToken, "refresh-token");
+  assert.equal(snapshotConfig.clientId, "client-id");
+  assert.equal(snapshotConfig.clientSecret, "client-secret");
 });

@@ -1,8 +1,11 @@
 import { Command } from "commander";
 import { listPrompts, getPrompt } from "@mcpjam/sdk";
 import { withEphemeralManager } from "../lib/ephemeral";
+import { createCliRpcLogCollector } from "../lib/rpc-logs";
+import { withRpcLogsIfRequested } from "../lib/rpc-helpers";
 import {
   addSharedServerOptions,
+  describeTarget,
   getGlobalOptions,
   parsePromptArguments,
   parseServerConfig,
@@ -21,6 +24,10 @@ export function registerPromptCommands(program: Command): void {
       .option("--cursor <cursor>", "Pagination cursor"),
   ).action(async (options, command) => {
     const globalOptions = getGlobalOptions(command);
+    const target = describeTarget(options);
+    const collector = globalOptions.rpc
+      ? createCliRpcLogCollector({ __cli__: target })
+      : undefined;
     const config = parseServerConfig({
       ...options,
       timeout: globalOptions.timeout,
@@ -30,10 +37,13 @@ export function registerPromptCommands(program: Command): void {
       config,
       (manager, serverId) =>
         listPrompts(manager, { serverId, cursor: options.cursor }),
-      { timeout: globalOptions.timeout },
+      {
+        timeout: globalOptions.timeout,
+        rpcLogger: collector?.rpcLogger,
+      },
     );
 
-    writeResult(result, globalOptions.format);
+    writeResult(withRpcLogsIfRequested(result, collector, globalOptions), globalOptions.format);
   });
 
   addSharedServerOptions(
@@ -44,6 +54,10 @@ export function registerPromptCommands(program: Command): void {
       .option("--prompt-args <json>", "Prompt arguments as a JSON object"),
   ).action(async (options, command) => {
     const globalOptions = getGlobalOptions(command);
+    const target = describeTarget(options);
+    const collector = globalOptions.rpc
+      ? createCliRpcLogCollector({ __cli__: target })
+      : undefined;
     const config = parseServerConfig({
       ...options,
       timeout: globalOptions.timeout,
@@ -58,9 +72,12 @@ export function registerPromptCommands(program: Command): void {
           name: options.name as string,
           arguments: promptArguments,
         }),
-      { timeout: globalOptions.timeout },
+      {
+        timeout: globalOptions.timeout,
+        rpcLogger: collector?.rpcLogger,
+      },
     );
 
-    writeResult(result, globalOptions.format);
+    writeResult(withRpcLogsIfRequested(result, collector, globalOptions), globalOptions.format);
   });
 }

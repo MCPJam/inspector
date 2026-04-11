@@ -1,9 +1,9 @@
 /// <reference lib="dom" />
 /// <reference lib="dom.iterable" />
 
-import { CheckoutSession } from "@/shared/acp-types";
-
 export {};
+
+type CheckoutSession = Record<string, unknown>;
 
 type DeviceCapabilities = {
   hover: boolean;

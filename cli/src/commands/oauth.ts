@@ -1,5 +1,14 @@
-import type { OAuthConformanceConfig, OAuthVerificationConfig } from "@mcpjam/sdk";
-import { OAuthConformanceTest, OAuthConformanceSuite } from "@mcpjam/sdk";
+import {
+  type OAuthConformanceConfig,
+  type OAuthVerificationConfig,
+  OAuthConformanceTest,
+  OAuthConformanceSuite,
+  executeDebugOAuthProxy,
+  executeOAuthProxy,
+  fetchOAuthMetadata,
+  OAuthProxyError,
+  runOAuthLogin,
+} from "@mcpjam/sdk";
 import { Command } from "commander";
 import {
   parseHeadersOption,
@@ -11,8 +20,10 @@ import {
   VALID_AUTH_MODES,
 } from "../lib/oauth-enums";
 import {
+  cliError,
   setProcessExitCode,
   usageError,
+  writeResult,
 } from "../lib/output";
 import { loadSuiteConfig } from "../lib/config-file";
 import {
@@ -21,6 +32,15 @@ import {
   resolveOAuthOutputFormat,
   type OAuthOutputFormat,
 } from "../lib/oauth-output";
+import {
+  buildCommandArtifactError,
+  writeCommandDebugArtifact,
+} from "../lib/debug-artifact";
+import {
+  createCliRpcLogCollector,
+} from "../lib/rpc-logs";
+import { summarizeServerDoctorTarget } from "../lib/server-doctor";
+import type { MCPServerConfig, OAuthLoginResult } from "@mcpjam/sdk";
 
 const DYNAMIC_CLIENT_ID_PLACEHOLDER = "__dynamic_registration_client__";
 const DYNAMIC_CLIENT_SECRET_PLACEHOLDER = "__dynamic_registration_secret__";
@@ -28,6 +48,16 @@ const DYNAMIC_CLIENT_SECRET_PLACEHOLDER = "__dynamic_registration_secret__";
 function getOAuthFormat(command: Command): OAuthOutputFormat {
   const opts = command.optsWithGlobals() as { format?: string };
   return resolveOAuthOutputFormat(opts.format, process.stdout.isTTY);
+}
+
+function getStructuredOAuthFormat(command: Command): "json" | "human" {
+  const format = getOAuthFormat(command);
+  if (format === "junit-xml") {
+    throw usageError(
+      'The oauth metadata/proxy commands only support --format "json" or "human".',
+    );
+  }
+  return format;
 }
 
 function writeOAuthOutput(output: string): void {
@@ -50,10 +80,143 @@ export interface OAuthCommandOptions {
   verifyCallTool?: string;
 }
 
+interface OAuthProxyCommandOptions {
+  url: string;
+  method?: string;
+  header?: string[];
+  body?: string;
+}
+
 export function registerOAuthCommands(program: Command): void {
   const oauth = program
     .command("oauth")
-    .description("Run MCP OAuth conformance flows");
+    .description("Run MCP OAuth login, proxy, and conformance flows");
+
+  oauth
+    .command("login")
+    .description("Run an OAuth login flow against an HTTP MCP server")
+    .requiredOption("--url <url>", "MCP server URL")
+    .requiredOption(
+      "--protocol-version <version>",
+      "OAuth protocol version: 2025-03-26, 2025-06-18, or 2025-11-25",
+    )
+    .requiredOption(
+      "--registration <strategy>",
+      "Registration strategy: dcr, preregistered, or cimd",
+    )
+    .option(
+      "--auth-mode <mode>",
+      "Authorization mode: headless, interactive, or client_credentials",
+      "interactive",
+    )
+    .option(
+      "--header <header>",
+      'HTTP header in "Key: Value" format. Repeat to send multiple headers.',
+      (value: string, previous: string[] = []) => [...previous, value],
+      [],
+    )
+    .option("--client-id <id>", "OAuth client ID")
+    .option("--client-secret <secret>", "OAuth client secret")
+    .option(
+      "--client-metadata-url <url>",
+      "Client metadata URL used for CIMD registration",
+    )
+    .option("--redirect-url <url>", "OAuth redirect URL to use for the flow")
+    .option("--scopes <scopes>", "Space-separated scope string")
+    .option(
+      "--step-timeout <ms>",
+      "Per-step timeout in milliseconds",
+      (value: string) => parsePositiveInteger(value, "Step timeout"),
+      30_000,
+    )
+    .option(
+      "--verify-tools",
+      "After OAuth succeeds, verify the token by listing MCP tools",
+    )
+    .option(
+      "--verify-call-tool <name>",
+      "After listing tools, also call the named tool",
+    )
+    .option(
+      "--debug-out <path>",
+      "Write a structured debug artifact to a file",
+    )
+    .action(async (options, command) => {
+      const format = getStructuredOAuthFormat(command);
+      const config = buildOAuthConformanceConfig(
+        options as OAuthCommandOptions,
+        {
+          defaultAuthMode: "interactive",
+        },
+      );
+      const snapshotCollector = options.debugOut
+        ? createCliRpcLogCollector({ __cli__: config.serverUrl })
+        : undefined;
+      let result: OAuthLoginResult | undefined;
+      let commandError: unknown;
+
+      try {
+        result = await runOAuthLogin(config);
+      } catch (error) {
+        commandError = error;
+      }
+
+      const snapshotConfig = buildOAuthLoginSnapshotConfig(config, result);
+      const target = summarizeServerDoctorTarget(
+        config.serverUrl,
+        snapshotConfig,
+      );
+
+      await writeCommandDebugArtifact({
+        outputPath: options.debugOut as string | undefined,
+        format,
+        commandName: "oauth login",
+        commandInput: summarizeOAuthLoginCommandInput(
+          options as OAuthCommandOptions,
+        ),
+        target,
+        outcome: commandError
+          ? {
+              status: "error",
+              error: commandError,
+            }
+          : result?.completed
+            ? {
+                status: "success",
+                result,
+              }
+            : {
+                status: "error",
+                result,
+                error: buildCommandArtifactError(
+                  "OAUTH_LOGIN_INCOMPLETE",
+                  result?.error?.message ?? "OAuth login did not complete.",
+                ),
+              },
+        snapshot: options.debugOut
+          ? {
+              input: {
+                config: snapshotConfig,
+                target,
+                timeout: config.stepTimeout ?? 30_000,
+              },
+              collector: snapshotCollector,
+            }
+          : undefined,
+      });
+
+      if (commandError) {
+        throw commandError;
+      }
+      if (!result) {
+        throw cliError("INTERNAL_ERROR", "OAuth login did not return a result.");
+      }
+
+      writeResult(result, format);
+      if (!result.completed) {
+        setProcessExitCode(1);
+      }
+    });
 
   oauth
     .command("conformance")
@@ -154,17 +317,67 @@ export function registerOAuthCommands(program: Command): void {
         setProcessExitCode(1);
       }
     });
+
+  oauth
+    .command("metadata")
+    .description("Fetch OAuth metadata from a URL")
+    .requiredOption("--url <url>", "OAuth metadata URL")
+    .action(async (options, command) => {
+      const result = await runOAuthMetadata(options.url as string);
+      writeResult(result, getStructuredOAuthFormat(command));
+    });
+
+  oauth
+    .command("proxy")
+    .description("Proxy an OAuth request with hosted-mode safety checks")
+    .requiredOption("--url <url>", "OAuth request URL")
+    .option("--method <method>", "HTTP method", "GET")
+    .option(
+      "--header <header>",
+      'HTTP header in "Key: Value" format. Repeat to send multiple headers.',
+      (value: string, previous: string[] = []) => [...previous, value],
+      [],
+    )
+    .option("--body <value>", "Request body as JSON or raw string")
+    .action(async (options, command) => {
+      const result = await runOAuthProxy(options as OAuthProxyCommandOptions);
+      writeResult(result, getStructuredOAuthFormat(command));
+    });
+
+  oauth
+    .command("debug-proxy")
+    .description("Proxy an OAuth debug request with hosted-mode safety checks")
+    .requiredOption("--url <url>", "OAuth request URL")
+    .option("--method <method>", "HTTP method", "GET")
+    .option(
+      "--header <header>",
+      'HTTP header in "Key: Value" format. Repeat to send multiple headers.',
+      (value: string, previous: string[] = []) => [...previous, value],
+      [],
+    )
+    .option("--body <value>", "Request body as JSON or raw string")
+    .action(async (options, command) => {
+      const result = await runOAuthDebugProxy(
+        options as OAuthProxyCommandOptions,
+      );
+      writeResult(result, getStructuredOAuthFormat(command));
+    });
 }
 
 export function buildOAuthConformanceConfig(
   options: OAuthCommandOptions,
+  defaults?: {
+    defaultAuthMode?: "headless" | "interactive" | "client_credentials";
+  },
 ): OAuthConformanceConfig {
   const serverUrl = options.url.trim();
   assertValidUrl(serverUrl, "server URL");
 
   const protocolVersion = parseProtocolVersion(options.protocolVersion);
   const registrationStrategy = parseRegistrationStrategy(options.registration);
-  const authMode = parseAuthMode(options.authMode ?? "headless");
+  const authMode = parseAuthMode(
+    options.authMode ?? defaults?.defaultAuthMode ?? "headless",
+  );
 
   if (
     protocolVersion !== "2025-11-25" &&
@@ -248,6 +461,71 @@ export function buildOAuthConformanceConfig(
   };
 }
 
+export function summarizeOAuthLoginCommandInput(
+  options: OAuthCommandOptions,
+): Record<string, unknown> {
+  return {
+    serverUrl: options.url.trim(),
+    protocolVersion: options.protocolVersion,
+    registration: options.registration,
+    authMode: options.authMode ?? "interactive",
+    redirectUrl: options.redirectUrl?.trim() || undefined,
+    scopes: options.scopes?.trim() || undefined,
+    clientMetadataUrl: options.clientMetadataUrl?.trim() || undefined,
+    headerNames: Object.keys(parseHeadersOption(options.header) ?? {}),
+    hasClientId: Boolean(options.clientId?.trim()),
+    hasClientSecret: Boolean(options.clientSecret),
+    verifyTools: options.verifyTools ?? false,
+    verifyCallTool: options.verifyCallTool ?? undefined,
+    stepTimeout: options.stepTimeout ?? 30_000,
+  };
+}
+
+export function buildOAuthLoginSnapshotConfig(
+  config: OAuthConformanceConfig,
+  result?: OAuthLoginResult,
+): MCPServerConfig {
+  const baseConfig: MCPServerConfig = {
+    url: config.serverUrl,
+    ...(config.customHeaders
+      ? { requestInit: { headers: config.customHeaders } }
+      : {}),
+    timeout: config.stepTimeout ?? 30_000,
+  };
+  if (!result) {
+    return baseConfig;
+  }
+
+  const clientId =
+    result.credentials.clientId ??
+    config.client?.preregistered?.clientId ??
+    (config.auth?.mode === "client_credentials" ? config.auth.clientId : undefined);
+  const clientSecret =
+    result.credentials.clientSecret ??
+    config.client?.preregistered?.clientSecret ??
+    (config.auth?.mode === "client_credentials"
+      ? config.auth.clientSecret
+      : undefined);
+
+  if (result.credentials.accessToken) {
+    return {
+      ...baseConfig,
+      accessToken: result.credentials.accessToken,
+    };
+  }
+
+  if (result.credentials.refreshToken && clientId) {
+    return {
+      ...baseConfig,
+      refreshToken: result.credentials.refreshToken,
+      clientId,
+      ...(clientSecret ? { clientSecret } : {}),
+    };
+  }
+
+  return baseConfig;
+}
+
 function buildAuthConfig(
   authMode: "headless" | "interactive" | "client_credentials",
   registrationStrategy: OAuthCommandOptions["registration"],
@@ -320,4 +598,78 @@ function parseAuthMode(
   throw usageError(
     `Invalid auth mode "${value}". Use ${[...VALID_AUTH_MODES].join(", ")}.`,
   );
+}
+
+export async function runOAuthMetadata(url: string) {
+  try {
+    const result = await fetchOAuthMetadata(url, true);
+    if ("status" in result && result.status !== undefined) {
+      throw cliError(
+        statusToErrorCode(result.status),
+        `Failed to fetch OAuth metadata: ${result.status} ${result.statusText}`,
+      );
+    }
+
+    return result.metadata;
+  } catch (error) {
+    throw mapOAuthProxyError(error);
+  }
+}
+
+export async function runOAuthProxy(options: OAuthProxyCommandOptions) {
+  try {
+    return await executeOAuthProxy({
+      url: options.url,
+      method: options.method,
+      headers: parseHeadersOption(options.header),
+      body: parseProxyBody(options.body),
+      httpsOnly: true,
+    });
+  } catch (error) {
+    throw mapOAuthProxyError(error);
+  }
+}
+
+export async function runOAuthDebugProxy(options: OAuthProxyCommandOptions) {
+  try {
+    return await executeDebugOAuthProxy({
+      url: options.url,
+      method: options.method,
+      headers: parseHeadersOption(options.header),
+      body: parseProxyBody(options.body),
+      httpsOnly: true,
+    });
+  } catch (error) {
+    throw mapOAuthProxyError(error);
+  }
+}
+
+export function parseProxyBody(value: string | undefined): unknown {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
+}
+
+export function mapOAuthProxyError(error: unknown) {
+  if (error instanceof OAuthProxyError) {
+    return cliError(statusToErrorCode(error.status), error.message);
+  }
+  return error;
+}
+
+function statusToErrorCode(status: number): string {
+  if (status === 400) return "VALIDATION_ERROR";
+  if (status === 401) return "UNAUTHORIZED";
+  if (status === 403) return "FORBIDDEN";
+  if (status === 404) return "NOT_FOUND";
+  if (status === 429) return "RATE_LIMITED";
+  if (status === 502) return "SERVER_UNREACHABLE";
+  if (status === 504) return "TIMEOUT";
+  return "INTERNAL_ERROR";
 }
