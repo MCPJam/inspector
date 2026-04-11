@@ -29,7 +29,46 @@ Use this skill when analyzing MCP server behavior from `mcpjam-cli` output. The 
 6. If the output came from `server doctor` or a `--debug-out` artifact, split it into primary command evidence, probe evidence, and connected-sweep evidence.
 7. If a field may be CLI-added or SDK-normalized, read `references/cli-surface-notes.md` before concluding anything.
 8. If the claim depends on MCP semantics, read `references/mcp-2025-11-25-interpretation.md`.
-9. Write the result using the output contract below.
+9. If the task involves security review, read `references/security-best-practices.md` for the full checklist and follow the security review workflow below.
+10. Write the result using the output contract below.
+
+## Security review workflow
+
+Use this when the task is to assess an MCP server's security posture. All checks use existing CLI commands — no special security tooling is needed.
+
+### Phase 1: Passive discovery (no auth required)
+
+Run `server probe --url <target> --format json` and inspect the output:
+
+1. **SSRF via OAuth discovery**: Check all URLs in `oauth.authorizationServerMetadata` and `oauth.resourceMetadata` for non-HTTPS, private IPs, and cloud metadata targets (169.254.169.254). See `references/security-best-practices.md` for the full IP range list.
+2. **Scope design**: Check `scopes_supported` for wildcards (`*`, `all`, `full-access`, `:*`). Compare `WWW-Authenticate` scope against the full catalog.
+3. **PKCE strength**: Check `code_challenge_methods_supported` for `plain` support.
+4. **Registration strategies**: Note which are available (`dcr`, `cimd`, `preregistered`) — DCR servers need the redirect URI checks in phase 2.
+
+### Phase 2: DCR abuse testing (if DCR is supported)
+
+Use `oauth proxy` to test the registration endpoint directly:
+
+1. **HTTP redirect URI acceptance**: POST a registration with `"redirect_uris":["http://evil.example/callback"]`. A `2xx` with a `client_id` is a HIGH finding.
+2. **Redirect URI validation**: Register normally, then attempt authorization with a modified redirect URI.
+3. **Registration response quality**: Check for relative `registration_client_uri` (RFC 7592 violation).
+
+### Phase 3: Authenticated review (requires successful auth)
+
+Run `oauth login` to obtain credentials, then:
+
+1. **Token audience binding**: Decode the JWT access token (base64url-decode the second `.`-delimited segment). Check `aud` against the MCP server resource URL.
+2. **Session ID quality**: Run `server info` multiple times with `--rpc` and inspect `Mcp-Session-Id` headers for predictability.
+3. **Connected surface**: Use `tools list`, `resources list`, `prompts list` to understand the blast radius of a compromised token.
+
+### Severity calibration for security findings
+
+- **HIGH**: Clear spec violation with a concrete exploit path (e.g., HTTP redirect URI + working authorization flow = auth code interception)
+- **MEDIUM**: Real standards issue with security implications but no demonstrated end-to-end exploit (e.g., relative registration_client_uri, wildcard scopes)
+- **LOW**: Hardening opportunity or defense-in-depth gap (e.g., `plain` PKCE support alongside `S256`, full-catalog scope challenges)
+- **INFO**: Observations that are true but not actionable (e.g., opaque tokens without `aud`, missing optional scope metadata)
+
+Always note compounding factors — a LOW finding can become MEDIUM when combined with another finding (e.g., `plain` PKCE + HTTP redirect URIs).
 
 ## Command choice
 
@@ -62,6 +101,9 @@ For each claimed finding, return:
 - Separate OAuth RFC violations from MCP profile preferences.
 - Distinguish "the server correctly rejected a bad request" from "the overall design is secure."
 - Treat `--debug-out` artifacts as aggregated evidence envelopes, not pure wire captures.
+- Never flag missing `scopes_supported` or missing `scope` in `WWW-Authenticate` as a security issue — both are optional.
+- Never claim a server is "secure" based solely on it rejecting one specific bad input. A single negative test does not prove broader security posture.
+- When compounding findings, explain the compound attack path. Do not just list unrelated findings and call the combination worse.
 
 ## Reference map
 
@@ -69,3 +111,5 @@ For each claimed finding, return:
   Use for command-specific caveats, artifact shapes, local enrichments, merged errors, and normalized empty arrays.
 - `references/mcp-2025-11-25-interpretation.md`
   Use for capability, lifecycle, transport, authorization, tools, resources, and prompts interpretation against the latest MCP spec.
+- `references/security-best-practices.md`
+  Use for security review checks mapped to CLI commands. Covers SSRF, confused deputy, PKCE, token passthrough, scope minimization, and session security. Source: https://modelcontextprotocol.io/docs/tutorials/security/security_best_practices
