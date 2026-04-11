@@ -163,6 +163,51 @@ describe("OAuth conformance human formatter", () => {
     expect(result).toEqual(before);
   });
 
+  it("surfaces verification error messages alongside PASS/FAIL", () => {
+    const result = createPassingResult({
+      passed: false,
+      verification: {
+        listTools: {
+          passed: false,
+          durationMs: 50,
+          error: "Server disconnected unexpectedly",
+        },
+        callTool: {
+          passed: false,
+          toolName: "execute_sql",
+          durationMs: 20,
+          error: "Tool returned error: invalid query",
+        },
+      },
+      summary: "OAuth succeeded but verification failed",
+    });
+
+    const output = formatOAuthConformanceHuman(result);
+
+    expect(output).toContain(
+      "listTools: FAIL — Server disconnected unexpectedly",
+    );
+    expect(output).toContain(
+      "callTool(execute_sql): FAIL — Tool returned error: invalid query",
+    );
+  });
+
+  it("appends tool count to listTools PASS without dropping success text", () => {
+    const result = createPassingResult({
+      verification: {
+        listTools: {
+          passed: true,
+          toolCount: 7,
+          durationMs: 30,
+        },
+      },
+    });
+
+    const output = formatOAuthConformanceHuman(result);
+
+    expect(output).toContain("listTools: PASS (7 tools)");
+    expect(output).not.toContain("—");
+  });
 });
 
 describe("OAuth conformance suite human formatter", () => {
@@ -199,5 +244,37 @@ describe("OAuth conformance suite human formatter", () => {
     expect(output.match(/^PASS /gm)).toHaveLength(4);
     expect(output.match(/^FAIL /gm)).toHaveLength(1);
     expect(output.match(/^\[flow-/gm)).toHaveLength(1);
+  });
+
+  it("shows verification details for flows that fail only post-auth verification", () => {
+    const verificationFailure: ConformanceResult = {
+      ...createPassingResult(),
+      passed: false,
+      summary: "listTools verification failed",
+      verification: {
+        listTools: {
+          passed: false,
+          durationMs: 40,
+          error: "MCP server closed connection",
+        },
+      },
+    };
+
+    const suite: OAuthConformanceSuiteResult = {
+      name: "Verification-only failure",
+      serverUrl: "https://mcp.example.com/mcp",
+      passed: false,
+      results: [{ ...verificationFailure, label: "flow-verify" }],
+      summary: "0/1 flows passed. Failed: flow-verify",
+      durationMs: 120,
+    };
+
+    const output = formatOAuthConformanceSuiteHuman(suite);
+
+    expect(output).toContain("[flow-verify]");
+    expect(output).toContain("Verification");
+    expect(output).toContain(
+      "listTools: FAIL — MCP server closed connection",
+    );
   });
 });

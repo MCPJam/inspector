@@ -36,6 +36,48 @@ describe("interactive authorization session", () => {
     }
   });
 
+  it("surfaces OAuth error responses from the callback without waiting for timeout", async () => {
+    const session = await createInteractiveAuthorizationSession();
+
+    try {
+      const resultPromise = session.authorize({
+        authorizationUrl: "https://auth.example.com/authorize",
+        timeoutMs: 10_000,
+        openUrl: async () => {
+          await fetch(
+            `${session.redirectUrl}?error=access_denied&error_description=User+rejected+access`,
+          );
+        },
+      });
+
+      await expect(resultPromise).rejects.toThrow(
+        /access_denied: User rejected access/,
+      );
+    } finally {
+      await session.stop().catch(() => undefined);
+    }
+  });
+
+  it("rejects callbacks missing both code and error without hanging", async () => {
+    const session = await createInteractiveAuthorizationSession();
+
+    try {
+      const resultPromise = session.authorize({
+        authorizationUrl: "https://auth.example.com/authorize",
+        timeoutMs: 10_000,
+        openUrl: async () => {
+          await fetch(`${session.redirectUrl}?state=no-code`);
+        },
+      });
+
+      await expect(resultPromise).rejects.toThrow(
+        /without a code or error parameter/,
+      );
+    } finally {
+      await session.stop().catch(() => undefined);
+    }
+  });
+
   it("opens the browser with a node-native system command", async () => {
     const child = new EventEmitter() as EventEmitter & {
       unref: jest.Mock;

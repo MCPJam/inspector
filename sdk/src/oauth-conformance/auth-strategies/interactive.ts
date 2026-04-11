@@ -17,6 +17,15 @@ function isLoopbackHostname(hostname: string): boolean {
   return hostname === "127.0.0.1" || hostname === "localhost";
 }
 
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 function getBrowserOpenCommand(
   url: string,
 ): {
@@ -108,6 +117,16 @@ export async function createInteractiveAuthorizationSession(options?: {
   let pendingReject: ((error: Error) => void) | undefined;
   let timeoutHandle: NodeJS.Timeout | undefined;
 
+  const failPending = (error: Error): void => {
+    if (timeoutHandle) {
+      clearTimeout(timeoutHandle);
+      timeoutHandle = undefined;
+    }
+    pendingReject?.(error);
+    pendingResolve = undefined;
+    pendingReject = undefined;
+  };
+
   const server = createServer((req, res) => {
     const requestUrl = new URL(
       req.url || callbackPath,
@@ -120,10 +139,30 @@ export async function createInteractiveAuthorizationSession(options?: {
       return;
     }
 
+    const oauthError = requestUrl.searchParams.get("error");
+    if (oauthError) {
+      const description = requestUrl.searchParams.get("error_description");
+      const message = description
+        ? `${oauthError}: ${description}`
+        : oauthError;
+      res.statusCode = 400;
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      res.end(
+        `<html><body><p>Authorization failed: ${escapeHtml(message)}. You can close this window.</p></body></html>`,
+      );
+      failPending(new Error(`Authorization server returned error: ${message}`));
+      return;
+    }
+
     const code = requestUrl.searchParams.get("code");
     if (!code) {
       res.statusCode = 400;
       res.end("Missing authorization code");
+      failPending(
+        new Error(
+          "Authorization callback was invoked without a code or error parameter",
+        ),
+      );
       return;
     }
 
@@ -198,6 +237,10 @@ export async function createInteractiveAuthorizationSession(options?: {
           }, timeoutMs);
         },
       );
+      // Attach a no-op handler to suppress "unhandled rejection" warnings when
+      // the callback server rejects before the caller awaits codePromise. The
+      // original promise's rejection is still observable to the caller.
+      codePromise.catch(() => undefined);
 
       try {
         await openUrl(authorizationUrl);

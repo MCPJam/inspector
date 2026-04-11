@@ -209,23 +209,22 @@ function formatVerification(result: ConformanceResult): string[] {
   }
 
   const lines: string[] = [];
+  const { listTools, callTool } = result.verification;
 
-  if (result.verification.listTools) {
-    lines.push(
-      `listTools: ${result.verification.listTools.passed ? "PASS" : "FAIL"}${
-        result.verification.listTools.toolCount === undefined
-          ? ""
-          : ` (${result.verification.listTools.toolCount} tools)`
-      }`,
-    );
+  if (listTools) {
+    const status = listTools.passed ? "PASS" : "FAIL";
+    const count =
+      listTools.toolCount === undefined
+        ? ""
+        : ` (${listTools.toolCount} tools)`;
+    const errorSuffix = listTools.error ? ` — ${listTools.error}` : "";
+    lines.push(`listTools: ${status}${count}${errorSuffix}`);
   }
 
-  if (result.verification.callTool) {
-    lines.push(
-      `callTool(${result.verification.callTool.toolName}): ${
-        result.verification.callTool.passed ? "PASS" : "FAIL"
-      }`,
-    );
+  if (callTool) {
+    const status = callTool.passed ? "PASS" : "FAIL";
+    const errorSuffix = callTool.error ? ` — ${callTool.error}` : "";
+    lines.push(`callTool(${callTool.toolName}): ${status}${errorSuffix}`);
   }
 
   return lines;
@@ -274,7 +273,17 @@ export function formatOAuthConformanceSuiteHuman(
   if (failures.length > 0) {
     lines.push("", "Failure details");
     for (const failure of failures) {
-      lines.push("", `[${failure.label}]`, ...formatFailureLines(failure));
+      const stepLines = formatFailureLines(failure);
+      const verificationLines = formatVerification(failure);
+      const detailLines =
+        stepLines.length > 0 && verificationLines.length > 0
+          ? [...stepLines, "", "Verification", ...verificationLines]
+          : stepLines.length > 0
+            ? stepLines
+            : verificationLines.length > 0
+              ? ["Verification", ...verificationLines]
+              : [`Summary: ${failure.summary}`];
+      lines.push("", `[${failure.label}]`, ...detailLines);
     }
   }
 

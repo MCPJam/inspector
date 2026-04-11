@@ -171,9 +171,9 @@ Each flow inherits from `defaults` and can override any field. The `serverUrl` i
 
 ```bash
 # JSON output (for agents)
-npx @mcpjam/cli-preview oauth conformance-suite --config ./oauth-tests.json
+npx @mcpjam/cli-preview oauth conformance-suite --config ./oauth-tests.json --format json
 
-# Human-readable
+# Human-readable (default on a TTY)
 npx @mcpjam/cli-preview oauth conformance-suite --config ./oauth-tests.json --format human
 
 # JUnit XML (for CI)
