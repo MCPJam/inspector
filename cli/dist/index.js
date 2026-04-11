@@ -249,6 +249,65 @@ function parseEnvironmentOption(values) {
   );
 }
 
+// src/commands/conformance.ts
+function registerProtocolCommands(program) {
+  const protocol = program.command("protocol").description("MCP protocol inspection and conformance checks");
+  protocol.command("conformance").description("Run MCP protocol conformance checks against an HTTP server").requiredOption("--url <url>", "MCP server URL").option("--access-token <token>", "Bearer access token for HTTP servers").option(
+    "--header <header>",
+    'HTTP header in "Key: Value" format. Repeat to send multiple headers.',
+    (value, previous = []) => [...previous, value],
+    []
+  ).option(
+    "--check-timeout <ms>",
+    "Per-check timeout in milliseconds",
+    (value) => parsePositiveInteger(value, "Check timeout"),
+    15e3
+  ).option(
+    "--category <category>",
+    "Check category to run. Repeat for multiple. Default: all.",
+    (value, previous = []) => [...previous, value],
+    []
+  ).option(
+    "--check-id <id>",
+    "Specific check ID to run. Repeat for multiple. Default: all.",
+    (value, previous = []) => [...previous, value],
+    []
+  ).action(async (options, command) => {
+    const format = getFormat(command);
+    const config = buildConfig(options);
+    const result = await new sdk.MCPConformanceTest(config).run();
+    writeResult(result, format);
+    if (!result.passed) {
+      setProcessExitCode(1);
+    }
+  });
+}
+function getFormat(command) {
+  const opts = command.optsWithGlobals();
+  const value = opts.format ?? "json";
+  if (value === "json" || value === "human") {
+    return value;
+  }
+  throw usageError(`Invalid output format "${value}". Use "json" or "human".`);
+}
+function buildConfig(options) {
+  const serverUrl = options.url.trim();
+  try {
+    new URL(serverUrl);
+  } catch {
+    throw usageError(`Invalid URL: ${serverUrl}`);
+  }
+  const customHeaders = parseHeadersOption(options.header);
+  return {
+    serverUrl,
+    accessToken: options.accessToken,
+    customHeaders,
+    checkTimeout: options.checkTimeout ?? 15e3,
+    ...options.category && options.category.length > 0 ? { categories: options.category } : {},
+    ...options.checkId && options.checkId.length > 0 ? { checkIds: options.checkId } : {}
+  };
+}
+
 // src/lib/oauth-enums.ts
 var VALID_PROTOCOL_VERSIONS = /* @__PURE__ */ new Set([
   "2025-03-26",
@@ -373,7 +432,7 @@ function flowToTestSuite(result) {
   const failures = result.steps.filter((s) => s.status === "failed").length;
   const skipped = result.steps.filter((s) => s.status === "skipped").length;
   const time = (result.durationMs / 1e3).toFixed(3);
-  const classname = escapeXml(result.serverUrl);
+  const classname = result.serverUrl;
   const cases = result.steps.map((step) => stepToTestCase(step, classname)).join("\n");
   return `  <testsuite name="${name}" tests="${tests}" failures="${failures}" skipped="${skipped}" time="${time}">
 ${cases}
@@ -482,12 +541,17 @@ function registerOAuthCommands(program) {
     const format = getOAuthFormat(command);
     const config = loadSuiteConfig(options.config);
     if (options.verifyTools || options.verifyCallTool) {
-      const verification = {
-        ...config.defaults?.verification,
+      const cliVerification = {
         listTools: true,
         ...options.verifyCallTool ? { callTool: { name: options.verifyCallTool } } : {}
       };
-      config.defaults = { ...config.defaults, verification };
+      for (const flow of config.flows) {
+        flow.verification = { ...flow.verification, ...cliVerification };
+      }
+      config.defaults = {
+        ...config.defaults,
+        verification: { ...config.defaults?.verification, ...cliVerification }
+      };
     }
     const suite = new sdk.OAuthConformanceSuite(config);
     const result = await suite.run();
@@ -766,6 +830,7 @@ async function main(argv = process.argv) {
   registerResourcesCommands(program);
   registerPromptCommands(program);
   registerOAuthCommands(program);
+  registerProtocolCommands(program);
   if (argv.length <= 2) {
     program.outputHelp();
     return 0;
