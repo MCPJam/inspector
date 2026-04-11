@@ -32,6 +32,15 @@ import {
   resolveOAuthOutputFormat,
   type OAuthOutputFormat,
 } from "../lib/oauth-output";
+import {
+  buildCommandArtifactError,
+  writeCommandDebugArtifact,
+} from "../lib/debug-artifact";
+import {
+  createCliRpcLogCollector,
+} from "../lib/rpc-logs";
+import { summarizeServerDoctorTarget } from "../lib/server-doctor";
+import type { MCPServerConfig, OAuthLoginResult } from "@mcpjam/sdk";
 
 const DYNAMIC_CLIENT_ID_PLACEHOLDER = "__dynamic_registration_client__";
 const DYNAMIC_CLIENT_SECRET_PLACEHOLDER = "__dynamic_registration_secret__";
@@ -128,6 +137,10 @@ export function registerOAuthCommands(program: Command): void {
       "--verify-call-tool <name>",
       "After listing tools, also call the named tool",
     )
+    .option(
+      "--debug-out <path>",
+      "Write a structured debug artifact to a file",
+    )
     .action(async (options, command) => {
       const format = getStructuredOAuthFormat(command);
       const config = buildOAuthConformanceConfig(
@@ -136,7 +149,68 @@ export function registerOAuthCommands(program: Command): void {
           defaultAuthMode: "interactive",
         },
       );
-      const result = await runOAuthLogin(config);
+      const snapshotCollector = options.debugOut
+        ? createCliRpcLogCollector({ __cli__: config.serverUrl })
+        : undefined;
+      let result: OAuthLoginResult | undefined;
+      let commandError: unknown;
+
+      try {
+        result = await runOAuthLogin(config);
+      } catch (error) {
+        commandError = error;
+      }
+
+      const snapshotConfig = buildOAuthLoginSnapshotConfig(config, result);
+      const target = summarizeServerDoctorTarget(
+        config.serverUrl,
+        snapshotConfig,
+      );
+
+      await writeCommandDebugArtifact({
+        outputPath: options.debugOut as string | undefined,
+        format,
+        commandName: "oauth login",
+        commandInput: summarizeOAuthLoginCommandInput(
+          options as OAuthCommandOptions,
+        ),
+        target,
+        outcome: commandError
+          ? {
+              status: "error",
+              error: commandError,
+            }
+          : result?.completed
+            ? {
+                status: "success",
+                result,
+              }
+            : {
+                status: "error",
+                result,
+                error: buildCommandArtifactError(
+                  "OAUTH_LOGIN_INCOMPLETE",
+                  result?.error?.message ?? "OAuth login did not complete.",
+                ),
+              },
+        snapshot: options.debugOut
+          ? {
+              input: {
+                config: snapshotConfig,
+                target,
+                timeout: config.stepTimeout ?? 30_000,
+              },
+              collector: snapshotCollector,
+            }
+          : undefined,
+      });
+
+      if (commandError) {
+        throw commandError;
+      }
+      if (!result) {
+        throw cliError("INTERNAL_ERROR", "OAuth login did not return a result.");
+      }
 
       writeResult(result, format);
       if (!result.completed) {
@@ -385,6 +459,71 @@ export function buildOAuthConformanceConfig(
     stepTimeout: options.stepTimeout ?? 30_000,
     verification,
   };
+}
+
+export function summarizeOAuthLoginCommandInput(
+  options: OAuthCommandOptions,
+): Record<string, unknown> {
+  return {
+    serverUrl: options.url.trim(),
+    protocolVersion: options.protocolVersion,
+    registration: options.registration,
+    authMode: options.authMode ?? "interactive",
+    redirectUrl: options.redirectUrl?.trim() || undefined,
+    scopes: options.scopes?.trim() || undefined,
+    clientMetadataUrl: options.clientMetadataUrl?.trim() || undefined,
+    headerNames: Object.keys(parseHeadersOption(options.header) ?? {}),
+    hasClientId: Boolean(options.clientId?.trim()),
+    hasClientSecret: Boolean(options.clientSecret),
+    verifyTools: options.verifyTools ?? false,
+    verifyCallTool: options.verifyCallTool ?? undefined,
+    stepTimeout: options.stepTimeout ?? 30_000,
+  };
+}
+
+export function buildOAuthLoginSnapshotConfig(
+  config: OAuthConformanceConfig,
+  result?: OAuthLoginResult,
+): MCPServerConfig {
+  const baseConfig: MCPServerConfig = {
+    url: config.serverUrl,
+    ...(config.customHeaders
+      ? { requestInit: { headers: config.customHeaders } }
+      : {}),
+    timeout: config.stepTimeout ?? 30_000,
+  };
+  if (!result) {
+    return baseConfig;
+  }
+
+  const clientId =
+    result.credentials.clientId ??
+    config.client?.preregistered?.clientId ??
+    (config.auth?.mode === "client_credentials" ? config.auth.clientId : undefined);
+  const clientSecret =
+    result.credentials.clientSecret ??
+    config.client?.preregistered?.clientSecret ??
+    (config.auth?.mode === "client_credentials"
+      ? config.auth.clientSecret
+      : undefined);
+
+  if (result.credentials.accessToken) {
+    return {
+      ...baseConfig,
+      accessToken: result.credentials.accessToken,
+    };
+  }
+
+  if (result.credentials.refreshToken && clientId) {
+    return {
+      ...baseConfig,
+      refreshToken: result.credentials.refreshToken,
+      clientId,
+      ...(clientSecret ? { clientSecret } : {}),
+    };
+  }
+
+  return baseConfig;
 }
 
 function buildAuthConfig(

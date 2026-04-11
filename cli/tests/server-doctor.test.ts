@@ -106,6 +106,38 @@ test("attachCliRpcLogs redacts sensitive auth values", () => {
   assert.match(message.note, /refresh_token=\[REDACTED\]/);
 });
 
+test("attachCliRpcLogs preserves challenge headers and boolean summaries", () => {
+  const collector = createCliRpcLogCollector({ "__cli__": "example" });
+  collector.rpcLogger({
+    serverId: "__cli__",
+    direction: "receive",
+    message: {
+      target: {
+        hasAccessToken: false,
+        hasRefreshToken: true,
+        hasClientSecret: false,
+      },
+      headers: {
+        "WWW-Authenticate":
+          'Bearer resource_metadata="https://example.com/.well-known/oauth-protected-resource"',
+      },
+    },
+  } as any);
+
+  const payload = attachCliRpcLogs({ ok: true }, collector) as {
+    _rpcLogs: Array<{ message: any }>;
+  };
+  const message = payload._rpcLogs[0]?.message;
+
+  assert.equal(message.target.hasAccessToken, false);
+  assert.equal(message.target.hasRefreshToken, true);
+  assert.equal(message.target.hasClientSecret, false);
+  assert.equal(
+    message.headers["WWW-Authenticate"],
+    'Bearer resource_metadata="https://example.com/.well-known/oauth-protected-resource"',
+  );
+});
+
 test("writeDebugArtifact persists JSON payloads", async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "mcpjam-doctor-"));
   const artifactPath = path.join(directory, "doctor.json");

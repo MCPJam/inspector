@@ -1,6 +1,10 @@
 import { probeMcpServer, runServerDoctor } from "@mcpjam/sdk";
 import { Command } from "commander";
-import { writeDebugArtifact } from "../lib/debug-artifact";
+import {
+  buildCommandArtifactError,
+  writeCommandDebugArtifact,
+  writeDebugArtifact,
+} from "../lib/debug-artifact";
 import { withEphemeralManager } from "../lib/ephemeral";
 import { attachCliRpcLogs, createCliRpcLogCollector } from "../lib/rpc-logs";
 import {
@@ -13,7 +17,6 @@ import {
   describeTarget,
   getGlobalOptions,
   parseHeadersOption,
-  parseJsonRecord,
   parseServerConfig,
   parsePositiveInteger,
   resolveHttpAccessToken,
@@ -54,13 +57,25 @@ export function registerServerCommands(program: Command): void {
       "Request timeout in milliseconds",
       (value: string) => parsePositiveInteger(value, "Timeout"),
     )
+    .option(
+      "--debug-out <path>",
+      "Write a structured debug artifact to a file",
+    )
     .action(async (options, command) => {
       const globalOptions = getGlobalOptions(command);
-      const accessToken = resolveHttpAccessToken(options);
       const protocolVersion = options.protocolVersion as
         | "2025-03-26"
         | "2025-06-18"
         | "2025-11-25";
+      const config = parseServerConfig({
+        ...options,
+        timeout: options.timeout ?? globalOptions.timeout,
+      });
+      const target = describeTarget(options);
+      const targetSummary = summarizeServerDoctorTarget(target, config);
+      const snapshotCollector = options.debugOut
+        ? createCliRpcLogCollector({ __cli__: target })
+        : undefined;
 
       if (
         protocolVersion !== "2025-03-26" &&
@@ -72,17 +87,74 @@ export function registerServerCommands(program: Command): void {
         );
       }
 
-      const result = await probeMcpServer({
-        url: options.url as string,
-        protocolVersion,
-        headers: parseHeadersOption(options.header),
-        accessToken,
-        clientCapabilities: parseJsonRecord(
-          options.clientCapabilities,
-          "Client capabilities",
-        ),
-        timeoutMs: options.timeout ?? globalOptions.timeout,
+      let result: Awaited<ReturnType<typeof probeMcpServer>> | undefined;
+      let commandError: unknown;
+
+      try {
+        const probeUrl = "url" in config ? config.url : undefined;
+        if (!probeUrl) {
+          throw usageError("HTTP probe requires --url.");
+        }
+
+        result = await probeMcpServer({
+          url: probeUrl,
+          protocolVersion,
+          headers: parseHeadersOption(options.header),
+          accessToken: resolveHttpAccessToken(options),
+          clientCapabilities:
+            "clientCapabilities" in config ? config.clientCapabilities : undefined,
+          timeoutMs: options.timeout ?? globalOptions.timeout,
+        });
+      } catch (error) {
+        commandError = error;
+      }
+
+      await writeCommandDebugArtifact({
+        outputPath: options.debugOut as string | undefined,
+        format: globalOptions.format,
+        commandName: "server probe",
+        commandInput: {
+          protocolVersion,
+          clientCapabilities:
+            "clientCapabilities" in config ? config.clientCapabilities : undefined,
+        },
+        target: targetSummary,
+        outcome: commandError
+          ? {
+              status: "error",
+              error: commandError,
+            }
+          : result?.status === "error"
+            ? {
+                status: "error",
+                result,
+                error: buildCommandArtifactError(
+                  "PROBE_FAILED",
+                  result.error ?? "Probe failed.",
+                ),
+              }
+            : {
+                status: "success",
+                result,
+              },
+        snapshot: options.debugOut
+          ? {
+              input: {
+                config,
+                target: targetSummary,
+                timeout: options.timeout ?? globalOptions.timeout,
+              },
+              collector: snapshotCollector,
+            }
+          : undefined,
       });
+
+      if (commandError) {
+        throw commandError;
+      }
+      if (!result) {
+        throw operationalError("Probe did not return a result.");
+      }
 
       writeResult(result, globalOptions.format);
       if (result.status === "error") {
@@ -176,36 +248,94 @@ export function registerServerCommands(program: Command): void {
     server
       .command("validate")
       .description("Connect to a server and verify the debugger surface works"),
-  ).action(async (options, command) => {
-    const globalOptions = getGlobalOptions(command);
-    const target = describeTarget(options);
-    const collector = globalOptions.rpc
-      ? createCliRpcLogCollector({ __cli__: target })
-      : undefined;
-    const config = parseServerConfig({
-      ...options,
-      timeout: globalOptions.timeout,
-    });
-
-    const result = await withEphemeralManager(
-      config,
-      async (manager, serverId) => {
-        await manager.getToolsForAiSdk([serverId]);
-        return {
-          success: true,
-          status: "connected",
-          target,
-          initInfo: manager.getInitializationInfo(serverId) ?? null,
-        };
-      },
-      {
+  )
+    .option(
+      "--debug-out <path>",
+      "Write a structured debug artifact to a file",
+    )
+    .action(async (options, command) => {
+      const globalOptions = getGlobalOptions(command);
+      const target = describeTarget(options);
+      const primaryCollector = globalOptions.rpc || options.debugOut
+        ? createCliRpcLogCollector({ __cli__: target })
+        : undefined;
+      const snapshotCollector = options.debugOut
+        ? createCliRpcLogCollector({ __cli__: target })
+        : undefined;
+      const config = parseServerConfig({
+        ...options,
         timeout: globalOptions.timeout,
-        rpcLogger: collector?.rpcLogger,
-      },
-    );
+      });
+      const targetSummary = summarizeServerDoctorTarget(target, config);
 
-    writeResult(withRpcLogsIfRequested(result, collector, globalOptions), globalOptions.format);
-  });
+      let result:
+        | {
+            success: true;
+            status: "connected";
+            target: string;
+            initInfo: unknown | null;
+          }
+        | undefined;
+      let commandError: unknown;
+
+      try {
+        result = await withEphemeralManager(
+          config,
+          async (manager, serverId) => {
+            await manager.getToolsForAiSdk([serverId]);
+            return {
+              success: true,
+              status: "connected" as const,
+              target,
+              initInfo: manager.getInitializationInfo(serverId) ?? null,
+            };
+          },
+          {
+            timeout: globalOptions.timeout,
+            rpcLogger: primaryCollector?.rpcLogger,
+          },
+        );
+      } catch (error) {
+        commandError = error;
+      }
+
+      await writeCommandDebugArtifact({
+        outputPath: options.debugOut as string | undefined,
+        format: globalOptions.format,
+        commandName: "server validate",
+        commandInput: {},
+        target: targetSummary,
+        outcome: commandError
+          ? {
+              status: "error",
+              error: commandError,
+            }
+          : {
+              status: "success",
+              result,
+            },
+        snapshot: options.debugOut
+          ? {
+              input: {
+                config,
+                target: targetSummary,
+                timeout: globalOptions.timeout,
+              },
+              collector: snapshotCollector,
+            }
+          : undefined,
+        collectors: [primaryCollector],
+      });
+
+      if (commandError) {
+        throw commandError;
+      }
+
+      writeResult(
+        withRpcLogsIfRequested(result, primaryCollector, globalOptions),
+        globalOptions.format,
+      );
+    });
 
   addSharedServerOptions(
     server.command("ping").description("Ping an MCP server"),

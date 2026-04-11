@@ -275,6 +275,38 @@ async function withEphemeralManagers(servers, fn, options) {
   }
 }
 
+// src/lib/redaction.ts
+function redactSensitiveValue(value) {
+  if (Array.isArray(value)) {
+    return value.map((entry) => redactSensitiveValue(entry));
+  }
+  if (!value || typeof value !== "object") {
+    return typeof value === "string" ? redactSensitiveString(value) : value;
+  }
+  return Object.fromEntries(
+    Object.entries(value).map(([key, entryValue]) => [
+      key,
+      shouldRedactKey(key) ? "[REDACTED]" : redactSensitiveValue(entryValue)
+    ])
+  );
+}
+function redactSensitiveString(value) {
+  return value.replace(
+    /\bBearer\s+(?![A-Za-z_][A-Za-z0-9_-]*=)([A-Za-z0-9\-._~+/]+=*)/giu,
+    "Bearer [REDACTED]"
+  ).replace(
+    /\b(access_token|refresh_token|client_secret|id_token|accessToken|refreshToken|clientSecret|idToken)=([^&\s]+)/giu,
+    "$1=[REDACTED]"
+  ).replace(
+    /(["']?(?:access_token|refresh_token|client_secret|id_token|accessToken|refreshToken|clientSecret|idToken)["']?\s*:\s*["'])[^"']*(["'])/giu,
+    "$1[REDACTED]$2"
+  );
+}
+function shouldRedactKey(key) {
+  const normalized = key.toLowerCase().replace(/[^a-z0-9]/gu, "");
+  return normalized === "authorization" || normalized === "proxyauthorization" || normalized === "cookie" || normalized === "setcookie" || normalized === "accesstoken" || normalized === "refreshtoken" || normalized === "clientsecret" || normalized === "idtoken" || normalized === "apikey" || normalized === "xapikey";
+}
+
 // src/lib/rpc-logs.ts
 var CliRpcLogCollector = class {
   constructor(serverNamesById) {
@@ -307,41 +339,17 @@ function attachCliRpcLogs(payload, collector) {
   }
   return {
     ...payload,
-    _rpcLogs: redactCliRpcLogs(collector.getLogs())
+    _rpcLogs: getCliRpcLogEvents([collector])
   };
+}
+function getCliRpcLogEvents(collectors) {
+  return collectors.flatMap((collector) => redactCliRpcLogs(collector?.getLogs() ?? []));
 }
 function redactCliRpcLogs(logs) {
   return logs.map((event) => ({
     ...event,
     message: redactSensitiveValue(event.message)
   }));
-}
-function redactSensitiveValue(value) {
-  if (Array.isArray(value)) {
-    return value.map((entry) => redactSensitiveValue(entry));
-  }
-  if (!value || typeof value !== "object") {
-    return typeof value === "string" ? redactSensitiveString(value) : value;
-  }
-  return Object.fromEntries(
-    Object.entries(value).map(([key, entryValue]) => [
-      key,
-      shouldRedactKey(key) ? "[REDACTED]" : redactSensitiveValue(entryValue)
-    ])
-  );
-}
-function redactSensitiveString(value) {
-  return value.replace(/\bBearer\s+[^\s",]+/giu, "Bearer [REDACTED]").replace(
-    /\b(access_token|refresh_token|client_secret|id_token)=([^&\s]+)/giu,
-    "$1=[REDACTED]"
-  ).replace(
-    /(["']?(?:access_token|refresh_token|client_secret|id_token)["']?\s*:\s*["'])[^"']*(["'])/giu,
-    "$1[REDACTED]$2"
-  );
-}
-function shouldRedactKey(key) {
-  const normalized = key.toLowerCase().replace(/[^a-z0-9]/gu, "");
-  return normalized === "authorization" || normalized === "proxyauthorization" || normalized === "cookie" || normalized === "setcookie" || normalized === "accesstoken" || normalized === "refreshtoken" || normalized === "clientsecret" || normalized === "idtoken" || normalized === "apikey" || normalized === "xapikey" || normalized.endsWith("token") || normalized.endsWith("secret");
 }
 
 // src/lib/server-config.ts
@@ -1071,6 +1079,199 @@ function renderOAuthConformanceSuiteResult(result, format) {
       return JSON.stringify(result);
   }
 }
+async function writeCommandDebugArtifact(options, dependencies = {}) {
+  if (!options.outputPath) {
+    return void 0;
+  }
+  const snapshotResult = options.snapshot ? await collectDoctorSnapshot(options.snapshot, dependencies) : { snapshot: null, snapshotError: null };
+  const payload = buildDebugArtifactEnvelope({
+    commandName: options.commandName,
+    commandInput: options.commandInput,
+    target: options.target,
+    outcome: options.outcome,
+    snapshot: snapshotResult.snapshot,
+    snapshotError: snapshotResult.snapshotError,
+    collectors: [
+      ...options.collectors ?? [],
+      options.snapshot?.collector
+    ]
+  });
+  const artifactPath = await writeDebugArtifact(options.outputPath, payload);
+  if (options.format === "human") {
+    process.stderr.write(`Debug artifact: ${artifactPath}
+`);
+  }
+  return artifactPath;
+}
+function buildDebugArtifactEnvelope(options) {
+  const payload = {
+    schemaVersion: 1,
+    generatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+    command: {
+      name: options.commandName,
+      input: options.commandInput
+    },
+    target: options.target,
+    outcome: buildOutcome(options.outcome),
+    snapshot: options.snapshot
+  };
+  if (options.snapshotError) {
+    payload.snapshotError = options.snapshotError;
+  }
+  const rpcLogs = getCliRpcLogEvents(options.collectors ?? []);
+  if (rpcLogs.length > 0) {
+    payload._rpcLogs = rpcLogs;
+  }
+  return redactSensitiveValue(payload);
+}
+function buildCommandArtifactError(code, message, details) {
+  return {
+    code,
+    message,
+    ...{} 
+  };
+}
+async function writeDebugArtifact(outputPath, payload) {
+  const resolvedPath = path__default.default.resolve(process.cwd(), outputPath);
+  const redactedPayload = redactSensitiveValue(payload);
+  try {
+    await promises.mkdir(path__default.default.dirname(resolvedPath), { recursive: true });
+    await promises.writeFile(
+      resolvedPath,
+      `${JSON.stringify(redactedPayload, null, 2)}
+`,
+      "utf8"
+    );
+  } catch (error) {
+    throw operationalError(
+      `Failed to write debug artifact to "${resolvedPath}".`,
+      {
+        source: error instanceof Error ? error.message : String(error)
+      }
+    );
+  }
+  return resolvedPath;
+}
+async function collectDoctorSnapshot(options, dependencies = {}) {
+  try {
+    const runDoctor = dependencies.runDoctor ?? sdk.runServerDoctor;
+    return {
+      snapshot: await runDoctor({
+        ...options.input,
+        rpcLogger: options.collector?.rpcLogger
+      }),
+      snapshotError: null
+    };
+  } catch (error) {
+    return {
+      snapshot: null,
+      snapshotError: normalizeArtifactError(error)
+    };
+  }
+}
+function buildOutcome(outcome) {
+  if (outcome.status === "success") {
+    return {
+      status: "success",
+      result: outcome.result
+    };
+  }
+  return {
+    status: "error",
+    ...outcome.result === void 0 ? {} : { result: outcome.result },
+    error: normalizeArtifactError(outcome.error)
+  };
+}
+function normalizeArtifactError(error) {
+  if (error && typeof error === "object" && typeof error.code === "string" && typeof error.message === "string") {
+    return error;
+  }
+  return toStructuredError(normalizeCliError(error)).error;
+}
+
+// src/lib/server-doctor.ts
+function summarizeServerDoctorTarget(target, config) {
+  if ("url" in config) {
+    return {
+      kind: "http",
+      label: target,
+      url: config.url,
+      commandArgs: [],
+      envKeys: [],
+      headerNames: Object.keys(extractHeaders(config.requestInit?.headers)),
+      timeoutMs: config.timeout,
+      hasAccessToken: Boolean(config.accessToken),
+      hasRefreshToken: Boolean(config.refreshToken),
+      hasClientSecret: Boolean(config.clientSecret),
+      ...config.clientCapabilities ? { clientCapabilities: config.clientCapabilities } : {}
+    };
+  }
+  return {
+    kind: "stdio",
+    label: target,
+    command: config.command,
+    commandArgs: config.args ?? [],
+    envKeys: Object.keys(config.env ?? {}),
+    headerNames: [],
+    timeoutMs: config.timeout,
+    hasAccessToken: false,
+    hasRefreshToken: false,
+    hasClientSecret: false,
+    ...config.clientCapabilities ? { clientCapabilities: config.clientCapabilities } : {}
+  };
+}
+function formatServerDoctorHuman(result, options = {}) {
+  const lines = [`Status: ${result.status}`, `Target: ${result.target.label}`];
+  if (result.probe) {
+    const transport = result.probe.transport.selected ?? (result.probe.transport.attempts.length > 0 ? "attempted" : "none");
+    lines.push(`Probe: ${result.probe.status} (${transport})`);
+  } else {
+    lines.push("Probe: skipped");
+  }
+  lines.push(
+    `Connection: ${result.connection.status} (${result.connection.detail})`
+  );
+  lines.push(
+    `Counts: tools ${result.tools.length}, resources ${result.resources.length}, resourceTemplates ${result.resourceTemplates.length}, prompts ${result.prompts.length}`
+  );
+  if (result.status === "oauth_required" && result.probe) {
+    const strategies = result.probe.oauth.registrationStrategies.join(", ") || "none";
+    lines.push(`OAuth: required (${strategies})`);
+    lines.push(
+      `Next: run \`mcpjam oauth login --url ${result.target.url ?? result.target.label}\``
+    );
+  } else if (result.error) {
+    lines.push(`Error: ${result.error.code}: ${result.error.message}`);
+  }
+  lines.push("Checks:");
+  for (const [name, check] of Object.entries(result.checks)) {
+    lines.push(`- ${name}: ${check.status} (${check.detail})`);
+  }
+  if (options.artifactPath) {
+    lines.push(`Artifact: ${options.artifactPath}`);
+  }
+  return lines.join("\n");
+}
+function extractHeaders(headers) {
+  if (!headers) {
+    return {};
+  }
+  if (headers instanceof Headers) {
+    const normalized = {};
+    headers.forEach((value, key) => {
+      normalized[key] = value;
+    });
+    return normalized;
+  }
+  if (Array.isArray(headers)) {
+    return Object.fromEntries(
+      headers.map(([key, value]) => [key, String(value)])
+    );
+  }
+  return Object.fromEntries(
+    Object.entries(headers).map(([key, value]) => [key, String(value)])
+  );
+}
 
 // src/commands/oauth.ts
 var DYNAMIC_CLIENT_ID_PLACEHOLDER = "__dynamic_registration_client__";
@@ -1123,6 +1324,9 @@ function registerOAuthCommands(program) {
   ).option(
     "--verify-call-tool <name>",
     "After listing tools, also call the named tool"
+  ).option(
+    "--debug-out <path>",
+    "Write a structured debug artifact to a file"
   ).action(async (options, command) => {
     const format = getStructuredOAuthFormat(command);
     const config = buildOAuthConformanceConfig(
@@ -1131,7 +1335,56 @@ function registerOAuthCommands(program) {
         defaultAuthMode: "interactive"
       }
     );
-    const result = await sdk.runOAuthLogin(config);
+    const snapshotCollector = options.debugOut ? createCliRpcLogCollector({ __cli__: config.serverUrl }) : void 0;
+    let result;
+    let commandError;
+    try {
+      result = await sdk.runOAuthLogin(config);
+    } catch (error) {
+      commandError = error;
+    }
+    const snapshotConfig = buildOAuthLoginSnapshotConfig(config, result);
+    const target = summarizeServerDoctorTarget(
+      config.serverUrl,
+      snapshotConfig
+    );
+    await writeCommandDebugArtifact({
+      outputPath: options.debugOut,
+      format,
+      commandName: "oauth login",
+      commandInput: summarizeOAuthLoginCommandInput(
+        options
+      ),
+      target,
+      outcome: commandError ? {
+        status: "error",
+        error: commandError
+      } : result?.completed ? {
+        status: "success",
+        result
+      } : {
+        status: "error",
+        result,
+        error: buildCommandArtifactError(
+          "OAUTH_LOGIN_INCOMPLETE",
+          result?.error?.message ?? "OAuth login did not complete."
+        )
+      },
+      snapshot: options.debugOut ? {
+        input: {
+          config: snapshotConfig,
+          target,
+          timeout: config.stepTimeout ?? 3e4
+        },
+        collector: snapshotCollector
+      } : void 0
+    });
+    if (commandError) {
+      throw commandError;
+    }
+    if (!result) {
+      throw cliError("INTERNAL_ERROR", "OAuth login did not return a result.");
+    }
     writeResult(result, format);
     if (!result.completed) {
       setProcessExitCode(1);
@@ -1296,6 +1549,50 @@ function buildOAuthConformanceConfig(options, defaults) {
     stepTimeout: options.stepTimeout ?? 3e4,
     verification
   };
+}
+function summarizeOAuthLoginCommandInput(options) {
+  return {
+    serverUrl: options.url.trim(),
+    protocolVersion: options.protocolVersion,
+    registration: options.registration,
+    authMode: options.authMode ?? "interactive",
+    redirectUrl: options.redirectUrl?.trim() || void 0,
+    scopes: options.scopes?.trim() || void 0,
+    clientMetadataUrl: options.clientMetadataUrl?.trim() || void 0,
+    headerNames: Object.keys(parseHeadersOption(options.header) ?? {}),
+    hasClientId: Boolean(options.clientId?.trim()),
+    hasClientSecret: Boolean(options.clientSecret),
+    verifyTools: options.verifyTools ?? false,
+    verifyCallTool: options.verifyCallTool ?? void 0,
+    stepTimeout: options.stepTimeout ?? 3e4
+  };
+}
+function buildOAuthLoginSnapshotConfig(config, result) {
+  const baseConfig = {
+    url: config.serverUrl,
+    ...config.customHeaders ? { requestInit: { headers: config.customHeaders } } : {},
+    timeout: config.stepTimeout ?? 3e4
+  };
+  if (!result) {
+    return baseConfig;
+  }
+  const clientId = result.credentials.clientId ?? config.client?.preregistered?.clientId ?? (config.auth?.mode === "client_credentials" ? config.auth.clientId : void 0);
+  const clientSecret = result.credentials.clientSecret ?? config.client?.preregistered?.clientSecret ?? (config.auth?.mode === "client_credentials" ? config.auth.clientSecret : void 0);
+  if (result.credentials.accessToken) {
+    return {
+      ...baseConfig,
+      accessToken: result.credentials.accessToken
+    };
+  }
+  if (result.credentials.refreshToken && clientId) {
+    return {
+      ...baseConfig,
+      refreshToken: result.credentials.refreshToken,
+      clientId,
+      ...clientSecret ? { clientSecret } : {}
+    };
+  }
+  return baseConfig;
 }
 function buildAuthConfig(authMode, registrationStrategy, clientId, clientSecret) {
   switch (authMode) {
@@ -1637,112 +1934,6 @@ function withRpcLogsIfRequested3(value, collector, options) {
   }
   return attachCliRpcLogs(value, collector);
 }
-async function writeDebugArtifact(outputPath, payload) {
-  const resolvedPath = path__default.default.resolve(process.cwd(), outputPath);
-  try {
-    await promises.mkdir(path__default.default.dirname(resolvedPath), { recursive: true });
-    await promises.writeFile(
-      resolvedPath,
-      `${JSON.stringify(payload, null, 2)}
-`,
-      "utf8"
-    );
-  } catch (error) {
-    throw operationalError(
-      `Failed to write debug artifact to "${resolvedPath}".`,
-      {
-        source: error instanceof Error ? error.message : String(error)
-      }
-    );
-  }
-  return resolvedPath;
-}
-
-// src/lib/server-doctor.ts
-function summarizeServerDoctorTarget(target, config) {
-  if ("url" in config) {
-    return {
-      kind: "http",
-      label: target,
-      url: config.url,
-      commandArgs: [],
-      envKeys: [],
-      headerNames: Object.keys(extractHeaders(config.requestInit?.headers)),
-      timeoutMs: config.timeout,
-      hasAccessToken: Boolean(config.accessToken),
-      hasRefreshToken: Boolean(config.refreshToken),
-      hasClientSecret: Boolean(config.clientSecret),
-      ...config.clientCapabilities ? { clientCapabilities: config.clientCapabilities } : {}
-    };
-  }
-  return {
-    kind: "stdio",
-    label: target,
-    command: config.command,
-    commandArgs: config.args ?? [],
-    envKeys: Object.keys(config.env ?? {}),
-    headerNames: [],
-    timeoutMs: config.timeout,
-    hasAccessToken: false,
-    hasRefreshToken: false,
-    hasClientSecret: false,
-    ...config.clientCapabilities ? { clientCapabilities: config.clientCapabilities } : {}
-  };
-}
-function formatServerDoctorHuman(result, options = {}) {
-  const lines = [`Status: ${result.status}`, `Target: ${result.target.label}`];
-  if (result.probe) {
-    const transport = result.probe.transport.selected ?? (result.probe.transport.attempts.length > 0 ? "attempted" : "none");
-    lines.push(`Probe: ${result.probe.status} (${transport})`);
-  } else {
-    lines.push("Probe: skipped");
-  }
-  lines.push(
-    `Connection: ${result.connection.status} (${result.connection.detail})`
-  );
-  lines.push(
-    `Counts: tools ${result.tools.length}, resources ${result.resources.length}, resourceTemplates ${result.resourceTemplates.length}, prompts ${result.prompts.length}`
-  );
-  if (result.status === "oauth_required" && result.probe) {
-    const strategies = result.probe.oauth.registrationStrategies.join(", ") || "none";
-    lines.push(`OAuth: required (${strategies})`);
-    lines.push(
-      `Next: run \`mcpjam oauth login --url ${result.target.url ?? result.target.label}\``
-    );
-  } else if (result.error) {
-    lines.push(`Error: ${result.error.code}: ${result.error.message}`);
-  }
-  lines.push("Checks:");
-  for (const [name, check] of Object.entries(result.checks)) {
-    lines.push(`- ${name}: ${check.status} (${check.detail})`);
-  }
-  if (options.artifactPath) {
-    lines.push(`Artifact: ${options.artifactPath}`);
-  }
-  return lines.join("\n");
-}
-function extractHeaders(headers) {
-  if (!headers) {
-    return {};
-  }
-  if (headers instanceof Headers) {
-    const normalized = {};
-    headers.forEach((value, key) => {
-      normalized[key] = value;
-    });
-    return normalized;
-  }
-  if (Array.isArray(headers)) {
-    return Object.fromEntries(
-      headers.map(([key, value]) => [key, String(value)])
-    );
-  }
-  return Object.fromEntries(
-    Object.entries(headers).map(([key, value]) => [key, String(value)])
-  );
-}
-
-// src/commands/server.ts
 function registerServerCommands(program) {
   const server = program.command("server").description("Inspect MCP server connectivity and capabilities");
   server.command("probe").description("Probe an HTTP MCP server without using the full client connect flow").requiredOption("--url <url>", "HTTP MCP server URL").option("--access-token <token>", "Bearer access token for HTTP servers").option(
@@ -1764,26 +1955,80 @@ function registerServerCommands(program) {
     "--timeout <ms>",
     "Request timeout in milliseconds",
     (value) => parsePositiveInteger(value, "Timeout")
+  ).option(
+    "--debug-out <path>",
+    "Write a structured debug artifact to a file"
   ).action(async (options, command) => {
     const globalOptions = getGlobalOptions(command);
-    const accessToken = resolveHttpAccessToken(options);
     const protocolVersion = options.protocolVersion;
+    const config = parseServerConfig({
+      ...options,
+      timeout: options.timeout ?? globalOptions.timeout
+    });
+    const target = describeTarget(options);
+    const targetSummary = summarizeServerDoctorTarget(target, config);
+    const snapshotCollector = options.debugOut ? createCliRpcLogCollector({ __cli__: target }) : void 0;
     if (protocolVersion !== "2025-03-26" && protocolVersion !== "2025-06-18" && protocolVersion !== "2025-11-25") {
       throw usageError(
         `Invalid protocol version "${options.protocolVersion}".`
       );
     }
-    const result = await sdk.probeMcpServer({
-      url: options.url,
-      protocolVersion,
-      headers: parseHeadersOption(options.header),
-      accessToken,
-      clientCapabilities: parseJsonRecord(
-        options.clientCapabilities,
-        "Client capabilities"
-      ),
-      timeoutMs: options.timeout ?? globalOptions.timeout
+    let result;
+    let commandError;
+    try {
+      const probeUrl = "url" in config ? config.url : void 0;
+      if (!probeUrl) {
+        throw usageError("HTTP probe requires --url.");
+      }
+      result = await sdk.probeMcpServer({
+        url: probeUrl,
+        protocolVersion,
+        headers: parseHeadersOption(options.header),
+        accessToken: resolveHttpAccessToken(options),
+        clientCapabilities: "clientCapabilities" in config ? config.clientCapabilities : void 0,
+        timeoutMs: options.timeout ?? globalOptions.timeout
+      });
+    } catch (error) {
+      commandError = error;
+    }
+    await writeCommandDebugArtifact({
+      outputPath: options.debugOut,
+      format: globalOptions.format,
+      commandName: "server probe",
+      commandInput: {
+        protocolVersion,
+        clientCapabilities: "clientCapabilities" in config ? config.clientCapabilities : void 0
+      },
+      target: targetSummary,
+      outcome: commandError ? {
+        status: "error",
+        error: commandError
+      } : result?.status === "error" ? {
+        status: "error",
+        result,
+        error: buildCommandArtifactError(
+          "PROBE_FAILED",
+          result.error ?? "Probe failed."
+        )
+      } : {
+        status: "success",
+        result
+      },
+      snapshot: options.debugOut ? {
+        input: {
+          config,
+          target: targetSummary,
+          timeout: options.timeout ?? globalOptions.timeout
+        },
+        collector: snapshotCollector
+      } : void 0
     });
+    if (commandError) {
+      throw commandError;
+    }
+    if (!result) {
+      throw operationalError("Probe did not return a result.");
+    }
     writeResult(result, globalOptions.format);
     if (result.status === "error") {
       setProcessExitCode(1);
@@ -1852,31 +2097,71 @@ function registerServerCommands(program) {
   });
   addSharedServerOptions(
     server.command("validate").description("Connect to a server and verify the debugger surface works")
+  ).option(
+    "--debug-out <path>",
+    "Write a structured debug artifact to a file"
   ).action(async (options, command) => {
     const globalOptions = getGlobalOptions(command);
     const target = describeTarget(options);
-    const collector = globalOptions.rpc ? createCliRpcLogCollector({ __cli__: target }) : void 0;
+    const primaryCollector = globalOptions.rpc || options.debugOut ? createCliRpcLogCollector({ __cli__: target }) : void 0;
+    const snapshotCollector = options.debugOut ? createCliRpcLogCollector({ __cli__: target }) : void 0;
     const config = parseServerConfig({
       ...options,
       timeout: globalOptions.timeout
     });
-    const result = await withEphemeralManager(
-      config,
-      async (manager, serverId) => {
-        await manager.getToolsForAiSdk([serverId]);
-        return {
-          success: true,
-          status: "connected",
-          target,
-          initInfo: manager.getInitializationInfo(serverId) ?? null
-        };
+    const targetSummary = summarizeServerDoctorTarget(target, config);
+    let result;
+    let commandError;
+    try {
+      result = await withEphemeralManager(
+        config,
+        async (manager, serverId) => {
+          await manager.getToolsForAiSdk([serverId]);
+          return {
+            success: true,
+            status: "connected",
+            target,
+            initInfo: manager.getInitializationInfo(serverId) ?? null
+          };
+        },
+        {
+          timeout: globalOptions.timeout,
+          rpcLogger: primaryCollector?.rpcLogger
+        }
+      );
+    } catch (error) {
+      commandError = error;
+    }
+    await writeCommandDebugArtifact({
+      outputPath: options.debugOut,
+      format: globalOptions.format,
+      commandName: "server validate",
+      commandInput: {},
+      target: targetSummary,
+      outcome: commandError ? {
+        status: "error",
+        error: commandError
+      } : {
+        status: "success",
+        result
       },
-      {
-        timeout: globalOptions.timeout,
-        rpcLogger: collector?.rpcLogger
-      }
+      snapshot: options.debugOut ? {
+        input: {
+          config,
+          target: targetSummary,
+          timeout: globalOptions.timeout
+        },
+        collector: snapshotCollector
+      } : void 0,
+      collectors: [primaryCollector]
+    });
+    if (commandError) {
+      throw commandError;
+    }
+    writeResult(
+      withRpcLogsIfRequested4(result, primaryCollector, globalOptions),
+      globalOptions.format
     );
-    writeResult(withRpcLogsIfRequested4(result, collector, globalOptions), globalOptions.format);
   });
   addSharedServerOptions(
     server.command("ping").description("Ping an MCP server")
@@ -1981,28 +2266,71 @@ function registerToolsCommands(program) {
     writeResult(withRpcLogsIfRequested5(result, collector, globalOptions), globalOptions.format);
   });
   addSharedServerOptions(
-    tools.command("call").description("Call an MCP tool").requiredOption("--name <tool>", "Tool name").option("--params <json>", "Tool parameter object as JSON")
+    tools.command("call").description("Call an MCP tool").requiredOption("--name <tool>", "Tool name").option("--params <json>", "Tool parameter object as JSON").option(
+      "--debug-out <path>",
+      "Write a structured debug artifact to a file"
+    )
   ).action(async (options, command) => {
     const globalOptions = getGlobalOptions(command);
     const target = describeTarget(options);
-    const collector = globalOptions.rpc ? createCliRpcLogCollector({ __cli__: target }) : void 0;
+    const primaryCollector = globalOptions.rpc || options.debugOut ? createCliRpcLogCollector({ __cli__: target }) : void 0;
+    const snapshotCollector = options.debugOut ? createCliRpcLogCollector({ __cli__: target }) : void 0;
     const config = parseServerConfig({
       ...options,
       timeout: globalOptions.timeout
     });
     const params = parseJsonRecord(options.params, "Tool parameters") ?? {};
-    const result = await withEphemeralManager(
-      config,
-      async (manager, serverId) => ({
-        status: "completed",
-        result: await manager.executeTool(serverId, options.name, params)
-      }),
-      {
-        timeout: globalOptions.timeout,
-        rpcLogger: collector?.rpcLogger
-      }
+    const targetSummary = summarizeServerDoctorTarget(target, config);
+    let result;
+    let commandError;
+    try {
+      result = await withEphemeralManager(
+        config,
+        async (manager, serverId) => ({
+          status: "completed",
+          result: await manager.executeTool(serverId, options.name, params)
+        }),
+        {
+          timeout: globalOptions.timeout,
+          rpcLogger: primaryCollector?.rpcLogger
+        }
+      );
+    } catch (error) {
+      commandError = error;
+    }
+    await writeCommandDebugArtifact({
+      outputPath: options.debugOut,
+      format: globalOptions.format,
+      commandName: "tools call",
+      commandInput: {
+        toolName: options.name,
+        params
+      },
+      target: targetSummary,
+      outcome: commandError ? {
+        status: "error",
+        error: commandError
+      } : {
+        status: "success",
+        result
+      },
+      snapshot: options.debugOut ? {
+        input: {
+          config,
+          target: targetSummary,
+          timeout: globalOptions.timeout
+        },
+        collector: snapshotCollector
+      } : void 0,
+      collectors: [primaryCollector]
+    });
+    if (commandError) {
+      throw commandError;
+    }
+    writeResult(
+      withRpcLogsIfRequested5(result, primaryCollector, globalOptions),
+      globalOptions.format
     );
-    writeResult(withRpcLogsIfRequested5(result, collector, globalOptions), globalOptions.format);
   });
 }
 function withRpcLogsIfRequested5(value, collector, options) {
