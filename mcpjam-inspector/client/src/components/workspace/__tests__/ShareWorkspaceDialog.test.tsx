@@ -339,6 +339,28 @@ describe("ShareWorkspaceDialog", () => {
     );
   });
 
+  it("does not create the workspace on first share without an organization", async () => {
+    renderDialog({
+      sharedWorkspaceId: null,
+      organizationId: undefined,
+      visibility: "private",
+    });
+
+    fireEvent.change(screen.getByPlaceholderText("Add people, emails..."), {
+      target: { value: "invitee@example.com" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Invite" }));
+
+    await waitFor(() => {
+      expect(mockToastError).toHaveBeenCalledWith(
+        "Select an organization to share this workspace.",
+      );
+    });
+
+    expect(mockCreateWorkspace).not.toHaveBeenCalled();
+    expect(mockInviteWorkspaceMember).not.toHaveBeenCalled();
+  });
+
   it("calls the workspace-scoped removal mutation via role dropdown", async () => {
     mockUseWorkspaceMembers.mockReturnValue({
       members: [

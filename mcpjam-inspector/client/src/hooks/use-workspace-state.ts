@@ -106,49 +106,24 @@ export function useWorkspaceState({
       workspaceId: convexActiveWorkspaceId,
       isAuthenticated,
     });
-
-  const effectiveWorkspaceOrganizationId = useMemo(() => {
-    if (selectedOrganizationId) {
-      return selectedOrganizationId;
-    }
-    if (!allRemoteWorkspaces) {
-      return undefined;
-    }
-
-    const activeRemoteWorkspace =
-      convexActiveWorkspaceId != null
-        ? allRemoteWorkspaces.find(
-            (workspace) => workspace._id === convexActiveWorkspaceId,
-          )
-        : undefined;
-    if (activeRemoteWorkspace?.organizationId) {
-      return activeRemoteWorkspace.organizationId;
-    }
-
-    const mostRecentlyUpdatedWorkspace = [...allRemoteWorkspaces].sort(
-      (a, b) => b.updatedAt - a.updatedAt,
-    )[0];
-    return mostRecentlyUpdatedWorkspace?.organizationId;
-  }, [selectedOrganizationId, allRemoteWorkspaces, convexActiveWorkspaceId]);
-
   const remoteWorkspaces = useMemo(() => {
     if (allRemoteWorkspaces === undefined) {
       return undefined;
     }
-    if (!effectiveWorkspaceOrganizationId) {
+    if (!selectedOrganizationId) {
       return [];
     }
 
     return (
       filterWorkspacesForOrganization(
         allRemoteWorkspaces,
-        effectiveWorkspaceOrganizationId,
+        selectedOrganizationId,
       ) ?? []
     );
-  }, [allRemoteWorkspaces, effectiveWorkspaceOrganizationId]);
+  }, [allRemoteWorkspaces, selectedOrganizationId]);
 
   const billingStatus = useOrganizationBillingStatus(
-    effectiveWorkspaceOrganizationId ?? null,
+    selectedOrganizationId ?? null,
     { enabled: isAuthenticated },
   );
 
@@ -359,7 +334,7 @@ export function useWorkspaceState({
   const migratableLocalWorkspaceCount = migratableLocalWorkspaces.length;
   const hasAnyRemoteWorkspaces = (allRemoteWorkspaces?.length ?? 0) > 0;
   const hasCurrentOrganizationWorkspaces = (remoteWorkspaces?.length ?? 0) > 0;
-  const canManageBillingForWorkspaceActions = effectiveWorkspaceOrganizationId
+  const canManageBillingForWorkspaceActions = selectedOrganizationId
     ? (billingStatus?.canManageBilling ?? false)
     : true;
 
@@ -429,7 +404,7 @@ export function useWorkspaceState({
       return;
     }
     if (useLocalFallback) return;
-    if (!effectiveWorkspaceOrganizationId) return;
+    if (!selectedOrganizationId) return;
     if (allRemoteWorkspaces === undefined) return;
     if (allRemoteWorkspaces.length > 0) return;
     if (migratableLocalWorkspaceCount === 0) return;
@@ -452,20 +427,20 @@ export function useWorkspaceState({
           description: workspace.description,
           clientConfig: workspace.clientConfig,
           servers: serializedServers,
-          organizationId: effectiveWorkspaceOrganizationId,
+          organizationId: selectedOrganizationId,
         });
         dispatch({
           type: "UPDATE_WORKSPACE",
           workspaceId: workspace.id,
           updates: {
             sharedWorkspaceId: workspaceId as string,
-            organizationId: effectiveWorkspaceOrganizationId,
+            organizationId: selectedOrganizationId,
           },
         });
         logger.info("Migrated workspace to Convex", { name: workspace.name });
       } catch (error) {
         migrationInFlightRef.current.delete(workspace.id);
-        const requestKey = effectiveWorkspaceOrganizationId;
+        const requestKey = selectedOrganizationId;
         if (!migrationErrorNotifiedRef.current.has(requestKey)) {
           migrationErrorNotifiedRef.current.add(requestKey);
           toast.error(
@@ -493,7 +468,7 @@ export function useWorkspaceState({
     convexCreateWorkspace,
     dispatch,
     logger,
-    effectiveWorkspaceOrganizationId,
+    selectedOrganizationId,
     canManageBillingForWorkspaceActions,
   ]);
 
@@ -502,12 +477,12 @@ export function useWorkspaceState({
       return;
     }
     if (useLocalFallback) return;
-    if (!effectiveWorkspaceOrganizationId) return;
+    if (!selectedOrganizationId) return;
     if (remoteWorkspaces === undefined) return;
     if (hasCurrentOrganizationWorkspaces) return;
     if (!hasAnyRemoteWorkspaces && migratableLocalWorkspaceCount > 0) return;
 
-    const requestKey = effectiveWorkspaceOrganizationId;
+    const requestKey = selectedOrganizationId;
     if (ensureDefaultInFlightRef.current.has(requestKey)) {
       return;
     }
@@ -518,7 +493,7 @@ export function useWorkspaceState({
     ensureDefaultInFlightRef.current.add(requestKey);
 
     convexEnsureDefaultWorkspace({
-      organizationId: effectiveWorkspaceOrganizationId,
+      organizationId: selectedOrganizationId,
     })
       .then((workspaceId) => {
         ensureDefaultCompletedRef.current.add(requestKey);
@@ -526,7 +501,7 @@ export function useWorkspaceState({
       .catch((error) => {
         ensureDefaultInFlightRef.current.delete(requestKey);
         logger.error("Failed to ensure default workspace", {
-          organizationId: effectiveWorkspaceOrganizationId,
+          organizationId: selectedOrganizationId,
           error: error instanceof Error ? error.message : "Unknown error",
         });
       });
@@ -538,14 +513,14 @@ export function useWorkspaceState({
     hasAnyRemoteWorkspaces,
     migratableLocalWorkspaceCount,
     convexEnsureDefaultWorkspace,
-    effectiveWorkspaceOrganizationId,
+    selectedOrganizationId,
     logger,
   ]);
 
   const handleCreateWorkspace = useCallback(
     async (name: string, switchTo: boolean = false) => {
       if (isAuthenticated) {
-        if (!effectiveWorkspaceOrganizationId) {
+        if (!selectedOrganizationId) {
           toast.error("Select an organization to create workspaces.");
           return "";
         }
@@ -555,7 +530,7 @@ export function useWorkspaceState({
             name,
             clientConfig: undefined,
             servers: {},
-            organizationId: effectiveWorkspaceOrganizationId,
+            organizationId: selectedOrganizationId,
           });
           if (switchTo && workspaceId) {
             setConvexActiveWorkspaceId(workspaceId as string);
@@ -594,7 +569,7 @@ export function useWorkspaceState({
       isAuthenticated,
       convexCreateWorkspace,
       dispatch,
-      effectiveWorkspaceOrganizationId,
+      selectedOrganizationId,
       canManageBillingForWorkspaceActions,
     ],
   );
@@ -785,7 +760,7 @@ export function useWorkspaceState({
       }
 
       if (isAuthenticated) {
-        if (!effectiveWorkspaceOrganizationId) {
+        if (!selectedOrganizationId) {
           toast.error("Select an organization to manage workspaces.");
           return;
         }
@@ -799,7 +774,7 @@ export function useWorkspaceState({
             description: sourceWorkspace.description,
             clientConfig: sourceWorkspace.clientConfig,
             servers: serializedServers,
-            organizationId: effectiveWorkspaceOrganizationId,
+            organizationId: selectedOrganizationId,
           });
           toast.success(`Workspace duplicated as "${newName}"`);
         } catch (error) {
@@ -821,7 +796,7 @@ export function useWorkspaceState({
       isAuthenticated,
       convexCreateWorkspace,
       dispatch,
-      effectiveWorkspaceOrganizationId,
+      selectedOrganizationId,
       canManageBillingForWorkspaceActions,
     ],
   );
@@ -876,7 +851,7 @@ export function useWorkspaceState({
   const handleImportWorkspace = useCallback(
     async (workspaceData: Workspace) => {
       if (isAuthenticated) {
-        if (!effectiveWorkspaceOrganizationId) {
+        if (!selectedOrganizationId) {
           toast.error("Select an organization to manage workspaces.");
           return;
         }
@@ -890,7 +865,7 @@ export function useWorkspaceState({
             description: workspaceData.description,
             clientConfig: workspaceData.clientConfig,
             servers: serializedServers,
-            organizationId: effectiveWorkspaceOrganizationId,
+            organizationId: selectedOrganizationId,
           });
           toast.success(`Workspace "${workspaceData.name}" imported`);
         } catch (error) {
@@ -918,7 +893,7 @@ export function useWorkspaceState({
       isAuthenticated,
       convexCreateWorkspace,
       dispatch,
-      effectiveWorkspaceOrganizationId,
+      selectedOrganizationId,
       canManageBillingForWorkspaceActions,
     ],
   );

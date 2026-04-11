@@ -225,6 +225,11 @@ export function ShareWorkspaceDialog({
       let currentWorkspaceId = sharedWorkspaceId;
 
       if (!currentWorkspaceId) {
+        if (!organizationId) {
+          toast.error("Select an organization to share this workspace.");
+          return;
+        }
+
         const serializedServers = serializeServersForSharing(workspaceServers);
         currentWorkspaceId = await createWorkspace({
           name: workspaceName,

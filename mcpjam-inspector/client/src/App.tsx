@@ -531,6 +531,8 @@ export default function App() {
     routeOrganizationId: hasRouteOrganization
       ? currentHashRoute.organizationId
       : undefined,
+    sortedOrganizations,
+    isLoadingOrganizations,
   });
   const activeOrganizationName = sortedOrganizations.find(
     (org) => org._id === activeOrganizationId,
@@ -730,11 +732,23 @@ export default function App() {
     billingUiEnabled && isBillingEnforcementActive(navPremiumness);
   const guestWorkspaceLimitReached =
     !isAuthenticated && Object.keys(workspaces).length >= 1;
+  const missingWorkspaceOrganizationContext =
+    isAuthenticated &&
+    routeScopedOrganizationId === null &&
+    activeOrganizationId === undefined;
   const isCreateWorkspaceDisabled =
-    workspaceCreationGate.isDenied || guestWorkspaceLimitReached;
+    workspaceCreationGate.isDenied ||
+    guestWorkspaceLimitReached ||
+    missingWorkspaceOrganizationContext;
   const createWorkspaceDisabledReason = guestWorkspaceLimitReached
     ? "Sign in to create more workspaces"
-    : (workspaceCreationGate.denialMessage ?? undefined);
+    : missingWorkspaceOrganizationContext
+      ? isLoadingOrganizations
+        ? "Loading organizations..."
+        : sortedOrganizations.length === 0
+        ? "Create or join an organization to create workspaces"
+        : "Select an organization to create workspaces"
+      : (workspaceCreationGate.denialMessage ?? undefined);
   const [trialModalDismissedForOrg, setTrialModalDismissedForOrg] = useState<
     string | null
   >(null);
@@ -1618,6 +1632,7 @@ export default function App() {
               workspace={activeWorkspace}
               convexWorkspaceId={convexWorkspaceId}
               workspaceServers={workspaceServers}
+              activeOrganizationId={activeOrganizationId}
               organizationName={activeOrganizationName}
               onUpdateWorkspace={handleUpdateWorkspace}
               onDeleteWorkspace={handleDeleteWorkspace}

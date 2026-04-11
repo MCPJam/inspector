@@ -347,7 +347,7 @@ describe("useWorkspaceState automatic workspace creation", () => {
     });
   });
 
-  it("falls back to the active synced workspace org when no explicit org is selected", () => {
+  it("does not expose synced workspaces without an explicit org selection", () => {
     workspaceQueryState.workspaces = [
       {
         _id: "remote-a",
@@ -384,14 +384,11 @@ describe("useWorkspaceState automatic workspace creation", () => {
     });
     const { result } = renderUseWorkspaceState({ appState });
 
-    expect(Object.keys(result.current.effectiveWorkspaces)).toHaveLength(2);
-    expect(Object.keys(result.current.effectiveWorkspaces)).toEqual(
-      expect.arrayContaining(["remote-b-1", "remote-b-2"]),
-    );
-    expect(result.current.effectiveActiveWorkspaceId).toBe("remote-b-2");
+    expect(result.current.effectiveWorkspaces).toEqual({});
+    expect(result.current.effectiveActiveWorkspaceId).toBe("none");
   });
 
-  it("creates workspaces inside the active synced workspace org when no explicit org is selected", async () => {
+  it("does not create synced workspaces without an explicit org selection even when remote workspaces exist", async () => {
     workspaceQueryState.workspaces = [
       {
         _id: "remote-a",
@@ -423,12 +420,10 @@ describe("useWorkspaceState automatic workspace creation", () => {
       await result.current.handleCreateWorkspace("Workspace Two");
     });
 
-    expect(createWorkspaceMock).toHaveBeenCalledWith({
-      organizationId: "org-b",
-      name: "Workspace Two",
-      clientConfig: undefined,
-      servers: {},
-    });
+    expect(createWorkspaceMock).not.toHaveBeenCalled();
+    expect(toast.error).toHaveBeenCalledWith(
+      "Select an organization to create workspaces.",
+    );
   });
 
   it("migrates real local workspaces with createWorkspace and persists the shared workspace id", async () => {
@@ -557,7 +552,10 @@ describe("useWorkspaceState automatic workspace creation", () => {
     const appState = createAppState({
       default: createSyntheticDefaultWorkspace(),
     });
-    const { result, rerender } = renderUseWorkspaceState({ appState });
+    const { result, rerender } = renderUseWorkspaceState({
+      appState,
+      activeOrganizationId: "org-client-config",
+    });
 
     let resolved = false;
     const savePromise = result.current
@@ -582,7 +580,7 @@ describe("useWorkspaceState automatic workspace creation", () => {
         clientConfig: savedConfig,
       },
     ];
-    rerender({ organizationId: undefined });
+    rerender({ organizationId: "org-client-config" });
 
     await waitFor(() => {
       expect(resolved).toBe(true);
@@ -621,7 +619,10 @@ describe("useWorkspaceState automatic workspace creation", () => {
     const appState = createAppState({
       default: createSyntheticDefaultWorkspace(),
     });
-    const { result } = renderUseWorkspaceState({ appState });
+    const { result } = renderUseWorkspaceState({
+      appState,
+      activeOrganizationId: "org-client-config",
+    });
 
     const savePromise = result.current.handleUpdateClientConfig(
       "remote-1",
@@ -795,7 +796,10 @@ describe("useWorkspaceState automatic workspace creation", () => {
     const appState = createAppState({
       default: createSyntheticDefaultWorkspace(),
     });
-    const { result, unmount } = renderUseWorkspaceState({ appState });
+    const { result, unmount } = renderUseWorkspaceState({
+      appState,
+      activeOrganizationId: "org-client-config",
+    });
 
     const savePromise = result.current.handleUpdateClientConfig(
       "remote-1",

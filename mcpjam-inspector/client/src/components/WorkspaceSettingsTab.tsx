@@ -28,6 +28,7 @@ interface WorkspaceSettingsTabProps {
   workspace: Workspace | undefined;
   convexWorkspaceId: string | null;
   workspaceServers: Record<string, ServerWithName>;
+  activeOrganizationId?: string;
   organizationName?: string;
   onUpdateWorkspace: (
     workspaceId: string,
@@ -43,6 +44,7 @@ export function WorkspaceSettingsTab({
   workspace,
   convexWorkspaceId,
   workspaceServers,
+  activeOrganizationId,
   organizationName,
   onUpdateWorkspace,
   onDeleteWorkspace,
@@ -59,6 +61,7 @@ export function WorkspaceSettingsTab({
   const workspaceName = workspace?.name ?? "";
   const workspaceDescription = workspace?.description ?? "";
   const isDefault = workspace?.isDefault ?? false;
+  const shareOrganizationId = workspace?.organizationId ?? activeOrganizationId;
   const currentMember = activeMembers.find(
     (member) => member.email.toLowerCase() === user?.email?.toLowerCase(),
   );
@@ -123,7 +126,7 @@ export function WorkspaceSettingsTab({
                   workspaceServers={workspaceServers}
                   currentUser={user}
                   sharedWorkspaceId={workspace?.sharedWorkspaceId}
-                  organizationId={workspace?.organizationId}
+                  organizationId={shareOrganizationId}
                   visibility={workspace?.visibility}
                   organizationName={organizationName}
                   onWorkspaceShared={onWorkspaceShared}
@@ -133,7 +136,7 @@ export function WorkspaceSettingsTab({
                 workspaceName={workspaceName}
                 workspaceServers={workspaceServers}
                 sharedWorkspaceId={workspace?.sharedWorkspaceId}
-                organizationId={workspace?.organizationId}
+                organizationId={shareOrganizationId}
                 visibility={workspace?.visibility}
                 organizationName={organizationName}
                 onWorkspaceShared={onWorkspaceShared}

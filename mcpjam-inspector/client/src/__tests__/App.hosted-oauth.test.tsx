@@ -484,30 +484,20 @@ describe("App hosted OAuth callback handling", () => {
     expect(wsPremiumnessCall?.[1]).toBe("skip");
   });
 
-  it("does not auto-select the first organization without an explicit org route", async () => {
-    const setActiveOrganizationId = vi.fn();
+  it("disables sidebar workspace creation when the user has no organizations", async () => {
+    clearHostedOAuthPendingState();
+    clearSandboxSession();
+    window.history.replaceState({}, "", "/#servers");
     mockUseAppState.mockImplementation(() => ({
       ...createAppStateMock(),
-      setActiveOrganizationId,
+      activeOrganizationId: undefined,
     }));
     mockUseQuery.mockImplementation((name: string) => {
+      if (name === "users:getCurrentUser") {
+        return null;
+      }
       if (name === "organizations:getMyOrganizations") {
-        return [
-          {
-            _id: "org-recent",
-            name: "Recent Org",
-            updatedAt: 2,
-            createdAt: 1,
-            createdBy: "user-1",
-          },
-          {
-            _id: "org-older",
-            name: "Older Org",
-            updatedAt: 1,
-            createdAt: 1,
-            createdBy: "user-1",
-          },
-        ];
+        return [];
       }
 
       return undefined;
@@ -516,10 +506,49 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(mockHandleOAuthCallback).toHaveBeenCalledWith("oauth-code");
+      expect(mockMCPSidebar).toHaveBeenCalled();
     });
 
-    expect(setActiveOrganizationId).not.toHaveBeenCalled();
+    const lastCall =
+      mockMCPSidebar.mock.calls[mockMCPSidebar.mock.calls.length - 1];
+    expect(lastCall?.[0]).toMatchObject({
+      isCreateWorkspaceDisabled: true,
+      createWorkspaceDisabledReason:
+        "Create or join an organization to create workspaces",
+    });
+  });
+
+  it("disables sidebar workspace creation while organizations are still loading", async () => {
+    clearHostedOAuthPendingState();
+    clearSandboxSession();
+    window.history.replaceState({}, "", "/#servers");
+    mockUseAppState.mockImplementation(() => ({
+      ...createAppStateMock(),
+      activeOrganizationId: undefined,
+    }));
+    mockUseQuery.mockImplementation((name: string) => {
+      if (name === "users:getCurrentUser") {
+        return null;
+      }
+      if (name === "organizations:getMyOrganizations") {
+        return undefined;
+      }
+
+      return undefined;
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(mockMCPSidebar).toHaveBeenCalled();
+    });
+
+    const lastCall =
+      mockMCPSidebar.mock.calls[mockMCPSidebar.mock.calls.length - 1];
+    expect(lastCall?.[0]).toMatchObject({
+      isCreateWorkspaceDisabled: true,
+      createWorkspaceDisabledReason: "Loading organizations...",
+    });
   });
 
   it("passes the valid organization route into app state for workspace actions", async () => {

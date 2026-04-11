@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useReducer, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+} from "react";
 import { toast } from "sonner";
 import { useConvexAuth } from "convex/react";
 import { useLogger } from "./use-logger";
@@ -7,6 +14,7 @@ import { appReducer } from "@/state/app-reducer";
 import { loadAppState, saveAppState } from "@/state/storage";
 import { useWorkspaceState } from "./use-workspace-state";
 import { useServerState } from "./use-server-state";
+import type { Organization } from "./useOrganizations";
 import {
   clearLegacyActiveOrganizationStorage,
   readStoredActiveOrganizationId,
@@ -18,15 +26,29 @@ export type { ServerUpdateResult } from "./use-server-state";
 
 interface ActiveOrganizationSelection {
   organizationId?: string;
-  userId: string | null;
+  userId?: string | null;
+}
+
+function resolveFallbackOrganizationId(
+  organizations: readonly Pick<Organization, "_id" | "myRole">[],
+) {
+  const firstOwnedOrganization = organizations.find(
+    (organization) => organization.myRole === "owner",
+  );
+
+  return firstOwnedOrganization?._id ?? organizations[0]?._id;
 }
 
 export function useAppState({
   currentUserId,
   routeOrganizationId,
+  sortedOrganizations,
+  isLoadingOrganizations,
 }: {
   currentUserId: string | null;
   routeOrganizationId?: string;
+  sortedOrganizations: readonly Organization[];
+  isLoadingOrganizations: boolean;
 }) {
   const logger = useLogger("Connections");
   const [appState, dispatch] = useReducer(appReducer, initialAppState);
@@ -37,12 +59,61 @@ export function useAppState({
   const [activeOrganizationSelection, setActiveOrganizationSelection] =
     useState<ActiveOrganizationSelection>({
       organizationId: undefined,
-      userId: currentUserId,
+      userId: undefined,
     });
-  const activeOrganizationId =
-    activeOrganizationSelection.userId === currentUserId
-      ? activeOrganizationSelection.organizationId
+  const hasHydratedActiveOrganizationSelection =
+    activeOrganizationSelection.userId === currentUserId &&
+    activeOrganizationSelection.userId !== undefined;
+  const storedActiveOrganizationId = hasHydratedActiveOrganizationSelection
+    ? activeOrganizationSelection.organizationId
+    : undefined;
+  const validStoredActiveOrganizationId = useMemo(() => {
+    if (
+      !isAuthenticated ||
+      isLoadingOrganizations ||
+      !storedActiveOrganizationId
+    ) {
+      return undefined;
+    }
+
+    return sortedOrganizations.some(
+      (organization) => organization._id === storedActiveOrganizationId,
+    )
+      ? storedActiveOrganizationId
       : undefined;
+  }, [
+    isAuthenticated,
+    isLoadingOrganizations,
+    storedActiveOrganizationId,
+    sortedOrganizations,
+  ]);
+  const fallbackOrganizationId = useMemo(() => {
+    if (
+      !hasHydratedActiveOrganizationSelection ||
+      !isAuthenticated ||
+      isLoadingOrganizations ||
+      routeOrganizationId
+    ) {
+      return undefined;
+    }
+
+    if (validStoredActiveOrganizationId) {
+      return validStoredActiveOrganizationId;
+    }
+
+    return resolveFallbackOrganizationId(sortedOrganizations);
+  }, [
+    hasHydratedActiveOrganizationSelection,
+    isAuthenticated,
+    isLoadingOrganizations,
+    routeOrganizationId,
+    validStoredActiveOrganizationId,
+    sortedOrganizations,
+  ]);
+  const activeOrganizationId =
+    routeOrganizationId ??
+    validStoredActiveOrganizationId ??
+    fallbackOrganizationId;
   const setActiveOrganizationId = useCallback(
     (organizationId: string | undefined) => {
       setActiveOrganizationSelection({
@@ -61,6 +132,28 @@ export function useAppState({
     });
   }, [currentUserId]);
 
+  useEffect(() => {
+    if (activeOrganizationSelection.userId !== currentUserId) {
+      return;
+    }
+    if (!routeOrganizationId) {
+      return;
+    }
+    if (activeOrganizationSelection.organizationId === routeOrganizationId) {
+      return;
+    }
+
+    setActiveOrganizationSelection({
+      organizationId: routeOrganizationId,
+      userId: currentUserId,
+    });
+  }, [
+    activeOrganizationSelection.organizationId,
+    activeOrganizationSelection.userId,
+    currentUserId,
+    routeOrganizationId,
+  ]);
+
   const isFirstScopedOrgRender = useRef(true);
   useEffect(() => {
     if (activeOrganizationSelection.userId !== currentUserId) {
@@ -78,6 +171,39 @@ export function useAppState({
       activeOrganizationSelection.organizationId,
     );
   }, [activeOrganizationSelection, currentUserId]);
+
+  useEffect(() => {
+    if (activeOrganizationSelection.userId !== currentUserId) {
+      return;
+    }
+    if (routeOrganizationId) {
+      return;
+    }
+    if (
+      !hasHydratedActiveOrganizationSelection ||
+      !isAuthenticated ||
+      isLoadingOrganizations
+    ) {
+      return;
+    }
+    if (activeOrganizationSelection.organizationId === fallbackOrganizationId) {
+      return;
+    }
+
+    setActiveOrganizationSelection({
+      organizationId: fallbackOrganizationId,
+      userId: currentUserId,
+    });
+  }, [
+    activeOrganizationSelection.organizationId,
+    activeOrganizationSelection.userId,
+    currentUserId,
+    routeOrganizationId,
+    hasHydratedActiveOrganizationSelection,
+    isAuthenticated,
+    isLoadingOrganizations,
+    fallbackOrganizationId,
+  ]);
 
   useEffect(() => {
     try {
