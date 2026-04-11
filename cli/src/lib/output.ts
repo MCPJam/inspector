@@ -21,12 +21,46 @@ export class CliError extends Error {
   }
 }
 
+export function cliError(
+  code: string,
+  message: string,
+  exitCode = 1,
+  details?: unknown,
+): CliError {
+  return new CliError(code, message, exitCode, details);
+}
+
 export function usageError(message: string, details?: unknown): CliError {
   return new CliError("USAGE_ERROR", message, 2, details);
 }
 
 export function operationalError(message: string, details?: unknown): CliError {
   return new CliError("OPERATIONAL_ERROR", message, 1, details);
+}
+
+export function normalizeCliError(error: unknown): CliError {
+  if (error instanceof CliError) {
+    return error;
+  }
+
+  const message =
+    error instanceof Error ? error.message : typeof error === "string" ? error : "Unknown error";
+  const lower = message.toLowerCase();
+
+  if (lower.includes("timed out") || lower.includes("timeout")) {
+    return cliError("TIMEOUT", message);
+  }
+
+  if (
+    lower.includes("connect") ||
+    lower.includes("connection") ||
+    lower.includes("refused") ||
+    lower.includes("econn")
+  ) {
+    return cliError("SERVER_UNREACHABLE", message);
+  }
+
+  return cliError("INTERNAL_ERROR", message);
 }
 
 type StructuredError = {

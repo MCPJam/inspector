@@ -2,6 +2,12 @@ import type { OAuthConformanceConfig, OAuthVerificationConfig } from "@mcpjam/sd
 import { OAuthConformanceTest, OAuthConformanceSuite } from "@mcpjam/sdk";
 import { Command } from "commander";
 import {
+  executeDebugOAuthProxy,
+  executeOAuthProxy,
+  fetchOAuthMetadata,
+  OAuthProxyError,
+} from "../../../mcpjam-inspector/server/utils/oauth-proxy";
+import {
   parseHeadersOption,
   parsePositiveInteger,
 } from "../lib/server-config";
@@ -11,8 +17,10 @@ import {
   VALID_AUTH_MODES,
 } from "../lib/oauth-enums";
 import {
+  cliError,
   setProcessExitCode,
   usageError,
+  writeResult,
 } from "../lib/output";
 import { loadSuiteConfig } from "../lib/config-file";
 import {
@@ -28,6 +36,16 @@ const DYNAMIC_CLIENT_SECRET_PLACEHOLDER = "__dynamic_registration_secret__";
 function getOAuthFormat(command: Command): OAuthOutputFormat {
   const opts = command.optsWithGlobals() as { format?: string };
   return resolveOAuthOutputFormat(opts.format, process.stdout.isTTY);
+}
+
+function getStructuredOAuthFormat(command: Command): "json" | "human" {
+  const format = getOAuthFormat(command);
+  if (format === "junit-xml") {
+    throw usageError(
+      'The oauth metadata/proxy commands only support --format "json" or "human".',
+    );
+  }
+  return format;
 }
 
 function writeOAuthOutput(output: string): void {
@@ -48,6 +66,13 @@ export interface OAuthCommandOptions {
   header?: string[];
   verifyTools?: boolean;
   verifyCallTool?: string;
+}
+
+interface OAuthProxyCommandOptions {
+  url: string;
+  method?: string;
+  header?: string[];
+  body?: string;
 }
 
 export function registerOAuthCommands(program: Command): void {
@@ -153,6 +178,51 @@ export function registerOAuthCommands(program: Command): void {
       if (!result.passed) {
         setProcessExitCode(1);
       }
+    });
+
+  oauth
+    .command("metadata")
+    .description("Fetch OAuth metadata from a URL")
+    .requiredOption("--url <url>", "OAuth metadata URL")
+    .action(async (options, command) => {
+      const result = await runOAuthMetadata(options.url as string);
+      writeResult(result, getStructuredOAuthFormat(command));
+    });
+
+  oauth
+    .command("proxy")
+    .description("Proxy an OAuth request with hosted-mode safety checks")
+    .requiredOption("--url <url>", "OAuth request URL")
+    .option("--method <method>", "HTTP method", "GET")
+    .option(
+      "--header <header>",
+      'HTTP header in "Key: Value" format. Repeat to send multiple headers.',
+      (value: string, previous: string[] = []) => [...previous, value],
+      [],
+    )
+    .option("--body <value>", "Request body as JSON or raw string")
+    .action(async (options, command) => {
+      const result = await runOAuthProxy(options as OAuthProxyCommandOptions);
+      writeResult(result, getStructuredOAuthFormat(command));
+    });
+
+  oauth
+    .command("debug-proxy")
+    .description("Proxy an OAuth debug request with hosted-mode safety checks")
+    .requiredOption("--url <url>", "OAuth request URL")
+    .option("--method <method>", "HTTP method", "GET")
+    .option(
+      "--header <header>",
+      'HTTP header in "Key: Value" format. Repeat to send multiple headers.',
+      (value: string, previous: string[] = []) => [...previous, value],
+      [],
+    )
+    .option("--body <value>", "Request body as JSON or raw string")
+    .action(async (options, command) => {
+      const result = await runOAuthDebugProxy(
+        options as OAuthProxyCommandOptions,
+      );
+      writeResult(result, getStructuredOAuthFormat(command));
     });
 }
 
@@ -320,4 +390,78 @@ function parseAuthMode(
   throw usageError(
     `Invalid auth mode "${value}". Use ${[...VALID_AUTH_MODES].join(", ")}.`,
   );
+}
+
+export async function runOAuthMetadata(url: string) {
+  try {
+    const result = await fetchOAuthMetadata(url, true);
+    if ("status" in result && result.status !== undefined) {
+      throw cliError(
+        statusToErrorCode(result.status),
+        `Failed to fetch OAuth metadata: ${result.status} ${result.statusText}`,
+      );
+    }
+
+    return result.metadata;
+  } catch (error) {
+    throw mapOAuthProxyError(error);
+  }
+}
+
+export async function runOAuthProxy(options: OAuthProxyCommandOptions) {
+  try {
+    return await executeOAuthProxy({
+      url: options.url,
+      method: options.method,
+      headers: parseHeadersOption(options.header),
+      body: parseProxyBody(options.body),
+      httpsOnly: true,
+    });
+  } catch (error) {
+    throw mapOAuthProxyError(error);
+  }
+}
+
+export async function runOAuthDebugProxy(options: OAuthProxyCommandOptions) {
+  try {
+    return await executeDebugOAuthProxy({
+      url: options.url,
+      method: options.method,
+      headers: parseHeadersOption(options.header),
+      body: parseProxyBody(options.body),
+      httpsOnly: true,
+    });
+  } catch (error) {
+    throw mapOAuthProxyError(error);
+  }
+}
+
+export function parseProxyBody(value: string | undefined): unknown {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
+}
+
+export function mapOAuthProxyError(error: unknown) {
+  if (error instanceof OAuthProxyError) {
+    return cliError(statusToErrorCode(error.status), error.message);
+  }
+  return error;
+}
+
+function statusToErrorCode(status: number): string {
+  if (status === 400) return "VALIDATION_ERROR";
+  if (status === 401) return "UNAUTHORIZED";
+  if (status === 403) return "FORBIDDEN";
+  if (status === 404) return "NOT_FOUND";
+  if (status === 429) return "RATE_LIMITED";
+  if (status === 502) return "SERVER_UNREACHABLE";
+  if (status === 504) return "TIMEOUT";
+  return "INTERNAL_ERROR";
 }

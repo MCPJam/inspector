@@ -1,8 +1,10 @@
 import { Command } from "commander";
-import { listTools } from "@mcpjam/sdk";
 import { withEphemeralManager } from "../lib/ephemeral";
+import { attachCliRpcLogs, createCliRpcLogCollector } from "../lib/rpc-logs";
+import { listToolsWithMetadata } from "../lib/server-ops";
 import {
   addSharedServerOptions,
+  describeTarget,
   getGlobalOptions,
   parseJsonRecord,
   parseServerConfig,
@@ -18,9 +20,14 @@ export function registerToolsCommands(program: Command): void {
     tools
       .command("list")
       .description("List tools exposed by an MCP server")
-      .option("--cursor <cursor>", "Pagination cursor"),
+      .option("--cursor <cursor>", "Pagination cursor")
+      .option("--model-id <model>", "Model id used for token counting"),
   ).action(async (options, command) => {
     const globalOptions = getGlobalOptions(command);
+    const target = describeTarget(options);
+    const collector = globalOptions.rpc
+      ? createCliRpcLogCollector({ __cli__: target })
+      : undefined;
     const config = parseServerConfig({
       ...options,
       timeout: globalOptions.timeout,
@@ -29,11 +36,18 @@ export function registerToolsCommands(program: Command): void {
     const result = await withEphemeralManager(
       config,
       (manager, serverId) =>
-        listTools(manager, { serverId, cursor: options.cursor }),
-      { timeout: globalOptions.timeout },
+        listToolsWithMetadata(manager, {
+          serverId,
+          cursor: options.cursor,
+          modelId: options.modelId,
+        }),
+      {
+        timeout: globalOptions.timeout,
+        rpcLogger: collector?.rpcLogger,
+      },
     );
 
-    writeResult(result, globalOptions.format);
+    writeResult(withRpcLogsIfRequested(result, collector, globalOptions), globalOptions.format);
   });
 
   addSharedServerOptions(
@@ -44,6 +58,10 @@ export function registerToolsCommands(program: Command): void {
       .option("--params <json>", "Tool parameter object as JSON"),
   ).action(async (options, command) => {
     const globalOptions = getGlobalOptions(command);
+    const target = describeTarget(options);
+    const collector = globalOptions.rpc
+      ? createCliRpcLogCollector({ __cli__: target })
+      : undefined;
     const config = parseServerConfig({
       ...options,
       timeout: globalOptions.timeout,
@@ -52,11 +70,28 @@ export function registerToolsCommands(program: Command): void {
 
     const result = await withEphemeralManager(
       config,
-      (manager, serverId) =>
-        manager.executeTool(serverId, options.name as string, params),
-      { timeout: globalOptions.timeout },
+      async (manager, serverId) => ({
+        status: "completed",
+        result: await manager.executeTool(serverId, options.name as string, params),
+      }),
+      {
+        timeout: globalOptions.timeout,
+        rpcLogger: collector?.rpcLogger,
+      },
     );
 
-    writeResult(result, globalOptions.format);
+    writeResult(withRpcLogsIfRequested(result, collector, globalOptions), globalOptions.format);
   });
+}
+
+function withRpcLogsIfRequested(
+  value: unknown,
+  collector: ReturnType<typeof createCliRpcLogCollector> | undefined,
+  options: { format: string; rpc: boolean },
+) {
+  if (!options.rpc || options.format !== "json") {
+    return value;
+  }
+
+  return attachCliRpcLogs(value, collector);
 }

@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   parseJsonRecord,
   parseServerConfig,
+  parseServerTargets,
 } from "../src/lib/server-config";
 import { CliError } from "../src/lib/output";
 
@@ -22,6 +23,21 @@ test("parseServerConfig builds an HTTP config with access token and headers", ()
     "X-Trace": "abc123",
   });
   assert.equal(config.timeout, 1234);
+});
+
+test("parseServerConfig accepts oauth access token and client capabilities", () => {
+  const config = parseServerConfig({
+    url: "https://example.com/mcp",
+    oauthAccessToken: "oauth-token",
+    clientCapabilities: '{"sampling":{},"elicitation":{}}',
+  });
+
+  assert.equal("url" in config, true);
+  assert.equal(config.accessToken, "oauth-token");
+  assert.deepEqual(config.clientCapabilities, {
+    sampling: {},
+    elicitation: {},
+  });
 });
 
 test("parseServerConfig builds a stdio config with args and env", () => {
@@ -94,7 +110,19 @@ test("parseServerConfig rejects missing and mixed targets", () => {
     (error) =>
       error instanceof CliError &&
       error.exitCode === 2 &&
-      error.message.includes("--access-token and --header can only be used"),
+      error.message.includes("--access-token, --oauth-access-token, and --header can only be used"),
+  );
+
+  assert.throws(
+    () =>
+      parseServerConfig({
+        url: "https://example.com/mcp",
+        accessToken: "one",
+        oauthAccessToken: "two",
+      }),
+    (error) =>
+      error instanceof CliError &&
+      error.message.includes("--access-token and --oauth-access-token must match"),
   );
 });
 
@@ -106,5 +134,54 @@ test("parseJsonRecord rejects non-object JSON", () => {
     (error) =>
       error instanceof CliError &&
       error.message.includes("Tool parameters must be a JSON object"),
+  );
+});
+
+test("parseServerTargets parses mixed HTTP and stdio targets", () => {
+  const targets = parseServerTargets(
+    JSON.stringify([
+      {
+        id: "http-server",
+        name: "HTTP Server",
+        url: "https://example.com/mcp",
+        oauthAccessToken: "oauth-token",
+        headers: { "X-Test": "yes" },
+      },
+      {
+        id: "stdio-server",
+        command: "node",
+        args: ["server.js"],
+        env: { FOO: "bar" },
+      },
+    ]),
+  );
+
+  assert.equal(targets.length, 2);
+  assert.equal(targets[0].id, "http-server");
+  assert.equal(targets[0].name, "HTTP Server");
+  assert.equal("url" in targets[0].config, true);
+  assert.equal(targets[0].config.accessToken, "oauth-token");
+  assert.deepEqual(targets[0].config.requestInit?.headers, {
+    "X-Test": "yes",
+  });
+
+  assert.equal(targets[1].id, "stdio-server");
+  assert.equal("command" in targets[1].config, true);
+  assert.deepEqual(targets[1].config.args, ["server.js"]);
+  assert.deepEqual(targets[1].config.env, { FOO: "bar" });
+});
+
+test("parseServerTargets rejects duplicate ids", () => {
+  assert.throws(
+    () =>
+      parseServerTargets(
+        JSON.stringify([
+          { id: "dup", url: "https://example.com/a" },
+          { id: "dup", url: "https://example.com/b" },
+        ]),
+      ),
+    (error) =>
+      error instanceof CliError &&
+      error.message.includes('Duplicate server id "dup"'),
   );
 });
