@@ -35,6 +35,17 @@ test("buildOAuthConformanceConfig maps preregistered client settings", () => {
   });
 });
 
+test("buildOAuthConformanceConfig maps redirectUrl when provided", () => {
+  const config = buildOAuthConformanceConfig({
+    url: "https://example.com/mcp",
+    protocolVersion: "2025-11-25",
+    registration: "dcr",
+    redirectUrl: "https://app.example.com/oauth/callback",
+  });
+
+  assert.equal(config.redirectUrl, "https://app.example.com/oauth/callback");
+});
+
 test("buildOAuthConformanceConfig allows DCR client_credentials without explicit creds", () => {
   const config = buildOAuthConformanceConfig({
     url: "https://example.com/mcp",
@@ -103,6 +114,21 @@ test("buildOAuthConformanceConfig rejects unsupported combinations", () => {
       buildOAuthConformanceConfig({
         url: "https://example.com/mcp",
         protocolVersion: "2025-11-25",
+        registration: "cimd",
+        authMode: "client_credentials",
+      }),
+    (error) =>
+      error instanceof CliError &&
+      error.message.includes("--auth-mode client_credentials cannot be used with --registration cimd") &&
+      error.message.includes("only works with --auth-mode headless or --auth-mode interactive") &&
+      error.message.includes("use --registration dcr or --registration preregistered"),
+  );
+
+  assert.throws(
+    () =>
+      buildOAuthConformanceConfig({
+        url: "https://example.com/mcp",
+        protocolVersion: "2025-11-25",
         registration: "preregistered",
         authMode: "client_credentials",
         clientId: "client-id",
@@ -110,5 +136,20 @@ test("buildOAuthConformanceConfig rejects unsupported combinations", () => {
     (error) =>
       error instanceof CliError &&
       error.message.includes("--client-secret is required"),
+  );
+});
+
+test("buildOAuthConformanceConfig rejects an invalid redirectUrl", () => {
+  assert.throws(
+    () =>
+      buildOAuthConformanceConfig({
+        url: "https://example.com/mcp",
+        protocolVersion: "2025-06-18",
+        registration: "dcr",
+        redirectUrl: "not-a-url",
+      }),
+    (error) =>
+      error instanceof CliError &&
+      error.message.includes("Invalid redirect URL"),
   );
 });
