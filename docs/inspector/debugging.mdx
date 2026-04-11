@@ -4,24 +4,17 @@ description: "See all messages sent to and from your MCP server"
 icon: "bug"
 ---
 
-MCPJam Inspector provides powerful debugging and monitoring capabilities to help you identify and resolve issues in your MCP server implementation quickly and efficiently.
+MCPJam Inspector gives you full visibility into every exchange between the inspector and your MCP server, across the Chat, App Builder, Tools, Prompts, and Resources tabs.
 
-<Frame>
-  <img
-    className="block"
-    src="/images/debugging/trace.png"
-    alt="Multiple"
-    width="300"
-  />
-</Frame>
+## JSON-RPC logging
 
-## Logs
+Every tab that talks to a connected server renders a live JSON-RPC logger. Each entry records the direction (client → server or server → client), the method name, a timestamp, and the full request/response payload. Click an entry to expand and inspect.
 
-View all messages being sent back and forth between MCPJam and your MCP server. We're working on building support to view all JSON-RPC messages. Tracing message levels are `ERROR`, `WARNING`, and `TRACE`.
+See [App Builder → JSON-RPC Logging](/inspector/app-builder#json-rpc-logging) and [MCP Inspector](/inspector/tools-prompts-resources#json-rpc-logging) for how it surfaces in each tab.
 
 ## Widget debugging
 
-When using OpenAI Apps or MCP Apps in the playground, you can debug widget state and globals directly from tool call results.
+When using ChatGPT Apps or MCP Apps in App Builder, you can debug widget state and globals directly from tool call results.
 
 ### Debugging in the chat
 
