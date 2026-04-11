@@ -1,16 +1,15 @@
-import type { OAuthConformanceConfig, OAuthVerificationConfig } from "@mcpjam/sdk";
 import {
+  type OAuthConformanceConfig,
+  type OAuthVerificationConfig,
   OAuthConformanceTest,
   OAuthConformanceSuite,
-  runOAuthLogin,
-} from "@mcpjam/sdk";
-import { Command } from "commander";
-import {
   executeDebugOAuthProxy,
   executeOAuthProxy,
   fetchOAuthMetadata,
   OAuthProxyError,
-} from "../../../mcpjam-inspector/server/utils/oauth-proxy";
+  runOAuthLogin,
+} from "@mcpjam/sdk";
+import { Command } from "commander";
 import {
   parseHeadersOption,
   parsePositiveInteger,

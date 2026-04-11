@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { OAuthProxyError } from "../../mcpjam-inspector/server/utils/oauth-proxy";
+import { OAuthProxyError } from "@mcpjam/sdk";
 import {
   mapOAuthProxyError,
   parseProxyBody,

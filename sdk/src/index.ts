@@ -226,7 +226,36 @@ export type {
 } from "./model-factory.js";
 
 // Widget helpers (for injecting OpenAI compat runtime into MCP App HTML)
-export { injectOpenAICompat } from "./widget-helpers.js";
+export {
+  serializeForInlineScript,
+  injectOpenAICompat,
+  extractBaseUrl,
+  generateUrlPolyfillScript,
+  WIDGET_BASE_CSS,
+  buildRuntimeConfigScript,
+  injectScripts,
+  buildCspHeader,
+  buildCspMetaContent,
+  buildChatGptRuntimeHead,
+} from "./widget-helpers.js";
+export type {
+  CspMode,
+  WidgetCspMeta,
+  CspConfig,
+} from "./widget-helpers.js";
+
+// OAuth proxy helpers (shared by inspector server routes and the CLI)
+export {
+  OAuthProxyError,
+  validateUrl,
+  executeOAuthProxy,
+  executeDebugOAuthProxy,
+  fetchOAuthMetadata,
+} from "./oauth-proxy.js";
+export type {
+  OAuthProxyRequest,
+  OAuthProxyResponse,
+} from "./oauth-proxy.js";
 
 // Skill reference (SKILL.md content for agent brief generation)
 export { EXPLORE_TO_SDK_EVALS_SKILL_MD, SKILL_MD } from "./skill-reference.js";

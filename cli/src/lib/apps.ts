@@ -1,12 +1,13 @@
 import type { MCPClientManager } from "@mcpjam/sdk";
-import { MCP_UI_RESOURCE_MIME_TYPE, injectOpenAICompat } from "@mcpjam/sdk";
 import {
+  MCP_UI_RESOURCE_MIME_TYPE,
   buildChatGptRuntimeHead,
   buildCspHeader,
   buildCspMetaContent,
+  injectOpenAICompat,
   injectScripts,
   type WidgetCspMeta,
-} from "../../../mcpjam-inspector/server/utils/widget-helpers";
+} from "@mcpjam/sdk";
 import { cliError } from "./output";
 
 type Manager = InstanceType<typeof MCPClientManager>;
