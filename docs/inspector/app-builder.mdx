@@ -21,7 +21,7 @@ To start building apps with MCPJam:
 
 1. **Connect your MCP server** - Use the Servers tab to connect to your MCP server that returns widget-enabled tools
 2. **Navigate to App Builder** - Switch to the App Builder tab in the inspector
-3. **Invoke a tool** - Either manually invoke a tool from the Tools list, or chat with your server in the playground
+3. **Invoke a tool** - Either manually invoke a tool from the Tools list, or chat with your server
 
 When a tool returns a widget (either via `openai/outputTemplate` for ChatGPT apps or `ui.resourceUri` for MCP apps), it will render immediately in the widget emulator.
 
@@ -158,6 +158,19 @@ Configure the system prompt and temperature for the LLM. Click the settings icon
 ### Tool Approval
 
 Toggle tool approval to require manual confirmation before the LLM executes any tool call. When enabled, each tool invocation pauses and waits for your approval before running.
+
+### Traces
+
+Every App Builder conversation can be replayed as a **Trace** — a timestamped timeline of user turns, agent turns, and tool calls, with per-step and total latency and token counts. Expand any step to inspect its raw input and output payloads. Toggle between Chat, Trace, and Raw views at the top of the panel without leaving the conversation.
+
+<Frame>
+  <img
+    className="block"
+    src="/images/traces_app_buiilder.png"
+    alt="App Builder Trace view showing a timestamped timeline of steps with latency and token counts"
+    width="1000"
+  />
+</Frame>
 
 ### X-Ray
 
