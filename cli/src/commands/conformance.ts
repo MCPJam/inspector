@@ -1,5 +1,9 @@
-import type { MCPConformanceConfig } from "@mcpjam/sdk";
-import { MCPConformanceTest } from "@mcpjam/sdk";
+import {
+  MCP_CHECK_CATEGORIES,
+  MCP_CHECK_IDS,
+  type MCPConformanceConfig,
+  MCPConformanceTest,
+} from "@mcpjam/sdk";
 import { Command } from "commander";
 import {
   parseHeadersOption,
@@ -76,26 +80,59 @@ function getFormat(command: Command): OutputFormat {
   throw usageError(`Invalid output format "${value}". Use "json" or "human".`);
 }
 
-function buildConfig(options: ProtocolConformanceOptions): MCPConformanceConfig {
+function collectInvalidEntries(
+  values: string[] | undefined,
+  allowedValues: readonly string[],
+): string[] {
+  return (values ?? []).filter((value) => !allowedValues.includes(value));
+}
+
+export function buildConfig(
+  options: ProtocolConformanceOptions,
+): MCPConformanceConfig {
   const serverUrl = options.url.trim();
+  let parsed: URL;
   try {
-    new URL(serverUrl);
+    parsed = new URL(serverUrl);
   } catch {
     throw usageError(`Invalid URL: ${serverUrl}`);
   }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw usageError(`Invalid URL scheme: ${serverUrl}`);
+  }
 
   const customHeaders = parseHeadersOption(options.header);
+  const categories = options.category?.filter(Boolean);
+  const invalidCategories = collectInvalidEntries(
+    categories,
+    MCP_CHECK_CATEGORIES,
+  );
+  if (invalidCategories.length > 0) {
+    throw usageError(
+      invalidCategories.length === 1
+        ? `Unknown category: ${invalidCategories[0]}`
+        : `Unknown categories: ${invalidCategories.join(", ")}`,
+    );
+  }
+
+  const checkIds = options.checkId?.filter(Boolean);
+  const invalidCheckIds = collectInvalidEntries(checkIds, MCP_CHECK_IDS);
+  if (invalidCheckIds.length > 0) {
+    throw usageError(
+      `Unknown check id${invalidCheckIds.length === 1 ? "" : "s"}: ${invalidCheckIds.join(", ")}`,
+    );
+  }
 
   return {
     serverUrl,
     accessToken: options.accessToken,
     customHeaders,
     checkTimeout: options.checkTimeout ?? 15_000,
-    ...(options.category && options.category.length > 0
-      ? { categories: options.category as MCPConformanceConfig["categories"] }
+    ...(categories && categories.length > 0
+      ? { categories: categories as MCPConformanceConfig["categories"] }
       : {}),
-    ...(options.checkId && options.checkId.length > 0
-      ? { checkIds: options.checkId as MCPConformanceConfig["checkIds"] }
+    ...(checkIds && checkIds.length > 0
+      ? { checkIds: checkIds as MCPConformanceConfig["checkIds"] }
       : {}),
   };
 }

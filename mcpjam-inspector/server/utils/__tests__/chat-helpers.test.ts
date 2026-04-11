@@ -10,12 +10,17 @@ vi.mock("@ai-sdk/openai", () => ({ createOpenAI: vi.fn() }));
 vi.mock("@ai-sdk/xai", () => ({ createXai: vi.fn() }));
 vi.mock("@openrouter/ai-sdk-provider", () => ({ createOpenRouter: vi.fn() }));
 vi.mock("ollama-ai-provider-v2", () => ({ createOllama: vi.fn() }));
-vi.mock("@mcpjam/sdk", () => ({
-  isChatGPTAppTool: vi.fn(),
-  isMcpAppTool: vi.fn(),
-  scrubMetaFromToolResult: vi.fn(),
-  scrubMetaAndStructuredContentFromToolResult: vi.fn(),
-}));
+vi.mock("@mcpjam/sdk", async () => {
+  const actual =
+    await vi.importActual<typeof import("@mcpjam/sdk")>("@mcpjam/sdk");
+  return {
+    ...actual,
+    isChatGPTAppTool: vi.fn(),
+    isMcpAppTool: vi.fn(),
+    scrubMetaFromToolResult: vi.fn(),
+    scrubMetaAndStructuredContentFromToolResult: vi.fn(),
+  };
+});
 
 import {
   isAnthropicCompatibleModel,

@@ -4,6 +4,7 @@ import type {
   RawHttpCheckContext,
 } from "../types.js";
 import {
+  errorMessage,
   failedResult,
   skippedResult,
   passedResult,
@@ -91,8 +92,9 @@ function processSseLines(
   current: SseEvent,
   seenFields: { value: boolean },
 ): string {
+  const endedWithDelimiter = /\r?\n\r?\n$/.test(buffer);
   const lines = buffer.split(/\r?\n/);
-  let remainder = lines.pop() ?? "";
+  const remainder = lines.pop() ?? "";
 
   const flushEvent = () => {
     if (!seenFields.value) {
@@ -151,9 +153,8 @@ function processSseLines(
     }
   }
 
-  if (remainder === "" && seenFields.value) {
+  if (endedWithDelimiter && seenFields.value) {
     flushEvent();
-    remainder = "";
   }
 
   return remainder;
@@ -313,9 +314,48 @@ export async function runTransportChecks(
 
   const initializationStartedAt = Date.now();
   let sessionId: string | undefined;
+  let session:
+    | {
+        ok: boolean;
+        status: number;
+        sessionId?: string;
+        body: unknown;
+      }
+    | undefined;
 
   try {
-    const session = await initializeSession(ctx);
+    try {
+      session = await initializeSession(ctx);
+    } catch (error) {
+      if (selectedCheckIds.has("server-sse-polling-session")) {
+        results.push(
+          failedResult(
+            TRANSPORT_CHECK_METADATA["server-sse-polling-session"],
+            Date.now() - initializationStartedAt,
+            `Initialize request failed: ${errorMessage(error)}`,
+            undefined,
+            error,
+          ),
+        );
+      }
+
+      for (const id of [
+        "server-accepts-multiple-post-streams",
+        "server-sse-streams-functional",
+      ] as const) {
+        if (selectedCheckIds.has(id)) {
+          results.push(
+            skippedResult(
+              TRANSPORT_CHECK_METADATA[id],
+              `Skipping check because the Streamable HTTP session could not be initialized: ${errorMessage(error)}`,
+            ),
+          );
+        }
+      }
+
+      return results;
+    }
+
     sessionId = session.sessionId;
     const hasStatefulSession = !!sessionId;
 
@@ -376,7 +416,7 @@ export async function runTransportChecks(
     if (needsMultiStreamChecks) {
       const activeSessionId = sessionId;
       const multiStreamStartedAt = Date.now();
-      const responses = await Promise.all(
+      const settledResponses = await Promise.allSettled(
         Array.from({ length: 3 }).map((_, index) =>
           fetchWithTimeout(
             ctx.fetchFn,
@@ -401,11 +441,25 @@ export async function runTransportChecks(
         ),
       );
 
-      const statuses = responses.map((response) => response.status);
-      const contentTypes = responses.map(
-        (response) => response.headers.get("content-type") ?? "",
+      const responses = settledResponses.map((result) =>
+        result.status === "fulfilled" ? result.value : undefined,
       );
-      const allAccepted = responses.every((response) => response.ok);
+      const requestErrors = settledResponses.map((result) =>
+        result.status === "rejected" ? errorMessage(result.reason) : undefined,
+      );
+      const statuses = responses.map((response) => response?.status ?? null);
+      const contentTypes = responses.map(
+        (response) => response?.headers.get("content-type") ?? "",
+      );
+      const allAccepted =
+        requestErrors.every((error) => error === undefined) &&
+        responses.every((response) => response?.ok === true);
+      const responseFailures = responses.some(
+        (response) => response !== undefined && !response.ok,
+      );
+      const requestOutcomeSummary = statuses.map(
+        (status, index) => status ?? `error:${requestErrors[index] ?? "unknown"}`,
+      );
 
       if (selectedCheckIds.has("server-accepts-multiple-post-streams")) {
         results.push(
@@ -421,45 +475,80 @@ export async function runTransportChecks(
             : failedResult(
                 TRANSPORT_CHECK_METADATA["server-accepts-multiple-post-streams"],
                 Date.now() - multiStreamStartedAt,
-                `Expected all concurrent POST requests to return 2xx, got ${statuses.join(", ")}`,
+                `Expected all concurrent POST requests to return 2xx, got ${requestOutcomeSummary.join(", ")}`,
                 {
                   statuses,
                   contentTypes,
+                  requestErrors,
                 },
               ),
         );
       }
 
       if (selectedCheckIds.has("server-sse-streams-functional")) {
-        const sseResponses = responses.filter((response) =>
-          (response.headers.get("content-type") ?? "").includes("text/event-stream"),
-        );
+        const sseResponses = responses
+          .map((response, index) => ({ response, index }))
+          .filter(
+            (
+              candidate,
+            ): candidate is { response: Response; index: number } =>
+              candidate.response !== undefined &&
+              candidate.response.ok &&
+              (candidate.response.headers.get("content-type") ?? "").includes(
+                "text/event-stream",
+              ),
+          );
 
         if (sseResponses.length === 0) {
           results.push(
-            passedResult(
-              TRANSPORT_CHECK_METADATA["server-sse-streams-functional"],
-              0,
-              {
-                message: "Concurrent requests returned JSON responses instead of SSE streams",
-                contentTypes,
-              },
-            ),
+            requestErrors.some((error) => error !== undefined) || responseFailures
+              ? failedResult(
+                  TRANSPORT_CHECK_METADATA["server-sse-streams-functional"],
+                  Date.now() - multiStreamStartedAt,
+                  "One or more concurrent POST requests failed before any SSE stream could be validated",
+                  {
+                    statuses,
+                    contentTypes,
+                    requestErrors,
+                  },
+                )
+              : passedResult(
+                  TRANSPORT_CHECK_METADATA["server-sse-streams-functional"],
+                  Date.now() - multiStreamStartedAt,
+                  {
+                    message:
+                      "Concurrent requests returned JSON responses instead of SSE streams",
+                    contentTypes,
+                  },
+                ),
           );
         } else {
-          const eventCounts = await Promise.all(
-            sseResponses.map(async (response) => {
-              const events = await readSseEvents(response, Math.min(ctx.config.checkTimeout, 2_000));
+          const settledEventReads = await Promise.allSettled(
+            sseResponses.map(async ({ response }) => {
+              const events = await readSseEvents(
+                response,
+                Math.min(ctx.config.checkTimeout, 2_000),
+              );
               return events.length;
             }),
           );
-          const allStreamsReadable = eventCounts.every((count) => count > 0);
+          const eventCounts = settledEventReads.map((result) =>
+            result.status === "fulfilled" ? result.value : 0,
+          );
+          const readErrors = settledEventReads.map((result) =>
+            result.status === "rejected" ? errorMessage(result.reason) : undefined,
+          );
+          const allStreamsReadable =
+            requestErrors.every((error) => error === undefined) &&
+            !responseFailures &&
+            readErrors.every((error) => error === undefined) &&
+            eventCounts.every((count) => count > 0);
 
           results.push(
             allStreamsReadable
               ? passedResult(
                   TRANSPORT_CHECK_METADATA["server-sse-streams-functional"],
-                  0,
+                  Date.now() - multiStreamStartedAt,
                   {
                     eventCounts,
                     sseStreamCount: sseResponses.length,
@@ -467,11 +556,16 @@ export async function runTransportChecks(
                 )
               : failedResult(
                   TRANSPORT_CHECK_METADATA["server-sse-streams-functional"],
-                  0,
+                  Date.now() - multiStreamStartedAt,
                   "One or more concurrent SSE streams produced no readable events",
                   {
+                    statuses,
+                    contentTypes,
+                    requestErrors,
                     eventCounts,
+                    readErrors,
                     sseStreamCount: sseResponses.length,
+                    sseResponseIndexes: sseResponses.map(({ index }) => index),
                   },
                 ),
           );

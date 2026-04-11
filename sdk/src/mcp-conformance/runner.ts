@@ -39,7 +39,7 @@ const CLIENT_CHECKS = [
 const RAW_CHECK_CATEGORY_ENTRIES: ReadonlyArray<
   readonly [MCPCheckId, MCPCheckCategory]
 > = [
-  ["protocol-invalid-method-error", "core"],
+  ["protocol-invalid-method-error", "protocol"],
   ["localhost-host-rebinding-rejected", "security"],
   ["localhost-host-valid-accepted", "security"],
   ["server-sse-polling-session", "transport"],
@@ -121,6 +121,45 @@ async function safeListResourceTemplates(
   }
 }
 
+async function safeListTools(
+  ctx: Pick<MCPClientCheckContext, "manager" | "serverId">,
+) {
+  try {
+    return await listTools(ctx.manager, { serverId: ctx.serverId });
+  } catch {
+    return {
+      tools: [],
+      nextCursor: undefined,
+    };
+  }
+}
+
+async function safeListPrompts(
+  ctx: Pick<MCPClientCheckContext, "manager" | "serverId">,
+) {
+  try {
+    return await listPrompts(ctx.manager, { serverId: ctx.serverId });
+  } catch {
+    return {
+      prompts: [],
+      nextCursor: undefined,
+    };
+  }
+}
+
+async function safeListResources(
+  ctx: Pick<MCPClientCheckContext, "manager" | "serverId">,
+) {
+  try {
+    return await listResources(ctx.manager, { serverId: ctx.serverId });
+  } catch {
+    return {
+      resources: [],
+      nextCursor: undefined,
+    };
+  }
+}
+
 async function runClientChecks(
   config: NormalizedMCPConformanceConfig,
   selectedCheckIds: Set<MCPCheckId>,
@@ -145,9 +184,9 @@ async function runClientChecks(
         const initializationInfo = manager.getInitializationInfo(serverId);
         const [toolsResult, promptsResult, resourcesResult, availableResourceTemplates] =
           await Promise.all([
-            listTools(manager, { serverId }),
-            listPrompts(manager, { serverId }),
-            listResources(manager, { serverId }),
+            safeListTools({ manager, serverId }),
+            safeListPrompts({ manager, serverId }),
+            safeListResources({ manager, serverId }),
             safeListResourceTemplates({ manager, serverId }),
           ]);
 

@@ -73,7 +73,10 @@ export const TOOL_CHECKS: MCPClientCheckDefinition[] = [
             continue;
           }
 
-          if (schema.type !== "object") {
+          if (
+            schema.type !== undefined &&
+            schema.type !== "object"
+          ) {
             violations.push({
               tool: tool.name,
               reason: `inputSchema.type is "${String(schema.type)}", expected "object"`,

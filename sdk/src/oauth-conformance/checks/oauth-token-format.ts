@@ -30,9 +30,6 @@ export function runTokenFormatCheck(
     typeof (body?.token_type ?? input.state.tokenType) !== "string"
       ? "token_type"
       : undefined,
-    typeof (body?.expires_in ?? input.state.expiresIn) !== "number"
-      ? "expires_in"
-      : undefined,
   ].filter(Boolean) as string[];
 
   if (missingFields.length > 0) {
@@ -42,6 +39,23 @@ export function runTokenFormatCheck(
       durationMs: Date.now() - startedAt,
       error: {
         message: `Token response is missing required fields: ${missingFields.join(", ")}`,
+        details: body ?? {
+          access_token: input.state.accessToken,
+          token_type: input.state.tokenType,
+          expires_in: input.state.expiresIn,
+        },
+      },
+    };
+  }
+
+  const expiresIn = body?.expires_in ?? input.state.expiresIn;
+  if (expiresIn !== undefined && typeof expiresIn !== "number") {
+    return {
+      step: "oauth_token_format",
+      status: "failed",
+      durationMs: Date.now() - startedAt,
+      error: {
+        message: "Token response field has an invalid type: expires_in must be a number when present",
         details: body ?? {
           access_token: input.state.accessToken,
           token_type: input.state.tokenType,

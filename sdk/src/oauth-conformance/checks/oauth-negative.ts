@@ -26,6 +26,43 @@ interface OAuthNegativeCheckInput {
   redirectUrl: string;
 }
 
+function errorDetails(error: unknown) {
+  if (error instanceof Error) {
+    return {
+      name: error.name,
+      message: error.message,
+      stack: error.stack,
+    };
+  }
+
+  return error;
+}
+
+function buildTransportFailure(
+  step: OAuthNegativeCheckStep,
+  startedAt: number,
+  request: {
+    method: string;
+    url: string;
+    headers: Record<string, string>;
+    body: Record<string, string>;
+  },
+  error: unknown,
+): OAuthNegativeCheckOutcome {
+  return {
+    step,
+    status: "failed",
+    durationMs: Date.now() - startedAt,
+    error: {
+      message: `Token endpoint request failed: ${error instanceof Error ? error.message : String(error)}`,
+      details: {
+        request,
+        error: errorDetails(error),
+      },
+    },
+  };
+}
+
 function buildTokenRequestHeaders(
   config: NormalizedOAuthConformanceConfig,
 ): Record<string, string> {
@@ -107,14 +144,26 @@ export async function runInvalidClientCheck(
     };
   }
 
-  const response = await input.trackedRequest({
+  const request = {
     method: "POST",
     url: tokenEndpoint,
     headers: buildTokenRequestHeaders(input.config),
     body: buildTokenRequestBody(input, {
       client_id: "invalid-client-id",
     }),
-  });
+  };
+  let response: Awaited<ReturnType<TrackedRequestFn>>;
+
+  try {
+    response = await input.trackedRequest(request);
+  } catch (error) {
+    return buildTransportFailure(
+      "oauth_invalid_client",
+      startedAt,
+      request,
+      error,
+    );
+  }
 
   if (!responseLooksRejected(response)) {
     return {
@@ -163,14 +212,26 @@ export async function runInvalidRedirectCheck(
     };
   }
 
-  const response = await input.trackedRequest({
+  const request = {
     method: "POST",
     url: tokenEndpoint,
     headers: buildTokenRequestHeaders(input.config),
     body: buildTokenRequestBody(input, {
       redirect_uri: `${input.redirectUrl}?invalid=1`,
     }),
-  });
+  };
+  let response: Awaited<ReturnType<TrackedRequestFn>>;
+
+  try {
+    response = await input.trackedRequest(request);
+  } catch (error) {
+    return buildTransportFailure(
+      "oauth_invalid_redirect",
+      startedAt,
+      request,
+      error,
+    );
+  }
 
   if (!responseLooksRejected(response)) {
     return {

@@ -11,7 +11,7 @@ import {
 const PROTOCOL_CHECK_METADATA = {
   "protocol-invalid-method-error": {
     id: "protocol-invalid-method-error",
-    category: "core",
+    category: "protocol",
     title: "Invalid Method Error",
     description:
       "Server returns a valid JSON-RPC error for an unrecognized method name.",
@@ -33,7 +33,7 @@ function buildBaseHeaders(ctx: RawHttpCheckContext): Record<string, string> {
 async function initializeAndGetSession(
   ctx: RawHttpCheckContext,
 ): Promise<string | undefined> {
-  const response = await fetch(ctx.serverUrl, {
+  const response = await ctx.fetchFn(ctx.serverUrl, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -72,7 +72,7 @@ export async function runProtocolChecks(
   try {
     const sessionId = await initializeAndGetSession(ctx);
 
-    const response = await fetch(ctx.serverUrl, {
+    const response = await ctx.fetchFn(ctx.serverUrl, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

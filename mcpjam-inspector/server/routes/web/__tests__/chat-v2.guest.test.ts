@@ -23,12 +23,17 @@ vi.mock("ai", async () => {
   };
 });
 
-vi.mock("@mcpjam/sdk", () => ({
-  isMCPAuthError: vi.fn().mockReturnValue(false),
-  MCPClientManager: vi.fn().mockImplementation(() => ({
-    disconnectAllServers: disconnectAllServersMock,
-  })),
-}));
+vi.mock("@mcpjam/sdk", async () => {
+  const actual =
+    await vi.importActual<typeof import("@mcpjam/sdk")>("@mcpjam/sdk");
+  return {
+    ...actual,
+    isMCPAuthError: vi.fn().mockReturnValue(false),
+    MCPClientManager: vi.fn().mockImplementation(() => ({
+      disconnectAllServers: disconnectAllServersMock,
+    })),
+  };
+});
 
 vi.mock("../../../utils/chat-v2-orchestration.js", () => ({
   prepareChatV2: prepareChatV2Mock,

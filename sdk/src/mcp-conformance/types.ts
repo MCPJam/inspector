@@ -3,6 +3,7 @@ import type { MCPClientManager } from "../mcp-client-manager/index.js";
 
 export const MCP_CHECK_CATEGORIES = [
   "core",
+  "protocol",
   "tools",
   "prompts",
   "resources",
