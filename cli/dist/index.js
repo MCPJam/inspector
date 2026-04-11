@@ -477,7 +477,7 @@ function registerOAuthCommands(program) {
     if (options.verifyTools || options.verifyCallTool) {
       const verification = {
         ...config.defaults?.verification,
-        ...options.verifyTools ? { listTools: true } : {},
+        listTools: true,
         ...options.verifyCallTool ? { callTool: { name: options.verifyCallTool } } : {}
       };
       config.defaults = { ...config.defaults, verification };
