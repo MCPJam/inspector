@@ -129,6 +129,34 @@ describe("useAppState active organization recovery", () => {
     );
   });
 
+  it("waits for stored active org hydration before applying fallback selection", async () => {
+    localStorage.setItem("active-organization-id:user-1", "org-stored");
+
+    const { result } = renderHook(() =>
+      useAppState({
+        currentUserId: "user-1",
+        routeOrganizationId: undefined,
+        hasOrganizations: true,
+        isLoadingOrganizations: false,
+        validOrganizations: [
+          { _id: "org-owned", myRole: "owner" },
+          { _id: "org-stored", myRole: "member" },
+        ],
+      }),
+    );
+
+    expect(useWorkspaceStateMock).toHaveBeenCalled();
+    expect(useWorkspaceStateMock.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({
+        activeOrganizationId: undefined,
+      }),
+    );
+
+    await waitFor(() => {
+      expect(result.current.activeOrganizationId).toBe("org-stored");
+    });
+  });
+
   it("clears a stale stored org when no valid organizations remain", async () => {
     localStorage.setItem("active-organization-id:user-1", "org-stale");
 

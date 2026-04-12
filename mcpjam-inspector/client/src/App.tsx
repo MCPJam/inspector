@@ -565,6 +565,7 @@ export default function App() {
     activeOrganizationId,
     setActiveOrganizationId,
     clearConvexActiveWorkspaceSelection,
+    clearLocalFallbackWorkspaceSelection,
     isCloudSyncActive,
   } = useAppState({
     currentUserId: workOsUser?.id ?? null,
@@ -1282,6 +1283,10 @@ export default function App() {
         !fallbackOrganizationId
       ) {
         clearConvexActiveWorkspaceSelection();
+        clearLocalFallbackWorkspaceSelection(
+          deletedOrganizationId,
+          fallbackOrganizationId,
+        );
       }
 
       setActiveOrganizationId(fallbackOrganizationId);
@@ -1291,6 +1296,7 @@ export default function App() {
     [
       activeWorkspace?.organizationId,
       applyNavigation,
+      clearLocalFallbackWorkspaceSelection,
       clearConvexActiveWorkspaceSelection,
       effectiveOrganizations,
       setActiveOrganizationId,

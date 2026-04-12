@@ -79,6 +79,7 @@ const {
     activeOrganizationId: undefined,
     setActiveOrganizationId: vi.fn(),
     clearConvexActiveWorkspaceSelection: vi.fn(),
+    clearLocalFallbackWorkspaceSelection: vi.fn(),
     isCloudSyncActive: false,
   });
 
@@ -1264,11 +1265,13 @@ describe("App hosted OAuth callback handling", () => {
 
     const setActiveOrganizationId = vi.fn();
     const clearConvexActiveWorkspaceSelection = vi.fn();
+    const clearLocalFallbackWorkspaceSelection = vi.fn();
     mockUseAppState.mockImplementation(() => ({
       ...createAppStateMock(),
       activeOrganizationId: "org-deleted",
       setActiveOrganizationId,
       clearConvexActiveWorkspaceSelection,
+      clearLocalFallbackWorkspaceSelection,
       workspaces: {
         ws_local: {
           id: "ws_local",
@@ -1338,6 +1341,10 @@ describe("App hosted OAuth callback handling", () => {
     });
 
     expect(clearConvexActiveWorkspaceSelection).toHaveBeenCalled();
+    expect(clearLocalFallbackWorkspaceSelection).toHaveBeenCalledWith(
+      "org-deleted",
+      "org-owned",
+    );
     expect(window.location.hash).toBe("#servers");
   });
 
@@ -1418,11 +1425,13 @@ describe("App hosted OAuth callback handling", () => {
 
     const setActiveOrganizationId = vi.fn();
     const clearConvexActiveWorkspaceSelection = vi.fn();
+    const clearLocalFallbackWorkspaceSelection = vi.fn();
     mockUseAppState.mockImplementation(() => ({
       ...createAppStateMock(),
       activeOrganizationId: "org-deleted",
       setActiveOrganizationId,
       clearConvexActiveWorkspaceSelection,
+      clearLocalFallbackWorkspaceSelection,
       workspaces: {
         ws_local: {
           id: "ws_local",
@@ -1476,6 +1485,10 @@ describe("App hosted OAuth callback handling", () => {
     });
 
     expect(clearConvexActiveWorkspaceSelection).toHaveBeenCalled();
+    expect(clearLocalFallbackWorkspaceSelection).toHaveBeenCalledWith(
+      "org-deleted",
+      undefined,
+    );
     expect(window.location.hash).toBe("#servers");
   });
 

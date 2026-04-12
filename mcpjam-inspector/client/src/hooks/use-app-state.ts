@@ -31,6 +31,14 @@ function resolveFallbackOrganizationId(
   return firstOwnedOrganization?._id ?? organizations[0]?._id;
 }
 
+function createDefaultWorkspace() {
+  return {
+    ...initialAppState.workspaces.default,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  };
+}
+
 export function useAppState({
   currentUserId,
   routeOrganizationId,
@@ -69,7 +77,9 @@ export function useAppState({
       (organization) => organization._id === storedActiveOrganizationId,
     );
   const fallbackActiveOrganizationId =
-    !routeOrganizationId && !isLoadingOrganizations
+    hasHydratedStoredActiveOrganization &&
+    !routeOrganizationId &&
+    !isLoadingOrganizations
       ? resolveFallbackOrganizationId(validOrganizations)
       : undefined;
   const activeOrganizationId = isStoredActiveOrganizationValid
@@ -295,6 +305,49 @@ export function useAppState({
     ],
   );
 
+  const clearLocalFallbackWorkspaceSelection = useCallback(
+    (deletedOrganizationId: string, fallbackOrganizationId?: string) => {
+      const remainingEntries = Object.entries(appState.workspaces).filter(
+        ([, workspace]) => workspace.organizationId !== deletedOrganizationId,
+      );
+      const nextWorkspaces =
+        remainingEntries.length > 0
+          ? Object.fromEntries(remainingEntries)
+          : { default: createDefaultWorkspace() };
+      const preferredWorkspaceForFallbackOrg = fallbackOrganizationId
+        ? Object.values(nextWorkspaces).find(
+            (workspace) => workspace.organizationId === fallbackOrganizationId,
+          )
+        : undefined;
+      const nextActiveWorkspace =
+        preferredWorkspaceForFallbackOrg ??
+        nextWorkspaces[appState.activeWorkspaceId] ??
+        nextWorkspaces.default ??
+        Object.values(nextWorkspaces)[0];
+      const nextActiveWorkspaceId = nextActiveWorkspace?.id ?? "default";
+      const nextServers = nextActiveWorkspace?.servers ?? {};
+
+      dispatch({
+        type: "HYDRATE_STATE",
+        payload: {
+          ...appState,
+          workspaces: nextWorkspaces,
+          activeWorkspaceId: nextActiveWorkspaceId,
+          servers: nextServers,
+          selectedServer:
+            appState.selectedServer !== "none" &&
+            nextServers[appState.selectedServer]
+              ? appState.selectedServer
+              : "none",
+          selectedMultipleServers: appState.selectedMultipleServers.filter(
+            (serverName) => nextServers[serverName] !== undefined,
+          ),
+        },
+      });
+    },
+    [appState, dispatch],
+  );
+
   const isCloudSyncActive =
     isAuthenticated && !useLocalFallback && remoteWorkspaces !== undefined;
 
@@ -306,6 +359,7 @@ export function useAppState({
     activeOrganizationId,
     setActiveOrganizationId,
     clearConvexActiveWorkspaceSelection,
+    clearLocalFallbackWorkspaceSelection,
 
     workspaceServers: serverState.workspaceServers,
     connectedOrConnectingServerConfigs:
