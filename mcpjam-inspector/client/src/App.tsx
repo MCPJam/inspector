@@ -570,6 +570,7 @@ export default function App() {
     currentUserId: workOsUser?.id ?? null,
     hasOrganizations: effectiveOrganizations.length > 0,
     isLoadingOrganizations,
+    validOrganizations: effectiveOrganizations,
     routeOrganizationId: hasRouteOrganization
       ? currentHashRoute.organizationId
       : undefined,
@@ -1643,7 +1644,7 @@ export default function App() {
               />
             ) : (
               <SandboxesTab
-                workspaceId={convexWorkspaceId}
+                workspaceId={billingWorkspaceId}
                 organizationId={activeWorkspaceBillingOrganizationId}
                 isBillingContextPending={isBillingContextPending}
               />

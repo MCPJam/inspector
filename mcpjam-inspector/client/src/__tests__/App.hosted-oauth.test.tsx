@@ -34,6 +34,7 @@ const {
   mockOrganizationsTab,
   mockPosthogCapture,
   mockPosthogState,
+  mockSandboxesTab,
   mockUseAuth,
   mockUseAppState,
   mockUseConvexAuth,
@@ -121,6 +122,7 @@ const {
     mockUseConvexAuth: vi.fn(),
     mockUseFeatureFlagEnabled: vi.fn(),
     mockUseQuery: vi.fn(() => undefined),
+    mockSandboxesTab: vi.fn(() => <div>Sandboxes Tab</div>),
     mockWorkOsAuthState: {
       getAccessToken: vi.fn(),
       signIn: vi.fn(),
@@ -232,7 +234,7 @@ vi.mock("../components/ViewsTab", () => ({
   ViewsTab: () => <div />,
 }));
 vi.mock("../components/SandboxesTab", () => ({
-  SandboxesTab: () => <div>Sandboxes Tab</div>,
+  SandboxesTab: (props: unknown) => mockSandboxesTab(props),
 }));
 vi.mock("../components/SettingsTab", () => ({
   SettingsTab: () => <div />,
@@ -370,6 +372,8 @@ describe("App hosted OAuth callback handling", () => {
     mockHandleOAuthCallback.mockReset();
     mockOrganizationsTab.mockReset();
     mockOrganizationsTab.mockImplementation(() => <div />);
+    mockSandboxesTab.mockReset();
+    mockSandboxesTab.mockImplementation(() => <div>Sandboxes Tab</div>);
     mockMCPSidebar.mockReset();
     mockMCPSidebar.mockImplementation(() => <div data-testid="mcp-sidebar" />);
     mockPosthogCapture.mockReset();
@@ -585,6 +589,58 @@ describe("App hosted OAuth callback handling", () => {
     expect(wsPremiumnessCall?.[1]).toBe("skip");
     await waitFor(() => {
       expect(clearConvexActiveWorkspaceSelection).toHaveBeenCalled();
+    });
+  });
+
+  it("passes a billing-safe workspace id to the sandboxes tab", async () => {
+    clearHostedOAuthPendingState();
+    clearSandboxSession();
+    window.history.replaceState({}, "", "/#sandboxes");
+
+    mockUseAppState.mockImplementation(() => ({
+      ...createAppStateMock(),
+      isCloudSyncActive: false,
+      workspaces: {
+        ws_local: {
+          id: "ws_local",
+          name: "Workspace One",
+          sharedWorkspaceId: "shared-ws-1",
+          organizationId: "org-1",
+          servers: {},
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+      },
+    }));
+    mockUseQuery.mockImplementation((name: string) => {
+      if (name === "organizations:getMyOrganizations") {
+        return [
+          {
+            _id: "org-1",
+            name: "Org One",
+            updatedAt: 1,
+            createdAt: 1,
+            createdBy: "user-1",
+            myRole: "owner",
+          },
+        ];
+      }
+
+      return undefined;
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(mockSandboxesTab).toHaveBeenCalled();
+    });
+
+    const lastCall =
+      mockSandboxesTab.mock.calls[mockSandboxesTab.mock.calls.length - 1];
+    expect(lastCall?.[0]).toMatchObject({
+      workspaceId: null,
+      organizationId: "org-1",
+      isBillingContextPending: false,
     });
   });
 

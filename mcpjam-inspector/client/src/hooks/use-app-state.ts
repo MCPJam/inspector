@@ -21,16 +21,28 @@ interface ActiveOrganizationSelection {
   userId: string | null;
 }
 
+function resolveFallbackOrganizationId(
+  organizations: ReadonlyArray<{ _id: string; myRole?: string }>,
+) {
+  const firstOwnedOrganization = organizations.find(
+    (organization) => organization.myRole === "owner",
+  );
+
+  return firstOwnedOrganization?._id ?? organizations[0]?._id;
+}
+
 export function useAppState({
   currentUserId,
   routeOrganizationId,
   hasOrganizations,
   isLoadingOrganizations,
+  validOrganizations,
 }: {
   currentUserId: string | null;
   routeOrganizationId?: string;
   hasOrganizations: boolean;
   isLoadingOrganizations: boolean;
+  validOrganizations: Array<{ _id: string; myRole?: string }>;
 }) {
   const logger = useLogger("Connections");
   const [appState, dispatch] = useReducer(appReducer, initialAppState);
@@ -43,10 +55,24 @@ export function useAppState({
       organizationId: undefined,
       userId: currentUserId,
     });
-  const activeOrganizationId =
+  const [hasHydratedStoredActiveOrganization, setHasHydratedStoredActiveOrganization] =
+    useState(false);
+  const storedActiveOrganizationId =
     activeOrganizationSelection.userId === currentUserId
       ? activeOrganizationSelection.organizationId
       : undefined;
+  const isStoredActiveOrganizationValid =
+    !!storedActiveOrganizationId &&
+    validOrganizations.some(
+      (organization) => organization._id === storedActiveOrganizationId,
+    );
+  const fallbackActiveOrganizationId =
+    !routeOrganizationId && !isLoadingOrganizations
+      ? resolveFallbackOrganizationId(validOrganizations)
+      : undefined;
+  const activeOrganizationId = isStoredActiveOrganizationValid
+    ? storedActiveOrganizationId
+    : fallbackActiveOrganizationId;
   const setActiveOrganizationId = useCallback(
     (organizationId: string | undefined) => {
       setActiveOrganizationSelection({
@@ -59,14 +85,19 @@ export function useAppState({
 
   useEffect(() => {
     clearLegacyActiveOrganizationStorage();
+    setHasHydratedStoredActiveOrganization(false);
     setActiveOrganizationSelection({
       organizationId: readStoredActiveOrganizationId(currentUserId),
       userId: currentUserId,
     });
+    setHasHydratedStoredActiveOrganization(true);
   }, [currentUserId]);
 
   const isFirstScopedOrgRender = useRef(true);
   useEffect(() => {
+    if (!hasHydratedStoredActiveOrganization) {
+      return;
+    }
     if (activeOrganizationSelection.userId !== currentUserId) {
       return;
     }
@@ -81,7 +112,41 @@ export function useAppState({
       currentUserId,
       activeOrganizationSelection.organizationId,
     );
-  }, [activeOrganizationSelection, currentUserId]);
+  }, [
+    activeOrganizationSelection,
+    currentUserId,
+    hasHydratedStoredActiveOrganization,
+  ]);
+
+  useEffect(() => {
+    if (!hasHydratedStoredActiveOrganization) {
+      return;
+    }
+    if (activeOrganizationSelection.userId !== currentUserId) {
+      return;
+    }
+    if (routeOrganizationId || isLoadingOrganizations) {
+      return;
+    }
+
+    const nextOrganizationId = activeOrganizationId;
+    if (activeOrganizationSelection.organizationId === nextOrganizationId) {
+      return;
+    }
+
+    setActiveOrganizationSelection({
+      organizationId: nextOrganizationId,
+      userId: currentUserId,
+    });
+  }, [
+    activeOrganizationId,
+    activeOrganizationSelection.organizationId,
+    activeOrganizationSelection.userId,
+    currentUserId,
+    hasHydratedStoredActiveOrganization,
+    isLoadingOrganizations,
+    routeOrganizationId,
+  ]);
 
   useEffect(() => {
     try {
@@ -107,6 +172,9 @@ export function useAppState({
     isAuthLoading,
     hasOrganizations,
     isLoadingOrganizations,
+    validOrganizationIds: validOrganizations.map(
+      (organization) => organization._id,
+    ),
     activeOrganizationId,
     routeOrganizationId,
     logger,

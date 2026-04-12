@@ -116,6 +116,7 @@ function renderUseWorkspaceState({
   isAuthenticated = true,
   hasOrganizations = true,
   isLoadingOrganizations = false,
+  validOrganizationIds,
 }: {
   appState: AppState;
   activeOrganizationId?: string;
@@ -123,6 +124,7 @@ function renderUseWorkspaceState({
   isAuthenticated?: boolean;
   hasOrganizations?: boolean;
   isLoadingOrganizations?: boolean;
+  validOrganizationIds?: string[];
 }) {
   const dispatch = vi.fn<(action: AppAction) => void>();
   const logger = {
@@ -132,21 +134,45 @@ function renderUseWorkspaceState({
   };
 
   const result = renderHook(
-    ({ organizationId }: { organizationId?: string }) =>
+    ({
+      organizationId,
+      hasOrganizationsOverride,
+      isLoadingOrganizationsOverride,
+      routeOrganizationIdOverride,
+      validOrganizationIdsOverride,
+    }: {
+      organizationId?: string;
+      hasOrganizationsOverride?: boolean;
+      isLoadingOrganizationsOverride?: boolean;
+      routeOrganizationIdOverride?: string;
+      validOrganizationIdsOverride?: string[];
+    }) =>
       useWorkspaceState({
         appState,
         dispatch,
         isAuthenticated,
         isAuthLoading: false,
-        hasOrganizations,
-        isLoadingOrganizations,
+        hasOrganizations: hasOrganizationsOverride ?? hasOrganizations,
+        isLoadingOrganizations:
+          isLoadingOrganizationsOverride ?? isLoadingOrganizations,
+        validOrganizationIds:
+          validOrganizationIdsOverride ??
+          validOrganizationIds ??
+          [routeOrganizationIdOverride ?? routeOrganizationId, activeOrganizationId]
+            .filter(
+            (organizationId): organizationId is string => !!organizationId,
+          ),
         activeOrganizationId: organizationId,
-        routeOrganizationId,
+        routeOrganizationId: routeOrganizationIdOverride ?? routeOrganizationId,
         logger,
       }),
     {
       initialProps: {
         organizationId: activeOrganizationId,
+        hasOrganizationsOverride: hasOrganizations,
+        isLoadingOrganizationsOverride: isLoadingOrganizations,
+        routeOrganizationIdOverride: routeOrganizationId,
+        validOrganizationIdsOverride: validOrganizationIds,
       },
     },
   );
@@ -255,6 +281,22 @@ describe("useWorkspaceState automatic workspace creation", () => {
 
     expect(useOrganizationBillingStatusMock).toHaveBeenCalledWith("org-auth", {
       enabled: false,
+    });
+  });
+
+  it("skips organization billing status queries for a stale stored org", () => {
+    const appState = createAppState({
+      default: createSyntheticDefaultWorkspace(),
+    });
+
+    renderUseWorkspaceState({
+      appState,
+      activeOrganizationId: "org-stale",
+      validOrganizationIds: ["org-live"],
+    });
+
+    expect(useOrganizationBillingStatusMock).toHaveBeenCalledWith(null, {
+      enabled: true,
     });
   });
 
@@ -468,6 +510,83 @@ describe("useWorkspaceState automatic workspace creation", () => {
 
     expect(localStorage.getItem("convex-active-workspace-id")).toBeNull();
     expect(ensureDefaultWorkspaceMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps zero-org recovery empty even after local fallback activated while org loading was still pending", async () => {
+    vi.useFakeTimers();
+    workspaceQueryState.allWorkspaces = [
+      {
+        _id: "remote-1",
+        name: "Deleted org workspace",
+        servers: {},
+        ownerId: "user-1",
+        organizationId: "deleted-org",
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ];
+    workspaceQueryState.workspaces = undefined;
+    localStorage.setItem("convex-active-workspace-id", "remote-1");
+
+    const appState = createAppState({
+      "local-1": createLocalWorkspace("local-1"),
+    });
+    const { result, rerender } = renderUseWorkspaceState({
+      appState,
+      activeOrganizationId: undefined,
+      hasOrganizations: false,
+      isLoadingOrganizations: true,
+      validOrganizationIds: [],
+    });
+
+    act(() => {
+      vi.advanceTimersByTime(10001);
+    });
+
+    expect(result.current.useLocalFallback).toBe(true);
+    expect(result.current.effectiveWorkspaces).toEqual(appState.workspaces);
+
+    rerender({
+      organizationId: undefined,
+      hasOrganizationsOverride: false,
+      isLoadingOrganizationsOverride: false,
+      routeOrganizationIdOverride: undefined,
+      validOrganizationIdsOverride: [],
+    });
+
+    expect(result.current.effectiveWorkspaces).toEqual({});
+    expect(result.current.effectiveActiveWorkspaceId).toBe("none");
+
+    await act(async () => {});
+    expect(localStorage.getItem("convex-active-workspace-id")).toBeNull();
+    expect(ensureDefaultWorkspaceMock).not.toHaveBeenCalled();
+  });
+
+  it("still uses local fallback when a valid org exists and cloud sync times out", async () => {
+    vi.useFakeTimers();
+    workspaceQueryState.allWorkspaces = undefined;
+    workspaceQueryState.workspaces = undefined;
+
+    const appState = createAppState({
+      "local-1": createLocalWorkspace("local-1"),
+    });
+    const { result } = renderUseWorkspaceState({
+      appState,
+      activeOrganizationId: "org-live",
+      hasOrganizations: true,
+      isLoadingOrganizations: false,
+      validOrganizationIds: ["org-live"],
+    });
+
+    act(() => {
+      vi.advanceTimersByTime(10001);
+    });
+
+    expect(result.current.useLocalFallback).toBe(true);
+    expect(result.current.effectiveWorkspaces).toEqual(appState.workspaces);
+    expect(result.current.effectiveActiveWorkspaceId).toBe(
+      appState.activeWorkspaceId,
+    );
   });
 
   it("fails authenticated client-config saves when the remote echo times out", async () => {

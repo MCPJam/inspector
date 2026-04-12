@@ -66,6 +66,7 @@ export interface UseWorkspaceStateParams {
   isAuthLoading: boolean;
   hasOrganizations: boolean;
   isLoadingOrganizations: boolean;
+  validOrganizationIds: string[];
   activeOrganizationId?: string;
   routeOrganizationId?: string;
   logger: LoggerLike;
@@ -78,11 +79,19 @@ export function useWorkspaceState({
   isAuthLoading,
   hasOrganizations,
   isLoadingOrganizations,
+  validOrganizationIds,
   activeOrganizationId,
   routeOrganizationId,
   logger,
 }: UseWorkspaceStateParams) {
   const workspaceOrganizationId = routeOrganizationId ?? activeOrganizationId;
+  const billingOrganizationId = routeOrganizationId
+    ? routeOrganizationId
+    : !isLoadingOrganizations &&
+        activeOrganizationId &&
+        validOrganizationIds.includes(activeOrganizationId)
+      ? activeOrganizationId
+      : undefined;
   const {
     allWorkspaces: allRemoteWorkspaces,
     workspaces: remoteWorkspaces,
@@ -99,7 +108,7 @@ export function useWorkspaceState({
     deleteWorkspace: convexDeleteWorkspace,
   } = useWorkspaceMutations();
   const billingStatus = useOrganizationBillingStatus(
-    workspaceOrganizationId ?? null,
+    billingOrganizationId ?? null,
     { enabled: isAuthenticated },
   );
 
@@ -124,7 +133,6 @@ export function useWorkspaceState({
   const CONVEX_TIMEOUT_MS = 10000;
   const shouldTreatRemoteWorkspacesAsEmpty =
     isAuthenticated &&
-    !useLocalFallback &&
     !isLoadingOrganizations &&
     !hasOrganizations &&
     !routeOrganizationId &&
@@ -319,11 +327,11 @@ export function useWorkspaceState({
   }, [convexWorkspaces]);
 
   const effectiveWorkspaces = useMemo((): Record<string, Workspace> => {
-    if (useLocalFallback) {
-      return appState.workspaces;
-    }
     if (shouldTreatRemoteWorkspacesAsEmpty) {
       return {};
+    }
+    if (useLocalFallback) {
+      return appState.workspaces;
     }
     if (isAuthenticated && remoteWorkspaces !== undefined) {
       return convexWorkspaces;
@@ -347,11 +355,11 @@ export function useWorkspaceState({
   ]);
 
   const effectiveActiveWorkspaceId = useMemo(() => {
-    if (useLocalFallback) {
-      return appState.activeWorkspaceId;
-    }
     if (shouldTreatRemoteWorkspacesAsEmpty) {
       return "none";
+    }
+    if (useLocalFallback) {
+      return appState.activeWorkspaceId;
     }
     if (isAuthenticated && remoteWorkspaces !== undefined) {
       if (

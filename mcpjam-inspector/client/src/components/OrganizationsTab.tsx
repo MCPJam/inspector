@@ -341,6 +341,7 @@ export function OrganizationsTab({
       onCheckoutIntentConsumed={onCheckoutIntentConsumed}
       onCheckoutIntentNavigationStarted={onCheckoutIntentNavigationStarted}
       navigateBillingInSameTab={navigateBillingInSameTab}
+      onOrganizationDeleted={onOrganizationDeleted}
     />
   );
 }
@@ -352,6 +353,7 @@ interface OrganizationPageProps {
   onCheckoutIntentConsumed?: () => void;
   onCheckoutIntentNavigationStarted?: () => void;
   navigateBillingInSameTab?: (url: string) => void;
+  onOrganizationDeleted?: (organizationId: string) => void;
 }
 
 interface CheckoutNavigationOptions {
@@ -366,6 +368,7 @@ function OrganizationPage({
   onCheckoutIntentConsumed,
   onCheckoutIntentNavigationStarted,
   navigateBillingInSameTab,
+  onOrganizationDeleted,
 }: OrganizationPageProps) {
   const { isAuthenticated } = useConvexAuth();
   const { user } = useAuth();
