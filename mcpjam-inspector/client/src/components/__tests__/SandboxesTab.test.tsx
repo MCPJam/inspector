@@ -281,6 +281,11 @@ describe("SandboxesTab", () => {
       screen.getByTestId("sandboxes-billing-context-pending"),
     ).toBeInTheDocument();
     expect(screen.queryByText("Sandboxes")).not.toBeInTheDocument();
+    expect(mockUseOrganizationBilling.mock.calls).toEqual([
+      [null, { workspaceId: null }],
+      [null, { workspaceId: null }],
+      [null, { workspaceId: null }],
+    ]);
   });
 
   it("renders the sandbox index once the builder experience loads", async () => {

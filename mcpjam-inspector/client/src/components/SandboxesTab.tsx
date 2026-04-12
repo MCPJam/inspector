@@ -48,18 +48,22 @@ export function SandboxesTab({
   organizationId,
   isBillingContextPending = false,
 }: SandboxesTabProps) {
+  const resolvedOrganizationId = isBillingContextPending
+    ? null
+    : organizationId;
+  const resolvedWorkspaceId = isBillingContextPending ? null : workspaceId;
   const sandboxGate = useWorkspaceBillingGate({
-    workspaceId,
-    organizationId,
+    workspaceId: resolvedWorkspaceId,
+    organizationId: resolvedOrganizationId,
     gate: BILLING_GATES.sandboxes,
   });
   const sandboxCreationGate = useWorkspaceBillingGate({
-    workspaceId,
-    organizationId,
+    workspaceId: resolvedWorkspaceId,
+    organizationId: resolvedOrganizationId,
     gate: BILLING_GATES.sandboxCreation,
   });
-  const { planCatalog } = useOrganizationBilling(sandboxGate.organizationId, {
-    workspaceId,
+  const { planCatalog } = useOrganizationBilling(resolvedOrganizationId, {
+    workspaceId: resolvedOrganizationId ? resolvedWorkspaceId : null,
   });
   const createSandboxUpsell =
     sandboxCreationGate.isDenied && sandboxCreationGate.denialMessage

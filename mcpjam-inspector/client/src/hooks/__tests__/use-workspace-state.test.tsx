@@ -343,6 +343,168 @@ describe("useWorkspaceState automatic workspace creation", () => {
     });
   });
 
+  it("does not ensure a default workspace until organization selection resolves", async () => {
+    workspaceQueryState.allWorkspaces = [];
+    workspaceQueryState.workspaces = [];
+
+    const appState = createAppState({
+      default: createSyntheticDefaultWorkspace(),
+    });
+    const { rerender } = renderUseWorkspaceState({
+      appState,
+      activeOrganizationId: undefined,
+      hasOrganizations: true,
+      isLoadingOrganizations: true,
+      validOrganizationIds: [],
+    });
+
+    await act(async () => {});
+    expect(ensureDefaultWorkspaceMock).not.toHaveBeenCalled();
+
+    rerender({
+      organizationId: "org-live",
+      hasOrganizationsOverride: true,
+      isLoadingOrganizationsOverride: false,
+      routeOrganizationIdOverride: undefined,
+      validOrganizationIdsOverride: ["org-live"],
+    });
+
+    await waitFor(() => {
+      expect(ensureDefaultWorkspaceMock).toHaveBeenCalledWith({
+        organizationId: "org-live",
+      });
+    });
+  });
+
+  it("does not migrate local workspaces until organization selection resolves", async () => {
+    workspaceQueryState.allWorkspaces = [];
+    workspaceQueryState.workspaces = [];
+
+    const appState = createAppState({
+      default: createSyntheticDefaultWorkspace(),
+      "local-1": createLocalWorkspace("local-1", {
+        name: "Imported workspace",
+      }),
+    });
+    const { rerender } = renderUseWorkspaceState({
+      appState,
+      activeOrganizationId: undefined,
+      hasOrganizations: true,
+      isLoadingOrganizations: true,
+      validOrganizationIds: [],
+    });
+
+    await act(async () => {});
+    expect(createWorkspaceMock).not.toHaveBeenCalled();
+
+    rerender({
+      organizationId: "org-live",
+      hasOrganizationsOverride: true,
+      isLoadingOrganizationsOverride: false,
+      routeOrganizationIdOverride: undefined,
+      validOrganizationIdsOverride: ["org-live"],
+    });
+
+    await waitFor(() => {
+      expect(createWorkspaceMock).toHaveBeenCalledWith({
+        organizationId: "org-live",
+        name: "Imported workspace",
+        description: undefined,
+        clientConfig: undefined,
+        servers: {},
+      });
+    });
+  });
+
+  it("does not create a cloud workspace until organization selection resolves", async () => {
+    workspaceQueryState.allWorkspaces = [];
+    workspaceQueryState.workspaces = [];
+
+    const appState = createAppState({
+      default: createSyntheticDefaultWorkspace(),
+    });
+    const { result } = renderUseWorkspaceState({
+      appState,
+      activeOrganizationId: undefined,
+      hasOrganizations: true,
+      isLoadingOrganizations: true,
+      validOrganizationIds: [],
+    });
+
+    await act(async () => {
+      await result.current.handleCreateWorkspace("Workspace Two");
+    });
+
+    expect(createWorkspaceMock).not.toHaveBeenCalled();
+    expect(toast.error).toHaveBeenCalledWith(
+      "Create or join an organization to create workspaces.",
+    );
+  });
+
+  it("does not duplicate a cloud workspace until organization selection resolves", async () => {
+    workspaceQueryState.allWorkspaces = [
+      {
+        _id: "remote-1",
+        name: "Workspace One",
+        servers: {},
+        ownerId: "user-1",
+        organizationId: "org-pending",
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ];
+    workspaceQueryState.workspaces = [...workspaceQueryState.allWorkspaces];
+
+    const appState = createAppState({
+      default: createSyntheticDefaultWorkspace(),
+    });
+    const { result } = renderUseWorkspaceState({
+      appState,
+      activeOrganizationId: undefined,
+      hasOrganizations: true,
+      isLoadingOrganizations: true,
+      validOrganizationIds: [],
+    });
+
+    await act(async () => {
+      await result.current.handleDuplicateWorkspace("remote-1", "Workspace Copy");
+    });
+
+    expect(createWorkspaceMock).not.toHaveBeenCalled();
+    expect(toast.error).toHaveBeenCalledWith(
+      "Create or join an organization to create workspaces.",
+    );
+  });
+
+  it("does not import a cloud workspace until organization selection resolves", async () => {
+    workspaceQueryState.allWorkspaces = [];
+    workspaceQueryState.workspaces = [];
+
+    const appState = createAppState({
+      default: createSyntheticDefaultWorkspace(),
+    });
+    const { result } = renderUseWorkspaceState({
+      appState,
+      activeOrganizationId: undefined,
+      hasOrganizations: true,
+      isLoadingOrganizations: true,
+      validOrganizationIds: [],
+    });
+
+    await act(async () => {
+      await result.current.handleImportWorkspace(
+        createLocalWorkspace("import-1", {
+          name: "Imported Workspace",
+        }),
+      );
+    });
+
+    expect(createWorkspaceMock).not.toHaveBeenCalled();
+    expect(toast.error).toHaveBeenCalledWith(
+      "Create or join an organization to create workspaces.",
+    );
+  });
+
   it("migrates real local workspaces with createWorkspace and persists the shared workspace id", async () => {
     const appState = createAppState({
       default: createSyntheticDefaultWorkspace(),

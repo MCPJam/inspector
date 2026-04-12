@@ -124,6 +124,7 @@ let mockCatalogCards: EnrichedRegistryCatalogCard[] = [];
 let mockRegistryLoading = false;
 const mockConnectRegistry = vi.fn();
 const mockUseRegistryServers = vi.fn();
+const mockUseWorkspaceBillingGate = vi.fn();
 
 vi.mock("posthog-js/react", () => ({
   usePostHog: () => ({
@@ -131,6 +132,15 @@ vi.mock("posthog-js/react", () => ({
   }),
   useFeatureFlagEnabled: () => false,
 }));
+
+vi.mock("@/lib/billing-gates", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/billing-gates")>();
+  return {
+    ...actual,
+    useWorkspaceBillingGate: (...args: unknown[]) =>
+      mockUseWorkspaceBillingGate(...args),
+  };
+});
 
 vi.mock("convex/react", () => ({
   useConvexAuth: () => ({
@@ -418,6 +428,25 @@ describe("ServersTab shared detail modal", () => {
     mockIsAuthenticated = false;
     mockCatalogCards = [];
     mockRegistryLoading = false;
+    mockUseWorkspaceBillingGate.mockImplementation(
+      ({
+        organizationId,
+        gate,
+      }: {
+        organizationId: string | null;
+        gate: unknown;
+      }) => ({
+        organizationId,
+        gate,
+        decision: null,
+        currentPlan: "starter",
+        upgradePlan: null,
+        canManageBilling: true,
+        isLoading: false,
+        isDenied: false,
+        denialMessage: null,
+      }),
+    );
     mockConnectRegistry.mockReset();
     mockConnectRegistry.mockImplementation(async (server) => {
       defaultProps.onConnect({
@@ -453,6 +482,12 @@ describe("ServersTab shared detail modal", () => {
       screen.getByTestId("servers-billing-context-pending"),
     ).toBeInTheDocument();
     expect(screen.queryByText("Add Server")).not.toBeInTheDocument();
+    expect(mockUseWorkspaceBillingGate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceId: null,
+        organizationId: null,
+      }),
+    );
   });
 
   it("shows a no-workspace state when there is no selected workspace", () => {

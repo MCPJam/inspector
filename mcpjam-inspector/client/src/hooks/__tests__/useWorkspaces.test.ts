@@ -26,6 +26,7 @@ function createWorkspace(
     _id: id,
     name: `Workspace ${id}`,
     servers: {},
+    organizationId: "org-1",
     ownerId: "user-1",
     createdAt: 1,
     updatedAt: 1,
@@ -43,18 +44,7 @@ describe("filterWorkspacesForOrganization", () => {
     expect(filterWorkspacesForOrganization(workspaces)).toEqual(workspaces);
   });
 
-  it("keeps legacy unscoped results while any workspace is missing organizationId", () => {
-    const workspaces = [
-      createWorkspace("ws-1", { organizationId: "org-1" }),
-      createWorkspace("ws-2"),
-    ];
-
-    expect(filterWorkspacesForOrganization(workspaces, "org-1")).toEqual(
-      workspaces,
-    );
-  });
-
-  it("filters by organization once all workspaces are org-scoped", () => {
+  it("filters by organization", () => {
     const workspaces = [
       createWorkspace("ws-1", { organizationId: "org-1" }),
       createWorkspace("ws-2", { organizationId: "org-2" }),

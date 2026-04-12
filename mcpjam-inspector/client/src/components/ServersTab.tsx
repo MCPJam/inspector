@@ -427,6 +427,12 @@ export function ServersTab({
     useState<PendingQuickConnectState | null>(() => readPendingQuickConnect());
   const selectedWorkspace = workspaces[activeWorkspaceId];
   const registryWorkspaceId = selectedWorkspace?.sharedWorkspaceId ?? null;
+  const resolvedOrganizationId = isBillingContextPending
+    ? null
+    : organizationId;
+  const resolvedRegistryWorkspaceId = isBillingContextPending
+    ? null
+    : registryWorkspaceId;
 
   const {
     catalogCards,
@@ -445,8 +451,8 @@ export function ServersTab({
 
   // Billing gate for server creation
   const serverCreationGate = useWorkspaceBillingGate({
-    workspaceId: registryWorkspaceId,
-    organizationId,
+    workspaceId: resolvedRegistryWorkspaceId,
+    organizationId: resolvedOrganizationId,
     gate: BILLING_GATES.serverCreation,
   });
 

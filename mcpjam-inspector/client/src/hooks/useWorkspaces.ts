@@ -18,7 +18,7 @@ export interface RemoteWorkspace {
   clientConfig?: WorkspaceClientConfig;
   servers: Record<string, any>;
   canDeleteWorkspace?: boolean;
-  organizationId?: string;
+  organizationId: string;
   visibility?: WorkspaceVisibility;
   ownerId: string;
   createdAt: number;
@@ -110,15 +110,6 @@ export function filterWorkspacesForOrganization(
   organizationId?: string,
 ) {
   if (!workspaces || !organizationId) return workspaces;
-
-  // Keep the legacy unscoped behavior until every returned workspace has been
-  // backfilled with an organizationId.
-  const allWorkspacesAreScoped = workspaces.every(
-    (workspace) => workspace.organizationId !== undefined,
-  );
-  if (!allWorkspacesAreScoped) {
-    return workspaces;
-  }
 
   return workspaces.filter(
     (workspace) => workspace.organizationId === organizationId,
