@@ -17,7 +17,7 @@ Use this file when performing a security-focused review of an MCP server. Each c
 
 **Attack**: A malicious MCP server populates OAuth metadata URLs (`resource_metadata`, `authorization_servers`, `token_endpoint`, `authorization_endpoint`) with internal targets. The client follows them, leaking internal network data or cloud credentials.
 
-#### Non-HTTPS OAuth URLs in production
+### Non-HTTPS OAuth URLs in production
 
 - **Command**: `server probe --url <target>`
 - **Where to look**: `oauth.authorizationServerMetadata` — inspect `token_endpoint`, `authorization_endpoint`, `registration_endpoint`, `jwks_uri`, `userinfo_endpoint`; also `oauth.resourceMetadataUrl` and `oauth.authorizationServerMetadataUrl`
@@ -29,26 +29,26 @@ Use this file when performing a security-focused review of an MCP server. Each c
 - **Best proving command**: `server probe`; use `oauth debug-proxy` or raw fetch evidence if metadata path handling is ambiguous
 - **Phase**: 1
 
-#### Private/internal IPs in discovered OAuth URLs
+### Private/internal IPs in discovered OAuth URLs
 
 - **Command**: `server probe --url <target>`
 - **Where to look**: All URLs in `oauth.authorizationServerMetadata` and `oauth.resourceMetadata.authorization_servers`
 - **Checklist hit**: URL hostname resolves to or is a private range: `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `169.254.0.0/16`, `127.0.0.0/8`, `::1`, `fc00::/7`, `fe80::/10`
 - **Default compliance impact**: `medium`
-- **Default security impact**: `high` when a public target advertises a private or internal discovery URL; `info` when the target itself is private or loopback
-- **Escalates when**: The path reaches cloud metadata or another sensitive internal service
+- **Default security impact**: `medium` when a public target advertises a private or internal discovery URL; `info` when the target itself is private or loopback
+- **Escalates when**: `server probe` or stronger raw evidence shows the public-facing target leading to cloud metadata or another sensitive internal service, or the internal hop produces a meaningful response
 - **Do not escalate when**: The entire review target is already private and the URL does not cross a trust boundary
 - **Best proving command**: `server probe` with raw discovery evidence
 - **Phase**: 1
 
-#### Cloud metadata endpoint targeting
+### Cloud metadata endpoint targeting
 
 - **Command**: `server probe --url <target>`
 - **Where to look**: All discovered URLs
 - **Checklist hit**: Any URL targeting `169.254.169.254`, `metadata.google.internal`, or `169.254.170.2`
 - **Default compliance impact**: `medium`
-- **Default security impact**: `high`
-- **Escalates when**: The metadata path is actually followed from a public target or produces sensitive responses
+- **Default security impact**: `medium`
+- **Escalates when**: `server probe` or stronger raw evidence shows a public-facing target leading to a live cloud metadata path, or the metadata request succeeds or returns sensitive responses
 - **Do not escalate when**: The hostname match is false-positive or synthetic and the server never presents it as a fetch target
 - **Best proving command**: `server probe` plus raw response capture if needed
 - **Phase**: 1
@@ -57,7 +57,7 @@ Use this file when performing a security-focused review of an MCP server. Each c
 
 **Attack**: An attacker dynamically registers a malicious client with an HTTP redirect URI, then tricks a user into authorizing through the MCP proxy. The consent cookie from a prior legitimate flow causes the authorization server to skip consent, and the auth code goes to the attacker.
 
-#### DCR accepts non-loopback HTTP redirect URIs
+### DCR accepts non-loopback HTTP redirect URIs
 
 - **Command**: `oauth proxy --url <registration_endpoint> --method POST --header "Content-Type: application/json" --body '{"redirect_uris":["http://evil.example/callback"],"client_name":"security-test","token_endpoint_auth_method":"none","grant_types":["authorization_code"],"response_types":["code"]}'`
 - **Where to look**: Response status and body. A `2xx` with a `client_id` means the registration succeeded.
@@ -69,7 +69,7 @@ Use this file when performing a security-focused review of an MCP server. Each c
 - **Best proving command**: Phase 2 `oauth proxy` registration, then Phase 3 `oauth login` plus an authorization URL opened in the same browser session
 - **Phase**: 2 then 3
 
-#### DCR returns relative registration_client_uri
+### DCR returns relative registration_client_uri
 
 - **Command**: Same DCR registration as above
 - **Where to look**: `registration_client_uri` in the response body
@@ -81,7 +81,7 @@ Use this file when performing a security-focused review of an MCP server. Each c
 - **Best proving command**: The DCR registration response itself
 - **Phase**: 2
 
-#### Redirect URI exact-match validation
+### Redirect URI exact-match validation
 
 - **Command**: Register via DCR, then attempt authorization with a modified redirect URI
 - **Where to look**: Authorization endpoint response
@@ -95,7 +95,7 @@ Use this file when performing a security-focused review of an MCP server. Each c
 
 ## PKCE Weakness
 
-#### Authorization server supports plain PKCE
+### Authorization server supports plain PKCE
 
 - **Command**: `server probe --url <target>`
 - **Where to look**: `oauth.authorizationServerMetadata.code_challenge_methods_supported`
@@ -111,7 +111,7 @@ Use this file when performing a security-focused review of an MCP server. Each c
 
 **Attack**: MCP server accepts tokens not issued for it, enabling security control circumvention, accountability gaps, and trust boundary issues.
 
-#### Token audience mismatch (JWT)
+### Token audience mismatch (JWT)
 
 - **Command**: `oauth login --url <target> --protocol-version 2025-11-25 --registration <strategy> --auth-mode interactive` then decode the JWT from `credentials.accessToken`
 - **Where to look**: The `aud` claim in the decoded JWT
@@ -127,7 +127,7 @@ Use this file when performing a security-focused review of an MCP server. Each c
 
 **Attack**: Broad tokens (`files:*`, `db:*`, `admin:*`) expand the blast radius of compromise.
 
-#### Wildcard or omnibus scopes in scopes_supported
+### Wildcard or omnibus scopes in scopes_supported
 
 - **Command**: `server probe --url <target>`
 - **Where to look**: `oauth.resourceMetadata.scopes_supported` and `oauth.authorizationServerMetadata.scopes_supported`
@@ -139,7 +139,7 @@ Use this file when performing a security-focused review of an MCP server. Each c
 - **Best proving command**: `server probe` first, then inspect the token or granted surface after `oauth login`
 - **Phase**: 1 then 4
 
-#### WWW-Authenticate challenges the full scope catalog
+### WWW-Authenticate challenges the full scope catalog
 
 - **Command**: `server probe --url <target>`
 - **Where to look**: Compare `oauth.wwwAuthenticate` scope parameter against `oauth.resourceMetadata.scopes_supported` or `oauth.authorizationServerMetadata.scopes_supported`
@@ -153,7 +153,7 @@ Use this file when performing a security-focused review of an MCP server. Each c
 
 ## Posture and Exposed Tool Surface
 
-#### Public side-effect tools
+### Public side-effect tools
 
 - **Command**: `tools list` without auth, then representative `tools call`
 - **Where to look**: Tool names, descriptions, annotations, and observed call behavior
@@ -165,7 +165,7 @@ Use this file when performing a security-focused review of an MCP server. Each c
 - **Best proving command**: `tools list` plus a narrow `tools call`
 - **Phase**: 2
 
-#### Gated tools return partial or misleading success without auth
+### Gated tools return partial or misleading success without auth
 
 - **Command**: `tools list` plus representative unauth `tools call`
 - **Where to look**: Tool results and auth errors
@@ -179,7 +179,7 @@ Use this file when performing a security-focused review of an MCP server. Each c
 
 ## Session Security
 
-#### Session ID predictability
+### Session ID predictability
 
 - **Command**: `server info --url <target> --access-token <token>` (multiple times) or inspect `Mcp-Session-Id` headers in `--rpc` output
 - **Where to look**: `Mcp-Session-Id` response header across multiple connections
