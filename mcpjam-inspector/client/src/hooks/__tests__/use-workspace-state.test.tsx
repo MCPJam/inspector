@@ -467,7 +467,10 @@ describe("useWorkspaceState automatic workspace creation", () => {
     });
 
     await act(async () => {
-      await result.current.handleDuplicateWorkspace("remote-1", "Workspace Copy");
+      await result.current.handleDuplicateWorkspace(
+        "remote-1",
+        "Workspace Copy",
+      );
     });
 
     expect(createWorkspaceMock).not.toHaveBeenCalled();
