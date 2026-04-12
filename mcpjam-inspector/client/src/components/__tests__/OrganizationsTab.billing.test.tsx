@@ -2030,7 +2030,9 @@ describe("OrganizationsTab billing", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Delete Organization" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Delete Organization" }),
+    );
 
     const dialog = await screen.findByRole("alertdialog");
     fireEvent.click(

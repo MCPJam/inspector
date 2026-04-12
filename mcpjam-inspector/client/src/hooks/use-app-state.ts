@@ -55,8 +55,10 @@ export function useAppState({
       organizationId: undefined,
       userId: currentUserId,
     });
-  const [hasHydratedStoredActiveOrganization, setHasHydratedStoredActiveOrganization] =
-    useState(false);
+  const [
+    hasHydratedStoredActiveOrganization,
+    setHasHydratedStoredActiveOrganization,
+  ] = useState(false);
   const storedActiveOrganizationId =
     activeOrganizationSelection.userId === currentUserId
       ? activeOrganizationSelection.organizationId
