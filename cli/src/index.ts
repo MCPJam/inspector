@@ -1,4 +1,5 @@
 import { Command, CommanderError } from "commander";
+import { version as pkgVersion } from "../package.json";
 import { registerAppsCommands } from "./commands/apps";
 import { registerProtocolCommands } from "./commands/conformance";
 import { registerOAuthCommands } from "./commands/oauth";
@@ -18,6 +19,7 @@ async function main(argv: readonly string[] = process.argv): Promise<number> {
   const program = addGlobalOptions(
     new Command()
       .name("mcpjam")
+      .version(pkgVersion, "-v, --version", "output the CLI version")
       .description(
         "Stateless MCP server probing, debugging, OAuth login, and conformance commands backed by @mcpjam/sdk",
       )
