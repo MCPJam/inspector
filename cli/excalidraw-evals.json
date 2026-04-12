@@ -1,0 +1,46 @@
+{
+  "servers": {
+    "excalidraw": {
+      "url": "https://mcp.excalidraw.com/mcp"
+    }
+  },
+  "agent": {
+    "model": "openai/gpt-4o",
+    "apiKey": "${OPENAI_API_KEY}",
+    "systemPrompt": "You are a helpful assistant that draws diagrams using Excalidraw. Always call read_me first to learn the element format before calling create_view.",
+    "maxSteps": 10,
+    "temperature": 0.1
+  },
+  "tests": [
+    {
+      "name": "reads format before drawing",
+      "prompt": "Draw a simple circle",
+      "expectedToolCalls": ["read_me", "create_view"],
+      "matchMode": "subset"
+    },
+    {
+      "name": "draws a flowchart",
+      "prompt": "Draw a flowchart with three boxes: Start, Process, End, connected by arrows",
+      "expectedToolCalls": ["read_me", "create_view"],
+      "matchMode": "subset"
+    },
+    {
+      "name": "draws a simple shape",
+      "prompt": "Draw a red rectangle",
+      "expectedToolCalls": ["read_me", "create_view"],
+      "matchMode": "subset"
+    },
+    {
+      "name": "draws a complex diagram",
+      "prompt": "Draw a system architecture diagram showing a Client, API Server, and Database connected with arrows",
+      "expectedToolCalls": ["read_me", "create_view"],
+      "matchMode": "subset"
+    }
+  ],
+  "options": {
+    "iterations": 3,
+    "concurrency": 2,
+    "timeoutMs": 60000,
+    "retries": 1
+  }
+}
