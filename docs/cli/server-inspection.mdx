@@ -1,0 +1,154 @@
+---
+title: "Server Inspection"
+description: "Probe, diagnose, and export MCP server connectivity and capabilities"
+icon: "stethoscope"
+---
+
+The `server` command group gives you a breadth-first view of any MCP server — connectivity, OAuth discovery, capabilities, tools, resources, and prompts — without writing code.
+
+## Quick start
+
+```bash
+# One command does everything: probe, connect, sweep tools/resources/prompts
+mcpjam server doctor --url https://your-server.com/mcp
+```
+
+If the server requires OAuth, doctor reports `oauth_required` with the discovery metadata. See [OAuth login](/cli/oauth-login) to obtain a token, then re-run with `--oauth-access-token`.
+
+## Commands
+
+### `server probe`
+
+Stateless HTTP probe — no full client connection. Tests transport selection, OAuth discovery, and `WWW-Authenticate` parsing.
+
+```bash
+mcpjam server probe --url https://your-server.com/mcp
+```
+
+Use this when you want to check reachability and OAuth metadata without triggering a full MCP initialize handshake. The probe sends an unauthenticated `initialize` request and inspects the response.
+
+**What it returns:**
+- Transport type (streamable-http, SSE, or failed)
+- OAuth metadata (resource metadata URL, authorization server metadata, registration strategies, scopes)
+- `WWW-Authenticate` header parsing
+
+### `server doctor`
+
+Combined triage — runs probe, then attempts a full client connection, then sweeps tools, resources, resource templates, and prompts. Returns a single JSON artifact.
+
+```bash
+# Human-readable summary
+mcpjam server doctor --url https://your-server.com/mcp
+
+# Full JSON artifact with RPC logs
+mcpjam server doctor --url https://your-server.com/mcp --rpc --out doctor.json
+
+# Stdio server
+mcpjam server doctor --command node --command-args server.js
+```
+
+**What it returns:**
+- `status`: `ready`, `oauth_required`, or `error`
+- Probe results (transport, OAuth discovery)
+- Initialization info and negotiated capabilities
+- Counts: tools, resources, resource templates, prompts
+
+The `--out <path>` flag writes the full JSON artifact to a file — useful for handoff to another engineer or agent.
+
+### `server info`
+
+Get initialization info for a connected server.
+
+```bash
+mcpjam server info --url https://your-server.com/mcp --access-token $TOKEN
+```
+
+Returns the server's `serverInfo` (name, version) and `capabilities` from the MCP initialize response.
+
+### `server capabilities`
+
+Get resolved server capabilities.
+
+```bash
+mcpjam server capabilities --url https://your-server.com/mcp --access-token $TOKEN
+```
+
+### `server validate`
+
+Connect to a server and verify the debugger surface works.
+
+```bash
+mcpjam server validate --url https://your-server.com/mcp --access-token $TOKEN
+```
+
+### `server ping`
+
+Simple connectivity check.
+
+```bash
+mcpjam server ping --url https://your-server.com/mcp
+```
+
+### `server export`
+
+Export a full snapshot of the server's tools, resources, prompts, and capabilities as JSON.
+
+```bash
+mcpjam server export --url https://your-server.com/mcp --access-token $TOKEN > snapshot.json
+```
+
+## Shared server flags
+
+Every `server` subcommand accepts these flags for specifying how to connect:
+
+| Flag | Description |
+|------|-------------|
+| `--url <url>` | HTTP MCP server URL |
+| `--access-token <token>` | Bearer access token |
+| `--oauth-access-token <token>` | OAuth bearer access token |
+| `--refresh-token <token>` | OAuth refresh token |
+| `--client-id <id>` | OAuth client ID (used with `--refresh-token`) |
+| `--client-secret <secret>` | OAuth client secret (used with `--refresh-token`) |
+| `--header <header>` | HTTP header in `Key: Value` format (repeatable) |
+| `--client-capabilities <json>` | Client capabilities as a JSON object |
+| `--command <command>` | Command for a stdio server |
+| `--command-args <arg>` | Stdio command argument (repeatable) |
+| `--env <env>` | Stdio environment `KEY=VALUE` (repeatable) |
+
+## Common patterns
+
+### Triage an unknown server
+
+```bash
+# Start with doctor
+mcpjam server doctor --url https://unknown-server.com/mcp
+
+# If it returns oauth_required, login first
+mcpjam oauth login --url https://unknown-server.com/mcp \
+  --protocol-version 2025-11-25 --registration dcr
+
+# Then re-run with the token
+mcpjam server doctor --url https://unknown-server.com/mcp --oauth-access-token $TOKEN
+```
+
+### Compare before/after a deploy
+
+```bash
+# Capture a snapshot before
+mcpjam server export --url https://your-server.com/mcp --access-token $TOKEN > before.json
+
+# Deploy...
+
+# Capture after
+mcpjam server export --url https://your-server.com/mcp --access-token $TOKEN > after.json
+
+# Diff
+diff <(jq -S . before.json) <(jq -S . after.json)
+```
+
+### CI health check
+
+```bash
+mcpjam server doctor --url $MCP_SERVER_URL --access-token $TOKEN --format json | jq '.status'
+# exits 0 if ready, 1 if not
+```

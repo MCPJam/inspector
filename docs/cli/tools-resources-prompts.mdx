@@ -1,0 +1,107 @@
+---
+title: "Tools, Resources & Prompts"
+description: "List, read, and call MCP server tools, resources, and prompts"
+icon: "wrench"
+---
+
+Once connected (with or without auth), the `tools`, `resources`, and `prompts` command groups let you explore and exercise what the server exposes.
+
+## Tools
+
+### List tools
+
+```bash
+mcpjam tools list --url https://your-server.com/mcp --access-token $TOKEN
+```
+
+Returns every tool the server exposes, including names, descriptions, and input schemas.
+
+### Call a tool
+
+```bash
+mcpjam tools call --url https://your-server.com/mcp --access-token $TOKEN \
+  --tool-name search_docs \
+  --tool-args '{"query": "authentication"}'
+```
+
+Tool arguments are passed as a JSON string. The result includes the tool's response content.
+
+<Note>
+  `tools call` supports `--debug-out <path>` to capture the full request/response
+  trace for debugging.
+</Note>
+
+## Resources
+
+### List resources
+
+```bash
+mcpjam resources list --url https://your-server.com/mcp --access-token $TOKEN
+```
+
+### Read a resource
+
+```bash
+mcpjam resources read --url https://your-server.com/mcp --access-token $TOKEN \
+  --resource-uri "file:///docs/readme.md"
+```
+
+### List resource templates
+
+```bash
+mcpjam resources templates --url https://your-server.com/mcp --access-token $TOKEN
+```
+
+## Prompts
+
+### List prompts
+
+```bash
+mcpjam prompts list --url https://your-server.com/mcp --access-token $TOKEN
+```
+
+### Get a prompt
+
+```bash
+mcpjam prompts get --url https://your-server.com/mcp --access-token $TOKEN \
+  --prompt-name summarize \
+  --prompt-args '{"text": "Hello world"}'
+```
+
+## Common patterns
+
+### Enumerate the full server surface
+
+```bash
+# One-shot: doctor already sweeps everything
+mcpjam server doctor --url https://your-server.com/mcp --access-token $TOKEN
+
+# Or individually for focused output
+mcpjam tools list --url $URL --access-token $TOKEN --format json | jq '.tools[].name'
+mcpjam resources list --url $URL --access-token $TOKEN --format json | jq '.resources[].uri'
+mcpjam prompts list --url $URL --access-token $TOKEN --format json | jq '.prompts[].name'
+```
+
+### Test a specific tool end-to-end
+
+```bash
+# List to find the tool
+mcpjam tools list --url $URL --access-token $TOKEN --format json \
+  | jq '.tools[] | select(.name == "search_docs")'
+
+# Call it
+mcpjam tools call --url $URL --access-token $TOKEN \
+  --tool-name search_docs \
+  --tool-args '{"query": "setup guide"}' \
+  --format json
+```
+
+### No-auth servers
+
+For servers that don't require authentication (like `mcp.excalidraw.com/mcp`), simply omit the auth flags:
+
+```bash
+mcpjam tools list --url https://mcp.excalidraw.com/mcp
+mcpjam tools call --url https://mcp.excalidraw.com/mcp \
+  --tool-name read_me
+```
