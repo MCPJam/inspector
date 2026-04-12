@@ -58,6 +58,34 @@ export function formatEvalsHuman(
     `Aggregate: ${pct}% accuracy, ${result.aggregate.successes}/${result.aggregate.iterations} passed`,
   );
 
+  // Failure details
+  const failingTests = Array.from(result.tests.entries()).filter(
+    ([, r]) => r.failures > 0,
+  );
+
+  if (failingTests.length > 0) {
+    lines.push("");
+    lines.push("Failures:");
+
+    for (const [name, testResult] of failingTests) {
+      const failedIterations = testResult.iterationDetails.filter(
+        (iter) => !iter.passed,
+      );
+
+      // Deduplicate error messages across iterations
+      const errorCounts = new Map<string, number>();
+      for (const iter of failedIterations) {
+        const msg = iter.error ?? "Unknown failure";
+        errorCounts.set(msg, (errorCounts.get(msg) ?? 0) + 1);
+      }
+
+      for (const [msg, count] of errorCounts) {
+        const suffix = count > 1 ? ` (x${count})` : "";
+        lines.push(`  ${name}: ${msg}${suffix}`);
+      }
+    }
+  }
+
   return lines.join("\n") + "\n";
 }
 

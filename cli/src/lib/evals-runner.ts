@@ -46,10 +46,26 @@ export async function runEvals(
         name: testCase.name,
         test: async (evalAgent) => {
           const result = await evalAgent.prompt(testCase.prompt);
+
+          // Surface prompt-level errors (model failures, connection issues)
+          if (result.hasError()) {
+            throw new Error(`Prompt error: ${result.getError()}`);
+          }
+
           const called = result.toolsCalled();
-          return matchMode === "exact"
+          const matched = matchMode === "exact"
             ? matchToolCalls(expected, called)
             : matchToolCallsSubset(expected, called);
+
+          if (!matched) {
+            const actualStr = called.length > 0 ? called.join(", ") : "(none)";
+            const expectedStr = expected.join(", ");
+            throw new Error(
+              `Tool call mismatch (${matchMode}): expected [${expectedStr}], got [${actualStr}]`,
+            );
+          }
+
+          return true;
         },
         expectedToolCalls: expected.map((toolName) => ({ toolName })),
       });

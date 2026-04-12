@@ -102,6 +102,21 @@ test("formatEvalsHuman includes aggregate line", () => {
   assert.ok(output.includes("9/10"), "should contain aggregate pass count");
 });
 
+test("formatEvalsHuman shows failure details with error messages", () => {
+  const output = formatEvalsHuman(makeSuiteResult(), makeConfig());
+  assert.ok(output.includes("Failures:"), "should contain Failures section");
+  assert.ok(output.includes("Tool mismatch"), "should contain error message from failed iteration");
+});
+
+test("formatEvalsHuman omits failure section when all tests pass", () => {
+  const result = makeSuiteResult();
+  // Override addition to all-pass
+  result.tests.set("addition", makeTestResult({ successes: 5, failures: 0 }));
+  result.aggregate.failures = 0;
+  const output = formatEvalsHuman(result, makeConfig());
+  assert.ok(!output.includes("Failures:"), "should not contain Failures section");
+});
+
 // --- JUnit XML format tests ---
 
 test("formatEvalsJUnit produces valid XML structure", () => {
