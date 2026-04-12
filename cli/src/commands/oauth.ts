@@ -78,6 +78,8 @@ export interface OAuthCommandOptions {
   header?: string[];
   verifyTools?: boolean;
   verifyCallTool?: string;
+  conformanceChecks?: boolean;
+  printUrl?: boolean;
 }
 
 interface OAuthProxyCommandOptions {
@@ -233,7 +235,7 @@ export function registerOAuthCommands(program: Command): void {
     .option(
       "--auth-mode <mode>",
       "Authorization mode: headless, interactive, or client_credentials",
-      "headless",
+      "interactive",
     )
     .option(
       "--header <header>",
@@ -262,6 +264,14 @@ export function registerOAuthCommands(program: Command): void {
     .option(
       "--verify-call-tool <name>",
       "After listing tools, also call the named tool",
+    )
+    .option(
+      "--conformance-checks",
+      "Run additional OAuth negative checks (invalid client, invalid redirect, token format) after the main flow",
+    )
+    .option(
+      "--print-url",
+      "In interactive mode, print the consent URL to stderr instead of launching a browser",
     )
     .action(async (options, command) => {
       const format = getOAuthFormat(command);
@@ -376,8 +386,14 @@ export function buildOAuthConformanceConfig(
   const protocolVersion = parseProtocolVersion(options.protocolVersion);
   const registrationStrategy = parseRegistrationStrategy(options.registration);
   const authMode = parseAuthMode(
-    options.authMode ?? defaults?.defaultAuthMode ?? "headless",
+    options.authMode ?? defaults?.defaultAuthMode ?? "interactive",
   );
+
+  if (options.printUrl && authMode !== "interactive") {
+    throw usageError(
+      "--print-url only applies to --auth-mode interactive. Headless and client_credentials modes do not open a browser.",
+    );
+  }
 
   if (
     protocolVersion !== "2025-11-25" &&
@@ -447,17 +463,27 @@ export function buildOAuthConformanceConfig(
         }
       : undefined;
 
+  const auth = buildAuthConfig(authMode, registrationStrategy, clientId, clientSecret);
+
+  if (options.printUrl && auth.mode === "interactive") {
+    (auth as { openUrl?: (url: string) => Promise<void> }).openUrl =
+      async (url: string) => {
+        process.stderr.write(`OAUTH_CONSENT_URL: ${url}\n`);
+      };
+  }
+
   return {
     serverUrl,
     protocolVersion,
     registrationStrategy,
-    auth: buildAuthConfig(authMode, registrationStrategy, clientId, clientSecret),
+    auth,
     client,
     scopes: options.scopes?.trim() || undefined,
     customHeaders,
     redirectUrl,
     stepTimeout: options.stepTimeout ?? 30_000,
     verification,
+    oauthConformanceChecks: options.conformanceChecks ?? false,
   };
 }
 

@@ -7,14 +7,14 @@ import {
 } from "../src/commands/oauth";
 import { CliError } from "../src/lib/output";
 
-test("buildOAuthConformanceConfig defaults to headless auth", () => {
+test("buildOAuthConformanceConfig defaults to interactive auth", () => {
   const config = buildOAuthConformanceConfig({
     url: "https://example.com/mcp",
     protocolVersion: "2025-11-25",
     registration: "cimd",
   });
 
-  assert.equal(config.auth?.mode, "headless");
+  assert.equal(config.auth?.mode, "interactive");
   assert.equal(config.registrationStrategy, "cimd");
 });
 
@@ -113,6 +113,74 @@ test("buildOAuthConformanceConfig omits verification when flags not set", () => 
   });
 
   assert.equal(config.verification, undefined);
+});
+
+test("buildOAuthConformanceConfig enables conformance checks when flag is set", () => {
+  const config = buildOAuthConformanceConfig({
+    url: "https://example.com/mcp",
+    protocolVersion: "2025-11-25",
+    registration: "dcr",
+    conformanceChecks: true,
+  });
+
+  assert.equal(config.oauthConformanceChecks, true);
+});
+
+test("buildOAuthConformanceConfig defaults conformance checks to false", () => {
+  const config = buildOAuthConformanceConfig({
+    url: "https://example.com/mcp",
+    protocolVersion: "2025-11-25",
+    registration: "dcr",
+  });
+
+  assert.equal(config.oauthConformanceChecks, false);
+});
+
+test("buildOAuthConformanceConfig sets openUrl for print-url in interactive mode", () => {
+  const config = buildOAuthConformanceConfig({
+    url: "https://example.com/mcp",
+    protocolVersion: "2025-11-25",
+    registration: "dcr",
+    authMode: "interactive",
+    printUrl: true,
+  });
+
+  assert.equal(config.auth?.mode, "interactive");
+  assert.equal(typeof (config.auth as any).openUrl, "function");
+});
+
+test("buildOAuthConformanceConfig rejects print-url with headless mode", () => {
+  assert.throws(
+    () =>
+      buildOAuthConformanceConfig({
+        url: "https://example.com/mcp",
+        protocolVersion: "2025-11-25",
+        registration: "dcr",
+        authMode: "headless",
+        printUrl: true,
+      }),
+    (error) =>
+      error instanceof CliError &&
+      error.message.includes("--print-url only applies to --auth-mode interactive"),
+  );
+});
+
+test("buildOAuthConformanceConfig rejects print-url with client_credentials mode", () => {
+  assert.throws(
+    () =>
+      buildOAuthConformanceConfig({
+        url: "https://example.com/mcp",
+        protocolVersion: "2025-11-25",
+        registration: "preregistered",
+        authMode: "client_credentials",
+        clientId: "id",
+        clientSecret: "secret",
+        printUrl: true,
+      }),
+    (error) =>
+      error instanceof CliError &&
+      error.message.includes("--print-url only applies to --auth-mode interactive"),
+  );
 });
 
 test("buildOAuthConformanceConfig rejects unsupported combinations", () => {
