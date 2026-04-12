@@ -1277,16 +1277,26 @@ export default function App() {
       const fallbackOrganizationId = resolveDeletedOrganizationFallbackId(
         remainingOrganizations,
       );
+      const isDeletedCurrentOrganization =
+        activeOrganizationId === deletedOrganizationId ||
+        currentHashRoute.organizationId === deletedOrganizationId ||
+        activeWorkspace?.organizationId === deletedOrganizationId;
+
+      clearLocalFallbackWorkspaceSelection(
+        deletedOrganizationId,
+        fallbackOrganizationId,
+      );
 
       if (
-        activeWorkspace?.organizationId === deletedOrganizationId ||
-        !fallbackOrganizationId
+        isDeletedCurrentOrganization &&
+        (activeWorkspace?.organizationId === deletedOrganizationId ||
+          !fallbackOrganizationId)
       ) {
         clearConvexActiveWorkspaceSelection();
-        clearLocalFallbackWorkspaceSelection(
-          deletedOrganizationId,
-          fallbackOrganizationId,
-        );
+      }
+
+      if (!isDeletedCurrentOrganization) {
+        return;
       }
 
       setActiveOrganizationId(fallbackOrganizationId);
@@ -1294,10 +1304,12 @@ export default function App() {
       applyNavigation("servers", { updateHash: true });
     },
     [
+      activeOrganizationId,
       activeWorkspace?.organizationId,
       applyNavigation,
       clearLocalFallbackWorkspaceSelection,
       clearConvexActiveWorkspaceSelection,
+      currentHashRoute.organizationId,
       effectiveOrganizations,
       setActiveOrganizationId,
     ],

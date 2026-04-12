@@ -1418,6 +1418,100 @@ describe("App hosted OAuth callback handling", () => {
     expect(window.location.hash).toBe("#servers");
   });
 
+  it("clears deleted-org fallback state without switching away from a different active org", async () => {
+    clearHostedOAuthPendingState();
+    clearSandboxSession();
+    window.history.replaceState({}, "", "/#organizations/org-member");
+
+    const setActiveOrganizationId = vi.fn();
+    const clearConvexActiveWorkspaceSelection = vi.fn();
+    const clearLocalFallbackWorkspaceSelection = vi.fn();
+    mockUseAppState.mockImplementation(() => ({
+      ...createAppStateMock(),
+      activeOrganizationId: "org-member",
+      setActiveOrganizationId,
+      clearConvexActiveWorkspaceSelection,
+      clearLocalFallbackWorkspaceSelection,
+      workspaces: {
+        ws_local: {
+          id: "ws_local",
+          name: "Active Workspace",
+          sharedWorkspaceId: "shared-ws-active",
+          organizationId: "org-member",
+          servers: {},
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+      },
+    }));
+    mockUseQuery.mockImplementation((name: string) => {
+      if (name === "users:getCurrentUser") {
+        return null;
+      }
+
+      if (name === "organizations:getMyOrganizations") {
+        return [
+          {
+            _id: "org-owner",
+            name: "Owner Org",
+            updatedAt: 3,
+            createdAt: 1,
+            createdBy: "user-1",
+            myRole: "owner",
+          },
+          {
+            _id: "org-deleted",
+            name: "Deleted Org",
+            updatedAt: 2,
+            createdAt: 1,
+            createdBy: "user-1",
+            myRole: "owner",
+          },
+          {
+            _id: "org-member",
+            name: "Member Org",
+            updatedAt: 1,
+            createdAt: 1,
+            createdBy: "user-2",
+            myRole: "member",
+          },
+        ];
+      }
+
+      return undefined;
+    });
+    mockOrganizationsTab.mockImplementation(
+      (props: { onOrganizationDeleted?: (organizationId: string) => void }) => (
+        <button
+          type="button"
+          data-testid="delete-non-current-org"
+          onClick={() => props.onOrganizationDeleted?.("org-deleted")}
+        >
+          Delete non-current org
+        </button>
+      ),
+    );
+
+    render(<App />);
+
+    const activeOrgCallsBeforeDelete = setActiveOrganizationId.mock.calls.length;
+    fireEvent.click(await screen.findByTestId("delete-non-current-org"));
+
+    await waitFor(() => {
+      expect(clearLocalFallbackWorkspaceSelection).toHaveBeenCalledWith(
+        "org-deleted",
+        "org-owner",
+      );
+    });
+
+    const postDeleteCalls = setActiveOrganizationId.mock.calls.slice(
+      activeOrgCallsBeforeDelete,
+    );
+    expect(postDeleteCalls).not.toContainEqual(["org-owner"]);
+    expect(clearConvexActiveWorkspaceSelection).not.toHaveBeenCalled();
+    expect(window.location.hash).toBe("#organizations/org-member");
+  });
+
   it("clears org and synced workspace selection when deleting the last org", async () => {
     clearHostedOAuthPendingState();
     clearSandboxSession();
