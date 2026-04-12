@@ -9,12 +9,18 @@ import {
 export interface GlobalOptions {
   format: OutputFormat;
   timeout: number;
+  rpc: boolean;
 }
 
 export interface SharedServerTargetOptions {
   url?: string;
   accessToken?: string;
+  oauthAccessToken?: string;
+  refreshToken?: string;
+  clientId?: string;
+  clientSecret?: string;
   header?: string[];
+  clientCapabilities?: string | Record<string, unknown>;
   command?: string;
   commandArgs?: string[];
   env?: string[];
@@ -30,10 +36,30 @@ export function addSharedServerOptions(command: Command): Command {
     .option("--url <url>", "HTTP MCP server URL")
     .option("--access-token <token>", "Bearer access token for HTTP servers")
     .option(
+      "--oauth-access-token <token>",
+      "OAuth bearer access token for HTTP servers",
+    )
+    .option(
+      "--refresh-token <token>",
+      "OAuth refresh token for HTTP servers",
+    )
+    .option(
+      "--client-id <id>",
+      "OAuth client ID used with --refresh-token",
+    )
+    .option(
+      "--client-secret <secret>",
+      "OAuth client secret used with --refresh-token",
+    )
+    .option(
       "--header <header>",
       'HTTP header in "Key: Value" format. Repeat to send multiple headers.',
       collectString,
       [],
+    )
+    .option(
+      "--client-capabilities <json>",
+      "Client capabilities advertised to the server as a JSON object",
     )
     .option("--command <command>", "Command for a stdio MCP server")
     .option(
@@ -53,6 +79,7 @@ export function getGlobalOptions(command: Command): GlobalOptions {
   return {
     format: parseOutputFormat(options.format as string ?? "json"),
     timeout: options.timeout ?? 30_000,
+    rpc: options.rpc ?? false,
   };
 }
 
@@ -99,6 +126,21 @@ export function parseJsonRecord(
   return parsed as Record<string, unknown>;
 }
 
+export function parseUnknownRecord(
+  value: unknown,
+  label: string,
+): Record<string, unknown> | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw usageError(`${label} must be a JSON object.`);
+  }
+
+  return value as Record<string, unknown>;
+}
+
 export function parsePromptArguments(
   value: string | undefined,
 ): Record<string, string> | undefined {
@@ -119,6 +161,9 @@ export function parseServerConfig(
   const command = options.command?.trim();
   const hasUrl = Boolean(url);
   const hasCommand = Boolean(command);
+  const clientCapabilities = resolveClientCapabilities(
+    options.clientCapabilities,
+  );
 
   if (hasUrl === hasCommand) {
     throw usageError("Specify exactly one target: either --url or --command.");
@@ -141,9 +186,34 @@ export function parseServerConfig(
     }
 
     const headers = parseHeadersOption(options.header);
+    const accessToken = resolveHttpAccessToken(options);
+    const refreshToken = options.refreshToken?.trim();
+    const clientId = options.clientId?.trim();
+    const clientSecret = options.clientSecret?.trim();
+
+    if (refreshToken && accessToken) {
+      throw usageError(
+        "--refresh-token cannot be used together with --access-token or --oauth-access-token.",
+      );
+    }
+
+    if (refreshToken && !clientId) {
+      throw usageError("--client-id is required when --refresh-token is used.");
+    }
+
+    if (!refreshToken && (clientId || clientSecret)) {
+      throw usageError(
+        "--client-id and --client-secret can only be used together with --refresh-token.",
+      );
+    }
+
     return {
       url,
-      accessToken: options.accessToken,
+      ...(accessToken ? { accessToken } : {}),
+      ...(refreshToken ? { refreshToken } : {}),
+      ...(clientId ? { clientId } : {}),
+      ...(clientSecret ? { clientSecret } : {}),
+      ...(clientCapabilities ? { clientCapabilities } : {}),
       requestInit: headers ? { headers } : undefined,
       timeout: options.timeout,
     };
@@ -153,9 +223,16 @@ export function parseServerConfig(
     throw usageError("Missing stdio command.");
   }
 
-  if (options.accessToken || (options.header?.length ?? 0) > 0) {
+  if (
+    options.accessToken ||
+    options.oauthAccessToken ||
+    options.refreshToken ||
+    options.clientId ||
+    options.clientSecret ||
+    (options.header?.length ?? 0) > 0
+  ) {
     throw usageError(
-      "--access-token and --header can only be used together with --url.",
+      "--access-token, --oauth-access-token, --refresh-token, --client-id, --client-secret, and --header can only be used together with --url.",
     );
   }
 
@@ -163,6 +240,7 @@ export function parseServerConfig(
     command,
     args: parseCommandArgs(options.commandArgs),
     env: parseEnvironmentOption(options.env),
+    ...(clientCapabilities ? { clientCapabilities } : {}),
     stderr: "ignore",
     timeout: options.timeout,
   };
@@ -176,7 +254,14 @@ export function addGlobalOptions(program: Command): Command {
       (value: string) => parsePositiveInteger(value, "Timeout"),
       30_000,
     )
-    .option("--format <format>", "Output format", "json");
+    .option("--rpc", "Include RPC logs in JSON output")
+    .option("--format <format>", "Output format");
+}
+
+export function describeTarget(
+  options: Pick<SharedServerTargetOptions, "url" | "command">,
+): string {
+  return options.url?.trim() || options.command?.trim() || "__cli__";
 }
 
 function parseHeader(entry: string): [string, string] {
@@ -233,4 +318,37 @@ function parseEnvironmentOption(
       return [key, envValue];
     }),
   );
+}
+
+function resolveClientCapabilities(
+  value: string | Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value === "string") {
+    return parseJsonRecord(value, "Client capabilities");
+  }
+
+  return parseUnknownRecord(value, "Client capabilities");
+}
+
+export function resolveHttpAccessToken(
+  options: Pick<SharedServerTargetOptions, "accessToken" | "oauthAccessToken">,
+): string | undefined {
+  const accessToken = options.accessToken?.trim();
+  const oauthAccessToken = options.oauthAccessToken?.trim();
+
+  if (
+    accessToken &&
+    oauthAccessToken &&
+    accessToken !== oauthAccessToken
+  ) {
+    throw usageError(
+      "--access-token and --oauth-access-token must match when both are provided.",
+    );
+  }
+
+  return accessToken ?? oauthAccessToken;
 }

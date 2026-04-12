@@ -71,6 +71,16 @@ describe("web routes — auth enforcement", () => {
     expect(data.code).toBe("UNAUTHORIZED");
   });
 
+  it("returns 401 for servers/doctor without bearer token", async () => {
+    const res = await postJson(app, "/api/web/servers/doctor", {
+      workspaceId: "ws-1",
+      serverId: "srv-1",
+    });
+    const { status, data } = await expectJson<{ code: string }>(res);
+    expect(status).toBe(401);
+    expect(data.code).toBe("UNAUTHORIZED");
+  });
+
   it("returns 401 for chat-v2 without bearer token", async () => {
     const res = await postJson(app, "/api/web/chat-v2", {
       workspaceId: "ws-1",

@@ -12,16 +12,21 @@ const {
   disconnectAllServersMock: vi.fn(),
 }));
 
-vi.mock("@mcpjam/sdk", () => ({
-  MCPClientManager: vi.fn().mockImplementation((configs: unknown) => {
-    managerConfigsMock(configs);
-    return {
-      getToolsForAiSdk: getToolsForAiSdkMock,
-      getInitializationInfo: getInitializationInfoMock,
-      disconnectAllServers: disconnectAllServersMock,
-    };
-  }),
-}));
+vi.mock("@mcpjam/sdk", async () => {
+  const actual =
+    await vi.importActual<typeof import("@mcpjam/sdk")>("@mcpjam/sdk");
+  return {
+    ...actual,
+    MCPClientManager: vi.fn().mockImplementation((configs: unknown) => {
+      managerConfigsMock(configs);
+      return {
+        getToolsForAiSdk: getToolsForAiSdkMock,
+        getInitializationInfo: getInitializationInfoMock,
+        disconnectAllServers: disconnectAllServersMock,
+      };
+    }),
+  };
+});
 
 import { createWebTestApp, expectJson, postJson } from "./helpers/test-app.js";
 import {

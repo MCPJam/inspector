@@ -4,9 +4,14 @@ const { mcpClientManagerConstructorMock } = vi.hoisted(() => ({
   mcpClientManagerConstructorMock: vi.fn(),
 }));
 
-vi.mock("@mcpjam/sdk", () => ({
-  MCPClientManager: mcpClientManagerConstructorMock,
-}));
+vi.mock("@mcpjam/sdk", async () => {
+  const actual =
+    await vi.importActual<typeof import("@mcpjam/sdk")>("@mcpjam/sdk");
+  return {
+    ...actual,
+    MCPClientManager: mcpClientManagerConstructorMock,
+  };
+});
 
 import {
   buildReplayManager,

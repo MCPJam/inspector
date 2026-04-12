@@ -44,13 +44,15 @@ export default defineConfig({
     // Force bundling of problematic packages
     "exit-hook",
     "@mcpjam/sdk",
+    "@mcpjam/sdk/operations",
   ],
   esbuildOptions(options) {
     options.platform = "node";
     options.mainFields = ["module", "main"];
-    // Configure path alias for @mcpjam/sdk
+    // Configure path aliases for local SDK build outputs, including subpaths.
     options.alias = {
       "@mcpjam/sdk": join(rootDir, "../sdk/dist/index.mjs"),
+      "@mcpjam/sdk/operations": join(rootDir, "../sdk/dist/operations.mjs"),
     };
   },
 });

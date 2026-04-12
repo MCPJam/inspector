@@ -1,12 +1,15 @@
 import { Command, CommanderError } from "commander";
+import { version as pkgVersion } from "../package.json";
+import { registerAppsCommands } from "./commands/apps";
+import { registerProtocolCommands } from "./commands/conformance";
 import { registerOAuthCommands } from "./commands/oauth";
 import { registerPromptCommands } from "./commands/prompts";
 import { registerResourcesCommands } from "./commands/resources";
 import { registerServerCommands } from "./commands/server";
 import { registerToolsCommands } from "./commands/tools";
 import {
-  CliError,
   detectOutputFormatFromArgv,
+  normalizeCliError,
   usageError,
   writeError,
 } from "./lib/output";
@@ -16,8 +19,9 @@ async function main(argv: readonly string[] = process.argv): Promise<number> {
   const program = addGlobalOptions(
     new Command()
       .name("mcpjam")
+      .version(pkgVersion, "-v, --version", "output the CLI version")
       .description(
-        "Stateless MCP inspection and OAuth conformance commands backed by @mcpjam/sdk",
+        "Stateless MCP server probing, debugging, OAuth login, and conformance commands backed by @mcpjam/sdk",
       )
       .allowExcessArguments(false)
       .exitOverride()
@@ -33,7 +37,9 @@ async function main(argv: readonly string[] = process.argv): Promise<number> {
   registerToolsCommands(program);
   registerResourcesCommands(program);
   registerPromptCommands(program);
+  registerAppsCommands(program);
   registerOAuthCommands(program);
+  registerProtocolCommands(program);
 
   if (argv.length <= 2) {
     program.outputHelp();
@@ -63,8 +69,9 @@ async function main(argv: readonly string[] = process.argv): Promise<number> {
       return 2;
     }
 
-    writeError(error, format);
-    return error instanceof CliError ? error.exitCode : 1;
+    const normalizedError = normalizeCliError(error);
+    writeError(normalizedError, format);
+    return normalizedError.exitCode;
   }
 }
 

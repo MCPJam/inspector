@@ -7,7 +7,10 @@
  */
 
 import { MCPClientManager } from "./mcp-client-manager/index.js";
-import type { MCPServerConfig } from "./mcp-client-manager/index.js";
+import type {
+  MCPServerConfig,
+  RpcLogger,
+} from "./mcp-client-manager/index.js";
 
 // ── Param types ─────────────────────────────────────────────────────
 
@@ -48,6 +51,8 @@ export interface WithEphemeralClientOptions {
   clientName?: string;
   /** Request timeout in ms (default: 30_000) */
   timeout?: number;
+  /** Optional RPC logger for request/response tracing. */
+  rpcLogger?: RpcLogger;
 }
 
 // ── Resources ───────────────────────────────────────────────────────
@@ -170,6 +175,7 @@ export async function withEphemeralClient<T>(
       defaultTimeout: options?.timeout ?? 30_000,
       defaultClientName: options?.clientName ?? "mcpjam-sdk",
       lazyConnect: true,
+      ...(options?.rpcLogger ? { rpcLogger: options.rpcLogger } : {}),
     },
   );
 
