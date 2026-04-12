@@ -1494,7 +1494,8 @@ describe("App hosted OAuth callback handling", () => {
 
     render(<App />);
 
-    const activeOrgCallsBeforeDelete = setActiveOrganizationId.mock.calls.length;
+    const activeOrgCallsBeforeDelete =
+      setActiveOrganizationId.mock.calls.length;
     fireEvent.click(await screen.findByTestId("delete-non-current-org"));
 
     await waitFor(() => {
