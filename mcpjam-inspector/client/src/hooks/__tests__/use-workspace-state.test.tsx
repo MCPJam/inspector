@@ -160,7 +160,7 @@ function renderUseWorkspaceState({
           validOrganizationIds ??
           [
             routeOrganizationIdOverride ?? routeOrganizationId,
-            activeOrganizationId,
+            organizationId,
           ].filter(
             (organizationId): organizationId is string => !!organizationId,
           ),
