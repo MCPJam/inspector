@@ -1,6 +1,6 @@
 ---
 name: mcpjam-cli-investigation
-description: Interpret `mcpjam-cli` probe, doctor, OAuth, tools, resources, and prompts output conservatively against MCP 2025-11-25. Use when triaging MCP server findings, deciding whether a CLI finding is real or overstated, or turning inspection output into an engineer-facing report with severity and confidence.
+description: Interpret `mcpjam-cli` probe, doctor, OAuth, tools, resources, and prompts output conservatively against MCP 2025-11-25. Use when triaging MCP server findings, performing security reviews, deciding whether a CLI finding is real or overstated, or turning inspection output into an engineer-facing report with severity and confidence.
 ---
 
 # MCPJam CLI Investigation
@@ -15,9 +15,10 @@ Use this skill when analyzing MCP server behavior from `mcpjam-cli` output. The 
 ## Default stance
 
 - Treat raw request/response evidence as higher trust than normalized CLI convenience output.
+- Separate observations, compliance issues, and security findings. They are related, but not interchangeable.
 - Map claims to spec strength: `MUST` and `MUST NOT` are strong conformance signals; `SHOULD` and `RECOMMENDED` are softer guidance; `MAY` and optional fields are usually informational.
-- Do not label a finding `high` severity unless the spec clearly forbids the behavior or you can describe a concrete exploit or breakage path.
-- When evidence is ambiguous, lower confidence before overstating the conclusion.
+- Do not label a security finding `high` unless you can support a concrete attacker benefit or clear breakage path.
+- When evidence is ambiguous, lower confidence or use `pending` before overstating the conclusion.
 
 ## Quick workflow
 
@@ -34,41 +35,66 @@ Use this skill when analyzing MCP server behavior from `mcpjam-cli` output. The 
 
 ## Security review workflow
 
-Use this when the task is to assess an MCP server's security posture. All checks use existing CLI commands — no special security tooling is needed.
+Use this when the task is to assess an MCP server's security posture. All checks use existing CLI commands — no special security tooling is needed. Do not assume every server should require auth.
 
-### Phase 1: Passive discovery (no auth required)
+### Phase 1: Observe (read-only)
 
-Run `server probe --url <target> --format json` and inspect the output:
+Run `server probe --url <target> --format json` first. Add `oauth metadata` or `server doctor --out <path>` only when they clarify the picture.
 
-1. **SSRF via OAuth discovery**: Check all URLs in `oauth.authorizationServerMetadata` and `oauth.resourceMetadata` for non-HTTPS, private IPs, and cloud metadata targets (169.254.169.254). See `references/security-best-practices.md` for the full IP range list.
-2. **Scope design**: Check `scopes_supported` for wildcards (`*`, `all`, `full-access`, `:*`). Compare `WWW-Authenticate` scope against the full catalog.
-3. **PKCE strength**: Check `code_challenge_methods_supported` for `plain` support.
-4. **Registration strategies**: Note which are available (`dcr`, `cimd`, `preregistered`) — DCR servers need the redirect URI checks in phase 2.
+- Record an initial auth signal:
+  - `full-auth candidate`: probe `status` is `oauth_required`
+  - `public-or-mixed candidate`: probe `status` is `ready`
+  - `unknown`: probe is only `reachable`, `error`, or otherwise ambiguous
+- Capture discovery facts:
+  - OAuth metadata URLs and whether they point to public, private, or suspicious targets
+  - `scopes_supported`, `WWW-Authenticate`, and PKCE methods
+  - registration strategies such as `dcr`, `cimd`, and `preregistered`
+- Record the evidence surface you are trusting. Raw probe/RPC evidence beats doctor summaries or convenience fields.
+- Phase 1 can produce observations and compliance notes. By itself it should not produce a `high` security severity.
 
-### Phase 2: DCR abuse testing (if DCR is supported)
+### Phase 2: Provoke (behavior, still mostly unauth)
 
-Use `oauth proxy` to test the registration endpoint directly:
+Treat the Phase 1 auth signal as provisional until behavior confirms it.
 
-1. **HTTP redirect URI acceptance**: POST a registration with `"redirect_uris":["http://evil.example/callback"]`. A `2xx` with a `client_id` is a HIGH finding.
-2. **Redirect URI validation**: Register normally, then attempt authorization with a modified redirect URI.
-3. **Registration response quality**: Check for relative `registration_client_uri` (RFC 7592 violation).
+- For a `full-auth candidate`:
+  - run DCR shape probes if DCR is supported
+  - spot-check representative unauth `tools list` or `tools call` behavior when feasible
+  - check malformed, expired, or obviously wrong-audience token handling without overstating what a rejection proves
+- For a `public-or-mixed candidate`:
+  - run unauth `tools list`
+  - classify exposed tools as read-only, write, or side-effect
+  - call representative public tools unauth
+  - check whether gated tools fail with a clean auth challenge instead of silent empty data or partial data
+- Anonymous tiers, rate limits, or degraded public access are posture notes, not a separate posture class.
+- Reclassify to one of `no-auth`, `full-auth`, `mixed-auth`, or `unknown` once Phase 2 behavior is clear. If Phase 2 contradicts Phase 1, update the posture and rerun the relevant checks instead of forcing the old classification.
+- Input-validation hits from Phase 2 cap at `medium` security severity until Phase 3 proves attacker benefit.
+- Design or posture findings can be real security findings in Phase 2, but do not auto-promote them. Document the unsafe behavior, abuse path, and any owner-intent uncertainty before calling them `medium` or `high`.
 
-### Phase 3: Authenticated review (requires successful auth)
+### Phase 3: Exploit or confirm attacker benefit
 
-Run `oauth login` to obtain credentials, then:
+Use `oauth login` and the same browser session when the proof depends on consent or cookies.
 
-1. **Token audience binding**: Decode the JWT access token (base64url-decode the second `.`-delimited segment). Check `aud` against the MCP server resource URL.
-2. **Session ID quality**: Run `server info` multiple times with `--rpc` and inspect `Mcp-Session-Id` headers for predictability.
-3. **Connected surface**: Use `tools list`, `resources list`, `prompts list` to understand the blast radius of a compromised token.
+- Use Phase 3 to turn a plausible concern into a real end-to-end security finding:
+  - DCR plus authorization flow proof
+  - redirect URI exact-match bypass proof
+  - foreign-token acceptance or token passthrough proof
+  - code, token, or cross-tenant data capture
+- Consent skip is one route to `high`, not the only route. Any demonstrated chain that shows concrete attacker gain can justify `high`.
 
-### Severity calibration for security findings
+### Phase 4: Inventory blast radius
 
-- **HIGH**: Clear spec violation with a concrete exploit path (e.g., HTTP redirect URI + working authorization flow = auth code interception)
-- **MEDIUM**: Real standards issue with security implications but no demonstrated end-to-end exploit (e.g., relative registration_client_uri, wildcard scopes)
-- **LOW**: Hardening opportunity or defense-in-depth gap (e.g., `plain` PKCE support alongside `S256`, full-catalog scope challenges)
-- **INFO**: Observations that are true but not actionable (e.g., opaque tokens without `aud`, missing optional scope metadata)
+- After auth succeeds, decode JWT claims, inspect `Mcp-Session-Id` with raw logs, and enumerate tools, resources, prompts, scopes, and tenant context.
+- Phase 4 is mainly blast-radius calibration. Treat it as context unless you also prove abuse.
 
-Always note compounding factors — a LOW finding can become MEDIUM when combined with another finding (e.g., `plain` PKCE + HTTP redirect URIs).
+### Security severity calibration
+
+- `high`: demonstrated attacker benefit or conforming-client breakage with direct evidence
+- `medium`: credible security issue with a concrete attack scenario, but end-to-end proof is still partial
+- `low`: hardening gap or limited-impact security concern
+- `pending`: plausible security concern with a specific missing proof step that could materially raise or lower severity
+- `info`: true observation with no credible attacker benefit yet
+
+Use `pending` instead of manufacturing a `medium` or `high` security severity from a checklist hit.
 
 ## Command choice
 
@@ -83,12 +109,27 @@ Always note compounding factors — a LOW finding can become MEDIUM when combine
 
 ## Output contract
 
-For each claimed finding, return:
+### General triage output
+
+For non-security tasks, return:
 
 - `Verdict`: `real issue`, `interop warning`, `implementation polish`, or `scanner/client artifact`
 - `Severity`: `high`, `medium`, `low`, or `info`
 - `Confidence`: `high`, `medium`, or `low`
 - `Why it matters`: one short paragraph tied to interoperability, security, or user impact
+- `Evidence`: the exact CLI behavior that supports the claim
+- `Missing evidence`: what would need to be confirmed before raising severity or confidence
+
+### Security review output
+
+For each claimed security-review finding, return:
+
+- `Verdict`: `real issue`, `interop warning`, `implementation polish`, or `scanner/client artifact`
+- `Compliance severity`: `high`, `medium`, `low`, or `info`
+- `Security severity`: `high`, `medium`, `low`, `info`, or `pending`
+- `Confidence`: `high`, `medium`, or `low`
+- `Attack scenario or pending rationale`: if `Security severity` is `medium` or `high`, open with 2-3 sentences answering who the attacker is, what they need, and what they gain; if it is `pending`, say exactly what proof is missing
+- `Verified via`: the phase plus exact command or result that supports the claim
 - `Evidence`: the exact CLI behavior that supports the claim
 - `Missing evidence`: what would need to be confirmed before raising severity or confidence
 
@@ -103,6 +144,12 @@ For each claimed finding, return:
 - Treat `--debug-out` artifacts as aggregated evidence envelopes, not pure wire captures.
 - Never flag missing `scopes_supported` or missing `scope` in `WWW-Authenticate` as a security issue — both are optional.
 - Never claim a server is "secure" based solely on it rejecting one specific bad input. A single negative test does not prove broader security posture.
+- Never let a checklist hit assign `high` security severity by itself.
+- JWT `aud` mismatch is not token passthrough proof unless you show the server accepts a token issued for a different audience or resource, or otherwise misbinds the token.
+- Supporting `plain` PKCE is usually hardening only. It cannot compound with attacker-owned-client DCR flows where the attacker chose the verifier.
+- Hostile `redirect_uri` values are not SSRF unless you show the server fetches them.
+- Public unauthenticated access is not itself a finding. Check whether behavior matches advertised posture and whether exposed surfaces are safe by design.
+- Anonymous trial or rate-limited access is a posture note, not a separate severity finding.
 - When compounding findings, explain the compound attack path. Do not just list unrelated findings and call the combination worse.
 
 ## Reference map
@@ -112,4 +159,4 @@ For each claimed finding, return:
 - `references/mcp-2025-11-25-interpretation.md`
   Use for capability, lifecycle, transport, authorization, tools, resources, and prompts interpretation against the latest MCP spec.
 - `references/security-best-practices.md`
-  Use for security review checks mapped to CLI commands. Covers SSRF, confused deputy, PKCE, token passthrough, scope minimization, and session security. Source: https://modelcontextprotocol.io/docs/tutorials/security/security_best_practices
+  Use for security review checks mapped to CLI commands. Covers SSRF, confused deputy, PKCE, token passthrough, scope minimization, auth-posture checks, and session security. Source: https://modelcontextprotocol.io/docs/tutorials/security/security_best_practices
