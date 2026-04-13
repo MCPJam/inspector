@@ -11,8 +11,8 @@ Complete flag tables for every `mcpjam` command. For guides and recipes, see the
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--timeout <ms>` | `30000` | Request timeout in milliseconds |
-| `--rpc` | off | Include raw JSON-RPC logs in output |
-| `--format <format>` | `human` on TTY, `json` when piped | Output format |
+| `--rpc` | off | Include raw JSON-RPC logs in JSON output under `_rpcLogs` |
+| `--format <format>` | `human` on TTY, `json` when piped | Output format (`json` or `human`; `junit-xml` is available on OAuth conformance commands only) |
 | `-v, --version` | | Print the CLI version |
 
 ---
@@ -80,7 +80,9 @@ Uses shared connection flags.
 | Flag | Description |
 |------|-------------|
 | `--tool-name <name>` | Name of the tool to call |
+| `--name <name>` | Legacy alias for `--tool-name` |
 | `--tool-args <json>` | Tool arguments as a JSON string |
+| `--params <json>` | Legacy alias for `--tool-args` |
 | `--debug-out <path>` | Write debug artifact to file |
 
 Plus shared connection flags.
@@ -98,6 +100,7 @@ Uses shared connection flags.
 | Flag | Description |
 |------|-------------|
 | `--resource-uri <uri>` | URI of the resource to read |
+| `--uri <uri>` | Legacy alias for `--resource-uri` |
 
 Plus shared connection flags.
 
@@ -118,6 +121,7 @@ Uses shared connection flags.
 | Flag | Description |
 |------|-------------|
 | `--prompt-name <name>` | Name of the prompt |
+| `--name <name>` | Legacy alias for `--prompt-name` |
 | `--prompt-args <json>` | Prompt arguments as a JSON string |
 
 Plus shared connection flags.
@@ -194,7 +198,16 @@ Plus shared connection flags.
 
 ### `protocol conformance`
 
-MCP protocol conformance checks against an HTTP server. Uses shared connection flags.
+| Flag | Required | Default | Description |
+|------|----------|---------|-------------|
+| `--url <url>` | Yes | | MCP server URL |
+| `--access-token <token>` | No | | Bearer access token |
+| `--header <header>` | No | | HTTP header `Key: Value` (repeatable) |
+| `--check-timeout <ms>` | No | `15000` | Per-check timeout in milliseconds |
+| `--category <category>` | No | all | Restrict checks to one or more categories |
+| `--check-id <id>` | No | all | Restrict checks to one or more check IDs |
+
+Supports `--format json` and `--format human`. `junit-xml` is not supported on protocol conformance.
 
 ---
 
@@ -204,9 +217,41 @@ MCP protocol conformance checks against an HTTP server. Uses shared connection f
 
 Fetch hosted-style MCP App widget content.
 
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--resource-uri <uri>` | Yes | Widget resource URI |
+| `--uri <uri>` | No | Legacy alias for `--resource-uri` |
+| `--tool-id <id>` | Yes | Tool call ID used for runtime injection |
+| `--tool-name <name>` | Yes | Tool name used for runtime injection |
+| `--tool-input <json>` | No | Tool input payload as JSON |
+| `--tool-output <json>` | No | Tool output payload as JSON |
+| `--theme <theme>` | No | Widget theme: `light` or `dark` |
+| `--csp-mode <mode>` | No | CSP mode: `permissive` or `widget-declared` |
+| `--template <uri>` | No | Optional `ui://` template override |
+| `--view-mode <mode>` | No | Widget view mode |
+| `--view-params <json>` | No | Widget view params as JSON |
+
+Plus shared connection flags.
+
 ### `apps chatgpt-widget`
 
 Fetch hosted-style ChatGPT App widget content.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--resource-uri <uri>` | Yes | Widget resource URI |
+| `--uri <uri>` | No | Legacy alias for `--resource-uri` |
+| `--tool-id <id>` | Yes | Tool call ID used for runtime injection |
+| `--tool-name <name>` | Yes | Tool name used for runtime injection |
+| `--tool-input <json>` | No | Tool input payload as JSON |
+| `--tool-output <json>` | No | Tool output payload as JSON |
+| `--tool-response-metadata <json>` | No | Tool response metadata as a JSON object |
+| `--theme <theme>` | No | Widget theme: `light` or `dark` |
+| `--csp-mode <mode>` | No | CSP mode: `permissive` or `widget-declared` |
+| `--locale <locale>` | No | Locale override |
+| `--device-type <type>` | No | Device type: `mobile`, `tablet`, or `desktop` |
+
+Plus shared connection flags.
 
 ---
 

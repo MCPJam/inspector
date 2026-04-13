@@ -105,6 +105,12 @@ Same as `oauth proxy` but routes through the debug proxy path. Use when testing 
 | `--verify-call-tool <name>` | No | | After listing, also call a named tool |
 | `--debug-out <path>` | No | | Write debug artifact to file |
 
+<Note>
+  For interactive login, a custom `--redirect-url` must still be an
+  `http://localhost` or `http://127.0.0.1` loopback URL. Custom callback paths
+  are supported.
+</Note>
+
 ## Using tokens from login
 
 After a successful `oauth login`, use the printed access token with other commands:
