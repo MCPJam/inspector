@@ -63,6 +63,21 @@ If a higher-priority surface contradicts a lower-priority summary, trust the hig
 - A passing negative test only proves the specific negative case that was sent.
 - A failing headless flow may reflect login UX or consent requirements, not a spec violation.
 
+### `apps conformance`
+
+- This is a connected, server-side MCP Apps check.
+- It validates:
+  - tools advertising `_meta.ui.resourceUri` or deprecated `_meta["ui/resourceUri"]`
+  - `ui://` resource discovery and `resources/read`
+  - `text/html;profile=mcp-app` payload shape
+  - `_meta.ui.csp`, `permissions`, `domain`, and `prefersBorder`
+- It does not currently validate:
+  - `ui/initialize` and `ui/notifications/initialized`
+  - `ui/notifications/tool-input` or `ui/notifications/tool-result` ordering
+  - sandbox proxy behavior
+  - host display modes, host context changes, or postMessage bridge behavior
+- Treat a pass as evidence that the server advertises an MCP Apps surface with plausible resource wiring. Do not describe it as full SEP-1865 conformance.
+
 ### `tools list`
 
 - The command returns:

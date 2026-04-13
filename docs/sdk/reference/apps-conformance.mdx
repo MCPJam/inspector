@@ -1,0 +1,127 @@
+---
+title: "MCP Apps Conformance SDK"
+description: "Programmatic MCP Apps surface validation with MCPAppsConformanceTest"
+icon: "app-window"
+---
+
+The MCP Apps Conformance SDK lets you validate the server-side MCP Apps surface your server exposes through tools and `ui://` resources.
+
+Use it when you want the same checks as the CLI's [`apps conformance`](/cli/apps-conformance) command, but inside your own test runner or CI pipeline.
+
+<Note>
+  This currently validates the **server-side** MCP Apps surface only. It does
+  not prove full host-side SEP-1865 behavior such as `ui/initialize`,
+  sandbox-proxy forwarding, or host notification ordering.
+</Note>
+
+## Import
+
+```typescript
+import { MCPAppsConformanceTest } from "@mcpjam/sdk";
+```
+
+## Basic usage
+
+```typescript
+const test = new MCPAppsConformanceTest({
+  url: "https://your-server.com/mcp",
+  timeout: 30_000,
+});
+
+const result = await test.run();
+
+console.log(result.passed);   // true
+console.log(result.summary);  // "6/6 checks passed, 0 failed, 0 skipped"
+console.log(result.discovery.uiToolCount);
+```
+
+For a stdio server:
+
+```typescript
+const test = new MCPAppsConformanceTest({
+  command: "node",
+  args: ["server.js"],
+  timeout: 30_000,
+});
+```
+
+## MCPAppsConformanceConfig
+
+`MCPAppsConformanceConfig` extends the standard `MCPServerConfig`, so it accepts the same HTTP and stdio connection settings as `MCPClientManager`.
+
+Additional property:
+
+| Property | Type | Required | Default | Description |
+|----------|------|----------|---------|-------------|
+| `checkIds` | `MCPAppsCheckId[]` | No | all checks | Run only the selected MCP Apps checks |
+
+Example with custom headers and a focused check set:
+
+```typescript
+const test = new MCPAppsConformanceTest({
+  url: "https://your-server.com/mcp",
+  requestInit: {
+    headers: {
+      Authorization: `Bearer ${process.env.TOKEN}`,
+    },
+  },
+  checkIds: [
+    "ui-resources-readable",
+    "ui-resource-contents-valid",
+  ],
+});
+```
+
+## Check ids
+
+Available checks:
+
+- `ui-tools-present`
+- `ui-tool-metadata-valid`
+- `ui-listed-resources-valid`
+- `ui-resources-readable`
+- `ui-resource-contents-valid`
+- `ui-resource-meta-valid`
+
+## Result shape
+
+`run()` returns an `MCPAppsConformanceResult`.
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `passed` | `boolean` | Whether any selected check failed |
+| `target` | `string` | URL or stdio command under test |
+| `checks` | `MCPAppsCheckResult[]` | Individual check results |
+| `summary` | `string` | Human-readable summary |
+| `durationMs` | `number` | Total duration |
+| `categorySummary` | `Record<"tools" \| "resources", ...>` | Pass/fail counts by category |
+| `discovery` | object | Counts for tools and UI resources discovered during the run |
+
+Each `MCPAppsCheckResult` includes:
+
+- `id`
+- `category`
+- `title`
+- `description`
+- `status`
+- `durationMs`
+- optional `details`
+- optional `warnings`
+- optional `error`
+
+## What the runner validates
+
+The current runner checks:
+
+1. At least one tool advertises MCP Apps UI metadata.
+2. Tool metadata uses a valid `ui://` resource URI and valid `visibility` values.
+3. Listed UI resources use `ui://` and `text/html;profile=mcp-app`.
+4. Referenced UI resources are readable via `resources/read`.
+5. Resource payloads provide exactly one HTML document through `text` or `blob`.
+6. `_meta.ui.csp`, `permissions`, `domain`, and `prefersBorder` use valid shapes.
+
+## Notes
+
+- The runner always advertises the MCP Apps UI extension capability so servers do not hide their MCP Apps surface when custom `clientCapabilities` are supplied.
+- Deprecated `_meta["ui/resourceUri"]` is accepted but surfaced as a warning.
+- HTML validation is intentionally lightweight. It verifies the expected MIME type and document-style HTML payload, not the full browser lifecycle.

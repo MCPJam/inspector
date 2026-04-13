@@ -1,0 +1,129 @@
+---
+title: "MCP Apps Conformance"
+description: "Validate MCP Apps tool metadata and ui:// resources from the CLI"
+icon: "app-window"
+---
+
+The `apps conformance` command validates the server-side MCP Apps surface your server exposes through tools and `ui://` resources.
+
+It is designed for MCP Apps triage, CI checks, and fast regression detection when you change `_meta.ui.resourceUri`, `resources/list`, or `resources/read`.
+
+<Note>
+  This is currently **server-side** MCP Apps conformance only. A passing run does
+  **not** prove full SEP-1865 host behavior such as `ui/initialize`,
+  `ui/notifications/tool-input` ordering, sandbox proxy behavior, or host
+  display-mode handling.
+</Note>
+
+## Quick start
+
+```bash
+mcpjam apps conformance --url https://your-server.com/mcp
+```
+
+For a local stdio server:
+
+```bash
+mcpjam apps conformance --command node --command-args server.js
+```
+
+## What it checks
+
+The current runner validates:
+
+1. MCP Apps tools are present.
+2. Tool metadata uses valid `_meta.ui.resourceUri` and `visibility` values.
+3. Listed UI resources use `ui://` URIs and `text/html;profile=mcp-app`.
+4. Referenced UI resources can be fetched with `resources/read`.
+5. Resource contents provide exactly one HTML payload via `text` or `blob`.
+6. `_meta.ui.csp`, `permissions`, `domain`, and `prefersBorder` use valid shapes.
+
+## Example output
+
+```bash
+mcpjam apps conformance \
+  --url https://your-server.com/mcp \
+  --format json
+```
+
+Typical success summary:
+
+```json
+{
+  "passed": true,
+  "summary": "6/6 checks passed, 0 failed, 0 skipped",
+  "discovery": {
+    "toolCount": 3,
+    "uiToolCount": 1,
+    "listedResourceCount": 1,
+    "listedUiResourceCount": 1,
+    "checkedUiResourceCount": 1
+  }
+}
+```
+
+## Categories and check ids
+
+Two categories are available:
+
+- `tools`
+- `resources`
+
+Specific check ids:
+
+- `ui-tools-present`
+- `ui-tool-metadata-valid`
+- `ui-listed-resources-valid`
+- `ui-resources-readable`
+- `ui-resource-contents-valid`
+- `ui-resource-meta-valid`
+
+Use `--category` to run a subset by category, or `--check-id` to run specific checks.
+
+```bash
+# Tool-only checks
+mcpjam apps conformance \
+  --url https://your-server.com/mcp \
+  --category tools
+
+# Specific checks
+mcpjam apps conformance \
+  --url https://your-server.com/mcp \
+  --check-id ui-resources-readable \
+  --check-id ui-resource-contents-valid
+```
+
+<Note>
+  If you pass both `--category` and `--check-id`, the explicit `--check-id`
+  selection wins.
+</Note>
+
+## Shared connection flags
+
+`apps conformance` uses the same shared target flags as the rest of the CLI:
+
+| Flag | Description |
+|------|-------------|
+| `--url <url>` | HTTP MCP server URL |
+| `--access-token <token>` | Bearer access token |
+| `--oauth-access-token <token>` | OAuth bearer access token |
+| `--refresh-token <token>` | OAuth refresh token |
+| `--client-id <id>` | OAuth client ID (with `--refresh-token`) |
+| `--client-secret <secret>` | OAuth client secret (with `--refresh-token`) |
+| `--header <header>` | HTTP header in `Key: Value` format (repeatable) |
+| `--client-capabilities <json>` | Client capabilities JSON object |
+| `--command <command>` | Command for a stdio server |
+| `--command-args <arg>` | Stdio command argument (repeatable) |
+| `--env <env>` | Stdio environment `KEY=VALUE` (repeatable) |
+
+## Notes
+
+- The runner always advertises the MCP Apps UI extension capability so servers do not hide their MCP Apps surface when custom client capabilities are provided.
+- Deprecated `_meta["ui/resourceUri"]` is accepted but reported as a warning.
+- `permissions` are validated against the SEP-1865 object shape, for example `geolocation: {}` instead of booleans.
+
+## Related commands
+
+- [Server inspection](/cli/server-inspection) for breadth-first connectivity and capability triage
+- [Tools, resources & prompts](/cli/tools-resources-prompts) for direct connected checks
+- [Command reference](/cli/reference) for the full flag list

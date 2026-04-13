@@ -210,6 +210,41 @@ npx @mcpjam/cli oauth conformance --url https://your-server.com/mcp --protocol-v
 npx @mcpjam/cli oauth conformance-suite --config ./oauth-tests.json --format junit-xml > report.xml
 ```
 
+### MCP Apps Conformance
+
+Validate the server-side MCP Apps surface your server exposes through tools and `ui://` resources.
+
+```ts
+import { MCPAppsConformanceTest } from "@mcpjam/sdk";
+
+const test = new MCPAppsConformanceTest({
+  url: "https://your-server.com/mcp",
+  timeout: 30_000,
+});
+
+const result = await test.run();
+console.log(result.passed);
+console.log(result.summary);
+```
+
+Or use the CLI:
+
+```bash
+# Full MCP Apps surface check
+npx @mcpjam/cli apps conformance \
+  --url https://your-server.com/mcp \
+  --format human
+
+# Focus on resource checks only
+npx @mcpjam/cli apps conformance \
+  --url https://your-server.com/mcp \
+  --category resources
+```
+
+The current runner validates tool metadata, `ui://` resource discovery, `resources/read`, HTML payload shape, and `_meta.ui` metadata such as `csp`, `permissions`, `domain`, and `prefersBorder`.
+
+It does **not** yet validate full host-side SEP-1865 behavior such as `ui/initialize`, sandbox proxy behavior, or host notification ordering.
+
 ---
 
 ## API Reference

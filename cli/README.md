@@ -23,6 +23,9 @@ mcpjam server doctor --url https://your-server.com/mcp
 # OAuth login
 mcpjam oauth login --url https://your-server.com/mcp
 
+# MCP Apps conformance
+mcpjam apps conformance --url https://your-server.com/mcp
+
 # Exercise tools
 mcpjam tools list --url https://your-server.com/mcp
 ```
