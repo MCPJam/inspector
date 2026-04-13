@@ -21,7 +21,7 @@ async function main(argv: readonly string[] = process.argv): Promise<number> {
       .name("mcpjam")
       .version(pkgVersion, "-v, --version", "output the CLI version")
       .description(
-        "Stateless MCP server probing, debugging, OAuth login, and conformance commands backed by @mcpjam/sdk",
+        "Test, debug, and validate MCP servers. Health checks, OAuth conformance, tool-surface diffing, and structured triage from the terminal or CI.",
       )
       .allowExcessArguments(false)
       .exitOverride()
