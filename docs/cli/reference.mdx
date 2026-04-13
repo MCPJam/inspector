@@ -25,6 +25,7 @@ All server commands accept the shared connection flags below, plus command-speci
 
 | Flag | Description |
 |------|-------------|
+| `--transport <transport>` | Explicit transport type (`http` or `stdio`) |
 | `--url <url>` | HTTP MCP server URL |
 | `--access-token <token>` | Bearer access token |
 | `--oauth-access-token <token>` | OAuth bearer access token |
@@ -34,8 +35,10 @@ All server commands accept the shared connection flags below, plus command-speci
 | `--header <header>` | HTTP header `Key: Value` (repeatable) |
 | `--client-capabilities <json>` | Client capabilities JSON object |
 | `--command <command>` | Stdio server command |
-| `--command-args <arg>` | Stdio command argument (repeatable) |
-| `--env <env>` | Stdio environment `KEY=VALUE` (repeatable) |
+| `--args <arg...>` | Preferred stdio command arguments |
+| `--command-args <arg>` | Legacy stdio command argument (repeatable) |
+| `-e, --env <env...>` | Stdio environment `KEY=VALUE` values |
+| `--cwd <path>` | Working directory for the stdio child process |
 
 ### `server probe`
 
@@ -217,6 +220,7 @@ Supports `--format json` and `--format human`. `junit-xml` is not supported on p
 
 | Flag | Description |
 |------|-------------|
+| `--transport <transport>` | Explicit transport type (`http` or `stdio`) |
 | `--url <url>` | HTTP MCP server URL |
 | `--access-token <token>` | Bearer access token |
 | `--oauth-access-token <token>` | OAuth bearer access token |
@@ -226,8 +230,10 @@ Supports `--format json` and `--format human`. `junit-xml` is not supported on p
 | `--header <header>` | HTTP header `Key: Value` (repeatable) |
 | `--client-capabilities <json>` | Client capabilities JSON object |
 | `--command <command>` | Stdio server command |
-| `--command-args <arg>` | Stdio command argument (repeatable) |
-| `--env <env>` | Stdio environment `KEY=VALUE` (repeatable) |
+| `--args <arg...>` | Preferred stdio command arguments |
+| `--command-args <arg>` | Legacy stdio command argument (repeatable) |
+| `-e, --env <env...>` | Stdio environment `KEY=VALUE` values |
+| `--cwd <path>` | Working directory for the stdio child process |
 
 ### `apps conformance`
 

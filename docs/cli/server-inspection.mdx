@@ -44,7 +44,7 @@ mcpjam server doctor --url https://your-server.com/mcp
 mcpjam server doctor --url https://your-server.com/mcp --rpc --out doctor.json
 
 # Stdio server
-mcpjam server doctor --command node --command-args server.js
+mcpjam server doctor --command node --args server.js --cwd /path/to/project
 ```
 
 **What it returns:**
@@ -103,6 +103,7 @@ Every `server` subcommand accepts these flags for specifying how to connect:
 
 | Flag | Description |
 |------|-------------|
+| `--transport <transport>` | Explicit transport type (`http` or `stdio`) |
 | `--url <url>` | HTTP MCP server URL |
 | `--access-token <token>` | Bearer access token |
 | `--oauth-access-token <token>` | OAuth bearer access token |
@@ -112,8 +113,14 @@ Every `server` subcommand accepts these flags for specifying how to connect:
 | `--header <header>` | HTTP header in `Key: Value` format (repeatable) |
 | `--client-capabilities <json>` | Client capabilities as a JSON object |
 | `--command <command>` | Command for a stdio server |
-| `--command-args <arg>` | Stdio command argument (repeatable) |
-| `--env <env>` | Stdio environment `KEY=VALUE` (repeatable) |
+| `--args <arg...>` | Preferred stdio command arguments |
+| `--command-args <arg>` | Legacy stdio command argument (repeatable) |
+| `-e, --env <env...>` | Stdio environment `KEY=VALUE` values |
+| `--cwd <path>` | Working directory for the stdio child process |
+
+Stdio child processes inherit the parent shell environment by default. Use
+`-e/--env` to add values or override inherited ones, and `--cwd` when the
+command must run from a project directory.
 
 ## Common patterns
 

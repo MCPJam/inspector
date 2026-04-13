@@ -31,6 +31,16 @@ Tool arguments are passed as a JSON string. The result includes the tool's respo
   trace for debugging.
 </Note>
 
+For a local stdio server:
+
+```bash
+mcpjam tools list \
+  --command npx \
+  --args -y @modelcontextprotocol/server-everything \
+  --cwd $PWD \
+  -e DEBUG=1
+```
+
 ## Resources
 
 ### List resources
@@ -105,3 +115,6 @@ mcpjam tools list --url https://mcp.excalidraw.com/mcp
 mcpjam tools call --url https://mcp.excalidraw.com/mcp \
   --tool-name read_me
 ```
+
+Stdio child processes inherit the parent shell environment by default. Use
+`-e/--env` to add values or override inherited ones for local subprocesses.

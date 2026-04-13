@@ -91,8 +91,11 @@ mcpjam server doctor --url https://your-server.com/mcp --header "X-API-Key: $KEY
 ### Stdio (local subprocess)
 
 ```bash
-mcpjam server doctor --command node --command-args server.js --env API_KEY=$KEY
+mcpjam server doctor --command node --args server.js --cwd /path/to/project -e API_KEY=$KEY
 ```
+
+Stdio child processes inherit the parent shell environment by default. Use
+`-e/--env` to add values or override inherited ones for the spawned server.
 
 ## Exit codes
 
