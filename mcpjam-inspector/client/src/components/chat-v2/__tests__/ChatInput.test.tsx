@@ -374,7 +374,9 @@ describe("ChatInput", () => {
     it("keeps the textarea editable while loading", () => {
       render(<ChatInput {...defaultProps} isLoading={true} value="Draft" />);
 
-      expect(screen.getByPlaceholderText("Type your message...")).not.toBeDisabled();
+      expect(
+        screen.getByPlaceholderText("Type your message..."),
+      ).not.toBeDisabled();
     });
 
     it("keeps the options menu enabled while loading", () => {
