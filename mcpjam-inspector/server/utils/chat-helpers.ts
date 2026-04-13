@@ -82,9 +82,7 @@ export const createLlmModel = (
       const resourceName = azureResourceMatch?.[1];
       return createAzure({
         apiKey,
-        ...(resourceName
-          ? { resourceName }
-          : { baseURL: azureBaseUrl }),
+        ...(resourceName ? { resourceName } : { baseURL: azureBaseUrl }),
       })(modelDefinition.id);
     }
     case "custom": {
