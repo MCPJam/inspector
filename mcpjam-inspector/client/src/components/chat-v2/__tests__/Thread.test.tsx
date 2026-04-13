@@ -32,7 +32,7 @@ vi.mock("../shared/thinking-indicator", () => ({
     resolvedVariant,
   }: {
     model: ModelDefinition;
-    resolvedVariant?: string;
+    resolvedVariant: string;
   }) => {
     mockThinkingIndicator({ model, resolvedVariant });
     return (
@@ -544,7 +544,7 @@ describe("Thread", () => {
       expect(screen.getByTestId("fullscreen-chat-overlay")).toBeInTheDocument();
       expect(mockFullscreenChatOverlay).toHaveBeenLastCalledWith(
         expect.objectContaining({
-          resolvedLoadingIndicatorVariant: "claude-mark",
+          loadingIndicatorVariant: "claude-mark",
         }),
       );
     });

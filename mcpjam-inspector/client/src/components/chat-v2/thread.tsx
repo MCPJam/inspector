@@ -236,7 +236,7 @@ export function Thread({
           disabled={fullscreenChatDisabled}
           canSend={canSendFullscreenChat}
           isThinking={isLoading}
-          resolvedLoadingIndicatorVariant={resolvedLoadingIndicatorVariant}
+          loadingIndicatorVariant={resolvedLoadingIndicatorVariant}
           onStop={onFullscreenChatStop}
           onSend={() => {
             if (!canSendFullscreenChat) return;

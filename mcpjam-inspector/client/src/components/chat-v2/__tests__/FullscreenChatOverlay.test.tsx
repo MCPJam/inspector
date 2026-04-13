@@ -12,14 +12,10 @@ import { FullscreenChatOverlay } from "../fullscreen-chat-overlay";
 vi.mock("../shared/loading-indicator-content", () => ({
   LoadingIndicatorContent: ({
     variant,
-    resolvedVariant,
   }: {
     variant?: string;
-    resolvedVariant?: string;
   }) => (
-    <div
-      data-testid={`loading-indicator-${resolvedVariant ?? variant ?? "default"}`}
-    />
+    <div data-testid={`loading-indicator-${variant ?? "default"}`} />
   ),
   useResolvedLoadingIndicatorVariant: (variant?: string) => variant ?? "default",
 }));

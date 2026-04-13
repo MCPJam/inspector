@@ -154,16 +154,10 @@ function ThinkingRow({
     >
       {shouldRenderDefaultBubble ? (
         <div className="inline-flex items-center gap-2 rounded-2xl bg-muted px-3 py-2 text-sm text-muted-foreground/80">
-          {resolvedVariant !== undefined ? (
-            <LoadingIndicatorContent resolvedVariant={resolvedVariant} />
-          ) : (
-            <LoadingIndicatorContent />
-          )}
+          <LoadingIndicatorContent variant={resolvedVariant} />
         </div>
       ) : (
-        <LoadingIndicatorContent
-          resolvedVariant={resolvedVariant ?? "default"}
-        />
+        <LoadingIndicatorContent variant={resolvedVariant} />
       )}
     </div>
   );
@@ -373,7 +367,7 @@ function Composer({
   );
 }
 
-type FullscreenChatOverlayBaseProps = {
+type FullscreenChatOverlayProps = {
   messages: UIMessage[];
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -383,21 +377,11 @@ type FullscreenChatOverlayBaseProps = {
   disabled: boolean;
   canSend: boolean;
   isThinking: boolean;
+  loadingIndicatorVariant?: LoadingIndicatorVariant;
   onStop?: () => void;
   onSend: () => void;
 };
-
-type FullscreenChatOverlayProps =
-  | (FullscreenChatOverlayBaseProps & {
-      loadingIndicatorVariant?: LoadingIndicatorVariant;
-      resolvedLoadingIndicatorVariant?: undefined;
-    })
-  | (FullscreenChatOverlayBaseProps & {
-      loadingIndicatorVariant?: never;
-      resolvedLoadingIndicatorVariant: LoadingIndicatorVariant;
-    });
-
-function ResolvedFullscreenChatOverlay({
+export function FullscreenChatOverlay({
   messages,
   open,
   onOpenChange,
@@ -407,14 +391,14 @@ function ResolvedFullscreenChatOverlay({
   disabled,
   canSend,
   isThinking,
-  resolvedLoadingIndicatorVariant,
+  loadingIndicatorVariant,
   onStop,
   onSend,
-}: FullscreenChatOverlayBaseProps & {
-  resolvedLoadingIndicatorVariant: LoadingIndicatorVariant;
-}) {
+}: FullscreenChatOverlayProps) {
   const sandboxHostStyle = useSandboxHostStyle();
   const sandboxHostTheme = useSandboxHostTheme();
+  const resolvedLoadingIndicatorVariant =
+    useResolvedLoadingIndicatorVariant(loadingIndicatorVariant);
   const resolvedThemeMode = sandboxHostTheme ?? "light";
   const isDarkSandboxTheme = resolvedThemeMode === "dark";
   const appearance = useMemo(
@@ -463,36 +447,4 @@ function ResolvedFullscreenChatOverlay({
       </div>
     </div>
   );
-}
-
-function SelfResolvingFullscreenChatOverlay({
-  loadingIndicatorVariant,
-  ...props
-}: FullscreenChatOverlayBaseProps & {
-  loadingIndicatorVariant?: LoadingIndicatorVariant;
-}) {
-  const resolvedLoadingIndicatorVariant =
-    useResolvedLoadingIndicatorVariant(loadingIndicatorVariant);
-
-  return (
-    <ResolvedFullscreenChatOverlay
-      {...props}
-      resolvedLoadingIndicatorVariant={resolvedLoadingIndicatorVariant}
-    />
-  );
-}
-
-export function FullscreenChatOverlay(props: FullscreenChatOverlayProps) {
-  if (props.resolvedLoadingIndicatorVariant !== undefined) {
-    const { resolvedLoadingIndicatorVariant, ...rest } = props;
-
-    return (
-      <ResolvedFullscreenChatOverlay
-        {...rest}
-        resolvedLoadingIndicatorVariant={resolvedLoadingIndicatorVariant}
-      />
-    );
-  }
-
-  return <SelfResolvingFullscreenChatOverlay {...props} />;
 }

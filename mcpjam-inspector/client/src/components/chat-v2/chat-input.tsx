@@ -230,9 +230,13 @@ export function ChatInput({
   const [addServerModalOpen, setAddServerModalOpen] = useState(false);
   const [systemPromptOpen, setSystemPromptOpen] = useState(false);
   const selectorHostStyle = hostStyle ?? sandboxHostStyle;
+  const hasServerRows = Boolean(
+    allServerConfigs &&
+      onServerToggle &&
+      Object.keys(allServerConfigs).length > 0,
+  );
   const hasServerOptions = Boolean(
-    onAddServer ||
-      (allServerConfigs && Object.keys(allServerConfigs).length > 0),
+    onAddServer || hasServerRows,
   );
   const showHostStyleSelectorControl =
     showHostStyleSelector &&
@@ -745,7 +749,9 @@ export function ChatInput({
                     <div
                       className={cn(
                         "px-1 pb-1",
-                        hasServerOptions && "border-t border-border mt-1 pt-1",
+                        allServerConfigs &&
+                          Object.keys(allServerConfigs).length > 0 &&
+                          "border-t border-border mt-1 pt-1",
                       )}
                     >
                       {onChangeFileAttachments && (

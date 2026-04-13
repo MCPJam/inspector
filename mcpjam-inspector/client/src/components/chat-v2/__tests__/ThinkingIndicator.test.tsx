@@ -40,7 +40,9 @@ describe("ThinkingIndicator", () => {
     );
 
   it("renders a leading assistant avatar outside host-style contexts", () => {
-    renderThinkingIndicator(<ThinkingIndicator model={defaultModel} />);
+    renderThinkingIndicator(
+      <ThinkingIndicator model={defaultModel} resolvedVariant="default" />,
+    );
 
     expect(screen.getByRole("img")).toBeInTheDocument();
     expect(screen.getByLabelText("GPT-4 assistant")).toBeInTheDocument();
@@ -49,7 +51,7 @@ describe("ThinkingIndicator", () => {
   it("hides the leading assistant avatar in sandbox host-style contexts", () => {
     renderThinkingIndicator(
       <SandboxHostStyleProvider value="claude">
-        <ThinkingIndicator model={defaultModel} />
+        <ThinkingIndicator model={defaultModel} resolvedVariant="default" />
       </SandboxHostStyleProvider>,
     );
 
@@ -58,7 +60,9 @@ describe("ThinkingIndicator", () => {
   });
 
   it("keeps the default visible thinking label", () => {
-    renderThinkingIndicator(<ThinkingIndicator model={defaultModel} />);
+    renderThinkingIndicator(
+      <ThinkingIndicator model={defaultModel} resolvedVariant="default" />,
+    );
 
     expect(screen.getByText(/Thinking/)).toBeInTheDocument();
     expect(

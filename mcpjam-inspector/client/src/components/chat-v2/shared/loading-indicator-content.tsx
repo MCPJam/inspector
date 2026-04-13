@@ -5,18 +5,6 @@ import { ClaudeLoadingIndicator } from "./claude-loading-indicator";
 
 export type LoadingIndicatorVariant = "default" | "chatgpt-dot" | "claude-mark";
 
-type LoadingIndicatorContentProps =
-  | {
-      resolvedVariant: LoadingIndicatorVariant;
-      variant?: never;
-      className?: string;
-    }
-  | {
-      resolvedVariant?: undefined;
-      variant?: LoadingIndicatorVariant;
-      className?: string;
-    };
-
 export function getLoadingIndicatorVariantForHostStyle(
   hostStyle: SandboxHostStyle | null | undefined,
 ): LoadingIndicatorVariant {
@@ -74,13 +62,15 @@ export function useResolvedLoadingIndicatorVariant(
   });
 }
 
-function ResolvedLoadingIndicatorContent({
-  resolvedVariant,
+export function LoadingIndicatorContent({
+  variant,
   className,
 }: {
-  resolvedVariant: LoadingIndicatorVariant;
+  variant?: LoadingIndicatorVariant;
   className?: string;
 }) {
+  const resolvedVariant = useResolvedLoadingIndicatorVariant(variant);
+
   if (resolvedVariant === "claude-mark") {
     return <ClaudeLoadingIndicator className={className} />;
   }
@@ -111,40 +101,5 @@ function ResolvedLoadingIndicatorContent({
         </span>
       </span>
     </span>
-  );
-}
-
-function SelfResolvingLoadingIndicatorContent({
-  variant,
-  className,
-}: {
-  variant?: LoadingIndicatorVariant;
-  className?: string;
-}) {
-  const resolvedVariant = useResolvedLoadingIndicatorVariant(variant);
-
-  return (
-    <ResolvedLoadingIndicatorContent
-      resolvedVariant={resolvedVariant}
-      className={className}
-    />
-  );
-}
-
-export function LoadingIndicatorContent(props: LoadingIndicatorContentProps) {
-  if (props.resolvedVariant !== undefined) {
-    return (
-      <ResolvedLoadingIndicatorContent
-        resolvedVariant={props.resolvedVariant}
-        className={props.className}
-      />
-    );
-  }
-
-  return (
-    <SelfResolvingLoadingIndicatorContent
-      variant={props.variant}
-      className={props.className}
-    />
   );
 }
