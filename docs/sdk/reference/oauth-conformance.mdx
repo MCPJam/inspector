@@ -1,328 +1,27 @@
 ---
-title: "OAuth Conformance"
-description: "Test your MCP server's OAuth implementation across all registration methods and protocol versions"
+title: "OAuth Conformance SDK"
+description: "Programmatic OAuth conformance testing with OAuthConformanceTest and OAuthConformanceSuite"
 icon: "shield-check"
 ---
 
-The OAuth Conformance module tests that your MCP server correctly implements the [MCP OAuth specification](https://modelcontextprotocol.io/specification/draft/basic/authorization). It walks through the full OAuth handshake — discovery, registration, authorization, token exchange — and optionally verifies the token works by connecting to the server and listing tools.
-
-Use it to validate that real MCP clients (Claude Desktop, ChatGPT, Claude Code, etc.) will be able to authenticate with your server.
-
-## What it tests
-
-Each conformance run walks through:
-
-1. **Initial request** — Sends an unauthenticated request to trigger a 401
-2. **Discovery** — Fetches resource metadata and authorization server metadata
-3. **Registration** — Registers the client via CIMD, DCR, or pre-registered credentials
-4. **Authorization** — Obtains an authorization code (interactive, headless, or client_credentials)
-5. **Token exchange** — Exchanges the code for access/refresh tokens
-6. **Authenticated request** — Retries the MCP request with the token
-7. **Post-auth verification** (optional) — Connects via MCP and lists tools / calls a tool
-
-## Registration strategies
-
-| Strategy | Description | Protocol versions |
-|----------|-------------|-------------------|
-| `cimd` | Client ID Metadata Document — the client publishes its identity at a URL | 2025-11-25 only |
-| `dcr` | Dynamic Client Registration — the client registers itself at runtime | All |
-| `preregistered` | Pre-registered client ID and optional secret | All |
-
-## Auth modes
-
-| Mode | Use case | User interaction |
-|------|----------|-----------------|
-| `headless` | CI/CD with auto-consenting auth servers | None |
-| `interactive` | Local dev — opens browser for consent | Browser popup |
-| `client_credentials` | Machine-to-machine (M2M) service accounts | None |
-
-### Compatibility
-
-Not every combination is valid. The runner rejects unsupported pairs before making any HTTP requests.
-
-| Registration | `headless` | `interactive` | `client_credentials` |
-|--------------|:----------:|:-------------:|:--------------------:|
-| `cimd` (2025-11-25 only) | ✅ | ✅ | ❌ |
-| `dcr` | ✅ | ✅ | ✅ (secret returned by DCR) |
-| `preregistered` | ✅ | ✅ | ✅ (requires `--client-secret`) |
-
-`cimd` + `client_credentials` is explicitly rejected: CIMD identifies a public client by a metadata URL and has no client secret to authenticate an M2M token request.
-
----
-
-## CLI Usage
+The OAuth Conformance SDK classes let you run the same flows the [CLI `oauth conformance`](/cli/oauth-conformance) command runs, but programmatically — for custom reporters, test frameworks, recording/replay via custom `fetchFn`, or Playwright-driven consent via `openUrl`.
 
 <Note>
-  All examples use `npx -y @mcpjam/cli@latest` so each run picks up the
-  newest published build and `-y` auto-accepts the install prompt in non-interactive
-  shells (CI, scripted agents). Drop `@latest` if you want npx's cached copy.
+  For CLI usage (one-liners, CI recipes, troubleshooting), see [CLI: OAuth Conformance](/cli/oauth-conformance).
+  This page covers the TypeScript SDK only.
 </Note>
 
-### Quick start — interactive DCR (local dev)
-
-The simplest one-liner. Opens a browser for consent, registers a fresh client via DCR, then verifies the token by listing tools.
-
-```bash
-npx -y @mcpjam/cli@latest oauth conformance \
-  --url https://your-server.com/mcp \
-  --protocol-version 2025-11-25 \
-  --registration dcr \
-  --auth-mode interactive \
-  --verify-tools
-```
-
-### Headless DCR (CI against an auto-consenting auth server)
-
-```bash
-npx -y @mcpjam/cli@latest oauth conformance \
-  --url https://your-server.com/mcp \
-  --protocol-version 2025-11-25 \
-  --registration dcr \
-  --auth-mode headless \
-  --verify-tools
-```
-
-### Preregistered + interactive
-
-Use this when the auth server doesn't support DCR and you've already registered a client out-of-band. Pass the exact `--redirect-url` that's allow-listed on the client record.
-
-```bash
-npx -y @mcpjam/cli@latest oauth conformance \
-  --url https://your-server.com/mcp \
-  --protocol-version 2025-11-25 \
-  --registration preregistered \
-  --auth-mode interactive \
-  --client-id "$OAUTH_CLIENT_ID" \
-  --client-secret "$OAUTH_CLIENT_SECRET" \
-  --redirect-url http://localhost:6274/oauth/callback \
-  --verify-tools
-```
-
-<Warning>
-  Prefer environment variables for `--client-secret`. Passing it inline leaks it
-  to shell history and process listings.
-</Warning>
-
-### CIMD (2025-11-25)
-
-Client ID Metadata Document registration — the server fetches your client's identity from `--client-metadata-url`. If omitted, the runner falls back to mcpjam's public metadata document, so you can try a CIMD flow with zero CIMD config:
-
-```bash
-npx -y @mcpjam/cli@latest oauth conformance \
-  --url https://your-server.com/mcp \
-  --protocol-version 2025-11-25 \
-  --registration cimd \
-  --auth-mode interactive \
-  --verify-tools
-```
-
-To publish and test your own metadata document:
-
-```bash
-npx -y @mcpjam/cli@latest oauth conformance \
-  --url https://your-server.com/mcp \
-  --protocol-version 2025-11-25 \
-  --registration cimd \
-  --auth-mode interactive \
-  --client-metadata-url https://your-app.com/.well-known/oauth-client \
-  --verify-tools
-```
-
-### All options
-
-| Flag | Required | Default | Description |
-|------|----------|---------|-------------|
-| `--url <url>` | Yes | — | MCP server URL |
-| `--protocol-version <v>` | Yes | — | `2025-03-26`, `2025-06-18`, or `2025-11-25` |
-| `--registration <s>` | Yes | — | `cimd`, `dcr`, or `preregistered` |
-| `--auth-mode <m>` | No | `headless` | `headless`, `interactive`, or `client_credentials` |
-| `--client-id <id>` | No | — | OAuth client ID (required for `preregistered`) |
-| `--client-secret <s>` | No | — | OAuth client secret |
-| `--client-metadata-url <url>` | No | — | Client metadata URL for CIMD |
-| `--redirect-url <url>` | No | Auto-generated | OAuth redirect URL to use for the run |
-| `--scopes <scopes>` | No | — | Space-separated scope string |
-| `--header <header>` | No | — | Custom HTTP header (`Key: Value`). Repeatable. |
-| `--step-timeout <ms>` | No | `30000` | Per-step timeout in milliseconds |
-| `--verify-tools` | No | — | After OAuth, connect and list tools |
-| `--verify-call-tool <name>` | No | — | Also call the named tool after listing |
-| `--format <fmt>` | No | `human` on TTY, `json` otherwise | `json`, `human`, or `junit-xml` |
-
-### Human vs JSON output
-
-- Interactive terminal runs default to `--format human`, which prints a compact OAuth-specific report.
-- Piped or redirected runs default to `--format json`, so CI, `jq`, and agent workflows still receive the full raw result unchanged.
-- `--format json`, `--format human`, and `--format junit-xml` always override the default.
-
-### Redirect URL behavior
-
-- `--redirect-url` is passed directly to `OAuthConformanceConfig.redirectUrl`.
-- For `interactive` auth mode, the SDK still enforces loopback redirects only: `http://localhost/.../callback` or `http://127.0.0.1/.../callback`.
-- For `headless` and `client_credentials`, the CLI only validates that the value is a syntactically valid URL.
-
-### Example human-readable failure output
-
-```text
-OAuth conformance: FAILED
-Server: https://mcp.asana.com/v2/mcp
-Flow: 2025-06-18 / dcr
-Summary: OAuth conformance failed at received_authorization_code: Headless authorization requires auto-consent. The authorization endpoint returned a 200 response instead of redirecting back with a code.
-
-Failure
-Step: received_authorization_code
-HTTP: 200 OK
-URL: https://app.asana.com/-/oauth_authorize?...
-Content-Type: text/html; charset=utf-8
-Page title: Log in - Asana
-Snippet: Welcome to Asana To get started, please sign in ...
-Hint: Authorization endpoint returned an HTML login page instead of redirecting back to the callback URL.
-```
-
-### Client credentials (M2M)
-
-For CI pipelines where no browser is available and your auth server supports `client_credentials`:
-
-```bash
-npx -y @mcpjam/cli@latest oauth conformance \
-  --url https://your-server.com/mcp \
-  --protocol-version 2025-11-25 \
-  --registration preregistered \
-  --auth-mode client_credentials \
-  --client-id "$M2M_CLIENT_ID" \
-  --client-secret "$M2M_CLIENT_SECRET" \
-  --verify-tools
-```
-
----
-
-## Suite runner
-
-Test multiple OAuth flows in one invocation using a JSON config file.
-
-### Config file format
-
-```json
-{
-  "name": "My Server OAuth Conformance",
-  "serverUrl": "https://your-server.com/mcp",
-  "defaults": {
-    "stepTimeout": 15000,
-    "verification": { "listTools": true }
-  },
-  "flows": [
-    {
-      "label": "CIMD (2025-11-25)",
-      "protocolVersion": "2025-11-25",
-      "registrationStrategy": "cimd",
-      "auth": { "mode": "interactive" }
-    },
-    {
-      "label": "DCR (2025-11-25)",
-      "protocolVersion": "2025-11-25",
-      "registrationStrategy": "dcr",
-      "auth": { "mode": "interactive" }
-    },
-    {
-      "label": "M2M client_credentials",
-      "protocolVersion": "2025-11-25",
-      "registrationStrategy": "preregistered",
-      "client": {
-        "preregistered": {
-          "clientId": "my-m2m-client-id",
-          "clientSecret": "my-m2m-client-secret"
-        }
-      },
-      "auth": {
-        "mode": "client_credentials",
-        "clientId": "my-m2m-client-id",
-        "clientSecret": "my-m2m-client-secret"
-      }
-    }
-  ]
-}
-```
-
-Each flow inherits from `defaults` and can override any field. The `serverUrl` is shared across all flows.
-
-### Running the suite
-
-```bash
-# JSON output (for agents)
-npx -y @mcpjam/cli@latest oauth conformance-suite --config ./oauth-tests.json --format json
-
-# Human-readable (default on a TTY)
-npx -y @mcpjam/cli@latest oauth conformance-suite --config ./oauth-tests.json --format human
-
-# JUnit XML (for CI)
-npx -y @mcpjam/cli@latest oauth conformance-suite --config ./oauth-tests.json --format junit-xml > report.xml
-```
-
-<Note>
-  `--verify-tools` and `--verify-call-tool` on the suite command are forced onto
-  **every** flow (and the suite defaults). Per-flow `verification` entries in
-  the config file cannot disable them once the CLI flag is set.
-</Note>
-
-### Suite options
-
-| Flag | Required | Default | Description |
-|------|----------|---------|-------------|
-| `--config <path>` | Yes | — | Path to JSON config file |
-| `--verify-tools` | No | — | Enable tool listing on all flows |
-| `--verify-call-tool <name>` | No | — | Call the named tool after listing |
-| `--format <fmt>` | No | `human` on TTY, `json` otherwise | `json`, `human`, or `junit-xml` |
-
----
-
-## CI/CD Integration
-
-### GitLab CI
-
-```yaml
-oauth-conformance:
-  stage: test
-  script:
-    - npx -y @mcpjam/cli@latest oauth conformance-suite
-        --config ./oauth-tests.json
-        --format junit-xml > report.xml
-  artifacts:
-    reports:
-      junit: report.xml
-```
-
-### GitHub Actions
-
-```yaml
-- name: OAuth Conformance
-  run: |
-    npx -y @mcpjam/cli@latest oauth conformance \
-      --url ${{ secrets.MCP_SERVER_URL }} \
-      --protocol-version 2025-11-25 \
-      --registration preregistered \
-      --auth-mode client_credentials \
-      --client-id ${{ secrets.M2M_CLIENT_ID }} \
-      --client-secret ${{ secrets.M2M_CLIENT_SECRET }} \
-      --verify-tools
-```
-
-### Exit codes
-
-| Code | Meaning |
-|------|---------|
-| `0` | All flows passed |
-| `1` | One or more flows failed |
-| `2` | Invalid arguments or config |
-
----
-
-## SDK Usage
-
-Use the SDK directly for programmatic testing, custom reporters, or integration into your own test framework.
-
-### Single flow
+## Import
 
 ```typescript
-import { OAuthConformanceTest } from "@mcpjam/sdk";
+import { OAuthConformanceTest, OAuthConformanceSuite } from "@mcpjam/sdk";
+```
 
+---
+
+## Single flow
+
+```typescript
 const test = new OAuthConformanceTest({
   serverUrl: "https://your-server.com/mcp",
   protocolVersion: "2025-11-25",
@@ -342,21 +41,20 @@ console.log(result.steps);    // Step-by-step results with HTTP traces
 
 | Property | Type | Required | Default | Description |
 |----------|------|----------|---------|-------------|
-| `serverUrl` | `string` | Yes | — | MCP server URL |
-| `protocolVersion` | `string` | Yes | — | `2025-03-26`, `2025-06-18`, or `2025-11-25` |
-| `registrationStrategy` | `string` | Yes | — | `cimd`, `dcr`, or `preregistered` |
+| `serverUrl` | `string` | Yes | | MCP server URL |
+| `protocolVersion` | `string` | Yes | | `2025-03-26`, `2025-06-18`, or `2025-11-25` |
+| `registrationStrategy` | `string` | Yes | | `cimd`, `dcr`, or `preregistered` |
 | `auth` | `OAuthConformanceAuthConfig` | No | `{ mode: "interactive" }` | Auth mode config |
 | `client` | `OAuthConformanceClientConfig` | No | `{}` | Client credentials config |
 | `verification` | `OAuthVerificationConfig` | No | `{}` | Post-auth verification config |
-| `scopes` | `string` | No | — | Space-separated scope string (e.g. `"read:tools write:tools"`) |
-| `customHeaders` | `Record<string, string>` | No | — | Extra HTTP headers |
+| `scopes` | `string` | No | | Space-separated scope string |
+| `customHeaders` | `Record<string, string>` | No | | Extra HTTP headers |
 | `redirectUrl` | `string` | No | Auto-generated | OAuth redirect URL |
-| `fetchFn` | `typeof fetch` | No | `fetch` | Custom fetch (useful for testing) |
+| `fetchFn` | `typeof fetch` | No | `fetch` | Custom fetch for recording/replay |
 | `stepTimeout` | `number` | No | `30000` | Per-step timeout in ms |
+| `oauthConformanceChecks` | `boolean` | No | `false` | Run 3 additional negative checks post-flow |
 
 ### OAuthConformanceAuthConfig
-
-A discriminated union on `mode`:
 
 ```typescript
 type OAuthConformanceAuthConfig =
@@ -369,31 +67,102 @@ type OAuthConformanceAuthConfig =
     };
 ```
 
-- `interactive.openUrl` — override how the consent URL is opened. Default is to launch the system browser. Useful for custom launchers or pointing an automated browser (Playwright, etc.) at the URL.
-- `client_credentials` requires both `clientId` and `clientSecret` on the auth object itself, even when `registrationStrategy` is `dcr` (in which case the values are replaced at runtime by the DCR response).
+- `interactive.openUrl` — override how the consent URL is opened. Default launches the system browser. Use for Playwright, custom launchers, or logging the URL.
 
 ### OAuthConformanceClientConfig
 
 | Property | Type | Description |
 |----------|------|-------------|
 | `preregistered.clientId` | `string` | Required when `registrationStrategy === "preregistered"` |
-| `preregistered.clientSecret` | `string` | Required for `preregistered` + `client_credentials`; optional otherwise |
-| `dynamicRegistration` | `Partial<OAuthDynamicRegistrationMetadata>` | Overrides sent during DCR (e.g. `client_name`, `logo_uri`, `scope`). SDK-only — not exposed via CLI |
-| `clientIdMetadataUrl` | `string` | CIMD metadata document URL. If omitted for `cimd` runs, the runner falls back to a default mcpjam-hosted metadata document |
+| `preregistered.clientSecret` | `string` | Required for `preregistered` + `client_credentials` |
+| `dynamicRegistration` | `Partial<OAuthDynamicRegistrationMetadata>` | Override the default DCR body (e.g. `client_name`, `logo_uri`, `scope`) |
+| `clientIdMetadataUrl` | `string` | CIMD metadata URL. Defaults to `https://www.mcpjam.com/.well-known/oauth/client-metadata.json` |
 
 ### OAuthVerificationConfig
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
-| `listTools` | `boolean` | `false` (or `true` if `callTool` is set) | Connect to the MCP server and list tools after auth |
-| `callTool` | `{ name, params? }` | — | Also call the named tool. Implicitly enables `listTools`. |
+| `listTools` | `boolean` | `false` | Connect and call `tools/list` after auth |
+| `callTool` | `{ name, params? }` | | Also call the named tool (enables `listTools`) |
 | `timeout` | `number` | `30000` | Verification timeout in ms |
 
-### Suite
+---
+
+## SDK-only features
+
+These are available in the SDK but not exposed as CLI flags.
+
+### Custom fetch (`fetchFn`)
+
+Swap in a recording, mocking, or proxying fetch implementation:
 
 ```typescript
-import { OAuthConformanceSuite } from "@mcpjam/sdk";
+import { OAuthConformanceTest } from "@mcpjam/sdk";
 
+const requests: Request[] = [];
+
+const test = new OAuthConformanceTest({
+  serverUrl: "https://your-server.com/mcp",
+  protocolVersion: "2025-11-25",
+  registrationStrategy: "dcr",
+  fetchFn: async (url, init) => {
+    requests.push(new Request(url, init));
+    return fetch(url, init);
+  },
+});
+
+const result = await test.run();
+console.log(`Captured ${requests.length} HTTP requests`);
+```
+
+### DCR metadata overrides (`dynamicRegistration`)
+
+Customize the client metadata sent during Dynamic Client Registration:
+
+```typescript
+const test = new OAuthConformanceTest({
+  serverUrl: "https://your-server.com/mcp",
+  protocolVersion: "2025-11-25",
+  registrationStrategy: "dcr",
+  client: {
+    dynamicRegistration: {
+      client_name: "My Custom Test Client",
+      logo_uri: "https://example.com/logo.png",
+      scope: "read:tools write:tools",
+    },
+  },
+});
+```
+
+### Negative conformance checks (`oauthConformanceChecks`)
+
+When enabled, three extra checks run after a successful flow:
+
+1. **Invalid client** — sends a token request with an unknown `client_id`; expects rejection.
+2. **Invalid redirect** — sends a token request with a mismatched `redirect_uri`; expects rejection.
+3. **Token format** — validates the token response includes `access_token`, `token_type`, and expiration metadata.
+
+```typescript
+const test = new OAuthConformanceTest({
+  serverUrl: "https://your-server.com/mcp",
+  protocolVersion: "2025-11-25",
+  registrationStrategy: "dcr",
+  oauthConformanceChecks: true,
+});
+
+const result = await test.run();
+// result.steps will include oauth_invalid_client, oauth_invalid_redirect, oauth_token_format
+```
+
+<Note>
+  `oauthConformanceChecks` is also available via the CLI's `--conformance-checks` flag.
+</Note>
+
+---
+
+## Suite
+
+```typescript
 const suite = new OAuthConformanceSuite({
   name: "My Server",
   serverUrl: "https://your-server.com/mcp",
@@ -412,9 +181,13 @@ const result = await suite.run();
 console.log(result.passed);   // true
 console.log(result.summary);  // "All 2 flows passed for ..."
 for (const flow of result.results) {
-  console.log(`${flow.label}: ${flow.passed ? "PASS" : "FAIL"}`);
+  console.log(`${flow.passed ? "PASS" : "FAIL"} ${flow.label}`);
 }
 ```
+
+---
+
+## Result types
 
 ### ConformanceResult
 
@@ -433,25 +206,38 @@ for (const flow of result.results) {
 
 | Property | Type | Description |
 |----------|------|-------------|
-| `step` | `OAuthFlowStep` | Step identifier (e.g. `"discovery"`, `"received_authorization_code"`) |
+| `step` | `string` | Step identifier (e.g. `"discovery"`, `"token_request"`, `"verify_list_tools"`) |
 | `title` | `string` | Human-readable step name |
-| `summary` | `string` | Short result summary for this step |
+| `summary` | `string` | Short result summary |
 | `status` | `"passed" \| "failed" \| "skipped"` | Step outcome |
 | `durationMs` | `number` | Step duration |
-| `logs` | `InfoLogEntry[]` | Structured log entries emitted during the step |
-| `http` | `HttpHistoryEntry` | The primary HTTP exchange for the step (if any) |
-| `httpAttempts` | `HttpHistoryEntry[]` | All HTTP request/response traces, including retries |
+| `logs` | `InfoLogEntry[]` | Structured log entries |
+| `http` | `HttpHistoryEntry` | Primary HTTP exchange (if any) |
+| `httpAttempts` | `HttpHistoryEntry[]` | All HTTP traces including retries |
 | `error` | `{ message, details? }` | Error info (if failed) |
-| `teachableMoments` | `string[]` | Educational notes for this step |
+| `teachableMoments` | `string[]` | Educational hints for this step |
+
+### VerificationResult
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `listTools.passed` | `boolean` | Whether `tools/list` succeeded |
+| `listTools.toolCount` | `number` | Number of tools returned |
+| `listTools.durationMs` | `number` | Duration |
+| `listTools.error` | `string` | Error message if failed |
+| `callTool.passed` | `boolean` | Whether the tool call succeeded |
+| `callTool.toolName` | `string` | Name of the tool called |
+| `callTool.durationMs` | `number` | Duration |
+| `callTool.error` | `string` | Error message if failed |
 
 ### OAuthConformanceSuiteResult
 
 | Property | Type | Description |
 |----------|------|-------------|
-| `name` | `string` | Suite name from config |
+| `name` | `string` | Suite name |
 | `serverUrl` | `string` | Shared server URL |
 | `passed` | `boolean` | `true` iff every flow passed |
-| `results` | `Array<ConformanceResult & { label: string }>` | Per-flow results |
+| `results` | `Array<ConformanceResult & { label }>` | Per-flow results |
 | `summary` | `string` | Human-readable suite summary |
 | `durationMs` | `number` | Total suite duration |
 
@@ -459,5 +245,6 @@ for (const flow of result.results) {
 
 ## Related
 
-- [OAuth Debugger](/inspector/guided-oauth) — Visual OAuth debugging in the Inspector UI
-- [MCPClientManager](/sdk/reference/mcp-client-manager) — Connecting to MCP servers programmatically
+- [CLI: OAuth Conformance](/cli/oauth-conformance) — recipes, troubleshooting, CI integration
+- [CLI: OAuth Login](/cli/oauth-login) — interactive authentication and debugging
+- [MCPClientManager](/sdk/reference/mcp-client-manager) — connecting to MCP servers programmatically
