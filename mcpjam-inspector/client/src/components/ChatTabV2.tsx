@@ -86,6 +86,7 @@ import { HOSTED_MODE } from "@/lib/config";
 import { buildOAuthTokensByServerId } from "@/lib/oauth/oauth-tokens";
 import type { HostedOAuthRequiredDetails } from "@/lib/hosted-oauth-required";
 import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
+import { useModelSelectorLayoutLock } from "@/hooks/use-model-selector-layout-lock";
 import { LiveTraceTimelineEmptyState } from "@/components/evals/live-trace-timeline-empty";
 import { LiveTraceRawEmptyState } from "@/components/evals/live-trace-raw-empty";
 import { TraceViewer } from "@/components/evals/trace-viewer";
@@ -1068,6 +1069,8 @@ export function ChatTabV2({
   // The user can still toggle multi-model for new chats afterward.
   const isMultiModelMode =
     canEnableMultiModel && multiModelEnabled && !activeHistorySessionId;
+  const { isMultiModelLayoutMode, onModelSelectorOpenChange } =
+    useModelSelectorLayoutLock(isMultiModelMode);
 
   useEffect(() => {
     if (isMultiModelMode && resolvedSelectedModels[0]) {
@@ -1145,13 +1148,13 @@ export function ChatTabV2({
     prevCompareModelIdsRef.current = current;
   }, [isMultiModelMode, resolvedSelectedModels]);
 
-  const effectiveHasMessages = isMultiModelMode
+  const effectiveHasMessages = isMultiModelLayoutMode
     ? Object.values(multiModelHasMessages).some(Boolean)
     : !isThreadEmpty;
   const showTopTraceViewTabs =
     traceViewsSupported &&
     !minimalMode &&
-    (!isMultiModelMode || !effectiveHasMessages);
+    (!isMultiModelLayoutMode || !effectiveHasMessages);
   const activeTraceViewMode: ChatTraceViewMode = showTopTraceViewTabs
     ? traceViewMode
     : "chat";
@@ -1838,6 +1841,7 @@ export function ChatTabV2({
     currentModel: selectedModel,
     availableModels,
     onModelChange: handleSingleModelChange,
+    onModelSelectorOpenChange,
     multiModelEnabled: isMultiModelMode,
     selectedModels: resolvedSelectedModels,
     onSelectedModelsChange: handleSelectedModelsChange,
@@ -1947,7 +1951,7 @@ export function ChatTabV2({
               transform: isWidgetFullscreen ? "none" : "translateZ(0)",
             }}
           >
-            {isMultiModelMode ? (
+            {isMultiModelLayoutMode ? (
               <div className="flex flex-1 min-h-0 flex-col overflow-hidden">
                 {showTopTraceViewTabs ? (
                   <ChatTraceViewModeHeaderBar
