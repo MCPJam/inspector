@@ -86,6 +86,7 @@ interface ChatInputProps {
   currentModel: ModelDefinition;
   availableModels: ModelDefinition[];
   onModelChange: (model: ModelDefinition) => void;
+  onModelSelectorOpenChange?: (open: boolean) => void;
   multiModelEnabled?: boolean;
   selectedModels?: ModelDefinition[];
   onSelectedModelsChange?: (models: ModelDefinition[]) => void;
@@ -155,6 +156,7 @@ export function ChatInput({
   currentModel,
   availableModels,
   onModelChange,
+  onModelSelectorOpenChange,
   multiModelEnabled = false,
   selectedModels,
   onSelectedModelsChange,
@@ -786,6 +788,7 @@ export function ChatInput({
                   currentModel={currentModel}
                   availableModels={availableModels}
                   onModelChange={onModelChange}
+                  onOpenChange={onModelSelectorOpenChange}
                   isLoading={isLoading}
                   hasMessages={hasMessages}
                   enableMultiModel={enableMultiModel}

@@ -479,6 +479,24 @@ export function PlaygroundMain({
   const canEnableMultiModel =
     enableMultiModelChat && availableModels.length > 1;
   const isMultiModelMode = canEnableMultiModel && multiModelEnabled;
+  const [isModelSelectorOpen, setIsModelSelectorOpen] = useState(false);
+  const [multiModelLayoutModeWhileSelectorOpen, setMultiModelLayoutModeWhileSelectorOpen] =
+    useState<boolean | null>(null);
+  const isMultiModelLayoutMode = isModelSelectorOpen
+    ? (multiModelLayoutModeWhileSelectorOpen ?? isMultiModelMode)
+    : isMultiModelMode;
+
+  const handleModelSelectorOpenChange = useCallback(
+    (open: boolean) => {
+      setIsModelSelectorOpen(open);
+      if (open) {
+        setMultiModelLayoutModeWhileSelectorOpen(isMultiModelMode);
+      } else {
+        setMultiModelLayoutModeWhileSelectorOpen(null);
+      }
+    },
+    [isMultiModelMode],
+  );
 
   useEffect(() => {
     if (isMultiModelMode && resolvedSelectedModels[0]) {
@@ -557,7 +575,7 @@ export function PlaygroundMain({
     prevCompareModelIdsRef.current = current;
   }, [isMultiModelMode, resolvedSelectedModels]);
 
-  const effectiveHasMessages = isMultiModelMode
+  const effectiveHasMessages = isMultiModelLayoutMode
     ? Object.values(multiModelHasMessages).some(Boolean)
     : !isThreadEmpty;
   const preludeTraceEnvelope = useMemo(
@@ -571,7 +589,7 @@ export function PlaygroundMain({
   // Match ChatTabV2 `showTopTraceViewTabs`: keep Trace/Chat/Raw while multi-model is
   // empty; hide the top bar once compare columns are active (per-card trace tabs take over).
   const showTraceViewTabs =
-    traceViewsSupported && (!isMultiModelMode || !effectiveHasMessages);
+    traceViewsSupported && (!isMultiModelLayoutMode || !effectiveHasMessages);
   const activeTraceViewMode: PlaygroundTraceViewMode = showTraceViewTabs
     ? traceViewMode
     : "chat";
@@ -1104,6 +1122,7 @@ export function PlaygroundMain({
     currentModel: selectedModel,
     availableModels,
     onModelChange: handleSingleModelChange,
+    onModelSelectorOpenChange: handleModelSelectorOpenChange,
     multiModelEnabled: isMultiModelMode,
     selectedModels: resolvedSelectedModels,
     onSelectedModelsChange: handleSelectedModelsChange,
@@ -1374,7 +1393,7 @@ export function PlaygroundMain({
     <div
       className={cn(
         "h-full flex flex-col overflow-hidden",
-        showPostConnectGuide || isMultiModelMode
+        showPostConnectGuide || isMultiModelLayoutMode
           ? "bg-background"
           : "bg-muted/20",
       )}
@@ -1385,7 +1404,7 @@ export function PlaygroundMain({
           <div
             className={cn(
               "@container/playground-header relative flex h-11 min-w-0 w-full items-center justify-center border-b border-border px-3 text-xs text-muted-foreground flex-shrink-0",
-              isMultiModelMode ? "bg-background" : "bg-background/50",
+              isMultiModelLayoutMode ? "bg-background" : "bg-background/50",
               effectiveHasMessages && "pr-10 sm:pr-11",
             )}
             data-testid="playground-main-header"
@@ -1447,7 +1466,7 @@ export function PlaygroundMain({
       />
 
       <div className="flex-1 min-h-0 overflow-hidden">
-        {isMultiModelMode ? (
+        {isMultiModelLayoutMode ? (
           <div className="flex h-full min-h-0 flex-col overflow-hidden">
             {showMultiModelTraceEmptyPanel && multiModelTracePanelModel ? (
               <MultiModelEmptyTraceDiagnosticsPanel
