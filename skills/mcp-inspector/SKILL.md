@@ -1,6 +1,6 @@
 ---
 name: mcp-inspector
-description: Interpret `mcpjam-cli` probe, doctor, OAuth, tools, resources, and prompts output conservatively against MCP 2025-11-25. Use when triaging MCP server findings, performing security reviews, deciding whether a CLI finding is real or overstated, or turning inspection output into an engineer-facing report with severity and confidence.
+description: Interpret `mcpjam-cli` probe, doctor, OAuth, apps conformance, tools, resources, and prompts output conservatively against MCP 2025-11-25. Use when triaging MCP server findings, performing security reviews, deciding whether a CLI finding is real or overstated, or turning inspection output into an engineer-facing report with severity and confidence.
 ---
 
 # MCPJam CLI Investigation
@@ -28,10 +28,11 @@ Use this skill when analyzing MCP server behavior from `mcpjam-cli` output. The 
 4. After successful auth, inspect the connected surface with direct commands such as `server info`, `server capabilities`, `tools list`, `resources list/read/templates`, and `prompts list/get`.
 5. Use `server doctor --out <path>` when you need one breadth-first snapshot instead of several single-purpose command outputs.
 6. If the output came from `server doctor` or a `--debug-out` artifact, split it into primary command evidence, probe evidence, and connected-sweep evidence.
-7. If a field may be CLI-added or SDK-normalized, read `references/cli-surface-notes.md` before concluding anything.
-8. If the claim depends on MCP semantics, read `references/mcp-2025-11-25-interpretation.md`.
-9. If the task involves security review, read `references/security-best-practices.md` for the full checklist and follow the security review workflow below.
-10. Write the result using the output contract below.
+7. If the claim is specifically about MCP Apps tool metadata or `ui://` resources, start with `apps conformance --format json` before dropping to `tools list` or `resources read`.
+8. If a field may be CLI-added or SDK-normalized, read `references/cli-surface-notes.md` before concluding anything.
+9. If the claim depends on MCP semantics, read `references/mcp-2025-11-25-interpretation.md`.
+10. If the task involves security review, read `references/security-best-practices.md` for the full checklist and follow the security review workflow below.
+11. Write the result using the output contract below.
 
 ## Security review workflow
 
@@ -102,7 +103,8 @@ Use `pending` instead of manufacturing a `medium` or `high` security severity fr
 - `server doctor`: combined triage artifact for probe plus connected behavior. Good for breadth, not always sufficient to prove wire-level behavior by itself.
 - `oauth metadata`, `oauth proxy`, `oauth debug-proxy`: exact endpoint and metadata inspection when conformance output looks surprising.
 - `oauth login`: obtain reusable credentials and verify the authenticated MCP path. Use this when the goal is to inspect a server that requires OAuth, then follow it with connected commands rather than stopping at the login result.
-- `oauth conformance`, `oauth conformance-suite`: flow-level auth checks. Treat these as targeted probes, not a complete security review.
+- `oauth conformance`, `oauth conformance-suite`: flow-level auth checks. Treat these as targeted probes, not a complete security review. When `--conformance-checks` is enabled, the command can directly probe DCR non-loopback `http://` redirects, invalid client rejection, authorization-endpoint redirect mismatch handling, invalid bearer-token rejection at the MCP server, and token-endpoint redirect mismatch handling.
+- `apps conformance`: server-side MCP Apps checks for `_meta.ui.resourceUri`, `ui://` resources, `resources/read`, HTML MIME and payload shape, and `_meta.ui` metadata. Use this for MCP Apps surface triage.
 - `server info`, `server capabilities`, `server validate`, `server ping`, `server export`: connected behavior after initialization and auth.
 - `tools list` and `tools call`, `resources list/read/templates`, `prompts list/get/list-multi`: direct post-connect capability checks.
 - Prefer `--format json`. Add `--rpc` when available if you need request and response evidence rather than a summary. Add `--debug-out` when you need a failure-safe artifact, not as a replacement for raw evidence.
@@ -138,12 +140,14 @@ For each claimed security-review finding, return:
 - Never call `toolsMetadata` an MCP server field.
 - Never infer prompt support from an empty prompts list unless you have raw RPC evidence that `prompts/list` was actually sent and answered by the server.
 - Never stop at `oauth_required` when the user asked to inspect the authenticated server surface and the CLI can complete login. Authenticate and continue with post-login commands when feasible.
+- Never treat a passing `apps conformance` result as full SEP-1865 conformance. The current command is server-side only and does not prove host lifecycle, sandbox proxy, or postMessage bridge behavior.
 - Never treat missing optional metadata such as `outputSchema`, content annotations, `scopes_supported`, or `scope` hints as a hard failure without a `MUST`.
 - Separate OAuth RFC violations from MCP profile preferences.
 - Distinguish "the server correctly rejected a bad request" from "the overall design is secure."
 - Treat `--debug-out` artifacts as aggregated evidence envelopes, not pure wire captures.
 - Never flag missing `scopes_supported` or missing `scope` in `WWW-Authenticate` as a security issue. Both are optional.
 - Never claim a server is "secure" based solely on it rejecting one specific bad input. A single negative test does not prove broader security posture.
+- Never treat a passing `oauth_invalid_token` or redirect-mismatch probe as proof that the whole authorization design is secure. Those checks only prove the exact case that was sent.
 - Never let a checklist hit assign `high` security severity by itself.
 - JWT `aud` mismatch is not token passthrough proof unless you show the server accepts a token issued for a different audience or resource, or otherwise misbinds the token.
 - Supporting `plain` PKCE is usually hardening only. It cannot compound with attacker-owned-client DCR flows where the attacker chose the verifier.

@@ -166,7 +166,7 @@ Plus shared connection flags.
 | `--step-timeout <ms>` | No | `30000` | Per-step timeout |
 | `--verify-tools` | No | | After OAuth, list tools |
 | `--verify-call-tool <name>` | No | | Also call the named tool |
-| `--conformance-checks` | No | | Run additional negative OAuth checks |
+| `--conformance-checks` | No | | Run additional negative OAuth checks, including DCR redirect URI policy and redirect-mismatch probes |
 | `--print-url` | No | | Print consent URL to stderr (interactive only) |
 
 ### `oauth conformance-suite`
@@ -212,6 +212,31 @@ Supports `--format json` and `--format human`. `junit-xml` is not supported on p
 ---
 
 ## `apps` commands
+
+### Shared connection flags
+
+| Flag | Description |
+|------|-------------|
+| `--url <url>` | HTTP MCP server URL |
+| `--access-token <token>` | Bearer access token |
+| `--oauth-access-token <token>` | OAuth bearer access token |
+| `--refresh-token <token>` | OAuth refresh token |
+| `--client-id <id>` | OAuth client ID (with `--refresh-token`) |
+| `--client-secret <secret>` | OAuth client secret (with `--refresh-token`) |
+| `--header <header>` | HTTP header `Key: Value` (repeatable) |
+| `--client-capabilities <json>` | Client capabilities JSON object |
+| `--command <command>` | Stdio server command |
+| `--command-args <arg>` | Stdio command argument (repeatable) |
+| `--env <env>` | Stdio environment `KEY=VALUE` (repeatable) |
+
+### `apps conformance`
+
+MCP Apps server-side conformance checks. Uses shared connection flags plus:
+
+| Flag | Description |
+|------|-------------|
+| `--category <category>` | Check category to run (`tools`, `resources`). Repeatable |
+| `--check-id <id>` | Specific check id to run. Repeatable |
 
 ### `apps mcp-widget`
 

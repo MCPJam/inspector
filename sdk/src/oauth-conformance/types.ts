@@ -17,7 +17,10 @@ import type { OAuthStepInfo } from "../oauth/state-machines/shared/step-metadata
 // (the interactive debugger state machine never enters these states).
 
 export type OAuthConformanceCheckId =
+  | "oauth_dcr_http_redirect_uri"
   | "oauth_invalid_client"
+  | "oauth_invalid_authorize_redirect"
+  | "oauth_invalid_token"
   | "oauth_invalid_redirect"
   | "oauth_token_format";
 
@@ -28,6 +31,14 @@ export const CONFORMANCE_CHECK_METADATA: Record<
   OAuthConformanceCheckId,
   OAuthStepInfo
 > = {
+  oauth_dcr_http_redirect_uri: {
+    title: "OAuth Check: DCR Redirect URI Policy",
+    summary:
+      "Attempt dynamic client registration with a non-loopback http redirect URI and confirm the authorization server rejects it.",
+    teachableMoments: [
+      "MCP authorization requires redirect URIs to use localhost or HTTPS.",
+    ],
+  },
   oauth_invalid_client: {
     title: "OAuth Check: Invalid Client",
     summary:
@@ -36,12 +47,28 @@ export const CONFORMANCE_CHECK_METADATA: Record<
       "Authorization servers should reject malformed or unknown clients instead of issuing tokens.",
     ],
   },
+  oauth_invalid_authorize_redirect: {
+    title: "OAuth Check: Invalid Redirect URI at Authorization Endpoint",
+    summary:
+      "Send an authorization request with a mismatched redirect URI and confirm the authorization server refuses to redirect back to it.",
+    teachableMoments: [
+      "Authorization servers should validate redirect_uri before redirecting user agents to untrusted callback URLs.",
+    ],
+  },
+  oauth_invalid_token: {
+    title: "OAuth Check: Invalid Access Token",
+    summary:
+      "Send an authenticated MCP initialize request with an obviously invalid bearer token and confirm the MCP server returns HTTP 401.",
+    teachableMoments: [
+      "Resource servers must reject invalid bearer tokens with HTTP 401 instead of treating them as authenticated.",
+    ],
+  },
   oauth_invalid_redirect: {
     title: "OAuth Check: Invalid Redirect URI",
     summary:
-      "Send a token request with a mismatched redirect URI and confirm the authorization server rejects it.",
+      "Send a token request with a mismatched redirect URI and look for a redirect-specific rejection from the token endpoint.",
     teachableMoments: [
-      "Redirect URI validation prevents authorization code injection and token leakage.",
+      "A generic invalid_grant rejection does not prove redirect URI exact-match validation.",
     ],
   },
   oauth_token_format: {
@@ -97,6 +124,8 @@ export interface OAuthConformanceConfig {
   stepTimeout?: number;
   verification?: OAuthVerificationConfig;
   oauthConformanceChecks?: boolean;
+  /** Optional callback for progress messages during the OAuth flow. */
+  onProgress?: (message: string) => void;
 }
 
 export interface StepResult {
@@ -140,6 +169,7 @@ export interface NormalizedOAuthConformanceConfig {
   stepTimeout: number;
   verification: OAuthVerificationConfig;
   oauthConformanceChecks: boolean;
+  onProgress: (message: string) => void;
 }
 
 export interface TrackedRequestOptions {

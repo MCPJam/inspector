@@ -60,8 +60,33 @@ If a higher-priority surface contradicts a lower-priority summary, trust the hig
 ### `oauth login`, `oauth conformance`, `oauth conformance-suite`
 
 - These are targeted flow tests, not a full security audit.
+- `oauth conformance --conformance-checks` adds targeted negative probes for:
+  - DCR acceptance of non-loopback `http://` redirect URIs
+  - invalid client rejection at the token endpoint
+  - authorization-endpoint handling of mismatched `redirect_uri`
+  - invalid bearer-token rejection by the MCP server
+  - token-endpoint handling of mismatched `redirect_uri`
 - A passing negative test only proves the specific negative case that was sent.
+- Current auth-code negative checks include the OAuth `resource` parameter, so failures are less likely to be caused by obviously malformed token requests.
+- A redirect-mismatch check marked `skipped` often means the request was rejected for some other reason before redirect validation was isolated. Do not overread that as a pass.
 - A failing headless flow may reflect login UX or consent requirements, not a spec violation.
+
+### `apps conformance`
+
+- This is a connected, server-side MCP Apps check.
+- It validates:
+  - tools advertising `_meta.ui.resourceUri` or deprecated `_meta["ui/resourceUri"]`
+  - tool `inputSchema` is a non-null JSON Schema object (MUST)
+  - tool name length, character set, and uniqueness (SHOULD — warnings only)
+  - `ui://` resource discovery and `resources/read`
+  - `text/html;profile=mcp-app` payload shape
+  - `_meta.ui.csp`, `permissions`, `domain`, and `prefersBorder`
+- It does not currently validate:
+  - `ui/initialize` and `ui/notifications/initialized`
+  - `ui/notifications/tool-input` or `ui/notifications/tool-result` ordering
+  - sandbox proxy behavior
+  - host display modes, host context changes, or postMessage bridge behavior
+- Treat a pass as evidence that the server advertises an MCP Apps surface with plausible resource wiring. Do not describe it as full SEP-1865 conformance.
 
 ### `tools list`
 
