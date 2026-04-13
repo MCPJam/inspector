@@ -149,6 +149,20 @@ test("parseServerConfig rejects missing and mixed targets", () => {
   assert.throws(
     () =>
       parseServerConfig({
+        command: "node",
+        header: ["X-Test: yes"],
+      }),
+    (error) =>
+      error instanceof CliError &&
+      error.exitCode === 2 &&
+      error.message.includes(
+        "--access-token, --oauth-access-token, --refresh-token, --client-id, --client-secret, and --header can only be used together with --url.",
+      ),
+  );
+
+  assert.throws(
+    () =>
+      parseServerConfig({
         url: "https://example.com/mcp",
         accessToken: "one",
         oauthAccessToken: "two",
