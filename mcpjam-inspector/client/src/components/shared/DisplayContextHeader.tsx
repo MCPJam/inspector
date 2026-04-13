@@ -4,8 +4,8 @@
  * Reusable component for display context controls (device, locale, timezone, CSP, capabilities, safe area).
  * Extracted from PlaygroundMain to be shared between App Builder and Views pages.
  *
- * Reads/writes UI playground state via useUIPlaygroundStore and derives theme, locale, timezone,
- * display modes, device capabilities, and safe-area defaults from useClientConfigStore hostContext.
+ * Reads/writes shared host/theme preferences plus UI playground state and derives locale,
+ * timezone, display modes, device capabilities, and safe-area defaults from hostContext.
  */
 
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
@@ -172,10 +172,6 @@ export function DisplayContextHeader({
   const customViewport = useUIPlaygroundStore((s) => s.customViewport);
   const setCustomViewport = useUIPlaygroundStore((s) => s.setCustomViewport);
 
-  // Host style (Claude / ChatGPT)
-  const hostStyle = useUIPlaygroundStore((s) => s.hostStyle);
-  const setHostStyle = useUIPlaygroundStore((s) => s.setHostStyle);
-
   // CSP mode (ChatGPT Apps)
   const cspMode = useUIPlaygroundStore((s) => s.cspMode);
   const setCspMode = useUIPlaygroundStore((s) => s.setCspMode);
@@ -213,6 +209,8 @@ export function DisplayContextHeader({
     Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const setThemeMode = usePreferencesStore((s) => s.setThemeMode);
+  const hostStyle = usePreferencesStore((s) => s.hostStyle);
+  const setHostStyle = usePreferencesStore((s) => s.setHostStyle);
   const usesThemeOverride =
     themeModeOverride !== undefined && onThemeToggleOverride !== undefined;
   const effectiveThemeMode = usesThemeOverride ? themeModeOverride : themeMode;

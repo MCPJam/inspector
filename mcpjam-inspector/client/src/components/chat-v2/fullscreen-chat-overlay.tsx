@@ -16,6 +16,7 @@ import { TextareaAutosize } from "@/components/ui/textarea-autosize";
 import {
   LoadingIndicatorContent,
   type LoadingIndicatorVariant,
+  useResolvedLoadingIndicatorVariant,
 } from "@/components/chat-v2/shared/loading-indicator-content";
 import { ClaudeLoadingIndicator } from "@/components/chat-v2/shared/claude-loading-indicator";
 import { getRenderableConversationMessages } from "@/components/chat-v2/thread/thread-helpers";
@@ -139,21 +140,24 @@ function MessageBubble({
 }
 
 function ThinkingRow({
-  variant = "default",
+  resolvedVariant,
 }: {
-  variant?: LoadingIndicatorVariant;
+  resolvedVariant?: LoadingIndicatorVariant;
 }) {
+  const shouldRenderDefaultBubble =
+    resolvedVariant !== "claude-mark" && resolvedVariant !== "chatgpt-dot";
+
   return (
     <div
       data-testid="fullscreen-thinking-row"
       className="flex w-full justify-start"
     >
-      {variant === "default" ? (
+      {shouldRenderDefaultBubble ? (
         <div className="inline-flex items-center gap-2 rounded-2xl bg-muted px-3 py-2 text-sm text-muted-foreground/80">
-          <LoadingIndicatorContent variant={variant} />
+          <LoadingIndicatorContent variant={resolvedVariant} />
         </div>
       ) : (
-        <LoadingIndicatorContent variant={variant} />
+        <LoadingIndicatorContent variant={resolvedVariant} />
       )}
     </div>
   );
@@ -192,12 +196,12 @@ function MessageList({
   messages,
   isThinking,
   open,
-  loadingIndicatorVariant = "default",
+  resolvedLoadingIndicatorVariant,
 }: {
   messages: UIMessage[];
   isThinking: boolean;
   open: boolean;
-  loadingIndicatorVariant?: LoadingIndicatorVariant;
+  resolvedLoadingIndicatorVariant?: LoadingIndicatorVariant;
 }) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -214,8 +218,8 @@ function MessageList({
   const lastVisibleMessage = visibleMessages.at(-1)?.message ?? null;
   const hasVisibleAssistantResponse = lastVisibleMessage?.role === "assistant";
   const shouldShowStandaloneThinkingRow =
-    loadingIndicatorVariant === "claude-mark" ||
-    loadingIndicatorVariant === "chatgpt-dot"
+    resolvedLoadingIndicatorVariant === "claude-mark" ||
+    resolvedLoadingIndicatorVariant === "chatgpt-dot"
       ? isThinking && !hasVisibleAssistantResponse
       : isThinking;
 
@@ -231,7 +235,7 @@ function MessageList({
       <div className="max-h-[45vh] overflow-y-auto px-4 py-3 space-y-3">
         {visibleMessages.map(({ message, text }, idx) => {
           const claudeFooterMode =
-            loadingIndicatorVariant === "claude-mark" &&
+            resolvedLoadingIndicatorVariant === "claude-mark" &&
             message.role === "assistant" &&
             message.id === lastVisibleMessage?.id
               ? isThinking
@@ -248,7 +252,7 @@ function MessageList({
           );
         })}
         {shouldShowStandaloneThinkingRow ? (
-          <ThinkingRow variant={loadingIndicatorVariant} />
+          <ThinkingRow resolvedVariant={resolvedLoadingIndicatorVariant} />
         ) : null}
         <div ref={bottomRef} />
       </div>
@@ -363,20 +367,7 @@ function Composer({
   );
 }
 
-export function FullscreenChatOverlay({
-  messages,
-  open,
-  onOpenChange,
-  input,
-  onInputChange,
-  placeholder,
-  disabled,
-  canSend,
-  isThinking,
-  loadingIndicatorVariant = "default",
-  onStop,
-  onSend,
-}: {
+type FullscreenChatOverlayProps = {
   messages: UIMessage[];
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -389,9 +380,25 @@ export function FullscreenChatOverlay({
   loadingIndicatorVariant?: LoadingIndicatorVariant;
   onStop?: () => void;
   onSend: () => void;
-}) {
+};
+export function FullscreenChatOverlay({
+  messages,
+  open,
+  onOpenChange,
+  input,
+  onInputChange,
+  placeholder,
+  disabled,
+  canSend,
+  isThinking,
+  loadingIndicatorVariant,
+  onStop,
+  onSend,
+}: FullscreenChatOverlayProps) {
   const sandboxHostStyle = useSandboxHostStyle();
   const sandboxHostTheme = useSandboxHostTheme();
+  const resolvedLoadingIndicatorVariant =
+    useResolvedLoadingIndicatorVariant(loadingIndicatorVariant);
   const resolvedThemeMode = sandboxHostTheme ?? "light";
   const isDarkSandboxTheme = resolvedThemeMode === "dark";
   const appearance = useMemo(
@@ -415,7 +422,7 @@ export function FullscreenChatOverlay({
             messages={messages}
             isThinking={isThinking}
             open={open}
-            loadingIndicatorVariant={loadingIndicatorVariant}
+            resolvedLoadingIndicatorVariant={resolvedLoadingIndicatorVariant}
           />
           <Composer
             value={input}

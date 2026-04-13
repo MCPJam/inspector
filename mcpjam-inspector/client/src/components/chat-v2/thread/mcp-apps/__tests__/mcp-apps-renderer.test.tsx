@@ -78,6 +78,11 @@ const mockClientConfigStoreState = {
     | undefined,
 };
 
+const mockPreferencesState = {
+  themeMode: "light" as const,
+  hostStyle: "claude" as const,
+};
+
 // ── Module mocks ───────────────────────────────────────────────────────────
 vi.mock("@modelcontextprotocol/ext-apps/app-bridge", () => ({
   AppBridge: vi.fn().mockImplementation(() => mockBridge),
@@ -119,7 +124,8 @@ vi.mock("@/components/ui/sandboxed-iframe", () => ({
 }));
 
 vi.mock("@/stores/preferences/preferences-provider", () => ({
-  usePreferencesStore: () => "light",
+  usePreferencesStore: (selector: any) =>
+    selector ? selector(mockPreferencesState) : mockPreferencesState,
 }));
 
 vi.mock("@/stores/ui-playground-store", () => ({

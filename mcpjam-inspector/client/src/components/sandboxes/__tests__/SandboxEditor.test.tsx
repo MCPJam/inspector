@@ -111,6 +111,7 @@ vi.mock("@/components/ChatTabV2", async () => {
       initialSystemPrompt?: string;
       initialTemperature?: number;
       initialRequireToolApproval?: boolean;
+      loadingIndicatorVariant?: string;
     }) => {
       React.useEffect(() => {
         mockPreviewMount(props);
@@ -233,6 +234,7 @@ describe("SandboxEditor preview", () => {
         initialSystemPrompt: "You are helpful.",
         initialTemperature: 0.4,
         initialRequireToolApproval: true,
+        loadingIndicatorVariant: "claude-mark",
       }),
     );
   });

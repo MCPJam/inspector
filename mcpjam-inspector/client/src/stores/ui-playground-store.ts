@@ -12,7 +12,6 @@ import type { FormField } from "@/lib/tool-form";
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 
 export type DeviceType = "mobile" | "tablet" | "desktop" | "custom";
-export type HostStyle = "claude" | "chatgpt";
 
 /** Device viewport configurations - shared across playground and MCP apps renderer */
 export const DEVICE_VIEWPORT_CONFIGS: Record<
@@ -137,9 +136,6 @@ interface UIPlaygroundState {
   // Custom viewport dimensions (for custom device type)
   customViewport: CustomViewport;
 
-  // Host style for MCP Apps (which host's design tokens to inject)
-  hostStyle: HostStyle;
-
   // Actions
   setTools: (tools: Record<string, Tool>) => void;
   setSelectedTool: (tool: string | null) => void;
@@ -172,7 +168,6 @@ interface UIPlaygroundState {
   setSafeAreaPreset: (preset: SafeAreaPreset) => void;
   setSafeAreaInsets: (insets: Partial<SafeAreaInsets>) => void;
   setCustomViewport: (viewport: Partial<CustomViewport>) => void;
-  setHostStyle: (style: HostStyle) => void;
   reset: () => void;
 }
 
@@ -189,8 +184,6 @@ const STORAGE_KEY_SIDEBAR = "mcpjam-ui-playground-sidebar-visible";
 const STORAGE_KEY_CUSTOM_VIEWPORT = "mcpjam-ui-playground-custom-viewport";
 const STORAGE_KEY_DEVICE_TYPE = "mcpjam-ui-playground-device-type";
 const STORAGE_KEY_SELECTED_PROTOCOL = "mcpjam-ui-playground-selected-protocol";
-const STORAGE_KEY_HOST_STYLE = "mcpjam-ui-playground-host-style";
-
 const getStoredVisibility = (key: string, defaultValue: boolean): boolean => {
   if (typeof window === "undefined") return defaultValue;
   const stored = localStorage.getItem(key);
@@ -213,15 +206,6 @@ const getStoredDeviceType = (): DeviceType => {
     return stored as DeviceType;
   }
   return "desktop";
-};
-
-const getStoredHostStyle = (): HostStyle => {
-  if (typeof window === "undefined") return "claude";
-  const stored = localStorage.getItem(STORAGE_KEY_HOST_STYLE);
-  if (stored && ["claude", "chatgpt"].includes(stored)) {
-    return stored as HostStyle;
-  }
-  return "claude";
 };
 
 const getStoredSelectedProtocol = (): UIType | null => {
@@ -277,7 +261,6 @@ const initialState = {
   safeAreaPreset: "none" as SafeAreaPreset,
   safeAreaInsets: SAFE_AREA_PRESETS["none"],
   customViewport: getStoredCustomViewport(),
-  hostStyle: getStoredHostStyle(),
 };
 
 export const useUIPlaygroundStore = create<UIPlaygroundState>((set) => ({
@@ -412,11 +395,6 @@ export const useUIPlaygroundStore = create<UIPlaygroundState>((set) => ({
       safeAreaInsets: { ...state.safeAreaInsets, ...insets },
     })),
 
-  setHostStyle: (hostStyle) => {
-    localStorage.setItem(STORAGE_KEY_HOST_STYLE, hostStyle);
-    return set({ hostStyle });
-  },
-
   setCustomViewport: (viewport) =>
     set((state) => {
       const newViewport = { ...state.customViewport, ...viewport };
@@ -447,8 +425,6 @@ export const useUIPlaygroundStore = create<UIPlaygroundState>((set) => ({
         capabilities: getDefaultCapabilities(storedDeviceType),
         // Preserve selected protocol from localStorage
         selectedProtocol: getStoredSelectedProtocol(),
-        // Preserve host style from localStorage
-        hostStyle: getStoredHostStyle(),
         // Preserve CSP modes (may be set via CLI config before reset fires)
         cspMode: state.cspMode,
         mcpAppsCspMode: state.mcpAppsCspMode,
