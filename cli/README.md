@@ -84,7 +84,7 @@ diff <(jq -S . before.json) <(jq -S . after.json)
 
 ### OAuth conformance across the full matrix
 
-3 registration strategies (CIMD, DCR, preregistered) × 3 protocol versions × 3 auth modes = 27 flow combinations. The conformance suite covers the matrix from a single config file and outputs JUnit XML.
+Cover the full registration × protocol version × auth mode matrix from a single config file. Outputs JUnit XML.
 
 ```bash
 mcpjam oauth conformance-suite --config ./oauth-matrix.json --format junit-xml > report.xml
