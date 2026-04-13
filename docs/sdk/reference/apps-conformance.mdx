@@ -31,7 +31,7 @@ const test = new MCPAppsConformanceTest({
 const result = await test.run();
 
 console.log(result.passed);   // true
-console.log(result.summary);  // "6/6 checks passed, 0 failed, 0 skipped"
+console.log(result.summary);  // "7/7 checks passed, 0 failed, 0 skipped"
 console.log(result.discovery.uiToolCount);
 ```
 
@@ -78,6 +78,7 @@ Available checks:
 
 - `ui-tools-present`
 - `ui-tool-metadata-valid`
+- `ui-tool-input-schema-valid`
 - `ui-listed-resources-valid`
 - `ui-resources-readable`
 - `ui-resource-contents-valid`
@@ -115,13 +116,15 @@ The current runner checks:
 
 1. At least one tool advertises MCP Apps UI metadata.
 2. Tool metadata uses a valid `ui://` resource URI and valid `visibility` values.
-3. Listed UI resources use `ui://` and `text/html;profile=mcp-app`.
-4. Referenced UI resources are readable via `resources/read`.
-5. Resource payloads provide exactly one HTML document through `text` or `blob`.
-6. `_meta.ui.csp`, `permissions`, `domain`, and `prefersBorder` use valid shapes.
+3. Tool `inputSchema` is a non-null JSON Schema object.
+4. Listed UI resources use `ui://` and `text/html;profile=mcp-app`.
+5. Referenced UI resources are readable via `resources/read`.
+6. Resource payloads provide exactly one HTML document through `text` or `blob`.
+7. `_meta.ui.csp`, `permissions`, `domain`, and `prefersBorder` use valid shapes.
 
 ## Notes
 
 - The runner always advertises the MCP Apps UI extension capability so servers do not hide their MCP Apps surface when custom `clientCapabilities` are supplied.
 - Deprecated `_meta["ui/resourceUri"]` is accepted but surfaced as a warning.
+- Tool name SHOULD validations (length, character set, uniqueness) surface as warnings, not failures.
 - HTML validation is intentionally lightweight. It verifies the expected MIME type and document-style HTML payload, not the full browser lifecycle.

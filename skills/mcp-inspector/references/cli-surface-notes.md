@@ -76,6 +76,8 @@ If a higher-priority surface contradicts a lower-priority summary, trust the hig
 - This is a connected, server-side MCP Apps check.
 - It validates:
   - tools advertising `_meta.ui.resourceUri` or deprecated `_meta["ui/resourceUri"]`
+  - tool `inputSchema` is a non-null JSON Schema object (MUST)
+  - tool name length, character set, and uniqueness (SHOULD — warnings only)
   - `ui://` resource discovery and `resources/read`
   - `text/html;profile=mcp-app` payload shape
   - `_meta.ui.csp`, `permissions`, `domain`, and `prefersBorder`

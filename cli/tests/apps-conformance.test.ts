@@ -36,6 +36,7 @@ test("buildAppsConformanceConfig expands categories into check ids", () => {
   assert.deepEqual(config.checkIds, [
     "ui-tools-present",
     "ui-tool-metadata-valid",
+    "ui-tool-input-schema-valid",
   ]);
 });
 

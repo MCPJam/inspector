@@ -35,6 +35,7 @@ const APPS_CHECK_IDS_BY_CATEGORY: Record<
   tools: [
     "ui-tools-present",
     "ui-tool-metadata-valid",
+    "ui-tool-input-schema-valid",
   ],
   resources: [
     "ui-listed-resources-valid",

@@ -22,7 +22,7 @@ describe("MCPAppsConformanceTest", () => {
       expect(result.passed).toBe(true);
       expect(result.checks).toHaveLength(MCP_APPS_CHECK_IDS.length);
       expect(result.checks.every((check) => check.status === "passed")).toBe(true);
-      expect(result.categorySummary.tools.passed).toBe(2);
+      expect(result.categorySummary.tools.passed).toBe(3);
       expect(result.categorySummary.resources.passed).toBe(4);
       expect(result.discovery.uiToolCount).toBe(1);
       expect(result.discovery.listedUiResourceCount).toBe(1);
@@ -52,6 +52,7 @@ describe("MCPAppsConformanceTest", () => {
       expect(statuses).toEqual({
         "ui-tools-present": "passed",
         "ui-tool-metadata-valid": "passed",
+        "ui-tool-input-schema-valid": "passed",
         "ui-listed-resources-valid": "skipped",
         "ui-resources-readable": "failed",
         "ui-resource-contents-valid": "skipped",

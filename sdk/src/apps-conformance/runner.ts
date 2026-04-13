@@ -37,6 +37,13 @@ const APPS_CHECK_METADATA: Record<
     description:
       "Tools with UI metadata use a ui:// resource URI and valid visibility values.",
   },
+  "ui-tool-input-schema-valid": {
+    id: "ui-tool-input-schema-valid",
+    category: "tools",
+    title: "UI Tool Input Schema Valid",
+    description:
+      "UI tools provide a non-null JSON Schema object as their inputSchema.",
+  },
   "ui-listed-resources-valid": {
     id: "ui-listed-resources-valid",
     category: "resources",
@@ -599,6 +606,27 @@ export class MCPAppsConformanceTest {
                     `Tool ${tool.name} uses deprecated _meta["ui/resourceUri"]; prefer _meta.ui.resourceUri`,
                   );
                 }
+
+                if (tool.name.length < 1 || tool.name.length > 128) {
+                  warnings.push(
+                    `Tool ${tool.name} name SHOULD be between 1 and 128 characters (has ${tool.name.length})`,
+                  );
+                }
+                if (!/^[A-Za-z0-9_\-.]+$/.test(tool.name)) {
+                  warnings.push(
+                    `Tool ${tool.name} name SHOULD only contain A-Z, a-z, 0-9, underscore, hyphen, or dot`,
+                  );
+                }
+              }
+
+              const seenNames = new Set<string>();
+              for (const tool of uiTools) {
+                if (seenNames.has(tool.name)) {
+                  warnings.push(
+                    `Tool name "${tool.name}" appears more than once; names SHOULD be unique within a server`,
+                  );
+                }
+                seenNames.add(tool.name);
               }
 
               if (violations.length > 0) {
@@ -625,6 +653,67 @@ export class MCPAppsConformanceTest {
                       uiToolNames: uiTools.map((tool) => tool.name),
                     },
                     warnings,
+                  ),
+                );
+              }
+            }
+          }
+
+          if (selectedCheckIds.has("ui-tool-input-schema-valid")) {
+            const stepStartedAt = Date.now();
+            if (toolsError) {
+              checks.push(
+                skippedResult(
+                  "ui-tool-input-schema-valid",
+                  "Skipping check because tools/list did not complete",
+                ),
+              );
+            } else if (uiTools.length === 0) {
+              checks.push(
+                skippedResult(
+                  "ui-tool-input-schema-valid",
+                  "Skipping check because no MCP Apps tools were discovered",
+                ),
+              );
+            } else {
+              const violations: string[] = [];
+
+              for (const tool of uiTools) {
+                const sourceTool = tools.find((entry) => entry.name === tool.name);
+                const schema = sourceTool?.inputSchema;
+
+                if (schema === undefined || schema === null) {
+                  violations.push(
+                    `Tool ${tool.name} is missing inputSchema (MUST be a JSON Schema object)`,
+                  );
+                } else if (!isPlainObject(schema)) {
+                  violations.push(
+                    `Tool ${tool.name} inputSchema MUST be a JSON Schema object, got ${Array.isArray(schema) ? "array" : typeof schema}`,
+                  );
+                }
+              }
+
+              if (violations.length > 0) {
+                checks.push(
+                  failedResult(
+                    "ui-tool-input-schema-valid",
+                    Date.now() - stepStartedAt,
+                    `${violations.length} inputSchema violation(s) found`,
+                    {
+                      violations,
+                      uiToolNames: uiTools.map((tool) => tool.name),
+                    },
+                  ),
+                );
+              } else {
+                checks.push(
+                  passedResult(
+                    "ui-tool-input-schema-valid",
+                    Date.now() - stepStartedAt,
+                    {
+                      uiToolCount: uiTools.length,
+                      uiToolNames: uiTools.map((tool) => tool.name),
+                    },
                   ),
                 );
               }

@@ -10,6 +10,7 @@ export type MCPAppsCheckCategory = (typeof MCP_APPS_CHECK_CATEGORIES)[number];
 export const MCP_APPS_CHECK_IDS = [
   "ui-tools-present",
   "ui-tool-metadata-valid",
+  "ui-tool-input-schema-valid",
   "ui-listed-resources-valid",
   "ui-resources-readable",
   "ui-resource-contents-valid",
