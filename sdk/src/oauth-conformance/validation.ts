@@ -121,5 +121,7 @@ export function normalizeOAuthConformanceConfig(
       callTool: config.verification?.callTool,
       timeout: config.verification?.timeout ?? 30_000,
     },
+    oauthConformanceChecks: config.oauthConformanceChecks ?? false,
+    onProgress: config.onProgress ?? (() => {}),
   };
 }

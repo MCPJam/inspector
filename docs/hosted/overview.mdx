@@ -4,7 +4,7 @@ description: "Use MCPJam Inspector in the browser — no installation required"
 icon: "Cloud"
 ---
 
-MCPJam Inspector is available as a hosted web app at [app.mcpjam.com](https://app.mcpjam.com). Connect to your remote MCP servers, test tools, build apps, and use the LLM playground — all from your browser without installing anything.
+MCPJam Inspector is available as a hosted web app at [app.mcpjam.com](https://app.mcpjam.com). Build, test, debug, and evaluate MCP servers and apps with frontier models — all from the web.
 
 <Card
   title="Open MCPJam Inspector"
@@ -18,13 +18,12 @@ MCPJam Inspector is available as a hosted web app at [app.mcpjam.com](https://ap
 ## Why use the hosted app?
 
 - **No installation** — Open a browser and start testing.
-- **Free LLM playground** — Chat with your MCP server using our free models at no cost.
 - **Always up to date** — You're always on the latest version without running `npx @mcpjam/inspector@latest`.
 - **Shareable** — Share server URLs with your team. Everyone can inspect the same server without local setup.
 
 ## Share your MCP server
 
-Send a link to your MCP server or app the same way you'd share a Google Doc. Anyone with a MCPJam account who opens it can immediately start chatting with the server in the playground — right in their browser.
+Send a link to your MCP server or app the same way you'd share a Google Doc. Anyone with a MCPJam account who opens it can immediately start chatting with the server right in their browser.
 
 Try it yourself with the [Excalidraw MCP server](https://app.mcpjam.com/shared/excalidraw/mN4lJGfKanjpnBdZvE-lL):
 
@@ -55,7 +54,7 @@ The hosted app requires all MCP server connections to use **HTTPS**. If your ser
 
 ### No STDIO connections
 
-STDIO servers are not available in the hosted version of MCPJam. Use SSE or Streamable HTTP transport instead.
+STDIO servers are not available in the hosted version of MCPJam. Use a Streamable HTTP endpoint instead, or switch to the [local inspector](/installation).
 
 ### No tunneling
 
@@ -63,7 +62,7 @@ Tunneling exposes a local MCP server over HTTPS for remote access. Since the hos
 
 ### No skills
 
-Skills are not yet available in the hosted app.
+Skills live on your filesystem and can only be discovered and run from the local inspector or desktop app.
 
 ### No tasks
 

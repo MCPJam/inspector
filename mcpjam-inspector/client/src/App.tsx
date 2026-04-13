@@ -18,7 +18,7 @@ import { PromptsTab } from "./components/PromptsTab";
 import { SkillsTab } from "./components/SkillsTab";
 import { LearningTab } from "./components/LearningTab";
 import { TasksTab } from "./components/TasksTab";
-import { ChatTabV2 } from "./components/ChatTabV2";
+import { HostStyledChatTabV2 } from "./components/HostStyledChatTabV2";
 import type { EvalChatHandoff } from "./lib/eval-chat-handoff";
 import { EvalsTab } from "./components/EvalsTab";
 import { CiEvalsTab } from "./components/CiEvalsTab";
@@ -201,6 +201,15 @@ function BillingHandoffLoading({ overlay = false }: { overlay?: boolean }) {
   );
 }
 
+function resolveDeletedOrganizationFallbackId(
+  organizations: ReadonlyArray<{ _id: string; myRole?: string }>,
+): string | undefined {
+  const firstOwnedOrganization = organizations.find(
+    (organization) => organization.myRole === "owner",
+  );
+  return firstOwnedOrganization?._id ?? organizations[0]?._id;
+}
+
 function getInitialPendingCheckoutIntent(): CheckoutIntent | null {
   if (typeof window === "undefined") {
     return null;
@@ -254,6 +263,10 @@ export default function App() {
     useState<EvalChatHandoff | null>(null);
   const [activeOrganizationSection, setActiveOrganizationSection] =
     useState<OrganizationRouteSection>("overview");
+  const [
+    optimisticallyDeletedOrganizationIds,
+    setOptimisticallyDeletedOrganizationIds,
+  ] = useState<string[]>([]);
   const [chatHasMessages, setChatHasMessages] = useState(false);
   const [appBuilderOnboarding, setAppBuilderOnboarding] = useState(false);
   const [callbackCompleted, setCallbackCompleted] = useState(false);
@@ -355,8 +368,33 @@ export default function App() {
   );
   const { sortedOrganizations, isLoading: isLoadingOrganizations } =
     useOrganizationQueries({ isAuthenticated });
+  useEffect(() => {
+    if (isLoadingOrganizations) {
+      return;
+    }
+
+    setOptimisticallyDeletedOrganizationIds((currentIds) => {
+      const nextIds = currentIds.filter((organizationId) =>
+        sortedOrganizations.some((org) => org._id === organizationId),
+      );
+      return nextIds.length === currentIds.length &&
+        nextIds.every(
+          (organizationId, index) => organizationId === currentIds[index],
+        )
+        ? currentIds
+        : nextIds;
+    });
+  }, [isLoadingOrganizations, sortedOrganizations]);
+  const effectiveOrganizations = useMemo(
+    () =>
+      sortedOrganizations.filter(
+        (organization) =>
+          !optimisticallyDeletedOrganizationIds.includes(organization._id),
+      ),
+    [optimisticallyDeletedOrganizationIds, sortedOrganizations],
+  );
   const hasRouteOrganization = !!currentHashRoute.organizationId
-    ? sortedOrganizations.some(
+    ? effectiveOrganizations.some(
         (org) => org._id === currentHashRoute.organizationId,
       )
     : false;
@@ -526,13 +564,19 @@ export default function App() {
     handleRefreshTokensFromOAuthFlow,
     activeOrganizationId,
     setActiveOrganizationId,
+    clearConvexActiveWorkspaceSelection,
+    clearLocalFallbackWorkspaceSelection,
+    isCloudSyncActive,
   } = useAppState({
     currentUserId: workOsUser?.id ?? null,
+    hasOrganizations: effectiveOrganizations.length > 0,
+    isLoadingOrganizations,
+    validOrganizations: effectiveOrganizations,
     routeOrganizationId: hasRouteOrganization
       ? currentHashRoute.organizationId
       : undefined,
   });
-  const activeOrganizationName = sortedOrganizations.find(
+  const activeOrganizationName = effectiveOrganizations.find(
     (org) => org._id === activeOrganizationId,
   )?.name;
   const hasAnyWorkspaceServers = Object.keys(workspaceServers).length > 0;
@@ -682,8 +726,31 @@ export default function App() {
   const billingOrganizationId =
     !isLoadingOrganizations &&
     rawBillingOrganizationId &&
-    sortedOrganizations.some((org) => org._id === rawBillingOrganizationId)
+    effectiveOrganizations.some((org) => org._id === rawBillingOrganizationId)
       ? rawBillingOrganizationId
+      : null;
+  const activeWorkspaceBillingOrganizationId =
+    activeWorkspace?.organizationId &&
+    billingOrganizationId &&
+    activeWorkspace.organizationId === billingOrganizationId
+      ? billingOrganizationId
+      : null;
+  const isBillingContextPending =
+    isAuthenticated &&
+    isLoadingOrganizations &&
+    !!(
+      currentHashRoute.organizationId ||
+      activeOrganizationId ||
+      activeWorkspace?.organizationId ||
+      convexWorkspaceId
+    );
+  const billingWorkspaceId =
+    isCloudSyncActive &&
+    !isBillingContextPending &&
+    activeWorkspace &&
+    convexWorkspaceId &&
+    activeWorkspaceBillingOrganizationId
+      ? convexWorkspaceId
       : null;
   const {
     billingStatus: shellBillingStatus,
@@ -692,11 +759,11 @@ export default function App() {
     selectFreeAfterTrial,
     isSelectingFreeAfterTrial,
   } = useOrganizationBilling(isAuthenticated ? billingOrganizationId : null, {
-    workspaceId: convexWorkspaceId,
+    workspaceId: billingWorkspaceId,
   });
   const billingUiEnabled = billingEntitlementsUiEnabled === true;
   const navPremiumness =
-    convexWorkspaceId && workspacePremiumness
+    billingWorkspaceId && workspacePremiumness
       ? workspacePremiumness
       : organizationPremiumness;
   const activeTabGate = getPremiumnessGateForTab(activeTab);
@@ -704,7 +771,7 @@ export default function App() {
     billingUiEnabled,
     workspacePremiumness,
     organizationPremiumness,
-    hasWorkspace: !!convexWorkspaceId,
+    hasWorkspace: !!billingWorkspaceId,
     gateKey: activeTabGate,
   });
   const activeTabBillingFeature = getRequiredBillingFeatureForTab(activeTab);
@@ -730,11 +797,19 @@ export default function App() {
     billingUiEnabled && isBillingEnforcementActive(navPremiumness);
   const guestWorkspaceLimitReached =
     !isAuthenticated && Object.keys(workspaces).length >= 1;
+  const noOrganizationsAvailable =
+    isAuthenticated &&
+    !isLoadingOrganizations &&
+    effectiveOrganizations.length === 0;
   const isCreateWorkspaceDisabled =
-    workspaceCreationGate.isDenied || guestWorkspaceLimitReached;
+    workspaceCreationGate.isDenied ||
+    guestWorkspaceLimitReached ||
+    noOrganizationsAvailable;
   const createWorkspaceDisabledReason = guestWorkspaceLimitReached
     ? "Sign in to create more workspaces"
-    : (workspaceCreationGate.denialMessage ?? undefined);
+    : noOrganizationsAvailable
+      ? "Create or join an organization to create workspaces"
+      : (workspaceCreationGate.denialMessage ?? undefined);
   const [trialModalDismissedForOrg, setTrialModalDismissedForOrg] = useState<
     string | null
   >(null);
@@ -749,6 +824,31 @@ export default function App() {
     billingUiEnabled &&
     shellBillingStatus?.decisionRequired === true &&
     shellBillingStatus?.isOwner === false;
+
+  useEffect(() => {
+    const hasStaleCloudWorkspaceSelection =
+      isCloudSyncActive &&
+      !isLoadingOrganizations &&
+      !isLoadingRemoteWorkspaces &&
+      activeWorkspaceId !== "none" &&
+      (!!convexWorkspaceId || !activeWorkspace) &&
+      !billingWorkspaceId;
+
+    if (!hasStaleCloudWorkspaceSelection) {
+      return;
+    }
+
+    clearConvexActiveWorkspaceSelection();
+  }, [
+    activeWorkspace,
+    activeWorkspaceId,
+    billingWorkspaceId,
+    clearConvexActiveWorkspaceSelection,
+    convexWorkspaceId,
+    isCloudSyncActive,
+    isLoadingOrganizations,
+    isLoadingRemoteWorkspaces,
+  ]);
 
   // Fetch views for the workspace to determine which servers have saved views
   const { viewsByServer } = useViewQueries({
@@ -823,7 +923,11 @@ export default function App() {
   const applyNavigation = useCallback(
     (
       target: string,
-      options?: { updateHash?: boolean; enforceCanonicalHash?: boolean },
+      options?: {
+        updateHash?: boolean;
+        enforceCanonicalHash?: boolean;
+        preserveCurrentOrganizationOnNonOrgTarget?: boolean;
+      },
     ) => {
       if (isSharedChatRoute) {
         const storedSession = readSharedServerSession();
@@ -848,6 +952,17 @@ export default function App() {
       }
 
       const resolved = resolveHostedNavigation(target, HOSTED_MODE);
+      const currentResolved = resolveHostedNavigation(
+        window.location.hash || "#servers",
+        HOSTED_MODE,
+      );
+      const shouldPreserveCurrentRouteOrganization =
+        options?.preserveCurrentOrganizationOnNonOrgTarget !== false &&
+        !resolved.organizationId &&
+        !!currentResolved.organizationId &&
+        effectiveOrganizations.some(
+          (organization) => organization._id === currentResolved.organizationId,
+        );
 
       if (
         options?.enforceCanonicalHash &&
@@ -874,6 +989,8 @@ export default function App() {
 
       if (resolved.organizationId) {
         setActiveOrganizationId(resolved.organizationId);
+      } else if (shouldPreserveCurrentRouteOrganization) {
+        setActiveOrganizationId(currentResolved.organizationId);
       }
       if (resolved.organizationSection) {
         setActiveOrganizationSection(resolved.organizationSection);
@@ -892,6 +1009,7 @@ export default function App() {
       setActiveTab(resolved.normalizedTab);
     },
     [
+      effectiveOrganizations,
       isSandboxChatRoute,
       isSharedChatRoute,
       setSelectedMultipleServersToAllServers,
@@ -1036,7 +1154,7 @@ export default function App() {
 
     const workspaceOrgId = activeWorkspace?.organizationId;
     const orgId = resolveCheckoutOrganizationId(
-      sortedOrganizations,
+      effectiveOrganizations,
       activeOrganizationId,
       workspaceOrgId,
     );
@@ -1072,7 +1190,7 @@ export default function App() {
     isLoadingOrganizations,
     pendingCheckoutIntent,
     signIn,
-    sortedOrganizations,
+    effectiveOrganizations,
     workOsUser?.id,
   ]);
 
@@ -1123,6 +1241,23 @@ export default function App() {
     applyNavigation(section, { updateHash: true });
   };
 
+  const handleSidebarSwitchOrganization = useCallback(
+    (
+      organizationId: string,
+      section: OrganizationRouteSection = "overview",
+    ) => {
+      setActiveOrganizationId(organizationId);
+      setActiveOrganizationSection(section);
+      applyNavigation(
+        section === "billing"
+          ? `organizations/${organizationId}/billing`
+          : `organizations/${organizationId}`,
+        { updateHash: true },
+      );
+    },
+    [applyNavigation, setActiveOrganizationId],
+  );
+
   const handleContinueEvalInChat = useCallback(
     (handoff: Omit<EvalChatHandoff, "id">) => {
       setSelectedMCPConfigs(handoff.serverNames);
@@ -1162,6 +1297,61 @@ export default function App() {
     isLoadingOrganizations,
     setActiveOrganizationId,
   ]);
+
+  const handleOrganizationDeleted = useCallback(
+    (deletedOrganizationId: string) => {
+      setOptimisticallyDeletedOrganizationIds((currentIds) =>
+        currentIds.includes(deletedOrganizationId)
+          ? currentIds
+          : [...currentIds, deletedOrganizationId],
+      );
+
+      const remainingOrganizations = effectiveOrganizations.filter(
+        (organization) => organization._id !== deletedOrganizationId,
+      );
+      const fallbackOrganizationId = resolveDeletedOrganizationFallbackId(
+        remainingOrganizations,
+      );
+      const isDeletedCurrentOrganization =
+        activeOrganizationId === deletedOrganizationId ||
+        currentHashRoute.organizationId === deletedOrganizationId ||
+        activeWorkspace?.organizationId === deletedOrganizationId;
+
+      clearLocalFallbackWorkspaceSelection(
+        deletedOrganizationId,
+        fallbackOrganizationId,
+      );
+
+      if (
+        isDeletedCurrentOrganization &&
+        (activeWorkspace?.organizationId === deletedOrganizationId ||
+          !fallbackOrganizationId)
+      ) {
+        clearConvexActiveWorkspaceSelection();
+      }
+
+      if (!isDeletedCurrentOrganization) {
+        return;
+      }
+
+      setActiveOrganizationId(fallbackOrganizationId);
+      setActiveOrganizationSection("overview");
+      applyNavigation("servers", {
+        updateHash: true,
+        preserveCurrentOrganizationOnNonOrgTarget: false,
+      });
+    },
+    [
+      activeOrganizationId,
+      activeWorkspace?.organizationId,
+      applyNavigation,
+      clearLocalFallbackWorkspaceSelection,
+      clearConvexActiveWorkspaceSelection,
+      currentHashRoute.organizationId,
+      effectiveOrganizations,
+      setActiveOrganizationId,
+    ],
+  );
 
   const handleSidebarSwitchWorkspace = useCallback(
     async (workspaceId: string) => {
@@ -1344,6 +1534,7 @@ export default function App() {
         onDeleteWorkspace={handleDeleteWorkspace}
         isLoadingWorkspaces={isLoadingRemoteWorkspaces}
         activeOrganizationId={activeOrganizationId}
+        onSwitchOrganization={handleSidebarSwitchOrganization}
         billingUiEnabled={billingUiEnabled}
         billingGateDenied={sidebarGateDenied}
         billingGateEnforcementActive={billingGateEnforcementActive}
@@ -1379,6 +1570,8 @@ export default function App() {
               onRemove={handleRemoveServer}
               workspaces={workspaces}
               activeWorkspaceId={activeWorkspaceId}
+              organizationId={activeWorkspaceBillingOrganizationId}
+              isBillingContextPending={isBillingContextPending}
               isLoadingWorkspaces={isLoadingRemoteWorkspaces}
               onWorkspaceShared={handleWorkspaceShared}
               onLeaveWorkspace={() => handleLeaveWorkspace(activeWorkspaceId)}
@@ -1507,7 +1700,11 @@ export default function App() {
                 }}
               />
             ) : (
-              <SandboxesTab workspaceId={convexWorkspaceId} />
+              <SandboxesTab
+                workspaceId={billingWorkspaceId}
+                organizationId={activeWorkspaceBillingOrganizationId}
+                isBillingContextPending={isBillingContextPending}
+              />
             ))}
           {activeTab === "resources" && (
             <div className="h-full overflow-hidden">
@@ -1571,7 +1768,7 @@ export default function App() {
             </ErrorBoundary>
           )}
           {activeTab === "chat-v2" && (
-            <ChatTabV2
+            <HostStyledChatTabV2
               connectedOrConnectingServerConfigs={
                 connectedOrConnectingServerConfigs
               }
@@ -1583,6 +1780,7 @@ export default function App() {
               onSelectedServerNamesChange={setSelectedMCPConfigs}
               onHasMessagesChange={setChatHasMessages}
               enableMultiModelChat
+              showHostStyleSelector
               evalChatHandoff={evalChatHandoff}
               onEvalChatHandoffConsumed={(id) =>
                 setEvalChatHandoff((current) =>
@@ -1640,6 +1838,7 @@ export default function App() {
               onCheckoutIntentNavigationStarted={
                 handleCheckoutIntentNavigationStarted
               }
+              onOrganizationDeleted={handleOrganizationDeleted}
             />
           )}
         </div>

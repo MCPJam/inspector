@@ -2,7 +2,7 @@ import { FormEvent, KeyboardEvent, useEffect, useMemo, useRef } from "react";
 import type { CSSProperties } from "react";
 
 import type { UIMessage } from "@ai-sdk/react";
-import { ArrowUp, ChevronDown, ChevronUp } from "lucide-react";
+import { ArrowUp, ChevronDown, ChevronUp, Square } from "lucide-react";
 
 import {
   useSandboxHostStyle,
@@ -16,6 +16,7 @@ import { TextareaAutosize } from "@/components/ui/textarea-autosize";
 import {
   LoadingIndicatorContent,
   type LoadingIndicatorVariant,
+  useResolvedLoadingIndicatorVariant,
 } from "@/components/chat-v2/shared/loading-indicator-content";
 import { ClaudeLoadingIndicator } from "@/components/chat-v2/shared/claude-loading-indicator";
 import { getRenderableConversationMessages } from "@/components/chat-v2/thread/thread-helpers";
@@ -139,21 +140,24 @@ function MessageBubble({
 }
 
 function ThinkingRow({
-  variant = "default",
+  resolvedVariant,
 }: {
-  variant?: LoadingIndicatorVariant;
+  resolvedVariant?: LoadingIndicatorVariant;
 }) {
+  const shouldRenderDefaultBubble =
+    resolvedVariant !== "claude-mark" && resolvedVariant !== "chatgpt-dot";
+
   return (
     <div
       data-testid="fullscreen-thinking-row"
       className="flex w-full justify-start"
     >
-      {variant === "default" ? (
+      {shouldRenderDefaultBubble ? (
         <div className="inline-flex items-center gap-2 rounded-2xl bg-muted px-3 py-2 text-sm text-muted-foreground/80">
-          <LoadingIndicatorContent variant={variant} />
+          <LoadingIndicatorContent variant={resolvedVariant} />
         </div>
       ) : (
-        <LoadingIndicatorContent variant={variant} />
+        <LoadingIndicatorContent variant={resolvedVariant} />
       )}
     </div>
   );
@@ -192,12 +196,12 @@ function MessageList({
   messages,
   isThinking,
   open,
-  loadingIndicatorVariant = "default",
+  resolvedLoadingIndicatorVariant,
 }: {
   messages: UIMessage[];
   isThinking: boolean;
   open: boolean;
-  loadingIndicatorVariant?: LoadingIndicatorVariant;
+  resolvedLoadingIndicatorVariant?: LoadingIndicatorVariant;
 }) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -214,8 +218,8 @@ function MessageList({
   const lastVisibleMessage = visibleMessages.at(-1)?.message ?? null;
   const hasVisibleAssistantResponse = lastVisibleMessage?.role === "assistant";
   const shouldShowStandaloneThinkingRow =
-    loadingIndicatorVariant === "claude-mark" ||
-    loadingIndicatorVariant === "chatgpt-dot"
+    resolvedLoadingIndicatorVariant === "claude-mark" ||
+    resolvedLoadingIndicatorVariant === "chatgpt-dot"
       ? isThinking && !hasVisibleAssistantResponse
       : isThinking;
 
@@ -231,7 +235,7 @@ function MessageList({
       <div className="max-h-[45vh] overflow-y-auto px-4 py-3 space-y-3">
         {visibleMessages.map(({ message, text }, idx) => {
           const claudeFooterMode =
-            loadingIndicatorVariant === "claude-mark" &&
+            resolvedLoadingIndicatorVariant === "claude-mark" &&
             message.role === "assistant" &&
             message.id === lastVisibleMessage?.id
               ? isThinking
@@ -248,7 +252,7 @@ function MessageList({
           );
         })}
         {shouldShowStandaloneThinkingRow ? (
-          <ThinkingRow variant={loadingIndicatorVariant} />
+          <ThinkingRow resolvedVariant={resolvedLoadingIndicatorVariant} />
         ) : null}
         <div ref={bottomRef} />
       </div>
@@ -262,7 +266,9 @@ function Composer({
   placeholder,
   disabled,
   canSend,
+  isThinking,
   onSubmit,
+  onStop,
   composerClassName,
   composerStyle,
   activeSubmitButtonClassName,
@@ -273,7 +279,9 @@ function Composer({
   placeholder: string;
   disabled: boolean;
   canSend: boolean;
+  isThinking: boolean;
   onSubmit: () => void;
+  onStop?: () => void;
   composerClassName: string;
   composerStyle?: CSSProperties;
   activeSubmitButtonClassName: string;
@@ -281,7 +289,7 @@ function Composer({
 }) {
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!canSend) return;
+    if (isThinking || !canSend) return;
     onSubmit();
   };
 
@@ -292,7 +300,7 @@ function Composer({
       !event.nativeEvent.isComposing
     ) {
       event.preventDefault();
-      if (!canSend) return;
+      if (isThinking || !canSend) return;
       onSubmit();
     }
   };
@@ -320,38 +328,46 @@ function Composer({
             "focus-visible:ring-0 focus-visible:outline-none focus-visible:border-none",
           )}
         />
-        <Button
-          type="submit"
-          size="icon"
-          className={cn(
-            "size-8 rounded-full shrink-0 transition-all",
-            canSend
-              ? activeSubmitButtonClassName
-              : inactiveSubmitButtonClassName,
-            canSend && "hover:scale-105",
-          )}
-          disabled={!canSend}
-        >
-          <ArrowUp className="h-4 w-4" />
-        </Button>
+        {isThinking ? (
+          <Button
+            type="button"
+            size="icon"
+            aria-label="Stop generating"
+            className={cn(
+              "size-8 rounded-full shrink-0 transition-all",
+              onStop
+                ? activeSubmitButtonClassName
+                : inactiveSubmitButtonClassName,
+              onStop && "hover:scale-105",
+            )}
+            disabled={!onStop}
+            onClick={() => onStop?.()}
+          >
+            <Square className="h-4 w-4" />
+          </Button>
+        ) : (
+          <Button
+            type="submit"
+            size="icon"
+            aria-label="Send message"
+            className={cn(
+              "size-8 rounded-full shrink-0 transition-all",
+              canSend
+                ? activeSubmitButtonClassName
+                : inactiveSubmitButtonClassName,
+              canSend && "hover:scale-105",
+            )}
+            disabled={!canSend}
+          >
+            <ArrowUp className="h-4 w-4" />
+          </Button>
+        )}
       </div>
     </form>
   );
 }
 
-export function FullscreenChatOverlay({
-  messages,
-  open,
-  onOpenChange,
-  input,
-  onInputChange,
-  placeholder,
-  disabled,
-  canSend,
-  isThinking,
-  loadingIndicatorVariant = "default",
-  onSend,
-}: {
+type FullscreenChatOverlayProps = {
   messages: UIMessage[];
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -362,10 +378,28 @@ export function FullscreenChatOverlay({
   canSend: boolean;
   isThinking: boolean;
   loadingIndicatorVariant?: LoadingIndicatorVariant;
+  onStop?: () => void;
   onSend: () => void;
-}) {
+};
+export function FullscreenChatOverlay({
+  messages,
+  open,
+  onOpenChange,
+  input,
+  onInputChange,
+  placeholder,
+  disabled,
+  canSend,
+  isThinking,
+  loadingIndicatorVariant,
+  onStop,
+  onSend,
+}: FullscreenChatOverlayProps) {
   const sandboxHostStyle = useSandboxHostStyle();
   const sandboxHostTheme = useSandboxHostTheme();
+  const resolvedLoadingIndicatorVariant = useResolvedLoadingIndicatorVariant(
+    loadingIndicatorVariant,
+  );
   const resolvedThemeMode = sandboxHostTheme ?? "light";
   const isDarkSandboxTheme = resolvedThemeMode === "dark";
   const appearance = useMemo(
@@ -389,7 +423,7 @@ export function FullscreenChatOverlay({
             messages={messages}
             isThinking={isThinking}
             open={open}
-            loadingIndicatorVariant={loadingIndicatorVariant}
+            resolvedLoadingIndicatorVariant={resolvedLoadingIndicatorVariant}
           />
           <Composer
             value={input}
@@ -397,12 +431,14 @@ export function FullscreenChatOverlay({
             placeholder={placeholder}
             disabled={disabled}
             canSend={canSend}
+            isThinking={isThinking}
             composerClassName={appearance.composerClassName}
             composerStyle={surfaceStyle}
             activeSubmitButtonClassName={appearance.activeSubmitButtonClassName}
             inactiveSubmitButtonClassName={
               appearance.inactiveSubmitButtonClassName
             }
+            onStop={onStop}
             onSubmit={() => {
               onOpenChange(true);
               onSend();

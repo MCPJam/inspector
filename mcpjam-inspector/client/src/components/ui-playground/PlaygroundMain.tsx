@@ -90,6 +90,12 @@ import {
   SandboxHostThemeProvider,
 } from "@/contexts/sandbox-host-style-context";
 import { useComposerOnboarding } from "@/hooks/use-composer-onboarding";
+import { useDebouncedXRayPayload } from "@/hooks/use-debounced-x-ray-payload";
+import { useModelSelectorLayoutLock } from "@/hooks/use-model-selector-layout-lock";
+import {
+  getChatComposerInteractivity,
+  useChatStopControls,
+} from "@/hooks/use-chat-stop-controls";
 import { HandDrawnSendHint } from "./HandDrawnSendHint";
 import { LiveTraceTimelineEmptyState } from "@/components/evals/live-trace-timeline-empty";
 import { LiveTraceRawEmptyState } from "@/components/evals/live-trace-raw-empty";
@@ -218,7 +224,7 @@ export function PlaygroundMain({
   disableChatInput = false,
   hideSaveViewButton = false,
   disabledInputPlaceholder = "Input disabled in Views",
-  loadingIndicatorVariant = "default",
+  loadingIndicatorVariant,
   initialInput,
   initialInputTypewriter = false,
   blockSubmitUntilServerConnected = false,
@@ -415,7 +421,7 @@ export function PlaygroundMain({
 
   // Host chat background: actual chat area colors from each host's UI
   // (separate from the 76 MCP spec widget design tokens)
-  const hostStyle = useUIPlaygroundStore((s) => s.hostStyle);
+  const hostStyle = usePreferencesStore((s) => s.hostStyle);
   const globalThemeMode = usePreferencesStore(
     (s) => s.themeMode,
   ) as ThreadThemeMode;
@@ -474,6 +480,8 @@ export function PlaygroundMain({
   const canEnableMultiModel =
     enableMultiModelChat && availableModels.length > 1;
   const isMultiModelMode = canEnableMultiModel && multiModelEnabled;
+  const { isMultiModelLayoutMode, onModelSelectorOpenChange } =
+    useModelSelectorLayoutLock(isMultiModelMode);
 
   useEffect(() => {
     if (isMultiModelMode && resolvedSelectedModels[0]) {
@@ -552,7 +560,7 @@ export function PlaygroundMain({
     prevCompareModelIdsRef.current = current;
   }, [isMultiModelMode, resolvedSelectedModels]);
 
-  const effectiveHasMessages = isMultiModelMode
+  const effectiveHasMessages = isMultiModelLayoutMode
     ? Object.values(multiModelHasMessages).some(Boolean)
     : !isThreadEmpty;
   const preludeTraceEnvelope = useMemo(
@@ -566,7 +574,7 @@ export function PlaygroundMain({
   // Match ChatTabV2 `showTopTraceViewTabs`: keep Trace/Chat/Raw while multi-model is
   // empty; hide the top bar once compare columns are active (per-card trace tabs take over).
   const showTraceViewTabs =
-    traceViewsSupported && (!isMultiModelMode || !effectiveHasMessages);
+    traceViewsSupported && (!isMultiModelLayoutMode || !effectiveHasMessages);
   const activeTraceViewMode: PlaygroundTraceViewMode = showTraceViewTabs
     ? traceViewMode
     : "chat";
@@ -578,11 +586,13 @@ export function PlaygroundMain({
     !showPostConnectGuide;
   const multiModelTracePanelModel =
     selectedModel ?? resolvedSelectedModels[0] ?? null;
-  const isAnyMultiModelStreaming =
-    isMultiModelMode &&
-    Object.values(multiModelSummaries).some(
-      (summary) => summary.status === "running",
-    );
+  const { isStreamingActive, stopActiveChat } = useChatStopControls({
+    isMultiModelMode,
+    isStreaming,
+    multiModelSummaries,
+    setStopBroadcastRequestId,
+    stop,
+  });
 
   // Composer onboarding: typewriter effect, guided input, submit gating, NUX CTA
   const composer = useComposerOnboarding({
@@ -595,6 +605,12 @@ export function PlaygroundMain({
     isThreadEmpty: !effectiveHasMessages,
   });
   composerOnResetRef.current = composer.onSessionReset;
+  const { composerDisabled, sendBlocked } = getChatComposerInteractivity({
+    isStreamingActive,
+    composerDisabled: disableChatInput || submitBlocked,
+    submitDisabled:
+      disableChatInput || submitBlocked || composer.submitGatedByServer,
+  });
 
   useEffect(() => {
     if (!canEnableMultiModel && multiModelEnabled) {
@@ -976,12 +992,7 @@ export function PlaygroundMain({
       composer.input.trim() ||
       mcpPromptResults.length > 0 ||
       fileAttachments.length > 0;
-    if (
-      hasContent &&
-      !(isMultiModelMode ? isAnyMultiModelStreaming : status !== "ready") &&
-      !submitBlocked &&
-      !composer.submitGatedByServer
-    ) {
+    if (hasContent && !sendBlocked) {
       if (
         !isMultiModelMode &&
         displayMode === "fullscreen" &&
@@ -1050,13 +1061,10 @@ export function PlaygroundMain({
   };
 
   const errorMessage = formatErrorMessage(error);
-  const inputDisabled = isMultiModelMode
-    ? disableChatInput || isAnyMultiModelStreaming || submitBlocked
-    : disableChatInput || status !== "ready" || submitBlocked;
 
   const handleMultiModelStarterPrompt = useCallback(
     (prompt: string) => {
-      if (submitBlocked || inputDisabled) {
+      if (composerDisabled || sendBlocked) {
         composer.setInput(prompt);
         return;
       }
@@ -1071,11 +1079,11 @@ export function PlaygroundMain({
     },
     [
       composer,
+      composerDisabled,
       fileAttachments,
-      inputDisabled,
       onFirstMessageSent,
       queueBroadcastRequest,
-      submitBlocked,
+      sendBlocked,
     ],
   );
   const traceViewerTrace = effectiveLiveTraceEnvelope ?? {
@@ -1092,15 +1100,14 @@ export function PlaygroundMain({
     value: composer.input,
     onChange: composer.handleInputChange,
     onSubmit,
-    stop: isMultiModelMode
-      ? () => setStopBroadcastRequestId((previous) => previous + 1)
-      : stop,
-    disabled: inputDisabled,
-    isLoading: isMultiModelMode ? isAnyMultiModelStreaming : isStreaming,
+    stop: stopActiveChat,
+    disabled: composerDisabled,
+    isLoading: isStreamingActive,
     placeholder,
     currentModel: selectedModel,
     availableModels,
     onModelChange: handleSingleModelChange,
+    onModelSelectorOpenChange,
     multiModelEnabled: isMultiModelMode,
     selectedModels: resolvedSelectedModels,
     onSelectedModelsChange: handleSelectedModelsChange,
@@ -1111,7 +1118,8 @@ export function PlaygroundMain({
     temperature,
     onTemperatureChange: setTemperature,
     onResetChat: handleResetAllChats,
-    submitDisabled: submitBlocked || composer.submitGatedByServer,
+    submitDisabled:
+      disableChatInput || submitBlocked || composer.submitGatedByServer,
     tokenUsage,
     selectedServers,
     mcpToolsTokenCount: null,
@@ -1347,16 +1355,15 @@ export function PlaygroundMain({
           input={composer.input}
           onInputChange={composer.setInput}
           placeholder={placeholder}
-          disabled={inputDisabled}
-          canSend={
-            !disableChatInput &&
-            status === "ready" &&
-            !submitBlocked &&
-            composer.input.trim().length > 0
-          }
-          isThinking={isStreaming}
+          disabled={composerDisabled}
+          canSend={!sendBlocked && composer.input.trim().length > 0}
+          isThinking={isStreamingActive}
           loadingIndicatorVariant={loadingIndicatorVariant}
+          onStop={stopActiveChat}
           onSend={() => {
+            if (sendBlocked) {
+              return;
+            }
             sendMessage({ text: composer.input });
             composer.setInput("");
             setMcpPromptResults([]);
@@ -1371,7 +1378,7 @@ export function PlaygroundMain({
     <div
       className={cn(
         "h-full flex flex-col overflow-hidden",
-        showPostConnectGuide || isMultiModelMode
+        showPostConnectGuide || isMultiModelLayoutMode
           ? "bg-background"
           : "bg-muted/20",
       )}
@@ -1382,7 +1389,7 @@ export function PlaygroundMain({
           <div
             className={cn(
               "@container/playground-header relative flex h-11 min-w-0 w-full items-center justify-center border-b border-border px-3 text-xs text-muted-foreground flex-shrink-0",
-              isMultiModelMode ? "bg-background" : "bg-background/50",
+              isMultiModelLayoutMode ? "bg-background" : "bg-background/50",
               effectiveHasMessages && "pr-10 sm:pr-11",
             )}
             data-testid="playground-main-header"
@@ -1444,7 +1451,7 @@ export function PlaygroundMain({
       />
 
       <div className="flex-1 min-h-0 overflow-hidden">
-        {isMultiModelMode ? (
+        {isMultiModelLayoutMode ? (
           <div className="flex h-full min-h-0 flex-col overflow-hidden">
             {showMultiModelTraceEmptyPanel && multiModelTracePanelModel ? (
               <MultiModelEmptyTraceDiagnosticsPanel

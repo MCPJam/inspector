@@ -20,6 +20,7 @@ vi.mock("framer-motion", async (importOriginal) => {
 
 const mockThread = vi.fn();
 const mockFullscreenChatOverlay = vi.fn();
+const mockMultiModelPlaygroundCard = vi.fn();
 
 // Mock lucide-react icons
 vi.mock("lucide-react", () => ({
@@ -256,6 +257,7 @@ vi.mock("@/components/chat-v2/chat-input", () => ({
     onSubmit,
     disabled,
     submitDisabled,
+    isLoading,
     placeholder,
     pulseSubmit,
   }: {
@@ -264,11 +266,13 @@ vi.mock("@/components/chat-v2/chat-input", () => ({
     onSubmit: (e: any) => void;
     disabled: boolean;
     submitDisabled?: boolean;
+    isLoading?: boolean;
     placeholder: string;
     pulseSubmit?: boolean;
   }) => (
     <form
       data-testid="chat-input"
+      data-loading={isLoading ? "true" : "false"}
       onSubmit={(e) => {
         e.preventDefault();
         onSubmit(e);
@@ -359,9 +363,12 @@ vi.mock("@/components/evals/trace-view-mode-tabs", () => {
 });
 
 vi.mock("@/components/ui-playground/multi-model-playground-card", () => ({
-  MultiModelPlaygroundCard: ({ model }: { model: { name: string } }) => (
-    <div data-testid="multi-model-playground-card">{model.name}</div>
-  ),
+  MultiModelPlaygroundCard: (props: { model: { name: string } }) => {
+    mockMultiModelPlaygroundCard(props);
+    return (
+      <div data-testid="multi-model-playground-card">{props.model.name}</div>
+    );
+  },
 }));
 
 // Mock ConfirmChatResetDialog
@@ -417,7 +424,9 @@ vi.mock("../playground-helpers", () => ({
 const mockPreferencesState = {
   themeMode: "light",
   themePreset: "soft-pop",
+  hostStyle: "claude",
   setThemeMode: vi.fn(),
+  setHostStyle: vi.fn(),
 };
 
 vi.mock("@/stores/preferences/preferences-provider", () => ({
@@ -438,8 +447,6 @@ const mockUIPlaygroundStore = {
   customViewport: { width: 375, height: 667 },
   setCustomViewport: vi.fn(),
   setPlaygroundActive: vi.fn(),
-  hostStyle: "claude",
-  setHostStyle: vi.fn(),
   cspMode: "widget-declared",
   setCspMode: vi.fn(),
   mcpAppsCspMode: "widget-declared",
@@ -563,6 +570,7 @@ describe("PlaygroundMain", () => {
     capturedChatSessionOptions = null;
     mockPreferencesState.themeMode = "light";
     mockPreferencesState.themePreset = "soft-pop";
+    mockPreferencesState.hostStyle = "claude";
     mockSharedAppState.servers["test-server"] = {
       connectionStatus: "connected",
     };
@@ -586,6 +594,7 @@ describe("PlaygroundMain", () => {
     });
     mockThread.mockClear();
     mockFullscreenChatOverlay.mockClear();
+    mockMultiModelPlaygroundCard.mockClear();
   });
 
   describe("rendering", () => {
@@ -766,6 +775,112 @@ describe("PlaygroundMain", () => {
       render(<PlaygroundMain {...defaultProps} />);
 
       expect(screen.getByTestId("thread-loading")).toBeInTheDocument();
+    });
+  });
+
+  describe("Escape shortcut", () => {
+    it("stops an active single-model chat when Escape is pressed", () => {
+      mockUseChatSession.isStreaming = true;
+
+      render(<PlaygroundMain {...defaultProps} />);
+
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Escape",
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+
+      expect(mockUseChatSession.stop).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not stop an idle single-model chat when Escape is pressed", () => {
+      render(<PlaygroundMain {...defaultProps} />);
+
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Escape",
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+
+      expect(mockUseChatSession.stop).not.toHaveBeenCalled();
+    });
+
+    it("increments stopRequestId for an active multi-model chat when Escape is pressed", async () => {
+      mockUseChatSession.availableModels = [
+        {
+          id: "openai/gpt-5-mini",
+          name: "GPT-5 Mini",
+          provider: "openai",
+        },
+        {
+          id: "anthropic/claude-sonnet-4-5",
+          name: "Claude Sonnet 4.5",
+          provider: "anthropic",
+        },
+      ];
+      mockUseChatSession.selectedModelIds = [
+        "openai/gpt-5-mini",
+        "anthropic/claude-sonnet-4-5",
+      ];
+      mockUseChatSession.multiModelEnabled = true;
+
+      render(<PlaygroundMain {...defaultProps} enableMultiModelChat={true} />);
+
+      const firstCardProps = mockMultiModelPlaygroundCard.mock.calls[0]?.[0];
+      expect(firstCardProps).toBeTruthy();
+
+      act(() => {
+        firstCardProps.onSummaryChange({
+          modelId: "openai/gpt-5-mini",
+          durationMs: null,
+          tokens: 0,
+          toolCount: 0,
+          status: "running",
+          hasMessages: true,
+        });
+      });
+
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Escape",
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+
+      await waitFor(() => {
+        expect(
+          mockMultiModelPlaygroundCard.mock.calls.some(
+            ([props]) => props.stopRequestId === 1,
+          ),
+        ).toBe(true);
+      });
+    });
+
+    it("does not stop when Escape was already handled elsewhere", () => {
+      mockUseChatSession.isStreaming = true;
+      const preventEscape = (event: KeyboardEvent) => {
+        event.preventDefault();
+      };
+
+      window.addEventListener("keydown", preventEscape, true);
+      render(<PlaygroundMain {...defaultProps} />);
+
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Escape",
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+
+      window.removeEventListener("keydown", preventEscape, true);
+
+      expect(mockUseChatSession.stop).not.toHaveBeenCalled();
     });
   });
 
@@ -1018,12 +1133,17 @@ describe("PlaygroundMain", () => {
       expect(screen.getByTestId("chat-input-field")).toBeInTheDocument();
     });
 
-    it("disables input when not ready", () => {
+    it("keeps input editable while streaming", () => {
       mockUseChatSession.status = "submitted";
+      mockUseChatSession.isStreaming = true;
 
       render(<PlaygroundMain {...defaultProps} />);
 
-      expect(screen.getByTestId("chat-input-field")).toBeDisabled();
+      expect(screen.getByTestId("chat-input-field")).not.toBeDisabled();
+      expect(screen.getByTestId("chat-input")).toHaveAttribute(
+        "data-loading",
+        "true",
+      );
     });
 
     it("disables input when submit is blocked", () => {

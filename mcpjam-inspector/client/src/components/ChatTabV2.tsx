@@ -86,6 +86,7 @@ import { HOSTED_MODE } from "@/lib/config";
 import { buildOAuthTokensByServerId } from "@/lib/oauth/oauth-tokens";
 import type { HostedOAuthRequiredDetails } from "@/lib/hosted-oauth-required";
 import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
+import { useModelSelectorLayoutLock } from "@/hooks/use-model-selector-layout-lock";
 import { LiveTraceTimelineEmptyState } from "@/components/evals/live-trace-timeline-empty";
 import { LiveTraceRawEmptyState } from "@/components/evals/live-trace-raw-empty";
 import { TraceViewer } from "@/components/evals/trace-viewer";
@@ -100,6 +101,11 @@ import {
   resolveRestorableServerNames,
   shouldPreserveGuestServerSelection,
 } from "@/components/chat-v2/history/session-restore";
+import {
+  getChatComposerInteractivity,
+  useChatStopControls,
+} from "@/hooks/use-chat-stop-controls";
+import type { SandboxHostStyle } from "@/lib/sandbox-host-style";
 
 interface ChatTabProps {
   connectedOrConnectingServerConfigs: Record<string, ServerWithName>;
@@ -128,6 +134,9 @@ interface ChatTabProps {
   initialRequireToolApproval?: boolean;
   reasoningDisplayMode?: ReasoningDisplayMode;
   loadingIndicatorVariant?: LoadingIndicatorVariant;
+  showHostStyleSelector?: boolean;
+  hostStyle?: SandboxHostStyle;
+  onHostStyleChange?: (hostStyle: SandboxHostStyle) => void;
   onOAuthRequired?: (details?: HostedOAuthRequiredDetails) => void;
   /** When true, blocks sending until sandbox onboarding/OAuth completes. */
   sandboxComposerBlocked?: boolean;
@@ -168,7 +177,10 @@ export function ChatTabV2({
   initialTemperature,
   initialRequireToolApproval,
   reasoningDisplayMode = "inline",
-  loadingIndicatorVariant = "default",
+  loadingIndicatorVariant,
+  showHostStyleSelector = false,
+  hostStyle,
+  onHostStyleChange,
   onOAuthRequired,
   sandboxComposerBlocked = false,
   sandboxComposerBlockedReason,
@@ -1057,6 +1069,8 @@ export function ChatTabV2({
   // The user can still toggle multi-model for new chats afterward.
   const isMultiModelMode =
     canEnableMultiModel && multiModelEnabled && !activeHistorySessionId;
+  const { isMultiModelLayoutMode, onModelSelectorOpenChange } =
+    useModelSelectorLayoutLock(isMultiModelMode);
 
   useEffect(() => {
     if (isMultiModelMode && resolvedSelectedModels[0]) {
@@ -1134,13 +1148,13 @@ export function ChatTabV2({
     prevCompareModelIdsRef.current = current;
   }, [isMultiModelMode, resolvedSelectedModels]);
 
-  const effectiveHasMessages = isMultiModelMode
+  const effectiveHasMessages = isMultiModelLayoutMode
     ? Object.values(multiModelHasMessages).some(Boolean)
     : !isThreadEmpty;
   const showTopTraceViewTabs =
     traceViewsSupported &&
     !minimalMode &&
-    (!isMultiModelMode || !effectiveHasMessages);
+    (!isMultiModelLayoutMode || !effectiveHasMessages);
   const activeTraceViewMode: ChatTraceViewMode = showTopTraceViewTabs
     ? traceViewMode
     : "chat";
@@ -1508,18 +1522,19 @@ export function ChatTabV2({
 
   // Submit blocking with server check
   const submitBlocked = baseSubmitBlocked;
-  const isAnyMultiModelStreaming =
-    isMultiModelMode &&
-    Object.values(multiModelSummaries).some(
-      (summary) => summary.status === "running",
-    );
+  const { isStreamingActive, stopActiveChat } = useChatStopControls({
+    isMultiModelMode,
+    isStreaming,
+    multiModelSummaries,
+    setStopBroadcastRequestId,
+    stop,
+  });
   // History rail: any in-flight generation for this tab (matches composer blocking).
-  const historyRailStreaming = isMultiModelMode
-    ? isAnyMultiModelStreaming
-    : isStreaming;
-  const inputDisabled = isMultiModelMode
-    ? isAnyMultiModelStreaming || submitBlocked || sandboxComposerBlocked
-    : status !== "ready" || submitBlocked || sandboxComposerBlocked;
+  const historyRailStreaming = isStreamingActive;
+  const { composerDisabled, sendBlocked } = getChatComposerInteractivity({
+    isStreamingActive,
+    composerDisabled: submitBlocked || sandboxComposerBlocked,
+  });
 
   let placeholder = minimalMode
     ? MINIMAL_CHAT_COMPOSER_PLACEHOLDER
@@ -1700,7 +1715,7 @@ export function ChatTabV2({
       mcpPromptResults.length > 0 ||
       skillResults.length > 0 ||
       fileAttachments.length > 0;
-    if (hasContent && !inputDisabled) {
+    if (hasContent && !sendBlocked) {
       const threadReady = await ensureThreadReadyForSend();
       if (!threadReady) {
         return;
@@ -1783,7 +1798,7 @@ export function ChatTabV2({
       "chat_starter_prompt_clicked",
       standardEventProps("chat_tab"),
     );
-    if (submitBlocked || inputDisabled) {
+    if (composerDisabled || sendBlocked) {
       setInput(prompt);
       return;
     }
@@ -1819,15 +1834,14 @@ export function ChatTabV2({
     value: input,
     onChange: setInput,
     onSubmit,
-    stop: isMultiModelMode
-      ? () => setStopBroadcastRequestId((previous) => previous + 1)
-      : stop,
-    disabled: inputDisabled,
-    isLoading: isMultiModelMode ? isAnyMultiModelStreaming : isStreaming,
+    stop: stopActiveChat,
+    disabled: composerDisabled,
+    isLoading: isStreamingActive,
     placeholder,
     currentModel: selectedModel,
     availableModels,
     onModelChange: handleSingleModelChange,
+    onModelSelectorOpenChange,
     multiModelEnabled: isMultiModelMode,
     selectedModels: resolvedSelectedModels,
     onSelectedModelsChange: handleSelectedModelsChange,
@@ -1838,7 +1852,7 @@ export function ChatTabV2({
     temperature,
     onTemperatureChange: setTemperature,
     onResetChat: handleResetAllChats,
-    submitDisabled: submitBlocked,
+    submitDisabled: submitBlocked || sandboxComposerBlocked,
     tokenUsage,
     selectedServers: selectedConnectedServerNames,
     mcpToolsTokenCount,
@@ -1855,6 +1869,9 @@ export function ChatTabV2({
     requireToolApproval,
     onRequireToolApprovalChange: handleRequireToolApprovalChange,
     minimalMode,
+    showHostStyleSelector,
+    hostStyle,
+    onHostStyleChange,
     allServerConfigs,
     onServerToggle,
     onReconnectServer,
@@ -1934,7 +1951,7 @@ export function ChatTabV2({
               transform: isWidgetFullscreen ? "none" : "translateZ(0)",
             }}
           >
-            {isMultiModelMode ? (
+            {isMultiModelLayoutMode ? (
               <div className="flex flex-1 min-h-0 flex-col overflow-hidden">
                 {showTopTraceViewTabs ? (
                   <ChatTraceViewModeHeaderBar
@@ -2298,7 +2315,9 @@ export function ChatTabV2({
                           onFullscreenChange={setIsWidgetFullscreen}
                           enableFullscreenChatOverlay
                           fullscreenChatPlaceholder={placeholder}
-                          fullscreenChatDisabled={inputDisabled}
+                          fullscreenChatDisabled={composerDisabled}
+                          fullscreenChatSendBlocked={sendBlocked}
+                          onFullscreenChatStop={stopActiveChat}
                           onToolApprovalResponse={addToolApprovalResponse}
                           toolRenderOverrides={restoredToolRenderOverrides}
                           minimalMode={minimalMode}

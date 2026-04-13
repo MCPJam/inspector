@@ -178,6 +178,7 @@ export function MCPAppsRenderer({
 }: MCPAppsRendererProps) {
   const sandboxRef = useRef<SandboxedIframeHandle>(null);
   const themeMode = usePreferencesStore((s) => s.themeMode);
+  const sharedHostStyle = usePreferencesStore((s) => s.hostStyle);
   const sandboxHostStyle = useSandboxHostStyle();
   const draftHostContext = useClientConfigStore(
     (s) => s.draftConfig?.hostContext,
@@ -195,7 +196,6 @@ export function MCPAppsRenderer({
 
   // Get CSP mode and host style from playground store when in playground
   const isPlaygroundActive = useUIPlaygroundStore((s) => s.isPlaygroundActive);
-  const playgroundHostStyle = useUIPlaygroundStore((s) => s.hostStyle);
   const playgroundCspMode = useUIPlaygroundStore((s) => s.mcpAppsCspMode);
   const cspMode: CspMode = isPlaygroundActive
     ? playgroundCspMode
@@ -684,7 +684,7 @@ export function MCPAppsRenderer({
   // CSS Variables for theming (SEP-1865 styles.variables)
   // These are sent via hostContext.styles.variables - the SDK should pass them through
   const effectiveHostStyle = isPlaygroundActive
-    ? playgroundHostStyle
+    ? sharedHostStyle
     : (sandboxHostStyle ?? "claude");
   const useChatGPTStyle = effectiveHostStyle === "chatgpt";
   themeModeRef.current = resolvedTheme;

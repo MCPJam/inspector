@@ -2,10 +2,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 import webRoutes from "../index.js";
 
-vi.mock("@mcpjam/sdk", () => ({
-  MCPClientManager: vi.fn(),
-  isMCPAuthError: vi.fn().mockReturnValue(false),
-}));
+vi.mock("@mcpjam/sdk", async () => {
+  const actual =
+    await vi.importActual<typeof import("@mcpjam/sdk")>("@mcpjam/sdk");
+  return {
+    ...actual,
+    MCPClientManager: vi.fn(),
+    isMCPAuthError: vi.fn().mockReturnValue(false),
+  };
+});
 
 vi.mock("../apps.js", () => ({
   default: new Hono(),

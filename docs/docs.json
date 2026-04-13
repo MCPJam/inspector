@@ -29,13 +29,27 @@
         "icon": "star",
         "pages": [
           "inspector/app-builder",
-          "inspector/llm-playground",
+          "inspector/chat",
           "inspector/guided-oauth",
           "inspector/tools-prompts-resources",
           "inspector/test-cases",
           "inspector/workspaces",
           "inspector/views",
           "inspector/skills"
+        ]
+      },
+      {
+        "group": "CLI",
+        "icon": "terminal",
+        "pages": [
+          "cli/overview",
+          "cli/server-inspection",
+          "cli/oauth-conformance",
+          "cli/oauth-login",
+          "cli/apps-conformance",
+          "cli/tools-resources-prompts",
+          "cli/ci",
+          "cli/reference"
         ]
       },
       {
@@ -67,7 +81,8 @@
               "sdk/reference/eval-reporting",
               "sdk/reference/validators",
               "sdk/reference/llm-providers",
-              "sdk/reference/oauth-conformance"
+              "sdk/reference/oauth-conformance",
+              "sdk/reference/apps-conformance"
             ]
           }
         ]
@@ -131,7 +146,9 @@
     "socials": {
       "discord": "https://discord.gg/JEnDtz8X6z",
       "github": "https://github.com/MCPJam/inspector",
-      "website": "https://mcpjam.com"
+      "website": "https://mcpjam.com",
+      "linkedin": "https://www.linkedin.com/company/109011364/",
+      "x": "https://x.com/mcpjams"
     }
   }
 }

@@ -4,6 +4,11 @@
 
 export type MaybePromise<T> = T | Promise<T>;
 
+export type OAuthAuthMode =
+  | "interactive"
+  | "headless"
+  | "client_credentials";
+
 // OAuth flow steps based on MCP specification
 export type OAuthFlowStep =
   | "idle"
@@ -39,6 +44,7 @@ export interface OAuthFlowState {
   // Data collected during the flow
   serverUrl?: string;
   wwwAuthenticateHeader?: string;
+  challengedScopes?: string[];
   resourceMetadataUrl?: string;
   resourceMetadata?: {
     resource: string;
@@ -212,6 +218,8 @@ export interface BaseOAuthStateMachineConfig {
   clientIdMetadataUrl?: string;
   customScopes?: string;
   customHeaders?: Record<string, string>;
+  authMode?: OAuthAuthMode;
+  strictConformance?: boolean;
 }
 
 // Registration strategies

@@ -1,0 +1,939 @@
+/// <reference lib="dom" />
+/// <reference lib="dom.iterable" />
+
+export {};
+
+type CheckoutSession = Record<string, unknown>;
+
+type DeviceCapabilities = {
+  hover: boolean;
+  touch: boolean;
+};
+
+type SafeAreaInsets = {
+  top: number;
+  bottom: number;
+  left: number;
+  right: number;
+};
+
+type UserLocation = {
+  country: string;
+  region: string;
+  city: string;
+};
+
+type RuntimeConfig = {
+  toolId: string;
+  toolName: string;
+  toolInput: Record<string, any>;
+  toolOutput: any;
+  toolResponseMetadata?: Record<string, any> | null;
+  theme: string;
+  locale: string;
+  deviceType: "mobile" | "tablet" | "desktop";
+  userLocation?: UserLocation | null;
+  maxHeight?: number | null;
+  capabilities?: DeviceCapabilities | null;
+  safeAreaInsets?: SafeAreaInsets;
+  viewMode?: string;
+  viewParams?: Record<string, any>;
+  useMapPendingCalls?: boolean;
+};
+
+type PendingCall = {
+  resolve: (value: unknown) => void;
+  reject: (reason?: unknown) => void;
+};
+
+type NavigationDirection = "back" | "forward";
+
+type OpenAIAPI = {
+  toolInput: Record<string, any>;
+  toolOutput: any;
+  toolResponseMetadata: Record<string, any> | null;
+  displayMode: string;
+  theme: string;
+  locale: string;
+  maxHeight: number | null;
+  safeArea: { insets: SafeAreaInsets };
+  userAgent: { device: { type: string }; capabilities: DeviceCapabilities };
+  view: { mode: string; params: Record<string, any> };
+  widgetState: any;
+  _pendingCalls?: Map<number, PendingCall>;
+  _pendingCheckoutCalls?: Map<number, PendingCall>;
+  _pendingFileCalls?: Map<number, PendingCall>;
+  _callId: number;
+  setWidgetState(state: any): void;
+  callTool(toolName: string, args?: Record<string, any>): Promise<any>;
+  sendFollowUpMessage(opts: any): void;
+  sendFollowupTurn(message: any): void;
+  requestCheckout(session: CheckoutSession): Promise<any>;
+  uploadFile(file: File): Promise<{ fileId: string }>;
+  getFileDownloadUrl(options: {
+    fileId: string;
+  }): Promise<{ downloadUrl: string }>;
+  requestDisplayMode(options?: { mode?: string; maxHeight?: number | null }): {
+    mode: string;
+  };
+  requestClose(): void;
+  openExternal(options: { href: string } | string): void;
+  requestModal(options: any): void;
+  notifyIntrinsicHeight(height: unknown): void;
+  notifyNavigation(direction: NavigationDirection): void;
+};
+
+declare global {
+  interface Window {
+    openai: OpenAIAPI;
+    webplus: OpenAIAPI;
+  }
+}
+
+const CONFIG_ELEMENT_ID = "openai-runtime-config";
+
+const readConfig = (): RuntimeConfig | null => {
+  try {
+    const el = document.getElementById(CONFIG_ELEMENT_ID);
+    if (!el) {
+      console.error("[OpenAI Widget] Missing runtime config element");
+      return null;
+    }
+    const raw = el.textContent || "{}";
+    return JSON.parse(raw) as RuntimeConfig;
+  } catch (err) {
+    console.error("[OpenAI Widget] Failed to parse runtime config", err);
+    return null;
+  }
+};
+
+const clampNumber = (value: unknown): number | null => {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+};
+
+(function bootstrap() {
+  const config = readConfig();
+  if (!config) return;
+
+  const {
+    toolId,
+    toolName,
+    toolInput,
+    toolOutput,
+    toolResponseMetadata,
+    theme,
+    locale,
+    deviceType,
+    userLocation,
+    maxHeight,
+    capabilities,
+    safeAreaInsets,
+    viewMode = "inline",
+    viewParams = {},
+    useMapPendingCalls = true,
+  } = config;
+
+  const widgetStateKey = `openai-widget-state:${toolName}:${toolId}`;
+
+  const hostLocale = locale;
+  const hostDeviceType = deviceType;
+  const hostUserLocation = userLocation ?? null;
+  const hostCapabilities = capabilities ?? null;
+  const hostSafeAreaInsets = safeAreaInsets ?? {
+    top: 0,
+    bottom: 0,
+    left: 0,
+    right: 0,
+  };
+
+  try {
+    document.documentElement.lang = hostLocale;
+  } catch (e) {
+    // no-op
+  }
+
+  const detectedTouch =
+    "ontouchstart" in window || (navigator as any).maxTouchPoints > 0;
+  const detectedHover = window.matchMedia("(hover: hover)").matches;
+  const hasTouch = hostCapabilities ? hostCapabilities.touch : detectedTouch;
+  const hasHover = hostCapabilities ? hostCapabilities.hover : detectedHover;
+
+  const getSubjectId = (): string => {
+    let subjectId = sessionStorage.getItem("openai_subject_id");
+    if (!subjectId) {
+      subjectId = "anon_" + Math.random().toString(36).substring(2, 15);
+      sessionStorage.setItem("openai_subject_id", subjectId);
+    }
+    return subjectId;
+  };
+
+  const postResize = (() => {
+    let lastHeight = 0;
+    let lastWidth = 0;
+    return (height: number, width: number) => {
+      const rh =
+        Number.isFinite(height) && height > 0 ? Math.round(height) : lastHeight;
+      const rw =
+        Number.isFinite(width) && width > 0 ? Math.round(width) : lastWidth;
+      if (rh === lastHeight && rw === lastWidth) return;
+      lastHeight = rh;
+      lastWidth = rw;
+      window.parent.postMessage(
+        { type: "openai:resize", height: rh, width: rw },
+        "*",
+      );
+    };
+  })();
+
+  const measureHeight = (): number => {
+    let contentHeight = 0;
+
+    if (document.body) {
+      const children = document.body.children;
+      for (let i = 0; i < children.length; i++) {
+        const child = children[i] as HTMLElement;
+        if (child.tagName === "SCRIPT" || child.tagName === "STYLE") continue;
+        const rect = child.getBoundingClientRect();
+        const bottom = rect.top + rect.height + window.scrollY;
+        contentHeight = Math.max(contentHeight, bottom);
+      }
+
+      const bodyStyle = window.getComputedStyle(document.body);
+      contentHeight += parseFloat(bodyStyle.marginBottom) || 0;
+      contentHeight += parseFloat(bodyStyle.paddingBottom) || 0;
+    }
+
+    if (contentHeight <= 0) {
+      const docEl = document.documentElement;
+      contentHeight = Math.max(
+        docEl ? docEl.scrollHeight : 0,
+        document.body ? document.body.scrollHeight : 0,
+      );
+    }
+
+    return Math.ceil(contentHeight);
+  };
+
+  const measureWidth = (): number => {
+    let contentWidth = 0;
+
+    if (document.body) {
+      const children = document.body.children;
+      for (let i = 0; i < children.length; i++) {
+        const child = children[i] as HTMLElement;
+        if (child.tagName === "SCRIPT" || child.tagName === "STYLE") continue;
+        const rect = child.getBoundingClientRect();
+        const right = rect.left + rect.width + window.scrollX;
+        contentWidth = Math.max(contentWidth, right);
+      }
+
+      const bodyStyle = window.getComputedStyle(document.body);
+      contentWidth += parseFloat(bodyStyle.marginRight) || 0;
+      contentWidth += parseFloat(bodyStyle.paddingRight) || 0;
+    }
+
+    if (contentWidth <= 0) {
+      const docEl = document.documentElement;
+      contentWidth = Math.max(
+        docEl ? docEl.scrollWidth : 0,
+        document.body ? document.body.scrollWidth : 0,
+      );
+    }
+
+    return Math.ceil(contentWidth);
+  };
+
+  const measureAndNotify = () => {
+    try {
+      postResize(measureHeight(), measureWidth());
+    } catch (err) {
+      console.error("[OpenAI Widget] Failed to measure dimensions:", err);
+    }
+  };
+
+  const setupAutoResize = () => {
+    let scheduled = false;
+
+    const scheduleMeasure = () => {
+      if (scheduled) return;
+      scheduled = true;
+      requestAnimationFrame(() => {
+        scheduled = false;
+        measureAndNotify();
+      });
+    };
+
+    scheduleMeasure();
+
+    if (typeof ResizeObserver !== "undefined") {
+      const resizeObserver = new ResizeObserver(scheduleMeasure);
+      resizeObserver.observe(document.documentElement);
+      if (document.body) resizeObserver.observe(document.body);
+    } else {
+      window.addEventListener("resize", scheduleMeasure);
+    }
+
+    window.addEventListener("load", () => {
+      requestAnimationFrame(measureAndNotify);
+    });
+  };
+
+  const navigationState = { currentIndex: 0, historyLength: 1 };
+
+  const withNavigationIndex = (
+    state: any,
+    index: number,
+  ): Record<string, any> => {
+    return state && typeof state === "object"
+      ? { ...state, __navIndex: index }
+      : { __navIndex: index };
+  };
+
+  const notifyNavigationState = () => {
+    const canGoBack = navigationState.currentIndex > 0;
+    const canGoForward =
+      navigationState.currentIndex < navigationState.historyLength - 1;
+    window.parent.postMessage(
+      {
+        type: "openai:navigationStateChanged",
+        toolId,
+        canGoBack,
+        canGoForward,
+        historyLength: navigationState.historyLength,
+        currentIndex: navigationState.currentIndex,
+      },
+      "*",
+    );
+  };
+
+  const originalPushState = history.pushState.bind(history);
+  history.pushState = function pushState(
+    state: any,
+    title: string,
+    url?: string | URL | null,
+  ) {
+    const nextIndex = navigationState.currentIndex + 1;
+    const stateWithIndex = withNavigationIndex(state, nextIndex);
+    originalPushState(stateWithIndex, title, url);
+    navigationState.currentIndex = nextIndex;
+    navigationState.historyLength = history.length;
+    notifyNavigationState();
+  };
+
+  const originalReplaceState = history.replaceState.bind(history);
+  history.replaceState = function replaceState(
+    state: any,
+    title: string,
+    url?: string | URL | null,
+  ) {
+    const stateWithIndex = withNavigationIndex(
+      state,
+      navigationState.currentIndex,
+    );
+    originalReplaceState(stateWithIndex, title, url);
+    navigationState.historyLength = history.length;
+    notifyNavigationState();
+  };
+
+  window.addEventListener("popstate", (event) => {
+    const stateIndex =
+      (event as any).state?.__navIndex ?? navigationState.currentIndex;
+    navigationState.currentIndex = stateIndex;
+    navigationState.historyLength = history.length;
+    notifyNavigationState();
+  });
+
+  const openaiAPI: any = {
+    toolInput,
+    toolOutput,
+    toolResponseMetadata: toolResponseMetadata ?? null,
+    displayMode: "inline",
+    theme,
+    locale: hostLocale,
+    maxHeight: maxHeight ?? null,
+    safeArea: { insets: hostSafeAreaInsets },
+    userAgent: {
+      device: { type: hostDeviceType },
+      capabilities: { hover: hasHover, touch: hasTouch },
+    },
+    view: { mode: viewMode, params: viewParams },
+    widgetState: null,
+    ...(useMapPendingCalls
+      ? {
+          _pendingCalls: new Map(),
+          _pendingCheckoutCalls: new Map(),
+          _pendingFileCalls: new Map(),
+        }
+      : {}),
+    _callId: 0,
+
+    setWidgetState(state: any) {
+      this.widgetState = state;
+      try {
+        localStorage.setItem(widgetStateKey, JSON.stringify(state));
+      } catch (err) {
+        // no-op
+      }
+      window.parent.postMessage(
+        { type: "openai:setWidgetState", toolId, state },
+        "*",
+      );
+    },
+
+    callTool(toolName: string, args: Record<string, any> = {}) {
+      const callId = ++this._callId;
+      if (useMapPendingCalls) {
+        return new Promise((resolve, reject) => {
+          this._pendingCalls.set(callId, { resolve, reject });
+          window.parent.postMessage(
+            {
+              type: "openai:callTool",
+              toolName,
+              args,
+              callId,
+              toolId,
+              _meta: Object.assign(
+                {
+                  "openai/locale": hostLocale,
+                  "openai/userAgent": navigator.userAgent,
+                  "openai/subject": getSubjectId(),
+                },
+                hostUserLocation
+                  ? { "openai/userLocation": hostUserLocation }
+                  : {},
+              ),
+            },
+            "*",
+          );
+          setTimeout(() => {
+            if (this._pendingCalls.has(callId)) {
+              this._pendingCalls.delete(callId);
+              reject(new Error("Tool call timeout"));
+            }
+          }, 30000);
+        });
+      }
+
+      return new Promise((resolve, reject) => {
+        const handler = (event: MessageEvent<any>) => {
+          if (
+            event.data?.type === "openai:callTool:response" &&
+            event.data.callId === callId
+          ) {
+            window.removeEventListener("message", handler);
+            event.data.error
+              ? reject(new Error(event.data.error))
+              : resolve(event.data.result);
+          }
+        };
+        window.addEventListener("message", handler);
+        window.parent.postMessage(
+          {
+            type: "openai:callTool",
+            callId,
+            toolName,
+            args,
+            toolId,
+            _meta: Object.assign(
+              {
+                "openai/locale": hostLocale,
+                "openai/userAgent": navigator.userAgent,
+                "openai/subject": getSubjectId(),
+              },
+              hostUserLocation
+                ? { "openai/userLocation": hostUserLocation }
+                : {},
+            ),
+          },
+          "*",
+        );
+        setTimeout(() => {
+          window.removeEventListener("message", handler);
+          reject(new Error("Tool call timeout"));
+        }, 30000);
+      });
+    },
+
+    sendFollowUpMessage(opts: any) {
+      const prompt = typeof opts === "string" ? opts : opts?.prompt || "";
+      window.parent.postMessage(
+        { type: "openai:sendFollowup", message: prompt, toolId },
+        "*",
+      );
+    },
+
+    sendFollowupTurn(message: any) {
+      return this.sendFollowUpMessage(
+        typeof message === "string" ? message : message?.prompt || "",
+      );
+    },
+
+    requestCheckout(session: CheckoutSession) {
+      const callId = ++this._callId;
+
+      if (useMapPendingCalls) {
+        return new Promise((resolve, reject) => {
+          this._pendingCheckoutCalls.set(callId, { resolve, reject });
+          window.parent.postMessage(
+            { type: "openai:requestCheckout", toolId, callId, session },
+            "*",
+          );
+          setTimeout(() => {
+            if (this._pendingCheckoutCalls.has(callId)) {
+              this._pendingCheckoutCalls.delete(callId);
+              reject(new Error("Checkout timeout"));
+            }
+          }, 30000);
+        });
+      }
+
+      return new Promise((resolve, reject) => {
+        const handler = (event: MessageEvent<any>) => {
+          if (
+            event.data?.type === "openai:requestCheckout:response" &&
+            event.data.callId === callId
+          ) {
+            window.removeEventListener("message", handler);
+            event.data.error
+              ? reject(new Error(event.data.error))
+              : resolve(event.data.result);
+          }
+        };
+        window.addEventListener("message", handler);
+        window.parent.postMessage(
+          { type: "openai:requestCheckout", callId, session, toolId },
+          "*",
+        );
+        setTimeout(() => {
+          window.removeEventListener("message", handler);
+          reject(new Error("Checkout timeout"));
+        }, 30000);
+      });
+    },
+
+    uploadFile(file: File): Promise<{ fileId: string }> {
+      const ALLOWED_TYPES = ["image/png", "image/jpeg", "image/webp"];
+      const MAX_SIZE = 20 * 1024 * 1024; // 20MB
+
+      if (!(file instanceof File)) {
+        return Promise.reject(new Error("uploadFile requires a File object"));
+      }
+      if (!ALLOWED_TYPES.includes(file.type)) {
+        return Promise.reject(
+          new Error(
+            `Unsupported file type: ${file.type}. Allowed: ${ALLOWED_TYPES.join(", ")}`,
+          ),
+        );
+      }
+      if (file.size > MAX_SIZE) {
+        return Promise.reject(
+          new Error(
+            `File too large. Maximum size: ${MAX_SIZE / 1024 / 1024}MB`,
+          ),
+        );
+      }
+
+      const callId = ++this._callId;
+
+      return new Promise((resolve, reject) => {
+        if (useMapPendingCalls) {
+          this._pendingFileCalls.set(callId, { resolve, reject });
+        }
+
+        const reader = new FileReader();
+        reader.onload = () => {
+          const dataUrl = reader.result as string;
+          // Strip the "data:<mime>;base64," prefix
+          const base64 = dataUrl.split(",")[1];
+          window.parent.postMessage(
+            {
+              type: "openai:uploadFile",
+              callId,
+              toolId,
+              data: base64,
+              mimeType: file.type,
+              fileName: file.name,
+            },
+            "*",
+          );
+        };
+        reader.onerror = () => {
+          if (useMapPendingCalls) this._pendingFileCalls.delete(callId);
+          reject(new Error("Failed to read file"));
+        };
+        reader.readAsDataURL(file);
+
+        if (useMapPendingCalls) {
+          setTimeout(() => {
+            if (this._pendingFileCalls.has(callId)) {
+              this._pendingFileCalls.delete(callId);
+              reject(new Error("Upload timeout"));
+            }
+          }, 60000);
+        } else {
+          // Fallback: per-call message listener
+          const handler = (event: MessageEvent<any>) => {
+            if (
+              event.data?.type === "openai:uploadFile:response" &&
+              event.data.callId === callId
+            ) {
+              window.removeEventListener("message", handler);
+              event.data.error
+                ? reject(new Error(event.data.error))
+                : resolve(event.data.result);
+            }
+          };
+          window.addEventListener("message", handler);
+          setTimeout(() => {
+            window.removeEventListener("message", handler);
+            reject(new Error("Upload timeout"));
+          }, 60000);
+        }
+      });
+    },
+
+    getFileDownloadUrl(options: {
+      fileId: string;
+    }): Promise<{ downloadUrl: string }> {
+      if (!options || !options.fileId) {
+        return Promise.reject(new Error("fileId is required"));
+      }
+
+      const callId = ++this._callId;
+
+      if (useMapPendingCalls) {
+        return new Promise((resolve, reject) => {
+          this._pendingFileCalls.set(callId, { resolve, reject });
+          window.parent.postMessage(
+            {
+              type: "openai:getFileDownloadUrl",
+              callId,
+              toolId,
+              fileId: options.fileId,
+            },
+            "*",
+          );
+          setTimeout(() => {
+            if (this._pendingFileCalls.has(callId)) {
+              this._pendingFileCalls.delete(callId);
+              reject(new Error("getFileDownloadUrl timeout"));
+            }
+          }, 30000);
+        });
+      }
+
+      return new Promise((resolve, reject) => {
+        const handler = (event: MessageEvent<any>) => {
+          if (
+            event.data?.type === "openai:getFileDownloadUrl:response" &&
+            event.data.callId === callId
+          ) {
+            window.removeEventListener("message", handler);
+            event.data.error
+              ? reject(new Error(event.data.error))
+              : resolve(event.data.result);
+          }
+        };
+        window.addEventListener("message", handler);
+        window.parent.postMessage(
+          {
+            type: "openai:getFileDownloadUrl",
+            callId,
+            toolId,
+            fileId: options.fileId,
+          },
+          "*",
+        );
+        setTimeout(() => {
+          window.removeEventListener("message", handler);
+          reject(new Error("getFileDownloadUrl timeout"));
+        }, 30000);
+      });
+    },
+
+    requestDisplayMode(options: any = {}) {
+      const mode = options.mode || "inline";
+      this.displayMode = mode;
+      window.parent.postMessage(
+        {
+          type: "openai:requestDisplayMode",
+          mode,
+          maxHeight: options.maxHeight,
+          toolId,
+        },
+        "*",
+      );
+      return { mode };
+    },
+
+    requestClose() {
+      window.parent.postMessage({ type: "openai:requestClose", toolId }, "*");
+    },
+
+    openExternal(options: any) {
+      let href: string | undefined;
+      if (typeof options === "string") {
+        console.warn(
+          "[OpenAI SDK] openExternal(string) is deprecated. Use openExternal({ href: string }) instead.",
+        );
+        href = options;
+      } else {
+        href = options?.href;
+      }
+      if (!href)
+        throw new Error(
+          'href is required for openExternal. Usage: openExternal({ href: "https://..." })',
+        );
+      window.parent.postMessage({ type: "openai:openExternal", href }, "*");
+      window.open(href, "_blank", "noopener,noreferrer");
+    },
+
+    requestModal(options?: any) {
+      const opts = options || {};
+      window.parent.postMessage(
+        {
+          type: "openai:requestModal",
+          title: opts.title,
+          params: opts.params,
+          anchor: opts.anchor,
+          template: opts.template,
+        },
+        "*",
+      );
+    },
+
+    notifyIntrinsicHeight(height: unknown) {
+      postResize(Number(height), measureWidth());
+    },
+
+    notifyNavigation(direction: "back" | "forward") {
+      if (direction === "back") {
+        if (navigationState.currentIndex > 0) {
+          navigationState.currentIndex--;
+          history.back();
+        }
+      } else if (direction === "forward") {
+        if (navigationState.currentIndex < navigationState.historyLength - 1) {
+          navigationState.currentIndex++;
+          history.forward();
+        }
+      }
+    },
+  };
+
+  Object.defineProperty(window, "openai", {
+    value: openaiAPI,
+    writable: false,
+    configurable: false,
+    enumerable: true,
+  });
+  Object.defineProperty(window, "webplus", {
+    value: openaiAPI,
+    writable: false,
+    configurable: false,
+    enumerable: true,
+  });
+
+  setTimeout(() => {
+    try {
+      window.dispatchEvent(
+        new CustomEvent("openai:set_globals", {
+          detail: {
+            globals: {
+              displayMode: openaiAPI.displayMode,
+              maxHeight: openaiAPI.maxHeight,
+              theme: openaiAPI.theme,
+              locale: openaiAPI.locale,
+              safeArea: openaiAPI.safeArea,
+              userAgent: openaiAPI.userAgent,
+            },
+          },
+        }),
+      );
+    } catch (err) {
+      console.error("[OpenAI Widget] Failed to dispatch globals event:", err);
+    }
+  }, 0);
+
+  setTimeout(() => {
+    try {
+      const stored = localStorage.getItem(widgetStateKey);
+      if (stored && window.openai)
+        window.openai.widgetState = JSON.parse(stored);
+    } catch (err) {
+      console.error("[OpenAI Widget] Failed to restore widget state:", err);
+    }
+  }, 0);
+
+  // Listen for storage changes from other same-origin iframes (modal ↔ inline sync)
+  window.addEventListener("storage", (event: StorageEvent) => {
+    if (event.key === widgetStateKey && event.newValue !== null) {
+      try {
+        const newState = JSON.parse(event.newValue);
+        window.openai.widgetState = newState;
+        window.dispatchEvent(
+          new CustomEvent("openai:set_globals", {
+            detail: { globals: { widgetState: newState } },
+          }),
+        );
+      } catch (err) {
+        // no-op
+      }
+    }
+  });
+
+  window.addEventListener("message", (event: MessageEvent<any>) => {
+    const { type, callId, result, error, globals } = event.data || {};
+    switch (type) {
+      case "openai:callTool:response": {
+        if (!useMapPendingCalls) break;
+        const pending = window.openai._pendingCalls?.get(callId);
+        if (pending) {
+          window.openai._pendingCalls?.delete(callId);
+          error ? pending.reject(new Error(error)) : pending.resolve(result);
+        }
+        break;
+      }
+      case "openai:requestCheckout:response": {
+        if (!useMapPendingCalls) break;
+        const pending = window.openai._pendingCheckoutCalls?.get(callId);
+        if (pending) {
+          window.openai._pendingCheckoutCalls?.delete(callId);
+          error ? pending.reject(new Error(error)) : pending.resolve(result);
+        }
+        break;
+      }
+      case "openai:uploadFile:response":
+      case "openai:getFileDownloadUrl:response": {
+        if (!useMapPendingCalls) break;
+        const filePending = window.openai._pendingFileCalls?.get(callId);
+        if (filePending) {
+          window.openai._pendingFileCalls?.delete(callId);
+          error
+            ? filePending.reject(new Error(error))
+            : filePending.resolve(result);
+        }
+        break;
+      }
+      case "openai:set_globals":
+        if (globals) {
+          if (globals.displayMode !== undefined) {
+            window.openai.displayMode = globals.displayMode;
+            // Enable native scrollbars in fullscreen/PiP; keep hidden-x in inline
+            if (
+              globals.displayMode === "fullscreen" ||
+              globals.displayMode === "pip"
+            ) {
+              document.documentElement.style.overflow = "auto";
+            } else {
+              document.documentElement.style.overflowX = "hidden";
+              document.documentElement.style.overflowY = "auto";
+            }
+          }
+          if (globals.maxHeight !== undefined)
+            window.openai.maxHeight = globals.maxHeight;
+          if (globals.theme !== undefined) window.openai.theme = globals.theme;
+          if (globals.locale !== undefined)
+            window.openai.locale = globals.locale;
+          if (globals.safeArea !== undefined)
+            window.openai.safeArea = globals.safeArea;
+          if (globals.userAgent !== undefined)
+            window.openai.userAgent = globals.userAgent;
+          if (globals.view !== undefined) window.openai.view = globals.view;
+          if (globals.toolInput !== undefined)
+            window.openai.toolInput = globals.toolInput;
+          if (globals.toolOutput !== undefined)
+            window.openai.toolOutput = globals.toolOutput;
+          if (globals.widgetState !== undefined) {
+            window.openai.widgetState = globals.widgetState;
+            try {
+              localStorage.setItem(
+                widgetStateKey,
+                JSON.stringify(globals.widgetState),
+              );
+            } catch (err) {
+              // no-op
+            }
+          }
+        }
+        try {
+          window.dispatchEvent(
+            new CustomEvent("openai:set_globals", { detail: { globals } }),
+          );
+        } catch (err) {
+          // no-op
+        }
+        break;
+      case "openai:requestResize":
+        measureAndNotify();
+        break;
+      case "openai:navigate":
+        if (event.data.toolId === toolId) {
+          if (event.data.direction === "back") {
+            if (navigationState.currentIndex > 0) {
+              navigationState.currentIndex--;
+              history.back();
+            }
+          } else if (event.data.direction === "forward") {
+            if (
+              navigationState.currentIndex <
+              navigationState.historyLength - 1
+            ) {
+              navigationState.currentIndex++;
+              history.forward();
+            }
+          }
+        }
+        break;
+    }
+  });
+
+  window.addEventListener("openai:resize", (event: Event) => {
+    try {
+      const detail =
+        event && typeof event === "object" && "detail" in event
+          ? (event as any).detail || {}
+          : {};
+      const height =
+        typeof detail?.height === "number"
+          ? detail.height
+          : typeof detail?.size?.height === "number"
+            ? detail.size.height
+            : null;
+      if (height != null) {
+        postResize(height, measureWidth());
+      } else {
+        measureAndNotify();
+      }
+    } catch (err) {
+      console.error("[OpenAI Widget] Failed to process resize event:", err);
+    }
+  });
+
+  setupAutoResize();
+
+  document.addEventListener("securitypolicyviolation", (e: any) => {
+    const violation = {
+      type: "openai:csp-violation",
+      toolId,
+      directive: e.violatedDirective,
+      blockedUri: e.blockedURI,
+      sourceFile: e.sourceFile || null,
+      lineNumber: clampNumber(e.lineNumber),
+      columnNumber: clampNumber(e.columnNumber),
+      originalPolicy: e.originalPolicy,
+      effectiveDirective: e.effectiveDirective,
+      disposition: e.disposition,
+      timestamp: Date.now(),
+    };
+
+    console.warn(
+      "[OpenAI Widget CSP Violation]",
+      violation.directive,
+      ":",
+      violation.blockedUri,
+    );
+    window.parent.postMessage(violation, "*");
+  });
+})();

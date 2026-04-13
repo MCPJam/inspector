@@ -1,26 +1,32 @@
 /**
  * Shared route handler functions for resources, prompts, and tools.
  *
- * Pure operations re-exported from @mcpjam/sdk, plus inspector-specific
- * listTools enrichment (toolsMetadata + tokenCount).
+ * Pure operations come from the SDK's dedicated operations entrypoint, while
+ * inspector-specific listTools adds toolsMetadata and tokenCount.
  *
  * Used by both web/ and mcp/ route sets.
  */
 
-// Re-export pure operations from SDK — no behavioral changes
+import type { MCPClientManager } from "@mcpjam/sdk";
+import {
+  listResources,
+  readResource,
+  listPrompts,
+  listPromptsMulti,
+  getPrompt,
+  listTools as listToolsBase,
+} from "@mcpjam/sdk/operations";
+import { countToolsTokens } from "./tokenizer-helpers.js";
+
+type Manager = InstanceType<typeof MCPClientManager>;
+
 export {
   listResources,
   readResource,
   listPrompts,
   listPromptsMulti,
   getPrompt,
-} from "@mcpjam/sdk";
-
-import type { MCPClientManager } from "@mcpjam/sdk";
-import { listTools as listToolsBase } from "@mcpjam/sdk";
-import { countToolsTokens } from "./tokenizer-helpers.js";
-
-type Manager = InstanceType<typeof MCPClientManager>;
+};
 
 /**
  * Inspector-enriched listTools: adds toolsMetadata and optional tokenCount

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, X } from "lucide-react";
 import { usePostHog } from "posthog-js/react";
 import { standardEventProps } from "@/lib/PosthogUtils";
@@ -31,6 +31,7 @@ interface ModelSelectorProps {
   currentModel: ModelDefinition;
   availableModels: ModelDefinition[];
   onModelChange: (model: ModelDefinition) => void;
+  onOpenChange?: (open: boolean) => void;
   disabled?: boolean;
   isLoading?: boolean;
   hideProvidedModels?: boolean;
@@ -139,6 +140,7 @@ export function ModelSelector({
   currentModel,
   availableModels,
   onModelChange,
+  onOpenChange,
   disabled,
   isLoading,
   hideProvidedModels = false,
@@ -151,11 +153,65 @@ export function ModelSelector({
   maxSelectedModels = 3,
 }: ModelSelectorProps) {
   const [isOpen, setIsOpen] = useState(false);
+  const keepPopoverOpenRef = useRef(false);
+  const keepPopoverOpenTimeoutRef = useRef<number | null>(null);
   const [hoveredLockedModelId, setHoveredLockedModelId] = useState<
     string | null
   >(null);
   const posthog = usePostHog();
+  const onOpenChangeRef = useRef(onOpenChange);
+
+  useEffect(() => {
+    onOpenChangeRef.current = onOpenChange;
+  }, [onOpenChange]);
+
+  useEffect(() => {
+    onOpenChangeRef.current?.(isOpen);
+  }, [isOpen]);
+
+  useEffect(() => {
+    return () => {
+      if (
+        typeof window !== "undefined" &&
+        keepPopoverOpenTimeoutRef.current !== null
+      ) {
+        window.clearTimeout(keepPopoverOpenTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  const requestPopoverStayOpen = () => {
+    keepPopoverOpenRef.current = true;
+    setIsOpen(true);
+
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    if (keepPopoverOpenTimeoutRef.current !== null) {
+      window.clearTimeout(keepPopoverOpenTimeoutRef.current);
+    }
+
+    keepPopoverOpenTimeoutRef.current = window.setTimeout(() => {
+      keepPopoverOpenRef.current = false;
+      keepPopoverOpenTimeoutRef.current = null;
+    }, 0);
+  };
+
   const handleOpenChange = (nextOpen: boolean) => {
+    if (!nextOpen && keepPopoverOpenRef.current) {
+      return;
+    }
+
+    if (
+      typeof window !== "undefined" &&
+      keepPopoverOpenTimeoutRef.current !== null
+    ) {
+      window.clearTimeout(keepPopoverOpenTimeoutRef.current);
+      keepPopoverOpenTimeoutRef.current = null;
+    }
+    keepPopoverOpenRef.current = false;
+
     if (nextOpen && !isOpen) {
       posthog.capture(
         "chat_model_selector_clicked",
@@ -290,6 +346,8 @@ export function ModelSelector({
       return;
     }
 
+    requestPopoverStayOpen();
+
     if (enabled) {
       requestSelectionChange({
         type: "multi",
@@ -308,6 +366,8 @@ export function ModelSelector({
   };
 
   const handleMultiModelSelect = (model: ModelDefinition) => {
+    requestPopoverStayOpen();
+
     const isSelected = selectedIds.has(String(model.id));
     const nextSelectedModels = isSelected
       ? selectedModelsData.filter(
@@ -330,6 +390,8 @@ export function ModelSelector({
     if (!multiModelEnabled || String(model.id) === String(leadModel.id)) {
       return;
     }
+
+    requestPopoverStayOpen();
 
     const nextSelectedModels = [
       model,
@@ -465,25 +527,17 @@ export function ModelSelector({
 
             {canUseMultiModel ? (
               <>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <div className="flex cursor-default items-center justify-between gap-2 border-b px-2.5 py-2">
-                      <span className="text-xs text-muted-foreground">
-                        Multiple models
-                      </span>
-                      <Switch
-                        checked={multiModelEnabled}
-                        onCheckedChange={handleToggleMultiModel}
-                        aria-label="Use multiple models"
-                        disabled={disabled || isLoading}
-                      />
-                    </div>
-                  </TooltipTrigger>
-                  <TooltipContent side="bottom" className="max-w-xs text-xs">
-                    Compare up to {maxSelectedModels} models in one composer.
-                    The first in your selection runs first.
-                  </TooltipContent>
-                </Tooltip>
+                <div className="flex cursor-default items-center justify-between gap-2 border-b px-2.5 py-2">
+                  <span className="text-xs text-muted-foreground">
+                    Multiple models
+                  </span>
+                  <Switch
+                    checked={multiModelEnabled}
+                    onCheckedChange={handleToggleMultiModel}
+                    aria-label="Use multiple models"
+                    disabled={disabled || isLoading}
+                  />
+                </div>
 
                 {multiModelEnabled ? (
                   <div

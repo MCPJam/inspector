@@ -21,6 +21,7 @@ import {
 import { LiveTraceTimelineEmptyState } from "@/components/evals/live-trace-timeline-empty";
 import { TraceViewer } from "@/components/evals/trace-viewer";
 import { useChatSession } from "@/hooks/use-chat-session";
+import { getChatComposerInteractivity } from "@/hooks/use-chat-stop-controls";
 import { createDeterministicToolMessages } from "@/components/ui-playground/playground-helpers";
 import {
   buildPreludeTraceEnvelope,
@@ -33,11 +34,8 @@ import {
 import { CHATGPT_CHAT_BACKGROUND } from "@/config/chatgpt-host-context";
 import { CLAUDE_DESKTOP_CHAT_BACKGROUND } from "@/config/claude-desktop-host-context";
 import type { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
-import type {
-  DeviceType,
-  DisplayMode,
-  HostStyle,
-} from "@/stores/ui-playground-store";
+import type { SandboxHostStyle } from "@/lib/sandbox-host-style";
+import type { DeviceType, DisplayMode } from "@/stores/ui-playground-store";
 import type { BroadcastChatTurnRequest } from "@/components/chat-v2/multi-model-chat-card";
 
 type PlaygroundTraceViewMode = "chat" | "timeline" | "raw";
@@ -97,7 +95,7 @@ interface MultiModelPlaygroundCardProps {
   hostedOAuthTokens?: Record<string, string>;
   displayMode: DisplayMode;
   onDisplayModeChange: (mode: DisplayMode) => void;
-  hostStyle: HostStyle;
+  hostStyle: SandboxHostStyle;
   effectiveThreadTheme: ThreadThemeMode;
   deviceType: DeviceType;
   selectedProtocol: UIType | null;
@@ -184,7 +182,6 @@ export function MultiModelPlaygroundCard({
     setMessages,
     sendMessage,
     stop,
-    status,
     error,
     chatSessionId,
     toolsMetadata,
@@ -216,6 +213,10 @@ export function MultiModelPlaygroundCard({
   const isThreadEmpty = !messages.some(
     (message) => message.role === "user" || message.role === "assistant",
   );
+  const { sendBlocked: fullscreenChatSendBlocked } =
+    getChatComposerInteractivity({
+      isStreamingActive: isStreaming,
+    });
 
   useEffect(() => {
     onTranscriptSync?.(String(model.id), messages);
@@ -612,6 +613,8 @@ export function MultiModelPlaygroundCard({
                   onModelContextUpdate={handleModelContextUpdate}
                   enableFullscreenChatOverlay
                   fullscreenChatPlaceholder="Message…"
+                  fullscreenChatSendBlocked={fullscreenChatSendBlocked}
+                  onFullscreenChatStop={stop}
                   onToolApprovalResponse={addToolApprovalResponse}
                   rawRequestPayloadHistory={{
                     entries: requestPayloadHistory,
@@ -681,7 +684,7 @@ export function MultiModelPlaygroundCard({
                           messages={messages}
                           sendFollowUpMessage={handleSendFollowUp}
                           model={model}
-                          isLoading={status === "submitted"}
+                          isLoading={isStreaming}
                           toolsMetadata={toolsMetadata}
                           toolServerMap={toolServerMap}
                           onWidgetStateChange={onWidgetStateChange}
@@ -695,6 +698,8 @@ export function MultiModelPlaygroundCard({
                           onToolApprovalResponse={addToolApprovalResponse}
                           toolRenderOverrides={mergedToolRenderOverrides}
                           showSaveViewButton={!hideSaveViewButton}
+                          fullscreenChatSendBlocked={fullscreenChatSendBlocked}
+                          onFullscreenChatStop={stop}
                           reasoningDisplayMode={reasoningDisplayMode}
                         />
                         {isExecuting && executingToolName ? (

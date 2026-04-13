@@ -29,12 +29,12 @@ vi.mock("../thread/message-view", () => ({
 vi.mock("../shared/thinking-indicator", () => ({
   ThinkingIndicator: ({
     model,
-    variant,
+    resolvedVariant,
   }: {
     model: ModelDefinition;
-    variant?: string;
+    resolvedVariant: string;
   }) => {
-    mockThinkingIndicator({ model, variant });
+    mockThinkingIndicator({ model, resolvedVariant });
     return (
       <div data-testid="thinking-indicator">Thinking... ({model.name})</div>
     );
@@ -42,7 +42,7 @@ vi.mock("../shared/thinking-indicator", () => ({
 }));
 
 vi.mock("../fullscreen-chat-overlay", () => ({
-  FullscreenChatOverlay: (props: { loadingIndicatorVariant?: string }) => {
+  FullscreenChatOverlay: (props: Record<string, unknown>) => {
     mockFullscreenChatOverlay(props);
     return <div data-testid="fullscreen-chat-overlay">Fullscreen Overlay</div>;
   },
@@ -255,6 +255,43 @@ describe("Thread", () => {
       );
     });
 
+    it("defaults to the GPT pulse for OpenAI models when no explicit variant is provided", () => {
+      const messages = [createMessage({ id: "msg-1", role: "user" })];
+
+      render(<Thread {...defaultProps} messages={messages} isLoading={true} />);
+
+      expect(mockThinkingIndicator).toHaveBeenCalledWith(
+        expect.objectContaining({
+          resolvedVariant: "chatgpt-dot",
+        }),
+      );
+    });
+
+    it("defaults to the Claude mascot for Anthropic models when no explicit variant is provided", () => {
+      const messages = [createMessage({ id: "msg-1", role: "user" })];
+      const claudeModel: ModelDefinition = {
+        ...defaultModel,
+        id: "anthropic/claude-sonnet-4.5",
+        name: "Claude Sonnet 4.5",
+        provider: "anthropic",
+      };
+
+      render(
+        <Thread
+          {...defaultProps}
+          model={claudeModel}
+          messages={messages}
+          isLoading={true}
+        />,
+      );
+
+      expect(mockThinkingIndicator).toHaveBeenCalledWith(
+        expect.objectContaining({
+          resolvedVariant: "claude-mark",
+        }),
+      );
+    });
+
     it("passes the selected loading indicator variant to the inline indicator", () => {
       render(
         <Thread
@@ -266,7 +303,7 @@ describe("Thread", () => {
 
       expect(mockThinkingIndicator).toHaveBeenCalledWith(
         expect.objectContaining({
-          variant: "claude-mark",
+          resolvedVariant: "claude-mark",
         }),
       );
     });
@@ -286,7 +323,7 @@ describe("Thread", () => {
       expect(screen.getByTestId("thinking-indicator")).toBeInTheDocument();
       expect(mockThinkingIndicator).toHaveBeenCalledWith(
         expect.objectContaining({
-          variant: "chatgpt-dot",
+          resolvedVariant: "chatgpt-dot",
         }),
       );
     });
@@ -331,7 +368,7 @@ describe("Thread", () => {
       expect(screen.getByTestId("thinking-indicator")).toBeInTheDocument();
       expect(mockThinkingIndicator).toHaveBeenCalledWith(
         expect.objectContaining({
-          variant: "claude-mark",
+          resolvedVariant: "claude-mark",
         }),
       );
       expect(mockMessageView).toHaveBeenCalledWith(
@@ -508,6 +545,35 @@ describe("Thread", () => {
       expect(mockFullscreenChatOverlay).toHaveBeenLastCalledWith(
         expect.objectContaining({
           loadingIndicatorVariant: "claude-mark",
+        }),
+      );
+    });
+
+    it("forwards fullscreen stop controls without disabling drafting while loading", () => {
+      const onFullscreenChatStop = vi.fn();
+      const messages = [createMessage({ id: "msg-1", role: "assistant" })];
+
+      render(
+        <Thread
+          {...defaultProps}
+          messages={messages}
+          isLoading={true}
+          enableFullscreenChatOverlay={true}
+          onFullscreenChatStop={onFullscreenChatStop}
+        />,
+      );
+
+      act(() => {
+        const firstMessageProps = mockMessageView.mock.calls[0]?.[0];
+        firstMessageProps?.onRequestFullscreen("tool-1");
+      });
+
+      expect(mockFullscreenChatOverlay).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          disabled: false,
+          isThinking: true,
+          canSend: false,
+          onStop: onFullscreenChatStop,
         }),
       );
     });

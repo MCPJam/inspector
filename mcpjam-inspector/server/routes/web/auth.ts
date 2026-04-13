@@ -225,7 +225,7 @@ export async function authorizeServer(
   return body as ConvexAuthorizeResponse;
 }
 
-function toHttpConfig(
+export function toHttpConfig(
   authResponse: ConvexAuthorizeResponse,
   timeoutMs: number,
   oauthAccessToken?: string,

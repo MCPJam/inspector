@@ -75,6 +75,7 @@ import { LearnMoreExpandedPanel } from "@/components/learn-more/LearnMoreExpande
 import type { BillingFeatureName } from "@/hooks/useOrganizationBilling";
 import type { ServerWithName } from "@/hooks/use-app-state";
 import type { Workspace } from "@/state/app-types";
+import type { OrganizationRouteSection } from "@/lib/hosted-navigation";
 
 interface NavItem {
   title: string;
@@ -343,6 +344,10 @@ interface MCPSidebarProps extends React.ComponentProps<typeof Sidebar> {
   onDeleteWorkspace: (workspaceId: string) => void;
   isLoadingWorkspaces?: boolean;
   activeOrganizationId?: string;
+  onSwitchOrganization?: (
+    organizationId: string,
+    section?: OrganizationRouteSection,
+  ) => void;
   billingGateDenied?: Partial<Record<BillingFeatureName, boolean>>;
   billingGateEnforcementActive?: boolean;
   billingUiEnabled?: boolean;
@@ -505,6 +510,7 @@ export function MCPSidebar({
   onDeleteWorkspace,
   isLoadingWorkspaces,
   activeOrganizationId,
+  onSwitchOrganization,
   billingGateDenied = {},
   billingGateEnforcementActive = false,
   billingUiEnabled = false,
@@ -779,7 +785,10 @@ export function MCPSidebar({
           })}
         </SidebarContent>
         <SidebarFooter>
-          <SidebarUser activeOrganizationId={activeOrganizationId} />
+          <SidebarUser
+            activeOrganizationId={activeOrganizationId}
+            onSwitchOrganization={onSwitchOrganization}
+          />
         </SidebarFooter>
       </Sidebar>
       {learnMoreEnabled && (

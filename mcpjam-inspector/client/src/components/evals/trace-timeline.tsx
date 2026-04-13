@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
   type KeyboardEvent,
+  type MouseEvent,
 } from "react";
 import { motion, useReducedMotion } from "framer-motion";
 import { usePostHog } from "posthog-js/react";
@@ -2271,6 +2272,12 @@ export function TraceTimeline({
                       });
                       setSelectedRowKey(row.key);
                     };
+                    const selectRowFromChild = (
+                      event: MouseEvent<HTMLButtonElement>,
+                    ) => {
+                      event.stopPropagation();
+                      selectRow();
+                    };
                     const leftCellClass = isSelected
                       ? cn("bg-transparent", borderAccent)
                       : "border-l-transparent bg-background group-hover:bg-muted/20 hover:bg-muted/20";
@@ -2284,6 +2291,7 @@ export function TraceTimeline({
                           <motion.div
                             data-testid="trace-row"
                             data-state={isSelected ? "selected" : undefined}
+                            onClick={selectRow}
                             initial={
                               shouldReduceMotion || rowIndex >= 20
                                 ? false
@@ -2306,7 +2314,7 @@ export function TraceTimeline({
                               gridTemplateColumns: "subgrid",
                             }}
                             className={cn(
-                              "group min-h-0 min-w-0 items-stretch",
+                              "group min-h-0 min-w-0 cursor-pointer items-stretch",
                               isSelected &&
                                 "trace-waterfall-row-selected ring-1 ring-inset ring-ring/40",
                             )}
@@ -2364,7 +2372,7 @@ export function TraceTimeline({
                                 type="button"
                                 data-testid="trace-row-label-button"
                                 className="min-w-0 flex-1 text-left"
-                                onClick={selectRow}
+                                onClick={selectRowFromChild}
                               >
                                 <div className="flex min-w-0 items-center gap-2">
                                   {row.kind === "prompt" ? (
@@ -2404,7 +2412,7 @@ export function TraceTimeline({
                                 sharedCellClass,
                               )}
                               aria-label={`Select on timeline (${formatDuration(durationMs)})`}
-                              onClick={selectRow}
+                              onClick={selectRowFromChild}
                             >
                               <div
                                 data-testid={
@@ -2431,7 +2439,7 @@ export function TraceTimeline({
                                 sharedCellClass,
                               )}
                               aria-label={`Select row duration (${durationLabel})`}
-                              onClick={selectRow}
+                              onClick={selectRowFromChild}
                             >
                               <Clock
                                 className="size-3 shrink-0 opacity-80"

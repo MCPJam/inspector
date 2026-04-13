@@ -2,7 +2,7 @@ import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useConvexAuth } from "convex/react";
 import { useLogger } from "./use-logger";
-import { initialAppState } from "@/state/app-types";
+import { initialAppState, type ServerWithName } from "@/state/app-types";
 import { appReducer } from "@/state/app-reducer";
 import { loadAppState, saveAppState } from "@/state/storage";
 import { useWorkspaceState } from "./use-workspace-state";
@@ -21,12 +21,50 @@ interface ActiveOrganizationSelection {
   userId: string | null;
 }
 
+function resolveFallbackOrganizationId(
+  organizations: ReadonlyArray<{ _id: string; myRole?: string }>,
+) {
+  const firstOwnedOrganization = organizations.find(
+    (organization) => organization.myRole === "owner",
+  );
+
+  return firstOwnedOrganization?._id ?? organizations[0]?._id;
+}
+
+function createDefaultWorkspace() {
+  return {
+    ...initialAppState.workspaces.default,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  };
+}
+
+export function buildDisconnectedRuntimeServers(
+  servers: Record<string, ServerWithName> | undefined,
+): Record<string, ServerWithName> {
+  return Object.fromEntries(
+    Object.entries(servers ?? {}).map(([serverName, server]) => [
+      serverName,
+      {
+        ...server,
+        connectionStatus: "disconnected",
+      } satisfies ServerWithName,
+    ]),
+  );
+}
+
 export function useAppState({
   currentUserId,
   routeOrganizationId,
+  hasOrganizations,
+  isLoadingOrganizations,
+  validOrganizations,
 }: {
   currentUserId: string | null;
   routeOrganizationId?: string;
+  hasOrganizations: boolean;
+  isLoadingOrganizations: boolean;
+  validOrganizations: Array<{ _id: string; myRole?: string }>;
 }) {
   const logger = useLogger("Connections");
   const [appState, dispatch] = useReducer(appReducer, initialAppState);
@@ -39,10 +77,33 @@ export function useAppState({
       organizationId: undefined,
       userId: currentUserId,
     });
-  const activeOrganizationId =
+  const [
+    hasHydratedStoredActiveOrganization,
+    setHasHydratedStoredActiveOrganization,
+  ] = useState(false);
+  const storedActiveOrganizationId =
     activeOrganizationSelection.userId === currentUserId
       ? activeOrganizationSelection.organizationId
       : undefined;
+  const isStoredActiveOrganizationValid =
+    !!storedActiveOrganizationId &&
+    validOrganizations.some(
+      (organization) => organization._id === storedActiveOrganizationId,
+    );
+  const isRouteOrganizationValid =
+    !!routeOrganizationId &&
+    validOrganizations.some(
+      (organization) => organization._id === routeOrganizationId,
+    );
+  const fallbackActiveOrganizationId =
+    hasHydratedStoredActiveOrganization &&
+    !routeOrganizationId &&
+    !isLoadingOrganizations
+      ? resolveFallbackOrganizationId(validOrganizations)
+      : undefined;
+  const activeOrganizationId = isStoredActiveOrganizationValid
+    ? storedActiveOrganizationId
+    : fallbackActiveOrganizationId;
   const setActiveOrganizationId = useCallback(
     (organizationId: string | undefined) => {
       setActiveOrganizationSelection({
@@ -55,14 +116,19 @@ export function useAppState({
 
   useEffect(() => {
     clearLegacyActiveOrganizationStorage();
+    setHasHydratedStoredActiveOrganization(false);
     setActiveOrganizationSelection({
       organizationId: readStoredActiveOrganizationId(currentUserId),
       userId: currentUserId,
     });
+    setHasHydratedStoredActiveOrganization(true);
   }, [currentUserId]);
 
   const isFirstScopedOrgRender = useRef(true);
   useEffect(() => {
+    if (!hasHydratedStoredActiveOrganization) {
+      return;
+    }
     if (activeOrganizationSelection.userId !== currentUserId) {
       return;
     }
@@ -77,7 +143,72 @@ export function useAppState({
       currentUserId,
       activeOrganizationSelection.organizationId,
     );
-  }, [activeOrganizationSelection, currentUserId]);
+  }, [
+    activeOrganizationSelection,
+    currentUserId,
+    hasHydratedStoredActiveOrganization,
+  ]);
+
+  useEffect(() => {
+    if (!hasHydratedStoredActiveOrganization) {
+      return;
+    }
+    if (activeOrganizationSelection.userId !== currentUserId) {
+      return;
+    }
+    if (!routeOrganizationId || isLoadingOrganizations) {
+      return;
+    }
+    if (!isRouteOrganizationValid) {
+      return;
+    }
+    if (activeOrganizationSelection.organizationId === routeOrganizationId) {
+      return;
+    }
+
+    setActiveOrganizationSelection({
+      organizationId: routeOrganizationId,
+      userId: currentUserId,
+    });
+  }, [
+    activeOrganizationSelection.organizationId,
+    activeOrganizationSelection.userId,
+    currentUserId,
+    hasHydratedStoredActiveOrganization,
+    isLoadingOrganizations,
+    isRouteOrganizationValid,
+    routeOrganizationId,
+  ]);
+
+  useEffect(() => {
+    if (!hasHydratedStoredActiveOrganization) {
+      return;
+    }
+    if (activeOrganizationSelection.userId !== currentUserId) {
+      return;
+    }
+    if (routeOrganizationId || isLoadingOrganizations) {
+      return;
+    }
+
+    const nextOrganizationId = activeOrganizationId;
+    if (activeOrganizationSelection.organizationId === nextOrganizationId) {
+      return;
+    }
+
+    setActiveOrganizationSelection({
+      organizationId: nextOrganizationId,
+      userId: currentUserId,
+    });
+  }, [
+    activeOrganizationId,
+    activeOrganizationSelection.organizationId,
+    activeOrganizationSelection.userId,
+    currentUserId,
+    hasHydratedStoredActiveOrganization,
+    isLoadingOrganizations,
+    routeOrganizationId,
+  ]);
 
   useEffect(() => {
     try {
@@ -101,6 +232,11 @@ export function useAppState({
     dispatch,
     isAuthenticated,
     isAuthLoading,
+    hasOrganizations,
+    isLoadingOrganizations,
+    validOrganizationIds: validOrganizations.map(
+      (organization) => organization._id,
+    ),
     activeOrganizationId,
     routeOrganizationId,
     logger,
@@ -123,6 +259,7 @@ export function useAppState({
   const {
     effectiveWorkspaces,
     setConvexActiveWorkspaceId,
+    clearConvexActiveWorkspaceSelection,
     useLocalFallback,
     remoteWorkspaces,
     isLoadingRemoteWorkspaces,
@@ -154,7 +291,7 @@ export function useAppState({
         }
       }
 
-      if (isAuthenticated) {
+      if (isAuthenticated && !useLocalFallback) {
         setConvexActiveWorkspaceId(workspaceId);
       } else {
         dispatch({ type: "SWITCH_WORKSPACE", workspaceId });
@@ -167,6 +304,7 @@ export function useAppState({
       handleDisconnect,
       logger,
       isAuthenticated,
+      useLocalFallback,
       dispatch,
       setConvexActiveWorkspaceId,
     ],
@@ -201,7 +339,7 @@ export function useAppState({
         }
       }
 
-      if (isAuthenticated) {
+      if (isAuthenticated && !useLocalFallback) {
         setConvexActiveWorkspaceId(targetWorkspaceId);
       } else {
         dispatch({ type: "SWITCH_WORKSPACE", workspaceId: targetWorkspaceId });
@@ -213,9 +351,49 @@ export function useAppState({
       appState.servers,
       handleDisconnect,
       isAuthenticated,
+      useLocalFallback,
       dispatch,
       setConvexActiveWorkspaceId,
     ],
+  );
+
+  const clearLocalFallbackWorkspaceSelection = useCallback(
+    (deletedOrganizationId: string, fallbackOrganizationId?: string) => {
+      const remainingEntries = Object.entries(appState.workspaces).filter(
+        ([, workspace]) => workspace.organizationId !== deletedOrganizationId,
+      );
+      const nextWorkspaces =
+        remainingEntries.length > 0
+          ? Object.fromEntries(remainingEntries)
+          : { default: createDefaultWorkspace() };
+      const preferredWorkspaceForFallbackOrg = fallbackOrganizationId
+        ? Object.values(nextWorkspaces).find(
+            (workspace) => workspace.organizationId === fallbackOrganizationId,
+          )
+        : undefined;
+      const nextActiveWorkspace =
+        preferredWorkspaceForFallbackOrg ??
+        nextWorkspaces[appState.activeWorkspaceId] ??
+        nextWorkspaces.default ??
+        Object.values(nextWorkspaces)[0];
+      const nextActiveWorkspaceId = nextActiveWorkspace?.id ?? "default";
+      const nextServers = buildDisconnectedRuntimeServers(
+        nextActiveWorkspace?.servers,
+      );
+
+      dispatch({
+        type: "HYDRATE_STATE",
+        payload: {
+          ...appState,
+          workspaces: nextWorkspaces,
+          activeWorkspaceId: nextActiveWorkspaceId,
+          servers: nextServers,
+          selectedServer: "none",
+          selectedMultipleServers: [],
+        },
+      });
+    },
+    [appState, dispatch],
   );
 
   const isCloudSyncActive =
@@ -228,6 +406,8 @@ export function useAppState({
     isCloudSyncActive,
     activeOrganizationId,
     setActiveOrganizationId,
+    clearConvexActiveWorkspaceSelection,
+    clearLocalFallbackWorkspaceSelection,
 
     workspaceServers: serverState.workspaceServers,
     connectedOrConnectingServerConfigs:
