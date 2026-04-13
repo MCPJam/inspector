@@ -53,8 +53,8 @@ Not every combination is valid. The runner rejects unsupported pairs before maki
 ## CLI Usage
 
 <Note>
-  All examples use `npx -y @mcpjam/cli-preview@latest` so each run picks up the
-  newest preview build and `-y` auto-accepts the install prompt in non-interactive
+  All examples use `npx -y @mcpjam/cli@latest` so each run picks up the
+  newest published build and `-y` auto-accepts the install prompt in non-interactive
   shells (CI, scripted agents). Drop `@latest` if you want npx's cached copy.
 </Note>
 
@@ -63,7 +63,7 @@ Not every combination is valid. The runner rejects unsupported pairs before maki
 The simplest one-liner. Opens a browser for consent, registers a fresh client via DCR, then verifies the token by listing tools.
 
 ```bash
-npx -y @mcpjam/cli-preview@latest oauth conformance \
+npx -y @mcpjam/cli@latest oauth conformance \
   --url https://your-server.com/mcp \
   --protocol-version 2025-11-25 \
   --registration dcr \
@@ -74,7 +74,7 @@ npx -y @mcpjam/cli-preview@latest oauth conformance \
 ### Headless DCR (CI against an auto-consenting auth server)
 
 ```bash
-npx -y @mcpjam/cli-preview@latest oauth conformance \
+npx -y @mcpjam/cli@latest oauth conformance \
   --url https://your-server.com/mcp \
   --protocol-version 2025-11-25 \
   --registration dcr \
@@ -87,7 +87,7 @@ npx -y @mcpjam/cli-preview@latest oauth conformance \
 Use this when the auth server doesn't support DCR and you've already registered a client out-of-band. Pass the exact `--redirect-url` that's allow-listed on the client record.
 
 ```bash
-npx -y @mcpjam/cli-preview@latest oauth conformance \
+npx -y @mcpjam/cli@latest oauth conformance \
   --url https://your-server.com/mcp \
   --protocol-version 2025-11-25 \
   --registration preregistered \
@@ -108,7 +108,7 @@ npx -y @mcpjam/cli-preview@latest oauth conformance \
 Client ID Metadata Document registration — the server fetches your client's identity from `--client-metadata-url`. If omitted, the runner falls back to mcpjam's public metadata document, so you can try a CIMD flow with zero CIMD config:
 
 ```bash
-npx -y @mcpjam/cli-preview@latest oauth conformance \
+npx -y @mcpjam/cli@latest oauth conformance \
   --url https://your-server.com/mcp \
   --protocol-version 2025-11-25 \
   --registration cimd \
@@ -119,7 +119,7 @@ npx -y @mcpjam/cli-preview@latest oauth conformance \
 To publish and test your own metadata document:
 
 ```bash
-npx -y @mcpjam/cli-preview@latest oauth conformance \
+npx -y @mcpjam/cli@latest oauth conformance \
   --url https://your-server.com/mcp \
   --protocol-version 2025-11-25 \
   --registration cimd \
@@ -182,7 +182,7 @@ Hint: Authorization endpoint returned an HTML login page instead of redirecting 
 For CI pipelines where no browser is available and your auth server supports `client_credentials`:
 
 ```bash
-npx -y @mcpjam/cli-preview@latest oauth conformance \
+npx -y @mcpjam/cli@latest oauth conformance \
   --url https://your-server.com/mcp \
   --protocol-version 2025-11-25 \
   --registration preregistered \
@@ -247,13 +247,13 @@ Each flow inherits from `defaults` and can override any field. The `serverUrl` i
 
 ```bash
 # JSON output (for agents)
-npx -y @mcpjam/cli-preview@latest oauth conformance-suite --config ./oauth-tests.json --format json
+npx -y @mcpjam/cli@latest oauth conformance-suite --config ./oauth-tests.json --format json
 
 # Human-readable (default on a TTY)
-npx -y @mcpjam/cli-preview@latest oauth conformance-suite --config ./oauth-tests.json --format human
+npx -y @mcpjam/cli@latest oauth conformance-suite --config ./oauth-tests.json --format human
 
 # JUnit XML (for CI)
-npx -y @mcpjam/cli-preview@latest oauth conformance-suite --config ./oauth-tests.json --format junit-xml > report.xml
+npx -y @mcpjam/cli@latest oauth conformance-suite --config ./oauth-tests.json --format junit-xml > report.xml
 ```
 
 <Note>
@@ -281,7 +281,7 @@ npx -y @mcpjam/cli-preview@latest oauth conformance-suite --config ./oauth-tests
 oauth-conformance:
   stage: test
   script:
-    - npx -y @mcpjam/cli-preview@latest oauth conformance-suite
+    - npx -y @mcpjam/cli@latest oauth conformance-suite
         --config ./oauth-tests.json
         --format junit-xml > report.xml
   artifacts:
@@ -294,7 +294,7 @@ oauth-conformance:
 ```yaml
 - name: OAuth Conformance
   run: |
-    npx -y @mcpjam/cli-preview@latest oauth conformance \
+    npx -y @mcpjam/cli@latest oauth conformance \
       --url ${{ secrets.MCP_SERVER_URL }} \
       --protocol-version 2025-11-25 \
       --registration preregistered \
