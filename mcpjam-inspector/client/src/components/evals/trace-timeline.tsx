@@ -2284,6 +2284,7 @@ export function TraceTimeline({
                           <motion.div
                             data-testid="trace-row"
                             data-state={isSelected ? "selected" : undefined}
+                            onClick={selectRow}
                             initial={
                               shouldReduceMotion || rowIndex >= 20
                                 ? false
@@ -2306,7 +2307,7 @@ export function TraceTimeline({
                               gridTemplateColumns: "subgrid",
                             }}
                             className={cn(
-                              "group min-h-0 min-w-0 items-stretch",
+                              "group min-h-0 min-w-0 cursor-pointer items-stretch",
                               isSelected &&
                                 "trace-waterfall-row-selected ring-1 ring-inset ring-ring/40",
                             )}
@@ -2364,7 +2365,6 @@ export function TraceTimeline({
                                 type="button"
                                 data-testid="trace-row-label-button"
                                 className="min-w-0 flex-1 text-left"
-                                onClick={selectRow}
                               >
                                 <div className="flex min-w-0 items-center gap-2">
                                   {row.kind === "prompt" ? (
@@ -2404,7 +2404,6 @@ export function TraceTimeline({
                                 sharedCellClass,
                               )}
                               aria-label={`Select on timeline (${formatDuration(durationMs)})`}
-                              onClick={selectRow}
                             >
                               <div
                                 data-testid={
@@ -2431,7 +2430,6 @@ export function TraceTimeline({
                                 sharedCellClass,
                               )}
                               aria-label={`Select row duration (${durationLabel})`}
-                              onClick={selectRow}
                             >
                               <Clock
                                 className="size-3 shrink-0 opacity-80"
