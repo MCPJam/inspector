@@ -39,6 +39,18 @@
         ]
       },
       {
+        "group": "CLI",
+        "icon": "terminal",
+        "pages": [
+          "cli/overview",
+          "cli/server-inspection",
+          "cli/oauth-conformance",
+          "cli/oauth-login",
+          "cli/tools-resources-prompts",
+          "cli/reference"
+        ]
+      },
+      {
         "group": "SDK",
         "icon": "code",
         "pages": [

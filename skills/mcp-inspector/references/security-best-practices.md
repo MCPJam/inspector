@@ -193,12 +193,12 @@ Use this file when performing a security-focused review of an MCP server. Each c
 
 ## What NOT to flag
 
-- Missing `scopes_supported` — this is optional
-- Missing `scope` in `WWW-Authenticate` — this is a SHOULD, not MUST
-- Custom URI schemes in redirect URIs — may be allowed by generic OAuth even if MCP profile is stricter
-- `https://` redirect URIs with open registration — not automatically a vulnerability without more context
+- Missing `scopes_supported`. This is optional.
+- Missing `scope` in `WWW-Authenticate`. This is a SHOULD, not MUST.
+- Custom URI schemes in redirect URIs. They may be allowed by generic OAuth even if MCP profile is stricter.
+- `https://` redirect URIs with open registration. This is not automatically a vulnerability without more context.
 - `plain` PKCE support by itself as a medium or high finding
 - JWT `aud` mismatch by itself as token passthrough proof
 - A no-auth server exposing read-only public tools by design
-- Missing optional metadata like `outputSchema` — not a security issue
-- A server correctly rejecting a bad request — that is the desired behavior, not a finding
+- Missing optional metadata like `outputSchema`. This is not a security issue.
+- A server correctly rejecting a bad request. That is the desired behavior, not a finding.

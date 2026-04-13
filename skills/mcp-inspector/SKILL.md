@@ -1,5 +1,5 @@
 ---
-name: mcpjam-cli-investigation
+name: mcp-inspector
 description: Interpret `mcpjam-cli` probe, doctor, OAuth, tools, resources, and prompts output conservatively against MCP 2025-11-25. Use when triaging MCP server findings, performing security reviews, deciding whether a CLI finding is real or overstated, or turning inspection output into an engineer-facing report with severity and confidence.
 ---
 
@@ -35,7 +35,7 @@ Use this skill when analyzing MCP server behavior from `mcpjam-cli` output. The 
 
 ## Security review workflow
 
-Use this when the task is to assess an MCP server's security posture. All checks use existing CLI commands — no special security tooling is needed. Do not assume every server should require auth.
+Use this when the task is to assess an MCP server's security posture. All checks use existing CLI commands. No special security tooling is needed. Do not assume every server should require auth.
 
 ### Phase 1: Observe (read-only)
 
@@ -142,7 +142,7 @@ For each claimed security-review finding, return:
 - Separate OAuth RFC violations from MCP profile preferences.
 - Distinguish "the server correctly rejected a bad request" from "the overall design is secure."
 - Treat `--debug-out` artifacts as aggregated evidence envelopes, not pure wire captures.
-- Never flag missing `scopes_supported` or missing `scope` in `WWW-Authenticate` as a security issue — both are optional.
+- Never flag missing `scopes_supported` or missing `scope` in `WWW-Authenticate` as a security issue. Both are optional.
 - Never claim a server is "secure" based solely on it rejecting one specific bad input. A single negative test does not prove broader security posture.
 - Never let a checklist hit assign `high` security severity by itself.
 - JWT `aud` mismatch is not token passthrough proof unless you show the server accepts a token issued for a different audience or resource, or otherwise misbinds the token.
