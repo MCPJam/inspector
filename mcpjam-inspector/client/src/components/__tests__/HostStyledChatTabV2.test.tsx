@@ -7,10 +7,8 @@ import { HOST_STYLE_KEY } from "@/stores/preferences/preferences-store";
 const mockChatTabV2 = vi.hoisted(() => vi.fn());
 
 vi.mock("../ChatTabV2", async () => {
-  const {
-    useSandboxHostStyle,
-    useSandboxHostTheme,
-  } = await import("@/contexts/sandbox-host-style-context");
+  const { useSandboxHostStyle, useSandboxHostTheme } =
+    await import("@/contexts/sandbox-host-style-context");
 
   return {
     ChatTabV2: (props: {
@@ -83,9 +81,9 @@ describe("HostStyledChatTabV2", () => {
       "data-context-host-theme",
       "dark",
     );
-    expect(screen.getByTestId("wrapped-chat-prop-host-style")).toHaveTextContent(
-      "claude",
-    );
+    expect(
+      screen.getByTestId("wrapped-chat-prop-host-style"),
+    ).toHaveTextContent("claude");
     expect(screen.getByTestId("wrapped-chat-prop-selector")).toHaveTextContent(
       "true",
     );
@@ -106,9 +104,9 @@ describe("HostStyledChatTabV2", () => {
       "data-context-host-style",
       "chatgpt",
     );
-    expect(screen.getByTestId("wrapped-chat-prop-host-style")).toHaveTextContent(
-      "chatgpt",
-    );
+    expect(
+      screen.getByTestId("wrapped-chat-prop-host-style"),
+    ).toHaveTextContent("chatgpt");
     expect(localStorage.getItem(HOST_STYLE_KEY)).toBe("chatgpt");
 
     firstRender.unmount();
