@@ -62,11 +62,18 @@ async function resolveHostedHttpConfig(
       await validateUrl(guestInput.serverUrl, true);
     } catch (err) {
       if (err instanceof OAuthProxyError) {
-        throw new WebRouteError(err.status, ErrorCode.VALIDATION_ERROR, err.message);
+        throw new WebRouteError(
+          err.status,
+          ErrorCode.VALIDATION_ERROR,
+          err.message,
+        );
       }
       throw err;
     }
-    const oauthToken = typeof body.oauthAccessToken === "string" ? body.oauthAccessToken : undefined;
+    const oauthToken =
+      typeof body.oauthAccessToken === "string"
+        ? body.oauthAccessToken
+        : undefined;
     return {
       serverUrl: guestInput.serverUrl,
       accessToken: oauthToken,
@@ -76,11 +83,16 @@ async function resolveHostedHttpConfig(
 
   // Workspace: authorize via Convex
   const wsBody = parseWithSchema(workspaceServerSchema, body);
-  const auth = await authorizeServer(bearerToken, wsBody.workspaceId, wsBody.serverId, {
-    accessScope: wsBody.accessScope,
-    shareToken: wsBody.shareToken,
-    sandboxToken: wsBody.sandboxToken,
-  });
+  const auth = await authorizeServer(
+    bearerToken,
+    wsBody.workspaceId,
+    wsBody.serverId,
+    {
+      accessScope: wsBody.accessScope,
+      shareToken: wsBody.shareToken,
+      sandboxToken: wsBody.sandboxToken,
+    },
+  );
 
   if (auth.serverConfig.transportType !== "http") {
     throw new WebRouteError(
@@ -91,11 +103,20 @@ async function resolveHostedHttpConfig(
   }
 
   if (!auth.serverConfig.url) {
-    throw new WebRouteError(500, ErrorCode.INTERNAL_ERROR, "Authorized server is missing URL");
+    throw new WebRouteError(
+      500,
+      ErrorCode.INTERNAL_ERROR,
+      "Authorized server is missing URL",
+    );
   }
 
-  const oauthToken = typeof wsBody.oauthAccessToken === "string" ? wsBody.oauthAccessToken : undefined;
-  const headers: Record<string, string> = { ...(auth.serverConfig.headers ?? {}) };
+  const oauthToken =
+    typeof wsBody.oauthAccessToken === "string"
+      ? wsBody.oauthAccessToken
+      : undefined;
+  const headers: Record<string, string> = {
+    ...(auth.serverConfig.headers ?? {}),
+  };
   if (oauthToken) {
     headers["Authorization"] = `Bearer ${oauthToken}`;
   }
@@ -118,12 +139,21 @@ async function resolveHostedServerConfig(
       await validateUrl(guestInput.serverUrl, true);
     } catch (err) {
       if (err instanceof OAuthProxyError) {
-        throw new WebRouteError(err.status, ErrorCode.VALIDATION_ERROR, err.message);
+        throw new WebRouteError(
+          err.status,
+          ErrorCode.VALIDATION_ERROR,
+          err.message,
+        );
       }
       throw err;
     }
-    const oauthToken = typeof body.oauthAccessToken === "string" ? body.oauthAccessToken : undefined;
-    const headers: Record<string, string> = { ...(guestInput.serverHeaders ?? {}) };
+    const oauthToken =
+      typeof body.oauthAccessToken === "string"
+        ? body.oauthAccessToken
+        : undefined;
+    const headers: Record<string, string> = {
+      ...(guestInput.serverHeaders ?? {}),
+    };
     if (oauthToken) {
       headers["Authorization"] = `Bearer ${oauthToken}`;
     }
@@ -136,16 +166,23 @@ async function resolveHostedServerConfig(
 
   // Workspace: authorize via Convex
   const wsBody = parseWithSchema(workspaceServerSchema, body);
-  const auth = await authorizeServer(bearerToken, wsBody.workspaceId, wsBody.serverId, {
-    accessScope: wsBody.accessScope,
-    shareToken: wsBody.shareToken,
-    sandboxToken: wsBody.sandboxToken,
-  });
+  const auth = await authorizeServer(
+    bearerToken,
+    wsBody.workspaceId,
+    wsBody.serverId,
+    {
+      accessScope: wsBody.accessScope,
+      shareToken: wsBody.shareToken,
+      sandboxToken: wsBody.sandboxToken,
+    },
+  );
 
   const httpConfig = toHttpConfig(
     auth,
     WEB_CALL_TIMEOUT_MS,
-    typeof wsBody.oauthAccessToken === "string" ? wsBody.oauthAccessToken : undefined,
+    typeof wsBody.oauthAccessToken === "string"
+      ? wsBody.oauthAccessToken
+      : undefined,
     wsBody.clientCapabilities as Record<string, unknown> | undefined,
   );
 
@@ -233,8 +270,10 @@ conformanceWeb.post("/oauth/start", async (c) =>
     // Build OAuth conformance config with interactive mode using custom redirect
     const oauthConfig: OAuthConformanceConfig = {
       serverUrl,
-      protocolVersion: (parsed.oauthProfile?.protocolVersion as any) || "2025-11-25",
-      registrationStrategy: (parsed.oauthProfile?.registrationStrategy as any) || "cimd",
+      protocolVersion:
+        (parsed.oauthProfile?.protocolVersion as any) || "2025-11-25",
+      registrationStrategy:
+        (parsed.oauthProfile?.registrationStrategy as any) || "cimd",
       auth: {
         mode: "interactive",
         openUrl: async () => {
@@ -263,25 +302,31 @@ conformanceWeb.post("/oauth/start", async (c) =>
 
     const test = new OAuthConformanceTest(oauthConfig, {
       createInteractiveAuthorizationSession: async (options) => {
-        const effectiveRedirectUrl = redirectUrl || options?.redirectUrl || `http://127.0.0.1:0/callback`;
+        const effectiveRedirectUrl =
+          redirectUrl || options?.redirectUrl || `http://127.0.0.1:0/callback`;
 
         return {
           redirectUrl: effectiveRedirectUrl,
           authorize: async (input) => {
             capturedAuthUrl = input.authorizationUrl;
 
-            const session = createSession(input.authorizationUrl, input.expectedState);
+            const session = createSession(
+              input.authorizationUrl,
+              input.expectedState,
+            );
             sessionId = session.id;
 
             // Wait for code from POST /oauth/authorize
-            const codePromise = new Promise<{ code: string }>((resolve, reject) => {
-              session.codeResolver = ({ code }) => resolve({ code });
-              session.codeRejecter = reject;
+            const codePromise = new Promise<{ code: string }>(
+              (resolve, reject) => {
+                session.codeResolver = ({ code }) => resolve({ code });
+                session.codeRejecter = reject;
 
-              setTimeout(() => {
-                reject(new Error("OAuth authorization timed out"));
-              }, input.timeoutMs || 120_000);
-            });
+                setTimeout(() => {
+                  reject(new Error("OAuth authorization timed out"));
+                }, input.timeoutMs || 120_000);
+              },
+            );
             waitForCode = codePromise;
 
             return codePromise;
@@ -301,7 +346,10 @@ conformanceWeb.post("/oauth/start", async (c) =>
       },
       (err) => {
         if (sessionId) {
-          setSessionError(sessionId, err instanceof Error ? err.message : String(err));
+          setSessionError(
+            sessionId,
+            err instanceof Error ? err.message : String(err),
+          );
         }
         throw err;
       },
@@ -351,7 +399,11 @@ conformanceWeb.post("/oauth/authorize", async (c) =>
     const body = await readJsonBody<Record<string, unknown>>(c);
     const parsed = parseWithSchema(oauthAuthorizeSchema, body);
 
-    const delivered = submitAuthorizationCode(parsed.sessionId, parsed.code, parsed.state);
+    const delivered = submitAuthorizationCode(
+      parsed.sessionId,
+      parsed.code,
+      parsed.state,
+    );
     if (!delivered) {
       throw new WebRouteError(
         404,
@@ -377,7 +429,11 @@ conformanceWeb.post("/oauth/complete", async (c) =>
 
     const session = getSession(parsed.sessionId);
     if (!session) {
-      throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Session not found or expired");
+      throw new WebRouteError(
+        404,
+        ErrorCode.NOT_FOUND,
+        "Session not found or expired",
+      );
     }
 
     if (session.result) {
@@ -406,7 +462,11 @@ conformanceWeb.post("/oauth/complete", async (c) =>
       }
 
       if (currentSession.error) {
-        throw new WebRouteError(500, ErrorCode.INTERNAL_ERROR, currentSession.error);
+        throw new WebRouteError(
+          500,
+          ErrorCode.INTERNAL_ERROR,
+          currentSession.error,
+        );
       }
     }
 

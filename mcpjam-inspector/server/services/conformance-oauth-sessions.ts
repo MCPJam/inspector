@@ -54,7 +54,11 @@ function ensureCleanupTimer() {
     }
   }, CLEANUP_INTERVAL_MS);
   // Don't prevent process exit
-  if (cleanupTimer && typeof cleanupTimer === "object" && "unref" in cleanupTimer) {
+  if (
+    cleanupTimer &&
+    typeof cleanupTimer === "object" &&
+    "unref" in cleanupTimer
+  ) {
     cleanupTimer.unref();
   }
 }

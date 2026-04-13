@@ -68,16 +68,18 @@ function isHttpServer(server: ServerWithName): boolean {
 }
 
 function StatusIcon({ status }: { status: string }) {
-  if (status === "passed") return <CheckCircle2 className="h-3.5 w-3.5 text-green-500 flex-shrink-0" />;
-  if (status === "failed") return <XCircle className="h-3.5 w-3.5 text-red-500 flex-shrink-0" />;
-  return <MinusCircle className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />;
+  if (status === "passed")
+    return (
+      <CheckCircle2 className="h-3.5 w-3.5 text-green-500 flex-shrink-0" />
+    );
+  if (status === "failed")
+    return <XCircle className="h-3.5 w-3.5 text-red-500 flex-shrink-0" />;
+  return (
+    <MinusCircle className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
+  );
 }
 
-function CheckRow({
-  check,
-}: {
-  check: MCPCheckResult | MCPAppsCheckResult;
-}) {
+function CheckRow({ check }: { check: MCPCheckResult | MCPAppsCheckResult }) {
   const [expanded, setExpanded] = useState(false);
   const hasError = check.status === "failed" && check.error;
 
@@ -91,13 +93,12 @@ function CheckRow({
       >
         <StatusIcon status={check.status} />
         <span className="text-xs flex-1 min-w-0 truncate">{check.title}</span>
-        {hasError && (
-          expanded ? (
+        {hasError &&
+          (expanded ? (
             <ChevronDown className="h-3 w-3 text-muted-foreground flex-shrink-0" />
           ) : (
             <ChevronRight className="h-3 w-3 text-muted-foreground flex-shrink-0" />
-          )
-        )}
+          ))}
         <span className="text-[10px] text-muted-foreground flex-shrink-0">
           {check.durationMs}ms
         </span>
@@ -233,29 +234,26 @@ export function ConformancePanel({
     }
   }, [server.name]);
 
-  const pollOAuthComplete = useCallback(
-    async (sessionId: string) => {
-      const MAX_POLLS = 10;
-      for (let i = 0; i < MAX_POLLS; i++) {
-        try {
-          const poll = await completeOAuthConformance(sessionId);
-          if (poll.phase === "complete" && poll.result) {
-            setOAuth({ status: "done", result: poll.result });
-            return;
-          }
-          // Still pending: keep polling
-        } catch (err) {
-          setOAuth({
-            status: "error",
-            error: err instanceof Error ? err.message : String(err),
-          });
+  const pollOAuthComplete = useCallback(async (sessionId: string) => {
+    const MAX_POLLS = 10;
+    for (let i = 0; i < MAX_POLLS; i++) {
+      try {
+        const poll = await completeOAuthConformance(sessionId);
+        if (poll.phase === "complete" && poll.result) {
+          setOAuth({ status: "done", result: poll.result });
           return;
         }
+        // Still pending: keep polling
+      } catch (err) {
+        setOAuth({
+          status: "error",
+          error: err instanceof Error ? err.message : String(err),
+        });
+        return;
       }
-      setOAuth({ status: "error", error: "OAuth conformance timed out" });
-    },
-    [],
-  );
+    }
+    setOAuth({ status: "error", error: "OAuth conformance timed out" });
+  }, []);
 
   const handleOAuthCallback = useCallback(
     async (sessionId: string, code: string, state?: string) => {
@@ -478,11 +476,7 @@ export function ConformancePanel({
         <div className="space-y-4">
           {/* Controls */}
           <div className="flex items-center justify-between gap-2">
-            <Button
-              size="sm"
-              onClick={runAll}
-              disabled={isRunning}
-            >
+            <Button size="sm" onClick={runAll} disabled={isRunning}>
               {isRunning ? (
                 <>
                   <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
@@ -534,7 +528,13 @@ export function ConformancePanel({
 function OAuthStepRow({
   step,
 }: {
-  step: { step: string; title: string; status: string; durationMs: number; error?: { message: string } };
+  step: {
+    step: string;
+    title: string;
+    status: string;
+    durationMs: number;
+    error?: { message: string };
+  };
 }) {
   const [expanded, setExpanded] = useState(false);
   const hasError = step.status === "failed" && step.error;
@@ -549,13 +549,12 @@ function OAuthStepRow({
       >
         <StatusIcon status={step.status} />
         <span className="text-xs flex-1 min-w-0 truncate">{step.title}</span>
-        {hasError && (
-          expanded ? (
+        {hasError &&
+          (expanded ? (
             <ChevronDown className="h-3 w-3 text-muted-foreground flex-shrink-0" />
           ) : (
             <ChevronRight className="h-3 w-3 text-muted-foreground flex-shrink-0" />
-          )
-        )}
+          ))}
         <span className="text-[10px] text-muted-foreground flex-shrink-0">
           {step.durationMs}ms
         </span>

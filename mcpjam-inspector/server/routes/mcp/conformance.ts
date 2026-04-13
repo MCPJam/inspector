@@ -71,7 +71,10 @@ conformance.post("/protocol", async (c) => {
     const parsed = protocolSchema.safeParse(body);
     if (!parsed.success) {
       return c.json(
-        { success: false, error: parsed.error.issues[0]?.message ?? "Invalid request" },
+        {
+          success: false,
+          error: parsed.error.issues[0]?.message ?? "Invalid request",
+        },
         400,
       );
     }
@@ -91,7 +94,9 @@ conformance.post("/protocol", async (c) => {
     const conformanceConfig: MCPConformanceConfig = {
       serverUrl: String(config.url),
       accessToken: config.accessToken,
-      customHeaders: config.requestInit?.headers as Record<string, string> | undefined,
+      customHeaders: config.requestInit?.headers as
+        | Record<string, string>
+        | undefined,
     };
 
     const test = new MCPConformanceTest(conformanceConfig);
@@ -101,7 +106,10 @@ conformance.post("/protocol", async (c) => {
   } catch (error) {
     logger.error("[Conformance Protocol]", error);
     return c.json(
-      { success: false, error: error instanceof Error ? error.message : "Unknown error" },
+      {
+        success: false,
+        error: error instanceof Error ? error.message : "Unknown error",
+      },
       500,
     );
   }
@@ -119,7 +127,10 @@ conformance.post("/apps", async (c) => {
     const parsed = appsSchema.safeParse(body);
     if (!parsed.success) {
       return c.json(
-        { success: false, error: parsed.error.issues[0]?.message ?? "Invalid request" },
+        {
+          success: false,
+          error: parsed.error.issues[0]?.message ?? "Invalid request",
+        },
         400,
       );
     }
@@ -135,7 +146,8 @@ conformance.post("/apps", async (c) => {
       );
     }
 
-    const appsConfig: MCPAppsConformanceConfig = resolved.config as MCPAppsConformanceConfig;
+    const appsConfig: MCPAppsConformanceConfig =
+      resolved.config as MCPAppsConformanceConfig;
     const test = new MCPAppsConformanceTest(appsConfig);
     const result = await test.run();
 
@@ -143,7 +155,10 @@ conformance.post("/apps", async (c) => {
   } catch (error) {
     logger.error("[Conformance Apps]", error);
     return c.json(
-      { success: false, error: error instanceof Error ? error.message : "Unknown error" },
+      {
+        success: false,
+        error: error instanceof Error ? error.message : "Unknown error",
+      },
       500,
     );
   }
@@ -176,7 +191,10 @@ conformance.post("/oauth/start", async (c) => {
     const parsed = oauthStartSchema.safeParse(body);
     if (!parsed.success) {
       return c.json(
-        { success: false, error: parsed.error.issues[0]?.message ?? "Invalid request" },
+        {
+          success: false,
+          error: parsed.error.issues[0]?.message ?? "Invalid request",
+        },
         400,
       );
     }
@@ -214,7 +232,8 @@ conformance.post("/oauth/start", async (c) => {
     const oauthConfig: OAuthConformanceConfig = {
       serverUrl,
       protocolVersion: (oauthProfile?.protocolVersion as any) || "2025-11-25",
-      registrationStrategy: (oauthProfile?.registrationStrategy as any) || "cimd",
+      registrationStrategy:
+        (oauthProfile?.registrationStrategy as any) || "cimd",
       auth: {
         mode: "interactive",
         openUrl: async (url: string) => {
@@ -246,7 +265,10 @@ conformance.post("/oauth/start", async (c) => {
       },
       (err) => {
         if (sessionId) {
-          setSessionError(sessionId, err instanceof Error ? err.message : String(err));
+          setSessionError(
+            sessionId,
+            err instanceof Error ? err.message : String(err),
+          );
         }
         throw err;
       },
@@ -285,7 +307,10 @@ conformance.post("/oauth/start", async (c) => {
   } catch (error) {
     logger.error("[Conformance OAuth Start]", error);
     return c.json(
-      { success: false, error: error instanceof Error ? error.message : "Unknown error" },
+      {
+        success: false,
+        error: error instanceof Error ? error.message : "Unknown error",
+      },
       500,
     );
   }
@@ -305,7 +330,10 @@ conformance.post("/oauth/authorize", async (c) => {
     const parsed = oauthAuthorizeSchema.safeParse(body);
     if (!parsed.success) {
       return c.json(
-        { success: false, error: parsed.error.issues[0]?.message ?? "Invalid request" },
+        {
+          success: false,
+          error: parsed.error.issues[0]?.message ?? "Invalid request",
+        },
         400,
       );
     }
@@ -315,7 +343,10 @@ conformance.post("/oauth/authorize", async (c) => {
 
     if (!delivered) {
       return c.json(
-        { success: false, error: "Session not found or not waiting for authorization" },
+        {
+          success: false,
+          error: "Session not found or not waiting for authorization",
+        },
         404,
       );
     }
@@ -324,7 +355,10 @@ conformance.post("/oauth/authorize", async (c) => {
   } catch (error) {
     logger.error("[Conformance OAuth Authorize]", error);
     return c.json(
-      { success: false, error: error instanceof Error ? error.message : "Unknown error" },
+      {
+        success: false,
+        error: error instanceof Error ? error.message : "Unknown error",
+      },
       500,
     );
   }
@@ -342,7 +376,10 @@ conformance.post("/oauth/complete", async (c) => {
     const parsed = oauthCompleteSchema.safeParse(body);
     if (!parsed.success) {
       return c.json(
-        { success: false, error: parsed.error.issues[0]?.message ?? "Invalid request" },
+        {
+          success: false,
+          error: parsed.error.issues[0]?.message ?? "Invalid request",
+        },
         400,
       );
     }
@@ -366,10 +403,7 @@ conformance.post("/oauth/complete", async (c) => {
     }
 
     if (session.error) {
-      return c.json(
-        { success: false, error: session.error },
-        500,
-      );
+      return c.json({ success: false, error: session.error }, 500);
     }
 
     // Long-poll: wait up to 25 seconds for completion
@@ -382,10 +416,7 @@ conformance.post("/oauth/complete", async (c) => {
 
       const currentSession = getSession(sessionId);
       if (!currentSession) {
-        return c.json(
-          { success: false, error: "Session expired" },
-          404,
-        );
+        return c.json({ success: false, error: "Session expired" }, 404);
       }
 
       if (currentSession.result) {
@@ -396,10 +427,7 @@ conformance.post("/oauth/complete", async (c) => {
       }
 
       if (currentSession.error) {
-        return c.json(
-          { success: false, error: currentSession.error },
-          500,
-        );
+        return c.json({ success: false, error: currentSession.error }, 500);
       }
     }
 
@@ -411,7 +439,10 @@ conformance.post("/oauth/complete", async (c) => {
   } catch (error) {
     logger.error("[Conformance OAuth Complete]", error);
     return c.json(
-      { success: false, error: error instanceof Error ? error.message : "Unknown error" },
+      {
+        success: false,
+        error: error instanceof Error ? error.message : "Unknown error",
+      },
       500,
     );
   }

@@ -17,7 +17,10 @@ beforeEach(() => {
 
 describe("createSession", () => {
   it("creates a session with authorization URL", () => {
-    const session = createSession("https://auth.example.com/authorize", "state123");
+    const session = createSession(
+      "https://auth.example.com/authorize",
+      "state123",
+    );
     expect(session.id).toBeTruthy();
     expect(session.authorizationUrl).toBe("https://auth.example.com/authorize");
     expect(session.expectedState).toBe("state123");
@@ -68,11 +71,17 @@ describe("submitAuthorizationCode", () => {
 
   it("delivers code to resolver", async () => {
     const session = createSession("https://a.com", "state123");
-    const codePromise = new Promise<{ code: string; state?: string }>((resolve) => {
-      session.codeResolver = resolve;
-    });
+    const codePromise = new Promise<{ code: string; state?: string }>(
+      (resolve) => {
+        session.codeResolver = resolve;
+      },
+    );
 
-    const delivered = submitAuthorizationCode(session.id, "auth-code", "state123");
+    const delivered = submitAuthorizationCode(
+      session.id,
+      "auth-code",
+      "state123",
+    );
     expect(delivered).toBe(true);
 
     const result = await codePromise;
@@ -91,7 +100,9 @@ describe("addCompletedStep", () => {
   });
 
   it("does not throw for nonexistent session", () => {
-    expect(() => addCompletedStep("nonexistent", "step", "passed")).not.toThrow();
+    expect(() =>
+      addCompletedStep("nonexistent", "step", "passed"),
+    ).not.toThrow();
   });
 });
 

@@ -35,7 +35,9 @@ vi.mock("@/components/oauth/utils", () => ({
 
 import { ConformancePanel } from "../ConformancePanel";
 
-function createHttpServer(overrides: Partial<ServerWithName> = {}): ServerWithName {
+function createHttpServer(
+  overrides: Partial<ServerWithName> = {},
+): ServerWithName {
   return {
     name: "http-server",
     lastConnectionTime: new Date(),
@@ -50,7 +52,9 @@ function createHttpServer(overrides: Partial<ServerWithName> = {}): ServerWithNa
   };
 }
 
-function createStdioServer(overrides: Partial<ServerWithName> = {}): ServerWithName {
+function createStdioServer(
+  overrides: Partial<ServerWithName> = {},
+): ServerWithName {
   return {
     name: "stdio-server",
     lastConnectionTime: new Date(),

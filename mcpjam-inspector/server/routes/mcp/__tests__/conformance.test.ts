@@ -22,7 +22,11 @@ function createTestApp(manager: ReturnType<typeof createMockManager>) {
   return app;
 }
 
-async function postJson(app: Hono, path: string, body: Record<string, unknown>) {
+async function postJson(
+  app: Hono,
+  path: string,
+  body: Record<string, unknown>,
+) {
   return app.request(path, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
