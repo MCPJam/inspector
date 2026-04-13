@@ -51,9 +51,10 @@ Each conformance run walks through:
 6. **Authenticated request** — retries the MCP request with the token
 7. **Post-auth verification** (optional) — connects via MCP and lists tools / calls a tool
 
-When `--conformance-checks` is enabled, three additional negative checks run after the flow:
+When `--conformance-checks` is enabled, four additional negative checks run after the flow:
+- **DCR redirect URI policy** — attempts dynamic client registration with a non-loopback `http://` redirect URI and expects rejection under the MCP authorization profile
 - **Invalid client** — confirms the auth server rejects an unknown client ID
-- **Invalid redirect** — confirms the auth server rejects a mismatched redirect URI
+- **Invalid redirect** — attempts a token request with a mismatched redirect URI to look for exact-match enforcement; this check may be skipped if the request is rejected for a different reason first
 - **Token format** — validates the token response has the expected fields
 
 ## Scenarios
@@ -174,7 +175,7 @@ mcpjam oauth conformance \
   --verify-tools
 ```
 
-This adds 3 checks after the main flow: invalid client rejection, invalid redirect rejection, and token format validation.
+This adds 4 checks after the main flow: DCR redirect URI policy, invalid client rejection, invalid redirect enforcement, and token format validation.
 
 ## Registration strategies
 

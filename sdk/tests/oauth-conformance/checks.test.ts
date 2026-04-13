@@ -1,4 +1,5 @@
 import {
+  runDcrHttpRedirectUriCheck,
   runInvalidClientCheck,
   runInvalidRedirectCheck,
 } from "../../src/oauth-conformance/checks/oauth-negative.js";
@@ -56,6 +57,67 @@ describe("oauth conformance unit checks", () => {
             method: "POST",
             url: "https://auth.example.com/token",
           }),
+        }),
+      },
+    });
+  });
+
+  it("fails when dynamic client registration accepts a non-loopback http redirect URI", async () => {
+    const result = await runDcrHttpRedirectUriCheck({
+      ...(baseNegativeInput as any),
+      state: {
+        authorizationServerMetadata: {
+          registration_endpoint: "https://auth.example.com/register",
+        },
+      },
+      trackedRequest: jest.fn().mockResolvedValue({
+        ok: true,
+        status: 201,
+        statusText: "Created",
+        body: {
+          client_id: "evil-client",
+          redirect_uris: ["http://evil.example/callback"],
+        },
+      }),
+    });
+
+    expect(result).toMatchObject({
+      step: "oauth_dcr_http_redirect_uri",
+      status: "failed",
+      error: {
+        message:
+          "Authorization server accepted a non-loopback http redirect_uri during dynamic client registration",
+        details: expect.objectContaining({
+          redirectUri: "http://evil.example/callback",
+          clientId: "evil-client",
+        }),
+      },
+    });
+  });
+
+  it("skips redirect validation when the token rejection is not redirect-specific", async () => {
+    const result = await runInvalidRedirectCheck({
+      ...(baseNegativeInput as any),
+      trackedRequest: jest.fn().mockResolvedValue({
+        ok: false,
+        status: 400,
+        statusText: "Bad Request",
+        body: {
+          error: "invalid_grant",
+          error_description: "Authorization code already used",
+        },
+      }),
+    });
+
+    expect(result).toMatchObject({
+      step: "oauth_invalid_redirect",
+      status: "skipped",
+      error: {
+        message:
+          "Token request was rejected for a non-redirect reason: Authorization code already used",
+        details: expect.objectContaining({
+          evidence:
+            "Received 400 Bad Request with Authorization code already used.",
         }),
       },
     });

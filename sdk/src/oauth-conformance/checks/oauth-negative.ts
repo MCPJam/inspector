@@ -1,4 +1,5 @@
 import { canonicalizeResourceUrl } from "../../oauth/state-machines/shared/urls.js";
+import { getConformanceAuthCodeDynamicRegistrationMetadata } from "../../oauth/client-identity.js";
 import type { OAuthFlowState } from "../../oauth/state-machines/types.js";
 import type {
   NormalizedOAuthConformanceConfig,
@@ -9,7 +10,9 @@ import type {
 
 type OAuthNegativeCheckStep = Extract<
   OAuthConformanceCheckId,
-  "oauth_invalid_client" | "oauth_invalid_redirect"
+  | "oauth_dcr_http_redirect_uri"
+  | "oauth_invalid_client"
+  | "oauth_invalid_redirect"
 >;
 
 export interface OAuthNegativeCheckOutcome {
@@ -45,16 +48,17 @@ function buildTransportFailure(
     method: string;
     url: string;
     headers: Record<string, string>;
-    body: Record<string, string>;
+    body: Record<string, unknown>;
   },
   error: unknown,
+  messagePrefix = "Token endpoint request failed",
 ): OAuthNegativeCheckOutcome {
   return {
     step,
     status: "failed",
     durationMs: Date.now() - startedAt,
     error: {
-      message: `Token endpoint request failed: ${error instanceof Error ? error.message : String(error)}`,
+      message: `${messagePrefix}: ${error instanceof Error ? error.message : String(error)}`,
       details: {
         request,
         error: errorDetails(error),
@@ -68,6 +72,15 @@ function buildTokenRequestHeaders(
 ): Record<string, string> {
   return {
     "Content-Type": "application/x-www-form-urlencoded",
+    ...(config.customHeaders ?? {}),
+  };
+}
+
+function buildJsonRequestHeaders(
+  config: NormalizedOAuthConformanceConfig,
+): Record<string, string> {
+  return {
+    "Content-Type": "application/json",
     ...(config.customHeaders ?? {}),
   };
 }
@@ -125,6 +138,131 @@ function responseLooksRejected(response: {
     typeof response.body === "object" &&
     "error" in response.body
   );
+}
+
+function summarizeResponseBody(body: unknown): string | undefined {
+  if (!body) {
+    return undefined;
+  }
+
+  if (typeof body === "string") {
+    return body;
+  }
+
+  if (typeof body !== "object") {
+    return String(body);
+  }
+
+  const record = body as Record<string, unknown>;
+  const prioritizedKeys = [
+    "error_description",
+    "error",
+    "message",
+    "title",
+    "detail",
+    "description",
+  ];
+
+  for (const key of prioritizedKeys) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim()) {
+      return value;
+    }
+  }
+
+  return undefined;
+}
+
+function rejectionLooksRedirectSpecific(response: {
+  body: unknown;
+}): boolean {
+  const summary = summarizeResponseBody(response.body)?.toLowerCase();
+  if (!summary) {
+    return false;
+  }
+
+  return (
+    summary.includes("redirect_uri") ||
+    summary.includes("redirect uri") ||
+    summary.includes("redirect")
+  );
+}
+
+export async function runDcrHttpRedirectUriCheck(
+  input: OAuthNegativeCheckInput,
+): Promise<OAuthNegativeCheckOutcome> {
+  const registrationEndpoint =
+    input.state.authorizationServerMetadata?.registration_endpoint;
+  const startedAt = Date.now();
+
+  if (!registrationEndpoint) {
+    return {
+      step: "oauth_dcr_http_redirect_uri",
+      status: "skipped",
+      durationMs: 0,
+      error: {
+        message:
+          "Registration endpoint is unavailable for redirect URI policy testing",
+      },
+    };
+  }
+
+  const redirectUri = "http://evil.example/callback";
+  const request = {
+    method: "POST",
+    url: registrationEndpoint,
+    headers: buildJsonRequestHeaders(input.config),
+    body: {
+      ...getConformanceAuthCodeDynamicRegistrationMetadata(),
+      redirect_uris: [redirectUri],
+    },
+  };
+  let response: Awaited<ReturnType<TrackedRequestFn>>;
+
+  try {
+    response = await input.trackedRequest(request);
+  } catch (error) {
+    return buildTransportFailure(
+      "oauth_dcr_http_redirect_uri",
+      startedAt,
+      request,
+      error,
+      "Dynamic client registration request failed",
+    );
+  }
+
+  if (responseLooksRejected(response)) {
+    return {
+      step: "oauth_dcr_http_redirect_uri",
+      status: "passed",
+      durationMs: Date.now() - startedAt,
+    };
+  }
+
+  const clientId =
+    response.body &&
+    typeof response.body === "object" &&
+    typeof (response.body as Record<string, unknown>).client_id === "string"
+      ? ((response.body as Record<string, unknown>).client_id as string)
+      : undefined;
+
+  return {
+    step: "oauth_dcr_http_redirect_uri",
+    status: "failed",
+    durationMs: Date.now() - startedAt,
+    error: {
+      message:
+        "Authorization server accepted a non-loopback http redirect_uri during dynamic client registration",
+      details: {
+        redirectUri,
+        clientId,
+        response: response.body,
+        evidence: clientId
+          ? `Registered redirect_uri ${redirectUri} was accepted and returned client_id ${clientId}.`
+          : `Registered redirect_uri ${redirectUri} was accepted.`,
+      },
+    },
+  };
 }
 
 export async function runInvalidClientCheck(
@@ -242,6 +380,26 @@ export async function runInvalidRedirectCheck(
         message:
           "Authorization server accepted a token request with a mismatched redirect_uri",
         details: response.body,
+      },
+    };
+  }
+
+  const rejectionSummary = summarizeResponseBody(response.body);
+  if (!rejectionLooksRedirectSpecific(response)) {
+    return {
+      step: "oauth_invalid_redirect",
+      status: "skipped",
+      durationMs: Date.now() - startedAt,
+      error: {
+        message: rejectionSummary
+          ? `Token request was rejected for a non-redirect reason: ${rejectionSummary}`
+          : "Token request was rejected, but redirect_uri validation was not isolated.",
+        details: {
+          response: response.body,
+          evidence: rejectionSummary
+            ? `Received ${response.status} ${response.statusText} with ${rejectionSummary}.`
+            : `Received ${response.status} ${response.statusText} without a redirect-specific error.`,
+        },
       },
     };
   }

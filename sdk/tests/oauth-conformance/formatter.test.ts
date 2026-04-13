@@ -208,6 +208,41 @@ describe("OAuth conformance human formatter", () => {
     expect(output).toContain("listTools: PASS (7 tools)");
     expect(output).not.toContain("—");
   });
+
+  it("prints a compact evidence line for failed OAuth checks", () => {
+    const result = createPassingResult({
+      passed: false,
+      steps: [
+        {
+          step: "oauth_dcr_http_redirect_uri",
+          title: "OAuth Check: DCR Redirect URI Policy",
+          summary:
+            "Attempt dynamic client registration with a non-loopback http redirect URI and confirm the authorization server rejects it.",
+          status: "failed",
+          durationMs: 18,
+          logs: [],
+          httpAttempts: [],
+          error: {
+            message:
+              "Authorization server accepted a non-loopback http redirect_uri during dynamic client registration",
+            details: {
+              evidence:
+                "Registered redirect_uri http://evil.example/callback was accepted and returned client_id evil-client.",
+            },
+          },
+        },
+      ],
+      summary:
+        "OAuth conformance failed at oauth_dcr_http_redirect_uri: Authorization server accepted a non-loopback http redirect_uri during dynamic client registration",
+    });
+
+    const output = formatOAuthConformanceHuman(result);
+
+    expect(output).toContain("Step: oauth_dcr_http_redirect_uri");
+    expect(output).toContain(
+      "Evidence: Registered redirect_uri http://evil.example/callback was accepted and returned client_id evil-client.",
+    );
+  });
 });
 
 describe("OAuth conformance suite human formatter", () => {

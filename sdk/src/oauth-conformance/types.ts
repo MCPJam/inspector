@@ -17,6 +17,7 @@ import type { OAuthStepInfo } from "../oauth/state-machines/shared/step-metadata
 // (the interactive debugger state machine never enters these states).
 
 export type OAuthConformanceCheckId =
+  | "oauth_dcr_http_redirect_uri"
   | "oauth_invalid_client"
   | "oauth_invalid_redirect"
   | "oauth_token_format";
@@ -28,6 +29,14 @@ export const CONFORMANCE_CHECK_METADATA: Record<
   OAuthConformanceCheckId,
   OAuthStepInfo
 > = {
+  oauth_dcr_http_redirect_uri: {
+    title: "OAuth Check: DCR Redirect URI Policy",
+    summary:
+      "Attempt dynamic client registration with a non-loopback http redirect URI and confirm the authorization server rejects it.",
+    teachableMoments: [
+      "MCP authorization requires redirect URIs to use localhost or HTTPS.",
+    ],
+  },
   oauth_invalid_client: {
     title: "OAuth Check: Invalid Client",
     summary:
@@ -39,9 +48,9 @@ export const CONFORMANCE_CHECK_METADATA: Record<
   oauth_invalid_redirect: {
     title: "OAuth Check: Invalid Redirect URI",
     summary:
-      "Send a token request with a mismatched redirect URI and confirm the authorization server rejects it.",
+      "Send a token request with a mismatched redirect URI and look for a redirect-specific rejection from the token endpoint.",
     teachableMoments: [
-      "Redirect URI validation prevents authorization code injection and token leakage.",
+      "A generic invalid_grant rejection does not prove redirect URI exact-match validation.",
     ],
   },
   oauth_token_format: {

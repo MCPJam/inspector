@@ -572,6 +572,10 @@ describe("OAuthConformanceTest", () => {
         });
       }
 
+      if (url === `${authServerUrl}/register`) {
+        return jsonResponse({ error: "invalid_redirect_uri" }, 400);
+      }
+
       if (url === DEFAULT_MCPJAM_CLIENT_ID_METADATA_URL) {
         return jsonResponse({
           client_id: DEFAULT_MCPJAM_CLIENT_ID_METADATA_URL,
@@ -635,8 +639,145 @@ describe("OAuthConformanceTest", () => {
 
     expect(result.passed).toBe(true);
     expect(tokenBodies).toHaveLength(3);
+    expect(statuses.oauth_dcr_http_redirect_uri).toBe("passed");
     expect(statuses.oauth_invalid_client).toBe("passed");
-    expect(statuses.oauth_invalid_redirect).toBe("passed");
+    expect(statuses.oauth_invalid_redirect).toBe("skipped");
     expect(statuses.oauth_token_format).toBe("passed");
+  });
+
+  it("fails conformance when DCR accepts a non-loopback http redirect URI", async () => {
+    const serverUrl = "https://mcp.example.com/mcp";
+    const redirectUrl = "http://127.0.0.1:3333/callback";
+    const resourceMetadataUrl =
+      "https://mcp.example.com/.well-known/oauth-protected-resource/mcp";
+    const authServerUrl = "https://auth.example.com";
+
+    const fetchFn: typeof fetch = jest.fn(async (input, init) => {
+      const url = String(input);
+      const headers = new Headers(init?.headers);
+
+      if (url === serverUrl && !headers.get("Authorization")) {
+        return new Response(null, {
+          status: 401,
+          headers: {
+            "WWW-Authenticate": `Bearer resource_metadata="${resourceMetadataUrl}"`,
+          },
+        });
+      }
+
+      if (url === resourceMetadataUrl) {
+        return jsonResponse({
+          resource: serverUrl,
+          authorization_servers: [authServerUrl],
+        });
+      }
+
+      if (url === `${authServerUrl}/.well-known/oauth-authorization-server`) {
+        return jsonResponse({
+          issuer: authServerUrl,
+          authorization_endpoint: `${authServerUrl}/authorize`,
+          token_endpoint: `${authServerUrl}/token`,
+          registration_endpoint: `${authServerUrl}/register`,
+          response_types_supported: ["code"],
+          grant_types_supported: ["authorization_code", "refresh_token"],
+          code_challenge_methods_supported: ["S256"],
+        });
+      }
+
+      if (url === `${authServerUrl}/register`) {
+        const body = JSON.parse(String(init?.body ?? "{}")) as {
+          redirect_uris?: string[];
+        };
+
+        if (body.redirect_uris?.[0] === "http://evil.example/callback") {
+          return jsonResponse(
+            {
+              client_id: "evil-client",
+              redirect_uris: body.redirect_uris,
+            },
+            201,
+          );
+        }
+
+        return jsonResponse(
+          {
+            client_id: "legit-client",
+            redirect_uris: body.redirect_uris,
+          },
+          201,
+        );
+      }
+
+      if (url === `${authServerUrl}/token`) {
+        const body = String(init?.body ?? "");
+
+        if (body.includes("client_id=invalid-client-id")) {
+          return jsonResponse({ error: "invalid_client" }, 401);
+        }
+
+        if (
+          body.includes(
+            "redirect_uri=http%3A%2F%2F127.0.0.1%3A3333%2Fcallback%3Finvalid%3D1",
+          )
+        ) {
+          return jsonResponse(
+            {
+              error: "invalid_request",
+              error_description: "redirect_uri mismatch",
+            },
+            400,
+          );
+        }
+
+        return jsonResponse({
+          access_token: "access-token",
+          refresh_token: "refresh-token",
+          token_type: "Bearer",
+          expires_in: 3600,
+        });
+      }
+
+      if (url === serverUrl && headers.get("Authorization") === "Bearer access-token") {
+        return createMcpInitializeResponse("2025-11-25");
+      }
+
+      return jsonResponse({ error: "not found" }, 404);
+    }) as typeof fetch;
+
+    const test = new OAuthConformanceTest(
+      {
+        serverUrl,
+        protocolVersion: "2025-11-25",
+        registrationStrategy: "dcr",
+        auth: { mode: "headless" },
+        fetchFn,
+        redirectUrl,
+        oauthConformanceChecks: true,
+        verification: { listTools: true },
+      },
+      {
+        completeHeadlessAuthorization: jest.fn(async () => ({
+          code: "auth-code",
+        })),
+      },
+    );
+
+    const result = await test.run();
+    const dcrCheck = result.steps.find(
+      (step) => step.step === "oauth_dcr_http_redirect_uri",
+    );
+
+    expect(result.passed).toBe(false);
+    expect(dcrCheck).toMatchObject({
+      status: "failed",
+      error: {
+        details: expect.objectContaining({
+          redirectUri: "http://evil.example/callback",
+          clientId: "evil-client",
+        }),
+      },
+    });
+    expect(result.verification).toBeUndefined();
+    expect(result.steps.map((step) => step.step)).not.toContain("verify_list_tools");
   });
 });

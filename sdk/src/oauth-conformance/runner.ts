@@ -23,6 +23,7 @@ import {
   type InteractiveAuthorizationSession,
 } from "./auth-strategies/interactive.js";
 import {
+  runDcrHttpRedirectUriCheck,
   runInvalidClientCheck,
   runInvalidRedirectCheck,
 } from "./checks/oauth-negative.js";
@@ -629,10 +630,17 @@ export class OAuthConformanceTest {
       if (
         state.currentStep === "complete" &&
         steps.every((step) => step.status !== "failed") &&
-        this.config.oauthConformanceChecks &&
-        redirectUrl
+        this.config.oauthConformanceChecks
       ) {
         const oauthCheckRedirectUrl = redirectUrl;
+        await recordOAuthCheck("oauth_dcr_http_redirect_uri", () =>
+          runDcrHttpRedirectUriCheck({
+            config: this.config,
+            state,
+            trackedRequest,
+            redirectUrl: oauthCheckRedirectUrl,
+          }),
+        );
         await recordOAuthCheck("oauth_invalid_client", () =>
           runInvalidClientCheck({
             config: this.config,
@@ -641,14 +649,18 @@ export class OAuthConformanceTest {
             redirectUrl: oauthCheckRedirectUrl,
           }),
         );
-        await recordOAuthCheck("oauth_invalid_redirect", () =>
-          runInvalidRedirectCheck({
-            config: this.config,
-            state,
-            trackedRequest,
-            redirectUrl: oauthCheckRedirectUrl,
-          }),
-        );
+        if (oauthCheckRedirectUrl) {
+          await recordOAuthCheck("oauth_invalid_redirect", () =>
+            runInvalidRedirectCheck({
+              config: this.config,
+              state,
+              trackedRequest,
+              redirectUrl: oauthCheckRedirectUrl,
+            }),
+          );
+        } else {
+          steps.push(buildSkippedStepResult("oauth_invalid_redirect"));
+        }
 
         const tokenRequestStep = [...steps]
           .reverse()

@@ -153,6 +153,19 @@ function deriveHint(
   return undefined;
 }
 
+function extractEvidence(details: unknown): string | undefined {
+  if (!details || typeof details !== "object") {
+    return undefined;
+  }
+
+  const evidence = (details as { evidence?: unknown }).evidence;
+  if (typeof evidence !== "string" || !evidence.trim()) {
+    return undefined;
+  }
+
+  return truncate(evidence);
+}
+
 function countStatuses(result: ConformanceResult): string {
   const passed = result.steps.filter((step) => step.status === "passed").length;
   const failed = result.steps.filter((step) => step.status === "failed").length;
@@ -176,6 +189,7 @@ function formatFailureLines(result: ConformanceResult): string[] {
   const contentType = response?.headers?.["content-type"];
   const bodySummary = summarizeBody(response?.body, contentType);
   const hint = deriveHint(failure, contentType, bodySummary);
+  const evidence = extractEvidence(failure.error?.details);
 
   const lines = [
     `Step: ${failure.step}`,
@@ -194,6 +208,10 @@ function formatFailureLines(result: ConformanceResult): string[] {
 
   if (bodySummary?.snippet) {
     lines.push(`Snippet: ${bodySummary.snippet}`);
+  }
+
+  if (evidence) {
+    lines.push(`Evidence: ${evidence}`);
   }
 
   if (hint) {
