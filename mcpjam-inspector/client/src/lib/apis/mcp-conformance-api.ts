@@ -6,6 +6,7 @@ import type {
 import { isHostedMode, runByMode } from "@/lib/apis/mode-client";
 import { buildHostedServerRequest } from "@/lib/apis/web/context";
 import { webPost } from "@/lib/apis/web/base";
+import { authFetch } from "@/lib/session-token";
 
 // ── Types ───────────────────────────────────────────────────────────────
 
@@ -41,7 +42,7 @@ export interface OAuthStartInput {
 // ── Local API helpers ───────────────────────────────────────────────────
 
 async function localPost<T>(path: string, body: unknown): Promise<T> {
-  const response = await fetch(path, {
+  const response = await authFetch(path, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),

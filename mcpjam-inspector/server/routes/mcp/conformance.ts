@@ -146,9 +146,14 @@ conformance.post("/apps", async (c) => {
       );
     }
 
-    const appsConfig: MCPAppsConformanceConfig =
-      resolved.config as MCPAppsConformanceConfig;
-    const test = new MCPAppsConformanceTest(appsConfig);
+    const serverConfig = { ...resolved.config };
+    // Ensure url is a string — mcpClientManager stores it as a URL object
+    if ("url" in serverConfig && serverConfig.url) {
+      (serverConfig as any).url = String(serverConfig.url);
+    }
+    const test = new MCPAppsConformanceTest(
+      serverConfig as MCPAppsConformanceConfig,
+    );
     const result = await test.run();
 
     return c.json({ success: true, result });
