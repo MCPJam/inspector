@@ -15,6 +15,9 @@ import { z } from "zod";
 
 const TEST_IMAGE_BASE64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==";
+export const CONFORMANCE_UI_TOOL_NAME = "test_ui_dashboard";
+export const CONFORMANCE_UI_RESOURCE_URI = "ui://test/dashboard";
+const CONFORMANCE_UI_RESOURCE_MIME_TYPE = "text/html;profile=mcp-app";
 
 type ConformanceServerOptions = {
   omitTools?: string[];
@@ -442,6 +445,41 @@ function createMcpServer(
     );
   }
 
+  if (!omittedTools.has(CONFORMANCE_UI_TOOL_NAME)) {
+    server.registerTool(
+      CONFORMANCE_UI_TOOL_NAME,
+      {
+        description: shouldOmitDescription(
+          options.omitToolDescriptions,
+          CONFORMANCE_UI_TOOL_NAME,
+        )
+          ? undefined
+          : "Returns dashboard data and advertises an MCP Apps HTML resource.",
+        inputSchema: {},
+        _meta: {
+          ui: {
+            resourceUri: CONFORMANCE_UI_RESOURCE_URI,
+            visibility: ["model", "app"],
+          },
+        },
+      },
+      async () => ({
+        content: [
+          {
+            type: "text",
+            text: "Dashboard ready.",
+          },
+        ],
+        structuredContent: {
+          status: "ready",
+          cards: [
+            { id: "summary", label: "Summary", value: 42 },
+          ],
+        },
+      }),
+    );
+  }
+
   if (!omittedResources.has("test://static-binary")) {
     server.registerResource(
       "static-binary",
@@ -505,6 +543,54 @@ function createMcpServer(
             uri: "test://watched-resource",
             mimeType: "text/plain",
             text: watchedResourceContent,
+          },
+        ],
+      }),
+    );
+  }
+
+  if (!omittedResources.has(CONFORMANCE_UI_RESOURCE_URI)) {
+    server.registerResource(
+      "ui-dashboard",
+      CONFORMANCE_UI_RESOURCE_URI,
+      {
+        title: "UI Dashboard",
+        description: "An MCP Apps HTML resource for conformance testing.",
+        mimeType: CONFORMANCE_UI_RESOURCE_MIME_TYPE,
+      },
+      async () => ({
+        contents: [
+          {
+            uri: CONFORMANCE_UI_RESOURCE_URI,
+            mimeType: CONFORMANCE_UI_RESOURCE_MIME_TYPE,
+            text: [
+              "<!DOCTYPE html>",
+              '<html lang="en">',
+              "<head>",
+              '  <meta charset="utf-8" />',
+              "  <title>Conformance Dashboard</title>",
+              "</head>",
+              "<body>",
+              '  <main id="app">MCP Apps conformance dashboard</main>',
+              "</body>",
+              "</html>",
+            ].join("\n"),
+            _meta: {
+              ui: {
+                csp: {
+                  connectDomains: ["https://api.example.com"],
+                  resourceDomains: ["https://cdn.example.com"],
+                  frameDomains: ["https://frames.example.com"],
+                  baseUriDomains: ["https://assets.example.com"],
+                },
+                permissions: {
+                  geolocation: {},
+                  clipboardWrite: {},
+                },
+                domain: "conformance-dashboard.oaiusercontent.test",
+                prefersBorder: true,
+              },
+            },
           },
         ],
       }),

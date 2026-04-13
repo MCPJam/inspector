@@ -51,9 +51,12 @@ Each conformance run walks through:
 6. **Authenticated request** — retries the MCP request with the token
 7. **Post-auth verification** (optional) — connects via MCP and lists tools / calls a tool
 
-When `--conformance-checks` is enabled, three additional negative checks run after the flow:
+When `--conformance-checks` is enabled, six additional negative checks run after the flow:
+- **DCR redirect URI policy** — attempts dynamic client registration with a non-loopback `http://` redirect URI and expects rejection under the MCP authorization profile
 - **Invalid client** — confirms the auth server rejects an unknown client ID
-- **Invalid redirect** — confirms the auth server rejects a mismatched redirect URI
+- **Invalid redirect at the authorization endpoint** — sends an authorization request with a mismatched `redirect_uri` and looks for rejection before the server redirects back to it
+- **Invalid token** — confirms the MCP server rejects an obviously invalid bearer token with HTTP 401
+- **Invalid redirect** — attempts a token request with a mismatched redirect URI to look for exact-match enforcement; this check may be skipped if the request is rejected for a different reason first
 - **Token format** — validates the token response has the expected fields
 
 ## Scenarios
@@ -147,7 +150,9 @@ mcpjam oauth conformance \
 
 <Note>
   `--scopes` sets what you **request** from the auth server. The runner does
-  not currently verify that granted scopes match requested scopes.
+  not currently verify that granted scopes match requested scopes. When
+  `--scopes` is omitted, the runner prefers the `scope=` value from the initial
+  `WWW-Authenticate` challenge and falls back to `scopes_supported`.
 </Note>
 
 ### Drive consent via Playwright or automation
@@ -174,7 +179,7 @@ mcpjam oauth conformance \
   --verify-tools
 ```
 
-This adds 3 checks after the main flow: invalid client rejection, invalid redirect rejection, and token format validation.
+This adds 6 checks after the main flow: DCR redirect URI policy, invalid client rejection, invalid redirect enforcement at the authorization endpoint, invalid bearer token rejection at the MCP server, invalid redirect enforcement at the token endpoint, and token format validation.
 
 ## Registration strategies
 
@@ -291,6 +296,12 @@ oauth-conformance:
 | `--verify-call-tool <name>` | No | | Also call the named tool (implies `--verify-tools`) |
 | `--conformance-checks` | No | | Run additional negative OAuth checks after the main flow |
 | `--print-url` | No | | Print consent URL to stderr instead of launching a browser |
+
+<Note>
+  For interactive conformance runs, a custom `--redirect-url` must still be an
+  `http://localhost` or `http://127.0.0.1` loopback URL. Custom callback paths
+  are supported.
+</Note>
 
 ### `oauth conformance-suite`
 

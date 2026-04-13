@@ -1,4 +1,5 @@
 import { Command } from "commander";
+import { isCallToolResultError } from "@mcpjam/sdk";
 import { writeCommandDebugArtifact } from "../lib/debug-artifact";
 import { withEphemeralManager } from "../lib/ephemeral";
 import { createCliRpcLogCollector } from "../lib/rpc-logs";
@@ -11,8 +12,9 @@ import {
   getGlobalOptions,
   parseJsonRecord,
   parseServerConfig,
+  resolveAliasedStringOption,
 } from "../lib/server-config";
-import { writeResult } from "../lib/output";
+import { setProcessExitCode, writeResult } from "../lib/output";
 
 export function registerToolsCommands(program: Command): void {
   const tools = program
@@ -57,8 +59,10 @@ export function registerToolsCommands(program: Command): void {
     tools
       .command("call")
       .description("Call an MCP tool")
-      .requiredOption("--name <tool>", "Tool name")
-      .option("--params <json>", "Tool parameter object as JSON")
+      .option("--tool-name <tool>", "Tool name")
+      .option("--name <tool>", "Alias for --tool-name")
+      .option("--tool-args <json>", "Tool parameter object as JSON")
+      .option("--params <json>", "Alias for --tool-args")
       .option(
         "--debug-out <path>",
         "Write a structured debug artifact to a file",
@@ -76,7 +80,24 @@ export function registerToolsCommands(program: Command): void {
       ...options,
       timeout: globalOptions.timeout,
     });
-    const params = parseJsonRecord(options.params, "Tool parameters") ?? {};
+    const toolName = resolveAliasedStringOption(
+      options as Record<string, unknown>,
+      [
+        { key: "toolName", flag: "--tool-name" },
+        { key: "name", flag: "--name" },
+      ],
+      "Tool name",
+      { required: true },
+    ) as string;
+    const paramsInput = resolveAliasedStringOption(
+      options as Record<string, unknown>,
+      [
+        { key: "toolArgs", flag: "--tool-args" },
+        { key: "params", flag: "--params" },
+      ],
+      "Tool parameters",
+    );
+    const params = parseJsonRecord(paramsInput, "Tool parameters") ?? {};
     const targetSummary = summarizeServerDoctorTarget(target, config);
 
     let result: unknown;
@@ -85,8 +106,7 @@ export function registerToolsCommands(program: Command): void {
     try {
       result = await withEphemeralManager(
         config,
-        (manager, serverId) =>
-          manager.executeTool(serverId, options.name as string, params),
+        (manager, serverId) => manager.executeTool(serverId, toolName, params),
         {
           timeout: globalOptions.timeout,
           rpcLogger: primaryCollector?.rpcLogger,
@@ -101,7 +121,7 @@ export function registerToolsCommands(program: Command): void {
       format: globalOptions.format,
       commandName: "tools call",
       commandInput: {
-        toolName: options.name as string,
+        toolName,
         params,
       },
       target: targetSummary,
@@ -135,5 +155,8 @@ export function registerToolsCommands(program: Command): void {
       withRpcLogsIfRequested(result, primaryCollector, globalOptions),
       globalOptions.format,
     );
+    if (isCallToolResultError(result)) {
+      setProcessExitCode(1);
+    }
   });
 }

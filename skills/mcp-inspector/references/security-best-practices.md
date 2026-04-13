@@ -61,11 +61,12 @@ Use this file when performing a security-focused review of an MCP server. Each c
 
 - **Command**: `oauth proxy --url <registration_endpoint> --method POST --header "Content-Type: application/json" --body '{"redirect_uris":["http://evil.example/callback"],"client_name":"security-test","token_endpoint_auth_method":"none","grant_types":["authorization_code"],"response_types":["code"]}'`
 - **Where to look**: Response status and body. A `2xx` with a `client_id` means the registration succeeded.
-- **Checklist hit**: Server accepted a non-loopback `http://` redirect URI
+- **Checklist hit**: Server accepted a non-loopback `http://` redirect URI. Under the MCP authorization spec, this is a direct profile violation because redirect URIs must be either `localhost` or `https`.
 - **Default compliance impact**: `medium`
 - **Default security impact**: `pending`
+- **Interpretation**: Treat this as a real conformance failure even when attacker benefit is not yet proved.
 - **Escalates when**: Phase 3 proves code or token capture, consent skip, a misleading consent flow, redirect exact-match bypass, or another end-to-end attacker benefit
-- **Do not escalate when**: Registration succeeds but the authorization and token path is not proved
+- **Do not escalate when**: Registration succeeds but the authorization and token path is not proved. Lack of exploit proof lowers the security severity, not the compliance finding.
 - **Best proving command**: Phase 2 `oauth proxy` registration, then Phase 3 `oauth login` plus an authorization URL opened in the same browser session
 - **Phase**: 2 then 3
 
@@ -88,10 +89,24 @@ Use this file when performing a security-focused review of an MCP server. Each c
 - **Checklist hit**: Server accepts a redirect URI that does not exactly match the registered one
 - **Default compliance impact**: `medium`
 - **Default security impact**: `pending`
+- **Interpretation**: Keep this separate from the non-loopback `http://` redirect check. A server can enforce exact matching and still violate the MCP redirect URI policy, or vice versa.
 - **Escalates when**: The modified URI actually receives an auth code, token, or other meaningful authorization result
-- **Do not escalate when**: You only suspect loose matching from registration behavior or summaries
+- **Do not escalate when**: You only suspect loose matching from registration behavior, a token-endpoint rejection reason, or summaries. Use a live authorization request to prove the mismatch was accepted.
 - **Best proving command**: DCR registration plus a live authorization request using the modified URI
 - **Phase**: 3
+
+### Invalid bearer token rejection
+
+- **Command**: `oauth conformance --conformance-checks` or a direct authenticated MCP request with an obviously invalid bearer token
+- **Where to look**: MCP server response status and body
+- **Checklist hit**: The MCP server responds with anything other than `401` to an obviously invalid bearer token
+- **Default compliance impact**: `medium`
+- **Default security impact**: `pending`
+- **Interpretation**: This is a targeted token-validation probe, not proof of token passthrough by itself. It is strongest when the request reaches the real MCP endpoint rather than only an OAuth metadata path.
+- **Escalates when**: You can show the server accepts foreign, expired, or otherwise invalid tokens for real MCP operations
+- **Do not escalate when**: The server cleanly rejects the token with `401`, or when a proxy layer rejects the request before the MCP server is meaningfully exercised
+- **Best proving command**: `oauth conformance --conformance-checks`, then a narrower follow-up request if the result is surprising
+- **Phase**: 2, with any abuse proof in 3
 
 ## PKCE Weakness
 

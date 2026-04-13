@@ -362,8 +362,6 @@ describe("FullscreenChatOverlay", () => {
     expect(screen.getByPlaceholderText("Message…")).toHaveValue(
       "Draft while thinking",
     );
-    expect(
-      screen.getByRole("button", { name: "Send message" }),
-    ).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled();
   });
 });

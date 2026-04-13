@@ -69,10 +69,22 @@ export const createLlmModel = (
       })(modelDefinition.id);
     case "xai":
       return createXai({ apiKey })(modelDefinition.id);
-    case "azure":
-      return createAzure({ apiKey, baseURL: baseUrls?.azure })(
-        modelDefinition.id,
+    case "azure": {
+      const azureBaseUrl = baseUrls?.azure ?? "";
+      // Extract resourceName from the Azure base URL so the SDK doesn't fall
+      // back to the AZURE_RESOURCE_NAME env var and throw when it's missing.
+      // Supports both:
+      //   https://<resource>.openai.azure.com/openai
+      //   https://<resource>.cognitiveservices.azure.com/openai
+      const azureResourceMatch = azureBaseUrl.match(
+        /https?:\/\/([^.]+)\.(openai|cognitiveservices)\.azure\.com/i,
       );
+      const resourceName = azureResourceMatch?.[1];
+      return createAzure({
+        apiKey,
+        ...(resourceName ? { resourceName } : { baseURL: azureBaseUrl }),
+      })(modelDefinition.id);
+    }
     case "custom": {
       const providerName = modelDefinition.customProviderName;
       if (!providerName) {
