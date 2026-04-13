@@ -47,6 +47,7 @@
           "cli/oauth-conformance",
           "cli/oauth-login",
           "cli/tools-resources-prompts",
+          "cli/ci-github-actions",
           "cli/reference"
         ]
       },

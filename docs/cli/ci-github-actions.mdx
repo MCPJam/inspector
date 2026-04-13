@@ -1,0 +1,201 @@
+---
+title: "CI / GitHub Actions"
+description: "Run MCP health checks and OAuth conformance in GitHub Actions"
+icon: "github"
+---
+
+Run `mcpjam` in CI to catch MCP server regressions on every push. The examples below use GitHub Actions, but the same commands work in any CI environment.
+
+## Authentication
+
+There are three ways to authenticate in CI, depending on your server setup.
+
+### Option 1: Headless OAuth login
+
+Best when your server supports OAuth with auto-consent (no interactive login page). The workflow obtains a fresh access token on every run.
+
+**Secrets needed:**
+
+| Secret | Description |
+|---|---|
+| `MCP_SERVER_URL` | Your MCP server URL |
+
+```yaml
+name: MCP Health Check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  mcp-doctor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: OAuth login (headless)
+        run: |
+          set -euo pipefail
+          npx -y @mcpjam/cli@latest oauth login \
+            --url ${{ secrets.MCP_SERVER_URL }} \
+            --protocol-version 2025-11-25 \
+            --registration dcr \
+            --auth-mode headless \
+            --format json > /tmp/oauth-result.json
+          TOKEN=$(jq -r '.credentials.accessToken // empty' /tmp/oauth-result.json)
+          rm -f /tmp/oauth-result.json
+          if [ -z "$TOKEN" ]; then
+            echo "::error::OAuth login did not return an access token"
+            exit 1
+          fi
+          echo "::add-mask::$TOKEN"
+          echo "MCP_TOKEN=$TOKEN" >> "$GITHUB_ENV"
+
+      - name: Run doctor
+        run: npx -y @mcpjam/cli@latest server doctor --url ${{ secrets.MCP_SERVER_URL }} --access-token $MCP_TOKEN --format json
+```
+
+### Option 2: Refresh token
+
+Best when you already have a refresh token from a previous `oauth login`. Refresh tokens are long-lived and safe to store as secrets. The CLI handles the token exchange automatically.
+
+**Secrets needed:**
+
+| Secret | Description |
+|---|---|
+| `MCP_SERVER_URL` | Your MCP server URL |
+| `MCP_REFRESH_TOKEN` | OAuth refresh token from a previous login |
+| `MCP_CLIENT_ID` | OAuth client ID (required with refresh tokens) |
+| `MCP_CLIENT_SECRET` | OAuth client secret (if the client is confidential) |
+
+```yaml
+name: MCP Health Check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  mcp-doctor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Run doctor
+        run: |
+          npx -y @mcpjam/cli@latest server doctor \
+            --url ${{ secrets.MCP_SERVER_URL }} \
+            --refresh-token ${{ secrets.MCP_REFRESH_TOKEN }} \
+            --client-id ${{ secrets.MCP_CLIENT_ID }} \
+            --client-secret ${{ secrets.MCP_CLIENT_SECRET }} \
+            --format json
+```
+
+<Tip>
+To get a refresh token, run `mcpjam oauth login` locally with `--format json` and grab `.credentials.refreshToken` from the output.
+</Tip>
+
+### Option 3: Static API key
+
+Best when your server uses a non-expiring API key instead of OAuth.
+
+**Secrets needed:**
+
+| Secret | Description |
+|---|---|
+| `MCP_SERVER_URL` | Your MCP server URL |
+| `MCP_API_KEY` | Static API key |
+
+```yaml
+name: MCP Health Check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  mcp-doctor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Run doctor
+        run: npx -y @mcpjam/cli@latest server doctor --url ${{ secrets.MCP_SERVER_URL }} --access-token ${{ secrets.MCP_API_KEY }} --format json
+```
+
+### Option 4: No auth
+
+Some servers don't require authentication at all.
+
+**Secrets needed:**
+
+| Secret | Description |
+|---|---|
+| `MCP_SERVER_URL` | Your MCP server URL |
+
+```yaml
+name: MCP Health Check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  mcp-doctor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Run doctor
+        run: npx -y @mcpjam/cli@latest server doctor --url ${{ secrets.MCP_SERVER_URL }} --format json
+```
+
+## Tool surface diffing
+
+Snapshot your tool surface before and after a deploy to catch breaking changes (renamed parameters, changed descriptions, removed tools).
+
+```yaml
+      - name: Snapshot before
+        run: npx -y @mcpjam/cli@latest server export --url ${{ secrets.MCP_SERVER_URL }} --access-token $MCP_TOKEN --format json > before.json
+
+      # your deploy step here
+
+      - name: Snapshot after
+        run: npx -y @mcpjam/cli@latest server export --url ${{ secrets.MCP_SERVER_URL }} --access-token $MCP_TOKEN --format json > after.json
+
+      - name: Diff
+        run: diff <(jq -S . before.json) <(jq -S . after.json)
+```
+
+## OAuth conformance suite
+
+Run the full registration x protocol version x auth mode matrix from a config file and output JUnit XML for test reporters.
+
+```yaml
+      - name: OAuth conformance
+        run: |
+          npx -y @mcpjam/cli@latest oauth conformance-suite \
+            --config ./oauth-matrix.json \
+            --format junit-xml > report.xml
+
+      - name: Upload test report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: oauth-conformance
+          path: report.xml
+```
+
+See [OAuth Conformance](/cli/oauth-conformance) for details on the config file format.
