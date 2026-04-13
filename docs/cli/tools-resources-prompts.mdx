@@ -28,7 +28,9 @@ Tool arguments are passed as a JSON string. The result includes the tool's respo
 
 <Note>
   `tools call` supports `--debug-out <path>` to capture the full request/response
-  trace for debugging.
+  trace for debugging. For stdio targets, the artifact records only the
+  explicit env keys passed through `-e/--env`; inherited shell variables are
+  not enumerated.
 </Note>
 
 For a local stdio server:

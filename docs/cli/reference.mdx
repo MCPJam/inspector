@@ -40,6 +40,14 @@ All server commands accept the shared connection flags below, plus command-speci
 | `-e, --env <env...>` | Stdio environment `KEY=VALUE` values |
 | `--cwd <path>` | Working directory for the stdio child process |
 
+Transport selection is inferred from `--url` vs `--command` when
+`--transport` is omitted. Use `--transport http|stdio` when you want an
+explicit validation step.
+
+For stdio targets, child processes inherit the parent shell environment by
+default. `-e/--env` adds or overrides child env values, and structured debug
+artifacts only record the explicit env keys you passed on the command line.
+
 ### `server probe`
 
 No additional flags beyond shared connection flags.
@@ -234,6 +242,10 @@ Supports `--format json` and `--format human`. `junit-xml` is not supported on p
 | `--command-args <arg>` | Legacy stdio command argument (repeatable) |
 | `-e, --env <env...>` | Stdio environment `KEY=VALUE` values |
 | `--cwd <path>` | Working directory for the stdio child process |
+
+Apps conformance shares the same transport inference rules as the rest of the
+CLI: `--url` implies HTTP, `--command` implies stdio, and `--transport` is an
+optional explicit override.
 
 ### `apps conformance`
 

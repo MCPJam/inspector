@@ -69,6 +69,10 @@ The CLI auto-detects whether stdout is a terminal:
 
 The CLI supports two transport modes, selected by which flags you pass:
 
+- `--url ...` selects HTTP.
+- `--command ...` selects stdio.
+- `--transport http|stdio` is optional and acts as an explicit override/validator when you want the CLI to reject mismatched flags early.
+
 ### HTTP (Streamable HTTP / SSE)
 
 ```bash
@@ -96,6 +100,13 @@ mcpjam server doctor --command node --args server.js --cwd /path/to/project -e A
 
 Stdio child processes inherit the parent shell environment by default. Use
 `-e/--env` to add values or override inherited ones for the spawned server.
+Structured debug artifacts only record the explicit env keys you pass through
+`-e/--env`; inherited shell variables are not enumerated.
+
+<Note>
+  `oauth ...` and `protocol conformance` are HTTP-only command groups. They do
+  not accept stdio targets.
+</Note>
 
 ## Exit codes
 

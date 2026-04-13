@@ -54,6 +54,8 @@ mcpjam server doctor --command node --args server.js --cwd /path/to/project
 - Counts: tools, resources, resource templates, prompts
 
 The `--out <path>` flag writes the full JSON artifact to a file — useful for handoff to another engineer or agent.
+For stdio targets, those artifacts only record the explicit env keys you passed
+via `-e/--env`; inherited shell variables are not enumerated.
 
 ### `server info`
 
@@ -121,6 +123,8 @@ Every `server` subcommand accepts these flags for specifying how to connect:
 Stdio child processes inherit the parent shell environment by default. Use
 `-e/--env` to add values or override inherited ones, and `--cwd` when the
 command must run from a project directory.
+If you pass `--transport`, the CLI validates that it matches the target flags
+you provided instead of silently inferring the transport.
 
 ## Common patterns
 
