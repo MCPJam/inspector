@@ -79,33 +79,96 @@ function StatusIcon({ status }: { status: string }) {
   );
 }
 
+function formatDetailLabel(label: string) {
+  return label
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/[_-]+/g, " ")
+    .replace(/^\w/, (char) => char.toUpperCase());
+}
+
+function formatDetailValue(value: unknown) {
+  if (value === null) return "null";
+  if (value === undefined) return "undefined";
+  if (typeof value === "string") return value;
+  if (
+    typeof value === "number" ||
+    typeof value === "boolean" ||
+    typeof value === "bigint"
+  ) {
+    return String(value);
+  }
+
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
+
 function CheckRow({ check }: { check: MCPCheckResult | MCPAppsCheckResult }) {
   const [expanded, setExpanded] = useState(false);
-  const hasError = check.status === "failed" && check.error;
+  const detailEntries = Object.entries(check.details ?? {});
+  const warnings = "warnings" in check ? check.warnings : undefined;
 
   return (
     <div className="border-b border-border/30 last:border-0">
       <button
         type="button"
         className="w-full flex items-center gap-2 py-1.5 px-1 text-left hover:bg-muted/30 transition-colors cursor-pointer"
-        onClick={() => hasError && setExpanded(!expanded)}
-        disabled={!hasError}
+        onClick={() => setExpanded((value) => !value)}
+        aria-expanded={expanded}
       >
         <StatusIcon status={check.status} />
         <span className="text-xs flex-1 min-w-0 truncate">{check.title}</span>
-        {hasError &&
-          (expanded ? (
-            <ChevronDown className="h-3 w-3 text-muted-foreground flex-shrink-0" />
-          ) : (
-            <ChevronRight className="h-3 w-3 text-muted-foreground flex-shrink-0" />
-          ))}
+        {expanded ? (
+          <ChevronDown className="h-3 w-3 text-muted-foreground flex-shrink-0" />
+        ) : (
+          <ChevronRight className="h-3 w-3 text-muted-foreground flex-shrink-0" />
+        )}
         <span className="text-[10px] text-muted-foreground flex-shrink-0">
           {check.durationMs}ms
         </span>
       </button>
-      {expanded && check.error && (
-        <div className="px-6 pb-2 text-xs text-red-400 whitespace-pre-wrap break-words">
-          {check.error.message}
+      {expanded && (
+        <div className="space-y-2 px-6 pb-2">
+          <div className="text-xs text-muted-foreground whitespace-pre-wrap break-words">
+            {check.description}
+          </div>
+
+          {detailEntries.length > 0 && (
+            <div className="rounded-sm bg-muted/20 px-2 py-1.5 space-y-1">
+              {detailEntries.map(([key, value]) => (
+                <div key={key} className="text-xs">
+                  <span className="font-medium text-foreground/80">
+                    {formatDetailLabel(key)}:
+                  </span>{" "}
+                  <span className="text-muted-foreground whitespace-pre-wrap break-words">
+                    {formatDetailValue(value)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {warnings && warnings.length > 0 && (
+            <div className="rounded-sm bg-muted/20 px-2 py-1.5 text-xs text-muted-foreground">
+              <div className="mb-1 flex items-center gap-1 font-medium text-foreground/70">
+                <AlertTriangle className="h-3 w-3" />
+                Warnings
+              </div>
+              <ul className="space-y-1 pl-4 list-disc">
+                {warnings.map((warning) => (
+                  <li key={warning}>{warning}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {check.error && (
+            <div className="rounded-sm border border-red-500/20 bg-red-500/5 px-2 py-1.5 text-xs text-red-400 whitespace-pre-wrap break-words">
+              {check.error.message}
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -190,8 +253,10 @@ export function ConformancePanel({
       : "OAuth conformance requires HTTP transport",
   });
   const [negativeChecks, setNegativeChecks] = useState(false);
+  const [runVersion, setRunVersion] = useState(0);
 
   const resetStates = useCallback(() => {
+    setRunVersion((value) => value + 1);
     setProtocol({
       status: httpServer ? "idle" : "unavailable",
       unavailableReason: httpServer
@@ -418,7 +483,7 @@ export function ConformancePanel({
           {protocol.result.summary}
         </div>
         {protocol.result.checks.map((check) => (
-          <CheckRow key={check.id} check={check} />
+          <CheckRow key={`${runVersion}-${check.id}`} check={check} />
         ))}
       </div>
     );
@@ -432,7 +497,7 @@ export function ConformancePanel({
           {apps.result.summary}
         </div>
         {apps.result.checks.map((check) => (
-          <CheckRow key={check.id} check={check} />
+          <CheckRow key={`${runVersion}-${check.id}`} check={check} />
         ))}
       </div>
     );
@@ -454,7 +519,7 @@ export function ConformancePanel({
           {oauth.result.summary}
         </div>
         {oauth.result.steps.map((step: OAuthConformanceStepResult) => (
-          <OAuthStepRow key={step.step} step={step} />
+          <OAuthStepRow key={`${runVersion}-${step.step}`} step={step} />
         ))}
       </div>
     );
@@ -528,40 +593,53 @@ export function ConformancePanel({
 function OAuthStepRow({
   step,
 }: {
-  step: {
-    step: string;
-    title: string;
-    status: string;
-    durationMs: number;
-    error?: { message: string };
-  };
+  step: OAuthConformanceStepResult;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const hasError = step.status === "failed" && step.error;
 
   return (
     <div className="border-b border-border/30 last:border-0">
       <button
         type="button"
         className="w-full flex items-center gap-2 py-1.5 px-1 text-left hover:bg-muted/30 transition-colors cursor-pointer"
-        onClick={() => hasError && setExpanded(!expanded)}
-        disabled={!hasError}
+        onClick={() => setExpanded((value) => !value)}
+        aria-expanded={expanded}
       >
         <StatusIcon status={step.status} />
         <span className="text-xs flex-1 min-w-0 truncate">{step.title}</span>
-        {hasError &&
-          (expanded ? (
-            <ChevronDown className="h-3 w-3 text-muted-foreground flex-shrink-0" />
-          ) : (
-            <ChevronRight className="h-3 w-3 text-muted-foreground flex-shrink-0" />
-          ))}
+        {expanded ? (
+          <ChevronDown className="h-3 w-3 text-muted-foreground flex-shrink-0" />
+        ) : (
+          <ChevronRight className="h-3 w-3 text-muted-foreground flex-shrink-0" />
+        )}
         <span className="text-[10px] text-muted-foreground flex-shrink-0">
           {step.durationMs}ms
         </span>
       </button>
-      {expanded && step.error && (
-        <div className="px-6 pb-2 text-xs text-red-400 whitespace-pre-wrap break-words">
-          {step.error.message}
+      {expanded && (
+        <div className="space-y-2 px-6 pb-2">
+          <div className="text-xs text-muted-foreground whitespace-pre-wrap break-words">
+            {step.summary}
+          </div>
+
+          {step.teachableMoments && step.teachableMoments.length > 0 && (
+            <div className="rounded-sm bg-muted/20 px-2 py-1.5 text-xs text-muted-foreground">
+              <div className="mb-1 font-medium text-foreground/70">
+                Why this matters
+              </div>
+              <ul className="space-y-1 pl-4 list-disc">
+                {step.teachableMoments.map((moment) => (
+                  <li key={moment}>{moment}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {step.error && (
+            <div className="rounded-sm border border-red-500/20 bg-red-500/5 px-2 py-1.5 text-xs text-red-400 whitespace-pre-wrap break-words">
+              {step.error.message}
+            </div>
+          )}
         </div>
       )}
     </div>
