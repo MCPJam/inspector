@@ -1,4 +1,5 @@
 .DS_Store
+.cursor/
 node_modules/
 .mcpjam/skills/
 **/.mcpjam/skills/
