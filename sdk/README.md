@@ -191,7 +191,7 @@ Or use the CLI:
 
 ```bash
 # Single flow (M2M, no browser needed)
-npx @mcpjam/cli-preview oauth conformance \
+npx @mcpjam/cli oauth conformance \
   --url https://your-server.com/mcp \
   --protocol-version 2025-11-25 \
   --registration preregistered \
@@ -201,13 +201,13 @@ npx @mcpjam/cli-preview oauth conformance \
   --verify-tools
 
 # Suite from config file
-npx @mcpjam/cli-preview oauth conformance-suite --config ./oauth-tests.json
+npx @mcpjam/cli oauth conformance-suite --config ./oauth-tests.json
 
 # Force human-readable output
-npx @mcpjam/cli-preview oauth conformance --url https://your-server.com/mcp --protocol-version 2025-11-25 --registration dcr --format human
+npx @mcpjam/cli oauth conformance --url https://your-server.com/mcp --protocol-version 2025-11-25 --registration dcr --format human
 
 # JUnit XML for CI
-npx @mcpjam/cli-preview oauth conformance-suite --config ./oauth-tests.json --format junit-xml > report.xml
+npx @mcpjam/cli oauth conformance-suite --config ./oauth-tests.json --format junit-xml > report.xml
 ```
 
 ---

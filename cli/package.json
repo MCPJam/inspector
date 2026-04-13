@@ -1,6 +1,6 @@
 {
-  "name": "@mcpjam/cli-preview",
-  "version": "0.0.4",
+  "name": "@mcpjam/cli",
+  "version": "2.0.0",
   "description": "CLI for MCPJam SDK inspection commands and OAuth conformance",
   "main": "dist/index.js",
   "files": [

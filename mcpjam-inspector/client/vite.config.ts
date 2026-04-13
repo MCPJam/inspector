@@ -10,6 +10,16 @@ const clientDir = fileURLToPath(new URL(".", import.meta.url));
 const rootDir = path.resolve(clientDir, "..");
 // The linked local SDK package can advertise ./browser before dist/browser.* exists.
 const sdkBrowserEntry = path.resolve(rootDir, "../sdk/src/browser.ts");
+// Bypass stale Vite optimized deps for MCP SDK auth helpers by resolving
+// directly to the installed ESM entrypoints.
+const mcpSdkClientAuthEntry = path.resolve(
+  rootDir,
+  "node_modules/@modelcontextprotocol/sdk/dist/esm/client/auth.js",
+);
+const mcpSdkSharedAuthEntry = path.resolve(
+  rootDir,
+  "node_modules/@modelcontextprotocol/sdk/dist/esm/shared/auth.js",
+);
 
 // Read version from package.json
 const packageJson = JSON.parse(
@@ -44,6 +54,8 @@ export default defineConfig(({ mode }) => {
         "@/shared": path.resolve(clientDir, "../shared"),
         "@": path.resolve(clientDir, "./src"),
         "@mcpjam/sdk/browser": sdkBrowserEntry,
+        "@modelcontextprotocol/sdk/client/auth.js": mcpSdkClientAuthEntry,
+        "@modelcontextprotocol/sdk/shared/auth.js": mcpSdkSharedAuthEntry,
         // Force React resolution to prevent conflicts with @mcp-ui/client
         react: path.resolve(clientDir, "../node_modules/react"),
         "react-dom": path.resolve(clientDir, "../node_modules/react-dom"),
@@ -61,6 +73,10 @@ export default defineConfig(({ mode }) => {
         "react-dom",
         "react/jsx-runtime",
         "react/jsx-dev-runtime",
+      ],
+      exclude: [
+        "@modelcontextprotocol/sdk/client/auth.js",
+        "@modelcontextprotocol/sdk/shared/auth.js",
       ],
       // Force re-optimization to clear any cached conflicts
       force: env.FORCE_OPTIMIZE === "true",
