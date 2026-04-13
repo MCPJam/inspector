@@ -24,9 +24,15 @@ describe("interactive authorization session", () => {
         expectedState: "expected-state",
         timeoutMs: 2_000,
         openUrl: async () => {
-          await fetch(
-            `${session.redirectUrl}?code=test-code&state=expected-state`,
+          const response = await fetch(
+            `${session.redirectUrl}?code=test-code&state=expected-state`
           );
+          expect(response.status).toBe(200);
+          expect(response.headers.get("content-type")).toContain("text/html");
+
+          const html = await response.text();
+          expect(html).toContain("Authorization complete");
+          expect(html).toContain("Return to the terminal to continue.");
         },
       });
 
@@ -44,14 +50,21 @@ describe("interactive authorization session", () => {
         authorizationUrl: "https://auth.example.com/authorize",
         timeoutMs: 10_000,
         openUrl: async () => {
-          await fetch(
-            `${session.redirectUrl}?error=access_denied&error_description=User+rejected+access`,
+          const response = await fetch(
+            `${session.redirectUrl}?error=access_denied&error_description=User+rejected+%3Caccess%3E`
           );
+          expect(response.status).toBe(400);
+          expect(response.headers.get("content-type")).toContain("text/html");
+
+          const html = await response.text();
+          expect(html).toContain("Authorization failed");
+          expect(html).toContain("Return to the terminal for details.");
+          expect(html).toContain("access_denied: User rejected &lt;access&gt;");
         },
       });
 
       await expect(resultPromise).rejects.toThrow(
-        /access_denied: User rejected access/,
+        /access_denied: User rejected <access>/
       );
     } finally {
       await session.stop().catch(() => undefined);
@@ -66,12 +79,20 @@ describe("interactive authorization session", () => {
         authorizationUrl: "https://auth.example.com/authorize",
         timeoutMs: 10_000,
         openUrl: async () => {
-          await fetch(`${session.redirectUrl}?state=no-code`);
+          const response = await fetch(`${session.redirectUrl}?state=no-code`);
+          expect(response.status).toBe(400);
+          expect(response.headers.get("content-type")).toContain("text/html");
+
+          const html = await response.text();
+          expect(html).toContain("Authorization incomplete");
+          expect(html).toContain(
+            "No authorization code was included in the callback."
+          );
         },
       });
 
       await expect(resultPromise).rejects.toThrow(
-        /without a code or error parameter/,
+        /without a code or error parameter/
       );
     } finally {
       await session.stop().catch(() => undefined);
