@@ -86,6 +86,7 @@ import { HOSTED_MODE } from "@/lib/config";
 import { buildOAuthTokensByServerId } from "@/lib/oauth/oauth-tokens";
 import type { HostedOAuthRequiredDetails } from "@/lib/hosted-oauth-required";
 import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
+import { useModelSelectorLayoutLock } from "@/hooks/use-model-selector-layout-lock";
 import { LiveTraceTimelineEmptyState } from "@/components/evals/live-trace-timeline-empty";
 import { LiveTraceRawEmptyState } from "@/components/evals/live-trace-raw-empty";
 import { TraceViewer } from "@/components/evals/trace-viewer";
@@ -1061,26 +1062,8 @@ export function ChatTabV2({
   // The user can still toggle multi-model for new chats afterward.
   const isMultiModelMode =
     canEnableMultiModel && multiModelEnabled && !activeHistorySessionId;
-  const [isModelSelectorOpen, setIsModelSelectorOpen] = useState(false);
-  const [
-    multiModelLayoutModeWhileSelectorOpen,
-    setMultiModelLayoutModeWhileSelectorOpen,
-  ] = useState<boolean | null>(null);
-  const isMultiModelLayoutMode = isModelSelectorOpen
-    ? (multiModelLayoutModeWhileSelectorOpen ?? isMultiModelMode)
-    : isMultiModelMode;
-
-  const handleModelSelectorOpenChange = useCallback(
-    (open: boolean) => {
-      setIsModelSelectorOpen(open);
-      if (open) {
-        setMultiModelLayoutModeWhileSelectorOpen(isMultiModelMode);
-      } else {
-        setMultiModelLayoutModeWhileSelectorOpen(null);
-      }
-    },
-    [isMultiModelMode],
-  );
+  const { isMultiModelLayoutMode, onModelSelectorOpenChange } =
+    useModelSelectorLayoutLock(isMultiModelMode);
 
   useEffect(() => {
     if (isMultiModelMode && resolvedSelectedModels[0]) {
@@ -1851,7 +1834,7 @@ export function ChatTabV2({
     currentModel: selectedModel,
     availableModels,
     onModelChange: handleSingleModelChange,
-    onModelSelectorOpenChange: handleModelSelectorOpenChange,
+    onModelSelectorOpenChange,
     multiModelEnabled: isMultiModelMode,
     selectedModels: resolvedSelectedModels,
     onSelectedModelsChange: handleSelectedModelsChange,

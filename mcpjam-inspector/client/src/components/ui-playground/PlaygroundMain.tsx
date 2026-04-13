@@ -91,6 +91,7 @@ import {
 } from "@/contexts/sandbox-host-style-context";
 import { useComposerOnboarding } from "@/hooks/use-composer-onboarding";
 import { useDebouncedXRayPayload } from "@/hooks/use-debounced-x-ray-payload";
+import { useModelSelectorLayoutLock } from "@/hooks/use-model-selector-layout-lock";
 import {
   getChatComposerInteractivity,
   useChatStopControls,
@@ -479,26 +480,8 @@ export function PlaygroundMain({
   const canEnableMultiModel =
     enableMultiModelChat && availableModels.length > 1;
   const isMultiModelMode = canEnableMultiModel && multiModelEnabled;
-  const [isModelSelectorOpen, setIsModelSelectorOpen] = useState(false);
-  const [
-    multiModelLayoutModeWhileSelectorOpen,
-    setMultiModelLayoutModeWhileSelectorOpen,
-  ] = useState<boolean | null>(null);
-  const isMultiModelLayoutMode = isModelSelectorOpen
-    ? (multiModelLayoutModeWhileSelectorOpen ?? isMultiModelMode)
-    : isMultiModelMode;
-
-  const handleModelSelectorOpenChange = useCallback(
-    (open: boolean) => {
-      setIsModelSelectorOpen(open);
-      if (open) {
-        setMultiModelLayoutModeWhileSelectorOpen(isMultiModelMode);
-      } else {
-        setMultiModelLayoutModeWhileSelectorOpen(null);
-      }
-    },
-    [isMultiModelMode],
-  );
+  const { isMultiModelLayoutMode, onModelSelectorOpenChange } =
+    useModelSelectorLayoutLock(isMultiModelMode);
 
   useEffect(() => {
     if (isMultiModelMode && resolvedSelectedModels[0]) {
@@ -1124,7 +1107,7 @@ export function PlaygroundMain({
     currentModel: selectedModel,
     availableModels,
     onModelChange: handleSingleModelChange,
-    onModelSelectorOpenChange: handleModelSelectorOpenChange,
+    onModelSelectorOpenChange,
     multiModelEnabled: isMultiModelMode,
     selectedModels: resolvedSelectedModels,
     onSelectedModelsChange: handleSelectedModelsChange,
