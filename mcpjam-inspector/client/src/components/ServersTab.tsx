@@ -155,6 +155,26 @@ function saveServerOrder(workspaceId: string, orderedNames: string[]): void {
   }
 }
 
+function ServersSurfaceLoadingState({
+  testId,
+  message,
+}: {
+  testId: string;
+  message: string;
+}) {
+  return (
+    <div
+      className="flex h-full min-h-[320px] items-center justify-center p-8"
+      data-testid={testId}
+    >
+      <div className="text-center">
+        <Loader2 className="mx-auto h-8 w-8 animate-spin text-muted-foreground" />
+        <p className="mt-4 text-sm text-muted-foreground">{message}</p>
+      </div>
+    </div>
+  );
+}
+
 function ServersQuickConnectMiniCard({
   card,
   pendingQuickConnect,
@@ -376,6 +396,8 @@ interface ServersTabProps {
   onRemove: (serverName: string) => void;
   workspaces: Record<string, Workspace>;
   activeWorkspaceId: string;
+  organizationId: string | null;
+  isBillingContextPending?: boolean;
   isLoadingWorkspaces?: boolean;
   onWorkspaceShared?: (sharedWorkspaceId: string) => void;
   onLeaveWorkspace?: () => void;
@@ -392,6 +414,8 @@ export function ServersTab({
   onRemove,
   workspaces,
   activeWorkspaceId,
+  organizationId,
+  isBillingContextPending = false,
   isLoadingWorkspaces,
   onWorkspaceShared,
   isRegistryEnabled = false,
@@ -401,8 +425,14 @@ export function ServersTab({
   const { isAuthenticated } = useConvexAuth();
   const [pendingQuickConnect, setPendingQuickConnect] =
     useState<PendingQuickConnectState | null>(() => readPendingQuickConnect());
-  const registryWorkspaceId =
-    workspaces[activeWorkspaceId]?.sharedWorkspaceId ?? null;
+  const selectedWorkspace = workspaces[activeWorkspaceId];
+  const registryWorkspaceId = selectedWorkspace?.sharedWorkspaceId ?? null;
+  const resolvedOrganizationId = isBillingContextPending
+    ? null
+    : organizationId;
+  const resolvedRegistryWorkspaceId = isBillingContextPending
+    ? null
+    : registryWorkspaceId;
 
   const {
     catalogCards,
@@ -421,7 +451,8 @@ export function ServersTab({
 
   // Billing gate for server creation
   const serverCreationGate = useWorkspaceBillingGate({
-    workspaceId: registryWorkspaceId,
+    workspaceId: resolvedRegistryWorkspaceId,
+    organizationId: resolvedOrganizationId,
     gate: BILLING_GATES.serverCreation,
   });
 
@@ -1158,13 +1189,36 @@ export function ServersTab({
     </div>
   );
 
+  const renderNoWorkspaceContent = () => (
+    <div className="space-y-6 p-8 h-full overflow-auto">
+      <Card className="p-12 text-center" data-testid="servers-no-workspace">
+        <div className="mx-auto max-w-sm">
+          <MCPIcon className="mx-auto h-12 w-12 text-muted-foreground" />
+          <h3 className="mt-4 text-lg font-semibold">No workspace selected</h3>
+          <p className="mt-2 text-sm text-muted-foreground">
+            Select or create a workspace before adding servers.
+          </p>
+        </div>
+      </Card>
+    </div>
+  );
+
   return (
     <div className="h-full flex flex-col">
-      {isLoadingWorkspaces
-        ? renderLoadingContent()
-        : hasAnyServers
-          ? renderConnectedContent()
-          : renderEmptyContent()}
+      {isBillingContextPending ? (
+        <ServersSurfaceLoadingState
+          testId="servers-billing-context-pending"
+          message="Checking your organization access..."
+        />
+      ) : isLoadingWorkspaces ? (
+        renderLoadingContent()
+      ) : !selectedWorkspace ? (
+        renderNoWorkspaceContent()
+      ) : hasAnyServers ? (
+        renderConnectedContent()
+      ) : (
+        renderEmptyContent()
+      )}
 
       {/* Add Server Modal */}
       <AddServerModal

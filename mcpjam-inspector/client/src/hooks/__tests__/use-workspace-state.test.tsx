@@ -114,11 +114,17 @@ function renderUseWorkspaceState({
   activeOrganizationId,
   routeOrganizationId,
   isAuthenticated = true,
+  hasOrganizations = true,
+  isLoadingOrganizations = false,
+  validOrganizationIds,
 }: {
   appState: AppState;
   activeOrganizationId?: string;
   routeOrganizationId?: string;
   isAuthenticated?: boolean;
+  hasOrganizations?: boolean;
+  isLoadingOrganizations?: boolean;
+  validOrganizationIds?: string[];
 }) {
   const dispatch = vi.fn<(action: AppAction) => void>();
   const logger = {
@@ -128,19 +134,47 @@ function renderUseWorkspaceState({
   };
 
   const result = renderHook(
-    ({ organizationId }: { organizationId?: string }) =>
+    ({
+      organizationId,
+      hasOrganizationsOverride,
+      isLoadingOrganizationsOverride,
+      routeOrganizationIdOverride,
+      validOrganizationIdsOverride,
+    }: {
+      organizationId?: string;
+      hasOrganizationsOverride?: boolean;
+      isLoadingOrganizationsOverride?: boolean;
+      routeOrganizationIdOverride?: string;
+      validOrganizationIdsOverride?: string[];
+    }) =>
       useWorkspaceState({
         appState,
         dispatch,
         isAuthenticated,
         isAuthLoading: false,
+        hasOrganizations: hasOrganizationsOverride ?? hasOrganizations,
+        isLoadingOrganizations:
+          isLoadingOrganizationsOverride ?? isLoadingOrganizations,
+        validOrganizationIds:
+          validOrganizationIdsOverride ??
+          validOrganizationIds ??
+          [
+            routeOrganizationIdOverride ?? routeOrganizationId,
+            organizationId,
+          ].filter(
+            (organizationId): organizationId is string => !!organizationId,
+          ),
         activeOrganizationId: organizationId,
-        routeOrganizationId,
+        routeOrganizationId: routeOrganizationIdOverride ?? routeOrganizationId,
         logger,
       }),
     {
       initialProps: {
         organizationId: activeOrganizationId,
+        hasOrganizationsOverride: hasOrganizations,
+        isLoadingOrganizationsOverride: isLoadingOrganizations,
+        routeOrganizationIdOverride: routeOrganizationId,
+        validOrganizationIdsOverride: validOrganizationIds,
       },
     },
   );
@@ -252,6 +286,22 @@ describe("useWorkspaceState automatic workspace creation", () => {
     });
   });
 
+  it("skips organization billing status queries for a stale stored org", () => {
+    const appState = createAppState({
+      default: createSyntheticDefaultWorkspace(),
+    });
+
+    renderUseWorkspaceState({
+      appState,
+      activeOrganizationId: "org-stale",
+      validOrganizationIds: ["org-live"],
+    });
+
+    expect(useOrganizationBillingStatusMock).toHaveBeenCalledWith(null, {
+      enabled: true,
+    });
+  });
+
   it("prefers the route organization for workspace actions while active org state catches up", async () => {
     workspaceQueryState.allWorkspaces = [
       {
@@ -293,12 +343,179 @@ describe("useWorkspaceState automatic workspace creation", () => {
     });
   });
 
+  it("does not ensure a default workspace until organization selection resolves", async () => {
+    workspaceQueryState.allWorkspaces = [];
+    workspaceQueryState.workspaces = [];
+
+    const appState = createAppState({
+      default: createSyntheticDefaultWorkspace(),
+    });
+    const { rerender } = renderUseWorkspaceState({
+      appState,
+      activeOrganizationId: undefined,
+      hasOrganizations: true,
+      isLoadingOrganizations: true,
+      validOrganizationIds: [],
+    });
+
+    await act(async () => {});
+    expect(ensureDefaultWorkspaceMock).not.toHaveBeenCalled();
+
+    rerender({
+      organizationId: "org-live",
+      hasOrganizationsOverride: true,
+      isLoadingOrganizationsOverride: false,
+      routeOrganizationIdOverride: undefined,
+      validOrganizationIdsOverride: ["org-live"],
+    });
+
+    await waitFor(() => {
+      expect(ensureDefaultWorkspaceMock).toHaveBeenCalledWith({
+        organizationId: "org-live",
+      });
+    });
+  });
+
+  it("does not migrate local workspaces until organization selection resolves", async () => {
+    workspaceQueryState.allWorkspaces = [];
+    workspaceQueryState.workspaces = [];
+
+    const appState = createAppState({
+      default: createSyntheticDefaultWorkspace(),
+      "local-1": createLocalWorkspace("local-1", {
+        name: "Imported workspace",
+        organizationId: "org-live",
+      }),
+    });
+    const { rerender } = renderUseWorkspaceState({
+      appState,
+      activeOrganizationId: undefined,
+      hasOrganizations: true,
+      isLoadingOrganizations: true,
+      validOrganizationIds: [],
+    });
+
+    await act(async () => {});
+    expect(createWorkspaceMock).not.toHaveBeenCalled();
+
+    rerender({
+      organizationId: "org-live",
+      hasOrganizationsOverride: true,
+      isLoadingOrganizationsOverride: false,
+      routeOrganizationIdOverride: undefined,
+      validOrganizationIdsOverride: ["org-live"],
+    });
+
+    await waitFor(() => {
+      expect(createWorkspaceMock).toHaveBeenCalledWith({
+        organizationId: "org-live",
+        name: "Imported workspace",
+        description: undefined,
+        clientConfig: undefined,
+        servers: {},
+      });
+    });
+  });
+
+  it("does not create a cloud workspace until organization selection resolves", async () => {
+    workspaceQueryState.allWorkspaces = [];
+    workspaceQueryState.workspaces = [];
+
+    const appState = createAppState({
+      default: createSyntheticDefaultWorkspace(),
+    });
+    const { result } = renderUseWorkspaceState({
+      appState,
+      activeOrganizationId: undefined,
+      hasOrganizations: true,
+      isLoadingOrganizations: true,
+      validOrganizationIds: [],
+    });
+
+    await act(async () => {
+      await result.current.handleCreateWorkspace("Workspace Two");
+    });
+
+    expect(createWorkspaceMock).not.toHaveBeenCalled();
+    expect(toast.error).toHaveBeenCalledWith(
+      "Create or join an organization to create workspaces.",
+    );
+  });
+
+  it("does not duplicate a cloud workspace until organization selection resolves", async () => {
+    workspaceQueryState.allWorkspaces = [
+      {
+        _id: "remote-1",
+        name: "Workspace One",
+        servers: {},
+        ownerId: "user-1",
+        organizationId: "org-pending",
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ];
+    workspaceQueryState.workspaces = [...workspaceQueryState.allWorkspaces];
+
+    const appState = createAppState({
+      default: createSyntheticDefaultWorkspace(),
+    });
+    const { result } = renderUseWorkspaceState({
+      appState,
+      activeOrganizationId: undefined,
+      hasOrganizations: true,
+      isLoadingOrganizations: true,
+      validOrganizationIds: [],
+    });
+
+    await act(async () => {
+      await result.current.handleDuplicateWorkspace(
+        "remote-1",
+        "Workspace Copy",
+      );
+    });
+
+    expect(createWorkspaceMock).not.toHaveBeenCalled();
+    expect(toast.error).toHaveBeenCalledWith(
+      "Create or join an organization to create workspaces.",
+    );
+  });
+
+  it("does not import a cloud workspace until organization selection resolves", async () => {
+    workspaceQueryState.allWorkspaces = [];
+    workspaceQueryState.workspaces = [];
+
+    const appState = createAppState({
+      default: createSyntheticDefaultWorkspace(),
+    });
+    const { result } = renderUseWorkspaceState({
+      appState,
+      activeOrganizationId: undefined,
+      hasOrganizations: true,
+      isLoadingOrganizations: true,
+      validOrganizationIds: [],
+    });
+
+    await act(async () => {
+      await result.current.handleImportWorkspace(
+        createLocalWorkspace("import-1", {
+          name: "Imported Workspace",
+        }),
+      );
+    });
+
+    expect(createWorkspaceMock).not.toHaveBeenCalled();
+    expect(toast.error).toHaveBeenCalledWith(
+      "Create or join an organization to create workspaces.",
+    );
+  });
+
   it("migrates real local workspaces with createWorkspace and persists the shared workspace id", async () => {
     const appState = createAppState({
       default: createSyntheticDefaultWorkspace(),
       "local-1": createLocalWorkspace("local-1", {
         name: "Imported workspace",
         description: "Needs migration",
+        organizationId: "org-migrate",
         servers: {
           demo: {
             name: "demo",
@@ -428,6 +645,401 @@ describe("useWorkspaceState automatic workspace creation", () => {
     });
 
     await savePromise;
+  });
+
+  it("treats the authenticated zero-org state as empty remote workspaces and clears stale synced selection", async () => {
+    workspaceQueryState.allWorkspaces = [
+      {
+        _id: "remote-1",
+        name: "Deleted org workspace",
+        servers: {},
+        ownerId: "user-1",
+        organizationId: "deleted-org",
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ];
+    workspaceQueryState.workspaces = [...workspaceQueryState.allWorkspaces];
+    localStorage.setItem("convex-active-workspace-id", "remote-1");
+
+    const appState = createAppState({
+      default: createSyntheticDefaultWorkspace(),
+    });
+    const { result } = renderUseWorkspaceState({
+      appState,
+      activeOrganizationId: undefined,
+      hasOrganizations: false,
+      isLoadingOrganizations: false,
+    });
+
+    await waitFor(() => {
+      expect(result.current.effectiveWorkspaces).toEqual({});
+      expect(result.current.effectiveActiveWorkspaceId).toBe("none");
+    });
+
+    expect(localStorage.getItem("convex-active-workspace-id")).toBeNull();
+    expect(ensureDefaultWorkspaceMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps zero-org recovery empty even after local fallback activated while org loading was still pending", async () => {
+    vi.useFakeTimers();
+    workspaceQueryState.allWorkspaces = [
+      {
+        _id: "remote-1",
+        name: "Deleted org workspace",
+        servers: {},
+        ownerId: "user-1",
+        organizationId: "deleted-org",
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ];
+    workspaceQueryState.workspaces = undefined;
+    localStorage.setItem("convex-active-workspace-id", "remote-1");
+
+    const appState = createAppState({
+      "local-1": createLocalWorkspace("local-1", {
+        organizationId: "org-live",
+      }),
+    });
+    const { result, rerender } = renderUseWorkspaceState({
+      appState,
+      activeOrganizationId: undefined,
+      hasOrganizations: false,
+      isLoadingOrganizations: true,
+      validOrganizationIds: [],
+    });
+
+    act(() => {
+      vi.advanceTimersByTime(10001);
+    });
+
+    expect(result.current.useLocalFallback).toBe(true);
+    expect(result.current.effectiveWorkspaces).toEqual(appState.workspaces);
+
+    rerender({
+      organizationId: undefined,
+      hasOrganizationsOverride: false,
+      isLoadingOrganizationsOverride: false,
+      routeOrganizationIdOverride: undefined,
+      validOrganizationIdsOverride: [],
+    });
+
+    expect(result.current.effectiveWorkspaces).toEqual({});
+    expect(result.current.effectiveActiveWorkspaceId).toBe("none");
+
+    await act(async () => {});
+    expect(localStorage.getItem("convex-active-workspace-id")).toBeNull();
+    expect(ensureDefaultWorkspaceMock).not.toHaveBeenCalled();
+  });
+
+  it("still uses local fallback when a valid org exists and cloud sync times out", async () => {
+    vi.useFakeTimers();
+    workspaceQueryState.allWorkspaces = undefined;
+    workspaceQueryState.workspaces = undefined;
+
+    const appState = createAppState({
+      "local-1": createLocalWorkspace("local-1", {
+        organizationId: "org-live",
+      }),
+    });
+    const { result } = renderUseWorkspaceState({
+      appState,
+      activeOrganizationId: "org-live",
+      hasOrganizations: true,
+      isLoadingOrganizations: false,
+      validOrganizationIds: ["org-live"],
+    });
+
+    act(() => {
+      vi.advanceTimersByTime(10001);
+    });
+
+    expect(result.current.useLocalFallback).toBe(true);
+    expect(result.current.effectiveWorkspaces).toEqual(appState.workspaces);
+    expect(result.current.effectiveActiveWorkspaceId).toBe(
+      appState.activeWorkspaceId,
+    );
+  });
+
+  it("scopes local fallback workspaces to the current org and ignores an active workspace from another org", async () => {
+    vi.useFakeTimers();
+    workspaceQueryState.allWorkspaces = undefined;
+    workspaceQueryState.workspaces = undefined;
+
+    const appState = {
+      ...createAppState({
+        "local-org-a": createLocalWorkspace("local-org-a", {
+          organizationId: "org-a",
+        }),
+        "local-org-b": createLocalWorkspace("local-org-b", {
+          organizationId: "org-b",
+        }),
+      }),
+      activeWorkspaceId: "local-org-b",
+    };
+
+    const { result } = renderUseWorkspaceState({
+      appState,
+      activeOrganizationId: "org-a",
+      hasOrganizations: true,
+      isLoadingOrganizations: false,
+      validOrganizationIds: ["org-a"],
+    });
+
+    act(() => {
+      vi.advanceTimersByTime(10001);
+    });
+
+    expect(result.current.useLocalFallback).toBe(true);
+    expect(result.current.effectiveWorkspaces).toEqual({
+      "local-org-a": appState.workspaces["local-org-a"],
+    });
+    expect(result.current.effectiveActiveWorkspaceId).toBe("local-org-a");
+  });
+
+  it("hides unscoped and wrong-org local fallback workspaces when the current org has no local matches", async () => {
+    vi.useFakeTimers();
+    workspaceQueryState.allWorkspaces = undefined;
+    workspaceQueryState.workspaces = undefined;
+
+    const appState = createAppState({
+      "local-unscoped": createLocalWorkspace("local-unscoped"),
+      "local-org-b": createLocalWorkspace("local-org-b", {
+        organizationId: "org-b",
+      }),
+    });
+
+    const { result } = renderUseWorkspaceState({
+      appState,
+      activeOrganizationId: "org-a",
+      hasOrganizations: true,
+      isLoadingOrganizations: false,
+      validOrganizationIds: ["org-a"],
+    });
+
+    act(() => {
+      vi.advanceTimersByTime(10001);
+    });
+
+    expect(result.current.useLocalFallback).toBe(true);
+    expect(result.current.effectiveWorkspaces).toEqual({});
+    expect(result.current.effectiveActiveWorkspaceId).toBe("none");
+  });
+
+  it("keeps unauthenticated local workspaces visible without org scoping", () => {
+    const appState = createAppState({
+      "local-unscoped": createLocalWorkspace("local-unscoped"),
+      "local-org-b": createLocalWorkspace("local-org-b", {
+        organizationId: "org-b",
+      }),
+    });
+
+    const { result } = renderUseWorkspaceState({
+      appState,
+      isAuthenticated: false,
+      activeOrganizationId: "org-a",
+      hasOrganizations: true,
+      isLoadingOrganizations: false,
+      validOrganizationIds: ["org-a"],
+    });
+
+    expect(result.current.effectiveWorkspaces).toEqual(appState.workspaces);
+    expect(result.current.effectiveActiveWorkspaceId).toBe(
+      appState.activeWorkspaceId,
+    );
+  });
+
+  it("stamps the current org id on local fallback create, duplicate, and import actions", async () => {
+    vi.useFakeTimers();
+    workspaceQueryState.allWorkspaces = undefined;
+    workspaceQueryState.workspaces = undefined;
+
+    const appState = createAppState({
+      "local-org-a": createLocalWorkspace("local-org-a", {
+        name: "Workspace A",
+        organizationId: "org-a",
+      }),
+    });
+
+    const { result, dispatch } = renderUseWorkspaceState({
+      appState,
+      activeOrganizationId: "org-a",
+      hasOrganizations: true,
+      isLoadingOrganizations: false,
+      validOrganizationIds: ["org-a"],
+    });
+
+    act(() => {
+      vi.advanceTimersByTime(10001);
+    });
+
+    await act(async () => {
+      await result.current.handleCreateWorkspace("Created locally");
+    });
+
+    expect(createWorkspaceMock).not.toHaveBeenCalled();
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "CREATE_WORKSPACE",
+      workspace: expect.objectContaining({
+        name: "Created locally",
+        organizationId: "org-a",
+      }),
+    });
+
+    dispatch.mockClear();
+
+    await act(async () => {
+      await result.current.handleDuplicateWorkspace(
+        "local-org-a",
+        "Duplicated locally",
+      );
+    });
+
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "CREATE_WORKSPACE",
+      workspace: expect.objectContaining({
+        name: "Duplicated locally",
+        organizationId: "org-a",
+      }),
+    });
+
+    dispatch.mockClear();
+
+    await act(async () => {
+      await result.current.handleImportWorkspace(
+        createLocalWorkspace("import-me", {
+          name: "Imported locally",
+        }),
+      );
+    });
+
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "IMPORT_WORKSPACE",
+      workspace: expect.objectContaining({
+        name: "Imported locally",
+        organizationId: "org-a",
+      }),
+    });
+  });
+
+  it("updates workspaces locally in authenticated fallback mode", async () => {
+    vi.useFakeTimers();
+    workspaceQueryState.allWorkspaces = undefined;
+    workspaceQueryState.workspaces = undefined;
+
+    const appState = createAppState({
+      "local-org-a": createLocalWorkspace("local-org-a", {
+        name: "Workspace A",
+        organizationId: "org-a",
+      }),
+    });
+
+    const { result, dispatch } = renderUseWorkspaceState({
+      appState,
+      activeOrganizationId: "org-a",
+      hasOrganizations: true,
+      isLoadingOrganizations: false,
+      validOrganizationIds: ["org-a"],
+    });
+
+    act(() => {
+      vi.advanceTimersByTime(10001);
+    });
+
+    dispatch.mockClear();
+
+    await act(async () => {
+      await result.current.handleUpdateWorkspace("local-org-a", {
+        name: "Workspace A Renamed",
+      });
+    });
+
+    expect(updateWorkspaceMock).not.toHaveBeenCalled();
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "UPDATE_WORKSPACE",
+      workspaceId: "local-org-a",
+      updates: {
+        name: "Workspace A Renamed",
+      },
+    });
+  });
+
+  it("deletes active workspaces locally in authenticated fallback mode", async () => {
+    vi.useFakeTimers();
+    workspaceQueryState.allWorkspaces = undefined;
+    workspaceQueryState.workspaces = undefined;
+
+    const appState = {
+      ...createAppState({
+        "local-org-a-1": createLocalWorkspace("local-org-a-1", {
+          name: "Workspace A1",
+          organizationId: "org-a",
+        }),
+        "local-org-a-2": createLocalWorkspace("local-org-a-2", {
+          name: "Workspace A2",
+          organizationId: "org-a",
+        }),
+      }),
+      activeWorkspaceId: "local-org-a-1",
+    };
+
+    const { result, dispatch } = renderUseWorkspaceState({
+      appState,
+      activeOrganizationId: "org-a",
+      hasOrganizations: true,
+      isLoadingOrganizations: false,
+      validOrganizationIds: ["org-a"],
+    });
+
+    act(() => {
+      vi.advanceTimersByTime(10001);
+    });
+
+    dispatch.mockClear();
+
+    await act(async () => {
+      await result.current.handleDeleteWorkspace("local-org-a-1");
+    });
+
+    expect(deleteWorkspaceMock).not.toHaveBeenCalled();
+    expect(dispatch).toHaveBeenNthCalledWith(1, {
+      type: "SWITCH_WORKSPACE",
+      workspaceId: "local-org-a-2",
+    });
+    expect(dispatch).toHaveBeenNthCalledWith(2, {
+      type: "DELETE_WORKSPACE",
+      workspaceId: "local-org-a-1",
+    });
+  });
+
+  it("does not migrate local workspaces from another org into the current organization", async () => {
+    workspaceQueryState.allWorkspaces = [];
+    workspaceQueryState.workspaces = [];
+
+    const appState = createAppState({
+      default: createSyntheticDefaultWorkspace(),
+      "local-org-b": createLocalWorkspace("local-org-b", {
+        name: "Org B workspace",
+        organizationId: "org-b",
+      }),
+    });
+
+    renderUseWorkspaceState({
+      appState,
+      activeOrganizationId: "org-a",
+      hasOrganizations: true,
+      isLoadingOrganizations: false,
+      validOrganizationIds: ["org-a", "org-b"],
+    });
+
+    await waitFor(() => {
+      expect(ensureDefaultWorkspaceMock).toHaveBeenCalledWith({
+        organizationId: "org-a",
+      });
+    });
+
+    expect(createWorkspaceMock).not.toHaveBeenCalled();
   });
 
   it("fails authenticated client-config saves when the remote echo times out", async () => {
@@ -587,9 +1199,11 @@ describe("useWorkspaceState automatic workspace creation", () => {
       default: createSyntheticDefaultWorkspace(),
       "local-1": createLocalWorkspace("local-1", {
         name: "Local One",
+        organizationId: "org-member",
       }),
       "local-2": createLocalWorkspace("local-2", {
         name: "Local Two",
+        organizationId: "org-member",
       }),
     });
     const { logger } = renderUseWorkspaceState({

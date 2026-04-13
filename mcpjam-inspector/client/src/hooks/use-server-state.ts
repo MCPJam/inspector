@@ -457,6 +457,52 @@ export function useServerState({
     ],
   );
 
+  const persistServerToLocalWorkspace = useCallback(
+    (
+      serverName: string,
+      serverEntry: ServerWithName,
+      options?: { originalServerName?: string },
+    ) => {
+      const targetWorkspaceId =
+        effectiveActiveWorkspaceId !== "none"
+          ? effectiveActiveWorkspaceId
+          : appState.activeWorkspaceId;
+
+      if (!targetWorkspaceId || targetWorkspaceId === "none") {
+        return;
+      }
+
+      const workspace =
+        effectiveWorkspaces[targetWorkspaceId] ??
+        appState.workspaces[targetWorkspaceId];
+      if (!workspace) {
+        return;
+      }
+
+      const nextServers = { ...workspace.servers };
+      if (
+        options?.originalServerName &&
+        options.originalServerName !== serverName
+      ) {
+        delete nextServers[options.originalServerName];
+      }
+      nextServers[serverName] = serverEntry;
+
+      dispatch({
+        type: "UPDATE_WORKSPACE",
+        workspaceId: targetWorkspaceId,
+        updates: { servers: nextServers },
+      });
+    },
+    [
+      effectiveActiveWorkspaceId,
+      effectiveWorkspaces,
+      appState.activeWorkspaceId,
+      appState.workspaces,
+      dispatch,
+    ],
+  );
+
   const fetchAndStoreInitInfo = useCallback(
     async (serverName: string) => {
       try {
@@ -1050,7 +1096,12 @@ export function useServerState({
 
       saveOAuthConfigToLocalStorage(formData);
 
-      if (isAuthenticated && effectiveActiveWorkspaceId) {
+      if (
+        isAuthenticated &&
+        !useLocalFallback &&
+        effectiveActiveWorkspaceId &&
+        effectiveActiveWorkspaceId !== "none"
+      ) {
         try {
           await syncServerToConvex(serverName, serverEntry);
         } catch (error) {
@@ -1059,19 +1110,7 @@ export function useServerState({
           });
         }
       } else {
-        const workspace = appState.workspaces[appState.activeWorkspaceId];
-        if (workspace) {
-          dispatch({
-            type: "UPDATE_WORKSPACE",
-            workspaceId: appState.activeWorkspaceId,
-            updates: {
-              servers: {
-                ...workspace.servers,
-                [serverName]: serverEntry,
-              },
-            },
-          });
-        }
+        persistServerToLocalWorkspace(serverName, serverEntry);
       }
 
       logger.info("Saved server configuration without connecting", {
@@ -1086,8 +1125,10 @@ export function useServerState({
       logger,
       dispatch,
       isAuthenticated,
+      useLocalFallback,
       effectiveActiveWorkspaceId,
       syncServerToConvex,
+      persistServerToLocalWorkspace,
     ],
   );
 
@@ -1680,20 +1721,10 @@ export function useServerState({
           server: updatedServer,
         });
 
-        if (!isAuthenticated) {
-          const workspace = appState.workspaces[appState.activeWorkspaceId];
-          if (workspace) {
-            const nextServers = { ...workspace.servers };
-            if (isRename) {
-              delete nextServers[originalServerName];
-            }
-            nextServers[nextServerName] = updatedServer;
-            dispatch({
-              type: "UPDATE_WORKSPACE",
-              workspaceId: appState.activeWorkspaceId,
-              updates: { servers: nextServers },
-            });
-          }
+        if (!isAuthenticated || useLocalFallback) {
+          persistServerToLocalWorkspace(nextServerName, updatedServer, {
+            originalServerName: isRename ? originalServerName : undefined,
+          });
         } else {
           await syncServerToConvex(nextServerName, updatedServer);
         }
@@ -1789,6 +1820,8 @@ export function useServerState({
       removeServerFromStateAndCloud,
       setSelectedServer,
       syncServerToConvex,
+      useLocalFallback,
+      persistServerToLocalWorkspace,
       notifyIfClientConfigSyncPending,
       guardedTestConnection,
     ],
