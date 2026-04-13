@@ -184,7 +184,7 @@ If you already have a refresh token, you can skip the login step and pass it dir
 mcpjam server doctor --url $URL --refresh-token $REFRESH_TOKEN --client-id $CLIENT_ID --client-secret $CLIENT_SECRET --format json
 ```
 
-See the full [CI documentation](https://docs.mcpjam.com/cli/ci-github-actions) for all authentication options.
+See the full [CI documentation](https://docs.mcpjam.com/cli/ci) for all authentication options.
 
 ## Documentation
 
