@@ -35,7 +35,7 @@ Commands:
   tools              List and invoke MCP server tools
   resources          List and read MCP resources
   prompts            List and fetch MCP prompts
-  apps               Fetch MCP App and ChatGPT App widget content
+  apps               MCP Apps utilities, widget extraction, and conformance checks
   oauth              Run MCP OAuth login, proxy, and conformance flows
   protocol           MCP protocol inspection and conformance checks
 ```
@@ -51,6 +51,9 @@ mcpjam server doctor --url https://your-server.com/mcp --access-token $TOKEN
 
 # OAuth login
 mcpjam oauth login --url https://your-server.com/mcp --protocol-version 2025-11-25
+
+# MCP Apps conformance
+mcpjam apps conformance --url https://your-server.com/mcp --access-token $TOKEN
 
 # List tools with full schemas
 mcpjam tools list --url https://your-server.com/mcp --access-token $TOKEN --format json

@@ -154,6 +154,13 @@ export function registerOAuthCommands(program: Command): void {
       const snapshotCollector = options.debugOut
         ? createCliRpcLogCollector({ __cli__: config.serverUrl })
         : undefined;
+      const isTTY = process.stderr.isTTY;
+      if (isTTY) {
+        config.onProgress = (message: string) => {
+          process.stderr.write(`\r\x1b[K${message}`);
+        };
+      }
+
       let result: OAuthLoginResult | undefined;
       let commandError: unknown;
 
@@ -161,6 +168,10 @@ export function registerOAuthCommands(program: Command): void {
         result = await runOAuthLogin(config);
       } catch (error) {
         commandError = error;
+      } finally {
+        if (isTTY) {
+          process.stderr.write("\r\x1b[K");
+        }
       }
 
       const snapshotConfig = buildOAuthLoginSnapshotConfig(config, result);
