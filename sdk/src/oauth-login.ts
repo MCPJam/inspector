@@ -368,6 +368,7 @@ export async function runOAuthLogin(
         DEFAULT_MCPJAM_CLIENT_ID_METADATA_URL,
       customScopes: config.scopes,
       customHeaders: config.customHeaders,
+      authMode: config.auth.mode,
     });
 
     let guard = 0;

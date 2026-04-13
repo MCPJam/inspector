@@ -24,7 +24,9 @@ import {
 } from "./auth-strategies/interactive.js";
 import {
   runDcrHttpRedirectUriCheck,
+  runInvalidAuthorizeRedirectCheck,
   runInvalidClientCheck,
+  runInvalidTokenCheck,
   runInvalidRedirectCheck,
 } from "./checks/oauth-negative.js";
 import { runTokenFormatCheck } from "./checks/oauth-token-format.js";
@@ -408,6 +410,8 @@ export class OAuthConformanceTest {
           DEFAULT_MCPJAM_CLIENT_ID_METADATA_URL,
         customScopes: this.config.scopes,
         customHeaders: this.config.customHeaders,
+        authMode: this.config.auth.mode,
+        strictConformance: true,
       });
 
       let guard = 0;
@@ -643,6 +647,22 @@ export class OAuthConformanceTest {
         );
         await recordOAuthCheck("oauth_invalid_client", () =>
           runInvalidClientCheck({
+            config: this.config,
+            state,
+            trackedRequest,
+            redirectUrl: oauthCheckRedirectUrl,
+          }),
+        );
+        await recordOAuthCheck("oauth_invalid_authorize_redirect", () =>
+          runInvalidAuthorizeRedirectCheck({
+            config: this.config,
+            state,
+            trackedRequest,
+            redirectUrl: oauthCheckRedirectUrl,
+          }),
+        );
+        await recordOAuthCheck("oauth_invalid_token", () =>
+          runInvalidTokenCheck({
             config: this.config,
             state,
             trackedRequest,

@@ -1,6 +1,11 @@
 import { canonicalizeResourceUrl } from "../../oauth/state-machines/shared/urls.js";
 import { getConformanceAuthCodeDynamicRegistrationMetadata } from "../../oauth/client-identity.js";
 import type { OAuthFlowState } from "../../oauth/state-machines/types.js";
+import {
+  buildInitializeRequestBody,
+  resolveInitializeProtocolVersion,
+} from "../../oauth/state-machines/shared/initialize.js";
+import { resolveRequestedScopeValue } from "../../oauth/state-machines/shared/challenges.js";
 import type {
   NormalizedOAuthConformanceConfig,
   OAuthConformanceCheckId,
@@ -12,6 +17,8 @@ type OAuthNegativeCheckStep = Extract<
   OAuthConformanceCheckId,
   | "oauth_dcr_http_redirect_uri"
   | "oauth_invalid_client"
+  | "oauth_invalid_authorize_redirect"
+  | "oauth_invalid_token"
   | "oauth_invalid_redirect"
 >;
 
@@ -48,7 +55,7 @@ function buildTransportFailure(
     method: string;
     url: string;
     headers: Record<string, string>;
-    body: Record<string, unknown>;
+    body?: Record<string, unknown>;
   },
   error: unknown,
   messagePrefix = "Token endpoint request failed",
@@ -76,6 +83,41 @@ function buildTokenRequestHeaders(
   };
 }
 
+function buildInvalidTokenMcpRequest(
+  input: OAuthNegativeCheckInput,
+): {
+  method: string;
+  url: string;
+  headers: Record<string, string>;
+  body: Record<string, unknown>;
+} {
+  const headers: Record<string, string> = {
+    ...(input.config.customHeaders ?? {}),
+    Authorization: "Bearer invalid-access-token",
+    "Content-Type": "application/json",
+    Accept: "application/json, text/event-stream",
+  };
+
+  if (input.config.protocolVersion !== "2025-03-26") {
+    headers["MCP-Protocol-Version"] = input.config.protocolVersion;
+  }
+
+  return {
+    method: "POST",
+    url: input.config.serverUrl,
+    headers,
+    body: buildInitializeRequestBody({
+      protocolVersion: resolveInitializeProtocolVersion(
+        input.config.protocolVersion,
+      ),
+      authMode: input.config.auth.mode,
+      clientName: "MCPJam SDK OAuth Conformance",
+      clientVersion: "1.0.0",
+      id: 999,
+    }),
+  };
+}
+
 function buildJsonRequestHeaders(
   config: NormalizedOAuthConformanceConfig,
 ): Record<string, string> {
@@ -85,11 +127,21 @@ function buildJsonRequestHeaders(
   };
 }
 
+function buildAuthorizeRequestHeaders(
+  config: NormalizedOAuthConformanceConfig,
+): Record<string, string> {
+  return {
+    Accept: "text/html, application/json",
+    ...(config.customHeaders ?? {}),
+  };
+}
+
 function buildTokenRequestBody(
   input: OAuthNegativeCheckInput,
   overrides: Record<string, string | undefined>,
 ): Record<string, string> {
   const body: Record<string, string> = {};
+  const resource = canonicalizeResourceUrl(input.config.serverUrl);
   const state = input.state;
 
   if (input.config.auth.mode === "client_credentials") {
@@ -99,7 +151,7 @@ function buildTokenRequestBody(
     if (input.config.scopes) {
       body.scope = input.config.scopes;
     }
-    body.resource = canonicalizeResourceUrl(input.config.serverUrl);
+    body.resource = resource;
   } else {
     body.grant_type = "authorization_code";
     body.client_id = state.clientId ?? "unknown-client";
@@ -111,6 +163,7 @@ function buildTokenRequestBody(
     if (state.codeVerifier) {
       body.code_verifier = state.codeVerifier;
     }
+    body.resource = resource;
   }
 
   for (const [key, value] of Object.entries(overrides)) {
@@ -186,6 +239,38 @@ function rejectionLooksRedirectSpecific(response: {
     summary.includes("redirect uri") ||
     summary.includes("redirect")
   );
+}
+
+function redirectLocationTargetsUri(
+  location: string,
+  redirectUri: string,
+): boolean {
+  try {
+    const normalizedLocation = new URL(location);
+    const normalizedRedirect = new URL(redirectUri);
+
+    if (
+      normalizedLocation.origin !== normalizedRedirect.origin ||
+      normalizedLocation.pathname !== normalizedRedirect.pathname
+    ) {
+      return false;
+    }
+
+    for (const [key, value] of normalizedRedirect.searchParams.entries()) {
+      if (normalizedLocation.searchParams.get(key) !== value) {
+        return false;
+      }
+    }
+
+    return true;
+  } catch {
+    return (
+      location === redirectUri ||
+      location.startsWith(`${redirectUri}?`) ||
+      location.startsWith(`${redirectUri}&`) ||
+      location.startsWith(`${redirectUri}#`)
+    );
+  }
 }
 
 export async function runDcrHttpRedirectUriCheck(
@@ -319,6 +404,221 @@ export async function runInvalidClientCheck(
     step: "oauth_invalid_client",
     status: "passed",
     durationMs: Date.now() - startedAt,
+  };
+}
+
+export async function runInvalidAuthorizeRedirectCheck(
+  input: OAuthNegativeCheckInput,
+): Promise<OAuthNegativeCheckOutcome> {
+  const authorizationEndpoint =
+    input.state.authorizationServerMetadata?.authorization_endpoint;
+  const startedAt = Date.now();
+
+  if (!authorizationEndpoint) {
+    return {
+      step: "oauth_invalid_authorize_redirect",
+      status: "skipped",
+      durationMs: 0,
+      error: {
+        message:
+          "Authorization endpoint is unavailable for invalid redirect_uri testing",
+      },
+    };
+  }
+
+  if (input.config.auth.mode === "client_credentials") {
+    return {
+      step: "oauth_invalid_authorize_redirect",
+      status: "skipped",
+      durationMs: 0,
+      error: {
+        message:
+          "redirect_uri validation at the authorization endpoint does not apply to client_credentials flows",
+      },
+    };
+  }
+
+  const clientId = input.state.clientId;
+  if (!clientId) {
+    return {
+      step: "oauth_invalid_authorize_redirect",
+      status: "skipped",
+      durationMs: 0,
+      error: {
+        message:
+          "Client identifier is unavailable for invalid redirect_uri authorization testing",
+      },
+    };
+  }
+
+  const invalidRedirectUri = `${input.redirectUrl}?invalid=1`;
+  const authorizeUrl = new URL(authorizationEndpoint);
+  authorizeUrl.searchParams.set("response_type", "code");
+  authorizeUrl.searchParams.set("client_id", clientId);
+  authorizeUrl.searchParams.set("redirect_uri", invalidRedirectUri);
+  authorizeUrl.searchParams.set(
+    "code_challenge",
+    input.state.codeChallenge ?? "invalid-redirect-check-challenge",
+  );
+  authorizeUrl.searchParams.set("code_challenge_method", "S256");
+  authorizeUrl.searchParams.set(
+    "state",
+    input.state.state ?? "invalid-redirect-check-state",
+  );
+  authorizeUrl.searchParams.set(
+    "resource",
+    canonicalizeResourceUrl(input.config.serverUrl),
+  );
+
+  const requestedScopeValue = resolveRequestedScopeValue({
+    customScopes: input.config.scopes,
+    challengedScopes: input.state.challengedScopes,
+    supportedScopes:
+      input.state.resourceMetadata?.scopes_supported ??
+      input.state.authorizationServerMetadata?.scopes_supported,
+  });
+  if (requestedScopeValue) {
+    authorizeUrl.searchParams.set("scope", requestedScopeValue);
+  }
+
+  const request = {
+    method: "GET",
+    url: authorizeUrl.toString(),
+    headers: buildAuthorizeRequestHeaders(input.config),
+  };
+  let response: Awaited<ReturnType<TrackedRequestFn>>;
+
+  try {
+    response = await input.trackedRequest(request, { redirect: "manual" });
+  } catch (error) {
+    return buildTransportFailure(
+      "oauth_invalid_authorize_redirect",
+      startedAt,
+      request,
+      error,
+      "Authorization request failed",
+    );
+  }
+
+  const location = response.headers.location;
+  if (typeof location === "string") {
+    if (redirectLocationTargetsUri(location, invalidRedirectUri)) {
+      return {
+        step: "oauth_invalid_authorize_redirect",
+        status: "failed",
+        durationMs: Date.now() - startedAt,
+        error: {
+          message:
+            "Authorization server redirected the user agent to an invalid redirect_uri",
+          details: {
+            redirectUri: invalidRedirectUri,
+            location,
+            evidence: `Authorization endpoint responded with Location: ${location}.`,
+          },
+        },
+      };
+    }
+
+    return {
+      step: "oauth_invalid_authorize_redirect",
+      status: "skipped",
+      durationMs: Date.now() - startedAt,
+      error: {
+        message:
+          "Authorization request redirected elsewhere before redirect_uri validation was isolated",
+        details: {
+          redirectUri: invalidRedirectUri,
+          location,
+        },
+      },
+    };
+  }
+
+  const rejectionSummary = summarizeResponseBody(response.body);
+  if (responseLooksRejected(response)) {
+    if (!rejectionLooksRedirectSpecific(response)) {
+      return {
+        step: "oauth_invalid_authorize_redirect",
+        status: "skipped",
+        durationMs: Date.now() - startedAt,
+        error: {
+          message: rejectionSummary
+            ? `Authorization request was rejected for a non-redirect reason: ${rejectionSummary}`
+            : "Authorization request was rejected, but redirect_uri validation was not isolated.",
+          details: {
+            redirectUri: invalidRedirectUri,
+            response: response.body,
+            evidence: rejectionSummary
+              ? `Received ${response.status} ${response.statusText} with ${rejectionSummary}.`
+              : `Received ${response.status} ${response.statusText} without a redirect-specific error.`,
+          },
+        },
+      };
+    }
+
+    return {
+      step: "oauth_invalid_authorize_redirect",
+      status: "passed",
+      durationMs: Date.now() - startedAt,
+    };
+  }
+
+  return {
+    step: "oauth_invalid_authorize_redirect",
+    status: "skipped",
+    durationMs: Date.now() - startedAt,
+    error: {
+      message:
+        "Authorization request did not produce an explicit redirect_uri validation error",
+      details: {
+        redirectUri: invalidRedirectUri,
+        status: response.status,
+        statusText: response.statusText,
+        response: response.body,
+      },
+    },
+  };
+}
+
+export async function runInvalidTokenCheck(
+  input: OAuthNegativeCheckInput,
+): Promise<OAuthNegativeCheckOutcome> {
+  const startedAt = Date.now();
+  const request = buildInvalidTokenMcpRequest(input);
+  let response: Awaited<ReturnType<TrackedRequestFn>>;
+
+  try {
+    response = await input.trackedRequest(request);
+  } catch (error) {
+    return buildTransportFailure(
+      "oauth_invalid_token",
+      startedAt,
+      request,
+      error,
+      "Authenticated MCP request failed",
+    );
+  }
+
+  if (response.status === 401) {
+    return {
+      step: "oauth_invalid_token",
+      status: "passed",
+      durationMs: Date.now() - startedAt,
+    };
+  }
+
+  return {
+    step: "oauth_invalid_token",
+    status: "failed",
+    durationMs: Date.now() - startedAt,
+    error: {
+      message: `MCP server accepted or mishandled an invalid bearer token (expected HTTP 401, received ${response.status})`,
+      details: {
+        response: response.body,
+        status: response.status,
+        statusText: response.statusText,
+      },
+    },
   };
 }
 

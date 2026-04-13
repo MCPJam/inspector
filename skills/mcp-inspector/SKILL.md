@@ -103,7 +103,7 @@ Use `pending` instead of manufacturing a `medium` or `high` security severity fr
 - `server doctor`: combined triage artifact for probe plus connected behavior. Good for breadth, not always sufficient to prove wire-level behavior by itself.
 - `oauth metadata`, `oauth proxy`, `oauth debug-proxy`: exact endpoint and metadata inspection when conformance output looks surprising.
 - `oauth login`: obtain reusable credentials and verify the authenticated MCP path. Use this when the goal is to inspect a server that requires OAuth, then follow it with connected commands rather than stopping at the login result.
-- `oauth conformance`, `oauth conformance-suite`: flow-level auth checks. Treat these as targeted probes, not a complete security review.
+- `oauth conformance`, `oauth conformance-suite`: flow-level auth checks. Treat these as targeted probes, not a complete security review. When `--conformance-checks` is enabled, the command can directly probe DCR non-loopback `http://` redirects, invalid client rejection, authorization-endpoint redirect mismatch handling, invalid bearer-token rejection at the MCP server, and token-endpoint redirect mismatch handling.
 - `apps conformance`: server-side MCP Apps checks for `_meta.ui.resourceUri`, `ui://` resources, `resources/read`, HTML MIME and payload shape, and `_meta.ui` metadata. Use this for MCP Apps surface triage.
 - `server info`, `server capabilities`, `server validate`, `server ping`, `server export`: connected behavior after initialization and auth.
 - `tools list` and `tools call`, `resources list/read/templates`, `prompts list/get/list-multi`: direct post-connect capability checks.
@@ -147,6 +147,7 @@ For each claimed security-review finding, return:
 - Treat `--debug-out` artifacts as aggregated evidence envelopes, not pure wire captures.
 - Never flag missing `scopes_supported` or missing `scope` in `WWW-Authenticate` as a security issue. Both are optional.
 - Never claim a server is "secure" based solely on it rejecting one specific bad input. A single negative test does not prove broader security posture.
+- Never treat a passing `oauth_invalid_token` or redirect-mismatch probe as proof that the whole authorization design is secure. Those checks only prove the exact case that was sent.
 - Never let a checklist hit assign `high` security severity by itself.
 - JWT `aud` mismatch is not token passthrough proof unless you show the server accepts a token issued for a different audience or resource, or otherwise misbinds the token.
 - Supporting `plain` PKCE is usually hardening only. It cannot compound with attacker-owned-client DCR flows where the attacker chose the verifier.

@@ -35,6 +35,15 @@ import {
   generateCodeChallenge,
 } from "./shared/pkce.js";
 import { buildResourceMetadataUrl } from "./shared/urls.js";
+import {
+  buildInitializeRequestBody,
+  resolveInitializeProtocolVersion,
+} from "./shared/initialize.js";
+import {
+  parseBearerAuthenticateParameters,
+  parseScopeString,
+  resolveRequestedScopeValue,
+} from "./shared/challenges.js";
 import { discoverOAuthProtectedResourceMetadata } from "@modelcontextprotocol/sdk/client/auth.js";
 
 // Re-export types for backward compatibility
@@ -397,10 +406,13 @@ export const createDebugOAuthStateMachine = (
     dynamicRegistration,
     customScopes,
     customHeaders,
+    authMode,
+    strictConformance = false,
     registrationStrategy = "dcr", // Default to DCR for 2025-06-18
   } = config;
 
   const redirectUri = redirectUrl;
+  const initializeProtocolVersion = resolveInitializeProtocolVersion("2025-06-18");
   const dynamicRegistrationDefaults = dynamicRegistration ?? {};
 
   if (
@@ -448,24 +460,19 @@ export const createDebugOAuthStateMachine = (
               "Content-Type": "application/json",
               Accept: "application/json, text/event-stream",
             });
+            const initializeRequestBody = buildInitializeRequestBody({
+              protocolVersion: initializeProtocolVersion,
+              authMode,
+              clientName: "MCPJam Inspector",
+              clientVersion: "1.0.0",
+              id: 1,
+            });
 
             const initialRequest = {
               method: "POST",
               url: serverUrl,
               headers: initialRequestHeaders,
-              body: {
-                jsonrpc: "2.0",
-                method: "initialize",
-                params: {
-                  protocolVersion: "2024-11-05",
-                  capabilities: {},
-                  clientInfo: {
-                    name: "MCPJam Inspector",
-                    version: "1.0.0",
-                  },
-                },
-                id: 1,
-              },
+              body: initializeRequestBody,
             };
 
             // Update state with the request
@@ -504,19 +511,15 @@ export const createDebugOAuthStateMachine = (
                   "Content-Type": "application/json",
                   Accept: "application/json, text/event-stream",
                 }),
-                body: JSON.stringify({
-                  jsonrpc: "2.0",
-                  method: "initialize",
-                  params: {
-                    protocolVersion: "2024-11-05",
-                    capabilities: {},
-                    clientInfo: {
-                      name: "MCPJam Inspector",
-                      version: "1.0.0",
-                    },
-                  },
-                  id: 1,
-                }),
+                body: JSON.stringify(
+                  buildInitializeRequestBody({
+                    protocolVersion: initializeProtocolVersion,
+                    authMode,
+                    clientName: "MCPJam Inspector",
+                    clientVersion: "1.0.0",
+                    id: 1,
+                  }),
+                ),
               });
 
               // Capture response data for all status codes
@@ -540,6 +543,12 @@ export const createDebugOAuthStateMachine = (
                 // Expected 401 response with WWW-Authenticate header
                 const wwwAuthenticateHeader =
                   response.headers["www-authenticate"];
+                const challengeParams = parseBearerAuthenticateParameters(
+                  wwwAuthenticateHeader,
+                );
+                const challengedScopes = parseScopeString(
+                  challengeParams.scope,
+                );
 
                 // Add info log for WWW-Authenticate header
                 const infoLogs = wwwAuthenticateHeader
@@ -550,6 +559,9 @@ export const createDebugOAuthStateMachine = (
                       "WWW-Authenticate Header",
                       {
                         header: wwwAuthenticateHeader,
+                        ...(challengedScopes && challengedScopes.length > 0
+                          ? { scope: challengedScopes.join(" ") }
+                          : {}),
                         "Received from": state.serverUrl || "Unknown",
                       },
                     )
@@ -558,6 +570,7 @@ export const createDebugOAuthStateMachine = (
                 updateState({
                   currentStep: "received_401_unauthorized",
                   wwwAuthenticateHeader: wwwAuthenticateHeader || undefined,
+                  challengedScopes,
                   lastResponse: responseData,
                   httpHistory: updatedHistory,
                   infoLogs,
@@ -604,18 +617,11 @@ export const createDebugOAuthStateMachine = (
 
           case "received_401_unauthorized":
             // Step 3: Extract resource metadata URL and prepare request
-            let extractedResourceMetadataUrl: string | undefined;
-
-            if (state.wwwAuthenticateHeader) {
-              // Parse WWW-Authenticate header to extract resource_metadata URL
-              // Format: Bearer resource_metadata="https://example.com/.well-known/oauth-protected-resource"
-              const resourceMetadataMatch = state.wwwAuthenticateHeader.match(
-                /resource_metadata="([^"]+)"/,
-              );
-              if (resourceMetadataMatch) {
-                extractedResourceMetadataUrl = resourceMetadataMatch[1];
-              }
-            }
+            const challengeParams = parseBearerAuthenticateParameters(
+              state.wwwAuthenticateHeader,
+            );
+            let extractedResourceMetadataUrl =
+              challengeParams.resource_metadata;
 
             // Fallback to building the URL if not found in header
             if (!extractedResourceMetadataUrl && state.serverUrl) {
@@ -1104,6 +1110,11 @@ export const createDebugOAuthStateMachine = (
               const scopesSupported =
                 state.resourceMetadata?.scopes_supported ||
                 state.authorizationServerMetadata.scopes_supported;
+              const requestedScopeValue = resolveRequestedScopeValue({
+                customScopes,
+                challengedScopes: state.challengedScopes,
+                supportedScopes: scopesSupported,
+              });
 
               const clientMetadata: Record<string, any> = {
                 ...dynamicRegistrationDefaults,
@@ -1120,9 +1131,8 @@ export const createDebugOAuthStateMachine = (
                   "none",
               };
 
-              // Include scopes if supported by the server
-              if (scopesSupported && scopesSupported.length > 0) {
-                clientMetadata.scope = scopesSupported.join(" ");
+              if (requestedScopeValue) {
+                clientMetadata.scope = requestedScopeValue;
               }
 
               const registrationRequest = {
@@ -1154,6 +1164,15 @@ export const createDebugOAuthStateMachine = (
               autoAdvance(50);
               return;
             } else {
+              if (strictConformance) {
+                updateState({
+                  error:
+                    "Authorization server metadata does not include a registration_endpoint required for DCR conformance.",
+                  isInitiatingAuth: false,
+                });
+                return;
+              }
+
               // No registration endpoint and DCR strategy - skip to PKCE generation with a mock client ID
               updateState({
                 currentStep: "generate_pkce_parameters",
@@ -1206,13 +1225,20 @@ export const createDebugOAuthStateMachine = (
 
               if (!response.ok) {
                 // Registration failed - could be server doesn't support DCR or request was invalid
+                const registrationError = strictConformance
+                  ? `Dynamic Client Registration failed (${response.status}).`
+                  : `Dynamic Client Registration failed (${response.status}). Using fallback client ID.`;
 
                 // Update state with error but continue with fallback
                 updateState({
                   lastResponse: registrationResponseData,
                   httpHistory: updatedHistoryReg,
-                  error: `Dynamic Client Registration failed (${response.status}). Using fallback client ID.`,
+                  error: registrationError,
                 });
+
+                if (strictConformance) {
+                  return;
+                }
 
                 // Fall back to mock client ID (simulating preregistered client)
                 const fallbackClientId = "preregistered-client-id";
@@ -1227,6 +1253,19 @@ export const createDebugOAuthStateMachine = (
               } else {
                 // Registration successful
                 const clientInfo = response.body;
+                if (
+                  strictConformance &&
+                  typeof clientInfo?.client_id !== "string"
+                ) {
+                  updateState({
+                    lastResponse: registrationResponseData,
+                    httpHistory: updatedHistoryReg,
+                    error:
+                      "Dynamic Client Registration response is missing a client_id.",
+                    isInitiatingAuth: false,
+                  });
+                  return;
+                }
 
                 // Add info log for DCR
                 const dcrInfo: Record<string, any> = {
@@ -1290,8 +1329,14 @@ export const createDebugOAuthStateMachine = (
               updateState({
                 lastResponse: errorResponse,
                 httpHistory: updatedHistoryError,
-                error: `Client registration failed: ${error instanceof Error ? error.message : String(error)}. Using fallback.`,
+                error: strictConformance
+                  ? `Client registration failed: ${error instanceof Error ? error.message : String(error)}`
+                  : `Client registration failed: ${error instanceof Error ? error.message : String(error)}. Using fallback.`,
               });
+
+              if (strictConformance) {
+                return;
+              }
 
               // Fall back to mock client ID
               const fallbackClientId = "preregistered-client-id";
@@ -1362,34 +1407,15 @@ export const createDebugOAuthStateMachine = (
               authUrl.searchParams.set("resource", state.serverUrl);
             }
 
-            // Add scopes to request refresh tokens and other capabilities
-            // If custom scopes are provided, use them exclusively
-            if (customScopes) {
-              authUrl.searchParams.set("scope", customScopes);
-            } else {
-              // Otherwise, use automatic scope discovery
-              const scopesSupported =
+            const requestedScopeValue = resolveRequestedScopeValue({
+              customScopes,
+              challengedScopes: state.challengedScopes,
+              supportedScopes:
                 state.resourceMetadata?.scopes_supported ||
-                state.authorizationServerMetadata.scopes_supported;
-
-              // Build scope string following OAuth 2.1 best practices
-              const scopes = new Set<string>();
-
-              // 1. Add server-advertised scopes first (MCP-specific like tasks.read, read-mcp, etc.)
-              if (scopesSupported && scopesSupported.length > 0) {
-                scopesSupported.forEach((scope) => scopes.add(scope));
-              }
-
-              // 2. Request offline_access for refresh tokens ONLY if server supports it
-              // Per OAuth 2.1, this is required to get refresh tokens
-              if (scopesSupported?.includes("offline_access")) {
-                scopes.add("offline_access");
-              }
-
-              // Set scope parameter - use only scopes the server actually supports
-              if (scopes.size > 0) {
-                authUrl.searchParams.set("scope", Array.from(scopes).join(" "));
-              }
+                state.authorizationServerMetadata.scopes_supported,
+            });
+            if (requestedScopeValue) {
+              authUrl.searchParams.set("scope", requestedScopeValue);
             }
 
             // Add info log for Authorization URL
@@ -1782,19 +1808,13 @@ export const createDebugOAuthStateMachine = (
                 Accept: "application/json, text/event-stream",
                 "MCP-Protocol-Version": "2025-06-18",
               },
-              body: {
-                jsonrpc: "2.0",
-                method: "initialize",
-                params: {
-                  protocolVersion: "2025-06-18",
-                  capabilities: {},
-                  clientInfo: {
-                    name: "MCPJam Inspector",
-                    version: "1.0.0",
-                  },
-                },
+              body: buildInitializeRequestBody({
+                protocolVersion: initializeProtocolVersion,
+                authMode,
+                clientName: "MCPJam Inspector",
+                clientVersion: "1.0.0",
                 id: 2,
-              },
+              }),
             };
 
             // Add info log for authenticated initialize request
@@ -1846,19 +1866,15 @@ export const createDebugOAuthStateMachine = (
                   "Content-Type": "application/json",
                   Accept: "application/json, text/event-stream",
                 }),
-                body: JSON.stringify({
-                  jsonrpc: "2.0",
-                  method: "initialize",
-                  params: {
-                    protocolVersion: "2024-11-05",
-                    capabilities: {},
-                    clientInfo: {
-                      name: "MCPJam Inspector",
-                      version: "1.0.0",
-                    },
-                  },
-                  id: 2,
-                }),
+                body: JSON.stringify(
+                  buildInitializeRequestBody({
+                    protocolVersion: initializeProtocolVersion,
+                    authMode,
+                    clientName: "MCPJam Inspector",
+                    clientVersion: "1.0.0",
+                    id: 2,
+                  }),
+                ),
               });
 
               const mcpResponseData = {

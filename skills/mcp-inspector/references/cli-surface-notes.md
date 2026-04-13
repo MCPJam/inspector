@@ -60,7 +60,15 @@ If a higher-priority surface contradicts a lower-priority summary, trust the hig
 ### `oauth login`, `oauth conformance`, `oauth conformance-suite`
 
 - These are targeted flow tests, not a full security audit.
+- `oauth conformance --conformance-checks` adds targeted negative probes for:
+  - DCR acceptance of non-loopback `http://` redirect URIs
+  - invalid client rejection at the token endpoint
+  - authorization-endpoint handling of mismatched `redirect_uri`
+  - invalid bearer-token rejection by the MCP server
+  - token-endpoint handling of mismatched `redirect_uri`
 - A passing negative test only proves the specific negative case that was sent.
+- Current auth-code negative checks include the OAuth `resource` parameter, so failures are less likely to be caused by obviously malformed token requests.
+- A redirect-mismatch check marked `skipped` often means the request was rejected for some other reason before redirect validation was isolated. Do not overread that as a pass.
 - A failing headless flow may reflect login UX or consent requirements, not a spec violation.
 
 ### `apps conformance`

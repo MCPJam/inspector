@@ -19,6 +19,8 @@ import type { OAuthStepInfo } from "../oauth/state-machines/shared/step-metadata
 export type OAuthConformanceCheckId =
   | "oauth_dcr_http_redirect_uri"
   | "oauth_invalid_client"
+  | "oauth_invalid_authorize_redirect"
+  | "oauth_invalid_token"
   | "oauth_invalid_redirect"
   | "oauth_token_format";
 
@@ -43,6 +45,22 @@ export const CONFORMANCE_CHECK_METADATA: Record<
       "Send a token request with an invalid client identifier and confirm the authorization server rejects it.",
     teachableMoments: [
       "Authorization servers should reject malformed or unknown clients instead of issuing tokens.",
+    ],
+  },
+  oauth_invalid_authorize_redirect: {
+    title: "OAuth Check: Invalid Redirect URI at Authorization Endpoint",
+    summary:
+      "Send an authorization request with a mismatched redirect URI and confirm the authorization server refuses to redirect back to it.",
+    teachableMoments: [
+      "Authorization servers should validate redirect_uri before redirecting user agents to untrusted callback URLs.",
+    ],
+  },
+  oauth_invalid_token: {
+    title: "OAuth Check: Invalid Access Token",
+    summary:
+      "Send an authenticated MCP initialize request with an obviously invalid bearer token and confirm the MCP server returns HTTP 401.",
+    teachableMoments: [
+      "Resource servers must reject invalid bearer tokens with HTTP 401 instead of treating them as authenticated.",
     ],
   },
   oauth_invalid_redirect: {
