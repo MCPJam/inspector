@@ -294,11 +294,6 @@ export async function createInteractiveAuthorizationSession(options?: {
         "Interactive OAuth conformance runs require a localhost or 127.0.0.1 redirect URL"
       );
     }
-    if (parsed.pathname !== "/callback") {
-      throw new Error(
-        "Interactive OAuth conformance runs require the callback path to be /callback"
-      );
-    }
 
     hostname = parsed.hostname;
     port = parsed.port ? Number(parsed.port) : 0;

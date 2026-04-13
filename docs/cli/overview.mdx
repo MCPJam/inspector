@@ -41,6 +41,7 @@ npx -y @mcpjam/cli@latest --help
 | [`tools`](/cli/tools-resources-prompts) | Exercise the tool surface | `list`, `call` |
 | [`resources`](/cli/tools-resources-prompts) | Read resources and templates | `list`, `read`, `templates` |
 | [`prompts`](/cli/tools-resources-prompts) | Fetch prompts | `list`, `get` |
+| [`apps`](/cli/reference) | Render hosted-style widget HTML for MCP and ChatGPT apps | `mcp-widget`, `chatgpt-widget` |
 | [`protocol`](/cli/reference) | MCP protocol conformance checks | `conformance` |
 
 ## Global flags
@@ -50,15 +51,15 @@ These flags apply to every command.
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--timeout <ms>` | `30000` | Request timeout in milliseconds |
-| `--rpc` | off | Include raw JSON-RPC request/response logs in output |
-| `--format <format>` | `human` on TTY, `json` when piped | Output format (`json`, `human`, or `junit-xml` for conformance commands) |
+| `--rpc` | off | Include raw JSON-RPC request/response logs in JSON output under `_rpcLogs` |
+| `--format <format>` | `human` on TTY, `json` when piped | Output format (`json` or `human`; `junit-xml` is available on OAuth conformance commands only) |
 | `-v, --version` | | Print the CLI version |
 
 ## Output formats
 
 The CLI auto-detects whether stdout is a terminal:
 
-- **Interactive terminal** — defaults to `--format human`, a compact readable summary.
+- **Interactive terminal** — defaults to `--format human`. For most commands this is pretty-printed JSON; `server doctor` and the OAuth conformance commands provide dedicated human-readable summaries.
 - **Piped or redirected** (CI, `| jq`, agent invocation) — defaults to `--format json`, the full structured result.
 - **Explicit `--format`** always wins over the auto-detected default.
 

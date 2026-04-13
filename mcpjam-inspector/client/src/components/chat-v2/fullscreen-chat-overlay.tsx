@@ -2,7 +2,7 @@ import { FormEvent, KeyboardEvent, useEffect, useMemo, useRef } from "react";
 import type { CSSProperties } from "react";
 
 import type { UIMessage } from "@ai-sdk/react";
-import { ArrowUp, ChevronDown, ChevronUp } from "lucide-react";
+import { ArrowUp, ChevronDown, ChevronUp, Square } from "lucide-react";
 
 import {
   useSandboxHostStyle,
@@ -262,7 +262,9 @@ function Composer({
   placeholder,
   disabled,
   canSend,
+  isThinking,
   onSubmit,
+  onStop,
   composerClassName,
   composerStyle,
   activeSubmitButtonClassName,
@@ -273,7 +275,9 @@ function Composer({
   placeholder: string;
   disabled: boolean;
   canSend: boolean;
+  isThinking: boolean;
   onSubmit: () => void;
+  onStop?: () => void;
   composerClassName: string;
   composerStyle?: CSSProperties;
   activeSubmitButtonClassName: string;
@@ -281,7 +285,7 @@ function Composer({
 }) {
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!canSend) return;
+    if (isThinking || !canSend) return;
     onSubmit();
   };
 
@@ -292,7 +296,7 @@ function Composer({
       !event.nativeEvent.isComposing
     ) {
       event.preventDefault();
-      if (!canSend) return;
+      if (isThinking || !canSend) return;
       onSubmit();
     }
   };
@@ -320,20 +324,40 @@ function Composer({
             "focus-visible:ring-0 focus-visible:outline-none focus-visible:border-none",
           )}
         />
-        <Button
-          type="submit"
-          size="icon"
-          className={cn(
-            "size-8 rounded-full shrink-0 transition-all",
-            canSend
-              ? activeSubmitButtonClassName
-              : inactiveSubmitButtonClassName,
-            canSend && "hover:scale-105",
-          )}
-          disabled={!canSend}
-        >
-          <ArrowUp className="h-4 w-4" />
-        </Button>
+        {isThinking ? (
+          <Button
+            type="button"
+            size="icon"
+            aria-label="Stop generating"
+            className={cn(
+              "size-8 rounded-full shrink-0 transition-all",
+              onStop
+                ? activeSubmitButtonClassName
+                : inactiveSubmitButtonClassName,
+              onStop && "hover:scale-105",
+            )}
+            disabled={!onStop}
+            onClick={() => onStop?.()}
+          >
+            <Square className="h-4 w-4" />
+          </Button>
+        ) : (
+          <Button
+            type="submit"
+            size="icon"
+            aria-label="Send message"
+            className={cn(
+              "size-8 rounded-full shrink-0 transition-all",
+              canSend
+                ? activeSubmitButtonClassName
+                : inactiveSubmitButtonClassName,
+              canSend && "hover:scale-105",
+            )}
+            disabled={!canSend}
+          >
+            <ArrowUp className="h-4 w-4" />
+          </Button>
+        )}
       </div>
     </form>
   );
@@ -350,6 +374,7 @@ export function FullscreenChatOverlay({
   canSend,
   isThinking,
   loadingIndicatorVariant = "default",
+  onStop,
   onSend,
 }: {
   messages: UIMessage[];
@@ -362,6 +387,7 @@ export function FullscreenChatOverlay({
   canSend: boolean;
   isThinking: boolean;
   loadingIndicatorVariant?: LoadingIndicatorVariant;
+  onStop?: () => void;
   onSend: () => void;
 }) {
   const sandboxHostStyle = useSandboxHostStyle();
@@ -397,12 +423,14 @@ export function FullscreenChatOverlay({
             placeholder={placeholder}
             disabled={disabled}
             canSend={canSend}
+            isThinking={isThinking}
             composerClassName={appearance.composerClassName}
             composerStyle={surfaceStyle}
             activeSubmitButtonClassName={appearance.activeSubmitButtonClassName}
             inactiveSubmitButtonClassName={
               appearance.inactiveSubmitButtonClassName
             }
+            onStop={onStop}
             onSubmit={() => {
               onOpenChange(true);
               onSend();

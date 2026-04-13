@@ -130,8 +130,16 @@ export function parseOutputFormat(value: string): OutputFormat {
   throw usageError(`Invalid output format "${value}". Use "json" or "human".`);
 }
 
+export function resolveOutputFormat(
+  value: string | undefined,
+  isTTY: boolean,
+): OutputFormat {
+  return parseOutputFormat(value ?? (isTTY ? "human" : "json"));
+}
+
 export function detectOutputFormatFromArgv(
   argv: readonly string[],
+  isTTY = process.stdout.isTTY,
 ): OutputFormat {
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index];
@@ -145,7 +153,7 @@ export function detectOutputFormatFromArgv(
     }
   }
 
-  return DEFAULT_OUTPUT_FORMAT;
+  return isTTY ? "human" : DEFAULT_OUTPUT_FORMAT;
 }
 
 function parseLooseOutputFormat(value: string | undefined): OutputFormat {

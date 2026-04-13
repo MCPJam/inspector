@@ -44,6 +44,8 @@ interface ThreadProps {
   enableFullscreenChatOverlay?: boolean;
   fullscreenChatPlaceholder?: string;
   fullscreenChatDisabled?: boolean;
+  fullscreenChatSendBlocked?: boolean;
+  onFullscreenChatStop?: () => void;
   selectedProtocolOverrideIfBothExists?: UIType;
   onToolApprovalResponse?: (options: { id: string; approved: boolean }) => void;
   toolRenderOverrides?: Record<string, ToolRenderOverride>;
@@ -75,6 +77,8 @@ export function Thread({
   enableFullscreenChatOverlay = false,
   fullscreenChatPlaceholder = "Message…",
   fullscreenChatDisabled = false,
+  fullscreenChatSendBlocked = isLoading,
+  onFullscreenChatStop,
   selectedProtocolOverrideIfBothExists,
   onToolApprovalResponse,
   toolRenderOverrides,
@@ -130,7 +134,9 @@ export function Thread({
   }, [showFullscreenChatOverlay]);
 
   const canSendFullscreenChat =
-    !fullscreenChatDisabled && fullscreenChatInput.trim().length > 0;
+    !fullscreenChatDisabled &&
+    !fullscreenChatSendBlocked &&
+    fullscreenChatInput.trim().length > 0;
 
   const sandboxHostStyle = useSandboxHostStyle();
   const sandboxHostTheme = useSandboxHostTheme();
@@ -219,6 +225,7 @@ export function Thread({
           canSend={canSendFullscreenChat}
           isThinking={isLoading}
           loadingIndicatorVariant={loadingIndicatorVariant}
+          onStop={onFullscreenChatStop}
           onSend={() => {
             if (!canSendFullscreenChat) return;
             const text = fullscreenChatInput;

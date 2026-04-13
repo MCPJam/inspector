@@ -1764,7 +1764,7 @@ export function useChatSession({
     isAuthLoading ||
     authHeadersNotReady ||
     hostedContextNotReady;
-  const inputDisabled = status !== "ready" || submitBlocked;
+  const inputDisabled = submitBlocked;
 
   return {
     // Chat state

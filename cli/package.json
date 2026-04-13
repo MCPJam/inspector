@@ -1,7 +1,7 @@
 {
   "name": "@mcpjam/cli",
   "version": "2.0.2",
-  "description": "CLI for MCPJam SDK inspection commands and OAuth conformance",
+  "description": "Test, debug, and validate MCP servers — health checks, OAuth conformance, tool-surface diffing, and structured triage from the terminal or CI",
   "main": "dist/index.js",
   "files": [
     "dist"
@@ -24,6 +24,17 @@
     "tsx": "^4.19.2",
     "typescript": "^5.8.3"
   },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "oauth",
+    "conformance",
+    "cli",
+    "testing",
+    "debugging",
+    "health-check",
+    "ci"
+  ],
   "engines": {
     "node": ">=18.0.0"
   }

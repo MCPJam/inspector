@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import type { ReactElement } from "react";
 import type { UIMessage } from "@ai-sdk/react";
 
@@ -39,6 +39,7 @@ describe("FullscreenChatOverlay", () => {
     disabled: false,
     canSend: false,
     isThinking: false,
+    onStop: vi.fn(),
     onSend: vi.fn(),
   };
 
@@ -290,5 +291,68 @@ describe("FullscreenChatOverlay", () => {
       "rounded-full",
       "bg-background/95",
     );
+  });
+
+  it("keeps the fullscreen textarea editable while thinking", () => {
+    render(
+      <FullscreenChatOverlay
+        {...defaultProps}
+        input="Draft while thinking"
+        isThinking={true}
+      />,
+    );
+
+    expect(screen.getByPlaceholderText("Message…")).not.toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Stop generating" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Send message" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("calls onStop from the fullscreen composer while thinking", () => {
+    const onStop = vi.fn();
+
+    render(
+      <FullscreenChatOverlay
+        {...defaultProps}
+        input="Draft while thinking"
+        isThinking={true}
+        onStop={onStop}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Stop generating" }));
+
+    expect(onStop).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves the draft and re-enables send after thinking stops", () => {
+    const { rerender } = render(
+      <FullscreenChatOverlay
+        {...defaultProps}
+        input="Draft while thinking"
+        isThinking={true}
+      />,
+    );
+
+    expect(screen.getByPlaceholderText("Message…")).toHaveValue(
+      "Draft while thinking",
+    );
+
+    rerender(
+      <FullscreenChatOverlay
+        {...defaultProps}
+        input="Draft while thinking"
+        canSend={true}
+        isThinking={false}
+      />,
+    );
+
+    expect(screen.getByPlaceholderText("Message…")).toHaveValue(
+      "Draft while thinking",
+    );
+    expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled();
   });
 });

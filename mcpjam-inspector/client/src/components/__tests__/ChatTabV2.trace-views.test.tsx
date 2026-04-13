@@ -1,5 +1,6 @@
 import type { CSSProperties, ReactNode } from "react";
 import {
+  act,
   fireEvent,
   render,
   screen,
@@ -151,8 +152,13 @@ vi.mock("use-stick-to-bottom", () => {
   };
 });
 
+const mockChatInput = vi.fn();
+
 vi.mock("@/components/chat-v2/chat-input", () => ({
-  ChatInput: () => <div data-testid="chat-input" />,
+  ChatInput: (props: Record<string, unknown>) => {
+    mockChatInput(props);
+    return <div data-testid="chat-input" />;
+  },
 }));
 
 vi.mock("@/components/chat-v2/thread", () => ({
@@ -161,10 +167,13 @@ vi.mock("@/components/chat-v2/thread", () => ({
   ),
 }));
 
+const mockMultiModelChatCard = vi.fn();
+
 vi.mock("@/components/chat-v2/multi-model-chat-card", () => ({
-  MultiModelChatCard: ({ model }: { model: { name: string } }) => (
-    <div data-testid="multi-model-card">{model.name}</div>
-  ),
+  MultiModelChatCard: (props: { model: { name: string } }) => {
+    mockMultiModelChatCard(props);
+    return <div data-testid="multi-model-card">{props.model.name}</div>;
+  },
 }));
 
 vi.mock("@/components/evals/trace-viewer", () => ({
@@ -300,6 +309,7 @@ describe("ChatTabV2 trace views", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockChatInput.mockClear();
     Object.assign(mockUseChatSession, {
       messages: [],
       status: "ready",
@@ -313,6 +323,7 @@ describe("ChatTabV2 trace views", () => {
       hasTraceSnapshot: false,
       hasLiveTimelineContent: false,
       traceViewsSupported: false,
+      isStreaming: false,
     });
   });
 
@@ -453,6 +464,126 @@ describe("ChatTabV2 trace views", () => {
       expect(screen.queryByTestId("trace-viewer")).not.toBeInTheDocument();
     });
     expect(screen.getByTestId("thread")).toBeInTheDocument();
+  });
+
+  it("stops an active single-model chat when Escape is pressed", () => {
+    mockUseChatSession.isStreaming = true;
+
+    render(<ChatTabV2 {...defaultProps} />);
+
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "Escape",
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+
+    expect(mockUseChatSession.stop).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not stop an idle single-model chat when Escape is pressed", () => {
+    render(<ChatTabV2 {...defaultProps} />);
+
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "Escape",
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+
+    expect(mockUseChatSession.stop).not.toHaveBeenCalled();
+  });
+
+  it("increments stopRequestId for an active multi-model chat when Escape is pressed", async () => {
+    mockUseChatSession.availableModels = [
+      {
+        id: "openai/gpt-5-mini",
+        name: "GPT-5 Mini",
+        provider: "openai",
+      },
+      {
+        id: "anthropic/claude-sonnet-4-5",
+        name: "Claude Sonnet 4.5",
+        provider: "anthropic",
+      },
+    ];
+    mockUseChatSession.selectedModelIds = [
+      "openai/gpt-5-mini",
+      "anthropic/claude-sonnet-4-5",
+    ];
+    mockUseChatSession.multiModelEnabled = true;
+
+    render(<ChatTabV2 {...defaultProps} enableMultiModelChat={true} />);
+
+    const firstCardProps = mockMultiModelChatCard.mock.calls[0]?.[0];
+    expect(firstCardProps).toBeTruthy();
+
+    act(() => {
+      firstCardProps.onSummaryChange({
+        modelId: "openai/gpt-5-mini",
+        durationMs: null,
+        tokens: 0,
+        toolCount: 0,
+        status: "running",
+        hasMessages: true,
+      });
+    });
+
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "Escape",
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+
+    await waitFor(() => {
+      expect(
+        mockMultiModelChatCard.mock.calls.some(
+          ([props]) => props.stopRequestId === 1,
+        ),
+      ).toBe(true);
+    });
+  });
+
+  it("does not stop when Escape was already handled elsewhere", () => {
+    mockUseChatSession.isStreaming = true;
+    const preventEscape = (event: KeyboardEvent) => {
+      event.preventDefault();
+    };
+
+    window.addEventListener("keydown", preventEscape, true);
+    render(<ChatTabV2 {...defaultProps} />);
+
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "Escape",
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+
+    window.removeEventListener("keydown", preventEscape, true);
+
+    expect(mockUseChatSession.stop).not.toHaveBeenCalled();
+  });
+
+  it("keeps the composer editable while streaming and only blocks sending", () => {
+    mockUseChatSession.messages = [
+      { id: "1", role: "user", parts: [{ type: "text", text: "Hello" }] },
+    ];
+    mockUseChatSession.isStreaming = true;
+
+    render(<ChatTabV2 {...defaultProps} />);
+
+    const chatInputProps = mockChatInput.mock.calls.at(-1)?.[0];
+    expect(chatInputProps).toMatchObject({
+      disabled: false,
+      isLoading: true,
+      submitDisabled: false,
+    });
   });
 
   it("renders compare cards when multi-model chat is enabled on the main chat surface", () => {

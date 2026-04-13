@@ -1,7 +1,7 @@
 import type { MCPServerConfig } from "@mcpjam/sdk";
 import { Command } from "commander";
 import {
-  parseOutputFormat,
+  resolveOutputFormat,
   type OutputFormat,
   usageError,
 } from "./output";
@@ -77,7 +77,7 @@ export function addSharedServerOptions(command: Command): Command {
 export function getGlobalOptions(command: Command): GlobalOptions {
   const options = command.optsWithGlobals() as Partial<GlobalOptions>;
   return {
-    format: parseOutputFormat(options.format as string ?? "json"),
+    format: resolveOutputFormat(options.format as string | undefined, process.stdout.isTTY),
     timeout: options.timeout ?? 30_000,
     rpc: options.rpc ?? false,
   };
@@ -152,6 +152,49 @@ export function parsePromptArguments(
   return Object.fromEntries(
     Object.entries(raw).map(([key, entryValue]) => [key, String(entryValue)]),
   );
+}
+
+export function resolveAliasedStringOption(
+  options: Record<string, unknown>,
+  aliases: ReadonlyArray<{ key: string; flag: string }>,
+  label: string,
+  config?: { required?: boolean },
+): string | undefined {
+  const provided = aliases
+    .map((alias) => {
+      const value = options[alias.key];
+      if (typeof value !== "string") {
+        return undefined;
+      }
+
+      const normalized = value.trim();
+      if (!normalized) {
+        return undefined;
+      }
+
+      return {
+        flag: alias.flag,
+        value: normalized,
+      };
+    })
+    .filter((entry): entry is { flag: string; value: string } => entry !== undefined);
+
+  const flagsText = aliases.map((alias) => alias.flag).join(" or ");
+
+  if (provided.length === 0) {
+    if (config?.required) {
+      throw usageError(`${label} is required. Use ${flagsText}.`);
+    }
+
+    return undefined;
+  }
+
+  const values = new Set(provided.map((entry) => entry.value));
+  if (values.size > 1) {
+    throw usageError(`Specify only one of ${flagsText}.`);
+  }
+
+  return provided[0]?.value;
 }
 
 export function parseServerConfig(
