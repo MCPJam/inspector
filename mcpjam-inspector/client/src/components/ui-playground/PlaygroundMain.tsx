@@ -480,8 +480,10 @@ export function PlaygroundMain({
     enableMultiModelChat && availableModels.length > 1;
   const isMultiModelMode = canEnableMultiModel && multiModelEnabled;
   const [isModelSelectorOpen, setIsModelSelectorOpen] = useState(false);
-  const [multiModelLayoutModeWhileSelectorOpen, setMultiModelLayoutModeWhileSelectorOpen] =
-    useState<boolean | null>(null);
+  const [
+    multiModelLayoutModeWhileSelectorOpen,
+    setMultiModelLayoutModeWhileSelectorOpen,
+  ] = useState<boolean | null>(null);
   const isMultiModelLayoutMode = isModelSelectorOpen
     ? (multiModelLayoutModeWhileSelectorOpen ?? isMultiModelMode)
     : isMultiModelMode;

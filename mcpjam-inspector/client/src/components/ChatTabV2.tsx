@@ -1062,8 +1062,10 @@ export function ChatTabV2({
   const isMultiModelMode =
     canEnableMultiModel && multiModelEnabled && !activeHistorySessionId;
   const [isModelSelectorOpen, setIsModelSelectorOpen] = useState(false);
-  const [multiModelLayoutModeWhileSelectorOpen, setMultiModelLayoutModeWhileSelectorOpen] =
-    useState<boolean | null>(null);
+  const [
+    multiModelLayoutModeWhileSelectorOpen,
+    setMultiModelLayoutModeWhileSelectorOpen,
+  ] = useState<boolean | null>(null);
   const isMultiModelLayoutMode = isModelSelectorOpen
     ? (multiModelLayoutModeWhileSelectorOpen ?? isMultiModelMode)
     : isMultiModelMode;
