@@ -6,6 +6,16 @@ icon: "terminal"
 
 The `mcpjam` CLI is a stateless tool for inspecting, debugging, and testing MCP servers from the command line or CI. It covers the full lifecycle: connectivity checks, OAuth login, tool/resource/prompt exploration, and protocol conformance.
 
+## Recommended: Use with Agent Skills
+
+The easiest way to use the CLI is through the [MCPJam skill](https://github.com/MCPJam/skills/tree/main/skills/mcp-inspector/references), which gives your agent full context on every command and workflow.
+
+```bash
+npx skills add mcpjam/skills
+```
+
+Once installed, your agent will know how and when to invoke `mcpjam` commands automatically.
+
 ## Install
 
 ```bash
