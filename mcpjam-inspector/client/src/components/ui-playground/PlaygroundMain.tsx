@@ -90,6 +90,11 @@ import {
   SandboxHostThemeProvider,
 } from "@/contexts/sandbox-host-style-context";
 import { useComposerOnboarding } from "@/hooks/use-composer-onboarding";
+import { useDebouncedXRayPayload } from "@/hooks/use-debounced-x-ray-payload";
+import {
+  getChatComposerInteractivity,
+  useChatStopControls,
+} from "@/hooks/use-chat-stop-controls";
 import { HandDrawnSendHint } from "./HandDrawnSendHint";
 import { LiveTraceTimelineEmptyState } from "@/components/evals/live-trace-timeline-empty";
 import { LiveTraceRawEmptyState } from "@/components/evals/live-trace-raw-empty";
@@ -578,11 +583,13 @@ export function PlaygroundMain({
     !showPostConnectGuide;
   const multiModelTracePanelModel =
     selectedModel ?? resolvedSelectedModels[0] ?? null;
-  const isAnyMultiModelStreaming =
-    isMultiModelMode &&
-    Object.values(multiModelSummaries).some(
-      (summary) => summary.status === "running",
-    );
+  const { isStreamingActive, stopActiveChat } = useChatStopControls({
+    isMultiModelMode,
+    isStreaming,
+    multiModelSummaries,
+    setStopBroadcastRequestId,
+    stop,
+  });
 
   // Composer onboarding: typewriter effect, guided input, submit gating, NUX CTA
   const composer = useComposerOnboarding({
@@ -595,6 +602,12 @@ export function PlaygroundMain({
     isThreadEmpty: !effectiveHasMessages,
   });
   composerOnResetRef.current = composer.onSessionReset;
+  const { composerDisabled, sendBlocked } = getChatComposerInteractivity({
+    isStreamingActive,
+    composerDisabled: disableChatInput || submitBlocked,
+    submitDisabled:
+      disableChatInput || submitBlocked || composer.submitGatedByServer,
+  });
 
   useEffect(() => {
     if (!canEnableMultiModel && multiModelEnabled) {
@@ -976,12 +989,7 @@ export function PlaygroundMain({
       composer.input.trim() ||
       mcpPromptResults.length > 0 ||
       fileAttachments.length > 0;
-    if (
-      hasContent &&
-      !(isMultiModelMode ? isAnyMultiModelStreaming : status !== "ready") &&
-      !submitBlocked &&
-      !composer.submitGatedByServer
-    ) {
+    if (hasContent && !sendBlocked) {
       if (
         !isMultiModelMode &&
         displayMode === "fullscreen" &&
@@ -1050,13 +1058,10 @@ export function PlaygroundMain({
   };
 
   const errorMessage = formatErrorMessage(error);
-  const inputDisabled = isMultiModelMode
-    ? disableChatInput || isAnyMultiModelStreaming || submitBlocked
-    : disableChatInput || status !== "ready" || submitBlocked;
 
   const handleMultiModelStarterPrompt = useCallback(
     (prompt: string) => {
-      if (submitBlocked || inputDisabled) {
+      if (composerDisabled || sendBlocked) {
         composer.setInput(prompt);
         return;
       }
@@ -1071,11 +1076,11 @@ export function PlaygroundMain({
     },
     [
       composer,
+      composerDisabled,
       fileAttachments,
-      inputDisabled,
       onFirstMessageSent,
       queueBroadcastRequest,
-      submitBlocked,
+      sendBlocked,
     ],
   );
   const traceViewerTrace = effectiveLiveTraceEnvelope ?? {
@@ -1092,11 +1097,9 @@ export function PlaygroundMain({
     value: composer.input,
     onChange: composer.handleInputChange,
     onSubmit,
-    stop: isMultiModelMode
-      ? () => setStopBroadcastRequestId((previous) => previous + 1)
-      : stop,
-    disabled: inputDisabled,
-    isLoading: isMultiModelMode ? isAnyMultiModelStreaming : isStreaming,
+    stop: stopActiveChat,
+    disabled: composerDisabled,
+    isLoading: isStreamingActive,
     placeholder,
     currentModel: selectedModel,
     availableModels,
@@ -1111,7 +1114,8 @@ export function PlaygroundMain({
     temperature,
     onTemperatureChange: setTemperature,
     onResetChat: handleResetAllChats,
-    submitDisabled: submitBlocked || composer.submitGatedByServer,
+    submitDisabled:
+      disableChatInput || submitBlocked || composer.submitGatedByServer,
     tokenUsage,
     selectedServers,
     mcpToolsTokenCount: null,
@@ -1347,16 +1351,15 @@ export function PlaygroundMain({
           input={composer.input}
           onInputChange={composer.setInput}
           placeholder={placeholder}
-          disabled={inputDisabled}
-          canSend={
-            !disableChatInput &&
-            status === "ready" &&
-            !submitBlocked &&
-            composer.input.trim().length > 0
-          }
-          isThinking={isStreaming}
+          disabled={composerDisabled}
+          canSend={!sendBlocked && composer.input.trim().length > 0}
+          isThinking={isStreamingActive}
           loadingIndicatorVariant={loadingIndicatorVariant}
+          onStop={stopActiveChat}
           onSend={() => {
+            if (sendBlocked) {
+              return;
+            }
             sendMessage({ text: composer.input });
             composer.setInput("");
             setMcpPromptResults([]);

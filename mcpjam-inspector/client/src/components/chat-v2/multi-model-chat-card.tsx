@@ -18,6 +18,7 @@ import {
   formatErrorMessage,
 } from "@/components/chat-v2/shared/chat-helpers";
 import { useChatSession } from "@/hooks/use-chat-session";
+import { getChatComposerInteractivity } from "@/hooks/use-chat-stop-controls";
 import type { ModelDefinition } from "@/shared/types";
 
 type ChatTraceViewMode = "chat" | "timeline" | "raw";
@@ -172,6 +173,10 @@ export function MultiModelChatCard({
     messages: [],
   };
   const errorMessage = formatErrorMessage(error);
+  const { sendBlocked: fullscreenChatSendBlocked } =
+    getChatComposerInteractivity({
+      isStreamingActive: isStreaming,
+    });
 
   const latestTurn = liveTraceEnvelope?.turns?.at(-1);
   const summary = useMemo<MultiModelCardSummary>(
@@ -569,6 +574,8 @@ export function MultiModelChatCard({
                   sendFollowUpMessage={handleSendFollowUp}
                   enableFullscreenChatOverlay
                   fullscreenChatPlaceholder={placeholder}
+                  fullscreenChatSendBlocked={fullscreenChatSendBlocked}
+                  onFullscreenChatStop={stop}
                   onToolApprovalResponse={addToolApprovalResponse}
                   rawRequestPayloadHistory={{
                     entries: requestPayloadHistory,
@@ -624,7 +631,7 @@ export function MultiModelChatCard({
                   messages={messages}
                   sendFollowUpMessage={handleSendFollowUp}
                   model={model}
-                  isLoading={status === "submitted"}
+                  isLoading={isStreaming}
                   toolsMetadata={toolsMetadata}
                   toolServerMap={toolServerMap}
                   onWidgetStateChange={handleWidgetStateChange}
@@ -632,6 +639,8 @@ export function MultiModelChatCard({
                   onFullscreenChange={setIsWidgetFullscreen}
                   enableFullscreenChatOverlay
                   fullscreenChatPlaceholder={placeholder}
+                  fullscreenChatSendBlocked={fullscreenChatSendBlocked}
+                  onFullscreenChatStop={stop}
                   onToolApprovalResponse={addToolApprovalResponse}
                   reasoningDisplayMode={reasoningDisplayMode}
                 />

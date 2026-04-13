@@ -42,7 +42,7 @@ vi.mock("../shared/thinking-indicator", () => ({
 }));
 
 vi.mock("../fullscreen-chat-overlay", () => ({
-  FullscreenChatOverlay: (props: { loadingIndicatorVariant?: string }) => {
+  FullscreenChatOverlay: (props: Record<string, unknown>) => {
     mockFullscreenChatOverlay(props);
     return <div data-testid="fullscreen-chat-overlay">Fullscreen Overlay</div>;
   },
@@ -508,6 +508,35 @@ describe("Thread", () => {
       expect(mockFullscreenChatOverlay).toHaveBeenLastCalledWith(
         expect.objectContaining({
           loadingIndicatorVariant: "claude-mark",
+        }),
+      );
+    });
+
+    it("forwards fullscreen stop controls without disabling drafting while loading", () => {
+      const onFullscreenChatStop = vi.fn();
+      const messages = [createMessage({ id: "msg-1", role: "assistant" })];
+
+      render(
+        <Thread
+          {...defaultProps}
+          messages={messages}
+          isLoading={true}
+          enableFullscreenChatOverlay={true}
+          onFullscreenChatStop={onFullscreenChatStop}
+        />,
+      );
+
+      act(() => {
+        const firstMessageProps = mockMessageView.mock.calls[0]?.[0];
+        firstMessageProps?.onRequestFullscreen("tool-1");
+      });
+
+      expect(mockFullscreenChatOverlay).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          disabled: false,
+          isThinking: true,
+          canSend: false,
+          onStop: onFullscreenChatStop,
         }),
       );
     });
