@@ -34,6 +34,26 @@ function truncate(value: string, maxLength = BODY_SNIPPET_LIMIT): string {
   return `${normalized.slice(0, maxLength - 1).trimEnd()}...`;
 }
 
+function redactSensitiveStrings(value: string): string {
+  return value
+    .replace(
+      /(authorization\s*:\s*bearer\s+)([^\s,;]+)/gi,
+      "$1[REDACTED]",
+    )
+    .replace(
+      /([?&](?:access_token|refresh_token|client_secret|code)=)([^&#\s]+)/gi,
+      "$1[REDACTED]",
+    )
+    .replace(
+      /("(?:access_token|refresh_token|client_secret|code)"\s*:\s*")([^"]*)(")/gi,
+      '$1[REDACTED]$3',
+    )
+    .replace(
+      /('(?:access_token|refresh_token|client_secret|code)'\s*:\s*')([^']*)(')/gi,
+      "$1[REDACTED]$3",
+    );
+}
+
 function decodeHtmlEntities(value: string): string {
   return value
     .replace(/&quot;/g, '"')
@@ -163,7 +183,7 @@ function extractEvidence(details: unknown): string | undefined {
     return undefined;
   }
 
-  return truncate(evidence);
+  return truncate(redactSensitiveStrings(evidence));
 }
 
 function countStatuses(result: ConformanceResult): string {

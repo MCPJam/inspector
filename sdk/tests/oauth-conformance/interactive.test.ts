@@ -124,6 +124,36 @@ describe("interactive authorization session", () => {
     }
   });
 
+  it("returns an error page when the callback state does not match", async () => {
+    const session = await createInteractiveAuthorizationSession();
+
+    try {
+      const resultPromise = session.authorize({
+        authorizationUrl: "https://auth.example.com/authorize",
+        expectedState: "expected-state",
+        timeoutMs: 10_000,
+        openUrl: async () => {
+          const response = await fetch(
+            `${session.redirectUrl}?code=test-code&state=wrong-state`
+          );
+          expect(response.status).toBe(400);
+          expect(response.headers.get("content-type")).toContain("text/html");
+
+          const html = await response.text();
+          expect(html).toContain("Authorization failed");
+          expect(html).toContain("Authorization state mismatch.");
+          expect(html).not.toContain("Authorization complete");
+        },
+      });
+
+      await expect(resultPromise).rejects.toThrow(
+        /Authorization state mismatch/
+      );
+    } finally {
+      await session.stop().catch(() => undefined);
+    }
+  });
+
   it("opens the browser with a node-native system command", async () => {
     const child = new EventEmitter() as EventEmitter & {
       unref: jest.Mock;

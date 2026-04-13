@@ -317,6 +317,27 @@ export async function runDcrHttpRedirectUriCheck(
   }
 
   if (responseLooksRejected(response)) {
+    const rejectionSummary = summarizeResponseBody(response.body);
+    if (!rejectionLooksRedirectSpecific(response)) {
+      return {
+        step: "oauth_dcr_http_redirect_uri",
+        status: "skipped",
+        durationMs: Date.now() - startedAt,
+        error: {
+          message: rejectionSummary
+            ? `Dynamic client registration was rejected for a non-redirect reason: ${rejectionSummary}`
+            : "Dynamic client registration was rejected, but redirect_uri validation was not isolated.",
+          details: {
+            redirectUri,
+            response: response.body,
+            evidence: rejectionSummary
+              ? `Received ${response.status} ${response.statusText} with ${rejectionSummary}.`
+              : `Received ${response.status} ${response.statusText} without a redirect-specific error.`,
+          },
+        },
+      };
+    }
+
     return {
       step: "oauth_dcr_http_redirect_uri",
       status: "passed",

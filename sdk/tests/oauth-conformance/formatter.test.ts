@@ -243,6 +243,44 @@ describe("OAuth conformance human formatter", () => {
       "Evidence: Registered redirect_uri http://evil.example/callback was accepted and returned client_id evil-client.",
     );
   });
+
+  it("redacts sensitive values before printing evidence", () => {
+    const result = createPassingResult({
+      passed: false,
+      steps: [
+        {
+          step: "oauth_invalid_redirect",
+          title: "OAuth Check: Invalid Redirect",
+          summary: "Verify redirect URI validation.",
+          status: "failed",
+          durationMs: 12,
+          logs: [],
+          httpAttempts: [],
+          error: {
+            message: "Invalid redirect was accepted",
+            details: {
+              evidence:
+                'Authorization: Bearer tok /?code=abc&access_token=xyz {"client_secret":"shh","refresh_token":"ref"}',
+            },
+          },
+        },
+      ],
+      summary: "OAuth conformance failed at oauth_invalid_redirect",
+    });
+
+    const output = formatOAuthConformanceHuman(result);
+
+    expect(output).toContain("Authorization: Bearer [REDACTED]");
+    expect(output).toContain("code=[REDACTED]");
+    expect(output).toContain("access_token=[REDACTED]");
+    expect(output).toContain('"client_secret":"[REDACTED]"');
+    expect(output).toContain('"refresh_token":"[REDACTED]"');
+    expect(output).not.toContain("Bearer tok");
+    expect(output).not.toContain("code=abc");
+    expect(output).not.toContain("access_token=xyz");
+    expect(output).not.toContain('"client_secret":"shh"');
+    expect(output).not.toContain('"refresh_token":"ref"');
+  });
 });
 
 describe("OAuth conformance suite human formatter", () => {

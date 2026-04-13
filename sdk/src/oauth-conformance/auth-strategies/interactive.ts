@@ -305,6 +305,13 @@ export async function createInteractiveAuthorizationSession(options?: {
     | undefined;
   let pendingReject: ((error: Error) => void) | undefined;
   let timeoutHandle: NodeJS.Timeout | undefined;
+  let activeExpectedState: string | undefined;
+
+  const clearPending = (): void => {
+    pendingResolve = undefined;
+    pendingReject = undefined;
+    activeExpectedState = undefined;
+  };
 
   const failPending = (error: Error): void => {
     if (timeoutHandle) {
@@ -312,8 +319,7 @@ export async function createInteractiveAuthorizationSession(options?: {
       timeoutHandle = undefined;
     }
     pendingReject?.(error);
-    pendingResolve = undefined;
-    pendingReject = undefined;
+    clearPending();
   };
 
   const server = createServer((req, res) => {
@@ -372,6 +378,23 @@ export async function createInteractiveAuthorizationSession(options?: {
     }
 
     const state = requestUrl.searchParams.get("state") ?? undefined;
+    if (activeExpectedState !== undefined && state !== activeExpectedState) {
+      const message = `Authorization state mismatch. Expected ${activeExpectedState}, received ${state ?? "missing"}`;
+      res.statusCode = 400;
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      res.end(
+        renderCallbackPage({
+          tone: "error",
+          title: "Authorization failed",
+          message: "Return to the terminal for details.",
+          detail: message,
+          caption: "You can close this window.",
+        })
+      );
+      failPending(new Error(message));
+      return;
+    }
+
     res.statusCode = 200;
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     res.end(
@@ -389,8 +412,7 @@ export async function createInteractiveAuthorizationSession(options?: {
     }
 
     pendingResolve?.({ code, state });
-    pendingResolve = undefined;
-    pendingReject = undefined;
+    clearPending();
   });
 
   await new Promise<void>((resolve, reject) => {
@@ -420,25 +442,16 @@ export async function createInteractiveAuthorizationSession(options?: {
       if (pendingResolve || pendingReject) {
         throw new Error("Interactive authorization is already in progress");
       }
+      activeExpectedState = expectedState;
 
       const codePromise = new Promise<AuthorizationCodeResult>(
         (resolve, reject) => {
-          pendingResolve = ({ code, state }) => {
-            if (expectedState && state !== expectedState) {
-              reject(
-                new Error(
-                  `Authorization state mismatch. Expected ${expectedState}, received ${state ?? "missing"}`
-                )
-              );
-              return;
-            }
-
+          pendingResolve = ({ code }) => {
             resolve({ code });
           };
           pendingReject = reject;
           timeoutHandle = setTimeout(() => {
-            pendingResolve = undefined;
-            pendingReject = undefined;
+            clearPending();
             reject(
               new Error(
                 `Interactive authorization timed out after ${timeoutMs}ms`
@@ -459,8 +472,7 @@ export async function createInteractiveAuthorizationSession(options?: {
           clearTimeout(timeoutHandle);
           timeoutHandle = undefined;
         }
-        pendingResolve = undefined;
-        pendingReject = undefined;
+        clearPending();
         throw error;
       }
 
@@ -471,8 +483,7 @@ export async function createInteractiveAuthorizationSession(options?: {
         clearTimeout(timeoutHandle);
       }
       pendingReject?.(new Error("Interactive authorization session closed"));
-      pendingResolve = undefined;
-      pendingReject = undefined;
+      clearPending();
       await closeServer(server);
     },
   };

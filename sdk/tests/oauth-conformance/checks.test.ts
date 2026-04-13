@@ -292,6 +292,40 @@ describe("oauth conformance unit checks", () => {
     });
   });
 
+  it("skips DCR redirect validation when the rejection is not redirect-specific", async () => {
+    const result = await runDcrHttpRedirectUriCheck({
+      ...(baseNegativeInput as any),
+      state: {
+        authorizationServerMetadata: {
+          registration_endpoint: "https://auth.example.com/register",
+        },
+      },
+      trackedRequest: jest.fn().mockResolvedValue({
+        ok: false,
+        status: 400,
+        statusText: "Bad Request",
+        body: {
+          error: "invalid_scope",
+          error_description: "Client is not allowed to request this scope",
+        },
+      }),
+    });
+
+    expect(result).toMatchObject({
+      step: "oauth_dcr_http_redirect_uri",
+      status: "skipped",
+      error: {
+        message:
+          "Dynamic client registration was rejected for a non-redirect reason: Client is not allowed to request this scope",
+        details: expect.objectContaining({
+          redirectUri: "http://evil.example/callback",
+          evidence:
+            "Received 400 Bad Request with Client is not allowed to request this scope.",
+        }),
+      },
+    });
+  });
+
   it("skips redirect validation when the token rejection is not redirect-specific", async () => {
     const result = await runInvalidRedirectCheck({
       ...(baseNegativeInput as any),

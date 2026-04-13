@@ -593,6 +593,7 @@ export const createDebugOAuthStateMachine = (
                 updateState({
                   currentStep: "received_401_unauthorized", // Reuse the same flow
                   wwwAuthenticateHeader: undefined, // No WWW-Authenticate header
+                  challengedScopes: undefined,
                   lastResponse: responseData,
                   httpHistory: updatedHistory,
                   infoLogs,

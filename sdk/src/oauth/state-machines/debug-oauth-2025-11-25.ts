@@ -1390,6 +1390,7 @@ export const createDebugOAuthStateMachine = (
                   lastResponse: registrationResponseData,
                   httpHistory: updatedHistoryReg,
                   error: registrationError,
+                  isInitiatingAuth: false,
                 });
 
                 if (strictConformance) {
@@ -1490,6 +1491,7 @@ export const createDebugOAuthStateMachine = (
                 lastResponse: errorResponse,
                 httpHistory: updatedHistoryError,
                 error: registrationError,
+                isInitiatingAuth: false,
               });
 
               if (strictConformance) {

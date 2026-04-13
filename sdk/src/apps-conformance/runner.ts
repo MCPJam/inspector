@@ -386,10 +386,13 @@ function buildConnectionFailureResult(
   startedAt: number,
 ): MCPAppsConformanceResult {
   const selectedCheckIds = buildCheckSelection(config);
+  const failureCheckId = selectedCheckIds.has("ui-tools-present")
+    ? "ui-tools-present"
+    : selectedCheckIds.values().next().value;
   const checks: MCPAppsCheckResult[] = [];
 
   for (const checkId of selectedCheckIds) {
-    if (checkId === "ui-tools-present") {
+    if (checkId === failureCheckId) {
       checks.push(
         failedResult(
           checkId,
@@ -847,9 +850,9 @@ export class MCPAppsConformanceTest {
                   ? outcome.result.contents
                   : [];
 
-                if (contents.length === 0) {
+                if (contents.length !== 1) {
                   violations.push(
-                    `${outcome.uri} returned no contents from resources/read`,
+                    `${outcome.uri} must return exactly one content entry from resources/read (got ${contents.length})`,
                   );
                   continue;
                 }
