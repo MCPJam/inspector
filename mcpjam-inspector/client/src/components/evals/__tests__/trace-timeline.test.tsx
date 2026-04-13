@@ -910,22 +910,30 @@ describe("TraceTimeline detail pane", () => {
 
     expect(screen.getAllByTestId("trace-row")).toHaveLength(4);
 
-    const secondPrompt = screen.getAllByTestId("trace-row").find((el) =>
-      within(el).queryByRole("button", { name: "Collapse Prompt 2" }),
-    );
+    const secondPrompt = screen
+      .getAllByTestId("trace-row")
+      .find((el) =>
+        within(el).queryByRole("button", { name: "Collapse Prompt 2" }),
+      );
     expect(secondPrompt).toBeTruthy();
 
-    await user.click(within(secondPrompt!).getByTestId("trace-row-label-button"));
-
-    const secondPromptSelected = screen.getAllByTestId("trace-row").find((el) =>
-      within(el).queryByRole("button", { name: "Collapse Prompt 2" }),
+    await user.click(
+      within(secondPrompt!).getByTestId("trace-row-label-button"),
     );
+
+    const secondPromptSelected = screen
+      .getAllByTestId("trace-row")
+      .find((el) =>
+        within(el).queryByRole("button", { name: "Collapse Prompt 2" }),
+      );
     expect(secondPromptSelected).toBeTruthy();
     expect(secondPromptSelected!).toHaveClass("trace-waterfall-row-selected");
 
-    const firstPrompt = screen.getAllByTestId("trace-row").find((el) =>
-      within(el).queryByRole("button", { name: "Collapse Prompt 1" }),
-    );
+    const firstPrompt = screen
+      .getAllByTestId("trace-row")
+      .find((el) =>
+        within(el).queryByRole("button", { name: "Collapse Prompt 1" }),
+      );
     expect(firstPrompt).toBeTruthy();
 
     await user.click(
@@ -934,12 +942,16 @@ describe("TraceTimeline detail pane", () => {
 
     expect(screen.getAllByTestId("trace-row")).toHaveLength(3);
 
-    const firstPromptAfter = screen.getAllByTestId("trace-row").find((el) =>
-      within(el).queryByRole("button", { name: "Expand Prompt 1" }),
-    );
-    const secondPromptAfter = screen.getAllByTestId("trace-row").find((el) =>
-      within(el).queryByRole("button", { name: "Collapse Prompt 2" }),
-    );
+    const firstPromptAfter = screen
+      .getAllByTestId("trace-row")
+      .find((el) =>
+        within(el).queryByRole("button", { name: "Expand Prompt 1" }),
+      );
+    const secondPromptAfter = screen
+      .getAllByTestId("trace-row")
+      .find((el) =>
+        within(el).queryByRole("button", { name: "Collapse Prompt 2" }),
+      );
 
     expect(firstPromptAfter).toBeTruthy();
     expect(secondPromptAfter).toBeTruthy();
