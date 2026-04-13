@@ -52,7 +52,7 @@ console.log(result.steps);    // Step-by-step results with HTTP traces
 | `redirectUrl` | `string` | No | Auto-generated | OAuth redirect URL |
 | `fetchFn` | `typeof fetch` | No | `fetch` | Custom fetch for recording/replay |
 | `stepTimeout` | `number` | No | `30000` | Per-step timeout in ms |
-| `oauthConformanceChecks` | `boolean` | No | `false` | Run 3 additional negative checks post-flow |
+| `oauthConformanceChecks` | `boolean` | No | `false` | Run 6 additional negative checks post-flow |
 
 ### OAuthConformanceAuthConfig
 
@@ -136,11 +136,14 @@ const test = new OAuthConformanceTest({
 
 ### Negative conformance checks (`oauthConformanceChecks`)
 
-When enabled, three extra checks run after a successful flow:
+When enabled, six extra checks run after a successful flow:
 
-1. **Invalid client** — sends a token request with an unknown `client_id`; expects rejection.
-2. **Invalid redirect** — sends a token request with a mismatched `redirect_uri`; expects rejection.
-3. **Token format** — validates the token response includes `access_token`, `token_type`, and expiration metadata.
+1. **DCR redirect URI policy** — attempts dynamic client registration with a non-loopback `http://` redirect URI; expects rejection under the MCP authorization profile.
+2. **Invalid client** — sends a token request with an unknown `client_id`; expects rejection.
+3. **Invalid redirect at the authorization endpoint** — sends an authorization request with a mismatched `redirect_uri` and looks for rejection before the server redirects back to it. This step may be `skipped` if the server defers validation behind user interaction.
+4. **Invalid token** — sends an authenticated MCP initialize request with an obviously invalid bearer token; expects HTTP 401 from the MCP server.
+5. **Invalid redirect at the token endpoint** — sends a token request with a mismatched `redirect_uri` to look for redirect exact-match enforcement. This step may be `skipped` if the request is rejected for another reason before redirect validation is demonstrated.
+6. **Token format** — validates the token response includes `access_token`, `token_type`, and expiration metadata.
 
 ```typescript
 const test = new OAuthConformanceTest({
@@ -151,7 +154,9 @@ const test = new OAuthConformanceTest({
 });
 
 const result = await test.run();
-// result.steps will include oauth_invalid_client, oauth_invalid_redirect, oauth_token_format
+// result.steps will include oauth_dcr_http_redirect_uri, oauth_invalid_client,
+// oauth_invalid_authorize_redirect, oauth_invalid_token,
+// oauth_invalid_redirect, and oauth_token_format
 ```
 
 <Note>

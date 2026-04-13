@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { render, screen, waitFor } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MultiModelPlaygroundCard } from "../multi-model-playground-card";
 import type { MultiModelCardSummary } from "@/components/chat-v2/model-compare-card-header";
 
@@ -25,27 +25,29 @@ vi.mock("use-stick-to-bottom", () => {
   };
 });
 
+const mockUseChatSession = {
+  messages: [],
+  setMessages: vi.fn(),
+  sendMessage: vi.fn(),
+  stop: vi.fn(),
+  status: "ready",
+  error: undefined,
+  chatSessionId: "chat-session-1",
+  toolsMetadata: {},
+  toolServerMap: {},
+  liveTraceEnvelope: null,
+  requestPayloadHistory: [],
+  hasTraceSnapshot: false,
+  hasLiveTimelineContent: false,
+  traceViewsSupported: true,
+  isStreaming: false,
+  addToolApprovalResponse: vi.fn(),
+  systemPrompt: "",
+  startChatWithMessages: vi.fn(),
+};
+
 vi.mock("@/hooks/use-chat-session", () => ({
-  useChatSession: () => ({
-    messages: [],
-    setMessages: vi.fn(),
-    sendMessage: vi.fn(),
-    stop: vi.fn(),
-    status: "ready",
-    error: undefined,
-    chatSessionId: "chat-session-1",
-    toolsMetadata: {},
-    toolServerMap: {},
-    liveTraceEnvelope: null,
-    requestPayloadHistory: [],
-    hasTraceSnapshot: false,
-    hasLiveTimelineContent: false,
-    traceViewsSupported: true,
-    isStreaming: false,
-    addToolApprovalResponse: vi.fn(),
-    systemPrompt: "",
-    startChatWithMessages: vi.fn(),
-  }),
+  useChatSession: () => mockUseChatSession,
 }));
 
 vi.mock("@/components/chat-v2/thread", () => ({
@@ -149,6 +151,10 @@ function Harness() {
 }
 
 describe("MultiModelPlaygroundCard", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   it("does not loop when parent passes inline summary handlers", () => {
     render(<Harness />);
 
@@ -211,5 +217,53 @@ describe("MultiModelPlaygroundCard", () => {
     expect(
       screen.queryByText("Send a shared message to start this model’s thread."),
     ).not.toBeInTheDocument();
+  });
+
+  it("calls stop when stopRequestId changes", async () => {
+    const { rerender } = render(
+      <MultiModelPlaygroundCard
+        model={model}
+        comparisonSummaries={[]}
+        selectedServers={[]}
+        broadcastRequest={null}
+        deterministicExecutionRequest={null}
+        stopRequestId={0}
+        initialSystemPrompt=""
+        initialTemperature={0.7}
+        initialRequireToolApproval={false}
+        displayMode="inline"
+        onDisplayModeChange={vi.fn()}
+        hostStyle="chatgpt"
+        effectiveThreadTheme="light"
+        deviceType="mobile"
+        selectedProtocol={null}
+        onSummaryChange={vi.fn()}
+      />,
+    );
+
+    rerender(
+      <MultiModelPlaygroundCard
+        model={model}
+        comparisonSummaries={[]}
+        selectedServers={[]}
+        broadcastRequest={null}
+        deterministicExecutionRequest={null}
+        stopRequestId={1}
+        initialSystemPrompt=""
+        initialTemperature={0.7}
+        initialRequireToolApproval={false}
+        displayMode="inline"
+        onDisplayModeChange={vi.fn()}
+        hostStyle="chatgpt"
+        effectiveThreadTheme="light"
+        deviceType="mobile"
+        selectedProtocol={null}
+        onSummaryChange={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(mockUseChatSession.stop).toHaveBeenCalledTimes(1);
+    });
   });
 });

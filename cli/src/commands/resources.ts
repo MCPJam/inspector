@@ -8,6 +8,7 @@ import {
   describeTarget,
   getGlobalOptions,
   parseServerConfig,
+  resolveAliasedStringOption,
 } from "../lib/server-config";
 import { writeResult } from "../lib/output";
 
@@ -49,13 +50,23 @@ export function registerResourcesCommands(program: Command): void {
     resources
       .command("read")
       .description("Read a resource from an MCP server")
-      .requiredOption("--uri <uri>", "Resource URI"),
+      .option("--resource-uri <uri>", "Resource URI")
+      .option("--uri <uri>", "Alias for --resource-uri"),
   ).action(async (options, command) => {
     const globalOptions = getGlobalOptions(command);
     const target = describeTarget(options);
     const collector = globalOptions.rpc
       ? createCliRpcLogCollector({ __cli__: target })
       : undefined;
+    const resourceUri = resolveAliasedStringOption(
+      options as Record<string, unknown>,
+      [
+        { key: "resourceUri", flag: "--resource-uri" },
+        { key: "uri", flag: "--uri" },
+      ],
+      "Resource URI",
+      { required: true },
+    ) as string;
     const config = parseServerConfig({
       ...options,
       timeout: globalOptions.timeout,
@@ -63,8 +74,7 @@ export function registerResourcesCommands(program: Command): void {
 
     const result = await withEphemeralManager(
       config,
-      (manager, serverId) =>
-        readResource(manager, { serverId, uri: options.uri as string }),
+      (manager, serverId) => readResource(manager, { serverId, uri: resourceUri }),
       {
         timeout: globalOptions.timeout,
         rpcLogger: collector?.rpcLogger,

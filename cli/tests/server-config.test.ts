@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   parseJsonRecord,
   parseServerConfig,
+  resolveAliasedStringOption,
 } from "../src/lib/server-config";
 import { CliError } from "../src/lib/output";
 
@@ -162,3 +163,77 @@ test("parseJsonRecord rejects non-object JSON", () => {
   );
 });
 
+test("resolveAliasedStringOption accepts either alias and preserves matching values", () => {
+  assert.equal(
+    resolveAliasedStringOption(
+      { toolName: "search_docs" },
+      [
+        { key: "toolName", flag: "--tool-name" },
+        { key: "name", flag: "--name" },
+      ],
+      "Tool name",
+      { required: true },
+    ),
+    "search_docs",
+  );
+
+  assert.equal(
+    resolveAliasedStringOption(
+      { name: "search_docs" },
+      [
+        { key: "toolName", flag: "--tool-name" },
+        { key: "name", flag: "--name" },
+      ],
+      "Tool name",
+      { required: true },
+    ),
+    "search_docs",
+  );
+
+  assert.equal(
+    resolveAliasedStringOption(
+      { toolName: "search_docs", name: "search_docs" },
+      [
+        { key: "toolName", flag: "--tool-name" },
+        { key: "name", flag: "--name" },
+      ],
+      "Tool name",
+      { required: true },
+    ),
+    "search_docs",
+  );
+});
+
+test("resolveAliasedStringOption rejects missing and conflicting aliases", () => {
+  assert.throws(
+    () =>
+      resolveAliasedStringOption(
+        {},
+        [
+          { key: "toolName", flag: "--tool-name" },
+          { key: "name", flag: "--name" },
+        ],
+        "Tool name",
+        { required: true },
+      ),
+    (error) =>
+      error instanceof CliError &&
+      error.message.includes("Tool name is required"),
+  );
+
+  assert.throws(
+    () =>
+      resolveAliasedStringOption(
+        { toolName: "search_docs", name: "read_me" },
+        [
+          { key: "toolName", flag: "--tool-name" },
+          { key: "name", flag: "--name" },
+        ],
+        "Tool name",
+        { required: true },
+      ),
+    (error) =>
+      error instanceof CliError &&
+      error.message.includes("Specify only one of --tool-name or --name"),
+  );
+});

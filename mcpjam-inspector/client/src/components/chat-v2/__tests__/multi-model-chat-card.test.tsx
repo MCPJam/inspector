@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { render, screen } from "@testing-library/react";
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { render, screen, waitFor } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { UIMessage } from "ai";
 import { MultiModelChatCard } from "../multi-model-chat-card";
 import type { MultiModelCardSummary } from "../model-compare-card-header";
@@ -28,27 +28,29 @@ vi.mock("use-stick-to-bottom", () => {
 
 const startChatWithMessages = vi.fn();
 
+const mockUseChatSession = {
+  messages: [],
+  setMessages: vi.fn(),
+  sendMessage: vi.fn(),
+  stop: vi.fn(),
+  status: "ready",
+  error: undefined,
+  chatSessionId: "chat-session-1",
+  toolsMetadata: {},
+  toolServerMap: {},
+  liveTraceEnvelope: null,
+  requestPayloadHistory: [],
+  hasTraceSnapshot: false,
+  hasLiveTimelineContent: false,
+  traceViewsSupported: true,
+  isStreaming: false,
+  addToolApprovalResponse: vi.fn(),
+  systemPrompt: "",
+  startChatWithMessages,
+};
+
 vi.mock("@/hooks/use-chat-session", () => ({
-  useChatSession: () => ({
-    messages: [],
-    setMessages: vi.fn(),
-    sendMessage: vi.fn(),
-    stop: vi.fn(),
-    status: "ready",
-    error: undefined,
-    chatSessionId: "chat-session-1",
-    toolsMetadata: {},
-    toolServerMap: {},
-    liveTraceEnvelope: null,
-    requestPayloadHistory: [],
-    hasTraceSnapshot: false,
-    hasLiveTimelineContent: false,
-    traceViewsSupported: true,
-    isStreaming: false,
-    addToolApprovalResponse: vi.fn(),
-    systemPrompt: "",
-    startChatWithMessages,
-  }),
+  useChatSession: () => mockUseChatSession,
 }));
 
 vi.mock("@/components/chat-v2/thread", () => ({
@@ -137,7 +139,7 @@ const seedMessages: UIMessage[] = [
 
 describe("MultiModelChatCard", () => {
   beforeEach(() => {
-    startChatWithMessages.mockClear();
+    vi.clearAllMocks();
   });
 
   it("does not loop when parent passes inline summary handlers", () => {
@@ -217,6 +219,46 @@ describe("MultiModelChatCard", () => {
       ]),
     );
     const arg = startChatWithMessages.mock.calls[0][0];
-    expect(arg.some((m) => m.id === "lead")).toBe(true);
+    expect(arg.some((message) => message.id === "lead")).toBe(true);
+  });
+
+  it("calls stop when stopRequestId changes", async () => {
+    const { rerender } = render(
+      <MultiModelChatCard
+        model={model}
+        comparisonSummaries={[]}
+        selectedServers={[]}
+        selectedServerInstructions={{}}
+        broadcastRequest={null}
+        stopRequestId={0}
+        placeholder="Message"
+        reasoningDisplayMode="inline"
+        initialSystemPrompt=""
+        initialTemperature={0.7}
+        initialRequireToolApproval={false}
+        onSummaryChange={vi.fn()}
+      />,
+    );
+
+    rerender(
+      <MultiModelChatCard
+        model={model}
+        comparisonSummaries={[]}
+        selectedServers={[]}
+        selectedServerInstructions={{}}
+        broadcastRequest={null}
+        stopRequestId={1}
+        placeholder="Message"
+        reasoningDisplayMode="inline"
+        initialSystemPrompt=""
+        initialTemperature={0.7}
+        initialRequireToolApproval={false}
+        onSummaryChange={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(mockUseChatSession.stop).toHaveBeenCalledTimes(1);
+    });
   });
 });

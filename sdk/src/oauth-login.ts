@@ -368,6 +368,7 @@ export async function runOAuthLogin(
         DEFAULT_MCPJAM_CLIENT_ID_METADATA_URL,
       customScopes: config.scopes,
       customHeaders: config.customHeaders,
+      authMode: config.auth.mode,
     });
 
     let guard = 0;
@@ -453,6 +454,7 @@ export async function runOAuthLogin(
         }
 
         try {
+          config.onProgress("Opening browser for authorization...");
           const authorizationResult =
             config.auth.mode === "interactive"
               ? await interactiveSession!.authorize({
@@ -471,6 +473,7 @@ export async function runOAuthLogin(
                   request: trackedRequest,
                 });
 
+          config.onProgress("Authorization received, exchanging token...");
           updateState({
             currentStep: "received_authorization_code",
             authorizationCode: authorizationResult.code,
@@ -526,6 +529,9 @@ export async function runOAuthLogin(
       );
     }
 
+    if (config.verification.listTools) {
+      config.onProgress("Verifying token with server...");
+    }
     const verification = await runVerification(
       config,
       state,

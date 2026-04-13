@@ -1,7 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
-import { LoadingIndicatorContent } from "../shared/loading-indicator-content";
+import {
+  LoadingIndicatorContent,
+  resolveLoadingIndicatorVariant,
+} from "../shared/loading-indicator-content";
 import { ClaudeLoadingIndicator } from "../shared/claude-loading-indicator";
+import { SandboxHostStyleProvider } from "@/contexts/sandbox-host-style-context";
 
 const mockUseReducedMotion = vi.hoisted(() => vi.fn(() => false));
 
@@ -67,5 +71,85 @@ describe("LoadingIndicatorContent", () => {
     expect(
       screen.getByTestId("loading-indicator-claude-strip-800"),
     ).toHaveAttribute("hidden");
+  });
+
+  it("defaults to the Claude mascot for Claude-style sandbox hosts", () => {
+    render(
+      <SandboxHostStyleProvider value="claude">
+        <LoadingIndicatorContent />
+      </SandboxHostStyleProvider>,
+    );
+
+    expect(screen.getByTestId("loading-indicator-claude")).toBeInTheDocument();
+  });
+
+  it("defaults to the GPT pulse for ChatGPT-style sandbox hosts", () => {
+    render(
+      <SandboxHostStyleProvider value="chatgpt">
+        <LoadingIndicatorContent />
+      </SandboxHostStyleProvider>,
+    );
+
+    expect(screen.getByTestId("loading-indicator-dot")).toBeInTheDocument();
+  });
+
+  it('treats variant="default" as fallback so host-style mascots still render', () => {
+    render(
+      <SandboxHostStyleProvider value="claude">
+        <LoadingIndicatorContent variant="default" />
+      </SandboxHostStyleProvider>,
+    );
+
+    expect(screen.getByTestId("loading-indicator-claude")).toBeInTheDocument();
+  });
+
+  it("treats undefined variant as fallback to host style", () => {
+    expect(
+      resolveLoadingIndicatorVariant({
+        variant: undefined,
+        hostStyle: "chatgpt",
+      }),
+    ).toBe("chatgpt-dot");
+  });
+
+  it('treats variant="default" as fallback to host style', () => {
+    expect(
+      resolveLoadingIndicatorVariant({
+        variant: "default",
+        hostStyle: "claude",
+      }),
+    ).toBe("claude-mark");
+  });
+
+  it("preserves explicit loading-indicator overrides", () => {
+    expect(
+      resolveLoadingIndicatorVariant({
+        variant: "chatgpt-dot",
+        hostStyle: "claude",
+        modelProvider: "anthropic",
+      }),
+    ).toBe("chatgpt-dot");
+    expect(
+      resolveLoadingIndicatorVariant({
+        variant: "claude-mark",
+        hostStyle: "chatgpt",
+        modelProvider: "openai",
+      }),
+    ).toBe("claude-mark");
+  });
+
+  it("falls back to the model provider when no explicit or host style override exists", () => {
+    expect(
+      resolveLoadingIndicatorVariant({
+        variant: undefined,
+        modelProvider: "openai",
+      }),
+    ).toBe("chatgpt-dot");
+    expect(
+      resolveLoadingIndicatorVariant({
+        variant: "default",
+        modelProvider: "anthropic",
+      }),
+    ).toBe("claude-mark");
   });
 });

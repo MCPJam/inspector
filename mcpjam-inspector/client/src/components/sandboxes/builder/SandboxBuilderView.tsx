@@ -39,6 +39,7 @@ import { copyToClipboard } from "@/lib/clipboard";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import { getSandboxHostStyleShortLabel } from "@/lib/sandbox-host-style";
 import { ChatTabV2 } from "@/components/ChatTabV2";
+import { getLoadingIndicatorVariantForHostStyle } from "@/components/chat-v2/shared/loading-indicator-content";
 import type { ServerWithName } from "@/hooks/use-app-state";
 import { useHostedOAuthGate } from "@/hooks/hosted/use-hosted-oauth-gate";
 import type { HostedOAuthRequiredDetails } from "@/lib/hosted-oauth-required";
@@ -1150,11 +1151,9 @@ export function SandboxBuilderView({
                                   initialRequireToolApproval={
                                     draftSandboxConfig.requireToolApproval
                                   }
-                                  loadingIndicatorVariant={
-                                    draftSandboxConfig.hostStyle === "chatgpt"
-                                      ? "chatgpt-dot"
-                                      : "claude-mark"
-                                  }
+                                  loadingIndicatorVariant={getLoadingIndicatorVariantForHostStyle(
+                                    draftSandboxConfig.hostStyle,
+                                  )}
                                   onOAuthRequired={handlePreviewOAuthRequired}
                                   sandboxComposerBlocked={
                                     introGate.composerBlocked

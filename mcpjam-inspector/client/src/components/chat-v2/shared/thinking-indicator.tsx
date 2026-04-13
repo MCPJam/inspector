@@ -14,10 +14,10 @@ import { getAssistantAvatarDescriptor } from "./assistant-avatar";
 
 export function ThinkingIndicator({
   model,
-  variant = "default",
+  resolvedVariant,
 }: {
   model: ModelDefinition;
-  variant?: LoadingIndicatorVariant;
+  resolvedVariant: LoadingIndicatorVariant;
 }) {
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const sandboxHostStyle = useSandboxHostStyle();
@@ -58,7 +58,7 @@ export function ThinkingIndicator({
       ) : null}
 
       <div className="inline-flex items-center gap-2 text-muted-foreground/80">
-        <LoadingIndicatorContent variant={variant} />
+        <LoadingIndicatorContent variant={resolvedVariant} />
       </div>
     </article>
   );

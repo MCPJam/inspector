@@ -10,6 +10,7 @@ import {
   parsePositiveInteger,
 } from "../lib/server-config";
 import {
+  resolveOutputFormat,
   setProcessExitCode,
   usageError,
   writeResult,
@@ -73,11 +74,7 @@ export function registerProtocolCommands(program: Command): void {
 
 function getFormat(command: Command): OutputFormat {
   const opts = command.optsWithGlobals() as { format?: string };
-  const value = opts.format ?? "json";
-  if (value === "json" || value === "human") {
-    return value;
-  }
-  throw usageError(`Invalid output format "${value}". Use "json" or "human".`);
+  return resolveOutputFormat(opts.format, process.stdout.isTTY);
 }
 
 function collectInvalidEntries(
