@@ -421,6 +421,79 @@ describe("ChatInput", () => {
     });
   });
 
+  describe("host style selector", () => {
+    it("shows the Claude/ChatGPT pill selector in the options menu when enabled", () => {
+      render(
+        <ChatInput
+          {...defaultProps}
+          showHostStyleSelector={true}
+          hostStyle="claude"
+          onHostStyleChange={vi.fn()}
+        />,
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "Options" }));
+
+      expect(screen.getByText("Host Style")).toBeInTheDocument();
+      expect(screen.getByRole("radio", { name: "ChatGPT" })).toBeInTheDocument();
+      expect(screen.getByRole("radio", { name: "Claude" })).toBeInTheDocument();
+    });
+
+    it("calls onHostStyleChange when the host style pill is changed", () => {
+      const onHostStyleChange = vi.fn();
+
+      render(
+        <ChatInput
+          {...defaultProps}
+          showHostStyleSelector={true}
+          hostStyle="claude"
+          onHostStyleChange={onHostStyleChange}
+        />,
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "Options" }));
+      fireEvent.click(screen.getByRole("radio", { name: "ChatGPT" }));
+
+      expect(onHostStyleChange).toHaveBeenCalledWith("chatgpt");
+    });
+
+    it("renders the host style section after tool approval at the bottom of the menu", () => {
+      render(
+        <ChatInput
+          {...defaultProps}
+          showHostStyleSelector={true}
+          hostStyle="claude"
+          onHostStyleChange={vi.fn()}
+        />,
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "Options" }));
+
+      const toolApproval = screen.getByText("Tool Approval");
+      const hostStyle = screen.getByText("Host Style");
+
+      expect(
+        toolApproval.compareDocumentPosition(hostStyle) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+      ).not.toBe(0);
+    });
+
+    it("keeps the host style selector out of the options menu by default", () => {
+      render(
+        <ChatInput
+          {...defaultProps}
+          hostStyle="claude"
+          onHostStyleChange={vi.fn()}
+        />,
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "Options" }));
+
+      expect(screen.queryByText("Host Style")).not.toBeInTheDocument();
+      expect(screen.queryByRole("radio", { name: "ChatGPT" })).not.toBeInTheDocument();
+    });
+  });
+
   describe("MCP prompt results", () => {
     it("renders MCP prompt cards when results exist", () => {
       const mcpPromptResults = [

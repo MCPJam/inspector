@@ -424,7 +424,9 @@ vi.mock("../playground-helpers", () => ({
 const mockPreferencesState = {
   themeMode: "light",
   themePreset: "soft-pop",
+  hostStyle: "claude",
   setThemeMode: vi.fn(),
+  setHostStyle: vi.fn(),
 };
 
 vi.mock("@/stores/preferences/preferences-provider", () => ({
@@ -445,8 +447,6 @@ const mockUIPlaygroundStore = {
   customViewport: { width: 375, height: 667 },
   setCustomViewport: vi.fn(),
   setPlaygroundActive: vi.fn(),
-  hostStyle: "claude",
-  setHostStyle: vi.fn(),
   cspMode: "widget-declared",
   setCspMode: vi.fn(),
   mcpAppsCspMode: "widget-declared",
@@ -570,6 +570,7 @@ describe("PlaygroundMain", () => {
     capturedChatSessionOptions = null;
     mockPreferencesState.themeMode = "light";
     mockPreferencesState.themePreset = "soft-pop";
+    mockPreferencesState.hostStyle = "claude";
     mockSharedAppState.servers["test-server"] = {
       connectionStatus: "connected",
     };

@@ -26,6 +26,7 @@ import { PlaygroundLeft } from "./PlaygroundLeft";
 import { PlaygroundMain } from "./PlaygroundMain";
 import SaveRequestDialog from "../tools/SaveRequestDialog";
 import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
+import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { listTools } from "@/lib/apis/mcp-tools-api";
 import { generateFormFieldsFromSchema } from "@/lib/tool-form";
 import type { MCPServerConfig } from "@mcpjam/sdk/browser";
@@ -46,6 +47,7 @@ import { AppBuilderSkeleton } from "@/components/app-builder/AppBuilderSkeleton"
 import type { ServerFormData } from "@/shared/types.js";
 import type { ServerWithName } from "@/hooks/use-app-state";
 import { useSidebar } from "@/components/ui/sidebar";
+import { getLoadingIndicatorVariantForHostStyle } from "@/components/chat-v2/shared/loading-indicator-content";
 import { toast } from "sonner";
 import type { PlaygroundServerSelectorProps } from "@/components/ActiveServerSelector";
 
@@ -100,7 +102,6 @@ export function AppBuilderTab({
     formFields,
     isExecuting,
     deviceType,
-    hostStyle,
     isSidebarVisible,
     selectedProtocol,
     setTools,
@@ -119,6 +120,7 @@ export function AppBuilderTab({
     reset,
     setSidebarVisible,
   } = useUIPlaygroundStore();
+  const hostStyle = usePreferencesStore((s) => s.hostStyle);
 
   const { setOpen: setMcpSidebarOpen } = useSidebar();
 
@@ -389,9 +391,9 @@ export function AppBuilderTab({
             }
             initialInputTypewriter={firstRunComposerSeed}
             blockSubmitUntilServerConnected={firstRunComposerSeed}
-            loadingIndicatorVariant={
-              hostStyle === "chatgpt" ? "chatgpt-dot" : "claude-mark"
-            }
+            loadingIndicatorVariant={getLoadingIndicatorVariantForHostStyle(
+              hostStyle,
+            )}
             pulseSubmit={firstRunComposerSeed}
             showPostConnectGuide={false}
             onFirstMessageSent={

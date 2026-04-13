@@ -105,6 +105,7 @@ import {
   getChatComposerInteractivity,
   useChatStopControls,
 } from "@/hooks/use-chat-stop-controls";
+import type { SandboxHostStyle } from "@/lib/sandbox-host-style";
 
 interface ChatTabProps {
   connectedOrConnectingServerConfigs: Record<string, ServerWithName>;
@@ -133,6 +134,9 @@ interface ChatTabProps {
   initialRequireToolApproval?: boolean;
   reasoningDisplayMode?: ReasoningDisplayMode;
   loadingIndicatorVariant?: LoadingIndicatorVariant;
+  showHostStyleSelector?: boolean;
+  hostStyle?: SandboxHostStyle;
+  onHostStyleChange?: (hostStyle: SandboxHostStyle) => void;
   onOAuthRequired?: (details?: HostedOAuthRequiredDetails) => void;
   /** When true, blocks sending until sandbox onboarding/OAuth completes. */
   sandboxComposerBlocked?: boolean;
@@ -173,7 +177,10 @@ export function ChatTabV2({
   initialTemperature,
   initialRequireToolApproval,
   reasoningDisplayMode = "inline",
-  loadingIndicatorVariant = "default",
+  loadingIndicatorVariant,
+  showHostStyleSelector = false,
+  hostStyle,
+  onHostStyleChange,
   onOAuthRequired,
   sandboxComposerBlocked = false,
   sandboxComposerBlockedReason,
@@ -1862,6 +1869,9 @@ export function ChatTabV2({
     requireToolApproval,
     onRequireToolApprovalChange: handleRequireToolApprovalChange,
     minimalMode,
+    showHostStyleSelector,
+    hostStyle,
+    onHostStyleChange,
     allServerConfigs,
     onServerToggle,
     onReconnectServer,

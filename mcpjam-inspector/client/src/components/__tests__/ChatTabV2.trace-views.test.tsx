@@ -586,6 +586,26 @@ describe("ChatTabV2 trace views", () => {
     });
   });
 
+  it("passes the host style selector props through to ChatInput when enabled", () => {
+    const onHostStyleChange = vi.fn();
+
+    render(
+      <ChatTabV2
+        {...defaultProps}
+        showHostStyleSelector={true}
+        hostStyle="chatgpt"
+        onHostStyleChange={onHostStyleChange}
+      />,
+    );
+
+    const chatInputProps = mockChatInput.mock.calls.at(-1)?.[0];
+    expect(chatInputProps).toMatchObject({
+      showHostStyleSelector: true,
+      hostStyle: "chatgpt",
+      onHostStyleChange,
+    });
+  });
+
   it("renders compare cards when multi-model chat is enabled on the main chat surface", () => {
     mockUseChatSession.availableModels = [
       {
