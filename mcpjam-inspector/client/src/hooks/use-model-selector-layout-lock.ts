@@ -13,8 +13,10 @@ export function useModelSelectorLayoutLock(
   isMultiModelMode: boolean,
 ): UseModelSelectorLayoutLockReturn {
   const [isModelSelectorOpen, setIsModelSelectorOpen] = useState(false);
-  const [multiModelLayoutModeWhileSelectorOpen, setMultiModelLayoutModeWhileSelectorOpen] =
-    useState<boolean | null>(null);
+  const [
+    multiModelLayoutModeWhileSelectorOpen,
+    setMultiModelLayoutModeWhileSelectorOpen,
+  ] = useState<boolean | null>(null);
 
   const isMultiModelLayoutMode = isModelSelectorOpen
     ? (multiModelLayoutModeWhileSelectorOpen ?? isMultiModelMode)
