@@ -78,6 +78,7 @@
     "typescript-eslint": "^8.53.1"
   },
   "dependencies": {
+    "@ai-sdk/amazon-bedrock": "^3.0.89",
     "@ai-sdk/anthropic": "^2.0.17",
     "@ai-sdk/azure": "^2.0.79",
     "@ai-sdk/deepseek": "^1.0.5",
@@ -85,6 +86,7 @@
     "@ai-sdk/mistral": "^2.0.19",
     "@ai-sdk/openai": "^2.0.32",
     "@ai-sdk/xai": "^2.0.29",
+    "@aws-sdk/credential-providers": "^3.1016.0",
     "@modelcontextprotocol/sdk": "^1.26.0",
     "@openrouter/ai-sdk-provider": "^2.2.0",
     "ai": "^6.0.141",
