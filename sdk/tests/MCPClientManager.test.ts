@@ -223,18 +223,30 @@ describe("MCPClientManager", () => {
     let manager: MCPClientManager;
     const inheritedEnvKey = "MCPJAM_TEST_INHERITED_ENV";
     const overrideEnvKey = "MCPJAM_TEST_OVERRIDE_ENV";
+    let previousInheritedEnv: string | undefined;
+    let previousOverrideEnv: string | undefined;
 
     beforeEach(() => {
+      previousInheritedEnv = process.env[inheritedEnvKey];
+      previousOverrideEnv = process.env[overrideEnvKey];
       manager = new MCPClientManager();
     });
 
     afterEach(async () => {
-      delete process.env[inheritedEnvKey];
-      delete process.env[overrideEnvKey];
       await manager.disconnectAllServers();
+      if (previousInheritedEnv === undefined) {
+        delete process.env[inheritedEnvKey];
+      } else {
+        process.env[inheritedEnvKey] = previousInheritedEnv;
+      }
+      if (previousOverrideEnv === undefined) {
+        delete process.env[overrideEnvKey];
+      } else {
+        process.env[overrideEnvKey] = previousOverrideEnv;
+      }
     });
 
-    it("does not inherit arbitrary parent env for stdio servers", async () => {
+    it("inherits parent process env for stdio servers", async () => {
       process.env[inheritedEnvKey] = "from-parent";
 
       await manager.connectToServer("env-inherit", {
@@ -245,12 +257,11 @@ describe("MCPClientManager", () => {
       const result = await manager.executeTool("env-inherit", "get-env", {});
       const env = JSON.parse(extractSingleText(result));
 
-      expect(env[inheritedEnvKey]).toBeUndefined();
+      expect(env[inheritedEnvKey]).toBe("from-parent");
     }, 30000);
 
-    it("lets explicit stdio env override parent values without inheriting arbitrary keys", async () => {
+    it("lets explicit stdio env override inherited parent values", async () => {
       process.env[overrideEnvKey] = "from-parent";
-      process.env[inheritedEnvKey] = "from-parent";
 
       await manager.connectToServer("env-override", {
         command: "npx",
@@ -264,7 +275,6 @@ describe("MCPClientManager", () => {
       const env = JSON.parse(extractSingleText(result));
 
       expect(env[overrideEnvKey]).toBe("from-config");
-      expect(env[inheritedEnvKey]).toBeUndefined();
     }, 30000);
 
     it("passes cwd to stdio child processes", async () => {
@@ -300,6 +310,22 @@ describe("MCPClientManager", () => {
           timeout: 1000,
         })
       ).rejects.toThrow(/stdio startup failed/);
+    }, 10000);
+
+    it("keeps stdio server context for silent initialization failures", async () => {
+      await expect(
+        manager.connectToServer("silent-timeout", {
+          command: process.execPath,
+          args: [
+            "-e",
+            "setInterval(() => {}, 1000);",
+          ],
+          stderr: "pipe",
+          timeout: 200,
+        })
+      ).rejects.toThrow(
+        /Failed to connect to MCP server "silent-timeout" via stdio: MCP error -32001: Request timed out/
+      );
     }, 10000);
 
     it("keeps draining stderr after startup for noisy stdio servers", async () => {

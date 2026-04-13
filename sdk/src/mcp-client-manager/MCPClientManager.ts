@@ -5,7 +5,6 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import {
   StdioClientTransport,
-  getDefaultEnvironment,
 } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
@@ -1077,7 +1076,7 @@ export class MCPClientManager {
     const underlying = new StdioClientTransport({
       command: config.command,
       args: config.args,
-      env: { ...getDefaultEnvironment(), ...(config.env ?? {}) },
+      env: { ...this.getProcessEnvironment(), ...(config.env ?? {}) },
       stderr: config.stderr,
       cwd: config.cwd,
     });
@@ -1247,6 +1246,15 @@ export class MCPClientManager {
     }
   }
 
+  private getProcessEnvironment(): Record<string, string> {
+    return Object.fromEntries(
+      Object.entries(process.env).filter(
+        (entry): entry is [string, string] =>
+          typeof entry[1] === "string" && !entry[1].startsWith("()")
+      )
+    );
+  }
+
   private createStdioStderrDrain(
     transport: StdioClientTransport
   ): { cleanup: () => void; getCapturedOutput: () => string } {
@@ -1287,13 +1295,12 @@ export class MCPClientManager {
     error: unknown,
     stderrOutput: string
   ): Error {
-    if (!stderrOutput) {
-      return error instanceof Error ? error : new Error(String(error));
-    }
-
     const baseMessage =
       error instanceof Error ? error.message : String(error);
-    const message = `Failed to connect to MCP server "${serverId}" via stdio: ${baseMessage}\n\nChild process stderr:\n${stderrOutput}`;
+    const stderrSection = stderrOutput
+      ? `\n\nChild process stderr:\n${stderrOutput}`
+      : "";
+    const message = `Failed to connect to MCP server "${serverId}" via stdio: ${baseMessage}${stderrSection}`;
 
     if (error instanceof Error) {
       return new Error(message, { cause: error });

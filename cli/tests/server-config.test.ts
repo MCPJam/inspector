@@ -77,7 +77,7 @@ test("parseServerConfig builds a stdio config with args and env", () => {
     assert.equal("command" in config, true);
     assert.equal(config.command, "node");
     assert.deepEqual(config.args, ["server.js", "--flag"]);
-    assert.equal(config.env?.[inheritedEnvKey], "from-parent");
+    assert.equal(config.env?.[inheritedEnvKey], undefined);
     assert.equal(config.env?.FOO, "bar");
     assert.equal(config.env?.BAZ, "qux");
     assert.equal(config.cwd, "/tmp/mcpjam-test");

@@ -295,7 +295,7 @@ export function parseServerConfig(
   return {
     command,
     args: parseCommandArgs(options.args, options.commandArgs),
-    env: buildCliStdioEnvironment(options.env),
+    env: parseEnvironmentOption(options.env),
     ...(cwd ? { cwd } : {}),
     ...(clientCapabilities ? { clientCapabilities } : {}),
     stderr: "pipe",
@@ -379,23 +379,6 @@ function parseEnvironmentOption(
 
       return [key, envValue];
     }),
-  );
-}
-
-function buildCliStdioEnvironment(
-  values: string[] | undefined,
-): Record<string, string> {
-  return {
-    ...getProcessEnvironment(),
-    ...(parseEnvironmentOption(values) ?? {}),
-  };
-}
-
-function getProcessEnvironment(): Record<string, string> {
-  return Object.fromEntries(
-    Object.entries(process.env).filter(
-      (entry): entry is [string, string] => typeof entry[1] === "string",
-    ),
   );
 }
 
