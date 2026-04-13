@@ -397,8 +397,9 @@ export function FullscreenChatOverlay({
 }: FullscreenChatOverlayProps) {
   const sandboxHostStyle = useSandboxHostStyle();
   const sandboxHostTheme = useSandboxHostTheme();
-  const resolvedLoadingIndicatorVariant =
-    useResolvedLoadingIndicatorVariant(loadingIndicatorVariant);
+  const resolvedLoadingIndicatorVariant = useResolvedLoadingIndicatorVariant(
+    loadingIndicatorVariant,
+  );
   const resolvedThemeMode = sandboxHostTheme ?? "light";
   const isDarkSandboxTheme = resolvedThemeMode === "dark";
   const appearance = useMemo(

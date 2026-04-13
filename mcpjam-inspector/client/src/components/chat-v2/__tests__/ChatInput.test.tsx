@@ -435,7 +435,9 @@ describe("ChatInput", () => {
       fireEvent.click(screen.getByRole("button", { name: "Options" }));
 
       expect(screen.getByText("Host Style")).toBeInTheDocument();
-      expect(screen.getByRole("radio", { name: "ChatGPT" })).toBeInTheDocument();
+      expect(
+        screen.getByRole("radio", { name: "ChatGPT" }),
+      ).toBeInTheDocument();
       expect(screen.getByRole("radio", { name: "Claude" })).toBeInTheDocument();
     });
 
@@ -490,7 +492,9 @@ describe("ChatInput", () => {
       fireEvent.click(screen.getByRole("button", { name: "Options" }));
 
       expect(screen.queryByText("Host Style")).not.toBeInTheDocument();
-      expect(screen.queryByRole("radio", { name: "ChatGPT" })).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("radio", { name: "ChatGPT" }),
+      ).not.toBeInTheDocument();
     });
   });
 

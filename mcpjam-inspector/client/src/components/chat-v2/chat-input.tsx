@@ -232,12 +232,10 @@ export function ChatInput({
   const selectorHostStyle = hostStyle ?? sandboxHostStyle;
   const hasServerRows = Boolean(
     allServerConfigs &&
-      onServerToggle &&
-      Object.keys(allServerConfigs).length > 0,
+    onServerToggle &&
+    Object.keys(allServerConfigs).length > 0,
   );
-  const hasServerOptions = Boolean(
-    onAddServer || hasServerRows,
-  );
+  const hasServerOptions = Boolean(onAddServer || hasServerRows);
   const showHostStyleSelectorControl =
     showHostStyleSelector &&
     Boolean(selectorHostStyle) &&
