@@ -1,9 +1,15 @@
 import type { ReactNode } from "react";
-import { describe, it, expect, vi } from "vitest";
+import { beforeEach, describe, it, expect, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
 import { render, screen, fireEvent, within } from "@testing-library/react";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 import { selectAxisTickPercents, TraceTimeline } from "../trace-timeline";
+
+const mockCapture = vi.fn();
+
+vi.mock("posthog-js/react", () => ({
+  usePostHog: () => ({ capture: mockCapture }),
+}));
 
 vi.mock("@/components/ui/resizable", () => ({
   ResizablePanelGroup: ({ children }: { children: ReactNode }) => (
@@ -40,6 +46,10 @@ vi.mock("@/components/ui/json-editor", () => ({
     <div data-testid="json-editor">{JSON.stringify(value)}</div>
   ),
 }));
+
+beforeEach(() => {
+  mockCapture.mockClear();
+});
 
 describe("selectAxisTickPercents", () => {
   it("uses only endpoints when unmeasured, zero, or very narrow", () => {
@@ -171,6 +181,7 @@ describe("TraceTimeline detail pane", () => {
         startMs: 0,
         endMs: 120,
         toolName: "read_me",
+        toolCallId: "tc-100",
       },
     ];
     const transcriptMessages = [
@@ -391,6 +402,7 @@ describe("TraceTimeline detail pane", () => {
         startMs: 0,
         endMs: 20,
         toolName: "read_me",
+        toolCallId: "tc-101",
       },
     ];
     render(
@@ -402,6 +414,7 @@ describe("TraceTimeline detail pane", () => {
             content: [
               {
                 type: "tool-call",
+                toolCallId: "tc-101",
                 toolName: "read_me",
                 input: { x: 1 },
               },
@@ -428,6 +441,7 @@ describe("TraceTimeline detail pane", () => {
         startMs: 0,
         endMs: 20,
         toolName: "read_me",
+        toolCallId: "tc-102",
       },
     ];
     render(
@@ -439,6 +453,7 @@ describe("TraceTimeline detail pane", () => {
             content: [
               {
                 type: "tool-call",
+                toolCallId: "tc-102",
                 toolName: "read_me",
                 input: { x: 1 },
               },
@@ -467,6 +482,7 @@ describe("TraceTimeline detail pane", () => {
         startMs: 0,
         endMs: 20,
         toolName: "read_me",
+        toolCallId: "tc-103",
       },
     ];
     render(
@@ -478,6 +494,7 @@ describe("TraceTimeline detail pane", () => {
             content: [
               {
                 type: "tool-call",
+                toolCallId: "tc-103",
                 toolName: "read_me",
                 input: { x: 1 },
               },
@@ -496,6 +513,54 @@ describe("TraceTimeline detail pane", () => {
 
     const pane = screen.getByTestId("trace-detail-pane");
     expect(within(pane).getByText("Tool · read_me")).toBeInTheDocument();
+  });
+
+  it("captures row selection only once when clicking the label button", async () => {
+    const user = userEvent.setup();
+    const spans: EvalTraceSpan[] = [
+      {
+        id: "tool-a",
+        name: "read_me",
+        category: "tool",
+        startMs: 0,
+        endMs: 20,
+        toolName: "read_me",
+        toolCallId: "tc-104",
+      },
+    ];
+    render(
+      <TraceTimeline
+        recordedSpans={spans}
+        transcriptMessages={[
+          {
+            role: "assistant",
+            content: [
+              {
+                type: "tool-call",
+                toolCallId: "tc-104",
+                toolName: "read_me",
+                input: { x: 1 },
+              },
+            ],
+          },
+        ]}
+      />,
+    );
+
+    const toolRow = screen
+      .getAllByTestId("trace-row")
+      .find((el) => el.textContent?.includes("read_me"));
+    expect(toolRow).toBeTruthy();
+
+    await user.click(within(toolRow!).getByTestId("trace-row-label-button"));
+
+    expect(mockCapture).toHaveBeenCalledTimes(1);
+    expect(mockCapture).toHaveBeenCalledWith(
+      "trace_span_clicked",
+      expect.objectContaining({
+        span_kind: "span",
+      }),
+    );
   });
 
   it("labels generic LLM spans as Agent and keeps tokens out of the inline row text", () => {
