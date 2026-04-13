@@ -1,6 +1,6 @@
 # @mcpjam/cli
 
-Test, debug, and validate MCP servers — health checks, OAuth conformance, tool-surface diffing, and structured triage from the terminal or CI.
+Test, debug, and validate MCP servers. Health checks, OAuth conformance, tool-surface diffing, and structured triage from the terminal or CI.
 
 ## Install
 
@@ -21,8 +21,7 @@ $ mcpjam --help
 
 Usage: mcpjam [options] [command]
 
-Test, debug, and validate MCP servers — health checks, OAuth conformance,
-tool-surface diffing, and structured triage from the terminal or CI
+Test, debug, and validate MCP servers. Health checks, OAuth conformance, tool-surface diffing, and structured triage from the terminal or CI.
 
 Options:
   -v, --version      output the CLI version
@@ -59,7 +58,7 @@ mcpjam tools list --url https://your-server.com/mcp --access-token $TOKEN --form
 
 ## Why
 
-MCP servers ship without the testing infrastructure REST APIs take for granted. No health checks, no OAuth conformance tests, no deploy-time regression detection. `mcpjam` fills that gap.
+MCP servers don't have built-in health checks, OAuth conformance tests, or deploy-time regression detection. `mcpjam` adds those.
 
 ## What it does
 
@@ -73,7 +72,7 @@ mcpjam server doctor --url $MCP_SERVER_URL --access-token $TOKEN --format json
 
 ### Catch breaking changes before they ship
 
-`server export` snapshots your entire tool surface — names, schemas, descriptions, capabilities — as diffable JSON. A renamed parameter or changed description shows up in the diff.
+`server export` snapshots your entire tool surface as diffable JSON. A renamed parameter or changed description shows up in the diff.
 
 ```bash
 mcpjam server export --url $URL --access-token $TOKEN > before.json
@@ -92,7 +91,7 @@ mcpjam oauth conformance-suite --config ./oauth-matrix.json --format junit-xml >
 
 ### Verify tokens work end-to-end
 
-OAuth can succeed while `tools/list` returns 401 because the audience, scope, or session init is wrong. `--verify-call-tool` completes the full chain — OAuth, MCP connect, tool call — and reports which step fails.
+OAuth can succeed while `tools/list` returns 401 because the audience, scope, or session init is wrong. `--verify-call-tool` completes the full chain (OAuth, MCP connect, tool call) and reports which step fails.
 
 ```bash
 mcpjam oauth conformance --url $URL --protocol-version 2025-11-25 \
@@ -115,7 +114,7 @@ MCP has shipped three protocol versions (2025-03-26, 2025-06-18, 2025-11-25). Cl
 
 ### Structured debug artifacts
 
-`--debug-out` captures a JSON artifact with every request and response in the OAuth and MCP flow. Attach it to a ticket — no reproduction steps required.
+`--debug-out` captures a JSON artifact with every request and response in the OAuth and MCP flow. Attach it to a ticket instead of writing reproduction steps.
 
 ```bash
 mcpjam oauth login --url $URL --protocol-version 2025-11-25 \
@@ -124,7 +123,7 @@ mcpjam oauth login --url $URL --protocol-version 2025-11-25 \
 
 ### Incident triage
 
-Separate your failures from host-side failures. `--rpc` records what your server returned — transport type, status codes, raw JSON-RPC pairs — as a structured artifact for postmortems.
+Separate your failures from host-side failures. `--rpc` records what your server returned (transport type, status codes, raw JSON-RPC pairs) as a structured artifact for postmortems.
 
 ```bash
 mcpjam server doctor --url $URL --access-token $TOKEN --rpc --out incident-triage.json
@@ -138,6 +137,54 @@ Pipe the full schema inventory into your own linter, review it in a PR, or check
 mcpjam tools list --url $URL --access-token $TOKEN --format json \
   | jq '.tools[] | {name, description, inputSchema}'
 ```
+
+## GitHub Actions
+
+```yaml
+name: MCP Health Check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  mcp-doctor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: OAuth login (headless)
+        run: |
+          set -euo pipefail
+          npx -y @mcpjam/cli@latest oauth login \
+            --url ${{ secrets.MCP_SERVER_URL }} \
+            --protocol-version 2025-11-25 \
+            --registration dcr \
+            --auth-mode headless \
+            --format json > /tmp/oauth-result.json
+          TOKEN=$(jq -r '.credentials.accessToken // empty' /tmp/oauth-result.json)
+          rm -f /tmp/oauth-result.json
+          if [ -z "$TOKEN" ]; then
+            echo "::error::OAuth login did not return an access token"
+            exit 1
+          fi
+          echo "::add-mask::$TOKEN"
+          echo "MCP_TOKEN=$TOKEN" >> "$GITHUB_ENV"
+
+      - name: Run doctor
+        run: npx -y @mcpjam/cli@latest server doctor --url ${{ secrets.MCP_SERVER_URL }} --access-token $MCP_TOKEN --format json
+```
+
+If you already have a refresh token, you can skip the login step and pass it directly:
+
+```bash
+mcpjam server doctor --url $URL --refresh-token $REFRESH_TOKEN --client-id $CLIENT_ID --client-secret $CLIENT_SECRET --format json
+```
+
+See the full [CI documentation](https://docs.mcpjam.com/cli/ci-github-actions) for all authentication options.
 
 ## Documentation
 
