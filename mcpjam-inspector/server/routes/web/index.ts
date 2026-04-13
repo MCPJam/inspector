@@ -14,6 +14,7 @@ import oauthWeb from "./oauth.js";
 import exporter from "./export.js";
 import guestSession from "./guest-session.js";
 import chatHistory from "./chat-history.js";
+import conformanceWeb from "./conformance.js";
 import { fetchRemoteGuestJwks } from "../../utils/guest-session-source.js";
 
 const web = new Hono();
@@ -27,6 +28,7 @@ web.use("/sandboxes/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/evals/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/chat-v2", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/chat-history/*", bearerAuthMiddleware, guestRateLimitMiddleware);
+web.use("/conformance/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use(
   "/apps/mcp-apps/widget-content",
   bearerAuthMiddleware,
@@ -50,6 +52,7 @@ web.route("/apps", apps);
 web.route("/oauth", oauthWeb);
 web.route("/guest-session", guestSession);
 web.route("/chat-history", chatHistory);
+web.route("/conformance", conformanceWeb);
 
 // Public guest JWKS compatibility endpoint.
 web.get("/guest-jwks", async (c) => {

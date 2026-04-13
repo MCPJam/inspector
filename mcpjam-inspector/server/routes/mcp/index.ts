@@ -18,6 +18,7 @@ import tunnelsRoute from "./tunnels";
 import logLevel from "./log-level";
 import tasks from "./tasks";
 import skills from "./skills";
+import conformance from "./conformance";
 
 const mcp = new Hono();
 
@@ -87,5 +88,8 @@ mcp.route("/tasks", tasks);
 
 // Skills endpoints - Agent skills from .mcpjam/skills/
 mcp.route("/skills", skills);
+
+// Conformance endpoints - Protocol, Apps, OAuth checks
+mcp.route("/conformance", conformance);
 
 export default mcp;
