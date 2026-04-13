@@ -23,33 +23,20 @@ import {
   TooltipTrigger,
   TooltipProvider,
 } from "@/components/ui/tooltip";
-import { cn } from "@/lib/utils";
 import { copyToClipboard } from "@/lib/clipboard";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
+import { cn } from "@/lib/utils";
+import { CopyableCodeBlock } from "./copyable-code-block";
 
 const LEARN_MCP_URL = "https://learn.mcpjam.com/mcp";
-const SDK_README_URL =
-  "https://github.com/MCPJam/inspector/blob/main/sdk/README.md";
-
-/** Providers supported by TestAgent — same list as @mcpjam/sdk README (TestAgent). */
-export const SDK_TEST_AGENT_PROVIDERS =
-  "openai, anthropic, azure, google, mistral, deepseek, ollama, openrouter, xai" as const;
 
 const ENV_TAIL_SHELL = `export MCP_SERVER_URL=${LEARN_MCP_URL}
-# EVAL_MODEL = <provider>/<model-id> (any model your vendor exposes under that provider).
-# Supported providers for TestAgent: ${SDK_TEST_AGENT_PROVIDERS}
-# Examples: openai/gpt-4o-mini, anthropic/claude-sonnet-4-20250514, openrouter/openai/gpt-4o-mini
-export EVAL_MODEL=<provider/model-id>
-# Use the API key variable your provider expects; rename in both shell and test if needed:
-# OPENAI_API_KEY, ANTHROPIC_API_KEY, GOOGLE_API_KEY, etc.
-export LLM_API_KEY=<your-llm-api-key>`;
+export LLM_API_KEY=<your-llm-api-key>
+export EVAL_MODEL=<provider/model-id> # e.g. openai/gpt-4o-mini, anthropic/claude-sonnet-4-20250514`;
 
 const ENV_TAIL_DOTENV = `MCP_SERVER_URL=${LEARN_MCP_URL}
-# EVAL_MODEL = <provider>/<model-id>. TestAgent providers: ${SDK_TEST_AGENT_PROVIDERS}
-# Examples: openai/gpt-4o-mini, anthropic/claude-sonnet-4-20250514
-EVAL_MODEL=<provider/model-id>
-# Match your provider's usual env var name; sync with apiKey in the sample test below.
-LLM_API_KEY=<your-llm-api-key>`;
+LLM_API_KEY=<your-llm-api-key>
+EVAL_MODEL=<provider/model-id> # e.g. openai/gpt-4o-mini, anthropic/claude-sonnet-4-20250514`;
 
 function escapeDoubleQuotes(value: string): string {
   return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
@@ -82,11 +69,7 @@ export const SDK_EVAL_QUICKSTART_INSTALL = "npm install @mcpjam/sdk";
 export const SDK_EVAL_QUICKSTART_ENV = buildShellEnvSnippet(null);
 
 export const SDK_EVAL_QUICKSTART_RUN = `import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import {
-  MCPClientManager,
-  TestAgent,
-  createEvalRunReporter,
-} from "@mcpjam/sdk";
+import { MCPClientManager, TestAgent, EvalTest } from "@mcpjam/sdk";
 
 // MCPJam hosted learning server (tools: greet, display-mcp-app — see Learn in the app)
 const SERVER_ID = "learn";
@@ -96,12 +79,10 @@ const MCP_SERVER_URL =
 const LLM_API_KEY = process.env.LLM_API_KEY!;
 // provider/model-id — must match an allowed TestAgent provider (see Configure environment in the app or SDK README).
 const MODEL = process.env.EVAL_MODEL!;
-const MCPJAM_API_KEY = process.env.MCPJAM_API_KEY!;
 
 describe("MCP eval quickstart", () => {
   let manager: MCPClientManager;
   let agent: TestAgent;
-  let reporter: ReturnType<typeof createEvalRunReporter> | undefined;
 
   beforeAll(async () => {
     manager = new MCPClientManager();
@@ -115,127 +96,33 @@ describe("MCP eval quickstart", () => {
       maxSteps: 8,
       mcpClientManager: manager,
     });
-    reporter = createEvalRunReporter({
-      suiteName: "Quickstart suite",
-      apiKey: MCPJAM_API_KEY,
-      strict: true,
-      mcpClientManager: manager,
-      serverNames: [SERVER_ID],
-      expectedIterations: 1,
-    });
   }, 120_000);
 
   afterAll(async () => {
-    if (reporter?.getAddedCount()) {
-      try {
-        await reporter.finalize();
-      } catch (e) {
-        console.warn("MCPJam reporter finalize failed (non-fatal):", e);
-      }
-    }
     await manager.disconnectAllServers();
   }, 120_000);
 
   it(
-    "agent calls greet on the learning server",
+    "agent calls greet across a two-turn case",
     async () => {
-      const result = await agent.prompt(
-        "Use the greet tool to say hello to Ada.",
-      );
-      const passed = result.hasToolCall("greet");
-      expect(passed).toBe(true);
-      await reporter!.recordFromPrompt(result, {
-        caseTitle: "learning-server-greet",
-        passed,
+      const evalTest = new EvalTest({
+        name: "learning-server-greet-multi-turn",
         expectedToolCalls: [{ toolName: "greet" }],
+        test: async (agent) => {
+          const r1 = await agent.prompt("Use the greet tool to say hello to Ada.");
+          const r2 = await agent.prompt("Now greet Grace too.", { context: [r1] });
+          return r1.hasToolCall("greet") && r2.hasToolCall("greet");
+        },
       });
+      await evalTest.run(agent, {
+        iterations: 1,
+        mcpjam: { suiteName: "Quickstart suite", serverNames: [SERVER_ID] },
+      });
+      expect(evalTest.accuracy()).toBe(1);
     },
     90_000,
   );
 });`;
-
-/* ------------------------------------------------------------------ */
-/*  Shared helpers                                                     */
-/* ------------------------------------------------------------------ */
-
-function QuickstartCodeBlock({
-  code,
-  copyLabel,
-  className,
-  toolbarLabel,
-}: {
-  code: string;
-  copyLabel: string;
-  className?: string;
-  toolbarLabel?: string;
-}) {
-  const [copied, setCopied] = useState(false);
-
-  const handleCopy = useCallback(async () => {
-    const ok = await copyToClipboard(code);
-    if (ok) {
-      toast.success("Copied to clipboard");
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } else {
-      toast.error("Could not copy");
-    }
-  }, [code]);
-
-  return (
-    <div
-      className={cn(
-        "overflow-hidden rounded-lg border border-border bg-muted/30",
-        className,
-      )}
-    >
-      {toolbarLabel ? (
-        <div className="flex items-center justify-between gap-2 border-b border-border/60 bg-muted/50 px-3 py-2">
-          <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-            {toolbarLabel}
-          </span>
-          <button
-            type="button"
-            onClick={handleCopy}
-            aria-label={copyLabel}
-            className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-          >
-            {copied ? (
-              <Check className="h-4 w-4 text-green-600 dark:text-green-500" />
-            ) : (
-              <Copy className="h-4 w-4" />
-            )}
-          </button>
-        </div>
-      ) : null}
-      <div className="relative">
-        <pre
-          className={cn(
-            "max-h-[min(420px,55vh)] overflow-auto px-4 py-3.5 text-left font-mono text-[11px] leading-relaxed text-foreground sm:text-xs",
-            toolbarLabel ? "pr-4" : "pr-12",
-          )}
-          tabIndex={0}
-        >
-          <code>{code}</code>
-        </pre>
-        {!toolbarLabel ? (
-          <button
-            type="button"
-            onClick={handleCopy}
-            aria-label={copyLabel}
-            className="absolute right-2 top-2 rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-          >
-            {copied ? (
-              <Check className="h-4 w-4 text-green-600 dark:text-green-500" />
-            ) : (
-              <Copy className="h-4 w-4" />
-            )}
-          </button>
-        ) : null}
-      </div>
-    </div>
-  );
-}
 
 /* ------------------------------------------------------------------ */
 /*  StepCard                                                           */
@@ -251,7 +138,7 @@ function StepCard({
   children: React.ReactNode;
 }) {
   return (
-    <div className="rounded-xl border border-border/60 bg-card/50 px-5 py-4">
+    <div className="rounded-2xl border border-border/40 bg-card/40 px-5 py-4 shadow-sm backdrop-blur-sm">
       <div className="mb-3 flex items-center gap-2.5">
         <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary ring-1 ring-primary/20">
           {step}
@@ -310,7 +197,7 @@ function ApiKeyRow({
 }) {
   if (isAuthLoading) {
     return (
-      <div className="flex items-center gap-2 rounded-lg bg-muted/40 px-3 py-2.5">
+      <div className="flex items-center gap-2 rounded-lg border border-border/60 bg-muted/40 px-3 py-2.5">
         <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
         <span className="text-xs text-muted-foreground">Checking...</span>
       </div>
@@ -319,7 +206,7 @@ function ApiKeyRow({
 
   if (!isAuthenticated) {
     return (
-      <div className="flex items-center justify-between rounded-lg bg-muted/40 px-3 py-2">
+      <div className="flex items-center justify-between rounded-lg border border-border/60 bg-muted/40 px-3 py-2">
         <span className="text-xs font-medium text-muted-foreground">
           MCPJAM_API_KEY
         </span>
@@ -338,7 +225,7 @@ function ApiKeyRow({
 
   if (!workspaceId) {
     return (
-      <div className="flex items-center justify-between rounded-lg bg-muted/40 px-3 py-2">
+      <div className="flex items-center justify-between rounded-lg border border-border/60 bg-muted/40 px-3 py-2">
         <span className="text-xs font-medium text-muted-foreground">
           MCPJAM_API_KEY
         </span>
@@ -351,7 +238,7 @@ function ApiKeyRow({
 
   if (maybeApiKey === undefined) {
     return (
-      <div className="flex items-center gap-2 rounded-lg bg-muted/40 px-3 py-2.5">
+      <div className="flex items-center gap-2 rounded-lg border border-border/60 bg-muted/40 px-3 py-2.5">
         <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
         <span className="text-xs text-muted-foreground">Loading key...</span>
       </div>
@@ -361,7 +248,7 @@ function ApiKeyRow({
   if (plaintextKey) {
     return (
       <TooltipProvider delayDuration={300}>
-        <div className="flex items-center gap-2 rounded-lg bg-muted/40 px-3 py-2">
+        <div className="flex items-center gap-2 rounded-lg border border-border/60 bg-muted/40 px-3 py-2">
           <span className="shrink-0 text-xs font-medium text-muted-foreground">
             MCPJAM_API_KEY
           </span>
@@ -398,7 +285,7 @@ function ApiKeyRow({
 
   if (!existingKey) {
     return (
-      <div className="flex items-center justify-between rounded-lg bg-muted/40 px-3 py-2">
+      <div className="flex items-center justify-between rounded-lg border border-border/60 bg-muted/40 px-3 py-2">
         <span className="text-xs font-medium text-muted-foreground">
           MCPJAM_API_KEY
         </span>
@@ -417,7 +304,7 @@ function ApiKeyRow({
   }
 
   return (
-    <div className="flex items-center justify-between rounded-lg bg-muted/40 px-3 py-2">
+    <div className="flex items-center justify-between rounded-lg border border-border/60 bg-muted/40 px-3 py-2">
       <div className="flex items-center gap-2">
         <span className="text-xs font-medium text-muted-foreground">
           MCPJAM_API_KEY
@@ -554,10 +441,10 @@ export function SdkEvalQuickstart({
   const dotenvEnv = buildDotEnvSnippet(plaintextKey);
 
   return (
-    <div className="w-full max-w-2xl space-y-4">
-      {/* Step 1: Install */}
-      <StepCard step={1} title="Install">
-        <QuickstartCodeBlock
+    <div className="w-full max-w-4xl space-y-3">
+      {/* Step 1: Set up project */}
+      <StepCard step={1} title="Create a project and install the SDK">
+        <CopyableCodeBlock
           code={SDK_EVAL_QUICKSTART_INSTALL}
           copyLabel="Copy install command"
           toolbarLabel="Terminal"
@@ -588,38 +475,39 @@ export function SdkEvalQuickstart({
           onCopyKey={() => void handleCopyHeaderKey()}
           headerCopied={headerCopied}
         />
-        <QuickstartCodeBlock
+        <CopyableCodeBlock
           code={dotenvEnv}
           copyLabel="Copy .env"
           toolbarLabel=".env"
         />
-        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
-          <span>
-            Providers:{" "}
-            <span className="text-foreground/80">
-              {SDK_TEST_AGENT_PROVIDERS}
-            </span>
-          </span>
+        <div className="flex justify-end text-[11px] text-muted-foreground">
           <a
             className="inline-flex items-center gap-1 font-medium text-primary underline-offset-4 hover:underline"
-            href={SDK_README_URL}
+            href="https://docs.mcpjam.com/sdk"
             target="_blank"
             rel="noreferrer noopener"
           >
-            SDK README
+            Learn more and see all providers in the SDK docs
             <ExternalLink className="h-3 w-3" />
           </a>
         </div>
       </StepCard>
 
-      {/* Step 3: Run */}
-      <StepCard step={3} title="Run the test">
-        <QuickstartCodeBlock
+      {/* Step 3: Copy the demo test */}
+      <StepCard
+        step={3}
+        title="Add mcp-eval.quickstart.test.ts to your project"
+      >
+        <CopyableCodeBlock
           code={SDK_EVAL_QUICKSTART_RUN}
           copyLabel="Copy quickstart test file"
           toolbarLabel="mcp-eval.quickstart.test.ts"
         />
-        <QuickstartCodeBlock
+      </StepCard>
+
+      {/* Step 4: Run the demo test */}
+      <StepCard step={4} title="Run the demo test">
+        <CopyableCodeBlock
           code="npx vitest mcp-eval.quickstart.test.ts"
           copyLabel="Copy run command"
           toolbarLabel="Terminal"

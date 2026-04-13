@@ -19,11 +19,16 @@ const {
   disconnectAllServersMock: vi.fn().mockResolvedValue(undefined),
 }));
 
-vi.mock("@mcpjam/sdk", () => ({
-  MCPClientManager: vi.fn(() => ({
-    disconnectAllServers: disconnectAllServersMock,
-  })),
-}));
+vi.mock("@mcpjam/sdk", async () => {
+  const actual =
+    await vi.importActual<typeof import("@mcpjam/sdk")>("@mcpjam/sdk");
+  return {
+    ...actual,
+    MCPClientManager: vi.fn(() => ({
+      disconnectAllServers: disconnectAllServersMock,
+    })),
+  };
+});
 
 vi.mock("../../../services/evals/route-helpers.js", () => ({
   buildReplayManager: vi.fn(() => ({

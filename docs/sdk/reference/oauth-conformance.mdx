@@ -1,0 +1,250 @@
+---
+title: "OAuth Conformance SDK"
+description: "Programmatic OAuth conformance testing with OAuthConformanceTest and OAuthConformanceSuite"
+icon: "shield-check"
+---
+
+The OAuth Conformance SDK classes let you run the same flows the [CLI `oauth conformance`](/cli/oauth-conformance) command runs, but programmatically — for custom reporters, test frameworks, recording/replay via custom `fetchFn`, or Playwright-driven consent via `openUrl`.
+
+<Note>
+  For CLI usage (one-liners, CI recipes, troubleshooting), see [CLI: OAuth Conformance](/cli/oauth-conformance).
+  This page covers the TypeScript SDK only.
+</Note>
+
+## Import
+
+```typescript
+import { OAuthConformanceTest, OAuthConformanceSuite } from "@mcpjam/sdk";
+```
+
+---
+
+## Single flow
+
+```typescript
+const test = new OAuthConformanceTest({
+  serverUrl: "https://your-server.com/mcp",
+  protocolVersion: "2025-11-25",
+  registrationStrategy: "dcr",
+  auth: { mode: "headless" },
+  verification: { listTools: true },
+});
+
+const result = await test.run();
+
+console.log(result.passed);   // true
+console.log(result.summary);  // "OAuth conformance passed for ..."
+console.log(result.steps);    // Step-by-step results with HTTP traces
+```
+
+### OAuthConformanceConfig
+
+| Property | Type | Required | Default | Description |
+|----------|------|----------|---------|-------------|
+| `serverUrl` | `string` | Yes | | MCP server URL |
+| `protocolVersion` | `string` | Yes | | `2025-03-26`, `2025-06-18`, or `2025-11-25` |
+| `registrationStrategy` | `string` | Yes | | `cimd`, `dcr`, or `preregistered` |
+| `auth` | `OAuthConformanceAuthConfig` | No | `{ mode: "interactive" }` | Auth mode config |
+| `client` | `OAuthConformanceClientConfig` | No | `{}` | Client credentials config |
+| `verification` | `OAuthVerificationConfig` | No | `{}` | Post-auth verification config |
+| `scopes` | `string` | No | | Space-separated scope string |
+| `customHeaders` | `Record<string, string>` | No | | Extra HTTP headers |
+| `redirectUrl` | `string` | No | Auto-generated | OAuth redirect URL |
+| `fetchFn` | `typeof fetch` | No | `fetch` | Custom fetch for recording/replay |
+| `stepTimeout` | `number` | No | `30000` | Per-step timeout in ms |
+| `oauthConformanceChecks` | `boolean` | No | `false` | Run 3 additional negative checks post-flow |
+
+### OAuthConformanceAuthConfig
+
+```typescript
+type OAuthConformanceAuthConfig =
+  | { mode: "interactive"; openUrl?: (url: string) => Promise<void> }
+  | { mode: "headless" }
+  | {
+      mode: "client_credentials";
+      clientId: string;
+      clientSecret: string;
+    };
+```
+
+- `interactive.openUrl` — override how the consent URL is opened. Default launches the system browser. Use for Playwright, custom launchers, or logging the URL.
+
+### OAuthConformanceClientConfig
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `preregistered.clientId` | `string` | Required when `registrationStrategy === "preregistered"` |
+| `preregistered.clientSecret` | `string` | Required for `preregistered` + `client_credentials` |
+| `dynamicRegistration` | `Partial<OAuthDynamicRegistrationMetadata>` | Override the default DCR body (e.g. `client_name`, `logo_uri`, `scope`) |
+| `clientIdMetadataUrl` | `string` | CIMD metadata URL. Defaults to `https://www.mcpjam.com/.well-known/oauth/client-metadata.json` |
+
+### OAuthVerificationConfig
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `listTools` | `boolean` | `false` | Connect and call `tools/list` after auth |
+| `callTool` | `{ name, params? }` | | Also call the named tool (enables `listTools`) |
+| `timeout` | `number` | `30000` | Verification timeout in ms |
+
+---
+
+## SDK-only features
+
+These are available in the SDK but not exposed as CLI flags.
+
+### Custom fetch (`fetchFn`)
+
+Swap in a recording, mocking, or proxying fetch implementation:
+
+```typescript
+import { OAuthConformanceTest } from "@mcpjam/sdk";
+
+const requests: Request[] = [];
+
+const test = new OAuthConformanceTest({
+  serverUrl: "https://your-server.com/mcp",
+  protocolVersion: "2025-11-25",
+  registrationStrategy: "dcr",
+  fetchFn: async (url, init) => {
+    requests.push(new Request(url, init));
+    return fetch(url, init);
+  },
+});
+
+const result = await test.run();
+console.log(`Captured ${requests.length} HTTP requests`);
+```
+
+### DCR metadata overrides (`dynamicRegistration`)
+
+Customize the client metadata sent during Dynamic Client Registration:
+
+```typescript
+const test = new OAuthConformanceTest({
+  serverUrl: "https://your-server.com/mcp",
+  protocolVersion: "2025-11-25",
+  registrationStrategy: "dcr",
+  client: {
+    dynamicRegistration: {
+      client_name: "My Custom Test Client",
+      logo_uri: "https://example.com/logo.png",
+      scope: "read:tools write:tools",
+    },
+  },
+});
+```
+
+### Negative conformance checks (`oauthConformanceChecks`)
+
+When enabled, three extra checks run after a successful flow:
+
+1. **Invalid client** — sends a token request with an unknown `client_id`; expects rejection.
+2. **Invalid redirect** — sends a token request with a mismatched `redirect_uri`; expects rejection.
+3. **Token format** — validates the token response includes `access_token`, `token_type`, and expiration metadata.
+
+```typescript
+const test = new OAuthConformanceTest({
+  serverUrl: "https://your-server.com/mcp",
+  protocolVersion: "2025-11-25",
+  registrationStrategy: "dcr",
+  oauthConformanceChecks: true,
+});
+
+const result = await test.run();
+// result.steps will include oauth_invalid_client, oauth_invalid_redirect, oauth_token_format
+```
+
+<Note>
+  `oauthConformanceChecks` is also available via the CLI's `--conformance-checks` flag.
+</Note>
+
+---
+
+## Suite
+
+```typescript
+const suite = new OAuthConformanceSuite({
+  name: "My Server",
+  serverUrl: "https://your-server.com/mcp",
+  defaults: {
+    auth: { mode: "headless" },
+    verification: { listTools: true },
+  },
+  flows: [
+    { protocolVersion: "2025-11-25", registrationStrategy: "cimd" },
+    { protocolVersion: "2025-11-25", registrationStrategy: "dcr" },
+  ],
+});
+
+const result = await suite.run();
+
+console.log(result.passed);   // true
+console.log(result.summary);  // "All 2 flows passed for ..."
+for (const flow of result.results) {
+  console.log(`${flow.passed ? "PASS" : "FAIL"} ${flow.label}`);
+}
+```
+
+---
+
+## Result types
+
+### ConformanceResult
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `passed` | `boolean` | Whether the flow completed successfully |
+| `protocolVersion` | `string` | Protocol version tested |
+| `registrationStrategy` | `string` | Registration strategy tested |
+| `serverUrl` | `string` | Server URL tested |
+| `steps` | `StepResult[]` | Step-by-step results |
+| `summary` | `string` | Human-readable summary |
+| `durationMs` | `number` | Total duration |
+| `verification` | `VerificationResult` | Post-auth verification results (if enabled) |
+
+### StepResult
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `step` | `string` | Step identifier (e.g. `"discovery"`, `"token_request"`, `"verify_list_tools"`) |
+| `title` | `string` | Human-readable step name |
+| `summary` | `string` | Short result summary |
+| `status` | `"passed" \| "failed" \| "skipped"` | Step outcome |
+| `durationMs` | `number` | Step duration |
+| `logs` | `InfoLogEntry[]` | Structured log entries |
+| `http` | `HttpHistoryEntry` | Primary HTTP exchange (if any) |
+| `httpAttempts` | `HttpHistoryEntry[]` | All HTTP traces including retries |
+| `error` | `{ message, details? }` | Error info (if failed) |
+| `teachableMoments` | `string[]` | Educational hints for this step |
+
+### VerificationResult
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `listTools.passed` | `boolean` | Whether `tools/list` succeeded |
+| `listTools.toolCount` | `number` | Number of tools returned |
+| `listTools.durationMs` | `number` | Duration |
+| `listTools.error` | `string` | Error message if failed |
+| `callTool.passed` | `boolean` | Whether the tool call succeeded |
+| `callTool.toolName` | `string` | Name of the tool called |
+| `callTool.durationMs` | `number` | Duration |
+| `callTool.error` | `string` | Error message if failed |
+
+### OAuthConformanceSuiteResult
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `name` | `string` | Suite name |
+| `serverUrl` | `string` | Shared server URL |
+| `passed` | `boolean` | `true` iff every flow passed |
+| `results` | `Array<ConformanceResult & { label }>` | Per-flow results |
+| `summary` | `string` | Human-readable suite summary |
+| `durationMs` | `number` | Total suite duration |
+
+---
+
+## Related
+
+- [CLI: OAuth Conformance](/cli/oauth-conformance) — recipes, troubleshooting, CI integration
+- [CLI: OAuth Login](/cli/oauth-login) — interactive authentication and debugging
+- [MCPClientManager](/sdk/reference/mcp-client-manager) — connecting to MCP servers programmatically

@@ -11,19 +11,39 @@
  * which manages PiP/fullscreen at the widget level.
  */
 
-import { FormEvent, useState, useEffect, useCallback, useMemo } from "react";
-import { ArrowDown, Braces, Loader2, Trash2 } from "lucide-react";
+import {
+  FormEvent,
+  useState,
+  useEffect,
+  useLayoutEffect,
+  useCallback,
+  useMemo,
+  useRef,
+} from "react";
+import { Braces, Loader2, Trash2 } from "lucide-react";
 import { useAuth } from "@workos-inc/authkit-react";
 import type { ContentBlock } from "@modelcontextprotocol/sdk/types.js";
+import type { UIMessage } from "ai";
 import { ModelDefinition } from "@/shared/types";
 import { cn } from "@/lib/utils";
 import { Thread } from "@/components/chat-v2/thread";
 import { ChatInput } from "@/components/chat-v2/chat-input";
-import { StickToBottom, useStickToBottomContext } from "use-stick-to-bottom";
-import { formatErrorMessage } from "@/components/chat-v2/shared/chat-helpers";
+import { StickToBottom } from "use-stick-to-bottom";
+import { ScrollToBottomButton } from "@/components/chat-v2/shared/scroll-to-bottom-button";
+import {
+  formatErrorMessage,
+  DEFAULT_CHAT_COMPOSER_PLACEHOLDER,
+  MINIMAL_CHAT_COMPOSER_PLACEHOLDER,
+  cloneUiMessages,
+} from "@/components/chat-v2/shared/chat-helpers";
+import { MultiModelEmptyTraceDiagnosticsPanel } from "@/components/chat-v2/multi-model-empty-trace-diagnostics";
+import { MultiModelStartersEmptyLayout } from "@/components/chat-v2/multi-model-starters-empty";
 import { ErrorBox } from "@/components/chat-v2/error";
 import { ConfirmChatResetDialog } from "@/components/chat-v2/chat-input/dialogs/confirm-chat-reset-dialog";
-import { useChatSession } from "@/hooks/use-chat-session";
+import {
+  type ChatSessionResetReason,
+  useChatSession,
+} from "@/hooks/use-chat-session";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
@@ -56,9 +76,9 @@ import { useTrafficLogStore } from "@/stores/traffic-log-store";
 import { MCPJamFreeModelsPrompt } from "@/components/chat-v2/mcpjam-free-models-prompt";
 import { FullscreenChatOverlay } from "@/components/chat-v2/fullscreen-chat-overlay";
 import { useSharedAppState } from "@/state/app-state-context";
-import { XRaySnapshotView } from "@/components/xray/xray-snapshot-view";
 import { Settings2 } from "lucide-react";
 import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-overrides";
+import type { LoadingIndicatorVariant } from "@/components/chat-v2/shared/loading-indicator-content";
 import { useConvexAuth } from "convex/react";
 import { useWorkspaceServers } from "@/hooks/useViews";
 import { buildOAuthTokensByServerId } from "@/lib/oauth/oauth-tokens";
@@ -69,6 +89,28 @@ import {
   SandboxHostStyleProvider,
   SandboxHostThemeProvider,
 } from "@/contexts/sandbox-host-style-context";
+import { useComposerOnboarding } from "@/hooks/use-composer-onboarding";
+import { useDebouncedXRayPayload } from "@/hooks/use-debounced-x-ray-payload";
+import {
+  getChatComposerInteractivity,
+  useChatStopControls,
+} from "@/hooks/use-chat-stop-controls";
+import { HandDrawnSendHint } from "./HandDrawnSendHint";
+import { LiveTraceTimelineEmptyState } from "@/components/evals/live-trace-timeline-empty";
+import { LiveTraceRawEmptyState } from "@/components/evals/live-trace-raw-empty";
+import { TraceViewer } from "@/components/evals/trace-viewer";
+import { ChatTraceViewModeHeaderBar } from "@/components/evals/trace-view-mode-tabs";
+import type { PlaygroundServerSelectorProps } from "@/components/ActiveServerSelector";
+import {
+  buildPreludeTraceEnvelope,
+  type PreludeTraceExecution,
+} from "@/components/ui-playground/live-trace-prelude";
+import { type BroadcastChatTurnRequest } from "@/components/chat-v2/multi-model-chat-card";
+import { type MultiModelCardSummary } from "@/components/chat-v2/model-compare-card-header";
+import {
+  MultiModelPlaygroundCard,
+  type PlaygroundDeterministicExecutionRequest,
+} from "@/components/ui-playground/multi-model-playground-card";
 
 /** Custom device config - dimensions come from store */
 const CUSTOM_DEVICE_BASE = {
@@ -80,7 +122,9 @@ type ThreadThemeMode = "light" | "dark";
 
 interface PlaygroundMainProps {
   serverName: string;
+  enableMultiModelChat?: boolean;
   onWidgetStateChange?: (toolCallId: string, state: unknown) => void;
+  playgroundServerSelectorProps?: PlaygroundServerSelectorProps;
   // Execution state for "Invoking" indicator
   isExecuting?: boolean;
   executingToolName?: string | null;
@@ -114,30 +158,19 @@ interface PlaygroundMainProps {
   disableChatInput?: boolean;
   hideSaveViewButton?: boolean;
   disabledInputPlaceholder?: string;
+  loadingIndicatorVariant?: LoadingIndicatorVariant;
   // Onboarding
   initialInput?: string;
+  /** When true with `initialInput`, reveals the string with a typewriter effect (App Builder NUX). */
+  initialInputTypewriter?: boolean;
+  /** When true, Send / Enter are blocked until the playground server is connected. */
+  blockSubmitUntilServerConnected?: boolean;
   pulseSubmit?: boolean;
   showPostConnectGuide?: boolean;
   onFirstMessageSent?: () => void;
 }
 
-function ScrollToBottomButton() {
-  const { isAtBottom, scrollToBottom } = useStickToBottomContext();
-
-  if (isAtBottom) return null;
-
-  return (
-    <div className="pointer-events-none absolute inset-x-0 flex bottom-12 justify-center animate-in slide-in-from-bottom fade-in duration-200">
-      <button
-        type="button"
-        className="pointer-events-auto inline-flex items-center gap-2 rounded-full border border-border bg-background/90 px-2 py-2 text-xs font-medium shadow-sm transition hover:bg-accent"
-        onClick={() => scrollToBottom({ animation: "smooth" })}
-      >
-        <ArrowDown className="h-4 w-4" />
-      </button>
-    </div>
-  );
-}
+type PlaygroundTraceViewMode = "chat" | "timeline" | "raw";
 
 // Invoking indicator component (ChatGPT-style "Invoking [toolName]")
 function InvokingIndicator({
@@ -167,7 +200,9 @@ function InvokingIndicator({
 
 export function PlaygroundMain({
   serverName,
+  enableMultiModelChat = false,
   onWidgetStateChange,
+  playgroundServerSelectorProps,
   isExecuting,
   executingToolName,
   invokingMessage,
@@ -188,7 +223,10 @@ export function PlaygroundMain({
   disableChatInput = false,
   hideSaveViewButton = false,
   disabledInputPlaceholder = "Input disabled in Views",
+  loadingIndicatorVariant = "default",
   initialInput,
+  initialInputTypewriter = false,
+  blockSubmitUntilServerConnected = false,
   pulseSubmit = false,
   showPostConnectGuide = false,
   onFirstMessageSent,
@@ -196,23 +234,7 @@ export function PlaygroundMain({
   const { signUp } = useAuth();
   const posthog = usePostHog();
   const clearLogs = useTrafficLogStore((s) => s.clear);
-  const [input, setInput] = useState(initialInput ?? "");
-  const [guidedInputCursorTrigger, setGuidedInputCursorTrigger] = useState(0);
-  const [isGuidedInputPristine, setIsGuidedInputPristine] = useState(
-    showPostConnectGuide && !!initialInput,
-  );
 
-  // Seed the guided prompt when the post-connect flow becomes active.
-  useEffect(() => {
-    if (showPostConnectGuide && initialInput) {
-      setInput(initialInput);
-      setIsGuidedInputPristine(true);
-      setGuidedInputCursorTrigger((current) => current + 1);
-      return;
-    }
-
-    setIsGuidedInputPristine(false);
-  }, [initialInput, showPostConnectGuide]);
   const [mcpPromptResults, setMcpPromptResults] = useState<MCPPromptResult[]>(
     [],
   );
@@ -228,11 +250,40 @@ export function PlaygroundMain({
     }[]
   >([]);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
-  const [xrayMode, setXrayMode] = useState(false);
+  const [traceViewMode, setTraceViewMode] =
+    useState<PlaygroundTraceViewMode>("chat");
   const [isWidgetFullscreen, setIsWidgetFullscreen] = useState(false);
   const [isFullscreenChatOpen, setIsFullscreenChatOpen] = useState(false);
   const [injectedToolRenderOverrides, setInjectedToolRenderOverrides] =
     useState<Record<string, ToolRenderOverride>>({});
+  const [preludeTraceExecutions, setPreludeTraceExecutions] = useState<
+    PreludeTraceExecution[]
+  >([]);
+  const [broadcastRequest, setBroadcastRequest] =
+    useState<BroadcastChatTurnRequest | null>(null);
+  const [deterministicExecutionRequest, setDeterministicExecutionRequest] =
+    useState<PlaygroundDeterministicExecutionRequest | null>(null);
+  const [stopBroadcastRequestId, setStopBroadcastRequestId] = useState(0);
+  const [multiModelSessionGeneration, setMultiModelSessionGeneration] =
+    useState(0);
+  const [multiModelSummaries, setMultiModelSummaries] = useState<
+    Record<string, MultiModelCardSummary>
+  >({});
+  const [multiModelHasMessages, setMultiModelHasMessages] = useState<
+    Record<string, boolean>
+  >({});
+  const [multiCompareEnterVersion, setMultiCompareEnterVersion] = useState(0);
+  const [multiCompareEnterMessages, setMultiCompareEnterMessages] = useState<
+    UIMessage[]
+  >([]);
+  const [multiAddColumnSeeds, setMultiAddColumnSeeds] = useState<
+    Record<string, { version: number; messages: UIMessage[] }>
+  >({});
+  const multiTranscriptsRef = useRef<Record<string, UIMessage[]>>({});
+  const prevCompareModeRef = useRef(false);
+  const lastMultiLeadIdRef = useRef<string | null>(null);
+  const prevCompareModelIdsRef = useRef<Set<string>>(new Set());
+  const multiAddColumnSeqRef = useRef(0);
   // Device config from store (managed by DisplayContextHeader)
   const storeDeviceType = useUIPlaygroundStore((s) => s.deviceType);
   const customViewport = useUIPlaygroundStore((s) => s.customViewport);
@@ -262,6 +313,21 @@ export function PlaygroundMain({
     [serverName, servers],
   );
 
+  const serverConnected = Boolean(
+    serverName && servers[serverName]?.connectionStatus === "connected",
+  );
+
+  const handlePlaygroundServerToggle = useCallback(
+    (name: string) => {
+      if (name === serverName) {
+        playgroundServerSelectorProps?.onServerChange("none");
+      } else {
+        playgroundServerSelectorProps?.onServerChange(name);
+      }
+    },
+    [serverName, playgroundServerSelectorProps],
+  );
+
   // Hosted mode context (workspaceId, serverIds, OAuth tokens)
   const activeWorkspace = appState.workspaces[appState.activeWorkspaceId];
   const convexWorkspaceId = activeWorkspace?.sharedWorkspaceId ?? null;
@@ -287,6 +353,7 @@ export function PlaygroundMain({
   );
 
   // Use shared chat session hook
+  const composerOnResetRef = useRef<() => void>(() => {});
   const {
     messages,
     setMessages,
@@ -294,8 +361,13 @@ export function PlaygroundMain({
     stop,
     status,
     error,
+    chatSessionId,
     selectedModel,
     setSelectedModel,
+    selectedModelIds,
+    setSelectedModelIds,
+    multiModelEnabled,
+    setMultiModelEnabled,
     availableModels,
     isAuthLoading,
     systemPrompt,
@@ -306,6 +378,12 @@ export function PlaygroundMain({
     toolServerMap,
     tokenUsage,
     resetChat,
+    startChatWithMessages,
+    liveTraceEnvelope,
+    requestPayloadHistory,
+    hasTraceSnapshot,
+    hasLiveTimelineContent,
+    traceViewsSupported,
     isStreaming,
     disableForAuthentication,
     submitBlocked,
@@ -317,14 +395,14 @@ export function PlaygroundMain({
     hostedWorkspaceId: convexWorkspaceId,
     hostedSelectedServerIds,
     hostedOAuthTokens,
-    onReset: () => {
-      if (showPostConnectGuide && isGuidedInputPristine && initialInput) {
-        setInput((currentInput) => currentInput || initialInput);
-        setGuidedInputCursorTrigger((current) => current + 1);
+    onReset: (reason?: ChatSessionResetReason) => {
+      setModelContextQueue([]);
+      setPreludeTraceExecutions([]);
+      setInjectedToolRenderOverrides({});
+      if (reason === "servers-changed") {
         return;
       }
-
-      setInput("");
+      composerOnResetRef.current();
     },
   });
 
@@ -383,6 +461,219 @@ export function PlaygroundMain({
   const isThreadEmpty = !messages.some(
     (msg) => msg.role === "user" || msg.role === "assistant",
   );
+  const multiModelAvailableModels = useMemo(
+    () => new Map(availableModels.map((model) => [String(model.id), model])),
+    [availableModels],
+  );
+  const resolvedSelectedModels = useMemo(() => {
+    const persistedModels = selectedModelIds
+      .map((modelId) => multiModelAvailableModels.get(modelId))
+      .filter((model): model is ModelDefinition => !!model && !model.disabled);
+
+    if (persistedModels.length > 0) {
+      return persistedModels.slice(0, 3);
+    }
+
+    return selectedModel ? [selectedModel] : [];
+  }, [multiModelAvailableModels, selectedModel, selectedModelIds]);
+  const canEnableMultiModel =
+    enableMultiModelChat && availableModels.length > 1;
+  const isMultiModelMode = canEnableMultiModel && multiModelEnabled;
+
+  useEffect(() => {
+    if (isMultiModelMode && resolvedSelectedModels[0]) {
+      lastMultiLeadIdRef.current = String(resolvedSelectedModels[0].id);
+    }
+  }, [isMultiModelMode, resolvedSelectedModels]);
+
+  const handleMultiModelTranscriptSync = useCallback(
+    (modelId: string, transcript: UIMessage[]) => {
+      multiTranscriptsRef.current[modelId] = cloneUiMessages(transcript);
+    },
+    [],
+  );
+
+  const clearMultiModelUiState = useCallback(() => {
+    setBroadcastRequest(null);
+    setDeterministicExecutionRequest(null);
+    setStopBroadcastRequestId(0);
+    setMultiModelSummaries({});
+    setMultiModelHasMessages({});
+    setMultiAddColumnSeeds({});
+    prevCompareModelIdsRef.current = new Set();
+  }, []);
+
+  useLayoutEffect(() => {
+    const prev = prevCompareModeRef.current;
+    if (prev && !isMultiModelMode) {
+      const leadId = lastMultiLeadIdRef.current;
+      if (leadId) {
+        const transcript = multiTranscriptsRef.current[leadId];
+        const hasConversation =
+          transcript?.some(
+            (m) => m.role === "user" || m.role === "assistant",
+          ) ?? false;
+        if (hasConversation && transcript) {
+          startChatWithMessages(cloneUiMessages(transcript));
+        }
+      }
+      clearMultiModelUiState();
+    }
+    if (!prev && isMultiModelMode) {
+      setMultiCompareEnterVersion((v) => v + 1);
+      setMultiCompareEnterMessages(cloneUiMessages(messages));
+    }
+    prevCompareModeRef.current = isMultiModelMode;
+  }, [
+    isMultiModelMode,
+    messages,
+    startChatWithMessages,
+    clearMultiModelUiState,
+  ]);
+
+  useEffect(() => {
+    if (!isMultiModelMode) {
+      prevCompareModelIdsRef.current = new Set();
+      return;
+    }
+    const current = new Set(resolvedSelectedModels.map((m) => String(m.id)));
+    const prev = prevCompareModelIdsRef.current;
+    const added = [...current].filter((id) => !prev.has(id));
+    const leadId = resolvedSelectedModels[0]
+      ? String(resolvedSelectedModels[0].id)
+      : null;
+    if (prev.size > 0 && added.length > 0 && leadId) {
+      const src = multiTranscriptsRef.current[leadId] ?? [];
+      multiAddColumnSeqRef.current += 1;
+      const v = multiAddColumnSeqRef.current;
+      setMultiAddColumnSeeds((s) => {
+        const next = { ...s };
+        for (const id of added) {
+          next[id] = { version: v, messages: cloneUiMessages(src) };
+        }
+        return next;
+      });
+    }
+    prevCompareModelIdsRef.current = current;
+  }, [isMultiModelMode, resolvedSelectedModels]);
+
+  const effectiveHasMessages = isMultiModelMode
+    ? Object.values(multiModelHasMessages).some(Boolean)
+    : !isThreadEmpty;
+  const preludeTraceEnvelope = useMemo(
+    () => buildPreludeTraceEnvelope(preludeTraceExecutions),
+    [preludeTraceExecutions],
+  );
+  const effectiveLiveTraceEnvelope =
+    hasTraceSnapshot || isStreaming
+      ? liveTraceEnvelope
+      : (preludeTraceEnvelope ?? liveTraceEnvelope);
+  // Match ChatTabV2 `showTopTraceViewTabs`: keep Trace/Chat/Raw while multi-model is
+  // empty; hide the top bar once compare columns are active (per-card trace tabs take over).
+  const showTraceViewTabs =
+    traceViewsSupported && (!isMultiModelMode || !effectiveHasMessages);
+  const activeTraceViewMode: PlaygroundTraceViewMode = showTraceViewTabs
+    ? traceViewMode
+    : "chat";
+  const showLiveTraceDiagnostics = activeTraceViewMode !== "chat";
+  const showMultiModelTraceEmptyPanel =
+    isMultiModelMode &&
+    !effectiveHasMessages &&
+    showLiveTraceDiagnostics &&
+    !showPostConnectGuide;
+  const multiModelTracePanelModel =
+    selectedModel ?? resolvedSelectedModels[0] ?? null;
+  const { isStreamingActive, stopActiveChat } = useChatStopControls({
+    isMultiModelMode,
+    isStreaming,
+    multiModelSummaries,
+    setStopBroadcastRequestId,
+    stop,
+  });
+
+  // Composer onboarding: typewriter effect, guided input, submit gating, NUX CTA
+  const composer = useComposerOnboarding({
+    initialInput,
+    initialInputTypewriter,
+    blockSubmitUntilServerConnected,
+    pulseSubmit,
+    showPostConnectGuide,
+    serverConnected,
+    isThreadEmpty: !effectiveHasMessages,
+  });
+  composerOnResetRef.current = composer.onSessionReset;
+  const { composerDisabled, sendBlocked } = getChatComposerInteractivity({
+    isStreamingActive,
+    composerDisabled: disableChatInput || submitBlocked,
+    submitDisabled:
+      disableChatInput || submitBlocked || composer.submitGatedByServer,
+  });
+
+  useEffect(() => {
+    if (!canEnableMultiModel && multiModelEnabled) {
+      setMultiModelEnabled(false);
+      setSelectedModelIds(selectedModel ? [String(selectedModel.id)] : []);
+      return;
+    }
+
+    const sanitizedIds = resolvedSelectedModels.map((model) =>
+      String(model.id),
+    );
+    const persistedIds = selectedModelIds.slice(0, 3);
+    const idsChanged =
+      sanitizedIds.length !== persistedIds.length ||
+      sanitizedIds.some((modelId, index) => modelId !== persistedIds[index]);
+
+    if (idsChanged) {
+      setSelectedModelIds(
+        sanitizedIds.length > 0 && multiModelEnabled
+          ? sanitizedIds
+          : selectedModel
+            ? [String(selectedModel.id)]
+            : [],
+      );
+    }
+  }, [
+    canEnableMultiModel,
+    multiModelEnabled,
+    resolvedSelectedModels,
+    selectedModel,
+    selectedModelIds,
+    setMultiModelEnabled,
+    setSelectedModelIds,
+  ]);
+
+  useEffect(() => {
+    const activeModelIds = new Set(
+      resolvedSelectedModels.map((model) => String(model.id)),
+    );
+
+    setMultiModelSummaries((previous) =>
+      Object.fromEntries(
+        Object.entries(previous).filter(([modelId]) =>
+          activeModelIds.has(modelId),
+        ),
+      ),
+    );
+    setMultiModelHasMessages((previous) =>
+      Object.fromEntries(
+        Object.entries(previous).filter(([modelId]) =>
+          activeModelIds.has(modelId),
+        ),
+      ),
+    );
+  }, [resolvedSelectedModels]);
+
+  useEffect(() => {
+    if (!traceViewsSupported) {
+      setTraceViewMode("chat");
+    }
+  }, [traceViewsSupported]);
+
+  useEffect(() => {
+    setTraceViewMode("chat");
+    setPreludeTraceExecutions([]);
+  }, [chatSessionId]);
 
   // Keyboard shortcut for clear chat (Cmd/Ctrl+Shift+K)
   useEffect(() => {
@@ -393,18 +684,37 @@ export function PlaygroundMain({
         e.key.toLowerCase() === "k"
       ) {
         e.preventDefault();
-        if (!isThreadEmpty) {
+        if (effectiveHasMessages) {
           setShowClearConfirm(true);
         }
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isThreadEmpty]);
+  }, [effectiveHasMessages]);
 
   // Handle deterministic execution injection
   useEffect(() => {
     if (!pendingExecution) return;
+
+    if (isMultiModelMode) {
+      const requestId = Date.now();
+      setDeterministicExecutionRequest({
+        id: requestId,
+        toolName: pendingExecution.toolName,
+        params: pendingExecution.params,
+        result: pendingExecution.result,
+        toolMeta: pendingExecution.toolMeta,
+        state: pendingExecution.state,
+        errorText: pendingExecution.errorText,
+        renderOverride: pendingExecution.renderOverride,
+        toolCallId:
+          pendingExecution.toolCallId ?? `playground-tool-${requestId}`,
+        replaceExisting: pendingExecution.replaceExisting,
+      });
+      onExecutionInjected();
+      return;
+    }
 
     const { toolName, params, result, toolMeta } = pendingExecution;
     const deterministicOptions =
@@ -455,8 +765,37 @@ export function PlaygroundMain({
     } else {
       setMessages((prev) => [...prev, ...newMessages]);
     }
+    setPreludeTraceExecutions((prev) => {
+      const nextExecution: PreludeTraceExecution = {
+        toolCallId,
+        toolName,
+        params,
+        result,
+        state:
+          pendingExecution.state === "output-error"
+            ? "output-error"
+            : "output-available",
+        errorText: pendingExecution.errorText,
+      };
+
+      if (pendingExecution.replaceExisting && pendingExecution.toolCallId) {
+        return prev.map((execution) =>
+          execution.toolCallId === pendingExecution.toolCallId
+            ? nextExecution
+            : execution,
+        );
+      }
+
+      return [...prev, nextExecution];
+    });
     onExecutionInjected(toolCallId);
-  }, [pendingExecution, setMessages, onExecutionInjected]);
+  }, [isMultiModelMode, onExecutionInjected, pendingExecution, setMessages]);
+
+  useEffect(() => {
+    if (!isMultiModelMode && hasTraceSnapshot) {
+      setPreludeTraceExecutions([]);
+    }
+  }, [hasTraceSnapshot, isMultiModelMode]);
 
   // Handle widget state changes
   const handleWidgetStateChange = useCallback(
@@ -493,13 +832,119 @@ export function PlaygroundMain({
     [],
   );
 
-  // Handle clear chat
-  const handleClearChat = useCallback(() => {
+  const resetMultiModelSessions = useCallback(() => {
+    clearMultiModelUiState();
+    setMultiModelSessionGeneration((previous) => previous + 1);
+  }, [clearMultiModelUiState]);
+
+  const handleResetAllChats = useCallback(() => {
+    composer.prepareForClearChat();
     resetChat();
     clearLogs();
     setInjectedToolRenderOverrides({});
+    setPreludeTraceExecutions([]);
+    resetMultiModelSessions();
+  }, [clearLogs, composer, resetChat, resetMultiModelSessions]);
+
+  const handleClearChat = useCallback(() => {
+    handleResetAllChats();
     setShowClearConfirm(false);
-  }, [resetChat, clearLogs]);
+  }, [handleResetAllChats]);
+
+  const handleSingleModelChange = useCallback(
+    (model: ModelDefinition) => {
+      setSelectedModel(model);
+      setSelectedModelIds([String(model.id)]);
+      setMultiModelEnabled(false);
+    },
+    [setMultiModelEnabled, setSelectedModel, setSelectedModelIds],
+  );
+
+  const handleSelectedModelsChange = useCallback(
+    (models: ModelDefinition[]) => {
+      const nextSelectedModels = models.slice(0, 3);
+      const leadModel = nextSelectedModels[0] ?? selectedModel;
+
+      if (leadModel) {
+        setSelectedModel(leadModel);
+      }
+      setSelectedModelIds(
+        nextSelectedModels.map((selectedModelItem) =>
+          String(selectedModelItem.id),
+        ),
+      );
+    },
+    [selectedModel, setSelectedModel, setSelectedModelIds],
+  );
+
+  const handleMultiModelEnabledChange = useCallback(
+    (enabled: boolean) => {
+      setMultiModelEnabled(enabled);
+    },
+    [setMultiModelEnabled],
+  );
+
+  const handleRequireToolApprovalChange = useCallback(
+    (enabled: boolean) => {
+      setRequireToolApproval(enabled);
+      if (isMultiModelMode) {
+        handleResetAllChats();
+      }
+    },
+    [handleResetAllChats, isMultiModelMode, setRequireToolApproval],
+  );
+
+  const handleMultiModelSummaryChange = useCallback(
+    (summary: MultiModelCardSummary) => {
+      setMultiModelSummaries((previous) => ({
+        ...previous,
+        [summary.modelId]: summary,
+      }));
+    },
+    [],
+  );
+
+  const handleMultiModelHasMessagesChange = useCallback(
+    (modelId: string, hasMessages: boolean) => {
+      setMultiModelHasMessages((previous) => ({
+        ...previous,
+        [modelId]: hasMessages,
+      }));
+    },
+    [],
+  );
+
+  const queueBroadcastRequest = useCallback(
+    (
+      request: Omit<BroadcastChatTurnRequest, "id">,
+      captureProps?: Record<string, unknown>,
+    ) => {
+      posthog.capture("app_builder_send_message", {
+        location: "app_builder_tab",
+        platform: detectPlatform(),
+        environment: detectEnvironment(),
+        model_id: selectedModel?.id ?? null,
+        model_name: selectedModel?.name ?? null,
+        model_provider: selectedModel?.provider ?? null,
+        multi_model_enabled: isMultiModelMode,
+        multi_model_count: isMultiModelMode ? resolvedSelectedModels.length : 1,
+        ...(captureProps ?? {}),
+      });
+
+      setBroadcastRequest({
+        ...request,
+        id: Date.now(),
+      });
+    },
+    [
+      isMultiModelMode,
+      posthog,
+      resolvedSelectedModels.length,
+      selectedModel?.id,
+      selectedModel?.name,
+      selectedModel?.provider,
+    ],
+  );
 
   const mergedToolRenderOverrides = useMemo(
     () => ({
@@ -509,18 +954,25 @@ export function PlaygroundMain({
     [injectedToolRenderOverrides, externalToolRenderOverrides],
   );
 
-  // Placeholder text
-  let placeholder = "Ask something to render UI...";
+  // Placeholder: Chat tab strings for multi-model; playground default for single-model
+  let placeholder = showPostConnectGuide
+    ? MINIMAL_CHAT_COMPOSER_PLACEHOLDER
+    : isMultiModelMode
+      ? DEFAULT_CHAT_COMPOSER_PLACEHOLDER
+      : "Try a prompt that could call your tools...";
   if (disableChatInput) {
     placeholder = disabledInputPlaceholder;
   }
   if (isAuthLoading) {
     placeholder = "Loading...";
   } else if (disableForAuthentication) {
-    placeholder = "Sign in to use chat";
+    placeholder = isMultiModelMode
+      ? "Sign in to use free chat"
+      : "Sign in to use chat";
   }
 
   const shouldShowUpsell = disableForAuthentication && !isAuthLoading;
+  const showMultiModelStarterPrompts = !shouldShowUpsell && !isAuthLoading;
   const handleSignUp = () => {
     posthog.capture("sign_up_button_clicked", {
       location: "app_builder_tab",
@@ -534,22 +986,17 @@ export function PlaygroundMain({
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const hasContent =
-      input.trim() || mcpPromptResults.length > 0 || fileAttachments.length > 0;
-    if (hasContent && status === "ready" && !submitBlocked) {
-      if (showPostConnectGuide && isGuidedInputPristine) {
-        setIsGuidedInputPristine(false);
-      }
-      if (displayMode === "fullscreen" && isWidgetFullscreen) {
+      composer.input.trim() ||
+      mcpPromptResults.length > 0 ||
+      fileAttachments.length > 0;
+    if (hasContent && !sendBlocked) {
+      if (
+        !isMultiModelMode &&
+        displayMode === "fullscreen" &&
+        isWidgetFullscreen
+      ) {
         setIsFullscreenChatOpen(true);
       }
-      posthog.capture("app_builder_send_message", {
-        location: "app_builder_tab",
-        platform: detectPlatform(),
-        environment: detectEnvironment(),
-        model_id: selectedModel?.id ?? null,
-        model_name: selectedModel?.name ?? null,
-        model_provider: selectedModel?.provider ?? null,
-      });
 
       // Include any pending model context from widgets (SEP-1865 ui/update-model-context)
       // Sent as "user" messages for compatibility with model provider APIs
@@ -570,23 +1017,40 @@ export function PlaygroundMain({
         }),
       );
 
-      if (contextMessages.length > 0) {
-        setMessages((prev) => [...prev, ...contextMessages]);
-      }
-
       // Convert file attachments to FileUIPart[] format for the AI SDK
       const files =
         fileAttachments.length > 0
           ? await attachmentsToFileUIParts(fileAttachments)
           : undefined;
 
-      sendMessage({ text: input, files });
-      setInput("");
+      if (isMultiModelMode) {
+        queueBroadcastRequest({
+          text: composer.input,
+          files,
+          prependMessages: [],
+        });
+        setModelContextQueue([]);
+      } else {
+        if (contextMessages.length > 0) {
+          setMessages((prev) => [...prev, ...contextMessages]);
+        }
+        queueBroadcastRequest(
+          {
+            text: composer.input,
+            files,
+            prependMessages: [],
+          },
+          { single_model_send: true },
+        );
+        sendMessage({ text: composer.input, files });
+        setModelContextQueue([]); // Clear after sending
+      }
+
+      composer.setInput("");
       setMcpPromptResults([]);
       // Revoke object URLs and clear file attachments
       revokeFileAttachmentUrls(fileAttachments);
       setFileAttachments([]);
-      setModelContextQueue([]); // Clear after sending
 
       // Notify onboarding that the first message was sent
       onFirstMessageSent?.();
@@ -594,42 +1058,64 @@ export function PlaygroundMain({
   };
 
   const errorMessage = formatErrorMessage(error);
-  const inputDisabled = disableChatInput || status !== "ready" || submitBlocked;
-  const handleInputChange = useCallback(
-    (nextInput: string) => {
-      setInput(nextInput);
-      if (
-        showPostConnectGuide &&
-        isGuidedInputPristine &&
-        nextInput !== initialInput
-      ) {
-        setIsGuidedInputPristine(false);
+
+  const handleMultiModelStarterPrompt = useCallback(
+    (prompt: string) => {
+      if (composerDisabled || sendBlocked) {
+        composer.setInput(prompt);
+        return;
       }
+      queueBroadcastRequest({
+        text: prompt,
+        prependMessages: [],
+      });
+      composer.setInput("");
+      revokeFileAttachmentUrls(fileAttachments);
+      setFileAttachments([]);
+      onFirstMessageSent?.();
     },
-    [initialInput, isGuidedInputPristine, showPostConnectGuide],
+    [
+      composer,
+      composerDisabled,
+      fileAttachments,
+      onFirstMessageSent,
+      queueBroadcastRequest,
+      sendBlocked,
+    ],
   );
+  const traceViewerTrace = effectiveLiveTraceEnvelope ?? {
+    traceVersion: 1 as const,
+    messages: [],
+  };
+  const showLiveTracePending =
+    activeTraceViewMode === "timeline" &&
+    !hasLiveTimelineContent &&
+    !preludeTraceEnvelope?.spans?.length;
 
   // Shared chat input props
   const sharedChatInputProps = {
-    value: input,
-    onChange: handleInputChange,
+    value: composer.input,
+    onChange: composer.handleInputChange,
     onSubmit,
-    stop,
-    disabled: inputDisabled,
-    isLoading: isStreaming,
+    stop: stopActiveChat,
+    disabled: composerDisabled,
+    isLoading: isStreamingActive,
     placeholder,
     currentModel: selectedModel,
     availableModels,
-    onModelChange: (model: ModelDefinition) => {
-      setSelectedModel(model);
-      resetChat();
-    },
+    onModelChange: handleSingleModelChange,
+    multiModelEnabled: isMultiModelMode,
+    selectedModels: resolvedSelectedModels,
+    onSelectedModelsChange: handleSelectedModelsChange,
+    onMultiModelEnabledChange: handleMultiModelEnabledChange,
+    enableMultiModel: canEnableMultiModel,
     systemPrompt,
     onSystemPromptChange: setSystemPrompt,
     temperature,
     onTemperatureChange: setTemperature,
-    onResetChat: resetChat,
-    submitDisabled: submitBlocked,
+    onResetChat: handleResetAllChats,
+    submitDisabled:
+      disableChatInput || submitBlocked || composer.submitGatedByServer,
     tokenUsage,
     selectedServers,
     mcpToolsTokenCount: null,
@@ -643,16 +1129,15 @@ export function PlaygroundMain({
     onChangeSkillResults: setSkillResults,
     fileAttachments,
     onChangeFileAttachments: setFileAttachments,
-    xrayMode,
-    onXrayModeChange: setXrayMode,
     requireToolApproval,
-    onRequireToolApprovalChange: setRequireToolApproval,
-    pulseSubmit: pulseSubmit && isGuidedInputPristine,
+    onRequireToolApprovalChange: handleRequireToolApprovalChange,
+    pulseSubmit: composer.sendButtonOnboardingPulse,
     minimalMode: showPostConnectGuide,
-    moveCaretToEndTrigger:
-      showPostConnectGuide && isThreadEmpty
-        ? guidedInputCursorTrigger
-        : undefined,
+    moveCaretToEndTrigger: composer.moveCaretToEndTrigger,
+    allServerConfigs: playgroundServerSelectorProps?.serverConfigs,
+    onServerToggle: handlePlaygroundServerToggle,
+    onReconnectServer: playgroundServerSelectorProps?.onReconnect,
+    onAddServer: playgroundServerSelectorProps?.onConnect,
   };
 
   // Check if widget should take over the full container
@@ -680,19 +1165,24 @@ export function PlaygroundMain({
   const threadContent = (
     <div className="relative flex flex-col flex-1 min-h-0">
       {isThreadEmpty ? (
-        // Empty state - centered when onboarding, otherwise top-aligned
+        // Empty state — centered (welcome + composer, or post-connect guide)
         <div
           className={cn(
             "flex-1 flex overflow-y-auto overflow-x-hidden px-4 min-h-0",
             "items-center justify-center",
+            hostStyle === "chatgpt"
+              ? effectiveThreadTheme === "dark"
+                ? "bg-[#212121] text-neutral-50"
+                : "bg-white text-neutral-950"
+              : effectiveThreadTheme === "dark"
+                ? "bg-[#262624] text-[#F1F0ED]"
+                : "bg-[#FAF9F5] text-[rgba(61,57,41,1)]",
           )}
         >
           <div
             className={cn(
-              "text-center mx-auto",
-              showPostConnectGuide
-                ? "max-w-3xl w-full"
-                : "max-w-md space-y-6 py-8",
+              "mx-auto w-full max-w-4xl text-center",
+              !showPostConnectGuide && "py-8",
             )}
           >
             {isAuthLoading ? (
@@ -708,9 +1198,77 @@ export function PlaygroundMain({
                 <ChatInput {...sharedChatInputProps} hasMessages={false} />
               </>
             ) : (
-              <h3 className="text-sm font-semibold text-foreground mb-2">
-                Test ChatGPT Apps and MCP Apps
-              </h3>
+              <div className="flex w-full flex-col items-center gap-8 [-webkit-user-drag:none]">
+                <div className="text-center max-w-md">
+                  <img
+                    src={
+                      effectiveThreadTheme === "dark"
+                        ? "/mcp_jam_dark.png"
+                        : "/mcp_jam_light.png"
+                    }
+                    alt="MCPJam"
+                    draggable={false}
+                    className="h-10 w-auto mx-auto mb-4"
+                  />
+                  <div className="space-y-3">
+                    <h3
+                      className={cn(
+                        "text-lg font-semibold",
+                        hostStyle === "chatgpt"
+                          ? effectiveThreadTheme === "dark"
+                            ? "text-white"
+                            : "text-neutral-950"
+                          : effectiveThreadTheme === "dark"
+                            ? "text-[#F1F0ED]"
+                            : "text-[rgba(61,57,41,1)]",
+                      )}
+                    >
+                      This is your playground for MCP.
+                    </h3>
+                    <p
+                      className={cn(
+                        "text-base leading-7",
+                        hostStyle === "chatgpt"
+                          ? effectiveThreadTheme === "dark"
+                            ? "text-neutral-400"
+                            : "text-neutral-600"
+                          : effectiveThreadTheme === "dark"
+                            ? "text-[#F1F0ED]/80"
+                            : "text-[rgba(61,57,41,0.72)]",
+                      )}
+                    >
+                      Test prompts, inspect tools, and debug AI-powered apps.
+                      Type a message here, or run a tool on the left.
+                    </p>
+                  </div>
+                </div>
+                {!isWidgetFullTakeover && !showFullscreenChatOverlay && (
+                  <div className="w-full shrink-0">
+                    {errorMessage && (
+                      <div className="pb-3">
+                        <ErrorBox
+                          message={errorMessage.message}
+                          errorDetails={errorMessage.details}
+                          code={errorMessage.code}
+                          statusCode={errorMessage.statusCode}
+                          isRetryable={errorMessage.isRetryable}
+                          isMCPJamPlatformError={
+                            errorMessage.isMCPJamPlatformError
+                          }
+                          onResetChat={resetChat}
+                        />
+                      </div>
+                    )}
+                    <ChatInput {...sharedChatInputProps} hasMessages={false} />
+                    {composer.sendNuxCtaVisible && (
+                      <HandDrawnSendHint
+                        hostStyle={hostStyle}
+                        theme={effectiveThreadTheme}
+                      />
+                    )}
+                  </div>
+                )}
+              </div>
             )}
           </div>
         </div>
@@ -727,7 +1285,7 @@ export function PlaygroundMain({
                 messages={messages}
                 sendFollowUpMessage={handleSendFollowUp}
                 model={selectedModel}
-                isLoading={status === "submitted"}
+                isLoading={isStreaming}
                 toolsMetadata={toolsMetadata}
                 toolServerMap={toolServerMap}
                 onWidgetStateChange={handleWidgetStateChange}
@@ -741,6 +1299,7 @@ export function PlaygroundMain({
                 onToolApprovalResponse={addToolApprovalResponse}
                 toolRenderOverrides={mergedToolRenderOverrides}
                 showSaveViewButton={!hideSaveViewButton}
+                loadingIndicatorVariant={loadingIndicatorVariant}
               />
               {/* Invoking indicator while tool execution is in progress */}
               {isExecuting && executingToolName && (
@@ -755,15 +1314,14 @@ export function PlaygroundMain({
         </StickToBottom>
       )}
 
-      {/* Single ChatInput that persists - hidden when widget takes over.
-          During guided onboarding it moves inline while the thread is empty,
-          then returns to the footer after the first message. */}
+      {/* Footer ChatInput: with messages, or empty when center has no composer
+          (auth loading / upsell). Otherwise empty thread uses centered composer only. */}
       {!isWidgetFullTakeover &&
         !showFullscreenChatOverlay &&
-        (!showPostConnectGuide || !isThreadEmpty) && (
+        (!isThreadEmpty || shouldShowUpsell || isAuthLoading) && (
           <div
             className={cn(
-              "flex-shrink-0 max-w-3xl mx-auto w-full",
+              "mx-auto w-full max-w-4xl shrink-0",
               isThreadEmpty ? "px-4 pb-4" : "p-3",
             )}
           >
@@ -790,20 +1348,20 @@ export function PlaygroundMain({
           messages={messages}
           open={isFullscreenChatOpen}
           onOpenChange={setIsFullscreenChatOpen}
-          input={input}
-          onInputChange={setInput}
+          input={composer.input}
+          onInputChange={composer.setInput}
           placeholder={placeholder}
-          disabled={inputDisabled}
-          canSend={
-            !disableChatInput &&
-            status === "ready" &&
-            !submitBlocked &&
-            input.trim().length > 0
-          }
-          isThinking={status === "submitted"}
+          disabled={composerDisabled}
+          canSend={!sendBlocked && composer.input.trim().length > 0}
+          isThinking={isStreamingActive}
+          loadingIndicatorVariant={loadingIndicatorVariant}
+          onStop={stopActiveChat}
           onSend={() => {
-            sendMessage({ text: input });
-            setInput("");
+            if (sendBlocked) {
+              return;
+            }
+            sendMessage({ text: composer.input });
+            composer.setInput("");
             setMcpPromptResults([]);
           }}
         />
@@ -816,49 +1374,70 @@ export function PlaygroundMain({
     <div
       className={cn(
         "h-full flex flex-col overflow-hidden",
-        showPostConnectGuide ? "bg-background" : "bg-muted/20",
+        showPostConnectGuide || isMultiModelMode
+          ? "bg-background"
+          : "bg-muted/20",
       )}
     >
       {/* Device frame header — hidden during onboarding */}
       {!showPostConnectGuide && (
-        <div
-          className="relative flex h-11 items-center justify-center px-3 border-b border-border bg-background/50 text-xs text-muted-foreground flex-shrink-0"
-          data-testid="playground-main-header"
-        >
-          {/* All controls centered */}
-          <DisplayContextHeader
-            protocol={selectedProtocol}
-            showThemeToggle
-            themeModeOverride={effectiveThreadTheme}
-            onThemeToggleOverride={toggleLocalThreadTheme}
-          />
-
-          {/* Right actions - absolutely positioned */}
-          {!isThreadEmpty && (
-            <div className="absolute right-3">
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-7 w-7 text-muted-foreground hover:text-foreground"
-                    onClick={() => setShowClearConfirm(true)}
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  <p>Clear chat</p>
-                  <p className="text-xs text-muted-foreground">
-                    {navigator.platform.includes("Mac")
-                      ? "⌘⇧K"
-                      : "Ctrl+Shift+K"}
-                  </p>
-                </TooltipContent>
-              </Tooltip>
+        <>
+          <div
+            className={cn(
+              "@container/playground-header relative flex h-11 min-w-0 w-full items-center justify-center border-b border-border px-3 text-xs text-muted-foreground flex-shrink-0",
+              isMultiModelMode ? "bg-background" : "bg-background/50",
+              effectiveHasMessages && "pr-10 sm:pr-11",
+            )}
+            data-testid="playground-main-header"
+          >
+            <div className="flex min-w-0 max-w-full justify-center">
+              <DisplayContextHeader
+                protocol={selectedProtocol}
+                showThemeToggle
+                themeModeOverride={effectiveThreadTheme}
+                onThemeToggleOverride={toggleLocalThreadTheme}
+              />
             </div>
-          )}
-        </div>
+
+            {effectiveHasMessages && (
+              <div className="absolute right-3">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                      onClick={() => setShowClearConfirm(true)}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p>Clear chat</p>
+                    <p className="text-xs text-muted-foreground">
+                      {navigator.platform.includes("Mac")
+                        ? "⌘⇧K"
+                        : "Ctrl+Shift+K"}
+                    </p>
+                  </TooltipContent>
+                </Tooltip>
+              </div>
+            )}
+          </div>
+
+          {showTraceViewTabs ? (
+            <ChatTraceViewModeHeaderBar
+              mode={activeTraceViewMode}
+              activeVariant="sidebar"
+              onModeChange={(mode) => {
+                if (mode === "tools") {
+                  return;
+                }
+                setTraceViewMode(mode);
+              }}
+            />
+          ) : null}
+        </>
       )}
 
       <ConfirmChatResetDialog
@@ -867,73 +1446,294 @@ export function PlaygroundMain({
         onConfirm={handleClearChat}
       />
 
-      {/* Device frame container */}
-      <div className="flex-1 flex items-center justify-center min-h-0 overflow-auto">
-        <SandboxHostStyleProvider value={hostStyle}>
-          <SandboxHostThemeProvider value={effectiveThreadTheme}>
-            <div
-              className={cn(
-                "sandbox-host-shell app-theme-scope relative flex flex-col overflow-hidden",
-                effectiveThreadTheme === "dark" && "dark",
-              )}
-              data-testid="playground-thread-shell"
-              data-host-style={hostStyle}
-              data-theme-preset={themePreset}
-              data-thread-theme={effectiveThreadTheme}
-              style={{
-                width: showPostConnectGuide ? "100%" : deviceConfig.width,
-                maxWidth: "100%",
-                height: showPostConnectGuide
-                  ? "100%"
-                  : isWidgetFullTakeover
-                    ? "100%"
-                    : deviceConfig.height,
-                maxHeight: "100%",
-                transform: isWidgetFullscreen ? "none" : "translateZ(0)",
-                backgroundColor: showPostConnectGuide
-                  ? undefined
-                  : hostBackgroundColor,
-              }}
-            >
-              {/* X-Ray mode: show raw JSON view of AI payload */}
-              {xrayMode && (
-                <StickToBottom
-                  className="relative flex flex-1 flex-col min-h-0"
-                  resize="smooth"
-                  initial="smooth"
-                >
-                  <div className="relative flex-1 min-h-0">
-                    <StickToBottom.Content className="flex flex-col min-h-0">
-                      <XRaySnapshotView
-                        systemPrompt={systemPrompt}
-                        messages={messages}
-                        selectedServers={selectedServers}
-                        onClose={() => setXrayMode(false)}
-                      />
-                    </StickToBottom.Content>
-                    <ScrollToBottomButton />
-                  </div>
-                  <div className="flex-shrink-0 border-t border-border">
-                    <div className="max-w-xl mx-auto w-full p-3">
-                      <ChatInput
-                        {...sharedChatInputProps}
-                        hasMessages={!isThreadEmpty}
+      <div className="flex-1 min-h-0 overflow-hidden">
+        {isMultiModelMode ? (
+          <div className="flex h-full min-h-0 flex-col overflow-hidden">
+            {showMultiModelTraceEmptyPanel && multiModelTracePanelModel ? (
+              <MultiModelEmptyTraceDiagnosticsPanel
+                activeTraceViewMode={activeTraceViewMode}
+                effectiveHasMessages={effectiveHasMessages}
+                hasLiveTimelineContent={hasLiveTimelineContent}
+                traceViewerTrace={traceViewerTrace}
+                model={multiModelTracePanelModel}
+                toolsMetadata={toolsMetadata}
+                toolServerMap={toolServerMap}
+                traceStartedAtMs={liveTraceEnvelope?.traceStartedAtMs ?? null}
+                traceEndedAtMs={liveTraceEnvelope?.traceEndedAtMs ?? null}
+                rawRequestPayloadHistory={{
+                  entries: requestPayloadHistory,
+                  hasUiMessages: effectiveHasMessages,
+                }}
+                rawEmptyTestId="playground-multi-empty-raw-pending"
+                timelineEmptyTestId="playground-multi-empty-trace-pending"
+                onRevealNavigateToChat={() => setTraceViewMode("chat")}
+                errorFooterSlot={
+                  errorMessage ? (
+                    <div className="max-w-4xl mx-auto px-4 pt-4">
+                      <ErrorBox
+                        message={errorMessage.message}
+                        errorDetails={errorMessage.details}
+                        code={errorMessage.code}
+                        statusCode={errorMessage.statusCode}
+                        isRetryable={errorMessage.isRetryable}
+                        isMCPJamPlatformError={
+                          errorMessage.isMCPJamPlatformError
+                        }
+                        onResetChat={handleResetAllChats}
                       />
                     </div>
-                  </div>
-                </StickToBottom>
+                  ) : null
+                }
+                chatInputSlot={
+                  <ChatInput {...sharedChatInputProps} hasMessages={false} />
+                }
+              />
+            ) : null}
+
+            {!effectiveHasMessages && !showMultiModelTraceEmptyPanel ? (
+              <MultiModelStartersEmptyLayout
+                isAuthLoading={isAuthLoading}
+                showStarterPrompts={showMultiModelStarterPrompts}
+                authPrimarySlot={
+                  isAuthLoading ? (
+                    <div className="text-center space-y-4">
+                      <div className="mx-auto h-8 w-8 animate-spin rounded-full border-b-2 border-primary" />
+                      <p className="text-sm text-muted-foreground">
+                        Loading...
+                      </p>
+                    </div>
+                  ) : shouldShowUpsell ? (
+                    <div className="space-y-4">
+                      <MCPJamFreeModelsPrompt onSignUp={handleSignUp} />
+                    </div>
+                  ) : null
+                }
+                onStarterPrompt={handleMultiModelStarterPrompt}
+                chatInputSlot={
+                  <ChatInput {...sharedChatInputProps} hasMessages={false} />
+                }
+              />
+            ) : null}
+
+            <div
+              data-testid="playground-multi-model-compare-section"
+              className={cn(
+                "flex flex-1 min-h-0 flex-col overflow-hidden",
+                !effectiveHasMessages && "hidden",
               )}
-              {/* Thread: kept mounted (but hidden) during X-Ray to preserve
-                  MCPAppsRenderer iframes and bridge connections */}
-              <div
-                className="flex flex-col flex-1 min-h-0"
-                style={xrayMode ? { display: "none" } : undefined}
-              >
-                {threadContent}
+              aria-hidden={!effectiveHasMessages}
+            >
+              <div className="flex min-h-64 flex-1 flex-col overflow-hidden px-4 py-4">
+                <div
+                  data-testid="playground-multi-model-grid"
+                  className={cn(
+                    "grid h-full min-h-0 w-full min-w-0 gap-4 auto-rows-[minmax(0,1fr)] [&>*]:min-h-0",
+                    resolvedSelectedModels.length <= 1 && "grid-cols-1",
+                    resolvedSelectedModels.length === 2 &&
+                      "grid-cols-1 xl:grid-cols-2",
+                    resolvedSelectedModels.length >= 3 &&
+                      "grid-cols-1 xl:grid-cols-2 2xl:grid-cols-3",
+                  )}
+                >
+                  {resolvedSelectedModels.map((model) => (
+                    <MultiModelPlaygroundCard
+                      key={`${multiModelSessionGeneration}:${String(model.id)}`}
+                      model={model}
+                      comparisonSummaries={Object.values(multiModelSummaries)}
+                      selectedServers={selectedServers}
+                      broadcastRequest={broadcastRequest}
+                      deterministicExecutionRequest={
+                        deterministicExecutionRequest
+                      }
+                      stopRequestId={stopBroadcastRequestId}
+                      initialSystemPrompt={systemPrompt}
+                      initialTemperature={temperature}
+                      initialRequireToolApproval={requireToolApproval}
+                      hostedWorkspaceId={convexWorkspaceId}
+                      hostedSelectedServerIds={hostedSelectedServerIds}
+                      hostedOAuthTokens={hostedOAuthTokens}
+                      displayMode={displayMode}
+                      onDisplayModeChange={handleDisplayModeChange}
+                      hostStyle={hostStyle}
+                      effectiveThreadTheme={effectiveThreadTheme}
+                      deviceType={storeDeviceType}
+                      selectedProtocol={selectedProtocol}
+                      hideSaveViewButton={hideSaveViewButton}
+                      onWidgetStateChange={onWidgetStateChange}
+                      toolRenderOverrides={externalToolRenderOverrides}
+                      isExecuting={isExecuting}
+                      executingToolName={executingToolName}
+                      invokingMessage={invokingMessage}
+                      onSummaryChange={handleMultiModelSummaryChange}
+                      onHasMessagesChange={handleMultiModelHasMessagesChange}
+                      showComparisonChrome={resolvedSelectedModels.length > 1}
+                      suppressThreadEmptyHint={false}
+                      compareEnterVersion={multiCompareEnterVersion}
+                      compareEnterMessages={multiCompareEnterMessages}
+                      addColumnSeed={
+                        multiAddColumnSeeds[String(model.id)] ?? null
+                      }
+                      onTranscriptSync={handleMultiModelTranscriptSync}
+                    />
+                  ))}
+                </div>
               </div>
+
+              {!showMultiModelTraceEmptyPanel ? (
+                <div className="shrink-0 border-t border-border bg-background/80 backdrop-blur-sm">
+                  {!isAuthLoading ? (
+                    <div className="w-full p-4">
+                      <ChatInput
+                        {...sharedChatInputProps}
+                        hasMessages={effectiveHasMessages}
+                      />
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
-          </SandboxHostThemeProvider>
-        </SandboxHostStyleProvider>
+          </div>
+        ) : (
+          <>
+            {showLiveTraceDiagnostics && (
+              <SandboxHostStyleProvider value={hostStyle}>
+                <SandboxHostThemeProvider value={effectiveThreadTheme}>
+                  <div
+                    className={cn(
+                      "flex h-full min-h-0 flex-col overflow-hidden",
+                      effectiveThreadTheme === "dark" && "dark",
+                    )}
+                    data-testid="playground-trace-diagnostics"
+                  >
+                    {activeTraceViewMode === "raw" && !showLiveTracePending ? (
+                      <StickToBottom
+                        className="flex flex-1 min-h-0 flex-col overflow-hidden"
+                        resize="smooth"
+                        initial="smooth"
+                      >
+                        <div className="relative flex flex-1 min-h-0 overflow-hidden">
+                          <StickToBottom.Content className="flex min-h-0 flex-1 flex-col overflow-y-auto px-4 pt-4">
+                            <div className="mx-auto flex min-h-0 w-full max-w-6xl flex-1 flex-col">
+                              {isThreadEmpty ? (
+                                <LiveTraceRawEmptyState testId="playground-live-raw-pending" />
+                              ) : (
+                                <TraceViewer
+                                  trace={traceViewerTrace}
+                                  model={selectedModel}
+                                  toolsMetadata={toolsMetadata}
+                                  toolServerMap={toolServerMap}
+                                  forcedViewMode={activeTraceViewMode}
+                                  hideToolbar
+                                  fillContent
+                                  onRevealNavigateToChat={() =>
+                                    setTraceViewMode("chat")
+                                  }
+                                  rawGrowWithContent
+                                  rawRequestPayloadHistory={{
+                                    entries: requestPayloadHistory,
+                                    hasUiMessages: !isThreadEmpty,
+                                  }}
+                                />
+                              )}
+                            </div>
+                          </StickToBottom.Content>
+                          <ScrollToBottomButton />
+                        </div>
+                      </StickToBottom>
+                    ) : (
+                      <div className="flex-1 min-h-0 overflow-hidden px-4 py-4">
+                        <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-col">
+                          {showLiveTracePending ? (
+                            <LiveTraceTimelineEmptyState testId="playground-live-trace-pending" />
+                          ) : (
+                            <TraceViewer
+                              trace={traceViewerTrace}
+                              model={selectedModel}
+                              toolsMetadata={toolsMetadata}
+                              toolServerMap={toolServerMap}
+                              forcedViewMode={activeTraceViewMode}
+                              hideToolbar
+                              fillContent
+                              onRevealNavigateToChat={() =>
+                                setTraceViewMode("chat")
+                              }
+                              rawRequestPayloadHistory={{
+                                entries: requestPayloadHistory,
+                                hasUiMessages: !isThreadEmpty,
+                              }}
+                            />
+                          )}
+                        </div>
+                      </div>
+                    )}
+                    <div className="flex-shrink-0 border-t border-border bg-background/70">
+                      <div className="max-w-4xl mx-auto w-full p-3">
+                        {errorMessage && (
+                          <div className="pb-3">
+                            <ErrorBox
+                              message={errorMessage.message}
+                              errorDetails={errorMessage.details}
+                              code={errorMessage.code}
+                              statusCode={errorMessage.statusCode}
+                              isRetryable={errorMessage.isRetryable}
+                              isMCPJamPlatformError={
+                                errorMessage.isMCPJamPlatformError
+                              }
+                              onResetChat={resetChat}
+                            />
+                          </div>
+                        )}
+                        <ChatInput
+                          {...sharedChatInputProps}
+                          hasMessages={!isThreadEmpty}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </SandboxHostThemeProvider>
+              </SandboxHostStyleProvider>
+            )}
+
+            {/* Device frame container */}
+            <div
+              className="flex h-full items-center justify-center min-h-0 overflow-auto"
+              style={showLiveTraceDiagnostics ? { display: "none" } : undefined}
+            >
+              <SandboxHostStyleProvider value={hostStyle}>
+                <SandboxHostThemeProvider value={effectiveThreadTheme}>
+                  <div
+                    className={cn(
+                      "sandbox-host-shell app-theme-scope relative flex flex-col overflow-hidden",
+                      effectiveThreadTheme === "dark" && "dark",
+                    )}
+                    data-testid="playground-thread-shell"
+                    data-host-style={hostStyle}
+                    data-theme-preset={themePreset}
+                    data-thread-theme={effectiveThreadTheme}
+                    style={{
+                      width: showPostConnectGuide ? "100%" : deviceConfig.width,
+                      maxWidth: "100%",
+                      height: showPostConnectGuide
+                        ? "100%"
+                        : isWidgetFullTakeover
+                          ? "100%"
+                          : deviceConfig.height,
+                      maxHeight: "100%",
+                      transform: isWidgetFullscreen ? "none" : "translateZ(0)",
+                      backgroundColor: showPostConnectGuide
+                        ? undefined
+                        : hostBackgroundColor,
+                    }}
+                  >
+                    <div className="flex flex-col flex-1 min-h-0">
+                      {threadContent}
+                    </div>
+                  </div>
+                </SandboxHostThemeProvider>
+              </SandboxHostStyleProvider>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );

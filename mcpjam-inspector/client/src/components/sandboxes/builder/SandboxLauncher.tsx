@@ -6,13 +6,13 @@ import {
   CommandItem,
   CommandList,
 } from "@/components/ui/command";
-import { Search, Sparkles, Users, Wand2 } from "lucide-react";
+import { Building2, Globe, Search, Wand2 } from "lucide-react";
 import { SANDBOX_STARTERS } from "./drafts";
 import type { SandboxStarterDefinition } from "./types";
 
 const STARTER_ICONS = {
-  "internal-qa": Users,
-  "icp-demo": Sparkles,
+  "internal-qa": Building2,
+  "icp-demo": Globe,
   blank: Wand2,
 } as const;
 

@@ -42,3 +42,37 @@ export type {
   CustomProvider,
   LLMProvider,
 } from "./types.js";
+
+export {
+  DEFAULT_MCPJAM_CLIENT_ID_METADATA_URL,
+  MCPJAM_CLIENT_URI,
+  MCPJAM_LOGO_URI,
+  getBrowserDebugDynamicRegistrationMetadata,
+} from "./oauth/client-identity.js";
+export { buildOAuthSequenceActions } from "./oauth/sequence-actions.js";
+export {
+  createOAuthStateMachine,
+  PROTOCOL_VERSION_INFO,
+  getDefaultRegistrationStrategy,
+  getSupportedRegistrationStrategies,
+} from "./oauth/state-machines/factory.js";
+export {
+  getStepInfo,
+  getStepIndex,
+} from "./oauth/state-machines/shared/step-metadata.js";
+export { EMPTY_OAUTH_FLOW_STATE } from "./oauth/state-machines/types.js";
+export type {
+  HttpHistoryEntry,
+  InfoLogEntry,
+  InfoLogLevel,
+  LogErrorDetails,
+  OAuthDynamicRegistrationMetadata,
+  OAuthFlowState,
+  OAuthFlowStep,
+  OAuthProtocolVersion,
+  OAuthRequestExecutor,
+  OAuthStateMachine,
+  RegistrationStrategy2025_03_26,
+  RegistrationStrategy2025_06_18,
+  RegistrationStrategy2025_11_25,
+} from "./oauth/state-machines/types.js";

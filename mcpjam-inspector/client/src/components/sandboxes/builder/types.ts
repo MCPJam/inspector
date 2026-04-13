@@ -15,7 +15,13 @@ export interface SandboxWelcomeDialogDraft {
 
 export interface SandboxFeedbackDialogDraft {
   enabled: boolean;
-  /** Fire feedback prompt every N tool calls when enabled. */
+  /**
+   * Hosted runs advance a counter on completed tool calls; when it reaches N,
+   * testers may see the feedback prompt. This is not “every N user messages.”
+   * Product intent for tight QA vs lighter external demos is still expressed
+   * via starter defaults (e.g. 1 vs 3) even though the underlying signal is
+   * tool-call-based until a prompt-based trigger exists.
+   */
   everyNToolCalls: number;
   /** Optional prompt copy for testers. */
   promptHint: string;
@@ -87,5 +93,7 @@ export interface SandboxStarterDefinition {
   title: string;
   description: string;
   promptHint: string;
+  /** Short hover text on the template info icon (first-run tiles). */
+  templateTooltip?: string;
   createDraft: (defaultModelId: string) => SandboxDraftConfig;
 }

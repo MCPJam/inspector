@@ -56,6 +56,7 @@ async function safeValidateHostedServer(
         serverConfig,
         extractOAuthToken(serverConfig),
         serverConfig.capabilities as Record<string, unknown> | undefined,
+        serverId,
       );
 
       return await webPost<typeof request, HostedServerValidateResponse>(

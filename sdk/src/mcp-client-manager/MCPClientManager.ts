@@ -723,10 +723,13 @@ export class MCPClientManager {
   /**
    * Pings a server to check connectivity.
    */
-  pingServer(serverId: string, options?: RequestOptions): void {
+  async pingServer(
+    serverId: string,
+    options?: RequestOptions
+  ): Promise<Awaited<ReturnType<Client["ping"]>>> {
     const client = this.getClientOrThrow(serverId);
     try {
-      client.ping(options);
+      return await client.ping(options);
     } catch (error) {
       throw new Error(
         `Failed to ping MCP server "${serverId}": ${error instanceof Error ? error.message : "Unknown error"}`
@@ -1071,6 +1074,8 @@ export class MCPClientManager {
       command: config.command,
       args: config.args,
       env: { ...getDefaultEnvironment(), ...(config.env ?? {}) },
+      stderr: config.stderr,
+      cwd: config.cwd,
     });
 
     const logger = this.resolveRpcLogger(config);

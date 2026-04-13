@@ -1,5 +1,5 @@
 import { isUIResource } from "@mcp-ui/client";
-import type { DynamicToolUIPart, UIMessage } from "ai";
+import type { DynamicToolUIPart, ModelMessage, UIMessage } from "ai";
 import { buildPersistedExecutionReplay } from "@/components/chat-v2/thread/persisted-execution-replay";
 import { extractTextFromToolResult } from "@/components/chat-v2/shared/tool-result-text";
 import type { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-overrides";
@@ -37,6 +37,8 @@ export interface TraceMessage {
   content?: string | TraceContentPart[];
 }
 
+export type TraceSourceMessage = TraceMessage | ModelMessage;
+
 export interface TraceWidgetSnapshot {
   toolCallId: string;
   toolName: string;
@@ -51,9 +53,84 @@ export interface TraceWidgetSnapshot {
   widgetHtmlUrl?: string | null;
 }
 
+/**
+ * Convert raw SharedChatWidgetSnapshot records (from Convex) into the
+ * TraceWidgetSnapshot shape used by the trace viewer adapter.
+ */
+export function snapshotsToTraceWidgetSnapshots(
+  snapshots: Array<{
+    toolCallId: string;
+    toolName: string;
+    serverId: string;
+    uiType: "mcp-apps" | "openai-apps";
+    resourceUri?: string;
+    widgetCsp: Record<string, unknown> | null;
+    widgetPermissions: Record<string, unknown> | null;
+    widgetPermissive: boolean;
+    prefersBorder: boolean;
+    widgetHtmlUrl?: string | null;
+  }>,
+): TraceWidgetSnapshot[] {
+  return snapshots.map((snap) => {
+    // Reconstruct toolMetadata so detectUIType returns the correct widget type.
+    // Without this, PartSwitch won't enter the widget rendering path.
+    const toolMetadata: Record<string, unknown> =
+      snap.uiType === "mcp-apps" && snap.resourceUri
+        ? { ui: { resourceUri: snap.resourceUri } }
+        : snap.uiType === "openai-apps"
+          ? { "openai/outputTemplate": "__cached__" }
+          : {};
+
+    return {
+      toolCallId: snap.toolCallId,
+      toolName: snap.toolName,
+      protocol: snap.uiType,
+      serverId: snap.serverId,
+      resourceUri: snap.resourceUri ?? "",
+      toolMetadata,
+      widgetCsp: snap.widgetCsp,
+      widgetPermissions: snap.widgetPermissions,
+      widgetPermissive: snap.widgetPermissive,
+      prefersBorder: snap.prefersBorder,
+      widgetHtmlUrl: snap.widgetHtmlUrl,
+    };
+  });
+}
+
+/**
+ * Build toolRenderOverrides directly from TraceWidgetSnapshot[].
+ * Used when loading a persisted session where we have snapshots
+ * but don't need the full adaptTraceToUiMessages pipeline.
+ */
+export function buildToolRenderOverridesFromSnapshots(
+  snapshots: TraceWidgetSnapshot[],
+): Record<string, ToolRenderOverride> {
+  const overrides: Record<string, ToolRenderOverride> = {};
+  for (const snap of snapshots) {
+    const replay = buildPersistedExecutionReplay({
+      protocol: snap.protocol,
+      toolCallId: snap.toolCallId,
+      toolName: snap.toolName,
+      toolOutput: {},
+      toolState: "output-available",
+      serverId: snap.serverId,
+      isOffline: !!snap.widgetHtmlUrl,
+      cachedWidgetHtmlUrl: snap.widgetHtmlUrl ?? undefined,
+      resourceUri: snap.resourceUri,
+      toolMetadata: snap.toolMetadata,
+      widgetCsp: snap.widgetCsp as any,
+      widgetPermissions: snap.widgetPermissions as any,
+      widgetPermissive: snap.widgetPermissive,
+      prefersBorder: snap.prefersBorder,
+    });
+    overrides[snap.toolCallId] = replay.renderOverride;
+  }
+  return overrides;
+}
+
 export interface TraceEnvelope {
   traceVersion?: 1;
-  messages?: TraceMessage[];
+  messages?: TraceSourceMessage[];
   widgetSnapshots?: TraceWidgetSnapshot[];
   spans?: EvalTraceSpan[];
   [key: string]: unknown;
@@ -161,26 +238,32 @@ function toMarkdownJson(value: unknown): string | null {
 }
 
 function resolveTraceMessages(
-  trace: TraceEnvelope | TraceMessage | TraceMessage[] | null,
+  trace: TraceEnvelope | TraceSourceMessage | TraceSourceMessage[] | null,
 ) {
-  let messages: TraceMessage[] = [];
+  let messages: TraceSourceMessage[] = [];
   let widgetSnapshots: TraceWidgetSnapshot[] = [];
 
   if (Array.isArray(trace)) {
     messages = trace;
-  } else if (isRecord(trace) && Array.isArray(trace.messages)) {
-    messages = trace.messages as TraceMessage[];
-    if (Array.isArray(trace.widgetSnapshots)) {
+  } else if (
+    isRecord(trace) &&
+    "messages" in trace &&
+    Array.isArray(trace.messages)
+  ) {
+    messages = trace.messages as TraceSourceMessage[];
+    if ("widgetSnapshots" in trace && Array.isArray(trace.widgetSnapshots)) {
       widgetSnapshots = trace.widgetSnapshots as TraceWidgetSnapshot[];
     }
   } else if (isRecord(trace) && typeof trace.role === "string") {
-    messages = [trace as unknown as TraceMessage];
+    messages = [trace as unknown as TraceSourceMessage];
   }
 
   return { messages, widgetSnapshots };
 }
 
-function normalizeMessageContent(message: TraceMessage): TraceContentPart[] {
+function normalizeMessageContent(
+  message: TraceSourceMessage,
+): TraceContentPart[] {
   if (typeof message.content === "string") {
     return [
       {
@@ -331,31 +414,30 @@ function shouldAttemptWidgetReplay(params: {
   connectedServerIds: Set<string>;
   widgetSnapshotMap: Map<string, TraceWidgetSnapshot>;
 }) {
-  const liveToolMetadata = params.toolsMetadata[params.toolName];
-  const liveUiType = detectUIType(liveToolMetadata, params.rawToolOutput);
-  const liveServerId = getToolServerId(params.toolName, params.toolServerMap);
   const snapshot = params.widgetSnapshotMap.get(params.toolCallId);
-  const historicalServerId =
-    snapshot?.serverId ?? readToolResultServerId(params.rawToolOutput);
+  const streamedToolMetadata = readToolResultMeta(params.rawToolOutput);
+  const effectiveToolMetadata =
+    snapshot?.toolMetadata ??
+    params.toolsMetadata[params.toolName] ??
+    streamedToolMetadata;
+  const effectiveUiType = detectUIType(
+    effectiveToolMetadata,
+    params.rawToolOutput,
+  );
+  const effectiveServerId =
+    snapshot?.serverId ??
+    getToolServerId(params.toolName, params.toolServerMap) ??
+    readToolResultServerId(params.rawToolOutput);
+  const effectiveResourceUri =
+    snapshot?.resourceUri ??
+    getUIResourceUri(effectiveUiType, effectiveToolMetadata);
 
-  const hasCurrentWidgetResolution =
-    !!liveToolMetadata &&
-    !!liveServerId &&
-    isWidgetUiType(liveUiType) &&
-    !!getUIResourceUri(liveUiType, liveToolMetadata);
-
-  if (!hasCurrentWidgetResolution || !liveServerId) {
-    return false;
-  }
-
-  if (historicalServerId) {
-    return (
-      liveServerId === historicalServerId &&
-      params.connectedServerIds.has(historicalServerId)
-    );
-  }
-
-  return params.connectedServerIds.has(liveServerId);
+  return Boolean(
+    effectiveServerId &&
+    effectiveResourceUri &&
+    isWidgetUiType(effectiveUiType) &&
+    params.connectedServerIds.has(effectiveServerId),
+  );
 }
 
 function createReplayOverride(
@@ -380,6 +462,18 @@ function createReplayOverride(
     widgetPermissive: snapshot.widgetPermissive,
     prefersBorder: snapshot.prefersBorder,
   }).renderOverride;
+}
+
+function createLiveSnapshotOverride(snapshot: TraceWidgetSnapshot) {
+  return {
+    serverId: snapshot.serverId,
+    resourceUri: snapshot.resourceUri,
+    toolMetadata: snapshot.toolMetadata,
+    widgetCsp: snapshot.widgetCsp as any,
+    widgetPermissions: snapshot.widgetPermissions as any,
+    widgetPermissive: snapshot.widgetPermissive,
+    prefersBorder: snapshot.prefersBorder,
+  } satisfies ToolRenderOverride;
 }
 
 function getTraceDisplayAttachment(params: {
@@ -462,7 +556,12 @@ function buildToolParts(params: {
       rawToolOutput,
     );
   } else if (canReplayWidget) {
-    // Live replay — no override needed, PartSwitch resolves from live metadata
+    if (snapshot) {
+      params.toolRenderOverrides[toolCallId] = {
+        ...createLiveSnapshotOverride(snapshot),
+        ...(params.toolRenderOverrides[toolCallId] ?? {}),
+      };
+    }
   } else if (!isError && isWidgetUiType(widgetUiType)) {
     // No replay possible — scrub widget metadata to prevent broken iframe
     adaptedOutput = scrubUiResourceContent(rawToolOutput);
@@ -560,9 +659,9 @@ function adaptTracePart(
 }
 
 function buildAssistantMessage(params: {
-  message: TraceMessage;
+  message: TraceSourceMessage;
   messageIndex: number;
-  toolMessages: TraceMessage[];
+  toolMessages: TraceSourceMessage[];
   widgetSnapshotMap: Map<string, TraceWidgetSnapshot>;
   toolsMetadata: Record<string, Record<string, any>>;
   toolServerMap: ToolServerMap;
@@ -694,7 +793,7 @@ function buildAssistantMessage(params: {
 }
 
 function buildUserMessage(
-  message: TraceMessage,
+  message: TraceSourceMessage,
   messageIndex: number,
 ): AdaptedUiMessage {
   const parts = normalizeMessageContent(message)
@@ -716,7 +815,7 @@ function buildUserMessage(
 }
 
 function buildOrphanToolMessages(params: {
-  toolMessages: TraceMessage[];
+  toolMessages: TraceSourceMessage[];
   startIndex: number;
   widgetSnapshotMap: Map<string, TraceWidgetSnapshot>;
   toolsMetadata: Record<string, Record<string, any>>;
@@ -776,7 +875,7 @@ function buildOrphanToolMessages(params: {
 }
 
 export function adaptTraceToUiMessages(params: {
-  trace: TraceEnvelope | TraceMessage | TraceMessage[] | null;
+  trace: TraceEnvelope | TraceSourceMessage | TraceSourceMessage[] | null;
   toolsMetadata?: Record<string, Record<string, any>>;
   toolServerMap?: ToolServerMap;
   connectedServerIds?: string[];
@@ -824,7 +923,7 @@ export function adaptTraceToUiMessages(params: {
     }
 
     if (message.role === "assistant") {
-      const toolMessages: TraceMessage[] = [];
+      const toolMessages: TraceSourceMessage[] = [];
       let nextIndex = index + 1;
       while (messages[nextIndex]?.role === "tool") {
         toolMessages.push(messages[nextIndex]);
@@ -849,7 +948,7 @@ export function adaptTraceToUiMessages(params: {
     }
 
     if (message.role === "tool") {
-      const toolMessages: TraceMessage[] = [];
+      const toolMessages: TraceSourceMessage[] = [];
       let nextIndex = index;
       while (messages[nextIndex]?.role === "tool") {
         toolMessages.push(messages[nextIndex]);

@@ -143,7 +143,7 @@ describe("ChatInput", () => {
       expect(screen.getByTestId("model-selector")).toHaveTextContent("GPT-4");
     });
 
-    it("renders system prompt selector", () => {
+    it("renders system prompt selector", async () => {
       render(<ChatInput {...defaultProps} />);
 
       expect(screen.getByTestId("system-prompt-selector")).toBeInTheDocument();
@@ -262,6 +262,70 @@ describe("ChatInput", () => {
         expect(submitButton).not.toBeDisabled();
       }
     });
+
+    it("disables submit when submitDisabled is true even if value has content", () => {
+      render(
+        <ChatInput {...defaultProps} value="Hello" submitDisabled={true} />,
+      );
+
+      const buttons = screen.getAllByRole("button");
+      const submitButton = buttons.find(
+        (btn) => btn.querySelector("svg.lucide-arrow-up") !== null,
+      );
+      expect(submitButton).toBeDefined();
+      expect(submitButton).toBeDisabled();
+    });
+
+    it("does not request form submit on Enter when submitDisabled is true", () => {
+      const requestSubmitSpy = vi
+        .spyOn(HTMLFormElement.prototype, "requestSubmit")
+        .mockImplementation(() => {});
+
+      render(
+        <ChatInput
+          {...defaultProps}
+          value="Hello"
+          submitDisabled={true}
+          onSubmit={vi.fn((e) => e.preventDefault())}
+        />,
+      );
+
+      const textarea = screen.getByPlaceholderText("Type your message...");
+      fireEvent.keyDown(textarea, { key: "Enter", shiftKey: false });
+
+      expect(requestSubmitSpy).not.toHaveBeenCalled();
+
+      requestSubmitSpy.mockRestore();
+    });
+  });
+
+  describe("onboarding send button", () => {
+    it("applies glow animation only when pulseSubmit is true", () => {
+      const { rerender } = render(
+        <ChatInput {...defaultProps} value="Hello" pulseSubmit={false} />,
+      );
+      let submit = screen
+        .getAllByRole("button")
+        .find((btn) => btn.querySelector("svg.lucide-arrow-up") !== null);
+      expect(submit).toBeDefined();
+      expect(submit?.className).not.toContain("animate-onboarding-pulse");
+
+      rerender(
+        <ChatInput {...defaultProps} value="Hello" pulseSubmit={true} />,
+      );
+      submit = screen
+        .getAllByRole("button")
+        .find((btn) => btn.querySelector("svg.lucide-arrow-up") !== null);
+      expect(submit?.className).toContain("animate-onboarding-pulse");
+    });
+
+    it("uses shadow-none so default button shadow does not read as a constant glow", () => {
+      render(<ChatInput {...defaultProps} value="Hello" />);
+      const submit = screen
+        .getAllByRole("button")
+        .find((btn) => btn.querySelector("svg.lucide-arrow-up") !== null);
+      expect(submit?.className).toContain("shadow-none");
+    });
   });
 
   describe("disabled state", () => {
@@ -305,6 +369,42 @@ describe("ChatInput", () => {
         fireEvent.click(stopButton);
         expect(stop).toHaveBeenCalled();
       }
+    });
+
+    it("keeps the textarea editable while loading", () => {
+      render(<ChatInput {...defaultProps} isLoading={true} value="Draft" />);
+
+      expect(screen.getByPlaceholderText("Type your message...")).not.toBeDisabled();
+    });
+
+    it("keeps the options menu enabled while loading", () => {
+      render(<ChatInput {...defaultProps} isLoading={true} />);
+
+      expect(screen.getByRole("button", { name: "Options" })).toBeEnabled();
+    });
+
+    it("does not request form submit on Enter while loading", () => {
+      const requestSubmitSpy = vi
+        .spyOn(HTMLFormElement.prototype, "requestSubmit")
+        .mockImplementation(() => {});
+
+      render(
+        <ChatInput
+          {...defaultProps}
+          value="Draft"
+          isLoading={true}
+          onSubmit={vi.fn((e) => e.preventDefault())}
+        />,
+      );
+
+      fireEvent.keyDown(screen.getByPlaceholderText("Type your message..."), {
+        key: "Enter",
+        shiftKey: false,
+      });
+
+      expect(requestSubmitSpy).not.toHaveBeenCalled();
+
+      requestSubmitSpy.mockRestore();
     });
   });
 
@@ -458,14 +558,17 @@ describe("ChatInput", () => {
   });
 
   describe("minimal mode", () => {
-    it("hides file attachments, system prompt, model selector, and tool approval in minimal mode", () => {
+    it("hides plus dropdown, model selector, and context in minimal mode", () => {
       render(<ChatInput {...defaultProps} minimalMode={true} />);
 
       expect(screen.getByTestId("prompts-popover")).toBeInTheDocument();
       expect(
+        screen.queryByRole("button", { name: "Options" }),
+      ).not.toBeInTheDocument();
+      expect(screen.queryByTestId("model-selector")).not.toBeInTheDocument();
+      expect(
         screen.queryByTestId("system-prompt-selector"),
       ).not.toBeInTheDocument();
-      expect(screen.queryByText("Tool Approval")).not.toBeInTheDocument();
     });
 
     it("hides context usage UI in minimal mode", () => {
@@ -484,18 +587,6 @@ describe("ChatInput", () => {
 
       expect(screen.queryByTestId("context")).not.toBeInTheDocument();
       expect(screen.queryByTestId("context-trigger")).not.toBeInTheDocument();
-    });
-
-    it("hides x-ray toggle in minimal mode", () => {
-      render(
-        <ChatInput
-          {...defaultProps}
-          minimalMode={true}
-          onXrayModeChange={vi.fn()}
-        />,
-      );
-
-      expect(screen.queryByText("X-Ray")).not.toBeInTheDocument();
     });
   });
 });

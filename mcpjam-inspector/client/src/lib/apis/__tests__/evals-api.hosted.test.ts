@@ -28,6 +28,7 @@ import {
   listEvalTools,
   runEvals,
   runEvalTestCase,
+  streamEvalTestCase,
 } from "../evals-api";
 
 describe("evals-api hosted mode", () => {
@@ -155,6 +156,79 @@ describe("evals-api hosted mode", () => {
       provider: "openai",
     });
     expect(body).not.toHaveProperty("convexAuthToken");
+  });
+
+  it("uses /api/web/evals/stream-test-case and parses SSE events", async () => {
+    const encoder = new TextEncoder();
+    authFetchMock.mockResolvedValueOnce(
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(
+              encoder.encode(
+                [
+                  'data: {"type":"trace_snapshot","turnIndex":0,"snapshotKind":"step_finish","trace":{"traceVersion":1,"messages":[{"role":"user","content":"Hello"}],"spans":[{"id":"step-1","name":"Step 1","type":"step","startMs":0,"endMs":1,"status":"ok","stepIndex":0}]},"actualToolCalls":[],"usage":{"inputTokens":3,"outputTokens":2,"totalTokens":5}}',
+                  "",
+                  'data: {"type":"complete","iteration":{"_id":"iter-1"}}',
+                  "",
+                ].join("\n"),
+              ),
+            );
+            controller.close();
+          },
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "text/event-stream" },
+        },
+      ),
+    );
+
+    const events: unknown[] = [];
+    await streamEvalTestCase(
+      {
+        workspaceId: "workspace-1",
+        testCaseId: "test-case-1",
+        model: "openai/gpt-5-mini",
+        provider: "openai",
+        serverIds: ["Server A"],
+        convexAuthToken: "convex-token",
+      },
+      (event) => {
+        events.push(event);
+      },
+    );
+
+    expect(authFetchMock).toHaveBeenCalledWith(
+      "/api/web/evals/stream-test-case",
+      expect.objectContaining({
+        method: "POST",
+      }),
+    );
+
+    const body = JSON.parse(authFetchMock.mock.calls[0][1].body);
+    expect(body).toMatchObject({
+      workspaceId: "workspace-1",
+      serverIds: ["srv_a"],
+      testCaseId: "test-case-1",
+      model: "openai/gpt-5-mini",
+      provider: "openai",
+    });
+    expect(events).toEqual([
+      expect.objectContaining({
+        type: "trace_snapshot",
+        snapshotKind: "step_finish",
+        usage: {
+          inputTokens: 3,
+          outputTokens: 2,
+          totalTokens: 5,
+        },
+      }),
+      expect.objectContaining({
+        type: "complete",
+        iteration: { _id: "iter-1" },
+      }),
+    ]);
   });
 
   it("uses hosted tool listing instead of /api/mcp/list-tools", async () => {

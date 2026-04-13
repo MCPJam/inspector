@@ -1,3 +1,8 @@
+import type { PromptTurn } from "@/shared/prompt-turns";
+import type { EvalTraceBlobV1 } from "@/shared/eval-trace";
+import type { EvalStreamToolCall } from "@/shared/eval-stream-events";
+import type { TraceMessage } from "./trace-viewer-adapter";
+
 export type EvalSuiteConfigTest = {
   title: string;
   query: string;
@@ -11,6 +16,7 @@ export type EvalSuiteConfigTest = {
   isNegativeTest?: boolean; // When true, test passes if NO tools are called
   scenario?: string; // Description of why app should NOT trigger (negative tests only)
   expectedOutput?: string; // The output or experience expected from the MCP server
+  promptTurns?: PromptTurn[];
   advancedConfig?: Record<string, unknown>;
   testCaseId?: string;
 };
@@ -61,6 +67,7 @@ export type EvalCase = {
   isNegativeTest?: boolean; // When true, test passes if NO tools are called
   scenario?: string; // Description of why app should NOT trigger (negative tests only)
   expectedOutput?: string; // The output or experience expected from the MCP server
+  promptTurns?: PromptTurn[];
   advancedConfig?: Record<string, unknown>;
   lastMessageRun?: string | null;
   _creationTime?: number; // Convex auto field
@@ -84,6 +91,7 @@ export type EvalIteration = {
     isNegativeTest?: boolean; // When true, test passes if NO tools are called
     scenario?: string; // Description of why app should NOT trigger (negative tests only)
     expectedOutput?: string; // The output or experience expected from the MCP server
+    promptTurns?: PromptTurn[];
     advancedConfig?: Record<string, unknown>;
   };
   suiteRunId?: string;
@@ -107,6 +115,55 @@ export type EvalIteration = {
   externalIterationId?: string;
   metadata?: Record<string, string | number | boolean>;
   _creationTime?: number; // Convex auto field
+};
+
+export type CompareModelOverride = {
+  systemPrompt?: string;
+  temperature?: string;
+  providerFlagsJson?: string;
+};
+
+export type EditorMode = "config" | "run";
+
+/** Compare run column trace mode — same values as TraceViewer view modes. */
+export type RunColumnTab = "timeline" | "chat" | "raw" | "tools";
+
+export type CompareRunRecord = {
+  modelValue: string;
+  modelLabel: string;
+  provider: string;
+  model: string;
+  status: "idle" | "running" | "completed" | "failed" | "cancelled";
+  /**
+   * When `status === "running"` and there is no iteration yet, true if this run
+   * replaces a prior completed/failed attempt (user hit Retry or re-ran compare).
+   */
+  isRetrying?: boolean;
+  iteration: EvalIteration | null;
+  error?: string | null;
+  startedAt: number | null;
+  completedAt: number | null;
+  result: "pending" | "passed" | "failed" | "cancelled" | null;
+  metrics: {
+    durationMs: number | null;
+    toolCallCount: number;
+    tokensUsed: number;
+    missingCount: number | null;
+    unexpectedCount: number | null;
+    argumentMismatchCount: number | null;
+    mismatchCount: number | null;
+  };
+  /** Stable step-complete trace snapshots populated during streaming. */
+  streamingTrace?: EvalTraceBlobV1;
+  /** In-flight messages collected after the last authoritative snapshot. */
+  streamingDraftMessages?: TraceMessage[];
+  /** Live actual tool calls collected from streamed snapshots. */
+  streamingActualToolCalls?: EvalStreamToolCall[];
+  /** Live metrics from stream events. */
+  streamingMetrics?: {
+    tokensUsed: number;
+    toolCallCount: number;
+  };
 };
 
 export type EvalSuiteRunSummary = {

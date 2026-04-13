@@ -598,6 +598,120 @@
   }
 }
 
+@keyframes thinking-dot-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+
+  50% {
+    transform: scale(1.25);
+  }
+}
+
+.animate-thinking-dot-pulse {
+  animation: thinking-dot-pulse 1.25s ease-in-out infinite;
+  backface-visibility: hidden;
+  transform: translateZ(0);
+  transform-origin: 50% center;
+  -webkit-font-smoothing: subpixel-antialiased;
+  will-change: transform;
+}
+
+.claude-loading-indicator__stage {
+  isolation: isolate;
+}
+
+.claude-loading-indicator__strip,
+.claude-loading-indicator__static {
+  position: absolute;
+  fill: #d97757;
+}
+
+.claude-loading-indicator__static {
+  inset: 0;
+}
+
+.claude-loading-indicator__strip {
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: auto;
+  transform: translateY(0);
+  transform-origin: top center;
+  will-change: opacity, transform;
+}
+
+.claude-loading-indicator__strip--900 {
+  animation:
+    claude-strip-900-position 1.7s linear infinite,
+    claude-strip-900-visibility 1.7s step-end infinite;
+}
+
+.claude-loading-indicator__strip--800 {
+  animation:
+    claude-strip-800-position 1.7s linear infinite,
+    claude-strip-800-visibility 1.7s step-end infinite;
+}
+
+/* Use step timing within wide keyframe ranges so production minification cannot
+   collapse adjacent boundaries, while keeping the original faster frame cadence. */
+@keyframes claude-strip-900-position {
+  0% {
+    transform: translateY(0%);
+    animation-timing-function: steps(8, end);
+  }
+  47.058824%,
+  100% {
+    transform: translateY(-88.8889%);
+  }
+}
+
+/* Keep these thresholds separated enough to survive CSS minification. */
+@keyframes claude-strip-900-visibility {
+  0%,
+  52.9% {
+    opacity: 1;
+  }
+  53%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes claude-strip-800-position {
+  0%,
+  58.823529% {
+    transform: translateY(0%);
+    animation-timing-function: steps(7, end);
+  }
+  100% {
+    transform: translateY(-87.5%);
+  }
+}
+
+@keyframes claude-strip-800-visibility {
+  0%,
+  52.9% {
+    opacity: 0;
+  }
+  53%,
+  100% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .claude-loading-indicator__strip {
+    animation: none;
+    opacity: 0;
+  }
+
+  .claude-loading-indicator__static {
+    display: block;
+  }
+}
+
 @keyframes progress-indeterminate {
   0% {
     transform: translateX(-100%);
@@ -794,6 +908,75 @@
   .animate-onboarding-pulse {
     animation: none;
     box-shadow: 0 0 0 3px oklch(0.75 0.18 55 / 0.3);
+  }
+}
+
+/* Hand-drawn NUX arrow: stroke draw-on animation */
+@keyframes hand-draw-stroke {
+  from {
+    stroke-dashoffset: 1;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+.hand-draw-path {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+}
+
+.hand-draw-path-body {
+  animation: hand-draw-stroke 1s cubic-bezier(0.33, 1, 0.68, 1) forwards;
+}
+
+/* Filled arrowhead pops in after the stroke finishes drawing */
+.hand-draw-arrowhead-fill {
+  opacity: 0;
+  animation: hand-draw-arrowhead-fade 0.26s cubic-bezier(0.33, 1, 0.68, 1) 0.72s
+    forwards;
+}
+
+@keyframes hand-draw-arrowhead-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Hand-drawn NUX arrow: text fade-in */
+@keyframes hand-draw-text-appear {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.hand-draw-text-appear {
+  opacity: 0;
+  animation: hand-draw-text-appear 0.4s cubic-bezier(0.33, 1, 0.68, 1) 0.85s
+    forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hand-draw-path {
+    stroke-dashoffset: 0;
+    animation: none;
+  }
+  .hand-draw-arrowhead-fill {
+    opacity: 1;
+    animation: none;
+  }
+  .hand-draw-text-appear {
+    opacity: 1;
+    transform: none;
+    animation: none;
   }
 }
 

@@ -11,11 +11,36 @@ import {
   captureToolSnapshotForEvalAuthoring,
   storeReplayConfig,
 } from "../../services/evals/route-helpers";
-import { runEvalSuiteWithAiSdk } from "../../services/evals-runner";
+import {
+  runEvalSuiteWithAiSdk,
+  streamTestCase,
+} from "../../services/evals-runner";
+import type { EvalStreamEvent } from "@/shared/eval-stream-events";
 import { logger } from "../../utils/logger";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
 import { flattenServerToolSnapshotTools } from "../../utils/export-helpers.js";
 import { sanitizeForConvexTransport } from "../../services/evals/convex-sanitize.js";
+import { type PromptTurn } from "@/shared/prompt-turns";
+
+const toolChoiceSchema = z.union([
+  z.enum(["auto", "none", "required"]),
+  z.object({
+    type: z.literal("tool"),
+    toolName: z.string().min(1),
+  }),
+]);
+
+const promptTurnSchema = z.object({
+  id: z.string(),
+  prompt: z.string(),
+  expectedToolCalls: z.array(
+    z.object({
+      toolName: z.string(),
+      arguments: z.record(z.string(), z.any()),
+    }),
+  ),
+  expectedOutput: z.string().optional(),
+});
 
 export const RunEvalsRequestSchema = z.object({
   workspaceId: z.string().optional(),
@@ -37,11 +62,13 @@ export const RunEvalsRequestSchema = z.object({
       ),
       isNegativeTest: z.boolean().optional(),
       scenario: z.string().optional(),
+      expectedOutput: z.string().optional(),
+      promptTurns: z.array(promptTurnSchema).optional(),
       advancedConfig: z
         .object({
           system: z.string().optional(),
           temperature: z.number().optional(),
-          toolChoice: z.string().optional(),
+          toolChoice: toolChoiceSchema.optional(),
         })
         .passthrough()
         .optional(),
@@ -67,6 +94,8 @@ export const RunTestCaseRequestSchema = z.object({
   testCaseId: z.string(),
   model: z.string(),
   provider: z.string(),
+  compareRunId: z.string().optional(),
+  skipLastMessageRunUpdate: z.boolean().optional(),
   serverIds: z
     .array(z.string())
     .min(1, { message: "At least one server must be selected" }),
@@ -78,6 +107,16 @@ export const RunTestCaseRequestSchema = z.object({
       expectedToolCalls: z.array(z.any()).optional(),
       isNegativeTest: z.boolean().optional(),
       runs: z.number().optional(),
+      expectedOutput: z.string().optional(),
+      promptTurns: z.array(promptTurnSchema).optional(),
+      advancedConfig: z
+        .object({
+          system: z.string().optional(),
+          temperature: z.number().optional(),
+          toolChoice: toolChoiceSchema.optional(),
+        })
+        .passthrough()
+        .optional(),
     })
     .optional(),
 });
@@ -253,6 +292,8 @@ export async function runEvalsWithManager(
       expectedToolCalls: any[];
       isNegativeTest?: boolean;
       scenario?: string;
+      expectedOutput?: string;
+      promptTurns?: PromptTurn[];
       judgeRequirement?: string;
       advancedConfig?: any;
     }
@@ -269,6 +310,8 @@ export async function runEvalsWithManager(
         expectedToolCalls: test.expectedToolCalls,
         isNegativeTest: test.isNegativeTest,
         scenario: test.scenario,
+        expectedOutput: test.expectedOutput,
+        promptTurns: test.promptTurns,
         advancedConfig: test.advancedConfig,
       });
     }
@@ -321,6 +364,16 @@ export async function runEvalsWithManager(
         const scenarioChanged =
           normalize(existingTestCase.scenario) !==
           normalize(testCaseData.scenario);
+        const expectedOutputChanged =
+          normalize(existingTestCase.expectedOutput) !==
+          normalize(testCaseData.expectedOutput);
+        const promptTurnsChanged =
+          JSON.stringify(
+            normalizeForComparison(existingTestCase.promptTurns || []),
+          ) !==
+          JSON.stringify(
+            normalizeForComparison(testCaseData.promptTurns || []),
+          );
         const judgeRequirementChanged =
           normalize(existingTestCase.judgeRequirement) !==
           normalize(testCaseData.judgeRequirement);
@@ -336,6 +389,8 @@ export async function runEvalsWithManager(
           expectedToolCallsChanged ||
           isNegativeTestChanged ||
           scenarioChanged ||
+          expectedOutputChanged ||
+          promptTurnsChanged ||
           judgeRequirementChanged ||
           advancedConfigChanged;
 
@@ -349,6 +404,8 @@ export async function runEvalsWithManager(
             ),
             isNegativeTest: testCaseData.isNegativeTest,
             scenario: testCaseData.scenario,
+            expectedOutput: testCaseData.expectedOutput,
+            promptTurns: sanitizeForConvexTransport(testCaseData.promptTurns),
             advancedConfig: sanitizeForConvexTransport(
               testCaseData.advancedConfig,
             ),
@@ -366,6 +423,8 @@ export async function runEvalsWithManager(
           ),
           isNegativeTest: testCaseData.isNegativeTest,
           scenario: testCaseData.scenario,
+          expectedOutput: testCaseData.expectedOutput,
+          promptTurns: sanitizeForConvexTransport(testCaseData.promptTurns),
           judgeRequirement: testCaseData.judgeRequirement,
           advancedConfig: sanitizeForConvexTransport(
             testCaseData.advancedConfig,
@@ -403,6 +462,8 @@ export async function runEvalsWithManager(
         ),
         isNegativeTest: testCaseData.isNegativeTest,
         scenario: testCaseData.scenario,
+        expectedOutput: testCaseData.expectedOutput,
+        promptTurns: sanitizeForConvexTransport(testCaseData.promptTurns),
         judgeRequirement: testCaseData.judgeRequirement,
         advancedConfig: sanitizeForConvexTransport(testCaseData.advancedConfig),
       });
@@ -469,7 +530,9 @@ export async function runEvalTestCaseWithManager(
     testCaseId,
     model,
     provider,
+    compareRunId,
     serverIds,
+    skipLastMessageRunUpdate,
     modelApiKeys,
     convexAuthToken,
     testCaseOverrides,
@@ -496,7 +559,13 @@ export async function runEvalTestCaseWithManager(
       testCaseOverrides?.expectedToolCalls ?? testCase.expectedToolCalls ?? [],
     isNegativeTest:
       testCaseOverrides?.isNegativeTest ?? testCase.isNegativeTest,
-    advancedConfig: testCase.advancedConfig,
+    expectedOutput:
+      testCaseOverrides?.expectedOutput ?? testCase.expectedOutput,
+    promptTurns:
+      (testCaseOverrides?.promptTurns as PromptTurn[] | undefined) ??
+      testCase.promptTurns,
+    advancedConfig:
+      testCaseOverrides?.advancedConfig ?? testCase.advancedConfig,
     testCaseId: testCase._id,
   };
 
@@ -514,6 +583,7 @@ export async function runEvalTestCaseWithManager(
     mcpClientManager: clientManager,
     recorder: null,
     testCaseId,
+    compareRunId,
   });
 
   const expectedIterationId =
@@ -534,7 +604,11 @@ export async function runEvalTestCaseWithManager(
     latestIteration = recentIterations?.[0] || null;
   }
 
-  if (!options?.skipLastMessageRunUpdate && (latestIteration as any)?._id) {
+  if (
+    !options?.skipLastMessageRunUpdate &&
+    !skipLastMessageRunUpdate &&
+    (latestIteration as any)?._id
+  ) {
     await convexClient.mutation("testSuites:updateTestCase" as any, {
       testCaseId,
       lastMessageRun: (latestIteration as any)._id,
@@ -631,4 +705,148 @@ export async function generateNegativeEvalTestsWithManager(
     tests,
     evalTests: convertToEvalTestCases(tests),
   };
+}
+
+export async function streamEvalTestCaseWithManager(
+  clientManager: MCPClientManager,
+  request: RunTestCaseRequest,
+  options?: {
+    skipLastMessageRunUpdate?: boolean;
+    onStreamComplete?: () => void;
+  },
+): Promise<ReadableStream<Uint8Array>> {
+  const {
+    testCaseId,
+    model,
+    provider,
+    compareRunId,
+    serverIds,
+    skipLastMessageRunUpdate,
+    modelApiKeys,
+    convexAuthToken,
+    testCaseOverrides,
+  } = request;
+
+  const resolvedServerIds = resolveServerIdsOrThrow(serverIds, clientManager);
+  const { convexClient, convexHttpUrl } = createConvexClients(convexAuthToken);
+
+  const testCase = await convexClient.query("testSuites:getTestCase" as any, {
+    testCaseId,
+  });
+
+  if (!testCase) {
+    throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Test case not found");
+  }
+
+  const test = {
+    title: testCase.title,
+    query: testCaseOverrides?.query ?? testCase.query,
+    runs: testCaseOverrides?.runs ?? 1,
+    model,
+    provider,
+    expectedToolCalls:
+      testCaseOverrides?.expectedToolCalls ?? testCase.expectedToolCalls ?? [],
+    isNegativeTest:
+      testCaseOverrides?.isNegativeTest ?? testCase.isNegativeTest,
+    expectedOutput:
+      testCaseOverrides?.expectedOutput ?? testCase.expectedOutput,
+    promptTurns:
+      (testCaseOverrides?.promptTurns as PromptTurn[] | undefined) ??
+      testCase.promptTurns,
+    advancedConfig:
+      testCaseOverrides?.advancedConfig ?? testCase.advancedConfig,
+    testCaseId: testCase._id,
+  };
+
+  const tools = (await clientManager.getToolsForAiSdk(
+    resolvedServerIds,
+  )) as Record<string, any>;
+  const encoder = new TextEncoder();
+
+  const sseEncode = (event: EvalStreamEvent): Uint8Array =>
+    encoder.encode(`data: ${JSON.stringify(event)}\n\n`);
+
+  return new ReadableStream<Uint8Array>({
+    async start(controller) {
+      try {
+        const outcomes = await streamTestCase({
+          test,
+          tools,
+          recorder: null,
+          modelApiKeys: modelApiKeys ?? undefined,
+          convexHttpUrl,
+          convexAuthToken,
+          convexClient,
+          testCaseId,
+          suiteId: testCase.evalTestSuiteId,
+          runId: null,
+          compareRunId,
+          emit: (event: EvalStreamEvent) => {
+            try {
+              controller.enqueue(sseEncode(event));
+            } catch {
+              // controller may be closed
+            }
+          },
+        });
+
+        // Retrieve the iteration
+        const expectedIterationId = outcomes[0]?.iterationId;
+        let latestIteration: unknown = null;
+        if (expectedIterationId) {
+          latestIteration = await convexClient.query(
+            "testSuites:getTestIteration" as any,
+            { iterationId: expectedIterationId },
+          );
+        }
+        if (!latestIteration) {
+          const recentIterations = await convexClient.query(
+            "testSuites:listTestIterations" as any,
+            { testCaseId },
+          );
+          latestIteration = recentIterations?.[0] || null;
+        }
+
+        // Update lastMessageRun
+        if (
+          !options?.skipLastMessageRunUpdate &&
+          !skipLastMessageRunUpdate &&
+          (latestIteration as any)?._id
+        ) {
+          await convexClient.mutation("testSuites:updateTestCase" as any, {
+            testCaseId,
+            lastMessageRun: (latestIteration as any)._id,
+          });
+        }
+
+        // Emit complete event
+        controller.enqueue(
+          sseEncode({
+            type: "complete",
+            iterationId: expectedIterationId,
+            iteration: latestIteration,
+          }),
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        controller.enqueue(
+          sseEncode({
+            type: "error",
+            message,
+            details:
+              error instanceof WebRouteError && error.details
+                ? JSON.stringify(error.details)
+                : undefined,
+          }),
+        );
+      } finally {
+        try {
+          controller.close();
+        } catch {
+          // already closed
+        }
+        options?.onStreamComplete?.();
+      }
+    },
+  });
 }

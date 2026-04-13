@@ -11,7 +11,6 @@ import {
   createUIMessageStreamResponse,
   parseJsonEventStream,
   pruneMessages,
-  uiMessageChunkSchema,
   type ToolSet,
 } from "ai";
 import type {
@@ -24,22 +23,51 @@ import type {
   ToolResultPart,
 } from "ai";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
+import { zodSchema } from "@ai-sdk/provider-utils";
 import type { MCPClientManager } from "@mcpjam/sdk";
+import { z } from "zod";
 import {
   hasUnresolvedToolCalls,
   executeToolCallsFromMessages,
 } from "@/shared/http-tool-calls";
 import {
+  scrubUnavailableToolHistoryForBackend,
   scrubMcpAppsToolResultsForBackend,
   scrubChatGPTAppsToolResultsForBackend,
 } from "./chat-helpers";
+import { normalizeModelMessagesForConvex } from "./normalize-model-messages-for-convex";
 import {
   serializeToolsForConvex,
   type ToolDefinition,
 } from "./mcpjam-tool-helpers";
 import { logger } from "./logger";
+import type { EvalTraceSpan } from "@/shared/eval-trace";
+import {
+  mergeLiveChatTraceUsage,
+  type LiveChatTraceUsage,
+} from "@/shared/live-chat-trace";
+import {
+  pushAiSdkTrailingErrorSpan,
+  pushBackendStepLlmFailureSpans,
+  pushBackendStepSuccessSpans,
+  pushBackendStepToolFailureSpans,
+  wrapBackendToolsForTrace,
+} from "../services/evals/eval-trace-capture";
+import {
+  emitRequestPayload,
+  emitTraceSnapshot,
+  generateLiveTraceTurnId,
+  getPromptIndex,
+  getPromptMessageStartIndex,
+  readToolServerId,
+  setToolSpanMessageRangesFromResults,
+  toTraceRecord,
+  writeTraceEvent,
+} from "./live-chat-trace-stream";
+import { buildResolvedModelRequestPayload } from "./model-request-payload";
 
 const MAX_STEPS = 20;
+const streamChunkSchema = zodSchema(z.unknown());
 
 export interface MCPJamHandlerOptions {
   messages: ModelMessage[];
@@ -55,6 +83,9 @@ export interface MCPJamHandlerOptions {
     fullHistory: ModelMessage[],
   ) => Promise<void> | void;
   onStreamComplete?: () => Promise<void> | void;
+  onStreamWriterReady?: (writer: {
+    write: (chunk: UIMessageChunk) => void;
+  }) => void;
 }
 
 interface StepContext {
@@ -73,9 +104,19 @@ interface StepContext {
   requireToolApproval?: boolean;
   stepIndex: number;
   usedToolCallIds: Set<string>;
+  traceTurn: LiveTraceTurnContext;
 }
 
 type PersistedAssistantPart = TextPart | ToolCallPart | ReasoningUIPart;
+
+interface LiveTraceTurnContext {
+  turnId: string;
+  promptIndex: number;
+  promptMessageStartIndex: number;
+  turnStartedAt: number;
+  turnSpans: EvalTraceSpan[];
+  turnUsage?: LiveChatTraceUsage;
+}
 
 interface StreamResult {
   contentParts: PersistedAssistantPart[];
@@ -172,12 +213,111 @@ function createToolCallIdNormalizer(
   };
 }
 
+function getLatestUserMessageIndex(messageHistory: ModelMessage[]): number {
+  for (let index = messageHistory.length - 1; index >= 0; index -= 1) {
+    if (messageHistory[index]?.role === "user") {
+      return index;
+    }
+  }
+  return -1;
+}
+
+function getPromptAssistantStepBaseIndex(
+  messageHistory: ModelMessage[],
+  promptMessageStartIndex: number,
+): number {
+  let assistantCount = 0;
+  for (
+    let index = promptMessageStartIndex;
+    index < messageHistory.length;
+    index += 1
+  ) {
+    if (messageHistory[index]?.role === "assistant") {
+      assistantCount += 1;
+    }
+  }
+  return assistantCount;
+}
+
+function readUsageFromFinishChunk(
+  finishChunk: UIMessageChunk | null,
+): LiveChatTraceUsage | undefined {
+  if (!finishChunk || finishChunk.type !== "finish") {
+    return undefined;
+  }
+
+  // The Convex /stream endpoint sends token data via `messageMetadata` on the
+  // finish chunk (using toUIMessageStreamResponse's messageMetadata callback).
+  // Fall back to `totalUsage` for compatibility with test mocks / future changes.
+  const chunk = finishChunk as UIMessageChunk & {
+    totalUsage?: {
+      inputTokens?: number;
+      outputTokens?: number;
+      totalTokens?: number;
+    };
+    messageMetadata?: {
+      inputTokens?: number;
+      outputTokens?: number;
+      totalTokens?: number;
+    };
+  };
+  const usage = chunk.totalUsage ?? chunk.messageMetadata;
+  if (!usage) {
+    return undefined;
+  }
+
+  const next: LiveChatTraceUsage = {};
+  if (typeof usage.inputTokens === "number") {
+    next.inputTokens = usage.inputTokens;
+  }
+  if (typeof usage.outputTokens === "number") {
+    next.outputTokens = usage.outputTokens;
+  }
+  if (typeof usage.totalTokens === "number") {
+    next.totalTokens = usage.totalTokens;
+  }
+
+  return Object.keys(next).length > 0 ? next : undefined;
+}
+
+function setStepSpanMessageRanges(
+  spans: EvalTraceSpan[],
+  promptIndex: number,
+  stepIndex: number,
+  messageStartIndex: number | undefined,
+  messageEndIndex: number | undefined,
+): void {
+  if (
+    typeof messageStartIndex !== "number" ||
+    typeof messageEndIndex !== "number" ||
+    messageEndIndex < messageStartIndex
+  ) {
+    return;
+  }
+
+  for (const span of spans) {
+    if (
+      (span.promptIndex ?? 0) !== promptIndex ||
+      span.stepIndex !== stepIndex
+    ) {
+      continue;
+    }
+    if (typeof span.messageStartIndex !== "number") {
+      span.messageStartIndex = messageStartIndex;
+    }
+    if (typeof span.messageEndIndex !== "number") {
+      span.messageEndIndex = messageEndIndex;
+    }
+  }
+}
+
 /**
  * Scrub messages for sending to the backend LLM.
  * Removes UI-specific metadata that shouldn't be sent to the model.
  */
 function scrubMessagesForBackend(
   messages: ModelMessage[],
+  tools: ToolSet,
   mcpClientManager: MCPClientManager,
   selectedServers?: string[],
 ): ModelMessage[] {
@@ -210,15 +350,21 @@ function scrubMessagesForBackend(
     return msg;
   });
 
-  return scrubChatGPTAppsToolResultsForBackend(
+  const withoutUnavailableToolHistory = scrubUnavailableToolHistoryForBackend(
+    stripped,
+    Object.keys(tools as Record<string, unknown>),
+  );
+
+  const scrubbed = scrubChatGPTAppsToolResultsForBackend(
     scrubMcpAppsToolResultsForBackend(
-      stripped,
+      withoutUnavailableToolHistory,
       mcpClientManager,
       selectedServers,
     ),
     mcpClientManager,
     selectedServers,
   );
+  return normalizeModelMessagesForConvex(scrubbed);
 }
 
 /**
@@ -229,6 +375,9 @@ async function processStream(
   body: ReadableStream<Uint8Array>,
   writer: StepContext["writer"],
   normalizeToolCallId: (toolCallId?: string) => string,
+  traceTurn: LiveTraceTurnContext,
+  stepIndex: number,
+  tools: ToolSet,
   requireToolApproval?: boolean,
 ): Promise<StreamResult> {
   const contentParts: PersistedAssistantPart[] = [];
@@ -259,7 +408,7 @@ async function processStream(
 
   const parsedStream = parseJsonEventStream({
     stream: body,
-    schema: uiMessageChunkSchema,
+    schema: streamChunkSchema as any,
   });
   const reader = parsedStream.getReader();
 
@@ -276,7 +425,14 @@ async function processStream(
         break;
       }
 
-      const chunk = value.value;
+      const chunk = value.value as UIMessageChunk & {
+        totalUsage?: {
+          inputTokens?: number;
+          outputTokens?: number;
+          totalTokens?: number;
+        };
+        [key: string]: unknown;
+      };
 
       // Skip backend stub tool outputs - we execute tools locally
       if (
@@ -298,6 +454,15 @@ async function processStream(
           flushReasoning();
           pendingText += chunk.delta ?? "";
           writer.write(chunk);
+          if (chunk.delta) {
+            writeTraceEvent(writer, {
+              type: "text_delta",
+              turnId: traceTurn.turnId,
+              promptIndex: traceTurn.promptIndex,
+              stepIndex,
+              delta: chunk.delta,
+            });
+          }
           break;
 
         case "text-end":
@@ -353,6 +518,16 @@ async function processStream(
           });
           hasToolCalls = true;
           writer.write({ ...chunk, toolCallId });
+          writeTraceEvent(writer, {
+            type: "tool_call",
+            turnId: traceTurn.turnId,
+            promptIndex: traceTurn.promptIndex,
+            stepIndex,
+            toolCallId,
+            toolName: chunk.toolName,
+            input: toTraceRecord(chunk.input),
+            serverId: readToolServerId(tools, chunk.toolName),
+          });
 
           if (requireToolApproval) {
             writer.write({
@@ -397,6 +572,8 @@ function emitToolResults(
   writer: StepContext["writer"],
   mcpClientManager: MCPClientManager,
   newMessages: ModelMessage[],
+  traceTurn?: LiveTraceTurnContext,
+  stepIndex?: number,
 ) {
   for (const msg of newMessages) {
     if (msg?.role === "tool") {
@@ -446,6 +623,25 @@ function emitToolResults(
             // Prefer full result (with _meta/structuredContent) for UI
             output: outputForUi,
           });
+
+          if (traceTurn && typeof stepIndex === "number") {
+            const errorText =
+              part.output?.type === "error-text" &&
+              typeof part.output.value === "string"
+                ? part.output.value
+                : undefined;
+            writeTraceEvent(writer, {
+              type: "tool_result",
+              turnId: traceTurn.turnId,
+              promptIndex: traceTurn.promptIndex,
+              stepIndex,
+              toolCallId: part.toolCallId,
+              toolName: toolName ?? part.toolName ?? "unknown",
+              output: outputForUi,
+              errorText,
+              serverId,
+            });
+          }
         }
       }
     }
@@ -509,6 +705,8 @@ async function handlePendingApprovals(
   messageHistory: ModelMessage[],
   tools: ToolSet,
   mcpClientManager: MCPClientManager,
+  traceTurn?: LiveTraceTurnContext,
+  stepIndex?: number,
 ): Promise<boolean> {
   // Build approvalId → toolCallId map, toolCallId → toolName map,
   // and toolCallId → assistant message index map from assistant messages
@@ -585,15 +783,32 @@ async function handlePendingApprovals(
 
     for (const toolCallId of deniedToolCallIds) {
       if (existingResultIds.has(toolCallId)) continue;
+      const toolName = toolCallIdToToolName.get(toolCallId) ?? "unknown";
       writer.write({
         type: "tool-output-denied",
         toolCallId,
       });
 
+      if (traceTurn && typeof stepIndex === "number") {
+        writeTraceEvent(writer, {
+          type: "tool_result",
+          turnId: traceTurn.turnId,
+          promptIndex: traceTurn.promptIndex,
+          stepIndex,
+          toolCallId,
+          toolName,
+          output: {
+            type: "error-text",
+            value: "Tool execution denied by user.",
+          },
+          errorText: "Tool execution denied by user.",
+        });
+      }
+
       const part: ToolResultPart = {
         type: "tool-result",
         toolCallId,
-        toolName: toolCallIdToToolName.get(toolCallId) ?? "unknown",
+        toolName,
         output: {
           type: "error-text",
           value: "Tool execution denied by user.",
@@ -634,7 +849,13 @@ async function handlePendingApprovals(
       tools: tools as Record<string, any>,
     });
 
-    emitToolResults(writer, mcpClientManager, newMessages);
+    emitToolResults(
+      writer,
+      mcpClientManager,
+      newMessages,
+      traceTurn,
+      stepIndex,
+    );
     didHandle = true;
   }
 
@@ -662,13 +883,17 @@ async function processOneStep(
     requireToolApproval,
     stepIndex,
     usedToolCallIds,
+    traceTurn,
   } = ctx;
 
   const beforeStepLength = messageHistory.length;
+  const stepStartAbs = Date.now();
+  const llmStartAbs = stepStartAbs;
 
   // Scrub messages before sending to backend
   const scrubbedMessages = scrubMessagesForBackend(
     messageHistory,
+    tools,
     mcpClientManager,
     selectedServers,
   );
@@ -677,6 +902,17 @@ async function processOneStep(
     usedToolCallIds,
     stepIndex,
   );
+
+  emitRequestPayload(writer, {
+    turnId: traceTurn.turnId,
+    promptIndex: traceTurn.promptIndex,
+    stepIndex,
+    payload: buildResolvedModelRequestPayload({
+      systemPrompt,
+      tools,
+      messages: scrubbedMessages,
+    }),
+  });
 
   // Call Convex /stream endpoint
   const res = await fetch(`${process.env.CONVEX_HTTP_URL}/stream`, {
@@ -700,6 +936,45 @@ async function processOneStep(
 
   if (!res.ok || !res.body) {
     const errorText = await res.text().catch(() => "stream failed");
+    const failAbs = Date.now();
+    const stepMessageEndIndex =
+      messageHistory.length > traceTurn.promptMessageStartIndex
+        ? messageHistory.length - 1
+        : undefined;
+    pushBackendStepLlmFailureSpans(
+      traceTurn.turnSpans,
+      traceTurn.turnStartedAt,
+      traceTurn.promptIndex,
+      stepIndex,
+      stepStartAbs,
+      llmStartAbs,
+      failAbs,
+      {
+        modelId,
+        messageStartIndex:
+          stepMessageEndIndex != null
+            ? traceTurn.promptMessageStartIndex
+            : undefined,
+        messageEndIndex: stepMessageEndIndex,
+      },
+    );
+    setStepSpanMessageRanges(
+      traceTurn.turnSpans,
+      traceTurn.promptIndex,
+      stepIndex,
+      stepMessageEndIndex != null
+        ? traceTurn.promptMessageStartIndex
+        : undefined,
+      stepMessageEndIndex,
+    );
+    emitTraceSnapshot(writer, messageHistory, tools, traceTurn);
+    writeTraceEvent(writer, {
+      type: "error",
+      turnId: traceTurn.turnId,
+      promptIndex: traceTurn.promptIndex,
+      stepIndex,
+      errorText,
+    });
     writer.write({ type: "error", errorText });
     return { shouldContinue: false, didEmitFinish: false };
   }
@@ -709,7 +984,15 @@ async function processOneStep(
     res.body,
     writer,
     normalizeToolCallId,
+    traceTurn,
+    stepIndex,
+    tools,
     requireToolApproval,
+  );
+  const llmEndAbs = Date.now();
+  traceTurn.turnUsage = mergeLiveChatTraceUsage(
+    traceTurn.turnUsage,
+    readUsageFromFinishChunk(finishChunk),
   );
 
   // Update message history with assistant response
@@ -720,11 +1003,45 @@ async function processOneStep(
     } as ModelMessage);
   }
 
+  const stepMessageEndIndex =
+    messageHistory.length > traceTurn.promptMessageStartIndex
+      ? messageHistory.length - 1
+      : undefined;
+  const stepMessageStartIndex =
+    stepMessageEndIndex != null ? traceTurn.promptMessageStartIndex : undefined;
+  const stepUsage = readUsageFromFinishChunk(finishChunk);
+
   // Check for unresolved tool calls and execute them
   if (hasUnresolvedToolCalls(messageHistory)) {
     // When approval is required, don't execute tools — pause and let the client
     // show the approval UI. The next request will carry approval responses.
     if (requireToolApproval) {
+      pushBackendStepSuccessSpans(
+        traceTurn.turnSpans,
+        traceTurn.turnStartedAt,
+        traceTurn.promptIndex,
+        stepIndex,
+        stepStartAbs,
+        { startAbs: llmStartAbs, endAbs: llmEndAbs },
+        undefined,
+        {
+          modelId,
+          inputTokens: stepUsage?.inputTokens,
+          outputTokens: stepUsage?.outputTokens,
+          totalTokens: stepUsage?.totalTokens,
+          messageStartIndex: stepMessageStartIndex,
+          messageEndIndex: stepMessageEndIndex,
+          status: "ok",
+        },
+      );
+      setStepSpanMessageRanges(
+        traceTurn.turnSpans,
+        traceTurn.promptIndex,
+        stepIndex,
+        stepMessageStartIndex,
+        stepMessageEndIndex,
+      );
+      emitTraceSnapshot(writer, messageHistory, tools, traceTurn);
       if (finishChunk) {
         writer.write(finishChunk);
       }
@@ -734,16 +1051,165 @@ async function processOneStep(
     // Emit inherited tool calls that need execution
     emitInheritedToolCalls(writer, messageHistory, beforeStepLength);
 
-    // Execute tools locally
-    const newMessages = await executeToolCallsFromMessages(messageHistory, {
-      tools: tools as Record<string, any>,
-    });
+    const toolsStartAbs = Date.now();
+    try {
+      const tracedTools = wrapBackendToolsForTrace(
+        tools as Record<string, any>,
+        {
+          runStartedAt: traceTurn.turnStartedAt,
+          promptIndex: traceTurn.promptIndex,
+          stepIndex,
+          spans: traceTurn.turnSpans,
+        },
+      );
 
-    // Emit results for newly executed tools
-    emitToolResults(writer, mcpClientManager, newMessages);
+      // Execute tools locally
+      const newMessages = await executeToolCallsFromMessages(messageHistory, {
+        tools: tracedTools as Record<string, any>,
+      });
+      const toolsEndAbs = Date.now();
+
+      const newToolCallIds = new Set<string>();
+      for (const msg of newMessages) {
+        if (msg?.role !== "tool") {
+          continue;
+        }
+        const toolMsg = msg as ToolModelMessage;
+        for (const part of toolMsg.content) {
+          if (
+            part.type === "tool-result" &&
+            typeof part.toolCallId === "string"
+          ) {
+            newToolCallIds.add(part.toolCallId);
+          }
+        }
+      }
+      setToolSpanMessageRangesFromResults(
+        traceTurn.turnSpans,
+        messageHistory,
+        traceTurn.promptIndex,
+        stepIndex,
+        newToolCallIds,
+      );
+      const stepMessageEndIndexAfterTools =
+        messageHistory.length > traceTurn.promptMessageStartIndex
+          ? messageHistory.length - 1
+          : undefined;
+      const stepMessageStartIndexAfterTools =
+        stepMessageEndIndexAfterTools != null
+          ? traceTurn.promptMessageStartIndex
+          : undefined;
+
+      pushBackendStepSuccessSpans(
+        traceTurn.turnSpans,
+        traceTurn.turnStartedAt,
+        traceTurn.promptIndex,
+        stepIndex,
+        stepStartAbs,
+        { startAbs: llmStartAbs, endAbs: llmEndAbs },
+        {
+          startAbs: toolsStartAbs,
+          endAbs: toolsEndAbs,
+          pushAggregateSpan: newMessages.length === 0,
+        },
+        {
+          modelId,
+          inputTokens: stepUsage?.inputTokens,
+          outputTokens: stepUsage?.outputTokens,
+          totalTokens: stepUsage?.totalTokens,
+          messageStartIndex: stepMessageStartIndexAfterTools,
+          messageEndIndex: stepMessageEndIndexAfterTools,
+          status: "ok",
+        },
+      );
+      setStepSpanMessageRanges(
+        traceTurn.turnSpans,
+        traceTurn.promptIndex,
+        stepIndex,
+        stepMessageStartIndexAfterTools,
+        stepMessageEndIndexAfterTools,
+      );
+
+      // Emit results for newly executed tools
+      emitToolResults(
+        writer,
+        mcpClientManager,
+        newMessages,
+        traceTurn,
+        stepIndex,
+      );
+      emitTraceSnapshot(writer, messageHistory, tools, traceTurn);
+    } catch (error) {
+      const failAbs = Date.now();
+      pushBackendStepToolFailureSpans(
+        traceTurn.turnSpans,
+        traceTurn.turnStartedAt,
+        traceTurn.promptIndex,
+        stepIndex,
+        stepStartAbs,
+        { startAbs: llmStartAbs, endAbs: llmEndAbs },
+        toolsStartAbs,
+        failAbs,
+        {
+          modelId,
+          inputTokens: stepUsage?.inputTokens,
+          outputTokens: stepUsage?.outputTokens,
+          totalTokens: stepUsage?.totalTokens,
+          messageStartIndex: stepMessageStartIndex,
+          messageEndIndex: stepMessageEndIndex,
+          pushAggregateSpan: false,
+        },
+      );
+      setStepSpanMessageRanges(
+        traceTurn.turnSpans,
+        traceTurn.promptIndex,
+        stepIndex,
+        stepMessageStartIndex,
+        stepMessageEndIndex,
+      );
+      emitTraceSnapshot(writer, messageHistory, tools, traceTurn);
+
+      const errorText = error instanceof Error ? error.message : String(error);
+      writeTraceEvent(writer, {
+        type: "error",
+        turnId: traceTurn.turnId,
+        promptIndex: traceTurn.promptIndex,
+        stepIndex,
+        errorText,
+      });
+      writer.write({ type: "error", errorText });
+      return { shouldContinue: false, didEmitFinish: false };
+    }
 
     return { shouldContinue: true, didEmitFinish: false };
   }
+
+  pushBackendStepSuccessSpans(
+    traceTurn.turnSpans,
+    traceTurn.turnStartedAt,
+    traceTurn.promptIndex,
+    stepIndex,
+    stepStartAbs,
+    { startAbs: llmStartAbs, endAbs: llmEndAbs },
+    undefined,
+    {
+      modelId,
+      inputTokens: stepUsage?.inputTokens,
+      outputTokens: stepUsage?.outputTokens,
+      totalTokens: stepUsage?.totalTokens,
+      messageStartIndex: stepMessageStartIndex,
+      messageEndIndex: stepMessageEndIndex,
+      status: "ok",
+    },
+  );
+  setStepSpanMessageRanges(
+    traceTurn.turnSpans,
+    traceTurn.promptIndex,
+    stepIndex,
+    stepMessageStartIndex,
+    stepMessageEndIndex,
+  );
+  emitTraceSnapshot(writer, messageHistory, tools, traceTurn);
 
   // No more tool calls - emit finish and stop
   const didEmitFinish = !!finishChunk;
@@ -774,11 +1240,23 @@ export async function handleMCPJamFreeChatModel(
     requireToolApproval,
     onConversationComplete,
     onStreamComplete,
+    onStreamWriterReady,
   } = options;
 
   const toolDefs = serializeToolsForConvex(tools);
   const messageHistory = [...messages];
   const usedToolCallIds = collectUsedToolCallIds(messageHistory);
+  const traceTurn: LiveTraceTurnContext = {
+    turnId: generateLiveTraceTurnId(),
+    promptIndex: getPromptIndex(messageHistory),
+    promptMessageStartIndex: getPromptMessageStartIndex(messageHistory),
+    turnStartedAt: Date.now(),
+    turnSpans: [],
+  };
+  const promptStepBaseIndex = getPromptAssistantStepBaseIndex(
+    messageHistory,
+    traceTurn.promptMessageStartIndex,
+  );
   let steps = 0;
   let runSucceeded = false;
 
@@ -787,6 +1265,15 @@ export async function handleMCPJamFreeChatModel(
       let finishEmitted = false;
 
       try {
+        onStreamWriterReady?.(writer);
+
+        writeTraceEvent(writer, {
+          type: "turn_start",
+          turnId: traceTurn.turnId,
+          promptIndex: traceTurn.promptIndex,
+          startedAtMs: traceTurn.turnStartedAt,
+        });
+
         // Process any pending approval responses from a previous request
         if (requireToolApproval) {
           const handled = await handlePendingApprovals(
@@ -794,6 +1281,8 @@ export async function handleMCPJamFreeChatModel(
             messageHistory,
             tools,
             mcpClientManager,
+            traceTurn,
+            promptStepBaseIndex + steps,
           );
           if (handled) {
             // Approvals were processed — if there are still unresolved tool
@@ -815,8 +1304,9 @@ export async function handleMCPJamFreeChatModel(
             mcpClientManager,
             selectedServers,
             requireToolApproval,
-            stepIndex: steps,
+            stepIndex: promptStepBaseIndex + steps,
             usedToolCallIds,
+            traceTurn,
           });
 
           steps++;
@@ -836,14 +1326,46 @@ export async function handleMCPJamFreeChatModel(
             finishReason: steps >= MAX_STEPS ? "length" : "stop",
             totalUsage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
           } as unknown as UIMessageChunk);
+          finishEmitted = true;
         }
+
+        writeTraceEvent(writer, {
+          type: "turn_finish",
+          turnId: traceTurn.turnId,
+          promptIndex: traceTurn.promptIndex,
+          finishReason: steps >= MAX_STEPS ? "length" : "stop",
+          usage: traceTurn.turnUsage,
+        });
 
         runSucceeded = true;
       } catch (error) {
         logger.error("[mcpjam-stream-handler] Error in agentic loop", error);
+        const failAbs = Date.now();
+        const errorText =
+          error instanceof Error ? error.message : String(error);
+        pushAiSdkTrailingErrorSpan(
+          traceTurn.turnSpans,
+          traceTurn.turnStartedAt,
+          traceTurn.turnStartedAt,
+          failAbs,
+          traceTurn.promptIndex,
+        );
+        emitTraceSnapshot(writer, messageHistory, tools, traceTurn);
+        writeTraceEvent(writer, {
+          type: "error",
+          turnId: traceTurn.turnId,
+          promptIndex: traceTurn.promptIndex,
+          errorText,
+        });
+        writeTraceEvent(writer, {
+          type: "turn_finish",
+          turnId: traceTurn.turnId,
+          promptIndex: traceTurn.promptIndex,
+          usage: traceTurn.turnUsage,
+        });
         writer.write({
           type: "error",
-          errorText: error instanceof Error ? error.message : String(error),
+          errorText,
         });
       }
     },

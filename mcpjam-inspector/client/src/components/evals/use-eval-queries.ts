@@ -56,7 +56,7 @@ export function useEvalQueries({
   ) as EvalSuiteRun[] | undefined;
 
   // Loading states
-  const isOverviewLoading = suiteOverview === undefined;
+  const isOverviewLoading = enableOverviewQuery && suiteOverview === undefined;
   const isSuiteDetailsLoading =
     enableSuiteDetailsQuery && suiteDetails === undefined;
   const isSuiteRunsLoading = enableSuiteDetailsQuery && suiteRuns === undefined;

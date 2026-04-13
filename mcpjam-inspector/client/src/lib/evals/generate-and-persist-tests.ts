@@ -1,5 +1,9 @@
 import type { ConvexReactClient } from "convex/react";
-import { generateEvalTests } from "@/lib/apis/evals-api";
+import {
+  generateEvalTests,
+  type GeneratedEvalTestCase,
+} from "@/lib/apis/evals-api";
+import type { PromptTurn } from "@/shared/prompt-turns";
 
 export type CreateEvalTestCaseInput = {
   suiteId: string;
@@ -11,7 +15,47 @@ export type CreateEvalTestCaseInput = {
   isNegativeTest: boolean;
   scenario?: string;
   expectedOutput?: string;
+  promptTurns?: PromptTurn[];
 };
+
+function getLegacyExpectedToolCalls(
+  promptTurns: PromptTurn[] | undefined,
+  fallback: Array<unknown> | undefined,
+): Array<unknown> {
+  const firstTurn = promptTurns?.[0];
+  if (firstTurn) {
+    return firstTurn.expectedToolCalls ?? [];
+  }
+  return fallback ?? [];
+}
+
+function toCreateTestCaseInput(
+  suiteId: string,
+  models: Array<{ model: string; provider: string }>,
+  test: GeneratedEvalTestCase,
+): CreateEvalTestCaseInput {
+  const isNegativeTest =
+    test.isNegativeTest === true ||
+    (Array.isArray(test.promptTurns) &&
+      test.promptTurns.length > 0 &&
+      test.promptTurns.every((turn) => turn.expectedToolCalls.length === 0));
+
+  return {
+    suiteId,
+    title: test.title || "Generated test",
+    query: test.query || test.promptTurns?.[0]?.prompt || "",
+    models,
+    expectedToolCalls: getLegacyExpectedToolCalls(
+      test.promptTurns,
+      test.expectedToolCalls,
+    ),
+    runs: test.runs || 1,
+    isNegativeTest,
+    scenario: test.scenario,
+    expectedOutput: test.expectedOutput,
+    promptTurns: test.promptTurns,
+  };
+}
 
 function collectModelsFromTestCases(
   testCases: Array<Record<string, unknown>>,
@@ -124,17 +168,7 @@ export async function generateAndPersistEvalTests(
   let createdCount = 0;
   for (const test of tests) {
     try {
-      await createTestCase({
-        suiteId,
-        title: test.title || "Generated test",
-        query: test.query || "",
-        models: modelsToUse,
-        expectedToolCalls: test.expectedToolCalls || [],
-        runs: test.runs || 1,
-        isNegativeTest: test.isNegativeTest || false,
-        scenario: test.scenario,
-        expectedOutput: test.expectedOutput,
-      });
+      await createTestCase(toCreateTestCaseInput(suiteId, modelsToUse, test));
       createdCount++;
     } catch (err) {
       console.error("Failed to create test case:", err);

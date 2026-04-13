@@ -9,7 +9,7 @@ import {
   type ComponentProps,
 } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
-import { AlertTriangle, Loader2 } from "lucide-react";
+import { AlertTriangle, Construction, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { ServersTab } from "./components/ServersTab";
 import { ToolsTab } from "./components/ToolsTab";
@@ -19,6 +19,7 @@ import { SkillsTab } from "./components/SkillsTab";
 import { LearningTab } from "./components/LearningTab";
 import { TasksTab } from "./components/TasksTab";
 import { ChatTabV2 } from "./components/ChatTabV2";
+import type { EvalChatHandoff } from "./lib/eval-chat-handoff";
 import { EvalsTab } from "./components/EvalsTab";
 import { CiEvalsTab } from "./components/CiEvalsTab";
 import { ViewsTab } from "./components/ViewsTab";
@@ -32,6 +33,7 @@ import { AuthTab } from "./components/AuthTab";
 import { OAuthFlowTab } from "./components/OAuthFlowTab";
 import { ErrorBoundary } from "./components/evals/ErrorBoundary";
 import { AppBuilderTab } from "./components/ui-playground/AppBuilderTab";
+import { EmptyState } from "./components/ui/empty-state";
 import { isFirstRunEligible } from "./lib/onboarding-state";
 import { ProfileTab } from "./components/ProfileTab";
 import { BillingUpsellGate } from "./components/billing/BillingUpsellGate";
@@ -76,7 +78,10 @@ import CompletingSignInLoading from "./components/CompletingSignInLoading";
 import LoadingScreen from "./components/LoadingScreen";
 import { Header } from "./components/Header";
 import { ThemePreset } from "./types/preferences/theme";
-import type { ActiveServerSelectorProps } from "./components/ActiveServerSelector";
+import type {
+  ActiveServerSelectorProps,
+  PlaygroundServerSelectorProps,
+} from "./components/ActiveServerSelector";
 import { useViewQueries, useWorkspaceServers } from "./hooks/useViews";
 import { HostedShellGate } from "./components/hosted/HostedShellGate";
 import { resolveHostedShellGateState } from "./components/hosted/hosted-shell-gate-state";
@@ -152,6 +157,8 @@ import {
 } from "./lib/hosted-oauth-resume";
 import { handleOAuthCallback } from "./lib/oauth/mcp-oauth";
 import { getEffectiveWorkspaceClientCapabilities } from "./lib/client-config";
+import { buildEvalsHash } from "./lib/evals-router";
+import { withTestingSurface } from "./lib/testing-surface";
 import { useClientConfigStore } from "./stores/client-config-store";
 
 function getHostedOAuthCallbackErrorMessage(): string {
@@ -167,6 +174,11 @@ function getHostedOAuthCallbackErrorMessage(): string {
     description || error,
     "Authorization could not be completed. Try again.",
   );
+}
+
+function replaceHash(hash: string) {
+  window.history.replaceState({}, "", `/${hash}`);
+  window.dispatchEvent(new HashChangeEvent("hashchange"));
 }
 
 function BillingHandoffLoading({ overlay = false }: { overlay?: boolean }) {
@@ -238,6 +250,8 @@ function AppChromeHeader({ hidden, ...props }: AppChromeHeaderProps) {
 
 export default function App() {
   const [activeTab, setActiveTab] = useState("servers");
+  const [evalChatHandoff, setEvalChatHandoff] =
+    useState<EvalChatHandoff | null>(null);
   const [activeOrganizationSection, setActiveOrganizationSection] =
     useState<OrganizationRouteSection>("overview");
   const [chatHasMessages, setChatHasMessages] = useState(false);
@@ -251,12 +265,17 @@ export default function App() {
     useState<CheckoutIntent | null>(() => getInitialPendingCheckoutIntent());
   const [billingPathSync, setBillingPathSync] = useState(0);
   const posthog = usePostHog();
+  const [evaluateRunsFlagsLoaded, setEvaluateRunsFlagsLoaded] = useState(
+    () => posthog.featureFlags?.hasLoadedFlags === true,
+  );
   const billingEntitlementsUiEnabled = useFeatureFlagEnabled(
     "billing-entitlements-ui",
   );
   const learningEnabled = useFeatureFlagEnabled("mcpjam-learning");
   const clientConfigEnabled = useFeatureFlagEnabled("client-config-enabled");
   const registryEnabled = useFeatureFlagEnabled("registry-enabled");
+  const playgroundEnabled = useFeatureFlagEnabled("playground-enabled");
+  const evaluateRunsEnabled = useFeatureFlagEnabled("evaluate-runs");
   const {
     getAccessToken,
     signIn,
@@ -320,6 +339,14 @@ export default function App() {
     HOSTED_MODE && !exitedSharedChat && hostedRouteKind === "shared";
   const isSandboxChatRoute =
     HOSTED_MODE && !exitedSandboxChat && hostedRouteKind === "sandbox";
+
+  useEffect(() => {
+    setEvaluateRunsFlagsLoaded(posthog.featureFlags?.hasLoadedFlags === true);
+
+    return posthog.onFeatureFlags(() => {
+      setEvaluateRunsFlagsLoaded(posthog.featureFlags?.hasLoadedFlags === true);
+    });
+  }, [posthog]);
   const isHostedChatRoute = isSharedChatRoute || isSandboxChatRoute;
   const currentHash = window.location.hash || "#servers";
   const currentHashRoute = useMemo(
@@ -482,6 +509,7 @@ export default function App() {
     handleUpdate,
     handleRemoveServer,
     setSelectedServer,
+    setSelectedMCPConfigs,
     toggleServerSelection,
     setSelectedMultipleServersToAllServers,
     workspaces,
@@ -594,20 +622,33 @@ export default function App() {
             "true",
           );
         } catch {
-          // Ignore localStorage failures and still navigate.
+          // Ignore localStorage failures and still select the server.
         }
         setSelectedServer(firstVisitServer);
-        if (
-          window.location.hash !== "#ci-evals" &&
-          window.location.hash !== "#/ci-evals"
-        ) {
-          window.location.hash = "#/ci-evals";
-        }
       }
     }
 
     previousConnectedServersRef.current = connectedServers;
   }, [activeTab, appState.servers, setSelectedServer]);
+
+  // Auto-select a connected server when navigating to tabs that need one
+  useEffect(() => {
+    const needsServer =
+      activeTab === "app-builder" ||
+      activeTab === "tools" ||
+      activeTab === "resources" ||
+      activeTab === "prompts" ||
+      activeTab === "tasks" ||
+      activeTab === "auth";
+    if (!needsServer || selectedMCPConfig) return;
+
+    const firstConnected = Object.entries(workspaceServers).find(
+      ([, server]) => (server as any).connectionStatus === "connected",
+    );
+    if (firstConnected) {
+      setSelectedServer(firstConnected[0]);
+    }
+  }, [activeTab, selectedMCPConfig, workspaceServers, setSelectedServer]);
 
   // Create effective app state that uses the correct workspaces (Convex when authenticated)
   const effectiveAppState = useMemo(
@@ -694,10 +735,16 @@ export default function App() {
   const createWorkspaceDisabledReason = guestWorkspaceLimitReached
     ? "Sign in to create more workspaces"
     : (workspaceCreationGate.denialMessage ?? undefined);
+  const [trialModalDismissedForOrg, setTrialModalDismissedForOrg] = useState<
+    string | null
+  >(null);
+  const trialModalDismissed =
+    trialModalDismissedForOrg === billingOrganizationId;
   const showTrialDecisionModal =
     billingUiEnabled &&
     shellBillingStatus?.decisionRequired === true &&
-    shellBillingStatus?.isOwner === true;
+    shellBillingStatus?.isOwner === true &&
+    !trialModalDismissed;
   const showTrialDecisionNotice =
     billingUiEnabled &&
     shellBillingStatus?.decisionRequired === true &&
@@ -1030,6 +1077,17 @@ export default function App() {
   ]);
 
   useEffect(() => {
+    if (activeTab === "ci-evals") {
+      if (!evaluateRunsFlagsLoaded) {
+        return;
+      }
+
+      if (evaluateRunsEnabled !== true) {
+        replaceHash(withTestingSurface(buildEvalsHash({ type: "list" })));
+        return;
+      }
+    }
+
     if (activeTabBillingLocked && activeTabBillingFeature) {
       toast.error(
         `${formatBillingFeatureName(activeTabBillingFeature)} is not included in the ${formatPlanName(
@@ -1054,6 +1112,8 @@ export default function App() {
     clientConfigEnabled,
     registryEnabled,
     learningEnabled,
+    evaluateRunsFlagsLoaded,
+    evaluateRunsEnabled,
     isAuthenticated,
     activeTab,
     applyNavigation,
@@ -1062,6 +1122,18 @@ export default function App() {
   const handleNavigate = (section: string) => {
     applyNavigation(section, { updateHash: true });
   };
+
+  const handleContinueEvalInChat = useCallback(
+    (handoff: Omit<EvalChatHandoff, "id">) => {
+      setSelectedMCPConfigs(handoff.serverNames);
+      setEvalChatHandoff({
+        ...handoff,
+        id: `eval-chat-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      });
+      applyNavigation("chat-v2", { updateHash: true });
+    },
+    [applyNavigation, setSelectedMCPConfigs],
+  );
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -1143,6 +1215,33 @@ export default function App() {
       pendingCheckoutIntent?.plan,
     ]);
 
+  const playgroundServerSelectorProps = useMemo(():
+    | PlaygroundServerSelectorProps
+    | undefined => {
+    if (activeTab !== "app-builder") return undefined;
+    return {
+      serverConfigs: workspaceServers,
+      selectedServer: appState.selectedServer,
+      selectedMultipleServers: appState.selectedMultipleServers,
+      isMultiSelectEnabled: false,
+      onServerChange: setSelectedServer,
+      onMultiServerToggle: toggleServerSelection,
+      onConnect: handleConnect,
+      onReconnect: handleReconnect,
+      showOnlyOAuthServers: false,
+      showOnlyServersWithViews: false,
+    };
+  }, [
+    activeTab,
+    workspaceServers,
+    appState.selectedServer,
+    appState.selectedMultipleServers,
+    setSelectedServer,
+    toggleServerSelection,
+    handleConnect,
+    handleReconnect,
+  ]);
+
   if (isDebugCallback) {
     return <OAuthDebugCallback />;
   }
@@ -1209,8 +1308,6 @@ export default function App() {
     activeTab === "tasks" ||
     activeTab === "oauth-flow" ||
     activeTab === "chat" ||
-    activeTab === "chat-v2" ||
-    activeTab === "app-builder" ||
     activeTab === "evals" ||
     activeTab === "views";
 
@@ -1218,22 +1315,18 @@ export default function App() {
     shouldShowActiveServerSelector
       ? {
           serverConfigs:
-            activeTab === "oauth-flow"
-              ? appState.servers
-              : activeTab === "views"
-                ? workspaceServers
-                : connectedOrConnectingServerConfigs,
+            activeTab === "oauth-flow" ? appState.servers : workspaceServers,
           selectedServer: appState.selectedServer,
           onServerChange: setSelectedServer,
           onConnect: handleConnect,
           onReconnect: handleReconnect,
-          isMultiSelectEnabled: activeTab === "chat" || activeTab === "chat-v2",
+          isMultiSelectEnabled: activeTab === "chat",
           onMultiServerToggle: toggleServerSelection,
           selectedMultipleServers: appState.selectedMultipleServers,
           showOnlyOAuthServers: false,
           showOnlyServersWithViews: activeTab === "views",
           serversWithViews: serversWithViews,
-          hasMessages: activeTab === "chat-v2" ? chatHasMessages : false,
+          hasMessages: false,
         }
       : undefined;
 
@@ -1316,9 +1409,15 @@ export default function App() {
             </div>
           )}
           {activeTab === "evals" &&
-            (billingUiEnabled &&
-            activeTabBillingLocked &&
-            activeTabBillingFeature ? (
+            (playgroundEnabled === false ? (
+              <EmptyState
+                icon={Construction}
+                title="Playground Coming Soon"
+                description="The Playground is under construction. Stay tuned!"
+              />
+            ) : billingUiEnabled &&
+              activeTabBillingLocked &&
+              activeTabBillingFeature ? (
               <BillingUpsellGate
                 feature={activeTabBillingFeature}
                 currentPlan={
@@ -1341,33 +1440,47 @@ export default function App() {
               <EvalsTab
                 selectedServer={appState.selectedServer}
                 workspaceId={convexWorkspaceId}
+                onContinueInChat={handleContinueEvalInChat}
               />
             ))}
           {activeTab === "ci-evals" &&
-            (billingUiEnabled &&
-            activeTabBillingLocked &&
-            activeTabBillingFeature ? (
-              <BillingUpsellGate
-                feature={activeTabBillingFeature}
-                currentPlan={
-                  shellBillingStatus?.effectivePlan ??
-                  shellBillingStatus?.plan ??
-                  "free"
-                }
-                upgradePlan={upgradePlanForActiveTab}
-                canManageBilling={shellBillingStatus?.canManageBilling ?? false}
-                onNavigateToBilling={() => {
-                  if (billingOrganizationId) {
-                    applyNavigation(
-                      `organizations/${billingOrganizationId}/billing`,
-                      { updateHash: true },
-                    );
+            (!evaluateRunsFlagsLoaded ? (
+              <div className="flex h-full min-h-[320px] items-center justify-center">
+                <div className="text-center">
+                  <Loader2 className="mx-auto h-8 w-8 animate-spin text-primary" />
+                  <p className="mt-4 text-sm text-muted-foreground">
+                    Loading Runs...
+                  </p>
+                </div>
+              </div>
+            ) : evaluateRunsEnabled === true ? (
+              billingUiEnabled &&
+              activeTabBillingLocked &&
+              activeTabBillingFeature ? (
+                <BillingUpsellGate
+                  feature={activeTabBillingFeature}
+                  currentPlan={
+                    shellBillingStatus?.effectivePlan ??
+                    shellBillingStatus?.plan ??
+                    "free"
                   }
-                }}
-              />
-            ) : (
-              <CiEvalsTab convexWorkspaceId={convexWorkspaceId} />
-            ))}
+                  upgradePlan={upgradePlanForActiveTab}
+                  canManageBilling={
+                    shellBillingStatus?.canManageBilling ?? false
+                  }
+                  onNavigateToBilling={() => {
+                    if (billingOrganizationId) {
+                      applyNavigation(
+                        `organizations/${billingOrganizationId}/billing`,
+                        { updateHash: true },
+                      );
+                    }
+                  }}
+                />
+              ) : (
+                <CiEvalsTab convexWorkspaceId={convexWorkspaceId} />
+              )
+            ) : null)}
           {activeTab === "views" && (
             <ViewsTab selectedServer={appState.selectedServer} />
           )}
@@ -1463,7 +1576,19 @@ export default function App() {
                 connectedOrConnectingServerConfigs
               }
               selectedServerNames={appState.selectedMultipleServers}
+              allServerConfigs={workspaceServers}
+              onServerToggle={toggleServerSelection}
+              onReconnectServer={handleReconnect}
+              onAddServer={handleConnect}
+              onSelectedServerNamesChange={setSelectedMCPConfigs}
               onHasMessagesChange={setChatHasMessages}
+              enableMultiModelChat
+              evalChatHandoff={evalChatHandoff}
+              onEvalChatHandoffConsumed={(id) =>
+                setEvalChatHandoff((current) =>
+                  current?.id === id ? null : current,
+                )
+              }
             />
           )}
           {activeTab === "tracing" && <TracingTab />}
@@ -1476,6 +1601,8 @@ export default function App() {
               isAuthLoading={isAuthLoading}
               onConnect={handleConnect}
               onOnboardingChange={setAppBuilderOnboarding}
+              playgroundServerSelectorProps={playgroundServerSelectorProps}
+              enableMultiModelChat
             />
           )}
           {activeTab === "client-config" && (
@@ -1517,7 +1644,13 @@ export default function App() {
           )}
         </div>
       </SidebarInset>
-      <Dialog open={showTrialDecisionModal}>
+      <Dialog
+        open={showTrialDecisionModal}
+        onOpenChange={(open) => {
+          if (!open)
+            setTrialModalDismissedForOrg(billingOrganizationId ?? null);
+        }}
+      >
         <DialogContent
           onPointerDownOutside={(e) => e.preventDefault()}
           onEscapeKeyDown={(e) => e.preventDefault()}
@@ -1530,7 +1663,7 @@ export default function App() {
               organization to the Free plan.
             </DialogDescription>
           </DialogHeader>
-          <DialogFooter className="gap-2 sm:gap-0">
+          <DialogFooter className="gap-2">
             <Button
               type="button"
               variant="outline"
@@ -1551,6 +1684,7 @@ export default function App() {
             <Button
               type="button"
               onClick={() => {
+                setTrialModalDismissedForOrg(billingOrganizationId ?? null);
                 if (billingOrganizationId) {
                   applyNavigation(
                     `organizations/${billingOrganizationId}/billing`,

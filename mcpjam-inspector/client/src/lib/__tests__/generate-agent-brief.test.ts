@@ -107,4 +107,43 @@ describe("generateAgentBrief", () => {
     expect(out).toContain("## Explore-generated test cases");
     expect(out).toContain("name: playground-to-sdk-evals");
   });
+
+  it("includes multi-turn explore cases when prompt turns are present", () => {
+    const mapped = mapEvalCasesToAgentBriefExploreCases([
+      {
+        title: "Multi-turn",
+        query: "First turn",
+        expectedToolCalls: [],
+        promptTurns: [
+          {
+            id: "turn-1",
+            prompt: "Find the customer",
+            expectedToolCalls: [{ toolName: "search_customer", arguments: {} }],
+          },
+          {
+            id: "turn-2",
+            prompt: "Send the follow-up",
+            expectedToolCalls: [
+              {
+                toolName: "send_email",
+                arguments: { template: "follow-up" },
+              },
+            ],
+            expectedOutput: "A sent confirmation",
+          },
+        ],
+      },
+    ]);
+
+    const out = generateAgentBrief(minimalPayload, {
+      exploreTestCases: mapped,
+    });
+
+    expect(mapped[0]?.promptTurns).toHaveLength(2);
+    expect(out).toContain("#### Turn 1");
+    expect(out).toContain("Find the customer");
+    expect(out).toContain("#### Turn 2");
+    expect(out).toContain("A sent confirmation");
+    expect(out).toMatch(/`send_email\(\{template: "follow-up"\}\)`/);
+  });
 });

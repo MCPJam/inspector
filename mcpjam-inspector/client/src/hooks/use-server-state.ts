@@ -39,6 +39,17 @@ import {
   CLIENT_CONFIG_SYNC_PENDING_ERROR_MESSAGE,
   getEffectiveServerClientCapabilities,
 } from "@/lib/client-config";
+import { EXCALIDRAW_SERVER_NAME } from "@/lib/excalidraw-quick-connect";
+import { readOnboardingState } from "@/lib/onboarding-state";
+
+/** Skip noisy connect toast while first-run App Builder onboarding is in progress. */
+function shouldSuppressExcalidrawConnectToastForOnboarding(
+  serverName: string,
+): boolean {
+  if (serverName !== EXCALIDRAW_SERVER_NAME) return false;
+  const status = readOnboardingState()?.status;
+  return status === "seen";
+}
 
 /**
  * Saves OAuth-related configuration to localStorage for reconnection purposes.
@@ -935,7 +946,11 @@ export function useServerState({
             );
           }
           logger.info("Connection successful", { serverName: formData.name });
-          toast.success("Connected successfully!");
+          if (
+            !shouldSuppressExcalidrawConnectToastForOnboarding(formData.name)
+          ) {
+            toast.success("Connected successfully!");
+          }
           storeInitInfo(formData.name, result.initInfo).catch((err) =>
             logger.warn("Failed to fetch init info", {
               serverName: formData.name,

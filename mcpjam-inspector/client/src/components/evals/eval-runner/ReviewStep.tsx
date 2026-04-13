@@ -188,6 +188,10 @@ export function ReviewStep({
                     <span>
                       {template.runs} run{template.runs === 1 ? "" : "s"}
                     </span>
+                    {template.promptTurns &&
+                      template.promptTurns.length > 1 && (
+                        <span>Turns: {template.promptTurns.length}</span>
+                      )}
                     {!template.isNegativeTest &&
                       template.expectedToolCalls.length > 0 && (
                         <span>

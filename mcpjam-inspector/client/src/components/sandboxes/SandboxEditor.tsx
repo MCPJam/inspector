@@ -21,6 +21,7 @@ import type { SandboxMode, SandboxSettings } from "@/hooks/useSandboxes";
 import { useSandboxMutations } from "@/hooks/useSandboxes";
 import { useServerMutations } from "@/hooks/useWorkspaces";
 import { AddServerModal } from "@/components/connection/AddServerModal";
+import { SandboxDeleteConfirmDialog } from "@/components/sandboxes/SandboxDeleteConfirmDialog";
 import { SandboxShareSection } from "@/components/sandboxes/SandboxShareSection";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -180,6 +181,8 @@ export function SandboxEditor({
   const [isAddServerOpen, setIsAddServerOpen] = useState(false);
   const [isAdvancedOpen, setIsAdvancedOpen] = useState(false);
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [isDeletingSandbox, setIsDeletingSandbox] = useState(false);
   const [previewChatKey, setPreviewChatKey] = useState(0);
   const [previewPlaygroundId, setPreviewPlaygroundId] = useState(() =>
     createPlaygroundId(),
@@ -239,6 +242,10 @@ export function SandboxEditor({
     previewIsInitialFingerprintRef.current = true;
     setPreviewEnabledOptionalIds([]);
   }, [hostedModels, sandbox]);
+
+  useEffect(() => {
+    setDeleteDialogOpen(false);
+  }, [sandbox?.sandboxId]);
 
   const optionalServerIdsKey = [...optionalServerIds].sort().join(",");
 
@@ -607,21 +614,20 @@ export function SandboxEditor({
     }
   };
 
-  const handleDelete = async () => {
+  const performSandboxDelete = useCallback(async () => {
     if (!sandbox) return;
-    const shouldDelete = window.confirm(
-      `Delete "${sandbox.name}"? This will also delete persisted usage history.`,
-    );
-    if (!shouldDelete) return;
-
+    setIsDeletingSandbox(true);
     try {
       await deleteSandbox({ sandboxId: sandbox.sandboxId });
       toast.success("Sandbox deleted");
       onDeleted?.();
     } catch (error) {
       toast.error(getBillingErrorMessage(error, "Failed to delete sandbox"));
+      throw error;
+    } finally {
+      setIsDeletingSandbox(false);
     }
-  };
+  }, [sandbox, deleteSandbox, onDeleted]);
 
   const handleTitleBlur = () => {
     setIsEditingTitle(false);
@@ -1060,7 +1066,7 @@ export function SandboxEditor({
               variant="ghost"
               size="sm"
               className="h-7 gap-1.5 px-2 text-xs text-destructive hover:text-destructive"
-              onClick={() => void handleDelete()}
+              onClick={() => setDeleteDialogOpen(true)}
             >
               <Trash2 className="h-3 w-3" />
               Delete
@@ -1068,6 +1074,16 @@ export function SandboxEditor({
           </div>
         )}
       </div>
+
+      {sandbox ? (
+        <SandboxDeleteConfirmDialog
+          open={deleteDialogOpen}
+          onOpenChange={setDeleteDialogOpen}
+          sandboxName={sandbox.name}
+          isDeleting={isDeletingSandbox}
+          onConfirm={performSandboxDelete}
+        />
+      ) : null}
 
       <AddServerModal
         isOpen={isAddServerOpen}

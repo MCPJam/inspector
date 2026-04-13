@@ -24,8 +24,10 @@ export const WEB_ALLOWED_ORIGINS = (process.env.WEB_ALLOWED_ORIGINS ?? "")
   .map((origin) => origin.trim())
   .filter((origin) => origin.length > 0);
 
+const CLIENT_PORT = process.env.CLIENT_PORT || "5173";
+
 const DEFAULT_CORS_ORIGINS = [
-  "http://localhost:5173", // Vite dev server
+  `http://localhost:${CLIENT_PORT}`, // Vite dev server
   "http://localhost:8080", // Electron renderer dev server
   `http://localhost:${SERVER_PORT}`, // Hono server
   `http://127.0.0.1:${SERVER_PORT}`, // Hono server production

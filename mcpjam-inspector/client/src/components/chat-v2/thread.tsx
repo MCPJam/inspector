@@ -1,6 +1,12 @@
-import { useEffect, useState, type RefObject } from "react";
+import { useEffect, useMemo, useState, type RefObject } from "react";
+import { cn } from "@/lib/utils";
+import {
+  useSandboxHostStyle,
+  useSandboxHostTheme,
+} from "@/contexts/sandbox-host-style-context";
 import { UIMessage } from "@ai-sdk/react";
 import type { ContentBlock } from "@modelcontextprotocol/sdk/types.js";
+import type { TranscriptThreadProps } from "./thread/transcript-thread";
 
 import { ModelDefinition } from "@/shared/types";
 import { type DisplayMode } from "@/stores/ui-playground-store";
@@ -9,8 +15,13 @@ import { ThinkingIndicator } from "@/components/chat-v2/shared/thinking-indicato
 import { FullscreenChatOverlay } from "@/components/chat-v2/fullscreen-chat-overlay";
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-overrides";
+import type { LoadingIndicatorVariant } from "@/components/chat-v2/shared/loading-indicator-content";
 import { type ReasoningDisplayMode } from "./thread/parts/reasoning-part";
 import { TranscriptThread } from "./thread/transcript-thread";
+import {
+  getLastRenderableConversationMessage,
+  hasRenderableConversationContent,
+} from "./thread/thread-helpers";
 
 interface ThreadProps {
   messages: UIMessage[];
@@ -33,17 +44,22 @@ interface ThreadProps {
   enableFullscreenChatOverlay?: boolean;
   fullscreenChatPlaceholder?: string;
   fullscreenChatDisabled?: boolean;
+  fullscreenChatSendBlocked?: boolean;
+  onFullscreenChatStop?: () => void;
   selectedProtocolOverrideIfBothExists?: UIType;
   onToolApprovalResponse?: (options: { id: string; approved: boolean }) => void;
   toolRenderOverrides?: Record<string, ToolRenderOverride>;
   showSaveViewButton?: boolean;
   minimalMode?: boolean;
   interactive?: boolean;
+  loadingIndicatorVariant?: LoadingIndicatorVariant;
   reasoningDisplayMode?: ReasoningDisplayMode;
   focusMessageId?: string | null;
   highlightedMessageIds?: string[];
   navigationKey?: string | number | null;
   viewportRef?: RefObject<HTMLElement | null>;
+  contentClassName?: string;
+  getMessageWrapperProps?: TranscriptThreadProps["getMessageWrapperProps"];
 }
 
 export function Thread({
@@ -61,17 +77,22 @@ export function Thread({
   enableFullscreenChatOverlay = false,
   fullscreenChatPlaceholder = "Message…",
   fullscreenChatDisabled = false,
+  fullscreenChatSendBlocked = isLoading,
+  onFullscreenChatStop,
   selectedProtocolOverrideIfBothExists,
   onToolApprovalResponse,
   toolRenderOverrides,
   showSaveViewButton = true,
   minimalMode = false,
   interactive = true,
+  loadingIndicatorVariant = "default",
   reasoningDisplayMode = "inline",
   focusMessageId = null,
   highlightedMessageIds = [],
   navigationKey = null,
   viewportRef,
+  contentClassName,
+  getMessageWrapperProps,
 }: ThreadProps) {
   const [pipWidgetId, setPipWidgetId] = useState<string | null>(null);
   const [fullscreenWidgetId, setFullscreenWidgetId] = useState<string | null>(
@@ -113,10 +134,37 @@ export function Thread({
   }, [showFullscreenChatOverlay]);
 
   const canSendFullscreenChat =
-    !fullscreenChatDisabled && fullscreenChatInput.trim().length > 0;
+    !fullscreenChatDisabled &&
+    !fullscreenChatSendBlocked &&
+    fullscreenChatInput.trim().length > 0;
+
+  const sandboxHostStyle = useSandboxHostStyle();
+  const sandboxHostTheme = useSandboxHostTheme();
+  const isChatgptDark =
+    sandboxHostStyle === "chatgpt" && sandboxHostTheme === "dark";
+  const lastRenderableMessage = useMemo(
+    () => getLastRenderableConversationMessage(messages),
+    [messages],
+  );
+  const hasVisibleAssistantResponse =
+    lastRenderableMessage?.role === "assistant" &&
+    hasRenderableConversationContent(lastRenderableMessage);
+  const lastRenderableMessageId = hasVisibleAssistantResponse
+    ? lastRenderableMessage.id
+    : null;
+  const shouldShowStandaloneThinkingIndicator =
+    loadingIndicatorVariant === "claude-mark" ||
+    loadingIndicatorVariant === "chatgpt-dot"
+      ? isLoading && !hasVisibleAssistantResponse
+      : isLoading;
 
   return (
-    <div className="flex-1 min-h-0 pb-4">
+    <div
+      className={cn(
+        "flex-1 min-h-0 min-w-0 pb-4",
+        isChatgptDark && "bg-[#212121] text-[#DFDFDF]",
+      )}
+    >
       {/* Fixed spacer to reserve space for PIP widget */}
       {pipWidgetId && (
         <div className="h-[480px] flex-shrink-0 pointer-events-none" />
@@ -150,11 +198,18 @@ export function Thread({
         highlightedMessageIds={highlightedMessageIds}
         navigationKey={navigationKey}
         viewportRef={viewportRef}
-        contentClassName="max-w-4xl mx-auto px-4 pt-8 pb-16 space-y-8"
+        isLoading={isLoading}
+        loadingIndicatorVariant={loadingIndicatorVariant}
+        lastRenderableMessageId={lastRenderableMessageId}
+        contentClassName={
+          contentClassName ??
+          "min-w-0 w-full max-w-4xl mx-auto px-4 pt-8 pb-16 space-y-8"
+        }
+        getMessageWrapperProps={getMessageWrapperProps}
       />
-      {isLoading && (
-        <div className="max-w-4xl mx-auto px-4">
-          <ThinkingIndicator model={model} />
+      {shouldShowStandaloneThinkingIndicator && (
+        <div className="min-w-0 w-full max-w-4xl mx-auto px-4">
+          <ThinkingIndicator model={model} variant={loadingIndicatorVariant} />
         </div>
       )}
 
@@ -169,6 +224,8 @@ export function Thread({
           disabled={fullscreenChatDisabled}
           canSend={canSendFullscreenChat}
           isThinking={isLoading}
+          loadingIndicatorVariant={loadingIndicatorVariant}
+          onStop={onFullscreenChatStop}
           onSend={() => {
             if (!canSendFullscreenChat) return;
             const text = fullscreenChatInput;

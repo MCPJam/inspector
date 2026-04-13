@@ -5,7 +5,10 @@ import type { ChatV2Request } from "@/shared/chat-v2";
 import { isMCPAuthError, MCPClientManager } from "@mcpjam/sdk";
 import type { HttpServerConfig } from "@mcpjam/sdk";
 import { handleMCPJamFreeChatModel } from "../../utils/mcpjam-stream-handler.js";
-import { isMCPJamProvidedModel, isGuestAllowedModel } from "@/shared/types";
+import {
+  isMCPJamGuestAllowedModel,
+  isMCPJamProvidedModel,
+} from "@/shared/types";
 import { WEB_STREAM_TIMEOUT_MS } from "../../config.js";
 import { prepareChatV2 } from "../../utils/chat-v2-orchestration.js";
 import { validateUrl, OAuthProxyError } from "../../utils/oauth-proxy.js";
@@ -22,6 +25,10 @@ import {
   webError,
   mapRuntimeError,
 } from "./auth.js";
+import {
+  attachHostedRpcLogs,
+  createHostedRpcLogCollector,
+} from "./hosted-rpc-logs.js";
 
 const chatV2 = new Hono();
 
@@ -31,9 +38,11 @@ chatV2.post("/", async (c) => {
   // serialize the Response object as '{}' instead of forwarding the stream.
   // Track OAuth server URLs so we can enrich auth errors with redirect info
   let oauthServerUrls: Record<string, string> = {};
+  let rpcCollector: ReturnType<typeof createHostedRpcLogCollector> | undefined;
   try {
     const bearerToken = assertBearerToken(c);
     const rawBody = await readJsonBody<Record<string, unknown>>(c);
+    rpcCollector = createHostedRpcLogCollector(rawBody);
 
     // Detect guest request by body shape: no workspaceId means guest-direct
     // (matching the pattern from withEphemeralConnection in auth.ts)
@@ -51,6 +60,7 @@ chatV2.post("/", async (c) => {
       }
 
       const body = rawBody as unknown as ChatV2Request & {
+        serverName?: string;
         serverUrl?: string;
         serverHeaders?: Record<string, string>;
         oauthAccessToken?: string;
@@ -82,10 +92,10 @@ chatV2.post("/", async (c) => {
       }
 
       if (modelDefinition.id && isMCPJamProvidedModel(modelDefinition.id)) {
-        if (!isGuestAllowedModel(String(modelDefinition.id))) {
+        if (!isMCPJamGuestAllowedModel(modelDefinition.id)) {
           throw new WebRouteError(
             403,
-            ErrorCode.UNAUTHORIZED,
+            ErrorCode.FORBIDDEN,
             "This MCPJam model is not available for guest access. Sign in to continue.",
           );
         }
@@ -141,13 +151,19 @@ chatV2.post("/", async (c) => {
 
         manager = new MCPClientManager(
           { __guest__: httpConfig },
-          { defaultTimeout: WEB_STREAM_TIMEOUT_MS },
+          {
+            defaultTimeout: WEB_STREAM_TIMEOUT_MS,
+            rpcLogger: rpcCollector.rpcLogger,
+          },
         );
       } else {
         // Guest without servers — empty manager for plain LLM chat
         manager = new MCPClientManager(
           {},
-          { defaultTimeout: WEB_STREAM_TIMEOUT_MS },
+          {
+            defaultTimeout: WEB_STREAM_TIMEOUT_MS,
+            rpcLogger: rpcCollector.rpcLogger,
+          },
         );
       }
 
@@ -199,14 +215,23 @@ chatV2.post("/", async (c) => {
                   modelId: String(modelDefinition.id),
                   modelSource: "mcpjam",
                   sourceType: "direct",
+                  directVisibility: body.directVisibility,
                   authHeader: c.req.header("authorization"),
                   sessionMessages: fullHistory,
                   startedAt: sessionStartedAt,
                   lastActivityAt: Date.now(),
+                  resumeConfig: {
+                    systemPrompt,
+                    temperature,
+                    requireToolApproval,
+                    selectedServers: hasServer ? ["__guest__"] : [],
+                  },
                 });
               }
             : undefined,
           onStreamComplete: () => manager.disconnectAllServers(),
+          onStreamWriterReady: (writer) =>
+            rpcCollector?.attachStreamWriter(writer),
         });
       } catch (error) {
         await manager.disconnectAllServers();
@@ -265,6 +290,7 @@ chatV2.post("/", async (c) => {
         accessScope: "chat_v2",
         shareToken,
         sandboxToken,
+        rpcLogger: rpcCollector.rpcLogger,
       },
     );
     oauthServerUrls = urls;
@@ -322,6 +348,7 @@ chatV2.post("/", async (c) => {
         requireToolApproval,
         onConversationComplete: hostedChatSessionId
           ? async (fullHistory) => {
+              const isDirectChat = !shareToken && !sandboxToken;
               await persistChatSessionToConvex({
                 chatSessionId: hostedChatSessionId,
                 modelId: String(modelDefinition.id),
@@ -342,10 +369,23 @@ chatV2.post("/", async (c) => {
                 sessionMessages: fullHistory,
                 startedAt: sessionStartedAt,
                 lastActivityAt: Date.now(),
+                ...(isDirectChat
+                  ? {
+                      directVisibility: body.directVisibility,
+                      resumeConfig: {
+                        systemPrompt,
+                        temperature,
+                        requireToolApproval,
+                        selectedServers: selectedServerIds,
+                      },
+                    }
+                  : {}),
               });
             }
           : undefined,
         onStreamComplete: () => manager.disconnectAllServers(),
+        onStreamWriterReady: (writer) =>
+          rpcCollector?.attachStreamWriter(writer),
       });
     } catch (error) {
       await manager.disconnectAllServers();
@@ -356,10 +396,17 @@ chatV2.post("/", async (c) => {
     if (isMCPAuthError(error) && Object.keys(oauthServerUrls).length > 0) {
       const firstUrl = Object.values(oauthServerUrls)[0];
       const msg = error instanceof Error ? error.message : String(error);
-      return webError(c, 401, ErrorCode.UNAUTHORIZED, msg, {
-        oauthRequired: true,
-        serverUrl: firstUrl,
-      });
+      return webError(
+        c,
+        401,
+        ErrorCode.UNAUTHORIZED,
+        msg,
+        {
+          oauthRequired: true,
+          serverUrl: firstUrl,
+        },
+        rpcCollector?.buildEnvelope(),
+      );
     }
     const routeError = mapRuntimeError(error);
     return webError(
@@ -368,6 +415,7 @@ chatV2.post("/", async (c) => {
       routeError.code,
       routeError.message,
       routeError.details,
+      rpcCollector?.buildEnvelope(),
     );
   }
 });

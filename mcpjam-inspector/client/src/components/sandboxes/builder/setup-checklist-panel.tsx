@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Check, ChevronDown, Globe, Lock, Plus } from "lucide-react";
+import { ChevronDown, Globe, Loader2, Lock, Plus } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -13,10 +13,19 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
   Popover,
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import {
   Select,
   SelectContent,
@@ -467,6 +476,8 @@ export function SetupChecklistPanel({
   onToggleServer,
   onServerOptionalChange,
   onCloseMobile,
+  /** When the sandbox is saved, invite someone by email from the Access dialog (invite-only mode). */
+  inviteSandboxMember,
 }: {
   sandboxDraft: SandboxDraftConfig;
   savedSandbox: SandboxSettings | null;
@@ -481,6 +492,7 @@ export function SetupChecklistPanel({
   onToggleServer: (serverId: string, checked: boolean) => void;
   onServerOptionalChange: (serverId: string, optional: boolean) => void;
   onCloseMobile?: () => void;
+  inviteSandboxMember?: (email: string) => Promise<void>;
 }) {
   const statuses = useMemo(
     () => computeSectionStatuses(sandboxDraft, workspaceServers),
@@ -494,6 +506,9 @@ export function SetupChecklistPanel({
   const [openMap, setOpenMap] = useState<
     Partial<Record<SetupSectionId, boolean>>
   >({});
+  const [accessDialogOpen, setAccessDialogOpen] = useState(false);
+  const [accessInviteEmail, setAccessInviteEmail] = useState("");
+  const [accessInviteBusy, setAccessInviteBusy] = useState(false);
   const didAutoExpandRef = useRef(false);
 
   useEffect(() => {
@@ -530,6 +545,24 @@ export function SetupChecklistPanel({
 
   const setSectionOpen = (id: SetupSectionId, open: boolean) => {
     setOpenMap((prev) => ({ ...prev, [id]: open }));
+  };
+
+  const handleAccessInvite = async () => {
+    if (!inviteSandboxMember) return;
+    const normalized = accessInviteEmail.trim().toLowerCase();
+    if (!normalized) return;
+    setAccessInviteBusy(true);
+    try {
+      await inviteSandboxMember(normalized);
+      toast.success(`Invited ${normalized}`);
+      setAccessInviteEmail("");
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Failed to send invite",
+      );
+    } finally {
+      setAccessInviteBusy(false);
+    }
   };
 
   return (
@@ -718,28 +751,8 @@ export function SetupChecklistPanel({
               />
               <CollapsibleContent className="pt-3 pb-1">
                 <div className="space-y-4 rounded-xl border border-border/50 bg-card/40 p-4">
-                  <div className="flex items-start justify-between gap-3 rounded-2xl border border-border/70 bg-card/60 px-4 py-4">
-                    <div>
-                      <p className="text-sm font-medium">Allow guest access</p>
-                      <p className="text-xs text-muted-foreground">
-                        When the link mode allows it, guests can open without a
-                        full account.
-                      </p>
-                    </div>
-                    <Switch
-                      checked={sandboxDraft.allowGuestAccess}
-                      onCheckedChange={(checked) =>
-                        onDraftChange((draft) => ({
-                          ...draft,
-                          allowGuestAccess: checked,
-                        }))
-                      }
-                    />
-                  </div>
-
-                  <div>
-                    <p className="text-sm font-medium">General access</p>
-                    <div className="mt-2 flex items-start gap-3">
+                  <div className="flex flex-col gap-3 rounded-2xl border border-border/70 bg-card/60 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex min-w-0 items-start gap-3">
                       <div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-muted">
                         {sandboxDraft.mode === "any_signed_in_with_link" ? (
                           <Globe className="size-4 text-muted-foreground" />
@@ -747,61 +760,191 @@ export function SetupChecklistPanel({
                           <Lock className="size-4 text-muted-foreground" />
                         )}
                       </div>
-                      <div className="min-w-0 flex-1">
-                        <Popover>
-                          <PopoverTrigger asChild>
-                            <button
-                              type="button"
-                              className="flex items-center gap-1 rounded-md px-1 py-0.5 text-sm font-medium hover:bg-muted/50"
-                            >
-                              {sandboxDraft.mode === "any_signed_in_with_link"
-                                ? "Anyone with the link"
-                                : "Invited users only"}
-                              <ChevronDown className="size-3.5 text-muted-foreground" />
-                            </button>
-                          </PopoverTrigger>
-                          <PopoverContent className="w-56 p-1" align="start">
-                            <button
-                              type="button"
-                              className="flex w-full items-center justify-between rounded-md px-2 py-1.5 text-sm hover:bg-muted/50"
-                              onClick={() =>
-                                onDraftChange((draft) => ({
-                                  ...draft,
-                                  mode: "any_signed_in_with_link" as SandboxMode,
-                                }))
-                              }
-                            >
-                              <span>Anyone with the link</span>
-                              {sandboxDraft.mode ===
-                                "any_signed_in_with_link" && (
-                                <Check className="size-3.5 text-muted-foreground" />
-                              )}
-                            </button>
-                            <button
-                              type="button"
-                              className="flex w-full items-center justify-between rounded-md px-2 py-1.5 text-sm hover:bg-muted/50"
-                              onClick={() =>
-                                onDraftChange((draft) => ({
-                                  ...draft,
-                                  mode: "invited_only",
-                                }))
-                              }
-                            >
-                              <span>Invited users only</span>
-                              {sandboxDraft.mode === "invited_only" && (
-                                <Check className="size-3.5 text-muted-foreground" />
-                              )}
-                            </button>
-                          </PopoverContent>
-                        </Popover>
-                        <p className="mt-0.5 px-1 text-xs text-muted-foreground">
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium">
+                          {sandboxDraft.mode === "any_signed_in_with_link"
+                            ? "Anyone with the link"
+                            : "Invited users only"}
+                        </p>
+                        <p className="mt-0.5 text-xs text-muted-foreground">
                           {sandboxDraft.mode === "any_signed_in_with_link"
                             ? "Any signed-in user with the link can open this sandbox."
-                            : "Only people you invite can access this sandbox."}
+                            : "Only people you invite can access this sandbox."}{" "}
+                          Guest access{" "}
+                          {sandboxDraft.allowGuestAccess ? "on" : "off"}.
                         </p>
                       </div>
                     </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="shrink-0 self-start sm:self-center"
+                      onClick={() => setAccessDialogOpen(true)}
+                    >
+                      Configure access
+                    </Button>
                   </div>
+
+                  <Dialog
+                    open={accessDialogOpen}
+                    onOpenChange={setAccessDialogOpen}
+                  >
+                    <DialogContent className="sm:max-w-md">
+                      <DialogHeader>
+                        <DialogTitle>Access settings</DialogTitle>
+                        <DialogDescription>
+                          Choose who can open this sandbox and whether guests
+                          can use it without a full account.
+                        </DialogDescription>
+                      </DialogHeader>
+                      <div className="space-y-6">
+                        <RadioGroup
+                          value={sandboxDraft.mode}
+                          onValueChange={(value) =>
+                            onDraftChange((draft) => ({
+                              ...draft,
+                              mode: value as SandboxMode,
+                            }))
+                          }
+                          className="grid gap-2"
+                        >
+                          <label
+                            htmlFor="access-mode-link"
+                            className="flex cursor-pointer items-start gap-3 rounded-xl border border-border/70 bg-card/50 p-3 has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring/50"
+                          >
+                            <RadioGroupItem
+                              value="any_signed_in_with_link"
+                              id="access-mode-link"
+                              className="mt-0.5"
+                            />
+                            <span className="min-w-0">
+                              <span className="block text-sm font-medium">
+                                Anyone with the link
+                              </span>
+                              <span className="mt-0.5 block text-xs text-muted-foreground">
+                                Any signed-in user with the link can open this
+                                sandbox.
+                              </span>
+                            </span>
+                          </label>
+                          <label
+                            htmlFor="access-mode-invite"
+                            className="flex cursor-pointer items-start gap-3 rounded-xl border border-border/70 bg-card/50 p-3 has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring/50"
+                          >
+                            <RadioGroupItem
+                              value="invited_only"
+                              id="access-mode-invite"
+                              className="mt-0.5"
+                            />
+                            <span className="min-w-0">
+                              <span className="block text-sm font-medium">
+                                Invited users only
+                              </span>
+                              <span className="mt-0.5 block text-xs text-muted-foreground">
+                                Only people you invite by email can open this
+                                sandbox. Workspace membership does not grant
+                                access by itself.
+                              </span>
+                            </span>
+                          </label>
+                        </RadioGroup>
+
+                        {sandboxDraft.mode === "invited_only" ? (
+                          <div className="space-y-3 rounded-xl border border-border/70 bg-card/50 p-4">
+                            <p className="text-xs text-muted-foreground">
+                              Invite-only is email-based. Workspace membership
+                              does not auto-include everyone—you invite each
+                              address (or use Share below for the full list).
+                            </p>
+                            <div className="space-y-2">
+                              <p className="text-sm font-semibold text-foreground">
+                                Invite people
+                              </p>
+                              <Label
+                                htmlFor="access-invite-email"
+                                className="text-xs font-medium text-muted-foreground"
+                              >
+                                Email address
+                              </Label>
+                              <div className="flex gap-2">
+                                <Input
+                                  id="access-invite-email"
+                                  type="email"
+                                  autoComplete="email"
+                                  placeholder="colleague@company.com"
+                                  disabled={!inviteSandboxMember}
+                                  value={accessInviteEmail}
+                                  onChange={(event) =>
+                                    setAccessInviteEmail(event.target.value)
+                                  }
+                                  onKeyDown={(event) => {
+                                    if (event.key === "Enter") {
+                                      event.preventDefault();
+                                      void handleAccessInvite();
+                                    }
+                                  }}
+                                />
+                                <Button
+                                  type="button"
+                                  className="shrink-0"
+                                  disabled={
+                                    !inviteSandboxMember ||
+                                    !accessInviteEmail.trim() ||
+                                    accessInviteBusy
+                                  }
+                                  onClick={() => void handleAccessInvite()}
+                                >
+                                  {accessInviteBusy &&
+                                  accessInviteEmail.trim() ? (
+                                    <Loader2 className="size-4 animate-spin" />
+                                  ) : (
+                                    "Invite"
+                                  )}
+                                </Button>
+                              </div>
+                              {!inviteSandboxMember ? (
+                                <p className="text-xs text-muted-foreground">
+                                  Save the sandbox to invite people by email and
+                                  manage the share link.
+                                </p>
+                              ) : null}
+                            </div>
+                          </div>
+                        ) : null}
+
+                        <div className="flex items-start justify-between gap-4 rounded-xl border border-border/70 bg-card/50 px-4 py-3">
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium">
+                              Allow guest access
+                            </p>
+                            <p className="mt-0.5 text-xs text-muted-foreground">
+                              When the link mode allows it, guests can open
+                              without a full account.
+                            </p>
+                          </div>
+                          <Switch
+                            className="shrink-0"
+                            checked={sandboxDraft.allowGuestAccess}
+                            onCheckedChange={(checked) =>
+                              onDraftChange((draft) => ({
+                                ...draft,
+                                allowGuestAccess: checked,
+                              }))
+                            }
+                          />
+                        </div>
+                      </div>
+                      <DialogFooter>
+                        <Button
+                          type="button"
+                          onClick={() => setAccessDialogOpen(false)}
+                        >
+                          Done
+                        </Button>
+                      </DialogFooter>
+                    </DialogContent>
+                  </Dialog>
 
                   {savedSandbox ? (
                     <SandboxShareSection
@@ -928,6 +1071,11 @@ export function SetupChecklistPanel({
                     <>
                       <div className="space-y-2">
                         <Label>Every N tool calls</Label>
+                        <p className="text-xs text-muted-foreground">
+                          The hosted session counts completed tool calls before
+                          showing the next feedback prompt. It does not mean
+                          “every N user messages.”
+                        </p>
                         <Input
                           type="number"
                           min={1}

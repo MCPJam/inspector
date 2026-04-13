@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { renderWithProviders, screen } from "@/test";
+import { renderWithProviders, screen, userEvent } from "@/test";
 import { RunOverview } from "../run-overview";
 
 vi.mock("convex/react", () => ({
@@ -49,5 +49,42 @@ describe("RunOverview canDeleteRuns", () => {
     expect(
       screen.queryByRole("checkbox", { name: /Select run/i }),
     ).not.toBeInTheDocument();
+  });
+
+  it("shows Delete suite control when canDeleteSuite and handler are set", async () => {
+    const user = userEvent.setup();
+    const onDeleteSuite = vi.fn();
+
+    renderWithProviders(
+      <RunOverview
+        {...baseProps}
+        canDeleteRuns={false}
+        canDeleteSuite
+        onDeleteSuite={onDeleteSuite}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Delete suite" }));
+    await user.click(screen.getByRole("button", { name: "Delete" }));
+
+    expect(onDeleteSuite).toHaveBeenCalledTimes(1);
+  });
+
+  it("hides Delete suite when canDeleteSuite is false", () => {
+    renderWithProviders(
+      <RunOverview
+        {...baseProps}
+        canDeleteSuite={false}
+        onDeleteSuite={vi.fn()}
+      />,
+    );
+    expect(
+      screen.queryByRole("button", { name: "Delete suite" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("hides the Runs/Cases selector when hideViewModeSelect is set", () => {
+    renderWithProviders(<RunOverview {...baseProps} hideViewModeSelect />);
+    expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
   });
 });

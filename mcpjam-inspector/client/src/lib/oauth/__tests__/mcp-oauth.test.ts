@@ -10,12 +10,14 @@ const {
   mockDiscoverAuthorizationServerMetadata,
   mockDiscoverOAuthServerInfo,
   mockFetchToken,
+  mockGetConvexSiteUrl,
   mockSdkAuth,
   mockSelectResourceURL,
 } = vi.hoisted(() => ({
   mockDiscoverAuthorizationServerMetadata: vi.fn(),
   mockDiscoverOAuthServerInfo: vi.fn(),
   mockFetchToken: vi.fn(),
+  mockGetConvexSiteUrl: vi.fn(),
   mockSdkAuth: vi.fn(),
   mockSelectResourceURL: vi.fn(),
 }));
@@ -32,7 +34,11 @@ vi.mock("@/lib/session-token", () => ({
   authFetch: vi.fn(),
 }));
 
-vi.mock("../state-machines/shared/helpers", () => ({
+vi.mock("@/lib/convex-site-url", () => ({
+  getConvexSiteUrl: mockGetConvexSiteUrl,
+}));
+
+vi.mock("../pkce", () => ({
   generateRandomString: vi.fn(() => "mock-random-string"),
 }));
 
@@ -110,6 +116,8 @@ describe("mcp-oauth", () => {
     mockDiscoverAuthorizationServerMetadata.mockReset();
     mockDiscoverOAuthServerInfo.mockReset();
     mockFetchToken.mockReset();
+    mockGetConvexSiteUrl.mockReset();
+    mockGetConvexSiteUrl.mockReturnValue("https://test.convex.site");
     mockSelectResourceURL.mockReset();
 
     const sessionToken = await import("@/lib/session-token");

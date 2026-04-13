@@ -1,6 +1,6 @@
 {
   "name": "@mcpjam/sdk",
-  "version": "0.8.15",
+  "version": "0.9.2",
   "description": "MCP server unit testing, end to end (e2e) testing, and server evals",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
@@ -16,6 +16,11 @@
       "import": "./dist/browser.mjs",
       "require": "./dist/browser.js"
     },
+    "./operations": {
+      "types": "./dist/operations.d.ts",
+      "import": "./dist/operations.mjs",
+      "require": "./dist/operations.js"
+    },
     "./skill-reference": {
       "types": "./dist/skill-reference.d.ts",
       "import": "./dist/skill-reference.mjs",
@@ -26,7 +31,10 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsup",
+    "build": "npm run bundle:runtimes && tsup",
+    "bundle:chatgpt-runtime": "node scripts/bundle-chatgpt-apps-runtime.mjs",
+    "bundle:mcp-apps-runtime": "node scripts/bundle-mcp-apps-openai-compatible-runtime.mjs",
+    "bundle:runtimes": "npm run bundle:chatgpt-runtime && npm run bundle:mcp-apps-runtime",
     "dev": "tsup --watch",
     "sentry:sourcemaps": "sentry-cli sourcemaps inject ./dist && sentry-cli sourcemaps upload --release=@mcpjam/sdk@$(node -p \"require('./package.json').version\") --org=mcpjam-gh --project=mcpjam-sdk ./dist",
     "test": "jest",

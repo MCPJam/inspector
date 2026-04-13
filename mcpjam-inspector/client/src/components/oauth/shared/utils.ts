@@ -1,4 +1,4 @@
-import type { OAuthFlowStep } from "@/lib/oauth/state-machines/types";
+import type { OAuthFlowStep } from "@mcpjam/sdk/browser";
 import type { NodeStatus } from "./types";
 
 // Helper to determine status based on current step and actual action order

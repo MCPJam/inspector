@@ -1,27 +1,31 @@
-import { useState } from "react";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
-} from "@/components/ui/dropdown-menu";
+import { useMemo, useState } from "react";
+import { Check, X } from "lucide-react";
+import { usePostHog } from "posthog-js/react";
+import { standardEventProps } from "@/lib/PosthogUtils";
 import { Button } from "@/components/ui/button";
 import {
-  ModelDefinition,
-  ModelProvider,
-  isMCPJamProvidedModel,
-} from "@/shared/types.js";
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { Switch } from "@/components/ui/switch";
 import { ProviderLogo } from "./model/provider-logo";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+  CommandSeparator,
+} from "@/components/ui/command";
+import { ModelDefinition, isMCPJamProvidedModel } from "@/shared/types.js";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { useConvexAuth } from "convex/react";
-import { ConfirmChatResetDialog } from "./dialogs/confirm-chat-reset-dialog";
+import { cn } from "@/lib/utils";
 
 interface ModelSelectorProps {
   currentModel: ModelDefinition;
@@ -30,20 +34,35 @@ interface ModelSelectorProps {
   disabled?: boolean;
   isLoading?: boolean;
   hideProvidedModels?: boolean;
+  /** @deprecated Model changes no longer reset the thread; kept for API compatibility. */
   hasMessages?: boolean;
+  enableMultiModel?: boolean;
+  multiModelEnabled?: boolean;
+  selectedModels?: ModelDefinition[];
+  onSelectedModelsChange?: (models: ModelDefinition[]) => void;
+  onMultiModelEnabledChange?: (enabled: boolean) => void;
+  maxSelectedModels?: number;
 }
 
-// Group key: for custom providers, use the customProviderName to group separately
 type GroupKey = string;
 
-// Helper function to group models by provider (custom providers grouped by customProviderName)
+type PendingSelectionChange =
+  | {
+      type: "single";
+      nextModel: ModelDefinition;
+    }
+  | {
+      type: "multi";
+      enabled: boolean;
+      selectedModels: ModelDefinition[];
+    };
+
 const groupModelsByProvider = (
   models: ModelDefinition[],
 ): Map<GroupKey, ModelDefinition[]> => {
   const groupedModels = new Map<GroupKey, ModelDefinition[]>();
 
   models.forEach((model) => {
-    // Custom providers are grouped by customProviderName
     const key =
       model.provider === "custom" && model.customProviderName
         ? `custom:${model.customProviderName}`
@@ -55,12 +74,11 @@ const groupModelsByProvider = (
   return groupedModels;
 };
 
-// Provider display names
 const getProviderDisplayName = (groupKey: GroupKey): string => {
-  // Custom provider groups use "custom:<name>" format
   if (groupKey.startsWith("custom:")) {
     return groupKey.slice("custom:".length);
   }
+
   switch (groupKey) {
     case "azure":
       return "Azure OpenAI";
@@ -86,10 +104,36 @@ const getProviderDisplayName = (groupKey: GroupKey): string => {
       return "Zhipu AI";
     case "minimax":
       return "MiniMax";
+    case "qwen":
+      return "Qwen";
     default:
       return groupKey;
   }
 };
+
+const getLogoProvider = (groupKey: GroupKey): string =>
+  groupKey.startsWith("custom:") ? "custom" : groupKey;
+
+const getCustomName = (groupKey: GroupKey): string | undefined =>
+  groupKey.startsWith("custom:") ? groupKey.slice("custom:".length) : undefined;
+
+function sameModelOrder(
+  left: ModelDefinition[],
+  right: ModelDefinition[],
+): boolean {
+  if (left.length !== right.length) {
+    return false;
+  }
+
+  return left.every(
+    (model, index) => String(model.id) === String(right[index]?.id),
+  );
+}
+
+/** Strip redundant tier suffix for a denser list (search value still uses full name). */
+function compactModelLabel(name: string): string {
+  return name.replace(/\s*\(Free\)\s*$/i, "").trim() || name;
+}
 
 export function ModelSelector({
   currentModel,
@@ -98,254 +142,439 @@ export function ModelSelector({
   disabled,
   isLoading,
   hideProvidedModels = false,
-  hasMessages = false,
+  hasMessages: _hasMessages = false,
+  enableMultiModel = false,
+  multiModelEnabled = false,
+  selectedModels,
+  onSelectedModelsChange,
+  onMultiModelEnabledChange,
+  maxSelectedModels = 3,
 }: ModelSelectorProps) {
-  const [isModelSelectorOpen, setIsModelSelectorOpen] = useState(false);
-  const [pendingModel, setPendingModel] = useState<ModelDefinition | null>(
-    null,
+  const [isOpen, setIsOpen] = useState(false);
+  const [hoveredLockedModelId, setHoveredLockedModelId] = useState<
+    string | null
+  >(null);
+  const posthog = usePostHog();
+  const handleOpenChange = (nextOpen: boolean) => {
+    if (nextOpen && !isOpen) {
+      posthog.capture(
+        "chat_model_selector_clicked",
+        standardEventProps("chat_input"),
+      );
+    }
+    setIsOpen(nextOpen);
+    if (!nextOpen) {
+      setHoveredLockedModelId(null);
+    }
+  };
+
+  const selectedModelsData =
+    selectedModels && selectedModels.length > 0
+      ? selectedModels
+      : [currentModel];
+
+  const lockedRowHighlightId =
+    hoveredLockedModelId ??
+    (!multiModelEnabled && currentModel.disabled
+      ? String(currentModel.id)
+      : null);
+
+  const groupedModels = useMemo(
+    () => groupModelsByProvider(availableModels),
+    [availableModels],
   );
-  const [showConfirmDialog, setShowConfirmDialog] = useState(false);
-  const currentModelData = currentModel;
-  const { isAuthenticated } = useConvexAuth();
-  const groupedModels = groupModelsByProvider(availableModels);
-  const sortedProviders = Array.from(groupedModels.keys()).sort();
+  const sortedProviders = useMemo(
+    () => Array.from(groupedModels.keys()).sort(),
+    [groupedModels],
+  );
 
-  // Extract the raw provider string for ProviderLogo (strips "custom:" prefix)
-  const getLogoProvider = (groupKey: GroupKey): string =>
-    groupKey.startsWith("custom:") ? "custom" : groupKey;
+  const modelGroups = useMemo(() => {
+    const groups: {
+      provider: GroupKey;
+      title: string;
+      providerType: "provided" | "configured";
+      models: ModelDefinition[];
+    }[] = [];
 
-  // Extract the custom provider name from a group key (e.g. "custom:Groq" → "Groq")
-  const getCustomName = (groupKey: GroupKey): string | undefined =>
-    groupKey.startsWith("custom:")
-      ? groupKey.slice("custom:".length)
-      : undefined;
+    for (const provider of sortedProviders) {
+      const allModels = groupedModels.get(provider) || [];
+      const filtered = hideProvidedModels
+        ? allModels.filter((model) => !isMCPJamProvidedModel(String(model.id)))
+        : allModels;
 
-  const mcpjamProviders = hideProvidedModels
-    ? []
-    : sortedProviders.filter((p) => {
-        const models = groupedModels.get(p) || [];
-        return models.some((m) => isMCPJamProvidedModel(m.id));
-      });
+      if (filtered.length === 0) {
+        continue;
+      }
 
-  const otherProviders = sortedProviders.filter((p) => {
-    const models = groupedModels.get(p) || [];
-    return models.some((m) => !isMCPJamProvidedModel(m.id));
-  });
+      const provided = filtered.filter((model) =>
+        isMCPJamProvidedModel(String(model.id)),
+      );
+      const configured = filtered.filter(
+        (model) => !isMCPJamProvidedModel(String(model.id)),
+      );
+      const title = getProviderDisplayName(provider);
 
-  const handleModelSelect = (model: ModelDefinition) => {
-    // If there are no messages or the model is the same, change immediately
-    if (!hasMessages || model.id === currentModel.id) {
-      onModelChange(model);
-      setIsModelSelectorOpen(false);
+      if (provided.length > 0) {
+        groups.push({
+          provider,
+          title,
+          providerType: "provided",
+          models: provided,
+        });
+      }
+      if (configured.length > 0) {
+        groups.push({
+          provider,
+          title,
+          providerType: "configured",
+          models: configured,
+        });
+      }
+    }
+
+    return groups;
+  }, [groupedModels, hideProvidedModels, sortedProviders]);
+
+  const selectedIds = useMemo(
+    () => new Set(selectedModelsData.map((model) => String(model.id))),
+    [selectedModelsData],
+  );
+  const canUseMultiModel =
+    enableMultiModel &&
+    !!onSelectedModelsChange &&
+    !!onMultiModelEnabledChange &&
+    availableModels.length > 1;
+  const leadModel = selectedModelsData[0] ?? currentModel;
+  const triggerLabel =
+    multiModelEnabled && selectedModelsData.length > 1
+      ? `${compactModelLabel(leadModel.name)} +${selectedModelsData.length - 1}`
+      : compactModelLabel(leadModel.name);
+  const modelSections = useMemo(() => {
+    const provided = modelGroups.filter((g) => g.providerType === "provided");
+    const configured = modelGroups.filter(
+      (g) => g.providerType === "configured",
+    );
+    return { provided, configured };
+  }, [modelGroups]);
+  const selectedLimitReached =
+    multiModelEnabled && selectedModelsData.length >= maxSelectedModels;
+
+  const requestSelectionChange = (nextChange: PendingSelectionChange) => {
+    const isSingleNoOp =
+      nextChange.type === "single" &&
+      String(nextChange.nextModel.id) === String(currentModel.id);
+    const isMultiNoOp =
+      nextChange.type === "multi" &&
+      nextChange.enabled === multiModelEnabled &&
+      sameModelOrder(nextChange.selectedModels, selectedModelsData);
+
+    if (isSingleNoOp) {
+      setIsOpen(false);
+      return;
+    }
+    if (isMultiNoOp) {
       return;
     }
 
-    // Show confirmation dialog
-    setPendingModel(model);
-    setShowConfirmDialog(true);
-    setIsModelSelectorOpen(false);
-  };
-
-  const handleConfirmModelChange = () => {
-    if (pendingModel) {
-      onModelChange(pendingModel);
-      setPendingModel(null);
+    if (nextChange.type === "single") {
+      onModelChange(nextChange.nextModel);
+      setIsOpen(false);
+    } else {
+      onSelectedModelsChange?.(nextChange.selectedModels);
+      onMultiModelEnabledChange?.(nextChange.enabled);
     }
-    setShowConfirmDialog(false);
   };
 
-  const handleCancelModelChange = () => {
-    setPendingModel(null);
-    setShowConfirmDialog(false);
+  const handleToggleMultiModel = (enabled: boolean) => {
+    if (!canUseMultiModel) {
+      return;
+    }
+
+    if (enabled) {
+      requestSelectionChange({
+        type: "multi",
+        enabled: true,
+        selectedModels:
+          selectedModelsData.length > 0 ? selectedModelsData : [currentModel],
+      });
+      return;
+    }
+
+    requestSelectionChange({
+      type: "multi",
+      enabled: false,
+      selectedModels: [leadModel],
+    });
   };
+
+  const handleMultiModelSelect = (model: ModelDefinition) => {
+    const isSelected = selectedIds.has(String(model.id));
+    const nextSelectedModels = isSelected
+      ? selectedModelsData.filter(
+          (selectedModel) => String(selectedModel.id) !== String(model.id),
+        )
+      : [...selectedModelsData, model];
+
+    if (nextSelectedModels.length === 0) {
+      return;
+    }
+
+    requestSelectionChange({
+      type: "multi",
+      enabled: true,
+      selectedModels: nextSelectedModels,
+    });
+  };
+
+  const handlePromoteLeadModel = (model: ModelDefinition) => {
+    if (!multiModelEnabled || String(model.id) === String(leadModel.id)) {
+      return;
+    }
+
+    const nextSelectedModels = [
+      model,
+      ...selectedModelsData.filter(
+        (selectedModel) => String(selectedModel.id) !== String(model.id),
+      ),
+    ];
+
+    requestSelectionChange({
+      type: "multi",
+      enabled: true,
+      selectedModels: nextSelectedModels,
+    });
+  };
+
+  const renderGroupModelItems = (group: (typeof modelGroups)[number]) =>
+    group.models.map((model) => {
+      const isDisabled =
+        !!model.disabled ||
+        (multiModelEnabled &&
+          !selectedIds.has(String(model.id)) &&
+          selectedLimitReached);
+      const disabledReason =
+        model.disabledReason ??
+        (!selectedIds.has(String(model.id)) && selectedLimitReached
+          ? `You can compare up to ${maxSelectedModels} models at once`
+          : undefined);
+      const isLockedRowHighlight =
+        lockedRowHighlightId === String(model.id) && !!disabledReason;
+      const isSelected = selectedIds.has(String(model.id));
+
+      const row = (
+        <CommandItem
+          key={String(model.id)}
+          value={`${model.name} ${group.title} ${String(model.id)}`}
+          onSelect={() => {
+            if (multiModelEnabled) {
+              handleMultiModelSelect(model);
+            } else {
+              requestSelectionChange({
+                type: "single",
+                nextModel: model,
+              });
+            }
+          }}
+          disabled={isDisabled}
+          className={cn(
+            "cursor-pointer rounded-sm px-2 py-1 data-[disabled=true]:cursor-not-allowed",
+            lockedRowHighlightId &&
+              "data-[selected=true]:bg-transparent data-[selected=true]:text-inherit",
+          )}
+        >
+          <ProviderLogo
+            provider={getLogoProvider(group.provider)}
+            customProviderName={getCustomName(group.provider)}
+            className="size-3.5"
+          />
+          <span className="min-w-0 flex-1 truncate text-sm">
+            {compactModelLabel(model.name)}
+          </span>
+          {multiModelEnabled ? (
+            <div
+              className={cn(
+                "ml-auto flex size-4 shrink-0 items-center justify-center rounded-[5px] border transition-[background-color,border-color,box-shadow] duration-200 ease-[cubic-bezier(0.33,1,0.68,1)]",
+                isSelected
+                  ? "border-primary bg-primary shadow-sm"
+                  : "border-border/60 bg-transparent hover:border-border",
+              )}
+              aria-hidden
+            >
+              {isSelected ? (
+                <Check
+                  strokeWidth={3}
+                  className="size-2.5 animate-in zoom-in-95 fade-in duration-200 fill-none text-primary-foreground"
+                />
+              ) : null}
+            </div>
+          ) : String(model.id) === String(currentModel.id) ? (
+            <div className="ml-auto size-1.5 shrink-0 rounded-full bg-primary" />
+          ) : null}
+        </CommandItem>
+      );
+
+      return disabledReason ? (
+        <Tooltip key={String(model.id)}>
+          <TooltipTrigger asChild>
+            <div
+              className={cn(
+                "rounded-sm transition-colors",
+                isLockedRowHighlight ? "bg-accent/60" : "hover:bg-accent/60",
+              )}
+              onMouseEnter={() => setHoveredLockedModelId(String(model.id))}
+              onMouseLeave={() => setHoveredLockedModelId(null)}
+            >
+              {row}
+            </div>
+          </TooltipTrigger>
+          <TooltipContent side="right">{disabledReason}</TooltipContent>
+        </Tooltip>
+      ) : (
+        row
+      );
+    });
 
   return (
     <>
-      <DropdownMenu
-        open={isModelSelectorOpen}
-        onOpenChange={setIsModelSelectorOpen}
-      >
+      <Popover open={isOpen} onOpenChange={handleOpenChange}>
         <Tooltip>
           <TooltipTrigger asChild>
-            <DropdownMenuTrigger asChild>
+            <PopoverTrigger asChild>
               <Button
                 variant="ghost"
                 size="sm"
                 disabled={disabled || isLoading}
-                className="h-8 px-2 rounded-full hover:bg-muted/80 transition-colors text-xs cursor-pointer max-w-[160px] @max-2xl/toolbar:w-8 @max-2xl/toolbar:px-0 @max-2xl/toolbar:max-w-none"
+                className="h-8 max-w-[180px] rounded-full px-2 text-xs transition-colors hover:bg-muted/80 @max-2xl/toolbar:max-w-none @max-2xl/toolbar:w-8 @max-2xl/toolbar:px-0"
               >
                 <ProviderLogo
-                  provider={currentModelData.provider}
-                  customProviderName={currentModelData.customProviderName}
+                  provider={leadModel.provider}
+                  customProviderName={leadModel.customProviderName}
                 />
-                <span className="text-[10px] font-medium truncate @max-2xl/toolbar:hidden">
-                  {currentModelData.name}
+                <span className="truncate text-[10px] font-medium @max-2xl/toolbar:hidden">
+                  {triggerLabel}
                 </span>
               </Button>
-            </DropdownMenuTrigger>
+            </PopoverTrigger>
           </TooltipTrigger>
-          <TooltipContent side="top">{currentModelData.name}</TooltipContent>
+          <TooltipContent side="top">{triggerLabel}</TooltipContent>
         </Tooltip>
-        <DropdownMenuContent align="start" className="min-w-[200px]">
-          {mcpjamProviders.length > 0 && (
-            <div className="px-2 py-1 text-[10px] uppercase tracking-wide text-muted-foreground">
-              MCPJam Free Models
-            </div>
-          )}
-          {mcpjamProviders.map((provider) => {
-            const models = groupedModels.get(provider) || [];
-            const mcpjamModels = models.filter((model) =>
-              isMCPJamProvidedModel(model.id),
-            );
-            const modelCount = mcpjamModels.length;
 
-            return (
-              <DropdownMenuSub key={provider}>
-                <DropdownMenuSubTrigger className="flex items-center gap-3 text-sm cursor-pointer">
-                  <ProviderLogo
-                    provider={getLogoProvider(provider)}
-                    customProviderName={getCustomName(provider)}
-                  />
-                  <div className="flex flex-col flex-1">
-                    <span className="font-medium">
-                      {getProviderDisplayName(provider)}
-                    </span>
-                    <span className="text-xs text-muted-foreground">
-                      {modelCount} model{modelCount !== 1 ? "s" : ""}
-                    </span>
+        <PopoverContent align="start" className="w-[280px] p-0" sideOffset={8}>
+          <Command shouldFilter={true}>
+            <CommandInput placeholder="Search models" />
+
+            {canUseMultiModel ? (
+              <>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <div className="flex cursor-default items-center justify-between gap-2 border-b px-2.5 py-2">
+                      <span className="text-xs text-muted-foreground">
+                        Multiple models
+                      </span>
+                      <Switch
+                        checked={multiModelEnabled}
+                        onCheckedChange={handleToggleMultiModel}
+                        aria-label="Use multiple models"
+                        disabled={disabled || isLoading}
+                      />
+                    </div>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom" className="max-w-xs text-xs">
+                    Compare up to {maxSelectedModels} models in one composer.
+                    The first in your selection runs first.
+                  </TooltipContent>
+                </Tooltip>
+
+                {multiModelEnabled ? (
+                  <div
+                    className="flex flex-wrap gap-1 border-b px-2.5 py-1.5"
+                    title="First chip is the lead model. Click a chip to promote it."
+                  >
+                    {selectedModelsData.map((model, index) => {
+                      const isLead = index === 0;
+                      return (
+                        <button
+                          key={String(model.id)}
+                          type="button"
+                          className={cn(
+                            "inline-flex max-w-full items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px] transition-colors",
+                            isLead
+                              ? "border-primary/25 bg-primary/5 text-foreground"
+                              : "border-border/50 bg-muted/30 text-muted-foreground hover:text-foreground",
+                          )}
+                          onClick={() => handlePromoteLeadModel(model)}
+                        >
+                          <ProviderLogo
+                            provider={model.provider}
+                            customProviderName={model.customProviderName}
+                            className="size-3"
+                          />
+                          <span className="truncate">
+                            {compactModelLabel(model.name)}
+                          </span>
+                          {selectedModelsData.length > 1 ? (
+                            <span
+                              role="button"
+                              tabIndex={-1}
+                              className="inline-flex size-3.5 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                handleMultiModelSelect(model);
+                              }}
+                            >
+                              <X className="h-2.5 w-2.5" />
+                            </span>
+                          ) : null}
+                        </button>
+                      );
+                    })}
+                    {selectedLimitReached ? (
+                      <span className="w-full text-[10px] text-muted-foreground">
+                        Max {maxSelectedModels}. Remove one to add another.
+                      </span>
+                    ) : null}
                   </div>
-                </DropdownMenuSubTrigger>
+                ) : null}
+              </>
+            ) : null}
 
-                <DropdownMenuSubContent
-                  className="min-w-[200px] max-h-[180px] overflow-y-auto"
-                  avoidCollisions={true}
-                  collisionPadding={8}
-                >
-                  {mcpjamModels.map((model) => {
-                    const isMCPJamProvided = isMCPJamProvidedModel(model.id);
-                    const isDisabled =
-                      !!model.disabled ||
-                      (isMCPJamProvided && !isAuthenticated);
-                    const computedReason =
-                      isMCPJamProvided && !isAuthenticated
-                        ? "Sign in to use MCPJam provided models"
-                        : model.disabledReason;
+            <CommandList className="max-h-[min(320px,45vh)]">
+              <CommandEmpty>No matching models.</CommandEmpty>
 
-                    const item = (
-                      <DropdownMenuItem
-                        key={model.id}
-                        onSelect={() => handleModelSelect(model)}
-                        className="flex items-center gap-3 text-sm cursor-pointer"
-                        disabled={isDisabled}
-                      >
-                        <div className="flex flex-col flex-1">
-                          <span className="font-medium">{model.name}</span>
-                        </div>
-                        {model.id === currentModel.id && (
-                          <div className="ml-auto w-2 h-2 bg-primary rounded-full" />
-                        )}
-                      </DropdownMenuItem>
-                    );
+              {modelSections.provided.length > 0 ? (
+                <CommandGroup heading="Free models">
+                  {modelSections.provided.map((group) => (
+                    <div key={`${group.provider}:${group.providerType}`}>
+                      <div className="px-2 pb-0.5 pt-1 text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
+                        {group.title}
+                      </div>
+                      {renderGroupModelItems(group)}
+                    </div>
+                  ))}
+                </CommandGroup>
+              ) : null}
 
-                    return isDisabled ? (
-                      <Tooltip key={model.id}>
-                        <TooltipTrigger asChild>
-                          <div className="pointer-events-auto">{item}</div>
-                        </TooltipTrigger>
-                        <TooltipContent side="right">
-                          {computedReason}
-                        </TooltipContent>
-                      </Tooltip>
-                    ) : (
-                      item
-                    );
-                  })}
-                </DropdownMenuSubContent>
-              </DropdownMenuSub>
-            );
-          })}
-          {mcpjamProviders.length > 0 && otherProviders.length > 0 && (
-            <div className="my-1 h-px bg-muted/50" />
-          )}
-          {otherProviders.length > 0 && (
-            <div className="px-2 py-1 text-[10px] uppercase tracking-wide text-muted-foreground">
-              Your providers
-            </div>
-          )}
-          {otherProviders.map((provider) => {
-            const models = groupedModels.get(provider) || [];
-            const userModels = models.filter(
-              (model) => !isMCPJamProvidedModel(model.id),
-            );
-            const modelCount = userModels.length;
+              {modelSections.provided.length > 0 &&
+              modelSections.configured.length > 0 ? (
+                <CommandSeparator />
+              ) : null}
 
-            return (
-              <DropdownMenuSub key={provider}>
-                <DropdownMenuSubTrigger className="flex items-center gap-3 text-sm cursor-pointer">
-                  <ProviderLogo
-                    provider={getLogoProvider(provider)}
-                    customProviderName={getCustomName(provider)}
-                  />
-                  <div className="flex flex-col flex-1">
-                    <span className="font-medium">
-                      {getProviderDisplayName(provider)}
-                    </span>
-                    <span className="text-xs text-muted-foreground">
-                      {modelCount} model{modelCount !== 1 ? "s" : ""}
-                    </span>
-                  </div>
-                </DropdownMenuSubTrigger>
-
-                <DropdownMenuSubContent
-                  className="min-w-[200px] max-h-[180px] overflow-y-auto"
-                  avoidCollisions={true}
-                  collisionPadding={8}
-                >
-                  {userModels.map((model) => {
-                    const isDisabled = !!model.disabled;
-
-                    const item = (
-                      <DropdownMenuItem
-                        key={model.id}
-                        onSelect={() => handleModelSelect(model)}
-                        className="flex items-center gap-3 text-sm cursor-pointer"
-                        disabled={isDisabled}
-                      >
-                        <div className="flex flex-col flex-1">
-                          <span className="font-medium">{model.name}</span>
-                        </div>
-                        {model.id === currentModel.id && (
-                          <div className="ml-auto w-2 h-2 bg-primary rounded-full" />
-                        )}
-                      </DropdownMenuItem>
-                    );
-
-                    return isDisabled ? (
-                      <Tooltip key={model.id}>
-                        <TooltipTrigger asChild>
-                          <div className="pointer-events-auto">{item}</div>
-                        </TooltipTrigger>
-                        <TooltipContent side="right">
-                          {model.disabledReason}
-                        </TooltipContent>
-                      </Tooltip>
-                    ) : (
-                      item
-                    );
-                  })}
-                </DropdownMenuSubContent>
-              </DropdownMenuSub>
-            );
-          })}
-        </DropdownMenuContent>
-      </DropdownMenu>
-
-      <ConfirmChatResetDialog
-        open={showConfirmDialog}
-        onConfirm={handleConfirmModelChange}
-        onCancel={handleCancelModelChange}
-        message="Changing the model will cause the chat to reset. This action cannot be undone."
-      />
+              {modelSections.configured.length > 0 ? (
+                <CommandGroup heading="Your providers">
+                  {modelSections.configured.map((group) => (
+                    <div key={`${group.provider}:${group.providerType}`}>
+                      <div className="px-2 pb-0.5 pt-1 text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
+                        {group.title}
+                      </div>
+                      {renderGroupModelItems(group)}
+                    </div>
+                  ))}
+                </CommandGroup>
+              ) : null}
+            </CommandList>
+          </Command>
+        </PopoverContent>
+      </Popover>
     </>
   );
 }

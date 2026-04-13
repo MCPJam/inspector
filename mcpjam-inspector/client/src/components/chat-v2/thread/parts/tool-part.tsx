@@ -17,6 +17,7 @@ import {
 import { UITools, ToolUIPart, DynamicToolUIPart } from "ai";
 
 import { usePostHog } from "posthog-js/react";
+import { standardEventProps } from "@/lib/PosthogUtils";
 import { type DisplayMode } from "@/stores/ui-playground-store";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { useWidgetDebugStore } from "@/stores/widget-debug-store";
@@ -114,6 +115,7 @@ export function ToolPart({
       hasTrackedSkillLoad.current = true;
       posthog.capture("skill_loaded", {
         skill_name: (part as any).input?.name ?? "unknown",
+        ...standardEventProps("chat_tool_part"),
       });
     }
   }, [state, label, posthog, toolCallId, part]);
@@ -142,7 +144,6 @@ export function ToolPart({
   const [activeDebugTab, setActiveDebugTab] = useState<
     "data" | "state" | "csp" | "context" | null
   >("data");
-  const [hasUsedSaveViewButton, setHasUsedSaveViewButton] = useState(true);
 
   const inputData = (part as any).input;
   const outputData = (part as any).output;
@@ -256,13 +257,6 @@ export function ToolPart({
     onDisplayModeChange?.(mode);
   };
 
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    setHasUsedSaveViewButton(
-      localStorage.getItem(SAVE_VIEW_BUTTON_USED_KEY) === "true",
-    );
-  }, []);
-
   const handleSaveViewClick = (e: MouseEvent<HTMLButtonElement>) => {
     e.stopPropagation();
     if (!onSaveView || !canSaveView || isSaving) return;
@@ -275,8 +269,7 @@ export function ToolPart({
     const shouldRedirectAfterSave =
       localStorage.getItem(SAVE_VIEW_REDIRECTED_KEY) !== "true";
 
-    if (!hasUsedSaveViewButton) {
-      setHasUsedSaveViewButton(true);
+    if (localStorage.getItem(SAVE_VIEW_BUTTON_USED_KEY) !== "true") {
       localStorage.setItem(SAVE_VIEW_BUTTON_USED_KEY, "true");
     }
 
@@ -395,15 +388,6 @@ export function ToolPart({
 
   const renderSaveViewButton = () => (
     <span className="relative inline-flex items-center">
-      {canSaveView &&
-        !isSaving &&
-        !hasUsedSaveViewButton &&
-        displayMode !== "fullscreen" && (
-          <span className="absolute right-0 bottom-full z-50 mb-2 whitespace-nowrap rounded-xl border border-primary/70 bg-primary px-2.5 py-1 text-[10px] font-semibold normal-case text-primary-foreground shadow-md shadow-primary/30 ring-1 ring-primary/40">
-            <span className="absolute -bottom-1 right-2 z-50 h-2.5 w-2.5 rotate-45 border-b border-r border-primary/70 bg-primary" />
-            <span className="relative z-10">Like how it looks? Save it.</span>
-          </span>
-        )}
       <Tooltip>
         <TooltipTrigger asChild>
           <button

@@ -1,4 +1,5 @@
 import {
+  type CSSProperties,
   useEffect,
   useMemo,
   useRef,
@@ -16,6 +17,7 @@ import type { DisplayMode } from "@/stores/ui-playground-store";
 import type { ToolServerMap } from "@/lib/apis/mcp-tools-api";
 import type { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import { cn } from "@/lib/utils";
+import type { LoadingIndicatorVariant } from "@/components/chat-v2/shared/loading-indicator-content";
 
 const NOOP = (..._args: unknown[]) => {};
 const TRANSCRIPT_SCROLL_SETTLE_MS = 120;
@@ -23,6 +25,10 @@ const TRANSCRIPT_SCROLL_MAX_OBSERVE_MS = 1500;
 const TRANSCRIPT_TALL_MESSAGE_RATIO = 0.55;
 const TRANSCRIPT_TOP_INSET_MIN_PX = 12;
 const TRANSCRIPT_TOP_INSET_MAX_PX = 24;
+const TRANSCRIPT_MESSAGE_VISIBILITY_STYLE: CSSProperties = {
+  contentVisibility: "auto",
+  containIntrinsicSize: "0 160px",
+};
 
 type MessageWrapperArgs = {
   message: UIMessage;
@@ -69,6 +75,9 @@ export interface TranscriptThreadProps extends MessageViewPassthroughProps {
   viewportRef?: RefObject<HTMLElement | null>;
   transcriptRef?: Ref<HTMLDivElement>;
   contentClassName?: string;
+  isLoading?: boolean;
+  loadingIndicatorVariant?: LoadingIndicatorVariant;
+  lastRenderableMessageId?: string | null;
   getMessageWrapperProps?: (
     args: MessageWrapperArgs,
   ) => MessageWrapperProps | undefined;
@@ -187,6 +196,9 @@ export function TranscriptThread({
   viewportRef,
   transcriptRef,
   contentClassName,
+  isLoading = false,
+  loadingIndicatorVariant = "default",
+  lastRenderableMessageId = null,
   getMessageWrapperProps,
 }: TranscriptThreadProps) {
   const contentRef = useRef<HTMLDivElement | null>(null);
@@ -196,6 +208,8 @@ export function TranscriptThread({
     () => new Set(highlightedMessageIds),
     [highlightedMessageIds],
   );
+  const shouldUseContentVisibility =
+    focusMessageId === null && highlightedMessageIds.length === 0;
 
   useEffect(() => {
     if (!focusMessageId) {
@@ -330,7 +344,7 @@ export function TranscriptThread({
         contentRef.current = node;
         assignRef(transcriptRef, node);
       }}
-      className={contentClassName}
+      className={cn("min-w-0", contentClassName)}
     >
       {messages.map((message) => {
         const isFocused = message.id === focusMessageId;
@@ -342,6 +356,14 @@ export function TranscriptThread({
             isHighlighted,
           }) ?? {};
         const { className, ...restWrapperProps } = wrapperProps;
+        const claudeFooterMode =
+          loadingIndicatorVariant === "claude-mark" &&
+          message.role === "assistant" &&
+          message.id === lastRenderableMessageId
+            ? isLoading
+              ? "animated"
+              : "static"
+            : "none";
 
         return (
           <div
@@ -358,6 +380,11 @@ export function TranscriptThread({
                 "relative rounded-xl border border-primary/30 bg-primary/5 p-2",
               className,
             )}
+            style={
+              shouldUseContentVisibility && !isFocused && !isHighlighted
+                ? TRANSCRIPT_MESSAGE_VISIBILITY_STYLE
+                : undefined
+            }
             {...restWrapperProps}
           >
             {isFocused ? (
@@ -412,6 +439,7 @@ export function TranscriptThread({
               minimalMode={minimalMode}
               interactive={interactive}
               reasoningDisplayMode={reasoningDisplayMode}
+              claudeFooterMode={claudeFooterMode}
             />
           </div>
         );
