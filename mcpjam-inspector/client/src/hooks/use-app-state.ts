@@ -2,7 +2,7 @@ import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useConvexAuth } from "convex/react";
 import { useLogger } from "./use-logger";
-import { initialAppState } from "@/state/app-types";
+import { initialAppState, type ServerWithName } from "@/state/app-types";
 import { appReducer } from "@/state/app-reducer";
 import { loadAppState, saveAppState } from "@/state/storage";
 import { useWorkspaceState } from "./use-workspace-state";
@@ -37,6 +37,20 @@ function createDefaultWorkspace() {
     createdAt: new Date(),
     updatedAt: new Date(),
   };
+}
+
+export function buildDisconnectedRuntimeServers(
+  servers: Record<string, ServerWithName> | undefined,
+): Record<string, ServerWithName> {
+  return Object.fromEntries(
+    Object.entries(servers ?? {}).map(([serverName, server]) => [
+      serverName,
+      {
+        ...server,
+        connectionStatus: "disconnected",
+      } satisfies ServerWithName,
+    ]),
+  );
 }
 
 export function useAppState({
@@ -75,6 +89,11 @@ export function useAppState({
     !!storedActiveOrganizationId &&
     validOrganizations.some(
       (organization) => organization._id === storedActiveOrganizationId,
+    );
+  const isRouteOrganizationValid =
+    !!routeOrganizationId &&
+    validOrganizations.some(
+      (organization) => organization._id === routeOrganizationId,
     );
   const fallbackActiveOrganizationId =
     hasHydratedStoredActiveOrganization &&
@@ -128,6 +147,37 @@ export function useAppState({
     activeOrganizationSelection,
     currentUserId,
     hasHydratedStoredActiveOrganization,
+  ]);
+
+  useEffect(() => {
+    if (!hasHydratedStoredActiveOrganization) {
+      return;
+    }
+    if (activeOrganizationSelection.userId !== currentUserId) {
+      return;
+    }
+    if (!routeOrganizationId || isLoadingOrganizations) {
+      return;
+    }
+    if (!isRouteOrganizationValid) {
+      return;
+    }
+    if (activeOrganizationSelection.organizationId === routeOrganizationId) {
+      return;
+    }
+
+    setActiveOrganizationSelection({
+      organizationId: routeOrganizationId,
+      userId: currentUserId,
+    });
+  }, [
+    activeOrganizationSelection.organizationId,
+    activeOrganizationSelection.userId,
+    currentUserId,
+    hasHydratedStoredActiveOrganization,
+    isLoadingOrganizations,
+    isRouteOrganizationValid,
+    routeOrganizationId,
   ]);
 
   useEffect(() => {
@@ -241,7 +291,7 @@ export function useAppState({
         }
       }
 
-      if (isAuthenticated) {
+      if (isAuthenticated && !useLocalFallback) {
         setConvexActiveWorkspaceId(workspaceId);
       } else {
         dispatch({ type: "SWITCH_WORKSPACE", workspaceId });
@@ -254,6 +304,7 @@ export function useAppState({
       handleDisconnect,
       logger,
       isAuthenticated,
+      useLocalFallback,
       dispatch,
       setConvexActiveWorkspaceId,
     ],
@@ -288,7 +339,7 @@ export function useAppState({
         }
       }
 
-      if (isAuthenticated) {
+      if (isAuthenticated && !useLocalFallback) {
         setConvexActiveWorkspaceId(targetWorkspaceId);
       } else {
         dispatch({ type: "SWITCH_WORKSPACE", workspaceId: targetWorkspaceId });
@@ -300,6 +351,7 @@ export function useAppState({
       appState.servers,
       handleDisconnect,
       isAuthenticated,
+      useLocalFallback,
       dispatch,
       setConvexActiveWorkspaceId,
     ],
@@ -325,7 +377,9 @@ export function useAppState({
         nextWorkspaces.default ??
         Object.values(nextWorkspaces)[0];
       const nextActiveWorkspaceId = nextActiveWorkspace?.id ?? "default";
-      const nextServers = nextActiveWorkspace?.servers ?? {};
+      const nextServers = buildDisconnectedRuntimeServers(
+        nextActiveWorkspace?.servers,
+      );
 
       dispatch({
         type: "HYDRATE_STATE",
@@ -334,14 +388,8 @@ export function useAppState({
           workspaces: nextWorkspaces,
           activeWorkspaceId: nextActiveWorkspaceId,
           servers: nextServers,
-          selectedServer:
-            appState.selectedServer !== "none" &&
-            nextServers[appState.selectedServer]
-              ? appState.selectedServer
-              : "none",
-          selectedMultipleServers: appState.selectedMultipleServers.filter(
-            (serverName) => nextServers[serverName] !== undefined,
-          ),
+          selectedServer: "none",
+          selectedMultipleServers: [],
         },
       });
     },

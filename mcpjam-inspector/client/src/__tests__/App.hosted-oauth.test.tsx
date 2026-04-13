@@ -1,4 +1,4 @@
-import { type ReactNode, useLayoutEffect } from "react";
+import { type ReactNode, useLayoutEffect, useState } from "react";
 import {
   act,
   fireEvent,
@@ -726,6 +726,152 @@ describe("App hosted OAuth callback handling", () => {
       mockUseAppState.mock.calls[mockUseAppState.mock.calls.length - 1];
     expect(lastCall?.[0]).toMatchObject({
       routeOrganizationId: "org-3",
+    });
+  });
+
+  it("keeps the sidebar-selected org active when navigating back to servers", async () => {
+    clearHostedOAuthPendingState();
+    clearSandboxSession();
+    window.history.replaceState({}, "", "/#organizations/org-a");
+
+    const setActiveOrganizationIdSpy = vi.fn();
+    mockUseAppState.mockImplementation(() => {
+      const [activeOrganizationId, setActiveOrganizationId] =
+        useState<string | undefined>("org-a");
+
+      return {
+        ...createAppStateMock(),
+        activeOrganizationId,
+        setActiveOrganizationId: (organizationId: string | undefined) => {
+          setActiveOrganizationIdSpy(organizationId);
+          setActiveOrganizationId(organizationId);
+        },
+      };
+    });
+    mockUseQuery.mockImplementation((name: string) => {
+      if (name === "organizations:getMyOrganizations") {
+        return [
+          {
+            _id: "org-a",
+            name: "Org A",
+            updatedAt: 1,
+            createdAt: 1,
+            createdBy: "user-1",
+            myRole: "owner",
+          },
+          {
+            _id: "org-b",
+            name: "Org B",
+            updatedAt: 2,
+            createdAt: 2,
+            createdBy: "user-1",
+            myRole: "owner",
+          },
+        ];
+      }
+
+      return undefined;
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(mockMCPSidebar).toHaveBeenCalled();
+    });
+
+    const getLastSidebarProps = () =>
+      mockMCPSidebar.mock.calls[mockMCPSidebar.mock.calls.length - 1]?.[0] as {
+        activeOrganizationId?: string;
+        onNavigate?: (section: string) => void;
+        onSwitchOrganization?: (organizationId: string) => void;
+      };
+
+    act(() => {
+      getLastSidebarProps().onSwitchOrganization?.("org-b");
+    });
+
+    await waitFor(() => {
+      expect(setActiveOrganizationIdSpy).toHaveBeenCalledWith("org-b");
+      expect(getLastSidebarProps().activeOrganizationId).toBe("org-b");
+      expect(window.location.hash).toBe("#organizations/org-b");
+    });
+
+    act(() => {
+      getLastSidebarProps().onNavigate?.("servers");
+    });
+
+    await waitFor(() => {
+      expect(getLastSidebarProps().activeOrganizationId).toBe("org-b");
+      expect(window.location.hash).toBe("#servers");
+    });
+  });
+
+  it("preserves the newly selected org when navigating away immediately", async () => {
+    clearHostedOAuthPendingState();
+    clearSandboxSession();
+    window.history.replaceState({}, "", "/#organizations/org-a");
+
+    const setActiveOrganizationIdSpy = vi.fn();
+    mockUseAppState.mockImplementation(() => {
+      const [activeOrganizationId, setActiveOrganizationId] =
+        useState<string | undefined>("org-a");
+
+      return {
+        ...createAppStateMock(),
+        activeOrganizationId,
+        setActiveOrganizationId: (organizationId: string | undefined) => {
+          setActiveOrganizationIdSpy(organizationId);
+          setActiveOrganizationId(organizationId);
+        },
+      };
+    });
+    mockUseQuery.mockImplementation((name: string) => {
+      if (name === "organizations:getMyOrganizations") {
+        return [
+          {
+            _id: "org-a",
+            name: "Org A",
+            updatedAt: 1,
+            createdAt: 1,
+            createdBy: "user-1",
+            myRole: "owner",
+          },
+          {
+            _id: "org-b",
+            name: "Org B",
+            updatedAt: 2,
+            createdAt: 2,
+            createdBy: "user-1",
+            myRole: "owner",
+          },
+        ];
+      }
+
+      return undefined;
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(mockMCPSidebar).toHaveBeenCalled();
+    });
+
+    const getLastSidebarProps = () =>
+      mockMCPSidebar.mock.calls[mockMCPSidebar.mock.calls.length - 1]?.[0] as {
+        activeOrganizationId?: string;
+        onNavigate?: (section: string) => void;
+        onSwitchOrganization?: (organizationId: string) => void;
+      };
+
+    act(() => {
+      getLastSidebarProps().onSwitchOrganization?.("org-b");
+      getLastSidebarProps().onNavigate?.("servers");
+    });
+
+    await waitFor(() => {
+      expect(setActiveOrganizationIdSpy).toHaveBeenCalledWith("org-b");
+      expect(getLastSidebarProps().activeOrganizationId).toBe("org-b");
+      expect(window.location.hash).toBe("#servers");
     });
   });
 

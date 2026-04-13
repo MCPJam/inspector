@@ -384,6 +384,7 @@ describe("useWorkspaceState automatic workspace creation", () => {
       default: createSyntheticDefaultWorkspace(),
       "local-1": createLocalWorkspace("local-1", {
         name: "Imported workspace",
+        organizationId: "org-live",
       }),
     });
     const { rerender } = renderUseWorkspaceState({
@@ -514,6 +515,7 @@ describe("useWorkspaceState automatic workspace creation", () => {
       "local-1": createLocalWorkspace("local-1", {
         name: "Imported workspace",
         description: "Needs migration",
+        organizationId: "org-migrate",
         servers: {
           demo: {
             name: "demo",
@@ -696,7 +698,9 @@ describe("useWorkspaceState automatic workspace creation", () => {
     localStorage.setItem("convex-active-workspace-id", "remote-1");
 
     const appState = createAppState({
-      "local-1": createLocalWorkspace("local-1"),
+      "local-1": createLocalWorkspace("local-1", {
+        organizationId: "org-live",
+      }),
     });
     const { result, rerender } = renderUseWorkspaceState({
       appState,
@@ -735,7 +739,9 @@ describe("useWorkspaceState automatic workspace creation", () => {
     workspaceQueryState.workspaces = undefined;
 
     const appState = createAppState({
-      "local-1": createLocalWorkspace("local-1"),
+      "local-1": createLocalWorkspace("local-1", {
+        organizationId: "org-live",
+      }),
     });
     const { result } = renderUseWorkspaceState({
       appState,
@@ -754,6 +760,286 @@ describe("useWorkspaceState automatic workspace creation", () => {
     expect(result.current.effectiveActiveWorkspaceId).toBe(
       appState.activeWorkspaceId,
     );
+  });
+
+  it("scopes local fallback workspaces to the current org and ignores an active workspace from another org", async () => {
+    vi.useFakeTimers();
+    workspaceQueryState.allWorkspaces = undefined;
+    workspaceQueryState.workspaces = undefined;
+
+    const appState = {
+      ...createAppState({
+        "local-org-a": createLocalWorkspace("local-org-a", {
+          organizationId: "org-a",
+        }),
+        "local-org-b": createLocalWorkspace("local-org-b", {
+          organizationId: "org-b",
+        }),
+      }),
+      activeWorkspaceId: "local-org-b",
+    };
+
+    const { result } = renderUseWorkspaceState({
+      appState,
+      activeOrganizationId: "org-a",
+      hasOrganizations: true,
+      isLoadingOrganizations: false,
+      validOrganizationIds: ["org-a"],
+    });
+
+    act(() => {
+      vi.advanceTimersByTime(10001);
+    });
+
+    expect(result.current.useLocalFallback).toBe(true);
+    expect(result.current.effectiveWorkspaces).toEqual({
+      "local-org-a": appState.workspaces["local-org-a"],
+    });
+    expect(result.current.effectiveActiveWorkspaceId).toBe("local-org-a");
+  });
+
+  it("hides unscoped and wrong-org local fallback workspaces when the current org has no local matches", async () => {
+    vi.useFakeTimers();
+    workspaceQueryState.allWorkspaces = undefined;
+    workspaceQueryState.workspaces = undefined;
+
+    const appState = createAppState({
+      "local-unscoped": createLocalWorkspace("local-unscoped"),
+      "local-org-b": createLocalWorkspace("local-org-b", {
+        organizationId: "org-b",
+      }),
+    });
+
+    const { result } = renderUseWorkspaceState({
+      appState,
+      activeOrganizationId: "org-a",
+      hasOrganizations: true,
+      isLoadingOrganizations: false,
+      validOrganizationIds: ["org-a"],
+    });
+
+    act(() => {
+      vi.advanceTimersByTime(10001);
+    });
+
+    expect(result.current.useLocalFallback).toBe(true);
+    expect(result.current.effectiveWorkspaces).toEqual({});
+    expect(result.current.effectiveActiveWorkspaceId).toBe("none");
+  });
+
+  it("keeps unauthenticated local workspaces visible without org scoping", () => {
+    const appState = createAppState({
+      "local-unscoped": createLocalWorkspace("local-unscoped"),
+      "local-org-b": createLocalWorkspace("local-org-b", {
+        organizationId: "org-b",
+      }),
+    });
+
+    const { result } = renderUseWorkspaceState({
+      appState,
+      isAuthenticated: false,
+      activeOrganizationId: "org-a",
+      hasOrganizations: true,
+      isLoadingOrganizations: false,
+      validOrganizationIds: ["org-a"],
+    });
+
+    expect(result.current.effectiveWorkspaces).toEqual(appState.workspaces);
+    expect(result.current.effectiveActiveWorkspaceId).toBe(
+      appState.activeWorkspaceId,
+    );
+  });
+
+  it("stamps the current org id on local fallback create, duplicate, and import actions", async () => {
+    vi.useFakeTimers();
+    workspaceQueryState.allWorkspaces = undefined;
+    workspaceQueryState.workspaces = undefined;
+
+    const appState = createAppState({
+      "local-org-a": createLocalWorkspace("local-org-a", {
+        name: "Workspace A",
+        organizationId: "org-a",
+      }),
+    });
+
+    const { result, dispatch } = renderUseWorkspaceState({
+      appState,
+      activeOrganizationId: "org-a",
+      hasOrganizations: true,
+      isLoadingOrganizations: false,
+      validOrganizationIds: ["org-a"],
+    });
+
+    act(() => {
+      vi.advanceTimersByTime(10001);
+    });
+
+    await act(async () => {
+      await result.current.handleCreateWorkspace("Created locally");
+    });
+
+    expect(createWorkspaceMock).not.toHaveBeenCalled();
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "CREATE_WORKSPACE",
+      workspace: expect.objectContaining({
+        name: "Created locally",
+        organizationId: "org-a",
+      }),
+    });
+
+    dispatch.mockClear();
+
+    await act(async () => {
+      await result.current.handleDuplicateWorkspace(
+        "local-org-a",
+        "Duplicated locally",
+      );
+    });
+
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "CREATE_WORKSPACE",
+      workspace: expect.objectContaining({
+        name: "Duplicated locally",
+        organizationId: "org-a",
+      }),
+    });
+
+    dispatch.mockClear();
+
+    await act(async () => {
+      await result.current.handleImportWorkspace(
+        createLocalWorkspace("import-me", {
+          name: "Imported locally",
+        }),
+      );
+    });
+
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "IMPORT_WORKSPACE",
+      workspace: expect.objectContaining({
+        name: "Imported locally",
+        organizationId: "org-a",
+      }),
+    });
+  });
+
+  it("updates workspaces locally in authenticated fallback mode", async () => {
+    vi.useFakeTimers();
+    workspaceQueryState.allWorkspaces = undefined;
+    workspaceQueryState.workspaces = undefined;
+
+    const appState = createAppState({
+      "local-org-a": createLocalWorkspace("local-org-a", {
+        name: "Workspace A",
+        organizationId: "org-a",
+      }),
+    });
+
+    const { result, dispatch } = renderUseWorkspaceState({
+      appState,
+      activeOrganizationId: "org-a",
+      hasOrganizations: true,
+      isLoadingOrganizations: false,
+      validOrganizationIds: ["org-a"],
+    });
+
+    act(() => {
+      vi.advanceTimersByTime(10001);
+    });
+
+    dispatch.mockClear();
+
+    await act(async () => {
+      await result.current.handleUpdateWorkspace("local-org-a", {
+        name: "Workspace A Renamed",
+      });
+    });
+
+    expect(updateWorkspaceMock).not.toHaveBeenCalled();
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "UPDATE_WORKSPACE",
+      workspaceId: "local-org-a",
+      updates: {
+        name: "Workspace A Renamed",
+      },
+    });
+  });
+
+  it("deletes active workspaces locally in authenticated fallback mode", async () => {
+    vi.useFakeTimers();
+    workspaceQueryState.allWorkspaces = undefined;
+    workspaceQueryState.workspaces = undefined;
+
+    const appState = {
+      ...createAppState({
+        "local-org-a-1": createLocalWorkspace("local-org-a-1", {
+          name: "Workspace A1",
+          organizationId: "org-a",
+        }),
+        "local-org-a-2": createLocalWorkspace("local-org-a-2", {
+          name: "Workspace A2",
+          organizationId: "org-a",
+        }),
+      }),
+      activeWorkspaceId: "local-org-a-1",
+    };
+
+    const { result, dispatch } = renderUseWorkspaceState({
+      appState,
+      activeOrganizationId: "org-a",
+      hasOrganizations: true,
+      isLoadingOrganizations: false,
+      validOrganizationIds: ["org-a"],
+    });
+
+    act(() => {
+      vi.advanceTimersByTime(10001);
+    });
+
+    dispatch.mockClear();
+
+    await act(async () => {
+      await result.current.handleDeleteWorkspace("local-org-a-1");
+    });
+
+    expect(deleteWorkspaceMock).not.toHaveBeenCalled();
+    expect(dispatch).toHaveBeenNthCalledWith(1, {
+      type: "SWITCH_WORKSPACE",
+      workspaceId: "local-org-a-2",
+    });
+    expect(dispatch).toHaveBeenNthCalledWith(2, {
+      type: "DELETE_WORKSPACE",
+      workspaceId: "local-org-a-1",
+    });
+  });
+
+  it("does not migrate local workspaces from another org into the current organization", async () => {
+    workspaceQueryState.allWorkspaces = [];
+    workspaceQueryState.workspaces = [];
+
+    const appState = createAppState({
+      default: createSyntheticDefaultWorkspace(),
+      "local-org-b": createLocalWorkspace("local-org-b", {
+        name: "Org B workspace",
+        organizationId: "org-b",
+      }),
+    });
+
+    renderUseWorkspaceState({
+      appState,
+      activeOrganizationId: "org-a",
+      hasOrganizations: true,
+      isLoadingOrganizations: false,
+      validOrganizationIds: ["org-a", "org-b"],
+    });
+
+    await waitFor(() => {
+      expect(ensureDefaultWorkspaceMock).toHaveBeenCalledWith({
+        organizationId: "org-a",
+      });
+    });
+
+    expect(createWorkspaceMock).not.toHaveBeenCalled();
   });
 
   it("fails authenticated client-config saves when the remote echo times out", async () => {
@@ -913,9 +1199,11 @@ describe("useWorkspaceState automatic workspace creation", () => {
       default: createSyntheticDefaultWorkspace(),
       "local-1": createLocalWorkspace("local-1", {
         name: "Local One",
+        organizationId: "org-member",
       }),
       "local-2": createLocalWorkspace("local-2", {
         name: "Local Two",
+        organizationId: "org-member",
       }),
     });
     const { logger } = renderUseWorkspaceState({

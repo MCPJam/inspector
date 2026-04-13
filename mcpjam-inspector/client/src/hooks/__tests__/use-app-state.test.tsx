@@ -1,7 +1,10 @@
-import { renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { initialAppState } from "@/state/app-types";
-import { useAppState } from "../use-app-state";
+import {
+  buildDisconnectedRuntimeServers,
+  useAppState,
+} from "../use-app-state";
 
 const {
   loadAppStateMock,
@@ -89,11 +92,33 @@ vi.mock("../use-server-state", () => ({
   useServerState: (...args: unknown[]) => useServerStateMock(...args),
 }));
 
+function createServer(name: string, connectionStatus: "connected" | "disconnected" = "connected") {
+  return {
+    name,
+    config: {
+      type: "http",
+      url: "https://example.com/mcp",
+    } as any,
+    lastConnectionTime: new Date("2026-01-01T00:00:00.000Z"),
+    connectionStatus,
+    retryCount: 0,
+    enabled: connectionStatus === "connected",
+    useOAuth: false,
+  };
+}
+
 describe("useAppState active organization recovery", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     localStorage.clear();
     loadAppStateMock.mockReturnValue(initialAppState);
+    Object.assign(workspaceStateValue, {
+      effectiveWorkspaces: {},
+      useLocalFallback: false,
+      remoteWorkspaces: [],
+      isLoadingRemoteWorkspaces: false,
+      effectiveActiveWorkspaceId: "none",
+    });
     useWorkspaceStateMock.mockReturnValue(workspaceStateValue);
     useServerStateMock.mockReturnValue(serverStateValue);
   });
@@ -157,6 +182,31 @@ describe("useAppState active organization recovery", () => {
     });
   });
 
+  it("commits a valid route organization into active org state", async () => {
+    localStorage.setItem("active-organization-id:user-1", "org-a");
+
+    const { result } = renderHook(() =>
+      useAppState({
+        currentUserId: "user-1",
+        routeOrganizationId: "org-b",
+        hasOrganizations: true,
+        isLoadingOrganizations: false,
+        validOrganizations: [
+          { _id: "org-a", myRole: "owner" },
+          { _id: "org-b", myRole: "member" },
+        ],
+      }),
+    );
+
+    await waitFor(() => {
+      expect(result.current.activeOrganizationId).toBe("org-b");
+    });
+
+    expect(localStorage.getItem("active-organization-id:user-1")).toBe(
+      "org-b",
+    );
+  });
+
   it("clears a stale stored org when no valid organizations remain", async () => {
     localStorage.setItem("active-organization-id:user-1", "org-stale");
 
@@ -181,5 +231,23 @@ describe("useAppState active organization recovery", () => {
       }),
     );
     expect(localStorage.getItem("active-organization-id:user-1")).toBeNull();
+  });
+
+  it("builds disconnected runtime servers from cached workspace servers", () => {
+    expect(
+      buildDisconnectedRuntimeServers({
+        champions: createServer("champions"),
+        linear: createServer("linear", "disconnected"),
+      }),
+    ).toEqual({
+      champions: expect.objectContaining({
+        name: "champions",
+        connectionStatus: "disconnected",
+      }),
+      linear: expect.objectContaining({
+        name: "linear",
+        connectionStatus: "disconnected",
+      }),
+    });
   });
 });

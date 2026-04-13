@@ -923,7 +923,11 @@ export default function App() {
   const applyNavigation = useCallback(
     (
       target: string,
-      options?: { updateHash?: boolean; enforceCanonicalHash?: boolean },
+      options?: {
+        updateHash?: boolean;
+        enforceCanonicalHash?: boolean;
+        preserveCurrentOrganizationOnNonOrgTarget?: boolean;
+      },
     ) => {
       if (isSharedChatRoute) {
         const storedSession = readSharedServerSession();
@@ -948,6 +952,17 @@ export default function App() {
       }
 
       const resolved = resolveHostedNavigation(target, HOSTED_MODE);
+      const currentResolved = resolveHostedNavigation(
+        window.location.hash || "#servers",
+        HOSTED_MODE,
+      );
+      const shouldPreserveCurrentRouteOrganization =
+        options?.preserveCurrentOrganizationOnNonOrgTarget !== false &&
+        !resolved.organizationId &&
+        !!currentResolved.organizationId &&
+        effectiveOrganizations.some(
+          (organization) => organization._id === currentResolved.organizationId,
+        );
 
       if (
         options?.enforceCanonicalHash &&
@@ -974,6 +989,8 @@ export default function App() {
 
       if (resolved.organizationId) {
         setActiveOrganizationId(resolved.organizationId);
+      } else if (shouldPreserveCurrentRouteOrganization) {
+        setActiveOrganizationId(currentResolved.organizationId);
       }
       if (resolved.organizationSection) {
         setActiveOrganizationSection(resolved.organizationSection);
@@ -992,6 +1009,7 @@ export default function App() {
       setActiveTab(resolved.normalizedTab);
     },
     [
+      effectiveOrganizations,
       isSandboxChatRoute,
       isSharedChatRoute,
       setSelectedMultipleServersToAllServers,
@@ -1223,6 +1241,20 @@ export default function App() {
     applyNavigation(section, { updateHash: true });
   };
 
+  const handleSidebarSwitchOrganization = useCallback(
+    (organizationId: string, section: OrganizationRouteSection = "overview") => {
+      setActiveOrganizationId(organizationId);
+      setActiveOrganizationSection(section);
+      applyNavigation(
+        section === "billing"
+          ? `organizations/${organizationId}/billing`
+          : `organizations/${organizationId}`,
+        { updateHash: true },
+      );
+    },
+    [applyNavigation, setActiveOrganizationId],
+  );
+
   const handleContinueEvalInChat = useCallback(
     (handoff: Omit<EvalChatHandoff, "id">) => {
       setSelectedMCPConfigs(handoff.serverNames);
@@ -1301,7 +1333,10 @@ export default function App() {
 
       setActiveOrganizationId(fallbackOrganizationId);
       setActiveOrganizationSection("overview");
-      applyNavigation("servers", { updateHash: true });
+      applyNavigation("servers", {
+        updateHash: true,
+        preserveCurrentOrganizationOnNonOrgTarget: false,
+      });
     },
     [
       activeOrganizationId,
@@ -1496,6 +1531,7 @@ export default function App() {
         onDeleteWorkspace={handleDeleteWorkspace}
         isLoadingWorkspaces={isLoadingRemoteWorkspaces}
         activeOrganizationId={activeOrganizationId}
+        onSwitchOrganization={handleSidebarSwitchOrganization}
         billingUiEnabled={billingUiEnabled}
         billingGateDenied={sidebarGateDenied}
         billingGateEnforcementActive={billingGateEnforcementActive}

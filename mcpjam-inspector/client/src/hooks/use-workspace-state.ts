@@ -33,6 +33,10 @@ function stringifyWorkspaceClientConfig(
   return stableStringifyJson(clientConfig ?? null);
 }
 
+function buildLocalWorkspaceId() {
+  return `workspace_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+}
+
 interface PendingClientConfigSync {
   workspaceId: string;
   expectedSerializedConfig: string;
@@ -87,6 +91,10 @@ export function useWorkspaceState({
   const workspaceOrganizationId = routeOrganizationId ?? activeOrganizationId;
   const hasResolvedWorkspaceOrganizationSelection =
     !isLoadingOrganizations && workspaceOrganizationId !== undefined;
+  const shouldScopeLocalFallbackByOrganization =
+    isAuthenticated &&
+    hasResolvedWorkspaceOrganizationSelection &&
+    workspaceOrganizationId !== undefined;
   const billingOrganizationId = routeOrganizationId
     ? routeOrganizationId
     : !isLoadingOrganizations &&
@@ -328,12 +336,33 @@ export function useWorkspaceState({
     pending.resolve();
   }, [convexWorkspaces]);
 
+  const localFallbackWorkspaces = useMemo((): Record<string, Workspace> => {
+    if (!useLocalFallback) {
+      return appState.workspaces;
+    }
+
+    if (!shouldScopeLocalFallbackByOrganization) {
+      return appState.workspaces;
+    }
+
+    return Object.fromEntries(
+      Object.entries(appState.workspaces).filter(
+        ([, workspace]) => workspace.organizationId === workspaceOrganizationId,
+      ),
+    );
+  }, [
+    useLocalFallback,
+    appState.workspaces,
+    shouldScopeLocalFallbackByOrganization,
+    workspaceOrganizationId,
+  ]);
+
   const effectiveWorkspaces = useMemo((): Record<string, Workspace> => {
     if (shouldTreatRemoteWorkspacesAsEmpty) {
       return {};
     }
     if (useLocalFallback) {
-      return appState.workspaces;
+      return localFallbackWorkspaces;
     }
     if (isAuthenticated && remoteWorkspaces !== undefined) {
       return convexWorkspaces;
@@ -347,7 +376,7 @@ export function useWorkspaceState({
     return appState.workspaces;
   }, [
     useLocalFallback,
-    appState.workspaces,
+    localFallbackWorkspaces,
     isAuthenticated,
     remoteWorkspaces,
     convexWorkspaces,
@@ -361,7 +390,13 @@ export function useWorkspaceState({
       return "none";
     }
     if (useLocalFallback) {
-      return appState.activeWorkspaceId;
+      if (localFallbackWorkspaces[appState.activeWorkspaceId]) {
+        return appState.activeWorkspaceId;
+      }
+      const defaultWorkspaceId = Object.entries(localFallbackWorkspaces).find(
+        ([, workspace]) => workspace.isDefault,
+      )?.[0];
+      return defaultWorkspaceId ?? Object.keys(localFallbackWorkspaces)[0] ?? "none";
     }
     if (isAuthenticated && remoteWorkspaces !== undefined) {
       if (
@@ -377,6 +412,7 @@ export function useWorkspaceState({
   }, [
     useLocalFallback,
     appState.activeWorkspaceId,
+    localFallbackWorkspaces,
     isAuthenticated,
     remoteWorkspaces,
     convexActiveWorkspaceId,
@@ -389,9 +425,15 @@ export function useWorkspaceState({
       Object.values(appState.workspaces).filter(
         (workspace) =>
           !workspace.sharedWorkspaceId &&
+          (!shouldScopeLocalFallbackByOrganization ||
+            workspace.organizationId === workspaceOrganizationId) &&
           !isSyntheticDefaultWorkspace(workspace),
       ),
-    [appState.workspaces],
+    [
+      appState.workspaces,
+      shouldScopeLocalFallbackByOrganization,
+      workspaceOrganizationId,
+    ],
   );
   const migratableLocalWorkspaceCount = migratableLocalWorkspaces.length;
   const hasAnyRemoteWorkspaces = (allRemoteWorkspaces?.length ?? 0) > 0;
@@ -598,7 +640,7 @@ export function useWorkspaceState({
 
   const handleCreateWorkspace = useCallback(
     async (name: string, switchTo: boolean = false) => {
-      if (isAuthenticated) {
+      if (isAuthenticated && !useLocalFallback) {
         const organizationId = workspaceOrganizationId;
         if (
           shouldTreatRemoteWorkspacesAsEmpty ||
@@ -632,12 +674,22 @@ export function useWorkspaceState({
         }
       }
 
+      if (
+        isAuthenticated &&
+        (!hasResolvedWorkspaceOrganizationSelection ||
+          workspaceOrganizationId === undefined)
+      ) {
+        toast.error("Create or join an organization to create workspaces.");
+        return "";
+      }
+
       const newWorkspace: Workspace = {
-        id: `workspace_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
+        id: buildLocalWorkspaceId(),
         name,
         servers: {},
         createdAt: new Date(),
         updatedAt: new Date(),
+        organizationId: isAuthenticated ? workspaceOrganizationId : undefined,
       };
       dispatch({ type: "CREATE_WORKSPACE", workspace: newWorkspace });
 
@@ -650,6 +702,7 @@ export function useWorkspaceState({
     },
     [
       isAuthenticated,
+      useLocalFallback,
       shouldTreatRemoteWorkspacesAsEmpty,
       convexCreateWorkspace,
       dispatch,
@@ -661,7 +714,7 @@ export function useWorkspaceState({
 
   const handleUpdateWorkspace = useCallback(
     async (workspaceId: string, updates: Partial<Workspace>): Promise<void> => {
-      if (isAuthenticated) {
+      if (isAuthenticated && !useLocalFallback) {
         try {
           const updateData: any = { workspaceId };
           if (updates.name !== undefined) updateData.name = updates.name;
@@ -691,7 +744,7 @@ export function useWorkspaceState({
         dispatch({ type: "UPDATE_WORKSPACE", workspaceId, updates });
       }
     },
-    [isAuthenticated, convexUpdateWorkspace, logger, dispatch],
+    [isAuthenticated, useLocalFallback, convexUpdateWorkspace, logger, dispatch],
   );
 
   const handleUpdateClientConfig = useCallback(
@@ -786,7 +839,7 @@ export function useWorkspaceState({
           return false;
         }
 
-        if (isAuthenticated) {
+        if (isAuthenticated && !useLocalFallback) {
           setConvexActiveWorkspaceId(targetWorkspaceId);
         } else {
           dispatch({
@@ -796,7 +849,7 @@ export function useWorkspaceState({
         }
       }
 
-      if (isAuthenticated) {
+      if (isAuthenticated && !useLocalFallback) {
         try {
           await convexDeleteWorkspace({ workspaceId });
         } catch (error) {
@@ -829,6 +882,7 @@ export function useWorkspaceState({
       effectiveActiveWorkspaceId,
       effectiveWorkspaces,
       isAuthenticated,
+      useLocalFallback,
       convexDeleteWorkspace,
       setConvexActiveWorkspaceId,
       logger,
@@ -844,7 +898,7 @@ export function useWorkspaceState({
         return;
       }
 
-      if (isAuthenticated) {
+      if (isAuthenticated && !useLocalFallback) {
         const organizationId = workspaceOrganizationId;
         if (
           shouldTreatRemoteWorkspacesAsEmpty ||
@@ -876,13 +930,34 @@ export function useWorkspaceState({
           );
         }
       } else {
-        dispatch({ type: "DUPLICATE_WORKSPACE", workspaceId, newName });
+        if (
+          isAuthenticated &&
+          (!hasResolvedWorkspaceOrganizationSelection ||
+            workspaceOrganizationId === undefined)
+        ) {
+          toast.error("Create or join an organization to create workspaces.");
+          return;
+        }
+
+        const duplicatedWorkspace: Workspace = {
+          ...sourceWorkspace,
+          id: buildLocalWorkspaceId(),
+          name: newName,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          isDefault: false,
+          organizationId: isAuthenticated
+            ? workspaceOrganizationId
+            : sourceWorkspace.organizationId,
+        };
+        dispatch({ type: "CREATE_WORKSPACE", workspace: duplicatedWorkspace });
         toast.success(`Workspace duplicated as "${newName}"`);
       }
     },
     [
       effectiveWorkspaces,
       isAuthenticated,
+      useLocalFallback,
       shouldTreatRemoteWorkspacesAsEmpty,
       convexCreateWorkspace,
       dispatch,
@@ -941,7 +1016,7 @@ export function useWorkspaceState({
 
   const handleImportWorkspace = useCallback(
     async (workspaceData: Workspace) => {
-      if (isAuthenticated) {
+      if (isAuthenticated && !useLocalFallback) {
         const organizationId = workspaceOrganizationId;
         if (
           shouldTreatRemoteWorkspacesAsEmpty ||
@@ -973,12 +1048,23 @@ export function useWorkspaceState({
           );
         }
       } else {
+        if (
+          isAuthenticated &&
+          (!hasResolvedWorkspaceOrganizationSelection ||
+            workspaceOrganizationId === undefined)
+        ) {
+          toast.error("Create or join an organization to create workspaces.");
+          return;
+        }
         const importedWorkspace: Workspace = {
           ...workspaceData,
-          id: `workspace_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
+          id: buildLocalWorkspaceId(),
           createdAt: new Date(),
           updatedAt: new Date(),
           isDefault: false,
+          organizationId: isAuthenticated
+            ? workspaceOrganizationId
+            : workspaceData.organizationId,
         };
         dispatch({ type: "IMPORT_WORKSPACE", workspace: importedWorkspace });
         toast.success(`Workspace "${importedWorkspace.name}" imported`);
@@ -986,6 +1072,7 @@ export function useWorkspaceState({
     },
     [
       isAuthenticated,
+      useLocalFallback,
       shouldTreatRemoteWorkspacesAsEmpty,
       convexCreateWorkspace,
       dispatch,

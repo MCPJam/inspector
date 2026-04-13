@@ -93,6 +93,20 @@ describe("SidebarUser - organization navigation", () => {
     window.location.hash = "";
   });
 
+  it("calls the org switch handler when provided", () => {
+    const onSwitchOrganization = vi.fn();
+
+    render(<SidebarUser onSwitchOrganization={onSwitchOrganization} />);
+
+    fireEvent.click(screen.getByText("Member Org"));
+
+    expect(onSwitchOrganization).toHaveBeenCalledWith(
+      "org_member",
+      "overview",
+    );
+    expect(window.location.hash).toBe("");
+  });
+
   it("navigates when clicking an org where user is a member (non-admin)", () => {
     render(<SidebarUser />);
 
