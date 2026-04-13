@@ -290,7 +290,10 @@ mcp-tool-diff:
     - npx -y @mcpjam/cli@latest server export --url "$MCP_SERVER_URL" --access-token "$MCP_TOKEN" --format json > before.json
     # your deploy step here
     - npx -y @mcpjam/cli@latest server export --url "$MCP_SERVER_URL" --access-token "$MCP_TOKEN" --format json > after.json
-    - diff <(jq -S . before.json) <(jq -S . after.json)
+    - jq -S . before.json > /tmp/before-sorted.json
+    - jq -S . after.json > /tmp/after-sorted.json
+    - diff /tmp/before-sorted.json /tmp/after-sorted.json
+    - rm -f /tmp/before-sorted.json /tmp/after-sorted.json
 ```
 
 ### OAuth conformance suite
