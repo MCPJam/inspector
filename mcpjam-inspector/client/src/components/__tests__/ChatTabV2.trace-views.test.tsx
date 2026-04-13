@@ -637,4 +637,99 @@ describe("ChatTabV2 trace views", () => {
     expect(screen.getAllByTestId("multi-model-card")).toHaveLength(2);
     expect(screen.getByTestId("trace-view-tabs")).toBeInTheDocument();
   });
+
+  it("keeps the single-model surface mounted while the model selector is open", () => {
+    mockUseChatSession.messages = [
+      { id: "1", role: "user", parts: [{ type: "text", text: "Hello" }] },
+    ];
+    mockUseChatSession.availableModels = [
+      {
+        id: "openai/gpt-5-mini",
+        name: "GPT-5 Mini",
+        provider: "openai",
+      },
+      {
+        id: "anthropic/claude-sonnet-4-5",
+        name: "Claude Sonnet 4.5",
+        provider: "anthropic",
+      },
+    ];
+
+    const { rerender } = render(
+      <ChatTabV2 {...defaultProps} enableMultiModelChat={true} />,
+    );
+
+    const initialChatInputProps = mockChatInput.mock.calls.at(-1)?.[0] as {
+      onModelSelectorOpenChange?: (open: boolean) => void;
+    };
+
+    act(() => {
+      initialChatInputProps.onModelSelectorOpenChange?.(true);
+    });
+
+    mockUseChatSession.selectedModelIds = [
+      "openai/gpt-5-mini",
+      "anthropic/claude-sonnet-4-5",
+    ];
+    mockUseChatSession.multiModelEnabled = true;
+
+    rerender(<ChatTabV2 {...defaultProps} enableMultiModelChat={true} />);
+
+    expect(screen.getByTestId("thread")).toBeInTheDocument();
+    expect(screen.queryByTestId("multi-model-card")).not.toBeInTheDocument();
+
+    const updatedChatInputProps = mockChatInput.mock.calls.at(-1)?.[0] as {
+      onModelSelectorOpenChange?: (open: boolean) => void;
+    };
+
+    act(() => {
+      updatedChatInputProps.onModelSelectorOpenChange?.(false);
+    });
+
+    rerender(<ChatTabV2 {...defaultProps} enableMultiModelChat={true} />);
+
+    expect(screen.getAllByTestId("multi-model-card")).toHaveLength(2);
+  });
+
+  it("keeps the multi-model surface mounted while the model selector is open", () => {
+    mockUseChatSession.messages = [
+      { id: "1", role: "user", parts: [{ type: "text", text: "Hello" }] },
+    ];
+    mockUseChatSession.availableModels = [
+      {
+        id: "openai/gpt-5-mini",
+        name: "GPT-5 Mini",
+        provider: "openai",
+      },
+      {
+        id: "anthropic/claude-sonnet-4-5",
+        name: "Claude Sonnet 4.5",
+        provider: "anthropic",
+      },
+    ];
+    mockUseChatSession.selectedModelIds = [
+      "openai/gpt-5-mini",
+      "anthropic/claude-sonnet-4-5",
+    ];
+    mockUseChatSession.multiModelEnabled = true;
+
+    const { rerender } = render(
+      <ChatTabV2 {...defaultProps} enableMultiModelChat={true} />,
+    );
+
+    expect(screen.getAllByTestId("multi-model-card")).toHaveLength(2);
+
+    const chatInputProps = mockChatInput.mock.calls.at(-1)?.[0] as {
+      onModelSelectorOpenChange?: (open: boolean) => void;
+    };
+
+    act(() => {
+      chatInputProps.onModelSelectorOpenChange?.(true);
+    });
+
+    rerender(<ChatTabV2 {...defaultProps} enableMultiModelChat={true} />);
+
+    expect(screen.getAllByTestId("multi-model-card")).toHaveLength(2);
+    expect(screen.queryByTestId("thread")).not.toBeInTheDocument();
+  });
 });

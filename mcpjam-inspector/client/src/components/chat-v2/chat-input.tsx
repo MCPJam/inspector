@@ -88,6 +88,7 @@ interface ChatInputProps {
   currentModel: ModelDefinition;
   availableModels: ModelDefinition[];
   onModelChange: (model: ModelDefinition) => void;
+  onModelSelectorOpenChange?: (open: boolean) => void;
   multiModelEnabled?: boolean;
   selectedModels?: ModelDefinition[];
   onSelectedModelsChange?: (models: ModelDefinition[]) => void;
@@ -163,6 +164,7 @@ export function ChatInput({
   currentModel,
   availableModels,
   onModelChange,
+  onModelSelectorOpenChange,
   multiModelEnabled = false,
   selectedModels,
   onSelectedModelsChange,
@@ -232,12 +234,10 @@ export function ChatInput({
   const selectorHostStyle = hostStyle ?? sandboxHostStyle;
   const hasServerRows = Boolean(
     allServerConfigs &&
-      onServerToggle &&
-      Object.keys(allServerConfigs).length > 0,
+    onServerToggle &&
+    Object.keys(allServerConfigs).length > 0,
   );
-  const hasServerOptions = Boolean(
-    onAddServer || hasServerRows,
-  );
+  const hasServerOptions = Boolean(onAddServer || hasServerRows);
   const showHostStyleSelectorControl =
     showHostStyleSelector &&
     Boolean(selectorHostStyle) &&
@@ -824,6 +824,7 @@ export function ChatInput({
                   currentModel={currentModel}
                   availableModels={availableModels}
                   onModelChange={onModelChange}
+                  onOpenChange={onModelSelectorOpenChange}
                   isLoading={isLoading}
                   hasMessages={hasMessages}
                   enableMultiModel={enableMultiModel}
