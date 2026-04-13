@@ -1,10 +1,6 @@
----
-title: "CLI Overview"
-description: "Stateless MCP server probing, debugging, OAuth, and conformance from your terminal"
-icon: "terminal"
----
+# @mcpjam/cli
 
-The `mcpjam` CLI is a stateless tool for inspecting, debugging, and testing MCP servers from the command line or CI. It covers the full lifecycle: connectivity checks, OAuth login, tool/resource/prompt exploration, and protocol conformance.
+Stateless MCP server probing, debugging, OAuth, and conformance from your terminal.
 
 ## Install
 
@@ -16,19 +12,18 @@ npm i -g @mcpjam/cli
 npx -y @mcpjam/cli@latest --help
 ```
 
-> **Note:** All examples in these docs use `mcpjam` directly. If you installed via `npx`,
-> replace `mcpjam` with `npx -y @mcpjam/cli@latest`.
+> **Note:** All examples below use `mcpjam` directly. If you installed via `npx`, replace `mcpjam` with `npx -y @mcpjam/cli@latest`.
 
 ## Command groups
 
 | Group | Purpose | Key commands |
 |-------|---------|-------------|
-| [`server`](/cli/server-inspection) | Triage connectivity and capabilities | `probe`, `doctor`, `info`, `validate`, `ping`, `capabilities`, `export` |
-| [`oauth`](/cli/oauth-conformance) | Test OAuth flows and conformance | `conformance`, `conformance-suite`, `login`, `metadata`, `proxy` |
-| [`tools`](/cli/tools-resources-prompts) | Exercise the tool surface | `list`, `call` |
-| [`resources`](/cli/tools-resources-prompts) | Read resources and templates | `list`, `read`, `templates` |
-| [`prompts`](/cli/tools-resources-prompts) | Fetch prompts | `list`, `get` |
-| [`protocol`](/cli/reference) | MCP protocol conformance checks | `conformance` |
+| `server` | Triage connectivity and capabilities | `probe`, `doctor`, `info`, `validate`, `ping`, `capabilities`, `export` |
+| `oauth` | Test OAuth flows and conformance | `conformance`, `conformance-suite`, `login`, `metadata`, `proxy` |
+| `tools` | Exercise the tool surface | `list`, `call` |
+| `resources` | Read resources and templates | `list`, `read`, `templates` |
+| `prompts` | Fetch prompts | `list`, `get` |
+| `protocol` | MCP protocol conformance checks | `conformance` |
 
 ## Global flags
 
@@ -107,10 +102,6 @@ mcpjam tools call --url https://your-server.com/mcp --access-token $TOKEN \
   --tool-name my_tool --tool-args '{"key": "value"}'
 ```
 
-## What's next
+## Full documentation
 
-- [Server inspection](/cli/server-inspection) — probe, doctor, and diagnostics
-- [OAuth conformance](/cli/oauth-conformance) — test your OAuth implementation
-- [OAuth login](/cli/oauth-login) — authenticate and debug OAuth flows
-- [Tools, resources & prompts](/cli/tools-resources-prompts) — exercise the connected surface
-- [Full command reference](/cli/reference) — every flag for every command
+For detailed guides on each command group, see the [full CLI docs](https://docs.mcpjam.com/cli).
