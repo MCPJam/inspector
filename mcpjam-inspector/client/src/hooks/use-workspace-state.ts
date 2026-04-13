@@ -396,7 +396,9 @@ export function useWorkspaceState({
       const defaultWorkspaceId = Object.entries(localFallbackWorkspaces).find(
         ([, workspace]) => workspace.isDefault,
       )?.[0];
-      return defaultWorkspaceId ?? Object.keys(localFallbackWorkspaces)[0] ?? "none";
+      return (
+        defaultWorkspaceId ?? Object.keys(localFallbackWorkspaces)[0] ?? "none"
+      );
     }
     if (isAuthenticated && remoteWorkspaces !== undefined) {
       if (
@@ -744,7 +746,13 @@ export function useWorkspaceState({
         dispatch({ type: "UPDATE_WORKSPACE", workspaceId, updates });
       }
     },
-    [isAuthenticated, useLocalFallback, convexUpdateWorkspace, logger, dispatch],
+    [
+      isAuthenticated,
+      useLocalFallback,
+      convexUpdateWorkspace,
+      logger,
+      dispatch,
+    ],
   );
 
   const handleUpdateClientConfig = useCallback(

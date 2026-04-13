@@ -1242,7 +1242,10 @@ export default function App() {
   };
 
   const handleSidebarSwitchOrganization = useCallback(
-    (organizationId: string, section: OrganizationRouteSection = "overview") => {
+    (
+      organizationId: string,
+      section: OrganizationRouteSection = "overview",
+    ) => {
       setActiveOrganizationId(organizationId);
       setActiveOrganizationSection(section);
       applyNavigation(

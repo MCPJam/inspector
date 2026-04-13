@@ -100,10 +100,7 @@ describe("SidebarUser - organization navigation", () => {
 
     fireEvent.click(screen.getByText("Member Org"));
 
-    expect(onSwitchOrganization).toHaveBeenCalledWith(
-      "org_member",
-      "overview",
-    );
+    expect(onSwitchOrganization).toHaveBeenCalledWith("org_member", "overview");
     expect(window.location.hash).toBe("");
   });
 

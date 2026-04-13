@@ -736,8 +736,9 @@ describe("App hosted OAuth callback handling", () => {
 
     const setActiveOrganizationIdSpy = vi.fn();
     mockUseAppState.mockImplementation(() => {
-      const [activeOrganizationId, setActiveOrganizationId] =
-        useState<string | undefined>("org-a");
+      const [activeOrganizationId, setActiveOrganizationId] = useState<
+        string | undefined
+      >("org-a");
 
       return {
         ...createAppStateMock(),
@@ -813,8 +814,9 @@ describe("App hosted OAuth callback handling", () => {
 
     const setActiveOrganizationIdSpy = vi.fn();
     mockUseAppState.mockImplementation(() => {
-      const [activeOrganizationId, setActiveOrganizationId] =
-        useState<string | undefined>("org-a");
+      const [activeOrganizationId, setActiveOrganizationId] = useState<
+        string | undefined
+      >("org-a");
 
       return {
         ...createAppStateMock(),

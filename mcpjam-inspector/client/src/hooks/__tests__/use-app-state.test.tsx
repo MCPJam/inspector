@@ -1,10 +1,7 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { initialAppState } from "@/state/app-types";
-import {
-  buildDisconnectedRuntimeServers,
-  useAppState,
-} from "../use-app-state";
+import { buildDisconnectedRuntimeServers, useAppState } from "../use-app-state";
 
 const {
   loadAppStateMock,
@@ -92,7 +89,10 @@ vi.mock("../use-server-state", () => ({
   useServerState: (...args: unknown[]) => useServerStateMock(...args),
 }));
 
-function createServer(name: string, connectionStatus: "connected" | "disconnected" = "connected") {
+function createServer(
+  name: string,
+  connectionStatus: "connected" | "disconnected" = "connected",
+) {
   return {
     name,
     config: {
@@ -202,9 +202,7 @@ describe("useAppState active organization recovery", () => {
       expect(result.current.activeOrganizationId).toBe("org-b");
     });
 
-    expect(localStorage.getItem("active-organization-id:user-1")).toBe(
-      "org-b",
-    );
+    expect(localStorage.getItem("active-organization-id:user-1")).toBe("org-b");
   });
 
   it("clears a stale stored org when no valid organizations remain", async () => {
