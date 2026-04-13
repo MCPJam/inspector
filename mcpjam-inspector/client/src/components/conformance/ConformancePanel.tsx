@@ -590,11 +590,7 @@ export function ConformancePanel({
 
 // ── OAuth Step Row ──────────────────────────────────────────────────────
 
-function OAuthStepRow({
-  step,
-}: {
-  step: OAuthConformanceStepResult;
-}) {
+function OAuthStepRow({ step }: { step: OAuthConformanceStepResult }) {
   const [expanded, setExpanded] = useState(false);
 
   return (

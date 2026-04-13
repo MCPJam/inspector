@@ -299,8 +299,12 @@ describe("ConformancePanel", () => {
 
     expect(screen.queryByText("Apps detail body")).not.toBeNull();
     expect(screen.queryByText("Warnings")).not.toBeNull();
-    expect(screen.queryByText("Missing optional output template")).not.toBeNull();
-    expect(screen.queryByText("Required tool metadata is missing")).not.toBeNull();
+    expect(
+      screen.queryByText("Missing optional output template"),
+    ).not.toBeNull();
+    expect(
+      screen.queryByText("Required tool metadata is missing"),
+    ).not.toBeNull();
   });
 
   it("allows skipped protocol rows to expand", async () => {
