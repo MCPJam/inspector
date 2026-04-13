@@ -276,7 +276,6 @@ export default function App() {
   const registryEnabled = useFeatureFlagEnabled("registry-enabled");
   const playgroundEnabled = useFeatureFlagEnabled("playground-enabled");
   const evaluateRunsEnabled = useFeatureFlagEnabled("evaluate-runs");
-  const traceViewsEnabled = useFeatureFlagEnabled("trace-views") === true;
   const {
     getAccessToken,
     signIn,
@@ -641,8 +640,7 @@ export default function App() {
       activeTab === "resources" ||
       activeTab === "prompts" ||
       activeTab === "tasks" ||
-      activeTab === "auth" ||
-      activeTab === "views";
+      activeTab === "auth";
     if (!needsServer || selectedMCPConfig) return;
 
     const firstConnected = Object.entries(workspaceServers).find(
@@ -1316,10 +1314,8 @@ export default function App() {
     activeTab === "tasks" ||
     activeTab === "oauth-flow" ||
     activeTab === "chat" ||
-    activeTab === "chat-v2" ||
     activeTab === "evals" ||
-    activeTab === "views" ||
-    activeTab === "app-builder";
+    activeTab === "views";
 
   const activeServerSelectorProps: ActiveServerSelectorProps | undefined =
     shouldShowActiveServerSelector
@@ -1330,13 +1326,13 @@ export default function App() {
           onServerChange: setSelectedServer,
           onConnect: handleConnect,
           onReconnect: handleReconnect,
-          isMultiSelectEnabled: activeTab === "chat" || activeTab === "chat-v2",
+          isMultiSelectEnabled: activeTab === "chat",
           onMultiServerToggle: toggleServerSelection,
           selectedMultipleServers: appState.selectedMultipleServers,
           showOnlyOAuthServers: false,
           showOnlyServersWithViews: activeTab === "views",
           serversWithViews: serversWithViews,
-          hasMessages: activeTab === "chat-v2" ? chatHasMessages : false,
+          hasMessages: false,
         }
       : undefined;
 
@@ -1586,8 +1582,12 @@ export default function App() {
                 connectedOrConnectingServerConfigs
               }
               selectedServerNames={appState.selectedMultipleServers}
+              allServerConfigs={workspaceServers}
+              onServerToggle={toggleServerSelection}
+              onReconnectServer={handleReconnect}
+              onAddServer={handleConnect}
+              onSelectedServerNamesChange={setSelectedMCPConfigs}
               onHasMessagesChange={setChatHasMessages}
-              enableTraceViews={traceViewsEnabled}
               enableMultiModelChat
               evalChatHandoff={evalChatHandoff}
               onEvalChatHandoffConsumed={(id) =>
@@ -1608,7 +1608,6 @@ export default function App() {
               onConnect={handleConnect}
               onOnboardingChange={setAppBuilderOnboarding}
               playgroundServerSelectorProps={playgroundServerSelectorProps}
-              enableTraceViews={traceViewsEnabled}
               enableMultiModelChat
             />
           )}

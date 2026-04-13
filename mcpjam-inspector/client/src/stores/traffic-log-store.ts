@@ -11,6 +11,8 @@
 
 import { create } from "zustand";
 import { addTokenToUrl } from "@/lib/session-token";
+import { HOSTED_MODE } from "@/lib/config";
+import type { HostedRpcLogEvent } from "@/shared/hosted-rpc-log";
 
 export type UiProtocol = "mcp-apps" | "openai-apps";
 
@@ -28,6 +30,7 @@ export interface UiLogEvent {
 export interface McpServerRpcItem {
   id: string;
   serverId: string;
+  serverName?: string;
   direction: string;
   method: string;
   timestamp: string;
@@ -69,6 +72,24 @@ export const useTrafficLogStore = create<TrafficLogState>((set) => ({
   clear: () => set({ items: [], mcpServerItems: [] }),
 }));
 
+export function ingestHostedRpcLogs(logs: HostedRpcLogEvent[]): void {
+  if (!Array.isArray(logs) || logs.length === 0) {
+    return;
+  }
+
+  const store = useTrafficLogStore.getState();
+  logs.forEach((log) => {
+    store.addMcpServerLog({
+      serverId: log.serverId,
+      serverName: log.serverName,
+      direction: log.direction.toUpperCase(),
+      method: extractMethod(log.message),
+      timestamp: log.timestamp,
+      payload: log.message,
+    });
+  });
+}
+
 /**
  * Singleton SSE subscription for MCP server RPC traffic.
  * This ensures only one EventSource connection exists regardless of
@@ -78,6 +99,10 @@ let sseConnection: EventSource | null = null;
 let sseSubscriberCount = 0;
 
 export function subscribeToRpcStream(): () => void {
+  if (HOSTED_MODE) {
+    return () => {};
+  }
+
   sseSubscriberCount++;
 
   if (!sseConnection) {
@@ -101,25 +126,11 @@ export function subscribeToRpcStream(): () => void {
         if (!data || data.type !== "rpc") return;
 
         const { serverId, direction, message, timestamp } = data;
-        const msg = message as {
-          method?: string;
-          result?: unknown;
-          error?: unknown;
-        };
-        const method: string =
-          typeof msg?.method === "string"
-            ? msg.method
-            : msg?.result !== undefined
-              ? "result"
-              : msg?.error !== undefined
-                ? "error"
-                : "unknown";
-
         useTrafficLogStore.getState().addMcpServerLog({
           serverId: typeof serverId === "string" ? serverId : "unknown",
           direction:
             typeof direction === "string" ? direction.toUpperCase() : "",
-          method,
+          method: extractMethod(message),
           timestamp: timestamp ?? new Date().toISOString(),
           payload: message,
         });

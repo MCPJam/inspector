@@ -1,5 +1,7 @@
 import { AlignLeft, Code2, GitCompare, MessageSquare } from "lucide-react";
+import { usePostHog } from "posthog-js/react";
 import { cn } from "@/lib/utils";
+import { standardEventProps } from "@/lib/PosthogUtils";
 
 export type TraceViewMode = "timeline" | "chat" | "raw" | "tools";
 
@@ -12,6 +14,7 @@ export function TraceViewModeTabs({
   onModeChange,
   showToolsTab,
   layout = "default",
+  activeVariant = "default",
   className,
 }: {
   mode: TraceViewMode;
@@ -19,16 +22,28 @@ export function TraceViewModeTabs({
   showToolsTab: boolean;
   /** `fullWidth`: equal-width segments across the container (e.g. chat trace header). */
   layout?: "default" | "fullWidth";
+  activeVariant?: "default" | "sidebar";
   className?: string;
 }) {
   const fullWidth = layout === "fullWidth";
+  const posthog = usePostHog();
+
+  const handleModeChange = (nextMode: TraceViewMode) => {
+    posthog.capture("trace_view_mode_changed", {
+      ...standardEventProps("trace_view_mode_tabs"),
+      mode: nextMode,
+    });
+    onModeChange(nextMode);
+  };
 
   const tabClass = (active: boolean) =>
     cn(
       "inline-flex min-w-0 items-center gap-1.5 rounded px-2 py-1 text-xs transition-colors",
       fullWidth && "min-h-8 flex-1 basis-0 justify-center",
       active
-        ? "bg-primary/10 font-medium text-foreground"
+        ? activeVariant === "sidebar"
+          ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
+          : "bg-primary/10 font-medium text-foreground"
         : "text-muted-foreground hover:text-foreground",
     );
 
@@ -42,7 +57,7 @@ export function TraceViewModeTabs({
     >
       <button
         type="button"
-        onClick={() => onModeChange("timeline")}
+        onClick={() => handleModeChange("timeline")}
         className={tabClass(mode === "timeline")}
         title="Trace"
       >
@@ -51,7 +66,7 @@ export function TraceViewModeTabs({
       </button>
       <button
         type="button"
-        onClick={() => onModeChange("chat")}
+        onClick={() => handleModeChange("chat")}
         className={tabClass(mode === "chat")}
         title="Chat view"
       >
@@ -60,7 +75,7 @@ export function TraceViewModeTabs({
       </button>
       <button
         type="button"
-        onClick={() => onModeChange("raw")}
+        onClick={() => handleModeChange("raw")}
         className={tabClass(mode === "raw")}
         title="Raw JSON"
       >
@@ -70,7 +85,7 @@ export function TraceViewModeTabs({
       {showToolsTab ? (
         <button
           type="button"
-          onClick={() => onModeChange("tools")}
+          onClick={() => handleModeChange("tools")}
           className={tabClass(mode === "tools")}
           title="Expected vs actual tool calls"
           data-testid="trace-viewer-tools-tab"
@@ -90,10 +105,12 @@ export function TraceViewModeTabs({
 export function ChatTraceViewModeHeaderBar({
   mode,
   onModeChange,
+  activeVariant = "default",
   className,
 }: {
   mode: TraceViewMode;
   onModeChange: (mode: TraceViewMode) => void;
+  activeVariant?: "default" | "sidebar";
   className?: string;
 }) {
   return (
@@ -109,6 +126,7 @@ export function ChatTraceViewModeHeaderBar({
           mode={mode}
           onModeChange={onModeChange}
           showToolsTab={false}
+          activeVariant={activeVariant}
         />
       </div>
     </div>

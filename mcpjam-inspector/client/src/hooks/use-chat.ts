@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { usePostHog } from "posthog-js/react";
+import { standardEventProps } from "@/lib/PosthogUtils";
 import { ChatMessage, ChatState, Attachment } from "@/lib/types/chat-types";
 import { createMessage } from "@/lib/chat-utils";
 import {
@@ -90,7 +91,7 @@ export function useChat(options: UseChatOptions = {}) {
       setIsOllamaRunning(isRunning);
 
       if (isRunning) {
-        posthog.capture("ollama_running");
+        posthog.capture("ollama_running", standardEventProps("chat_tab"));
       }
 
       const toolCapableModels = isRunning

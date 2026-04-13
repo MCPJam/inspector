@@ -4,6 +4,7 @@ import {
   hasUnresolvedToolCalls,
 } from "@/shared/http-tool-calls";
 import { handleMCPJamFreeChatModel } from "../mcpjam-stream-handler";
+import { createHostedRpcLogCollector } from "../../routes/web/hosted-rpc-logs.js";
 
 let lastExecution: Promise<void> | null = null;
 let writtenChunks: any[] = [];
@@ -56,10 +57,15 @@ vi.mock("@/shared/http-tool-calls", () => ({
   executeToolCallsFromMessages: vi.fn(),
 }));
 
-vi.mock("../chat-helpers", () => ({
-  scrubMcpAppsToolResultsForBackend: vi.fn((messages) => messages),
-  scrubChatGPTAppsToolResultsForBackend: vi.fn((messages) => messages),
-}));
+vi.mock("../chat-helpers", async () => {
+  const actual =
+    await vi.importActual<typeof import("../chat-helpers")>("../chat-helpers");
+  return {
+    ...actual,
+    scrubMcpAppsToolResultsForBackend: vi.fn((messages) => messages),
+    scrubChatGPTAppsToolResultsForBackend: vi.fn((messages) => messages),
+  };
+});
 
 vi.mock("../mcpjam-tool-helpers", () => ({
   serializeToolsForConvex: vi.fn(() => []),
@@ -122,7 +128,12 @@ describe("mcpjam-stream-handler", () => {
       messages,
       modelId: "gpt-4.1-mini",
       systemPrompt: "You are helpful",
-      tools: {},
+      tools: {
+        search: {
+          description: "Search the web",
+          inputSchema: {} as any,
+        },
+      },
       mcpClientManager: {
         getAllToolsMetadata: vi.fn().mockReturnValue({}),
       } as any,
@@ -150,6 +161,62 @@ describe("mcpjam-stream-handler", () => {
       },
     ]);
     expect(onConversationComplete).toHaveBeenCalledWith(messages);
+  });
+
+  it("removes stale disconnected tool history before sending the next turn to Convex", async () => {
+    await handleMCPJamFreeChatModel({
+      messages: [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call-1",
+              toolName: "create_view",
+              input: { elements: [] },
+            },
+          ],
+        },
+        {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "call-1",
+              toolName: "create_view",
+              output: {
+                type: "json",
+                value: { ok: true },
+              },
+            },
+          ],
+        },
+        {
+          role: "user",
+          content: "Draw a dog",
+        },
+      ] as any,
+      modelId: "gpt-4.1-mini",
+      systemPrompt: "You are helpful",
+      tools: {},
+      mcpClientManager: {
+        getAllToolsMetadata: vi.fn().mockReturnValue({}),
+      } as any,
+    });
+
+    await lastExecution;
+
+    const fetchBody = JSON.parse(
+      ((global.fetch as any).mock.calls[0]?.[1]?.body as string) ?? "{}",
+    );
+    const scrubbedMessages = JSON.parse(fetchBody.messages);
+
+    expect(scrubbedMessages).toEqual([
+      {
+        role: "user",
+        content: "Draw a dog",
+      },
+    ]);
   });
 
   it("preserves spliced denial tool results in the completed conversation history", async () => {
@@ -444,6 +511,7 @@ describe("mcpjam-stream-handler", () => {
 
     expect(traceEvents.map((event) => event.type)).toEqual([
       "turn_start",
+      "request_payload",
       "text_delta",
       "trace_snapshot",
       "turn_finish",
@@ -453,7 +521,17 @@ describe("mcpjam-stream-handler", () => {
       type: "turn_start",
       promptIndex: 0,
     });
-    expect(traceEvents[2]).toMatchObject({
+    expect(traceEvents[1]).toMatchObject({
+      type: "request_payload",
+      promptIndex: 0,
+      stepIndex: 0,
+      payload: {
+        system: "You are helpful",
+        tools: {},
+        messages: [{ role: "user", content: "Say hello" }],
+      },
+    });
+    expect(traceEvents[3]).toMatchObject({
       type: "trace_snapshot",
       snapshot: {
         messages: [
@@ -470,7 +548,7 @@ describe("mcpjam-stream-handler", () => {
         },
       },
     });
-    expect(traceEvents[2].snapshot.spans).toEqual(
+    expect(traceEvents[3].snapshot.spans).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           category: "step",
@@ -479,7 +557,7 @@ describe("mcpjam-stream-handler", () => {
         }),
       ]),
     );
-    expect(traceEvents[3]).toMatchObject({
+    expect(traceEvents[4]).toMatchObject({
       type: "turn_finish",
       usage: {
         inputTokens: 2,
@@ -556,6 +634,93 @@ describe("mcpjam-stream-handler", () => {
     });
   });
 
+  it("flushes buffered hosted rpc logs first and streams live hosted rpc logs as data parts", async () => {
+    let resolveFetch: ((response: Response) => void) | undefined;
+    global.fetch = vi.fn().mockImplementation(
+      () =>
+        new Promise<Response>((resolve) => {
+          resolveFetch = resolve;
+        }),
+    );
+
+    const collector = createHostedRpcLogCollector({
+      selectedServerIds: ["srv-notion"],
+      selectedServerNames: ["Notion"],
+    });
+
+    collector.rpcLogger({
+      direction: "send",
+      serverId: "srv-notion",
+      message: {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/list",
+      },
+    });
+
+    await handleMCPJamFreeChatModel({
+      messages: [{ role: "user", content: "Say hello" }] as any,
+      modelId: "openai/gpt-5-mini",
+      systemPrompt: "You are helpful",
+      tools: {},
+      mcpClientManager: {
+        getAllToolsMetadata: vi.fn().mockReturnValue({}),
+      } as any,
+      onStreamWriterReady: (writer) => collector.attachStreamWriter(writer),
+    });
+
+    expect(writtenChunks[0]).toMatchObject({
+      type: "data-rpc-log",
+      data: expect.objectContaining({
+        serverId: "srv-notion",
+        serverName: "Notion",
+        direction: "send",
+      }),
+    });
+
+    collector.rpcLogger({
+      direction: "receive",
+      serverId: "srv-notion",
+      message: {
+        jsonrpc: "2.0",
+        id: 1,
+        result: { tools: [] },
+      },
+    });
+
+    resolveFetch?.(
+      createSseResponse([
+        {
+          type: "finish",
+          finishReason: "stop",
+          totalUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        },
+      ]),
+    );
+
+    await lastExecution;
+
+    const rpcChunks = writtenChunks.filter(
+      (chunk) => chunk?.type === "data-rpc-log",
+    );
+    expect(rpcChunks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          data: expect.objectContaining({
+            serverName: "Notion",
+            direction: "send",
+          }),
+        }),
+        expect.objectContaining({
+          data: expect.objectContaining({
+            serverName: "Notion",
+            direction: "receive",
+          }),
+        }),
+      ]),
+    );
+  });
+
   it("emits tool trace events when local tool execution runs after a streamed call", async () => {
     global.fetch = vi.fn().mockResolvedValue(
       createSseResponse([
@@ -625,10 +790,14 @@ describe("mcpjam-stream-handler", () => {
     const traceEvents = writtenChunks
       .filter((chunk) => chunk?.type === "data-trace-event")
       .map((chunk) => chunk.data);
+    const requestPayloadEvents = traceEvents.filter(
+      (event) => event.type === "request_payload",
+    );
 
     expect(traceEvents.map((event) => event.type)).toEqual(
       expect.arrayContaining([
         "turn_start",
+        "request_payload",
         "tool_call",
         "tool_result",
         "trace_snapshot",
@@ -655,5 +824,42 @@ describe("mcpjam-stream-handler", () => {
         }),
       ]),
     );
+    expect(requestPayloadEvents).toHaveLength(2);
+    expect(requestPayloadEvents.map((event) => event.stepIndex)).toEqual([
+      0, 1,
+    ]);
+    expect(requestPayloadEvents[0]).toMatchObject({
+      payload: {
+        messages: [{ role: "user", content: "Fetch the docs" }],
+      },
+    });
+    expect(requestPayloadEvents[1]).toMatchObject({
+      payload: {
+        messages: [
+          { role: "user", content: "Fetch the docs" },
+          {
+            role: "assistant",
+            content: [
+              {
+                type: "tool-call",
+                toolCallId: "call-1",
+                toolName: "read_docs",
+                input: { topic: "latency" },
+              },
+            ],
+          },
+          {
+            role: "tool",
+            content: [
+              expect.objectContaining({
+                type: "tool-result",
+                toolCallId: "call-1",
+                toolName: "read_docs",
+              }),
+            ],
+          },
+        ],
+      },
+    });
   });
 });

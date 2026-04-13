@@ -65,6 +65,10 @@ describe("mapModelIdToTokenizerBackend", () => {
   });
 
   describe("Google Gemini models", () => {
+    it("no longer maps the removed gemini-3-pro-preview alias", () => {
+      expect(mapModelIdToTokenizerBackend("gemini-3-pro-preview")).toBe(null);
+    });
+
     it("maps gemini-2.5-pro correctly", () => {
       expect(mapModelIdToTokenizerBackend("gemini-2.5-pro")).toBe(
         "google/gemini-2.5-pro",

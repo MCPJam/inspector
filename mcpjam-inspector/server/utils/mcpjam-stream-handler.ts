@@ -31,9 +31,11 @@ import {
   executeToolCallsFromMessages,
 } from "@/shared/http-tool-calls";
 import {
+  scrubUnavailableToolHistoryForBackend,
   scrubMcpAppsToolResultsForBackend,
   scrubChatGPTAppsToolResultsForBackend,
 } from "./chat-helpers";
+import { normalizeModelMessagesForConvex } from "./normalize-model-messages-for-convex";
 import {
   serializeToolsForConvex,
   type ToolDefinition,
@@ -52,6 +54,7 @@ import {
   wrapBackendToolsForTrace,
 } from "../services/evals/eval-trace-capture";
 import {
+  emitRequestPayload,
   emitTraceSnapshot,
   generateLiveTraceTurnId,
   getPromptIndex,
@@ -61,6 +64,7 @@ import {
   toTraceRecord,
   writeTraceEvent,
 } from "./live-chat-trace-stream";
+import { buildResolvedModelRequestPayload } from "./model-request-payload";
 
 const MAX_STEPS = 20;
 const streamChunkSchema = zodSchema(z.unknown());
@@ -79,6 +83,9 @@ export interface MCPJamHandlerOptions {
     fullHistory: ModelMessage[],
   ) => Promise<void> | void;
   onStreamComplete?: () => Promise<void> | void;
+  onStreamWriterReady?: (writer: {
+    write: (chunk: UIMessageChunk) => void;
+  }) => void;
 }
 
 interface StepContext {
@@ -310,6 +317,7 @@ function setStepSpanMessageRanges(
  */
 function scrubMessagesForBackend(
   messages: ModelMessage[],
+  tools: ToolSet,
   mcpClientManager: MCPClientManager,
   selectedServers?: string[],
 ): ModelMessage[] {
@@ -342,15 +350,21 @@ function scrubMessagesForBackend(
     return msg;
   });
 
-  return scrubChatGPTAppsToolResultsForBackend(
+  const withoutUnavailableToolHistory = scrubUnavailableToolHistoryForBackend(
+    stripped,
+    Object.keys(tools as Record<string, unknown>),
+  );
+
+  const scrubbed = scrubChatGPTAppsToolResultsForBackend(
     scrubMcpAppsToolResultsForBackend(
-      stripped,
+      withoutUnavailableToolHistory,
       mcpClientManager,
       selectedServers,
     ),
     mcpClientManager,
     selectedServers,
   );
+  return normalizeModelMessagesForConvex(scrubbed);
 }
 
 /**
@@ -879,6 +893,7 @@ async function processOneStep(
   // Scrub messages before sending to backend
   const scrubbedMessages = scrubMessagesForBackend(
     messageHistory,
+    tools,
     mcpClientManager,
     selectedServers,
   );
@@ -887,6 +902,17 @@ async function processOneStep(
     usedToolCallIds,
     stepIndex,
   );
+
+  emitRequestPayload(writer, {
+    turnId: traceTurn.turnId,
+    promptIndex: traceTurn.promptIndex,
+    stepIndex,
+    payload: buildResolvedModelRequestPayload({
+      systemPrompt,
+      tools,
+      messages: scrubbedMessages,
+    }),
+  });
 
   // Call Convex /stream endpoint
   const res = await fetch(`${process.env.CONVEX_HTTP_URL}/stream`, {
@@ -1214,6 +1240,7 @@ export async function handleMCPJamFreeChatModel(
     requireToolApproval,
     onConversationComplete,
     onStreamComplete,
+    onStreamWriterReady,
   } = options;
 
   const toolDefs = serializeToolsForConvex(tools);
@@ -1238,6 +1265,8 @@ export async function handleMCPJamFreeChatModel(
       let finishEmitted = false;
 
       try {
+        onStreamWriterReady?.(writer);
+
         writeTraceEvent(writer, {
           type: "turn_start",
           turnId: traceTurn.turnId,

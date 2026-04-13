@@ -6,7 +6,6 @@ import {
   useEffect,
   type ReactNode,
 } from "react";
-import { usePostHog } from "posthog-js/react";
 import type { ContentBlock } from "@modelcontextprotocol/sdk/types.js";
 import { Loader2, Minus, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -33,7 +32,10 @@ import {
 } from "./recorded-trace-toolbar";
 import { cn } from "@/lib/utils";
 import { TraceViewModeTabs } from "./trace-view-mode-tabs";
-import { TraceRawView, type TraceRawXRayMirror } from "./trace-raw-view";
+import {
+  TraceRawView,
+  type TraceRawRequestPayloadHistory,
+} from "./trace-raw-view";
 
 const TraceTimelineLazy = lazy(() =>
   import("./trace-timeline").then((m) => ({ default: m.TraceTimeline })),
@@ -100,7 +102,7 @@ interface TraceViewerProps {
    * When set (live chat), Raw tab shows the resolved model request payload
    * (`system`, `tools`, `messages`) instead of the diagnostic trace blob.
    */
-  rawXRayMirror?: TraceRawXRayMirror | null;
+  rawRequestPayloadHistory?: TraceRawRequestPayloadHistory | null;
   /**
    * When true, Raw JSON uses `height: auto` and minimal wrappers so a parent
    * `StickToBottom` (or similar) owns vertical scroll as the payload grows.
@@ -178,10 +180,9 @@ export function TraceViewer({
   enableFullscreenChatOverlay = false,
   fullscreenChatPlaceholder = "Message…",
   fullscreenChatDisabled = false,
-  rawXRayMirror = null,
+  rawRequestPayloadHistory = null,
   rawGrowWithContent = false,
 }: TraceViewerProps) {
-  const posthog = usePostHog();
   const [viewMode, setViewMode] = useState<
     "timeline" | "chat" | "raw" | "tools"
   >("timeline");
@@ -211,12 +212,6 @@ export function TraceViewer({
   const hasEvalToolCalls =
     expectedToolCalls.length > 0 || actualToolCalls.length > 0;
   const effectiveViewMode = forcedViewMode ?? viewMode;
-  const shouldCaptureRawPayloadOpened =
-    trace != null && effectiveViewMode === "raw" && rawXRayMirror != null;
-  useEffect(() => {
-    if (!shouldCaptureRawPayloadOpened) return;
-    posthog?.capture("xray_opened");
-  }, [shouldCaptureRawPayloadOpened, posthog]);
   const recordedSpans = useMemo(() => getRecordedSpans(trace), [trace]);
   const promptGroups = useMemo(
     () => (recordedSpans?.length ? buildPromptGroups(recordedSpans) : []),
@@ -502,7 +497,7 @@ export function TraceViewer({
           >
             <TraceRawView
               trace={trace}
-              xRayMirror={rawXRayMirror}
+              requestPayloadHistory={rawRequestPayloadHistory}
               growWithContent={rawGrowWithContent}
             />
           </div>

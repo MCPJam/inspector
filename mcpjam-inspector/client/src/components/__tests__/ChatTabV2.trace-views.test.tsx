@@ -20,12 +20,15 @@ vi.mock("convex/react", () => ({
     isAuthenticated: true,
     isLoading: false,
   }),
+  useQuery: (_name: string, args: unknown) =>
+    args === "skip" ? undefined : null,
 }));
 
 vi.mock("posthog-js/react", () => ({
   usePostHog: () => ({
     capture: vi.fn(),
   }),
+  useFeatureFlagEnabled: () => false,
 }));
 
 vi.mock("@/lib/PosthogUtils", () => ({
@@ -251,6 +254,7 @@ const mockUseChatSession = {
   resetChat: vi.fn(),
   startChatWithMessages: vi.fn(),
   liveTraceEnvelope: null,
+  requestPayloadHistory: [],
   hasTraceSnapshot: false,
   hasLiveTimelineContent: false,
   traceViewsSupported: false,
@@ -305,6 +309,7 @@ describe("ChatTabV2 trace views", () => {
       selectedModelIds: [],
       multiModelEnabled: false,
       liveTraceEnvelope: null,
+      requestPayloadHistory: [],
       hasTraceSnapshot: false,
       hasLiveTimelineContent: false,
       traceViewsSupported: false,

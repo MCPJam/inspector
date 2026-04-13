@@ -15,6 +15,7 @@ import {
   FormEvent,
   useState,
   useEffect,
+  useLayoutEffect,
   useCallback,
   useMemo,
   useRef,
@@ -22,6 +23,7 @@ import {
 import { Braces, Loader2, Trash2 } from "lucide-react";
 import { useAuth } from "@workos-inc/authkit-react";
 import type { ContentBlock } from "@modelcontextprotocol/sdk/types.js";
+import type { UIMessage } from "ai";
 import { ModelDefinition } from "@/shared/types";
 import { cn } from "@/lib/utils";
 import { Thread } from "@/components/chat-v2/thread";
@@ -32,12 +34,16 @@ import {
   formatErrorMessage,
   DEFAULT_CHAT_COMPOSER_PLACEHOLDER,
   MINIMAL_CHAT_COMPOSER_PLACEHOLDER,
+  cloneUiMessages,
 } from "@/components/chat-v2/shared/chat-helpers";
 import { MultiModelEmptyTraceDiagnosticsPanel } from "@/components/chat-v2/multi-model-empty-trace-diagnostics";
 import { MultiModelStartersEmptyLayout } from "@/components/chat-v2/multi-model-starters-empty";
 import { ErrorBox } from "@/components/chat-v2/error";
 import { ConfirmChatResetDialog } from "@/components/chat-v2/chat-input/dialogs/confirm-chat-reset-dialog";
-import { useChatSession } from "@/hooks/use-chat-session";
+import {
+  type ChatSessionResetReason,
+  useChatSession,
+} from "@/hooks/use-chat-session";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
@@ -84,7 +90,6 @@ import {
   SandboxHostThemeProvider,
 } from "@/contexts/sandbox-host-style-context";
 import { useComposerOnboarding } from "@/hooks/use-composer-onboarding";
-import { useDebouncedXRayPayload } from "@/hooks/use-debounced-x-ray-payload";
 import { HandDrawnSendHint } from "./HandDrawnSendHint";
 import { LiveTraceTimelineEmptyState } from "@/components/evals/live-trace-timeline-empty";
 import { LiveTraceRawEmptyState } from "@/components/evals/live-trace-raw-empty";
@@ -112,7 +117,6 @@ type ThreadThemeMode = "light" | "dark";
 
 interface PlaygroundMainProps {
   serverName: string;
-  enableTraceViews?: boolean;
   enableMultiModelChat?: boolean;
   onWidgetStateChange?: (toolCallId: string, state: unknown) => void;
   playgroundServerSelectorProps?: PlaygroundServerSelectorProps;
@@ -191,7 +195,6 @@ function InvokingIndicator({
 
 export function PlaygroundMain({
   serverName,
-  enableTraceViews = false,
   enableMultiModelChat = false,
   onWidgetStateChange,
   playgroundServerSelectorProps,
@@ -264,6 +267,18 @@ export function PlaygroundMain({
   const [multiModelHasMessages, setMultiModelHasMessages] = useState<
     Record<string, boolean>
   >({});
+  const [multiCompareEnterVersion, setMultiCompareEnterVersion] = useState(0);
+  const [multiCompareEnterMessages, setMultiCompareEnterMessages] = useState<
+    UIMessage[]
+  >([]);
+  const [multiAddColumnSeeds, setMultiAddColumnSeeds] = useState<
+    Record<string, { version: number; messages: UIMessage[] }>
+  >({});
+  const multiTranscriptsRef = useRef<Record<string, UIMessage[]>>({});
+  const prevCompareModeRef = useRef(false);
+  const lastMultiLeadIdRef = useRef<string | null>(null);
+  const prevCompareModelIdsRef = useRef<Set<string>>(new Set());
+  const multiAddColumnSeqRef = useRef(0);
   // Device config from store (managed by DisplayContextHeader)
   const storeDeviceType = useUIPlaygroundStore((s) => s.deviceType);
   const customViewport = useUIPlaygroundStore((s) => s.customViewport);
@@ -295,6 +310,17 @@ export function PlaygroundMain({
 
   const serverConnected = Boolean(
     serverName && servers[serverName]?.connectionStatus === "connected",
+  );
+
+  const handlePlaygroundServerToggle = useCallback(
+    (name: string) => {
+      if (name === serverName) {
+        playgroundServerSelectorProps?.onServerChange("none");
+      } else {
+        playgroundServerSelectorProps?.onServerChange(name);
+      }
+    },
+    [serverName, playgroundServerSelectorProps],
   );
 
   // Hosted mode context (workspaceId, serverIds, OAuth tokens)
@@ -347,7 +373,9 @@ export function PlaygroundMain({
     toolServerMap,
     tokenUsage,
     resetChat,
+    startChatWithMessages,
     liveTraceEnvelope,
+    requestPayloadHistory,
     hasTraceSnapshot,
     hasLiveTimelineContent,
     traceViewsSupported,
@@ -362,7 +390,15 @@ export function PlaygroundMain({
     hostedWorkspaceId: convexWorkspaceId,
     hostedSelectedServerIds,
     hostedOAuthTokens,
-    onReset: () => composerOnResetRef.current(),
+    onReset: (reason?: ChatSessionResetReason) => {
+      setModelContextQueue([]);
+      setPreludeTraceExecutions([]);
+      setInjectedToolRenderOverrides({});
+      if (reason === "servers-changed") {
+        return;
+      }
+      composerOnResetRef.current();
+    },
   });
 
   // Set playground active flag for widget renderers to read
@@ -427,7 +463,7 @@ export function PlaygroundMain({
   const resolvedSelectedModels = useMemo(() => {
     const persistedModels = selectedModelIds
       .map((modelId) => multiModelAvailableModels.get(modelId))
-      .filter((model): model is ModelDefinition => !!model);
+      .filter((model): model is ModelDefinition => !!model && !model.disabled);
 
     if (persistedModels.length > 0) {
       return persistedModels.slice(0, 3);
@@ -438,6 +474,84 @@ export function PlaygroundMain({
   const canEnableMultiModel =
     enableMultiModelChat && availableModels.length > 1;
   const isMultiModelMode = canEnableMultiModel && multiModelEnabled;
+
+  useEffect(() => {
+    if (isMultiModelMode && resolvedSelectedModels[0]) {
+      lastMultiLeadIdRef.current = String(resolvedSelectedModels[0].id);
+    }
+  }, [isMultiModelMode, resolvedSelectedModels]);
+
+  const handleMultiModelTranscriptSync = useCallback(
+    (modelId: string, transcript: UIMessage[]) => {
+      multiTranscriptsRef.current[modelId] = cloneUiMessages(transcript);
+    },
+    [],
+  );
+
+  const clearMultiModelUiState = useCallback(() => {
+    setBroadcastRequest(null);
+    setDeterministicExecutionRequest(null);
+    setStopBroadcastRequestId(0);
+    setMultiModelSummaries({});
+    setMultiModelHasMessages({});
+    setMultiAddColumnSeeds({});
+    prevCompareModelIdsRef.current = new Set();
+  }, []);
+
+  useLayoutEffect(() => {
+    const prev = prevCompareModeRef.current;
+    if (prev && !isMultiModelMode) {
+      const leadId = lastMultiLeadIdRef.current;
+      if (leadId) {
+        const transcript = multiTranscriptsRef.current[leadId];
+        const hasConversation =
+          transcript?.some(
+            (m) => m.role === "user" || m.role === "assistant",
+          ) ?? false;
+        if (hasConversation && transcript) {
+          startChatWithMessages(cloneUiMessages(transcript));
+        }
+      }
+      clearMultiModelUiState();
+    }
+    if (!prev && isMultiModelMode) {
+      setMultiCompareEnterVersion((v) => v + 1);
+      setMultiCompareEnterMessages(cloneUiMessages(messages));
+    }
+    prevCompareModeRef.current = isMultiModelMode;
+  }, [
+    isMultiModelMode,
+    messages,
+    startChatWithMessages,
+    clearMultiModelUiState,
+  ]);
+
+  useEffect(() => {
+    if (!isMultiModelMode) {
+      prevCompareModelIdsRef.current = new Set();
+      return;
+    }
+    const current = new Set(resolvedSelectedModels.map((m) => String(m.id)));
+    const prev = prevCompareModelIdsRef.current;
+    const added = [...current].filter((id) => !prev.has(id));
+    const leadId = resolvedSelectedModels[0]
+      ? String(resolvedSelectedModels[0].id)
+      : null;
+    if (prev.size > 0 && added.length > 0 && leadId) {
+      const src = multiTranscriptsRef.current[leadId] ?? [];
+      multiAddColumnSeqRef.current += 1;
+      const v = multiAddColumnSeqRef.current;
+      setMultiAddColumnSeeds((s) => {
+        const next = { ...s };
+        for (const id of added) {
+          next[id] = { version: v, messages: cloneUiMessages(src) };
+        }
+        return next;
+      });
+    }
+    prevCompareModelIdsRef.current = current;
+  }, [isMultiModelMode, resolvedSelectedModels]);
+
   const effectiveHasMessages = isMultiModelMode
     ? Object.values(multiModelHasMessages).some(Boolean)
     : !isThreadEmpty;
@@ -452,9 +566,7 @@ export function PlaygroundMain({
   // Match ChatTabV2 `showTopTraceViewTabs`: keep Trace/Chat/Raw while multi-model is
   // empty; hide the top bar once compare columns are active (per-card trace tabs take over).
   const showTraceViewTabs =
-    enableTraceViews &&
-    traceViewsSupported &&
-    (!isMultiModelMode || !effectiveHasMessages);
+    traceViewsSupported && (!isMultiModelMode || !effectiveHasMessages);
   const activeTraceViewMode: PlaygroundTraceViewMode = showTraceViewTabs
     ? traceViewMode
     : "chat";
@@ -540,10 +652,10 @@ export function PlaygroundMain({
   }, [resolvedSelectedModels]);
 
   useEffect(() => {
-    if (!enableTraceViews || !traceViewsSupported) {
+    if (!traceViewsSupported) {
       setTraceViewMode("chat");
     }
-  }, [enableTraceViews, traceViewsSupported]);
+  }, [traceViewsSupported]);
 
   useEffect(() => {
     setTraceViewMode("chat");
@@ -708,13 +820,9 @@ export function PlaygroundMain({
   );
 
   const resetMultiModelSessions = useCallback(() => {
-    setBroadcastRequest(null);
-    setDeterministicExecutionRequest(null);
-    setStopBroadcastRequestId(0);
+    clearMultiModelUiState();
     setMultiModelSessionGeneration((previous) => previous + 1);
-    setMultiModelSummaries({});
-    setMultiModelHasMessages({});
-  }, []);
+  }, [clearMultiModelUiState]);
 
   const handleResetAllChats = useCallback(() => {
     composer.prepareForClearChat();
@@ -735,14 +843,8 @@ export function PlaygroundMain({
       setSelectedModel(model);
       setSelectedModelIds([String(model.id)]);
       setMultiModelEnabled(false);
-      handleResetAllChats();
     },
-    [
-      handleResetAllChats,
-      setMultiModelEnabled,
-      setSelectedModel,
-      setSelectedModelIds,
-    ],
+    [setMultiModelEnabled, setSelectedModel, setSelectedModelIds],
   );
 
   const handleSelectedModelsChange = useCallback(
@@ -758,9 +860,8 @@ export function PlaygroundMain({
           String(selectedModelItem.id),
         ),
       );
-      handleResetAllChats();
     },
-    [handleResetAllChats, selectedModel, setSelectedModel, setSelectedModelIds],
+    [selectedModel, setSelectedModel, setSelectedModelIds],
   );
 
   const handleMultiModelEnabledChange = useCallback(
@@ -981,15 +1082,6 @@ export function PlaygroundMain({
     traceVersion: 1 as const,
     messages: [],
   };
-  const playgroundRawXRayMirror = useDebouncedXRayPayload({
-    systemPrompt,
-    messages,
-    selectedServers,
-    enabled:
-      traceViewsSupported &&
-      showLiveTraceDiagnostics &&
-      (isMultiModelMode ? !effectiveHasMessages : !isThreadEmpty),
-  });
   const showLiveTracePending =
     activeTraceViewMode === "timeline" &&
     !hasLiveTimelineContent &&
@@ -1038,6 +1130,10 @@ export function PlaygroundMain({
     pulseSubmit: composer.sendButtonOnboardingPulse,
     minimalMode: showPostConnectGuide,
     moveCaretToEndTrigger: composer.moveCaretToEndTrigger,
+    allServerConfigs: playgroundServerSelectorProps?.serverConfigs,
+    onServerToggle: handlePlaygroundServerToggle,
+    onReconnectServer: playgroundServerSelectorProps?.onReconnect,
+    onAddServer: playgroundServerSelectorProps?.onConnect,
   };
 
   // Check if widget should take over the full container
@@ -1285,17 +1381,20 @@ export function PlaygroundMain({
         <>
           <div
             className={cn(
-              "relative flex h-11 items-center justify-center px-3 border-b border-border text-xs text-muted-foreground flex-shrink-0",
+              "@container/playground-header relative flex h-11 min-w-0 w-full items-center justify-center border-b border-border px-3 text-xs text-muted-foreground flex-shrink-0",
               isMultiModelMode ? "bg-background" : "bg-background/50",
+              effectiveHasMessages && "pr-10 sm:pr-11",
             )}
             data-testid="playground-main-header"
           >
-            <DisplayContextHeader
-              protocol={selectedProtocol}
-              showThemeToggle
-              themeModeOverride={effectiveThreadTheme}
-              onThemeToggleOverride={toggleLocalThreadTheme}
-            />
+            <div className="flex min-w-0 max-w-full justify-center">
+              <DisplayContextHeader
+                protocol={selectedProtocol}
+                showThemeToggle
+                themeModeOverride={effectiveThreadTheme}
+                onThemeToggleOverride={toggleLocalThreadTheme}
+              />
+            </div>
 
             {effectiveHasMessages && (
               <div className="absolute right-3">
@@ -1326,6 +1425,7 @@ export function PlaygroundMain({
           {showTraceViewTabs ? (
             <ChatTraceViewModeHeaderBar
               mode={activeTraceViewMode}
+              activeVariant="sidebar"
               onModeChange={(mode) => {
                 if (mode === "tools") {
                   return;
@@ -1357,12 +1457,9 @@ export function PlaygroundMain({
                 toolServerMap={toolServerMap}
                 traceStartedAtMs={liveTraceEnvelope?.traceStartedAtMs ?? null}
                 traceEndedAtMs={liveTraceEnvelope?.traceEndedAtMs ?? null}
-                rawXRayMirror={{
-                  payload: playgroundRawXRayMirror.payload,
-                  loading: playgroundRawXRayMirror.loading,
-                  error: playgroundRawXRayMirror.error,
-                  refetch: playgroundRawXRayMirror.refetch,
-                  hasUiMessages: playgroundRawXRayMirror.hasMessages,
+                rawRequestPayloadHistory={{
+                  entries: requestPayloadHistory,
+                  hasUiMessages: effectiveHasMessages,
                 }}
                 rawEmptyTestId="playground-multi-empty-raw-pending"
                 timelineEmptyTestId="playground-multi-empty-trace-pending"
@@ -1468,6 +1565,12 @@ export function PlaygroundMain({
                       onHasMessagesChange={handleMultiModelHasMessagesChange}
                       showComparisonChrome={resolvedSelectedModels.length > 1}
                       suppressThreadEmptyHint={false}
+                      compareEnterVersion={multiCompareEnterVersion}
+                      compareEnterMessages={multiCompareEnterMessages}
+                      addColumnSeed={
+                        multiAddColumnSeeds[String(model.id)] ?? null
+                      }
+                      onTranscriptSync={handleMultiModelTranscriptSync}
                     />
                   ))}
                 </div>
@@ -1523,13 +1626,9 @@ export function PlaygroundMain({
                                     setTraceViewMode("chat")
                                   }
                                   rawGrowWithContent
-                                  rawXRayMirror={{
-                                    payload: playgroundRawXRayMirror.payload,
-                                    loading: playgroundRawXRayMirror.loading,
-                                    error: playgroundRawXRayMirror.error,
-                                    refetch: playgroundRawXRayMirror.refetch,
-                                    hasUiMessages:
-                                      playgroundRawXRayMirror.hasMessages,
+                                  rawRequestPayloadHistory={{
+                                    entries: requestPayloadHistory,
+                                    hasUiMessages: !isThreadEmpty,
                                   }}
                                 />
                               )}
@@ -1555,13 +1654,9 @@ export function PlaygroundMain({
                               onRevealNavigateToChat={() =>
                                 setTraceViewMode("chat")
                               }
-                              rawXRayMirror={{
-                                payload: playgroundRawXRayMirror.payload,
-                                loading: playgroundRawXRayMirror.loading,
-                                error: playgroundRawXRayMirror.error,
-                                refetch: playgroundRawXRayMirror.refetch,
-                                hasUiMessages:
-                                  playgroundRawXRayMirror.hasMessages,
+                              rawRequestPayloadHistory={{
+                                entries: requestPayloadHistory,
+                                hasUiMessages: !isThreadEmpty,
                               }}
                             />
                           )}

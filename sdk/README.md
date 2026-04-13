@@ -147,6 +147,69 @@ describe("Asana MCP Evals", () => {
 });
 ```
 
+### OAuth Conformance
+
+Test that your MCP server's OAuth implementation works across all registration methods and protocol versions.
+
+```ts
+import { OAuthConformanceTest, OAuthConformanceSuite } from "@mcpjam/sdk";
+
+// Single flow
+const test = new OAuthConformanceTest({
+  serverUrl: "https://your-server.com/mcp",
+  protocolVersion: "2025-11-25",
+  registrationStrategy: "dcr",
+  auth: { mode: "headless" },
+  verification: { listTools: true },
+});
+
+const result = await test.run();
+console.log(result.passed);  // true
+console.log(result.summary); // "OAuth conformance passed for ..."
+
+// Suite: test multiple flows at once
+const suite = new OAuthConformanceSuite({
+  serverUrl: "https://your-server.com/mcp",
+  defaults: { verification: { listTools: true } },
+  flows: [
+    { protocolVersion: "2025-11-25", registrationStrategy: "cimd", auth: { mode: "interactive" } },
+    { protocolVersion: "2025-11-25", registrationStrategy: "dcr", auth: { mode: "interactive" } },
+    {
+      protocolVersion: "2025-11-25",
+      registrationStrategy: "preregistered",
+      auth: { mode: "client_credentials", clientId: "id", clientSecret: "secret" },
+      client: { preregistered: { clientId: "id", clientSecret: "secret" } },
+    },
+  ],
+});
+
+const suiteResult = await suite.run();
+console.log(suiteResult.summary); // "All 3 flows passed for ..."
+```
+
+Or use the CLI:
+
+```bash
+# Single flow (M2M, no browser needed)
+npx @mcpjam/cli-preview oauth conformance \
+  --url https://your-server.com/mcp \
+  --protocol-version 2025-11-25 \
+  --registration preregistered \
+  --auth-mode client_credentials \
+  --redirect-url https://app.example.com/oauth/callback \
+  --client-id "$CLIENT_ID" --client-secret "$CLIENT_SECRET" \
+  --verify-tools
+
+# Suite from config file
+npx @mcpjam/cli-preview oauth conformance-suite --config ./oauth-tests.json
+
+# Force human-readable output
+npx @mcpjam/cli-preview oauth conformance --url https://your-server.com/mcp --protocol-version 2025-11-25 --registration dcr --format human
+
+# JUnit XML for CI
+npx @mcpjam/cli-preview oauth conformance-suite --config ./oauth-tests.json --format junit-xml > report.xml
+```
+
 ---
 
 ## API Reference

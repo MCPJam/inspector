@@ -455,6 +455,81 @@ describe("useChatSession live trace state", () => {
     expect(result.current.hasLiveTimelineContent).toBe(false);
   });
 
+  it("accumulates streamed request payload snapshots by turn and step", async () => {
+    const { result } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+      }),
+    );
+
+    await waitFor(() => {
+      expect(result.current.isSessionBootstrapComplete).toBe(true);
+      expect(mockState.chatOnData).not.toBeNull();
+    });
+
+    act(() => {
+      mockState.chatOnData?.(
+        tracePart({
+          type: "request_payload",
+          turnId: "turn-1",
+          promptIndex: 0,
+          stepIndex: 0,
+          payload: {
+            system: "System 1",
+            tools: {
+              greet: {
+                name: "greet",
+                description: "Say hello",
+                inputSchema: {
+                  type: "object",
+                  properties: {},
+                  additionalProperties: false,
+                },
+              },
+            },
+            messages: [{ role: "user", content: "Hi" }],
+          },
+        }),
+      );
+      mockState.chatOnData?.(
+        tracePart({
+          type: "request_payload",
+          turnId: "turn-1",
+          promptIndex: 0,
+          stepIndex: 1,
+          payload: {
+            system: "System 1",
+            tools: {},
+            messages: [
+              { role: "user", content: "Hi" },
+              { role: "assistant", content: "Hello" },
+            ],
+          },
+        }),
+      );
+    });
+
+    await waitFor(() => {
+      expect(result.current.requestPayloadHistory).toHaveLength(2);
+    });
+
+    expect(result.current.requestPayloadHistory).toEqual([
+      expect.objectContaining({
+        turnId: "turn-1",
+        promptIndex: 0,
+        stepIndex: 0,
+      }),
+      expect.objectContaining({
+        turnId: "turn-1",
+        promptIndex: 0,
+        stepIndex: 1,
+      }),
+    ]);
+    expect(result.current.liveTraceEnvelope?.requestPayloads).toEqual(
+      result.current.requestPayloadHistory,
+    );
+  });
+
   it("clears live trace state when the chat session resets", async () => {
     const { result } = renderHook(() =>
       useChatSession({
@@ -503,10 +578,24 @@ describe("useChatSession live trace state", () => {
           },
         }),
       );
+      mockState.chatOnData?.(
+        tracePart({
+          type: "request_payload",
+          turnId: "turn-1",
+          promptIndex: 0,
+          stepIndex: 0,
+          payload: {
+            system: "You are helpful",
+            tools: {},
+            messages: [{ role: "user", content: "First prompt" }],
+          },
+        }),
+      );
     });
 
     await waitFor(() => {
       expect(result.current.liveTraceEnvelope?.spans).toHaveLength(1);
+      expect(result.current.requestPayloadHistory).toHaveLength(1);
     });
 
     const initialSessionId = result.current.chatSessionId;
@@ -518,6 +607,7 @@ describe("useChatSession live trace state", () => {
     await waitFor(() => {
       expect(result.current.chatSessionId).not.toBe(initialSessionId);
       expect(result.current.liveTraceEnvelope).toBeNull();
+      expect(result.current.requestPayloadHistory).toEqual([]);
       expect(result.current.hasTraceSnapshot).toBe(false);
       expect(result.current.hasLiveTimelineContent).toBe(false);
     });

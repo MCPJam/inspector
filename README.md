@@ -36,7 +36,7 @@ npx @mcpjam/inspector@latest
 - [Key Features](#key-features)
   - [ChatGPT / MCP Apps Builder](#openai-apps--mcp-ui)
   - [OAuth Debugger](#oauth-debugger)
-  - [LLM Playground](#llm-playground)
+  - [Chat](#chat)
 - [Contributing](#contributing-)
 - [Links](#links-)
 - [Community](#community-)
@@ -97,7 +97,7 @@ View every step of the OAuth handshake in detail, with guided explanations. Test
 
 <img alt="MCPJam OAuth Flow Debugger" src="./docs/images/oauth-debugger.png">
 
-## LLM Playground
+## Chat
 
 Try your server against any LLM model. We provide frontier models like GPT-5, Claude Sonnet, Gemini 2.5 for free, or bring your own API key. View your server's token usage.
 

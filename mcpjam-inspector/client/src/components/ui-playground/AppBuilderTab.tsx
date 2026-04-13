@@ -58,7 +58,6 @@ interface AppBuilderTabProps {
   onConnect?: (formData: ServerFormData) => void;
   onOnboardingChange?: (isOnboarding: boolean) => void;
   playgroundServerSelectorProps?: PlaygroundServerSelectorProps;
-  enableTraceViews?: boolean;
   enableMultiModelChat?: boolean;
 }
 
@@ -75,7 +74,6 @@ export function AppBuilderTab({
   onConnect,
   onOnboardingChange,
   playgroundServerSelectorProps,
-  enableTraceViews = false,
   enableMultiModelChat = false,
 }: AppBuilderTabProps) {
   const posthog = usePostHog();
@@ -216,13 +214,18 @@ export function AppBuilderTab({
     }
   }, [serverName, reset, setTools, setExecutionError]);
 
+  const serverConnectionStatus = serverName
+    ? servers[serverName]?.connectionStatus
+    : undefined;
+
   useEffect(() => {
-    if (serverConfig && serverName) {
+    if (serverConfig && serverName && serverConnectionStatus === "connected") {
       fetchTools();
     } else {
       reset();
+      setToolsMetadata({});
     }
-  }, [serverConfig, serverName, fetchTools, reset]);
+  }, [serverConfig, serverName, serverConnectionStatus, fetchTools, reset]);
 
   // Update form fields when tool is selected
   useEffect(() => {
@@ -371,7 +374,6 @@ export function AppBuilderTab({
         >
           <PlaygroundMain
             serverName={serverName || ""}
-            enableTraceViews={enableTraceViews}
             enableMultiModelChat={enableMultiModelChat}
             isExecuting={isExecuting}
             executingToolName={selectedTool}

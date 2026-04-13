@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { Check, X } from "lucide-react";
-import { useConvexAuth } from "convex/react";
+import { usePostHog } from "posthog-js/react";
+import { standardEventProps } from "@/lib/PosthogUtils";
 import { Button } from "@/components/ui/button";
 import {
   Popover,
@@ -8,7 +9,6 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { Switch } from "@/components/ui/switch";
-import { ConfirmChatResetDialog } from "./dialogs/confirm-chat-reset-dialog";
 import { ProviderLogo } from "./model/provider-logo";
 import {
   Command,
@@ -34,6 +34,7 @@ interface ModelSelectorProps {
   disabled?: boolean;
   isLoading?: boolean;
   hideProvidedModels?: boolean;
+  /** @deprecated Model changes no longer reset the thread; kept for API compatibility. */
   hasMessages?: boolean;
   enableMultiModel?: boolean;
   multiModelEnabled?: boolean;
@@ -103,6 +104,8 @@ const getProviderDisplayName = (groupKey: GroupKey): string => {
       return "Zhipu AI";
     case "minimax":
       return "MiniMax";
+    case "qwen":
+      return "Qwen";
     default:
       return groupKey;
   }
@@ -139,7 +142,7 @@ export function ModelSelector({
   disabled,
   isLoading,
   hideProvidedModels = false,
-  hasMessages = false,
+  hasMessages: _hasMessages = false,
   enableMultiModel = false,
   multiModelEnabled = false,
   selectedModels,
@@ -148,15 +151,33 @@ export function ModelSelector({
   maxSelectedModels = 3,
 }: ModelSelectorProps) {
   const [isOpen, setIsOpen] = useState(false);
-  const [pendingChange, setPendingChange] =
-    useState<PendingSelectionChange | null>(null);
-  const [showConfirmDialog, setShowConfirmDialog] = useState(false);
-  const { isAuthenticated } = useConvexAuth();
+  const [hoveredLockedModelId, setHoveredLockedModelId] = useState<
+    string | null
+  >(null);
+  const posthog = usePostHog();
+  const handleOpenChange = (nextOpen: boolean) => {
+    if (nextOpen && !isOpen) {
+      posthog.capture(
+        "chat_model_selector_clicked",
+        standardEventProps("chat_input"),
+      );
+    }
+    setIsOpen(nextOpen);
+    if (!nextOpen) {
+      setHoveredLockedModelId(null);
+    }
+  };
 
   const selectedModelsData =
     selectedModels && selectedModels.length > 0
       ? selectedModels
       : [currentModel];
+
+  const lockedRowHighlightId =
+    hoveredLockedModelId ??
+    (!multiModelEnabled && currentModel.disabled
+      ? String(currentModel.id)
+      : null);
 
   const groupedModels = useMemo(
     () => groupModelsByProvider(availableModels),
@@ -255,13 +276,6 @@ export function ModelSelector({
       return;
     }
 
-    if (hasMessages) {
-      setPendingChange(nextChange);
-      setShowConfirmDialog(true);
-      setIsOpen(false);
-      return;
-    }
-
     if (nextChange.type === "single") {
       onModelChange(nextChange.nextModel);
       setIsOpen(false);
@@ -269,27 +283,6 @@ export function ModelSelector({
       onSelectedModelsChange?.(nextChange.selectedModels);
       onMultiModelEnabledChange?.(nextChange.enabled);
     }
-  };
-
-  const handleConfirmSelectionChange = () => {
-    if (!pendingChange) {
-      return;
-    }
-
-    if (pendingChange.type === "single") {
-      onModelChange(pendingChange.nextModel);
-    } else {
-      onSelectedModelsChange?.(pendingChange.selectedModels);
-      onMultiModelEnabledChange?.(pendingChange.enabled);
-    }
-
-    setPendingChange(null);
-    setShowConfirmDialog(false);
-  };
-
-  const handleCancelSelectionChange = () => {
-    setPendingChange(null);
-    setShowConfirmDialog(false);
   };
 
   const handleToggleMultiModel = (enabled: boolean) => {
@@ -354,19 +347,18 @@ export function ModelSelector({
 
   const renderGroupModelItems = (group: (typeof modelGroups)[number]) =>
     group.models.map((model) => {
-      const isMcpJamProvided = isMCPJamProvidedModel(String(model.id));
       const isDisabled =
         !!model.disabled ||
-        (isMcpJamProvided && !isAuthenticated) ||
         (multiModelEnabled &&
           !selectedIds.has(String(model.id)) &&
           selectedLimitReached);
       const disabledReason =
-        isMcpJamProvided && !isAuthenticated
-          ? "Sign in to use MCPJam provided models"
-          : !selectedIds.has(String(model.id)) && selectedLimitReached
-            ? `You can compare up to ${maxSelectedModels} models at once`
-            : model.disabledReason;
+        model.disabledReason ??
+        (!selectedIds.has(String(model.id)) && selectedLimitReached
+          ? `You can compare up to ${maxSelectedModels} models at once`
+          : undefined);
+      const isLockedRowHighlight =
+        lockedRowHighlightId === String(model.id) && !!disabledReason;
       const isSelected = selectedIds.has(String(model.id));
 
       const row = (
@@ -384,7 +376,11 @@ export function ModelSelector({
             }
           }}
           disabled={isDisabled}
-          className="cursor-pointer rounded-sm px-2 py-1 data-[disabled=true]:cursor-not-allowed"
+          className={cn(
+            "cursor-pointer rounded-sm px-2 py-1 data-[disabled=true]:cursor-not-allowed",
+            lockedRowHighlightId &&
+              "data-[selected=true]:bg-transparent data-[selected=true]:text-inherit",
+          )}
         >
           <ProviderLogo
             provider={getLogoProvider(group.provider)}
@@ -420,7 +416,16 @@ export function ModelSelector({
       return disabledReason ? (
         <Tooltip key={String(model.id)}>
           <TooltipTrigger asChild>
-            <div>{row}</div>
+            <div
+              className={cn(
+                "rounded-sm transition-colors",
+                isLockedRowHighlight ? "bg-accent/60" : "hover:bg-accent/60",
+              )}
+              onMouseEnter={() => setHoveredLockedModelId(String(model.id))}
+              onMouseLeave={() => setHoveredLockedModelId(null)}
+            >
+              {row}
+            </div>
           </TooltipTrigger>
           <TooltipContent side="right">{disabledReason}</TooltipContent>
         </Tooltip>
@@ -431,7 +436,7 @@ export function ModelSelector({
 
   return (
     <>
-      <Popover open={isOpen} onOpenChange={setIsOpen}>
+      <Popover open={isOpen} onOpenChange={handleOpenChange}>
         <Tooltip>
           <TooltipTrigger asChild>
             <PopoverTrigger asChild>
@@ -570,13 +575,6 @@ export function ModelSelector({
           </Command>
         </PopoverContent>
       </Popover>
-
-      <ConfirmChatResetDialog
-        open={showConfirmDialog}
-        onConfirm={handleConfirmSelectionChange}
-        onCancel={handleCancelSelectionChange}
-        message="Changing the selected model set will clear the current chat session. This action cannot be undone."
-      />
     </>
   );
 }

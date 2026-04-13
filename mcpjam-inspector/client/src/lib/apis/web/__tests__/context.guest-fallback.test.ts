@@ -235,6 +235,7 @@ describe("isGuestMode and buildHostedServerRequest consistency", () => {
 
     expect(result).toMatchObject({
       serverUrl: "https://my-mcp.example.com/sse",
+      serverName: "my-server",
     });
     // Should NOT have workspaceId — this is a guest request
     expect(result).not.toHaveProperty("workspaceId");
@@ -253,6 +254,7 @@ describe("isGuestMode and buildHostedServerRequest consistency", () => {
     expect(result).toMatchObject({
       workspaceId: "ws-shared",
       serverId: "srv-1",
+      serverName: "my-server",
       shareToken: "share_tok_123",
     });
   });
@@ -270,6 +272,7 @@ describe("isGuestMode and buildHostedServerRequest consistency", () => {
     expect(result).toMatchObject({
       workspaceId: "ws-sandbox",
       serverId: "srv-1",
+      serverName: "my-server",
       sandboxToken: "sandbox_tok_123",
     });
   });
@@ -298,9 +301,11 @@ describe("isGuestMode and buildHostedServerRequest consistency", () => {
           elicitation: {},
           experimental: { inspectorProfile: true },
         },
+        "example-server",
       ),
     ).toEqual({
       serverUrl: "https://example.com/mcp",
+      serverName: "example-server",
       clientCapabilities: {
         elicitation: {},
         experimental: { inspectorProfile: true },

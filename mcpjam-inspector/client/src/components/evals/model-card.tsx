@@ -63,6 +63,7 @@ function getProviderFromId(modelId: string): string {
     "x-ai": "xAI",
     moonshotai: "Moonshot AI",
     "z-ai": "Zhipu AI",
+    qwen: "Qwen",
     "meta-llama": "Meta",
   };
 

@@ -35,6 +35,9 @@ jobs:
       - name: Build SDK
         run: npm --prefix ../sdk run build
 
+      - name: Install local SDK into app
+        run: npm install ../sdk --no-save
+
       - name: Run unit tests
         run: |
           echo "🧪 Running unit tests..."

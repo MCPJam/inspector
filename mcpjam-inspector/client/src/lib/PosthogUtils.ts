@@ -72,3 +72,11 @@ export function detectPlatform() {
 export function detectEnvironment() {
   return import.meta.env.ENVIRONMENT;
 }
+
+export function standardEventProps(location: string) {
+  return {
+    location,
+    platform: detectPlatform(),
+    environment: detectEnvironment(),
+  };
+}

@@ -3,7 +3,7 @@ import type {
   RegistrationStrategy2025_03_26,
   RegistrationStrategy2025_06_18,
   RegistrationStrategy2025_11_25,
-} from "@/lib/oauth/state-machines/types";
+} from "@mcpjam/sdk/browser";
 
 export type OAuthRegistrationStrategy =
   | RegistrationStrategy2025_03_26

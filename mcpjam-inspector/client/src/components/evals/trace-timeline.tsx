@@ -8,6 +8,8 @@ import {
   type KeyboardEvent,
 } from "react";
 import { motion, useReducedMotion } from "framer-motion";
+import { usePostHog } from "posthog-js/react";
+import { standardEventProps } from "@/lib/PosthogUtils";
 import {
   AlertCircle,
   Bot,
@@ -19,6 +21,7 @@ import {
   MessageSquareQuote,
   Minus,
   Plus,
+  User,
   Wrench,
 } from "lucide-react";
 import type { EvalTraceSpan, EvalTraceSpanCategory } from "@/shared/eval-trace";
@@ -1026,7 +1029,7 @@ function CategoryGlyph({
   );
   switch (category) {
     case "prompt":
-      return <Layers className={iconClass} aria-hidden />;
+      return <User className={iconClass} aria-hidden />;
     case "llm":
       return <Bot className={iconClass} aria-hidden />;
     case "tool":
@@ -1727,6 +1730,7 @@ export function TraceTimeline({
     onExpandedStepIdsChange ?? setInternalExpandedStepIds;
 
   const [selectedRowKey, setSelectedRowKey] = useState<string | null>(null);
+  const posthog = usePostHog();
 
   const axisHeaderMeasureRef = useRef<HTMLDivElement>(null);
   const [axisColumnWidthPx, setAxisColumnWidthPx] = useState(-1);
@@ -2104,7 +2108,7 @@ export function TraceTimeline({
         >
           <ResizablePanel
             defaultSize={65}
-            minSize={40}
+            minSize={0}
             className="min-h-0 min-w-0 overflow-hidden"
           >
             <ScrollArea
@@ -2260,7 +2264,13 @@ export function TraceTimeline({
                       row,
                       spanShowsFailure,
                     );
-                    const selectRow = () => setSelectedRowKey(row.key);
+                    const selectRow = () => {
+                      posthog.capture("trace_span_clicked", {
+                        ...standardEventProps("trace_timeline"),
+                        span_kind: row.kind,
+                      });
+                      setSelectedRowKey(row.key);
+                    };
                     const leftCellClass = isSelected
                       ? cn("bg-transparent", borderAccent)
                       : "border-l-transparent bg-background group-hover:bg-muted/20 hover:bg-muted/20";
@@ -2525,7 +2535,6 @@ export function TraceTimeline({
           <ResizablePanel
             defaultSize={35}
             minSize={20}
-            maxSize={50}
             className="min-h-0 min-w-0 overflow-hidden"
           >
             <div

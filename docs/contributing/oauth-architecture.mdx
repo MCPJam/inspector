@@ -8,11 +8,13 @@ icon: "lock"
 
 The OAuth implementation uses:
 
-- **Client-side state machine** for flow orchestration
+- **SDK-owned date-versioned OAuth state machines** for flow orchestration
 - **CORS proxy server** for metadata discovery and SSE handling
 - **localStorage** for persistence
 - **MCP SDK** for OAuth operations
 - **Multi-protocol support** for 2025-03-26, 2025-06-18, and 2025-11-25 specifications
+
+The canonical home for the date-versioned OAuth debug state machines is now `sdk/src/oauth/state-machines/**`. The Inspector consumes those browser-safe SDK exports through `@mcpjam/sdk/browser` plus a small adapter in `client/src/lib/oauth/debug-state-machine-adapter.ts`.
 
 ## Complete OAuth Flow
 
@@ -256,7 +258,7 @@ Provides an interactive guide for the OAuth flow with educational content:
 - Integrated action controls (Configure, Reset, Continue)
 - Summary header showing target server, protocol, and registration strategy
 
-Step metadata is defined in `client/src/lib/oauth/state-machines/shared/step-metadata.ts` with:
+Step metadata is defined in `sdk/src/oauth/state-machines/shared/step-metadata.ts` with:
 
 - Step ordering and indexing
 - Educational summaries for each step
@@ -326,7 +328,9 @@ saveCodeVerifier(verifier)
 
 ### 5. OAuth State Machine
 
-**Location:** `client/src/lib/oauth-state-machine.ts:353`
+**Canonical location:** `sdk/src/oauth/state-machines/**`
+
+**Legacy location:** `client/src/lib/oauth-state-machine.ts:353`
 
 Manages the step-by-step OAuth flow:
 
@@ -528,13 +532,14 @@ clearOAuthData(serverName);
 
 | Component                | Location                                                        |
 | ------------------------ | --------------------------------------------------------------- |
-| OAuth Flow Types         | `client/src/lib/oauth/state-machines/types.ts`                  |
+| OAuth Flow Types         | `sdk/src/oauth/state-machines/types.ts`                         |
 | OAuth Profile Types      | `client/src/lib/oauth/profile.ts`                               |
-| State Machine Factory    | `client/src/lib/oauth/state-machines/factory.ts`                |
-| 2025-03-26 State Machine | `client/src/lib/oauth/state-machines/debug-oauth-2025-03-26.ts` |
-| 2025-06-18 State Machine | `client/src/lib/oauth/state-machines/debug-oauth-2025-06-18.ts` |
-| 2025-11-25 State Machine | `client/src/lib/oauth/state-machines/debug-oauth-2025-11-25.ts` |
+| State Machine Factory    | `sdk/src/oauth/state-machines/factory.ts`                       |
+| 2025-03-26 State Machine | `sdk/src/oauth/state-machines/debug-oauth-2025-03-26.ts`        |
+| 2025-06-18 State Machine | `sdk/src/oauth/state-machines/debug-oauth-2025-06-18.ts`        |
+| 2025-11-25 State Machine | `sdk/src/oauth/state-machines/debug-oauth-2025-11-25.ts`        |
 | OAuth Provider           | `client/src/lib/mcp-oauth.ts`                                   |
+| Inspector OAuth Adapter  | `client/src/lib/oauth/debug-state-machine-adapter.ts`           |
 | Debug Proxy              | `server/routes/mcp/oauth.ts`                                    |
 | OAuth Flow UI            | `client/src/components/OAuthFlowTab.tsx`                        |
 | OAuth Profile Modal      | `client/src/components/oauth/OAuthProfileModal.tsx`             |

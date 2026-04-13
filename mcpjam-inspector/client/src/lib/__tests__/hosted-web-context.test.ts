@@ -35,6 +35,7 @@ describe("hosted web context", () => {
     expect(buildHostedServerRequest("bench")).toEqual({
       workspaceId: "ws_shared",
       serverId: "srv_bench",
+      serverName: "bench",
       clientCapabilities: defaultClientCapabilities,
       accessScope: "chat_v2",
       shareToken: "share_tok_123",
@@ -43,6 +44,7 @@ describe("hosted web context", () => {
     expect(buildHostedServerBatchRequest(["bench"])).toEqual({
       workspaceId: "ws_shared",
       serverIds: ["srv_bench"],
+      serverNames: ["bench"],
       clientCapabilities: defaultClientCapabilities,
       accessScope: "chat_v2",
       shareToken: "share_tok_123",
@@ -68,6 +70,7 @@ describe("hosted web context", () => {
     expect(buildHostedServerRequest("bench")).toEqual({
       workspaceId: "ws_regular",
       serverId: "srv_bench",
+      serverName: "bench",
       clientCapabilities: defaultClientCapabilities,
     });
   });
@@ -87,6 +90,7 @@ describe("hosted web context", () => {
 
     expect(buildHostedServerRequest("myServer")).toEqual({
       serverUrl: "https://example.com/mcp",
+      serverName: "myServer",
       serverHeaders: { "X-Api-Key": "key123" },
       clientCapabilities: defaultClientCapabilities,
     });
@@ -108,6 +112,7 @@ describe("hosted web context", () => {
 
     expect(buildHostedServerRequest("myServer")).toEqual({
       serverUrl: "https://example.com/mcp",
+      serverName: "myServer",
       serverHeaders: { "X-Api-Key": "key123" },
       clientCapabilities: defaultClientCapabilities,
     });
@@ -136,6 +141,7 @@ describe("hosted web context", () => {
 
     expect(buildHostedServerRequest("myServer")).toEqual({
       serverUrl: "https://example.com/mcp",
+      serverName: "myServer",
       serverHeaders: {
         Authorization: "Bearer stale-access-token",
         "X-Api-Key": "key123",
@@ -174,6 +180,7 @@ describe("hosted web context", () => {
 
     expect(buildHostedServerRequest("myServer")).toEqual({
       serverUrl: "https://example.com/mcp",
+      serverName: "myServer",
       serverHeaders: {
         "X-Api-Key": "key123",
       },
@@ -197,6 +204,7 @@ describe("hosted web context", () => {
 
     expect(buildHostedServerRequest("myServer")).toEqual({
       serverUrl: "https://example.com/mcp",
+      serverName: "myServer",
       clientCapabilities: defaultClientCapabilities,
     });
   });
@@ -217,6 +225,7 @@ describe("hosted web context", () => {
     expect(buildHostedServerRequest("bench")).toEqual({
       workspaceId: "ws_override",
       serverId: "srv_bench",
+      serverName: "bench",
       clientCapabilities,
     });
   });
@@ -255,6 +264,7 @@ describe("hosted web context", () => {
 
     expect(buildHostedServerRequest("myServer")).toEqual({
       serverUrl: "https://example.com/mcp",
+      serverName: "myServer",
       clientCapabilities: defaultClientCapabilities,
     });
   });

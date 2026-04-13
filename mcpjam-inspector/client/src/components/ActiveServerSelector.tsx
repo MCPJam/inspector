@@ -7,7 +7,6 @@ import { Check, ChevronLeft, ChevronRight, RefreshCw } from "lucide-react";
 import { usePostHog } from "posthog-js/react";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { hasOAuthConfig } from "@/lib/oauth/mcp-oauth";
-import { ConfirmChatResetDialog } from "./chat-v2/chat-input/dialogs/confirm-chat-reset-dialog";
 import { HOSTED_MODE } from "@/lib/config";
 
 const HOSTED_HTTPS_REQUIRED_HINT =
@@ -37,11 +36,11 @@ export interface ActiveServerSelectorProps {
   showOnlyOAuthServers?: boolean; // Only show servers that use OAuth
   showOnlyServersWithViews?: boolean; // Only show servers that have saved views
   serversWithViews?: Set<string>; // Set of server names that have saved views
-  hasMessages?: boolean;
+  hasMessages?: boolean; // Reserved for callers that still compute this
   className?: string;
 }
 
-/** Props supplied by the shell; `hasMessages` and `className` are set in PlaygroundMain. */
+/** Props supplied by the shell; `className` is set in PlaygroundMain. */
 export type PlaygroundServerSelectorProps = Omit<
   ActiveServerSelectorProps,
   "hasMessages" | "className"
@@ -89,16 +88,15 @@ export function ActiveServerSelector({
   showOnlyOAuthServers = false,
   showOnlyServersWithViews = false,
   serversWithViews,
-  hasMessages = false,
   className,
 }: ActiveServerSelectorProps) {
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
-  const [showConfirmDialog, setShowConfirmDialog] = useState(false);
-  const [pendingServer, setPendingServer] = useState<string | null>(null);
   const [canScrollLeft, setCanScrollLeft] = useState(false);
   const [canScrollRight, setCanScrollRight] = useState(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const posthog = usePostHog();
+  const hasNoServersWithViews =
+    showOnlyServersWithViews && (serversWithViews?.size ?? 0) === 0;
 
   // Helper function to check if a server uses OAuth
   const isOAuthServer = (server: ServerWithName): boolean => {
@@ -115,18 +113,13 @@ export function ActiveServerSelector({
 
   const servers = Object.entries(serverConfigs).filter(([name, server]) => {
     if (showOnlyOAuthServers && !isOAuthServer(server)) return false;
-    if (
-      showOnlyServersWithViews &&
-      serversWithViews &&
-      !serversWithViews.has(name)
-    )
-      return false;
+    if (showOnlyServersWithViews && !serversWithViews?.has(name)) return false;
     return true;
   });
 
   // Auto-select first available server if current selection is not in the list
   useEffect(() => {
-    if (isMultiSelectEnabled) return; // Don't auto-select in multi-select mode
+    if (isMultiSelectEnabled || hasNoServersWithViews) return;
 
     const serverNames = servers.map(([name]) => name);
     const isCurrentSelectionValid = serverNames.includes(selectedServer);
@@ -143,42 +136,20 @@ export function ActiveServerSelector({
       // No available servers and selection is stale — clear it
       onServerChange("none");
     }
-  }, [servers.length, selectedServer, isMultiSelectEnabled, onServerChange]);
+  }, [
+    servers.length,
+    selectedServer,
+    isMultiSelectEnabled,
+    onServerChange,
+    hasNoServersWithViews,
+  ]);
 
   const handleServerClick = (name: string) => {
     if (isMultiSelectEnabled) {
-      if (hasMessages) {
-        setPendingServer(name);
-        setShowConfirmDialog(true);
-        return;
-      }
       onMultiServerToggle(name);
-    } else {
-      const isDifferentServer = selectedServer !== name;
-      if (isDifferentServer && hasMessages) {
-        setPendingServer(name);
-        setShowConfirmDialog(true);
-        return;
-      }
-      onServerChange(name);
+      return;
     }
-  };
-
-  const handleConfirmChange = () => {
-    if (pendingServer) {
-      if (isMultiSelectEnabled) {
-        onMultiServerToggle(pendingServer);
-      } else {
-        onServerChange(pendingServer);
-      }
-      setPendingServer(null);
-    }
-    setShowConfirmDialog(false);
-  };
-
-  const handleCancelChange = () => {
-    setPendingServer(null);
-    setShowConfirmDialog(false);
+    onServerChange(name);
   };
 
   useEffect(() => {
@@ -219,6 +190,10 @@ export function ActiveServerSelector({
       behavior: "smooth",
     });
   };
+
+  if (hasNoServersWithViews) {
+    return null;
+  }
 
   return (
     <div className={cn("relative h-full w-full min-w-0", className)}>
@@ -348,13 +323,6 @@ export function ActiveServerSelector({
             });
             onConnect(formData);
           }}
-        />
-
-        <ConfirmChatResetDialog
-          open={showConfirmDialog}
-          onConfirm={handleConfirmChange}
-          onCancel={handleCancelChange}
-          message="Changing server selection will cause the chat to reset. This action cannot be undone."
         />
 
         {canScrollLeft && (
