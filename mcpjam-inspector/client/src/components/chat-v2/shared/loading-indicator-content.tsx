@@ -5,10 +5,17 @@ import { ClaudeLoadingIndicator } from "./claude-loading-indicator";
 
 export type LoadingIndicatorVariant = "default" | "chatgpt-dot" | "claude-mark";
 
-interface LoadingIndicatorContentProps {
-  variant?: LoadingIndicatorVariant;
-  className?: string;
-}
+type LoadingIndicatorContentProps =
+  | {
+      resolvedVariant: LoadingIndicatorVariant;
+      variant?: never;
+      className?: string;
+    }
+  | {
+      resolvedVariant?: undefined;
+      variant?: LoadingIndicatorVariant;
+      className?: string;
+    };
 
 export function getLoadingIndicatorVariantForHostStyle(
   hostStyle: SandboxHostStyle | null | undefined,
@@ -67,12 +74,13 @@ export function useResolvedLoadingIndicatorVariant(
   });
 }
 
-export function LoadingIndicatorContent({
-  variant,
+function ResolvedLoadingIndicatorContent({
+  resolvedVariant,
   className,
-}: LoadingIndicatorContentProps) {
-  const resolvedVariant = useResolvedLoadingIndicatorVariant(variant);
-
+}: {
+  resolvedVariant: LoadingIndicatorVariant;
+  className?: string;
+}) {
   if (resolvedVariant === "claude-mark") {
     return <ClaudeLoadingIndicator className={className} />;
   }
@@ -103,5 +111,40 @@ export function LoadingIndicatorContent({
         </span>
       </span>
     </span>
+  );
+}
+
+function SelfResolvingLoadingIndicatorContent({
+  variant,
+  className,
+}: {
+  variant?: LoadingIndicatorVariant;
+  className?: string;
+}) {
+  const resolvedVariant = useResolvedLoadingIndicatorVariant(variant);
+
+  return (
+    <ResolvedLoadingIndicatorContent
+      resolvedVariant={resolvedVariant}
+      className={className}
+    />
+  );
+}
+
+export function LoadingIndicatorContent(props: LoadingIndicatorContentProps) {
+  if (props.resolvedVariant !== undefined) {
+    return (
+      <ResolvedLoadingIndicatorContent
+        resolvedVariant={props.resolvedVariant}
+        className={props.className}
+      />
+    );
+  }
+
+  return (
+    <SelfResolvingLoadingIndicatorContent
+      variant={props.variant}
+      className={props.className}
+    />
   );
 }

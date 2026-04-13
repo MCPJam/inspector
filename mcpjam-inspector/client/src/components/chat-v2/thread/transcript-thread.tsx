@@ -17,10 +17,7 @@ import type { DisplayMode } from "@/stores/ui-playground-store";
 import type { ToolServerMap } from "@/lib/apis/mcp-tools-api";
 import type { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import { cn } from "@/lib/utils";
-import {
-  type LoadingIndicatorVariant,
-  useResolvedLoadingIndicatorVariant,
-} from "@/components/chat-v2/shared/loading-indicator-content";
+import { type LoadingIndicatorVariant } from "@/components/chat-v2/shared/loading-indicator-content";
 
 const NOOP = (..._args: unknown[]) => {};
 const TRANSCRIPT_SCROLL_SETTLE_MS = 120;
@@ -79,7 +76,7 @@ export interface TranscriptThreadProps extends MessageViewPassthroughProps {
   transcriptRef?: Ref<HTMLDivElement>;
   contentClassName?: string;
   isLoading?: boolean;
-  loadingIndicatorVariant?: LoadingIndicatorVariant;
+  resolvedLoadingIndicatorVariant?: LoadingIndicatorVariant;
   lastRenderableMessageId?: string | null;
   getMessageWrapperProps?: (
     args: MessageWrapperArgs,
@@ -200,19 +197,13 @@ export function TranscriptThread({
   transcriptRef,
   contentClassName,
   isLoading = false,
-  loadingIndicatorVariant,
+  resolvedLoadingIndicatorVariant,
   lastRenderableMessageId = null,
   getMessageWrapperProps,
 }: TranscriptThreadProps) {
   const contentRef = useRef<HTMLDivElement | null>(null);
   const messageRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const shouldReduceMotion = useReducedMotion();
-  const resolvedLoadingIndicatorVariant = useResolvedLoadingIndicatorVariant(
-    loadingIndicatorVariant,
-    {
-      modelProvider: model.provider,
-    },
-  );
   const highlightedMessageIdSet = useMemo(
     () => new Set(highlightedMessageIds),
     [highlightedMessageIds],

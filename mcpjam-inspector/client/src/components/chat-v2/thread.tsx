@@ -208,7 +208,7 @@ export function Thread({
         navigationKey={navigationKey}
         viewportRef={viewportRef}
         isLoading={isLoading}
-        loadingIndicatorVariant={resolvedLoadingIndicatorVariant}
+        resolvedLoadingIndicatorVariant={resolvedLoadingIndicatorVariant}
         lastRenderableMessageId={lastRenderableMessageId}
         contentClassName={
           contentClassName ??
@@ -220,7 +220,7 @@ export function Thread({
         <div className="min-w-0 w-full max-w-4xl mx-auto px-4">
           <ThinkingIndicator
             model={model}
-            variant={resolvedLoadingIndicatorVariant}
+            resolvedVariant={resolvedLoadingIndicatorVariant}
           />
         </div>
       )}
@@ -236,7 +236,7 @@ export function Thread({
           disabled={fullscreenChatDisabled}
           canSend={canSendFullscreenChat}
           isThinking={isLoading}
-          loadingIndicatorVariant={resolvedLoadingIndicatorVariant}
+          resolvedLoadingIndicatorVariant={resolvedLoadingIndicatorVariant}
           onStop={onFullscreenChatStop}
           onSend={() => {
             if (!canSendFullscreenChat) return;

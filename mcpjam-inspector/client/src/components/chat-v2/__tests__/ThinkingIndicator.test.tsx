@@ -68,7 +68,7 @@ describe("ThinkingIndicator", () => {
 
   it("renders the pulsing dot variant with hidden accessible text", () => {
     renderThinkingIndicator(
-      <ThinkingIndicator model={defaultModel} variant="chatgpt-dot" />,
+      <ThinkingIndicator model={defaultModel} resolvedVariant="chatgpt-dot" />,
     );
 
     expect(screen.getByTestId("loading-indicator-dot")).toBeInTheDocument();
@@ -79,7 +79,7 @@ describe("ThinkingIndicator", () => {
 
   it("renders the animated Claude mark variant with hidden accessible text", () => {
     renderThinkingIndicator(
-      <ThinkingIndicator model={defaultModel} variant="claude-mark" />,
+      <ThinkingIndicator model={defaultModel} resolvedVariant="claude-mark" />,
     );
 
     expect(screen.getByTestId("loading-indicator-claude")).toBeInTheDocument();

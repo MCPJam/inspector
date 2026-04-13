@@ -93,6 +93,19 @@ describe("LoadingIndicatorContent", () => {
     expect(screen.getByTestId("loading-indicator-dot")).toBeInTheDocument();
   });
 
+  it("renders an explicit resolvedVariant directly without host-style fallback", () => {
+    render(
+      <SandboxHostStyleProvider value="claude">
+        <LoadingIndicatorContent resolvedVariant="chatgpt-dot" />
+      </SandboxHostStyleProvider>,
+    );
+
+    expect(screen.getByTestId("loading-indicator-dot")).toBeInTheDocument();
+    expect(
+      screen.queryByTestId("loading-indicator-claude"),
+    ).not.toBeInTheDocument();
+  });
+
   it('treats variant="default" as fallback so host-style mascots still render', () => {
     render(
       <SandboxHostStyleProvider value="claude">

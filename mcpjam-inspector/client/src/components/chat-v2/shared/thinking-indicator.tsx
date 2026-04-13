@@ -9,23 +9,19 @@ import {
 import {
   LoadingIndicatorContent,
   type LoadingIndicatorVariant,
-  useResolvedLoadingIndicatorVariant,
 } from "./loading-indicator-content";
 import { getAssistantAvatarDescriptor } from "./assistant-avatar";
 
 export function ThinkingIndicator({
   model,
-  variant,
+  resolvedVariant,
 }: {
   model: ModelDefinition;
-  variant?: LoadingIndicatorVariant;
+  resolvedVariant?: LoadingIndicatorVariant;
 }) {
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const sandboxHostStyle = useSandboxHostStyle();
   const sandboxHostTheme = useSandboxHostTheme();
-  const resolvedVariant = useResolvedLoadingIndicatorVariant(variant, {
-    modelProvider: model.provider,
-  });
   const assistantAvatar = getAssistantAvatarDescriptor({
     model,
     themeMode: sandboxHostTheme ?? themeMode,
@@ -62,7 +58,11 @@ export function ThinkingIndicator({
       ) : null}
 
       <div className="inline-flex items-center gap-2 text-muted-foreground/80">
-        <LoadingIndicatorContent variant={resolvedVariant} />
+        {resolvedVariant !== undefined ? (
+          <LoadingIndicatorContent resolvedVariant={resolvedVariant} />
+        ) : (
+          <LoadingIndicatorContent />
+        )}
       </div>
     </article>
   );

@@ -29,12 +29,12 @@ vi.mock("../thread/message-view", () => ({
 vi.mock("../shared/thinking-indicator", () => ({
   ThinkingIndicator: ({
     model,
-    variant,
+    resolvedVariant,
   }: {
     model: ModelDefinition;
-    variant?: string;
+    resolvedVariant?: string;
   }) => {
-    mockThinkingIndicator({ model, variant });
+    mockThinkingIndicator({ model, resolvedVariant });
     return (
       <div data-testid="thinking-indicator">Thinking... ({model.name})</div>
     );
@@ -262,7 +262,7 @@ describe("Thread", () => {
 
       expect(mockThinkingIndicator).toHaveBeenCalledWith(
         expect.objectContaining({
-          variant: "chatgpt-dot",
+          resolvedVariant: "chatgpt-dot",
         }),
       );
     });
@@ -287,7 +287,7 @@ describe("Thread", () => {
 
       expect(mockThinkingIndicator).toHaveBeenCalledWith(
         expect.objectContaining({
-          variant: "claude-mark",
+          resolvedVariant: "claude-mark",
         }),
       );
     });
@@ -303,7 +303,7 @@ describe("Thread", () => {
 
       expect(mockThinkingIndicator).toHaveBeenCalledWith(
         expect.objectContaining({
-          variant: "claude-mark",
+          resolvedVariant: "claude-mark",
         }),
       );
     });
@@ -323,7 +323,7 @@ describe("Thread", () => {
       expect(screen.getByTestId("thinking-indicator")).toBeInTheDocument();
       expect(mockThinkingIndicator).toHaveBeenCalledWith(
         expect.objectContaining({
-          variant: "chatgpt-dot",
+          resolvedVariant: "chatgpt-dot",
         }),
       );
     });
@@ -368,7 +368,7 @@ describe("Thread", () => {
       expect(screen.getByTestId("thinking-indicator")).toBeInTheDocument();
       expect(mockThinkingIndicator).toHaveBeenCalledWith(
         expect.objectContaining({
-          variant: "claude-mark",
+          resolvedVariant: "claude-mark",
         }),
       );
       expect(mockMessageView).toHaveBeenCalledWith(
@@ -544,7 +544,7 @@ describe("Thread", () => {
       expect(screen.getByTestId("fullscreen-chat-overlay")).toBeInTheDocument();
       expect(mockFullscreenChatOverlay).toHaveBeenLastCalledWith(
         expect.objectContaining({
-          loadingIndicatorVariant: "claude-mark",
+          resolvedLoadingIndicatorVariant: "claude-mark",
         }),
       );
     });

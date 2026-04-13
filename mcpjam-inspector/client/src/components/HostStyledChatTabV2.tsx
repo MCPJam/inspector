@@ -8,7 +8,10 @@ import { getSandboxShellStyle } from "@/lib/sandbox-host-style";
 import { cn } from "@/lib/utils";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 
-type HostStyledChatTabV2Props = ComponentProps<typeof ChatTabV2>;
+type HostStyledChatTabV2Props = Omit<
+  ComponentProps<typeof ChatTabV2>,
+  "hostStyle" | "onHostStyleChange"
+>;
 
 export function HostStyledChatTabV2({
   showHostStyleSelector = false,
