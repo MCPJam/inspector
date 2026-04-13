@@ -1,0 +1,314 @@
+---
+title: "OAuth Conformance"
+description: "Test your MCP server's OAuth implementation across all registration methods and protocol versions"
+icon: "shield-check"
+---
+
+The OAuth conformance module runs real OAuth handshakes against your MCP server — the same flows Claude Desktop, ChatGPT, and Claude Code perform — and tells you exactly where they break.
+
+## Why you need this
+
+- **Each MCP client exercises OAuth slightly differently.** Passing conformance means your server works for all of them.
+- **OAuth bugs are silent.** A valid-looking token can be rejected by MCP authentication downstream. Users see "failed to connect" with no context. `--verify-tools` catches this.
+- **3 registration strategies x 3 protocol versions x 3 auth modes** = 27 possible flow combinations. The suite runner covers the matrix in one invocation.
+- **CI-ready output.** `--format junit-xml` for dashboards. Exit 0/1/2 for scripts.
+
+## Quick start
+
+```bash
+mcpjam oauth conformance \
+  --url https://your-server.com/mcp \
+  --protocol-version 2025-11-25 \
+  --registration dcr \
+  --verify-tools
+```
+
+The default `--auth-mode` is `interactive` — a browser opens for consent. Pass `--auth-mode headless` for CI against auto-consenting auth servers, or `--auth-mode client_credentials` for M2M.
+
+**What success looks like:**
+
+```text
+OAuth conformance: PASSED
+Server: https://your-server.com/mcp
+Flow: 2025-11-25 / dcr
+Summary: OAuth conformance passed for https://your-server.com/mcp (2025-11-25, dcr)
+Duration: 4312ms
+Steps: 12 passed steps, 0 failed steps, 0 skipped steps
+
+Verification
+listTools: PASS (8 tools)
+```
+
+## What it tests
+
+Each conformance run walks through:
+
+1. **Initial request** — sends an unauthenticated request to trigger a 401
+2. **Discovery** — fetches resource metadata and authorization server metadata
+3. **Registration** — registers the client via CIMD, DCR, or pre-registered credentials
+4. **Authorization** — obtains an authorization code (interactive, headless, or client_credentials)
+5. **Token exchange** — exchanges the code for access/refresh tokens
+6. **Authenticated request** — retries the MCP request with the token
+7. **Post-auth verification** (optional) — connects via MCP and lists tools / calls a tool
+
+When `--conformance-checks` is enabled, three additional negative checks run after the flow:
+- **Invalid client** — confirms the auth server rejects an unknown client ID
+- **Invalid redirect** — confirms the auth server rejects a mismatched redirect URI
+- **Token format** — validates the token response has the expected fields
+
+## Scenarios
+
+### I just added OAuth to my MCP server
+
+```bash
+mcpjam oauth conformance \
+  --url http://localhost:8080/mcp \
+  --protocol-version 2025-11-25 \
+  --registration dcr \
+  --verify-tools
+```
+
+### CI conformance testing without a browser
+
+```bash
+# Option A: headless (requires auto-consenting auth server)
+mcpjam oauth conformance \
+  --url $MCP_SERVER_URL \
+  --protocol-version 2025-11-25 \
+  --registration dcr \
+  --auth-mode headless \
+  --verify-tools
+
+# Option B: client_credentials (M2M, no browser)
+mcpjam oauth conformance \
+  --url $MCP_SERVER_URL \
+  --protocol-version 2025-11-25 \
+  --registration preregistered \
+  --auth-mode client_credentials \
+  --client-id "$M2M_CLIENT_ID" \
+  --client-secret "$M2M_CLIENT_SECRET" \
+  --verify-tools
+```
+
+<Note>
+  Always pass `--auth-mode` explicitly in CI. The default is `interactive`
+  and will attempt to open a browser.
+</Note>
+
+### Test multiple protocol versions at once
+
+Create a config file:
+
+```json
+{
+  "name": "Full Protocol Matrix",
+  "serverUrl": "https://your-server.com/mcp",
+  "defaults": {
+    "auth": { "mode": "headless" },
+    "verification": { "listTools": true }
+  },
+  "flows": [
+    { "label": "2025-03-26 / dcr", "protocolVersion": "2025-03-26", "registrationStrategy": "dcr" },
+    { "label": "2025-06-18 / dcr", "protocolVersion": "2025-06-18", "registrationStrategy": "dcr" },
+    { "label": "2025-11-25 / dcr", "protocolVersion": "2025-11-25", "registrationStrategy": "dcr" },
+    { "label": "2025-11-25 / cimd", "protocolVersion": "2025-11-25", "registrationStrategy": "cimd" }
+  ]
+}
+```
+
+```bash
+mcpjam oauth conformance-suite --config ./oauth-tests.json
+```
+
+### Users report tokens work but tool calls fail
+
+This is exactly what `--verify-call-tool` catches. OAuth can succeed (valid token issued) while the MCP layer rejects it (wrong audience, missing scope, session binding).
+
+```bash
+mcpjam oauth conformance \
+  --url https://your-server.com/mcp \
+  --protocol-version 2025-11-25 \
+  --registration dcr \
+  --verify-call-tool your_tool_name
+```
+
+`--verify-call-tool` implies `--verify-tools`.
+
+### Test specific scopes
+
+```bash
+mcpjam oauth conformance \
+  --url https://your-server.com/mcp \
+  --protocol-version 2025-11-25 \
+  --registration dcr \
+  --scopes "read:tools write:tools" \
+  --verify-tools
+```
+
+<Note>
+  `--scopes` sets what you **request** from the auth server. The runner does
+  not currently verify that granted scopes match requested scopes.
+</Note>
+
+### Drive consent via Playwright or automation
+
+```bash
+mcpjam oauth conformance \
+  --url https://your-server.com/mcp \
+  --protocol-version 2025-11-25 \
+  --registration dcr \
+  --print-url \
+  --verify-tools
+```
+
+`--print-url` writes the consent URL to stderr (`OAUTH_CONSENT_URL: https://...`) instead of launching a browser. The local callback listener still runs — your Playwright script opens the URL, drives consent, and the CLI catches the redirect.
+
+### Run the OAuth negative checks
+
+```bash
+mcpjam oauth conformance \
+  --url https://your-server.com/mcp \
+  --protocol-version 2025-11-25 \
+  --registration dcr \
+  --conformance-checks \
+  --verify-tools
+```
+
+This adds 3 checks after the main flow: invalid client rejection, invalid redirect rejection, and token format validation.
+
+## Registration strategies
+
+| Strategy | Description | Protocol versions |
+|----------|-------------|-------------------|
+| `cimd` | Client ID Metadata Document — the client publishes its identity at a URL | 2025-11-25 only |
+| `dcr` | Dynamic Client Registration — the client registers itself at runtime | All |
+| `preregistered` | Pre-registered client ID and optional secret | All |
+
+**When to choose what:**
+- **CIMD** (2025-11-25): preferred for production when the auth server supports it — avoids mutable DCR state.
+- **DCR**: the default for quick testing — works everywhere, no pre-configuration needed.
+- **Preregistered**: use when the auth server doesn't support DCR, or for `client_credentials` M2M flows.
+
+When `cimd` is used without `--client-metadata-url`, the runner falls back to mcpjam's public metadata document at `https://www.mcpjam.com/.well-known/oauth/client-metadata.json`.
+
+## Auth modes
+
+| Mode | Use case | User interaction |
+|------|----------|-----------------|
+| `interactive` (default) | Local dev — opens browser for consent | Browser popup |
+| `headless` | CI with auto-consenting auth servers | None |
+| `client_credentials` | Machine-to-machine service accounts | None |
+
+### Compatibility
+
+| Registration | `headless` | `interactive` | `client_credentials` |
+|--------------|:----------:|:-------------:|:--------------------:|
+| `cimd` (2025-11-25 only) | yes | yes | no |
+| `dcr` | yes | yes | yes (secret from DCR) |
+| `preregistered` | yes | yes | yes (requires `--client-secret`) |
+
+`cimd` + `client_credentials` is rejected with a clear error: *"CIMD is a browser-based registration flow and only works with --auth-mode headless or --auth-mode interactive."*
+
+## Post-auth verification
+
+OAuth conformance proves a token was issued. Verification proves the token is actually **usable for MCP operations**.
+
+Three silent-failure modes this catches:
+
+1. **Token audience mismatch** — OAuth flow succeeds but `tools/list` returns 401 because `aud` doesn't match the MCP resource URL.
+2. **Scope mismatch** — token issued but the MCP tool handler requires different scopes.
+3. **Session binding** — some servers require a separate session init after auth.
+
+| Flag | What it does |
+|------|-------------|
+| `--verify-tools` | After OAuth, connect to the MCP server and call `tools/list` |
+| `--verify-call-tool <name>` | Also call the named tool (implies `--verify-tools`) |
+
+## Troubleshooting
+
+| Step that failed | Likely cause | Fix |
+|-----------------|-------------|-----|
+| `request_without_token` returned 200 | Server allows anonymous access or missing `WWW-Authenticate` | Return 401 with `WWW-Authenticate: Bearer resource_metadata="..."` |
+| `request_resource_metadata` 404 | `/.well-known/oauth-protected-resource` missing or wrong Content-Type | Ensure the endpoint exists and returns `application/json` |
+| `received_resource_metadata` — AS URL mismatch | `authorization_servers` points to a URL without AS metadata | Verify the AS URL has `/.well-known/oauth-authorization-server` |
+| `request_client_registration` 400 | DCR endpoint rejected the registration metadata | Check required fields; use SDK `dynamicRegistration` overrides for custom metadata |
+| `received_authorization_code` — HTML login page | Auth server requires interactive login but you used `--auth-mode headless` | Switch to `--auth-mode interactive` |
+| `received_authorization_code` — state mismatch | Stale popup or concurrent authorization flows | Close other browser tabs and retry |
+| `token_request` 401 `invalid_client` | Wrong `token_endpoint_auth_method` or client_id mismatch | Check DCR response for `token_endpoint_auth_method`; CIMD uses `none` |
+| `authenticated_mcp_request` 401 | Token `aud` doesn't match MCP resource URL | Ensure your auth server sets `aud` correctly |
+| `verify_list_tools` auth error | Token works for OAuth but MCP layer rejects it — scope issue | Check that the token's scope matches what tool handlers require |
+| DCR + `client_credentials`: "Dynamic registration produced a public client" | DCR returned `token_endpoint_auth_method: "none"` | Use `--registration preregistered` with explicit credentials instead |
+
+## CI/CD integration
+
+### GitHub Actions
+
+```yaml
+- name: OAuth Conformance
+  run: |
+    npx -y @mcpjam/cli-preview@latest oauth conformance \
+      --url ${{ secrets.MCP_SERVER_URL }} \
+      --protocol-version 2025-11-25 \
+      --registration preregistered \
+      --auth-mode client_credentials \
+      --client-id ${{ secrets.M2M_CLIENT_ID }} \
+      --client-secret ${{ secrets.M2M_CLIENT_SECRET }} \
+      --verify-tools
+```
+
+### GitLab CI (JUnit output)
+
+```yaml
+oauth-conformance:
+  stage: test
+  script:
+    - npx -y @mcpjam/cli-preview@latest oauth conformance-suite
+        --config ./oauth-tests.json
+        --format junit-xml > report.xml
+  artifacts:
+    reports:
+      junit: report.xml
+```
+
+## All flags
+
+### `oauth conformance`
+
+| Flag | Required | Default | Description |
+|------|----------|---------|-------------|
+| `--url <url>` | Yes | | MCP server URL |
+| `--protocol-version <v>` | Yes | | `2025-03-26`, `2025-06-18`, or `2025-11-25` |
+| `--registration <s>` | Yes | | `cimd`, `dcr`, or `preregistered` |
+| `--auth-mode <m>` | No | `interactive` | `headless`, `interactive`, or `client_credentials` |
+| `--client-id <id>` | No | | OAuth client ID (required for `preregistered`) |
+| `--client-secret <s>` | No | | OAuth client secret |
+| `--client-metadata-url <url>` | No | | CIMD metadata document URL |
+| `--redirect-url <url>` | No | Auto-generated | OAuth redirect URL |
+| `--scopes <scopes>` | No | | Space-separated scope string |
+| `--header <header>` | No | | HTTP header `Key: Value` (repeatable) |
+| `--step-timeout <ms>` | No | `30000` | Per-step timeout |
+| `--verify-tools` | No | | After OAuth, connect and list tools |
+| `--verify-call-tool <name>` | No | | Also call the named tool (implies `--verify-tools`) |
+| `--conformance-checks` | No | | Run additional negative OAuth checks after the main flow |
+| `--print-url` | No | | Print consent URL to stderr instead of launching a browser |
+
+### `oauth conformance-suite`
+
+| Flag | Required | Default | Description |
+|------|----------|---------|-------------|
+| `--config <path>` | Yes | | Path to JSON config file |
+| `--verify-tools` | No | | Enable tool listing on all flows |
+| `--verify-call-tool <name>` | No | | Call the named tool after listing |
+| `--format <fmt>` | No | Auto-detected | `json`, `human`, or `junit-xml` |
+
+<Note>
+  `--verify-tools` and `--verify-call-tool` on the suite command are forced
+  onto **every** flow. Per-flow `verification` entries in the config file
+  cannot disable them once the CLI flag is set.
+</Note>
+
+## Related
+
+- [OAuth Login & Debugging](/cli/oauth-login) — get tokens and debug OAuth flows
+- [Server Inspection](/cli/server-inspection) — probe and diagnose before testing conformance
+- [OAuth Conformance SDK Reference](/sdk/reference/oauth-conformance) — programmatic usage with `OAuthConformanceTest`
