@@ -1,0 +1,219 @@
+---
+title: "Command Reference"
+description: "Complete flag reference for every mcpjam CLI command"
+icon: "book"
+---
+
+Complete flag tables for every `mcpjam` command. For guides and recipes, see the individual command pages.
+
+## Global flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--timeout <ms>` | `30000` | Request timeout in milliseconds |
+| `--rpc` | off | Include raw JSON-RPC logs in output |
+| `--format <format>` | `human` on TTY, `json` when piped | Output format |
+| `-v, --version` | | Print the CLI version |
+
+---
+
+## `server` commands
+
+All server commands accept the shared connection flags below, plus command-specific options.
+
+### Shared connection flags
+
+| Flag | Description |
+|------|-------------|
+| `--url <url>` | HTTP MCP server URL |
+| `--access-token <token>` | Bearer access token |
+| `--oauth-access-token <token>` | OAuth bearer access token |
+| `--refresh-token <token>` | OAuth refresh token |
+| `--client-id <id>` | OAuth client ID (with `--refresh-token`) |
+| `--client-secret <secret>` | OAuth client secret (with `--refresh-token`) |
+| `--header <header>` | HTTP header `Key: Value` (repeatable) |
+| `--client-capabilities <json>` | Client capabilities JSON object |
+| `--command <command>` | Stdio server command |
+| `--command-args <arg>` | Stdio command argument (repeatable) |
+| `--env <env>` | Stdio environment `KEY=VALUE` (repeatable) |
+
+### `server probe`
+
+No additional flags beyond shared connection flags.
+
+### `server doctor`
+
+| Flag | Description |
+|------|-------------|
+| `--out <path>` | Write the doctor JSON artifact to a file |
+
+### `server info`
+
+No additional flags.
+
+### `server validate`
+
+No additional flags.
+
+### `server ping`
+
+No additional flags.
+
+### `server capabilities`
+
+No additional flags.
+
+### `server export`
+
+No additional flags.
+
+---
+
+## `tools` commands
+
+### `tools list`
+
+Uses shared connection flags.
+
+### `tools call`
+
+| Flag | Description |
+|------|-------------|
+| `--tool-name <name>` | Name of the tool to call |
+| `--tool-args <json>` | Tool arguments as a JSON string |
+| `--debug-out <path>` | Write debug artifact to file |
+
+Plus shared connection flags.
+
+---
+
+## `resources` commands
+
+### `resources list`
+
+Uses shared connection flags.
+
+### `resources read`
+
+| Flag | Description |
+|------|-------------|
+| `--resource-uri <uri>` | URI of the resource to read |
+
+Plus shared connection flags.
+
+### `resources templates`
+
+Uses shared connection flags.
+
+---
+
+## `prompts` commands
+
+### `prompts list`
+
+Uses shared connection flags.
+
+### `prompts get`
+
+| Flag | Description |
+|------|-------------|
+| `--prompt-name <name>` | Name of the prompt |
+| `--prompt-args <json>` | Prompt arguments as a JSON string |
+
+Plus shared connection flags.
+
+---
+
+## `oauth` commands
+
+### `oauth login`
+
+| Flag | Required | Default | Description |
+|------|----------|---------|-------------|
+| `--url <url>` | Yes | | MCP server URL |
+| `--protocol-version <v>` | Yes | | `2025-03-26`, `2025-06-18`, or `2025-11-25` |
+| `--registration <s>` | Yes | | `cimd`, `dcr`, or `preregistered` |
+| `--auth-mode <m>` | No | `interactive` | `headless`, `interactive`, or `client_credentials` |
+| `--client-id <id>` | No | | OAuth client ID |
+| `--client-secret <s>` | No | | OAuth client secret |
+| `--client-metadata-url <url>` | No | | CIMD metadata document URL |
+| `--redirect-url <url>` | No | Auto-generated | OAuth redirect URL |
+| `--scopes <scopes>` | No | | Space-separated scope string |
+| `--header <header>` | No | | HTTP header `Key: Value` (repeatable) |
+| `--step-timeout <ms>` | No | `30000` | Per-step timeout |
+| `--verify-tools` | No | | After login, list tools |
+| `--verify-call-tool <name>` | No | | Also call the named tool |
+| `--debug-out <path>` | No | | Write debug artifact to file |
+
+### `oauth conformance`
+
+| Flag | Required | Default | Description |
+|------|----------|---------|-------------|
+| `--url <url>` | Yes | | MCP server URL |
+| `--protocol-version <v>` | Yes | | `2025-03-26`, `2025-06-18`, or `2025-11-25` |
+| `--registration <s>` | Yes | | `cimd`, `dcr`, or `preregistered` |
+| `--auth-mode <m>` | No | `interactive` | `headless`, `interactive`, or `client_credentials` |
+| `--client-id <id>` | No | | OAuth client ID |
+| `--client-secret <s>` | No | | OAuth client secret |
+| `--client-metadata-url <url>` | No | | CIMD metadata document URL |
+| `--redirect-url <url>` | No | Auto-generated | OAuth redirect URL |
+| `--scopes <scopes>` | No | | Space-separated scope string |
+| `--header <header>` | No | | HTTP header `Key: Value` (repeatable) |
+| `--step-timeout <ms>` | No | `30000` | Per-step timeout |
+| `--verify-tools` | No | | After OAuth, list tools |
+| `--verify-call-tool <name>` | No | | Also call the named tool |
+| `--conformance-checks` | No | | Run additional negative OAuth checks |
+| `--print-url` | No | | Print consent URL to stderr (interactive only) |
+
+### `oauth conformance-suite`
+
+| Flag | Required | Default | Description |
+|------|----------|---------|-------------|
+| `--config <path>` | Yes | | Path to JSON config file |
+| `--verify-tools` | No | | Enable tool listing on all flows |
+| `--verify-call-tool <name>` | No | | Call the named tool after listing |
+
+### `oauth metadata`
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--url <url>` | Yes | OAuth metadata URL to fetch |
+
+### `oauth proxy` / `oauth debug-proxy`
+
+| Flag | Required | Default | Description |
+|------|----------|---------|-------------|
+| `--url <url>` | Yes | | OAuth request URL |
+| `--method <method>` | No | `GET` | HTTP method |
+| `--header <header>` | No | | HTTP header `Key: Value` (repeatable) |
+| `--body <value>` | No | | Request body (JSON or raw string) |
+
+---
+
+## `protocol` commands
+
+### `protocol conformance`
+
+MCP protocol conformance checks against an HTTP server. Uses shared connection flags.
+
+---
+
+## `apps` commands
+
+### `apps mcp-widget`
+
+Fetch hosted-style MCP App widget content.
+
+### `apps chatgpt-widget`
+
+Fetch hosted-style ChatGPT App widget content.
+
+---
+
+## Exit codes
+
+| Code | Meaning |
+|------|---------|
+| `0` | Success / all checks passed |
+| `1` | Command ran but reported a failure |
+| `2` | Invalid arguments or configuration |
