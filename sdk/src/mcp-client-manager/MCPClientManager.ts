@@ -5,6 +5,7 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import {
   StdioClientTransport,
+  getDefaultEnvironment,
 } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
@@ -333,6 +334,8 @@ export class MCPClientManager {
     } catch {
       // Ignore close errors
     } finally {
+      state.stdioStderrCleanup?.();
+      state.stdioStderrCleanup = undefined;
       if (state.transport) {
         await this.safeCloseTransport(state.transport);
       }
@@ -1036,7 +1039,8 @@ export class MCPClientManager {
           serverId,
           client,
           config,
-          timeout
+          timeout,
+          state
         );
       } else {
         transport = await this.connectViaHttp(
@@ -1067,12 +1071,13 @@ export class MCPClientManager {
     serverId: string,
     client: Client,
     config: StdioServerConfig,
-    timeout: number
+    timeout: number,
+    state: ManagedClientState
   ): Promise<Transport> {
     const underlying = new StdioClientTransport({
       command: config.command,
       args: config.args,
-      env: { ...this.getProcessEnvironment(), ...(config.env ?? {}) },
+      env: { ...getDefaultEnvironment(), ...(config.env ?? {}) },
       stderr: config.stderr,
       cwd: config.cwd,
     });
@@ -1082,20 +1087,21 @@ export class MCPClientManager {
       ? wrapTransportForLogging(serverId, logger, underlying)
       : underlying;
 
-    const stopStderrCapture = this.captureStdioStartupStderr(underlying);
+    const stderrDrain = this.createStdioStderrDrain(underlying);
 
     try {
       await client.connect(transport, { timeout });
     } catch (error) {
+      const stderrOutput = stderrDrain.getCapturedOutput();
+      stderrDrain.cleanup();
       throw this.annotateStdioConnectError(
         serverId,
         error,
-        stopStderrCapture()
+        stderrOutput
       );
-    } finally {
-      stopStderrCapture();
     }
 
+    state.stdioStderrCleanup = stderrDrain.cleanup;
     return underlying;
   }
 
@@ -1241,20 +1247,15 @@ export class MCPClientManager {
     }
   }
 
-  private getProcessEnvironment(): Record<string, string> {
-    return Object.fromEntries(
-      Object.entries(process.env).filter(
-        (entry): entry is [string, string] => typeof entry[1] === "string"
-      )
-    );
-  }
-
-  private captureStdioStartupStderr(
+  private createStdioStderrDrain(
     transport: StdioClientTransport
-  ): () => string {
+  ): { cleanup: () => void; getCapturedOutput: () => string } {
     const stderrStream = transport.stderr as NodeJS.ReadableStream | null;
     if (!stderrStream) {
-      return () => "";
+      return {
+        cleanup: () => {},
+        getCapturedOutput: () => "",
+      };
     }
 
     const maxCapturedChars = 16_384;
@@ -1270,13 +1271,14 @@ export class MCPClientManager {
 
     stderrStream.on("data", onData);
 
-    return () => {
-      if (!stopped) {
-        stopped = true;
-        stderrStream.removeListener("data", onData);
-      }
-
-      return captured.trim();
+    return {
+      cleanup: () => {
+        if (!stopped) {
+          stopped = true;
+          stderrStream.removeListener("data", onData);
+        }
+      },
+      getCapturedOutput: () => captured.trim(),
     };
   }
 
@@ -1323,6 +1325,8 @@ export class MCPClientManager {
   }
 
   private resetState(serverId: string): void {
+    const state = this.clientStates.get(serverId);
+    state?.stdioStderrCleanup?.();
     this.clientStates.delete(serverId);
     this.toolsMetadataCache.delete(serverId);
   }

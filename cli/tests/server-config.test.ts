@@ -58,26 +58,38 @@ test("parseServerConfig accepts refresh-token auth for HTTP servers", () => {
 });
 
 test("parseServerConfig builds a stdio config with args and env", () => {
-  const config = parseServerConfig({
-    transport: "stdio",
-    command: "node",
-    args: ["server.js"],
-    commandArgs: ["--flag"],
-    env: ["FOO=bar", "BAZ=qux"],
-    cwd: "/tmp/mcpjam-test",
-    timeout: 5000,
-  });
+  const inheritedEnvKey = "MCPJAM_TEST_CLI_INHERITED_ENV";
+  const originalInheritedEnv = process.env[inheritedEnvKey];
 
-  assert.equal("command" in config, true);
-  assert.equal(config.command, "node");
-  assert.deepEqual(config.args, ["server.js", "--flag"]);
-  assert.deepEqual(config.env, {
-    FOO: "bar",
-    BAZ: "qux",
-  });
-  assert.equal(config.cwd, "/tmp/mcpjam-test");
-  assert.equal(config.stderr, "pipe");
-  assert.equal(config.timeout, 5000);
+  process.env[inheritedEnvKey] = "from-parent";
+
+  try {
+    const config = parseServerConfig({
+      transport: "stdio",
+      command: "node",
+      args: ["server.js"],
+      commandArgs: ["--flag"],
+      env: ["FOO=bar", "BAZ=qux"],
+      cwd: "/tmp/mcpjam-test",
+      timeout: 5000,
+    });
+
+    assert.equal("command" in config, true);
+    assert.equal(config.command, "node");
+    assert.deepEqual(config.args, ["server.js", "--flag"]);
+    assert.equal(config.env?.[inheritedEnvKey], "from-parent");
+    assert.equal(config.env?.FOO, "bar");
+    assert.equal(config.env?.BAZ, "qux");
+    assert.equal(config.cwd, "/tmp/mcpjam-test");
+    assert.equal(config.stderr, "pipe");
+    assert.equal(config.timeout, 5000);
+  } finally {
+    if (originalInheritedEnv === undefined) {
+      delete process.env[inheritedEnvKey];
+    } else {
+      process.env[inheritedEnvKey] = originalInheritedEnv;
+    }
+  }
 });
 
 test("parseServerConfig preserves commas inside stdio args and env values", () => {
@@ -93,10 +105,8 @@ test("parseServerConfig preserves commas inside stdio args and env values", () =
 
   assert.equal("command" in config, true);
   assert.deepEqual(config.args, ['{"a":1,"b":2}', "--list=one,two"]);
-  assert.deepEqual(config.env, {
-    NO_PROXY: "127.0.0.1,localhost",
-    JSON_PAYLOAD: '{"a":1,"b":2}',
-  });
+  assert.equal(config.env?.NO_PROXY, "127.0.0.1,localhost");
+  assert.equal(config.env?.JSON_PAYLOAD, '{"a":1,"b":2}');
 });
 
 test("parseServerConfig rejects missing and mixed targets", () => {

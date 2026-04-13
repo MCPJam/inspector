@@ -73,6 +73,65 @@ function buildInlineCwdServerScript(): string {
   `;
 }
 
+function buildInlineStderrFloodServerScript(): string {
+  const sdkCjsRoot = path.dirname(
+    require.resolve("@modelcontextprotocol/sdk/package.json")
+  );
+  const serverIndexPath = JSON.stringify(
+    path.join(sdkCjsRoot, "server", "index.js")
+  );
+  const serverStdioPath = JSON.stringify(
+    path.join(sdkCjsRoot, "server", "stdio.js")
+  );
+  const typesPath = JSON.stringify(path.join(sdkCjsRoot, "types.js"));
+
+  return `
+    const { Server } = require(${serverIndexPath});
+    const { StdioServerTransport } = require(${serverStdioPath});
+    const {
+      CallToolRequestSchema,
+      ListToolsRequestSchema
+    } = require(${typesPath});
+
+    const server = new Server(
+      { name: "stderr-flood-server", version: "1.0.0" },
+      { capabilities: { tools: {} } }
+    );
+
+    const floodChunk = "x".repeat(64 * 1024);
+    const flood = setInterval(() => {
+      for (let i = 0; i < 8; i += 1) {
+        process.stderr.write(floodChunk);
+      }
+    }, 10);
+
+    server.setRequestHandler(ListToolsRequestSchema, async () => ({
+      tools: [
+        {
+          name: "ping",
+          description: "Responds even while stderr is noisy",
+          inputSchema: {
+            type: "object",
+            properties: {},
+            additionalProperties: false
+          }
+        }
+      ]
+    }));
+
+    server.setRequestHandler(CallToolRequestSchema, async () => ({
+      content: [{ type: "text", text: "pong" }]
+    }));
+
+    server.connect(new StdioServerTransport()).catch((error) => {
+      console.error(error);
+      process.exit(1);
+    });
+
+    process.on("exit", () => clearInterval(flood));
+  `;
+}
+
 describe("MCPClientManager", () => {
   describe("constructor", () => {
     it("should create an instance with empty config", () => {
@@ -175,7 +234,7 @@ describe("MCPClientManager", () => {
       await manager.disconnectAllServers();
     });
 
-    it("inherits parent process env for stdio servers", async () => {
+    it("does not inherit arbitrary parent env for stdio servers", async () => {
       process.env[inheritedEnvKey] = "from-parent";
 
       await manager.connectToServer("env-inherit", {
@@ -186,11 +245,12 @@ describe("MCPClientManager", () => {
       const result = await manager.executeTool("env-inherit", "get-env", {});
       const env = JSON.parse(extractSingleText(result));
 
-      expect(env[inheritedEnvKey]).toBe("from-parent");
+      expect(env[inheritedEnvKey]).toBeUndefined();
     }, 30000);
 
-    it("lets explicit stdio env override inherited parent values", async () => {
+    it("lets explicit stdio env override parent values without inheriting arbitrary keys", async () => {
       process.env[overrideEnvKey] = "from-parent";
+      process.env[inheritedEnvKey] = "from-parent";
 
       await manager.connectToServer("env-override", {
         command: "npx",
@@ -204,6 +264,7 @@ describe("MCPClientManager", () => {
       const env = JSON.parse(extractSingleText(result));
 
       expect(env[overrideEnvKey]).toBe("from-config");
+      expect(env[inheritedEnvKey]).toBeUndefined();
     }, 30000);
 
     it("passes cwd to stdio child processes", async () => {
@@ -240,6 +301,23 @@ describe("MCPClientManager", () => {
         })
       ).rejects.toThrow(/stdio startup failed/);
     }, 10000);
+
+    it("keeps draining stderr after startup for noisy stdio servers", async () => {
+      await manager.connectToServer("stderr-flood", {
+        command: process.execPath,
+        args: [
+          "-e",
+          buildInlineStderrFloodServerScript(),
+        ],
+        stderr: "pipe",
+        timeout: 5000,
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 250));
+
+      const result = await manager.executeTool("stderr-flood", "ping", {});
+      expect(extractSingleText(result)).toBe("pong");
+    }, 15000);
   });
 
   describe("HTTP server", () => {
