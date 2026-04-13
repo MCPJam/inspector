@@ -124,6 +124,8 @@ export interface OAuthConformanceConfig {
   stepTimeout?: number;
   verification?: OAuthVerificationConfig;
   oauthConformanceChecks?: boolean;
+  /** Optional callback for progress messages during the OAuth flow. */
+  onProgress?: (message: string) => void;
 }
 
 export interface StepResult {
@@ -167,6 +169,7 @@ export interface NormalizedOAuthConformanceConfig {
   stepTimeout: number;
   verification: OAuthVerificationConfig;
   oauthConformanceChecks: boolean;
+  onProgress: (message: string) => void;
 }
 
 export interface TrackedRequestOptions {
