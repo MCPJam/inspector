@@ -306,6 +306,23 @@ export {
   MCP_CHECK_CATEGORIES,
   MCP_CHECK_IDS,
 } from "./mcp-conformance/index.js";
+
+// MCP Apps conformance
+export { MCPAppsConformanceTest } from "./apps-conformance/index.js";
+export type {
+  MCPAppsCheckCategory,
+  MCPAppsCheckId,
+  MCPAppsCheckResult,
+  MCPAppsCheckStatus,
+  MCPAppsConformanceConfig,
+  MCPAppsConformanceResult,
+  MCPAppsResourceReadOutcome,
+} from "./apps-conformance/index.js";
+export {
+  MCP_APPS_CHECK_CATEGORIES,
+  MCP_APPS_CHECK_IDS,
+} from "./apps-conformance/index.js";
+
 export type {
   ConformanceResult,
   ConformanceStepId,

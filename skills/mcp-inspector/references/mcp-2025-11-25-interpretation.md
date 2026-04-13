@@ -45,6 +45,8 @@ Primary MCP references:
 - Missing `resource_metadata` in `WWW-Authenticate` is not automatically a hard failure if the well-known metadata path works.
 - `scope` in the `WWW-Authenticate` challenge is guidance and is only a `SHOULD`.
 - `scopes_supported` is useful for clients, but absence is not automatically a protocol failure.
+- The OAuth `resource` parameter is a `MUST` in both authorization and token requests. If a client-side negative check omits `resource`, a rejection may be caused by a malformed request rather than the behavior under test.
+- When both are present, clients should prefer the `scope` value challenged in `WWW-Authenticate` over `scopes_supported` for the current request.
 - Redirect URI findings need calibration:
   - accepting non-localhost `http://` redirect URIs is a real problem under the MCP profile
   - accepting arbitrary `https://` redirect URIs is not automatically a vulnerability; open registration and trust-policy details matter

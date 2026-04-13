@@ -34,6 +34,26 @@ function truncate(value: string, maxLength = BODY_SNIPPET_LIMIT): string {
   return `${normalized.slice(0, maxLength - 1).trimEnd()}...`;
 }
 
+function redactSensitiveStrings(value: string): string {
+  return value
+    .replace(
+      /(authorization\s*:\s*bearer\s+)([^\s,;]+)/gi,
+      "$1[REDACTED]",
+    )
+    .replace(
+      /([?&](?:access_token|refresh_token|client_secret|code)=)([^&#\s]+)/gi,
+      "$1[REDACTED]",
+    )
+    .replace(
+      /("(?:access_token|refresh_token|client_secret|code)"\s*:\s*")([^"]*)(")/gi,
+      '$1[REDACTED]$3',
+    )
+    .replace(
+      /('(?:access_token|refresh_token|client_secret|code)'\s*:\s*')([^']*)(')/gi,
+      "$1[REDACTED]$3",
+    );
+}
+
 function decodeHtmlEntities(value: string): string {
   return value
     .replace(/&quot;/g, '"')
@@ -153,6 +173,19 @@ function deriveHint(
   return undefined;
 }
 
+function extractEvidence(details: unknown): string | undefined {
+  if (!details || typeof details !== "object") {
+    return undefined;
+  }
+
+  const evidence = (details as { evidence?: unknown }).evidence;
+  if (typeof evidence !== "string" || !evidence.trim()) {
+    return undefined;
+  }
+
+  return truncate(redactSensitiveStrings(evidence));
+}
+
 function countStatuses(result: ConformanceResult): string {
   const passed = result.steps.filter((step) => step.status === "passed").length;
   const failed = result.steps.filter((step) => step.status === "failed").length;
@@ -176,6 +209,7 @@ function formatFailureLines(result: ConformanceResult): string[] {
   const contentType = response?.headers?.["content-type"];
   const bodySummary = summarizeBody(response?.body, contentType);
   const hint = deriveHint(failure, contentType, bodySummary);
+  const evidence = extractEvidence(failure.error?.details);
 
   const lines = [
     `Step: ${failure.step}`,
@@ -194,6 +228,10 @@ function formatFailureLines(result: ConformanceResult): string[] {
 
   if (bodySummary?.snippet) {
     lines.push(`Snippet: ${bodySummary.snippet}`);
+  }
+
+  if (evidence) {
+    lines.push(`Evidence: ${evidence}`);
   }
 
   if (hint) {

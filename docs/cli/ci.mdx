@@ -1,16 +1,18 @@
 ---
-title: "CI / GitHub Actions"
-description: "Run MCP health checks and OAuth conformance in GitHub Actions"
-icon: "github"
+title: "CI / CD"
+description: "Run MCP health checks and OAuth conformance in GitHub Actions, GitLab CI, and other CI environments"
+icon: "circle-check"
 ---
 
-Run `mcpjam` in CI to catch MCP server regressions on every push. The examples below use GitHub Actions, but the same commands work in any CI environment.
+Run `mcpjam` in CI to catch MCP server regressions on every push. The examples below cover GitHub Actions and GitLab CI, but the same commands work in any CI environment.
 
-## Authentication
+## GitHub Actions
+
+### Authentication
 
 There are three ways to authenticate in CI, depending on your server setup.
 
-### Option 1: Headless OAuth login
+#### Option 1: Headless OAuth login
 
 Best when your server supports OAuth with auto-consent (no interactive login page). The workflow obtains a fresh access token on every run.
 
@@ -58,7 +60,7 @@ jobs:
         run: npx -y @mcpjam/cli@latest server doctor --url ${{ secrets.MCP_SERVER_URL }} --access-token $MCP_TOKEN --format json
 ```
 
-### Option 2: Refresh token
+#### Option 2: Refresh token
 
 Best when you already have a refresh token from a previous `oauth login`. Refresh tokens are long-lived and safe to store as secrets. The CLI handles the token exchange automatically.
 
@@ -101,7 +103,7 @@ jobs:
 To get a refresh token, run `mcpjam oauth login` locally with `--format json` and grab `.credentials.refreshToken` from the output.
 </Tip>
 
-### Option 3: Static API key
+#### Option 3: Static API key
 
 Best when your server uses a non-expiring API key instead of OAuth.
 
@@ -132,7 +134,7 @@ jobs:
         run: npx -y @mcpjam/cli@latest server doctor --url ${{ secrets.MCP_SERVER_URL }} --access-token ${{ secrets.MCP_API_KEY }} --format json
 ```
 
-### Option 4: No auth
+#### Option 4: No auth
 
 Some servers don't require authentication at all.
 
@@ -162,7 +164,7 @@ jobs:
         run: npx -y @mcpjam/cli@latest server doctor --url ${{ secrets.MCP_SERVER_URL }} --format json
 ```
 
-## Tool surface diffing
+### Tool surface diffing
 
 Snapshot your tool surface before and after a deploy to catch breaking changes (renamed parameters, changed descriptions, removed tools).
 
@@ -179,7 +181,7 @@ Snapshot your tool surface before and after a deploy to catch breaking changes (
         run: diff <(jq -S . before.json) <(jq -S . after.json)
 ```
 
-## OAuth conformance suite
+### OAuth conformance suite
 
 Run the full registration x protocol version x auth mode matrix from a config file and output JUnit XML for test reporters.
 
@@ -196,6 +198,118 @@ Run the full registration x protocol version x auth mode matrix from a config fi
         with:
           name: oauth-conformance
           path: report.xml
+```
+
+See [OAuth Conformance](/cli/oauth-conformance) for details on the config file format.
+
+---
+
+## GitLab CI
+
+The same CLI commands work in GitLab CI. The examples below use GitLab CI/CD variables for secrets and `.gitlab-ci.yml` syntax.
+
+### Authentication
+
+#### Headless OAuth login
+
+```yaml
+mcp-health-check:
+  image: node:20
+  variables:
+    MCP_SERVER_URL: $MCP_SERVER_URL
+  script:
+    - |
+      npx -y @mcpjam/cli@latest oauth login \
+        --url "$MCP_SERVER_URL" \
+        --protocol-version 2025-11-25 \
+        --registration dcr \
+        --auth-mode headless \
+        --format json > /tmp/oauth-result.json
+      TOKEN=$(jq -r '.credentials.accessToken // empty' /tmp/oauth-result.json)
+      rm -f /tmp/oauth-result.json
+      if [ -z "$TOKEN" ]; then
+        echo "OAuth login did not return an access token"
+        exit 1
+      fi
+      export MCP_TOKEN="$TOKEN"
+    - npx -y @mcpjam/cli@latest server doctor --url "$MCP_SERVER_URL" --access-token "$MCP_TOKEN" --format json
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+```
+
+#### Refresh token
+
+```yaml
+mcp-health-check:
+  image: node:20
+  variables:
+    MCP_SERVER_URL: $MCP_SERVER_URL
+    MCP_REFRESH_TOKEN: $MCP_REFRESH_TOKEN
+    MCP_CLIENT_ID: $MCP_CLIENT_ID
+    MCP_CLIENT_SECRET: $MCP_CLIENT_SECRET
+  script:
+    - |
+      npx -y @mcpjam/cli@latest server doctor \
+        --url "$MCP_SERVER_URL" \
+        --refresh-token "$MCP_REFRESH_TOKEN" \
+        --client-id "$MCP_CLIENT_ID" \
+        --client-secret "$MCP_CLIENT_SECRET" \
+        --format json
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+```
+
+#### Static API key
+
+```yaml
+mcp-health-check:
+  image: node:20
+  variables:
+    MCP_SERVER_URL: $MCP_SERVER_URL
+    MCP_API_KEY: $MCP_API_KEY
+  script:
+    - npx -y @mcpjam/cli@latest server doctor --url "$MCP_SERVER_URL" --access-token "$MCP_API_KEY" --format json
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+```
+
+### Tool surface diffing
+
+Snapshot your tool surface before and after a deploy to catch breaking changes.
+
+```yaml
+mcp-tool-diff:
+  image: node:20
+  variables:
+    MCP_SERVER_URL: $MCP_SERVER_URL
+    MCP_TOKEN: $MCP_TOKEN
+  script:
+    - npx -y @mcpjam/cli@latest server export --url "$MCP_SERVER_URL" --access-token "$MCP_TOKEN" --format json > before.json
+    # your deploy step here
+    - npx -y @mcpjam/cli@latest server export --url "$MCP_SERVER_URL" --access-token "$MCP_TOKEN" --format json > after.json
+    - jq -S . before.json > /tmp/before-sorted.json
+    - jq -S . after.json > /tmp/after-sorted.json
+    - diff /tmp/before-sorted.json /tmp/after-sorted.json
+    - rm -f /tmp/before-sorted.json /tmp/after-sorted.json
+```
+
+### OAuth conformance suite
+
+```yaml
+mcp-oauth-conformance:
+  image: node:20
+  script:
+    - |
+      npx -y @mcpjam/cli@latest oauth conformance-suite \
+        --config ./oauth-matrix.json \
+        --format junit-xml > report.xml
+  artifacts:
+    when: always
+    reports:
+      junit: report.xml
 ```
 
 See [OAuth Conformance](/cli/oauth-conformance) for details on the config file format.
