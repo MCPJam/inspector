@@ -98,6 +98,8 @@ interface TraceViewerProps {
   enableFullscreenChatOverlay?: boolean;
   fullscreenChatPlaceholder?: string;
   fullscreenChatDisabled?: boolean;
+  fullscreenChatSendBlocked?: boolean;
+  onFullscreenChatStop?: () => void;
   /**
    * When set (live chat), Raw tab shows the resolved model request payload
    * (`system`, `tools`, `messages`) instead of the diagnostic trace blob.
@@ -180,6 +182,8 @@ export function TraceViewer({
   enableFullscreenChatOverlay = false,
   fullscreenChatPlaceholder = "Message…",
   fullscreenChatDisabled = false,
+  fullscreenChatSendBlocked,
+  onFullscreenChatStop,
   rawRequestPayloadHistory = null,
   rawGrowWithContent = false,
 }: TraceViewerProps) {
@@ -586,6 +590,8 @@ export function TraceViewer({
                 enableFullscreenChatOverlay={enableFullscreenChatOverlay}
                 fullscreenChatPlaceholder={fullscreenChatPlaceholder}
                 fullscreenChatDisabled={fullscreenChatDisabled}
+                fullscreenChatSendBlocked={fullscreenChatSendBlocked}
+                onFullscreenChatStop={onFullscreenChatStop}
                 selectedProtocolOverrideIfBothExists={
                   selectedProtocolOverrideIfBothExists
                 }

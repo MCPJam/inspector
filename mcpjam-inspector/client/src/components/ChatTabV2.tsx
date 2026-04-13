@@ -100,7 +100,10 @@ import {
   resolveRestorableServerNames,
   shouldPreserveGuestServerSelection,
 } from "@/components/chat-v2/history/session-restore";
-import { useEscapeToStopChat } from "@/hooks/use-escape-to-stop-chat";
+import {
+  getChatComposerInteractivity,
+  useChatStopControls,
+} from "@/hooks/use-chat-stop-controls";
 
 interface ChatTabProps {
   connectedOrConnectingServerConfigs: Record<string, ServerWithName>;
@@ -1509,31 +1512,18 @@ export function ChatTabV2({
 
   // Submit blocking with server check
   const submitBlocked = baseSubmitBlocked;
-  const isAnyMultiModelStreaming =
-    isMultiModelMode &&
-    Object.values(multiModelSummaries).some(
-      (summary) => summary.status === "running",
-    );
+  const { isStreamingActive, stopActiveChat } = useChatStopControls({
+    isMultiModelMode,
+    isStreaming,
+    multiModelSummaries,
+    setStopBroadcastRequestId,
+    stop,
+  });
   // History rail: any in-flight generation for this tab (matches composer blocking).
-  const historyRailStreaming = isMultiModelMode
-    ? isAnyMultiModelStreaming
-    : isStreaming;
-  const stopActiveChat = useCallback(() => {
-    if (isMultiModelMode) {
-      setStopBroadcastRequestId((previous) => previous + 1);
-      return;
-    }
-
-    stop();
-  }, [isMultiModelMode, stop]);
-  const isStopShortcutEnabled = historyRailStreaming;
-  const inputDisabled = isMultiModelMode
-    ? isAnyMultiModelStreaming || submitBlocked || sandboxComposerBlocked
-    : status !== "ready" || submitBlocked || sandboxComposerBlocked;
-
-  useEscapeToStopChat({
-    enabled: isStopShortcutEnabled,
-    onStop: stopActiveChat,
+  const historyRailStreaming = isStreamingActive;
+  const { composerDisabled, sendBlocked } = getChatComposerInteractivity({
+    isStreamingActive,
+    composerDisabled: submitBlocked || sandboxComposerBlocked,
   });
 
   let placeholder = minimalMode
@@ -1715,7 +1705,7 @@ export function ChatTabV2({
       mcpPromptResults.length > 0 ||
       skillResults.length > 0 ||
       fileAttachments.length > 0;
-    if (hasContent && !inputDisabled) {
+    if (hasContent && !sendBlocked) {
       const threadReady = await ensureThreadReadyForSend();
       if (!threadReady) {
         return;
@@ -1798,7 +1788,7 @@ export function ChatTabV2({
       "chat_starter_prompt_clicked",
       standardEventProps("chat_tab"),
     );
-    if (submitBlocked || inputDisabled) {
+    if (composerDisabled || sendBlocked) {
       setInput(prompt);
       return;
     }
@@ -1835,8 +1825,8 @@ export function ChatTabV2({
     onChange: setInput,
     onSubmit,
     stop: stopActiveChat,
-    disabled: inputDisabled,
-    isLoading: isMultiModelMode ? isAnyMultiModelStreaming : isStreaming,
+    disabled: composerDisabled,
+    isLoading: isStreamingActive,
     placeholder,
     currentModel: selectedModel,
     availableModels,
@@ -1851,7 +1841,7 @@ export function ChatTabV2({
     temperature,
     onTemperatureChange: setTemperature,
     onResetChat: handleResetAllChats,
-    submitDisabled: submitBlocked,
+    submitDisabled: submitBlocked || sandboxComposerBlocked,
     tokenUsage,
     selectedServers: selectedConnectedServerNames,
     mcpToolsTokenCount,
@@ -2311,7 +2301,9 @@ export function ChatTabV2({
                           onFullscreenChange={setIsWidgetFullscreen}
                           enableFullscreenChatOverlay
                           fullscreenChatPlaceholder={placeholder}
-                          fullscreenChatDisabled={inputDisabled}
+                          fullscreenChatDisabled={composerDisabled}
+                          fullscreenChatSendBlocked={sendBlocked}
+                          onFullscreenChatStop={stopActiveChat}
                           onToolApprovalResponse={addToolApprovalResponse}
                           toolRenderOverrides={restoredToolRenderOverrides}
                           minimalMode={minimalMode}

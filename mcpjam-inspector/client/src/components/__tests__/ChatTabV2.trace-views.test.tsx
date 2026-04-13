@@ -152,8 +152,13 @@ vi.mock("use-stick-to-bottom", () => {
   };
 });
 
+const mockChatInput = vi.fn();
+
 vi.mock("@/components/chat-v2/chat-input", () => ({
-  ChatInput: () => <div data-testid="chat-input" />,
+  ChatInput: (props: Record<string, unknown>) => {
+    mockChatInput(props);
+    return <div data-testid="chat-input" />;
+  },
 }));
 
 vi.mock("@/components/chat-v2/thread", () => ({
@@ -304,6 +309,7 @@ describe("ChatTabV2 trace views", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockChatInput.mockClear();
     Object.assign(mockUseChatSession, {
       messages: [],
       status: "ready",
@@ -562,6 +568,22 @@ describe("ChatTabV2 trace views", () => {
     window.removeEventListener("keydown", preventEscape, true);
 
     expect(mockUseChatSession.stop).not.toHaveBeenCalled();
+  });
+
+  it("keeps the composer editable while streaming and only blocks sending", () => {
+    mockUseChatSession.messages = [
+      { id: "1", role: "user", parts: [{ type: "text", text: "Hello" }] },
+    ];
+    mockUseChatSession.isStreaming = true;
+
+    render(<ChatTabV2 {...defaultProps} />);
+
+    const chatInputProps = mockChatInput.mock.calls.at(-1)?.[0];
+    expect(chatInputProps).toMatchObject({
+      disabled: false,
+      isLoading: true,
+      submitDisabled: false,
+    });
   });
 
   it("renders compare cards when multi-model chat is enabled on the main chat surface", () => {

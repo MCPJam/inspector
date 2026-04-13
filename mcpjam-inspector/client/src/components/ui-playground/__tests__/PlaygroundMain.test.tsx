@@ -257,6 +257,7 @@ vi.mock("@/components/chat-v2/chat-input", () => ({
     onSubmit,
     disabled,
     submitDisabled,
+    isLoading,
     placeholder,
     pulseSubmit,
   }: {
@@ -265,11 +266,13 @@ vi.mock("@/components/chat-v2/chat-input", () => ({
     onSubmit: (e: any) => void;
     disabled: boolean;
     submitDisabled?: boolean;
+    isLoading?: boolean;
     placeholder: string;
     pulseSubmit?: boolean;
   }) => (
     <form
       data-testid="chat-input"
+      data-loading={isLoading ? "true" : "false"}
       onSubmit={(e) => {
         e.preventDefault();
         onSubmit(e);
@@ -1129,12 +1132,17 @@ describe("PlaygroundMain", () => {
       expect(screen.getByTestId("chat-input-field")).toBeInTheDocument();
     });
 
-    it("disables input when not ready", () => {
+    it("keeps input editable while streaming", () => {
       mockUseChatSession.status = "submitted";
+      mockUseChatSession.isStreaming = true;
 
       render(<PlaygroundMain {...defaultProps} />);
 
-      expect(screen.getByTestId("chat-input-field")).toBeDisabled();
+      expect(screen.getByTestId("chat-input-field")).not.toBeDisabled();
+      expect(screen.getByTestId("chat-input")).toHaveAttribute(
+        "data-loading",
+        "true",
+      );
     });
 
     it("disables input when submit is blocked", () => {

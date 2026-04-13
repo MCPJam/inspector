@@ -370,6 +370,42 @@ describe("ChatInput", () => {
         expect(stop).toHaveBeenCalled();
       }
     });
+
+    it("keeps the textarea editable while loading", () => {
+      render(<ChatInput {...defaultProps} isLoading={true} value="Draft" />);
+
+      expect(screen.getByPlaceholderText("Type your message...")).not.toBeDisabled();
+    });
+
+    it("keeps the options menu enabled while loading", () => {
+      render(<ChatInput {...defaultProps} isLoading={true} />);
+
+      expect(screen.getByRole("button", { name: "Options" })).toBeEnabled();
+    });
+
+    it("does not request form submit on Enter while loading", () => {
+      const requestSubmitSpy = vi
+        .spyOn(HTMLFormElement.prototype, "requestSubmit")
+        .mockImplementation(() => {});
+
+      render(
+        <ChatInput
+          {...defaultProps}
+          value="Draft"
+          isLoading={true}
+          onSubmit={vi.fn((e) => e.preventDefault())}
+        />,
+      );
+
+      fireEvent.keyDown(screen.getByPlaceholderText("Type your message..."), {
+        key: "Enter",
+        shiftKey: false,
+      });
+
+      expect(requestSubmitSpy).not.toHaveBeenCalled();
+
+      requestSubmitSpy.mockRestore();
+    });
   });
 
   describe("model selection", () => {
