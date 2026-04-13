@@ -714,7 +714,6 @@ export function ServersTab({
     },
     [onUpdate, workspaceServers],
   );
-
   useEffect(() => {
     if (!detailModalState.isOpen || detailModalLiveServer == null) {
       return;

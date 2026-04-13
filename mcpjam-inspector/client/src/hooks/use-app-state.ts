@@ -126,6 +126,7 @@ export function useAppState({
     useLocalFallback,
     remoteWorkspaces,
     isLoadingRemoteWorkspaces,
+    isWorkspaceBootstrapLoading,
     effectiveActiveWorkspaceId,
   } = workspaceState;
   const { handleDisconnect } = serverState;
@@ -225,6 +226,7 @@ export function useAppState({
     appState,
     isLoading,
     isLoadingRemoteWorkspaces,
+    isWorkspaceBootstrapLoading,
     isCloudSyncActive,
     activeOrganizationId,
     setActiveOrganizationId,

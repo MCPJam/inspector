@@ -9,6 +9,8 @@ import {
 import { toast } from "sonner";
 import type { AppAction, AppState, Workspace } from "@/state/app-types";
 import {
+  type BootstrapGuestSourceWorkspace,
+  type RemoteWorkspace,
   useWorkspaceMutations,
   useWorkspaceQueries,
   useWorkspaceServers,
@@ -22,10 +24,14 @@ import {
   type WorkspaceClientConfig,
 } from "@/lib/client-config";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
+import {
+  buildCarryForwardServerPayload,
+} from "@/lib/persisted-server-payload";
 import { useClientConfigStore } from "@/stores/client-config-store";
 import { useOrganizationBillingStatus } from "./useOrganizationBilling";
 
 const CLIENT_CONFIG_SYNC_ECHO_TIMEOUT_MS = 10000;
+const GUEST_SERVER_CARRY_FORWARD_TIMEOUT_MS = 5000;
 
 function stringifyWorkspaceClientConfig(
   clientConfig: WorkspaceClientConfig | undefined,
@@ -47,6 +53,10 @@ interface LoggerLike {
   error: (message: string, meta?: Record<string, unknown>) => void;
 }
 
+function buildGenerationKey(generation: number, key: string) {
+  return `${generation}:${key}`;
+}
+
 function isSyntheticDefaultWorkspace(workspace: Workspace) {
   return (
     workspace.id === "default" &&
@@ -57,6 +67,25 @@ function isSyntheticDefaultWorkspace(workspace: Workspace) {
     workspace.description === "Default workspace" &&
     Object.keys(workspace.servers).length === 0
   );
+}
+
+function selectFallbackRemoteWorkspace(remoteWorkspaces: RemoteWorkspace[]) {
+  const ownedFallbackWorkspace = remoteWorkspaces.reduce<RemoteWorkspace | null>(
+    (newestWorkspace, workspace) => {
+      if (!workspace.isOwnedFallbackCandidate) {
+        return newestWorkspace;
+      }
+      if (!newestWorkspace) {
+        return workspace;
+      }
+      return workspace.createdAt > newestWorkspace.createdAt
+        ? workspace
+        : newestWorkspace;
+    },
+    null,
+  );
+
+  return ownedFallbackWorkspace ?? remoteWorkspaces[0];
 }
 
 export interface UseWorkspaceStateParams {
@@ -79,6 +108,58 @@ export function useWorkspaceState({
   logger,
 }: UseWorkspaceStateParams) {
   const workspaceOrganizationId = routeOrganizationId ?? activeOrganizationId;
+  const [convexActiveWorkspaceId, setConvexActiveWorkspaceId] = useState<
+    string | null
+  >(() => {
+    if (typeof window !== "undefined") {
+      return localStorage.getItem("convex-active-workspace-id");
+    }
+    return null;
+  });
+  const [useLocalFallback, setUseLocalFallback] = useState(false);
+
+  // Guest server bootstrap: when a guest signs in, import their local servers
+  // into Convex via a single mutation. Queries are paused until done so the
+  // UI never shows a partially-imported workspace.
+  const [isWorkspaceBootstrapLoading, setIsWorkspaceBootstrapLoading] =
+    useState(false);
+  const [hasCompletedBootstrapImport, setHasCompletedBootstrapImport] =
+    useState(false);
+  const operationContextKey =
+    isAuthenticated && !useLocalFallback
+      ? `auth:${workspaceOrganizationId ?? "fallback"}`
+      : useLocalFallback
+        ? "local-fallback"
+        : "signed-out";
+  const carryForwardLocalWorkspaces = useMemo(
+    () =>
+      Object.values(appState.workspaces).filter(
+        (workspace) => Object.keys(workspace.servers).length > 0,
+      ),
+    [appState.workspaces],
+  );
+  const bootstrapGuestSourceWorkspaces =
+    useMemo<BootstrapGuestSourceWorkspace[]>(
+      () =>
+        carryForwardLocalWorkspaces
+          .map((workspace) => ({
+            localWorkspaceId: workspace.id,
+            servers: Object.entries(workspace.servers).map(
+              ([serverName, server]) =>
+                buildCarryForwardServerPayload(serverName, server),
+            ),
+          }))
+          .filter((workspace) => workspace.servers.length > 0),
+      [carryForwardLocalWorkspaces],
+    );
+  const hasCarryForwardCandidates = bootstrapGuestSourceWorkspaces.length > 0;
+  // Hold off Convex queries until guest server carry-forward finishes, preventing
+  // the UI from briefly showing an empty or partial workspace.
+  const shouldPauseRemoteBootstrapQueries =
+    isAuthenticated &&
+    !useLocalFallback &&
+    hasCarryForwardCandidates &&
+    !hasCompletedBootstrapImport;
   const {
     allWorkspaces: allRemoteWorkspaces,
     workspaces: remoteWorkspaces,
@@ -86,9 +167,11 @@ export function useWorkspaceState({
   } = useWorkspaceQueries({
     isAuthenticated,
     organizationId: workspaceOrganizationId,
+    enabled: !shouldPauseRemoteBootstrapQueries,
   });
   const {
     createWorkspace: convexCreateWorkspace,
+    bootstrapGuestServerImport: convexBootstrapGuestServerImport,
     ensureDefaultWorkspace: convexEnsureDefaultWorkspace,
     updateWorkspace: convexUpdateWorkspace,
     updateClientConfig: convexUpdateClientConfig,
@@ -99,27 +182,26 @@ export function useWorkspaceState({
     { enabled: isAuthenticated },
   );
 
-  const [convexActiveWorkspaceId, setConvexActiveWorkspaceId] = useState<
-    string | null
-  >(() => {
-    if (typeof window !== "undefined") {
-      return localStorage.getItem("convex-active-workspace-id");
-    }
-    return null;
-  });
-
   const { servers: activeWorkspaceServersFlat, isLoading: isLoadingServers } =
     useWorkspaceServers({
       workspaceId: convexActiveWorkspaceId,
       isAuthenticated,
+      enabled: !shouldPauseRemoteBootstrapQueries,
     });
 
+  const operationGenerationRef = useRef(0);
+  const operationContextKeyRef = useRef(operationContextKey);
   const migrationInFlightRef = useRef(new Set<string>());
+  const bootstrapMutationInFlightGenerationRef = useRef<number | null>(null);
+  const completedBootstrapGenerationRef = useRef<number | null>(null);
   const ensureDefaultInFlightRef = useRef(new Set<string>());
   const ensureDefaultCompletedRef = useRef(new Set<string>());
   const migrationErrorNotifiedRef = useRef(new Set<string>());
-  const [useLocalFallback, setUseLocalFallback] = useState(false);
   const convexTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const workspaceBootstrapTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
+  const workspaceBootstrapTimeoutGenerationRef = useRef<number | null>(null);
   const pendingClientConfigSyncRef = useRef<PendingClientConfigSync | null>(
     null,
   );
@@ -138,6 +220,54 @@ export function useWorkspaceState({
       pending.reject(error);
     }
   }, []);
+
+  const clearWorkspaceBootstrapTimeout = useCallback(() => {
+    if (workspaceBootstrapTimeoutRef.current) {
+      clearTimeout(workspaceBootstrapTimeoutRef.current);
+      workspaceBootstrapTimeoutRef.current = null;
+    }
+    workspaceBootstrapTimeoutGenerationRef.current = null;
+  }, []);
+
+  const isCurrentOperationGeneration = useCallback((generation: number) => {
+    return operationGenerationRef.current === generation;
+  }, []);
+
+  const canContinueBootstrapGeneration = useCallback((generation: number) => {
+    return (
+      operationGenerationRef.current === generation &&
+      completedBootstrapGenerationRef.current !== generation
+    );
+  }, []);
+
+  const resetOperationGeneration = useCallback(() => {
+    operationGenerationRef.current += 1;
+    migrationInFlightRef.current.clear();
+    bootstrapMutationInFlightGenerationRef.current = null;
+    completedBootstrapGenerationRef.current = null;
+    migrationErrorNotifiedRef.current.clear();
+    clearWorkspaceBootstrapTimeout();
+    setHasCompletedBootstrapImport(false);
+    setIsWorkspaceBootstrapLoading(false);
+    return operationGenerationRef.current;
+  }, [clearWorkspaceBootstrapTimeout]);
+
+  const finishWorkspaceBootstrap = useCallback(
+    (generation: number) => {
+      if (!isCurrentOperationGeneration(generation)) {
+        return;
+      }
+
+      completedBootstrapGenerationRef.current = generation;
+      setHasCompletedBootstrapImport(true);
+      clearWorkspaceBootstrapTimeout();
+      if (bootstrapMutationInFlightGenerationRef.current === generation) {
+        bootstrapMutationInFlightGenerationRef.current = null;
+      }
+      setIsWorkspaceBootstrapLoading(false);
+    },
+    [clearWorkspaceBootstrapTimeout, isCurrentOperationGeneration],
+  );
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -196,6 +326,12 @@ export function useWorkspaceState({
       );
     };
   }, [clearPendingClientConfigSync]);
+
+  useEffect(() => {
+    return () => {
+      clearWorkspaceBootstrapTimeout();
+    };
+  }, [clearWorkspaceBootstrapTimeout]);
 
   const isLoadingRemoteWorkspaces =
     (isAuthenticated &&
@@ -296,8 +432,10 @@ export function useWorkspaceState({
       ) {
         return convexActiveWorkspaceId;
       }
-      const firstId = Object.keys(effectiveWorkspaces)[0];
-      return firstId || "none";
+      if (remoteWorkspaces.length === 0) {
+        return "none";
+      }
+      return selectFallbackRemoteWorkspace(remoteWorkspaces)._id;
     }
     return appState.activeWorkspaceId;
   }, [
@@ -337,7 +475,9 @@ export function useWorkspaceState({
         if (savedActiveId && convexWorkspaces[savedActiveId]) {
           setConvexActiveWorkspaceId(savedActiveId);
         } else {
-          setConvexActiveWorkspaceId(remoteWorkspaces[0]._id);
+          setConvexActiveWorkspaceId(
+            selectFallbackRemoteWorkspace(remoteWorkspaces)._id,
+          );
         }
       }
     }
@@ -358,21 +498,63 @@ export function useWorkspaceState({
   }, [convexActiveWorkspaceId]);
 
   useEffect(() => {
-    if (!isAuthenticated || useLocalFallback) {
-      migrationInFlightRef.current.clear();
-      ensureDefaultInFlightRef.current.clear();
-      // Intentionally NOT clearing ensureDefaultCompletedRef here — it must
-      // survive transient auth-state flickers so that a workspace that was
-      // already successfully created isn't re-created when the Convex
-      // subscription briefly returns an empty result during reconnection.
-      migrationErrorNotifiedRef.current.clear();
+    if (operationContextKeyRef.current !== operationContextKey) {
+      operationContextKeyRef.current = operationContextKey;
+      resetOperationGeneration();
     }
-  }, [isAuthenticated, useLocalFallback]);
+  }, [operationContextKey, resetOperationGeneration]);
+
+  useEffect(() => {
+    const currentGeneration = operationGenerationRef.current;
+    const shouldRunBootstrapImport =
+      isAuthenticated &&
+      !isAuthLoading &&
+      !useLocalFallback &&
+      hasCarryForwardCandidates &&
+      !hasCompletedBootstrapImport;
+
+    if (!shouldRunBootstrapImport) {
+      clearWorkspaceBootstrapTimeout();
+      setIsWorkspaceBootstrapLoading(false);
+      return;
+    }
+
+    setIsWorkspaceBootstrapLoading(true);
+    if (workspaceBootstrapTimeoutGenerationRef.current !== currentGeneration) {
+      clearWorkspaceBootstrapTimeout();
+      workspaceBootstrapTimeoutGenerationRef.current = currentGeneration;
+      workspaceBootstrapTimeoutRef.current = setTimeout(() => {
+        if (!canContinueBootstrapGeneration(currentGeneration)) {
+          return;
+        }
+        workspaceBootstrapTimeoutRef.current = null;
+        workspaceBootstrapTimeoutGenerationRef.current = null;
+        logger.warn("Guest server carry-forward timed out", {
+          timeoutMs: GUEST_SERVER_CARRY_FORWARD_TIMEOUT_MS,
+        });
+        toast.warning(
+          "Importing your servers took too long. Opened app without waiting.",
+        );
+        finishWorkspaceBootstrap(currentGeneration);
+      }, GUEST_SERVER_CARRY_FORWARD_TIMEOUT_MS);
+    }
+  }, [
+    canContinueBootstrapGeneration,
+    clearWorkspaceBootstrapTimeout,
+    finishWorkspaceBootstrap,
+    hasCompletedBootstrapImport,
+    hasCarryForwardCandidates,
+    isAuthenticated,
+    isAuthLoading,
+    logger,
+    useLocalFallback,
+  ]);
 
   useEffect(() => {
     if (
       !isAuthenticated ||
       useLocalFallback ||
+      hasCarryForwardCandidates ||
       allRemoteWorkspaces === undefined ||
       allRemoteWorkspaces.length > 0 ||
       migratableLocalWorkspaceCount === 0
@@ -382,6 +564,7 @@ export function useWorkspaceState({
   }, [
     isAuthenticated,
     useLocalFallback,
+    hasCarryForwardCandidates,
     allRemoteWorkspaces,
     migratableLocalWorkspaceCount,
   ]);
@@ -390,6 +573,10 @@ export function useWorkspaceState({
     if (!isAuthenticated) {
       return;
     }
+    if (hasCarryForwardCandidates) return;
+    const currentGeneration = operationGenerationRef.current;
+    if (completedBootstrapGenerationRef.current === currentGeneration) return;
+    if (isAuthLoading) return;
     if (useLocalFallback) return;
     if (allRemoteWorkspaces === undefined) return;
     if (allRemoteWorkspaces.length > 0) return;
@@ -400,23 +587,30 @@ export function useWorkspaceState({
     });
 
     const migrateWorkspace = async (workspace: Workspace) => {
-      if (migrationInFlightRef.current.has(workspace.id)) {
+      if (!isCurrentOperationGeneration(currentGeneration)) {
+        return;
+      }
+      const inFlightKey = buildGenerationKey(currentGeneration, workspace.id);
+      if (migrationInFlightRef.current.has(inFlightKey)) {
         return;
       }
 
-      migrationInFlightRef.current.add(workspace.id);
+      migrationInFlightRef.current.add(inFlightKey);
 
       try {
-        const serializedServers = serializeServersForSharing(workspace.servers);
         const workspaceId = await convexCreateWorkspace({
           name: workspace.name,
           description: workspace.description,
           clientConfig: workspace.clientConfig,
-          servers: serializedServers,
+          servers: {},
           ...(workspaceOrganizationId
             ? { organizationId: workspaceOrganizationId }
             : {}),
         });
+        if (!isCurrentOperationGeneration(currentGeneration)) {
+          return;
+        }
+
         dispatch({
           type: "UPDATE_WORKSPACE",
           workspaceId: workspace.id,
@@ -427,10 +621,21 @@ export function useWorkspaceState({
               : {}),
           },
         });
+
+        if (appState.activeWorkspaceId === workspace.id) {
+          setConvexActiveWorkspaceId(workspaceId as string);
+        }
+
         logger.info("Migrated workspace to Convex", { name: workspace.name });
       } catch (error) {
-        migrationInFlightRef.current.delete(workspace.id);
-        const requestKey = workspaceOrganizationId ?? "fallback";
+        migrationInFlightRef.current.delete(inFlightKey);
+        if (!isCurrentOperationGeneration(currentGeneration)) {
+          return;
+        }
+        const requestKey = buildGenerationKey(
+          currentGeneration,
+          workspaceOrganizationId ?? "fallback",
+        );
         if (!migrationErrorNotifiedRef.current.has(requestKey)) {
           migrationErrorNotifiedRef.current.add(requestKey);
           toast.error(
@@ -445,13 +650,18 @@ export function useWorkspaceState({
           name: workspace.name,
           error: error instanceof Error ? error.message : "Unknown error",
         });
+        if (hasCarryForwardCandidates) {
+          finishWorkspaceBootstrap(currentGeneration);
+        }
       }
     };
 
     Promise.all(migratableLocalWorkspaces.map(migrateWorkspace));
   }, [
     isAuthenticated,
+    isAuthLoading,
     useLocalFallback,
+    hasCarryForwardCandidates,
     allRemoteWorkspaces,
     migratableLocalWorkspaces,
     migratableLocalWorkspaceCount,
@@ -460,12 +670,126 @@ export function useWorkspaceState({
     logger,
     workspaceOrganizationId,
     canManageBillingForWorkspaceActions,
+    appState.activeWorkspaceId,
+    finishWorkspaceBootstrap,
+    isCurrentOperationGeneration,
   ]);
 
   useEffect(() => {
     if (!isAuthenticated) {
       return;
     }
+    const currentGeneration = operationGenerationRef.current;
+    if (isAuthLoading) return;
+    if (useLocalFallback) return;
+    if (!hasCarryForwardCandidates) return;
+    if (hasCompletedBootstrapImport) return;
+    if (bootstrapMutationInFlightGenerationRef.current === currentGeneration) {
+      return;
+    }
+
+    bootstrapMutationInFlightGenerationRef.current = currentGeneration;
+
+    void (async () => {
+      try {
+        const result = await convexBootstrapGuestServerImport({
+          ...(workspaceOrganizationId
+            ? { organizationId: workspaceOrganizationId }
+            : {}),
+          ...(convexActiveWorkspaceId
+            ? { preferredWorkspaceId: convexActiveWorkspaceId }
+            : {}),
+          sourceWorkspaces: bootstrapGuestSourceWorkspaces,
+        });
+
+        if (!canContinueBootstrapGeneration(currentGeneration)) {
+          return;
+        }
+
+        const targetOrganizationId =
+          result.targetOrganizationId ?? workspaceOrganizationId;
+
+        setConvexActiveWorkspaceId(result.targetWorkspaceId);
+        localStorage.setItem(
+          "convex-active-workspace-id",
+          result.targetWorkspaceId,
+        );
+
+        for (const workspaceId of result.importedSourceWorkspaceIds) {
+          dispatch({
+            type: "UPDATE_WORKSPACE",
+            workspaceId,
+            updates: {
+              sharedWorkspaceId: result.targetWorkspaceId,
+              ...(targetOrganizationId
+                ? { organizationId: targetOrganizationId }
+                : {}),
+            },
+          });
+        }
+
+        if (result.failedServerNames.length > 0) {
+          logger.error("Failed to carry forward some guest servers", {
+            targetWorkspaceId: result.targetWorkspaceId,
+            serverNames: result.failedServerNames,
+          });
+          toast.error(
+            `Could not import some guest servers after sign-in: ${result.failedServerNames.join(", ")}`,
+          );
+        }
+
+        if (result.timedOut) {
+          logger.warn("Guest server carry-forward timed out in Convex", {
+            targetWorkspaceId: result.targetWorkspaceId,
+          });
+          toast.warning(
+            "Importing your servers took too long. Opened app without waiting.",
+          );
+        }
+
+        logger.info("Carried forward guest workspace servers", {
+          targetWorkspaceId: result.targetWorkspaceId,
+          importedServerCount: result.importedServerNames.length,
+          skippedExistingNameServerCount:
+            result.skippedExistingNameServerNames.length,
+          failedServerCount: result.failedServerNames.length,
+          sourceWorkspaceCount: result.importedSourceWorkspaceIds.length,
+          timedOut: result.timedOut,
+        });
+      } catch (error) {
+        if (canContinueBootstrapGeneration(currentGeneration)) {
+          logger.error("Failed to carry forward guest workspace servers", {
+            error: error instanceof Error ? error.message : "Unknown error",
+          });
+          toast.error("Could not import guest servers after sign-in");
+        }
+      } finally {
+        finishWorkspaceBootstrap(currentGeneration);
+      }
+    })();
+  }, [
+    canContinueBootstrapGeneration,
+    isAuthenticated,
+    isAuthLoading,
+    useLocalFallback,
+    hasCarryForwardCandidates,
+    hasCompletedBootstrapImport,
+    bootstrapGuestSourceWorkspaces,
+    convexActiveWorkspaceId,
+    convexBootstrapGuestServerImport,
+    dispatch,
+    finishWorkspaceBootstrap,
+    workspaceOrganizationId,
+    logger,
+  ]);
+
+  useEffect(() => {
+    if (!isAuthenticated) {
+      return;
+    }
+    if (hasCarryForwardCandidates) return;
+    const currentGeneration = operationGenerationRef.current;
+    if (completedBootstrapGenerationRef.current === currentGeneration) return;
     if (useLocalFallback) return;
     if (remoteWorkspaces === undefined) return;
     if (hasCurrentOrganizationWorkspaces) return;
@@ -486,24 +810,34 @@ export function useWorkspaceState({
         ? { organizationId: workspaceOrganizationId }
         : {},
     )
-      .then((workspaceId) => {
+      .then(() => {
+        ensureDefaultInFlightRef.current.delete(requestKey);
         ensureDefaultCompletedRef.current.add(requestKey);
       })
       .catch((error) => {
         ensureDefaultInFlightRef.current.delete(requestKey);
+        if (!isCurrentOperationGeneration(currentGeneration)) {
+          return;
+        }
         logger.error("Failed to ensure default workspace", {
           organizationId: workspaceOrganizationId,
           error: error instanceof Error ? error.message : "Unknown error",
         });
+        if (hasCarryForwardCandidates) {
+          finishWorkspaceBootstrap(currentGeneration);
+        }
       });
   }, [
     isAuthenticated,
     useLocalFallback,
+    hasCarryForwardCandidates,
     remoteWorkspaces,
     hasCurrentOrganizationWorkspaces,
     hasAnyRemoteWorkspaces,
     migratableLocalWorkspaceCount,
     convexEnsureDefaultWorkspace,
+    finishWorkspaceBootstrap,
+    isCurrentOperationGeneration,
     workspaceOrganizationId,
     logger,
   ]);
@@ -887,6 +1221,7 @@ export function useWorkspaceState({
     useLocalFallback,
     setConvexActiveWorkspaceId,
     isLoadingRemoteWorkspaces,
+    isWorkspaceBootstrapLoading,
     effectiveWorkspaces,
     effectiveActiveWorkspaceId,
     handleCreateWorkspace,

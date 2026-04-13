@@ -50,6 +50,7 @@ const {
     },
     isLoading: false,
     isLoadingRemoteWorkspaces: false,
+    isWorkspaceBootstrapLoading: false,
     workspaceServers: {},
     connectedOrConnectingServerConfigs: {},
     selectedMCPConfig: null,
@@ -313,7 +314,12 @@ vi.mock("../components/CompletingSignInLoading", () => ({
   default: () => <div />,
 }));
 vi.mock("../components/LoadingScreen", () => ({
-  default: () => <div data-testid="hosted-oauth-loading" />,
+  default: ({
+    testId,
+  }: {
+    overlay?: boolean;
+    testId?: string;
+  }) => <div data-testid={testId ?? "hosted-oauth-loading"} />,
 }));
 vi.mock("../components/Header", () => ({
   Header: () => <div data-testid="app-header" />,
@@ -1300,6 +1306,44 @@ describe("App hosted OAuth callback handling", () => {
     expect(window.location.hash).toBe("#servers");
     expect(screen.queryByTestId("app-builder-tab")).not.toBeInTheDocument();
     expect(screen.queryByText("Servers Tab")).not.toBeInTheDocument();
+  });
+
+  it("keeps the shell hidden behind the workspace bootstrap overlay until import finishes", async () => {
+    clearHostedOAuthPendingState();
+    clearSandboxSession();
+    window.history.replaceState({}, "", "/#servers");
+    mockHandleOAuthCallback.mockReset();
+
+    let bootstrapLoading = true;
+    mockUseAppState.mockImplementation(() => ({
+      ...createAppStateMock(),
+      isWorkspaceBootstrapLoading: bootstrapLoading,
+    }));
+
+    const { rerender } = render(<App />);
+
+    await waitFor(() => {
+      expect(
+        screen.getByTestId("workspace-bootstrap-loading-overlay"),
+      ).toBeInTheDocument();
+      expect(screen.getByTestId("app-shell-container")).toHaveAttribute(
+        "aria-hidden",
+        "true",
+      );
+    });
+
+    bootstrapLoading = false;
+    rerender(<App />);
+
+    await waitFor(() => {
+      expect(
+        screen.queryByTestId("workspace-bootstrap-loading-overlay"),
+      ).not.toBeInTheDocument();
+      expect(screen.getByText("Servers Tab")).toBeInTheDocument();
+      expect(screen.getByTestId("app-shell-container")).not.toHaveAttribute(
+        "aria-hidden",
+      );
+    });
   });
 
   it("does not auto-route signed-in users into App Builder once startup is ready", async () => {

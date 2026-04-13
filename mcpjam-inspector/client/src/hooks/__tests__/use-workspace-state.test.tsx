@@ -7,21 +7,27 @@ import { useClientConfigStore } from "@/stores/client-config-store";
 import type { WorkspaceClientConfig } from "@/lib/client-config";
 
 const {
+  bootstrapGuestServerImportMock,
   createWorkspaceMock,
   ensureDefaultWorkspaceMock,
   updateClientConfigMock,
   updateWorkspaceMock,
   deleteWorkspaceMock,
+  workspaceServersState,
   workspaceQueryState,
   organizationBillingStatusState,
   useOrganizationBillingStatusMock,
-  serializeServersForSharingMock,
 } = vi.hoisted(() => ({
+  bootstrapGuestServerImportMock: vi.fn(),
   createWorkspaceMock: vi.fn(),
   ensureDefaultWorkspaceMock: vi.fn(),
   updateClientConfigMock: vi.fn(),
   updateWorkspaceMock: vi.fn(),
   deleteWorkspaceMock: vi.fn(),
+  workspaceServersState: {
+    servers: undefined as any,
+    isLoading: false,
+  },
   workspaceQueryState: {
     allWorkspaces: undefined as any,
     workspaces: undefined as any,
@@ -35,7 +41,6 @@ const {
       | undefined,
   },
   useOrganizationBillingStatusMock: vi.fn(),
-  serializeServersForSharingMock: vi.fn((servers) => servers),
 }));
 
 vi.mock("sonner", () => ({
@@ -47,17 +52,36 @@ vi.mock("sonner", () => ({
 }));
 
 vi.mock("../useWorkspaces", () => ({
-  useWorkspaceQueries: () => workspaceQueryState,
+  useWorkspaceQueries: ({
+    enabled = true,
+  }: {
+    enabled?: boolean;
+  }) =>
+    enabled
+      ? workspaceQueryState
+      : {
+          allWorkspaces: undefined,
+          workspaces: undefined,
+          isLoading: false,
+        },
   useWorkspaceMutations: () => ({
     createWorkspace: createWorkspaceMock,
+    bootstrapGuestServerImport: bootstrapGuestServerImportMock,
     ensureDefaultWorkspace: ensureDefaultWorkspaceMock,
     updateWorkspace: updateWorkspaceMock,
     updateClientConfig: updateClientConfigMock,
     deleteWorkspace: deleteWorkspaceMock,
   }),
-  useWorkspaceServers: () => ({
-    servers: undefined,
-    isLoading: false,
+  useWorkspaceServers: ({
+    workspaceId,
+    enabled = true,
+  }: {
+    workspaceId: string | null;
+    enabled?: boolean;
+  }) => ({
+    servers:
+      enabled && workspaceId ? workspaceServersState.servers : undefined,
+    isLoading: enabled ? workspaceServersState.isLoading : false,
   }),
 }));
 
@@ -68,7 +92,6 @@ vi.mock("../useOrganizationBilling", () => ({
 
 vi.mock("@/lib/workspace-serialization", () => ({
   deserializeServersFromConvex: vi.fn((servers) => servers ?? {}),
-  serializeServersForSharing: serializeServersForSharingMock,
 }));
 
 function createSyntheticDefaultWorkspace(): Workspace {
@@ -109,16 +132,29 @@ function createAppState(workspaces: Record<string, Workspace>): AppState {
   };
 }
 
+function createDeferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+
+  return { promise, resolve, reject };
+}
+
 function renderUseWorkspaceState({
   appState,
   activeOrganizationId,
   routeOrganizationId,
   isAuthenticated = true,
+  isAuthLoading = false,
 }: {
   appState: AppState;
   activeOrganizationId?: string;
   routeOrganizationId?: string;
   isAuthenticated?: boolean;
+  isAuthLoading?: boolean;
 }) {
   const dispatch = vi.fn<(action: AppAction) => void>();
   const logger = {
@@ -128,12 +164,20 @@ function renderUseWorkspaceState({
   };
 
   const result = renderHook(
-    ({ organizationId }: { organizationId?: string }) =>
+    ({
+      organizationId,
+      isAuthLoading,
+      isAuthenticated,
+    }: {
+      organizationId?: string;
+      isAuthLoading: boolean;
+      isAuthenticated: boolean;
+    }) =>
       useWorkspaceState({
         appState,
         dispatch,
         isAuthenticated,
-        isAuthLoading: false,
+        isAuthLoading,
         activeOrganizationId: organizationId,
         routeOrganizationId,
         logger,
@@ -141,12 +185,28 @@ function renderUseWorkspaceState({
     {
       initialProps: {
         organizationId: activeOrganizationId,
+        isAuthLoading,
+        isAuthenticated,
       },
     },
   );
 
   return {
     ...result,
+    rerender: ({
+      organizationId = activeOrganizationId,
+      isAuthLoading: nextIsAuthLoading = isAuthLoading,
+      isAuthenticated: nextIsAuthenticated = isAuthenticated,
+    }: {
+      organizationId?: string;
+      isAuthLoading?: boolean;
+      isAuthenticated?: boolean;
+    } = {}) =>
+      result.rerender({
+        organizationId,
+        isAuthLoading: nextIsAuthLoading,
+        isAuthenticated: nextIsAuthenticated,
+      }),
     dispatch,
     logger,
   };
@@ -161,11 +221,40 @@ describe("useWorkspaceState automatic workspace creation", () => {
     vi.clearAllMocks();
     vi.useRealTimers();
     localStorage.clear();
+    bootstrapGuestServerImportMock.mockImplementation(
+      async ({
+        organizationId,
+        preferredWorkspaceId,
+        sourceWorkspaces,
+      }: {
+        organizationId?: string;
+        preferredWorkspaceId?: string;
+        sourceWorkspaces: Array<{
+          localWorkspaceId: string;
+          servers: Array<{ name: string }>;
+        }>;
+      }) => ({
+        targetWorkspaceId: preferredWorkspaceId ?? "remote-workspace-id",
+        targetOrganizationId: organizationId,
+        createdWorkspace: !preferredWorkspaceId,
+        importedServerNames: sourceWorkspaces.flatMap((workspace) =>
+          workspace.servers.map((server) => server.name),
+        ),
+        skippedExistingNameServerNames: [],
+        failedServerNames: [],
+        importedSourceWorkspaceIds: sourceWorkspaces.map(
+          (workspace) => workspace.localWorkspaceId,
+        ),
+        timedOut: false,
+      }),
+    );
     createWorkspaceMock.mockResolvedValue("remote-workspace-id");
     ensureDefaultWorkspaceMock.mockResolvedValue("default-workspace-id");
     updateClientConfigMock.mockResolvedValue(undefined);
     updateWorkspaceMock.mockResolvedValue("remote-workspace-id");
     deleteWorkspaceMock.mockResolvedValue(undefined);
+    workspaceServersState.servers = undefined;
+    workspaceServersState.isLoading = false;
     workspaceQueryState.allWorkspaces = [];
     workspaceQueryState.workspaces = [];
     workspaceQueryState.isLoading = false;
@@ -293,12 +382,227 @@ describe("useWorkspaceState automatic workspace creation", () => {
     });
   });
 
-  it("migrates real local workspaces with createWorkspace and persists the shared workspace id", async () => {
+  it("prefers the newest owned fallback candidate when the saved workspace is invalid", async () => {
+    workspaceQueryState.allWorkspaces = [
+      {
+        _id: "remote-1",
+        name: "Older owned workspace",
+        servers: {},
+        ownerId: "user-1",
+        isOwnedFallbackCandidate: true,
+        createdAt: 1,
+        updatedAt: 1,
+      },
+      {
+        _id: "remote-2",
+        name: "Newest owned workspace",
+        servers: {},
+        ownerId: "user-1",
+        isOwnedFallbackCandidate: true,
+        createdAt: 2,
+        updatedAt: 2,
+      },
+      {
+        _id: "remote-3",
+        name: "Invited workspace",
+        servers: {},
+        ownerId: "other-user",
+        isOwnedFallbackCandidate: false,
+        createdAt: 3,
+        updatedAt: 3,
+      },
+    ];
+    workspaceQueryState.workspaces = [...workspaceQueryState.allWorkspaces];
+    localStorage.setItem("convex-active-workspace-id", "remote-missing");
+
     const appState = createAppState({
       default: createSyntheticDefaultWorkspace(),
-      "local-1": createLocalWorkspace("local-1", {
+    });
+    const { result } = renderUseWorkspaceState({ appState });
+
+    expect(result.current.effectiveActiveWorkspaceId).toBe("remote-2");
+    await waitFor(() => {
+      expect(localStorage.getItem("convex-active-workspace-id")).toBe(
+        "remote-2",
+      );
+    });
+  });
+
+  it("falls back to the first remote workspace when no owned fallback candidate exists", async () => {
+    workspaceQueryState.allWorkspaces = [
+      {
+        _id: "remote-1",
+        name: "First workspace",
+        servers: {},
+        ownerId: "other-user",
+        isOwnedFallbackCandidate: false,
+        createdAt: 1,
+        updatedAt: 1,
+      },
+      {
+        _id: "remote-2",
+        name: "Second workspace",
+        servers: {},
+        ownerId: "other-user",
+        isOwnedFallbackCandidate: false,
+        createdAt: 2,
+        updatedAt: 2,
+      },
+    ];
+    workspaceQueryState.workspaces = [...workspaceQueryState.allWorkspaces];
+    localStorage.setItem("convex-active-workspace-id", "remote-missing");
+
+    const appState = createAppState({
+      default: createSyntheticDefaultWorkspace(),
+    });
+    const { result } = renderUseWorkspaceState({ appState });
+
+    expect(result.current.effectiveActiveWorkspaceId).toBe("remote-1");
+    await waitFor(() => {
+      expect(localStorage.getItem("convex-active-workspace-id")).toBe(
+        "remote-1",
+      );
+    });
+  });
+
+  it("keeps fallback selection scoped to the current organization's remote workspaces", async () => {
+    workspaceQueryState.allWorkspaces = [
+      {
+        _id: "remote-global",
+        name: "Owned workspace in another org",
+        servers: {},
+        ownerId: "user-1",
+        organizationId: "org-other",
+        isOwnedFallbackCandidate: true,
+        createdAt: 10,
+        updatedAt: 10,
+      },
+      {
+        _id: "remote-scoped",
+        name: "Scoped workspace",
+        servers: {},
+        ownerId: "other-user",
+        organizationId: "org-scope",
+        isOwnedFallbackCandidate: false,
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ];
+    workspaceQueryState.workspaces = [
+      {
+        _id: "remote-scoped",
+        name: "Scoped workspace",
+        servers: {},
+        ownerId: "other-user",
+        organizationId: "org-scope",
+        isOwnedFallbackCandidate: false,
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ];
+    localStorage.setItem("convex-active-workspace-id", "remote-missing");
+
+    const appState = createAppState({
+      default: createSyntheticDefaultWorkspace(),
+    });
+    const { result } = renderUseWorkspaceState({
+      appState,
+      activeOrganizationId: "org-scope",
+    });
+
+    expect(result.current.effectiveActiveWorkspaceId).toBe("remote-scoped");
+    expect(localStorage.getItem("convex-active-workspace-id")).toBe(
+      "remote-scoped",
+    );
+  });
+
+  it("bootstraps the active local workspace servers into the signed-in workspace", async () => {
+    const appState = createAppState({
+      default: createLocalWorkspace("default", {
         name: "Imported workspace",
         description: "Needs migration",
+        isDefault: true,
+        servers: {
+          demo: {
+            name: "demo",
+            config: {
+              url: "https://example.com/mcp",
+              requestInit: {
+                headers: {
+                  Authorization: "Bearer secret",
+                  "X-Custom": "1",
+                },
+              },
+              timeout: 30_000,
+            } as any,
+            lastConnectionTime: new Date("2026-01-01T00:00:00.000Z"),
+            connectionStatus: "disconnected",
+            retryCount: 0,
+            enabled: true,
+            useOAuth: true,
+            oauthFlowProfile: {
+              scopes: "read,write",
+              clientId: "demo-client",
+            } as any,
+          },
+        },
+      }),
+    });
+
+    const { dispatch } = renderUseWorkspaceState({
+      appState,
+      activeOrganizationId: "org-migrate",
+    });
+
+    await waitFor(() => {
+      expect(bootstrapGuestServerImportMock).toHaveBeenCalledWith({
+        organizationId: "org-migrate",
+        sourceWorkspaces: [
+          {
+            localWorkspaceId: "default",
+            servers: [
+              {
+                name: "demo",
+                enabled: true,
+                transportType: "http",
+                command: undefined,
+                args: undefined,
+                url: "https://example.com/mcp",
+                headers: undefined,
+                timeout: 30_000,
+                useOAuth: true,
+                oauthScopes: ["read", "write"],
+                clientId: "demo-client",
+              },
+            ],
+          },
+        ],
+      });
+    });
+
+    await waitFor(() => {
+      expect(dispatch).toHaveBeenCalledWith({
+        type: "UPDATE_WORKSPACE",
+        workspaceId: "default",
+        updates: {
+          sharedWorkspaceId: "remote-workspace-id",
+          organizationId: "org-migrate",
+        },
+      });
+    });
+    expect(localStorage.getItem("convex-active-workspace-id")).toBe(
+      "remote-workspace-id",
+    );
+    expect(createWorkspaceMock).not.toHaveBeenCalled();
+    expect(ensureDefaultWorkspaceMock).not.toHaveBeenCalled();
+  });
+
+  it("waits for auth loading to finish before bootstrapping local workspace servers", async () => {
+    const appState = createAppState({
+      default: createLocalWorkspace("default", {
+        name: "Imported workspace",
+        description: "Needs migration",
+        isDefault: true,
         servers: {
           demo: {
             name: "demo",
@@ -311,35 +615,1561 @@ describe("useWorkspaceState automatic workspace creation", () => {
       }),
     });
 
-    const { dispatch } = renderUseWorkspaceState({
+    const { rerender } = renderUseWorkspaceState({
       appState,
-      activeOrganizationId: "org-migrate",
+      isAuthLoading: true,
     });
+
+    await Promise.resolve();
+    expect(bootstrapGuestServerImportMock).not.toHaveBeenCalled();
+
+    rerender({ organizationId: undefined, isAuthLoading: false });
+
+    await waitFor(() => {
+      expect(bootstrapGuestServerImportMock).toHaveBeenCalledWith({
+        sourceWorkspaces: [
+          {
+            localWorkspaceId: "default",
+            servers: [
+              {
+                name: "demo",
+                enabled: false,
+                transportType: "http",
+                command: undefined,
+                args: undefined,
+                url: "https://example.com/mcp",
+                headers: undefined,
+                timeout: undefined,
+                useOAuth: undefined,
+                oauthScopes: undefined,
+                clientId: undefined,
+              },
+            ],
+          },
+        ],
+      });
+    });
+  });
+
+  it("carries guest-created servers into the active signed-in workspace", async () => {
+    workspaceQueryState.allWorkspaces = [
+      {
+        _id: "remote-1",
+        name: "Remote workspace",
+        servers: {},
+        ownerId: "user-1",
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ];
+    workspaceQueryState.workspaces = [...workspaceQueryState.allWorkspaces];
+    workspaceServersState.servers = [];
+    localStorage.setItem("convex-active-workspace-id", "remote-1");
+
+    const appState = createAppState({
+      default: createLocalWorkspace("default", {
+        name: "Default",
+        description: "Default workspace",
+        isDefault: true,
+        servers: {
+          linear: {
+            name: "linear",
+            config: {
+              url: "https://mcp.linear.app/mcp",
+              requestInit: {
+                headers: {
+                  Authorization: "Bearer secret",
+                  "X-Custom": "1",
+                },
+              },
+              timeout: 30_000,
+            } as any,
+            lastConnectionTime: new Date("2026-01-01T00:00:00.000Z"),
+            connectionStatus: "disconnected",
+            retryCount: 0,
+            enabled: true,
+            useOAuth: true,
+            oauthFlowProfile: {
+              scopes: "read,write",
+              clientId: "linear-client",
+            } as any,
+          },
+        },
+      }),
+    });
+
+    const { dispatch } = renderUseWorkspaceState({ appState });
+
+    await waitFor(() => {
+      expect(bootstrapGuestServerImportMock).toHaveBeenCalledWith({
+        preferredWorkspaceId: "remote-1",
+        sourceWorkspaces: [
+          {
+            localWorkspaceId: "default",
+            servers: [
+              {
+                name: "linear",
+                enabled: true,
+                transportType: "http",
+                command: undefined,
+                args: undefined,
+                url: "https://mcp.linear.app/mcp",
+                headers: undefined,
+                timeout: 30_000,
+                useOAuth: true,
+                oauthScopes: ["read", "write"],
+                clientId: "linear-client",
+              },
+            ],
+          },
+        ],
+      });
+    });
+
+    await waitFor(() => {
+      expect(dispatch).toHaveBeenCalledWith({
+        type: "UPDATE_WORKSPACE",
+        workspaceId: "default",
+        updates: {
+          sharedWorkspaceId: "remote-1",
+        },
+      });
+    });
+  });
+
+  it("does not wait for active workspace server hydration before bootstrapping guest servers", async () => {
+    workspaceQueryState.allWorkspaces = [
+      {
+        _id: "remote-1",
+        name: "Remote workspace",
+        servers: {},
+        ownerId: "user-1",
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ];
+    workspaceQueryState.workspaces = [...workspaceQueryState.allWorkspaces];
+    workspaceServersState.servers = undefined;
+    workspaceServersState.isLoading = true;
+    localStorage.removeItem("convex-active-workspace-id");
+
+    const appState = createAppState({
+      default: createLocalWorkspace("default", {
+        name: "Default",
+        description: "Default workspace",
+        isDefault: true,
+        servers: {
+          demo: {
+            name: "demo",
+            config: { url: "https://example.com/mcp" } as any,
+            lastConnectionTime: new Date("2026-01-01T00:00:00.000Z"),
+            connectionStatus: "disconnected",
+            retryCount: 0,
+          },
+        },
+      }),
+    });
+
+    renderUseWorkspaceState({ appState });
+
+    await waitFor(() => {
+      expect(bootstrapGuestServerImportMock).toHaveBeenCalledWith({
+        sourceWorkspaces: [
+          {
+            localWorkspaceId: "default",
+            servers: [
+              {
+                name: "demo",
+                enabled: false,
+                transportType: "http",
+                command: undefined,
+                args: undefined,
+                url: "https://example.com/mcp",
+                headers: undefined,
+                timeout: undefined,
+                useOAuth: undefined,
+                oauthScopes: undefined,
+                clientId: undefined,
+              },
+            ],
+          },
+        ],
+      });
+    });
+  });
+
+  it("uses the active workspace even when the local workspace still points at an old shared workspace", async () => {
+    workspaceQueryState.allWorkspaces = [
+      {
+        _id: "remote-1",
+        name: "Active remote workspace",
+        servers: {},
+        ownerId: "user-1",
+        createdAt: 1,
+        updatedAt: 1,
+      },
+      {
+        _id: "remote-2",
+        name: "Previously linked workspace",
+        ownerId: "user-1",
+        createdAt: 2,
+        updatedAt: 2,
+        servers: {},
+      },
+    ];
+    workspaceQueryState.workspaces = [...workspaceQueryState.allWorkspaces];
+    workspaceServersState.servers = [
+      {
+        _id: "srv-linear",
+        workspaceId: "remote-1",
+        name: "linear",
+        enabled: true,
+        transportType: "http",
+        url: "https://mcp.linear.app/mcp",
+        headers: { "X-Different": "remote-value" },
+        timeout: 30_000,
+        useOAuth: true,
+        oauthScopes: ["read", "write"],
+        clientId: "linear-client",
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ];
+    localStorage.setItem("convex-active-workspace-id", "remote-1");
+
+    const appState = createAppState({
+      default: createLocalWorkspace("default", {
+        name: "Default",
+        description: "Default workspace",
+        isDefault: true,
+        sharedWorkspaceId: "remote-2",
+        servers: {
+          linear: {
+            name: "linear",
+            config: {
+              url: "https://mcp.linear.app/mcp",
+              requestInit: {
+                headers: {
+                  Authorization: "Bearer secret",
+                  "X-Custom": "1",
+                },
+              },
+              timeout: 30_000,
+            } as any,
+            lastConnectionTime: new Date("2026-01-01T00:00:00.000Z"),
+            connectionStatus: "disconnected",
+            retryCount: 0,
+            enabled: true,
+            useOAuth: true,
+            oauthFlowProfile: {
+              scopes: "read,write",
+              clientId: "linear-client",
+            } as any,
+          },
+        },
+      }),
+    });
+
+    const { dispatch } = renderUseWorkspaceState({ appState });
+
+    await waitFor(() => {
+      expect(bootstrapGuestServerImportMock).toHaveBeenCalledWith({
+        preferredWorkspaceId: "remote-1",
+        sourceWorkspaces: [
+          {
+            localWorkspaceId: "default",
+            servers: [
+              {
+                name: "linear",
+                enabled: true,
+                transportType: "http",
+                command: undefined,
+                args: undefined,
+                url: "https://mcp.linear.app/mcp",
+                headers: undefined,
+                timeout: 30_000,
+                useOAuth: true,
+                oauthScopes: ["read", "write"],
+                clientId: "linear-client",
+              },
+            ],
+          },
+        ],
+      });
+    });
+
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "UPDATE_WORKSPACE",
+      workspaceId: "default",
+      updates: {
+        sharedWorkspaceId: "remote-1",
+      },
+    });
+    expect(dispatch).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "UPDATE_WORKSPACE",
+        workspaceId: "default",
+        updates: expect.objectContaining({
+          sharedWorkspaceId: "remote-2",
+        }),
+      }),
+    );
+  });
+
+  it("waits for auth loading to finish before importing guest servers", async () => {
+    workspaceQueryState.allWorkspaces = [
+      {
+        _id: "remote-1",
+        name: "Remote workspace",
+        servers: {},
+        ownerId: "user-1",
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ];
+    workspaceQueryState.workspaces = [...workspaceQueryState.allWorkspaces];
+    workspaceServersState.servers = [];
+    localStorage.setItem("convex-active-workspace-id", "remote-1");
+
+    const appState = createAppState({
+      default: createLocalWorkspace("default", {
+        name: "Default",
+        description: "Default workspace",
+        isDefault: true,
+        servers: {
+          demo: {
+            name: "demo",
+            config: { url: "https://example.com/mcp" } as any,
+            lastConnectionTime: new Date("2026-01-01T00:00:00.000Z"),
+            connectionStatus: "disconnected",
+            retryCount: 0,
+          },
+        },
+      }),
+    });
+
+    const { rerender } = renderUseWorkspaceState({
+      appState,
+      isAuthLoading: true,
+    });
+
+    await Promise.resolve();
+    expect(bootstrapGuestServerImportMock).not.toHaveBeenCalled();
+
+    rerender({ organizationId: undefined, isAuthLoading: false });
+
+    await waitFor(() => {
+      expect(bootstrapGuestServerImportMock).toHaveBeenCalledWith({
+        preferredWorkspaceId: "remote-1",
+        sourceWorkspaces: [
+          {
+            localWorkspaceId: "default",
+            servers: [
+              {
+                name: "demo",
+                enabled: false,
+                transportType: "http",
+                command: undefined,
+                args: undefined,
+                url: "https://example.com/mcp",
+                headers: undefined,
+                timeout: undefined,
+                useOAuth: undefined,
+                oauthScopes: undefined,
+                clientId: undefined,
+              },
+            ],
+          },
+        ],
+      });
+    });
+  });
+
+  it("treats a same-name remote server as already imported", async () => {
+    workspaceQueryState.allWorkspaces = [
+      {
+        _id: "remote-1",
+        name: "Remote workspace",
+        servers: {},
+        ownerId: "user-1",
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ];
+    workspaceQueryState.workspaces = [...workspaceQueryState.allWorkspaces];
+    localStorage.setItem("convex-active-workspace-id", "remote-1");
+    bootstrapGuestServerImportMock.mockResolvedValueOnce({
+      targetWorkspaceId: "remote-1",
+      targetOrganizationId: undefined,
+      createdWorkspace: false,
+      importedServerNames: [],
+      skippedExistingNameServerNames: ["linear"],
+      failedServerNames: [],
+      importedSourceWorkspaceIds: ["default"],
+      timedOut: false,
+    });
+
+    const appState = createAppState({
+      default: createLocalWorkspace("default", {
+        name: "Default",
+        description: "Default workspace",
+        isDefault: true,
+        servers: {
+          linear: {
+            name: "linear",
+            config: {
+              url: "https://mcp.linear.app/mcp",
+              requestInit: {
+                headers: {
+                  Authorization: "Bearer secret",
+                  "X-Custom": "1",
+                },
+              },
+              timeout: 30_000,
+            } as any,
+            lastConnectionTime: new Date("2026-01-01T00:00:00.000Z"),
+            connectionStatus: "disconnected",
+            retryCount: 0,
+            enabled: true,
+            useOAuth: true,
+            oauthFlowProfile: {
+              scopes: "read,write",
+              clientId: "linear-client",
+            } as any,
+          },
+        },
+      }),
+    });
+
+    const { dispatch } = renderUseWorkspaceState({ appState });
+
+    await waitFor(() => {
+      expect(dispatch).toHaveBeenCalledWith({
+        type: "UPDATE_WORKSPACE",
+        workspaceId: "default",
+        updates: {
+          sharedWorkspaceId: "remote-1",
+        },
+      });
+    });
+  });
+
+  it("silently skips a same-name remote server even when headers differ", async () => {
+    workspaceQueryState.allWorkspaces = [
+      {
+        _id: "remote-1",
+        name: "Remote workspace",
+        servers: {},
+        ownerId: "user-1",
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ];
+    workspaceQueryState.workspaces = [...workspaceQueryState.allWorkspaces];
+    localStorage.setItem("convex-active-workspace-id", "remote-1");
+    bootstrapGuestServerImportMock.mockResolvedValueOnce({
+      targetWorkspaceId: "remote-1",
+      targetOrganizationId: undefined,
+      createdWorkspace: false,
+      importedServerNames: [],
+      skippedExistingNameServerNames: ["linear"],
+      failedServerNames: [],
+      importedSourceWorkspaceIds: ["default"],
+      timedOut: false,
+    });
+
+    const appState = createAppState({
+      default: createLocalWorkspace("default", {
+        name: "Default",
+        description: "Default workspace",
+        isDefault: true,
+        servers: {
+          linear: {
+            name: "linear",
+            config: {
+              url: "https://mcp.linear.app/mcp",
+              requestInit: {
+                headers: {
+                  Authorization: "Bearer secret",
+                  "X-Custom": "1",
+                },
+              },
+              timeout: 30_000,
+            } as any,
+            lastConnectionTime: new Date("2026-01-01T00:00:00.000Z"),
+            connectionStatus: "disconnected",
+            retryCount: 0,
+            enabled: true,
+            useOAuth: true,
+            oauthFlowProfile: {
+              scopes: "read,write",
+              clientId: "linear-client",
+            } as any,
+          },
+        },
+      }),
+    });
+
+    const { dispatch } = renderUseWorkspaceState({ appState });
+
+    await waitFor(() => {
+      expect(dispatch).toHaveBeenCalledWith({
+        type: "UPDATE_WORKSPACE",
+        workspaceId: "default",
+        updates: {
+          sharedWorkspaceId: "remote-1",
+        },
+      });
+    });
+  });
+
+  it("falls back to the active authed workspace when the old shared workspace link is stale", async () => {
+    workspaceQueryState.allWorkspaces = [
+      {
+        _id: "remote-1",
+        name: "Remote workspace",
+        servers: {},
+        ownerId: "user-1",
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ];
+    workspaceQueryState.workspaces = [...workspaceQueryState.allWorkspaces];
+    workspaceServersState.servers = [];
+    localStorage.setItem("convex-active-workspace-id", "remote-1");
+
+    const appState = createAppState({
+      default: createLocalWorkspace("default", {
+        name: "Default",
+        description: "Default workspace",
+        isDefault: true,
+        sharedWorkspaceId: "remote-missing",
+        servers: {
+          linear: {
+            name: "linear",
+            config: {
+              url: "https://mcp.linear.app/mcp",
+              requestInit: {
+                headers: {
+                  Authorization: "Bearer secret",
+                  "X-Custom": "1",
+                },
+              },
+              timeout: 30_000,
+            } as any,
+            lastConnectionTime: new Date("2026-01-01T00:00:00.000Z"),
+            connectionStatus: "disconnected",
+            retryCount: 0,
+            enabled: true,
+            useOAuth: true,
+            oauthFlowProfile: {
+              scopes: "read,write",
+              clientId: "linear-client",
+            } as any,
+          },
+        },
+      }),
+    });
+
+    const { dispatch } = renderUseWorkspaceState({ appState });
+
+    await waitFor(() => {
+      expect(bootstrapGuestServerImportMock).toHaveBeenCalledWith({
+        preferredWorkspaceId: "remote-1",
+        sourceWorkspaces: [
+          {
+            localWorkspaceId: "default",
+            servers: [
+              {
+                name: "linear",
+                enabled: true,
+                transportType: "http",
+                command: undefined,
+                args: undefined,
+                url: "https://mcp.linear.app/mcp",
+                headers: undefined,
+                timeout: 30_000,
+                useOAuth: true,
+                oauthScopes: ["read", "write"],
+                clientId: "linear-client",
+              },
+            ],
+          },
+        ],
+      });
+    });
+
+    await waitFor(() => {
+      expect(dispatch).toHaveBeenCalledWith({
+        type: "UPDATE_WORKSPACE",
+        workspaceId: "default",
+        updates: {
+          sharedWorkspaceId: "remote-1",
+        },
+      });
+    });
+  });
+
+  it("bootstraps into a backend-created default workspace when no remote workspace exists yet", async () => {
+    workspaceQueryState.allWorkspaces = [];
+    workspaceQueryState.workspaces = [];
+    workspaceServersState.servers = undefined;
+    bootstrapGuestServerImportMock.mockResolvedValueOnce({
+      targetWorkspaceId: "remote-1",
+      targetOrganizationId: undefined,
+      createdWorkspace: true,
+      importedServerNames: ["linear"],
+      skippedExistingNameServerNames: [],
+      failedServerNames: [],
+      importedSourceWorkspaceIds: ["default"],
+      timedOut: false,
+    });
+
+    const appState = createAppState({
+      default: createLocalWorkspace("default", {
+        name: "Default",
+        description: "Default workspace",
+        isDefault: true,
+        sharedWorkspaceId: "remote-missing",
+        servers: {
+          linear: {
+            name: "linear",
+            config: {
+              url: "https://mcp.linear.app/mcp",
+              requestInit: {
+                headers: {
+                  Authorization: "Bearer secret",
+                  "X-Custom": "1",
+                },
+              },
+              timeout: 30_000,
+            } as any,
+            lastConnectionTime: new Date("2026-01-01T00:00:00.000Z"),
+            connectionStatus: "disconnected",
+            retryCount: 0,
+            enabled: true,
+            useOAuth: true,
+            oauthFlowProfile: {
+              scopes: "read,write",
+              clientId: "linear-client",
+            } as any,
+          },
+        },
+      }),
+    });
+
+    const { dispatch } = renderUseWorkspaceState({ appState });
+
+    await waitFor(() => {
+      expect(bootstrapGuestServerImportMock).toHaveBeenCalledWith({
+        sourceWorkspaces: [
+          {
+            localWorkspaceId: "default",
+            servers: [
+              {
+                name: "linear",
+                enabled: true,
+                transportType: "http",
+                command: undefined,
+                args: undefined,
+                url: "https://mcp.linear.app/mcp",
+                headers: undefined,
+                timeout: 30_000,
+                useOAuth: true,
+                oauthScopes: ["read", "write"],
+                clientId: "linear-client",
+              },
+            ],
+          },
+        ],
+      });
+    });
+
+    await waitFor(() => {
+      expect(dispatch).toHaveBeenCalledWith({
+        type: "UPDATE_WORKSPACE",
+        workspaceId: "default",
+        updates: {
+          sharedWorkspaceId: "remote-1",
+        },
+      });
+    });
+  });
+
+  it("silently skips guest servers when the remote workspace already has the same name", async () => {
+    workspaceQueryState.allWorkspaces = [
+      {
+        _id: "remote-1",
+        name: "Remote workspace",
+        servers: {},
+        ownerId: "user-1",
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ];
+    workspaceQueryState.workspaces = [...workspaceQueryState.allWorkspaces];
+    localStorage.setItem("convex-active-workspace-id", "remote-1");
+    bootstrapGuestServerImportMock.mockResolvedValueOnce({
+      targetWorkspaceId: "remote-1",
+      targetOrganizationId: undefined,
+      createdWorkspace: false,
+      importedServerNames: [],
+      skippedExistingNameServerNames: ["linear"],
+      failedServerNames: [],
+      importedSourceWorkspaceIds: ["default"],
+      timedOut: false,
+    });
+
+    const appState = createAppState({
+      default: createLocalWorkspace("default", {
+        name: "Default",
+        description: "Default workspace",
+        isDefault: true,
+        servers: {
+          linear: {
+            name: "linear",
+            config: { url: "https://mcp.linear.app/mcp" } as any,
+            lastConnectionTime: new Date("2026-01-01T00:00:00.000Z"),
+            connectionStatus: "disconnected",
+            retryCount: 0,
+          },
+        },
+      }),
+    });
+
+    const { dispatch } = renderUseWorkspaceState({ appState });
+
+    await waitFor(() => {
+      expect(dispatch).toHaveBeenCalledWith({
+        type: "UPDATE_WORKSPACE",
+        workspaceId: "default",
+        updates: {
+          sharedWorkspaceId: "remote-1",
+        },
+      });
+    });
+
+    expect(vi.mocked(toast.error)).not.toHaveBeenCalled();
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "UPDATE_WORKSPACE",
+      workspaceId: "default",
+      updates: {
+        sharedWorkspaceId: "remote-1",
+      },
+    });
+  });
+
+  it("keeps workspace bootstrap loading active until the guest import pass finishes", async () => {
+    workspaceQueryState.allWorkspaces = [
+      {
+        _id: "remote-1",
+        name: "Remote workspace",
+        servers: {},
+        ownerId: "user-1",
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ];
+    workspaceQueryState.workspaces = [...workspaceQueryState.allWorkspaces];
+    workspaceServersState.servers = [];
+    localStorage.setItem("convex-active-workspace-id", "remote-1");
+
+    let resolveBootstrapImport:
+      | ((value: {
+          targetWorkspaceId: string;
+          targetOrganizationId?: string;
+          createdWorkspace: boolean;
+          importedServerNames: string[];
+          skippedExistingNameServerNames: string[];
+          failedServerNames: string[];
+          importedSourceWorkspaceIds: string[];
+          timedOut: boolean;
+        }) => void)
+      | null = null;
+    bootstrapGuestServerImportMock.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveBootstrapImport = resolve;
+        }),
+    );
+
+    const appState = createAppState({
+      default: createLocalWorkspace("default", {
+        name: "Default",
+        description: "Default workspace",
+        isDefault: true,
+        servers: {
+          demo: {
+            name: "demo",
+            config: { url: "https://example.com/mcp" } as any,
+            lastConnectionTime: new Date("2026-01-01T00:00:00.000Z"),
+            connectionStatus: "disconnected",
+            retryCount: 0,
+          },
+        },
+      }),
+    });
+
+    const { result, dispatch } = renderUseWorkspaceState({ appState });
+
+    await waitFor(() => {
+      expect(result.current.isWorkspaceBootstrapLoading).toBe(true);
+    });
+
+    await act(async () => {
+      resolveBootstrapImport?.({
+        targetWorkspaceId: "remote-1",
+        targetOrganizationId: undefined,
+        createdWorkspace: false,
+        importedServerNames: ["demo"],
+        skippedExistingNameServerNames: [],
+        failedServerNames: [],
+        importedSourceWorkspaceIds: ["default"],
+        timedOut: false,
+      });
+    });
+
+    await waitFor(() => {
+      expect(result.current.isWorkspaceBootstrapLoading).toBe(false);
+      expect(dispatch).toHaveBeenCalledWith({
+        type: "UPDATE_WORKSPACE",
+        workspaceId: "default",
+        updates: {
+          sharedWorkspaceId: "remote-1",
+        },
+      });
+    });
+  });
+
+  it("stops workspace bootstrap loading after 5 seconds if guest import hangs", async () => {
+    vi.useFakeTimers();
+
+    workspaceQueryState.allWorkspaces = [
+      {
+        _id: "remote-1",
+        name: "Remote workspace",
+        servers: {},
+        ownerId: "user-1",
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ];
+    workspaceQueryState.workspaces = [...workspaceQueryState.allWorkspaces];
+    workspaceServersState.servers = [];
+    localStorage.setItem("convex-active-workspace-id", "remote-1");
+
+    bootstrapGuestServerImportMock.mockImplementationOnce(
+      () => new Promise(() => {}),
+    );
+
+    const appState = createAppState({
+      default: createLocalWorkspace("default", {
+        name: "Default",
+        description: "Default workspace",
+        isDefault: true,
+        servers: {
+          demo: {
+            name: "demo",
+            config: { url: "https://example.com/mcp" } as any,
+            lastConnectionTime: new Date("2026-01-01T00:00:00.000Z"),
+            connectionStatus: "disconnected",
+            retryCount: 0,
+          },
+        },
+      }),
+    });
+
+    const { result, rerender } = renderUseWorkspaceState({ appState });
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(result.current.isWorkspaceBootstrapLoading).toBe(true);
+
+    await act(async () => {
+      vi.advanceTimersByTime(5000);
+      await Promise.resolve();
+    });
+
+    expect(result.current.isWorkspaceBootstrapLoading).toBe(false);
+    expect(vi.mocked(toast.warning)).toHaveBeenCalledWith(
+      "Importing your servers took too long. Opened app without waiting.",
+    );
+
+    workspaceQueryState.workspaces = [...workspaceQueryState.workspaces];
+    rerender({ organizationId: undefined });
+
+    expect(bootstrapGuestServerImportMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not relink a local workspace when bootstrap times out before that workspace finishes", async () => {
+    workspaceQueryState.allWorkspaces = [
+      {
+        _id: "remote-1",
+        name: "Remote workspace",
+        servers: {},
+        ownerId: "user-1",
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ];
+    workspaceQueryState.workspaces = [...workspaceQueryState.allWorkspaces];
+    localStorage.setItem("convex-active-workspace-id", "remote-1");
+    bootstrapGuestServerImportMock.mockResolvedValueOnce({
+      targetWorkspaceId: "remote-1",
+      targetOrganizationId: undefined,
+      createdWorkspace: false,
+      importedServerNames: [],
+      skippedExistingNameServerNames: [],
+      failedServerNames: [],
+      importedSourceWorkspaceIds: [],
+      timedOut: true,
+    });
+
+    const appState = createAppState({
+      default: createLocalWorkspace("default", {
+        name: "Default",
+        description: "Default workspace",
+        isDefault: true,
+        servers: {
+          demo: {
+            name: "demo",
+            config: { url: "https://example.com/mcp" } as any,
+            lastConnectionTime: new Date("2026-01-01T00:00:00.000Z"),
+            connectionStatus: "disconnected",
+            retryCount: 0,
+          },
+        },
+      }),
+    });
+
+    const { dispatch } = renderUseWorkspaceState({ appState });
+
+    await waitFor(() => {
+      expect(vi.mocked(toast.warning)).toHaveBeenCalledWith(
+        "Importing your servers took too long. Opened app without waiting.",
+      );
+    });
+
+    expect(dispatch).not.toHaveBeenCalledWith({
+      type: "UPDATE_WORKSPACE",
+      workspaceId: "default",
+      updates: {
+        sharedWorkspaceId: "remote-1",
+      },
+    });
+  });
+
+  it("stops workspace bootstrap loading if the guest server carry-forward mutation fails", async () => {
+    workspaceQueryState.allWorkspaces = [];
+    workspaceQueryState.workspaces = [];
+    bootstrapGuestServerImportMock.mockRejectedValueOnce(
+      new Error("bootstrap failed"),
+    );
+
+    const appState = createAppState({
+      default: createLocalWorkspace("default", {
+        name: "Default",
+        description: "Needs migration",
+        isDefault: true,
+        servers: {
+          demo: {
+            name: "demo",
+            config: { url: "https://example.com/mcp" } as any,
+            lastConnectionTime: new Date("2026-01-01T00:00:00.000Z"),
+            connectionStatus: "disconnected",
+            retryCount: 0,
+          },
+        },
+      }),
+    });
+
+    const { result, rerender } = renderUseWorkspaceState({ appState });
+
+    await waitFor(() => {
+      expect(bootstrapGuestServerImportMock).toHaveBeenCalledTimes(1);
+      expect(result.current.isWorkspaceBootstrapLoading).toBe(false);
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith(
+        "Could not import guest servers after sign-in",
+      );
+    });
+
+    rerender({ organizationId: undefined });
+
+    await waitFor(() => {
+      expect(bootstrapGuestServerImportMock).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("does not retry failed guest imports on a later rerender", async () => {
+    workspaceQueryState.allWorkspaces = [
+      {
+        _id: "remote-1",
+        name: "Remote workspace",
+        servers: {},
+        ownerId: "user-1",
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ];
+    workspaceQueryState.workspaces = [...workspaceQueryState.allWorkspaces];
+    workspaceServersState.servers = [];
+    localStorage.setItem("convex-active-workspace-id", "remote-1");
+
+    bootstrapGuestServerImportMock
+      .mockRejectedValueOnce(new Error("network down"))
+      .mockResolvedValueOnce({
+        targetWorkspaceId: "remote-1",
+        targetOrganizationId: undefined,
+        createdWorkspace: false,
+        importedServerNames: ["demo"],
+        skippedExistingNameServerNames: [],
+        failedServerNames: [],
+        importedSourceWorkspaceIds: ["default"],
+        timedOut: false,
+      });
+
+    const appState = createAppState({
+      default: createLocalWorkspace("default", {
+        name: "Default",
+        description: "Default workspace",
+        isDefault: true,
+        servers: {
+          demo: {
+            name: "demo",
+            config: { url: "https://example.com/mcp" } as any,
+            lastConnectionTime: new Date("2026-01-01T00:00:00.000Z"),
+            connectionStatus: "disconnected",
+            retryCount: 0,
+          },
+        },
+      }),
+    });
+
+    const { dispatch, rerender } = renderUseWorkspaceState({ appState });
+
+    await waitFor(() => {
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith(
+        "Could not import guest servers after sign-in",
+      );
+    });
+
+    expect(dispatch).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "UPDATE_WORKSPACE",
+        workspaceId: "default",
+      }),
+    );
+
+    workspaceQueryState.workspaces = [...workspaceQueryState.workspaces];
+    rerender({ organizationId: undefined });
+
+    await waitFor(() => {
+      expect(bootstrapGuestServerImportMock).toHaveBeenCalledTimes(1);
+      expect(dispatch).not.toHaveBeenCalledWith({
+        type: "UPDATE_WORKSPACE",
+        workspaceId: "default",
+        updates: {
+          sharedWorkspaceId: "remote-1",
+        },
+      });
+    });
+  });
+
+  it("does not retry successful guest imports on a later rerender", async () => {
+    workspaceQueryState.allWorkspaces = [
+      {
+        _id: "remote-1",
+        name: "Remote workspace",
+        servers: {},
+        ownerId: "user-1",
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ];
+    workspaceQueryState.workspaces = [...workspaceQueryState.allWorkspaces];
+    workspaceServersState.servers = [];
+    localStorage.setItem("convex-active-workspace-id", "remote-1");
+
+    const appState = createAppState({
+      default: createLocalWorkspace("default", {
+        name: "Default",
+        description: "Default workspace",
+        isDefault: true,
+        servers: {
+          demo: {
+            name: "demo",
+            config: { url: "https://example.com/mcp" } as any,
+            lastConnectionTime: new Date("2026-01-01T00:00:00.000Z"),
+            connectionStatus: "disconnected",
+            retryCount: 0,
+          },
+        },
+      }),
+    });
+
+    const { rerender } = renderUseWorkspaceState({ appState });
+
+    await waitFor(() => {
+      expect(bootstrapGuestServerImportMock).toHaveBeenCalledTimes(1);
+    });
+
+    workspaceQueryState.workspaces = [...workspaceQueryState.workspaces];
+    rerender({ organizationId: undefined });
+
+    await waitFor(() => {
+      expect(bootstrapGuestServerImportMock).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("does not retry same-name skipped guest imports on a later rerender", async () => {
+    workspaceQueryState.allWorkspaces = [
+      {
+        _id: "remote-1",
+        name: "Remote workspace",
+        servers: {},
+        ownerId: "user-1",
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ];
+    workspaceQueryState.workspaces = [...workspaceQueryState.allWorkspaces];
+    localStorage.setItem("convex-active-workspace-id", "remote-1");
+    bootstrapGuestServerImportMock.mockResolvedValueOnce({
+      targetWorkspaceId: "remote-1",
+      targetOrganizationId: undefined,
+      createdWorkspace: false,
+      importedServerNames: [],
+      skippedExistingNameServerNames: ["linear"],
+      failedServerNames: [],
+      importedSourceWorkspaceIds: ["default"],
+      timedOut: false,
+    });
+
+    const appState = createAppState({
+      default: createLocalWorkspace("default", {
+        name: "Default",
+        description: "Default workspace",
+        isDefault: true,
+        servers: {
+          linear: {
+            name: "linear",
+            config: { url: "https://mcp.linear.app/mcp" } as any,
+            lastConnectionTime: new Date("2026-01-01T00:00:00.000Z"),
+            connectionStatus: "disconnected",
+            retryCount: 0,
+          },
+        },
+      }),
+    });
+
+    const { rerender } = renderUseWorkspaceState({ appState });
+
+    await waitFor(() => {
+      expect(bootstrapGuestServerImportMock).toHaveBeenCalledTimes(1);
+    });
+
+    expect(vi.mocked(toast.error)).not.toHaveBeenCalled();
+
+    workspaceQueryState.workspaces = [...workspaceQueryState.workspaces];
+    rerender({ organizationId: undefined });
+
+    await waitFor(() => {
+      expect(bootstrapGuestServerImportMock).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(toast.error)).not.toHaveBeenCalled();
+    });
+  });
+
+  it("ignores a stale guest server carry-forward result that resolves after sign-out", async () => {
+    workspaceQueryState.allWorkspaces = [
+      {
+        _id: "remote-1",
+        name: "Remote workspace",
+        servers: {},
+        ownerId: "user-1",
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ];
+    workspaceQueryState.workspaces = [...workspaceQueryState.allWorkspaces];
+    workspaceServersState.servers = [];
+    localStorage.setItem("convex-active-workspace-id", "remote-1");
+
+    const deferred = createDeferred<{
+      targetWorkspaceId: string;
+      targetOrganizationId?: string;
+      createdWorkspace: boolean;
+      importedServerNames: string[];
+      skippedExistingNameServerNames: string[];
+      failedServerNames: string[];
+      importedSourceWorkspaceIds: string[];
+      timedOut: boolean;
+    }>();
+    bootstrapGuestServerImportMock.mockImplementationOnce(() => deferred.promise);
+
+    const appState = createAppState({
+      default: createLocalWorkspace("default", {
+        name: "Default",
+        description: "Default workspace",
+        isDefault: true,
+        servers: {
+          demo: {
+            name: "demo",
+            config: { url: "https://example.com/mcp" } as any,
+            lastConnectionTime: new Date("2026-01-01T00:00:00.000Z"),
+            connectionStatus: "disconnected",
+            retryCount: 0,
+          },
+        },
+      }),
+    });
+
+    const { dispatch, rerender } = renderUseWorkspaceState({ appState });
+
+    await waitFor(() => {
+      expect(bootstrapGuestServerImportMock).toHaveBeenCalledTimes(1);
+    });
+
+    rerender({ isAuthenticated: false });
+
+    await act(async () => {
+      deferred.resolve({
+        targetWorkspaceId: "remote-stale",
+        targetOrganizationId: undefined,
+        createdWorkspace: false,
+        importedServerNames: ["demo"],
+        skippedExistingNameServerNames: [],
+        failedServerNames: [],
+        importedSourceWorkspaceIds: ["default"],
+        timedOut: false,
+      });
+      await Promise.resolve();
+    });
+
+    expect(dispatch).not.toHaveBeenCalledWith({
+      type: "UPDATE_WORKSPACE",
+      workspaceId: "default",
+      updates: {
+        sharedWorkspaceId: "remote-stale",
+      },
+    });
+    expect(localStorage.getItem("convex-active-workspace-id")).toBe("remote-1");
+    expect(vi.mocked(toast.error)).not.toHaveBeenCalledWith(
+      "Could not import guest servers after sign-in",
+    );
+  });
+
+  it("ignores a stale guest server carry-forward result after sign-out and allows a new sign-in pass", async () => {
+    workspaceQueryState.allWorkspaces = [
+      {
+        _id: "remote-1",
+        name: "Remote workspace",
+        servers: {},
+        ownerId: "user-1",
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ];
+    workspaceQueryState.workspaces = [...workspaceQueryState.allWorkspaces];
+    workspaceServersState.servers = [];
+    localStorage.setItem("convex-active-workspace-id", "remote-1");
+
+    const firstDeferred = createDeferred<{
+      targetWorkspaceId: string;
+      targetOrganizationId?: string;
+      createdWorkspace: boolean;
+      importedServerNames: string[];
+      skippedExistingNameServerNames: string[];
+      failedServerNames: string[];
+      importedSourceWorkspaceIds: string[];
+      timedOut: boolean;
+    }>();
+    const secondDeferred = createDeferred<{
+      targetWorkspaceId: string;
+      targetOrganizationId?: string;
+      createdWorkspace: boolean;
+      importedServerNames: string[];
+      skippedExistingNameServerNames: string[];
+      failedServerNames: string[];
+      importedSourceWorkspaceIds: string[];
+      timedOut: boolean;
+    }>();
+    bootstrapGuestServerImportMock
+      .mockImplementationOnce(() => firstDeferred.promise)
+      .mockImplementationOnce(() => secondDeferred.promise);
+
+    const appState = createAppState({
+      default: createLocalWorkspace("default", {
+        name: "Default",
+        description: "Default workspace",
+        isDefault: true,
+        servers: {
+          demo: {
+            name: "demo",
+            config: { url: "https://example.com/mcp" } as any,
+            lastConnectionTime: new Date("2026-01-01T00:00:00.000Z"),
+            connectionStatus: "disconnected",
+            retryCount: 0,
+          },
+        },
+      }),
+    });
+
+    const { dispatch, rerender } = renderUseWorkspaceState({ appState });
+
+    await waitFor(() => {
+      expect(bootstrapGuestServerImportMock).toHaveBeenCalledTimes(1);
+    });
+
+    rerender({ isAuthenticated: false });
+    rerender({ isAuthenticated: true });
+
+    await waitFor(() => {
+      expect(bootstrapGuestServerImportMock).toHaveBeenCalledTimes(2);
+    });
+
+    await act(async () => {
+      firstDeferred.resolve({
+        targetWorkspaceId: "remote-stale",
+        targetOrganizationId: undefined,
+        createdWorkspace: false,
+        importedServerNames: ["demo"],
+        skippedExistingNameServerNames: [],
+        failedServerNames: [],
+        importedSourceWorkspaceIds: ["default"],
+        timedOut: false,
+      });
+      await Promise.resolve();
+    });
+
+    expect(dispatch).not.toHaveBeenCalledWith({
+      type: "UPDATE_WORKSPACE",
+      workspaceId: "default",
+      updates: {
+        sharedWorkspaceId: "remote-stale",
+      },
+    });
+    expect(localStorage.getItem("convex-active-workspace-id")).toBe("remote-1");
+
+    await act(async () => {
+      secondDeferred.resolve({
+        targetWorkspaceId: "remote-2",
+        targetOrganizationId: undefined,
+        createdWorkspace: false,
+        importedServerNames: ["demo"],
+        skippedExistingNameServerNames: [],
+        failedServerNames: [],
+        importedSourceWorkspaceIds: ["default"],
+        timedOut: false,
+      });
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(dispatch).toHaveBeenCalledWith({
+        type: "UPDATE_WORKSPACE",
+        workspaceId: "default",
+        updates: {
+          sharedWorkspaceId: "remote-2",
+        },
+      });
+    });
+  });
+
+  it("clears the completed bootstrap guard after sign-out", async () => {
+    workspaceQueryState.allWorkspaces = [
+      {
+        _id: "remote-1",
+        name: "Remote workspace",
+        servers: {},
+        ownerId: "user-1",
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ];
+    workspaceQueryState.workspaces = [...workspaceQueryState.allWorkspaces];
+    workspaceServersState.servers = [];
+    localStorage.setItem("convex-active-workspace-id", "remote-1");
+
+    const appState = createAppState({
+      default: createLocalWorkspace("default", {
+        name: "Default",
+        description: "Default workspace",
+        isDefault: true,
+        servers: {
+          demo: {
+            name: "demo",
+            config: { url: "https://example.com/mcp" } as any,
+            lastConnectionTime: new Date("2026-01-01T00:00:00.000Z"),
+            connectionStatus: "disconnected",
+            retryCount: 0,
+          },
+        },
+      }),
+    });
+
+    const { rerender } = renderUseWorkspaceState({ appState });
+
+    await waitFor(() => {
+      expect(bootstrapGuestServerImportMock).toHaveBeenCalledTimes(1);
+    });
+
+    rerender({ isAuthenticated: false });
+    rerender({ isAuthenticated: true });
+
+    await waitFor(() => {
+      expect(bootstrapGuestServerImportMock).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it("ignores a stale workspace migration result that resolves after sign-out", async () => {
+    workspaceQueryState.allWorkspaces = [];
+    workspaceQueryState.workspaces = [];
+
+    const deferred = createDeferred<string>();
+    createWorkspaceMock.mockImplementationOnce(() => deferred.promise);
+
+    const appState = createAppState({
+      "workspace-1": createLocalWorkspace("workspace-1", {
+        name: "Needs migration",
+        description: "Needs migration",
+      }),
+    });
+
+    const { dispatch, rerender } = renderUseWorkspaceState({ appState });
 
     await waitFor(() => {
       expect(createWorkspaceMock).toHaveBeenCalledTimes(1);
     });
 
-    expect(serializeServersForSharingMock).toHaveBeenCalledWith(
-      appState.workspaces["local-1"].servers,
-    );
-    expect(createWorkspaceMock).toHaveBeenCalledWith({
-      organizationId: "org-migrate",
-      name: "Imported workspace",
-      description: "Needs migration",
-      servers: appState.workspaces["local-1"].servers,
+    rerender({ isAuthenticated: false });
+
+    await act(async () => {
+      deferred.resolve("remote-stale");
+      await Promise.resolve();
     });
+
+    expect(dispatch).not.toHaveBeenCalledWith({
+      type: "UPDATE_WORKSPACE",
+      workspaceId: "workspace-1",
+      updates: {
+        sharedWorkspaceId: "remote-stale",
+      },
+    });
+  });
+
+  it("does not send ensure-default twice on a same-org sign-out/sign-in flicker", async () => {
+    workspaceQueryState.allWorkspaces = [];
+    workspaceQueryState.workspaces = [];
+
+    const deferred = createDeferred<string>();
+    ensureDefaultWorkspaceMock.mockImplementationOnce(() => deferred.promise);
+
+    const appState = createAppState({
+      default: createSyntheticDefaultWorkspace(),
+    });
+
+    const { rerender } = renderUseWorkspaceState({
+      appState,
+      activeOrganizationId: "org-empty",
+    });
+
     await waitFor(() => {
-      expect(dispatch).toHaveBeenCalledWith({
-        type: "UPDATE_WORKSPACE",
-        workspaceId: "local-1",
-        updates: {
-          sharedWorkspaceId: "remote-workspace-id",
-          organizationId: "org-migrate",
-        },
+      expect(ensureDefaultWorkspaceMock).toHaveBeenCalledTimes(1);
+      expect(ensureDefaultWorkspaceMock).toHaveBeenLastCalledWith({
+        organizationId: "org-empty",
       });
     });
-    expect(ensureDefaultWorkspaceMock).not.toHaveBeenCalled();
+
+    rerender({ isAuthenticated: false });
+
+    await act(async () => {
+      deferred.resolve("default-workspace-id-stale");
+      await Promise.resolve();
+    });
+
+    rerender({ isAuthenticated: true, organizationId: "org-empty" });
+
+    await waitFor(() => {
+      expect(ensureDefaultWorkspaceMock).toHaveBeenCalledTimes(1);
+      expect(ensureDefaultWorkspaceMock).toHaveBeenCalledWith({
+        organizationId: "org-empty",
+      });
+    });
+  });
+
+  it("allows ensure-default to run again after an org change even if the old org request finishes later", async () => {
+    workspaceQueryState.allWorkspaces = [];
+    workspaceQueryState.workspaces = [];
+
+    const deferred = createDeferred<string>();
+    ensureDefaultWorkspaceMock
+      .mockImplementationOnce(() => deferred.promise)
+      .mockResolvedValueOnce("default-workspace-id-org-b");
+
+    const appState = createAppState({
+      default: createSyntheticDefaultWorkspace(),
+    });
+
+    const { rerender } = renderUseWorkspaceState({
+      appState,
+      activeOrganizationId: "org-a",
+    });
+
+    await waitFor(() => {
+      expect(ensureDefaultWorkspaceMock).toHaveBeenCalledTimes(1);
+      expect(ensureDefaultWorkspaceMock).toHaveBeenLastCalledWith({
+        organizationId: "org-a",
+      });
+    });
+
+    rerender({ organizationId: "org-b" });
+
+    await waitFor(() => {
+      expect(ensureDefaultWorkspaceMock).toHaveBeenCalledTimes(2);
+      expect(ensureDefaultWorkspaceMock).toHaveBeenLastCalledWith({
+        organizationId: "org-b",
+      });
+    });
+
+    await act(async () => {
+      deferred.resolve("default-workspace-id-org-a");
+      await Promise.resolve();
+    });
+
+    expect(ensureDefaultWorkspaceMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("clears ensure-default in-flight dedupe after a failure so a later retry is allowed", async () => {
+    workspaceQueryState.allWorkspaces = [];
+    workspaceQueryState.workspaces = [];
+
+    ensureDefaultWorkspaceMock
+      .mockRejectedValueOnce(new Error("ensure failed"))
+      .mockResolvedValueOnce("default-workspace-id-next");
+
+    const appState = createAppState({
+      default: createSyntheticDefaultWorkspace(),
+    });
+
+    const { rerender } = renderUseWorkspaceState({
+      appState,
+      activeOrganizationId: "org-empty",
+    });
+
+    await waitFor(() => {
+      expect(ensureDefaultWorkspaceMock).toHaveBeenCalledTimes(1);
+    });
+
+    rerender({ isAuthenticated: false });
+    rerender({ isAuthenticated: true, organizationId: "org-empty" });
+
+    await waitFor(() => {
+      expect(ensureDefaultWorkspaceMock).toHaveBeenCalledTimes(2);
+      expect(ensureDefaultWorkspaceMock).toHaveBeenLastCalledWith({
+        organizationId: "org-empty",
+      });
+    });
   });
 
   it("treats the empty synthetic default as ensure-default only, not a migration candidate", async () => {
@@ -358,7 +2188,6 @@ describe("useWorkspaceState automatic workspace creation", () => {
     expect(ensureDefaultWorkspaceMock).toHaveBeenCalledWith({
       organizationId: "org-empty",
     });
-    expect(serializeServersForSharingMock).not.toHaveBeenCalled();
     expect(createWorkspaceMock).not.toHaveBeenCalled();
 
     rerender({ organizationId: "org-empty" });

@@ -21,6 +21,7 @@ export interface RemoteWorkspace {
   organizationId?: string;
   visibility?: WorkspaceVisibility;
   ownerId: string;
+  isOwnedFallbackCandidate: boolean;
   createdAt: number;
   updatedAt: number;
 }
@@ -47,6 +48,36 @@ export interface RemoteServer {
   clientId?: string;
   createdAt: number;
   updatedAt: number;
+}
+
+export interface BootstrapGuestServerPayload {
+  name: string;
+  enabled: boolean;
+  transportType: "stdio" | "http";
+  command?: string;
+  args?: string[];
+  url?: string;
+  headers?: Record<string, string>;
+  timeout?: number;
+  useOAuth?: boolean;
+  oauthScopes?: string[];
+  clientId?: string;
+}
+
+export interface BootstrapGuestSourceWorkspace {
+  localWorkspaceId: string;
+  servers: BootstrapGuestServerPayload[];
+}
+
+export interface BootstrapGuestServerImportResult {
+  targetWorkspaceId: string;
+  targetOrganizationId?: string;
+  createdWorkspace: boolean;
+  importedServerNames: string[];
+  skippedExistingNameServerNames: string[];
+  failedServerNames: string[];
+  importedSourceWorkspaceIds: string[];
+  timedOut: boolean;
 }
 
 export interface WorkspaceMember {
@@ -128,16 +159,18 @@ export function filterWorkspacesForOrganization(
 export function useWorkspaceQueries({
   isAuthenticated,
   organizationId,
+  enabled = true,
 }: {
   isAuthenticated: boolean;
   organizationId?: string;
+  enabled?: boolean;
 }) {
   const queriedWorkspaces = useQuery(
     "workspaces:getMyWorkspaces" as any,
-    isAuthenticated ? ({} as any) : "skip",
+    isAuthenticated && enabled ? ({} as any) : "skip",
   ) as RemoteWorkspace[] | undefined;
 
-  const isLoading = isAuthenticated && queriedWorkspaces === undefined;
+  const isLoading = isAuthenticated && enabled && queriedWorkspaces === undefined;
 
   const workspaces = useMemo(
     () => filterWorkspacesForOrganization(queriedWorkspaces, organizationId),
@@ -202,6 +235,9 @@ export function useWorkspaceMembers({
 
 export function useWorkspaceMutations() {
   const createWorkspace = useMutation("workspaces:createWorkspace" as any);
+  const bootstrapGuestServerImport = useMutation(
+    "workspaces:bootstrapGuestServerImport" as any,
+  );
   const ensureDefaultWorkspace = useMutation(
     "workspaces:ensureDefaultWorkspace" as any,
   );
@@ -225,6 +261,7 @@ export function useWorkspaceMutations() {
 
   return {
     createWorkspace,
+    bootstrapGuestServerImport,
     ensureDefaultWorkspace,
     updateWorkspace,
     updateClientConfig,
@@ -252,16 +289,19 @@ export function useServerMutations() {
 export function useWorkspaceServers({
   workspaceId,
   isAuthenticated,
+  enabled = true,
 }: {
   workspaceId: string | null;
   isAuthenticated: boolean;
+  enabled?: boolean;
 }) {
   const servers = useQuery(
     "servers:getWorkspaceServers" as any,
-    isAuthenticated && workspaceId ? ({ workspaceId } as any) : "skip",
+    isAuthenticated && enabled && workspaceId ? ({ workspaceId } as any) : "skip",
   ) as RemoteServer[] | undefined;
 
-  const isLoading = isAuthenticated && workspaceId && servers === undefined;
+  const isLoading =
+    isAuthenticated && enabled && workspaceId && servers === undefined;
 
   // Convert array to record keyed by server name
   const serversRecord = useMemo(() => {
