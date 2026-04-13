@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 
 interface UseEscapeToStopChatOptions {
   enabled: boolean;
@@ -9,6 +9,12 @@ export function useEscapeToStopChat({
   enabled,
   onStop,
 }: UseEscapeToStopChatOptions) {
+  const onStopRef = useRef(onStop);
+
+  useEffect(() => {
+    onStopRef.current = onStop;
+  }, [onStop]);
+
   useEffect(() => {
     if (!enabled || typeof window === "undefined") {
       return;
@@ -23,10 +29,10 @@ export function useEscapeToStopChat({
       }
 
       event.preventDefault();
-      onStop();
+      onStopRef.current();
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [enabled, onStop]);
+  }, [enabled]);
 }

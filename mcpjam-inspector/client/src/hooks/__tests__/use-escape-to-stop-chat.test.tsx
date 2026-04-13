@@ -102,4 +102,47 @@ describe("useEscapeToStopChat", () => {
     );
     expect(onStop).not.toHaveBeenCalled();
   });
+
+  it("keeps the listener stable when onStop changes and calls the latest callback", () => {
+    const firstOnStop = vi.fn();
+    const secondOnStop = vi.fn();
+    const addEventListenerSpy = vi.spyOn(window, "addEventListener");
+    const removeEventListenerSpy = vi.spyOn(window, "removeEventListener");
+
+    const { rerender } = renderHook(
+      ({ onStop }) => useEscapeToStopChat({ enabled: true, onStop }),
+      {
+        initialProps: { onStop: firstOnStop },
+      },
+    );
+
+    const keydownAddsAfterMount = addEventListenerSpy.mock.calls.filter(
+      ([type]) => type === "keydown",
+    ).length;
+    const keydownRemovesAfterMount = removeEventListenerSpy.mock.calls.filter(
+      ([type]) => type === "keydown",
+    ).length;
+
+    rerender({ onStop: secondOnStop });
+
+    expect(
+      addEventListenerSpy.mock.calls.filter(([type]) => type === "keydown")
+        .length,
+    ).toBe(keydownAddsAfterMount);
+    expect(
+      removeEventListenerSpy.mock.calls.filter(([type]) => type === "keydown")
+        .length,
+    ).toBe(keydownRemovesAfterMount);
+
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "Escape",
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+
+    expect(firstOnStop).not.toHaveBeenCalled();
+    expect(secondOnStop).toHaveBeenCalledTimes(1);
+  });
 });
