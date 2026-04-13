@@ -42,7 +42,7 @@
         "group": "CLI",
         "icon": "terminal",
         "pages": [
-          "cli/index",
+          "cli/overview",
           "cli/server-inspection",
           "cli/oauth-conformance",
           "cli/oauth-login",
