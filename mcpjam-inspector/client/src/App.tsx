@@ -18,7 +18,7 @@ import { PromptsTab } from "./components/PromptsTab";
 import { SkillsTab } from "./components/SkillsTab";
 import { LearningTab } from "./components/LearningTab";
 import { TasksTab } from "./components/TasksTab";
-import { ChatTabV2 } from "./components/ChatTabV2";
+import { HostStyledChatTabV2 } from "./components/HostStyledChatTabV2";
 import type { EvalChatHandoff } from "./lib/eval-chat-handoff";
 import { EvalsTab } from "./components/EvalsTab";
 import { CiEvalsTab } from "./components/CiEvalsTab";
@@ -1571,7 +1571,7 @@ export default function App() {
             </ErrorBoundary>
           )}
           {activeTab === "chat-v2" && (
-            <ChatTabV2
+            <HostStyledChatTabV2
               connectedOrConnectingServerConfigs={
                 connectedOrConnectingServerConfigs
               }
@@ -1583,6 +1583,7 @@ export default function App() {
               onSelectedServerNamesChange={setSelectedMCPConfigs}
               onHasMessagesChange={setChatHasMessages}
               enableMultiModelChat
+              showHostStyleSelector
               evalChatHandoff={evalChatHandoff}
               onEvalChatHandoffConsumed={(id) =>
                 setEvalChatHandoff((current) =>

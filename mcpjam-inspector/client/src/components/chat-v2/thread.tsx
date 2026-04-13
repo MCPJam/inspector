@@ -15,7 +15,10 @@ import { ThinkingIndicator } from "@/components/chat-v2/shared/thinking-indicato
 import { FullscreenChatOverlay } from "@/components/chat-v2/fullscreen-chat-overlay";
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-overrides";
-import type { LoadingIndicatorVariant } from "@/components/chat-v2/shared/loading-indicator-content";
+import {
+  type LoadingIndicatorVariant,
+  useResolvedLoadingIndicatorVariant,
+} from "@/components/chat-v2/shared/loading-indicator-content";
 import { type ReasoningDisplayMode } from "./thread/parts/reasoning-part";
 import { TranscriptThread } from "./thread/transcript-thread";
 import {
@@ -85,7 +88,7 @@ export function Thread({
   showSaveViewButton = true,
   minimalMode = false,
   interactive = true,
-  loadingIndicatorVariant = "default",
+  loadingIndicatorVariant,
   reasoningDisplayMode = "inline",
   focusMessageId = null,
   highlightedMessageIds = [],
@@ -140,6 +143,12 @@ export function Thread({
 
   const sandboxHostStyle = useSandboxHostStyle();
   const sandboxHostTheme = useSandboxHostTheme();
+  const resolvedLoadingIndicatorVariant = useResolvedLoadingIndicatorVariant(
+    loadingIndicatorVariant,
+    {
+      modelProvider: model.provider,
+    },
+  );
   const isChatgptDark =
     sandboxHostStyle === "chatgpt" && sandboxHostTheme === "dark";
   const lastRenderableMessage = useMemo(
@@ -153,8 +162,8 @@ export function Thread({
     ? lastRenderableMessage.id
     : null;
   const shouldShowStandaloneThinkingIndicator =
-    loadingIndicatorVariant === "claude-mark" ||
-    loadingIndicatorVariant === "chatgpt-dot"
+    resolvedLoadingIndicatorVariant === "claude-mark" ||
+    resolvedLoadingIndicatorVariant === "chatgpt-dot"
       ? isLoading && !hasVisibleAssistantResponse
       : isLoading;
 
@@ -199,7 +208,7 @@ export function Thread({
         navigationKey={navigationKey}
         viewportRef={viewportRef}
         isLoading={isLoading}
-        loadingIndicatorVariant={loadingIndicatorVariant}
+        loadingIndicatorVariant={resolvedLoadingIndicatorVariant}
         lastRenderableMessageId={lastRenderableMessageId}
         contentClassName={
           contentClassName ??
@@ -209,7 +218,10 @@ export function Thread({
       />
       {shouldShowStandaloneThinkingIndicator && (
         <div className="min-w-0 w-full max-w-4xl mx-auto px-4">
-          <ThinkingIndicator model={model} variant={loadingIndicatorVariant} />
+          <ThinkingIndicator
+            model={model}
+            variant={resolvedLoadingIndicatorVariant}
+          />
         </div>
       )}
 
@@ -224,7 +236,7 @@ export function Thread({
           disabled={fullscreenChatDisabled}
           canSend={canSendFullscreenChat}
           isThinking={isLoading}
-          loadingIndicatorVariant={loadingIndicatorVariant}
+          loadingIndicatorVariant={resolvedLoadingIndicatorVariant}
           onStop={onFullscreenChatStop}
           onSend={() => {
             if (!canSendFullscreenChat) return;

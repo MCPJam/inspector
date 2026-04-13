@@ -69,6 +69,8 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import { HostStylePillSelector } from "@/components/shared/HostStylePillSelector";
+import type { SandboxHostStyle } from "@/lib/sandbox-host-style";
 
 interface ChatInputProps {
   value: string;
@@ -121,6 +123,12 @@ interface ChatInputProps {
   onRequireToolApprovalChange?: (enabled: boolean) => void;
   /** Shared chat-only mode */
   minimalMode?: boolean;
+  /** Main chat: show the Claude/ChatGPT host-style selector in the "+" menu. */
+  showHostStyleSelector?: boolean;
+  /** Current host style for the selector UI. */
+  hostStyle?: SandboxHostStyle;
+  /** Shared host-style setter. */
+  onHostStyleChange?: (hostStyle: SandboxHostStyle) => void;
   /** Onboarding: pulse the send button with glow animation */
   pulseSubmit?: boolean;
   /** Move the textarea caret to the end when this trigger changes */
@@ -182,6 +190,9 @@ export function ChatInput({
   requireToolApproval = false,
   onRequireToolApprovalChange,
   minimalMode = false,
+  showHostStyleSelector = false,
+  hostStyle,
+  onHostStyleChange,
   pulseSubmit = false,
   moveCaretToEndTrigger,
   allServerConfigs,
@@ -218,6 +229,15 @@ export function ChatInput({
   };
   const [addServerModalOpen, setAddServerModalOpen] = useState(false);
   const [systemPromptOpen, setSystemPromptOpen] = useState(false);
+  const selectorHostStyle = hostStyle ?? sandboxHostStyle;
+  const hasServerOptions = Boolean(
+    onAddServer ||
+      (allServerConfigs && Object.keys(allServerConfigs).length > 0),
+  );
+  const showHostStyleSelectorControl =
+    showHostStyleSelector &&
+    Boolean(selectorHostStyle) &&
+    Boolean(onHostStyleChange);
 
   const caret = useTextareaCaretPosition(
     textareaRef,
@@ -606,10 +626,7 @@ export function ChatInput({
                     side="top"
                     sideOffset={8}
                   >
-                    {(onAddServer ||
-                      (allServerConfigs &&
-                        onServerToggle &&
-                        Object.keys(allServerConfigs).length > 0)) && (
+                    {hasServerOptions && (
                       <div className="px-1 pt-1 pb-0">
                         <p className="px-2 py-1.5 text-[11px] font-medium text-muted-foreground uppercase tracking-wider">
                           Servers
@@ -728,9 +745,7 @@ export function ChatInput({
                     <div
                       className={cn(
                         "px-1 pb-1",
-                        allServerConfigs &&
-                          Object.keys(allServerConfigs).length > 0 &&
-                          "border-t border-border mt-1 pt-1",
+                        hasServerOptions && "border-t border-border mt-1 pt-1",
                       )}
                     >
                       {onChangeFileAttachments && (
@@ -775,6 +790,23 @@ export function ChatInput({
                               onRequireToolApprovalChange(checked)
                             }
                           />
+                        </div>
+                      )}
+
+                      {showHostStyleSelectorControl && selectorHostStyle && (
+                        <div className="mt-1 border-t border-border/70 px-2 py-[5px]">
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="shrink-0 text-[9px] font-medium text-muted-foreground uppercase tracking-[0.18em]">
+                              Host Style
+                            </p>
+                            <HostStylePillSelector
+                              className="w-[164px] shrink-0"
+                              value={selectorHostStyle}
+                              onValueChange={(nextStyle) =>
+                                onHostStyleChange?.(nextStyle)
+                              }
+                            />
+                          </div>
                         </div>
                       )}
                     </div>

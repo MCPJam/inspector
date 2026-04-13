@@ -34,10 +34,10 @@ import {
 import { CHATGPT_CHAT_BACKGROUND } from "@/config/chatgpt-host-context";
 import { CLAUDE_DESKTOP_CHAT_BACKGROUND } from "@/config/claude-desktop-host-context";
 import type { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
+import type { SandboxHostStyle } from "@/lib/sandbox-host-style";
 import type {
   DeviceType,
   DisplayMode,
-  HostStyle,
 } from "@/stores/ui-playground-store";
 import type { BroadcastChatTurnRequest } from "@/components/chat-v2/multi-model-chat-card";
 
@@ -98,7 +98,7 @@ interface MultiModelPlaygroundCardProps {
   hostedOAuthTokens?: Record<string, string>;
   displayMode: DisplayMode;
   onDisplayModeChange: (mode: DisplayMode) => void;
-  hostStyle: HostStyle;
+  hostStyle: SandboxHostStyle;
   effectiveThreadTheme: ThreadThemeMode;
   deviceType: DeviceType;
   selectedProtocol: UIType | null;

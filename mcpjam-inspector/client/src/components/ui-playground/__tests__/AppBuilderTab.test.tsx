@@ -53,10 +53,15 @@ vi.mock("@/lib/mcp-ui/mcp-apps-utils", () => ({
 }));
 
 // Mock preferences store
+const mockPreferencesState = {
+  themeMode: "light",
+  hostStyle: "claude",
+  setHostStyle: vi.fn(),
+};
+
 vi.mock("@/stores/preferences/preferences-provider", () => ({
   usePreferencesStore: (selector: any) => {
-    const state = { themeMode: "light" };
-    return selector ? selector(state) : state;
+    return selector ? selector(mockPreferencesState) : mockPreferencesState;
   },
 }));
 
@@ -67,7 +72,6 @@ const mockUIPlaygroundStore = {
   formFields: [],
   isExecuting: false,
   deviceType: "mobile",
-  hostStyle: "claude",
   displayMode: "inline",
   globals: { locale: "en-US", theme: "light", timeZone: "UTC" },
   isSidebarVisible: true,
@@ -308,9 +312,9 @@ describe("AppBuilderTab", () => {
       tools: {},
       formFields: [],
       isExecuting: false,
-      hostStyle: "claude",
       isSidebarVisible: true,
     });
+    mockPreferencesState.hostStyle = "claude";
 
     // Reset onboarding state (default: dismissed, no overlay)
     Object.assign(mockOnboarding, {
@@ -495,7 +499,7 @@ describe("AppBuilderTab", () => {
 
     it("passes the Claude mark variant to PlaygroundMain when Claude host style is selected", async () => {
       const serverConfig = createServerConfig();
-      mockUIPlaygroundStore.hostStyle = "claude";
+      mockPreferencesState.hostStyle = "claude";
 
       render(
         <AppBuilderTab
@@ -514,7 +518,7 @@ describe("AppBuilderTab", () => {
 
     it("passes the pulsing dot variant to PlaygroundMain when ChatGPT host style is selected", async () => {
       const serverConfig = createServerConfig();
-      mockUIPlaygroundStore.hostStyle = "chatgpt";
+      mockPreferencesState.hostStyle = "chatgpt";
 
       render(
         <AppBuilderTab

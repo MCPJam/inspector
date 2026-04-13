@@ -74,15 +74,15 @@ const {
   mockUpdateThemeMode: vi.fn(),
   mockPreferencesState: {
     themeMode: "light",
+    hostStyle: "claude",
     setThemeMode: vi.fn(),
+    setHostStyle: vi.fn(),
   },
   mockUIPlaygroundStore: {
     deviceType: "desktop",
     setDeviceType: vi.fn(),
     customViewport: { width: 1280, height: 800 },
     setCustomViewport: vi.fn(),
-    hostStyle: "claude",
-    setHostStyle: vi.fn(),
     cspMode: "widget-declared",
     setCspMode: vi.fn(),
     mcpAppsCspMode: "widget-declared",
@@ -164,6 +164,7 @@ describe("DisplayContextHeader", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockPreferencesState.themeMode = "light";
+    mockPreferencesState.hostStyle = "claude";
   });
 
   it("uses the local theme override without writing global theme state", () => {
@@ -196,5 +197,21 @@ describe("DisplayContextHeader", () => {
 
     expect(mockPreferencesState.setThemeMode).toHaveBeenCalledWith("dark");
     expect(mockUpdateThemeMode).toHaveBeenCalledWith("dark");
+  });
+
+  it("writes Claude and ChatGPT host-style selections through shared preferences", () => {
+    render(<DisplayContextHeader protocol={null} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Claude" }));
+    fireEvent.click(screen.getByRole("button", { name: "ChatGPT" }));
+
+    expect(mockPreferencesState.setHostStyle).toHaveBeenNthCalledWith(
+      1,
+      "claude",
+    );
+    expect(mockPreferencesState.setHostStyle).toHaveBeenNthCalledWith(
+      2,
+      "chatgpt",
+    );
   });
 });

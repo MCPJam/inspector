@@ -223,7 +223,7 @@ export function PlaygroundMain({
   disableChatInput = false,
   hideSaveViewButton = false,
   disabledInputPlaceholder = "Input disabled in Views",
-  loadingIndicatorVariant = "default",
+  loadingIndicatorVariant,
   initialInput,
   initialInputTypewriter = false,
   blockSubmitUntilServerConnected = false,
@@ -420,7 +420,7 @@ export function PlaygroundMain({
 
   // Host chat background: actual chat area colors from each host's UI
   // (separate from the 76 MCP spec widget design tokens)
-  const hostStyle = useUIPlaygroundStore((s) => s.hostStyle);
+  const hostStyle = usePreferencesStore((s) => s.hostStyle);
   const globalThemeMode = usePreferencesStore(
     (s) => s.themeMode,
   ) as ThreadThemeMode;

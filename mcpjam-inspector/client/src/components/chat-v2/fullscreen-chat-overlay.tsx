@@ -16,6 +16,7 @@ import { TextareaAutosize } from "@/components/ui/textarea-autosize";
 import {
   LoadingIndicatorContent,
   type LoadingIndicatorVariant,
+  useResolvedLoadingIndicatorVariant,
 } from "@/components/chat-v2/shared/loading-indicator-content";
 import { ClaudeLoadingIndicator } from "@/components/chat-v2/shared/claude-loading-indicator";
 import { getRenderableConversationMessages } from "@/components/chat-v2/thread/thread-helpers";
@@ -139,16 +140,19 @@ function MessageBubble({
 }
 
 function ThinkingRow({
-  variant = "default",
+  variant,
 }: {
   variant?: LoadingIndicatorVariant;
 }) {
+  const shouldRenderDefaultBubble =
+    variant !== "claude-mark" && variant !== "chatgpt-dot";
+
   return (
     <div
       data-testid="fullscreen-thinking-row"
       className="flex w-full justify-start"
     >
-      {variant === "default" ? (
+      {shouldRenderDefaultBubble ? (
         <div className="inline-flex items-center gap-2 rounded-2xl bg-muted px-3 py-2 text-sm text-muted-foreground/80">
           <LoadingIndicatorContent variant={variant} />
         </div>
@@ -192,7 +196,7 @@ function MessageList({
   messages,
   isThinking,
   open,
-  loadingIndicatorVariant = "default",
+  loadingIndicatorVariant,
 }: {
   messages: UIMessage[];
   isThinking: boolean;
@@ -373,7 +377,7 @@ export function FullscreenChatOverlay({
   disabled,
   canSend,
   isThinking,
-  loadingIndicatorVariant = "default",
+  loadingIndicatorVariant,
   onStop,
   onSend,
 }: {
@@ -392,6 +396,8 @@ export function FullscreenChatOverlay({
 }) {
   const sandboxHostStyle = useSandboxHostStyle();
   const sandboxHostTheme = useSandboxHostTheme();
+  const resolvedLoadingIndicatorVariant =
+    useResolvedLoadingIndicatorVariant(loadingIndicatorVariant);
   const resolvedThemeMode = sandboxHostTheme ?? "light";
   const isDarkSandboxTheme = resolvedThemeMode === "dark";
   const appearance = useMemo(
@@ -415,7 +421,7 @@ export function FullscreenChatOverlay({
             messages={messages}
             isThinking={isThinking}
             open={open}
-            loadingIndicatorVariant={loadingIndicatorVariant}
+            loadingIndicatorVariant={resolvedLoadingIndicatorVariant}
           />
           <Composer
             value={input}

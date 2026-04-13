@@ -54,6 +54,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import { getLoadingIndicatorVariantForHostStyle } from "@/components/chat-v2/shared/loading-indicator-content";
 import { SandboxHostStyleProvider } from "@/contexts/sandbox-host-style-context";
 import { SandboxHostOnboardingOverlays } from "@/components/hosted/SandboxHostOnboardingOverlays";
 import { useSandboxHostIntroGate } from "@/components/hosted/useSandboxHostIntroGate";
@@ -1170,6 +1171,9 @@ export function SandboxEditor({
                       initialSystemPrompt={normalizedSystemPrompt}
                       initialTemperature={temperature}
                       initialRequireToolApproval={requireToolApproval}
+                      loadingIndicatorVariant={getLoadingIndicatorVariantForHostStyle(
+                        hostStyle,
+                      )}
                       onOAuthRequired={handlePreviewOAuthRequired}
                       sandboxComposerBlocked={introGate.composerBlocked}
                       sandboxComposerBlockedReason="Get started or authorize to send messages…"

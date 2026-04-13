@@ -255,6 +255,43 @@ describe("Thread", () => {
       );
     });
 
+    it("defaults to the GPT pulse for OpenAI models when no explicit variant is provided", () => {
+      const messages = [createMessage({ id: "msg-1", role: "user" })];
+
+      render(<Thread {...defaultProps} messages={messages} isLoading={true} />);
+
+      expect(mockThinkingIndicator).toHaveBeenCalledWith(
+        expect.objectContaining({
+          variant: "chatgpt-dot",
+        }),
+      );
+    });
+
+    it("defaults to the Claude mascot for Anthropic models when no explicit variant is provided", () => {
+      const messages = [createMessage({ id: "msg-1", role: "user" })];
+      const claudeModel: ModelDefinition = {
+        ...defaultModel,
+        id: "anthropic/claude-sonnet-4.5",
+        name: "Claude Sonnet 4.5",
+        provider: "anthropic",
+      };
+
+      render(
+        <Thread
+          {...defaultProps}
+          model={claudeModel}
+          messages={messages}
+          isLoading={true}
+        />,
+      );
+
+      expect(mockThinkingIndicator).toHaveBeenCalledWith(
+        expect.objectContaining({
+          variant: "claude-mark",
+        }),
+      );
+    });
+
     it("passes the selected loading indicator variant to the inline indicator", () => {
       render(
         <Thread

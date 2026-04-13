@@ -1,3 +1,5 @@
+import { useSandboxHostStyle } from "@/contexts/sandbox-host-style-context";
+import type { SandboxHostStyle } from "@/lib/sandbox-host-style";
 import { cn } from "@/lib/utils";
 import { ClaudeLoadingIndicator } from "./claude-loading-indicator";
 
@@ -8,15 +10,74 @@ interface LoadingIndicatorContentProps {
   className?: string;
 }
 
+export function getLoadingIndicatorVariantForHostStyle(
+  hostStyle: SandboxHostStyle | null | undefined,
+): LoadingIndicatorVariant {
+  if (hostStyle === "chatgpt") {
+    return "chatgpt-dot";
+  }
+
+  if (hostStyle === "claude") {
+    return "claude-mark";
+  }
+
+  return "default";
+}
+
+export function resolveLoadingIndicatorVariant({
+  variant,
+  hostStyle,
+  modelProvider,
+}: {
+  variant?: LoadingIndicatorVariant;
+  hostStyle?: SandboxHostStyle | null;
+  modelProvider?: string | null;
+}): LoadingIndicatorVariant {
+  if (variant !== undefined && variant !== "default") {
+    return variant;
+  }
+
+  const hostVariant = getLoadingIndicatorVariantForHostStyle(hostStyle);
+  if (hostVariant !== "default") {
+    return hostVariant;
+  }
+
+  const normalizedProvider = modelProvider?.toLowerCase();
+  if (normalizedProvider === "openai") {
+    return "chatgpt-dot";
+  }
+
+  if (normalizedProvider === "anthropic") {
+    return "claude-mark";
+  }
+
+  return "default";
+}
+
+export function useResolvedLoadingIndicatorVariant(
+  variant?: LoadingIndicatorVariant,
+  options?: { modelProvider?: string | null },
+): LoadingIndicatorVariant {
+  const sandboxHostStyle = useSandboxHostStyle();
+
+  return resolveLoadingIndicatorVariant({
+    variant,
+    hostStyle: sandboxHostStyle,
+    modelProvider: options?.modelProvider,
+  });
+}
+
 export function LoadingIndicatorContent({
-  variant = "default",
+  variant,
   className,
 }: LoadingIndicatorContentProps) {
-  if (variant === "claude-mark") {
+  const resolvedVariant = useResolvedLoadingIndicatorVariant(variant);
+
+  if (resolvedVariant === "claude-mark") {
     return <ClaudeLoadingIndicator className={className} />;
   }
 
-  if (variant === "chatgpt-dot") {
+  if (resolvedVariant === "chatgpt-dot") {
     return (
       <span className={cn("inline-flex min-h-6 items-center", className)}>
         <span className="sr-only">Thinking</span>
