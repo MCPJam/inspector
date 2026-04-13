@@ -292,6 +292,12 @@ oauth-conformance:
 | `--conformance-checks` | No | | Run additional negative OAuth checks after the main flow |
 | `--print-url` | No | | Print consent URL to stderr instead of launching a browser |
 
+<Note>
+  For interactive conformance runs, a custom `--redirect-url` must still be an
+  `http://localhost` or `http://127.0.0.1` loopback URL. Custom callback paths
+  are supported.
+</Note>
+
 ### `oauth conformance-suite`
 
 | Flag | Required | Default | Description |

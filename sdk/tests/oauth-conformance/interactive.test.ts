@@ -36,6 +36,31 @@ describe("interactive authorization session", () => {
     }
   });
 
+  it("accepts custom loopback callback paths", async () => {
+    const session = await createInteractiveAuthorizationSession({
+      redirectUrl: "http://127.0.0.1:0/oauth/custom-callback",
+    });
+
+    try {
+      expect(session.redirectUrl).toMatch(/\/oauth\/custom-callback$/);
+
+      const resultPromise = session.authorize({
+        authorizationUrl: "https://auth.example.com/authorize",
+        expectedState: "expected-state",
+        timeoutMs: 2_000,
+        openUrl: async () => {
+          await fetch(
+            `${session.redirectUrl}?code=test-code&state=expected-state`,
+          );
+        },
+      });
+
+      await expect(resultPromise).resolves.toEqual({ code: "test-code" });
+    } finally {
+      await session.stop().catch(() => undefined);
+    }
+  });
+
   it("surfaces OAuth error responses from the callback without waiting for timeout", async () => {
     const session = await createInteractiveAuthorizationSession();
 
