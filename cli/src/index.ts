@@ -1,6 +1,7 @@
 import { Command, CommanderError } from "commander";
 import { version as pkgVersion } from "../package.json";
 import { registerAppsCommands } from "./commands/apps";
+import { registerAuthCommands } from "./commands/auth";
 import { registerProtocolCommands } from "./commands/conformance";
 import { registerOAuthCommands } from "./commands/oauth";
 import { registerPromptCommands } from "./commands/prompts";
@@ -33,6 +34,7 @@ async function main(argv: readonly string[] = process.argv): Promise<number> {
       }),
   );
 
+  registerAuthCommands(program);
   registerServerCommands(program);
   registerToolsCommands(program);
   registerResourcesCommands(program);
