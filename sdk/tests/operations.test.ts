@@ -1,5 +1,9 @@
 import {
   listResources,
+  listAllPrompts,
+  listAllResourceTemplates,
+  listAllResources,
+  listAllTools,
   readResource,
   listPrompts,
   listPromptsMulti,
@@ -18,6 +22,9 @@ function createMockManager(overrides: Record<string, any> = {}) {
     listPrompts: jest
       .fn()
       .mockResolvedValue({ prompts: [], nextCursor: undefined }),
+    listResourceTemplates: jest
+      .fn()
+      .mockResolvedValue({ resourceTemplates: [], nextCursor: undefined }),
     getPrompt: jest.fn().mockResolvedValue({ messages: [] }),
     listTools: jest.fn().mockResolvedValue({ tools: [] }),
     connectToServer: jest.fn().mockResolvedValue(undefined),
@@ -139,9 +146,7 @@ describe("listPromptsMulti", () => {
 
   it("omits errors key when all servers succeed", async () => {
     const manager = createMockManager({
-      listPrompts: jest
-        .fn()
-        .mockResolvedValue({ prompts: [{ name: "p" }] }),
+      listPrompts: jest.fn().mockResolvedValue({ prompts: [{ name: "p" }] }),
     });
 
     const result = await listPromptsMulti(manager, {
@@ -239,6 +244,127 @@ describe("listTools", () => {
   });
 });
 
+describe("listAllTools", () => {
+  it("drains paginated tool pages and merges metadata from each page", async () => {
+    const manager = createMockManager({
+      listTools: jest
+        .fn()
+        .mockResolvedValueOnce({
+          tools: [
+            {
+              name: "echo",
+              _meta: { executionCount: 1 },
+            },
+          ],
+          nextCursor: "cursor-1",
+        })
+        .mockResolvedValueOnce({
+          tools: [
+            {
+              name: "draw",
+              _meta: { title: "Draw" },
+            },
+          ],
+          nextCursor: undefined,
+        }),
+    });
+
+    const result = await listAllTools(manager, { serverId: "srv" });
+
+    expect(result.tools.map((tool) => tool.name)).toEqual(["echo", "draw"]);
+    expect(result.toolsMetadata).toEqual({
+      echo: { executionCount: 1 },
+      draw: { title: "Draw" },
+    });
+    expect(manager.listTools).toHaveBeenNthCalledWith(1, "srv", undefined);
+    expect(manager.listTools).toHaveBeenNthCalledWith(2, "srv", {
+      cursor: "cursor-1",
+    });
+  });
+});
+
+describe("listAllResources", () => {
+  it("drains all resource pages", async () => {
+    const manager = createMockManager({
+      listResources: jest
+        .fn()
+        .mockResolvedValueOnce({
+          resources: [{ uri: "file:///a.txt" }],
+          nextCursor: "cursor-1",
+        })
+        .mockResolvedValueOnce({
+          resources: [{ uri: "file:///b.txt" }],
+          nextCursor: undefined,
+        }),
+    });
+
+    const result = await listAllResources(manager, { serverId: "srv" });
+
+    expect(result.resources).toEqual([
+      { uri: "file:///a.txt" },
+      { uri: "file:///b.txt" },
+    ]);
+  });
+});
+
+describe("listAllPrompts", () => {
+  it("drains all prompt pages", async () => {
+    const manager = createMockManager({
+      listPrompts: jest
+        .fn()
+        .mockResolvedValueOnce({
+          prompts: [{ name: "first" }],
+          nextCursor: "cursor-1",
+        })
+        .mockResolvedValueOnce({
+          prompts: [{ name: "second" }],
+          nextCursor: undefined,
+        }),
+    });
+
+    const result = await listAllPrompts(manager, { serverId: "srv" });
+
+    expect(result.prompts).toEqual([{ name: "first" }, { name: "second" }]);
+  });
+});
+
+describe("listAllResourceTemplates", () => {
+  it("drains all resource template pages", async () => {
+    const manager = createMockManager({
+      listResourceTemplates: jest
+        .fn()
+        .mockResolvedValueOnce({
+          resourceTemplates: [{ uriTemplate: "note://{id}" }],
+          nextCursor: "cursor-1",
+        })
+        .mockResolvedValueOnce({
+          resourceTemplates: [{ uriTemplate: "todo://{id}" }],
+          nextCursor: undefined,
+        }),
+    });
+
+    const result = await listAllResourceTemplates(manager, { serverId: "srv" });
+
+    expect(result.resourceTemplates).toEqual([
+      { uriTemplate: "note://{id}" },
+      { uriTemplate: "todo://{id}" },
+    ]);
+  });
+
+  it("returns an empty list when the method is unavailable", async () => {
+    const manager = createMockManager({
+      listResourceTemplates: jest
+        .fn()
+        .mockRejectedValue(new Error("Method resources/templates not found")),
+    });
+
+    const result = await listAllResourceTemplates(manager, { serverId: "srv" });
+
+    expect(result.resourceTemplates).toEqual([]);
+    expect(result.unsupported).toBe(true);
+  });
+});
+
 // ── withEphemeralClient ─────────────────────────────────────────────
 
 describe("withEphemeralClient", () => {
@@ -267,7 +393,7 @@ describe("withDisposableManager", () => {
     await expect(
       withDisposableManager(manager, async () => {
         throw new Error("boom");
-      }),
+      })
     ).rejects.toThrow("boom");
 
     expect(manager.disconnectAllServers).toHaveBeenCalledTimes(1);
@@ -283,7 +409,7 @@ describe("withDisposableManager", () => {
     await expect(
       withDisposableManager(manager, async () => {
         throw new Error("boom");
-      }),
+      })
     ).rejects.toThrow("boom");
 
     expect(manager.disconnectAllServers).toHaveBeenCalledTimes(1);
@@ -310,7 +436,7 @@ describe("withDisposableManager", () => {
       async (m) => {
         expect(m).toBe(manager);
         return 42;
-      },
+      }
     );
 
     expect(result).toBe(42);

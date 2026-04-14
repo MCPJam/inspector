@@ -1,4 +1,14 @@
-import { probeMcpServer, runServerDoctor } from "@mcpjam/sdk";
+import { readFile } from "node:fs/promises";
+import {
+  buildServerDiffReport,
+  collectServerSnapshot,
+  diffServerSnapshots,
+  probeMcpServer,
+  runServerDoctor,
+  serializeServerSnapshot,
+  serializeStableServerSnapshot,
+  ServerSnapshotFormatError,
+} from "@mcpjam/sdk";
 import { Command } from "commander";
 import {
   buildCommandArtifactError,
@@ -12,7 +22,6 @@ import {
   formatServerDoctorHuman,
   summarizeServerDoctorTarget,
 } from "../lib/server-doctor";
-import { exportServerSnapshot } from "../lib/server-ops";
 import {
   addSharedServerOptions,
   describeTarget,
@@ -22,7 +31,17 @@ import {
   parsePositiveInteger,
   resolveHttpAccessToken,
 } from "../lib/server-config";
-import { operationalError, setProcessExitCode, usageError, writeResult } from "../lib/output";
+import {
+  parseReporterFormat,
+  writeJsonArtifact,
+  writeReporterResult,
+} from "../lib/reporting";
+import {
+  operationalError,
+  setProcessExitCode,
+  usageError,
+  writeResult,
+} from "../lib/output";
 
 export function registerServerCommands(program: Command): void {
   const server = program
@@ -31,7 +50,9 @@ export function registerServerCommands(program: Command): void {
 
   server
     .command("probe")
-    .description("Probe an HTTP MCP server without using the full client connect flow")
+    .description(
+      "Probe an HTTP MCP server without using the full client connect flow",
+    )
     .requiredOption("--url <url>", "HTTP MCP server URL")
     .option("--access-token <token>", "Bearer access token for HTTP servers")
     .option(
@@ -58,10 +79,7 @@ export function registerServerCommands(program: Command): void {
       "Request timeout in milliseconds",
       (value: string) => parsePositiveInteger(value, "Timeout"),
     )
-    .option(
-      "--debug-out <path>",
-      "Write a structured debug artifact to a file",
-    )
+    .option("--debug-out <path>", "Write a structured debug artifact to a file")
     .action(async (options, command) => {
       const globalOptions = getGlobalOptions(command);
       const protocolVersion = options.protocolVersion as
@@ -103,7 +121,9 @@ export function registerServerCommands(program: Command): void {
           headers: parseHeadersOption(options.header),
           accessToken: resolveHttpAccessToken(options),
           clientCapabilities:
-            "clientCapabilities" in config ? config.clientCapabilities : undefined,
+            "clientCapabilities" in config
+              ? config.clientCapabilities
+              : undefined,
           timeoutMs: options.timeout ?? globalOptions.timeout,
         });
       } catch (error) {
@@ -117,7 +137,9 @@ export function registerServerCommands(program: Command): void {
         commandInput: {
           protocolVersion,
           clientCapabilities:
-            "clientCapabilities" in config ? config.clientCapabilities : undefined,
+            "clientCapabilities" in config
+              ? config.clientCapabilities
+              : undefined,
         },
         target: targetSummary,
         outcome: commandError
@@ -180,14 +202,12 @@ export function registerServerCommands(program: Command): void {
     });
     const doctorTarget = summarizeServerDoctorTarget(target, config);
 
-    const result = await runServerDoctor(
-      {
-        config,
-        target: doctorTarget,
-        timeout: globalOptions.timeout,
-        rpcLogger: collector?.rpcLogger,
-      },
-    );
+    const result = await runServerDoctor({
+      config,
+      target: doctorTarget,
+      timeout: globalOptions.timeout,
+      rpcLogger: collector?.rpcLogger,
+    });
 
     const jsonPayload = globalOptions.rpc
       ? attachCliRpcLogs(result, collector)
@@ -242,7 +262,10 @@ export function registerServerCommands(program: Command): void {
       },
     );
 
-    writeResult(withRpcLogsIfRequested(result, collector, globalOptions), globalOptions.format);
+    writeResult(
+      withRpcLogsIfRequested(result, collector, globalOptions),
+      globalOptions.format,
+    );
   });
 
   addSharedServerOptions(
@@ -250,16 +273,14 @@ export function registerServerCommands(program: Command): void {
       .command("validate")
       .description("Connect to a server and verify the debugger surface works"),
   )
-    .option(
-      "--debug-out <path>",
-      "Write a structured debug artifact to a file",
-    )
+    .option("--debug-out <path>", "Write a structured debug artifact to a file")
     .action(async (options, command) => {
       const globalOptions = getGlobalOptions(command);
       const target = describeTarget(options);
-      const primaryCollector = globalOptions.rpc || options.debugOut
-        ? createCliRpcLogCollector({ __cli__: target })
-        : undefined;
+      const primaryCollector =
+        globalOptions.rpc || options.debugOut
+          ? createCliRpcLogCollector({ __cli__: target })
+          : undefined;
       const snapshotCollector = options.debugOut
         ? createCliRpcLogCollector({ __cli__: target })
         : undefined;
@@ -364,7 +385,10 @@ export function registerServerCommands(program: Command): void {
       },
     );
 
-    writeResult(withRpcLogsIfRequested(result, collector, globalOptions), globalOptions.format);
+    writeResult(
+      withRpcLogsIfRequested(result, collector, globalOptions),
+      globalOptions.format,
+    );
   });
 
   addSharedServerOptions(
@@ -394,11 +418,20 @@ export function registerServerCommands(program: Command): void {
       },
     );
 
-    writeResult(withRpcLogsIfRequested(result, collector, globalOptions), globalOptions.format);
+    writeResult(
+      withRpcLogsIfRequested(result, collector, globalOptions),
+      globalOptions.format,
+    );
   });
 
   addSharedServerOptions(
-    server.command("export").description("Export server tools, resources, prompts, and capabilities"),
+    server
+      .command("export")
+      .description("Export server tools, resources, prompts, and capabilities")
+      .option(
+        "--stable",
+        "Emit the deterministic versioned snapshot format for baselines",
+      ),
   ).action(async (options, command) => {
     const globalOptions = getGlobalOptions(command);
     const target = describeTarget(options);
@@ -410,15 +443,234 @@ export function registerServerCommands(program: Command): void {
       timeout: globalOptions.timeout,
     });
 
-    const result = await withEphemeralManager(
+    const snapshot = await collectServerSnapshot({
       config,
-      (manager, serverId) => exportServerSnapshot(manager, serverId, target),
-      {
+      target,
+      timeout: globalOptions.timeout,
+      rpcLogger: collector?.rpcLogger,
+      clientName: "mcpjam",
+      serverId: "__cli__",
+    });
+    const result = options.stable
+      ? serializeStableServerSnapshot(snapshot)
+      : serializeServerSnapshot(snapshot, { mode: "raw" });
+
+    writeResult(
+      withRpcLogsIfRequested(result, collector, globalOptions),
+      globalOptions.format,
+    );
+  });
+
+  addSharedServerOptions(
+    server
+      .command("diff")
+      .description(
+        "Compare a server snapshot baseline against a live or file snapshot",
+      )
+      .option(
+        "--baseline <path>",
+        "Compare a baseline file to a live server target",
+      )
+      .option("--left <path>", "Left snapshot file for file-vs-file comparison")
+      .option(
+        "--right <path>",
+        "Right snapshot file for file-vs-file comparison",
+      )
+      .option(
+        "--fail-on <policy>",
+        "Diff failure policy: breaking, any, or none",
+      )
+      .option(
+        "--reporter <reporter>",
+        "Structured reporter output: json-summary or junit-xml",
+      )
+      .option("--out <path>", "Write the raw diff JSON artifact to a file"),
+  ).action(async (options, command) => {
+    const globalOptions = getGlobalOptions(command);
+    const reporter = parseReporterFormat(
+      options.reporter as string | undefined,
+    );
+    const mode = resolveServerDiffMode(options as Record<string, unknown>);
+
+    let rawDiff: ReturnType<typeof diffServerSnapshots>;
+    let collector: ReturnType<typeof createCliRpcLogCollector> | undefined;
+
+    if (mode.kind === "baseline-live") {
+      const target = describeTarget(options);
+      collector = globalOptions.rpc
+        ? createCliRpcLogCollector({ __cli__: target })
+        : undefined;
+      const config = parseServerConfig({
+        ...options,
+        timeout: globalOptions.timeout,
+      });
+      const baselineSnapshot = await readSnapshotFile(mode.baselinePath);
+      const currentSnapshot = await collectServerSnapshot({
+        config,
+        target,
         timeout: globalOptions.timeout,
         rpcLogger: collector?.rpcLogger,
-      },
-    );
+        clientName: "mcpjam",
+        serverId: "__cli__",
+      });
+      rawDiff = createServerDiffResult(
+        baselineSnapshot,
+        currentSnapshot,
+        parseDiffFailOn(options.failOn as string | undefined),
+      );
+    } else {
+      if (hasServerTargetOptions(options as Record<string, unknown>)) {
+        throw usageError(
+          "Do not pass live target options together with --left/--right file comparison.",
+        );
+      }
 
-    writeResult(withRpcLogsIfRequested(result, collector, globalOptions), globalOptions.format);
+      const [leftSnapshot, rightSnapshot] = await Promise.all([
+        readSnapshotFile(mode.leftPath),
+        readSnapshotFile(mode.rightPath),
+      ]);
+      rawDiff = createServerDiffResult(
+        leftSnapshot,
+        rightSnapshot,
+        parseDiffFailOn(options.failOn as string | undefined),
+      );
+    }
+
+    const diffPayload = collector
+      ? withRpcLogsIfRequested(rawDiff, collector, globalOptions)
+      : rawDiff;
+
+    if (options.out) {
+      await writeJsonArtifact(options.out as string, diffPayload);
+    }
+
+    if (reporter) {
+      writeReporterResult(
+        reporter,
+        buildServerDiffReport(rawDiff, {
+          metadata:
+            mode.kind === "baseline-live"
+              ? {
+                  comparisonMode: mode.kind,
+                  baselinePath: mode.baselinePath,
+                }
+              : {
+                  comparisonMode: mode.kind,
+                  leftPath: mode.leftPath,
+                  rightPath: mode.rightPath,
+                },
+        }),
+      );
+    } else {
+      writeResult(diffPayload, globalOptions.format);
+    }
+
+    if (!rawDiff.passed) {
+      setProcessExitCode(1);
+    }
   });
+}
+
+function hasServerTargetOptions(options: Record<string, unknown>): boolean {
+  return typeof options.url === "string" || typeof options.command === "string";
+}
+
+function resolveServerDiffMode(
+  options: Record<string, unknown>,
+):
+  | { kind: "baseline-live"; baselinePath: string }
+  | { kind: "file-file"; leftPath: string; rightPath: string } {
+  const baselinePath = toOptionalString(options.baseline);
+  const leftPath = toOptionalString(options.left);
+  const rightPath = toOptionalString(options.right);
+
+  if (baselinePath && (leftPath || rightPath)) {
+    throw usageError(
+      "Specify either --baseline with a live target or --left/--right for file comparison.",
+    );
+  }
+
+  if (baselinePath) {
+    return {
+      kind: "baseline-live",
+      baselinePath,
+    };
+  }
+
+  if (leftPath && rightPath) {
+    return {
+      kind: "file-file",
+      leftPath,
+      rightPath,
+    };
+  }
+
+  if (leftPath || rightPath) {
+    throw usageError(
+      "Both --left and --right are required for file comparison.",
+    );
+  }
+
+  throw usageError(
+    "Specify either --baseline with a live target or --left/--right for file comparison.",
+  );
+}
+
+function parseDiffFailOn(
+  value: string | undefined,
+): "breaking" | "any" | "none" | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (value === "breaking" || value === "any" || value === "none") {
+    return value;
+  }
+
+  throw usageError(
+    `Invalid fail-on policy "${value}". Use "breaking", "any", or "none".`,
+  );
+}
+
+async function readSnapshotFile(filePath: string): Promise<unknown> {
+  let contents: string;
+  try {
+    contents = await readFile(filePath, "utf8");
+  } catch (error) {
+    throw operationalError(`Failed to read snapshot file "${filePath}".`, {
+      source: error instanceof Error ? error.message : String(error),
+    });
+  }
+
+  try {
+    return JSON.parse(contents);
+  } catch (error) {
+    throw usageError(`Snapshot file "${filePath}" must contain valid JSON.`, {
+      source: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+function toOptionalString(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const normalized = value.trim();
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+function createServerDiffResult(
+  left: unknown,
+  right: unknown,
+  failOn: "breaking" | "any" | "none" | undefined,
+) {
+  try {
+    return diffServerSnapshots(left, right, { failOn });
+  } catch (error) {
+    if (error instanceof ServerSnapshotFormatError) {
+      throw usageError(error.message);
+    }
+    throw error;
+  }
 }

@@ -1,7 +1,12 @@
 import { Command } from "commander";
-import { isCallToolResultError } from "@mcpjam/sdk";
+import {
+  buildToolCallValidationReport,
+  isCallToolResultError,
+  validateToolCallResult,
+} from "@mcpjam/sdk";
 import { writeCommandDebugArtifact } from "../lib/debug-artifact";
 import { withEphemeralManager } from "../lib/ephemeral";
+import { parseReporterFormat, writeReporterResult } from "../lib/reporting";
 import { createCliRpcLogCollector } from "../lib/rpc-logs";
 import { withRpcLogsIfRequested } from "../lib/rpc-helpers";
 import { listToolsWithMetadata } from "../lib/server-ops";
@@ -14,7 +19,7 @@ import {
   parseServerConfig,
   resolveAliasedStringOption,
 } from "../lib/server-config";
-import { setProcessExitCode, writeResult } from "../lib/output";
+import { setProcessExitCode, usageError, writeResult } from "../lib/output";
 
 export function registerToolsCommands(program: Command): void {
   const tools = program
@@ -52,7 +57,10 @@ export function registerToolsCommands(program: Command): void {
       },
     );
 
-    writeResult(withRpcLogsIfRequested(result, collector, globalOptions), globalOptions.format);
+    writeResult(
+      withRpcLogsIfRequested(result, collector, globalOptions),
+      globalOptions.format,
+    );
   });
 
   addSharedServerOptions(
@@ -64,15 +72,28 @@ export function registerToolsCommands(program: Command): void {
       .option("--tool-args <json>", "Tool parameter object as JSON")
       .option("--params <json>", "Alias for --tool-args")
       .option(
+        "--validate-response",
+        "Validate the MCP tool-call envelope returned by the server",
+      )
+      .option(
+        "--expect-success",
+        "Evaluate the tool-call outcome policy against isError",
+      )
+      .option(
+        "--reporter <reporter>",
+        "Structured reporter output: json-summary or junit-xml",
+      )
+      .option(
         "--debug-out <path>",
         "Write a structured debug artifact to a file",
       ),
   ).action(async (options, command) => {
     const globalOptions = getGlobalOptions(command);
     const target = describeTarget(options);
-    const primaryCollector = globalOptions.rpc || options.debugOut
-      ? createCliRpcLogCollector({ __cli__: target })
-      : undefined;
+    const primaryCollector =
+      globalOptions.rpc || options.debugOut
+        ? createCliRpcLogCollector({ __cli__: target })
+        : undefined;
     const snapshotCollector = options.debugOut
       ? createCliRpcLogCollector({ __cli__: target })
       : undefined;
@@ -80,6 +101,9 @@ export function registerToolsCommands(program: Command): void {
       ...options,
       timeout: globalOptions.timeout,
     });
+    const reporter = parseReporterFormat(
+      options.reporter as string | undefined,
+    );
     const toolName = resolveAliasedStringOption(
       options as Record<string, unknown>,
       [
@@ -99,9 +123,18 @@ export function registerToolsCommands(program: Command): void {
     );
     const params = parseJsonRecord(paramsInput, "Tool parameters") ?? {};
     const targetSummary = summarizeServerDoctorTarget(target, config);
+    const shouldValidateResponse = options.validateResponse === true;
+    const shouldExpectSuccess = options.expectSuccess === true;
+
+    if (reporter && !shouldValidateResponse && !shouldExpectSuccess) {
+      throw usageError(
+        "--reporter requires --validate-response and/or --expect-success.",
+      );
+    }
 
     let result: unknown;
     let commandError: unknown;
+    const startedAt = Date.now();
 
     try {
       result = await withEphemeralManager(
@@ -151,10 +184,35 @@ export function registerToolsCommands(program: Command): void {
       throw commandError;
     }
 
-    writeResult(
-      withRpcLogsIfRequested(result, primaryCollector, globalOptions),
-      globalOptions.format,
-    );
+    const validationResult =
+      shouldValidateResponse || shouldExpectSuccess
+        ? validateToolCallResult(result, {
+            envelope: shouldValidateResponse,
+            outcome: shouldExpectSuccess ? { failOnIsError: true } : undefined,
+          })
+        : undefined;
+
+    if (reporter) {
+      writeReporterResult(
+        reporter,
+        buildToolCallValidationReport(validationResult!, {
+          durationMs: Date.now() - startedAt,
+          rawResult: result,
+          metadata: {
+            toolName,
+          },
+        }),
+      );
+    } else {
+      writeResult(
+        withRpcLogsIfRequested(result, primaryCollector, globalOptions),
+        globalOptions.format,
+      );
+    }
+
+    if (validationResult && !validationResult.passed) {
+      setProcessExitCode(1);
+    }
     if (isCallToolResultError(result)) {
       setProcessExitCode(1);
     }
