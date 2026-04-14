@@ -13,6 +13,7 @@ export const DEFAULT_RETRY_POLICY: RetryPolicy = {
 
 export interface RetryExecutionOptions<T> {
   policy?: RetryPolicy;
+  signal?: AbortSignal;
   operation: (attempt: number) => Promise<T>;
   shouldRetryError?: (error: unknown, attempt: number) => boolean;
   shouldRetryResult?: (result: T, attempt: number) => boolean;
@@ -23,8 +24,49 @@ export interface RetryExecutionOptions<T> {
   }) => Promise<void> | void;
 }
 
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function toAbortError(reason: unknown): Error {
+  if (reason instanceof Error) {
+    return reason;
+  }
+
+  const error = new Error(
+    reason == null ? "The operation was aborted." : String(reason)
+  );
+  error.name = "AbortError";
+  return error;
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    throw toAbortError(signal.reason);
+  }
+}
+
+function delay(ms: number, signal?: AbortSignal): Promise<void> {
+  throwIfAborted(signal);
+
+  if (ms <= 0) {
+    return Promise.resolve();
+  }
+
+  return new Promise((resolve, reject) => {
+    const timeoutId = setTimeout(() => {
+      cleanup();
+      resolve();
+    }, ms);
+
+    const onAbort = () => {
+      clearTimeout(timeoutId);
+      cleanup();
+      reject(toAbortError(signal?.reason));
+    };
+
+    const cleanup = () => {
+      signal?.removeEventListener("abort", onAbort);
+    };
+
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 function extractHttpStatusCode(error: unknown): number | undefined {
@@ -147,6 +189,7 @@ export function isRetryableTransientError(error: unknown): boolean {
 
 export async function retryWithPolicy<T>({
   policy,
+  signal,
   operation,
   shouldRetryError,
   shouldRetryResult,
@@ -155,6 +198,8 @@ export async function retryWithPolicy<T>({
   const normalized = normalizeRetryPolicy(policy);
 
   for (let attempt = 0; ; attempt += 1) {
+    throwIfAborted(signal);
+
     try {
       const result = await operation(attempt);
       const shouldRetry =
@@ -166,7 +211,7 @@ export async function retryWithPolicy<T>({
       }
 
       await onRetry?.({ attempt, result });
-      await delay(normalized.retryDelayMs);
+      await delay(normalized.retryDelayMs, signal);
     } catch (error) {
       const shouldRetry =
         attempt < normalized.retries &&
@@ -177,7 +222,7 @@ export async function retryWithPolicy<T>({
       }
 
       await onRetry?.({ attempt, error });
-      await delay(normalized.retryDelayMs);
+      await delay(normalized.retryDelayMs, signal);
     }
   }
 }

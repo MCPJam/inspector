@@ -160,6 +160,9 @@ describe("POST /api/mcp/connect", () => {
         "Connection failed for server failing-server",
       );
       expect(data.details).toBe("Connection refused");
+      expect(mcpClientManager.removeServer).toHaveBeenCalledWith(
+        "failing-server",
+      );
     });
 
     it("disconnects existing connection before reconnecting", async () => {

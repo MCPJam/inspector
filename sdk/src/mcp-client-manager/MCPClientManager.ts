@@ -1668,9 +1668,9 @@ export class MCPClientManager {
   ): Promise<T> {
     return retryWithPolicy({
       policy: retryPolicy,
+      signal: options?.signal,
       operation: async () => operation(),
-      shouldRetryError: (error) =>
-        !options?.signal?.aborted && isRetryableTransientError(error),
+      shouldRetryError: (error) => isRetryableTransientError(error),
       onRetry: async () => {
         await this.destroyLiveState(serverId);
       },

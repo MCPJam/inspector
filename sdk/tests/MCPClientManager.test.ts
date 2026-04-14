@@ -944,6 +944,50 @@ describe("MCPClientManager", () => {
       expect(fakeClient.listTools).toHaveBeenCalledTimes(2);
     });
 
+    it("does not retry read operations after the caller aborts during backoff", async () => {
+      manager = new MCPClientManager(
+        {},
+        {
+          lazyConnect: true,
+          retryPolicy: {
+            retries: 1,
+            retryDelayMs: 25,
+          },
+        }
+      );
+
+      const abortController = new AbortController();
+      const fakeClient = {
+        listTools: jest
+          .fn()
+          .mockRejectedValueOnce(
+            Object.assign(new Error("timed out"), { code: "ETIMEDOUT" })
+          )
+          .mockResolvedValueOnce({ tools: [] }),
+      };
+
+      seedRegisteredServer(manager, "retry-read-abort", {
+        command: "node",
+        args: ["server.js"],
+      });
+
+      const connectSpy = jest
+        .spyOn(manager as any, "connectToServerOnce")
+        .mockImplementation(async (serverId: string) => {
+          seedLiveState(manager, serverId, { client: fakeClient });
+          return fakeClient as any;
+        });
+
+      const promise = manager.listTools("retry-read-abort", undefined, {
+        signal: abortController.signal,
+      });
+      setTimeout(() => abortController.abort(new Error("Request cancelled")), 5);
+
+      await expect(promise).rejects.toThrow("Request cancelled");
+      expect(connectSpy).toHaveBeenCalledTimes(1);
+      expect(fakeClient.listTools).toHaveBeenCalledTimes(1);
+    });
+
     it("keeps executeTool single-shot by default", async () => {
       const fakeClient = {
         callTool: jest
@@ -1009,6 +1053,56 @@ describe("MCPClientManager", () => {
 
       expect(fakeClient.callTool).toHaveBeenCalledTimes(2);
       expect(connectSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not retry executeTool after the caller aborts during backoff", async () => {
+      const abortController = new AbortController();
+      const fakeClient = {
+        callTool: jest
+          .fn()
+          .mockRejectedValueOnce(
+            Object.assign(new Error("timed out"), { code: "ETIMEDOUT" })
+          )
+          .mockResolvedValueOnce({
+            content: [{ type: "text", text: "ok" }],
+          }),
+      };
+
+      seedRegisteredServer(manager, "tool-retry-abort", {
+        command: "node",
+        args: ["server.js"],
+      });
+      seedLiveState(manager, "tool-retry-abort", { client: fakeClient });
+
+      const connectSpy = jest
+        .spyOn(manager as any, "connectToServerOnce")
+        .mockImplementation(async (serverId: string) => {
+          seedLiveState(manager, serverId, { client: fakeClient });
+          return fakeClient as any;
+        });
+
+      const promise = manager.executeTool(
+        "tool-retry-abort",
+        "echo",
+        { message: "hello" },
+        {
+          request: {
+            signal: abortController.signal,
+          },
+          retry: {
+            retries: 1,
+            retryDelayMs: 25,
+          },
+        }
+      );
+      setTimeout(
+        () => abortController.abort(new Error("Tool request cancelled")),
+        5
+      );
+
+      await expect(promise).rejects.toThrow("Tool request cancelled");
+      expect(fakeClient.callTool).toHaveBeenCalledTimes(1);
+      expect(connectSpy).toHaveBeenCalledTimes(0);
     });
   });
 
