@@ -14,7 +14,7 @@ import {
   AccordionTrigger,
   AccordionContent,
 } from "../ui/accordion";
-import type { Tool } from "@modelcontextprotocol/sdk/types.js";
+import type { Tool } from "@modelcontextprotocol/client";
 import { ScrollArea } from "../ui/scroll-area";
 import { SearchInput } from "../ui/search-input";
 import { SavedRequestItem } from "../tools/SavedRequestItem";

@@ -1,4 +1,4 @@
-import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import type { CallToolResult } from "@modelcontextprotocol/client";
 import { CheckCircle, Info, ExternalLink, Clock3 } from "lucide-react";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";

@@ -4,7 +4,7 @@ import {
   resolveOutputFormat,
   type OutputFormat,
   usageError,
-} from "./output";
+} from "./output.js";
 
 export interface GlobalOptions {
   format: OutputFormat;

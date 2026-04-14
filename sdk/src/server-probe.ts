@@ -1,4 +1,4 @@
-import { discoverOAuthProtectedResourceMetadata } from "@modelcontextprotocol/sdk/client/auth.js";
+import { discoverOAuthProtectedResourceMetadata } from "@modelcontextprotocol/client";
 import { buildResourceMetadataUrl } from "./oauth/state-machines/shared/urls.js";
 import type {
   OAuthProtocolVersion,

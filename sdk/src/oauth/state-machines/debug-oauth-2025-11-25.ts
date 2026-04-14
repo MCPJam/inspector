@@ -47,7 +47,7 @@ import {
   parseScopeString,
   resolveRequestedScopeValue,
 } from "./shared/challenges.js";
-import { discoverOAuthProtectedResourceMetadata } from "@modelcontextprotocol/sdk/client/auth.js";
+import { discoverOAuthProtectedResourceMetadata } from "../browser-auth.js";
 
 export type { OAuthFlowStep, OAuthFlowState };
 export { EMPTY_OAUTH_FLOW_STATE };

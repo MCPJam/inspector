@@ -1,16 +1,16 @@
 import { Command } from "commander";
 import { listResources, readResource } from "@mcpjam/sdk";
-import { withEphemeralManager } from "../lib/ephemeral";
-import { createCliRpcLogCollector } from "../lib/rpc-logs";
-import { withRpcLogsIfRequested } from "../lib/rpc-helpers";
+import { withEphemeralManager } from "../lib/ephemeral.js";
+import { createCliRpcLogCollector } from "../lib/rpc-logs.js";
+import { withRpcLogsIfRequested } from "../lib/rpc-helpers.js";
 import {
   addSharedServerOptions,
   describeTarget,
   getGlobalOptions,
   parseServerConfig,
   resolveAliasedStringOption,
-} from "../lib/server-config";
-import { writeResult } from "../lib/output";
+} from "../lib/server-config.js";
+import { writeResult } from "../lib/output.js";
 
 export function registerResourcesCommands(program: Command): void {
   const resources = program

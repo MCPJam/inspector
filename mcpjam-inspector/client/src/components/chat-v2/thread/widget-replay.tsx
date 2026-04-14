@@ -1,4 +1,4 @@
-import type { ContentBlock } from "@modelcontextprotocol/sdk/types.js";
+import type { ContentBlock } from "@modelcontextprotocol/client";
 import { ChatGPTAppRenderer } from "./chatgpt-app-renderer";
 import { MCPAppsRenderer } from "./mcp-apps/mcp-apps-renderer";
 import type { ToolState } from "./mcp-apps/useToolInputStreaming";

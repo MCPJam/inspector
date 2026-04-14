@@ -46,7 +46,7 @@ import {
 import type {
   CallToolResult,
   ContentBlock,
-} from "@modelcontextprotocol/sdk/types.js";
+} from "@modelcontextprotocol/client";
 import {
   getClaudeDesktopStyleVariables,
   CLAUDE_DESKTOP_FONT_CSS,

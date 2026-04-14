@@ -4,14 +4,6 @@ import path from "path";
 const rootDir = path.resolve(__dirname, "..");
 // The linked local SDK package can advertise ./browser before dist/browser.* exists.
 const sdkBrowserEntry = path.resolve(rootDir, "../sdk/src/browser.ts");
-const mcpSdkClientAuthEntry = path.resolve(
-  rootDir,
-  "node_modules/@modelcontextprotocol/sdk/dist/esm/client/auth.js",
-);
-const mcpSdkSharedAuthEntry = path.resolve(
-  rootDir,
-  "node_modules/@modelcontextprotocol/sdk/dist/esm/shared/auth.js",
-);
 
 export default defineConfig({
   test: {
@@ -35,8 +27,6 @@ export default defineConfig({
       "@/shared": path.resolve(__dirname, "../shared"),
       "@": path.resolve(__dirname, "./src"),
       "@mcpjam/sdk/browser": sdkBrowserEntry,
-      "@modelcontextprotocol/sdk/client/auth.js": mcpSdkClientAuthEntry,
-      "@modelcontextprotocol/sdk/shared/auth.js": mcpSdkSharedAuthEntry,
     },
   },
 });

@@ -2,13 +2,10 @@
  * Elicitation handler management for MCPClientManager
  */
 
-import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { ElicitRequestSchema } from "@modelcontextprotocol/sdk/types.js";
-import type { ElicitResult } from "@modelcontextprotocol/sdk/types.js";
+import type { Client, ElicitResult } from "@modelcontextprotocol/client";
 import type { ElicitationHandler, ElicitationCallback } from "./types.js";
 
-// Re-export the schema for convenience
-export { ElicitRequestSchema };
+export const ElicitRequestMethod = "elicitation/create" as const;
 
 /**
  * Manages elicitation handlers and callbacks for MCP servers.
@@ -126,14 +123,14 @@ export class ElicitationManager {
     const serverSpecific = this.handlers.get(serverId);
 
     if (serverSpecific) {
-      client.setRequestHandler(ElicitRequestSchema, async (request) =>
+      client.setRequestHandler(ElicitRequestMethod, async (request) =>
         serverSpecific(request.params)
       );
       return;
     }
 
     if (this.globalCallback) {
-      client.setRequestHandler(ElicitRequestSchema, async (request) => {
+      client.setRequestHandler(ElicitRequestMethod, async (request) => {
         const reqId = `elicit_${Date.now()}_${Math.random()
           .toString(36)
           .slice(2, 9)}`;
@@ -161,7 +158,7 @@ export class ElicitationManager {
    * @param client - The MCP client
    */
   removeFromClient(client: Client): void {
-    client.removeRequestHandler("elicitation/create");
+    client.removeRequestHandler(ElicitRequestMethod);
   }
 
   /**

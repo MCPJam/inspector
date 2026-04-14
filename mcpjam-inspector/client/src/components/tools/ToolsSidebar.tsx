@@ -1,4 +1,4 @@
-import type { Tool } from "@modelcontextprotocol/sdk/types.js";
+import type { Tool } from "@modelcontextprotocol/client";
 import { RefreshCw, Play, Clock, PanelLeftClose, Save } from "lucide-react";
 import {
   Accordion,

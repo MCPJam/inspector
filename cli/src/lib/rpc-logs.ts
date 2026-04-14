@@ -1,5 +1,5 @@
 import type { RpcLogger } from "@mcpjam/sdk";
-import { redactSensitiveValue } from "./redaction";
+import { redactSensitiveValue } from "./redaction.js";
 
 export interface CliRpcLogEvent {
   serverId: string;

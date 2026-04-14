@@ -108,7 +108,7 @@ export {
 
 // Notification schemas (for advanced use cases)
 export {
-  ResourceListChangedNotificationSchema,
-  ResourceUpdatedNotificationSchema,
-  PromptListChangedNotificationSchema,
+  ResourceListChangedNotificationMethod,
+  ResourceUpdatedNotificationMethod,
+  PromptListChangedNotificationMethod,
 } from "./notification-handlers.js";

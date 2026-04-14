@@ -9,7 +9,7 @@
 
 import { useRef, useState, useMemo, useCallback, useEffect } from "react";
 import type { AppBridge } from "@modelcontextprotocol/ext-apps/app-bridge";
-import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import type { CallToolResult } from "@modelcontextprotocol/client";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 

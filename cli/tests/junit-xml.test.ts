@@ -3,7 +3,7 @@ import test from "node:test";
 import {
   suiteResultToJUnitXml,
   singleResultToJUnitXml,
-} from "../src/lib/junit-xml";
+} from "../src/lib/junit-xml.js";
 import type {
   OAuthConformanceSuiteResult,
   ConformanceResult,

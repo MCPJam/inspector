@@ -3,7 +3,7 @@ import test from "node:test";
 import {
   exportServerSnapshot,
   listToolsWithMetadata,
-} from "../src/lib/server-ops";
+} from "../src/lib/server-ops.js";
 
 function createMockManager(overrides: Record<string, any> = {}) {
   return {

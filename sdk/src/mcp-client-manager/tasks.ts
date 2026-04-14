@@ -2,76 +2,18 @@
  * MCP Tasks support (experimental feature - spec 2025-11-25)
  */
 
-import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import type { ServerCapabilities } from "@modelcontextprotocol/sdk/types.js";
-import { z } from "zod";
+import type {
+  Client,
+  ServerCapabilities,
+} from "@modelcontextprotocol/client";
 import type {
   MCPTask,
   MCPListTasksResult,
   ClientRequestOptions,
 } from "./types.js";
 
-// ============================================================================
-// Zod Schemas
-// ============================================================================
-
-/**
- * Task object schema
- */
-export const TaskSchema = z.object({
-  taskId: z.string(),
-  status: z.enum([
-    "working",
-    "input_required",
-    "completed",
-    "failed",
-    "cancelled",
-  ]),
-  statusMessage: z.string().optional(),
-  createdAt: z.string(),
-  lastUpdatedAt: z.string(),
-  ttl: z.number().nullable(),
-  pollInterval: z.number().optional(),
-});
-
-/**
- * List tasks result schema
- */
-export const ListTasksResultSchema = z.object({
-  tasks: z.array(TaskSchema),
-  nextCursor: z.string().optional(),
-});
-
-/**
- * Task status notification schema
- * Per spec, notification includes the full Task object
- */
-export const TaskStatusNotificationSchema = z.object({
-  method: z.literal("notifications/tasks/status"),
-  params: z
-    .object({
-      taskId: z.string(),
-      status: z.enum([
-        "working",
-        "input_required",
-        "completed",
-        "failed",
-        "cancelled",
-      ]),
-      statusMessage: z.string().optional(),
-      createdAt: z.string(),
-      lastUpdatedAt: z.string(),
-      ttl: z.number().nullable(),
-      pollInterval: z.number().optional(),
-    })
-    .optional(),
-});
-
-/**
- * Generic result schema for tasks/result
- * Per MCP spec: "tasks/result returns exactly what the underlying request would have returned"
- */
-export const TaskResultSchema = z.unknown();
+export const TaskStatusNotificationMethod =
+  "notifications/tasks/status" as const;
 
 // ============================================================================
 // Task Operations
@@ -95,7 +37,6 @@ export async function listTasks(
       method: "tasks/list",
       params: cursor ? { cursor } : {},
     },
-    ListTasksResultSchema,
     options
   );
 }
@@ -118,7 +59,6 @@ export async function getTask(
       method: "tasks/get",
       params: { taskId },
     },
-    TaskSchema,
     options
   );
 }
@@ -142,7 +82,6 @@ export async function getTaskResult(
       method: "tasks/result",
       params: { taskId },
     },
-    TaskResultSchema,
     options
   );
 }
@@ -165,7 +104,6 @@ export async function cancelTask(
       method: "tasks/cancel",
       params: { taskId },
     },
-    TaskSchema,
     options
   );
 }

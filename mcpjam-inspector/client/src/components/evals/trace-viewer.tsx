@@ -6,7 +6,7 @@ import {
   useEffect,
   type ReactNode,
 } from "react";
-import type { ContentBlock } from "@modelcontextprotocol/sdk/types.js";
+import type { ContentBlock } from "@modelcontextprotocol/client";
 import { Loader2, Minus, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { ModelDefinition, ModelProvider } from "@/shared/types";

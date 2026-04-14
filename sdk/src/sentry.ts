@@ -1,6 +1,9 @@
 import { createHash } from "node:crypto";
-import packageJson from "../package.json";
+import { createRequire } from "node:module";
 import { EvalReportingError } from "./errors.js";
+
+const require = createRequire(import.meta.url);
+const packageJson = require("../package.json") as { version: string };
 
 const SDK_SENTRY_DSN =
   "https://490f3f2a8a287f8a9f86eea23c16c01e@o4510109778378752.ingest.us.sentry.io/4511018761125888";

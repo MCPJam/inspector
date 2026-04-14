@@ -2,20 +2,22 @@
  * TypeScript types and interfaces for MCPClientManager
  */
 
-import type { ClientOptions } from "@modelcontextprotocol/sdk/client/index.js";
-import type { StdioServerParameters } from "@modelcontextprotocol/sdk/client/stdio.js";
-import type { StreamableHTTPClientTransportOptions } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import type { SSEClientTransportOptions } from "@modelcontextprotocol/sdk/client/sse.js";
-import type { RequestOptions } from "@modelcontextprotocol/sdk/shared/protocol.js";
-import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
-import type { RefreshTokenOAuthProvider } from "./refresh-token-auth-provider.js";
 import type {
+  CallToolResult,
+  Client,
+  ClientOptions,
   ElicitRequest,
   ElicitResult,
-  CallToolResult,
+  ListTasksResult as BaseListTasksResult,
+  RequestOptions,
+  SSEClientTransportOptions,
+  StdioServerParameters,
+  StreamableHTTPClientTransportOptions,
+  Task as BaseTask,
   Tool as BaseTool,
-} from "@modelcontextprotocol/sdk/types.js";
+  Transport,
+} from "@modelcontextprotocol/client";
+import type { RefreshTokenOAuthProvider } from "./refresh-token-auth-provider.js";
 import type { ToolSet } from "ai";
 
 // Re-export ElicitResult for convenience
@@ -283,33 +285,17 @@ export type ElicitationCallback = (
 /**
  * Task status values
  */
-export type MCPTaskStatus =
-  | "working"
-  | "input_required"
-  | "completed"
-  | "failed"
-  | "cancelled";
+export type MCPTaskStatus = BaseTask["status"];
 
 /**
  * MCP Task object
  */
-export type MCPTask = {
-  taskId: string;
-  status: MCPTaskStatus;
-  statusMessage?: string;
-  createdAt: string;
-  lastUpdatedAt: string;
-  ttl: number | null;
-  pollInterval?: number;
-};
+export type MCPTask = BaseTask;
 
 /**
  * Result from listing tasks
  */
-export type MCPListTasksResult = {
-  tasks: MCPTask[];
-  nextCursor?: string;
-};
+export type MCPListTasksResult = BaseListTasksResult;
 
 // ============================================================================
 // Client Method Parameter Types

@@ -1,9 +1,11 @@
-const mockAddBreadcrumb = jest.fn().mockResolvedValue(undefined);
-const mockCaptureEvalReportingFailure = jest.fn().mockResolvedValue(undefined);
+const sentryMocks = vi.hoisted(() => ({
+  addBreadcrumb: vi.fn().mockResolvedValue(undefined),
+  captureEvalReportingFailure: vi.fn().mockResolvedValue(undefined),
+}));
 
-jest.mock("../src/sentry", () => ({
-  addBreadcrumb: mockAddBreadcrumb,
-  captureEvalReportingFailure: mockCaptureEvalReportingFailure,
+vi.mock("../src/sentry", () => ({
+  addBreadcrumb: sentryMocks.addBreadcrumb,
+  captureEvalReportingFailure: sentryMocks.captureEvalReportingFailure,
 }));
 
 import {
@@ -48,15 +50,15 @@ describe("reportEvalResults", () => {
     } else {
       process.env.MCPJAM_BASE_URL = originalMcpjamBaseUrl;
     }
-    mockAddBreadcrumb.mockClear();
-    mockCaptureEvalReportingFailure.mockClear();
-    jest.restoreAllMocks();
+    sentryMocks.addBreadcrumb.mockClear();
+    sentryMocks.captureEvalReportingFailure.mockClear();
+    vi.restoreAllMocks();
   });
 
   it("uses sdk.mcpjam.com when no baseUrl override is provided", async () => {
     delete process.env.MCPJAM_BASE_URL;
 
-    const fetchMock = jest.fn().mockResolvedValue(
+    const fetchMock = vi.fn().mockResolvedValue(
       okResponse({
         suiteId: "suite_1",
         runId: "run_1",
@@ -82,7 +84,7 @@ describe("reportEvalResults", () => {
   it("uses MCPJAM_BASE_URL when no baseUrl override is provided", async () => {
     process.env.MCPJAM_BASE_URL = "https://tough-cassowary-291.convex.site";
 
-    const fetchMock = jest.fn().mockResolvedValue(
+    const fetchMock = vi.fn().mockResolvedValue(
       okResponse({
         suiteId: "suite_1",
         runId: "run_1",
@@ -106,7 +108,7 @@ describe("reportEvalResults", () => {
   });
 
   it("uses one-shot /report for small payloads", async () => {
-    const fetchMock = jest.fn().mockResolvedValue(
+    const fetchMock = vi.fn().mockResolvedValue(
       okResponse({
         suiteId: "suite_1",
         runId: "run_1",
@@ -132,7 +134,7 @@ describe("reportEvalResults", () => {
   });
 
   it("forwards serverReplayConfigs in one-shot reports", async () => {
-    const fetchMock = jest.fn().mockResolvedValue(
+    const fetchMock = vi.fn().mockResolvedValue(
       okResponse({
         suiteId: "suite_1",
         runId: "run_1",
@@ -149,7 +151,7 @@ describe("reportEvalResults", () => {
       suiteName: "SDK smoke",
       serverNames: ["asana"],
       agent: {
-        getServerReplayConfigs: jest.fn().mockReturnValue([
+        getServerReplayConfigs: vi.fn().mockReturnValue([
           {
             serverId: "agent",
             url: "https://agent.example.com/mcp",
@@ -158,7 +160,7 @@ describe("reportEvalResults", () => {
         ]),
       },
       mcpClientManager: {
-        getServerReplayConfigs: jest.fn().mockReturnValue([
+        getServerReplayConfigs: vi.fn().mockReturnValue([
           {
             serverId: "manager",
             url: "https://manager.example.com/mcp",
@@ -187,7 +189,7 @@ describe("reportEvalResults", () => {
   });
 
   it("filters inferred replay configs by serverNames in one-shot reports", async () => {
-    const fetchMock = jest.fn().mockResolvedValue(
+    const fetchMock = vi.fn().mockResolvedValue(
       okResponse({
         suiteId: "suite_1",
         runId: "run_1",
@@ -199,7 +201,7 @@ describe("reportEvalResults", () => {
     global.fetch = fetchMock as any;
 
     const agent = {
-      getServerReplayConfigs: jest.fn().mockReturnValue([
+      getServerReplayConfigs: vi.fn().mockReturnValue([
         {
           serverId: "asana",
           url: "https://asana.example.com/mcp",
@@ -233,7 +235,7 @@ describe("reportEvalResults", () => {
   });
 
   it("resolves replay configs from agent in one-shot reports", async () => {
-    const fetchMock = jest.fn().mockResolvedValue(
+    const fetchMock = vi.fn().mockResolvedValue(
       okResponse({
         suiteId: "suite_1",
         runId: "run_1",
@@ -245,7 +247,7 @@ describe("reportEvalResults", () => {
     global.fetch = fetchMock as any;
 
     const agent = {
-      getServerReplayConfigs: jest.fn().mockReturnValue([
+      getServerReplayConfigs: vi.fn().mockReturnValue([
         {
           serverId: "agent",
           url: "https://agent.example.com/mcp",
@@ -274,7 +276,7 @@ describe("reportEvalResults", () => {
   });
 
   it("prefers agent replay configs over mcpClientManager", async () => {
-    const fetchMock = jest.fn().mockResolvedValue(
+    const fetchMock = vi.fn().mockResolvedValue(
       okResponse({
         suiteId: "suite_1",
         runId: "run_1",
@@ -286,7 +288,7 @@ describe("reportEvalResults", () => {
     global.fetch = fetchMock as any;
 
     const agent = {
-      getServerReplayConfigs: jest.fn().mockReturnValue([
+      getServerReplayConfigs: vi.fn().mockReturnValue([
         {
           serverId: "agent",
           url: "https://agent.example.com/mcp",
@@ -295,7 +297,7 @@ describe("reportEvalResults", () => {
       ]),
     };
     const mcpClientManager = {
-      getServerReplayConfigs: jest.fn().mockReturnValue([
+      getServerReplayConfigs: vi.fn().mockReturnValue([
         {
           serverId: "manager",
           url: "https://manager.example.com/mcp",
@@ -326,7 +328,7 @@ describe("reportEvalResults", () => {
   });
 
   it("falls back to mcpClientManager replay configs when agent has none", async () => {
-    const fetchMock = jest.fn().mockResolvedValue(
+    const fetchMock = vi.fn().mockResolvedValue(
       okResponse({
         suiteId: "suite_1",
         runId: "run_1",
@@ -338,10 +340,10 @@ describe("reportEvalResults", () => {
     global.fetch = fetchMock as any;
 
     const agent = {
-      getServerReplayConfigs: jest.fn().mockReturnValue([]),
+      getServerReplayConfigs: vi.fn().mockReturnValue([]),
     };
     const mcpClientManager = {
-      getServerReplayConfigs: jest.fn().mockReturnValue([
+      getServerReplayConfigs: vi.fn().mockReturnValue([
         {
           serverId: "manager",
           url: "https://manager.example.com/mcp",
@@ -372,7 +374,7 @@ describe("reportEvalResults", () => {
   });
 
   it("resolves replay configs from mcpClientManager when agent is absent", async () => {
-    const fetchMock = jest.fn().mockResolvedValue(
+    const fetchMock = vi.fn().mockResolvedValue(
       okResponse({
         suiteId: "suite_1",
         runId: "run_1",
@@ -384,7 +386,7 @@ describe("reportEvalResults", () => {
     global.fetch = fetchMock as any;
 
     const mcpClientManager = {
-      getServerReplayConfigs: jest.fn().mockReturnValue([
+      getServerReplayConfigs: vi.fn().mockReturnValue([
         {
           serverId: "manager",
           url: "https://manager.example.com/mcp",
@@ -413,7 +415,7 @@ describe("reportEvalResults", () => {
   });
 
   it("adds external run and iteration ids for one-shot idempotency", async () => {
-    const fetchMock = jest.fn().mockResolvedValue(
+    const fetchMock = vi.fn().mockResolvedValue(
       okResponse({
         suiteId: "suite_1",
         runId: "run_1",
@@ -632,7 +634,7 @@ describe("reportEvalResults", () => {
   });
 
   it("warns and continues when widget snapshot upload fails", async () => {
-    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     const fetchMock = jest
       .fn()
       .mockResolvedValueOnce(
@@ -697,13 +699,13 @@ describe("reportEvalResults", () => {
       })
     );
     expect(requestBody.results[0].widgetSnapshots[0].widgetHtmlBlobId).toBeUndefined();
-    expect(mockAddBreadcrumb).toHaveBeenCalledWith(
+    expect(sentryMocks.addBreadcrumb).toHaveBeenCalledWith(
       expect.objectContaining({
         category: "eval-reporting.widget-upload",
         level: "warning",
       })
     );
-    expect(mockCaptureEvalReportingFailure).not.toHaveBeenCalled();
+    expect(sentryMocks.captureEvalReportingFailure).not.toHaveBeenCalled();
   });
 
   it("wraps reporting failures in EvalReportingError and captures once", async () => {
@@ -726,8 +728,8 @@ describe("reportEvalResults", () => {
       statusCode: 404,
     });
 
-    expect(mockCaptureEvalReportingFailure).toHaveBeenCalledTimes(1);
-    expect(mockCaptureEvalReportingFailure).toHaveBeenCalledWith(
+    expect(sentryMocks.captureEvalReportingFailure).toHaveBeenCalledTimes(1);
+    expect(sentryMocks.captureEvalReportingFailure).toHaveBeenCalledWith(
       expect.any(EvalReportingError),
       expect.objectContaining({
         apiKey: "mcpjam_test_key",
@@ -738,7 +740,9 @@ describe("reportEvalResults", () => {
         suiteName: "direct-failure",
       })
     );
-    expect(mockCaptureEvalReportingFailure.mock.calls[0][1]).not.toHaveProperty(
+    expect(
+      sentryMocks.captureEvalReportingFailure.mock.calls[0][1]
+    ).not.toHaveProperty(
       "serverReplayConfigs"
     );
   });
@@ -748,7 +752,7 @@ describe("reportEvalResults", () => {
       .fn()
       .mockResolvedValue(errorResponse(500, "backend down"));
     global.fetch = fetchMock as any;
-    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 
     const output = await reportEvalResultsSafely({
       apiKey: "mcpjam_test_key",
@@ -760,8 +764,8 @@ describe("reportEvalResults", () => {
 
     expect(output).toBeNull();
     expect(warnSpy).toHaveBeenCalled();
-    expect(mockCaptureEvalReportingFailure).toHaveBeenCalledTimes(1);
-    expect(mockCaptureEvalReportingFailure).toHaveBeenCalledWith(
+    expect(sentryMocks.captureEvalReportingFailure).toHaveBeenCalledTimes(1);
+    expect(sentryMocks.captureEvalReportingFailure).toHaveBeenCalledWith(
       expect.any(EvalReportingError),
       expect.objectContaining({
         apiKey: "mcpjam_test_key",
@@ -771,7 +775,9 @@ describe("reportEvalResults", () => {
         suiteName: "safe-mode",
       })
     );
-    expect(mockCaptureEvalReportingFailure.mock.calls[0][1]).not.toHaveProperty(
+    expect(
+      sentryMocks.captureEvalReportingFailure.mock.calls[0][1]
+    ).not.toHaveProperty(
       "serverReplayConfigs"
     );
   });

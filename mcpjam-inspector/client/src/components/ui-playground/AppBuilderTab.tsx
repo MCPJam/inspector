@@ -13,7 +13,7 @@ import {
   useState,
   useLayoutEffect,
 } from "react";
-import type { Tool } from "@modelcontextprotocol/sdk/types.js";
+import type { Tool } from "@modelcontextprotocol/client";
 import { Wrench } from "lucide-react";
 import {
   ResizablePanel,

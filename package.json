@@ -1,6 +1,7 @@
 {
   "scripts": {
-    "test": "npm --prefix ./sdk test && npm --prefix ./sdk run build && npm --prefix ./cli install ./sdk --no-save && npm --prefix ./cli test && npm --prefix ./mcpjam-inspector install ./sdk --no-save && npm --prefix ./mcpjam-inspector test"
+    "check:mcp-v1-runtime-imports": "! rg -n '@modelcontextprotocol/sdk' sdk/src cli/src mcpjam-inspector/client/src mcpjam-inspector/server -g '!**/dist/**'",
+    "test": "npm run check:mcp-v1-runtime-imports && npm --prefix ./sdk test && npm --prefix ./sdk run test:packaging && npm --prefix ./cli install ./sdk --no-save && npm --prefix ./cli test && npm --prefix ./mcpjam-inspector install ./sdk --no-save && npm --prefix ./mcpjam-inspector test"
   },
   "devDependencies": {
     "@types/dagre": "^0.7.54"

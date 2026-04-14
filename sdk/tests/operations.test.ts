@@ -241,7 +241,7 @@ describe("listTools", () => {
 
 // ── withEphemeralClient ─────────────────────────────────────────────
 
-describe("withEphemeralClient", () => {
+describe.skip("withEphemeralClient", () => {
   // We can't easily test the full lifecycle without mocking the constructor,
   // so we test withDisposableManager which covers the cleanup pattern.
 });

@@ -1,30 +1,31 @@
 {
   "name": "@mcpjam/sdk",
-  "version": "0.9.3",
+  "version": "1.0.0",
   "description": "MCP server unit testing, end to end (e2e) testing, and server evals",
+  "type": "module",
   "main": "dist/index.js",
-  "module": "dist/index.mjs",
+  "module": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.mjs",
-      "require": "./dist/index.js"
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
     },
     "./browser": {
       "types": "./dist/browser.d.ts",
-      "import": "./dist/browser.mjs",
-      "require": "./dist/browser.js"
+      "import": "./dist/browser.js",
+      "default": "./dist/browser.js"
     },
     "./operations": {
       "types": "./dist/operations.d.ts",
-      "import": "./dist/operations.mjs",
-      "require": "./dist/operations.js"
+      "import": "./dist/operations.js",
+      "default": "./dist/operations.js"
     },
     "./skill-reference": {
       "types": "./dist/skill-reference.d.ts",
-      "import": "./dist/skill-reference.mjs",
-      "require": "./dist/skill-reference.js"
+      "import": "./dist/skill-reference.js",
+      "default": "./dist/skill-reference.js"
     }
   },
   "files": [
@@ -37,9 +38,10 @@
     "bundle:runtimes": "npm run bundle:chatgpt-runtime && npm run bundle:mcp-apps-runtime",
     "dev": "tsup --watch",
     "sentry:sourcemaps": "sentry-cli sourcemaps inject ./dist && sentry-cli sourcemaps upload --release=@mcpjam/sdk@$(node -p \"require('./package.json').version\") --org=mcpjam-gh --project=mcpjam-sdk ./dist",
-    "test": "jest",
-    "test:watch": "jest --watch",
-    "test:coverage": "jest --coverage",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "test:packaging": "npm run build && node --input-type=module -e \"await import('@mcpjam/sdk'); await import('@mcpjam/sdk/browser');\"",
     "lint": "eslint src tests",
     "lint:fix": "eslint src tests --fix",
     "format": "prettier --write \"src/**/*.ts\" \"tests/**/*.ts\"",
@@ -59,6 +61,9 @@
   "author": "MCPJam",
   "license": "MIT",
   "devDependencies": {
+    "@modelcontextprotocol/sdk": "^1.26.0",
+    "@modelcontextprotocol/node": "^2.0.0-alpha.2",
+    "@modelcontextprotocol/server": "^2.0.0-alpha.2",
     "@eslint/js": "^9.39.2",
     "@sentry/cli": "^2.58.4",
     "@sentry/node": "^8.55.0",
@@ -75,7 +80,8 @@
     "ts-jest": "^29.1.2",
     "tsup": "^8.0.1",
     "typescript": "^5.3.3",
-    "typescript-eslint": "^8.53.1"
+    "typescript-eslint": "^8.53.1",
+    "vitest": "^3.2.4"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^2.0.17",
@@ -85,7 +91,7 @@
     "@ai-sdk/mistral": "^2.0.19",
     "@ai-sdk/openai": "^2.0.32",
     "@ai-sdk/xai": "^2.0.29",
-    "@modelcontextprotocol/sdk": "^1.26.0",
+    "@modelcontextprotocol/client": "^2.0.0-alpha.2",
     "@openrouter/ai-sdk-provider": "^2.2.0",
     "ai": "^6.0.141",
     "ollama-ai-provider-v2": "^1.5.2",
@@ -101,7 +107,7 @@
     }
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=20.0.0"
   },
   "overrides": {
     "zod": "^4.1.12"

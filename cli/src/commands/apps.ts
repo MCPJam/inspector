@@ -10,10 +10,10 @@ import {
 import {
   buildChatGptWidgetContent,
   buildMcpWidgetContent,
-} from "../lib/apps";
-import { withEphemeralManager } from "../lib/ephemeral";
-import { createCliRpcLogCollector } from "../lib/rpc-logs";
-import { withRpcLogsIfRequested } from "../lib/rpc-helpers";
+} from "../lib/apps.js";
+import { withEphemeralManager } from "../lib/ephemeral.js";
+import { createCliRpcLogCollector } from "../lib/rpc-logs.js";
+import { withRpcLogsIfRequested } from "../lib/rpc-helpers.js";
 import {
   addSharedServerOptions,
   describeTarget,
@@ -22,12 +22,12 @@ import {
   parseServerConfig,
   resolveAliasedStringOption,
   type SharedServerTargetOptions,
-} from "../lib/server-config";
+} from "../lib/server-config.js";
 import {
   setProcessExitCode,
   usageError,
   writeResult,
-} from "../lib/output";
+} from "../lib/output.js";
 
 const APPS_CHECK_IDS_BY_CATEGORY: Record<
   MCPAppsCheckCategory,

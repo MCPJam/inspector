@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Braces, Loader2 } from "lucide-react";
 import { StickToBottom } from "use-stick-to-bottom";
 import { ScrollToBottomButton } from "@/components/chat-v2/shared/scroll-to-bottom-button";
-import type { ContentBlock } from "@modelcontextprotocol/sdk/types.js";
+import type { ContentBlock } from "@modelcontextprotocol/client";
 import type { UIMessage } from "ai";
 import { cn } from "@/lib/utils";
 import type { ModelDefinition } from "@/shared/types";

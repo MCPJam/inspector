@@ -324,7 +324,7 @@ describe("MCPClientManager", () => {
           timeout: 200,
         })
       ).rejects.toThrow(
-        /Failed to connect to MCP server "silent-timeout" via stdio: MCP error -32001: Request timed out/
+        /Failed to connect to MCP server "silent-timeout" via stdio: Request timed out/
       );
     }, 10000);
 
