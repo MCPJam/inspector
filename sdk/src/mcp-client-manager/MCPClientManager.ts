@@ -232,7 +232,7 @@ export class MCPClientManager {
    */
   getConnectionStatus(serverId: string): MCPConnectionStatus {
     const state = this.liveClientStates.get(serverId);
-    if (state?.promise) return "connecting";
+    if (state?.retryPromise || state?.connectPromise) return "connecting";
     if (state?.client) return "connected";
     return "disconnected";
   }
@@ -314,21 +314,40 @@ export class MCPClientManager {
     if (liveState?.client) {
       throw new Error(`MCP server "${serverId}" is already connected.`);
     }
-    if (liveState?.promise) {
-      return liveState.promise;
+    if (liveState?.retryPromise) {
+      return liveState.retryPromise;
     }
 
     const timeout = config.timeout ?? this.defaultTimeout;
     this.registerServer(serverId, config, timeout);
 
-    return retryWithPolicy({
-      policy: this.defaultRetryPolicy,
-      operation: () => this.connectToServerOnce(serverId),
-      shouldRetryError: (error) => isRetryableTransientError(error),
-      onRetry: async () => {
-        await this.destroyLiveState(serverId);
-      },
-    });
+    const state: LiveClientState = liveState ?? {};
+    const retryPromise = Promise.resolve().then(() =>
+      retryWithPolicy({
+        policy: this.defaultRetryPolicy,
+        operation: () => this.connectToServerOnce(serverId),
+        shouldRetryError: (error) => isRetryableTransientError(error),
+        onRetry: async () => {
+          await this.destroyLiveState(serverId, {
+            preserveRetryPromise: true,
+          });
+        },
+      })
+    );
+    state.retryPromise = retryPromise;
+    this.liveClientStates.set(serverId, state);
+
+    try {
+      return await retryPromise;
+    } finally {
+      const latestState = this.liveClientStates.get(serverId);
+      if (latestState?.retryPromise === retryPromise) {
+        latestState.retryPromise = undefined;
+        if (!latestState.client && !latestState.connectPromise) {
+          this.liveClientStates.delete(serverId);
+        }
+      }
+    }
   }
 
   /**
@@ -1028,8 +1047,8 @@ export class MCPClientManager {
       throw new Error(`MCP server "${serverId}" is already connected.`);
     }
 
-    if (existingState?.promise) {
-      return existingState.promise;
+    if (existingState?.connectPromise) {
+      return existingState.connectPromise;
     }
 
     const state: LiveClientState = existingState ?? {};
@@ -1041,7 +1060,7 @@ export class MCPClientManager {
       registeredState.timeout,
       state
     );
-    state.promise = connectionPromise;
+    state.connectPromise = connectionPromise;
     this.liveClientStates.set(serverId, state);
     return connectionPromise;
   }
@@ -1076,7 +1095,7 @@ export class MCPClientManager {
 
       client.onclose = () => {
         if (this.liveClientStates.get(serverId) === state) {
-          this.clearLiveState(serverId);
+          this.clearLiveState(serverId, { preservePendingPromises: true });
         }
       };
 
@@ -1106,7 +1125,7 @@ export class MCPClientManager {
 
       state.client = client;
       state.transport = transport;
-      state.promise = undefined;
+      state.connectPromise = undefined;
       this.liveClientStates.set(serverId, state);
 
       // Set logging level (ignore errors)
@@ -1122,7 +1141,9 @@ export class MCPClientManager {
       if (transport) {
         await this.safeCloseTransport(transport);
       }
-      this.clearLiveState(serverId);
+      this.clearLiveState(serverId, {
+        preserveRetryPromise: Boolean(state.retryPromise),
+      });
       throw error;
     }
   }
@@ -1377,8 +1398,12 @@ export class MCPClientManager {
     if (!this.registeredServers.has(serverId)) {
       throw new Error(`Unknown MCP server "${serverId}".`);
     }
-    if (state?.promise) {
-      await state.promise;
+    if (state?.retryPromise) {
+      await state.retryPromise;
+      return;
+    }
+    if (state?.connectPromise) {
+      await state.connectPromise;
       return;
     }
     await this.connectToServerOnce(serverId);
@@ -1392,28 +1417,63 @@ export class MCPClientManager {
     return state.client;
   }
 
-  private clearLiveState(serverId: string): void {
+  private clearLiveState(
+    serverId: string,
+    options?: {
+      preservePendingPromises?: boolean;
+      preserveRetryPromise?: boolean;
+    }
+  ): void {
     const state = this.liveClientStates.get(serverId);
     state?.stdioStderrCleanup?.();
-    this.liveClientStates.delete(serverId);
+
+    if (!state) {
+      this.toolsMetadataCache.delete(serverId);
+      return;
+    }
+
+    delete state.client;
+    delete state.transport;
+    delete state.stdioStderrCleanup;
+    if (!options?.preservePendingPromises) {
+      delete state.connectPromise;
+    }
+    if (!options?.preservePendingPromises && !options?.preserveRetryPromise) {
+      delete state.retryPromise;
+      delete state.authProvider;
+    }
+
+    if (state.connectPromise || state.retryPromise) {
+      this.liveClientStates.set(serverId, state);
+    } else {
+      this.liveClientStates.delete(serverId);
+    }
     this.toolsMetadataCache.delete(serverId);
   }
 
-  private async destroyLiveState(serverId: string): Promise<void> {
+  private async destroyLiveState(
+    serverId: string,
+    options?: {
+      preservePendingPromises?: boolean;
+      preserveRetryPromise?: boolean;
+    }
+  ): Promise<void> {
     const state = this.liveClientStates.get(serverId);
-    this.clearLiveState(serverId);
+    const client = state?.client;
+    const transport = state?.transport;
+    this.clearLiveState(serverId, options);
     if (!state) {
       return;
     }
 
     try {
-      await state.client?.close();
+      await client?.close();
     } catch {
       // Ignore close errors
     }
 
-    if (state.transport) {
-      await this.safeCloseTransport(state.transport);
+    if (transport) {
+      await this.safeCloseTransport(transport);
     }
   }
 
@@ -1451,16 +1511,19 @@ export class MCPClientManager {
     }
 
     if (config.refreshToken) {
+      const configuredRefreshToken = config.refreshToken.trim();
       const currentAccessToken =
         liveState?.authProvider?.tokens()?.access_token;
       const currentRefreshToken = liveState?.authProvider
-        ?.prepareTokenRequest()
-        .get("refresh_token");
+          ?.prepareTokenRequest()
+          .get("refresh_token");
       const clientId = config.clientId?.trim();
       const clientSecret = config.clientSecret?.trim();
 
       if (currentRefreshToken && currentRefreshToken.trim()) {
         replayConfig.refreshToken = currentRefreshToken.trim();
+      } else if (configuredRefreshToken) {
+        replayConfig.refreshToken = configuredRefreshToken;
       } else if (currentAccessToken && currentAccessToken.trim()) {
         replayConfig.accessToken = currentAccessToken.trim();
       }
@@ -1626,7 +1689,7 @@ export class MCPClientManager {
     return Boolean(
       value &&
       typeof value === "object" &&
-      ("request" in value || "task" in value || "retry" in value)
+      ("request" in value || "retry" in value)
     );
   }
 
@@ -1656,7 +1719,8 @@ export class MCPClientManager {
       async () => {
         await this.ensureConnected(serverId);
         return operation(this.getClientOrThrow(serverId));
-      }
+      },
+      { resetConnectionOnRetry: false }
     );
   }
 
@@ -1664,7 +1728,10 @@ export class MCPClientManager {
     serverId: string,
     options: RequestOptions | undefined,
     retryPolicy: RetryPolicy,
-    operation: () => Promise<T>
+    operation: () => Promise<T>,
+    config: {
+      resetConnectionOnRetry?: boolean;
+    } = {}
   ): Promise<T> {
     return retryWithPolicy({
       policy: retryPolicy,
@@ -1672,7 +1739,9 @@ export class MCPClientManager {
       operation: async () => operation(),
       shouldRetryError: (error) => isRetryableTransientError(error),
       onRetry: async () => {
-        await this.destroyLiveState(serverId);
+        if (config.resetConnectionOnRetry) {
+          await this.destroyLiveState(serverId);
+        }
       },
     });
   }

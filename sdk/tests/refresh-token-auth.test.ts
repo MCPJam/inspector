@@ -456,7 +456,7 @@ describe("MCPClientManager refreshToken integration", () => {
       const result = await manager.listTools("oauth-server");
       expect(result.tools.length).toBe(MOCK_TOOLS.length);
       expect(
-        (manager as any).liveClientStates.get("oauth-server").authProvider
+        (manager as any).liveClientStates.get("oauth-server")?.authProvider
       ).toBeInstanceOf(RefreshTokenOAuthProvider);
       expect(manager.getServerReplayConfigs()).toEqual([
         expect.objectContaining({

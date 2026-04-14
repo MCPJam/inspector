@@ -152,12 +152,19 @@ export type ServerSummary = {
 };
 
 /**
- * Internal state for a managed client connection
+ * Shared state for managed client connections.
  */
-export interface ManagedClientState {
+export interface BaseClientState {
   client?: Client;
   transport?: Transport;
   authProvider?: RefreshTokenOAuthProvider;
+}
+
+/**
+ * Internal state for a managed client connection.
+ * Retained for compatibility with external type consumers.
+ */
+export interface ManagedClientState extends BaseClientState {
   promise?: Promise<Client>;
 }
 
@@ -172,12 +179,10 @@ export interface RegisteredServerState {
 /**
  * Live connection state for a registered server.
  */
-export interface LiveClientState {
-  client?: Client;
-  transport?: Transport;
-  authProvider?: RefreshTokenOAuthProvider;
+export interface LiveClientState extends BaseClientState {
   stdioStderrCleanup?: () => void;
-  promise?: Promise<Client>;
+  connectPromise?: Promise<Client>;
+  retryPromise?: Promise<Client>;
 }
 
 // ============================================================================

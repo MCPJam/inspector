@@ -551,6 +551,24 @@ describe("MCPClientManager", () => {
         },
       ]);
     });
+
+    it("preserves refresh-token replay configs without live client state", () => {
+      const replayManager = new MCPClientManager();
+      seedRegisteredServer(replayManager, "oauth-refresh", {
+        url: "https://example.com/mcp",
+        refreshToken: "rt_test",
+        clientId: "client_id",
+      });
+
+      expect(replayManager.getServerReplayConfigs()).toEqual([
+        {
+          serverId: "oauth-refresh",
+          url: "https://example.com/mcp",
+          refreshToken: "rt_test",
+          clientId: "client_id",
+        },
+      ]);
+    });
   });
 
   describe("HTTP server (streamable)", () => {
@@ -899,6 +917,32 @@ describe("MCPClientManager", () => {
       expect(manager.hasServer("retry-connect")).toBe(true);
     });
 
+    it("shares the retried direct connect promise across concurrent callers", async () => {
+      const client = {} as any;
+      const connectSpy = jest
+        .spyOn(manager as any, "connectToServerOnce")
+        .mockRejectedValueOnce(
+          Object.assign(new Error("timed out"), { code: "ETIMEDOUT" })
+        )
+        .mockResolvedValueOnce(client);
+
+      const first = manager.connectToServer("retry-shared", {
+        command: "node",
+        args: ["server.js"],
+      });
+      const second = manager.connectToServer("retry-shared", {
+        command: "node",
+        args: ["server.js"],
+      });
+
+      await expect(Promise.all([first, second])).resolves.toEqual([
+        client,
+        client,
+      ]);
+
+      expect(connectSpy).toHaveBeenCalledTimes(2);
+    });
+
     it("does not retry direct connectToServer calls on auth errors", async () => {
       const connectSpy = jest
         .spyOn(manager as any, "connectToServerOnce")
@@ -940,8 +984,34 @@ describe("MCPClientManager", () => {
         tools: [],
       });
 
-      expect(connectSpy).toHaveBeenCalledTimes(2);
+      expect(connectSpy).toHaveBeenCalledTimes(1);
       expect(fakeClient.listTools).toHaveBeenCalledTimes(2);
+    });
+
+    it("retries read operations without tearing down an existing live session", async () => {
+      const fakeClient = {
+        listTools: jest
+          .fn()
+          .mockRejectedValueOnce(
+            Object.assign(new Error("timed out"), { code: "ETIMEDOUT" })
+          )
+          .mockResolvedValueOnce({ tools: [] }),
+      };
+
+      seedRegisteredServer(manager, "retry-live-read", {
+        command: "node",
+        args: ["server.js"],
+      });
+      seedLiveState(manager, "retry-live-read", { client: fakeClient });
+
+      const destroySpy = jest.spyOn(manager as any, "destroyLiveState");
+
+      await expect(manager.listTools("retry-live-read")).resolves.toEqual({
+        tools: [],
+      });
+
+      expect(fakeClient.listTools).toHaveBeenCalledTimes(2);
+      expect(destroySpy).not.toHaveBeenCalled();
     });
 
     it("does not retry read operations after the caller aborts during backoff", async () => {
@@ -1052,7 +1122,7 @@ describe("MCPClientManager", () => {
       });
 
       expect(fakeClient.callTool).toHaveBeenCalledTimes(2);
-      expect(connectSpy).toHaveBeenCalledTimes(1);
+      expect(connectSpy).not.toHaveBeenCalled();
     });
 
     it("does not retry executeTool after the caller aborts during backoff", async () => {
@@ -1103,6 +1173,42 @@ describe("MCPClientManager", () => {
       await expect(promise).rejects.toThrow("Tool request cancelled");
       expect(fakeClient.callTool).toHaveBeenCalledTimes(1);
       expect(connectSpy).toHaveBeenCalledTimes(0);
+    });
+
+    it("treats legacy request options with a task field as request options", async () => {
+      const fakeClient = {
+        callTool: jest.fn().mockResolvedValue({
+          content: [{ type: "text", text: "ok" }],
+        }),
+        request: jest.fn(),
+      };
+
+      seedRegisteredServer(manager, "legacy-request-options", {
+        command: "node",
+        args: ["server.js"],
+      });
+      seedLiveState(manager, "legacy-request-options", { client: fakeClient });
+
+      await expect(
+        manager.executeTool(
+          "legacy-request-options",
+          "echo",
+          { message: "hello" },
+          {
+            timeout: 500,
+            task: { ttl: 60 },
+          } as any
+        )
+      ).resolves.toEqual({
+        content: [{ type: "text", text: "ok" }],
+      });
+
+      expect(fakeClient.callTool).toHaveBeenCalledTimes(1);
+      expect(fakeClient.callTool.mock.calls[0]?.[2]).toMatchObject({
+        timeout: 500,
+        task: { ttl: 60 },
+      });
+      expect(fakeClient.request).not.toHaveBeenCalled();
     });
   });
 

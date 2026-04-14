@@ -220,4 +220,24 @@ describe("probeMcpServer", () => {
     expect(result.status).toBe("reachable");
     expect(result.transport.attempts).toHaveLength(2);
   });
+
+  it("does not retry deterministic probe failures", async () => {
+    const serverUrl = "https://mcp.example.com/mcp";
+    const fetchFn: typeof fetch = jest.fn(async () => {
+      throw new TypeError("malformed request");
+    }) as typeof fetch;
+
+    const result = await probeMcpServer({
+      url: serverUrl,
+      fetchFn,
+      retryPolicy: {
+        retries: 3,
+        retryDelayMs: 0,
+      },
+    });
+
+    expect(result.status).toBe("error");
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+    expect(result.transport.attempts).toHaveLength(1);
+  });
 });

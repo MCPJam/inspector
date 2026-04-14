@@ -1,6 +1,14 @@
-import { retryWithPolicy } from "../src/retry";
+import { isRetryableTransientError, retryWithPolicy } from "../src/retry";
 
 describe("retryWithPolicy", () => {
+  it("does not treat HTTP 501 as retryable", () => {
+    expect(
+      isRetryableTransientError(
+        Object.assign(new Error("HTTP 501"), { statusCode: 501 })
+      )
+    ).toBe(false);
+  });
+
   it("does not start another attempt when aborted during backoff", async () => {
     const abortController = new AbortController();
     const operation = jest

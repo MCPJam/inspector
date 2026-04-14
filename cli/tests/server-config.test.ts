@@ -328,11 +328,18 @@ test("parseRetryPolicy preserves explicit values and fills defaults", () => {
     retries: 3,
     retryDelayMs: 3000,
   });
-  assert.deepEqual(parseRetryPolicy({ retryDelayMs: 250 }), {
-    retries: 0,
-    retryDelayMs: 250,
-  });
   assert.equal(parseRetryPolicy({}), undefined);
+});
+
+test("parseRetryPolicy rejects retryDelayMs without retries", () => {
+  assert.throws(
+    () => parseRetryPolicy({ retryDelayMs: 250 }),
+    (error) =>
+      error instanceof CliError &&
+      error.message.includes(
+        "--retry-delay-ms requires --retries to be greater than 0",
+      ),
+  );
 });
 
 test("resolveAliasedStringOption accepts either alias and preserves matching values", () => {

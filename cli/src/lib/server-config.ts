@@ -137,8 +137,13 @@ export function parseRetryPolicy(
     return undefined;
   }
 
+  const retries = options.retries ?? DEFAULT_RETRY_POLICY.retries;
+  if (options.retryDelayMs !== undefined && retries === 0) {
+    throw usageError("--retry-delay-ms requires --retries to be greater than 0.");
+  }
+
   return {
-    retries: options.retries ?? DEFAULT_RETRY_POLICY.retries,
+    retries,
     retryDelayMs: options.retryDelayMs ?? DEFAULT_RETRY_POLICY.retryDelayMs,
   };
 }

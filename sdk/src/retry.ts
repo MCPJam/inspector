@@ -24,6 +24,20 @@ export interface RetryExecutionOptions<T> {
   }) => Promise<void> | void;
 }
 
+const RETRYABLE_NODE_ERROR_CODES = new Set([
+  "ECONNREFUSED",
+  "ECONNRESET",
+  "EAI_AGAIN",
+  "ENETDOWN",
+  "ENETUNREACH",
+  "ENOTFOUND",
+  "EPIPE",
+  "ETIMEDOUT",
+  "UND_ERR_CONNECT_TIMEOUT",
+  "UND_ERR_HEADERS_TIMEOUT",
+  "UND_ERR_SOCKET",
+]);
+
 function toAbortError(reason: unknown): Error {
   if (reason instanceof Error) {
     return reason;
@@ -134,27 +148,15 @@ export function isRetryableTransientError(error: unknown): boolean {
   if (statusCode === 408 || statusCode === 425 || statusCode === 429) {
     return true;
   }
+  if (statusCode === 501) {
+    return false;
+  }
   if (statusCode !== undefined && statusCode >= 500 && statusCode <= 599) {
     return true;
   }
 
   const nodeCode = extractNodeErrorCode(error)?.toUpperCase();
-  if (
-    nodeCode &&
-    new Set([
-      "ECONNREFUSED",
-      "ECONNRESET",
-      "EAI_AGAIN",
-      "ENETDOWN",
-      "ENETUNREACH",
-      "ENOTFOUND",
-      "EPIPE",
-      "ETIMEDOUT",
-      "UND_ERR_CONNECT_TIMEOUT",
-      "UND_ERR_HEADERS_TIMEOUT",
-      "UND_ERR_SOCKET",
-    ]).has(nodeCode)
-  ) {
+  if (nodeCode && RETRYABLE_NODE_ERROR_CODES.has(nodeCode)) {
     return true;
   }
 

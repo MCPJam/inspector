@@ -1,6 +1,10 @@
 import { discoverOAuthProtectedResourceMetadata } from "@modelcontextprotocol/sdk/client/auth.js";
 import { buildResourceMetadataUrl } from "./oauth/state-machines/shared/urls.js";
-import { type RetryPolicy, retryWithPolicy } from "./retry.js";
+import {
+  type RetryPolicy,
+  isRetryableTransientError,
+  retryWithPolicy,
+} from "./retry.js";
 import type { OAuthProtocolVersion } from "./oauth/state-machines/types.js";
 
 export interface ProbeMcpServerConfig {
@@ -840,7 +844,7 @@ async function probeMcpServerOnce(
       protocolVersion,
       attempts,
       error instanceof Error ? error.message : String(error),
-      true
+      isRetryableTransientError(error)
     );
   }
 }
