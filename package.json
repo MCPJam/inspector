@@ -1,6 +1,6 @@
 {
   "scripts": {
-    "test": "npm --prefix ./sdk test && npm --prefix ./sdk run build && npm --prefix ./cli install ./sdk --no-save && npm --prefix ./cli test && npm --prefix ./mcpjam-inspector install ./sdk --no-save && npm --prefix ./mcpjam-inspector test"
+    "test": "npm --prefix ./sdk test && npm --prefix ./sdk run build && npm --prefix ./cli install ./sdk --no-save && npm --prefix ./cli test && npm --prefix ./mcpjam-inspector install ./sdk --no-save && npm --prefix ./mcpjam-inspector test && npm --prefix ./mcp install && npm --prefix ./mcp run typecheck"
   },
   "devDependencies": {
     "@types/dagre": "^0.7.54"
