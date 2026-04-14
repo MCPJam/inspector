@@ -13,7 +13,13 @@ import type {
   OAuthClientProvider,
   OAuthDiscoveryState,
 } from "@modelcontextprotocol/sdk/client/auth.js";
-import type { HttpServerConfig } from "@mcpjam/sdk/browser";
+import {
+  DEFAULT_MCPJAM_CLIENT_ID_METADATA_URL,
+  MCPJAM_CLIENT_URI,
+  MCPJAM_LOGO_URI,
+} from "@mcpjam/sdk/browser";
+import type { HttpServerConfig, OAuthProtocolVersion } from "@mcpjam/sdk/browser";
+import type { OAuthRegistrationStrategy } from "./profile";
 import { generateRandomString } from "./pkce";
 import { authFetch } from "@/lib/session-token";
 import { HOSTED_MODE } from "@/lib/config";
@@ -34,6 +40,8 @@ export interface StoredOAuthConfig {
   customHeaders?: Record<string, string>;
   registryServerId?: string;
   useRegistryOAuthProxy?: boolean;
+  protocolVersion?: OAuthProtocolVersion;
+  registrationStrategy?: OAuthRegistrationStrategy;
 }
 
 interface OAuthRoutingConfig {
@@ -47,6 +55,26 @@ function getDiscoveryStorageKey(serverName: string): string {
 
 function clearStoredDiscoveryState(serverName: string): void {
   localStorage.removeItem(getDiscoveryStorageKey(serverName));
+}
+
+function isOAuthProtocolVersion(
+  value: unknown,
+): value is OAuthProtocolVersion {
+  return (
+    value === "2025-03-26" ||
+    value === "2025-06-18" ||
+    value === "2025-11-25"
+  );
+}
+
+function isOAuthRegistrationStrategy(
+  value: unknown,
+): value is OAuthRegistrationStrategy {
+  return (
+    value === "dcr" ||
+    value === "preregistered" ||
+    value === "cimd"
+  );
 }
 
 type OAuthRequestFields = Record<string, string>;
@@ -77,6 +105,14 @@ export function readStoredOAuthConfig(
           ? parsed.registryServerId
           : undefined,
       useRegistryOAuthProxy: parsed?.useRegistryOAuthProxy === true,
+      protocolVersion: isOAuthProtocolVersion(parsed?.protocolVersion)
+        ? parsed.protocolVersion
+        : undefined,
+      registrationStrategy: isOAuthRegistrationStrategy(
+        parsed?.registrationStrategy,
+      )
+        ? parsed.registrationStrategy
+        : undefined,
     };
 
     if (
@@ -110,12 +146,18 @@ export function readStoredOAuthConfig(
 export function buildStoredOAuthConfig(
   options: Pick<
     MCPOAuthOptions,
-    "scopes" | "registryServerId" | "useRegistryOAuthProxy"
+    | "scopes"
+    | "registryServerId"
+    | "useRegistryOAuthProxy"
+    | "protocolVersion"
+    | "registrationStrategy"
   >,
 ): StoredOAuthConfig {
   const config: StoredOAuthConfig = {
     registryServerId: options.registryServerId,
     useRegistryOAuthProxy: options.useRegistryOAuthProxy === true,
+    protocolVersion: options.protocolVersion,
+    registrationStrategy: options.registrationStrategy,
   };
 
   if (options.scopes && options.scopes.length > 0) {
@@ -254,6 +296,7 @@ async function loadCallbackDiscoveryState(
   provider: MCPOAuthProvider,
   serverUrl: string,
   fetchFn: typeof fetch,
+  protocolVersion?: OAuthProtocolVersion,
 ): Promise<OAuthDiscoveryState> {
   const cachedState = await provider.discoveryState();
   if (cachedState?.authorizationServerUrl) {
@@ -261,7 +304,7 @@ async function loadCallbackDiscoveryState(
       cachedState.authorizationServerMetadata ??
       (await discoverAuthorizationServerMetadata(
         cachedState.authorizationServerUrl,
-        { fetchFn },
+        { fetchFn, protocolVersion },
       ));
 
     const discoveryState: OAuthDiscoveryState = {
@@ -272,11 +315,25 @@ async function loadCallbackDiscoveryState(
     return discoveryState;
   }
 
+  return seedDiscoveryState(provider, serverUrl, fetchFn, protocolVersion);
+}
+
+async function seedDiscoveryState(
+  provider: MCPOAuthProvider,
+  serverUrl: string,
+  fetchFn: typeof fetch,
+  protocolVersion?: OAuthProtocolVersion,
+): Promise<OAuthDiscoveryState> {
   const discovered = await discoverOAuthServerInfo(serverUrl, { fetchFn });
+  const authorizationServerMetadata = await discoverAuthorizationServerMetadata(
+    discovered.authorizationServerUrl,
+    { fetchFn, protocolVersion },
+  );
+
   const discoveryState: OAuthDiscoveryState = {
     authorizationServerUrl: discovered.authorizationServerUrl,
     resourceMetadata: discovered.resourceMetadata,
-    authorizationServerMetadata: discovered.authorizationServerMetadata,
+    authorizationServerMetadata,
   };
   await provider.saveDiscoveryState(discoveryState);
   return discoveryState;
@@ -421,6 +478,8 @@ export interface MCPOAuthOptions {
   scopes?: string[];
   clientId?: string;
   clientSecret?: string;
+  protocolVersion?: OAuthProtocolVersion;
+  registrationStrategy?: OAuthRegistrationStrategy;
   /** Registry record identifier for bookkeeping and optional Convex token exchange */
   registryServerId?: string;
   /** True only for registry servers with backend-managed preregistered OAuth credentials */
@@ -442,18 +501,22 @@ export class MCPOAuthProvider implements OAuthClientProvider {
   private redirectUri: string;
   private customClientId?: string;
   private customClientSecret?: string;
+  private registrationStrategy?: OAuthRegistrationStrategy;
 
   constructor(
     serverName: string,
     serverUrl: string,
     customClientId?: string,
     customClientSecret?: string,
+    _protocolVersion?: OAuthProtocolVersion,
+    registrationStrategy?: OAuthRegistrationStrategy,
   ) {
     this.serverName = serverName;
     this.serverUrl = serverUrl;
     this.redirectUri = getRedirectUri();
     this.customClientId = customClientId;
     this.customClientSecret = customClientSecret;
+    this.registrationStrategy = registrationStrategy;
   }
 
   state(): string {
@@ -467,13 +530,25 @@ export class MCPOAuthProvider implements OAuthClientProvider {
   get clientMetadata() {
     return {
       client_name: `MCPJam - ${this.serverName}`,
-      client_uri: "https://github.com/mcpjam/inspector",
-      logo_uri: "https://www.mcpjam.com/mcp_jam_2row.png",
+      client_uri: MCPJAM_CLIENT_URI,
+      logo_uri: MCPJAM_LOGO_URI,
       redirect_uris: [this.redirectUri],
       grant_types: ["authorization_code", "refresh_token"],
       response_types: ["code"],
       token_endpoint_auth_method: "none",
     };
+  }
+
+  get clientMetadataUrl(): string | undefined {
+    if (this.registrationStrategy !== "cimd") {
+      return undefined;
+    }
+
+    if (this.customClientId) {
+      return undefined;
+    }
+
+    return DEFAULT_MCPJAM_CLIENT_ID_METADATA_URL;
   }
 
   clientInformation() {
@@ -616,6 +691,16 @@ export class MCPOAuthProvider implements OAuthClientProvider {
 export async function initiateOAuth(
   options: MCPOAuthOptions,
 ): Promise<OAuthResult> {
+  if (
+    options.registrationStrategy === "preregistered" &&
+    !options.clientId?.trim()
+  ) {
+    return {
+      success: false,
+      error: "Client ID is required for pre-registered OAuth.",
+    };
+  }
+
   // Build fetch interceptor — routes token requests through Convex for registry servers
   const fetchFn = createOAuthFetchInterceptor({
     registryServerId: options.registryServerId,
@@ -628,6 +713,8 @@ export async function initiateOAuth(
       options.serverUrl,
       options.clientId,
       options.clientSecret,
+      options.protocolVersion,
+      options.registrationStrategy,
     );
 
     // Store server URL for callback recovery
@@ -643,6 +730,13 @@ export async function initiateOAuth(
       `mcp-oauth-config-${options.serverName}`,
       JSON.stringify(oauthConfig),
     );
+
+    if (
+      !options.clientId &&
+      options.registrationStrategy !== "preregistered"
+    ) {
+      await provider.invalidateCredentials("client");
+    }
 
     // Store custom client credentials if provided, so they can be retrieved during callback
     if (options.clientId || options.clientSecret) {
@@ -666,6 +760,13 @@ export async function initiateOAuth(
         JSON.stringify(updatedClientInfo),
       );
     }
+
+    await seedDiscoveryState(
+      provider,
+      options.serverUrl,
+      fetchFn,
+      options.protocolVersion,
+    );
 
     const authArgs: any = { serverUrl: options.serverUrl, fetchFn };
     if (options.scopes && options.scopes.length > 0) {
@@ -766,11 +867,14 @@ export async function handleOAuthCallback(
       serverUrl,
       customClientId,
       customClientSecret,
+      oauthConfig.protocolVersion,
+      oauthConfig.registrationStrategy,
     );
     const discoveryState = await loadCallbackDiscoveryState(
       provider,
       serverUrl,
       fetchFn,
+      oauthConfig.protocolVersion,
     );
     const resource = await selectResourceURL(
       serverUrl,
@@ -941,6 +1045,8 @@ export async function refreshOAuthTokens(
       serverUrl,
       customClientId,
       customClientSecret,
+      oauthConfig.protocolVersion,
+      oauthConfig.registrationStrategy,
     );
     const existingTokens = provider.tokens();
 
@@ -950,6 +1056,13 @@ export async function refreshOAuthTokens(
         error: "No refresh token available",
       };
     }
+
+    await loadCallbackDiscoveryState(
+      provider,
+      serverUrl,
+      fetchFn,
+      oauthConfig.protocolVersion,
+    );
 
     const result = await auth(provider, { serverUrl, fetchFn });
 

@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import { usePostHog, useFeatureFlagEnabled } from "posthog-js/react";
 import { standardEventProps } from "@/lib/PosthogUtils";
+import { isConnectedStatus } from "@/state/app-types";
 
 import { NavMain } from "@/components/sidebar/nav-main";
 import {
@@ -542,7 +543,7 @@ export function MCPSidebar({
   // Get list of connected server names
   const connectedServerNames = useMemo(() => {
     return Object.entries(servers)
-      .filter(([, server]) => server.connectionStatus === "connected")
+      .filter(([, server]) => isConnectedStatus(server.connectionStatus))
       .map(([name]) => name);
   }, [servers]);
 

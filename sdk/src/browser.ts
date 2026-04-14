@@ -42,6 +42,14 @@ export type {
   CustomProvider,
   LLMProvider,
 } from "./types.js";
+export type {
+  ConnectContext,
+  ConnectIssue,
+  ConnectIssueCode,
+  ConnectPhase,
+  ConnectReport,
+  ConnectStatus,
+} from "./connect-report-types.js";
 
 export {
   DEFAULT_MCPJAM_CLIENT_ID_METADATA_URL,

@@ -12,6 +12,7 @@ const {
   handleOAuthCallbackMock,
   initiateOAuthMock,
   getStoredTokensMock,
+  readStoredOAuthConfigMock,
   clearOAuthDataMock,
   testConnectionMock,
   mockConvexQuery,
@@ -21,6 +22,7 @@ const {
   handleOAuthCallbackMock: vi.fn(),
   initiateOAuthMock: vi.fn(),
   getStoredTokensMock: vi.fn(),
+  readStoredOAuthConfigMock: vi.fn(),
   clearOAuthDataMock: vi.fn(),
   testConnectionMock: vi.fn(),
   mockConvexQuery: vi.fn(),
@@ -54,6 +56,7 @@ vi.mock("@/state/oauth-orchestrator", () => ({
 vi.mock("@/lib/oauth/mcp-oauth", () => ({
   handleOAuthCallback: handleOAuthCallbackMock,
   getStoredTokens: getStoredTokensMock,
+  readStoredOAuthConfig: readStoredOAuthConfigMock,
   clearOAuthData: clearOAuthDataMock,
   initiateOAuth: initiateOAuthMock,
 }));
@@ -191,6 +194,10 @@ describe("useServerState OAuth callback failures", () => {
       isAwaitingRemoteEcho: false,
     });
     getStoredTokensMock.mockReturnValue(undefined);
+    readStoredOAuthConfigMock.mockReturnValue({
+      registryServerId: undefined,
+      useRegistryOAuthProxy: false,
+    });
     testConnectionMock.mockResolvedValue({
       success: true,
       initInfo: null,
@@ -335,6 +342,65 @@ describe("useServerState OAuth callback failures", () => {
     });
   });
 
+  it("preserves saved OAuth strategy details when forcing a reconnect auth flow", async () => {
+    readStoredOAuthConfigMock.mockReturnValue({
+      registryServerId: "registry-asana",
+      useRegistryOAuthProxy: true,
+      protocolVersion: "2025-11-25",
+      registrationStrategy: "preregistered",
+      scopes: ["mcp:*"],
+    });
+
+    const appState = createAppState();
+    appState.workspaces.default.servers["demo-server"] = {
+      ...appState.workspaces.default.servers["demo-server"],
+      connectionStatus: "failed",
+      oauthFlowProfile: {
+        serverUrl: "https://example.com/mcp",
+        clientId: "profile-client-id",
+        clientSecret: "profile-client-secret",
+        scopes: "mcp:*",
+        customHeaders: [],
+        protocolVersion: "2025-11-25",
+        registrationStrategy: "preregistered",
+      },
+      oauthTokens: {
+        client_id: "stored-client-id",
+        client_secret: "stored-client-secret",
+        access_token: "access-token",
+        refresh_token: "refresh-token",
+        expires_in: 3600,
+        scope: "mcp:*",
+      },
+      useOAuth: true,
+    } as any;
+    appState.servers["demo-server"] = {
+      ...appState.workspaces.default.servers["demo-server"],
+    } as any;
+    initiateOAuthMock.mockResolvedValueOnce({ success: true });
+
+    const dispatch = vi.fn();
+    const { result } = renderUseServerState(dispatch, appState);
+
+    await act(async () => {
+      await result.current.handleReconnect("demo-server", {
+        forceOAuthFlow: true,
+      });
+    });
+
+    expect(initiateOAuthMock).toHaveBeenCalledWith({
+      serverName: "demo-server",
+      serverUrl: "https://example.com/mcp",
+      clientId: "profile-client-id",
+      clientSecret: "profile-client-secret",
+      scopes: ["mcp:*"],
+      protocolVersion: "2025-11-25",
+      registrationStrategy: "preregistered",
+      registryServerId: "registry-asana",
+      useRegistryOAuthProxy: true,
+    });
+  });
+
   it("resolves preregistered registry OAuth config before initiating Asana connect", async () => {
     mockConvexQuery.mockResolvedValueOnce({
       clientId: "asana-client-id",
@@ -449,6 +515,10 @@ describe("useServerState authenticated fallback persistence", () => {
       isAwaitingRemoteEcho: false,
     });
     getStoredTokensMock.mockReturnValue(undefined);
+    readStoredOAuthConfigMock.mockReturnValue({
+      registryServerId: undefined,
+      useRegistryOAuthProxy: false,
+    });
     testConnectionMock.mockResolvedValue({
       success: true,
       initInfo: null,

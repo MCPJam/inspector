@@ -4,6 +4,7 @@ import { useAuth } from "@workos-inc/authkit-react";
 import { toast } from "sonner";
 import posthog from "posthog-js";
 import type { ServerWithName } from "@/hooks/use-app-state";
+import { isConnectedStatus } from "@/state/app-types";
 import type { EvalSuiteOverviewEntry } from "@/components/evals/types";
 import { generateAndPersistEvalTests } from "@/lib/evals/generate-and-persist-tests";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
@@ -66,7 +67,7 @@ export function useExploreCasesPrefetchOnConnect(
     const status = server.connectionStatus;
     prevStatusRef.current = status;
 
-    if (status === "connected" && prev !== "connected") {
+    if (isConnectedStatus(status) && !isConnectedStatus(prev as any)) {
       pendingExplorePrefetchRef.current = true;
     }
 

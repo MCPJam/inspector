@@ -1,4 +1,4 @@
-import { probeMcpServer, runServerDoctor } from "@mcpjam/sdk";
+import { connectServerWithReport, probeMcpServer, runServerDoctor } from "@mcpjam/sdk";
 import { Command } from "commander";
 import {
   buildCommandArtifactError,
@@ -270,32 +270,18 @@ export function registerServerCommands(program: Command): void {
       const targetSummary = summarizeServerDoctorTarget(target, config);
 
       let result:
-        | {
-            success: true;
-            status: "connected";
-            target: string;
-            initInfo: unknown | null;
-          }
+        | Awaited<ReturnType<typeof connectServerWithReport>>
         | undefined;
       let commandError: unknown;
 
       try {
-        result = await withEphemeralManager(
+        result = await connectServerWithReport({
           config,
-          async (manager, serverId) => {
-            await manager.getToolsForAiSdk([serverId]);
-            return {
-              success: true,
-              status: "connected" as const,
-              target,
-              initInfo: manager.getInitializationInfo(serverId) ?? null,
-            };
-          },
-          {
-            timeout: globalOptions.timeout,
-            rpcLogger: primaryCollector?.rpcLogger,
-          },
-        );
+          target,
+          serverId: "__cli__",
+          timeout: globalOptions.timeout,
+          rpcLogger: primaryCollector?.rpcLogger,
+        });
       } catch (error) {
         commandError = error;
       }
@@ -332,10 +318,23 @@ export function registerServerCommands(program: Command): void {
         throw commandError;
       }
 
-      writeResult(
-        withRpcLogsIfRequested(result, primaryCollector, globalOptions),
-        globalOptions.format,
-      );
+      if (!result) {
+        throw operationalError("Validation did not return a result.");
+      }
+
+      if (globalOptions.format === "human") {
+        const suffix = result.issue ? `: ${result.issue.message}` : "";
+        process.stdout.write(`${result.target}: ${result.status}${suffix}\n`);
+      } else {
+        writeResult(
+          withRpcLogsIfRequested(result, primaryCollector, globalOptions),
+          globalOptions.format,
+        );
+      }
+
+      if (!result.success) {
+        setProcessExitCode(1);
+      }
     });
 
   addSharedServerOptions(

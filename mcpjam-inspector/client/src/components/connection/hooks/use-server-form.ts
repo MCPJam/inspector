@@ -3,6 +3,16 @@ import { ServerFormData } from "@/shared/types.js";
 import { ServerWithName } from "@/hooks/use-app-state";
 import { hasOAuthConfig, getStoredTokens } from "@/lib/oauth/mcp-oauth";
 import { HOSTED_MODE } from "@/lib/config";
+import {
+  getDefaultRegistrationStrategy,
+  getSupportedRegistrationStrategies,
+} from "@mcpjam/sdk/browser";
+import { deriveOAuthProfileFromServer } from "@/components/oauth/utils";
+import {
+  EMPTY_OAUTH_TEST_PROFILE,
+  type OAuthRegistrationStrategy,
+  type OAuthTestProfile,
+} from "@/lib/oauth/profile";
 
 interface InitialFormValues {
   name: string;
@@ -15,6 +25,8 @@ interface InitialFormValues {
   useCustomClientId: boolean;
   clientId: string;
   clientSecret: string;
+  oauthProtocolVersion: OAuthTestProfile["protocolVersion"];
+  oauthRegistrationStrategy: OAuthRegistrationStrategy;
   envVars: Array<{ key: string; value: string }>;
   customHeaders: Array<{ key: string; value: string }>;
   requestTimeout: string;
@@ -32,6 +44,14 @@ export function useServerForm(
   const [oauthScopesInput, setOauthScopesInput] = useState("");
   const [clientId, setClientId] = useState("");
   const [clientSecret, setClientSecret] = useState("");
+  const [oauthProtocolVersion, setOauthProtocolVersion] =
+    useState<OAuthTestProfile["protocolVersion"]>(
+      EMPTY_OAUTH_TEST_PROFILE.protocolVersion,
+    );
+  const [oauthRegistrationStrategy, setOauthRegistrationStrategy] =
+    useState<OAuthRegistrationStrategy>(
+      EMPTY_OAUTH_TEST_PROFILE.registrationStrategy,
+    );
   const [bearerToken, setBearerToken] = useState("");
   const [authType, setAuthType] = useState<"oauth" | "bearer" | "none">("none");
   const [useCustomClientId, setUseCustomClientId] = useState(false);
@@ -58,6 +78,7 @@ export function useServerForm(
   // Initialize form with server data (for edit mode)
   useEffect(() => {
     if (server) {
+      const oauthProfile = deriveOAuthProfileFromServer(server);
       const config = server.config;
       const isHttpServer = "url" in config;
 
@@ -138,6 +159,8 @@ export function useServerForm(
       // Don't set a default scope for existing servers - use what's configured
       // Only set default for new servers
       setOauthScopesInput(scopes.join(" "));
+      setOauthProtocolVersion(oauthProfile.protocolVersion);
+      setOauthRegistrationStrategy(oauthProfile.registrationStrategy);
       setRequestTimeout(timeoutValue);
 
       // Set auth type based on multiple OAuth detection sources
@@ -195,6 +218,8 @@ export function useServerForm(
         useCustomClientId: !!clientIdValue,
         clientId: clientIdValue,
         clientSecret: clientSecretValue,
+        oauthProtocolVersion: oauthProfile.protocolVersion,
+        oauthRegistrationStrategy: oauthProfile.registrationStrategy,
         envVars: envArray.map(({ key, value }) => ({ key, value })),
         customHeaders: headersArray.map(({ key, value }) => ({ key, value })),
         requestTimeout: timeoutValue,
@@ -247,6 +272,14 @@ export function useServerForm(
         urlObj.protocol !== "https:"
       ) {
         return "HTTPS is required";
+      }
+
+      if (
+        authType === "oauth" &&
+        oauthRegistrationStrategy === "preregistered" &&
+        !clientId.trim()
+      ) {
+        return "Client ID is required for pre-registered OAuth";
       }
     }
 
@@ -353,11 +386,31 @@ export function useServerForm(
       headers,
       useOAuth,
       oauthScopes: scopes.length > 0 ? scopes : undefined,
-      clientId: clientId.trim() || undefined,
-      clientSecret: clientSecret.trim() || undefined,
+      clientId:
+        useOAuth &&
+        (useCustomClientId || oauthRegistrationStrategy === "preregistered")
+          ? clientId.trim() || undefined
+          : undefined,
+      clientSecret:
+        useOAuth &&
+        (useCustomClientId || oauthRegistrationStrategy === "preregistered")
+          ? clientSecret.trim() || undefined
+          : undefined,
       requestTimeout: reqTimeout,
     };
   };
+
+  const buildOAuthProfile = (): OAuthTestProfile => ({
+    serverUrl: url.trim(),
+    clientId: clientId.trim(),
+    clientSecret: clientSecret.trim(),
+    scopes: oauthScopesInput.trim(),
+    customHeaders: customHeaders
+      .filter(({ key }) => key.trim().length > 0)
+      .map(({ key, value }) => ({ key: key.trim(), value })),
+    protocolVersion: oauthProtocolVersion,
+    registrationStrategy: oauthRegistrationStrategy,
+  });
 
   const resetForm = () => {
     setName("");
@@ -367,6 +420,8 @@ export function useServerForm(
     setOauthScopesInput("");
     setClientId("");
     setClientSecret("");
+    setOauthProtocolVersion(EMPTY_OAUTH_TEST_PROFILE.protocolVersion);
+    setOauthRegistrationStrategy(EMPTY_OAUTH_TEST_PROFILE.registrationStrategy);
     setBearerToken("");
     setAuthType("none");
     setUseCustomClientId(false);
@@ -395,6 +450,8 @@ export function useServerForm(
       useCustomClientId !== iv.useCustomClientId ||
       clientId !== iv.clientId ||
       clientSecret !== iv.clientSecret ||
+      oauthProtocolVersion !== iv.oauthProtocolVersion ||
+      oauthRegistrationStrategy !== iv.oauthRegistrationStrategy ||
       requestTimeout !== iv.requestTimeout ||
       JSON.stringify(envVars) !== JSON.stringify(iv.envVars) ||
       JSON.stringify(customHeaders) !== JSON.stringify(iv.customHeaders)
@@ -422,6 +479,25 @@ export function useServerForm(
     setClientId,
     clientSecret,
     setClientSecret,
+    oauthProtocolVersion,
+    setOauthProtocolVersion: (
+      value: OAuthTestProfile["protocolVersion"],
+    ) => {
+      setOauthProtocolVersion(value);
+      const supported = getSupportedRegistrationStrategies(value);
+      if (!supported.includes(oauthRegistrationStrategy)) {
+        setOauthRegistrationStrategy(
+          getDefaultRegistrationStrategy(value) as OAuthRegistrationStrategy,
+        );
+      }
+    },
+    oauthRegistrationStrategy,
+    setOauthRegistrationStrategy: (value: OAuthRegistrationStrategy) => {
+      setOauthRegistrationStrategy(value);
+      if (value === "preregistered") {
+        setUseCustomClientId(true);
+      }
+    },
     bearerToken,
     setBearerToken,
     authType,
@@ -462,6 +538,7 @@ export function useServerForm(
     removeCustomHeader,
     updateCustomHeader,
     buildFormData,
+    buildOAuthProfile,
     resetForm,
   };
 }

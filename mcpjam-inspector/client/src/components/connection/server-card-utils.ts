@@ -17,6 +17,12 @@ const connectionStatusMeta: Record<ConnectionStatus, ConnectionStatusMeta> = {
     Icon: Check,
     iconClassName: "h-3 w-3 text-green-500",
   },
+  partial: {
+    label: "Connected with warnings",
+    indicatorColor: "#f59e0b",
+    Icon: AlertCircle,
+    iconClassName: "h-3 w-3 text-amber-500",
+  },
   connecting: {
     label: "Finishing setup...",
     indicatorColor: "#3b82f6",

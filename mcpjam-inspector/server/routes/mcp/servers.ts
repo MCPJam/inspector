@@ -1,5 +1,9 @@
 import { Hono } from "hono";
-import type { MCPServerConfig } from "@mcpjam/sdk";
+import {
+  connectServerWithReport,
+  type ConnectContext,
+  type MCPServerConfig,
+} from "@mcpjam/sdk";
 import "../../types/hono"; // Type extensions
 import { rpcLogBus, type RpcLogEvent } from "../../services/rpc-log-bus";
 import { logger } from "../../utils/logger";
@@ -140,10 +144,12 @@ servers.post("/reconnect", async (c) => {
     const body = (await c.req.json()) as {
       serverId?: string;
       serverConfig?: MCPServerConfig;
+      oauthContext?: ConnectContext["oauth"];
     };
 
     serverId = body.serverId;
     const serverConfig = body.serverConfig;
+    const oauthContext = body.oauthContext;
 
     if (!serverId || !serverConfig) {
       return c.json(
@@ -205,22 +211,27 @@ servers.post("/reconnect", async (c) => {
       }
     }
 
-    await mcpClientManager.disconnectServer(serverId);
-    await mcpClientManager.connectToServer(serverId, normalizedConfig);
-
-    const status = mcpClientManager.getConnectionStatus(serverId);
+    const report = await connectServerWithReport({
+      manager: mcpClientManager,
+      serverId,
+      config: normalizedConfig,
+      target: serverId,
+      disconnectBeforeConnect: true,
+      ...(oauthContext ? { context: { oauth: oauthContext } } : {}),
+    });
     const message =
-      status === "connected"
+      report.status === "connected"
         ? `Reconnected to server: ${serverId}`
-        : `Server ${serverId} reconnected with status '${status}'`;
-    const success = status === "connected";
+        : `Server ${serverId} reconnected with status '${report.status}'`;
 
     return c.json({
-      success,
+      success: report.success,
       serverId,
-      status,
+      status: report.status,
       message,
-      ...(success ? {} : { error: message }),
+      report,
+      initInfo: report.initInfo,
+      ...(report.issue ? { error: report.issue.message } : {}),
     });
   } catch (error) {
     logger.error("Error reconnecting server", error, { serverId });

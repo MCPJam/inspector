@@ -18,6 +18,7 @@ import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
 import { Skeleton } from "./ui/skeleton";
 import { EmptyState } from "./ui/empty-state";
+import { isConnectedStatus } from "@/state/app-types";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -86,10 +87,10 @@ export function RegistryTab({
       servers?.[pending.serverName] ??
       Object.entries(servers ?? {}).find(
         ([name, server]) =>
-          server.connectionStatus === "connected" &&
+          isConnectedStatus(server.connectionStatus) &&
           name.startsWith(`${pending.displayName} (`),
       )?.[1];
-    if (liveServer?.connectionStatus === "connected") {
+    if (liveServer && isConnectedStatus(liveServer.connectionStatus)) {
       clearPendingQuickConnect();
       setPendingQuickConnect(null);
       onNavigate?.("app-builder");
@@ -359,21 +360,23 @@ function DualTypeAction({
 
   // Check if any variant is connected/added
   const connectedVariant = variants.find(
-    (v) => v.connectionStatus === "connected",
+    (v) => isConnectedStatus(v.connectionStatus),
   );
   const addedVariant = variants.find((v) => v.connectionStatus === "added");
   const activeVariant = connectedVariant ?? addedVariant;
 
   if (activeVariant) {
     const disconnectLabel =
-      activeVariant.connectionStatus === "connected" ? "Disconnect" : "Remove";
+      isConnectedStatus(activeVariant.connectionStatus)
+        ? "Disconnect"
+        : "Remove";
 
     // Show connected state + dropdown for remaining variants
     const remainingVariants = variants.filter((v) => v !== activeVariant);
 
     return (
       <div className="flex items-center gap-1.5">
-        {activeVariant.connectionStatus === "connected" ? (
+        {isConnectedStatus(activeVariant.connectionStatus) ? (
           <Button
             size="sm"
             className="h-7 text-xs bg-primary/10 hover:bg-primary/10 text-primary border border-primary/20 cursor-default"

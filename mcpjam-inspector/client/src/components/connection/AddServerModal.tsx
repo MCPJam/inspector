@@ -24,7 +24,10 @@ import { HostedConnectionTypeControl } from "./shared/HostedConnectionTypeContro
 interface AddServerModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSubmit: (formData: ServerFormData) => void;
+  onSubmit: (
+    formData: ServerFormData,
+    options?: { oauthProfile?: import("@/lib/oauth/profile").OAuthTestProfile },
+  ) => void;
   initialData?: Partial<ServerFormData>;
   requireHttps?: boolean;
 }
@@ -123,7 +126,11 @@ export function AddServerModal({
     }
 
     const finalFormData = formState.buildFormData();
-    onSubmit(finalFormData);
+    onSubmit(finalFormData, {
+      oauthProfile: finalFormData.useOAuth
+        ? formState.buildOAuthProfile()
+        : undefined,
+    });
     formState.resetForm();
     onClose();
   };
@@ -271,8 +278,20 @@ export function AddServerModal({
               onBearerTokenChange={formState.setBearerToken}
               oauthScopesInput={formState.oauthScopesInput}
               onOauthScopesChange={formState.setOauthScopesInput}
+              oauthProtocolVersion={formState.oauthProtocolVersion}
+              onOauthProtocolVersionChange={formState.setOauthProtocolVersion}
+              oauthRegistrationStrategy={formState.oauthRegistrationStrategy}
+              onOauthRegistrationStrategyChange={
+                formState.setOauthRegistrationStrategy
+              }
               useCustomClientId={formState.useCustomClientId}
               onUseCustomClientIdChange={(checked) => {
+                if (
+                  formState.oauthRegistrationStrategy === "preregistered" &&
+                  !checked
+                ) {
+                  return;
+                }
                 formState.setUseCustomClientId(checked);
                 if (!checked) {
                   formState.setClientId("");

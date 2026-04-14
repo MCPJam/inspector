@@ -2,7 +2,11 @@ import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useConvexAuth } from "convex/react";
 import { useLogger } from "./use-logger";
-import { initialAppState, type ServerWithName } from "@/state/app-types";
+import {
+  initialAppState,
+  isConnectedStatus,
+  type ServerWithName,
+} from "@/state/app-types";
 import { appReducer } from "@/state/app-reducer";
 import { loadAppState, saveAppState } from "@/state/storage";
 import { useWorkspaceState } from "./use-workspace-state";
@@ -283,7 +287,7 @@ export function useAppState({
       const currentServers = Object.keys(appState.servers);
       for (const serverName of currentServers) {
         const server = appState.servers[serverName];
-        if (server.connectionStatus === "connected") {
+        if (isConnectedStatus(server.connectionStatus)) {
           logger.info("Disconnecting server before workspace switch", {
             serverName,
           });
@@ -334,7 +338,7 @@ export function useAppState({
       const workspaceServers = Object.keys(workspace.servers || {});
       for (const serverName of workspaceServers) {
         const runtimeServer = appState.servers[serverName];
-        if (runtimeServer?.connectionStatus === "connected") {
+        if (runtimeServer && isConnectedStatus(runtimeServer.connectionStatus)) {
           await handleDisconnect(serverName);
         }
       }

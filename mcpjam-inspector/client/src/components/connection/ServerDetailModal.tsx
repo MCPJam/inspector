@@ -26,6 +26,7 @@ import {
   isOpenAIAppAndMCPApp,
 } from "@/lib/mcp-ui/mcp-apps-utils";
 import { getConnectionStatusMeta } from "./server-card-utils";
+import { isConnectedStatus } from "@/state/app-types";
 import { useServerForm } from "./hooks/use-server-form";
 import { ServerInfoContent } from "./ServerInfoContent";
 import { ServerInfoToolsMetadataContent } from "./ServerInfoToolsMetadataContent";
@@ -42,6 +43,7 @@ interface ServerDetailModalProps {
   onSubmit: (
     formData: ServerFormData,
     originalServerName: string,
+    options?: { oauthProfile?: import("@/lib/oauth/profile").OAuthTestProfile },
   ) => Promise<ServerUpdateResult>;
   onDisconnect: (serverName: string) => void;
   onReconnect: (
@@ -86,7 +88,8 @@ export function ServerDetailModal({
     trimmedName !== server.name &&
     existingServerNames.includes(trimmedName);
 
-  const isConnected = server.connectionStatus === "connected";
+  const isConnected = isConnectedStatus(server.connectionStatus);
+  const isOAuthRequired = server.lastConnectionReport?.status === "oauth_required";
   const { label: connectionStatusLabel, indicatorColor } =
     getConnectionStatusMeta(server.connectionStatus);
 
@@ -94,7 +97,7 @@ export function ServerDetailModal({
     let isCancelled = false;
 
     const loadTools = async () => {
-      if (!isOpen || server.connectionStatus !== "connected") {
+      if (!isOpen || !isConnectedStatus(server.connectionStatus)) {
         setIsLoadingTools(false);
         setToolsLoadError(null);
         setToolsData(null);
@@ -176,7 +179,11 @@ export function ServerDetailModal({
     const finalFormData = formState.buildFormData();
     setIsSaving(true);
     try {
-      await onSubmit(finalFormData, server.name);
+      await onSubmit(finalFormData, server.name, {
+        oauthProfile: finalFormData.useOAuth
+          ? formState.buildOAuthProfile()
+          : undefined,
+      });
     } finally {
       setIsSaving(false);
     }
@@ -290,7 +297,9 @@ export function ServerDetailModal({
                 <span>
                   {isReconnecting
                     ? "Connecting..."
-                    : server.connectionStatus === "failed"
+                    : isOAuthRequired
+                      ? "Authorization required"
+                      : server.connectionStatus === "failed"
                       ? `${connectionStatusLabel} (${server.retryCount})`
                       : connectionStatusLabel}
                 </span>

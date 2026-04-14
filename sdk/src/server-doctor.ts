@@ -292,6 +292,47 @@ export async function collectConnectedServerDoctorState(
   };
 }
 
+export function buildConnectedServerDoctorResult<TTarget = unknown>(
+  target: TTarget,
+  collected: ConnectedServerDoctorState,
+): ServerDoctorResult<TTarget> {
+  const result: ServerDoctorResult<TTarget> = {
+    target,
+    generatedAt: new Date().toISOString(),
+    status: "ready",
+    probe: null,
+    connection: {
+      status: "connected",
+      detail: "Connected and initialized successfully.",
+    },
+    initInfo: collected.initInfo,
+    capabilities: collected.capabilities,
+    tools: collected.tools,
+    toolsMetadata: collected.toolsMetadata,
+    resources: collected.resources,
+    resourceTemplates: collected.resourceTemplates,
+    prompts: collected.prompts,
+    checks: {
+      probe: skippedCheck("HTTP probe was not run for this live connection."),
+      connection: okCheck("Connected and initialized successfully."),
+      initialization: collected.checks.initialization,
+      capabilities: collected.checks.capabilities,
+      tools: collected.checks.tools,
+      resources: collected.checks.resources,
+      resourceTemplates: collected.checks.resourceTemplates,
+      prompts: collected.checks.prompts,
+    },
+    error: collected.errors[0] ?? null,
+  };
+
+  result.status = deriveDoctorStatus(result);
+  if (result.status === "ready") {
+    result.error = null;
+  }
+
+  return result;
+}
+
 export function normalizeServerDoctorError(error: unknown): ServerDoctorError {
   if (isServerDoctorError(error)) {
     return error;

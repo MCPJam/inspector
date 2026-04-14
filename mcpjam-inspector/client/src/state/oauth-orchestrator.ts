@@ -61,17 +61,27 @@ export async function ensureAuthorizedForReconnect(
     // Get stored OAuth configuration
     const oauthConfig = readStoredOAuthConfig(server.name);
     const clientInfo = storedClientInfo ? JSON.parse(storedClientInfo) : {};
+    const oauthProfile = server.oauthFlowProfile;
 
     const opts: MCPOAuthOptions = {
       serverName: server.name,
       serverUrl: url,
       clientId:
+        oauthProfile?.clientId ||
         server.oauthTokens?.client_id ||
         storedTokens?.client_id ||
         clientInfo?.client_id,
       clientSecret:
+        oauthProfile?.clientSecret ||
         server.oauthTokens?.client_secret || clientInfo?.client_secret,
-      scopes: oauthConfig.scopes,
+      scopes:
+        oauthProfile?.scopes
+          ?.split(/\s+/)
+          .filter((scope) => scope.length > 0) ?? oauthConfig.scopes,
+      protocolVersion:
+        oauthProfile?.protocolVersion ?? oauthConfig.protocolVersion,
+      registrationStrategy:
+        oauthProfile?.registrationStrategy ?? oauthConfig.registrationStrategy,
       registryServerId: oauthConfig.registryServerId,
       useRegistryOAuthProxy: oauthConfig.useRegistryOAuthProxy,
     } as MCPOAuthOptions;

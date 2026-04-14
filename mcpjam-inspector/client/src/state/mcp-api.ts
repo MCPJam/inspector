@@ -1,4 +1,9 @@
-import type { HttpServerConfig, MCPServerConfig } from "@mcpjam/sdk/browser";
+import type {
+  ConnectContext,
+  ConnectReport,
+  HttpServerConfig,
+  MCPServerConfig,
+} from "@mcpjam/sdk/browser";
 import type { LoggingLevel } from "@modelcontextprotocol/sdk/types.js";
 import { authFetch } from "@/lib/session-token";
 import { HOSTED_MODE } from "@/lib/config";
@@ -46,9 +51,18 @@ function normalizeHostedValidationError(error: unknown): string {
   return "Hosted validation failed";
 }
 
+export interface ConnectionApiResponse {
+  success: boolean;
+  status?: ConnectReport["status"];
+  initInfo?: Record<string, unknown> | null;
+  error?: string;
+  report?: ConnectReport;
+}
+
 async function safeValidateHostedServer(
   serverId: string,
   serverConfig: MCPServerConfig,
+  oauthContext?: ConnectContext["oauth"],
 ): Promise<HostedServerValidateResponse & { error?: string }> {
   try {
     if (isGuestMode()) {
@@ -57,6 +71,7 @@ async function safeValidateHostedServer(
         extractOAuthToken(serverConfig),
         serverConfig.capabilities as Record<string, unknown> | undefined,
         serverId,
+        oauthContext,
       );
 
       return await webPost<typeof request, HostedServerValidateResponse>(
@@ -69,6 +84,7 @@ async function safeValidateHostedServer(
       serverId,
       extractOAuthToken(serverConfig),
       serverConfig.capabilities as Record<string, unknown> | undefined,
+      oauthContext,
     );
   } catch (error) {
     return {
@@ -108,9 +124,10 @@ async function authFetchWithTimeout(
 export async function testConnection(
   serverConfig: MCPServerConfig,
   serverId: string,
+  oauthContext?: ConnectContext["oauth"],
 ) {
   if (HOSTED_MODE) {
-    return safeValidateHostedServer(serverId, serverConfig);
+    return safeValidateHostedServer(serverId, serverConfig, oauthContext);
   }
 
   const res = await authFetchWithTimeout(
@@ -118,7 +135,7 @@ export async function testConnection(
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ serverConfig, serverId }),
+      body: JSON.stringify({ serverConfig, serverId, ...(oauthContext ? { oauthContext } : {}) }),
     },
     20000, // 20 second timeout
   );
@@ -152,9 +169,10 @@ export async function listServers() {
 export async function reconnectServer(
   serverId: string,
   serverConfig: MCPServerConfig,
+  oauthContext?: ConnectContext["oauth"],
 ) {
   if (HOSTED_MODE) {
-    return safeValidateHostedServer(serverId, serverConfig);
+    return safeValidateHostedServer(serverId, serverConfig, oauthContext);
   }
 
   const res = await authFetchWithTimeout(
@@ -162,7 +180,7 @@ export async function reconnectServer(
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ serverId, serverConfig }),
+      body: JSON.stringify({ serverId, serverConfig, ...(oauthContext ? { oauthContext } : {}) }),
     },
     20000, // 20 second timeout
   );

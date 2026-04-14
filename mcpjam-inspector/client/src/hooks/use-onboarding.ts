@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { useMutation } from "convex/react";
 import { usePostHog } from "posthog-js/react";
 import { toast } from "sonner";
+import { isConnectedStatus } from "@/state/app-types";
 import type { OnboardingPhase } from "@/lib/onboarding-state";
 import {
   readOnboardingState,
@@ -79,7 +80,8 @@ export function useOnboarding({
   const [connectError, setConnectError] = useState<string | null>(null);
   const excalidrawServer = servers[EXCALIDRAW_SERVER_NAME];
   const hasConnectedExcalidraw =
-    excalidrawServer?.connectionStatus === "connected";
+    !!excalidrawServer &&
+    isConnectedStatus(excalidrawServer.connectionStatus);
   const isResolvingRemoteCompletion = isAuthLoading;
 
   const didAutoConnectRef = useRef(false);
@@ -143,7 +145,10 @@ export function useOnboarding({
   useEffect(() => {
     if (phase !== "connecting_excalidraw") return;
 
-    if (excalidrawServer?.connectionStatus === "connected") {
+    if (
+      excalidrawServer &&
+      isConnectedStatus(excalidrawServer.connectionStatus)
+    ) {
       setPhase("connected_guided");
       setConnectError(null);
       posthog.capture("onboarding_connect_excalidraw_success", trackingProps);
