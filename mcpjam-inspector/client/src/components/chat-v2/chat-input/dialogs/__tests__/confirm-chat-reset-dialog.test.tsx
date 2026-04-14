@@ -25,11 +25,7 @@ describe("ConfirmChatResetDialog", () => {
     localStorage.setItem(SKIP_CHAT_RESET_CONFIRMATION_KEY, "true");
 
     rerender(
-      <ConfirmChatResetDialog
-        open
-        onConfirm={onConfirm}
-        onCancel={onCancel}
-      />,
+      <ConfirmChatResetDialog open onConfirm={onConfirm} onCancel={onCancel} />,
     );
 
     expect(onConfirm).toHaveBeenCalledTimes(1);
