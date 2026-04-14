@@ -984,7 +984,7 @@ export function useWorkspaceState({
   );
 
   const handleWorkspaceShared = useCallback(
-    (convexWorkspaceId: string) => {
+    (convexWorkspaceId: string, sourceWorkspaceId?: string) => {
       if (isAuthenticated) {
         setConvexActiveWorkspaceId(convexWorkspaceId);
         logger.info("Switched to newly shared workspace", {
@@ -993,7 +993,7 @@ export function useWorkspaceState({
       } else {
         dispatch({
           type: "UPDATE_WORKSPACE",
-          workspaceId: appState.activeWorkspaceId,
+          workspaceId: sourceWorkspaceId ?? appState.activeWorkspaceId,
           updates: { sharedWorkspaceId: convexWorkspaceId },
         });
       }
