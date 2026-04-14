@@ -1,4 +1,9 @@
-import { useState, useEffect, useCallback } from "react";
+import {
+  useState,
+  useEffect,
+  useCallback,
+  type MouseEvent as ReactMouseEvent,
+} from "react";
 import { toast } from "sonner";
 import { Card } from "../ui/card";
 import { Button } from "../ui/button";
@@ -68,6 +73,15 @@ function isHostedInsecureHttpServer(server: ServerWithName): boolean {
 
 // Temporary hide while sandbox sharing replaces server sharing in the main UI.
 const SERVER_SHARE_UI_ENABLED = false;
+const SERVER_CARD_CONTEXT_MENU_EXEMPT_SELECTOR =
+  "[data-server-card-context-menu-exempt]";
+
+function isContextMenuExemptTarget(target: EventTarget | null): boolean {
+  return (
+    target instanceof Element &&
+    target.closest(SERVER_CARD_CONTEXT_MENU_EXEMPT_SELECTOR) != null
+  );
+}
 
 interface ServerConnectionCardProps {
   server: ServerWithName;
@@ -116,6 +130,7 @@ export function ServerConnectionCard({
   const [isClosingTunnel, setIsClosingTunnel] = useState(false);
   const [showTunnelExplanation, setShowTunnelExplanation] = useState(false);
   const [isShareDialogOpen, setIsShareDialogOpen] = useState(false);
+  const [isActionsMenuOpen, setIsActionsMenuOpen] = useState(false);
 
   const {
     label: connectionStatusLabel,
@@ -345,18 +360,40 @@ export function ServerConnectionCard({
     [onOpenDetailModal, posthog, server],
   );
 
-  const handleCardClick = useCallback(() => {
-    if (!isDetailModalEnabled) {
-      return;
-    }
-    posthog.capture("server_card_clicked", {
-      location: "server_connection_card",
-      platform: detectPlatform(),
-      environment: detectEnvironment(),
-      server_id: server.name,
-    });
-    openDetailModal("configuration", "card_click");
-  }, [isDetailModalEnabled, server.name, posthog, openDetailModal]);
+  const handleCardContextMenu = useCallback(
+    (event: ReactMouseEvent<HTMLDivElement>) => {
+      if (isContextMenuExemptTarget(event.target)) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      setIsActionsMenuOpen(true);
+    },
+    [],
+  );
+
+  const handleCardClick = useCallback(
+    (event: ReactMouseEvent<HTMLDivElement>) => {
+      if (!isDetailModalEnabled) {
+        return;
+      }
+
+      const shouldSuppressCardClick = event.ctrlKey || isActionsMenuOpen;
+      if (shouldSuppressCardClick) {
+        return;
+      }
+
+      posthog.capture("server_card_clicked", {
+        location: "server_connection_card",
+        platform: detectPlatform(),
+        environment: detectEnvironment(),
+        server_id: server.name,
+      });
+      openDetailModal("configuration", "card_click");
+    },
+    [isActionsMenuOpen, isDetailModalEnabled, server.name, posthog, openDetailModal],
+  );
 
   return (
     <>
@@ -366,6 +403,7 @@ export function ServerConnectionCard({
             ? "cursor-pointer hover:border-border hover:shadow-md hover:border-primary/40"
             : ""
         }`}
+        onContextMenu={handleCardContextMenu}
         onClick={isDetailModalEnabled ? handleCardClick : undefined}
       >
         <div className="p-4">
@@ -400,6 +438,7 @@ export function ServerConnectionCard({
               <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
                 {hasError && (
                   <button
+                    data-server-card-context-menu-exempt
                     onClick={(e) => {
                       e.stopPropagation();
                       setIsErrorExpanded(true);
@@ -435,6 +474,7 @@ export function ServerConnectionCard({
                 </span>
 
                 <Switch
+                  data-server-card-context-menu-exempt
                   checked={server.connectionStatus === "connected"}
                   onCheckedChange={(checked) => {
                     posthog.capture("connection_switch_toggled", {
@@ -457,9 +497,13 @@ export function ServerConnectionCard({
                   className="cursor-pointer scale-75"
                 />
 
-                <DropdownMenu>
+                <DropdownMenu
+                  open={isActionsMenuOpen}
+                  onOpenChange={setIsActionsMenuOpen}
+                >
                   <DropdownMenuTrigger asChild>
                     <Button
+                      aria-label={`Open actions menu for ${server.name}`}
                       variant="ghost"
                       size="sm"
                       className="h-7 w-7 p-0 text-muted-foreground/70 hover:text-foreground cursor-pointer"
@@ -579,6 +623,8 @@ export function ServerConnectionCard({
           <div className="relative mt-2 rounded-md border border-border/50 bg-muted/30 p-2 pr-8 font-mono text-xs text-muted-foreground">
             <div className="break-all">{commandDisplay}</div>
             <button
+              aria-label="Copy server command"
+              data-server-card-context-menu-exempt
               onClick={(e) => {
                 e.stopPropagation();
                 copyToClipboard(commandDisplay, "command");
@@ -610,6 +656,7 @@ export function ServerConnectionCard({
             >
               {canShareServer && (
                 <button
+                  data-server-card-context-menu-exempt
                   onClick={() => {
                     posthog.capture("share_server_clicked", {
                       location: "server_connection_card",
@@ -629,6 +676,7 @@ export function ServerConnectionCard({
                   {hasTunnel ? (
                     <div className="inline-flex items-center overflow-hidden rounded-full border border-border/70 bg-muted/30 text-foreground">
                       <button
+                        data-server-card-context-menu-exempt
                         onClick={() => copyToClipboard(tunnelUrl!, "tunnel")}
                         className="inline-flex items-center gap-1.5 px-2 py-0.5 text-[11px] transition-colors hover:bg-accent/60 cursor-pointer"
                       >
@@ -646,6 +694,7 @@ export function ServerConnectionCard({
                       </button>
                       <span className="h-4 w-px bg-border/80" />
                       <button
+                        data-server-card-context-menu-exempt
                         onClick={handleCloseTunnel}
                         disabled={isClosingTunnel}
                         className="inline-flex items-center justify-center px-1.5 py-0.5 text-destructive transition-colors hover:bg-destructive/15 hover:text-destructive disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer"
@@ -661,6 +710,7 @@ export function ServerConnectionCard({
                     </div>
                   ) : (
                     <button
+                      data-server-card-context-menu-exempt
                       onClick={handleCreateTunnel}
                       disabled={isCreatingTunnel || !canManageTunnels}
                       className="inline-flex items-center gap-1.5 rounded-full border border-border/70 bg-muted/30 px-2 py-0.5 text-[11px] text-foreground transition-colors hover:bg-accent/60 disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer"
@@ -696,6 +746,7 @@ export function ServerConnectionCard({
               </div>
               {server.lastError!.length > 140 && (
                 <button
+                  data-server-card-context-menu-exempt
                   onClick={() => setIsErrorExpanded((prev) => !prev)}
                   className="mt-1 underline cursor-pointer"
                 >
@@ -718,6 +769,7 @@ export function ServerConnectionCard({
             >
               Having trouble?{" "}
               <a
+                data-server-card-context-menu-exempt
                 href="https://docs.mcpjam.com/troubleshooting/common-errors"
                 target="_blank"
                 rel="noopener noreferrer"

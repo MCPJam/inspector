@@ -82,17 +82,25 @@ export function MultiModelStartersEmptyLayout({
   chipClassName = "rounded-full border border-border bg-background px-4 py-2 text-sm text-foreground transition hover:border-foreground hover:bg-accent cursor-pointer font-light",
 }: MultiModelStartersEmptyLayoutProps) {
   return (
-    <div className="flex min-h-0 flex-1 items-center justify-center overflow-y-auto px-4">
-      <div className="w-full max-w-4xl space-y-6 py-8">
-        {authPrimarySlot}
-        <div className="space-y-4">
+    <div
+      className="flex min-h-0 flex-1 overflow-hidden"
+      data-testid="multi-model-empty-state-shell"
+    >
+      <div
+        className="flex h-full min-h-0 flex-1 items-center justify-center overflow-hidden px-4"
+        data-testid="multi-model-empty-state-body"
+      >
+        <div className="w-full max-w-4xl shrink-0 space-y-6 py-8">
+          {authPrimarySlot}
           {showStarterPrompts ? (
-            <MultiModelStarterPromptsBlock
-              onStarterPrompt={onStarterPrompt}
-              chipClassName={chipClassName}
-            />
+            <div className="space-y-4">
+              <MultiModelStarterPromptsBlock
+                onStarterPrompt={onStarterPrompt}
+                chipClassName={chipClassName}
+              />
+            </div>
           ) : null}
-          {!isAuthLoading ? chatInputSlot : null}
+          {!isAuthLoading ? <div className="w-full">{chatInputSlot}</div> : null}
         </div>
       </div>
     </div>
