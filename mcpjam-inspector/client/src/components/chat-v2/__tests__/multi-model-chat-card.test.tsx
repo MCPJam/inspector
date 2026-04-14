@@ -261,4 +261,27 @@ describe("MultiModelChatCard", () => {
       expect(mockUseChatSession.stop).toHaveBeenCalledTimes(1);
     });
   });
+
+  it("card root has no forced min-height so it can shrink inside a short grid row", () => {
+    render(
+      <MultiModelChatCard
+        model={model}
+        comparisonSummaries={[]}
+        selectedServers={[]}
+        selectedServerInstructions={{}}
+        broadcastRequest={null}
+        stopRequestId={0}
+        placeholder="Message"
+        reasoningDisplayMode="inline"
+        initialSystemPrompt=""
+        initialTemperature={0.7}
+        initialRequireToolApproval={false}
+        onSummaryChange={vi.fn()}
+      />,
+    );
+
+    const root = screen.getByTestId("multi-model-chat-card-root");
+    expect(root.className).not.toMatch(/min-h-\[\d+rem\]/);
+    expect(root.className).toContain("min-h-0");
+  });
 });
