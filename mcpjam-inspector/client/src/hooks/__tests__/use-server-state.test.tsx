@@ -274,6 +274,32 @@ describe("useServerState OAuth callback failures", () => {
     );
   });
 
+  it("defers Electron-tagged browser callbacks to the App-level desktop return notice", async () => {
+    const consoleErrorSpy = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+    window.isElectron = false;
+    window.history.replaceState(
+      {},
+      "",
+      "/oauth/callback?code=test-code&state=electron_mcp:test-state",
+    );
+
+    try {
+      const dispatch = vi.fn();
+      renderUseServerState(dispatch);
+      await flushAsyncWork();
+
+      expect(handleOAuthCallbackMock).not.toHaveBeenCalled();
+      expect(dispatch).not.toHaveBeenCalled();
+      expect(consoleErrorSpy).not.toHaveBeenCalledWith(
+        "Not implemented: navigation to another Document",
+      );
+    } finally {
+      consoleErrorSpy.mockRestore();
+    }
+  });
+
   it("ignores regular browser OAuth callbacks that are not tagged for Electron", () => {
     window.isElectron = false;
     window.history.replaceState(

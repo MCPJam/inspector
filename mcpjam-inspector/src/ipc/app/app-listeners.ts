@@ -1,7 +1,10 @@
-import { ipcMain, app, BrowserWindow, shell } from "electron";
+import { ipcMain, app, shell } from "electron";
+import type { BrowserWindow } from "electron";
 import log from "electron-log";
 
-export function registerAppListeners(mainWindow: BrowserWindow): void {
+export function registerAppListeners(
+  getMainWindow: () => BrowserWindow | null,
+): void {
   // Get app version
   ipcMain.handle("app:version", () => {
     return app.getVersion();
@@ -13,7 +16,9 @@ export function registerAppListeners(mainWindow: BrowserWindow): void {
   });
 
   ipcMain.handle("app:open-external", async (event, url: string) => {
-    if (event.sender.id !== mainWindow.webContents.id) {
+    const mainWindow = getMainWindow();
+
+    if (!mainWindow || event.sender.id !== mainWindow.webContents.id) {
       log.warn(
         `Ignoring open-external from untrusted sender (id: ${event.sender.id})`,
       );

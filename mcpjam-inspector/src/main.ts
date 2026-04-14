@@ -354,7 +354,7 @@ app.whenReady().then(async () => {
     mainWindow = createMainWindow(serverUrl);
 
     // Register IPC listeners
-    registerListeners(mainWindow);
+    registerListeners(mainWindow, () => mainWindow);
 
     // Setup auto-updater events to notify renderer when update is ready
     setupAutoUpdaterEvents(mainWindow);

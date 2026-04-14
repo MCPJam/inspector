@@ -772,7 +772,6 @@ export function useServerState({
       ? getHostedOAuthCallbackContext()
       : null;
     if (electronCallbackUrl) {
-      window.location.replace(electronCallbackUrl);
       return;
     }
     if (code) {

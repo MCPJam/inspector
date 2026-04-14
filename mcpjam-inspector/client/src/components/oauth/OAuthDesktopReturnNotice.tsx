@@ -4,6 +4,8 @@ interface OAuthDesktopReturnNoticeProps {
   returnToElectronUrl: string;
 }
 
+const attemptedDesktopReturnUrls = new Set<string>();
+
 export function redirectBrowserCallbackToElectron(
   returnToElectronUrl: string,
   navigate: Pick<Location, "replace"> = window.location,
@@ -15,11 +17,26 @@ export function redirectBrowserCallbackToElectron(
   navigate.replace(returnToElectronUrl);
 }
 
+export const desktopReturnRuntime = {
+  redirect: redirectBrowserCallbackToElectron,
+};
+
+export function resetDesktopReturnAttemptsForTests() {
+  attemptedDesktopReturnUrls.clear();
+}
+
 export default function OAuthDesktopReturnNotice({
   returnToElectronUrl,
 }: OAuthDesktopReturnNoticeProps) {
   useEffect(() => {
-    redirectBrowserCallbackToElectron(returnToElectronUrl);
+    // React StrictMode replays effects in development, so guard the custom
+    // protocol handoff to avoid showing duplicate "Open Electron?" prompts.
+    if (attemptedDesktopReturnUrls.has(returnToElectronUrl)) {
+      return;
+    }
+
+    attemptedDesktopReturnUrls.add(returnToElectronUrl);
+    desktopReturnRuntime.redirect(returnToElectronUrl);
   }, [returnToElectronUrl]);
 
   return (
