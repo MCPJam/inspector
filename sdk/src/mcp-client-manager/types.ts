@@ -159,6 +159,7 @@ export interface ManagedClientState {
   client?: Client;
   transport?: Transport;
   authProvider?: RefreshTokenOAuthProvider;
+  stdioStderrCleanup?: () => void;
   promise?: Promise<Client>;
 }
 

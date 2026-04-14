@@ -1,4 +1,7 @@
 import { MCPClientManager } from "../src/mcp-client-manager";
+import { realpathSync, rmSync, mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import {
   startMockHttpServer,
   startMockStreamableHttpServer,
@@ -6,6 +9,128 @@ import {
   MOCK_RESOURCES,
   MOCK_PROMPTS,
 } from "./mock-servers";
+
+function extractSingleText(result: unknown): string {
+  return (result as any).content[0].text;
+}
+
+function buildInlineCwdServerScript(): string {
+  const sdkCjsRoot = path.dirname(
+    require.resolve("@modelcontextprotocol/sdk/package.json")
+  );
+  const serverIndexPath = JSON.stringify(
+    path.join(sdkCjsRoot, "server", "index.js")
+  );
+  const serverStdioPath = JSON.stringify(
+    path.join(sdkCjsRoot, "server", "stdio.js")
+  );
+  const typesPath = JSON.stringify(path.join(sdkCjsRoot, "types.js"));
+
+  return `
+    const { Server } = require(${serverIndexPath});
+    const { StdioServerTransport } = require(${serverStdioPath});
+    const {
+      CallToolRequestSchema,
+      ListToolsRequestSchema
+    } = require(${typesPath});
+
+    const server = new Server(
+      { name: "cwd-test-server", version: "1.0.0" },
+      { capabilities: { tools: {} } }
+    );
+
+    server.setRequestHandler(ListToolsRequestSchema, async () => ({
+      tools: [
+        {
+          name: "cwd",
+          description: "Returns the current working directory",
+          inputSchema: {
+            type: "object",
+            properties: {},
+            additionalProperties: false
+          }
+        }
+      ]
+    }));
+
+    server.setRequestHandler(CallToolRequestSchema, async (request) => {
+      if (request.params.name !== "cwd") {
+        return {
+          content: [{ type: "text", text: "unknown tool" }],
+          isError: true
+        };
+      }
+
+      return {
+        content: [{ type: "text", text: process.cwd() }]
+      };
+    });
+
+    server.connect(new StdioServerTransport()).catch((error) => {
+      console.error(error);
+      process.exit(1);
+    });
+  `;
+}
+
+function buildInlineStderrFloodServerScript(): string {
+  const sdkCjsRoot = path.dirname(
+    require.resolve("@modelcontextprotocol/sdk/package.json")
+  );
+  const serverIndexPath = JSON.stringify(
+    path.join(sdkCjsRoot, "server", "index.js")
+  );
+  const serverStdioPath = JSON.stringify(
+    path.join(sdkCjsRoot, "server", "stdio.js")
+  );
+  const typesPath = JSON.stringify(path.join(sdkCjsRoot, "types.js"));
+
+  return `
+    const { Server } = require(${serverIndexPath});
+    const { StdioServerTransport } = require(${serverStdioPath});
+    const {
+      CallToolRequestSchema,
+      ListToolsRequestSchema
+    } = require(${typesPath});
+
+    const server = new Server(
+      { name: "stderr-flood-server", version: "1.0.0" },
+      { capabilities: { tools: {} } }
+    );
+
+    const floodChunk = "x".repeat(64 * 1024);
+    const flood = setInterval(() => {
+      for (let i = 0; i < 8; i += 1) {
+        process.stderr.write(floodChunk);
+      }
+    }, 10);
+
+    server.setRequestHandler(ListToolsRequestSchema, async () => ({
+      tools: [
+        {
+          name: "ping",
+          description: "Responds even while stderr is noisy",
+          inputSchema: {
+            type: "object",
+            properties: {},
+            additionalProperties: false
+          }
+        }
+      ]
+    }));
+
+    server.setRequestHandler(CallToolRequestSchema, async () => ({
+      content: [{ type: "text", text: "pong" }]
+    }));
+
+    server.connect(new StdioServerTransport()).catch((error) => {
+      console.error(error);
+      process.exit(1);
+    });
+
+    process.on("exit", () => clearInterval(flood));
+  `;
+}
 
 describe("MCPClientManager", () => {
   describe("constructor", () => {
@@ -92,6 +217,133 @@ describe("MCPClientManager", () => {
 
       expect(manager.getConnectionStatus("everything")).toBe("disconnected");
     }, 30000);
+  });
+
+  describe("STDIO transport hardening", () => {
+    let manager: MCPClientManager;
+    const inheritedEnvKey = "MCPJAM_TEST_INHERITED_ENV";
+    const overrideEnvKey = "MCPJAM_TEST_OVERRIDE_ENV";
+    let previousInheritedEnv: string | undefined;
+    let previousOverrideEnv: string | undefined;
+
+    beforeEach(() => {
+      previousInheritedEnv = process.env[inheritedEnvKey];
+      previousOverrideEnv = process.env[overrideEnvKey];
+      manager = new MCPClientManager();
+    });
+
+    afterEach(async () => {
+      await manager.disconnectAllServers();
+      if (previousInheritedEnv === undefined) {
+        delete process.env[inheritedEnvKey];
+      } else {
+        process.env[inheritedEnvKey] = previousInheritedEnv;
+      }
+      if (previousOverrideEnv === undefined) {
+        delete process.env[overrideEnvKey];
+      } else {
+        process.env[overrideEnvKey] = previousOverrideEnv;
+      }
+    });
+
+    it("inherits parent process env for stdio servers", async () => {
+      process.env[inheritedEnvKey] = "from-parent";
+
+      await manager.connectToServer("env-inherit", {
+        command: "npx",
+        args: ["-y", "@modelcontextprotocol/server-everything"],
+      });
+
+      const result = await manager.executeTool("env-inherit", "get-env", {});
+      const env = JSON.parse(extractSingleText(result));
+
+      expect(env[inheritedEnvKey]).toBe("from-parent");
+    }, 30000);
+
+    it("lets explicit stdio env override inherited parent values", async () => {
+      process.env[overrideEnvKey] = "from-parent";
+
+      await manager.connectToServer("env-override", {
+        command: "npx",
+        args: ["-y", "@modelcontextprotocol/server-everything"],
+        env: {
+          [overrideEnvKey]: "from-config",
+        },
+      });
+
+      const result = await manager.executeTool("env-override", "get-env", {});
+      const env = JSON.parse(extractSingleText(result));
+
+      expect(env[overrideEnvKey]).toBe("from-config");
+    }, 30000);
+
+    it("passes cwd to stdio child processes", async () => {
+      const cwd = mkdtempSync(path.join(tmpdir(), "mcpjam-cwd-test-"));
+      const resolvedCwd = realpathSync(cwd);
+
+      try {
+        await manager.connectToServer("cwd-server", {
+          command: process.execPath,
+          args: [
+            "-e",
+            buildInlineCwdServerScript(),
+          ],
+          cwd,
+        });
+
+        const result = await manager.executeTool("cwd-server", "cwd", {});
+        expect(extractSingleText(result)).toBe(resolvedCwd);
+      } finally {
+        rmSync(cwd, { recursive: true, force: true });
+      }
+    }, 15000);
+
+    it("surfaces startup stderr when a stdio server fails to initialize", async () => {
+      await expect(
+        manager.connectToServer("stderr-failure", {
+          command: process.execPath,
+          args: [
+            "-e",
+            'console.error("stdio startup failed"); process.exit(1);',
+          ],
+          stderr: "pipe",
+          timeout: 1000,
+        })
+      ).rejects.toThrow(/stdio startup failed/);
+    }, 10000);
+
+    it("keeps stdio server context for silent initialization failures", async () => {
+      await expect(
+        manager.connectToServer("silent-timeout", {
+          command: process.execPath,
+          args: [
+            "-e",
+            "setInterval(() => {}, 1000);",
+          ],
+          stderr: "pipe",
+          timeout: 200,
+        })
+      ).rejects.toThrow(
+        /Failed to connect to MCP server "silent-timeout" via stdio: MCP error -32001: Request timed out/
+      );
+    }, 10000);
+
+    it("keeps draining stderr after startup for noisy stdio servers", async () => {
+      await manager.connectToServer("stderr-flood", {
+        command: process.execPath,
+        args: [
+          "-e",
+          buildInlineStderrFloodServerScript(),
+        ],
+        stderr: "pipe",
+        timeout: 5000,
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 250));
+
+      const result = await manager.executeTool("stderr-flood", "ping", {});
+      expect(extractSingleText(result)).toBe("pong");
+    }, 15000);
   });
 
   describe("HTTP server", () => {
