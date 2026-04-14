@@ -243,24 +243,20 @@ describe("guest-session module", () => {
       const frozenNow = 1_700_000_000_000;
       vi.useFakeTimers({ now: frozenNow });
 
-      try {
-        const session = {
-          guestId: "edge-guest",
-          token: "edge-token",
-          expiresAt: frozenNow + 5 * 60 * 1000 + 1, // 5 min + 1ms past buffer threshold
-        };
+      const session = {
+        guestId: "edge-guest",
+        token: "edge-token",
+        expiresAt: frozenNow + 5 * 60 * 1000 + 1, // 5 min + 1ms past buffer threshold
+      };
 
-        vi.mocked(localStorage.getItem).mockReturnValue(
-          JSON.stringify(session),
-        );
+      vi.mocked(localStorage.getItem).mockReturnValue(JSON.stringify(session));
 
-        const result = await guestSession.getOrCreateGuestSession();
+      const result = await guestSession.getOrCreateGuestSession();
 
-        expect(result).toEqual(session);
-        expect(global.fetch).not.toHaveBeenCalled();
-      } finally {
-        vi.useRealTimers();
-      }
+      expect(result).toEqual(session);
+      expect(global.fetch).not.toHaveBeenCalled();
+
+      vi.useRealTimers();
     });
   });
 
