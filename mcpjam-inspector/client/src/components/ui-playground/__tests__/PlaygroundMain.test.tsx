@@ -608,7 +608,9 @@ describe("PlaygroundMain", () => {
       render(<PlaygroundMain {...defaultProps} displayMode="fullscreen" />);
 
       expect(screen.getByTestId("chat-input")).toBeInTheDocument();
-      expect(screen.queryByTestId("fullscreen-overlay")).not.toBeInTheDocument();
+      expect(
+        screen.queryByTestId("fullscreen-overlay"),
+      ).not.toBeInTheDocument();
     });
 
     it("renders device controls", () => {
