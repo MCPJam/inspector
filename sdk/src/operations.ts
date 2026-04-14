@@ -10,6 +10,7 @@ import { MCPClientManager } from "./mcp-client-manager/index.js";
 import type {
   MCPServerConfig,
   RpcLogger,
+  RetryPolicy,
 } from "./mcp-client-manager/index.js";
 
 // ── Param types ─────────────────────────────────────────────────────
@@ -53,17 +54,19 @@ export interface WithEphemeralClientOptions {
   timeout?: number;
   /** Optional RPC logger for request/response tracing. */
   rpcLogger?: RpcLogger;
+  /** Retry policy for the ephemeral manager and initial connect. */
+  retryPolicy?: RetryPolicy;
 }
 
 // ── Resources ───────────────────────────────────────────────────────
 
 export async function listResources(
   manager: MCPClientManager,
-  params: ListResourcesParams,
+  params: ListResourcesParams
 ) {
   const result = await manager.listResources(
     params.serverId,
-    params.cursor ? { cursor: params.cursor } : undefined,
+    params.cursor ? { cursor: params.cursor } : undefined
   );
   return {
     resources: result.resources ?? [],
@@ -73,7 +76,7 @@ export async function listResources(
 
 export async function readResource(
   manager: MCPClientManager,
-  params: ReadResourceParams,
+  params: ReadResourceParams
 ) {
   const content = await manager.readResource(params.serverId, {
     uri: params.uri,
@@ -85,11 +88,11 @@ export async function readResource(
 
 export async function listPrompts(
   manager: MCPClientManager,
-  params: ListPromptsParams,
+  params: ListPromptsParams
 ) {
   const result = await manager.listPrompts(
     params.serverId,
-    params.cursor ? { cursor: params.cursor } : undefined,
+    params.cursor ? { cursor: params.cursor } : undefined
   );
   return {
     prompts: result.prompts ?? [],
@@ -99,7 +102,7 @@ export async function listPrompts(
 
 export async function listPromptsMulti(
   manager: MCPClientManager,
-  params: ListPromptsMultiParams,
+  params: ListPromptsMultiParams
 ) {
   const promptsByServer: Record<string, unknown[]> = {};
   const errors: Record<string, string> = {};
@@ -115,7 +118,7 @@ export async function listPromptsMulti(
         errors[serverId] = errorMessage;
         promptsByServer[serverId] = [];
       }
-    }),
+    })
   );
 
   const payload: Record<string, unknown> = { prompts: promptsByServer };
@@ -127,14 +130,14 @@ export async function listPromptsMulti(
 
 export async function getPrompt(
   manager: MCPClientManager,
-  params: GetPromptParams,
+  params: GetPromptParams
 ) {
   const promptArguments = params.arguments
     ? Object.fromEntries(
         Object.entries(params.arguments).map(([key, value]) => [
           key,
           String(value),
-        ]),
+        ])
       )
     : undefined;
 
@@ -149,11 +152,11 @@ export async function getPrompt(
 
 export async function listTools(
   manager: MCPClientManager,
-  params: ListToolsParams,
+  params: ListToolsParams
 ) {
   const result = await manager.listTools(
     params.serverId,
-    params.cursor ? { cursor: params.cursor } : undefined,
+    params.cursor ? { cursor: params.cursor } : undefined
   );
   return {
     tools: result.tools ?? [],
@@ -166,7 +169,7 @@ export async function listTools(
 export async function withEphemeralClient<T>(
   config: MCPServerConfig,
   fn: (manager: MCPClientManager, serverId: string) => Promise<T>,
-  options?: WithEphemeralClientOptions,
+  options?: WithEphemeralClientOptions
 ): Promise<T> {
   const serverId = options?.serverId ?? "__ephemeral__";
   const manager = new MCPClientManager(
@@ -175,8 +178,9 @@ export async function withEphemeralClient<T>(
       defaultTimeout: options?.timeout ?? 30_000,
       defaultClientName: options?.clientName ?? "mcpjam-sdk",
       lazyConnect: true,
+      retryPolicy: options?.retryPolicy,
       ...(options?.rpcLogger ? { rpcLogger: options.rpcLogger } : {}),
-    },
+    }
   );
 
   try {
@@ -193,7 +197,7 @@ export async function withEphemeralClient<T>(
 
 export async function withDisposableManager<T>(
   managerOrPromise: MCPClientManager | Promise<MCPClientManager>,
-  fn: (manager: MCPClientManager) => Promise<T>,
+  fn: (manager: MCPClientManager) => Promise<T>
 ): Promise<T> {
   const manager = await managerOrPromise;
   try {

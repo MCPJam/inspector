@@ -9,10 +9,7 @@ import {
 } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import {
-  CallToolResultSchema,
-  CreateTaskResultSchema,
-} from "@modelcontextprotocol/sdk/types.js";
+import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { RequestOptions } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import type {
@@ -27,12 +24,14 @@ import type {
   MCPServerConfig,
   StdioServerConfig,
   HttpServerConfig,
-  ManagedClientState,
+  RegisteredServerState,
+  LiveClientState,
   MCPConnectionStatus,
   ServerSummary,
   ClientCapabilityOptions,
   ExecuteToolArguments,
   TaskOptions,
+  ExecuteToolRequest,
   ClientRequestOptions,
   ListResourcesParams,
   ListResourceTemplatesParams,
@@ -60,6 +59,12 @@ import {
 import { isMethodUnavailableError, formatError } from "./error-utils.js";
 import { MCPAuthError, isAuthError } from "./errors.js";
 import {
+  type RetryPolicy,
+  isRetryableTransientError,
+  normalizeRetryPolicy,
+  retryWithPolicy,
+} from "../retry.js";
+import {
   buildRequestInit,
   normalizeHeaders,
   getExistingAuthorization,
@@ -78,6 +83,7 @@ import {
 } from "./notification-handlers.js";
 import { ElicitationManager } from "./elicitation.js";
 import {
+  CreateTaskResultSchema,
   listTasks as tasksListTasks,
   getTask as tasksGetTask,
   getTaskResult as tasksGetTaskResult,
@@ -120,7 +126,8 @@ import {
  */
 export class MCPClientManager {
   // State management
-  private readonly clientStates = new Map<string, ManagedClientState>();
+  private readonly registeredServers = new Map<string, RegisteredServerState>();
+  private readonly liveClientStates = new Map<string, LiveClientState>();
   private readonly toolsMetadataCache = new Map<string, Map<string, any>>();
 
   // Managers for specific features
@@ -135,6 +142,7 @@ export class MCPClientManager {
   private readonly defaultLogJsonRpc: boolean;
   private readonly defaultRpcLogger?: RpcLogger;
   private readonly defaultProgressHandler?: ProgressHandler;
+  private readonly defaultRetryPolicy: RetryPolicy;
   private readonly lazyConnect: boolean;
 
   // Progress token counter for uniqueness
@@ -161,6 +169,7 @@ export class MCPClientManager {
     this.defaultLogJsonRpc = options.defaultLogJsonRpc ?? false;
     this.defaultRpcLogger = options.rpcLogger;
     this.defaultProgressHandler = options.progressHandler;
+    this.defaultRetryPolicy = normalizeRetryPolicy(options.retryPolicy);
     this.lazyConnect = options.lazyConnect ?? false;
 
     // Start connecting to all configured servers (unless replay/trace-repair use explicit connect)
@@ -179,33 +188,41 @@ export class MCPClientManager {
    * Lists all registered server IDs.
    */
   listServers(): string[] {
-    return Array.from(this.clientStates.keys());
+    return Array.from(this.registeredServers.keys());
   }
 
   /**
    * Checks if a server is registered.
    */
   hasServer(serverId: string): boolean {
-    return this.clientStates.has(serverId);
+    return this.registeredServers.has(serverId);
   }
 
   /**
    * Gets summaries for all registered servers.
    */
   getServerSummaries(): ServerSummary[] {
-    return Array.from(this.clientStates.entries()).map(([serverId, state]) => ({
-      id: serverId,
-      status: this.getConnectionStatus(serverId),
-      config: state.config,
-    }));
+    return Array.from(this.registeredServers.entries()).map(
+      ([serverId, state]) => ({
+        id: serverId,
+        status: this.getConnectionStatus(serverId),
+        config: state.config,
+      })
+    );
   }
 
   /**
    * Gets replayable HTTP server configs for eval reporting.
    */
   getServerReplayConfigs(): MCPServerReplayConfig[] {
-    return Array.from(this.clientStates.entries())
-      .map(([serverId, state]) => this.buildServerReplayConfig(serverId, state))
+    return Array.from(this.registeredServers.entries())
+      .map(([serverId, state]) =>
+        this.buildServerReplayConfig(
+          serverId,
+          state,
+          this.liveClientStates.get(serverId)
+        )
+      )
       .filter(
         (config): config is MCPServerReplayConfig => config !== undefined
       );
@@ -215,7 +232,7 @@ export class MCPClientManager {
    * Gets the connection status for a server.
    */
   getConnectionStatus(serverId: string): MCPConnectionStatus {
-    const state = this.clientStates.get(serverId);
+    const state = this.liveClientStates.get(serverId);
     if (state?.promise) return "connecting";
     if (state?.client) return "connected";
     return "disconnected";
@@ -225,32 +242,34 @@ export class MCPClientManager {
    * Gets the configuration for a server.
    */
   getServerConfig(serverId: string): MCPServerConfig | undefined {
-    return this.clientStates.get(serverId)?.config;
+    return this.registeredServers.get(serverId)?.config;
   }
 
   /**
    * Gets the capabilities reported by a server.
    */
   getServerCapabilities(serverId: string): ServerCapabilities | undefined {
-    return this.clientStates.get(serverId)?.client?.getServerCapabilities();
+    return this.liveClientStates.get(serverId)?.client?.getServerCapabilities();
   }
 
   /**
    * Gets the underlying MCP Client for a server.
    */
   getClient(serverId: string): Client | undefined {
-    return this.clientStates.get(serverId)?.client;
+    return this.liveClientStates.get(serverId)?.client;
   }
 
   /**
    * Gets initialization information for a connected server.
    */
   getInitializationInfo(serverId: string) {
-    const state = this.clientStates.get(serverId);
-    const client = state?.client;
+    const configState = this.registeredServers.get(serverId);
+    const liveState = this.liveClientStates.get(serverId);
+    const client = liveState?.client;
     if (!client) return undefined;
 
-    const config = state.config;
+    const config = configState?.config;
+    if (!config) return undefined;
     let transportType: string;
     if (this.isStdioConfig(config)) {
       transportType = "stdio";
@@ -263,8 +282,8 @@ export class MCPClientManager {
     }
 
     let protocolVersion: string | undefined;
-    if (state.transport) {
-      protocolVersion = (state.transport as any)._protocolVersion;
+    if (liveState.transport) {
+      protocolVersion = (liveState.transport as any)._protocolVersion;
     }
 
     return {
@@ -292,53 +311,34 @@ export class MCPClientManager {
     serverId: string,
     config: MCPServerConfig
   ): Promise<Client> {
-    const timeout = config.timeout ?? this.defaultTimeout;
-    const existingState = this.clientStates.get(serverId);
-
-    if (existingState?.client) {
+    const liveState = this.liveClientStates.get(serverId);
+    if (liveState?.client) {
       throw new Error(`MCP server "${serverId}" is already connected.`);
     }
-
-    const state: ManagedClientState = existingState ?? { config, timeout };
-    state.config = config;
-    state.timeout = timeout;
-    state.authProvider = undefined;
-
-    // Reuse existing connection promise if in-flight
-    if (state.promise) {
-      this.clientStates.set(serverId, state);
-      return state.promise;
+    if (liveState?.promise) {
+      return liveState.promise;
     }
 
-    const connectionPromise = this.performConnection(
-      serverId,
-      config,
-      timeout,
-      state
-    );
-    state.promise = connectionPromise;
-    this.clientStates.set(serverId, state);
+    const timeout = config.timeout ?? this.defaultTimeout;
+    this.registerServer(serverId, config, timeout);
 
-    return connectionPromise;
+    return retryWithPolicy({
+      policy: this.defaultRetryPolicy,
+      operation: () => this.connectToServerOnce(serverId),
+      shouldRetryError: (error) => isRetryableTransientError(error),
+      onRetry: async () => {
+        await this.destroyLiveState(serverId);
+      },
+    });
   }
 
   /**
    * Disconnects from a server.
    */
   async disconnectServer(serverId: string): Promise<void> {
-    const state = this.clientStates.get(serverId);
-    if (!state?.client) return;
-
-    try {
-      await state.client.close();
-    } catch {
-      // Ignore close errors
-    } finally {
-      if (state.transport) {
-        await this.safeCloseTransport(state.transport);
-      }
-      this.resetState(serverId);
-    }
+    const state = this.liveClientStates.get(serverId);
+    if (!state) return;
+    await this.destroyLiveState(serverId);
   }
 
   /**
@@ -346,6 +346,8 @@ export class MCPClientManager {
    */
   async removeServer(serverId: string): Promise<void> {
     await this.disconnectServer(serverId);
+    this.registeredServers.delete(serverId);
+    this.toolsMetadataCache.delete(serverId);
     this.notificationManager.clearServer(serverId);
     this.elicitationManager.clearServer(serverId);
   }
@@ -354,13 +356,8 @@ export class MCPClientManager {
    * Disconnects from all servers.
    */
   async disconnectAllServers(): Promise<void> {
-    const serverIds = this.listServers();
+    const serverIds = Array.from(this.liveClientStates.keys());
     await Promise.all(serverIds.map((id) => this.disconnectServer(id)));
-
-    for (const serverId of serverIds) {
-      this.notificationManager.clearServer(serverId);
-      this.elicitationManager.clearServer(serverId);
-    }
   }
 
   // ===========================================================================
@@ -375,23 +372,22 @@ export class MCPClientManager {
     params?: Parameters<Client["listTools"]>[0],
     options?: ClientRequestOptions
   ): Promise<ListToolsResult> {
-    await this.ensureConnected(serverId);
-    const client = this.getClientOrThrow(serverId);
-
-    try {
-      const result = await client.listTools(
-        params,
-        this.withTimeout(serverId, options)
-      );
-      this.cacheToolsMetadata(serverId, result.tools);
-      return result;
-    } catch (error) {
-      if (isMethodUnavailableError(error, "tools/list")) {
-        this.toolsMetadataCache.set(serverId, new Map());
-        return { tools: [] } as ListToolsResult;
+    return this.runRetryableReadOperation(serverId, options, async (client) => {
+      try {
+        const result = await client.listTools(
+          params,
+          this.withTimeout(serverId, options)
+        );
+        this.cacheToolsMetadata(serverId, result.tools);
+        return result;
+      } catch (error) {
+        if (isMethodUnavailableError(error, "tools/list")) {
+          this.toolsMetadataCache.set(serverId, new Map());
+          return { tools: [] } as ListToolsResult;
+        }
+        throw error;
       }
-      throw error;
-    }
+    });
   }
 
   /**
@@ -412,7 +408,6 @@ export class MCPClientManager {
 
     const toolLists = await Promise.all(
       targetIds.map(async (serverId) => {
-        await this.ensureConnected(serverId);
         const result = await this.listTools(serverId);
 
         // Attach execute function to each tool
@@ -488,7 +483,6 @@ export class MCPClientManager {
     const perServerTools = await Promise.all(
       ids.map(async (id) => {
         try {
-          await this.ensureConnected(id);
           const listToolsResult = await this.listTools(id);
 
           const tools = await convertMCPToolsToVercelTools(listToolsResult, {
@@ -542,34 +536,57 @@ export class MCPClientManager {
   async executeTool(
     serverId: string,
     toolName: string,
-    args: ExecuteToolArguments = {},
+    args?: ExecuteToolArguments,
     options?: ClientRequestOptions,
     taskOptions?: TaskOptions
+  ): Promise<CallToolResult | Record<string, unknown>>;
+  async executeTool(
+    serverId: string,
+    toolName: string,
+    args: ExecuteToolArguments | undefined,
+    options: ExecuteToolRequest
+  ): Promise<CallToolResult | Record<string, unknown>>;
+  async executeTool(
+    serverId: string,
+    toolName: string,
+    args: ExecuteToolArguments = {},
+    options?: ClientRequestOptions | ExecuteToolRequest,
+    taskOptions?: TaskOptions
   ) {
-    await this.ensureConnected(serverId);
-    const client = this.getClientOrThrow(serverId);
+    const request = this.normalizeExecuteToolRequest(options, taskOptions);
+    const operation = async () => {
+      await this.ensureConnected(serverId);
+      const client = this.getClientOrThrow(serverId);
+      const mergedOptions = this.withProgressHandler(serverId, request.request);
+      const callParams = { name: toolName, arguments: args };
 
-    const mergedOptions = this.withProgressHandler(serverId, options);
-    const callParams = { name: toolName, arguments: args };
+      if (request.task !== undefined) {
+        const taskValue =
+          request.task.ttl !== undefined ? { ttl: request.task.ttl } : {};
+        const result = await client.request(
+          { method: "tools/call", params: { ...callParams, task: taskValue } },
+          CreateTaskResultSchema,
+          mergedOptions
+        );
+        return {
+          task: result.task,
+          _meta: {
+            "io.modelcontextprotocol/model-immediate-response": `Task ${result.task.taskId} created with status: ${result.task.status}`,
+          },
+        };
+      }
 
-    if (taskOptions !== undefined) {
-      // Task-augmented tool call per MCP Tasks spec
-      const taskValue =
-        taskOptions.ttl !== undefined ? { ttl: taskOptions.ttl } : {};
-      const result = await client.request(
-        { method: "tools/call", params: { ...callParams, task: taskValue } },
-        CreateTaskResultSchema,
-        mergedOptions
-      );
-      return {
-        task: result.task,
-        _meta: {
-          "io.modelcontextprotocol/model-immediate-response": `Task ${result.task.taskId} created with status: ${result.task.status}`,
-        },
-      };
-    }
+      return client.callTool(callParams, CallToolResultSchema, mergedOptions);
+    };
 
-    return client.callTool(callParams, CallToolResultSchema, mergedOptions);
+    return request.retry
+      ? this.runRetriedOperation(
+          serverId,
+          request.request,
+          request.retry,
+          operation
+        )
+      : operation();
   }
 
   // ===========================================================================
@@ -584,22 +601,21 @@ export class MCPClientManager {
     params?: ListResourcesParams,
     options?: ClientRequestOptions
   ) {
-    await this.ensureConnected(serverId);
-    const client = this.getClientOrThrow(serverId);
-
-    try {
-      return await client.listResources(
-        params,
-        this.withTimeout(serverId, options)
-      );
-    } catch (error) {
-      if (isMethodUnavailableError(error, "resources/list")) {
-        return { resources: [] } as Awaited<
-          ReturnType<Client["listResources"]>
-        >;
+    return this.runRetryableReadOperation(serverId, options, async (client) => {
+      try {
+        return await client.listResources(
+          params,
+          this.withTimeout(serverId, options)
+        );
+      } catch (error) {
+        if (isMethodUnavailableError(error, "resources/list")) {
+          return { resources: [] } as Awaited<
+            ReturnType<Client["listResources"]>
+          >;
+        }
+        throw error;
       }
-      throw error;
-    }
+    });
   }
 
   /**
@@ -610,11 +626,8 @@ export class MCPClientManager {
     params: ReadResourceParams,
     options?: ClientRequestOptions
   ) {
-    await this.ensureConnected(serverId);
-    const client = this.getClientOrThrow(serverId);
-    return client.readResource(
-      params,
-      this.withProgressHandler(serverId, options)
+    return this.runRetryableReadOperation(serverId, options, (client) =>
+      client.readResource(params, this.withProgressHandler(serverId, options))
     );
   }
 
@@ -658,11 +671,8 @@ export class MCPClientManager {
     params?: ListResourceTemplatesParams,
     options?: ClientRequestOptions
   ) {
-    await this.ensureConnected(serverId);
-    const client = this.getClientOrThrow(serverId);
-    return client.listResourceTemplates(
-      params,
-      this.withTimeout(serverId, options)
+    return this.runRetryableReadOperation(serverId, options, (client) =>
+      client.listResourceTemplates(params, this.withTimeout(serverId, options))
     );
   }
 
@@ -678,26 +688,24 @@ export class MCPClientManager {
     params?: ListPromptsParams,
     options?: ClientRequestOptions
   ) {
-    await this.ensureConnected(serverId);
-    const client = this.getClientOrThrow(serverId);
-
-    // Skip if server doesn't advertise prompts capability
-    const capabilities = client.getServerCapabilities();
-    if (capabilities && !capabilities.prompts) {
-      return { prompts: [] } as Awaited<ReturnType<Client["listPrompts"]>>;
-    }
-
-    try {
-      return await client.listPrompts(
-        params,
-        this.withTimeout(serverId, options)
-      );
-    } catch (error) {
-      if (isMethodUnavailableError(error, "prompts/list")) {
+    return this.runRetryableReadOperation(serverId, options, async (client) => {
+      const capabilities = client.getServerCapabilities();
+      if (capabilities && !capabilities.prompts) {
         return { prompts: [] } as Awaited<ReturnType<Client["listPrompts"]>>;
       }
-      throw error;
-    }
+
+      try {
+        return await client.listPrompts(
+          params,
+          this.withTimeout(serverId, options)
+        );
+      } catch (error) {
+        if (isMethodUnavailableError(error, "prompts/list")) {
+          return { prompts: [] } as Awaited<ReturnType<Client["listPrompts"]>>;
+        }
+        throw error;
+      }
+    });
   }
 
   /**
@@ -708,11 +716,8 @@ export class MCPClientManager {
     params: GetPromptParams,
     options?: ClientRequestOptions
   ) {
-    await this.ensureConnected(serverId);
-    const client = this.getClientOrThrow(serverId);
-    return client.getPrompt(
-      params,
-      this.withProgressHandler(serverId, options)
+    return this.runRetryableReadOperation(serverId, options, (client) =>
+      client.getPrompt(params, this.withProgressHandler(serverId, options))
     );
   }
 
@@ -727,14 +732,15 @@ export class MCPClientManager {
     serverId: string,
     options?: RequestOptions
   ): Promise<Awaited<ReturnType<Client["ping"]>>> {
-    const client = this.getClientOrThrow(serverId);
-    try {
-      return await client.ping(options);
-    } catch (error) {
-      throw new Error(
-        `Failed to ping MCP server "${serverId}": ${error instanceof Error ? error.message : "Unknown error"}`
-      );
-    }
+    return this.runRetryableReadOperation(serverId, options, async (client) => {
+      try {
+        return await client.ping(options);
+      } catch (error) {
+        throw new Error(
+          `Failed to ping MCP server "${serverId}": ${error instanceof Error ? error.message : "Unknown error"}`
+        );
+      }
+    });
   }
 
   /**
@@ -753,7 +759,7 @@ export class MCPClientManager {
    * Gets the session ID for a Streamable HTTP server.
    */
   getSessionIdByServer(serverId: string): string | undefined {
-    const state = this.clientStates.get(serverId);
+    const state = this.liveClientStates.get(serverId);
     if (!state?.transport) {
       throw new Error(`Unknown MCP server "${serverId}".`);
     }
@@ -779,7 +785,7 @@ export class MCPClientManager {
   ): void {
     this.notificationManager.addHandler(serverId, schema, handler);
 
-    const client = this.clientStates.get(serverId)?.client;
+    const client = this.liveClientStates.get(serverId)?.client;
     if (client) {
       client.setNotificationHandler(
         schema,
@@ -840,12 +846,12 @@ export class MCPClientManager {
    * Sets a server-specific elicitation handler.
    */
   setElicitationHandler(serverId: string, handler: ElicitationHandler): void {
-    if (!this.clientStates.has(serverId)) {
+    if (!this.registeredServers.has(serverId)) {
       throw new Error(`Unknown MCP server "${serverId}".`);
     }
     this.elicitationManager.setHandler(serverId, handler);
 
-    const client = this.clientStates.get(serverId)?.client;
+    const client = this.liveClientStates.get(serverId)?.client;
     if (client) {
       this.elicitationManager.applyToClient(serverId, client);
     }
@@ -856,7 +862,7 @@ export class MCPClientManager {
    */
   clearElicitationHandler(serverId: string): void {
     this.elicitationManager.clearHandler(serverId);
-    const client = this.clientStates.get(serverId)?.client;
+    const client = this.liveClientStates.get(serverId)?.client;
     if (client) {
       if (this.elicitationManager.getGlobalCallback()) {
         this.elicitationManager.applyToClient(serverId, client);
@@ -871,7 +877,7 @@ export class MCPClientManager {
    */
   setElicitationCallback(callback: ElicitationCallback): void {
     this.elicitationManager.setGlobalCallback(callback);
-    for (const [serverId, state] of this.clientStates.entries()) {
+    for (const [serverId, state] of this.liveClientStates.entries()) {
       if (state.client) {
         this.elicitationManager.applyToClient(serverId, state.client);
       }
@@ -883,7 +889,7 @@ export class MCPClientManager {
    */
   clearElicitationCallback(): void {
     this.elicitationManager.clearGlobalCallback();
-    for (const [serverId, state] of this.clientStates.entries()) {
+    for (const [serverId, state] of this.liveClientStates.entries()) {
       if (!state.client) continue;
       if (this.elicitationManager.getHandler(serverId)) {
         this.elicitationManager.applyToClient(serverId, state.client);
@@ -919,20 +925,20 @@ export class MCPClientManager {
     cursor?: string,
     options?: ClientRequestOptions
   ) {
-    await this.ensureConnected(serverId);
-    const client = this.getClientOrThrow(serverId);
-    try {
-      return await tasksListTasks(
-        client,
-        cursor,
-        this.withTimeout(serverId, options)
-      );
-    } catch (error) {
-      if (isMethodUnavailableError(error, "tasks/list")) {
-        return { tasks: [] };
+    return this.runRetryableReadOperation(serverId, options, async (client) => {
+      try {
+        return await tasksListTasks(
+          client,
+          cursor,
+          this.withTimeout(serverId, options)
+        );
+      } catch (error) {
+        if (isMethodUnavailableError(error, "tasks/list")) {
+          return { tasks: [] };
+        }
+        throw error;
       }
-      throw error;
-    }
+    });
   }
 
   /**
@@ -943,9 +949,9 @@ export class MCPClientManager {
     taskId: string,
     options?: ClientRequestOptions
   ) {
-    await this.ensureConnected(serverId);
-    const client = this.getClientOrThrow(serverId);
-    return tasksGetTask(client, taskId, this.withTimeout(serverId, options));
+    return this.runRetryableReadOperation(serverId, options, (client) =>
+      tasksGetTask(client, taskId, this.withTimeout(serverId, options))
+    );
   }
 
   /**
@@ -956,12 +962,8 @@ export class MCPClientManager {
     taskId: string,
     options?: ClientRequestOptions
   ) {
-    await this.ensureConnected(serverId);
-    const client = this.getClientOrThrow(serverId);
-    return tasksGetTaskResult(
-      client,
-      taskId,
-      this.withTimeout(serverId, options)
+    return this.runRetryableReadOperation(serverId, options, (client) =>
+      tasksGetTaskResult(client, taskId, this.withTimeout(serverId, options))
     );
   }
 
@@ -1003,14 +1005,58 @@ export class MCPClientManager {
   // Private Helpers
   // ===========================================================================
 
+  private registerServer(
+    serverId: string,
+    config: MCPServerConfig,
+    timeout: number
+  ): RegisteredServerState {
+    const state: RegisteredServerState = {
+      config,
+      timeout,
+    };
+    this.registeredServers.set(serverId, state);
+    return state;
+  }
+
+  private async connectToServerOnce(serverId: string): Promise<Client> {
+    const registeredState = this.registeredServers.get(serverId);
+    if (!registeredState) {
+      throw new Error(`Unknown MCP server "${serverId}".`);
+    }
+
+    const existingState = this.liveClientStates.get(serverId);
+    if (existingState?.client) {
+      throw new Error(`MCP server "${serverId}" is already connected.`);
+    }
+
+    if (existingState?.promise) {
+      return existingState.promise;
+    }
+
+    const state: LiveClientState = existingState ?? {};
+    state.authProvider = undefined;
+
+    const connectionPromise = this.performConnection(
+      serverId,
+      registeredState.config,
+      registeredState.timeout,
+      state
+    );
+    state.promise = connectionPromise;
+    this.liveClientStates.set(serverId, state);
+    return connectionPromise;
+  }
+
   private async performConnection(
     serverId: string,
     config: MCPServerConfig,
     timeout: number,
-    state: ManagedClientState
+    state: LiveClientState
   ): Promise<Client> {
+    let client: Client | undefined;
+    let transport: Transport | undefined;
     try {
-      const client = new Client(
+      client = new Client(
         {
           name: this.defaultClientName ?? serverId,
           version: config.version ?? this.defaultClientVersion,
@@ -1029,9 +1075,8 @@ export class MCPClientManager {
         client.onerror = (error) => config.onError?.(error);
       }
 
-      client.onclose = () => this.resetState(serverId);
+      client.onclose = () => this.clearLiveState(serverId);
 
-      let transport: Transport;
       if (this.isStdioConfig(config)) {
         transport = await this.connectViaStdio(
           serverId,
@@ -1049,17 +1094,31 @@ export class MCPClientManager {
         );
       }
 
+      if (this.liveClientStates.get(serverId) !== state) {
+        await client.close().catch(() => undefined);
+        await this.safeCloseTransport(transport);
+        throw new Error(`MCP server "${serverId}" connection was cancelled.`);
+      }
+
       state.client = client;
       state.transport = transport;
       state.promise = undefined;
-      this.clientStates.set(serverId, state);
+      this.liveClientStates.set(serverId, state);
 
       // Set logging level (ignore errors)
       this.setLoggingLevel(serverId, "debug").catch(() => {});
 
       return client;
     } catch (error) {
-      this.resetState(serverId);
+      try {
+        await client?.close();
+      } catch {
+        // Ignore close errors
+      }
+      if (transport) {
+        await this.safeCloseTransport(transport);
+      }
+      this.clearLiveState(serverId);
       throw error;
     }
   }
@@ -1092,7 +1151,7 @@ export class MCPClientManager {
     client: Client,
     config: HttpServerConfig,
     timeout: number,
-    state: ManagedClientState
+    state: LiveClientState
   ): Promise<Transport> {
     const url = new URL(config.url);
 
@@ -1230,35 +1289,54 @@ export class MCPClientManager {
   }
 
   private async ensureConnected(serverId: string): Promise<void> {
-    const state = this.clientStates.get(serverId);
+    const state = this.liveClientStates.get(serverId);
     if (state?.client) return;
 
-    if (!state) {
+    if (!this.registeredServers.has(serverId)) {
       throw new Error(`Unknown MCP server "${serverId}".`);
     }
-    if (state.promise) {
+    if (state?.promise) {
       await state.promise;
       return;
     }
-    await this.connectToServer(serverId, state.config);
+    await this.connectToServerOnce(serverId);
   }
 
   private getClientOrThrow(serverId: string): Client {
-    const state = this.clientStates.get(serverId);
+    const state = this.liveClientStates.get(serverId);
     if (!state?.client) {
       throw new Error(`MCP server "${serverId}" is not connected.`);
     }
     return state.client;
   }
 
-  private resetState(serverId: string): void {
-    this.clientStates.delete(serverId);
+  private clearLiveState(serverId: string): void {
+    this.liveClientStates.delete(serverId);
     this.toolsMetadataCache.delete(serverId);
+  }
+
+  private async destroyLiveState(serverId: string): Promise<void> {
+    const state = this.liveClientStates.get(serverId);
+    this.clearLiveState(serverId);
+    if (!state) {
+      return;
+    }
+
+    try {
+      await state.client?.close();
+    } catch {
+      // Ignore close errors
+    }
+
+    if (state.transport) {
+      await this.safeCloseTransport(state.transport);
+    }
   }
 
   private buildServerReplayConfig(
     serverId: string,
-    state: ManagedClientState
+    state: RegisteredServerState,
+    liveState?: LiveClientState
   ): MCPServerReplayConfig | undefined {
     const { config } = state;
     if (!this.isHttpConfig(config)) {
@@ -1289,8 +1367,9 @@ export class MCPClientManager {
     }
 
     if (config.refreshToken) {
-      const currentAccessToken = state.authProvider?.tokens()?.access_token;
-      const currentRefreshToken = state.authProvider
+      const currentAccessToken =
+        liveState?.authProvider?.tokens()?.access_token;
+      const currentRefreshToken = liveState?.authProvider
         ?.prepareTokenRequest()
         .get("refresh_token");
       const clientId = config.clientId?.trim();
@@ -1391,7 +1470,7 @@ export class MCPClientManager {
     serverId: string,
     options?: RequestOptions
   ): RequestOptions {
-    const state = this.clientStates.get(serverId);
+    const state = this.registeredServers.get(serverId);
     const timeout = state?.timeout ?? this.defaultTimeout;
 
     if (!options) return { timeout };
@@ -1455,5 +1534,62 @@ export class MCPClientManager {
 
   private isStdioConfig(config: MCPServerConfig): config is StdioServerConfig {
     return "command" in config;
+  }
+
+  private isExecuteToolRequest(
+    value: ClientRequestOptions | ExecuteToolRequest | undefined
+  ): value is ExecuteToolRequest {
+    return Boolean(
+      value &&
+      typeof value === "object" &&
+      ("request" in value || "task" in value || "retry" in value)
+    );
+  }
+
+  private normalizeExecuteToolRequest(
+    options?: ClientRequestOptions | ExecuteToolRequest,
+    taskOptions?: TaskOptions
+  ): ExecuteToolRequest {
+    if (this.isExecuteToolRequest(options)) {
+      return options;
+    }
+
+    return {
+      request: options,
+      task: taskOptions,
+    };
+  }
+
+  private async runRetryableReadOperation<T>(
+    serverId: string,
+    options: RequestOptions | undefined,
+    operation: (client: Client) => Promise<T>
+  ): Promise<T> {
+    return this.runRetriedOperation(
+      serverId,
+      options,
+      this.defaultRetryPolicy,
+      async () => {
+        await this.ensureConnected(serverId);
+        return operation(this.getClientOrThrow(serverId));
+      }
+    );
+  }
+
+  private async runRetriedOperation<T>(
+    serverId: string,
+    options: RequestOptions | undefined,
+    retryPolicy: RetryPolicy,
+    operation: () => Promise<T>
+  ): Promise<T> {
+    return retryWithPolicy({
+      policy: retryPolicy,
+      operation: async () => operation(),
+      shouldRetryError: (error) =>
+        !options?.signal?.aborted && isRetryableTransientError(error),
+      onRetry: async () => {
+        await this.destroyLiveState(serverId);
+      },
+    });
   }
 }

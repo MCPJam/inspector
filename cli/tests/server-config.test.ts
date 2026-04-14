@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  parseNonNegativeInteger,
   parseJsonRecord,
+  parseRetryPolicy,
   parseServerConfig,
   resolveAliasedStringOption,
 } from "../src/lib/server-config";
@@ -78,10 +80,7 @@ test("parseServerConfig preserves commas inside stdio args and env values", () =
   const config = parseServerConfig({
     command: "node",
     commandArgs: ['{"a":1,"b":2}', "--list=one,two"],
-    env: [
-      "NO_PROXY=127.0.0.1,localhost",
-      'JSON_PAYLOAD={"a":1,"b":2}',
-    ],
+    env: ["NO_PROXY=127.0.0.1,localhost", 'JSON_PAYLOAD={"a":1,"b":2}'],
   });
 
   assert.equal("command" in config, true);
@@ -125,7 +124,9 @@ test("parseServerConfig rejects missing and mixed targets", () => {
     (error) =>
       error instanceof CliError &&
       error.exitCode === 2 &&
-      error.message.includes("--access-token, --oauth-access-token, --refresh-token, --client-id, --client-secret, and --header can only be used"),
+      error.message.includes(
+        "--access-token, --oauth-access-token, --refresh-token, --client-id, --client-secret, and --header can only be used",
+      ),
   );
 
   assert.throws(
@@ -137,7 +138,9 @@ test("parseServerConfig rejects missing and mixed targets", () => {
       }),
     (error) =>
       error instanceof CliError &&
-      error.message.includes("--access-token and --oauth-access-token must match"),
+      error.message.includes(
+        "--access-token and --oauth-access-token must match",
+      ),
   );
 
   assert.throws(
@@ -153,7 +156,10 @@ test("parseServerConfig rejects missing and mixed targets", () => {
 });
 
 test("parseJsonRecord rejects non-object JSON", () => {
-  assert.equal(parseJsonRecord('{"message":"hello"}', "Tool parameters")?.message, "hello");
+  assert.equal(
+    parseJsonRecord('{"message":"hello"}', "Tool parameters")?.message,
+    "hello",
+  );
 
   assert.throws(
     () => parseJsonRecord('["hello"]', "Tool parameters"),
@@ -161,6 +167,34 @@ test("parseJsonRecord rejects non-object JSON", () => {
       error instanceof CliError &&
       error.message.includes("Tool parameters must be a JSON object"),
   );
+});
+
+test("parseNonNegativeInteger accepts zero and rejects negatives", () => {
+  assert.equal(parseNonNegativeInteger("0", "Retries"), 0);
+  assert.equal(parseNonNegativeInteger("12", "Retries"), 12);
+
+  assert.throws(
+    () => parseNonNegativeInteger("-1", "Retries"),
+    (error) =>
+      error instanceof CliError &&
+      error.message.includes("Retries must be a non-negative integer"),
+  );
+});
+
+test("parseRetryPolicy preserves explicit values and fills defaults", () => {
+  assert.deepEqual(parseRetryPolicy({ retries: 2, retryDelayMs: 1500 }), {
+    retries: 2,
+    retryDelayMs: 1500,
+  });
+  assert.deepEqual(parseRetryPolicy({ retries: 3 }), {
+    retries: 3,
+    retryDelayMs: 3000,
+  });
+  assert.deepEqual(parseRetryPolicy({ retryDelayMs: 250 }), {
+    retries: 0,
+    retryDelayMs: 250,
+  });
+  assert.equal(parseRetryPolicy({}), undefined);
 });
 
 test("resolveAliasedStringOption accepts either alias and preserves matching values", () => {

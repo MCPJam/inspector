@@ -1,4 +1,4 @@
-import { MCPClientManager } from "../src/mcp-client-manager";
+import { MCPAuthError, MCPClientManager } from "../src/mcp-client-manager";
 import {
   startMockHttpServer,
   startMockStreamableHttpServer,
@@ -6,6 +6,26 @@ import {
   MOCK_RESOURCES,
   MOCK_PROMPTS,
 } from "./mock-servers";
+
+function seedRegisteredServer(
+  manager: MCPClientManager,
+  serverId: string,
+  config: Record<string, unknown>,
+  timeout = 1000
+): void {
+  (manager as any).registeredServers.set(serverId, {
+    config,
+    timeout,
+  });
+}
+
+function seedLiveState(
+  manager: MCPClientManager,
+  serverId: string,
+  liveState: Record<string, unknown>
+): void {
+  (manager as any).liveClientStates.set(serverId, liveState);
+}
 
 describe("MCPClientManager", () => {
   describe("constructor", () => {
@@ -91,6 +111,8 @@ describe("MCPClientManager", () => {
       await manager.disconnectServer("everything");
 
       expect(manager.getConnectionStatus("everything")).toBe("disconnected");
+      expect(manager.hasServer("everything")).toBe(true);
+      expect(manager.listServers()).toContain("everything");
     }, 30000);
   });
 
@@ -204,17 +226,14 @@ describe("MCPClientManager", () => {
 
     it("skips non-replayable HTTP configs with custom request state", () => {
       const replayManager = new MCPClientManager();
-      (replayManager as any).clientStates.set("custom-http", {
-        config: {
-          url: "https://example.com/mcp",
-          accessToken: "at_test",
-          requestInit: {
-            headers: {
-              "X-Custom": "1",
-            },
+      seedRegisteredServer(replayManager, "custom-http", {
+        url: "https://example.com/mcp",
+        accessToken: "at_test",
+        requestInit: {
+          headers: {
+            "X-Custom": "1",
           },
         },
-        timeout: 1000,
       });
 
       expect(replayManager.getServerReplayConfigs()).toEqual([]);
@@ -222,15 +241,12 @@ describe("MCPClientManager", () => {
 
     it("returns tokenless replay configs for public HTTP servers with empty headers", () => {
       const replayManager = new MCPClientManager();
-      (replayManager as any).clientStates.set("public-http", {
-        config: {
-          url: "https://example.com/mcp",
-          requestInit: {
-            headers: {},
-          },
-          preferSSE: true,
+      seedRegisteredServer(replayManager, "public-http", {
+        url: "https://example.com/mcp",
+        requestInit: {
+          headers: {},
         },
-        timeout: 1000,
+        preferSSE: true,
       });
 
       expect(replayManager.getServerReplayConfigs()).toEqual([
@@ -244,12 +260,9 @@ describe("MCPClientManager", () => {
 
     it("skips stdio servers when building replay configs", () => {
       const replayManager = new MCPClientManager();
-      (replayManager as any).clientStates.set("stdio-server", {
-        config: {
-          command: "node",
-          args: ["server.js"],
-        },
-        timeout: 1000,
+      seedRegisteredServer(replayManager, "stdio-server", {
+        command: "node",
+        args: ["server.js"],
       });
 
       expect(replayManager.getServerReplayConfigs()).toEqual([]);
@@ -257,14 +270,11 @@ describe("MCPClientManager", () => {
 
     it("skips HTTP configs with unsupported requestInit options", () => {
       const replayManager = new MCPClientManager();
-      (replayManager as any).clientStates.set("request-http", {
-        config: {
-          url: "https://example.com/mcp",
-          requestInit: {
-            method: "POST",
-          },
+      seedRegisteredServer(replayManager, "request-http", {
+        url: "https://example.com/mcp",
+        requestInit: {
+          method: "POST",
         },
-        timeout: 1000,
       });
 
       expect(replayManager.getServerReplayConfigs()).toEqual([]);
@@ -272,16 +282,13 @@ describe("MCPClientManager", () => {
 
     it("extracts bearer auth from requestInit headers for replay configs", () => {
       const replayManager = new MCPClientManager();
-      (replayManager as any).clientStates.set("header-http", {
-        config: {
-          url: "https://example.com/mcp",
-          requestInit: {
-            headers: {
-              Authorization: "Bearer at_from_headers",
-            },
+      seedRegisteredServer(replayManager, "header-http", {
+        url: "https://example.com/mcp",
+        requestInit: {
+          headers: {
+            Authorization: "Bearer at_from_headers",
           },
         },
-        timeout: 1000,
       });
 
       expect(replayManager.getServerReplayConfigs()).toEqual([
@@ -584,6 +591,173 @@ describe("MCPClientManager", () => {
         })
       ).rejects.toThrow('MCP server "duplicate" is already connected');
     }, 30000);
+
+    it("preserves server inventory after a failed connect attempt", async () => {
+      await expect(
+        manager.connectToServer("failing-http", {
+          url: "http://127.0.0.1:9/mcp",
+          timeout: 250,
+        })
+      ).rejects.toThrow();
+
+      expect(manager.hasServer("failing-http")).toBe(true);
+      expect(manager.listServers()).toContain("failing-http");
+      expect(manager.getConnectionStatus("failing-http")).toBe("disconnected");
+    });
+  });
+
+  describe("retry support", () => {
+    let manager: MCPClientManager;
+
+    beforeEach(() => {
+      manager = new MCPClientManager(
+        {},
+        {
+          lazyConnect: true,
+          retryPolicy: {
+            retries: 1,
+            retryDelayMs: 0,
+          },
+        }
+      );
+    });
+
+    afterEach(async () => {
+      jest.restoreAllMocks();
+      await manager.disconnectAllServers();
+    });
+
+    it("retries direct connectToServer calls on transient failures", async () => {
+      const client = {} as any;
+      const connectSpy = jest
+        .spyOn(manager as any, "connectToServerOnce")
+        .mockRejectedValueOnce(
+          Object.assign(new Error("timed out"), { code: "ETIMEDOUT" })
+        )
+        .mockResolvedValueOnce(client);
+
+      await expect(
+        manager.connectToServer("retry-connect", {
+          command: "node",
+          args: ["server.js"],
+        })
+      ).resolves.toBe(client);
+
+      expect(connectSpy).toHaveBeenCalledTimes(2);
+      expect(manager.hasServer("retry-connect")).toBe(true);
+    });
+
+    it("does not retry direct connectToServer calls on auth errors", async () => {
+      const connectSpy = jest
+        .spyOn(manager as any, "connectToServerOnce")
+        .mockRejectedValue(new MCPAuthError("Unauthorized", 401));
+
+      await expect(
+        manager.connectToServer("auth-connect", {
+          command: "node",
+          args: ["server.js"],
+        })
+      ).rejects.toThrow("Unauthorized");
+
+      expect(connectSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it("retries read operations as a single ensureConnected plus RPC budget", async () => {
+      const fakeClient = {
+        listTools: jest
+          .fn()
+          .mockRejectedValueOnce(
+            Object.assign(new Error("timed out"), { code: "ETIMEDOUT" })
+          )
+          .mockResolvedValueOnce({ tools: [] }),
+      };
+
+      seedRegisteredServer(manager, "retry-read", {
+        command: "node",
+        args: ["server.js"],
+      });
+
+      const connectSpy = jest
+        .spyOn(manager as any, "connectToServerOnce")
+        .mockImplementation(async (serverId: string) => {
+          seedLiveState(manager, serverId, { client: fakeClient });
+          return fakeClient as any;
+        });
+
+      await expect(manager.listTools("retry-read")).resolves.toEqual({
+        tools: [],
+      });
+
+      expect(connectSpy).toHaveBeenCalledTimes(2);
+      expect(fakeClient.listTools).toHaveBeenCalledTimes(2);
+    });
+
+    it("keeps executeTool single-shot by default", async () => {
+      const fakeClient = {
+        callTool: jest
+          .fn()
+          .mockRejectedValue(
+            Object.assign(new Error("timed out"), { code: "ETIMEDOUT" })
+          ),
+      };
+
+      seedRegisteredServer(manager, "tool-default", {
+        command: "node",
+        args: ["server.js"],
+      });
+      seedLiveState(manager, "tool-default", { client: fakeClient });
+
+      await expect(
+        manager.executeTool("tool-default", "echo", { message: "hello" })
+      ).rejects.toThrow("timed out");
+
+      expect(fakeClient.callTool).toHaveBeenCalledTimes(1);
+    });
+
+    it("retries executeTool only when explicit retry options are provided", async () => {
+      const fakeClient = {
+        callTool: jest
+          .fn()
+          .mockRejectedValueOnce(
+            Object.assign(new Error("timed out"), { code: "ETIMEDOUT" })
+          )
+          .mockResolvedValueOnce({
+            content: [{ type: "text", text: "ok" }],
+          }),
+      };
+
+      seedRegisteredServer(manager, "tool-retry", {
+        command: "node",
+        args: ["server.js"],
+      });
+      seedLiveState(manager, "tool-retry", { client: fakeClient });
+
+      const connectSpy = jest
+        .spyOn(manager as any, "connectToServerOnce")
+        .mockImplementation(async (serverId: string) => {
+          seedLiveState(manager, serverId, { client: fakeClient });
+          return fakeClient as any;
+        });
+
+      await expect(
+        manager.executeTool(
+          "tool-retry",
+          "echo",
+          { message: "hello" },
+          {
+            retry: {
+              retries: 1,
+              retryDelayMs: 0,
+            },
+          }
+        )
+      ).resolves.toEqual({
+        content: [{ type: "text", text: "ok" }],
+      });
+
+      expect(fakeClient.callTool).toHaveBeenCalledTimes(2);
+      expect(connectSpy).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe("multiple servers", () => {
@@ -669,6 +843,11 @@ describe("MCPClientManager", () => {
 
       expect(manager.getConnectionStatus("disc-a")).toBe("disconnected");
       expect(manager.getConnectionStatus("disc-b")).toBe("disconnected");
+      expect(manager.hasServer("disc-a")).toBe(true);
+      expect(manager.hasServer("disc-b")).toBe(true);
+      expect(manager.listServers()).toEqual(
+        expect.arrayContaining(["disc-a", "disc-b"])
+      );
     }, 30000);
   });
 });

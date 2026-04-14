@@ -9,6 +9,7 @@ import {
   buildServerToolSnapshotDebug,
   exportConnectedServerToolSnapshotForEvalAuthoring,
 } from "../../utils/export-helpers.js";
+import { INSPECTOR_MCP_RETRY_POLICY } from "../../utils/mcp-retry-policy.js";
 
 const INSPECTOR_SERVICE_TOKEN_HEADER = "X-Inspector-Service-Token";
 
@@ -192,6 +193,7 @@ export function buildReplayManager(replayConfig: ReplayConfig) {
     {
       defaultTimeout: WEB_CALL_TIMEOUT_MS,
       lazyConnect: true,
+      retryPolicy: INSPECTOR_MCP_RETRY_POLICY,
     },
   );
 }
@@ -202,10 +204,10 @@ function isMcpAlreadyConnectedError(error: unknown): boolean {
 
 /**
  * Await MCP connections for all replay servers. The manager constructor starts
- * connects in the background; failed connects call resetState and remove the
- * server before callers run (e.g. runEvalTestCaseWithManager awaits getTestCase
- * between resolveServerIdsOrThrow and getToolsForAiSdk). Explicit connect
- * ensures stable state or a clear connection error.
+ * connects in the background; failed connects clear only live state while
+ * preserving registered server inventory. Explicit connect ensures replay
+ * runners see a stable connection or a clear connection error before making
+ * follow-on SDK calls.
  */
 export async function connectReplayManagerServers(
   manager: MCPClientManager,

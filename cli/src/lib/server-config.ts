@@ -1,10 +1,10 @@
-import type { MCPServerConfig } from "@mcpjam/sdk";
-import { Command } from "commander";
 import {
-  resolveOutputFormat,
-  type OutputFormat,
-  usageError,
-} from "./output";
+  DEFAULT_RETRY_POLICY,
+  type MCPServerConfig,
+  type RetryPolicy,
+} from "@mcpjam/sdk";
+import { Command } from "commander";
+import { resolveOutputFormat, type OutputFormat, usageError } from "./output";
 
 export interface GlobalOptions {
   format: OutputFormat;
@@ -25,6 +25,8 @@ export interface SharedServerTargetOptions {
   commandArgs?: string[];
   env?: string[];
   timeout?: number;
+  retries?: number;
+  retryDelayMs?: number;
 }
 
 function collectString(value: string, previous: string[] = []): string[] {
@@ -39,14 +41,8 @@ export function addSharedServerOptions(command: Command): Command {
       "--oauth-access-token <token>",
       "OAuth bearer access token for HTTP servers",
     )
-    .option(
-      "--refresh-token <token>",
-      "OAuth refresh token for HTTP servers",
-    )
-    .option(
-      "--client-id <id>",
-      "OAuth client ID used with --refresh-token",
-    )
+    .option("--refresh-token <token>", "OAuth refresh token for HTTP servers")
+    .option("--client-id <id>", "OAuth client ID used with --refresh-token")
     .option(
       "--client-secret <secret>",
       "OAuth client secret used with --refresh-token",
@@ -77,7 +73,10 @@ export function addSharedServerOptions(command: Command): Command {
 export function getGlobalOptions(command: Command): GlobalOptions {
   const options = command.optsWithGlobals() as Partial<GlobalOptions>;
   return {
-    format: resolveOutputFormat(options.format as string | undefined, process.stdout.isTTY),
+    format: resolveOutputFormat(
+      options.format as string | undefined,
+      process.stdout.isTTY,
+    ),
     timeout: options.timeout ?? 30_000,
     rpc: options.rpc ?? false,
   };
@@ -90,6 +89,45 @@ export function parsePositiveInteger(value: string, label = "Value"): number {
   }
 
   return parsed;
+}
+
+export function parseNonNegativeInteger(
+  value: string,
+  label = "Value",
+): number {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    throw usageError(`${label} must be a non-negative integer.`);
+  }
+
+  return parsed;
+}
+
+export function addRetryOptions(command: Command): Command {
+  return command
+    .option(
+      "--retries <count>",
+      "Retry transient failures this many times",
+      (value: string) => parseNonNegativeInteger(value, "Retries"),
+    )
+    .option(
+      "--retry-delay-ms <ms>",
+      "Fixed delay between retries in milliseconds",
+      (value: string) => parseNonNegativeInteger(value, "Retry delay"),
+    );
+}
+
+export function parseRetryPolicy(
+  options: Pick<SharedServerTargetOptions, "retries" | "retryDelayMs">,
+): RetryPolicy | undefined {
+  if (options.retries === undefined && options.retryDelayMs === undefined) {
+    return undefined;
+  }
+
+  return {
+    retries: options.retries ?? DEFAULT_RETRY_POLICY.retries,
+    retryDelayMs: options.retryDelayMs ?? DEFAULT_RETRY_POLICY.retryDelayMs,
+  };
 }
 
 export function parseHeadersOption(
@@ -177,7 +215,9 @@ export function resolveAliasedStringOption(
         value: normalized,
       };
     })
-    .filter((entry): entry is { flag: string; value: string } => entry !== undefined);
+    .filter(
+      (entry): entry is { flag: string; value: string } => entry !== undefined,
+    );
 
   const flagsText = aliases.map((alias) => alias.flag).join(" or ");
 
@@ -383,11 +423,7 @@ export function resolveHttpAccessToken(
   const accessToken = options.accessToken?.trim();
   const oauthAccessToken = options.oauthAccessToken?.trim();
 
-  if (
-    accessToken &&
-    oauthAccessToken &&
-    accessToken !== oauthAccessToken
-  ) {
+  if (accessToken && oauthAccessToken && accessToken !== oauthAccessToken) {
     throw usageError(
       "--access-token and --oauth-access-token must match when both are provided.",
     );
