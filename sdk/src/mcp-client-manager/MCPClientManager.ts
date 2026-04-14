@@ -763,15 +763,9 @@ export class MCPClientManager {
     serverId: string,
     options?: RequestOptions
   ): Promise<Awaited<ReturnType<Client["ping"]>>> {
-    return this.runRetryableReadOperation(serverId, options, async (client) => {
-      try {
-        return await client.ping(options);
-      } catch (error) {
-        throw new Error(
-          `Failed to ping MCP server "${serverId}": ${error instanceof Error ? error.message : "Unknown error"}`
-        );
-      }
-    });
+    return this.runRetryableReadOperation(serverId, options, async (client) =>
+      client.ping(options)
+    );
   }
 
   /**
@@ -1072,11 +1066,13 @@ export class MCPClientManager {
     const state: LiveClientState = existingState ?? {};
     state.authProvider = undefined;
 
-    const connectionPromise = this.performConnection(
-      serverId,
-      registeredState.config,
-      registeredState.timeout,
-      state
+    const connectionPromise = Promise.resolve().then(() =>
+      this.performConnection(
+        serverId,
+        registeredState.config,
+        registeredState.timeout,
+        state
+      )
     );
     state.connectPromise = connectionPromise;
     this.liveClientStates.set(serverId, state);
@@ -1113,7 +1109,7 @@ export class MCPClientManager {
 
       client.onclose = () => {
         if (this.liveClientStates.get(serverId) === state) {
-          this.clearLiveState(serverId, { preservePendingPromises: true });
+          this.clearClosedPendingConnectionState(serverId, state);
         }
       };
 
@@ -1468,6 +1464,35 @@ export class MCPClientManager {
 
     if (state.connectPromise || state.retryPromise) {
       this.liveClientStates.set(serverId, state);
+    } else {
+      this.liveClientStates.delete(serverId);
+    }
+    this.toolsMetadataCache.delete(serverId);
+  }
+
+  private clearClosedPendingConnectionState(
+    serverId: string,
+    state: LiveClientState
+  ): void {
+    state.stdioStderrCleanup?.();
+
+    const nextState: LiveClientState = {};
+    if (state.connectPromise) {
+      nextState.connectPromise = state.connectPromise;
+    }
+    if (state.retryPromise) {
+      nextState.retryPromise = state.retryPromise;
+    }
+    if (state.authProvider) {
+      nextState.authProvider = state.authProvider;
+    }
+
+    delete state.client;
+    delete state.transport;
+    delete state.stdioStderrCleanup;
+
+    if (nextState.connectPromise || nextState.retryPromise) {
+      this.liveClientStates.set(serverId, nextState);
     } else {
       this.liveClientStates.delete(serverId);
     }

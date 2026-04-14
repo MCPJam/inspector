@@ -1020,6 +1020,29 @@ describe("MCPClientManager", () => {
       expect(fakeClient.listTools).toHaveBeenCalledTimes(2);
     });
 
+    it("retries pingServer using the original transport error details", async () => {
+      const fakeClient = {
+        ping: jest
+          .fn()
+          .mockRejectedValueOnce(
+            Object.assign(new Error("server unavailable"), {
+              statusCode: 503,
+            })
+          )
+          .mockResolvedValueOnce(undefined),
+      };
+
+      seedRegisteredServer(manager, "retry-ping", {
+        command: "node",
+        args: ["server.js"],
+      });
+      seedLiveState(manager, "retry-ping", { client: fakeClient });
+
+      await expect(manager.pingServer("retry-ping")).resolves.toBeUndefined();
+
+      expect(fakeClient.ping).toHaveBeenCalledTimes(2);
+    });
+
     it("retries read operations without tearing down an existing live session", async () => {
       const fakeClient = {
         listTools: jest
@@ -1044,6 +1067,43 @@ describe("MCPClientManager", () => {
 
       expect(fakeClient.listTools).toHaveBeenCalledTimes(2);
       expect(destroySpy).not.toHaveBeenCalled();
+    });
+
+    it("cancels a connect when the client closes during the handshake", async () => {
+      const fakeTransport = {
+        close: jest.fn().mockResolvedValue(undefined),
+      };
+
+      const connectViaStdioSpy = jest
+        .spyOn(manager as any, "connectViaStdio")
+        .mockImplementation(
+          async (
+            _serverId: string,
+            client: { onclose?: () => void },
+            _config: unknown,
+            _timeout: number,
+            _state: unknown
+          ) => {
+            client.onclose?.();
+            return fakeTransport as any;
+          }
+        );
+
+      await expect(
+        manager.connectToServer("closed-during-connect", {
+          command: "node",
+          args: ["server.js"],
+        })
+      ).rejects.toThrow(
+        'MCP server "closed-during-connect" connection was cancelled.'
+      );
+
+      expect(connectViaStdioSpy).toHaveBeenCalledTimes(1);
+      expect(fakeTransport.close).toHaveBeenCalled();
+      expect(manager.getConnectionStatus("closed-during-connect")).toBe(
+        "disconnected"
+      );
+      expect(manager.getClient("closed-during-connect")).toBeUndefined();
     });
 
     it("does not retry read operations after the caller aborts during backoff", async () => {
