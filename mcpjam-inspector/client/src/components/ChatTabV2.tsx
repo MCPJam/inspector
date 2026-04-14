@@ -2429,10 +2429,10 @@ export function ChatTabV2({
                       data-testid="chat-empty-state-shell"
                     >
                       <div
-                        className="flex h-full min-h-0 flex-1 items-center justify-center overflow-hidden px-4"
+                        className="flex h-full min-h-0 flex-1 items-center justify-center px-4"
                         data-testid="chat-empty-state-body"
                       >
-                        <div className="w-full max-w-3xl shrink-0 space-y-6 py-8">
+                        <div className="min-h-0 max-h-full w-full max-w-3xl shrink space-y-6 overflow-y-auto overscroll-contain py-8">
                           {isAuthLoading ? (
                             <div className="text-center space-y-4">
                               <div className="mx-auto h-8 w-8 animate-spin rounded-full border-b-2 border-primary" />

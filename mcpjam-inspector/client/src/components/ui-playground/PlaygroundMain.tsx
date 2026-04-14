@@ -1168,8 +1168,7 @@ export function PlaygroundMain({
   const showSingleModelEmptyStateComposer =
     !isAuthLoading &&
     !shouldShowUpsell &&
-    (showPostConnectGuide ||
-      (!isWidgetFullTakeover && !showFullscreenChatOverlay));
+    (showPostConnectGuide || !showFullscreenChatOverlay);
 
   // Thread content - single ChatInput that persists across empty/non-empty states
   const threadContent = (
