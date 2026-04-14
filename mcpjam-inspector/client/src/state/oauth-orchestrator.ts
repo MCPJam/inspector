@@ -75,9 +75,11 @@ export async function ensureAuthorizedForReconnect(
         oauthProfile?.clientSecret ||
         server.oauthTokens?.client_secret || clientInfo?.client_secret,
       scopes:
-        oauthProfile?.scopes
-          ?.split(/\s+/)
-          .filter((scope) => scope.length > 0) ?? oauthConfig.scopes,
+        (oauthProfile?.scopes?.trim()
+          ? oauthProfile.scopes
+              .split(/\s+/)
+              .filter((scope) => scope.length > 0)
+          : undefined) ?? oauthConfig.scopes,
       protocolVersion:
         oauthProfile?.protocolVersion ?? oauthConfig.protocolVersion,
       registrationStrategy:

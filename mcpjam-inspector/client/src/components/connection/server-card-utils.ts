@@ -1,5 +1,5 @@
 import type { ComponentType } from "react";
-import { Check, Loader2, Wifi, X } from "lucide-react";
+import { AlertCircle, Check, Loader2, Wifi, X } from "lucide-react";
 import type { MCPServerConfig } from "@mcpjam/sdk/browser";
 import type { ConnectionStatus } from "@/state/app-types";
 

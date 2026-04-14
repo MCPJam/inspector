@@ -3,6 +3,7 @@ import type {
   MCPServerConfig,
   RpcLogger,
 } from "./mcp-client-manager/index.js";
+import type { RetryPolicy } from "./retry.js";
 import {
   buildConnectedServerDoctorResult,
   collectConnectedServerDoctorState,
@@ -25,6 +26,7 @@ export interface ConnectServerWithReportInput {
   manager?: MCPClientManager;
   timeout?: number;
   rpcLogger?: RpcLogger;
+  retryPolicy?: RetryPolicy;
   disconnectBeforeConnect?: boolean;
   diagnostics?: "on_failure" | "never";
   context?: Partial<Pick<ConnectContext, "oauth">>;
@@ -54,6 +56,7 @@ export async function connectServerWithReport(
         defaultTimeout: timeout,
         defaultClientName: "mcpjam-sdk",
         lazyConnect: true,
+        ...(input.retryPolicy ? { retryPolicy: input.retryPolicy } : {}),
         ...(input.rpcLogger ? { rpcLogger: input.rpcLogger } : {}),
       },
     );
@@ -106,14 +109,21 @@ export async function connectServerWithReport(
       };
     } catch (error) {
       const issue = classifyValidationIssue(error);
-      const diagnostics = await collectPartialDiagnostics(
-        manager,
-        serverId,
-        input.target,
-        error,
-        dependencies.collectConnectedState ?? collectConnectedServerDoctorState,
-        dependencies.buildConnectedDoctorResult ?? buildConnectedServerDoctorResult,
-      );
+      let diagnostics: ServerDoctorResult | undefined;
+      try {
+        diagnostics = await collectPartialDiagnostics(
+          manager,
+          serverId,
+          input.target,
+          error,
+          dependencies.collectConnectedState ??
+            collectConnectedServerDoctorState,
+          dependencies.buildConnectedDoctorResult ??
+            buildConnectedServerDoctorResult,
+        );
+      } catch {
+        diagnostics = undefined;
+      }
 
       return {
         success: true,
@@ -121,7 +131,7 @@ export async function connectServerWithReport(
         target: input.target,
         initInfo,
         issue,
-        diagnostics,
+        ...(diagnostics ? { diagnostics } : {}),
         context: reportContext,
       };
     }
@@ -142,6 +152,7 @@ async function collectFailureDiagnostics(
       target: input.target,
       timeout: input.timeout ?? DEFAULT_TIMEOUT_MS,
       rpcLogger: input.rpcLogger,
+      retryPolicy: input.retryPolicy,
     });
   } catch {
     return undefined;

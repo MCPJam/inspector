@@ -53,8 +53,9 @@ export type PlaygroundServerSelectorProps = Omit<
 function getStatusColor(status: string): string {
   switch (status) {
     case "connected":
-    case "partial":
       return "bg-green-500 dark:bg-green-400";
+    case "partial":
+      return "bg-amber-500 dark:bg-amber-400";
     case "connecting":
       return "bg-yellow-500 dark:bg-yellow-400 animate-pulse";
     case "failed":

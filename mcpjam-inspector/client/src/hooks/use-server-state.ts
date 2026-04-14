@@ -1800,12 +1800,6 @@ export function useServerState({
           });
           return;
         }
-        dispatch({
-          type: "CONNECT_FAILURE",
-          name: serverName,
-          error: getConnectionErrorMessage(result),
-          ...(result.report ? { report: result.report } : {}),
-        });
         return;
       }
 
@@ -1840,12 +1834,6 @@ export function useServerState({
           logger.info("Reconnection successful", { serverName, result });
           return;
         }
-        dispatch({
-          type: "CONNECT_FAILURE",
-          name: serverName,
-          error: getConnectionErrorMessage(result),
-          ...(result.report ? { report: result.report } : {}),
-        });
         logger.error("Reconnection failed", { serverName, result });
         const errorMessage =
           getConnectionErrorMessage(result) || `Failed to reconnect: ${serverName}`;
@@ -2033,7 +2021,7 @@ export function useServerState({
         });
         try {
           const result = await guardedTestConnection(
-            withWorkspaceClientCapabilities(originalServer.config),
+            withWorkspaceClientCapabilities(mcpConfig),
             originalServerName,
             buildOAuthContext({
               serverName: originalServerName,

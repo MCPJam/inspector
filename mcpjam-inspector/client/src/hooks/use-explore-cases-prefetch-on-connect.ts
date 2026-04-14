@@ -67,11 +67,11 @@ export function useExploreCasesPrefetchOnConnect(
     const status = server.connectionStatus;
     prevStatusRef.current = status;
 
-    if (isConnectedStatus(status) && !isConnectedStatus(prev as any)) {
+    if (isConnectedStatus(status) && !isConnectedStatus(prev)) {
       pendingExplorePrefetchRef.current = true;
     }
 
-    if (status !== "connected") {
+    if (!isConnectedStatus(status)) {
       pendingExplorePrefetchRef.current = false;
       return;
     }

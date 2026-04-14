@@ -7,12 +7,31 @@ import { HOSTED_MODE } from "../../config";
 const connect = new Hono();
 
 connect.post("/", async (c) => {
+  let body: {
+    serverConfig?: MCPServerConfig;
+    serverId?: string;
+    oauthContext?: ConnectContext["oauth"];
+  };
+
   try {
-    const { serverConfig, serverId, oauthContext } = (await c.req.json()) as {
+    body = (await c.req.json()) as {
       serverConfig?: MCPServerConfig;
       serverId?: string;
       oauthContext?: ConnectContext["oauth"];
     };
+  } catch (error) {
+    return c.json(
+      {
+        success: false,
+        error: "Failed to parse request body",
+        details: error instanceof Error ? error.message : "Unknown error",
+      },
+      400,
+    );
+  }
+
+  try {
+    const { serverConfig, serverId, oauthContext } = body;
 
     if (!serverConfig) {
       return c.json(
@@ -80,6 +99,17 @@ connect.post("/", async (c) => {
       ...(oauthContext ? { context: { oauth: oauthContext } } : {}),
     });
 
+    if (!report.success) {
+      try {
+        await mcpClientManager.removeServer(serverId);
+      } catch (cleanupError) {
+        console.debug(
+          `Failed to remove MCP server ${serverId} after connection failure`,
+          cleanupError,
+        );
+      }
+    }
+
     return c.json({
       success: report.success,
       status: report.status,
@@ -91,10 +121,10 @@ connect.post("/", async (c) => {
     return c.json(
       {
         success: false,
-        error: "Failed to parse request body",
+        error: error instanceof Error ? error.message : "Failed to connect",
         details: error instanceof Error ? error.message : "Unknown error",
       },
-      400,
+      500,
     );
   }
 });

@@ -22,6 +22,8 @@ export type {
   MCPConnectionStatus,
   ServerSummary,
   MCPServerSummary,
+  RegisteredServerState,
+  LiveClientState,
 } from "./mcp-client-manager/index.js";
 
 // Handler and callback types
@@ -42,6 +44,7 @@ export type {
   ToolExecuteOptions,
   AiSdkTool,
   ExecuteToolArguments,
+  ExecuteToolRequest,
   TaskOptions,
   ClientCapabilityOptions,
   MCPTask,
@@ -84,6 +87,13 @@ export {
   isAuthError,
   isMCPAuthError,
 } from "./mcp-client-manager/index.js";
+export type { RetryPolicy } from "./retry.js";
+export {
+  DEFAULT_RETRY_POLICY,
+  isRetryableTransientError,
+  normalizeRetryPolicy,
+  retryWithPolicy,
+} from "./retry.js";
 export { EvalReportingError, SdkError } from "./errors.js";
 export { probeMcpServer } from "./server-probe.js";
 export type {
@@ -121,6 +131,71 @@ export type {
   ConnectReport,
   ConnectStatus,
 } from "./connect-report-types.js";
+export {
+  collectServerSnapshot,
+  collectConnectedServerSnapshot,
+  normalizeServerSnapshot,
+  serializeServerSnapshot,
+  serializeStableServerSnapshot,
+  ServerSnapshotFormatError,
+} from "./server-snapshot.js";
+export type {
+  CollectServerSnapshotInput,
+  CollectedServerSnapshot,
+  RawServerSnapshot,
+  StableServerSnapshot,
+  NormalizedServerSnapshot,
+  ServerSnapshotTool,
+  ServerSnapshotResource,
+  ServerSnapshotResourceTemplate,
+  ServerSnapshotPrompt,
+  ServerSnapshotDependencies,
+} from "./server-snapshot.js";
+export {
+  diffServerSnapshots,
+  collectAndDiffServerSnapshot,
+  buildServerDiffReport,
+} from "./server-diff.js";
+export type {
+  SnapshotDiffClassification,
+  SnapshotDiffEntityType,
+  SnapshotDiffChangeType,
+  SnapshotDiffFailOn,
+  SnapshotFieldChange,
+  SnapshotEntityChange,
+  SnapshotEntityClassificationSummary,
+  SnapshotDiffSummary,
+  SnapshotSurfaceSummary,
+  ServerSnapshotDiffResult,
+  DiffServerSnapshotsOptions,
+  CollectAndDiffServerSnapshotInput,
+} from "./server-diff.js";
+export {
+  validateToolCallEnvelope,
+  evaluateToolCallOutcome,
+  validateToolCallResult,
+  buildToolCallValidationReport,
+} from "./response-validation.js";
+export type {
+  ToolCallEnvelopeValidationDetails,
+  ToolCallEnvelopeValidationResult,
+  ToolCallOutcomePolicy,
+  ToolCallOutcomeEvaluationResult,
+  ToolCallValidationResult,
+} from "./response-validation.js";
+export { redactSensitiveValue } from "./redaction.js";
+export {
+  summarizeStructuredCases,
+  renderStructuredRunJson,
+  renderStructuredRunJUnitXml,
+} from "./structured-reporting.js";
+export type {
+  StructuredCaseClassification,
+  StructuredCaseResult,
+  StructuredSummaryBucket,
+  StructuredRunSummary,
+  StructuredRunReport,
+} from "./structured-reporting.js";
 export { runOAuthLogin } from "./oauth-login.js";
 export type {
   OAuthLoginConfig,
@@ -265,11 +340,7 @@ export {
   buildCspMetaContent,
   buildChatGptRuntimeHead,
 } from "./widget-helpers.js";
-export type {
-  CspMode,
-  WidgetCspMeta,
-  CspConfig,
-} from "./widget-helpers.js";
+export type { CspMode, WidgetCspMeta, CspConfig } from "./widget-helpers.js";
 
 // OAuth proxy helpers (shared by inspector server routes and the CLI)
 export {
@@ -279,10 +350,7 @@ export {
   executeDebugOAuthProxy,
   fetchOAuthMetadata,
 } from "./oauth-proxy.js";
-export type {
-  OAuthProxyRequest,
-  OAuthProxyResponse,
-} from "./oauth-proxy.js";
+export type { OAuthProxyRequest, OAuthProxyResponse } from "./oauth-proxy.js";
 
 // Skill reference (SKILL.md content for agent brief generation)
 export { EXPLORE_TO_SDK_EVALS_SKILL_MD, SKILL_MD } from "./skill-reference.js";
@@ -303,7 +371,10 @@ export type {
 } from "./oauth-conformance/index.js";
 
 // MCP conformance
-export { MCPConformanceTest, MCPConformanceSuite } from "./mcp-conformance/index.js";
+export {
+  MCPConformanceTest,
+  MCPConformanceSuite,
+} from "./mcp-conformance/index.js";
 export type {
   MCPCheckCategory,
   MCPCheckId,

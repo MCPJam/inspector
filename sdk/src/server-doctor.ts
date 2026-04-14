@@ -1,9 +1,15 @@
 import { probeMcpServer } from "./server-probe.js";
-import { withEphemeralClient } from "./operations.js";
-import { isMethodUnavailableError } from "./mcp-client-manager/index.js";
+import {
+  listAllPrompts,
+  listAllResourceTemplates,
+  listAllResources,
+  listAllTools,
+  withEphemeralClient,
+} from "./operations.js";
 import type {
   MCPClientManager,
   MCPServerConfig,
+  RetryPolicy,
   RpcLogger,
 } from "./mcp-client-manager/index.js";
 import type { ProbeMcpServerResult } from "./server-probe.js";
@@ -77,12 +83,17 @@ export interface RunServerDoctorInput<TTarget = unknown> {
   target: TTarget;
   timeout: number;
   rpcLogger?: RpcLogger;
+  retryPolicy?: RetryPolicy;
 }
 
 type WithConnectedManager = <T>(
   config: MCPServerConfig,
   fn: (manager: MCPClientManager, serverId: string) => Promise<T>,
-  options?: { timeout?: number; rpcLogger?: RpcLogger },
+  options?: {
+    timeout?: number;
+    rpcLogger?: RpcLogger;
+    retryPolicy?: RetryPolicy;
+  }
 ) => Promise<T>;
 
 export interface ServerDoctorDependencies {
@@ -92,7 +103,7 @@ export interface ServerDoctorDependencies {
 
 export async function runServerDoctor<TTarget = unknown>(
   input: RunServerDoctorInput<TTarget>,
-  dependencies: ServerDoctorDependencies = {},
+  dependencies: ServerDoctorDependencies = {}
 ): Promise<ServerDoctorResult<TTarget>> {
   const probeServer = dependencies.probeServer ?? probeMcpServer;
   const withManager =
@@ -101,6 +112,7 @@ export async function runServerDoctor<TTarget = unknown>(
       withEphemeralClient(config, fn, {
         timeout: options?.timeout,
         rpcLogger: options?.rpcLogger,
+        retryPolicy: options?.retryPolicy,
         serverId: "__cli__",
         clientName: "mcpjam",
       }));
@@ -149,18 +161,21 @@ export async function runServerDoctor<TTarget = unknown>(
           ? { accessToken: resolveProbeAccessToken(input.config) }
           : {}),
         ...(resolveDoctorClientCapabilities(input.config)
-          ? { clientCapabilities: resolveDoctorClientCapabilities(input.config) }
+          ? {
+              clientCapabilities: resolveDoctorClientCapabilities(input.config),
+            }
           : {}),
         timeoutMs: input.timeout,
+        retryPolicy: input.retryPolicy,
       });
       result.checks.probe = summarizeProbeCheck(
         result.probe,
-        hasConnectionCredentials(input.config),
+        hasConnectionCredentials(input.config)
       );
     } catch (error) {
       const structured = normalizeServerDoctorError(error);
       result.checks.probe = errorCheck(
-        `HTTP probe failed: ${structured.message}`,
+        `HTTP probe failed: ${structured.message}`
       );
       result.error = structured;
     }
@@ -172,8 +187,7 @@ export async function runServerDoctor<TTarget = unknown>(
       result.status = "oauth_required";
       result.connection = {
         status: "skipped",
-        detail:
-          "Server requires OAuth before a connection can be established.",
+        detail: "Server requires OAuth before a connection can be established.",
       };
       result.checks.connection = skippedCheck(result.connection.detail);
       result.error = {
@@ -194,11 +208,13 @@ export async function runServerDoctor<TTarget = unknown>(
   try {
     const collected = await withManager(
       input.config,
-      (manager, serverId) => collectConnectedServerDoctorState(manager, serverId),
+      (manager, serverId) =>
+        collectConnectedServerDoctorState(manager, serverId),
       {
         timeout: input.timeout,
         rpcLogger: input.rpcLogger,
-      },
+        retryPolicy: input.retryPolicy,
+      }
     );
 
     result.connection = {
@@ -243,7 +259,7 @@ export async function runServerDoctor<TTarget = unknown>(
 
 export async function collectConnectedServerDoctorState(
   manager: MCPClientManager,
-  serverId: string,
+  serverId: string
 ): Promise<ConnectedServerDoctorState> {
   const errors: ServerDoctorError[] = [];
   const initInfo = manager.getInitializationInfo(serverId) ?? null;
@@ -279,7 +295,9 @@ export async function collectConnectedServerDoctorState(
     checks: {
       initialization: initInfo
         ? okCheck("Initialization info captured.")
-        : errorCheck("Server connected but did not return initialization info."),
+        : errorCheck(
+            "Server connected but did not return initialization info."
+          ),
       capabilities: capabilities
         ? okCheck("Server capabilities captured.")
         : errorCheck("Server connected but did not advertise capabilities."),
@@ -339,7 +357,11 @@ export function normalizeServerDoctorError(error: unknown): ServerDoctorError {
   }
 
   const message =
-    error instanceof Error ? error.message : typeof error === "string" ? error : "Unknown error";
+    error instanceof Error
+      ? error.message
+      : typeof error === "string"
+        ? error
+        : "Unknown error";
   const lower = message.toLowerCase();
 
   if (lower.includes("timed out") || lower.includes("timeout")) {
@@ -369,7 +391,7 @@ function isServerDoctorError(error: unknown): error is ServerDoctorError {
 
 async function collectTools(
   manager: MCPClientManager,
-  serverId: string,
+  serverId: string
 ): Promise<{
   tools: unknown[];
   toolsMetadata: Record<string, unknown>;
@@ -377,11 +399,15 @@ async function collectTools(
   error?: ServerDoctorError;
 }> {
   try {
-    const result = await manager.listTools(serverId);
-    const tools = result.tools ?? [];
+    const result = await listAllTools(manager, { serverId });
+    const tools =
+      result.tools?.map((tool) => {
+        const { _meta: _ignoredMeta, ...toolWithoutMeta } = tool;
+        return toolWithoutMeta;
+      }) ?? [];
     return {
       tools,
-      toolsMetadata: manager.getAllToolsMetadata(serverId),
+      toolsMetadata: result.toolsMetadata,
       check: okCheck(describeCount(tools.length, "tool")),
     };
   } catch (error) {
@@ -397,14 +423,14 @@ async function collectTools(
 
 async function collectResources(
   manager: MCPClientManager,
-  serverId: string,
+  serverId: string
 ): Promise<{
   resources: unknown[];
   check: ServerDoctorCheck;
   error?: ServerDoctorError;
 }> {
   try {
-    const result = await manager.listResources(serverId);
+    const result = await listAllResources(manager, { serverId });
     const resources = result.resources ?? [];
     return {
       resources,
@@ -422,14 +448,14 @@ async function collectResources(
 
 async function collectPrompts(
   manager: MCPClientManager,
-  serverId: string,
+  serverId: string
 ): Promise<{
   prompts: unknown[];
   check: ServerDoctorCheck;
   error?: ServerDoctorError;
 }> {
   try {
-    const result = await manager.listPrompts(serverId);
+    const result = await listAllPrompts(manager, { serverId });
     const prompts = result.prompts ?? [];
     return {
       prompts,
@@ -447,32 +473,28 @@ async function collectPrompts(
 
 async function collectResourceTemplates(
   manager: MCPClientManager,
-  serverId: string,
+  serverId: string
 ): Promise<{
   resourceTemplates: unknown[];
   check: ServerDoctorCheck;
   error?: ServerDoctorError;
 }> {
   try {
-    const result = await manager.listResourceTemplates(serverId);
+    const result = await listAllResourceTemplates(manager, { serverId });
     const resourceTemplates = result.resourceTemplates ?? [];
-    return {
-      resourceTemplates,
-      check: okCheck(
-        describeCount(resourceTemplates.length, "resource template"),
-      ),
-    };
-  } catch (error) {
-    if (
-      isMethodUnavailableError(error, "resources/templates") ||
-      isUnsupportedMethodError(error, "resources/templates")
-    ) {
+    if (result.unsupported) {
       return {
-        resourceTemplates: [],
+        resourceTemplates,
         check: skippedCheck("Server does not support resources/templates."),
       };
     }
-
+    return {
+      resourceTemplates,
+      check: okCheck(
+        describeCount(resourceTemplates.length, "resource template")
+      ),
+    };
+  } catch (error) {
     const structured = normalizeServerDoctorError(error);
     return {
       resourceTemplates: [],
@@ -503,13 +525,13 @@ function resolveProbeAccessToken(config: MCPServerConfig): string | undefined {
 }
 
 function resolveDoctorClientCapabilities(
-  config: MCPServerConfig,
+  config: MCPServerConfig
 ): Record<string, unknown> | undefined {
   return config.clientCapabilities ?? config.capabilities;
 }
 
 function extractHeaders(
-  headers: HeadersInit | undefined,
+  headers: HeadersInit | undefined
 ): Record<string, string> {
   if (!headers) {
     return {};
@@ -525,35 +547,35 @@ function extractHeaders(
 
   if (Array.isArray(headers)) {
     return Object.fromEntries(
-      headers.map(([key, value]) => [key, String(value)]),
+      headers.map(([key, value]) => [key, String(value)])
     );
   }
 
   return Object.fromEntries(
-    Object.entries(headers).map(([key, value]) => [key, String(value)]),
+    Object.entries(headers).map(([key, value]) => [key, String(value)])
   );
 }
 
 function summarizeProbeCheck(
   probe: ProbeMcpServerResult,
-  hasCredentials: boolean,
+  hasCredentials: boolean
 ): ServerDoctorCheck {
   switch (probe.status) {
     case "ready":
       return okCheck(
         `HTTP initialize probe succeeded via ${
           probe.transport.selected ?? "unknown transport"
-        }.`,
+        }.`
       );
     case "oauth_required":
       return hasCredentials
         ? okCheck(
-            "Unauthenticated probe requires OAuth; continuing with provided credentials.",
+            "Unauthenticated probe requires OAuth; continuing with provided credentials."
           )
         : errorCheck("Server requires OAuth before it can be connected.");
     case "reachable":
       return errorCheck(
-        "HTTP endpoint was reachable, but the initialize probe did not complete successfully.",
+        "HTTP endpoint was reachable, but the initialize probe did not complete successfully."
       );
     case "error":
       return errorCheck(probe.error ?? "HTTP probe failed.");
@@ -565,9 +587,12 @@ function summarizeProbeCheck(
 }
 
 function deriveDoctorStatus<TTarget>(
-  result: ServerDoctorResult<TTarget>,
+  result: ServerDoctorResult<TTarget>
 ): ServerDoctorResult<TTarget>["status"] {
-  if (result.probe?.status === "oauth_required" && result.connection.status === "skipped") {
+  if (
+    result.probe?.status === "oauth_required" &&
+    result.connection.status === "skipped"
+  ) {
     return "oauth_required";
   }
 
@@ -581,7 +606,10 @@ function deriveDoctorStatus<TTarget>(
 }
 
 function hasConnectionCredentials(config: MCPServerConfig): boolean {
-  return "url" in config && Boolean(resolveProbeAccessToken(config) || config.refreshToken);
+  return (
+    "url" in config &&
+    Boolean(resolveProbeAccessToken(config) || config.refreshToken)
+  );
 }
 
 function okCheck(detail: string): ServerDoctorCheck {
@@ -598,23 +626,4 @@ function skippedCheck(detail: string): ServerDoctorCheck {
 
 function describeCount(count: number, label: string): string {
   return `${count} ${label}${count === 1 ? "" : "s"} discovered.`;
-}
-
-function isUnsupportedMethodError(
-  error: unknown,
-  method: string,
-): boolean {
-  const message =
-    error instanceof Error ? error.message : typeof error === "string" ? error : "";
-  const lower = message.toLowerCase();
-  const normalizedMethod = method.toLowerCase();
-
-  return (
-    lower.includes(normalizedMethod) &&
-    (lower.includes("not found") ||
-      lower.includes("not implemented") ||
-      lower.includes("unsupported") ||
-      lower.includes("unavailable") ||
-      lower.includes("does not support"))
-  );
 }

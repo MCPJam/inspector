@@ -148,7 +148,11 @@ function parseOAuthContext(
     protocolVersion !== "2025-06-18" &&
     protocolVersion !== "2025-11-25"
   ) {
-    return undefined;
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      `Invalid oauthContext.protocolVersion: ${String(protocolVersion)}`,
+    );
   }
 
   if (
@@ -156,7 +160,11 @@ function parseOAuthContext(
     registrationStrategy !== "preregistered" &&
     registrationStrategy !== "cimd"
   ) {
-    return undefined;
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      `Invalid oauthContext.registrationStrategy: ${String(registrationStrategy)}`,
+    );
   }
 
   return {

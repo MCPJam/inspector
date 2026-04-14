@@ -70,8 +70,8 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         oauthTokens: action.tokens,
         enabled: true,
         useOAuth: baseServer.useOAuth ?? action.tokens != null,
-        ...(action.report?.initInfo
-          ? { initializationInfo: action.report.initInfo }
+        ...(action.report
+          ? { initializationInfo: action.report.initInfo ?? undefined }
           : {}),
       });
       return {
