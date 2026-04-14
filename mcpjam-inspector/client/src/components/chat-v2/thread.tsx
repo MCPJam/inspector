@@ -1,4 +1,4 @@
-import { useEffect, useState, type RefObject } from "react";
+import { useEffect, useMemo, useState, type RefObject } from "react";
 import { cn } from "@/lib/utils";
 import {
   useSandboxHostStyle,
@@ -15,8 +15,16 @@ import { ThinkingIndicator } from "@/components/chat-v2/shared/thinking-indicato
 import { FullscreenChatOverlay } from "@/components/chat-v2/fullscreen-chat-overlay";
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-overrides";
+import {
+  type LoadingIndicatorVariant,
+  useResolvedLoadingIndicatorVariant,
+} from "@/components/chat-v2/shared/loading-indicator-content";
 import { type ReasoningDisplayMode } from "./thread/parts/reasoning-part";
 import { TranscriptThread } from "./thread/transcript-thread";
+import {
+  getLastRenderableConversationMessage,
+  hasRenderableConversationContent,
+} from "./thread/thread-helpers";
 
 interface ThreadProps {
   messages: UIMessage[];
@@ -39,12 +47,15 @@ interface ThreadProps {
   enableFullscreenChatOverlay?: boolean;
   fullscreenChatPlaceholder?: string;
   fullscreenChatDisabled?: boolean;
+  fullscreenChatSendBlocked?: boolean;
+  onFullscreenChatStop?: () => void;
   selectedProtocolOverrideIfBothExists?: UIType;
   onToolApprovalResponse?: (options: { id: string; approved: boolean }) => void;
   toolRenderOverrides?: Record<string, ToolRenderOverride>;
   showSaveViewButton?: boolean;
   minimalMode?: boolean;
   interactive?: boolean;
+  loadingIndicatorVariant?: LoadingIndicatorVariant;
   reasoningDisplayMode?: ReasoningDisplayMode;
   focusMessageId?: string | null;
   highlightedMessageIds?: string[];
@@ -69,12 +80,15 @@ export function Thread({
   enableFullscreenChatOverlay = false,
   fullscreenChatPlaceholder = "Message…",
   fullscreenChatDisabled = false,
+  fullscreenChatSendBlocked = isLoading,
+  onFullscreenChatStop,
   selectedProtocolOverrideIfBothExists,
   onToolApprovalResponse,
   toolRenderOverrides,
   showSaveViewButton = true,
   minimalMode = false,
   interactive = true,
+  loadingIndicatorVariant,
   reasoningDisplayMode = "inline",
   focusMessageId = null,
   highlightedMessageIds = [],
@@ -123,12 +137,35 @@ export function Thread({
   }, [showFullscreenChatOverlay]);
 
   const canSendFullscreenChat =
-    !fullscreenChatDisabled && fullscreenChatInput.trim().length > 0;
+    !fullscreenChatDisabled &&
+    !fullscreenChatSendBlocked &&
+    fullscreenChatInput.trim().length > 0;
 
   const sandboxHostStyle = useSandboxHostStyle();
   const sandboxHostTheme = useSandboxHostTheme();
+  const resolvedLoadingIndicatorVariant = useResolvedLoadingIndicatorVariant(
+    loadingIndicatorVariant,
+    {
+      modelProvider: model.provider,
+    },
+  );
   const isChatgptDark =
     sandboxHostStyle === "chatgpt" && sandboxHostTheme === "dark";
+  const lastRenderableMessage = useMemo(
+    () => getLastRenderableConversationMessage(messages),
+    [messages],
+  );
+  const hasVisibleAssistantResponse =
+    lastRenderableMessage?.role === "assistant" &&
+    hasRenderableConversationContent(lastRenderableMessage);
+  const lastRenderableMessageId = hasVisibleAssistantResponse
+    ? lastRenderableMessage.id
+    : null;
+  const shouldShowStandaloneThinkingIndicator =
+    resolvedLoadingIndicatorVariant === "claude-mark" ||
+    resolvedLoadingIndicatorVariant === "chatgpt-dot"
+      ? isLoading && !hasVisibleAssistantResponse
+      : isLoading;
 
   return (
     <div
@@ -170,15 +207,21 @@ export function Thread({
         highlightedMessageIds={highlightedMessageIds}
         navigationKey={navigationKey}
         viewportRef={viewportRef}
+        isLoading={isLoading}
+        resolvedLoadingIndicatorVariant={resolvedLoadingIndicatorVariant}
+        lastRenderableMessageId={lastRenderableMessageId}
         contentClassName={
           contentClassName ??
           "min-w-0 w-full max-w-4xl mx-auto px-4 pt-8 pb-16 space-y-8"
         }
         getMessageWrapperProps={getMessageWrapperProps}
       />
-      {isLoading && (
+      {shouldShowStandaloneThinkingIndicator && (
         <div className="min-w-0 w-full max-w-4xl mx-auto px-4">
-          <ThinkingIndicator model={model} />
+          <ThinkingIndicator
+            model={model}
+            resolvedVariant={resolvedLoadingIndicatorVariant}
+          />
         </div>
       )}
 
@@ -193,6 +236,8 @@ export function Thread({
           disabled={fullscreenChatDisabled}
           canSend={canSendFullscreenChat}
           isThinking={isLoading}
+          loadingIndicatorVariant={resolvedLoadingIndicatorVariant}
+          onStop={onFullscreenChatStop}
           onSend={() => {
             if (!canSendFullscreenChat) return;
             const text = fullscreenChatInput;

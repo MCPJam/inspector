@@ -1,11 +1,9 @@
 import {
   getStepInfo,
   getStepIndex,
-} from "@/lib/oauth/state-machines/shared/step-metadata";
-import {
   type OAuthFlowState,
   type OAuthFlowStep,
-} from "@/lib/oauth/state-machines/types";
+} from "@mcpjam/sdk/browser";
 import { Circle, CheckCircle2 } from "lucide-react";
 
 interface StepEntry {
@@ -22,6 +20,25 @@ interface StepGroup {
 
 const formatTimestamp = (timestamp: number) =>
   new Date(timestamp).toLocaleTimeString();
+
+const getErrorStack = (
+  error:
+    | NonNullable<OAuthFlowState["infoLogs"]>[number]["error"]
+    | NonNullable<OAuthFlowState["httpHistory"]>[number]["error"]
+    | undefined,
+): string | undefined => {
+  if (
+    error?.details &&
+    typeof error.details === "object" &&
+    error.details !== null &&
+    "stack" in error.details &&
+    typeof error.details.stack === "string"
+  ) {
+    return error.details.stack;
+  }
+
+  return undefined;
+};
 
 const getStatusIcon = (step: OAuthFlowStep, currentStepIndex: number) => {
   const index = getStepIndex(step);
@@ -156,8 +173,9 @@ export function generateGuideText(
 
         if (httpEntry.error) {
           text += `\nERROR: ${httpEntry.error.message}\n`;
-          if (httpEntry.error.stack) {
-            text += `Stack: ${httpEntry.error.stack}\n`;
+          const stack = getErrorStack(httpEntry.error);
+          if (stack) {
+            text += `Stack: ${stack}\n`;
           }
         }
         text += "\n";
@@ -169,7 +187,7 @@ export function generateGuideText(
 }
 
 export function generateRawText(
-  oauthFlowState: OAuthFlowState,
+  _oauthFlowState: OAuthFlowState,
   timelineEntries: Array<
     | {
         type: "info";
@@ -203,8 +221,9 @@ export function generateRawText(
       }
       if (log.error) {
         text += `ERROR: ${log.error.message}\n`;
-        if (log.error.stack) {
-          text += `Stack: ${log.error.stack}\n`;
+        const stack = getErrorStack(log.error);
+        if (stack) {
+          text += `Stack: ${stack}\n`;
         }
       }
       text += "\n";
@@ -253,8 +272,9 @@ export function generateRawText(
 
       if (httpEntry.error) {
         text += `\nERROR: ${httpEntry.error.message}\n`;
-        if (httpEntry.error.stack) {
-          text += `Stack: ${httpEntry.error.stack}\n`;
+        const stack = getErrorStack(httpEntry.error);
+        if (stack) {
+          text += `Stack: ${stack}\n`;
         }
       }
       text += "\n";

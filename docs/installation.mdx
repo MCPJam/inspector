@@ -4,7 +4,34 @@ description: "Here's a list of all ways to start MCPJam"
 icon: "terminal"
 ---
 
-## Quick start
+MCPJam Inspector runs three ways: a hosted web app, a desktop app for Mac and Windows, or via your terminal. The web app is HTTPS-only and has no install. Terminal and Desktop support HTTP/S and local STDIO servers.
+
+<CardGroup cols={3}>
+  <Card title="Web App" icon="globe" href="https://app.mcpjam.com">
+    Open [app.mcpjam.com](https://app.mcpjam.com). HTTPS only. No install. Share servers with your team.
+  </Card>
+  <Card title="Desktop App" icon="monitor">
+    Download for [Mac](https://github.com/MCPJam/inspector/releases/latest/download/MCPJam.Inspector.dmg) or [Windows](https://github.com/MCPJam/inspector/releases/latest/download/MCPJam-Inspector-Setup.exe). HTTP/S and local STDIO.
+  </Card>
+  <Card title="Terminal" icon="terminal">
+    `npx @mcpjam/inspector@latest`. HTTP/S and local STDIO.
+  </Card>
+</CardGroup>
+
+## Web app
+
+Go to [app.mcpjam.com](https://app.mcpjam.com) in your browser. No install required. The web app accepts HTTPS MCP server URLs only — for HTTP or local STDIO servers, use the desktop or terminal options below. See [Hosted App](/hosted/overview) for more.
+
+## Desktop app
+
+Download the installer for your OS and run it:
+
+- [Mac](https://github.com/MCPJam/inspector/releases/latest/download/MCPJam.Inspector.dmg)
+- [Windows](https://github.com/MCPJam/inspector/releases/latest/download/MCPJam-Inspector-Setup.exe)
+
+The desktop app supports HTTP/S and local STDIO servers, and does not require Node.js.
+
+## Terminal
 
 Run the command in your terminal:
 
@@ -14,23 +41,15 @@ npx @mcpjam/inspector@latest
 
 After installing the package, you should see a link to `localhost`. Open that link up to see the inspector.
 
-<Note>
-  Don't have Node.js installed? Download our desktop app for [Mac](https://github.com/MCPJam/inspector/releases/latest/download/MCPJam.Inspector.dmg) or [Windows](https://github.com/MCPJam/inspector/releases/latest/download/MCPJam-Inspector-Setup.exe).
-</Note>
-
 ## Docker
 
-Run MCPJam Inspector using Docker:
+Run MCPJam Inspector using Docker, bound to localhost for security:
 
 ```bash
 docker run -p 127.0.0.1:6274:6274 mcpjam/mcp-inspector
 ```
 
-The application will be available at **`http://127.0.0.1:6274`**.
-
-<Warning>
-**Security:** Always use `-p 127.0.0.1:6274:6274` (not `-p 6274:6274`) to ensure the inspector is only accessible from your local machine.
-</Warning>
+The app is available at `http://127.0.0.1:6274`. Always use `-p 127.0.0.1:6274:6274` (not `-p 6274:6274`) to keep the inspector local-only. On macOS/Windows, connect to host MCP servers via `http://host.docker.internal:PORT` instead of `127.0.0.1`.
 
 ### Docker with Arguments
 

@@ -4,6 +4,7 @@ import { Loader2, Link2Off, ShieldX } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { ChatTabV2 } from "@/components/ChatTabV2";
+import { getLoadingIndicatorVariantForHostStyle } from "@/components/chat-v2/shared/loading-indicator-content";
 import type { ServerWithName } from "@/hooks/use-app-state";
 import { useHostedApiContext } from "@/hooks/hosted/use-hosted-api-context";
 import { useHostedOAuthGate } from "@/hooks/hosted/use-hosted-oauth-gate";
@@ -681,6 +682,9 @@ export function SandboxChatPage({
           )}
           minimalMode
           reasoningDisplayMode="hidden"
+          loadingIndicatorVariant={getLoadingIndicatorVariantForHostStyle(
+            hostStyle,
+          )}
           hostedWorkspaceIdOverride={session.payload.workspaceId}
           hostedSelectedServerIdsOverride={sessionServersActive.map(
             (server) => server.serverId,

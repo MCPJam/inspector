@@ -69,10 +69,22 @@ export const createLlmModel = (
       })(modelDefinition.id);
     case "xai":
       return createXai({ apiKey })(modelDefinition.id);
-    case "azure":
-      return createAzure({ apiKey, baseURL: baseUrls?.azure })(
-        modelDefinition.id,
+    case "azure": {
+      const azureBaseUrl = baseUrls?.azure ?? "";
+      // Extract resourceName from the Azure base URL so the SDK doesn't fall
+      // back to the AZURE_RESOURCE_NAME env var and throw when it's missing.
+      // Supports both:
+      //   https://<resource>.openai.azure.com/openai
+      //   https://<resource>.cognitiveservices.azure.com/openai
+      const azureResourceMatch = azureBaseUrl.match(
+        /https?:\/\/([^.]+)\.(openai|cognitiveservices)\.azure\.com/i,
       );
+      const resourceName = azureResourceMatch?.[1];
+      return createAzure({
+        apiKey,
+        ...(resourceName ? { resourceName } : { baseURL: azureBaseUrl }),
+      })(modelDefinition.id);
+    }
     case "custom": {
       const providerName = modelDefinition.customProviderName;
       if (!providerName) {
@@ -114,6 +126,14 @@ export const createLlmModel = (
 
 const ANTHROPIC_TOOL_NAME_PATTERN = /^[a-zA-Z0-9_-]{1,64}$/;
 
+function readRecordString(value: unknown, key: string): string | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const candidate = (value as Record<string, unknown>)[key];
+  return typeof candidate === "string" && candidate.length > 0
+    ? candidate
+    : undefined;
+}
+
 export const isAnthropicCompatibleModel = (
   modelDefinition: ModelDefinition,
   customProviders?: CustomProviderConfig[],
@@ -132,6 +152,141 @@ export const isAnthropicCompatibleModel = (
 
 export const getInvalidAnthropicToolNames = (toolNames: string[]): string[] => {
   return toolNames.filter((name) => !ANTHROPIC_TOOL_NAME_PATTERN.test(name));
+};
+
+/**
+ * Tool availability is per-turn. If a server disconnects, older tool-call /
+ * tool-result transcript parts for that server should not be sent back to the
+ * model on the next request.
+ */
+export const scrubUnavailableToolHistoryForBackend = (
+  messages: ModelMessage[],
+  availableToolNames: Iterable<string>,
+): ModelMessage[] => {
+  const available = new Set(
+    Array.from(availableToolNames).filter(
+      (name): name is string => typeof name === "string" && name.length > 0,
+    ),
+  );
+
+  if (messages.length === 0) {
+    return messages;
+  }
+
+  const staleToolCallIds = new Set<string>();
+  const approvalIdToToolCallId = new Map<string, string>();
+
+  for (const msg of messages) {
+    if (
+      !msg ||
+      (msg.role !== "assistant" && msg.role !== "tool") ||
+      !Array.isArray((msg as any).content)
+    ) {
+      continue;
+    }
+
+    for (const part of (msg as any).content as unknown[]) {
+      const partType = readRecordString(part, "type");
+      if (!partType) continue;
+
+      const toolCallId = readRecordString(part, "toolCallId");
+      const toolName =
+        readRecordString(part, "toolName") ?? readRecordString(part, "name");
+
+      if (
+        (partType === "tool-call" || partType === "tool-result") &&
+        toolCallId &&
+        toolName &&
+        !available.has(toolName)
+      ) {
+        staleToolCallIds.add(toolCallId);
+      }
+
+      if (partType === "tool-approval-request") {
+        const approvalId = readRecordString(part, "approvalId");
+        if (approvalId && toolCallId) {
+          approvalIdToToolCallId.set(approvalId, toolCallId);
+        }
+      }
+    }
+  }
+
+  const staleApprovalIds = new Set<string>();
+  for (const [approvalId, toolCallId] of approvalIdToToolCallId.entries()) {
+    if (staleToolCallIds.has(toolCallId)) {
+      staleApprovalIds.add(approvalId);
+    }
+  }
+
+  return messages.flatMap((msg) => {
+    if (
+      !msg ||
+      (msg.role !== "assistant" && msg.role !== "tool") ||
+      !Array.isArray((msg as any).content)
+    ) {
+      return [msg];
+    }
+
+    const originalContent = (msg as any).content as unknown[];
+    const filteredContent = originalContent.filter((part) => {
+      const partType = readRecordString(part, "type");
+      if (!partType) return true;
+
+      if (partType === "tool-call" || partType === "tool-result") {
+        if (available.size === 0) return false;
+
+        const toolCallId = readRecordString(part, "toolCallId");
+        const toolName =
+          readRecordString(part, "toolName") ?? readRecordString(part, "name");
+
+        if (toolCallId && staleToolCallIds.has(toolCallId)) {
+          return false;
+        }
+
+        if (toolName && !available.has(toolName)) {
+          return false;
+        }
+
+        return true;
+      }
+
+      if (partType === "tool-approval-request") {
+        if (available.size === 0) return false;
+
+        const approvalId = readRecordString(part, "approvalId");
+        const toolCallId = readRecordString(part, "toolCallId");
+        if (
+          (approvalId && staleApprovalIds.has(approvalId)) ||
+          (toolCallId && staleToolCallIds.has(toolCallId))
+        ) {
+          return false;
+        }
+        return true;
+      }
+
+      if (partType === "tool-approval-response") {
+        if (available.size === 0) return false;
+
+        const approvalId = readRecordString(part, "approvalId");
+        if (approvalId && staleApprovalIds.has(approvalId)) {
+          return false;
+        }
+        return true;
+      }
+
+      return true;
+    });
+
+    if (filteredContent.length === 0) {
+      return [];
+    }
+
+    if (filteredContent.length === originalContent.length) {
+      return [msg];
+    }
+
+    return [{ ...msg, content: filteredContent } as ModelMessage];
+  });
 };
 
 export const scrubMcpAppsToolResultsForBackend = (

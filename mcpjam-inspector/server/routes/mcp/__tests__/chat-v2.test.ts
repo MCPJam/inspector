@@ -8,11 +8,14 @@ import {
 } from "./helpers/index.js";
 import type { Hono } from "hono";
 import { APICallError } from "@ai-sdk/provider";
+import type { ModelMessage } from "ai";
 
 // Track stream events for testing
 let capturedStreamEvents: any[] = [];
 let mockWriter: { write: ReturnType<typeof vi.fn> };
 let lastStreamExecution: Promise<void> | null = null;
+let capturedCreateUiStreamOnError: ((error: unknown) => string) | undefined;
+type ErrorResponse = { error: string };
 
 const buildSsePayload = (events: any[]) =>
   `${events
@@ -34,21 +37,90 @@ const createSseResponse = (events: any[]) => {
   });
 };
 
+const createAsyncIterable = (events: any[]) => ({
+  async *[Symbol.asyncIterator]() {
+    for (const event of events) {
+      yield event;
+    }
+  },
+});
+
 // Mock the AI SDK
 vi.mock("ai", async () => {
   const actual = await vi.importActual<typeof import("ai")>("ai");
   return {
     ...actual,
     convertToModelMessages: vi.fn((messages) => messages),
-    streamText: vi.fn().mockReturnValue({
-      toUIMessageStreamResponse: vi.fn().mockReturnValue(
-        new Response(JSON.stringify({ type: "text", content: "Hello" }), {
-          headers: { "Content-Type": "text/event-stream" },
-        }),
-      ),
+    streamText: vi.fn().mockImplementation((options: any) => {
+      const usage = {
+        inputTokens: 10,
+        outputTokens: 5,
+        totalTokens: 15,
+      };
+      const step = {
+        usage,
+        toolCalls: [],
+        toolResults: [],
+        response: {
+          messages: [{ role: "assistant", content: "Hello" }],
+        },
+      };
+
+      const toUIMessageStream = vi.fn(() => {
+        options.prepareStep?.({
+          stepNumber: 0,
+          steps: [],
+          model: options.model,
+        });
+        options.onChunk?.({
+          chunk: {
+            type: "text-delta",
+            id: "text-1",
+            text: "Hello",
+          },
+        });
+        options.onStepFinish?.(step);
+        options.onFinish?.({
+          text: "Hello",
+          finishReason: "stop",
+          totalUsage: usage,
+          steps: [step],
+        });
+
+        return createAsyncIterable([
+          { type: "start" },
+          { type: "text-start", id: "text-1" },
+          { type: "text-delta", id: "text-1", text: "Hello" },
+          { type: "text-end", id: "text-1" },
+          {
+            type: "finish-step",
+            usage,
+            finishReason: "stop",
+            rawFinishReason: "stop",
+            response: {},
+            providerMetadata: undefined,
+          },
+          {
+            type: "finish",
+            finishReason: "stop",
+            rawFinishReason: "stop",
+            totalUsage: usage,
+          },
+        ]);
+      });
+
+      return {
+        toUIMessageStream,
+        toUIMessageStreamResponse: vi.fn().mockReturnValue(
+          new Response(JSON.stringify({ type: "text", content: "Hello" }), {
+            headers: { "Content-Type": "text/event-stream" },
+          }),
+        ),
+      };
     }),
     stepCountIs: vi.fn().mockReturnValue(() => false),
-    createUIMessageStream: vi.fn(({ execute, onFinish }) => {
+    createUIMessageStream: vi.fn(({ execute, onFinish, onError }) => {
+      capturedCreateUiStreamOnError = onError;
       // Create a mock writer that captures events
       mockWriter = {
         write: vi.fn((event) => {
@@ -74,20 +146,23 @@ vi.mock("../../../utils/chat-helpers", async () => {
     typeof import("../../../utils/chat-helpers")
   >("../../../utils/chat-helpers");
   return {
+    ...actual,
     createLlmModel: vi.fn().mockReturnValue({}),
     scrubMcpAppsToolResultsForBackend: vi.fn((messages) => messages),
     scrubChatGPTAppsToolResultsForBackend: vi.fn((messages) => messages),
-    isAnthropicCompatibleModel: actual.isAnthropicCompatibleModel,
-    getInvalidAnthropicToolNames: actual.getInvalidAnthropicToolNames,
   };
 });
 
 // Mock shared types
-vi.mock("@/shared/types", () => ({
-  isGPT5Model: vi.fn().mockReturnValue(false),
-  isMCPJamProvidedModel: vi.fn().mockReturnValue(false),
-  isGuestAllowedModel: vi.fn().mockReturnValue(true),
-}));
+vi.mock("@/shared/types", async () => {
+  const actual =
+    await vi.importActual<typeof import("@/shared/types")>("@/shared/types");
+  return {
+    ...actual,
+    isGPT5Model: vi.fn().mockReturnValue(false),
+    isMCPJamProvidedModel: vi.fn().mockReturnValue(false),
+  };
+});
 
 vi.mock("../../../utils/guest-auth.js", () => ({
   getProductionGuestAuthHeader: vi
@@ -113,10 +188,21 @@ describe("POST /api/mcp/chat-v2", () => {
   let manager: MockMCPClientManager;
   let app: Hono;
 
+  const postAuthenticatedJson = (body: Record<string, unknown>) =>
+    app.request("/api/mcp/chat-v2", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer signed-in-test-token",
+      },
+      body: JSON.stringify(body),
+    });
+
   beforeEach(() => {
     vi.clearAllMocks();
     capturedStreamEvents = [];
     lastStreamExecution = null;
+    capturedCreateUiStreamOnError = undefined;
     manager = createMockMcpClientManager({
       getToolsForAiSdk: vi.fn().mockResolvedValue({}),
     });
@@ -128,7 +214,7 @@ describe("POST /api/mcp/chat-v2", () => {
       const res = await postJson(app, "/api/mcp/chat-v2", {
         model: { id: "gpt-4", provider: "openai" },
       });
-      const { status, data } = await expectJson(res);
+      const { status, data } = await expectJson<ErrorResponse>(res);
 
       expect(status).toBe(400);
       expect(data.error).toBe("messages are required");
@@ -139,7 +225,7 @@ describe("POST /api/mcp/chat-v2", () => {
         messages: [],
         model: { id: "gpt-4", provider: "openai" },
       });
-      const { status, data } = await expectJson(res);
+      const { status, data } = await expectJson<ErrorResponse>(res);
 
       expect(status).toBe(400);
       expect(data.error).toBe("messages are required");
@@ -150,7 +236,7 @@ describe("POST /api/mcp/chat-v2", () => {
         messages: "not an array",
         model: { id: "gpt-4", provider: "openai" },
       });
-      const { status, data } = await expectJson(res);
+      const { status, data } = await expectJson<ErrorResponse>(res);
 
       expect(status).toBe(400);
       expect(data.error).toBe("messages are required");
@@ -160,7 +246,7 @@ describe("POST /api/mcp/chat-v2", () => {
       const res = await postJson(app, "/api/mcp/chat-v2", {
         messages: [{ role: "user", content: "Hello" }],
       });
-      const { status, data } = await expectJson(res);
+      const { status, data } = await expectJson<ErrorResponse>(res);
 
       expect(status).toBe(400);
       expect(data.error).toBe("model is not supported");
@@ -182,7 +268,7 @@ describe("POST /api/mcp/chat-v2", () => {
         },
         apiKey: "test-key",
       });
-      const { status, data } = await expectJson(res);
+      const { status, data } = await expectJson<ErrorResponse>(res);
 
       expect(status).toBe(400);
       expect(data.error).toContain("Invalid tool name(s) for Anthropic");
@@ -216,7 +302,7 @@ describe("POST /api/mcp/chat-v2", () => {
           },
         ],
       });
-      const { status, data } = await expectJson(res);
+      const { status, data } = await expectJson<ErrorResponse>(res);
 
       expect(status).toBe(400);
       expect(data.error).toContain("Invalid tool name(s) for Anthropic");
@@ -285,6 +371,55 @@ describe("POST /api/mcp/chat-v2", () => {
       expect(res.headers.get("Content-Type")).toContain("text/event-stream");
     });
 
+    it("emits ordered live trace events for configured local models", async () => {
+      const res = await postJson(app, "/api/mcp/chat-v2", {
+        messages: [{ role: "user", content: "Hello" }],
+        model: { id: "gpt-4", provider: "openai" },
+        apiKey: "test-key",
+      });
+
+      expect(res.status).toBe(200);
+      await lastStreamExecution;
+
+      const traceEvents = capturedStreamEvents
+        .filter((event) => event?.type === "data-trace-event")
+        .map((event) => event.data?.type);
+      const requestPayloadEvents = capturedStreamEvents.filter(
+        (event) =>
+          event?.type === "data-trace-event" &&
+          event.data?.type === "request_payload",
+      );
+
+      expect(traceEvents).toEqual(
+        expect.arrayContaining([
+          "turn_start",
+          "request_payload",
+          "text_delta",
+          "trace_snapshot",
+          "turn_finish",
+        ]),
+      );
+      expect(traceEvents.indexOf("turn_start")).toBeLessThan(
+        traceEvents.indexOf("request_payload"),
+      );
+      expect(traceEvents.indexOf("request_payload")).toBeLessThan(
+        traceEvents.indexOf("trace_snapshot"),
+      );
+      expect(traceEvents.indexOf("trace_snapshot")).toBeLessThan(
+        traceEvents.indexOf("turn_finish"),
+      );
+      expect(requestPayloadEvents).toHaveLength(1);
+      expect(requestPayloadEvents[0]?.data).toMatchObject({
+        promptIndex: 0,
+        stepIndex: 0,
+        payload: {
+          system: expect.any(String),
+          tools: expect.any(Object),
+          messages: [{ role: "user", content: "Hello" }],
+        },
+      });
+    });
+
     it("uses provided temperature", async () => {
       const { streamText } = await import("ai");
 
@@ -330,7 +465,12 @@ describe("POST /api/mcp/chat-v2", () => {
 
       expect(streamText).toHaveBeenCalledWith(
         expect.objectContaining({
-          system: "You are a helpful assistant",
+          system: expect.stringContaining("You are a helpful assistant"),
+        }),
+      );
+      expect(streamText).not.toHaveBeenCalledWith(
+        expect.objectContaining({
+          system: expect.stringContaining("## Connected MCP Tools"),
         }),
       );
     });
@@ -347,7 +487,7 @@ describe("POST /api/mcp/chat-v2", () => {
         model: { id: "gpt-4", provider: "openai" },
         apiKey: "test-key",
       });
-      const { status, data } = await expectJson(res);
+      const { status, data } = await expectJson<ErrorResponse>(res);
 
       expect(status).toBe(500);
       expect(data.error).toBe("Unexpected error");
@@ -401,17 +541,8 @@ describe("POST /api/mcp/chat-v2", () => {
   describe("auth error normalization", () => {
     let capturedOnError: ((error: unknown) => string) | undefined;
 
-    beforeEach(async () => {
-      // Override streamText mock to capture the onError callback
-      const { streamText } = await import("ai");
-      vi.mocked(streamText).mockImplementation((() => ({
-        toUIMessageStreamResponse: (opts: any) => {
-          capturedOnError = opts?.onError;
-          return new Response("{}", {
-            headers: { "Content-Type": "text/event-stream" },
-          });
-        },
-      })) as any);
+    beforeEach(() => {
+      capturedOnError = undefined;
     });
 
     async function getOnError(
@@ -422,6 +553,7 @@ describe("POST /api/mcp/chat-v2", () => {
         model: { id: "test-model", name: "Test", provider },
         apiKey: "bad-key",
       });
+      capturedOnError = capturedCreateUiStreamOnError;
       expect(capturedOnError).toBeDefined();
       return capturedOnError!;
     }
@@ -632,10 +764,11 @@ describe("POST /api/mcp/chat-v2", () => {
         });
 
       try {
-        const res = await postJson(app, "/api/mcp/chat-v2", {
+        const res = await postAuthenticatedJson({
           messages: [{ role: "user", content: "Hello" }],
           model: { id: "google/gemini-2.5-flash", provider: "google" },
           chatSessionId: "chat-session-1",
+          directVisibility: "workspace",
         });
 
         expect(res.status).toBe(200);
@@ -651,7 +784,7 @@ describe("POST /api/mcp/chat-v2", () => {
 
         expect(init).toMatchObject({
           headers: expect.objectContaining({
-            authorization: "Bearer guest-test-token",
+            authorization: "Bearer signed-in-test-token",
           }),
         });
         expect(body).toMatchObject({
@@ -659,6 +792,7 @@ describe("POST /api/mcp/chat-v2", () => {
           modelId: "google/gemini-2.5-flash",
           modelSource: "mcpjam",
           sourceType: "direct",
+          directVisibility: "workspace",
         });
         expect(body.sessionMessages).toEqual([
           { role: "user", content: "Hello" },
@@ -668,7 +802,7 @@ describe("POST /api/mcp/chat-v2", () => {
       }
     });
 
-    it("uses a guest token for MCPJam free-tier models that no longer require sign-in", async () => {
+    it("uses a guest token for claude-haiku-4.5 guest requests", async () => {
       const originalFetch = global.fetch;
       global.fetch = vi
         .fn()
@@ -698,7 +832,7 @@ describe("POST /api/mcp/chat-v2", () => {
       try {
         const res = await postJson(app, "/api/mcp/chat-v2", {
           messages: [{ role: "user", content: "Hello" }],
-          model: { id: "openai/gpt-oss-120b", provider: "openai" },
+          model: { id: "anthropic/claude-haiku-4.5", provider: "anthropic" },
         });
 
         expect(res.status).toBe(200);
@@ -719,6 +853,94 @@ describe("POST /api/mcp/chat-v2", () => {
         global.fetch = originalFetch;
       }
     });
+    it("uses a guest token for non-gated MCPJam guest requests", async () => {
+      const { getProductionGuestAuthHeader } =
+        await import("../../../utils/guest-auth.js");
+
+      const originalFetch = global.fetch;
+      global.fetch = vi
+        .fn()
+        .mockImplementation(async (input: RequestInfo | URL) => {
+          const url = String(input);
+          if (url === "https://test-convex.example.com/stream") {
+            return createSseResponse([
+              {
+                type: "finish",
+                finishReason: "stop",
+                messageMetadata: {
+                  inputTokens: 1,
+                  outputTokens: 1,
+                  totalTokens: 2,
+                },
+              },
+            ]);
+          }
+
+          if (url === "https://test-convex.example.com/ingest-chat") {
+            return new Response(null, { status: 200 });
+          }
+
+          throw new Error(`Unexpected fetch URL: ${url}`);
+        });
+
+      try {
+        const res = await postJson(app, "/api/mcp/chat-v2", {
+          messages: [{ role: "user", content: "Hello" }],
+          model: { id: "openai/gpt-4o-mini", provider: "openai" },
+        });
+        expect(res.status).toBe(200);
+        await lastStreamExecution;
+
+        const streamCall = vi
+          .mocked(global.fetch)
+          .mock.calls.find(([url]) => String(url).endsWith("/stream"));
+
+        expect(streamCall).toBeDefined();
+        const [, init] = streamCall!;
+        expect(init).toMatchObject({
+          headers: expect.objectContaining({
+            authorization: "Bearer guest-test-token",
+          }),
+        });
+        expect(vi.mocked(getProductionGuestAuthHeader)).toHaveBeenCalled();
+      } finally {
+        global.fetch = originalFetch;
+      }
+    });
+
+    it.each([
+      { id: "openai/gpt-5.4-pro", provider: "openai" },
+      { id: "anthropic/claude-opus-4.6", provider: "anthropic" },
+      { id: "google/gemini-3.1-pro-preview", provider: "google" },
+    ])(
+      "rejects gated MCPJam guest model $id before fetching guest auth",
+      async ({ id, provider }) => {
+        const { getProductionGuestAuthHeader } =
+          await import("../../../utils/guest-auth.js");
+
+        const originalFetch = global.fetch;
+        global.fetch = vi.fn();
+
+        try {
+          const res = await postJson(app, "/api/mcp/chat-v2", {
+            messages: [{ role: "user", content: "Hello" }],
+            model: { id, provider },
+          });
+          const { status, data } = await expectJson(res);
+
+          expect(status).toBe(403);
+          expect(data.error).toBe(
+            "This MCPJam model is not available for guest access. Sign in to continue.",
+          );
+          expect(
+            vi.mocked(getProductionGuestAuthHeader),
+          ).not.toHaveBeenCalled();
+          expect(global.fetch).not.toHaveBeenCalled();
+        } finally {
+          global.fetch = originalFetch;
+        }
+      },
+    );
   });
 
   describe("unresolved tool calls from aborted requests (MCPJam models)", () => {
@@ -746,23 +968,23 @@ describe("POST /api/mcp/chat-v2", () => {
         hasUnresolvedCallCount++;
         return hasUnresolvedCallCount === 1;
       });
-      vi.mocked(executeToolCallsFromMessages).mockImplementation(
-        async (messages: any[]) => {
-          // Simulate adding tool result to messages
-          const toolResultMsg = {
-            role: "tool",
-            content: [
-              {
-                type: "tool-result",
-                toolCallId: "orphaned-call-123",
-                output: { type: "json", value: { result: "executed" } },
-              },
-            ],
-          };
-          messages.push(toolResultMsg);
-          return [toolResultMsg];
-        },
-      );
+      vi.mocked(executeToolCallsFromMessages).mockImplementation((async (
+        messages: any[],
+      ) => {
+        // Simulate adding tool result to messages
+        const toolResultMsg = {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "orphaned-call-123",
+              output: { type: "json", value: { result: "executed" } },
+            },
+          ],
+        } as unknown as ModelMessage;
+        messages.push(toolResultMsg);
+        return [toolResultMsg];
+      }) as any);
 
       // Mock fetch for CONVEX_HTTP_URL - return fresh response each time
       const originalFetch = global.fetch;
@@ -782,7 +1004,7 @@ describe("POST /api/mcp/chat-v2", () => {
         .mockImplementation(async () => createSseResponse(finishEvents));
 
       try {
-        await postJson(app, "/api/mcp/chat-v2", {
+        await postAuthenticatedJson({
           messages: [
             { role: "user", content: "Continue" },
             {
@@ -846,7 +1068,7 @@ describe("POST /api/mcp/chat-v2", () => {
       // No unresolved tool calls - all are resolved
       vi.mocked(hasUnresolvedToolCalls).mockReturnValue(false);
       vi.mocked(executeToolCallsFromMessages).mockImplementation(
-        async () => {},
+        (async () => []) as any,
       );
 
       // Mock fetch for CONVEX_HTTP_URL
@@ -866,7 +1088,7 @@ describe("POST /api/mcp/chat-v2", () => {
       );
 
       try {
-        await postJson(app, "/api/mcp/chat-v2", {
+        await postAuthenticatedJson({
           messages: [
             { role: "user", content: "Continue" },
             {
@@ -918,31 +1140,33 @@ describe("POST /api/mcp/chat-v2", () => {
         hasUnresolvedCallCount++;
         return hasUnresolvedCallCount === 1;
       });
-      vi.mocked(executeToolCallsFromMessages).mockImplementation(
-        async (messages: any[]) => {
-          // Simulate adding tool results for both calls
-          messages.push({
-            role: "tool",
-            content: [
-              {
-                type: "tool-result",
-                toolCallId: "call-1",
-                output: { type: "json", value: { result: "result1" } },
-              },
-            ],
-          });
-          messages.push({
-            role: "tool",
-            content: [
-              {
-                type: "tool-result",
-                toolCallId: "call-2",
-                output: { type: "json", value: { result: "result2" } },
-              },
-            ],
-          });
-        },
-      );
+      vi.mocked(executeToolCallsFromMessages).mockImplementation((async (
+        messages: any[],
+      ) => {
+        // Simulate adding tool results for both calls
+        const firstToolResult = {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "call-1",
+              output: { type: "json", value: { result: "result1" } },
+            },
+          ],
+        } as unknown as ModelMessage;
+        const secondToolResult = {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "call-2",
+              output: { type: "json", value: { result: "result2" } },
+            },
+          ],
+        } as unknown as ModelMessage;
+        messages.push(firstToolResult, secondToolResult);
+        return [firstToolResult, secondToolResult];
+      }) as any);
 
       // Mock fetch for CONVEX_HTTP_URL - return fresh response each time
       const originalFetch = global.fetch;
@@ -962,7 +1186,7 @@ describe("POST /api/mcp/chat-v2", () => {
         .mockImplementation(async () => createSseResponse(finishEvents));
 
       try {
-        await postJson(app, "/api/mcp/chat-v2", {
+        await postAuthenticatedJson({
           messages: [
             { role: "user", content: "Do two things" },
             {
@@ -1026,32 +1250,32 @@ describe("POST /api/mcp/chat-v2", () => {
         hasUnresolvedCallCount++;
         return hasUnresolvedCallCount === 1;
       });
-      vi.mocked(executeToolCallsFromMessages).mockImplementation(
-        async (messages: any[]) => {
-          const msg1 = {
-            role: "tool",
-            content: [
-              {
-                type: "tool-result",
-                toolCallId: "batch-call-1",
-                output: { type: "json", value: { stops: ["Berryessa"] } },
-              },
-            ],
-          };
-          const msg2 = {
-            role: "tool",
-            content: [
-              {
-                type: "tool-result",
-                toolCallId: "batch-call-2",
-                output: { type: "json", value: { stops: ["Montgomery"] } },
-              },
-            ],
-          };
-          messages.push(msg1, msg2);
-          return [msg1, msg2];
-        },
-      );
+      vi.mocked(executeToolCallsFromMessages).mockImplementation((async (
+        messages: any[],
+      ) => {
+        const msg1 = {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "batch-call-1",
+              output: { type: "json", value: { stops: ["Berryessa"] } },
+            },
+          ],
+        } as unknown as ModelMessage;
+        const msg2 = {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "batch-call-2",
+              output: { type: "json", value: { stops: ["Montgomery"] } },
+            },
+          ],
+        } as unknown as ModelMessage;
+        messages.push(msg1, msg2);
+        return [msg1, msg2];
+      }) as any);
 
       const originalFetch = global.fetch;
       let fetchCallCount = 0;
@@ -1105,7 +1329,7 @@ describe("POST /api/mcp/chat-v2", () => {
       });
 
       try {
-        await postJson(app, "/api/mcp/chat-v2", {
+        await postAuthenticatedJson({
           messages: [
             { role: "user", content: "Search stops Berryessa and Montgomery" },
           ],
@@ -1154,23 +1378,23 @@ describe("POST /api/mcp/chat-v2", () => {
         // Second call: false (tool result added, no more unresolved)
         return hasUnresolvedCallCount === 1;
       });
-      vi.mocked(executeToolCallsFromMessages).mockImplementation(
-        async (messages: any[]) => {
-          // Simulate adding tool result for the new tool call
-          const toolResultMsg = {
-            role: "tool",
-            content: [
-              {
-                type: "tool-result",
-                toolCallId: "new-call-from-step",
-                output: { type: "json", value: { result: "done" } },
-              },
-            ],
-          };
-          messages.push(toolResultMsg);
-          return [toolResultMsg];
-        },
-      );
+      vi.mocked(executeToolCallsFromMessages).mockImplementation((async (
+        messages: any[],
+      ) => {
+        // Simulate adding tool result for the new tool call
+        const toolResultMsg = {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "new-call-from-step",
+              output: { type: "json", value: { result: "done" } },
+            },
+          ],
+        } as unknown as ModelMessage;
+        messages.push(toolResultMsg);
+        return [toolResultMsg];
+      }) as any);
 
       const originalFetch = global.fetch;
       let fetchCallCount = 0;
@@ -1205,7 +1429,7 @@ describe("POST /api/mcp/chat-v2", () => {
       });
 
       try {
-        await postJson(app, "/api/mcp/chat-v2", {
+        await postAuthenticatedJson({
           // No inherited tool calls - clean message history
           messages: [{ role: "user", content: "Do something" }],
           model: { id: "google/gemini-2.5-flash", provider: "google" },
@@ -1238,37 +1462,37 @@ describe("POST /api/mcp/chat-v2", () => {
         return unresolvedChecks <= 2;
       });
 
-      vi.mocked(executeToolCallsFromMessages).mockImplementation(
-        async (messages: any[]) => {
-          const latestAssistantWithToolCall = [...messages]
-            .reverse()
-            .find(
-              (msg) =>
-                msg?.role === "assistant" &&
-                Array.isArray(msg.content) &&
-                msg.content.some((part: any) => part?.type === "tool-call"),
-            );
-
-          const latestToolCall = latestAssistantWithToolCall?.content?.find(
-            (part: any) => part?.type === "tool-call",
+      vi.mocked(executeToolCallsFromMessages).mockImplementation((async (
+        messages: any[],
+      ) => {
+        const latestAssistantWithToolCall = [...messages]
+          .reverse()
+          .find(
+            (msg) =>
+              msg?.role === "assistant" &&
+              Array.isArray(msg.content) &&
+              msg.content.some((part: any) => part?.type === "tool-call"),
           );
 
-          if (!latestToolCall?.toolCallId) return [];
+        const latestToolCall = latestAssistantWithToolCall?.content?.find(
+          (part: any) => part?.type === "tool-call",
+        );
 
-          const toolResultMsg = {
-            role: "tool",
-            content: [
-              {
-                type: "tool-result",
-                toolCallId: latestToolCall.toolCallId,
-                output: { type: "json", value: { ok: true } },
-              },
-            ],
-          };
-          messages.push(toolResultMsg);
-          return [toolResultMsg];
-        },
-      );
+        if (!latestToolCall?.toolCallId) return [];
+
+        const toolResultMsg = {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: latestToolCall.toolCallId,
+              output: { type: "json", value: { ok: true } },
+            },
+          ],
+        } as unknown as ModelMessage;
+        messages.push(toolResultMsg);
+        return [toolResultMsg];
+      }) as any);
 
       const originalFetch = global.fetch;
       let fetchCallCount = 0;
@@ -1312,7 +1536,7 @@ describe("POST /api/mcp/chat-v2", () => {
       });
 
       try {
-        await postJson(app, "/api/mcp/chat-v2", {
+        await postAuthenticatedJson({
           messages: [{ role: "user", content: "Do two create_view calls" }],
           model: { id: "google/gemini-2.5-flash-preview", provider: "google" },
         });

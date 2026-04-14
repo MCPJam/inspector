@@ -147,6 +147,116 @@ describe("Asana MCP Evals", () => {
 });
 ```
 
+### OAuth Conformance
+
+Test that your MCP server's OAuth implementation works across all registration methods and protocol versions.
+
+```ts
+import { OAuthConformanceTest, OAuthConformanceSuite } from "@mcpjam/sdk";
+
+// Single flow
+const test = new OAuthConformanceTest({
+  serverUrl: "https://your-server.com/mcp",
+  protocolVersion: "2025-11-25",
+  registrationStrategy: "dcr",
+  auth: { mode: "headless" },
+  verification: { listTools: true },
+});
+
+const result = await test.run();
+console.log(result.passed); // true
+console.log(result.summary); // "OAuth conformance passed for ..."
+
+// Suite: test multiple flows at once
+const suite = new OAuthConformanceSuite({
+  serverUrl: "https://your-server.com/mcp",
+  defaults: { verification: { listTools: true } },
+  flows: [
+    {
+      protocolVersion: "2025-11-25",
+      registrationStrategy: "cimd",
+      auth: { mode: "interactive" },
+    },
+    {
+      protocolVersion: "2025-11-25",
+      registrationStrategy: "dcr",
+      auth: { mode: "interactive" },
+    },
+    {
+      protocolVersion: "2025-11-25",
+      registrationStrategy: "preregistered",
+      auth: {
+        mode: "client_credentials",
+        clientId: "id",
+        clientSecret: "secret",
+      },
+      client: { preregistered: { clientId: "id", clientSecret: "secret" } },
+    },
+  ],
+});
+
+const suiteResult = await suite.run();
+console.log(suiteResult.summary); // "All 3 flows passed for ..."
+```
+
+Or use the CLI:
+
+```bash
+# Single flow (M2M, no browser needed)
+npx @mcpjam/cli oauth conformance \
+  --url https://your-server.com/mcp \
+  --protocol-version 2025-11-25 \
+  --registration preregistered \
+  --auth-mode client_credentials \
+  --redirect-url https://app.example.com/oauth/callback \
+  --client-id "$CLIENT_ID" --client-secret "$CLIENT_SECRET" \
+  --verify-tools
+
+# Suite from config file
+npx @mcpjam/cli oauth conformance-suite --config ./oauth-tests.json
+
+# Force human-readable output
+npx @mcpjam/cli oauth conformance --url https://your-server.com/mcp --protocol-version 2025-11-25 --registration dcr --format human
+
+# JUnit XML for CI
+npx @mcpjam/cli oauth conformance-suite --config ./oauth-tests.json --format junit-xml > report.xml
+```
+
+### MCP Apps Conformance
+
+Validate the server-side MCP Apps surface your server exposes through tools and `ui://` resources.
+
+```ts
+import { MCPAppsConformanceTest } from "@mcpjam/sdk";
+
+const test = new MCPAppsConformanceTest({
+  url: "https://your-server.com/mcp",
+  timeout: 30_000,
+});
+
+const result = await test.run();
+console.log(result.passed);
+console.log(result.summary);
+```
+
+Or use the CLI:
+
+```bash
+# Full MCP Apps surface check
+npx @mcpjam/cli apps conformance \
+  --url https://your-server.com/mcp \
+  --format human
+
+# Focus on resource checks only
+npx @mcpjam/cli apps conformance \
+  --url https://your-server.com/mcp \
+  --category resources
+```
+
+The current runner validates tool metadata, `ui://` resource discovery, `resources/read`, HTML payload shape, and `_meta.ui` metadata such as `csp`, `permissions`, `domain`, and `prefersBorder`.
+
+It does **not** yet validate full host-side SEP-1865 behavior such as `ui/initialize`, sandbox proxy behavior, or host notification ordering.
+
 ---
 
 ## API Reference
@@ -188,6 +298,40 @@ await manager.pingServer("everything");
 // Disconnect
 await manager.disconnectServer("everything");
 ```
+
+Retry policy is SDK-owned and disabled by default. To enable transient retries for connection and read-style manager operations, pass a manager-level policy:
+
+```ts
+const manager = new MCPClientManager(
+  {},
+  {
+    retryPolicy: {
+      retries: 2,
+      retryDelayMs: 3000,
+    },
+  }
+);
+```
+
+The manager applies that policy to `connectToServer()` when called directly and to read/diagnostic methods such as `listTools`, `listResources`, `readResource`, `listPrompts`, `getPrompt`, `pingServer`, and task reads. Read retries wrap the full connect plus RPC operation, so a single retry budget covers reconnect and the follow-on request together.
+
+Tool execution stays single-shot unless you opt in explicitly at the call site:
+
+```ts
+await manager.executeTool(
+  "everything",
+  "add",
+  { a: 1, b: 2 },
+  {
+    retry: {
+      retries: 1,
+      retryDelayMs: 1000,
+    },
+  }
+);
+```
+
+`withEphemeralClient()`, `probeMcpServer()`, and `runServerDoctor()` also accept the same `retryPolicy` shape. Retry classifiers are intentionally conservative in v1: transient network/connect/reset/DNS/timeout failures and HTTP `408`, `425`, `429`, and `5xx` are retryable; auth, validation, and method-unavailable errors are not.
 
 </details>
 

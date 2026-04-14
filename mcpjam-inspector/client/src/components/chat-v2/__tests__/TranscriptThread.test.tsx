@@ -9,7 +9,11 @@ import { TranscriptThread } from "../thread/transcript-thread";
 const mockMessageView = vi.fn();
 
 vi.mock("../thread/message-view", () => ({
-  MessageView: (props: { message: UIMessage; model: ModelDefinition }) => {
+  MessageView: (props: {
+    message: UIMessage;
+    model: ModelDefinition;
+    claudeFooterMode?: "none" | "animated" | "static";
+  }) => {
     mockMessageView(props);
     const { message, model } = props;
     return (
@@ -257,6 +261,48 @@ describe("TranscriptThread", () => {
     expect(wrapper?.className).toContain("bg-primary/5");
     expect(screen.getByTestId("transcript-focus-guide")).toBeInTheDocument();
     expect(screen.getByTestId("message-assistant-1")).toBeInTheDocument();
+  });
+
+  it("uses the resolved Claude variant to attach an animated footer to the latest assistant message", () => {
+    render(
+      <TranscriptThread
+        {...defaultProps}
+        isLoading={true}
+        resolvedLoadingIndicatorVariant="claude-mark"
+        lastRenderableMessageId="assistant-1"
+      />,
+    );
+
+    expect(mockMessageView).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: expect.objectContaining({ id: "assistant-1" }),
+        claudeFooterMode: "animated",
+      }),
+    );
+    expect(mockMessageView).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: expect.objectContaining({ id: "user-1" }),
+        claudeFooterMode: "none",
+      }),
+    );
+  });
+
+  it("uses the resolved Claude variant to keep the latest assistant footer static after loading", () => {
+    render(
+      <TranscriptThread
+        {...defaultProps}
+        isLoading={false}
+        resolvedLoadingIndicatorVariant="claude-mark"
+        lastRenderableMessageId="assistant-1"
+      />,
+    );
+
+    expect(mockMessageView).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: expect.objectContaining({ id: "assistant-1" }),
+        claudeFooterMode: "static",
+      }),
+    );
   });
 
   it("scrolls the focused message using the nearest scrollable ancestor", () => {

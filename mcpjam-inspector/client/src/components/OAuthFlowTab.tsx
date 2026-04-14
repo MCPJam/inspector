@@ -1,11 +1,10 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
-import { EMPTY_OAUTH_FLOW_STATE_V2 } from "@/lib/oauth/state-machines/debug-oauth-2025-06-18";
 import {
-  OAuthFlowState,
+  EMPTY_OAUTH_FLOW_STATE,
+  type OAuthFlowState,
   type OAuthFlowStep,
-} from "@/lib/oauth/state-machines/types";
-import { createOAuthStateMachine } from "@/lib/oauth/state-machines/factory";
-import { DebugMCPOAuthClientProvider } from "@/lib/oauth/debug-oauth-provider";
+} from "@mcpjam/sdk/browser";
+import { createInspectorOAuthStateMachine } from "@/lib/oauth/debug-state-machine-adapter";
 import { OAuthSequenceDiagram } from "@/components/oauth/OAuthSequenceDiagram";
 import { OAuthAuthorizationModal } from "@/components/oauth/OAuthAuthorizationModal";
 import {
@@ -105,7 +104,7 @@ export const OAuthFlowTab = ({
     string | null
   >(null);
   const [oauthFlowState, setOAuthFlowState] = useState<OAuthFlowState>(
-    EMPTY_OAUTH_FLOW_STATE_V2,
+    EMPTY_OAUTH_FLOW_STATE,
   );
   const [focusedStep, setFocusedStep] = useState<OAuthFlowStep | null>(null);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
@@ -188,7 +187,7 @@ export const OAuthFlowTab = ({
     if (prevServerNameRef.current !== selectedServerName) {
       prevServerNameRef.current = selectedServerName;
       setOAuthFlowState({
-        ...EMPTY_OAUTH_FLOW_STATE_V2,
+        ...EMPTY_OAUTH_FLOW_STATE,
         serverUrl: profile.serverUrl || undefined,
       });
       processedCodeRef.current = null;
@@ -203,7 +202,7 @@ export const OAuthFlowTab = ({
     (serverUrlOverride?: string) => {
       const nextServerUrl = serverUrlOverride ?? profile.serverUrl;
       setOAuthFlowState({
-        ...EMPTY_OAUTH_FLOW_STATE_V2,
+        ...EMPTY_OAUTH_FLOW_STATE,
         serverUrl: nextServerUrl || undefined,
       });
       processedCodeRef.current = null;
@@ -231,16 +230,13 @@ export const OAuthFlowTab = ({
   const oauthStateMachine = useMemo(() => {
     if (!hasProfile) return null;
 
-    const provider = new DebugMCPOAuthClientProvider(profile.serverUrl);
-
-    return createOAuthStateMachine({
+    return createInspectorOAuthStateMachine({
       protocolVersion,
       state: oauthFlowStateRef.current,
       getState: () => oauthFlowStateRef.current,
       updateState: updateOAuthFlowState,
       serverUrl: profile.serverUrl,
       serverName: serverIdentifier,
-      redirectUrl: provider.redirectUrl,
       customScopes: profile.scopes.trim() || undefined,
       customHeaders,
       registrationStrategy,

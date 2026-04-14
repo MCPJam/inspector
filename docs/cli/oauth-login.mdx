@@ -1,0 +1,127 @@
+---
+title: "OAuth Login & Debugging"
+description: "Authenticate with MCP servers and debug OAuth flows"
+icon: "key"
+---
+
+The `oauth` command group handles authentication against MCP servers that require OAuth. Use `oauth login` to obtain tokens interactively, and the proxy/metadata commands to debug discovery and endpoint behavior.
+
+## Quick start
+
+```bash
+# Interactive login — opens a browser for consent
+mcpjam oauth login --url https://your-server.com/mcp \
+  --protocol-version 2025-11-25 \
+  --registration dcr
+```
+
+On success, the command prints credentials (access token, refresh token, client ID) that you can pass to other commands via `--oauth-access-token` or `--access-token`.
+
+## Commands
+
+### `oauth login`
+
+Runs a full OAuth flow: discovery, registration, authorization, token exchange. Supports all three registration strategies and auth modes.
+
+```bash
+# DCR + interactive (most common for local dev)
+mcpjam oauth login --url https://your-server.com/mcp \
+  --protocol-version 2025-11-25 \
+  --registration dcr
+
+# CIMD + interactive (2025-11-25 only)
+mcpjam oauth login --url https://your-server.com/mcp \
+  --protocol-version 2025-11-25 \
+  --registration cimd
+
+# Preregistered + client_credentials (M2M, no browser)
+mcpjam oauth login --url https://your-server.com/mcp \
+  --protocol-version 2025-11-25 \
+  --registration preregistered \
+  --auth-mode client_credentials \
+  --client-id "$CLIENT_ID" \
+  --client-secret "$CLIENT_SECRET"
+```
+
+<Warning>
+  Prefer environment variables for `--client-secret`. Passing it inline leaks
+  to shell history and process listings.
+</Warning>
+
+The `--debug-out <path>` flag captures a structured debug artifact with full HTTP traces — useful for filing bug reports or handing off to another engineer.
+
+```bash
+mcpjam oauth login --url https://your-server.com/mcp \
+  --protocol-version 2025-11-25 \
+  --registration dcr \
+  --debug-out oauth-debug.json
+```
+
+### `oauth metadata`
+
+Fetch and display OAuth metadata from a URL. Useful for verifying your server's discovery endpoints are correct.
+
+```bash
+mcpjam oauth metadata --url https://your-server.com/.well-known/oauth-protected-resource
+mcpjam oauth metadata --url https://auth.example.com/.well-known/oauth-authorization-server
+```
+
+### `oauth proxy`
+
+Send an arbitrary HTTP request through the OAuth proxy with hosted-mode safety checks. Useful for testing individual OAuth endpoints (registration, token, etc.) without building raw HTTP requests.
+
+```bash
+# Test a DCR registration
+mcpjam oauth proxy \
+  --url https://auth.example.com/register \
+  --method POST \
+  --header "Content-Type: application/json" \
+  --body '{"redirect_uris":["http://localhost:8080/callback"],"client_name":"test"}'
+
+# Fetch an endpoint
+mcpjam oauth proxy --url https://auth.example.com/v1/oauth2/token --method GET
+```
+
+### `oauth debug-proxy`
+
+Same as `oauth proxy` but routes through the debug proxy path. Use when testing endpoints that behave differently for debug vs. production requests.
+
+## Login flags
+
+| Flag | Required | Default | Description |
+|------|----------|---------|-------------|
+| `--url <url>` | Yes | | MCP server URL |
+| `--protocol-version <v>` | Yes | | `2025-03-26`, `2025-06-18`, or `2025-11-25` |
+| `--registration <s>` | Yes | | `cimd`, `dcr`, or `preregistered` |
+| `--auth-mode <m>` | No | `interactive` | `headless`, `interactive`, or `client_credentials` |
+| `--client-id <id>` | No | | OAuth client ID (required for `preregistered`) |
+| `--client-secret <s>` | No | | OAuth client secret |
+| `--client-metadata-url <url>` | No | | CIMD metadata document URL |
+| `--redirect-url <url>` | No | Auto-generated | OAuth redirect URL |
+| `--scopes <scopes>` | No | | Space-separated scope string |
+| `--header <header>` | No | | HTTP header `Key: Value` (repeatable) |
+| `--step-timeout <ms>` | No | `30000` | Per-step timeout |
+| `--verify-tools` | No | | After login, connect and list tools |
+| `--verify-call-tool <name>` | No | | After listing, also call a named tool |
+| `--debug-out <path>` | No | | Write debug artifact to file |
+
+<Note>
+  For interactive login, a custom `--redirect-url` must still be an
+  `http://localhost` or `http://127.0.0.1` loopback URL. Custom callback paths
+  are supported.
+</Note>
+
+## Using tokens from login
+
+After a successful `oauth login`, use the printed access token with other commands:
+
+```bash
+# Capture the token
+TOKEN=$(mcpjam oauth login --url https://your-server.com/mcp \
+  --protocol-version 2025-11-25 --registration dcr \
+  --format json | jq -r '.credentials.accessToken')
+
+# Use it
+mcpjam server doctor --url https://your-server.com/mcp --oauth-access-token "$TOKEN"
+mcpjam tools list --url https://your-server.com/mcp --access-token "$TOKEN"
+```

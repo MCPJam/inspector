@@ -20,6 +20,7 @@ import {
   Puzzle,
 } from "lucide-react";
 import { usePostHog, useFeatureFlagEnabled } from "posthog-js/react";
+import { standardEventProps } from "@/lib/PosthogUtils";
 
 import { NavMain } from "@/components/sidebar/nav-main";
 import {
@@ -74,6 +75,7 @@ import { LearnMoreExpandedPanel } from "@/components/learn-more/LearnMoreExpande
 import type { BillingFeatureName } from "@/hooks/useOrganizationBilling";
 import type { ServerWithName } from "@/hooks/use-app-state";
 import type { Workspace } from "@/state/app-types";
+import type { OrganizationRouteSection } from "@/lib/hosted-navigation";
 
 interface NavItem {
   title: string;
@@ -342,6 +344,10 @@ interface MCPSidebarProps extends React.ComponentProps<typeof Sidebar> {
   onDeleteWorkspace: (workspaceId: string) => void;
   isLoadingWorkspaces?: boolean;
   activeOrganizationId?: string;
+  onSwitchOrganization?: (
+    organizationId: string,
+    section?: OrganizationRouteSection,
+  ) => void;
   billingGateDenied?: Partial<Record<BillingFeatureName, boolean>>;
   billingGateEnforcementActive?: boolean;
   billingUiEnabled?: boolean;
@@ -504,6 +510,7 @@ export function MCPSidebar({
   onDeleteWorkspace,
   isLoadingWorkspaces,
   activeOrganizationId,
+  onSwitchOrganization,
   billingGateDenied = {},
   billingGateEnforcementActive = false,
   billingUiEnabled = false,
@@ -596,10 +603,10 @@ export function MCPSidebar({
         localStorage.setItem(APP_BUILDER_VISITED_KEY, "true");
         setHasVisitedAppBuilder(true);
       }
-      // Track skills tab opened
-      if (section === "skills") {
-        posthog.capture("skills_tab_opened");
-      }
+      posthog.capture("sidebar_nav_clicked", {
+        ...standardEventProps("mcp_sidebar"),
+        section,
+      });
       onNavigate(section);
     } else {
       window.open(url, "_blank");
@@ -778,7 +785,10 @@ export function MCPSidebar({
           })}
         </SidebarContent>
         <SidebarFooter>
-          <SidebarUser activeOrganizationId={activeOrganizationId} />
+          <SidebarUser
+            activeOrganizationId={activeOrganizationId}
+            onSwitchOrganization={onSwitchOrganization}
+          />
         </SidebarFooter>
       </Sidebar>
       {learnMoreEnabled && (

@@ -1,16 +1,42 @@
 import type { ReactNode } from "react";
-import { describe, it, expect, vi } from "vitest";
+import { beforeEach, describe, it, expect, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
 import { render, screen, fireEvent, within } from "@testing-library/react";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
-import { TraceTimeline } from "../trace-timeline";
+import { selectAxisTickPercents, TraceTimeline } from "../trace-timeline";
+
+const mockCapture = vi.fn();
+
+vi.mock("posthog-js/react", () => ({
+  usePostHog: () => ({ capture: mockCapture }),
+}));
 
 vi.mock("@/components/ui/resizable", () => ({
   ResizablePanelGroup: ({ children }: { children: ReactNode }) => (
     <div data-testid="resizable-panel-group">{children}</div>
   ),
-  ResizablePanel: ({ children }: { children: ReactNode }) => (
-    <div data-testid="resizable-panel">{children}</div>
+  ResizablePanel: ({
+    children,
+    className,
+    defaultSize,
+    minSize,
+    maxSize,
+  }: {
+    children: ReactNode;
+    className?: string;
+    defaultSize?: number;
+    minSize?: number;
+    maxSize?: number;
+  }) => (
+    <div
+      data-testid="resizable-panel"
+      data-default-size={defaultSize}
+      data-min-size={minSize}
+      data-max-size={maxSize}
+      className={className}
+    >
+      {children}
+    </div>
   ),
   ResizableHandle: () => <div data-testid="resizable-handle" />,
 }));
@@ -21,7 +47,60 @@ vi.mock("@/components/ui/json-editor", () => ({
   ),
 }));
 
+beforeEach(() => {
+  mockCapture.mockClear();
+});
+
+describe("selectAxisTickPercents", () => {
+  it("uses only endpoints when unmeasured, zero, or very narrow", () => {
+    expect(selectAxisTickPercents(-1)).toEqual([0, 100]);
+    expect(selectAxisTickPercents(0)).toEqual([0, 100]);
+    expect(selectAxisTickPercents(60)).toEqual([0, 100]);
+  });
+
+  it("adds a middle tick when there is moderate width", () => {
+    expect(selectAxisTickPercents(180)).toEqual([0, 50, 100]);
+  });
+
+  it("omits the center tick but keeps quartiles when between moderate and full", () => {
+    expect(selectAxisTickPercents(220)).toEqual([0, 25, 75, 100]);
+  });
+
+  it("shows all default ticks when the axis is wide enough", () => {
+    expect(selectAxisTickPercents(300)).toEqual([0, 25, 50, 75, 100]);
+  });
+});
+
 describe("TraceTimeline detail pane", () => {
+  it("allows the detail pane to expand to full height", () => {
+    const spans: EvalTraceSpan[] = [
+      {
+        id: "tool-a",
+        name: "read_me",
+        category: "tool",
+        startMs: 0,
+        endMs: 20,
+        toolName: "read_me",
+      },
+    ];
+
+    render(
+      <TraceTimeline
+        recordedSpans={spans}
+        transcriptMessages={[{ role: "user", content: "hi" }]}
+      />,
+    );
+
+    const [timelinePanel, detailPanel] =
+      screen.getAllByTestId("resizable-panel");
+
+    expect(timelinePanel).toHaveAttribute("data-default-size", "65");
+    expect(timelinePanel).toHaveAttribute("data-min-size", "0");
+    expect(detailPanel).toHaveAttribute("data-default-size", "35");
+    expect(detailPanel).toHaveAttribute("data-min-size", "20");
+    expect(detailPanel).not.toHaveAttribute("data-max-size");
+  });
+
   it("shows tool input from transcript when span has toolName but no toolCallId", () => {
     const spans: EvalTraceSpan[] = [
       {
@@ -91,6 +170,53 @@ describe("TraceTimeline detail pane", () => {
     expect(
       within(pane).queryByRole("button", { name: "Plain" }),
     ).not.toBeInTheDocument();
+  });
+
+  it("selects a row from the outer row container", () => {
+    const spans: EvalTraceSpan[] = [
+      {
+        id: "tool-a",
+        name: "read_me",
+        category: "tool",
+        startMs: 0,
+        endMs: 120,
+        toolName: "read_me",
+        toolCallId: "tc-100",
+      },
+    ];
+    const transcriptMessages = [
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool-call",
+            toolCallId: "tc-100",
+            toolName: "read_me",
+            input: { path: "README.md" },
+          },
+        ],
+      },
+    ];
+
+    render(
+      <TraceTimeline
+        recordedSpans={spans}
+        transcriptMessages={transcriptMessages}
+      />,
+    );
+
+    const toolRow = screen
+      .getAllByTestId("trace-row")
+      .find((el) => el.textContent?.includes("read_me"));
+    expect(toolRow).toBeTruthy();
+
+    fireEvent.click(toolRow!);
+
+    const pane = screen.getByTestId("trace-detail-pane");
+    expect(within(pane).getByText("Tool · read_me")).toBeInTheDocument();
+    expect(within(pane).getByTestId("json-editor").textContent).toContain(
+      "README.md",
+    );
   });
 
   it("hides step rows from the waterfall (only LLM/tool/error spans are shown)", () => {
@@ -276,6 +402,7 @@ describe("TraceTimeline detail pane", () => {
         startMs: 0,
         endMs: 20,
         toolName: "read_me",
+        toolCallId: "tc-101",
       },
     ];
     render(
@@ -287,6 +414,7 @@ describe("TraceTimeline detail pane", () => {
             content: [
               {
                 type: "tool-call",
+                toolCallId: "tc-101",
                 toolName: "read_me",
                 input: { x: 1 },
               },
@@ -313,6 +441,7 @@ describe("TraceTimeline detail pane", () => {
         startMs: 0,
         endMs: 20,
         toolName: "read_me",
+        toolCallId: "tc-102",
       },
     ];
     render(
@@ -324,6 +453,7 @@ describe("TraceTimeline detail pane", () => {
             content: [
               {
                 type: "tool-call",
+                toolCallId: "tc-102",
                 toolName: "read_me",
                 input: { x: 1 },
               },
@@ -340,6 +470,97 @@ describe("TraceTimeline detail pane", () => {
     await user.click(within(toolRow!).getByTestId("trace-row-duration-hit"));
     const pane = screen.getByTestId("trace-detail-pane");
     expect(within(pane).getByText("Tool · read_me")).toBeInTheDocument();
+  });
+
+  it("selects a row from the timeline bar hit area", async () => {
+    const user = userEvent.setup();
+    const spans: EvalTraceSpan[] = [
+      {
+        id: "tool-a",
+        name: "read_me",
+        category: "tool",
+        startMs: 0,
+        endMs: 20,
+        toolName: "read_me",
+        toolCallId: "tc-103",
+      },
+    ];
+    render(
+      <TraceTimeline
+        recordedSpans={spans}
+        transcriptMessages={[
+          {
+            role: "assistant",
+            content: [
+              {
+                type: "tool-call",
+                toolCallId: "tc-103",
+                toolName: "read_me",
+                input: { x: 1 },
+              },
+            ],
+          },
+        ]}
+      />,
+    );
+
+    const toolRow = screen
+      .getAllByTestId("trace-row")
+      .find((el) => el.textContent?.includes("read_me"));
+    expect(toolRow).toBeTruthy();
+
+    await user.click(within(toolRow!).getByTestId("trace-row-bar-hit"));
+
+    const pane = screen.getByTestId("trace-detail-pane");
+    expect(within(pane).getByText("Tool · read_me")).toBeInTheDocument();
+  });
+
+  it("captures row selection only once when clicking the label button", async () => {
+    const user = userEvent.setup();
+    const spans: EvalTraceSpan[] = [
+      {
+        id: "tool-a",
+        name: "read_me",
+        category: "tool",
+        startMs: 0,
+        endMs: 20,
+        toolName: "read_me",
+        toolCallId: "tc-104",
+      },
+    ];
+    render(
+      <TraceTimeline
+        recordedSpans={spans}
+        transcriptMessages={[
+          {
+            role: "assistant",
+            content: [
+              {
+                type: "tool-call",
+                toolCallId: "tc-104",
+                toolName: "read_me",
+                input: { x: 1 },
+              },
+            ],
+          },
+        ]}
+      />,
+    );
+
+    const toolRow = screen
+      .getAllByTestId("trace-row")
+      .find((el) => el.textContent?.includes("read_me"));
+    expect(toolRow).toBeTruthy();
+
+    await user.click(within(toolRow!).getByTestId("trace-row-label-button"));
+
+    expect(mockCapture).toHaveBeenCalledTimes(1);
+    expect(mockCapture).toHaveBeenCalledWith(
+      "trace_span_clicked",
+      expect.objectContaining({
+        span_kind: "span",
+      }),
+    );
   });
 
   it("labels generic LLM spans as Agent and keeps tokens out of the inline row text", () => {
@@ -652,6 +873,10 @@ describe("TraceTimeline detail pane", () => {
     expect(hoverContent).toHaveAttribute("data-side", "left");
 
     const hoverCard = await screen.findByTestId("trace-row-hover-card");
+    expect(within(hoverCard).getByText("Time")).toBeTruthy();
+    expect(within(hoverCard).getByText("Start")).toBeTruthy();
+    expect(within(hoverCard).getByText("Tokens")).toBeTruthy();
+    expect(within(hoverCard).getByText("Input")).toBeTruthy();
     expect(
       within(hoverCard).getByTestId("trace-row-hover-start"),
     ).toHaveTextContent(new Date(traceStartedAtMs).toLocaleString());
@@ -703,6 +928,152 @@ describe("TraceTimeline detail pane", () => {
     expect(
       within(hoverCard).getByTestId("trace-row-hover-end"),
     ).toHaveTextContent("—");
+    expect(
+      within(hoverCard).getByTestId("trace-row-hover-input-tokens"),
+    ).toHaveTextContent("—");
+    expect(
+      within(hoverCard).getByTestId("trace-row-hover-output-tokens"),
+    ).toHaveTextContent("—");
+    expect(
+      within(hoverCard).getByTestId("trace-row-hover-total-tokens"),
+    ).toHaveTextContent("—");
+  });
+
+  it("toggles a prompt chevron without changing another selected row", async () => {
+    const user = userEvent.setup();
+    const spans: EvalTraceSpan[] = [
+      {
+        id: "llm-1",
+        name: "Model response",
+        category: "llm",
+        startMs: 0,
+        endMs: 100,
+        promptIndex: 0,
+      },
+      {
+        id: "llm-2",
+        name: "Model response",
+        category: "llm",
+        startMs: 100,
+        endMs: 200,
+        promptIndex: 1,
+      },
+    ];
+    const transcriptMessages = [
+      { role: "user" as const, content: "first turn" },
+      { role: "assistant" as const, content: "first answer" },
+      { role: "user" as const, content: "second turn" },
+      { role: "assistant" as const, content: "second answer" },
+    ];
+
+    render(
+      <TraceTimeline
+        recordedSpans={spans}
+        transcriptMessages={transcriptMessages}
+      />,
+    );
+
+    expect(screen.getAllByTestId("trace-row")).toHaveLength(4);
+
+    const secondPrompt = screen
+      .getAllByTestId("trace-row")
+      .find((el) =>
+        within(el).queryByRole("button", { name: "Collapse Prompt 2" }),
+      );
+    expect(secondPrompt).toBeTruthy();
+
+    await user.click(
+      within(secondPrompt!).getByTestId("trace-row-label-button"),
+    );
+
+    const secondPromptSelected = screen
+      .getAllByTestId("trace-row")
+      .find((el) =>
+        within(el).queryByRole("button", { name: "Collapse Prompt 2" }),
+      );
+    expect(secondPromptSelected).toBeTruthy();
+    expect(secondPromptSelected!).toHaveClass("trace-waterfall-row-selected");
+
+    const firstPrompt = screen
+      .getAllByTestId("trace-row")
+      .find((el) =>
+        within(el).queryByRole("button", { name: "Collapse Prompt 1" }),
+      );
+    expect(firstPrompt).toBeTruthy();
+
+    await user.click(
+      within(firstPrompt!).getByRole("button", { name: "Collapse Prompt 1" }),
+    );
+
+    expect(screen.getAllByTestId("trace-row")).toHaveLength(3);
+
+    const firstPromptAfter = screen
+      .getAllByTestId("trace-row")
+      .find((el) =>
+        within(el).queryByRole("button", { name: "Expand Prompt 1" }),
+      );
+    const secondPromptAfter = screen
+      .getAllByTestId("trace-row")
+      .find((el) =>
+        within(el).queryByRole("button", { name: "Collapse Prompt 2" }),
+      );
+
+    expect(firstPromptAfter).toBeTruthy();
+    expect(secondPromptAfter).toBeTruthy();
+    expect(firstPromptAfter!).not.toHaveClass("trace-waterfall-row-selected");
+    expect(secondPromptAfter!).toHaveClass("trace-waterfall-row-selected");
+    expect(
+      within(firstPromptAfter!).getByRole("button", {
+        name: "Expand Prompt 1",
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it("does NOT inherit LLM token counts onto tool row hover card", async () => {
+    const user = userEvent.setup();
+    const traceStartedAtMs = Date.parse("2026-03-30T02:35:00.000Z");
+    const spans: EvalTraceSpan[] = [
+      {
+        id: "step-0-llm",
+        name: "Model response",
+        category: "llm",
+        startMs: 0,
+        endMs: 300,
+        promptIndex: 0,
+        stepIndex: 0,
+        inputTokens: 50,
+        outputTokens: 12,
+        totalTokens: 62,
+      },
+      {
+        id: "tool-read",
+        name: "read_me",
+        category: "tool",
+        startMs: 300,
+        endMs: 350,
+        promptIndex: 0,
+        stepIndex: 0,
+        toolName: "read_me",
+      },
+    ];
+
+    render(
+      <TraceTimeline
+        recordedSpans={spans}
+        transcriptMessages={[{ role: "user", content: "hi" }]}
+        traceStartedAtMs={traceStartedAtMs}
+        traceEndedAtMs={traceStartedAtMs + 350}
+      />,
+    );
+
+    const toolRow = screen
+      .getAllByTestId("trace-row")
+      .find((el) => el.textContent?.includes("read_me"));
+    expect(toolRow).toBeTruthy();
+
+    await user.hover(toolRow!);
+
+    const hoverCard = await screen.findByTestId("trace-row-hover-card");
     expect(
       within(hoverCard).getByTestId("trace-row-hover-input-tokens"),
     ).toHaveTextContent("—");
@@ -976,5 +1347,84 @@ describe("TraceTimeline detail pane", () => {
         name: /Agent · Calling read_me, create_view/i,
       }),
     ).toBeInTheDocument();
+  });
+
+  it("keeps the selected prompt row when only span timings change (live preview)", () => {
+    const spansA: EvalTraceSpan[] = [
+      {
+        id: "p0-step",
+        name: "Step 1",
+        category: "step",
+        startMs: 0,
+        endMs: 100,
+        promptIndex: 0,
+        stepIndex: 0,
+        status: "ok",
+      },
+      {
+        id: "p0-llm",
+        parentId: "p0-step",
+        name: "Agent",
+        category: "llm",
+        startMs: 0,
+        endMs: 100,
+        promptIndex: 0,
+        stepIndex: 0,
+        status: "ok",
+        messageStartIndex: 0,
+        messageEndIndex: 0,
+      },
+      {
+        id: "p1-step",
+        name: "Step 1",
+        category: "step",
+        startMs: 100,
+        endMs: 200,
+        promptIndex: 1,
+        stepIndex: 0,
+        status: "ok",
+      },
+      {
+        id: "p1-llm",
+        parentId: "p1-step",
+        name: "Agent",
+        category: "llm",
+        startMs: 100,
+        endMs: 200,
+        promptIndex: 1,
+        stepIndex: 0,
+        status: "ok",
+        messageStartIndex: 2,
+        messageEndIndex: 2,
+      },
+    ];
+    const transcript = [
+      { role: "user", content: "draw a dog" },
+      { role: "assistant", content: "ok" },
+      { role: "user", content: "save checkpoint" },
+    ];
+    const { rerender } = render(
+      <TraceTimeline recordedSpans={spansA} transcriptMessages={transcript} />,
+    );
+
+    const secondPrompt = screen
+      .getAllByTestId("trace-row")
+      .find((el) => el.textContent?.includes('User: "save checkpoint"'));
+    expect(secondPrompt).toBeTruthy();
+    fireEvent.click(
+      within(secondPrompt!).getByTestId("trace-row-label-button"),
+    );
+    expect(secondPrompt!).toHaveClass("trace-waterfall-row-selected");
+
+    const spansB = spansA.map((s) => ({ ...s, endMs: s.endMs + 400 }));
+    rerender(
+      <TraceTimeline recordedSpans={spansB} transcriptMessages={transcript} />,
+    );
+
+    const secondAfter = screen
+      .getAllByTestId("trace-row")
+      .find((el) => el.textContent?.includes('User: "save checkpoint"'));
+    expect(secondAfter).toBeTruthy();
+    expect(secondAfter!).toHaveClass("trace-waterfall-row-selected");
   });
 });

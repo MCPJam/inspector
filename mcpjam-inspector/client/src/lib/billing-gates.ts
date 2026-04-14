@@ -9,7 +9,6 @@ import {
   type PremiumnessGateKey,
   type PremiumnessState,
 } from "@/hooks/useOrganizationBilling";
-import { useWorkspaceQueries } from "@/hooks/useWorkspaces";
 import {
   formatBillingLimitReachedMessage,
   getGateDecision,
@@ -112,26 +111,24 @@ export function resolveBillingGateState(
 
 interface UseWorkspaceBillingGateParams {
   workspaceId: string | null;
+  organizationId: string | null;
   gate: BillingGateDefinition;
 }
 
 export function useWorkspaceBillingGate({
   workspaceId,
+  organizationId,
   gate,
 }: UseWorkspaceBillingGateParams): ResolvedBillingGate {
   const { isAuthenticated } = useConvexAuth();
   const billingUiFlag = useFeatureFlagEnabled("billing-entitlements-ui");
   const billingUiEnabled = billingUiFlag === true;
   const shouldResolve =
-    isAuthenticated && billingUiFlag !== false && !!workspaceId;
-  const { workspaces, isLoading: isLoadingWorkspaces } = useWorkspaceQueries({
-    isAuthenticated,
-  });
-  const workspace =
-    (workspaces ?? []).find(
-      (currentWorkspace) => currentWorkspace._id === workspaceId,
-    ) ?? null;
-  const organizationId = workspace?.organizationId ?? null;
+    isAuthenticated &&
+    billingUiFlag !== false &&
+    !!workspaceId &&
+    !!organizationId;
+  const resolvedOrganizationId = shouldResolve ? organizationId : null;
   const {
     billingStatus,
     organizationPremiumness,
@@ -139,25 +136,23 @@ export function useWorkspaceBillingGate({
     isLoadingBilling,
     isLoadingOrganizationPremiumness,
     isLoadingWorkspacePremiumness,
-  } = useOrganizationBilling(shouldResolve ? organizationId : null, {
+  } = useOrganizationBilling(resolvedOrganizationId, {
     workspaceId: shouldResolve ? workspaceId : null,
   });
   const premiumness =
-    workspaceId && workspacePremiumness
+    shouldResolve && workspacePremiumness
       ? workspacePremiumness
       : organizationPremiumness;
   const isLoadingGate =
     shouldResolve &&
     (billingUiFlag === undefined ||
-      isLoadingWorkspaces ||
-      (organizationId !== null &&
-        (isLoadingBilling ||
-          isLoadingWorkspacePremiumness ||
-          isLoadingOrganizationPremiumness)));
+      isLoadingBilling ||
+      isLoadingWorkspacePremiumness ||
+      isLoadingOrganizationPremiumness);
 
   return resolveBillingGateState({
     billingUiEnabled,
-    organizationId,
+    organizationId: resolvedOrganizationId,
     billingStatus,
     premiumness,
     gate,

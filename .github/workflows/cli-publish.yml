@@ -1,0 +1,51 @@
+name: CLI NPM release
+
+on:
+  workflow_dispatch:
+
+env:
+  NODE_VERSION: "24.14.0"
+
+jobs:
+  publish-cli:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: cli
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build
+        run: npm run build
+
+      - name: Publish to npm
+        run: npm publish --access public --ignore-scripts
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Get published package metadata
+        id: package
+        run: |
+          echo "name=$(node -p "require('./package.json').name")" >> $GITHUB_OUTPUT
+          echo "version=$(node -p "require('./package.json').version")" >> $GITHUB_OUTPUT
+          echo "url=https://www.npmjs.com/package/$(node -p "encodeURIComponent(require('./package.json').name)")" >> $GITHUB_OUTPUT
+
+      - name: Create success summary
+        run: |
+          echo "## CLI Published Successfully!" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Package:** [${{ steps.package.outputs.name }}](${{ steps.package.outputs.url }})" >> $GITHUB_STEP_SUMMARY
+          echo "**Version:** ${{ steps.package.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Run with: \`npx ${{ steps.package.outputs.name }} --help\`" >> $GITHUB_STEP_SUMMARY
+          echo "Global install: \`npm install -g ${{ steps.package.outputs.name }}\`" >> $GITHUB_STEP_SUMMARY

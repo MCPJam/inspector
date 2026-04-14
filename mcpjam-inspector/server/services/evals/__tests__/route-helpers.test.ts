@@ -4,9 +4,14 @@ const { mcpClientManagerConstructorMock } = vi.hoisted(() => ({
   mcpClientManagerConstructorMock: vi.fn(),
 }));
 
-vi.mock("@mcpjam/sdk", () => ({
-  MCPClientManager: mcpClientManagerConstructorMock,
-}));
+vi.mock("@mcpjam/sdk", async () => {
+  const actual =
+    await vi.importActual<typeof import("@mcpjam/sdk")>("@mcpjam/sdk");
+  return {
+    ...actual,
+    MCPClientManager: mcpClientManagerConstructorMock,
+  };
+});
 
 import {
   buildReplayManager,
@@ -164,6 +169,10 @@ describe("buildReplayManager", () => {
       {
         defaultTimeout: expect.any(Number),
         lazyConnect: true,
+        retryPolicy: {
+          retries: 0,
+          retryDelayMs: 3000,
+        },
       },
     );
   });

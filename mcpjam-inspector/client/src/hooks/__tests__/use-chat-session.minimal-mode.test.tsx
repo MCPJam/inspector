@@ -10,6 +10,13 @@ const mockAddToolApprovalResponse = vi.fn();
 const mockAuthFetch = vi.fn();
 const mockGetSessionAuthHeaders = vi.fn(() => ({}));
 const mockGetAccessToken = vi.fn(async () => null);
+const mockGetGuestBearerToken = vi.fn(async () => "guest-token");
+const mockHasToken = vi.fn(() => false);
+const mockGetToken = vi.fn(() => "");
+const mockGetOpenRouterSelectedModels = vi.fn(() => []);
+const mockGetOllamaBaseUrl = vi.fn(() => "http://127.0.0.1:11434");
+const mockGetAzureBaseUrl = vi.fn(() => "");
+const mockGetCustomProviderByName = vi.fn();
 const mockConvexAuth = {
   isAuthenticated: true,
   isLoading: false,
@@ -17,6 +24,7 @@ const mockConvexAuth = {
 const mockTransportInstances: Array<{
   options: any;
   sendMessages: ReturnType<typeof vi.fn>;
+  requests: any[];
 }> = [];
 
 const baseModel = {
@@ -29,14 +37,30 @@ const mcpJamModel = {
   name: "GPT-5 Mini",
   provider: "openai" as const,
 };
-const guestParityMcpJamModel = {
-  id: "openai/gpt-oss-120b",
-  name: "GPT OSS 120B",
+const gatedMcpJamModel = {
+  id: "openai/gpt-5.4-pro",
+  name: "GPT-5.4 Pro",
   provider: "openai" as const,
+};
+const guestAllowedMcpJamModel = {
+  id: "anthropic/claude-haiku-4.5",
+  name: "Claude Haiku 4.5",
+  provider: "anthropic" as const,
 };
 const mockModelState = {
   availableModels: [baseModel],
   selectedModelId: "gpt-4",
+};
+const mockAiProviderKeysState = {
+  hasToken: mockHasToken,
+  getToken: mockGetToken,
+  getOpenRouterSelectedModels: mockGetOpenRouterSelectedModels,
+  getOllamaBaseUrl: mockGetOllamaBaseUrl,
+  getAzureBaseUrl: mockGetAzureBaseUrl,
+};
+const mockCustomProvidersState = {
+  customProviders: [],
+  getCustomProviderByName: mockGetCustomProviderByName,
 };
 
 async function resolveConfig<T>(value: T | (() => T | Promise<T>)) {
@@ -53,6 +77,10 @@ function getUsedTransport() {
   return transport!;
 }
 
+function getTransportRequests() {
+  return mockTransportInstances.flatMap((instance) => instance.requests);
+}
+
 vi.mock("@/lib/config", () => ({
   HOSTED_MODE: false,
 }));
@@ -63,26 +91,21 @@ vi.mock("@/components/chat-v2/shared/model-helpers", () => ({
 }));
 
 vi.mock("@/hooks/use-ai-provider-keys", () => ({
-  useAiProviderKeys: () => ({
-    hasToken: vi.fn(() => false),
-    getToken: vi.fn(() => ""),
-    getOpenRouterSelectedModels: vi.fn(() => []),
-    getOllamaBaseUrl: vi.fn(() => "http://127.0.0.1:11434"),
-    getAzureBaseUrl: vi.fn(() => ""),
-  }),
+  useAiProviderKeys: () => mockAiProviderKeysState,
 }));
 
 vi.mock("@/hooks/use-custom-providers", () => ({
-  useCustomProviders: () => ({
-    customProviders: [],
-    getCustomProviderByName: vi.fn(),
-  }),
+  useCustomProviders: () => mockCustomProvidersState,
 }));
 
 vi.mock("@/hooks/use-persisted-model", () => ({
   usePersistedModel: () => ({
     selectedModelId: mockModelState.selectedModelId,
     setSelectedModelId: vi.fn(),
+    selectedModelIds: [mockModelState.selectedModelId],
+    setSelectedModelIds: vi.fn(),
+    multiModelEnabled: false,
+    setMultiModelEnabled: vi.fn(),
   }),
 }));
 
@@ -105,6 +128,10 @@ vi.mock("@/lib/apis/mcp-tokenizer-api", () => ({
 vi.mock("@/lib/session-token", () => ({
   authFetch: (...args: unknown[]) => mockAuthFetch(...args),
   getAuthHeaders: () => mockGetSessionAuthHeaders(),
+}));
+
+vi.mock("@/lib/guest-session", () => ({
+  getGuestBearerToken: (...args: unknown[]) => mockGetGuestBearerToken(...args),
 }));
 
 vi.mock("@/hooks/useSharedChatWidgetCapture", () => ({
@@ -181,9 +208,11 @@ vi.mock("ai", () => ({
   DefaultChatTransport: class MockTransport {
     options: any;
     sendMessages: ReturnType<typeof vi.fn>;
+    requests: any[];
 
     constructor(options: any) {
       this.options = options;
+      this.requests = [];
       this.sendMessages = vi.fn(async (requestOptions: any) => {
         const resolvedBody = await resolveConfig(this.options.body);
         const resolvedHeaders = await resolveConfig(this.options.headers);
@@ -194,6 +223,7 @@ vi.mock("ai", () => ({
           trigger: requestOptions.trigger,
           messageId: requestOptions.messageId,
         };
+        this.requests.push(requestBody);
         await this.options.fetch?.(this.options.api, {
           method: "POST",
           headers: resolvedHeaders,
@@ -217,6 +247,8 @@ describe("useChatSession minimal mode parity", () => {
     mockModelState.selectedModelId = "gpt-4";
     mockGetSessionAuthHeaders.mockReturnValue({});
     mockGetAccessToken.mockResolvedValue(null);
+    mockGetGuestBearerToken.mockReset();
+    mockGetGuestBearerToken.mockResolvedValue("guest-token");
     mockAuthFetch.mockResolvedValue(new Response(null, { status: 200 }));
     mockTransportInstances.length = 0;
     mockGetToolsMetadata.mockResolvedValue({
@@ -295,7 +327,7 @@ describe("useChatSession minimal mode parity", () => {
     warnSpy.mockRestore();
   });
 
-  it("keeps non-hosted chat off authFetch and omits transport headers by default", async () => {
+  it("keeps non-hosted chat off authFetch and includes a guest bearer header", async () => {
     const selectedServers = ["server-1"];
     const { result } = renderHook(() =>
       useChatSession({
@@ -312,9 +344,9 @@ describe("useChatSession minimal mode parity", () => {
     const latestTransport = mockTransportInstances.at(-1)!;
     expect(latestTransport.options.api).toBe("/api/mcp/chat-v2");
     expect(latestTransport.options.fetch).toBeUndefined();
-    expect(
-      await resolveConfig(latestTransport.options.headers),
-    ).toBeUndefined();
+    expect(await resolveConfig(latestTransport.options.headers)).toEqual({
+      Authorization: "Bearer guest-token",
+    });
 
     act(() => {
       result.current.sendMessage({ text: "hello" });
@@ -331,9 +363,15 @@ describe("useChatSession minimal mode parity", () => {
     expect(mockAuthFetch).not.toHaveBeenCalled();
   });
 
-  it("keeps guest-parity MCPJam models on the unauthenticated non-hosted path", async () => {
-    mockModelState.availableModels = [guestParityMcpJamModel];
-    mockModelState.selectedModelId = guestParityMcpJamModel.id;
+  it("keeps only the three premium MCPJam models gated on the unauthenticated non-hosted path", async () => {
+    mockModelState.availableModels = [
+      baseModel,
+      gatedMcpJamModel,
+      mcpJamModel,
+      guestAllowedMcpJamModel,
+    ];
+    mockModelState.selectedModelId = mcpJamModel.id;
+
     mockConvexAuth.isAuthenticated = false;
     mockGetAccessToken.mockResolvedValue(null);
     const selectedServers = ["server-1"];
@@ -352,10 +390,165 @@ describe("useChatSession minimal mode parity", () => {
 
     const latestTransport = mockTransportInstances.at(-1)!;
     expect(latestTransport.options.api).toBe("/api/mcp/chat-v2");
-    expect(
-      await resolveConfig(latestTransport.options.headers),
-    ).toBeUndefined();
+    expect(await resolveConfig(latestTransport.options.headers)).toEqual({
+      Authorization: "Bearer guest-token",
+    });
     expect(result.current.disableForAuthentication).toBe(false);
+    expect(result.current.availableModels.map((model) => model.id)).toEqual([
+      "gpt-4",
+      "openai/gpt-5.4-pro",
+      "openai/gpt-5-mini",
+      "anthropic/claude-haiku-4.5",
+    ]);
+    expect(
+      result.current.availableModels.find((model) => model.id === "gpt-4")
+        ?.disabled,
+    ).toBeUndefined();
+    expect(
+      result.current.availableModels.find(
+        (model) => model.id === "openai/gpt-5.4-pro",
+      ),
+    ).toMatchObject({
+      disabled: true,
+      disabledReason: "Sign in to use MCPJam provided models",
+    });
+    expect(
+      result.current.availableModels.find(
+        (model) => model.id === "openai/gpt-5-mini",
+      )?.disabled,
+    ).toBeUndefined();
+    expect(
+      result.current.availableModels.find(
+        (model) => model.id === "anthropic/claude-haiku-4.5",
+      )?.disabled,
+    ).toBeUndefined();
+    expect(result.current.selectedModel.id).toBe("openai/gpt-5-mini");
     expect(mockAuthFetch).not.toHaveBeenCalled();
+  });
+
+  it("keeps an initialModelId authoritative even when that model is guest-locked", async () => {
+    mockModelState.availableModels = [
+      baseModel,
+      gatedMcpJamModel,
+      mcpJamModel,
+      guestAllowedMcpJamModel,
+    ];
+    mockModelState.selectedModelId = mcpJamModel.id;
+    mockConvexAuth.isAuthenticated = false;
+    mockGetAccessToken.mockResolvedValue(null);
+
+    const { result } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        minimalMode: true,
+        initialSystemPrompt: "Prompt",
+        initialModelId: gatedMcpJamModel.id,
+      }),
+    );
+
+    await waitFor(() => {
+      expect(result.current.selectedModel.id).toBe("openai/gpt-5.4-pro");
+    });
+
+    expect(result.current.selectedModel).toMatchObject({
+      id: "openai/gpt-5.4-pro",
+      disabled: true,
+      disabledReason: "Sign in to use MCPJam provided models",
+    });
+    expect(result.current.isAuthReady).toBe(false);
+    expect(result.current.disableForAuthentication).toBe(true);
+  });
+
+  it("creates a locked placeholder when initialModelId is missing from availableModels", async () => {
+    mockModelState.availableModels = [
+      baseModel,
+      mcpJamModel,
+      guestAllowedMcpJamModel,
+    ];
+    mockModelState.selectedModelId = mcpJamModel.id;
+    mockConvexAuth.isAuthenticated = false;
+    mockGetAccessToken.mockResolvedValue(null);
+
+    const { result } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        minimalMode: true,
+        initialSystemPrompt: "Prompt",
+        initialModelId: gatedMcpJamModel.id,
+      }),
+    );
+
+    await waitFor(() => {
+      expect(result.current.selectedModel.id).toBe("openai/gpt-5.4-pro");
+    });
+
+    expect(result.current.selectedModel).toMatchObject({
+      id: "openai/gpt-5.4-pro",
+      name: "openai/gpt-5.4-pro",
+      provider: "openai",
+      disabled: true,
+      disabledReason: "Sign in to use MCPJam provided models",
+    });
+    expect(result.current.isAuthReady).toBe(false);
+    expect(result.current.disableForAuthentication).toBe(true);
+  });
+
+  it("uses the latest selectedServers on the next non-hosted send without changing chatSessionId", async () => {
+    const { result, rerender } = renderHook(
+      ({ selectedServers }: { selectedServers: string[] }) =>
+        useChatSession({
+          selectedServers,
+          minimalMode: true,
+          initialSystemPrompt: "Prompt",
+        }),
+      {
+        initialProps: {
+          selectedServers: ["server-1"],
+        },
+      },
+    );
+
+    await waitFor(() => {
+      expect(mockTransportInstances.length).toBeGreaterThan(0);
+    });
+
+    const initialChatSessionId = result.current.chatSessionId;
+
+    act(() => {
+      result.current.sendMessage({ text: "hello" });
+    });
+
+    await waitFor(() => {
+      expect(getTransportRequests()).toHaveLength(1);
+    });
+
+    expect(getTransportRequests().at(-1)).toMatchObject({
+      selectedServers: ["server-1"],
+      chatSessionId: initialChatSessionId,
+    });
+
+    rerender({
+      selectedServers: ["server-2"],
+    });
+
+    await waitFor(() => {
+      expect(mockTransportInstances.length).toBeGreaterThan(1);
+    });
+
+    expect(result.current.chatSessionId).toBe(initialChatSessionId);
+    const requestsBeforeSecondSend = getTransportRequests().length;
+
+    act(() => {
+      result.current.sendMessage({ text: "hello again" });
+    });
+
+    await waitFor(() => {
+      expect(getTransportRequests()).toHaveLength(requestsBeforeSecondSend + 1);
+    });
+
+    expect(getTransportRequests().at(-1)).toMatchObject({
+      selectedServers: ["server-2"],
+      chatSessionId: initialChatSessionId,
+    });
   });
 });

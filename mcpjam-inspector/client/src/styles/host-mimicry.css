@@ -4,12 +4,12 @@
 }
 
 .sandbox-host-shell .sandbox-host-user-bubble,
-.sandbox-host-shell .sandbox-host-assistant-avatar,
 .sandbox-host-shell .sandbox-host-composer {
   transition:
     background-color 160ms ease,
     border-color 160ms ease,
-    color 160ms ease;
+    color 160ms ease,
+    opacity 160ms ease;
 }
 
 .sandbox-host-shell[data-host-style="chatgpt"] .sandbox-host-composer {

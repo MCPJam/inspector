@@ -38,7 +38,7 @@ vi.mock("@/lib/convex-site-url", () => ({
   getConvexSiteUrl: mockGetConvexSiteUrl,
 }));
 
-vi.mock("../state-machines/shared/helpers", () => ({
+vi.mock("../pkce", () => ({
   generateRandomString: vi.fn(() => "mock-random-string"),
 }));
 

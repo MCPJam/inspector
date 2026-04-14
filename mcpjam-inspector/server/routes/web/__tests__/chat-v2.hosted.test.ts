@@ -6,11 +6,13 @@ const {
   handleMCPJamFreeChatModelMock,
   persistChatSessionToConvexMock,
   disconnectAllServersMock,
+  emitConstructorRpcLogMock,
 } = vi.hoisted(() => ({
   prepareChatV2Mock: vi.fn(),
   handleMCPJamFreeChatModelMock: vi.fn(),
   persistChatSessionToConvexMock: vi.fn(),
   disconnectAllServersMock: vi.fn(),
+  emitConstructorRpcLogMock: vi.fn(),
 }));
 
 vi.mock("ai", async () => {
@@ -21,12 +23,20 @@ vi.mock("ai", async () => {
   };
 });
 
-vi.mock("@mcpjam/sdk", () => ({
-  isMCPAuthError: vi.fn().mockReturnValue(false),
-  MCPClientManager: vi.fn().mockImplementation(() => ({
-    disconnectAllServers: disconnectAllServersMock,
-  })),
-}));
+vi.mock("@mcpjam/sdk", async () => {
+  const actual =
+    await vi.importActual<typeof import("@mcpjam/sdk")>("@mcpjam/sdk");
+  return {
+    ...actual,
+    isMCPAuthError: vi.fn().mockReturnValue(false),
+    MCPClientManager: vi.fn().mockImplementation((_servers, options) => {
+      emitConstructorRpcLogMock(options?.rpcLogger);
+      return {
+        disconnectAllServers: disconnectAllServersMock,
+      };
+    }),
+  };
+});
 
 vi.mock("../../../utils/chat-v2-orchestration.js", () => ({
   prepareChatV2: prepareChatV2Mock,
@@ -68,6 +78,7 @@ describe("web routes — chat-v2 hosted mode", () => {
       enhancedSystemPrompt: "system",
       resolvedTemperature: 0.7,
     });
+    emitConstructorRpcLogMock.mockReset();
 
     handleMCPJamFreeChatModelMock.mockImplementation(async (options: any) => {
       await options.onConversationComplete?.([
@@ -136,6 +147,11 @@ describe("web routes — chat-v2 hosted mode", () => {
 
     expect(response.status).toBe(200);
     expect(await response.text()).toBe("ok");
+    expect(prepareChatV2Mock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        selectedServers: ["server-1"],
+      }),
+    );
     expect(persistChatSessionToConvexMock).toHaveBeenCalledWith(
       expect.objectContaining({
         chatSessionId: "chat-session-1",
@@ -145,6 +161,88 @@ describe("web routes — chat-v2 hosted mode", () => {
         surface: "preview",
         modelId: "openai/gpt-5-mini",
         modelSource: "mcpjam",
+      }),
+    );
+  });
+
+  it("forwards directVisibility for hosted direct chats", async () => {
+    const { app, token } = createWebTestApp();
+
+    const response = await postJson(
+      app,
+      "/api/web/chat-v2",
+      {
+        workspaceId: "workspace-1",
+        selectedServerIds: ["server-1"],
+        chatSessionId: "chat-session-direct",
+        directVisibility: "workspace",
+        messages: [{ role: "user", content: "hello" }],
+        model: {
+          id: "openai/gpt-5-mini",
+          provider: "openai",
+          name: "GPT-5 Mini",
+        },
+      },
+      token,
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe("ok");
+    expect(persistChatSessionToConvexMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        chatSessionId: "chat-session-direct",
+        workspaceId: "workspace-1",
+        sourceType: "direct",
+        directVisibility: "workspace",
+      }),
+    );
+  });
+
+  it("includes pre-stream rpc logs in hosted chat JSON errors", async () => {
+    const { app, token } = createWebTestApp();
+
+    emitConstructorRpcLogMock.mockImplementation((rpcLogger) => {
+      rpcLogger?.({
+        direction: "send",
+        serverId: "server-1",
+        message: {
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/list",
+        },
+      });
+    });
+    prepareChatV2Mock.mockRejectedValueOnce(new Error("chat setup failed"));
+
+    const response = await postJson(
+      app,
+      "/api/web/chat-v2",
+      {
+        workspaceId: "workspace-1",
+        selectedServerIds: ["server-1"],
+        selectedServerNames: ["Notion"],
+        messages: [{ role: "user", content: "hello" }],
+        model: {
+          id: "openai/gpt-5-mini",
+          provider: "openai",
+          name: "GPT-5 Mini",
+        },
+      },
+      token,
+    );
+
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual(
+      expect.objectContaining({
+        code: "INTERNAL_ERROR",
+        message: "chat setup failed",
+        _rpcLogs: [
+          expect.objectContaining({
+            serverId: "server-1",
+            serverName: "Notion",
+            direction: "send",
+          }),
+        ],
       }),
     );
   });

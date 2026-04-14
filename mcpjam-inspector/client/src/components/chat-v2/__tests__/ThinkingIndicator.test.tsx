@@ -1,17 +1,20 @@
-import { describe, it, expect, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
+import type { ReactElement } from "react";
 import { ThinkingIndicator } from "../shared/thinking-indicator";
-import { SandboxHostStyleProvider } from "@/contexts/sandbox-host-style-context";
 import type { ModelDefinition } from "@/shared/types";
+import { SandboxHostStyleProvider } from "@/contexts/sandbox-host-style-context";
+import { PreferencesStoreProvider } from "@/stores/preferences/preferences-provider";
 
-vi.mock("@/stores/preferences/preferences-provider", () => ({
-  usePreferencesStore: (selector: (state: { themeMode: "light" }) => unknown) =>
-    selector({ themeMode: "light" }),
-}));
+const mockUseReducedMotion = vi.hoisted(() => vi.fn(() => false));
 
-vi.mock("@/components/chat-v2/shared/chat-helpers", () => ({
-  getProviderLogoFromModel: () => "/provider-logo.png",
-}));
+vi.mock("framer-motion", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("framer-motion")>();
+  return {
+    ...actual,
+    useReducedMotion: mockUseReducedMotion,
+  };
+});
 
 describe("ThinkingIndicator", () => {
   const defaultModel: ModelDefinition = {
@@ -25,20 +28,76 @@ describe("ThinkingIndicator", () => {
     supportsStreaming: true,
   };
 
-  it("renders the provider logo outside sandboxes", () => {
-    render(<ThinkingIndicator model={defaultModel} />);
-
-    expect(screen.getByRole("img")).toHaveAttribute("alt", "gpt-4 logo");
+  beforeEach(() => {
+    mockUseReducedMotion.mockReturnValue(false);
   });
 
-  it("renders the sandbox host logo inside sandboxes (not the model provider)", () => {
+  const renderThinkingIndicator = (ui: ReactElement) =>
     render(
-      <SandboxHostStyleProvider value="chatgpt">
-        <ThinkingIndicator model={defaultModel} />
+      <PreferencesStoreProvider themeMode="light" themePreset="default">
+        {ui}
+      </PreferencesStoreProvider>,
+    );
+
+  it("renders a leading assistant avatar outside host-style contexts", () => {
+    renderThinkingIndicator(
+      <ThinkingIndicator model={defaultModel} resolvedVariant="default" />,
+    );
+
+    expect(screen.getByRole("img")).toBeInTheDocument();
+    expect(screen.getByLabelText("GPT-4 assistant")).toBeInTheDocument();
+  });
+
+  it("hides the leading assistant avatar in sandbox host-style contexts", () => {
+    renderThinkingIndicator(
+      <SandboxHostStyleProvider value="claude">
+        <ThinkingIndicator model={defaultModel} resolvedVariant="default" />
       </SandboxHostStyleProvider>,
     );
 
-    expect(screen.getByLabelText("ChatGPT assistant")).toBeInTheDocument();
-    expect(screen.getByRole("img")).toHaveAttribute("alt", "ChatGPT logo");
+    expect(screen.queryByRole("img")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("GPT-4 assistant")).not.toBeInTheDocument();
+  });
+
+  it("keeps the default visible thinking label", () => {
+    renderThinkingIndicator(
+      <ThinkingIndicator model={defaultModel} resolvedVariant="default" />,
+    );
+
+    expect(screen.getByText(/Thinking/)).toBeInTheDocument();
+    expect(
+      screen.queryByTestId("loading-indicator-dot"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("renders the pulsing dot variant with hidden accessible text", () => {
+    renderThinkingIndicator(
+      <ThinkingIndicator model={defaultModel} resolvedVariant="chatgpt-dot" />,
+    );
+
+    expect(screen.getByTestId("loading-indicator-dot")).toBeInTheDocument();
+    expect(
+      screen.getByText("Thinking", { selector: ".sr-only" }),
+    ).toBeInTheDocument();
+  });
+
+  it("renders the animated Claude mark variant with hidden accessible text", () => {
+    renderThinkingIndicator(
+      <ThinkingIndicator model={defaultModel} resolvedVariant="claude-mark" />,
+    );
+
+    expect(screen.getByTestId("loading-indicator-claude")).toBeInTheDocument();
+    expect(
+      screen.getByTestId("loading-indicator-claude-stage"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByTestId("loading-indicator-claude-strip-900"),
+    ).not.toHaveAttribute("hidden");
+    expect(
+      screen.getByTestId("loading-indicator-claude-strip-800"),
+    ).not.toHaveAttribute("hidden");
+    expect(
+      screen.getByText("Thinking", { selector: ".sr-only" }),
+    ).toBeInTheDocument();
   });
 });

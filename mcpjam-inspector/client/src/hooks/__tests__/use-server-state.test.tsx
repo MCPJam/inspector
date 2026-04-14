@@ -149,19 +149,27 @@ function createAppState(options?: {
 function renderUseServerState(
   dispatch: (action: AppAction) => void,
   appState = createAppState(),
+  options?: {
+    isAuthenticated?: boolean;
+    useLocalFallback?: boolean;
+    effectiveWorkspaces?: AppState["workspaces"];
+    effectiveActiveWorkspaceId?: string;
+    activeWorkspaceServersFlat?: any;
+  },
 ) {
   return renderHook(() =>
     useServerState({
       appState,
       dispatch,
       isLoading: false,
-      isAuthenticated: false,
+      isAuthenticated: options?.isAuthenticated ?? false,
       isAuthLoading: false,
       isLoadingWorkspaces: false,
-      useLocalFallback: true,
-      effectiveWorkspaces: appState.workspaces,
-      effectiveActiveWorkspaceId: appState.activeWorkspaceId,
-      activeWorkspaceServersFlat: undefined,
+      useLocalFallback: options?.useLocalFallback ?? true,
+      effectiveWorkspaces: options?.effectiveWorkspaces ?? appState.workspaces,
+      effectiveActiveWorkspaceId:
+        options?.effectiveActiveWorkspaceId ?? appState.activeWorkspaceId,
+      activeWorkspaceServersFlat: options?.activeWorkspaceServersFlat,
       logger: {
         info: vi.fn(),
         warn: vi.fn(),
@@ -565,5 +573,120 @@ describe("useServerState OAuth callback failures", () => {
     expect(toastError).toHaveBeenCalledWith(
       "Network error: Failed to resolve registry OAuth config: registry lookup failed",
     );
+  });
+});
+
+describe("useServerState authenticated fallback persistence", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+    window.history.replaceState({}, "", "/");
+    useClientConfigStore.setState({
+      activeWorkspaceId: null,
+      defaultConfig: null,
+      savedConfig: undefined,
+      draftConfig: null,
+      clientCapabilitiesText: "{}",
+      hostContextText: "{}",
+      clientCapabilitiesError: null,
+      hostContextError: null,
+      isSaving: false,
+      isDirty: false,
+      pendingWorkspaceId: null,
+      pendingSavedConfig: undefined,
+      isAwaitingRemoteEcho: false,
+    });
+    getStoredTokensMock.mockReturnValue(undefined);
+    testConnectionMock.mockResolvedValue({
+      success: true,
+      initInfo: null,
+    });
+    initiateOAuthMock.mockResolvedValue({ success: true });
+    mockConvexQuery.mockResolvedValue(null);
+  });
+
+  it("persists saved server configs into the local workspace in authenticated fallback mode", async () => {
+    const dispatch = vi.fn();
+    const { result } = renderUseServerState(dispatch, createAppState(), {
+      isAuthenticated: true,
+      useLocalFallback: true,
+    });
+
+    dispatch.mockClear();
+
+    await act(async () => {
+      await result.current.saveServerConfigWithoutConnecting({
+        name: "saved-fallback",
+        type: "http",
+        url: "https://fallback.example/mcp",
+      });
+    });
+
+    const updateWorkspaceAction = dispatch.mock.calls
+      .map(([action]) => action)
+      .find(
+        (action): action is Extract<AppAction, { type: "UPDATE_WORKSPACE" }> =>
+          action.type === "UPDATE_WORKSPACE",
+      );
+
+    expect(updateWorkspaceAction).toMatchObject({
+      type: "UPDATE_WORKSPACE",
+      workspaceId: "default",
+    });
+    expect(updateWorkspaceAction?.updates.servers).toEqual(
+      expect.objectContaining({
+        "demo-server": expect.any(Object),
+        "saved-fallback": expect.objectContaining({
+          name: "saved-fallback",
+        }),
+      }),
+    );
+    expect(toastSuccess).toHaveBeenCalledWith(
+      "Saved configuration for saved-fallback",
+    );
+  });
+
+  it("persists renamed servers into the local workspace in authenticated fallback mode", async () => {
+    const dispatch = vi.fn();
+    const { result } = renderUseServerState(dispatch, createAppState(), {
+      isAuthenticated: true,
+      useLocalFallback: true,
+    });
+
+    dispatch.mockClear();
+
+    await act(async () => {
+      await result.current.handleUpdate(
+        "demo-server",
+        {
+          name: "renamed-server",
+          type: "http",
+          url: "https://example.com/mcp",
+          useOAuth: true,
+        },
+        true,
+      );
+    });
+
+    const updateWorkspaceAction = dispatch.mock.calls
+      .map(([action]) => action)
+      .find(
+        (action): action is Extract<AppAction, { type: "UPDATE_WORKSPACE" }> =>
+          action.type === "UPDATE_WORKSPACE",
+      );
+
+    expect(updateWorkspaceAction).toMatchObject({
+      type: "UPDATE_WORKSPACE",
+      workspaceId: "default",
+    });
+    expect(
+      updateWorkspaceAction?.updates.servers["demo-server"],
+    ).toBeUndefined();
+    expect(updateWorkspaceAction?.updates.servers["renamed-server"]).toEqual(
+      expect.objectContaining({
+        name: "renamed-server",
+      }),
+    );
+    expect(toastSuccess).toHaveBeenCalledWith("Server configuration updated");
   });
 });

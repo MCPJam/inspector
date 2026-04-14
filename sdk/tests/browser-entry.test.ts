@@ -50,4 +50,21 @@ describe("browser entrypoint", () => {
       (browser as Record<string, unknown>).MCPClientManager
     ).toBeUndefined();
   });
+
+  it("exports browser-safe OAuth debug helpers without OAuthConformanceTest", () => {
+    expect(browser.EMPTY_OAUTH_FLOW_STATE.currentStep).toBe("idle");
+    expect(typeof browser.createOAuthStateMachine).toBe("function");
+    expect(typeof browser.buildOAuthSequenceActions).toBe("function");
+    expect(browser.PROTOCOL_VERSION_INFO["2025-11-25"]).toBeDefined();
+    expect(browser.getDefaultRegistrationStrategy("2025-11-25")).toBe("cimd");
+    expect(browser.getSupportedRegistrationStrategies("2025-06-18")).toEqual([
+      "dcr",
+      "preregistered",
+    ]);
+    expect(typeof browser.getStepInfo).toBe("function");
+    expect(typeof browser.getStepIndex).toBe("function");
+    expect(
+      (browser as Record<string, unknown>).OAuthConformanceTest
+    ).toBeUndefined();
+  });
 });

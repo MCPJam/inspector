@@ -122,6 +122,7 @@ describe("mcp-api hosted-mode reconnect hardening", () => {
       config,
       undefined,
       { roots: { listChanged: true } },
+      "Excalidraw (App)",
     );
     expect(webPostMock).toHaveBeenCalledWith("/api/web/servers/validate", {
       serverUrl: "https://mcp.excalidraw.com/mcp",

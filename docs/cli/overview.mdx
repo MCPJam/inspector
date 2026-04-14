@@ -1,0 +1,150 @@
+---
+title: "CLI Overview"
+description: "Stateless MCP server probing, debugging, OAuth, and conformance from your terminal"
+icon: "terminal"
+---
+
+The `mcpjam` CLI is a stateless tool for inspecting, debugging, and testing MCP servers from the command line or CI. It covers the full lifecycle: connectivity checks, OAuth login, MCP Apps validation, tool/resource/prompt exploration, and protocol conformance.
+
+## Recommended: Use with Agent Skills
+
+The easiest way to use the CLI is through the [MCPJam skill](https://github.com/MCPJam/inspector/tree/main/skills/mcp-inspector), which gives your agent full context on every command and workflow.
+
+```bash
+npx skills add mcpjam/inspector --skill mcp-inspector
+```
+
+Once installed, your agent will know how and when to invoke `mcpjam` commands automatically.
+
+## Install
+
+```bash
+# Global (gives you the mcpjam command)
+npm i -g @mcpjam/cli
+
+# Or run without installing
+npx -y @mcpjam/cli@latest --help
+```
+
+<Note>
+  All examples in these docs use `mcpjam` directly. If you installed via `npx`,
+  replace `mcpjam` with `npx -y @mcpjam/cli@latest`.
+</Note>
+
+## Command groups
+
+| Group | Purpose | Key commands |
+|-------|---------|-------------|
+| [`server`](/cli/server-inspection) | Triage connectivity and capabilities | `probe`, `doctor`, `info`, `validate`, `ping`, `capabilities`, `export` |
+| [`oauth`](/cli/oauth-conformance) | Test OAuth flows and conformance | `conformance`, `conformance-suite`, `login`, `metadata`, `proxy` |
+| [`apps`](/cli/apps-conformance) | Validate MCP Apps tool metadata and `ui://` resources | `conformance`, `mcp-widget`, `chatgpt-widget` |
+| [`tools`](/cli/tools-resources-prompts) | Exercise the tool surface | `list`, `call` |
+| [`resources`](/cli/tools-resources-prompts) | Read resources and templates | `list`, `read`, `templates` |
+| [`prompts`](/cli/tools-resources-prompts) | Fetch prompts | `list`, `get` |
+| [`apps`](/cli/reference) | Render hosted-style widget HTML for MCP and ChatGPT apps | `mcp-widget`, `chatgpt-widget` |
+| [`protocol`](/cli/reference) | MCP protocol conformance checks | `conformance` |
+
+## Global flags
+
+These flags apply to every command.
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--timeout <ms>` | `30000` | Request timeout in milliseconds |
+| `--rpc` | off | Include raw JSON-RPC request/response logs in JSON output under `_rpcLogs` |
+| `--format <format>` | `human` on TTY, `json` when piped | Output format (`json` or `human`; `junit-xml` is available on OAuth conformance commands only) |
+| `-v, --version` | | Print the CLI version |
+
+## Output formats
+
+The CLI auto-detects whether stdout is a terminal:
+
+- **Interactive terminal** — defaults to `--format human`. For most commands this is pretty-printed JSON; `server doctor` and the OAuth conformance commands provide dedicated human-readable summaries.
+- **Piped or redirected** (CI, `| jq`, agent invocation) — defaults to `--format json`, the full structured result.
+- **Explicit `--format`** always wins over the auto-detected default.
+
+**For agents**: raw JSON is the source of truth. Human format is a lossy presentation layer. If you're parsing output programmatically, always pass `--format json`.
+
+## Connecting to servers
+
+The CLI supports two transport modes, selected by which flags you pass:
+
+- `--url ...` selects HTTP.
+- `--command ...` selects stdio.
+- `--transport http|stdio` is optional and acts as an explicit override/validator when you want the CLI to reject mismatched flags early.
+
+### HTTP (Streamable HTTP / SSE)
+
+```bash
+mcpjam server doctor --url https://your-server.com/mcp
+```
+
+Add auth when needed:
+
+```bash
+# Static bearer token
+mcpjam server doctor --url https://your-server.com/mcp --access-token $TOKEN
+
+# OAuth tokens from a prior login
+mcpjam server doctor --url https://your-server.com/mcp --oauth-access-token $TOKEN
+
+# Custom headers
+mcpjam server doctor --url https://your-server.com/mcp --header "X-API-Key: $KEY"
+```
+
+### Stdio (local subprocess)
+
+```bash
+mcpjam server doctor --command node --args server.js --cwd /path/to/project -e API_KEY=$KEY
+```
+
+Stdio child processes inherit the parent shell environment by default. Use
+`-e/--env` to add values or override inherited ones for the spawned server.
+Structured debug artifacts only record the explicit env keys you pass through
+`-e/--env`; inherited shell variables are not enumerated.
+
+<Note>
+  `oauth ...` and `protocol conformance` are HTTP-only command groups. They do
+  not accept stdio targets.
+</Note>
+
+## Exit codes
+
+| Code | Meaning |
+|------|---------|
+| `0` | Success / all checks passed |
+| `1` | Command ran but reported a failure (e.g., server unhealthy, conformance failed) |
+| `2` | Invalid arguments or configuration |
+
+## Quick triage workflow
+
+The fastest path from "I have a server URL" to "I know what's wrong":
+
+```bash
+# 1. One-shot health check (probe + connect + sweep)
+mcpjam server doctor --url https://your-server.com/mcp
+
+# 2. If oauth_required: get a token
+mcpjam oauth login --url https://your-server.com/mcp \
+  --protocol-version 2025-11-25 --registration dcr
+
+# 3. Re-run doctor with the token
+mcpjam server doctor --url https://your-server.com/mcp --oauth-access-token $TOKEN
+
+# 4. Exercise tools directly
+mcpjam tools list --url https://your-server.com/mcp --access-token $TOKEN
+mcpjam tools call --url https://your-server.com/mcp --access-token $TOKEN \
+  --tool-name my_tool --tool-args '{"key": "value"}'
+
+# 5. If the server exposes MCP Apps, validate the ui:// surface
+mcpjam apps conformance --url https://your-server.com/mcp --access-token $TOKEN
+```
+
+## What's next
+
+- [Server inspection](/cli/server-inspection) — probe, doctor, and diagnostics
+- [OAuth conformance](/cli/oauth-conformance) — test your OAuth implementation
+- [OAuth login](/cli/oauth-login) — authenticate and debug OAuth flows
+- [MCP Apps conformance](/cli/apps-conformance) — validate `_meta.ui.resourceUri` and `ui://` resources
+- [Tools, resources & prompts](/cli/tools-resources-prompts) — exercise the connected surface
+- [Full command reference](/cli/reference) — every flag for every command

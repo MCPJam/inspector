@@ -14,7 +14,7 @@ import type {
   OAuthDiscoveryState,
 } from "@modelcontextprotocol/sdk/client/auth.js";
 import type { HttpServerConfig } from "@mcpjam/sdk/browser";
-import { generateRandomString } from "./state-machines/shared/helpers";
+import { generateRandomString } from "./pkce";
 import { authFetch } from "@/lib/session-token";
 import { HOSTED_MODE } from "@/lib/config";
 import { captureServerDetailModalOAuthResume } from "@/lib/server-detail-modal-resume";
@@ -210,15 +210,17 @@ export function isOAuthTokenGrantRequest(
   return grantType === "authorization_code" || grantType === "refresh_token";
 }
 
-export function shouldUseRegistryOAuthProxy({
-  registryServerId,
-  useRegistryOAuthProxy,
-  method,
-  body,
-}: OAuthRoutingConfig & {
+type OAuthRoutingRequestConfig = OAuthRoutingConfig & {
   method: string;
   body: unknown;
-}): body is OAuthRequestFields {
+};
+
+export function shouldUseRegistryOAuthProxy(
+  config: OAuthRoutingRequestConfig,
+): config is OAuthRoutingRequestConfig & {
+  body: OAuthRequestFields;
+} {
+  const { registryServerId, useRegistryOAuthProxy, method, body } = config;
   if (!registryServerId || !useRegistryOAuthProxy) {
     return false;
   }
@@ -312,11 +314,13 @@ function createOAuthFetchInterceptor(
           ? input.toString()
           : input.url;
     const oauthGrantType = getOAuthGrantType(serializedBody);
-    const isRegistryTokenRequest = shouldUseRegistryOAuthProxy({
+    const registryTokenRequest = {
       ...routingConfig,
       method,
       body: serializedBody,
-    });
+    };
+    const isRegistryTokenRequest =
+      shouldUseRegistryOAuthProxy(registryTokenRequest);
 
     // Check if this is an OAuth-related request that needs CORS bypass
     const isOAuthRequest =
@@ -334,7 +338,7 @@ function createOAuthFetchInterceptor(
       const convexSiteUrl = getConvexSiteUrl();
       if (convexSiteUrl) {
         const endpoint =
-          serializedBody.grant_type === "refresh_token"
+          registryTokenRequest.body.grant_type === "refresh_token"
             ? "/registry/oauth/refresh"
             : "/registry/oauth/token";
         const response = await authFetch(`${convexSiteUrl}${endpoint}`, {
@@ -343,7 +347,7 @@ function createOAuthFetchInterceptor(
           body: JSON.stringify(
             toConvexOAuthPayload(
               routingConfig.registryServerId!,
-              serializedBody,
+              registryTokenRequest.body,
             ),
           ),
         });

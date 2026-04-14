@@ -29,6 +29,7 @@ function getProviderDisplayName(provider: string): string {
     "z-ai": "Zhipu AI",
     openrouter: "OpenRouter",
     minimax: "MiniMax",
+    qwen: "Qwen",
   };
 
   return providerMap[provider] || provider;

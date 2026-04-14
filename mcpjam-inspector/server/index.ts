@@ -12,6 +12,7 @@ import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 import { MCPClientManager } from "@mcpjam/sdk";
 import { loadInspectorEnv, warnOnConvexDevMisconfiguration } from "./env";
+import { INSPECTOR_MCP_RETRY_POLICY } from "./utils/mcp-retry-policy";
 
 // Security imports
 import {
@@ -211,6 +212,7 @@ const strictModeResponse = (c: any, path: string) =>
 const mcpClientManager = new MCPClientManager(
   {},
   {
+    retryPolicy: INSPECTOR_MCP_RETRY_POLICY,
     rpcLogger: ({ direction, message, serverId }) => {
       rpcLogBus.publish({
         serverId,

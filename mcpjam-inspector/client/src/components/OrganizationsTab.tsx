@@ -72,6 +72,7 @@ interface OrganizationsTabProps {
   onCheckoutIntentConsumed?: () => void;
   onCheckoutIntentNavigationStarted?: () => void;
   navigateBillingInSameTab?: (url: string) => void;
+  onOrganizationDeleted?: (organizationId: string) => void;
 }
 
 function getOrganizationRouteHash(
@@ -238,6 +239,7 @@ export function OrganizationsTab({
   onCheckoutIntentConsumed,
   onCheckoutIntentNavigationStarted,
   navigateBillingInSameTab,
+  onOrganizationDeleted,
 }: OrganizationsTabProps) {
   const { user, signIn } = useElectronHostedAuth();
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
@@ -339,6 +341,7 @@ export function OrganizationsTab({
       onCheckoutIntentConsumed={onCheckoutIntentConsumed}
       onCheckoutIntentNavigationStarted={onCheckoutIntentNavigationStarted}
       navigateBillingInSameTab={navigateBillingInSameTab}
+      onOrganizationDeleted={onOrganizationDeleted}
     />
   );
 }
@@ -350,6 +353,7 @@ interface OrganizationPageProps {
   onCheckoutIntentConsumed?: () => void;
   onCheckoutIntentNavigationStarted?: () => void;
   navigateBillingInSameTab?: (url: string) => void;
+  onOrganizationDeleted?: (organizationId: string) => void;
 }
 
 interface CheckoutNavigationOptions {
@@ -364,6 +368,7 @@ function OrganizationPage({
   onCheckoutIntentConsumed,
   onCheckoutIntentNavigationStarted,
   navigateBillingInSameTab,
+  onOrganizationDeleted,
 }: OrganizationPageProps) {
   const { isAuthenticated } = useConvexAuth();
   const { user } = useElectronHostedAuth();
@@ -682,7 +687,10 @@ function OrganizationPage({
       await deleteOrganization({ organizationId: organization._id });
       toast.success("Organization deleted");
       setDeleteConfirmOpen(false);
-      window.location.hash = "servers";
+      onOrganizationDeleted?.(organization._id);
+      if (!onOrganizationDeleted) {
+        window.location.hash = "servers";
+      }
     } catch (error) {
       toast.error((error as Error).message || "Failed to delete organization");
     } finally {

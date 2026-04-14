@@ -18,7 +18,6 @@ import tunnelsRoute from "./tunnels";
 import logLevel from "./log-level";
 import tasks from "./tasks";
 import skills from "./skills";
-import xrayPayload from "./xray-payload";
 
 const mcp = new Hono();
 
@@ -88,8 +87,5 @@ mcp.route("/tasks", tasks);
 
 // Skills endpoints - Agent skills from .mcpjam/skills/
 mcp.route("/skills", skills);
-
-// X-Ray payload endpoint - returns actual payload sent to model
-mcp.route("/xray-payload", xrayPayload);
 
 export default mcp;

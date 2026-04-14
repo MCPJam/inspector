@@ -21,11 +21,16 @@ const {
   disconnectAllServersMock: vi.fn().mockResolvedValue(undefined),
 }));
 
-vi.mock("@mcpjam/sdk", () => ({
-  MCPClientManager: vi.fn().mockImplementation(() => ({
-    disconnectAllServers: disconnectAllServersMock,
-  })),
-}));
+vi.mock("@mcpjam/sdk", async () => {
+  const actual =
+    await vi.importActual<typeof import("@mcpjam/sdk")>("@mcpjam/sdk");
+  return {
+    ...actual,
+    MCPClientManager: vi.fn().mockImplementation(() => ({
+      disconnectAllServers: disconnectAllServersMock,
+    })),
+  };
+});
 
 vi.mock("../../shared/evals.js", async () => {
   const actual = await vi.importActual<typeof import("../../shared/evals.js")>(

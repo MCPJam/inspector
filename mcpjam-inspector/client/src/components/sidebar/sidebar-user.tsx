@@ -32,11 +32,17 @@ import { CreateOrganizationDialog } from "@/components/organization/CreateOrgani
 import { HOSTED_MODE } from "@/lib/config";
 import { Button } from "@/components/ui/button";
 import { useElectronHostedAuth } from "@/hooks/useElectronHostedAuth";
+import type { OrganizationRouteSection } from "@/lib/hosted-navigation";
 
 export function SidebarUser({
   activeOrganizationId,
+  onSwitchOrganization,
 }: {
   activeOrganizationId?: string;
+  onSwitchOrganization?: (
+    organizationId: string,
+    section?: OrganizationRouteSection,
+  ) => void;
 }) {
   const { isLoading, isAuthenticated } = useConvexAuth();
   const { user, signIn, signOut } = useElectronHostedAuth();
@@ -61,8 +67,19 @@ export function SidebarUser({
     ? sortedOrganizations.find((org) => org._id === activeOrganizationId)?.name
     : undefined;
   const subtitle = activeOrgName || email;
-  const navigateToOrganization = (organizationId: string) => {
-    window.location.hash = `organizations/${organizationId}`;
+  const navigateToOrganization = (
+    organizationId: string,
+    section: OrganizationRouteSection = "overview",
+  ) => {
+    if (onSwitchOrganization) {
+      onSwitchOrganization(organizationId, section);
+      return;
+    }
+
+    window.location.hash =
+      section === "billing"
+        ? `organizations/${organizationId}/billing`
+        : `organizations/${organizationId}`;
   };
 
   const handleSignOut = () => {

@@ -1,11 +1,16 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
+  useRef,
   useState,
   type KeyboardEvent,
+  type MouseEvent,
 } from "react";
 import { motion, useReducedMotion } from "framer-motion";
+import { usePostHog } from "posthog-js/react";
+import { standardEventProps } from "@/lib/PosthogUtils";
 import {
   AlertCircle,
   Bot,
@@ -17,6 +22,7 @@ import {
   MessageSquareQuote,
   Minus,
   Plus,
+  User,
   Wrench,
 } from "lucide-react";
 import type { EvalTraceSpan, EvalTraceSpanCategory } from "@/shared/eval-trace";
@@ -42,7 +48,57 @@ import {
   type TimelineFilter,
 } from "./recorded-trace-toolbar";
 
-const TICKS = [0, 25, 50, 75, 100];
+const ALL_AXIS_TICK_PERCENTS = [0, 25, 50, 75, 100] as const;
+
+/**
+ * Approximate horizontal space needed per tick (10px tabular nums; labels like "9.99s" are wide).
+ */
+const AXIS_TICK_MIN_GAP_PX = 54;
+
+/** When only [0,100] ticks fit but the track is narrower than this, draw one range label (endpoints collide). */
+const AXIS_SINGLE_RANGE_LABEL_BELOW_PX = 120;
+
+/**
+ * Chooses tick positions for the time axis based on measured column width.
+ * Exported for unit tests.
+ */
+export function selectAxisTickPercents(widthPx: number): number[] {
+  if (!Number.isFinite(widthPx)) {
+    return [0, 100];
+  }
+  // Unmeasured (initial render) or zero-sized: avoid stacking many labels in one column.
+  if (widthPx <= 0) {
+    return [0, 100];
+  }
+  const maxTicks = Math.max(2, Math.floor(widthPx / AXIS_TICK_MIN_GAP_PX));
+  if (maxTicks >= ALL_AXIS_TICK_PERCENTS.length) {
+    return [...ALL_AXIS_TICK_PERCENTS];
+  }
+  if (maxTicks <= 2) {
+    return [0, 100];
+  }
+  if (maxTicks === 3) {
+    return [0, 50, 100];
+  }
+  return [0, 25, 75, 100];
+}
+
+function axisTickLabelAlignClass(tick: number): string {
+  if (tick <= 0) {
+    return "left-0 top-1/2 -translate-x-0 -translate-y-1/2 text-left";
+  }
+  if (tick >= 100) {
+    return "left-0 top-1/2 -translate-x-full -translate-y-1/2 text-right";
+  }
+  return "left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 text-center";
+}
+
+function formatAxisRangeLabel(axisMaxMs: number): string {
+  if (axisMaxMs <= 0) {
+    return formatAxisLabel(0);
+  }
+  return `${formatAxisLabel(0)}–${formatAxisLabel(axisMaxMs)}`;
+}
 
 export type { TimelineFilter };
 
@@ -974,7 +1030,7 @@ function CategoryGlyph({
   );
   switch (category) {
     case "prompt":
-      return <Layers className={iconClass} aria-hidden />;
+      return <User className={iconClass} aria-hidden />;
     case "llm":
       return <Bot className={iconClass} aria-hidden />;
     case "tool":
@@ -987,22 +1043,78 @@ function CategoryGlyph({
   }
 }
 
-function getRowTokenStats(row: TimelineRow): {
+function findStepLlmTokenStats(
+  recordedSpans: EvalTraceSpan[],
+  span: EvalTraceSpan,
+): {
   inputTokens?: number;
   outputTokens?: number;
   totalTokens?: number;
 } {
-  return row.kind === "prompt"
-    ? {
-        inputTokens: row.aggregatedInputTokens,
-        outputTokens: row.aggregatedOutputTokens,
-        totalTokens: row.aggregatedTotalTokens,
-      }
-    : {
-        inputTokens: row.span.inputTokens,
-        outputTokens: row.span.outputTokens,
-        totalTokens: row.span.totalTokens,
-      };
+  const p = span.promptIndex;
+  const s = span.stepIndex;
+  if (typeof p !== "number" || typeof s !== "number") {
+    return {};
+  }
+  const llm = recordedSpans.find(
+    (sp) => sp.category === "llm" && sp.promptIndex === p && sp.stepIndex === s,
+  );
+  if (!llm) {
+    return {};
+  }
+  return {
+    ...(typeof llm.inputTokens === "number"
+      ? { inputTokens: llm.inputTokens }
+      : {}),
+    ...(typeof llm.outputTokens === "number"
+      ? { outputTokens: llm.outputTokens }
+      : {}),
+    ...(typeof llm.totalTokens === "number"
+      ? { totalTokens: llm.totalTokens }
+      : {}),
+  };
+}
+
+function getRowTokenStats(
+  row: TimelineRow,
+  recordedSpans?: EvalTraceSpan[] | null,
+): {
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+} {
+  if (row.kind === "prompt") {
+    return {
+      inputTokens: row.aggregatedInputTokens,
+      outputTokens: row.aggregatedOutputTokens,
+      totalTokens: row.aggregatedTotalTokens,
+    };
+  }
+  const base = {
+    inputTokens: row.span.inputTokens,
+    outputTokens: row.span.outputTokens,
+    totalTokens: row.span.totalTokens,
+  };
+  const hasAny =
+    typeof base.inputTokens === "number" ||
+    typeof base.outputTokens === "number" ||
+    typeof base.totalTokens === "number";
+  if (
+    hasAny ||
+    !recordedSpans?.length ||
+    (row.span.category !== "llm" && row.span.category !== "step")
+  ) {
+    return base;
+  }
+  const inherited = findStepLlmTokenStats(recordedSpans, row.span);
+  if (
+    typeof inherited.inputTokens === "number" ||
+    typeof inherited.outputTokens === "number" ||
+    typeof inherited.totalTokens === "number"
+  ) {
+    return inherited;
+  }
+  return base;
 }
 
 function formatTokenCount(value?: number): string {
@@ -1373,13 +1485,27 @@ function TimelineDetailPane({
   const toolErrorExcerpt =
     row.kind === "span" && toolData.errorText ? toolData.errorText : null;
 
+  const showRevealInChat = Boolean(revealSelection && onRevealInTranscript);
+
   return (
     <div
       data-testid="trace-detail-pane"
       className="space-y-4 bg-background p-4"
     >
-      <div className="space-y-3 border-b border-border/40 pb-3">
-        <div className="flex gap-3">
+      <div
+        className={cn(
+          "border-b border-border/40 pb-3",
+          showRevealInChat
+            ? "flex flex-col gap-3 min-[400px]:flex-row min-[400px]:items-start"
+            : "",
+        )}
+      >
+        <div
+          className={cn(
+            "flex gap-3",
+            showRevealInChat ? "min-w-0 min-[400px]:flex-1" : "",
+          )}
+        >
           <div className="shrink-0 pt-0.5">
             {row.kind === "prompt" ? (
               <CategoryGlyph category="prompt" size="lg" />
@@ -1433,20 +1559,26 @@ function TimelineDetailPane({
             </div>
           </div>
         </div>
-      </div>
 
-      {revealSelection && onRevealInTranscript ? (
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          className="w-full justify-center"
-          onClick={() => onRevealInTranscript(revealSelection)}
-        >
-          <MessageSquareQuote className="h-3.5 w-3.5" />
-          Reveal in Chat
-        </Button>
-      ) : null}
+        {showRevealInChat ? (
+          <div className="flex min-w-0 min-[400px]:flex-1 min-[400px]:justify-end min-[400px]:pt-0.5">
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="w-full shrink-0 justify-center whitespace-nowrap min-[400px]:w-auto"
+              onClick={() => {
+                if (revealSelection && onRevealInTranscript) {
+                  onRevealInTranscript(revealSelection);
+                }
+              }}
+            >
+              <MessageSquareQuote className="h-3.5 w-3.5" />
+              Reveal in Chat
+            </Button>
+          </div>
+        ) : null}
+      </div>
 
       {row.kind === "prompt" && promptUserMessage ? (
         <div className="min-h-0 max-h-[min(60vh,28rem)] flex-1 overflow-auto rounded-md border border-border/50 bg-muted/10 px-3 py-2 text-xs leading-relaxed text-foreground">
@@ -1599,14 +1731,53 @@ export function TraceTimeline({
     onExpandedStepIdsChange ?? setInternalExpandedStepIds;
 
   const [selectedRowKey, setSelectedRowKey] = useState<string | null>(null);
+  const posthog = usePostHog();
+
+  const axisHeaderMeasureRef = useRef<HTMLDivElement>(null);
+  const [axisColumnWidthPx, setAxisColumnWidthPx] = useState(-1);
+
+  useLayoutEffect(() => {
+    const el = axisHeaderMeasureRef.current;
+    if (!el) return;
+
+    const readWidth = () => {
+      const w = el.getBoundingClientRect().width;
+      setAxisColumnWidthPx(Number.isFinite(w) ? w : 0);
+    };
+    readWidth();
+
+    if (typeof ResizeObserver === "undefined") {
+      return;
+    }
+    const ro = new ResizeObserver(readWidth);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  const axisTicks = useMemo(
+    () => selectAxisTickPercents(axisColumnWidthPx),
+    [axisColumnWidthPx],
+  );
+
+  const collapseAxisToSingleRangeLabel = useMemo(() => {
+    if (axisTicks.length !== 2) {
+      return false;
+    }
+    if (axisColumnWidthPx < 0) {
+      return true;
+    }
+    if (axisColumnWidthPx === 0) {
+      return true;
+    }
+    return axisColumnWidthPx < AXIS_SINGLE_RANGE_LABEL_BELOW_PX;
+  }, [axisColumnWidthPx, axisTicks]);
 
   useEffect(() => {
     if (!hideToolbar) {
       setInternalExpandedPromptIds(new Set(groups.map((group) => group.key)));
       setInternalExpandedStepIds(collectStepSpanIdsWithChildren(groups));
     }
-    setSelectedRowKey(null);
-  }, [hideToolbar, traceIdentity, groups]);
+  }, [hideToolbar, groups]);
 
   const rows = useMemo(() => {
     if (mode !== "recorded") {
@@ -1927,7 +2098,7 @@ export function TraceTimeline({
         )}
       >
         <ResizablePanelGroup
-          direction="horizontal"
+          direction="vertical"
           className={cn(
             "rounded-lg border border-border/50 bg-background",
             fillContent
@@ -1938,7 +2109,7 @@ export function TraceTimeline({
         >
           <ResizablePanel
             defaultSize={65}
-            minSize={40}
+            minSize={0}
             className="min-h-0 min-w-0 overflow-hidden"
           >
             <ScrollArea
@@ -1951,7 +2122,7 @@ export function TraceTimeline({
               <div
                 tabIndex={0}
                 role="region"
-                aria-label="Trace waterfall. Use arrow keys to change selection, Enter to expand."
+                aria-label="Trace timeline. Use arrow keys to change selection, Enter to expand."
                 onKeyDown={handleWaterfallKeyDown}
                 className="min-h-0 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
               >
@@ -1964,42 +2135,57 @@ export function TraceTimeline({
                   }}
                 >
                   <div
-                    className="sticky top-0 z-20 border-b border-border/50 bg-background/95 px-4 py-3 backdrop-blur"
-                    style={{ gridColumn: 1, gridRow: 1 }}
+                    className="sticky top-0 z-20 border-b border-border/50 bg-background/95 px-4 py-1.5 backdrop-blur"
+                    style={{ gridColumn: "1 / 3", gridRow: 1 }}
                   >
-                    <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                      Waterfall
-                    </div>
-                    <div className="mt-1 text-xs text-foreground">
-                      Prompt, step, and child spans in execution order
-                    </div>
-                  </div>
-                  <div
-                    className="sticky top-0 z-20 border-b border-border/50 bg-background/95 px-4 py-3 backdrop-blur"
-                    style={{ gridColumn: 2, gridRow: 1 }}
-                  >
-                    <div className="relative h-8">
-                      {TICKS.map((tick) => {
-                        const left = `${tick}%`;
-                        return (
-                          <div
-                            key={tick}
-                            className="pointer-events-none absolute inset-y-0"
-                            style={{ left }}
-                          >
-                            <div className="absolute top-0 left-1/2 -translate-x-1/2 text-[10px] text-muted-foreground">
-                              {formatAxisLabel((axisMaxMs * tick) / 100)}
+                    <div className="flex min-h-6 min-w-0 items-center gap-3">
+                      <div className="shrink-0 text-[10px] uppercase tracking-wide text-muted-foreground">
+                        Trace
+                      </div>
+                      <div className="min-h-6 min-w-0 flex-1">
+                        <div
+                          ref={axisHeaderMeasureRef}
+                          className="relative h-6 min-w-0"
+                        >
+                          {collapseAxisToSingleRangeLabel ? (
+                            <div className="flex h-full min-w-0 items-center justify-center">
+                              <span
+                                className="min-w-0 max-w-full truncate text-center text-[10px] tabular-nums text-muted-foreground"
+                                title={formatAxisRangeLabel(axisMaxMs)}
+                              >
+                                {formatAxisRangeLabel(axisMaxMs)}
+                              </span>
                             </div>
-                          </div>
-                        );
-                      })}
+                          ) : (
+                            axisTicks.map((tick) => {
+                              const left = tick >= 100 ? "100%" : `${tick}%`;
+                              return (
+                                <div
+                                  key={tick}
+                                  className="pointer-events-none absolute inset-y-0"
+                                  style={{ left }}
+                                >
+                                  <div
+                                    className={cn(
+                                      "absolute text-[10px] tabular-nums text-muted-foreground",
+                                      axisTickLabelAlignClass(tick),
+                                    )}
+                                  >
+                                    {formatAxisLabel((axisMaxMs * tick) / 100)}
+                                  </div>
+                                </div>
+                              );
+                            })
+                          )}
+                        </div>
+                      </div>
                     </div>
                   </div>
                   <div
-                    className="sticky top-0 z-20 border-b border-l border-border/50 bg-background/95 px-3 py-3 pl-4 backdrop-blur"
+                    className="sticky top-0 z-20 flex min-h-0 items-center border-b border-l border-border/50 bg-background/95 px-3 py-1.5 pl-4 backdrop-blur"
                     style={{ gridColumn: 3, gridRow: 1 }}
                   >
-                    <div className="relative flex h-8 items-center justify-start gap-1.5">
+                    <div className="flex h-6 w-full min-w-0 items-center justify-start gap-1.5">
                       <Clock
                         className="size-3 shrink-0 text-muted-foreground"
                         aria-hidden
@@ -2018,11 +2204,13 @@ export function TraceTimeline({
                         gridRow: `2 / ${rows.length + 2}`,
                       }}
                     >
-                      {TICKS.map((tick) => (
+                      {axisTicks.map((tick) => (
                         <div
                           key={tick}
                           className="absolute top-0 bottom-0 w-px bg-border/40"
-                          style={{ left: `${tick}%` }}
+                          style={{
+                            left: tick >= 100 ? "100%" : `${tick}%`,
+                          }}
                         />
                       ))}
                     </div>
@@ -2057,7 +2245,7 @@ export function TraceTimeline({
                         ? (row.conversationLabel ?? row.label)
                         : derivedLabel!.title;
                     const durationLabel = formatDuration(durationMs);
-                    const tokenStats = getRowTokenStats(row);
+                    const tokenStats = getRowTokenStats(row, recordedSpans);
                     const rowStartTimestamp =
                       traceStartAnchorMs !== null
                         ? traceStartAnchorMs + startMs
@@ -2077,7 +2265,19 @@ export function TraceTimeline({
                       row,
                       spanShowsFailure,
                     );
-                    const selectRow = () => setSelectedRowKey(row.key);
+                    const selectRow = () => {
+                      posthog.capture("trace_span_clicked", {
+                        ...standardEventProps("trace_timeline"),
+                        span_kind: row.kind,
+                      });
+                      setSelectedRowKey(row.key);
+                    };
+                    const selectRowFromChild = (
+                      event: MouseEvent<HTMLButtonElement>,
+                    ) => {
+                      event.stopPropagation();
+                      selectRow();
+                    };
                     const leftCellClass = isSelected
                       ? cn("bg-transparent", borderAccent)
                       : "border-l-transparent bg-background group-hover:bg-muted/20 hover:bg-muted/20";
@@ -2091,6 +2291,7 @@ export function TraceTimeline({
                           <motion.div
                             data-testid="trace-row"
                             data-state={isSelected ? "selected" : undefined}
+                            onClick={selectRow}
                             initial={
                               shouldReduceMotion || rowIndex >= 20
                                 ? false
@@ -2113,7 +2314,7 @@ export function TraceTimeline({
                               gridTemplateColumns: "subgrid",
                             }}
                             className={cn(
-                              "group min-h-0 min-w-0 items-stretch",
+                              "group min-h-0 min-w-0 cursor-pointer items-stretch",
                               isSelected &&
                                 "trace-waterfall-row-selected ring-1 ring-inset ring-ring/40",
                             )}
@@ -2171,7 +2372,7 @@ export function TraceTimeline({
                                 type="button"
                                 data-testid="trace-row-label-button"
                                 className="min-w-0 flex-1 text-left"
-                                onClick={selectRow}
+                                onClick={selectRowFromChild}
                               >
                                 <div className="flex min-w-0 items-center gap-2">
                                   {row.kind === "prompt" ? (
@@ -2211,7 +2412,7 @@ export function TraceTimeline({
                                 sharedCellClass,
                               )}
                               aria-label={`Select on timeline (${formatDuration(durationMs)})`}
-                              onClick={selectRow}
+                              onClick={selectRowFromChild}
                             >
                               <div
                                 data-testid={
@@ -2238,7 +2439,7 @@ export function TraceTimeline({
                                 sharedCellClass,
                               )}
                               aria-label={`Select row duration (${durationLabel})`}
-                              onClick={selectRow}
+                              onClick={selectRowFromChild}
                             >
                               <Clock
                                 className="size-3 shrink-0 opacity-80"
@@ -2259,55 +2460,75 @@ export function TraceTimeline({
                             className="space-y-3"
                           >
                             <div className="space-y-1.5">
-                              <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                              <div className="text-[10px] font-semibold uppercase tracking-wide text-popover-foreground/65">
                                 Time
                               </div>
-                              <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-xs">
-                                <dt className="text-muted-foreground">Start</dt>
-                                <dd
-                                  data-testid="trace-row-hover-start"
-                                  className="text-right font-medium text-foreground"
-                                >
-                                  {formatWallClockTimestamp(rowStartTimestamp)}
-                                </dd>
-                                <dt className="text-muted-foreground">End</dt>
-                                <dd
-                                  data-testid="trace-row-hover-end"
-                                  className="text-right font-medium text-foreground"
-                                >
-                                  {formatWallClockTimestamp(rowEndTimestamp)}
-                                </dd>
-                              </dl>
+                              <div className="space-y-1 text-xs">
+                                <div className="flex min-w-0 items-baseline justify-between gap-3">
+                                  <span className="shrink-0 text-popover-foreground/70">
+                                    Start
+                                  </span>
+                                  <span
+                                    data-testid="trace-row-hover-start"
+                                    className="min-w-0 text-right font-medium text-popover-foreground tabular-nums"
+                                  >
+                                    {formatWallClockTimestamp(
+                                      rowStartTimestamp,
+                                    )}
+                                  </span>
+                                </div>
+                                <div className="flex min-w-0 items-baseline justify-between gap-3">
+                                  <span className="shrink-0 text-popover-foreground/70">
+                                    End
+                                  </span>
+                                  <span
+                                    data-testid="trace-row-hover-end"
+                                    className="min-w-0 text-right font-medium text-popover-foreground tabular-nums"
+                                  >
+                                    {formatWallClockTimestamp(rowEndTimestamp)}
+                                  </span>
+                                </div>
+                              </div>
                             </div>
                             <div className="space-y-1.5">
-                              <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                              <div className="text-[10px] font-semibold uppercase tracking-wide text-popover-foreground/65">
                                 Tokens
                               </div>
-                              <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-xs">
-                                <dt className="text-muted-foreground">Input</dt>
-                                <dd
-                                  data-testid="trace-row-hover-input-tokens"
-                                  className="text-right font-medium tabular-nums text-foreground"
-                                >
-                                  {formatTokenCount(tokenStats.inputTokens)}
-                                </dd>
-                                <dt className="text-muted-foreground">
-                                  Output
-                                </dt>
-                                <dd
-                                  data-testid="trace-row-hover-output-tokens"
-                                  className="text-right font-medium tabular-nums text-foreground"
-                                >
-                                  {formatTokenCount(tokenStats.outputTokens)}
-                                </dd>
-                                <dt className="text-muted-foreground">Total</dt>
-                                <dd
-                                  data-testid="trace-row-hover-total-tokens"
-                                  className="text-right font-medium tabular-nums text-foreground"
-                                >
-                                  {formatTokenCount(tokenStats.totalTokens)}
-                                </dd>
-                              </dl>
+                              <div className="space-y-1 text-xs">
+                                <div className="flex min-w-0 items-baseline justify-between gap-3">
+                                  <span className="shrink-0 text-popover-foreground/70">
+                                    Input
+                                  </span>
+                                  <span
+                                    data-testid="trace-row-hover-input-tokens"
+                                    className="min-w-0 text-right font-medium text-popover-foreground tabular-nums"
+                                  >
+                                    {formatTokenCount(tokenStats.inputTokens)}
+                                  </span>
+                                </div>
+                                <div className="flex min-w-0 items-baseline justify-between gap-3">
+                                  <span className="shrink-0 text-popover-foreground/70">
+                                    Output
+                                  </span>
+                                  <span
+                                    data-testid="trace-row-hover-output-tokens"
+                                    className="min-w-0 text-right font-medium text-popover-foreground tabular-nums"
+                                  >
+                                    {formatTokenCount(tokenStats.outputTokens)}
+                                  </span>
+                                </div>
+                                <div className="flex min-w-0 items-baseline justify-between gap-3">
+                                  <span className="shrink-0 text-popover-foreground/70">
+                                    Total
+                                  </span>
+                                  <span
+                                    data-testid="trace-row-hover-total-tokens"
+                                    className="min-w-0 text-right font-medium text-popover-foreground tabular-nums"
+                                  >
+                                    {formatTokenCount(tokenStats.totalTokens)}
+                                  </span>
+                                </div>
+                              </div>
                             </div>
                           </div>
                         </HoverCardContent>
@@ -2322,17 +2543,11 @@ export function TraceTimeline({
           <ResizablePanel
             defaultSize={35}
             minSize={20}
-            maxSize={50}
             className="min-h-0 min-w-0 overflow-hidden"
           >
             <div
               data-testid="trace-timeline-detail-sticky"
-              className={cn(
-                "min-h-0 min-w-0 overflow-y-auto lg:sticky lg:top-3",
-                fillContent
-                  ? "max-h-full lg:max-h-full"
-                  : "lg:max-h-[calc(100vh-8rem)]",
-              )}
+              className="h-full min-h-0 min-w-0 max-h-full overflow-y-auto"
             >
               <TimelineDetailPane
                 row={selectedRow}

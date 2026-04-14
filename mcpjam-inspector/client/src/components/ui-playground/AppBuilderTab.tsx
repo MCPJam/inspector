@@ -26,6 +26,7 @@ import { PlaygroundLeft } from "./PlaygroundLeft";
 import { PlaygroundMain } from "./PlaygroundMain";
 import SaveRequestDialog from "../tools/SaveRequestDialog";
 import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
+import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { listTools } from "@/lib/apis/mcp-tools-api";
 import { generateFormFieldsFromSchema } from "@/lib/tool-form";
 import type { MCPServerConfig } from "@mcpjam/sdk/browser";
@@ -46,6 +47,7 @@ import { AppBuilderSkeleton } from "@/components/app-builder/AppBuilderSkeleton"
 import type { ServerFormData } from "@/shared/types.js";
 import type { ServerWithName } from "@/hooks/use-app-state";
 import { useSidebar } from "@/components/ui/sidebar";
+import { getLoadingIndicatorVariantForHostStyle } from "@/components/chat-v2/shared/loading-indicator-content";
 import { toast } from "sonner";
 import type { PlaygroundServerSelectorProps } from "@/components/ActiveServerSelector";
 
@@ -58,6 +60,7 @@ interface AppBuilderTabProps {
   onConnect?: (formData: ServerFormData) => void;
   onOnboardingChange?: (isOnboarding: boolean) => void;
   playgroundServerSelectorProps?: PlaygroundServerSelectorProps;
+  enableMultiModelChat?: boolean;
 }
 
 const APP_BUILDER_FIRST_RUN_PROMPT = "Draw me an MCP architecture diagram";
@@ -73,6 +76,7 @@ export function AppBuilderTab({
   onConnect,
   onOnboardingChange,
   playgroundServerSelectorProps,
+  enableMultiModelChat = false,
 }: AppBuilderTabProps) {
   const posthog = usePostHog();
   const prefersReducedMotion = useReducedMotion();
@@ -116,6 +120,7 @@ export function AppBuilderTab({
     reset,
     setSidebarVisible,
   } = useUIPlaygroundStore();
+  const hostStyle = usePreferencesStore((s) => s.hostStyle);
 
   const { setOpen: setMcpSidebarOpen } = useSidebar();
 
@@ -211,13 +216,18 @@ export function AppBuilderTab({
     }
   }, [serverName, reset, setTools, setExecutionError]);
 
+  const serverConnectionStatus = serverName
+    ? servers[serverName]?.connectionStatus
+    : undefined;
+
   useEffect(() => {
-    if (serverConfig && serverName) {
+    if (serverConfig && serverName && serverConnectionStatus === "connected") {
       fetchTools();
     } else {
       reset();
+      setToolsMetadata({});
     }
-  }, [serverConfig, serverName, fetchTools, reset]);
+  }, [serverConfig, serverName, serverConnectionStatus, fetchTools, reset]);
 
   // Update form fields when tool is selected
   useEffect(() => {
@@ -366,6 +376,7 @@ export function AppBuilderTab({
         >
           <PlaygroundMain
             serverName={serverName || ""}
+            enableMultiModelChat={enableMultiModelChat}
             isExecuting={isExecuting}
             executingToolName={selectedTool}
             invokingMessage={invokingMessage}
@@ -380,6 +391,9 @@ export function AppBuilderTab({
             }
             initialInputTypewriter={firstRunComposerSeed}
             blockSubmitUntilServerConnected={firstRunComposerSeed}
+            loadingIndicatorVariant={getLoadingIndicatorVariantForHostStyle(
+              hostStyle,
+            )}
             pulseSubmit={firstRunComposerSeed}
             showPostConnectGuide={false}
             onFirstMessageSent={
