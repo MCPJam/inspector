@@ -2,11 +2,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
   managerConfigsMock,
+  managerOptionsMock,
   getToolsForAiSdkMock,
   getInitializationInfoMock,
   disconnectAllServersMock,
 } = vi.hoisted(() => ({
   managerConfigsMock: vi.fn(),
+  managerOptionsMock: vi.fn(),
   getToolsForAiSdkMock: vi.fn(),
   getInitializationInfoMock: vi.fn(),
   disconnectAllServersMock: vi.fn(),
@@ -17,14 +19,17 @@ vi.mock("@mcpjam/sdk", async () => {
     await vi.importActual<typeof import("@mcpjam/sdk")>("@mcpjam/sdk");
   return {
     ...actual,
-    MCPClientManager: vi.fn().mockImplementation((configs: unknown) => {
-      managerConfigsMock(configs);
-      return {
-        getToolsForAiSdk: getToolsForAiSdkMock,
-        getInitializationInfo: getInitializationInfoMock,
-        disconnectAllServers: disconnectAllServersMock,
-      };
-    }),
+    MCPClientManager: vi
+      .fn()
+      .mockImplementation((configs: unknown, options: unknown) => {
+        managerConfigsMock(configs);
+        managerOptionsMock(options);
+        return {
+          getToolsForAiSdk: getToolsForAiSdkMock,
+          getInitializationInfo: getInitializationInfoMock,
+          disconnectAllServers: disconnectAllServersMock,
+        };
+      }),
   };
 });
 
@@ -38,6 +43,7 @@ describe("web routes — guest OAuth validation", () => {
   beforeEach(() => {
     initGuestTokenSecret();
     managerConfigsMock.mockReset();
+    managerOptionsMock.mockReset();
     getToolsForAiSdkMock.mockReset();
     getInitializationInfoMock.mockReset();
     disconnectAllServersMock.mockReset();
@@ -90,5 +96,13 @@ describe("web routes — guest OAuth validation", () => {
         timeout: expect.any(Number),
       },
     });
+    expect(managerOptionsMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        retryPolicy: {
+          retries: 0,
+          retryDelayMs: 3000,
+        },
+      }),
+    );
   });
 });

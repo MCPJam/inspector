@@ -16,27 +16,46 @@ www.mcpjam.com
 
 </div>
 
-MCPJam Inspector is the local development client for ChatGPT apps, MCP ext-apps, and MCP servers. Build and test your apps with a full widget emulator, chat with any LLM, and inspect your server’s tools, resources, prompts, and OAuth flows.
+MCPJam is the development platform for MCP servers, MCP apps, and ChatGPT apps.
 
-No more ngrok or ChatGPT subscription needed. MCPJam is the fastest way to iterate on any MCP project.
+- **Debug**: Inspect every JSON-RPC message and OAuth exchange across host configurations with full traces.
+- **Chat**: Talk to any LLM against your server with full trace visibility into tool calls and context across agent, host app, your server.
+- **Inspect**: Explore your server’s tools, resources, and prompts in one place.
+- **Evaluate**: Run evals across multiple LLMs and track accuracy over time so you catch regressions early.
+- **CLI**: Probe servers, run doctor checks, exercise OAuth flows, and list tools/resources/prompts straight from your terminal.
+- **SDK**: Programmatically drive inspections, snapshot server capabilities, and assert on tool/resource shapes from your own tests.
+- **CI/CD**: Wire the CLI and SDK into GitHub Actions (or any pipeline) to run e2e tests, evals, OAuth checks, and spec conformance on every PR.
+
+No more ngrok or ChatGPT/Claude subscription needed. MCPJam is the fastest way to iterate on any MCP project.
 
 ### 🚀 Quick Start
 
-Start up the MCPJam inspector:
+Open the hosted web app. No install needed.
+
+👉 [app.mcpjam.com](https://app.mcpjam.com)
+
+Or run MCPJam locally for HTTP/S and local STDIO servers:
 
 ```bash
 npx @mcpjam/inspector@latest
 ```
 
-<img alt="MCPJam Inspector Demo" src="./docs/images/mcpjam-banner.png">
+<img alt="MCPJam Inspector Demo" src="./docs/images/mcpjam-new-banner.png">
 
 # Table of contents
 
 - [Installation Guides](#installation-guides)
 - [Key Features](#key-features)
-  - [ChatGPT / MCP Apps Builder](#openai-apps--mcp-ui)
-  - [OAuth Debugger](#oauth-debugger)
+  - [App Builder](#app-builder)
   - [Chat](#chat)
+  - [OAuth Debugger](#oauth-debugger)
+  - [MCP Server Debugging](#mcp-server-debugging)
+  - [Skills](#skills)
+  - [Workspaces](#workspaces)
+  - [Evals](#evals)
+  - [CLI](#cli)
+  - [SDK](#sdk)
+  - [CI/CD](#cicd)
 - [Contributing](#contributing-)
 - [Links](#links-)
 - [Community](#community-)
@@ -45,69 +64,122 @@ npx @mcpjam/inspector@latest
 
 # Installation Guides
 
+MCPJam Inspector runs three ways: a hosted web app, a desktop app for Mac and Windows, or via your terminal. The web app is HTTPS-only and has no install. Terminal and Desktop support HTTP/S and local STDIO servers.
+
 ### Requirements
 
 [![Node.js](https://img.shields.io/badge/Node.js-20+-green.svg?style=for-the-badge&logo=node.js)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5+-blue.svg?style=for-the-badge&logo=typescript)](https://www.typescriptlang.org/)
 
-## Install MCPJam
+Node.js 20+ is only required for the terminal install (`npx`). The hosted web app and desktop apps have no local runtime requirements.
 
-We recommend starting MCPJam inspector via `npx`:
+## Hosted Web App
+
+Open [app.mcpjam.com](https://app.mcpjam.com) in your browser. No install required. Always on the latest version, and you can share MCP server links with teammates the same way you'd share a Google Doc.
+
+- HTTPS MCP server URLs only (for HTTP or local STDIO servers, use Desktop or Terminal).
+- No STDIO, tunneling, skills, or tasks. Those require the local inspector.
+
+See [Hosted App docs](https://docs.mcpjam.com/hosted/overview) for details.
+
+## Desktop App
+
+Download the installer for your OS. Supports HTTP/S and local STDIO servers. No Node.js required.
+
+- [Install Mac](https://github.com/MCPJam/inspector/releases/latest/download/MCPJam.Inspector.dmg)
+- [Install Windows](https://github.com/MCPJam/inspector/releases/latest/download/MCPJam-Inspector-Setup.exe)
+
+## Terminal
+
+Run the inspector via `npx` (supports HTTP/S and local STDIO):
 
 ```bash
 npx @mcpjam/inspector@latest
 ```
 
-We have a Mac and Windows desktop app:
+After it starts, open the printed `localhost` URL in your browser.
 
-- [Install Mac](https://github.com/MCPJam/inspector/releases/latest/download/MCPJam.Inspector.dmg)
-- [Install Windows](https://github.com/MCPJam/inspector/releases/latest/download/MCPJam-Inspector-Setup.exe)
+## Docker
 
-Run MCPJam using Docker:
+Run MCPJam Inspector using Docker, bound to localhost for security:
 
 ```bash
-docker run -p 6274:6274 mcpjam/mcp-inspector
+docker run -p 127.0.0.1:6274:6274 mcpjam/mcp-inspector
 ```
+
+The app is available at `http://127.0.0.1:6274`. Always use `-p 127.0.0.1:6274:6274` (not `-p 6274:6274`) to keep the inspector local-only. On macOS/Windows, connect to host MCP servers via `http://host.docker.internal:PORT` instead of `127.0.0.1`.
 
 # Key features
 
-| Capability           | Description                                                                                                                                                                                                                                                                                        |
-| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| ChatGPT Apps SDK     | Local development for ChatGPT Apps SDK support. Full support for the `windows.openai` API: `widgetState`, `callTool`, `structuredContent`, `sendFollowUpMessage`, `displayMode`, CSP, and more. No more ngrok or ChatGPT subscription needed. [Read more](https://www.mcpjam.com/blog/app-builder) |
-| MCP ext-apps (Claude)   | Full local development for MCP Apps (SEP-1865). Support for all JSON-RPC message types, such as `tools/call`, `ui/initialize`, `ui/message`, `ui/open-link`, and more. [Read more](https://www.mcpjam.com/blog/mcp-apps-preview)                                                                   |
-| OAuth Debugger       | Debug your MCP server's OAuth implementation at every step. Visually inspect every network message. Supports all protocol versions (03-26, 06-18, and 11-25). Support for client pre-registration, DCR, and CIMD. [Read more](https://www.mcpjam.com/blog/oauth-debugger)                          |
-| LLM playground       | Chat with your MCP server against any LLM in the playground. We provide frontier models such as GPT-5 and Claude Sonnet for free, or bring your own API key. Playground supports ChatGPT apps and MCP Apps. [Read more](https://www.mcpjam.com/blog/frontier-models)                               |
-| MCP server debugging | Connect to and test any MCP server local or remote. Manually invoke MCP tools, resources, resource templates, and elicitation flows. View all JSON-RPC logs. Support for all features from the official MCP inspector.                                                                             |
-| Server info          | View server icons, version, capabilities, instructions, and ChatGPT widget metadata exposed by the server. [Read more](https://www.mcpjam.com/blog/server-instructions)                                                                                                                            |
+| Capability           | Description                                                                                                                                                                                                        |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| App Builder          | Debug your server against a model: tool calls or in-panel chat, with Chat, Trace, and Raw. OpenAI Apps SDK and MCP app UIs, text tools, Chrome DevTools-style widget emulator. [Read more](https://docs.mcpjam.com/inspector/app-builder) |
+| Chat                 | Multi-server chat on frontier models (free). Chat, Trace, Raw; compare up to 3 models. [Read more](https://docs.mcpjam.com/inspector/chat)                                                                         |
+| OAuth Debugger       | Guided MCP OAuth conformance checks: protocol versions 03-26, 06-18, 11-25; DCR, client pre-registration, CIMD. [Read more](https://docs.mcpjam.com/inspector/guided-oauth)                                        |
+| MCP Server Debugging | Manually run tools, resources, templates, and elicitation; full JSON-RPC logs.                                                                                                                                     |
+| Skills               | Skills in Chat and App Builder; local filesystem only. [Read more](https://docs.mcpjam.com/inspector/skills)                                                                                                       |
+| Workspaces           | Shared server groups with real-time team sync. [Read more](https://docs.mcpjam.com/inspector/workspaces)                                                                                                           |
+| Evals                | Test cases with expected tool calls, run across LLMs, metrics. [Read more](https://docs.mcpjam.com/inspector/test-cases)                                                                                           |
+| CLI                  | Run MCPJam checks, probes, and evals from the terminal. Perfect for local dev loops and CI. [Read more](https://docs.mcpjam.com/cli/overview)                                                                      |
+| SDK                  | Programmatic access to MCPJam for custom tooling, scripting, and integrations. [Read more](https://docs.mcpjam.com/sdk)                                                                                            |
+| CI/CD                | Run MCPJam checks and evals in GitHub Actions and other CI systems to gate PRs on regressions. [Read more](https://docs.mcpjam.com/cli/ci)                                                                         |
 
-## ChatGPT Apps / MCP Apps Builder
+## App Builder
 
-Develop [ChatGPT apps](https://developers.openai.com/apps-sdk/) and [MCP apps (Claude)](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/1865) in MCPJam's Apps Builder. Apps Builder is a local emulator to quickly view and iterate on your widgets.
+Debug your server against a model using tool calls or in-panel chat, with Chat, Trace, and Raw views. Supports OpenAI Apps SDK and MCP app UIs, text tools, and a Chrome DevTools-style widget emulator to iterate on widgets locally.
 
 - Manually invoke a tool to instantly view the widget, or chat with your server using an LLM.
-- View all JSON-RPC messages, `window.openai` messages in the logs.
+- View all JSON-RPC messages and `window.openai` messages in the logs.
 - Change emulator device to Desktop, Tablet, or Mobile views.
 - Test your app's locale change, CSP permissions, light / dark mode, hover & touch, and safe area insets.
 
-<img alt="MCPJam LLM playground" src="./docs/images/pizza-demo.png">
+<img alt="MCPJam App Builder" src="./docs/images/pizza-demo.png">
 
-## OAuth Debugger
+<img alt="MCPJam App Builder trace view" src="./docs/images/app-builder-trace.png">
 
-View every step of the OAuth handshake in detail, with guided explanations. Test with every version of the OAuth spec (03-26, 06-18, and 11-25). Support for client pre-registration, Dynamic Client Registration (DCR), and Client ID Metadata Documents (CIMD).
-
-<img alt="MCPJam OAuth Flow Debugger" src="./docs/images/oauth-debugger.png">
+_Trace view: every tool call, agent step, and JSON-RPC message._
 
 ## Chat
 
-Try your server against any LLM model. We provide frontier models like GPT-5, Claude Sonnet, Gemini 2.5 for free, or bring your own API key. View your server's token usage.
+Multi-server chat on frontier models for free, or bring your own API key. Chat, Trace, and Raw views; compare up to 3 models side-by-side. View your server's token usage.
 
-<img alt="MCPJam LLM playground" src="./docs/images/playground.png">
+<img alt="MCPJam Chat comparing frontier models side by side" src="./docs/images/side-bears.png">
 
-## MCP Inspector
+## OAuth Debugger
 
-MCPJam contains all of the tooling to test your MCP server. Test your server's tools, resources, prompts, templates, with full JSON-RPC observability. MCPJam has all features from the original inspector and more.
+Guided MCP OAuth conformance checks with step-by-step explanations. Test against every version of the OAuth spec (03-26, 06-18, and 11-25). Support for client pre-registration, Dynamic Client Registration (DCR), and Client ID Metadata Documents (CIMD).
 
-<img alt="MCPJam LLM playground" src="./docs/images/mcp-tools.png">
+<img alt="MCPJam OAuth Flow Debugger" src="./docs/images/oauth-debugger.png">
+
+## MCP Server Debugging
+
+MCPJam contains all of the tooling to test your MCP server. Manually run tools, resources, resource templates, prompts, and elicitation flows, with full JSON-RPC observability. MCPJam has all features from the original inspector and more.
+
+<img alt="MCPJam MCP Tools" src="./docs/images/mcp-tools.png">
+
+## Skills
+
+Use Skills in Chat and App Builder to extend models with local, reusable behaviors. Local filesystem only. Your data never leaves your machine. [Read more](https://docs.mcpjam.com/inspector/skills)
+
+## Workspaces
+
+Group your servers into shared workspaces with real-time team sync, so everyone on your team is testing against the same configuration. [Read more](https://docs.mcpjam.com/inspector/workspaces)
+
+## Evals
+
+Define test cases with expected tool calls and run them across multiple LLMs. Track accuracy metrics over time to catch regressions early and improve your server with every iteration. [Read more](https://docs.mcpjam.com/inspector/test-cases)
+
+## CLI
+
+Run MCPJam from the terminal for fast local dev loops and CI integration. Probe servers, run OAuth checks, inspect tools and resources, and execute evals without leaving your shell. [Read more](https://docs.mcpjam.com/cli/overview)
+
+## SDK
+
+Programmatic access to MCPJam for custom tooling, scripting, and integrations. Build your own workflows on top of MCPJam's inspection and evaluation primitives. [Read more](https://docs.mcpjam.com/sdk)
+
+## CI/CD
+
+Wire MCPJam into GitHub Actions, GitLab CI, or your CI system of choice to run conformance, E2E tests, and evals on every PR. Catch MCP server regressions before they ship. [Read more](https://docs.mcpjam.com/cli/ci)
 
 # Contributing 👨‍💻
 
@@ -132,12 +204,12 @@ Join our [Discord community](https://discord.gg/JEnDtz8X6z) where the contributo
 
 Some of our partners and favorite frameworks:
 
-- [Stytch](https://stytch.com) - Our favorite MCP OAuth provider
-- [xMCP](https://xmcp.dev/) - The Typescript MCP framework. Ship on Vercel instantly.
-- [Alpic](https://alpic.ai/) - Host MCP servers. Try their new [Skybridge framework](https://github.com/alpic-ai/skybridge) for ChatGPT apps!
+- [Stytch](https://stytch.com). Our favorite MCP OAuth provider.
+- [xMCP](https://xmcp.dev/). The Typescript MCP framework. Ship on Vercel instantly.
+- [Alpic](https://alpic.ai/). Host MCP servers. Try their new [Skybridge framework](https://github.com/alpic-ai/skybridge) for ChatGPT apps!
 
 ---
 
 # License 📄
 
-This project is licensed under the **Apache License 2.0** - see the [LICENSE](LICENSE).
+This project is licensed under the **Apache License 2.0**. See the [LICENSE](LICENSE).

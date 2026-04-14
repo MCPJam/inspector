@@ -3,7 +3,7 @@ import { probeMcpServer } from "../src/server-probe.js";
 function jsonResponse(
   body: unknown,
   status = 200,
-  headers: Record<string, string> = {},
+  headers: Record<string, string> = {}
 ): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -109,12 +109,135 @@ describe("probeMcpServer", () => {
     expect(result.oauth.required).toBe(true);
     expect(result.oauth.resourceMetadataUrl).toBe(resourceMetadataUrl);
     expect(result.oauth.authorizationServerMetadataUrl).toBe(
-      `${authServerUrl}/.well-known/oauth-authorization-server`,
+      `${authServerUrl}/.well-known/oauth-authorization-server`
     );
     expect(result.oauth.registrationStrategies).toEqual([
       "preregistered",
       "dcr",
       "cimd",
     ]);
+  });
+
+  it("retries transient probe failures and preserves attempts across retries", async () => {
+    const serverUrl = "https://mcp.example.com/mcp";
+    let initializeCalls = 0;
+
+    const fetchFn: typeof fetch = jest.fn(async (input) => {
+      const url = String(input);
+
+      if (url !== serverUrl) {
+        return jsonResponse({ error: "unexpected" }, 404);
+      }
+
+      initializeCalls += 1;
+      if (initializeCalls === 1) {
+        throw Object.assign(new Error("connect timeout"), {
+          code: "ETIMEDOUT",
+        });
+      }
+
+      return jsonResponse(
+        {
+          jsonrpc: "2.0",
+          result: {
+            protocolVersion: "2025-11-25",
+            serverInfo: { name: "mock-server", version: "1.0.0" },
+            capabilities: { tools: {} },
+          },
+        },
+        200,
+        {}
+      );
+    }) as typeof fetch;
+
+    const result = await probeMcpServer({
+      url: serverUrl,
+      accessToken: "token",
+      fetchFn,
+      retryPolicy: {
+        retries: 1,
+        retryDelayMs: 0,
+      },
+    });
+
+    expect(result.status).toBe("ready");
+    expect(initializeCalls).toBe(2);
+    expect(result.transport.attempts).toHaveLength(2);
+    expect(result.transport.attempts[0]?.error).toContain("timeout");
+  });
+
+  it("does not retry oauth_required responses", async () => {
+    const serverUrl = "https://mcp.example.com/mcp";
+    let initializeCalls = 0;
+
+    const fetchFn: typeof fetch = jest.fn(async (input) => {
+      const url = String(input);
+
+      if (url === serverUrl) {
+        initializeCalls += 1;
+        return new Response(null, { status: 401 });
+      }
+
+      return jsonResponse({ error: "missing" }, 404);
+    }) as typeof fetch;
+
+    const result = await probeMcpServer({
+      url: serverUrl,
+      fetchFn,
+      retryPolicy: {
+        retries: 3,
+        retryDelayMs: 0,
+      },
+    });
+
+    expect(result.status).toBe("oauth_required");
+    expect(initializeCalls).toBe(1);
+  });
+
+  it("does not retry reachable transport mismatch responses", async () => {
+    const serverUrl = "https://mcp.example.com/mcp";
+
+    const fetchFn: typeof fetch = jest.fn(async (_input, init) => {
+      if ((init?.method ?? "GET") === "POST") {
+        return jsonResponse({ error: "unsupported" }, 415);
+      }
+
+      return jsonResponse({ error: "missing" }, 404, {
+        "Content-Type": "application/json",
+      });
+    }) as typeof fetch;
+
+    const result = await probeMcpServer({
+      url: serverUrl,
+      accessToken: "token",
+      fetchFn,
+      retryPolicy: {
+        retries: 3,
+        retryDelayMs: 0,
+      },
+    });
+
+    expect(result.status).toBe("reachable");
+    expect(result.transport.attempts).toHaveLength(2);
+  });
+
+  it("does not retry deterministic probe failures", async () => {
+    const serverUrl = "https://mcp.example.com/mcp";
+    const fetchFn: typeof fetch = jest.fn(async () => {
+      throw new TypeError("malformed request");
+    }) as typeof fetch;
+
+    const result = await probeMcpServer({
+      url: serverUrl,
+      fetchFn,
+      retryPolicy: {
+        retries: 3,
+        retryDelayMs: 0,
+      },
+    });
+
+    expect(result.status).toBe("error");
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+    expect(result.transport.attempts).toHaveLength(1);
   });
 });

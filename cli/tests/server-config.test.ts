@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { Command } from "commander";
 import {
+  addSharedServerOptions,
+  parseNonNegativeInteger,
   parseJsonRecord,
+  parseRetryPolicy,
   parseServerConfig,
   resolveAliasedStringOption,
 } from "../src/lib/server-config";
@@ -56,28 +60,45 @@ test("parseServerConfig accepts refresh-token auth for HTTP servers", () => {
 });
 
 test("parseServerConfig builds a stdio config with args and env", () => {
-  const config = parseServerConfig({
-    command: "node",
-    commandArgs: ["server.js", "--flag"],
-    env: ["FOO=bar", "BAZ=qux"],
-    timeout: 5000,
-  });
+  const inheritedEnvKey = "MCPJAM_TEST_CLI_INHERITED_ENV";
+  const originalInheritedEnv = process.env[inheritedEnvKey];
 
-  assert.equal("command" in config, true);
-  assert.equal(config.command, "node");
-  assert.deepEqual(config.args, ["server.js", "--flag"]);
-  assert.deepEqual(config.env, {
-    FOO: "bar",
-    BAZ: "qux",
-  });
-  assert.equal(config.stderr, "ignore");
-  assert.equal(config.timeout, 5000);
+  process.env[inheritedEnvKey] = "from-parent";
+
+  try {
+    const config = parseServerConfig({
+      transport: "stdio",
+      command: "node",
+      args: ["server.js"],
+      commandArgs: ["--flag"],
+      env: ["FOO=bar", "BAZ=qux"],
+      cwd: "/tmp/mcpjam-test",
+      timeout: 5000,
+    });
+
+    assert.equal("command" in config, true);
+    assert.equal(config.command, "node");
+    assert.deepEqual(config.args, ["server.js", "--flag"]);
+    assert.equal(config.env?.[inheritedEnvKey], undefined);
+    assert.equal(config.env?.FOO, "bar");
+    assert.equal(config.env?.BAZ, "qux");
+    assert.equal(config.cwd, "/tmp/mcpjam-test");
+    assert.equal(config.stderr, "pipe");
+    assert.equal(config.timeout, 5000);
+  } finally {
+    if (originalInheritedEnv === undefined) {
+      delete process.env[inheritedEnvKey];
+    } else {
+      process.env[inheritedEnvKey] = originalInheritedEnv;
+    }
+  }
 });
 
 test("parseServerConfig preserves commas inside stdio args and env values", () => {
   const config = parseServerConfig({
     command: "node",
-    commandArgs: ['{"a":1,"b":2}', "--list=one,two"],
+    args: ['{"a":1,"b":2}'],
+    commandArgs: ["--list=one,two"],
     env: [
       "NO_PROXY=127.0.0.1,localhost",
       'JSON_PAYLOAD={"a":1,"b":2}',
@@ -86,10 +107,8 @@ test("parseServerConfig preserves commas inside stdio args and env values", () =
 
   assert.equal("command" in config, true);
   assert.deepEqual(config.args, ['{"a":1,"b":2}', "--list=one,two"]);
-  assert.deepEqual(config.env, {
-    NO_PROXY: "127.0.0.1,localhost",
-    JSON_PAYLOAD: '{"a":1,"b":2}',
-  });
+  assert.equal(config.env?.NO_PROXY, "127.0.0.1,localhost");
+  assert.equal(config.env?.JSON_PAYLOAD, '{"a":1,"b":2}');
 });
 
 test("parseServerConfig rejects missing and mixed targets", () => {
@@ -119,13 +138,28 @@ test("parseServerConfig rejects missing and mixed targets", () => {
   assert.throws(
     () =>
       parseServerConfig({
+        transport: "http",
+        command: "node",
+        url: "https://example.com/mcp",
+        header: ["X-Test: yes"],
+      }),
+    (error) =>
+      error instanceof CliError &&
+      error.exitCode === 2,
+  );
+
+  assert.throws(
+    () =>
+      parseServerConfig({
         command: "node",
         header: ["X-Test: yes"],
       }),
     (error) =>
       error instanceof CliError &&
       error.exitCode === 2 &&
-      error.message.includes("--access-token, --oauth-access-token, --refresh-token, --client-id, --client-secret, and --header can only be used"),
+      error.message.includes(
+        "--access-token, --oauth-access-token, --refresh-token, --client-id, --client-secret, and --header can only be used together with --url.",
+      ),
   );
 
   assert.throws(
@@ -137,7 +171,9 @@ test("parseServerConfig rejects missing and mixed targets", () => {
       }),
     (error) =>
       error instanceof CliError &&
-      error.message.includes("--access-token and --oauth-access-token must match"),
+      error.message.includes(
+        "--access-token and --oauth-access-token must match",
+      ),
   );
 
   assert.throws(
@@ -150,16 +186,159 @@ test("parseServerConfig rejects missing and mixed targets", () => {
       error instanceof CliError &&
       error.message.includes("--client-id is required"),
   );
+
+  assert.throws(
+    () =>
+      parseServerConfig({
+        transport: "socket" as "http",
+        url: "https://example.com/mcp",
+      }),
+    (error) =>
+      error instanceof CliError &&
+      error.message.includes('Invalid transport "socket"'),
+  );
+
+  assert.throws(
+    () =>
+      parseServerConfig({
+        transport: "http",
+        command: "node",
+      }),
+    (error) =>
+      error instanceof CliError &&
+      error.message.includes("--transport http requires --url"),
+  );
+
+  assert.throws(
+    () =>
+      parseServerConfig({
+        transport: "stdio",
+        url: "https://example.com/mcp",
+      }),
+    (error) =>
+      error instanceof CliError &&
+      error.message.includes("--transport stdio requires --command"),
+  );
+
+  assert.throws(
+    () =>
+      parseServerConfig({
+        transport: "http",
+        url: "https://example.com/mcp",
+        command: "node",
+      }),
+    (error) =>
+      error instanceof CliError &&
+      error.message.includes("--command can only be used with --transport stdio"),
+  );
+
+  assert.throws(
+    () =>
+      parseServerConfig({
+        transport: "stdio",
+        url: "https://example.com/mcp",
+        command: "node",
+      }),
+    (error) =>
+      error instanceof CliError &&
+      error.message.includes("--url can only be used with --transport http"),
+  );
+});
+
+test("parseServerConfig rejects stdio-only flags on HTTP targets", () => {
+  assert.throws(
+    () =>
+      parseServerConfig({
+        url: "https://example.com/mcp",
+        args: ["-y", "@modelcontextprotocol/server-everything"],
+      }),
+    (error) =>
+      error instanceof CliError &&
+      error.message.includes("--args, --command-args, --env, and --cwd"),
+  );
+});
+
+test("addSharedServerOptions parses modern stdio aliases", () => {
+  const command = addSharedServerOptions(
+    new Command().exitOverride().allowExcessArguments(false),
+  );
+
+  command.parse([
+    "node",
+    "test",
+    "--transport",
+    "stdio",
+    "--command",
+    "npx",
+    "--args",
+    "-y",
+    "@modelcontextprotocol/server-everything",
+    "--command-args",
+    "mcp",
+    "--command-args",
+    "start",
+    "-e",
+    "FOO=bar",
+    "BAR=baz",
+    "--cwd",
+    "/tmp/stdin-server",
+  ]);
+
+  const options = command.opts();
+  assert.equal(options.transport, "stdio");
+  assert.equal(options.command, "npx");
+  assert.deepEqual(options.args, ["-y", "@modelcontextprotocol/server-everything"]);
+  assert.deepEqual(options.commandArgs, ["mcp", "start"]);
+  assert.deepEqual(options.env, ["FOO=bar", "BAR=baz"]);
+  assert.equal(options.cwd, "/tmp/stdin-server");
 });
 
 test("parseJsonRecord rejects non-object JSON", () => {
-  assert.equal(parseJsonRecord('{"message":"hello"}', "Tool parameters")?.message, "hello");
+  assert.equal(
+    parseJsonRecord('{"message":"hello"}', "Tool parameters")?.message,
+    "hello",
+  );
 
   assert.throws(
     () => parseJsonRecord('["hello"]', "Tool parameters"),
     (error) =>
       error instanceof CliError &&
       error.message.includes("Tool parameters must be a JSON object"),
+  );
+});
+
+test("parseNonNegativeInteger accepts zero and rejects negatives", () => {
+  assert.equal(parseNonNegativeInteger("0", "Retries"), 0);
+  assert.equal(parseNonNegativeInteger("12", "Retries"), 12);
+
+  assert.throws(
+    () => parseNonNegativeInteger("-1", "Retries"),
+    (error) =>
+      error instanceof CliError &&
+      error.message.includes("Retries must be a non-negative integer"),
+  );
+});
+
+test("parseRetryPolicy preserves explicit values and fills defaults", () => {
+  assert.deepEqual(parseRetryPolicy({ retries: 2, retryDelayMs: 1500 }), {
+    retries: 2,
+    retryDelayMs: 1500,
+  });
+  assert.deepEqual(parseRetryPolicy({ retries: 3 }), {
+    retries: 3,
+    retryDelayMs: 3000,
+  });
+  assert.equal(parseRetryPolicy({}), undefined);
+});
+
+test("parseRetryPolicy rejects retryDelayMs without retries", () => {
+  assert.throws(
+    () => parseRetryPolicy({ retryDelayMs: 250 }),
+    (error) =>
+      error instanceof CliError &&
+      error.message.includes(
+        "--retry-delay-ms requires --retries to be greater than 0",
+      ),
   );
 });
 

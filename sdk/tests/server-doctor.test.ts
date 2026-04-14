@@ -5,7 +5,7 @@ import {
 import type { ProbeMcpServerResult } from "../src/server-probe";
 
 function createProbeResult(
-  overrides: Partial<ProbeMcpServerResult> = {},
+  overrides: Partial<ProbeMcpServerResult> = {}
 ): ProbeMcpServerResult {
   return {
     url: "https://example.com/mcp",
@@ -31,17 +31,26 @@ function createProbeResult(
 
 function createMockManager(overrides: Record<string, any> = {}) {
   return {
-    listTools: jest
-      .fn()
-      .mockResolvedValue({ tools: [{ name: "echo", description: "Echo input" }] }),
-    getAllToolsMetadata: jest.fn().mockReturnValue({ echo: { title: "Echo" } }),
+    listTools: jest.fn().mockResolvedValue({
+      tools: [
+        {
+          name: "echo",
+          description: "Echo input",
+          _meta: { title: "Echo" },
+        },
+      ],
+    }),
     listResources: jest
       .fn()
       .mockResolvedValue({ resources: [{ uri: "file://note", name: "Note" }] }),
-    listPrompts: jest.fn().mockResolvedValue({ prompts: [{ name: "summarize" }] }),
+    listPrompts: jest
+      .fn()
+      .mockResolvedValue({ prompts: [{ name: "summarize" }] }),
     listResourceTemplates: jest
       .fn()
-      .mockResolvedValue({ resourceTemplates: [{ uriTemplate: "note://{id}" }] }),
+      .mockResolvedValue({
+        resourceTemplates: [{ uriTemplate: "note://{id}" }],
+      }),
     getInitializationInfo: jest.fn().mockReturnValue({
       protocolVersion: "2025-11-25",
       serverInfo: { name: "Example" },
@@ -63,7 +72,11 @@ describe("collectConnectedServerDoctorState", () => {
       protocolVersion: "2025-11-25",
       serverInfo: { name: "Example" },
     });
-    expect(result.capabilities).toEqual({ tools: {}, resources: {}, prompts: {} });
+    expect(result.capabilities).toEqual({
+      tools: {},
+      resources: {},
+      prompts: {},
+    });
     expect(result.tools).toEqual([{ name: "echo", description: "Echo input" }]);
     expect(result.toolsMetadata).toEqual({ echo: { title: "Echo" } });
     expect(result.resources).toEqual([{ uri: "file://note", name: "Note" }]);
@@ -104,7 +117,7 @@ describe("runServerDoctor", () => {
       {
         probeServer: jest.fn().mockResolvedValue(createProbeResult()),
         withManager: async (_config, fn) => fn(createMockManager(), "srv"),
-      },
+      }
     );
 
     expect(result.status).toBe("ready");
@@ -142,13 +155,13 @@ describe("runServerDoctor", () => {
                 "https://example.com/.well-known/oauth-protected-resource",
               registrationStrategies: ["dcr", "cimd"],
             },
-          }),
+          })
         ),
         withManager: async () => {
           connected = true;
           throw new Error("should not connect");
         },
-      },
+      }
     );
 
     expect(result.status).toBe("oauth_required");
@@ -184,18 +197,55 @@ describe("runServerDoctor", () => {
               optional: false,
               registrationStrategies: ["dcr"],
             },
-          }),
+          })
         ),
         withManager: async (_config, fn) => {
           connected = true;
           return fn(createMockManager(), "srv");
         },
-      },
+      }
     );
 
     expect(connected).toBe(true);
     expect(result.status).toBe("ready");
     expect(result.checks.probe.status).toBe("ok");
-    expect(result.checks.probe.detail).toMatch(/continuing with provided credentials/i);
+    expect(result.checks.probe.detail).toMatch(
+      /continuing with provided credentials/i
+    );
+  });
+
+  it("passes retry policy through probe and ephemeral manager dependencies", async () => {
+    const retryPolicy = {
+      retries: 2,
+      retryDelayMs: 250,
+    };
+    const probeServer = jest.fn().mockResolvedValue(createProbeResult());
+    const withManager = jest.fn(
+      async (_config, fn, options?: { retryPolicy?: typeof retryPolicy }) => {
+        expect(options?.retryPolicy).toEqual(retryPolicy);
+        return fn(createMockManager(), "srv");
+      }
+    );
+
+    await runServerDoctor(
+      {
+        config: {
+          url: "https://example.com/mcp",
+          timeout: 4_000,
+        },
+        target: { label: "https://example.com/mcp" },
+        timeout: 4_000,
+        retryPolicy,
+      },
+      {
+        probeServer,
+        withManager,
+      }
+    );
+
+    expect(probeServer).toHaveBeenCalledWith(
+      expect.objectContaining({ retryPolicy })
+    );
+    expect(withManager).toHaveBeenCalled();
   });
 });

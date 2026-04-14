@@ -169,6 +169,10 @@ describe("buildReplayManager", () => {
       {
         defaultTimeout: expect.any(Number),
         lazyConnect: true,
+        retryPolicy: {
+          retries: 0,
+          retryDelayMs: 3000,
+        },
       },
     );
   });

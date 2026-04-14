@@ -74,6 +74,15 @@ connect.post("/", async (c) => {
         status: "connected",
       });
     } catch (error) {
+      try {
+        await mcpClientManager.removeServer(serverId);
+      } catch (cleanupError) {
+        console.debug(
+          `Failed to remove MCP server ${serverId} after connection failure`,
+          cleanupError,
+        );
+      }
+
       return c.json(
         {
           success: false,
