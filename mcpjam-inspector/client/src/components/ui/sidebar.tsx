@@ -71,11 +71,18 @@ function SidebarProvider({
   // We use openProp and setOpenProp for control from outside the component.
   const [_open, _setOpen] = React.useState(defaultOpen);
   const open = openProp ?? _open;
+  const openRef = React.useRef(open);
+  const setOpenPropRef = React.useRef(setOpenProp);
+  openRef.current = open;
+  setOpenPropRef.current = setOpenProp;
+
   const setOpen = React.useCallback(
     (value: boolean | ((value: boolean) => boolean)) => {
-      if (setOpenProp) {
-        const openState = typeof value === "function" ? value(open) : value;
-        setOpenProp(openState);
+      const controlledSetOpen = setOpenPropRef.current;
+      if (controlledSetOpen) {
+        const openState =
+          typeof value === "function" ? value(openRef.current) : value;
+        controlledSetOpen(openState);
         return;
       }
 
@@ -83,7 +90,7 @@ function SidebarProvider({
         return typeof value === "function" ? value(prev) : value;
       });
     },
-    [setOpenProp, open],
+    [],
   );
 
   // Persist effective open state (matches prior behavior; avoids side effects inside _setOpen updaters).
