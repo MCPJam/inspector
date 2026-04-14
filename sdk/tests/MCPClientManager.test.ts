@@ -958,6 +958,38 @@ describe("MCPClientManager", () => {
       expect(connectSpy).toHaveBeenCalledTimes(1);
     });
 
+    it("stops direct connect retries after disconnect during backoff", async () => {
+      manager = new MCPClientManager(
+        {},
+        {
+          lazyConnect: true,
+          retryPolicy: {
+            retries: 1,
+            retryDelayMs: 25,
+          },
+        }
+      );
+
+      const connectSpy = jest
+        .spyOn(manager as any, "connectToServerOnce")
+        .mockRejectedValue(
+          Object.assign(new Error("timed out"), { code: "ETIMEDOUT" })
+        );
+
+      const promise = manager.connectToServer("retry-disconnect", {
+        command: "node",
+        args: ["server.js"],
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      await manager.disconnectServer("retry-disconnect");
+
+      await expect(promise).rejects.toThrow(
+        'MCP server "retry-disconnect" was disconnected.'
+      );
+      expect(connectSpy).toHaveBeenCalledTimes(1);
+    });
+
     it("retries read operations as a single ensureConnected plus RPC budget", async () => {
       const fakeClient = {
         listTools: jest
@@ -1055,6 +1087,44 @@ describe("MCPClientManager", () => {
 
       await expect(promise).rejects.toThrow("Request cancelled");
       expect(connectSpy).toHaveBeenCalledTimes(1);
+      expect(fakeClient.listTools).toHaveBeenCalledTimes(1);
+    });
+
+    it("stops read retries after disconnect during backoff", async () => {
+      manager = new MCPClientManager(
+        {},
+        {
+          lazyConnect: true,
+          retryPolicy: {
+            retries: 1,
+            retryDelayMs: 25,
+          },
+        }
+      );
+
+      const fakeClient = {
+        listTools: jest
+          .fn()
+          .mockRejectedValueOnce(
+            Object.assign(new Error("timed out"), { code: "ETIMEDOUT" })
+          )
+          .mockResolvedValueOnce({ tools: [] }),
+      };
+
+      seedRegisteredServer(manager, "retry-read-disconnect", {
+        command: "node",
+        args: ["server.js"],
+      });
+      seedLiveState(manager, "retry-read-disconnect", { client: fakeClient });
+
+      const promise = manager.listTools("retry-read-disconnect");
+
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      await manager.disconnectServer("retry-read-disconnect");
+
+      await expect(promise).rejects.toThrow(
+        'MCP server "retry-read-disconnect" was disconnected.'
+      );
       expect(fakeClient.listTools).toHaveBeenCalledTimes(1);
     });
 

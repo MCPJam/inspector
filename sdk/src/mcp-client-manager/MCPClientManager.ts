@@ -128,6 +128,7 @@ export class MCPClientManager {
   private readonly registeredServers = new Map<string, RegisteredServerState>();
   private readonly liveClientStates = new Map<string, LiveClientState>();
   private readonly toolsMetadataCache = new Map<string, Map<string, any>>();
+  private readonly retryAbortControllers = new Map<string, Set<AbortController>>();
 
   // Managers for specific features
   private readonly notificationManager = new NotificationManager();
@@ -320,16 +321,19 @@ export class MCPClientManager {
 
     const timeout = config.timeout ?? this.defaultTimeout;
     this.registerServer(serverId, config, timeout);
+    const { signal, cleanup } = this.createRetrySignal(serverId);
 
     const state: LiveClientState = liveState ?? {};
     const retryPromise = Promise.resolve().then(() =>
       retryWithPolicy({
         policy: this.defaultRetryPolicy,
-        operation: () => this.connectToServerOnce(serverId),
+        signal,
+        operation: () => this.connectToServerOnce(serverId, signal),
         shouldRetryError: (error) => isRetryableTransientError(error),
         onRetry: async () => {
           await this.destroyLiveState(serverId, {
             preserveRetryPromise: true,
+            abortRetryOperations: false,
           });
         },
       })
@@ -340,6 +344,7 @@ export class MCPClientManager {
     try {
       return await retryPromise;
     } finally {
+      cleanup();
       const latestState = this.liveClientStates.get(serverId);
       if (latestState?.retryPromise === retryPromise) {
         latestState.retryPromise = undefined;
@@ -355,7 +360,10 @@ export class MCPClientManager {
    */
   async disconnectServer(serverId: string): Promise<void> {
     const state = this.liveClientStates.get(serverId);
-    if (!state) return;
+    if (!state) {
+      this.abortRetrySignals(serverId);
+      return;
+    }
     await this.destroyLiveState(serverId);
   }
 
@@ -374,7 +382,12 @@ export class MCPClientManager {
    * Disconnects from all servers.
    */
   async disconnectAllServers(): Promise<void> {
-    const serverIds = Array.from(this.liveClientStates.keys());
+    const serverIds = Array.from(
+      new Set([
+        ...this.liveClientStates.keys(),
+        ...this.retryAbortControllers.keys(),
+      ])
+    );
     await Promise.all(serverIds.map((id) => this.disconnectServer(id)));
   }
 
@@ -572,8 +585,8 @@ export class MCPClientManager {
     taskOptions?: TaskOptions
   ) {
     const request = this.normalizeExecuteToolRequest(options, taskOptions);
-    const operation = async () => {
-      await this.ensureConnected(serverId);
+    const operation = async (signal?: AbortSignal) => {
+      await this.ensureConnected(serverId, signal);
       const client = this.getClientOrThrow(serverId);
       const mergedOptions = this.withProgressHandler(serverId, request.request);
       const callParams = { name: toolName, arguments: args };
@@ -1036,7 +1049,12 @@ export class MCPClientManager {
     return state;
   }
 
-  private async connectToServerOnce(serverId: string): Promise<Client> {
+  private async connectToServerOnce(
+    serverId: string,
+    signal?: AbortSignal
+  ): Promise<Client> {
+    this.throwIfAborted(signal);
+
     const registeredState = this.registeredServers.get(serverId);
     if (!registeredState) {
       throw new Error(`Unknown MCP server "${serverId}".`);
@@ -1048,7 +1066,7 @@ export class MCPClientManager {
     }
 
     if (existingState?.connectPromise) {
-      return existingState.connectPromise;
+      return this.awaitWithAbort(existingState.connectPromise, signal);
     }
 
     const state: LiveClientState = existingState ?? {};
@@ -1062,7 +1080,7 @@ export class MCPClientManager {
     );
     state.connectPromise = connectionPromise;
     this.liveClientStates.set(serverId, state);
-    return connectionPromise;
+    return this.awaitWithAbort(connectionPromise, signal);
   }
 
   private async performConnection(
@@ -1391,7 +1409,12 @@ export class MCPClientManager {
     return new Error(message);
   }
 
-  private async ensureConnected(serverId: string): Promise<void> {
+  private async ensureConnected(
+    serverId: string,
+    signal?: AbortSignal
+  ): Promise<void> {
+    this.throwIfAborted(signal);
+
     const state = this.liveClientStates.get(serverId);
     if (state?.client) return;
 
@@ -1399,14 +1422,14 @@ export class MCPClientManager {
       throw new Error(`Unknown MCP server "${serverId}".`);
     }
     if (state?.retryPromise) {
-      await state.retryPromise;
+      await this.awaitWithAbort(state.retryPromise, signal);
       return;
     }
     if (state?.connectPromise) {
-      await state.connectPromise;
+      await this.awaitWithAbort(state.connectPromise, signal);
       return;
     }
-    await this.connectToServerOnce(serverId);
+    await this.connectToServerOnce(serverId, signal);
   }
 
   private getClientOrThrow(serverId: string): Client {
@@ -1456,8 +1479,13 @@ export class MCPClientManager {
     options?: {
       preservePendingPromises?: boolean;
       preserveRetryPromise?: boolean;
+      abortRetryOperations?: boolean;
     }
   ): Promise<void> {
+    if (options?.abortRetryOperations !== false) {
+      this.abortRetrySignals(serverId);
+    }
+
     const state = this.liveClientStates.get(serverId);
     const client = state?.client;
     const transport = state?.transport;
@@ -1716,8 +1744,8 @@ export class MCPClientManager {
       serverId,
       options,
       this.defaultRetryPolicy,
-      async () => {
-        await this.ensureConnected(serverId);
+      async (signal) => {
+        await this.ensureConnected(serverId, signal);
         return operation(this.getClientOrThrow(serverId));
       },
       { resetConnectionOnRetry: false }
@@ -1728,21 +1756,150 @@ export class MCPClientManager {
     serverId: string,
     options: RequestOptions | undefined,
     retryPolicy: RetryPolicy,
-    operation: () => Promise<T>,
+    operation: (signal?: AbortSignal) => Promise<T>,
     config: {
       resetConnectionOnRetry?: boolean;
     } = {}
   ): Promise<T> {
-    return retryWithPolicy({
-      policy: retryPolicy,
-      signal: options?.signal,
-      operation: async () => operation(),
-      shouldRetryError: (error) => isRetryableTransientError(error),
-      onRetry: async () => {
-        if (config.resetConnectionOnRetry) {
-          await this.destroyLiveState(serverId);
+    const { signal, cleanup } = this.createRetrySignal(serverId, options?.signal);
+
+    try {
+      return await retryWithPolicy({
+        policy: retryPolicy,
+        signal,
+        operation: async () => this.awaitWithAbort(operation(signal), signal),
+        shouldRetryError: (error) => isRetryableTransientError(error),
+        onRetry: async () => {
+          if (config.resetConnectionOnRetry) {
+            await this.destroyLiveState(serverId, {
+              abortRetryOperations: false,
+            });
+          }
+        },
+      });
+    } finally {
+      cleanup();
+    }
+  }
+
+  private createRetrySignal(
+    serverId: string,
+    callerSignal?: AbortSignal
+  ): { signal: AbortSignal; cleanup: () => void } {
+    const controller = new AbortController();
+    let controllers = this.retryAbortControllers.get(serverId);
+    if (!controllers) {
+      controllers = new Set();
+      this.retryAbortControllers.set(serverId, controllers);
+    }
+    controllers.add(controller);
+
+    const abortFromCaller = () => {
+      if (!controller.signal.aborted) {
+        controller.abort(callerSignal?.reason);
+      }
+    };
+
+    if (callerSignal?.aborted) {
+      abortFromCaller();
+    } else {
+      callerSignal?.addEventListener("abort", abortFromCaller, { once: true });
+    }
+
+    return {
+      signal: controller.signal,
+      cleanup: () => {
+        callerSignal?.removeEventListener("abort", abortFromCaller);
+        const currentControllers = this.retryAbortControllers.get(serverId);
+        if (!currentControllers) {
+          return;
+        }
+        currentControllers.delete(controller);
+        if (currentControllers.size === 0) {
+          this.retryAbortControllers.delete(serverId);
         }
       },
+    };
+  }
+
+  private abortRetrySignals(serverId: string): void {
+    const controllers = this.retryAbortControllers.get(serverId);
+    if (!controllers) {
+      return;
+    }
+
+    this.retryAbortControllers.delete(serverId);
+    const error = new Error(`MCP server "${serverId}" was disconnected.`);
+    error.name = "AbortError";
+
+    for (const controller of controllers) {
+      if (!controller.signal.aborted) {
+        controller.abort(error);
+      }
+    }
+  }
+
+  private throwIfAborted(signal?: AbortSignal): void {
+    if (!signal?.aborted) {
+      return;
+    }
+
+    if (signal.reason instanceof Error) {
+      throw signal.reason;
+    }
+
+    const error = new Error(
+      signal.reason == null
+        ? "The operation was aborted."
+        : String(signal.reason)
+    );
+    error.name = "AbortError";
+    throw error;
+  }
+
+  private async awaitWithAbort<T>(
+    promise: Promise<T>,
+    signal?: AbortSignal
+  ): Promise<T> {
+    this.throwIfAborted(signal);
+
+    if (!signal) {
+      return promise;
+    }
+
+    return await new Promise<T>((resolve, reject) => {
+      const onAbort = () => {
+        cleanup();
+        reject(
+          signal.reason instanceof Error
+            ? signal.reason
+            : Object.assign(
+                new Error(
+                  signal.reason == null
+                    ? "The operation was aborted."
+                    : String(signal.reason)
+                ),
+                { name: "AbortError" }
+              )
+        );
+      };
+
+      const cleanup = () => {
+        signal.removeEventListener("abort", onAbort);
+      };
+
+      signal.addEventListener("abort", onAbort, { once: true });
+
+      promise.then(
+        (value) => {
+          cleanup();
+          resolve(value);
+        },
+        (error) => {
+          cleanup();
+          reject(error);
+        }
+      );
     });
   }
 }
