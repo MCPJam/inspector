@@ -8,6 +8,7 @@ import {
   useState,
   type ComponentProps,
 } from "react";
+import { useAuth } from "@workos-inc/authkit-react";
 import { AlertTriangle, Construction, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { ServersTab } from "./components/ServersTab";
@@ -56,7 +57,6 @@ import {
 import { useAppState } from "./hooks/use-app-state";
 import { PreferencesStoreProvider } from "./stores/preferences/preferences-provider";
 import { Toaster } from "./components/ui/sonner";
-import { useElectronHostedAuth } from "./hooks/useElectronHostedAuth";
 import { useElectronOAuth } from "./hooks/useElectronOAuth";
 import { useEnsureDbUser } from "./hooks/useEnsureDbUser";
 import { usePostHog, useFeatureFlagEnabled } from "posthog-js/react";
@@ -296,7 +296,7 @@ export default function App() {
     signIn,
     user: workOsUser,
     isLoading: isWorkOsLoading,
-  } = useElectronHostedAuth();
+  } = useAuth();
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
   const [hostedOAuthHandling, setHostedOAuthHandling] = useState(() =>
     HOSTED_MODE ? getHostedOAuthCallbackContext() !== null : false,

@@ -1,15 +1,15 @@
 import { useRef, useState } from "react";
+import { useAuth } from "@workos-inc/authkit-react";
 import { useAction, useMutation, useQuery } from "convex/react";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { EditableText } from "@/components/ui/editable-text";
 import { getInitials } from "@/lib/utils";
 import { Camera, Loader2 } from "lucide-react";
-import { useElectronHostedAuth } from "@/hooks/useElectronHostedAuth";
 import { useProfilePicture } from "@/hooks/useProfilePicture";
 
 export function ProfileTab() {
-  const { user, signIn } = useElectronHostedAuth();
+  const { user, signIn } = useAuth();
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 

@@ -21,6 +21,7 @@ import {
   useRef,
 } from "react";
 import { Braces, Loader2, Trash2 } from "lucide-react";
+import { useAuth } from "@workos-inc/authkit-react";
 import type { ContentBlock } from "@modelcontextprotocol/sdk/types.js";
 import type { UIMessage } from "ai";
 import { ModelDefinition } from "@/shared/types";
@@ -49,7 +50,6 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { useElectronHostedAuth } from "@/hooks/useElectronHostedAuth";
 import { createDeterministicToolMessages } from "./playground-helpers";
 import type { MCPPromptResult } from "@/components/chat-v2/chat-input/prompts/mcp-prompts-popover";
 import type { SkillResult } from "@/components/chat-v2/chat-input/skills/skill-types";
@@ -232,7 +232,7 @@ export function PlaygroundMain({
   showPostConnectGuide = false,
   onFirstMessageSent,
 }: PlaygroundMainProps) {
-  const { signUp } = useElectronHostedAuth();
+  const { signUp } = useAuth();
   const posthog = usePostHog();
   const clearLogs = useTrafficLogStore((s) => s.clear);
 

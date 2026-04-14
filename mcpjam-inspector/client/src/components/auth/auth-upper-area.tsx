@@ -1,3 +1,4 @@
+import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
 import { usePostHog } from "posthog-js/react";
 import { Button } from "@/components/ui/button";
@@ -9,7 +10,6 @@ import {
 } from "@/components/ActiveServerSelector";
 import { NotificationBell } from "@/components/notifications/NotificationBell";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
-import { useElectronHostedAuth } from "@/hooks/useElectronHostedAuth";
 
 interface AuthUpperAreaProps {
   activeServerSelectorProps?: ActiveServerSelectorProps;
@@ -18,7 +18,7 @@ interface AuthUpperAreaProps {
 export function AuthUpperArea({
   activeServerSelectorProps,
 }: AuthUpperAreaProps) {
-  const { user, signIn, signUp } = useElectronHostedAuth();
+  const { user, signIn, signUp } = useAuth();
   const { isLoading } = useConvexAuth();
   const posthog = usePostHog();
 

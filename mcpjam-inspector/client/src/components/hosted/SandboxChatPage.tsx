@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
 import { Loader2, Link2Off, ShieldX } from "lucide-react";
 import { toast } from "sonner";
@@ -32,7 +33,6 @@ import { SandboxHostStyleProvider } from "@/contexts/sandbox-host-style-context"
 import { SandboxHostOnboardingOverlays } from "@/components/hosted/SandboxHostOnboardingOverlays";
 import { useSandboxHostIntroGate } from "@/components/hosted/useSandboxHostIntroGate";
 import { getSandboxShellStyle } from "@/lib/sandbox-host-style";
-import { useElectronHostedAuth } from "@/hooks/useElectronHostedAuth";
 
 interface SandboxChatPageProps {
   pathToken?: string | null;
@@ -219,7 +219,7 @@ export function SandboxChatPage({
   pathToken,
   onExitSandboxChat,
 }: SandboxChatPageProps) {
-  const { getAccessToken, signIn } = useElectronHostedAuth();
+  const { getAccessToken, signIn } = useAuth();
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
   const themeMode = usePreferencesStore((s) => s.themeMode);
 

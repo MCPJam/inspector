@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState } from "react";
 import { useConvexAuth } from "convex/react";
+import { useAuth } from "@workos-inc/authkit-react";
 import { useFeatureFlagEnabled } from "posthog-js/react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -29,7 +30,6 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { useElectronHostedAuth } from "@/hooks/useElectronHostedAuth";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
   Organization,
@@ -241,7 +241,7 @@ export function OrganizationsTab({
   navigateBillingInSameTab,
   onOrganizationDeleted,
 }: OrganizationsTabProps) {
-  const { user, signIn } = useElectronHostedAuth();
+  const { user, signIn } = useAuth();
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
 
   const { sortedOrganizations, isLoading } = useOrganizationQueries({
@@ -371,7 +371,7 @@ function OrganizationPage({
   onOrganizationDeleted,
 }: OrganizationPageProps) {
   const { isAuthenticated } = useConvexAuth();
-  const { user } = useElectronHostedAuth();
+  const { user } = useAuth();
   const currentUserEmail = user?.email;
   const fileInputRef = useRef<HTMLInputElement>(null);
 

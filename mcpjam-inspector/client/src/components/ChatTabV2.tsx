@@ -9,6 +9,7 @@ import {
 } from "react";
 import type { UIMessage } from "ai";
 import { ScrollToBottomButton } from "@/components/chat-v2/shared/scroll-to-bottom-button";
+import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
 import type { ContentBlock } from "@modelcontextprotocol/sdk/types.js";
 import { toast } from "sonner";
@@ -44,7 +45,6 @@ import {
   standardEventProps,
 } from "@/lib/PosthogUtils";
 import { ErrorBox } from "@/components/chat-v2/error";
-import { useElectronHostedAuth } from "@/hooks/useElectronHostedAuth";
 import { StickToBottom } from "use-stick-to-bottom";
 import { type MCPPromptResult } from "@/components/chat-v2/chat-input/prompts/mcp-prompts-popover";
 import type { SkillResult } from "@/components/chat-v2/chat-input/skills/skill-types";
@@ -189,7 +189,7 @@ export function ChatTabV2({
   evalChatHandoff,
   onEvalChatHandoffConsumed,
 }: ChatTabProps) {
-  const { signUp } = useElectronHostedAuth();
+  const { signUp } = useAuth();
   const { isAuthenticated: isConvexAuthenticated } = useConvexAuth();
   const appState = useSharedAppState();
   const { isVisible: isJsonRpcPanelVisible, toggle: toggleJsonRpcPanel } =

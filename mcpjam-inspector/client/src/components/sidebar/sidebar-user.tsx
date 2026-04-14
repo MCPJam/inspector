@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth, useQuery } from "convex/react";
 import {
   DropdownMenu,
@@ -31,7 +32,6 @@ import { useOrganizationQueries } from "@/hooks/useOrganizations";
 import { CreateOrganizationDialog } from "@/components/organization/CreateOrganizationDialog";
 import { HOSTED_MODE } from "@/lib/config";
 import { Button } from "@/components/ui/button";
-import { useElectronHostedAuth } from "@/hooks/useElectronHostedAuth";
 import type { OrganizationRouteSection } from "@/lib/hosted-navigation";
 
 export function SidebarUser({
@@ -45,7 +45,7 @@ export function SidebarUser({
   ) => void;
 }) {
   const { isLoading, isAuthenticated } = useConvexAuth();
-  const { user, signIn, signOut } = useElectronHostedAuth();
+  const { user, signIn, signOut } = useAuth();
   const { profilePictureUrl } = useProfilePicture();
   const convexUser = useQuery("users:getCurrentUser" as any);
   const { isMobile } = useSidebar();
@@ -83,12 +83,12 @@ export function SidebarUser({
   };
 
   const handleSignOut = () => {
-    if (window.isElectron) {
-      void signOut();
-      return;
-    }
-
-    void signOut({ returnTo: window.location.origin });
+    const isElectron = (window as any).isElectron;
+    const returnTo =
+      isElectron && import.meta.env.DEV
+        ? "http://localhost:8080/callback"
+        : window.location.origin;
+    signOut({ returnTo });
   };
 
   const avatarUrl = profilePictureUrl;

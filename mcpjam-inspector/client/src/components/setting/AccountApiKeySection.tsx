@@ -26,9 +26,9 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useConvexAuth, useMutation, useQuery } from "convex/react";
+import { useAuth } from "@workos-inc/authkit-react";
 import { usePostHog } from "posthog-js/react";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
-import { useElectronHostedAuth } from "@/hooks/useElectronHostedAuth";
 
 type CopyFieldProps = {
   value: string;
@@ -93,7 +93,7 @@ export function AccountApiKeySection({
   const [isApiKeyModalOpen, setIsApiKeyModalOpen] = useState(false);
 
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
-  const { signIn } = useElectronHostedAuth();
+  const { signIn } = useAuth();
   const posthog = usePostHog();
 
   const maybeApiKey = useQuery(

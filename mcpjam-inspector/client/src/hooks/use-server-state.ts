@@ -26,7 +26,6 @@ import {
   getStoredTokens,
   clearOAuthData,
   initiateOAuth,
-  isElectronMcpCallbackState,
 } from "@/lib/oauth/mcp-oauth";
 import { getHostedOAuthCallbackContext } from "@/lib/hosted-oauth-callback";
 import { HOSTED_MODE } from "@/lib/config";
@@ -128,6 +127,10 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => {
     window.setTimeout(resolve, ms);
   });
+}
+
+function isElectronMcpCallbackState(state: string | null | undefined): boolean {
+  return Boolean(state?.startsWith("electron_mcp:"));
 }
 
 export function shouldRetryOAuthConnectionFailure(
