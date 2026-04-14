@@ -25,6 +25,11 @@
       "types": "./dist/skill-reference.d.ts",
       "import": "./dist/skill-reference.mjs",
       "require": "./dist/skill-reference.js"
+    },
+    "./auth": {
+      "types": "./dist/auth.d.ts",
+      "import": "./dist/auth.mjs",
+      "require": "./dist/auth.js"
     }
   },
   "files": [
