@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { Command } from "commander";
 import {
+  addSharedServerOptions,
   parseNonNegativeInteger,
   parseJsonRecord,
   parseRetryPolicy,
@@ -58,37 +60,55 @@ test("parseServerConfig accepts refresh-token auth for HTTP servers", () => {
 });
 
 test("parseServerConfig builds a stdio config with args and env", () => {
-  const config = parseServerConfig({
-    command: "node",
-    commandArgs: ["server.js", "--flag"],
-    env: ["FOO=bar", "BAZ=qux"],
-    timeout: 5000,
-  });
+  const inheritedEnvKey = "MCPJAM_TEST_CLI_INHERITED_ENV";
+  const originalInheritedEnv = process.env[inheritedEnvKey];
 
-  assert.equal("command" in config, true);
-  assert.equal(config.command, "node");
-  assert.deepEqual(config.args, ["server.js", "--flag"]);
-  assert.deepEqual(config.env, {
-    FOO: "bar",
-    BAZ: "qux",
-  });
-  assert.equal(config.stderr, "ignore");
-  assert.equal(config.timeout, 5000);
+  process.env[inheritedEnvKey] = "from-parent";
+
+  try {
+    const config = parseServerConfig({
+      transport: "stdio",
+      command: "node",
+      args: ["server.js"],
+      commandArgs: ["--flag"],
+      env: ["FOO=bar", "BAZ=qux"],
+      cwd: "/tmp/mcpjam-test",
+      timeout: 5000,
+    });
+
+    assert.equal("command" in config, true);
+    assert.equal(config.command, "node");
+    assert.deepEqual(config.args, ["server.js", "--flag"]);
+    assert.equal(config.env?.[inheritedEnvKey], undefined);
+    assert.equal(config.env?.FOO, "bar");
+    assert.equal(config.env?.BAZ, "qux");
+    assert.equal(config.cwd, "/tmp/mcpjam-test");
+    assert.equal(config.stderr, "pipe");
+    assert.equal(config.timeout, 5000);
+  } finally {
+    if (originalInheritedEnv === undefined) {
+      delete process.env[inheritedEnvKey];
+    } else {
+      process.env[inheritedEnvKey] = originalInheritedEnv;
+    }
+  }
 });
 
 test("parseServerConfig preserves commas inside stdio args and env values", () => {
   const config = parseServerConfig({
     command: "node",
-    commandArgs: ['{"a":1,"b":2}', "--list=one,two"],
-    env: ["NO_PROXY=127.0.0.1,localhost", 'JSON_PAYLOAD={"a":1,"b":2}'],
+    args: ['{"a":1,"b":2}'],
+    commandArgs: ["--list=one,two"],
+    env: [
+      "NO_PROXY=127.0.0.1,localhost",
+      'JSON_PAYLOAD={"a":1,"b":2}',
+    ],
   });
 
   assert.equal("command" in config, true);
   assert.deepEqual(config.args, ['{"a":1,"b":2}', "--list=one,two"]);
-  assert.deepEqual(config.env, {
-    NO_PROXY: "127.0.0.1,localhost",
-    JSON_PAYLOAD: '{"a":1,"b":2}',
-  });
+  assert.equal(config.env?.NO_PROXY, "127.0.0.1,localhost");
+  assert.equal(config.env?.JSON_PAYLOAD, '{"a":1,"b":2}');
 });
 
 test("parseServerConfig rejects missing and mixed targets", () => {
@@ -118,6 +138,19 @@ test("parseServerConfig rejects missing and mixed targets", () => {
   assert.throws(
     () =>
       parseServerConfig({
+        transport: "http",
+        command: "node",
+        url: "https://example.com/mcp",
+        header: ["X-Test: yes"],
+      }),
+    (error) =>
+      error instanceof CliError &&
+      error.exitCode === 2,
+  );
+
+  assert.throws(
+    () =>
+      parseServerConfig({
         command: "node",
         header: ["X-Test: yes"],
       }),
@@ -125,7 +158,7 @@ test("parseServerConfig rejects missing and mixed targets", () => {
       error instanceof CliError &&
       error.exitCode === 2 &&
       error.message.includes(
-        "--access-token, --oauth-access-token, --refresh-token, --client-id, --client-secret, and --header can only be used",
+        "--access-token, --oauth-access-token, --refresh-token, --client-id, --client-secret, and --header can only be used together with --url.",
       ),
   );
 
@@ -153,6 +186,111 @@ test("parseServerConfig rejects missing and mixed targets", () => {
       error instanceof CliError &&
       error.message.includes("--client-id is required"),
   );
+
+  assert.throws(
+    () =>
+      parseServerConfig({
+        transport: "socket" as "http",
+        url: "https://example.com/mcp",
+      }),
+    (error) =>
+      error instanceof CliError &&
+      error.message.includes('Invalid transport "socket"'),
+  );
+
+  assert.throws(
+    () =>
+      parseServerConfig({
+        transport: "http",
+        command: "node",
+      }),
+    (error) =>
+      error instanceof CliError &&
+      error.message.includes("--transport http requires --url"),
+  );
+
+  assert.throws(
+    () =>
+      parseServerConfig({
+        transport: "stdio",
+        url: "https://example.com/mcp",
+      }),
+    (error) =>
+      error instanceof CliError &&
+      error.message.includes("--transport stdio requires --command"),
+  );
+
+  assert.throws(
+    () =>
+      parseServerConfig({
+        transport: "http",
+        url: "https://example.com/mcp",
+        command: "node",
+      }),
+    (error) =>
+      error instanceof CliError &&
+      error.message.includes("--command can only be used with --transport stdio"),
+  );
+
+  assert.throws(
+    () =>
+      parseServerConfig({
+        transport: "stdio",
+        url: "https://example.com/mcp",
+        command: "node",
+      }),
+    (error) =>
+      error instanceof CliError &&
+      error.message.includes("--url can only be used with --transport http"),
+  );
+});
+
+test("parseServerConfig rejects stdio-only flags on HTTP targets", () => {
+  assert.throws(
+    () =>
+      parseServerConfig({
+        url: "https://example.com/mcp",
+        args: ["-y", "@modelcontextprotocol/server-everything"],
+      }),
+    (error) =>
+      error instanceof CliError &&
+      error.message.includes("--args, --command-args, --env, and --cwd"),
+  );
+});
+
+test("addSharedServerOptions parses modern stdio aliases", () => {
+  const command = addSharedServerOptions(
+    new Command().exitOverride().allowExcessArguments(false),
+  );
+
+  command.parse([
+    "node",
+    "test",
+    "--transport",
+    "stdio",
+    "--command",
+    "npx",
+    "--args",
+    "-y",
+    "@modelcontextprotocol/server-everything",
+    "--command-args",
+    "mcp",
+    "--command-args",
+    "start",
+    "-e",
+    "FOO=bar",
+    "BAR=baz",
+    "--cwd",
+    "/tmp/stdin-server",
+  ]);
+
+  const options = command.opts();
+  assert.equal(options.transport, "stdio");
+  assert.equal(options.command, "npx");
+  assert.deepEqual(options.args, ["-y", "@modelcontextprotocol/server-everything"]);
+  assert.deepEqual(options.commandArgs, ["mcp", "start"]);
+  assert.deepEqual(options.env, ["FOO=bar", "BAR=baz"]);
+  assert.equal(options.cwd, "/tmp/stdin-server");
 });
 
 test("parseJsonRecord rejects non-object JSON", () => {

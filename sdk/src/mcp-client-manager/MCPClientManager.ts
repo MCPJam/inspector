@@ -5,7 +5,6 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import {
   StdioClientTransport,
-  getDefaultEnvironment,
 } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
@@ -1075,14 +1074,19 @@ export class MCPClientManager {
         client.onerror = (error) => config.onError?.(error);
       }
 
-      client.onclose = () => this.clearLiveState(serverId);
+      client.onclose = () => {
+        if (this.liveClientStates.get(serverId) === state) {
+          this.clearLiveState(serverId);
+        }
+      };
 
       if (this.isStdioConfig(config)) {
         transport = await this.connectViaStdio(
           serverId,
           client,
           config,
-          timeout
+          timeout,
+          state
         );
       } else {
         transport = await this.connectViaHttp(
@@ -1127,12 +1131,13 @@ export class MCPClientManager {
     serverId: string,
     client: Client,
     config: StdioServerConfig,
-    timeout: number
+    timeout: number,
+    state: LiveClientState
   ): Promise<Transport> {
     const underlying = new StdioClientTransport({
       command: config.command,
       args: config.args,
-      env: { ...getDefaultEnvironment(), ...(config.env ?? {}) },
+      env: { ...this.getProcessEnvironment(), ...(config.env ?? {}) },
       stderr: config.stderr,
       cwd: config.cwd,
     });
@@ -1142,7 +1147,21 @@ export class MCPClientManager {
       ? wrapTransportForLogging(serverId, logger, underlying)
       : underlying;
 
-    await client.connect(transport, { timeout });
+    const stderrDrain = this.createStdioStderrDrain(underlying);
+
+    try {
+      await client.connect(transport, { timeout });
+    } catch (error) {
+      const stderrOutput = stderrDrain.getCapturedOutput();
+      stderrDrain.cleanup();
+      throw this.annotateStdioConnectError(
+        serverId,
+        error,
+        stderrOutput
+      );
+    }
+
+    state.stdioStderrCleanup = stderrDrain.cleanup;
     return underlying;
   }
 
@@ -1288,6 +1307,69 @@ export class MCPClientManager {
     }
   }
 
+  private getProcessEnvironment(): Record<string, string> {
+    return Object.fromEntries(
+      Object.entries(process.env).filter(
+        (entry): entry is [string, string] =>
+          typeof entry[1] === "string" && !entry[1].startsWith("()")
+      )
+    );
+  }
+
+  private createStdioStderrDrain(
+    transport: StdioClientTransport
+  ): { cleanup: () => void; getCapturedOutput: () => string } {
+    const stderrStream = transport.stderr as NodeJS.ReadableStream | null;
+    if (!stderrStream) {
+      return {
+        cleanup: () => {},
+        getCapturedOutput: () => "",
+      };
+    }
+
+    const maxCapturedChars = 16_384;
+    let captured = "";
+    let stopped = false;
+    const onData = (chunk: Buffer | string) => {
+      const text = typeof chunk === "string" ? chunk : chunk.toString("utf8");
+      captured += text;
+      if (captured.length > maxCapturedChars) {
+        captured = captured.slice(-maxCapturedChars);
+      }
+    };
+
+    stderrStream.on("data", onData);
+
+    return {
+      cleanup: () => {
+        if (!stopped) {
+          stopped = true;
+          stderrStream.removeListener("data", onData);
+        }
+      },
+      getCapturedOutput: () => captured.trim(),
+    };
+  }
+
+  private annotateStdioConnectError(
+    serverId: string,
+    error: unknown,
+    stderrOutput: string
+  ): Error {
+    const baseMessage =
+      error instanceof Error ? error.message : String(error);
+    const stderrSection = stderrOutput
+      ? `\n\nChild process stderr:\n${stderrOutput}`
+      : "";
+    const message = `Failed to connect to MCP server "${serverId}" via stdio: ${baseMessage}${stderrSection}`;
+
+    if (error instanceof Error) {
+      return new Error(message, { cause: error });
+    }
+
+    return new Error(message);
+  }
+
   private async ensureConnected(serverId: string): Promise<void> {
     const state = this.liveClientStates.get(serverId);
     if (state?.client) return;
@@ -1311,6 +1393,8 @@ export class MCPClientManager {
   }
 
   private clearLiveState(serverId: string): void {
+    const state = this.liveClientStates.get(serverId);
+    state?.stdioStderrCleanup?.();
     this.liveClientStates.delete(serverId);
     this.toolsMetadataCache.delete(serverId);
   }

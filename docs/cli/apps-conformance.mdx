@@ -24,7 +24,7 @@ mcpjam apps conformance --url https://your-server.com/mcp
 For a local stdio server:
 
 ```bash
-mcpjam apps conformance --command node --command-args server.js
+mcpjam apps conformance --command node --args server.js --cwd /path/to/project
 ```
 
 ## What it checks
@@ -106,6 +106,7 @@ mcpjam apps conformance \
 
 | Flag | Description |
 |------|-------------|
+| `--transport <transport>` | Explicit transport type (`http` or `stdio`) |
 | `--url <url>` | HTTP MCP server URL |
 | `--access-token <token>` | Bearer access token |
 | `--oauth-access-token <token>` | OAuth bearer access token |
@@ -115,8 +116,16 @@ mcpjam apps conformance \
 | `--header <header>` | HTTP header in `Key: Value` format (repeatable) |
 | `--client-capabilities <json>` | Client capabilities JSON object |
 | `--command <command>` | Command for a stdio server |
-| `--command-args <arg>` | Stdio command argument (repeatable) |
-| `--env <env>` | Stdio environment `KEY=VALUE` (repeatable) |
+| `--args <arg...>` | Preferred stdio command arguments |
+| `--command-args <arg>` | Legacy stdio command argument (repeatable) |
+| `-e, --env <env...>` | Stdio environment `KEY=VALUE` values |
+| `--cwd <path>` | Working directory for the stdio child process |
+
+Stdio child processes inherit the parent shell environment by default. Use
+`-e/--env` to add values or override inherited ones when the app server needs
+project-specific configuration.
+`--transport` is optional; without it, `--url` implies HTTP and `--command`
+implies stdio.
 
 ## Notes
 

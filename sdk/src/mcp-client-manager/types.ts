@@ -176,6 +176,7 @@ export interface LiveClientState {
   client?: Client;
   transport?: Transport;
   authProvider?: RefreshTokenOAuthProvider;
+  stdioStderrCleanup?: () => void;
   promise?: Promise<Client>;
 }
 

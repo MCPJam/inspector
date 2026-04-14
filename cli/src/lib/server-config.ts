@@ -12,7 +12,10 @@ export interface GlobalOptions {
   rpc: boolean;
 }
 
+type TransportType = "http" | "stdio";
+
 export interface SharedServerTargetOptions {
+  transport?: TransportType;
   url?: string;
   accessToken?: string;
   oauthAccessToken?: string;
@@ -22,8 +25,10 @@ export interface SharedServerTargetOptions {
   header?: string[];
   clientCapabilities?: string | Record<string, unknown>;
   command?: string;
+  args?: string[];
   commandArgs?: string[];
   env?: string[];
+  cwd?: string;
   timeout?: number;
   retries?: number;
   retryDelayMs?: number;
@@ -35,6 +40,10 @@ function collectString(value: string, previous: string[] = []): string[] {
 
 export function addSharedServerOptions(command: Command): Command {
   return command
+    .option(
+      "--transport <transport>",
+      'Explicit transport type: "http" or "stdio"',
+    )
     .option("--url <url>", "HTTP MCP server URL")
     .option("--access-token <token>", "Bearer access token for HTTP servers")
     .option(
@@ -59,15 +68,19 @@ export function addSharedServerOptions(command: Command): Command {
     )
     .option("--command <command>", "Command for a stdio MCP server")
     .option(
+      "--args <arg...>",
+      "Preferred stdio command arguments. Pass multiple values or repeat the flag.",
+    )
+    .option(
       "--command-args <arg>",
-      "Stdio command argument. Repeat to pass multiple arguments.",
+      "Legacy stdio command argument. Repeat to pass multiple arguments.",
       collectString,
     )
     .option(
-      "--env <env>",
-      'Stdio environment assignment in "KEY=VALUE" format. Repeat to pass multiple assignments.',
-      collectString,
-    );
+      "-e, --env <env...>",
+      'Stdio environment assignment in "KEY=VALUE" format. Pass multiple values or repeat the flag.',
+    )
+    .option("--cwd <path>", "Working directory for the stdio MCP server process");
 }
 
 export function getGlobalOptions(command: Command): GlobalOptions {
@@ -244,21 +257,21 @@ export function parseServerConfig(
   const command = options.command?.trim();
   const hasUrl = Boolean(url);
   const hasCommand = Boolean(command);
+  const transport = resolveTargetTransport(options, hasUrl, hasCommand);
+  const cwd = options.cwd?.trim();
   const clientCapabilities = resolveClientCapabilities(
     options.clientCapabilities,
   );
 
-  if (hasUrl === hasCommand) {
-    throw usageError("Specify exactly one target: either --url or --command.");
-  }
-
-  if (hasUrl && url) {
+  if (transport === "http" && url) {
     if (
+      (options.args?.length ?? 0) > 0 ||
       (options.commandArgs?.length ?? 0) > 0 ||
-      (options.env?.length ?? 0) > 0
+      (options.env?.length ?? 0) > 0 ||
+      cwd
     ) {
       throw usageError(
-        "--command-args and --env can only be used together with --command.",
+        "--args, --command-args, --env, and --cwd can only be used together with --command.",
       );
     }
 
@@ -321,10 +334,11 @@ export function parseServerConfig(
 
   return {
     command,
-    args: parseCommandArgs(options.commandArgs),
+    args: parseCommandArgs(options.args, options.commandArgs),
     env: parseEnvironmentOption(options.env),
+    ...(cwd ? { cwd } : {}),
     ...(clientCapabilities ? { clientCapabilities } : {}),
-    stderr: "ignore",
+    stderr: "pipe",
     timeout: options.timeout,
   };
 }
@@ -365,12 +379,17 @@ function parseHeader(entry: string): [string, string] {
   return [key, value];
 }
 
-function parseCommandArgs(values: string[] | undefined): string[] | undefined {
-  if (!values || values.length === 0) {
+function parseCommandArgs(
+  values: string[] | undefined,
+  legacyValues: string[] | undefined,
+): string[] | undefined {
+  const combined = [...(values ?? []), ...(legacyValues ?? [])];
+
+  if (combined.length === 0) {
     return undefined;
   }
 
-  return values;
+  return combined;
 }
 
 function parseEnvironmentOption(
@@ -415,6 +434,58 @@ function resolveClientCapabilities(
   }
 
   return parseUnknownRecord(value, "Client capabilities");
+}
+
+function resolveTargetTransport(
+  options: SharedServerTargetOptions,
+  hasUrl: boolean,
+  hasCommand: boolean,
+): TransportType {
+  const transport = resolveTransportOption(options.transport);
+
+  if (!transport) {
+    if (hasUrl === hasCommand) {
+      throw usageError("Specify exactly one target: either --url or --command.");
+    }
+
+    return hasUrl ? "http" : "stdio";
+  }
+
+  if (transport === "http") {
+    if (!hasUrl) {
+      throw usageError("--transport http requires --url.");
+    }
+    if (hasCommand) {
+      throw usageError("--command can only be used with --transport stdio.");
+    }
+
+    return transport;
+  }
+
+  if (!hasCommand) {
+    throw usageError("--transport stdio requires --command.");
+  }
+  if (hasUrl) {
+    throw usageError("--url can only be used with --transport http.");
+  }
+
+  return transport;
+}
+
+function resolveTransportOption(
+  value: string | undefined,
+): TransportType | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (value === "http" || value === "stdio") {
+    return value;
+  }
+
+  throw usageError(
+    `Invalid transport "${value}". Use "http" or "stdio".`,
+  );
 }
 
 export function resolveHttpAccessToken(
