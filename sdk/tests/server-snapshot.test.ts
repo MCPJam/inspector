@@ -23,10 +23,12 @@ function makeCollectedSnapshot(): CollectedServerSnapshot<string> {
         name: "zeta",
         description: "Second tool",
         inputSchema: {
+          enum: ["beta", "alpha"],
           properties: {
             b: { type: "string" },
             a: { type: "string" },
           },
+          required: ["b", "a"],
           type: "object",
         },
       },
@@ -54,6 +56,7 @@ function makeCollectedSnapshot(): CollectedServerSnapshot<string> {
         name: "Note",
       },
     ],
+    resourceTemplatesSupported: true,
     prompts: [
       {
         name: "summarize",
@@ -62,6 +65,10 @@ function makeCollectedSnapshot(): CollectedServerSnapshot<string> {
       {
         name: "annotate",
         description: "Annotate text",
+        arguments: [
+          { name: "zeta", required: false, description: "Second" },
+          { name: "alpha", required: true, description: "First" },
+        ],
       },
     ],
   };
@@ -106,13 +113,20 @@ describe("serializeServerSnapshot", () => {
     expect(result.toolsMetadata).toEqual({
       zeta: { a: true, z: true },
     });
+    expect(result.resourceTemplatesSupported).toBe(true);
     expect(result.tools[1]?.inputSchema).toEqual({
+      enum: ["alpha", "beta"],
       properties: {
         a: { type: "string" },
         b: { type: "string" },
       },
+      required: ["a", "b"],
       type: "object",
     });
+    expect(result.prompts[0]?.arguments).toEqual([
+      { description: "First", name: "alpha", required: true },
+      { description: "Second", name: "zeta", required: false },
+    ]);
   });
 });
 
@@ -148,6 +162,7 @@ describe("normalizeServerSnapshot", () => {
       },
       resources: [{ uri: "file:///a.txt" }, { uri: "file:///z.txt" }],
       resourceTemplates: [],
+      resourceTemplatesSupported: null,
       prompts: [{ name: "annotate" }, { name: "summarize" }],
     });
   });
@@ -163,10 +178,42 @@ describe("normalizeServerSnapshot", () => {
       toolsMetadata: {},
       resources: [],
       resourceTemplates: [],
+      resourceTemplatesSupported: true,
       prompts: [],
     });
 
     expect(result.target).toBe("https://example.com/mcp");
+  });
+
+  it("canonicalizes order-insensitive schema arrays", () => {
+    const result = normalizeServerSnapshot({
+      kind: "server-snapshot",
+      schemaVersion: 1,
+      target: "https://example.com/mcp",
+      initInfo: null,
+      capabilities: null,
+      tools: [
+        {
+          name: "echo",
+          inputSchema: {
+            enum: ["beta", "alpha"],
+            required: ["zeta", "alpha"],
+            type: ["string", "null"],
+          },
+        },
+      ],
+      toolsMetadata: {},
+      resources: [],
+      resourceTemplates: [],
+      resourceTemplatesSupported: true,
+      prompts: [],
+    });
+
+    expect(result.tools[0]?.inputSchema).toEqual({
+      enum: ["alpha", "beta"],
+      required: ["alpha", "zeta"],
+      type: ["null", "string"],
+    });
   });
 
   it("rejects unsupported snapshot metadata", () => {

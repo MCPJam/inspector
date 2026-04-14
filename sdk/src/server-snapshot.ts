@@ -47,6 +47,7 @@ export interface CollectedServerSnapshot<TTarget = unknown> {
   toolsMetadata: Record<string, unknown>;
   resources: ServerSnapshotResource[];
   resourceTemplates: ServerSnapshotResourceTemplate[];
+  resourceTemplatesSupported: boolean;
   prompts: ServerSnapshotPrompt[];
   warnings?: string[];
 }
@@ -73,13 +74,21 @@ export interface StableServerSnapshot<TTarget = unknown> {
   toolsMetadata: Record<string, unknown>;
   resources: ServerSnapshotResource[];
   resourceTemplates: ServerSnapshotResourceTemplate[];
+  resourceTemplatesSupported: boolean;
   prompts: ServerSnapshotPrompt[];
 }
 
-export type NormalizedServerSnapshot<TTarget = unknown> = Omit<
-  StableServerSnapshot<TTarget>,
-  "kind" | "schemaVersion"
->;
+export interface NormalizedServerSnapshot<TTarget = unknown> {
+  target: TTarget;
+  initInfo: unknown | null;
+  capabilities: unknown | null;
+  tools: ServerSnapshotTool[];
+  toolsMetadata: Record<string, unknown>;
+  resources: ServerSnapshotResource[];
+  resourceTemplates: ServerSnapshotResourceTemplate[];
+  resourceTemplatesSupported: boolean | null;
+  prompts: ServerSnapshotPrompt[];
+}
 
 export interface CollectServerSnapshotInput<TTarget = unknown> {
   config: MCPServerConfig;
@@ -197,6 +206,7 @@ export async function collectConnectedServerSnapshot<TTarget = unknown>(
           : { mimeType: template.mimeType }),
       })
     ),
+    resourceTemplatesSupported: !resourceTemplatesResult.unsupported,
     prompts: promptsResult.prompts.map((prompt) => ({
       name: prompt.name,
       ...(prompt.description === undefined
@@ -225,6 +235,8 @@ export function serializeServerSnapshot<TTarget = unknown>(
       toolsMetadata: normalized.toolsMetadata,
       resources: normalized.resources,
       resourceTemplates: normalized.resourceTemplates,
+      resourceTemplatesSupported:
+        normalized.resourceTemplatesSupported !== false,
       prompts: normalized.prompts,
     };
   }
@@ -300,6 +312,9 @@ export function normalizeServerSnapshot<TTarget = unknown>(
     resourceTemplates: normalizedResourceTemplates.sort((left, right) =>
       left.uriTemplate.localeCompare(right.uriTemplate)
     ),
+    resourceTemplatesSupported:
+      readOptionalBoolean(record.resourceTemplatesSupported) ??
+      (normalizedResourceTemplates.length > 0 ? true : null),
     prompts: normalizedPrompts.sort((left, right) =>
       left.name.localeCompare(right.name)
     ),
@@ -377,7 +392,7 @@ function normalizePrompt(
       : {}),
     ...(record.arguments === undefined
       ? {}
-      : { arguments: sortKeysDeep(record.arguments) }),
+      : { arguments: normalizePromptArguments(record.arguments) }),
   };
 }
 
@@ -409,6 +424,10 @@ function asLooseRecord(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
 function readArray(value: unknown, label: string): unknown[] {
   if (value === undefined) {
     return [];
@@ -430,9 +449,33 @@ function readString(value: unknown, message: string): string {
   return value;
 }
 
-function sortKeysDeep<T>(value: T): T {
+function readOptionalBoolean(value: unknown): boolean | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value !== "boolean") {
+    throw new ServerSnapshotFormatError(
+      "Expected resourceTemplatesSupported to be a boolean when present."
+    );
+  }
+
+  return value;
+}
+
+function sortKeysDeep<T>(value: T, parentKey?: string): T {
   if (Array.isArray(value)) {
-    return value.map((entry) => sortKeysDeep(entry)) as T;
+    const normalizedEntries = value.map((entry) => sortKeysDeep(entry)) as T[];
+
+    if (parentKey === "required") {
+      return [...normalizedEntries].sort(compareStableValues) as T;
+    }
+
+    if (parentKey === "enum" || parentKey === "type") {
+      return [...normalizedEntries].sort(compareStableValues) as T;
+    }
+
+    return normalizedEntries as T;
   }
 
   if (!value || typeof value !== "object") {
@@ -443,7 +486,7 @@ function sortKeysDeep<T>(value: T): T {
   return Object.fromEntries(
     Object.keys(record)
       .sort((left, right) => left.localeCompare(right))
-      .map((key) => [key, sortKeysDeep(record[key])])
+      .map((key) => [key, sortKeysDeep(record[key], key)])
   ) as T;
 }
 
@@ -451,4 +494,29 @@ function sortRecord(record: Record<string, unknown>): Record<string, unknown> {
   return Object.fromEntries(
     Object.entries(record).sort(([left], [right]) => left.localeCompare(right))
   );
+}
+
+function normalizePromptArguments(value: unknown): unknown {
+  if (!Array.isArray(value)) {
+    return sortKeysDeep(value);
+  }
+
+  const normalizedArguments = value.map((entry) => sortKeysDeep(entry));
+  if (
+    normalizedArguments.every(
+      (entry) => isRecord(entry) && typeof entry.name === "string"
+    )
+  ) {
+    return normalizedArguments.sort((left, right) =>
+      String((left as { name: string }).name).localeCompare(
+        String((right as { name: string }).name)
+      )
+    );
+  }
+
+  return normalizedArguments;
+}
+
+function compareStableValues(left: unknown, right: unknown): number {
+  return JSON.stringify(left).localeCompare(JSON.stringify(right));
 }

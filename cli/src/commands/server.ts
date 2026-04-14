@@ -455,10 +455,7 @@ export function registerServerCommands(program: Command): void {
       ? serializeStableServerSnapshot(snapshot)
       : serializeServerSnapshot(snapshot, { mode: "raw" });
 
-    writeResult(
-      withRpcLogsIfRequested(result, collector, globalOptions),
-      globalOptions.format,
-    );
+    writeResult(result, globalOptions.format);
   });
 
   addSharedServerOptions(
@@ -536,12 +533,8 @@ export function registerServerCommands(program: Command): void {
       );
     }
 
-    const diffPayload = collector
-      ? withRpcLogsIfRequested(rawDiff, collector, globalOptions)
-      : rawDiff;
-
     if (options.out) {
-      await writeJsonArtifact(options.out as string, diffPayload);
+      await writeJsonArtifact(options.out as string, rawDiff);
     }
 
     if (reporter) {
@@ -562,7 +555,7 @@ export function registerServerCommands(program: Command): void {
         }),
       );
     } else {
-      writeResult(diffPayload, globalOptions.format);
+      writeResult(rawDiff, globalOptions.format);
     }
 
     if (!rawDiff.passed) {

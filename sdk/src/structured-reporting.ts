@@ -99,7 +99,7 @@ export function renderStructuredRunJUnitXml(
   const effectiveCases =
     redactedReport.cases.length > 0
       ? redactedReport.cases
-      : [createSyntheticPassingCase(redactedReport.kind)];
+      : [createSyntheticCase(redactedReport.kind, redactedReport.passed)];
 
   const tests = effectiveCases.length;
   const failures = effectiveCases.filter((entry) => !entry.passed).length;
@@ -130,7 +130,21 @@ function updateBucket(bucket: StructuredSummaryBucket, passed: boolean): void {
   }
 }
 
-function createSyntheticPassingCase(kind: string): StructuredCaseResult {
+function createSyntheticCase(
+  kind: string,
+  passed: boolean
+): StructuredCaseResult {
+  if (!passed) {
+    return {
+      id: `${kind}:failed`,
+      title: "failed",
+      category: "validation",
+      passed: false,
+      classification: "informational",
+      error: "Run failed without individual cases.",
+    };
+  }
+
   if (kind === "server-diff") {
     return {
       id: "server-diff:no-drift",

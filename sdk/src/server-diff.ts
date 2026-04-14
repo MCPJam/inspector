@@ -293,26 +293,102 @@ function diffResourceTemplates(
   baseline: NormalizedServerSnapshot,
   current: NormalizedServerSnapshot
 ): SnapshotEntityChange[] {
-  return diffSimpleEntities(
+  const changes = diffSimpleEntities(
     "resourceTemplates",
     baseline.resourceTemplates,
     current.resourceTemplates,
     (template) => template.uriTemplate,
     ["name", "description", "mimeType"]
   );
+
+  const supportChange = classifyResourceTemplateSupportChange(
+    baseline.resourceTemplatesSupported,
+    current.resourceTemplatesSupported
+  );
+  if (supportChange) {
+    changes.unshift(supportChange);
+  }
+
+  return changes;
 }
 
 function diffPrompts(
   baseline: NormalizedServerSnapshot,
   current: NormalizedServerSnapshot
 ): SnapshotEntityChange[] {
-  return diffSimpleEntities(
-    "prompts",
-    baseline.prompts,
-    current.prompts,
-    (prompt) => prompt.name,
-    ["description", "arguments"]
+  const baselineByName = new Map(
+    baseline.prompts.map((prompt) => [prompt.name, prompt])
   );
+  const currentByName = new Map(
+    current.prompts.map((prompt) => [prompt.name, prompt])
+  );
+  const promptNames = new Set([
+    ...Array.from(baselineByName.keys()),
+    ...Array.from(currentByName.keys()),
+  ]);
+
+  const changes: SnapshotEntityChange[] = [];
+  for (const promptName of Array.from(promptNames).sort((left, right) =>
+    left.localeCompare(right)
+  )) {
+    const before = baselineByName.get(promptName);
+    const after = currentByName.get(promptName);
+
+    if (!before) {
+      changes.push({
+        entityType: "prompts",
+        entityId: promptName,
+        changeType: "added",
+        classification: "non_breaking",
+        after,
+        fieldChanges: [],
+      });
+      continue;
+    }
+
+    if (!after) {
+      changes.push({
+        entityType: "prompts",
+        entityId: promptName,
+        changeType: "removed",
+        classification: "breaking",
+        before,
+        fieldChanges: [],
+      });
+      continue;
+    }
+
+    const fieldChanges: SnapshotFieldChange[] = [];
+    maybePushFieldChange(fieldChanges, {
+      field: "description",
+      before: before.description,
+      after: after.description,
+      classification: "informational",
+    });
+    const argumentsChange = classifyPromptArgumentsChange(
+      before.arguments,
+      after.arguments
+    );
+    if (argumentsChange) {
+      fieldChanges.push(argumentsChange);
+    }
+
+    if (fieldChanges.length > 0) {
+      changes.push({
+        entityType: "prompts",
+        entityId: promptName,
+        changeType: "modified",
+        classification: maxClassification(
+          fieldChanges.map((change) => change.classification)
+        ),
+        before,
+        after,
+        fieldChanges,
+      });
+    }
+  }
+
+  return changes;
 }
 
 function diffSimpleEntities<TEntity extends object, TEntityId extends string>(
@@ -803,7 +879,11 @@ function describeClassificationFailure(
     return `Change classification "${classification}" failed the selected diff policy.`;
   }
 
-  return `Change classification "${classification}" failed the selected diff policy.`;
+  if (failOn === "breaking") {
+    return `Breaking-only diff policy failed because this change was classified as "${classification}".`;
+  }
+
+  return `Diff policy failed because this change was classified as "${classification}".`;
 }
 
 function createEntityClassificationSummary(): SnapshotEntityClassificationSummary {
@@ -868,4 +948,180 @@ function setsEqual(left: Set<string>, right: Set<string>): boolean {
     left.size === right.size &&
     Array.from(left).every((value) => right.has(value))
   );
+}
+
+function classifyResourceTemplateSupportChange(
+  before: boolean | null,
+  after: boolean | null
+): SnapshotEntityChange | undefined {
+  if (before === after) {
+    return undefined;
+  }
+
+  const classification =
+    before === true && after === false
+      ? "breaking"
+      : before === false && after === true
+        ? "non_breaking"
+        : "informational";
+  const reason =
+    before === true && after === false
+      ? "Server no longer supports resources/templates."
+      : before === false && after === true
+        ? "Server now supports resources/templates."
+        : "resources/templates support changed, but one side lacks support metadata.";
+
+  return {
+    entityType: "resourceTemplates",
+    entityId: "support",
+    changeType: "modified",
+    classification,
+    before: { supported: before },
+    after: { supported: after },
+    fieldChanges: [
+      {
+        field: "supported",
+        changeType: "modified",
+        classification,
+        reason,
+        before,
+        after,
+      },
+    ],
+  };
+}
+
+function classifyPromptArgumentsChange(
+  before: unknown,
+  after: unknown
+): SnapshotFieldChange | undefined {
+  if (isEmptyPromptArguments(before) && isEmptyPromptArguments(after)) {
+    return undefined;
+  }
+
+  if (isDeepEqual(before, after)) {
+    return undefined;
+  }
+
+  const beforeArguments = asPromptArguments(before);
+  const afterArguments = asPromptArguments(after);
+  if (!beforeArguments || !afterArguments) {
+    return {
+      field: "arguments",
+      changeType: "modified",
+      classification: "informational",
+      reason:
+        "Prompt arguments changed in a way that could not be safely classified.",
+      before,
+      after,
+    };
+  }
+
+  const reasons: Array<{
+    classification: SnapshotDiffClassification;
+    reason: string;
+  }> = [];
+  const argumentNames = new Set([
+    ...Array.from(beforeArguments.keys()),
+    ...Array.from(afterArguments.keys()),
+  ]);
+
+  for (const argumentName of Array.from(argumentNames).sort((left, right) =>
+    left.localeCompare(right)
+  )) {
+    const beforeArgument = beforeArguments.get(argumentName);
+    const afterArgument = afterArguments.get(argumentName);
+
+    if (!beforeArgument && afterArgument) {
+      reasons.push({
+        classification: isRequiredPromptArgument(afterArgument)
+          ? "breaking"
+          : "non_breaking",
+        reason: `Prompt argument "${argumentName}" was added${
+          isRequiredPromptArgument(afterArgument) ? " as required" : ""
+        }.`,
+      });
+      continue;
+    }
+
+    if (beforeArgument && !afterArgument) {
+      reasons.push({
+        classification: "breaking",
+        reason: `Prompt argument "${argumentName}" was removed.`,
+      });
+      continue;
+    }
+
+    if (beforeArgument && afterArgument) {
+      if (
+        !isRequiredPromptArgument(beforeArgument) &&
+        isRequiredPromptArgument(afterArgument)
+      ) {
+        reasons.push({
+          classification: "breaking",
+          reason: `Prompt argument "${argumentName}" became required.`,
+        });
+      } else if (
+        isRequiredPromptArgument(beforeArgument) &&
+        !isRequiredPromptArgument(afterArgument)
+      ) {
+        reasons.push({
+          classification: "non_breaking",
+          reason: `Prompt argument "${argumentName}" is no longer required.`,
+        });
+      }
+
+      if (!isDeepEqual(beforeArgument, afterArgument)) {
+        reasons.push({
+          classification: "informational",
+          reason: `Prompt argument "${argumentName}" changed metadata.`,
+        });
+      }
+    }
+  }
+
+  return {
+    field: "arguments",
+    changeType: "modified",
+    classification:
+      reasons.length > 0
+        ? maxClassification(reasons.map((reason) => reason.classification))
+        : "informational",
+    reason:
+      reasons.length > 0
+        ? reasons.map((reason) => reason.reason).join(" ")
+        : "Prompt arguments changed.",
+    before,
+    after,
+  };
+}
+
+function asPromptArguments(
+  value: unknown
+): Map<string, Record<string, unknown>> | undefined {
+  if (value === undefined) {
+    return new Map();
+  }
+
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const argumentsByName = new Map<string, Record<string, unknown>>();
+  for (const entry of value) {
+    if (!isRecord(entry) || typeof entry.name !== "string") {
+      return undefined;
+    }
+    argumentsByName.set(entry.name, entry);
+  }
+
+  return argumentsByName;
+}
+
+function isRequiredPromptArgument(argument: Record<string, unknown>): boolean {
+  return argument.required === true;
+}
+
+function isEmptyPromptArguments(value: unknown): boolean {
+  return value === undefined || (Array.isArray(value) && value.length === 0);
 }

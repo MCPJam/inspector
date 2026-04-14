@@ -95,4 +95,20 @@ describe("renderStructuredRunJUnitXml", () => {
     expect(xml).toContain('classname="mcpjam.tools-call-validation"');
     expect(xml).toContain('name="validation-passed"');
   });
+
+  it("emits a synthetic failure when an empty run failed overall", () => {
+    const xml = renderStructuredRunJUnitXml({
+      schemaVersion: 1,
+      kind: "server-diff",
+      passed: false,
+      summary: summarizeStructuredCases([]),
+      cases: [],
+      durationMs: 0,
+      metadata: {},
+    });
+
+    expect(xml).toContain('failures="1"');
+    expect(xml).toContain('name="failed"');
+    expect(xml).toContain("Run failed without individual cases.");
+  });
 });

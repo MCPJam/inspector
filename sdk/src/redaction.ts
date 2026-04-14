@@ -1,6 +1,13 @@
 export function redactSensitiveValue(value: unknown): unknown {
+  return redactSensitiveValueAtPath(value, []);
+}
+
+function redactSensitiveValueAtPath(
+  value: unknown,
+  path: string[]
+): unknown {
   if (Array.isArray(value)) {
-    return value.map((entry) => redactSensitiveValue(entry));
+    return value.map((entry) => redactSensitiveValueAtPath(entry, path));
   }
 
   if (!value || typeof value !== "object") {
@@ -10,7 +17,9 @@ export function redactSensitiveValue(value: unknown): unknown {
   return Object.fromEntries(
     Object.entries(value).map(([key, entryValue]) => [
       key,
-      shouldRedactKey(key) ? "[REDACTED]" : redactSensitiveValue(entryValue),
+      shouldRedactKey(key, entryValue, path)
+        ? "[REDACTED]"
+        : redactSensitiveValueAtPath(entryValue, [...path, key]),
     ])
   );
 }
@@ -35,14 +44,23 @@ function redactSensitiveString(value: string): string {
     );
 }
 
-function shouldRedactKey(key: string): boolean {
+function shouldRedactKey(
+  key: string,
+  value: unknown,
+  path: string[]
+): boolean {
   const normalized = key.toLowerCase().replace(/[^a-z0-9]/gu, "");
+
+  if (normalized === "code") {
+    return shouldRedactAuthorizationCodeValue(value, path);
+  }
 
   return (
     normalized === "authorization" ||
     normalized === "proxyauthorization" ||
     normalized === "cookie" ||
     normalized === "setcookie" ||
+    normalized === "codeverifier" ||
     normalized === "accesstoken" ||
     normalized === "refreshtoken" ||
     normalized === "clientsecret" ||
@@ -50,4 +68,23 @@ function shouldRedactKey(key: string): boolean {
     normalized === "apikey" ||
     normalized === "xapikey"
   );
+}
+
+function shouldRedactAuthorizationCodeValue(
+  value: unknown,
+  path: string[]
+): boolean {
+  if (path[path.length - 1] === "error" || path[path.length - 1] === "snapshotError") {
+    return false;
+  }
+
+  if (typeof value !== "string") {
+    return false;
+  }
+
+  if (/^[A-Z0-9_:-]+$/u.test(value)) {
+    return false;
+  }
+
+  return value.length > 0;
 }

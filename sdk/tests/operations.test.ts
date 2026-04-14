@@ -244,7 +244,7 @@ describe("listTools", () => {
   });
 });
 
-describe("listAllTools", () => {
+describe("pagination guards", () => {
   it("drains paginated tool pages and merges metadata from each page", async () => {
     const manager = createMockManager({
       listTools: jest
@@ -362,6 +362,37 @@ describe("listAllResourceTemplates", () => {
 
     expect(result.resourceTemplates).toEqual([]);
     expect(result.unsupported).toBe(true);
+  });
+
+  it("propagates non-capability failures", async () => {
+    const manager = createMockManager({
+      listResourceTemplates: jest
+        .fn()
+        .mockRejectedValue(new Error("socket hang up")),
+    });
+
+    await expect(
+      listAllResourceTemplates(manager, { serverId: "srv" }),
+    ).rejects.toThrow("socket hang up");
+  });
+});
+
+describe("listAllTools", () => {
+  it("stops draining after the max page guard", async () => {
+    let page = 0;
+    const manager = createMockManager({
+      listTools: jest.fn().mockImplementation(async () => {
+        page += 1;
+        return {
+          tools: [],
+          nextCursor: `cursor-${page}`,
+        };
+      }),
+    });
+
+    await expect(listAllTools(manager, { serverId: "srv" })).rejects.toThrow(
+      "Exceeded 1000 pages while draining tools/list.",
+    );
   });
 });
 

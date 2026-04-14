@@ -83,6 +83,8 @@ export interface ListAllResourceTemplatesResult {
   unsupported?: boolean;
 }
 
+const MAX_PAGINATION_PAGES = 1000;
+
 export interface WithEphemeralClientOptions {
   /** Override the serverId (default: "__ephemeral__") */
   serverId?: string;
@@ -358,8 +360,16 @@ async function drainPaginatedList<TItem, TPage extends { nextCursor?: string }>(
   const items: TItem[] = [];
   const seenCursors = new Set<string>();
   let cursor: string | undefined;
+  let pagesFetched = 0;
 
   for (;;) {
+    pagesFetched += 1;
+    if (pagesFetched > MAX_PAGINATION_PAGES) {
+      throw new Error(
+        `Exceeded ${MAX_PAGINATION_PAGES} pages while draining ${methodName}.`
+      );
+    }
+
     const page = await fetchPage(cursor);
     items.push(...pickItems(page));
 

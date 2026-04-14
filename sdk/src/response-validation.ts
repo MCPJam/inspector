@@ -62,6 +62,8 @@ export function validateToolCallEnvelope(
     return { passed: false, errors, warnings, details };
   }
 
+  validateIsErrorField(result, errors);
+
   if (result.content === undefined) {
     return { passed: errors.length === 0, errors, warnings, details };
   }
@@ -130,6 +132,11 @@ export function evaluateToolCallOutcome(
   const failOnIsError = policy.failOnIsError ?? false;
   const errors: string[] = [];
   const warnings: string[] = [];
+
+  if (isRecord(result)) {
+    validateIsErrorField(result, errors);
+  }
+
   const isError = isRecord(result) && result.isError === true;
 
   if (failOnIsError && isError) {
@@ -257,10 +264,21 @@ function isValidResourceContent(entry: Record<string, unknown>): boolean {
   }
 
   return (
-    typeof resource.text === "string" ||
-    typeof resource.blob === "string" ||
-    typeof resource.mimeType === "string"
+    (typeof resource.text === "string" && resource.text.length > 0) ||
+    (typeof resource.blob === "string" && resource.blob.length > 0)
   );
+}
+
+function validateIsErrorField(
+  result: Record<string, unknown>,
+  errors: string[]
+): void {
+  if (
+    Object.prototype.hasOwnProperty.call(result, "isError") &&
+    typeof result.isError !== "boolean"
+  ) {
+    errors.push('Tool call result "isError" must be a boolean when present.');
+  }
 }
 
 function describeType(value: unknown): string {

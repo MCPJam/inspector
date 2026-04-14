@@ -19,6 +19,7 @@ function makeSnapshot(
     toolsMetadata: {},
     resources: [],
     resourceTemplates: [],
+    resourceTemplatesSupported: true,
     prompts: [],
     ...overrides,
   };
@@ -224,6 +225,46 @@ describe("diffServerSnapshots", () => {
     expect(result.changes[0]?.fieldChanges[0]).toMatchObject({
       field: "inputSchema",
       classification: "informational",
+    });
+  });
+
+  it("classifies required prompt argument additions as breaking", () => {
+    const result = diffServerSnapshots(
+      makeSnapshot({
+        prompts: [{ name: "greet", arguments: [] }],
+      }),
+      makeSnapshot({
+        prompts: [
+          {
+            name: "greet",
+            arguments: [{ name: "name", required: true }],
+          },
+        ],
+      }),
+    );
+
+    expect(result.passed).toBe(false);
+    expect(result.changes[0]?.fieldChanges[0]).toMatchObject({
+      field: "arguments",
+      classification: "breaking",
+    });
+  });
+
+  it("classifies resource template support removal as breaking", () => {
+    const result = diffServerSnapshots(
+      makeSnapshot({ resourceTemplatesSupported: true }),
+      makeSnapshot({ resourceTemplatesSupported: false }),
+    );
+
+    expect(result.passed).toBe(false);
+    expect(result.changes[0]).toMatchObject({
+      entityType: "resourceTemplates",
+      entityId: "support",
+      classification: "breaking",
+    });
+    expect(result.changes[0]?.fieldChanges[0]).toMatchObject({
+      field: "supported",
+      classification: "breaking",
     });
   });
 });
