@@ -8,10 +8,15 @@
 
 import { MCPClientManager } from "./mcp-client-manager/index.js";
 import type {
+  ListToolsResult,
+  MCPPrompt,
+  MCPResource,
+  MCPResourceTemplate,
   MCPServerConfig,
   RpcLogger,
   RetryPolicy,
 } from "./mcp-client-manager/index.js";
+import { isMethodUnavailableError } from "./mcp-client-manager/index.js";
 
 // ── Param types ─────────────────────────────────────────────────────
 
@@ -44,6 +49,42 @@ export interface ListToolsParams {
   serverId: string;
   cursor?: string;
 }
+
+export interface ListAllToolsParams {
+  serverId: string;
+}
+
+export interface ListAllToolsResult {
+  tools: ListToolsResult["tools"];
+  toolsMetadata: Record<string, unknown>;
+}
+
+export interface ListAllResourcesParams {
+  serverId: string;
+}
+
+export interface ListAllResourcesResult {
+  resources: MCPResource[];
+}
+
+export interface ListAllPromptsParams {
+  serverId: string;
+}
+
+export interface ListAllPromptsResult {
+  prompts: MCPPrompt[];
+}
+
+export interface ListAllResourceTemplatesParams {
+  serverId: string;
+}
+
+export interface ListAllResourceTemplatesResult {
+  resourceTemplates: MCPResourceTemplate[];
+  unsupported?: boolean;
+}
+
+const MAX_PAGINATION_PAGES = 1000;
 
 export interface WithEphemeralClientOptions {
   /** Override the serverId (default: "__ephemeral__") */
@@ -164,6 +205,110 @@ export async function listTools(
   };
 }
 
+export async function listAllTools(
+  manager: MCPClientManager,
+  params: ListAllToolsParams
+): Promise<ListAllToolsResult> {
+  const tools = await drainPaginatedList<
+    Awaited<ReturnType<typeof listTools>>["tools"][number],
+    Awaited<ReturnType<typeof listTools>>
+  >(
+    async (cursor) => listTools(manager, { serverId: params.serverId, cursor }),
+    "tools/list",
+    (page) => page.tools ?? []
+  );
+
+  const toolsMetadata: Record<string, unknown> = {};
+  for (const tool of tools) {
+    const metadata = tool._meta;
+    if (metadata !== undefined) {
+      toolsMetadata[tool.name] = metadata;
+    }
+  }
+
+  return { tools, toolsMetadata };
+}
+
+export async function listAllResources(
+  manager: MCPClientManager,
+  params: ListAllResourcesParams
+): Promise<ListAllResourcesResult> {
+  const resources = await drainPaginatedList<
+    Awaited<ReturnType<typeof listResources>>["resources"][number],
+    Awaited<ReturnType<typeof listResources>>
+  >(
+    async (cursor) =>
+      listResources(manager, { serverId: params.serverId, cursor }),
+    "resources/list",
+    (page) => page.resources ?? []
+  );
+
+  return { resources };
+}
+
+export async function listAllPrompts(
+  manager: MCPClientManager,
+  params: ListAllPromptsParams
+): Promise<ListAllPromptsResult> {
+  const prompts = await drainPaginatedList<
+    Awaited<ReturnType<typeof listPrompts>>["prompts"][number],
+    Awaited<ReturnType<typeof listPrompts>>
+  >(
+    async (cursor) =>
+      listPrompts(manager, { serverId: params.serverId, cursor }),
+    "prompts/list",
+    (page) => page.prompts ?? []
+  );
+
+  return { prompts };
+}
+
+export async function listAllResourceTemplates(
+  manager: MCPClientManager,
+  params: ListAllResourceTemplatesParams
+): Promise<ListAllResourceTemplatesResult> {
+  let unsupported = false;
+  const resourceTemplates = await drainPaginatedList<
+    MCPResourceTemplate,
+    {
+      resourceTemplates: MCPResourceTemplate[];
+      nextCursor?: string;
+    }
+  >(
+    async (cursor) => {
+      let result;
+      try {
+        result = await manager.listResourceTemplates(
+          params.serverId,
+          cursor ? { cursor } : undefined
+        );
+      } catch (error) {
+        if (
+          isMethodUnavailableError(error, "resources/templates") ||
+          isUnsupportedMethodError(error, "resources/templates")
+        ) {
+          unsupported = true;
+          return {
+            resourceTemplates: [] as MCPResourceTemplate[],
+            nextCursor: undefined,
+          };
+        }
+        throw error;
+      }
+      return {
+        resourceTemplates: result.resourceTemplates ?? [],
+        nextCursor: result.nextCursor,
+      };
+    },
+    "resources/templates/list",
+    (page) => page.resourceTemplates ?? []
+  );
+
+  return unsupported
+    ? { resourceTemplates, unsupported: true }
+    : { resourceTemplates };
+}
+
 // ── Lifecycle Helpers ───────────────────────────────────────────────
 
 export async function withEphemeralClient<T>(
@@ -209,4 +354,64 @@ export async function withDisposableManager<T>(
       // Best effort cleanup for the disposable manager lifecycle.
     }
   }
+}
+
+async function drainPaginatedList<TItem, TPage extends { nextCursor?: string }>(
+  fetchPage: (cursor?: string) => Promise<TPage>,
+  methodName: string,
+  pickItems: (page: TPage) => TItem[]
+): Promise<TItem[]> {
+  const items: TItem[] = [];
+  const seenCursors = new Set<string>();
+  let cursor: string | undefined;
+  let pagesFetched = 0;
+
+  for (;;) {
+    pagesFetched += 1;
+    if (pagesFetched > MAX_PAGINATION_PAGES) {
+      throw new Error(
+        `Exceeded ${MAX_PAGINATION_PAGES} pages while draining ${methodName}.`
+      );
+    }
+
+    const page = await fetchPage(cursor);
+    items.push(...pickItems(page));
+
+    const nextCursor =
+      typeof page.nextCursor === "string" ? page.nextCursor : undefined;
+    if (!nextCursor) {
+      break;
+    }
+
+    if (seenCursors.has(nextCursor)) {
+      throw new Error(
+        `Detected repeated cursor "${nextCursor}" while draining ${methodName}.`
+      );
+    }
+
+    seenCursors.add(nextCursor);
+    cursor = nextCursor;
+  }
+
+  return items;
+}
+
+function isUnsupportedMethodError(error: unknown, method: string): boolean {
+  const message =
+    error instanceof Error
+      ? error.message
+      : typeof error === "string"
+        ? error
+        : "";
+  const lower = message.toLowerCase();
+  const normalizedMethod = method.toLowerCase();
+
+  return (
+    lower.includes(normalizedMethod) &&
+    (lower.includes("not found") ||
+      lower.includes("not implemented") ||
+      lower.includes("unsupported") ||
+      lower.includes("unavailable") ||
+      lower.includes("does not support"))
+  );
 }

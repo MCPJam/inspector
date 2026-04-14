@@ -1,5 +1,4 @@
 import {
-  DEFAULT_RETRY_POLICY,
   type MCPServerConfig,
   type RetryPolicy,
 } from "@mcpjam/sdk";
@@ -33,6 +32,11 @@ export interface SharedServerTargetOptions {
   retries?: number;
   retryDelayMs?: number;
 }
+
+const DEFAULT_CLI_RETRY_POLICY: RetryPolicy = {
+  retries: 0,
+  retryDelayMs: 3_000,
+};
 
 function collectString(value: string, previous: string[] = []): string[] {
   return [...previous, value];
@@ -131,20 +135,21 @@ export function addRetryOptions(command: Command): Command {
 }
 
 export function parseRetryPolicy(
-  options: Pick<SharedServerTargetOptions, "retries" | "retryDelayMs">,
+  options: Pick<SharedServerTargetOptions, "retries" | "retryDelayMs"> = {},
 ): RetryPolicy | undefined {
   if (options.retries === undefined && options.retryDelayMs === undefined) {
     return undefined;
   }
 
-  const retries = options.retries ?? DEFAULT_RETRY_POLICY.retries;
+  const retries = options.retries ?? DEFAULT_CLI_RETRY_POLICY.retries;
   if (options.retryDelayMs !== undefined && retries === 0) {
     throw usageError("--retry-delay-ms requires --retries to be greater than 0.");
   }
 
   return {
     retries,
-    retryDelayMs: options.retryDelayMs ?? DEFAULT_RETRY_POLICY.retryDelayMs,
+    retryDelayMs:
+      options.retryDelayMs ?? DEFAULT_CLI_RETRY_POLICY.retryDelayMs,
   };
 }
 

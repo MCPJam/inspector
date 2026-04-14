@@ -119,6 +119,71 @@ export type {
   RunServerDoctorInput,
   ServerDoctorDependencies,
 } from "./server-doctor.js";
+export {
+  collectServerSnapshot,
+  collectConnectedServerSnapshot,
+  normalizeServerSnapshot,
+  serializeServerSnapshot,
+  serializeStableServerSnapshot,
+  ServerSnapshotFormatError,
+} from "./server-snapshot.js";
+export type {
+  CollectServerSnapshotInput,
+  CollectedServerSnapshot,
+  RawServerSnapshot,
+  StableServerSnapshot,
+  NormalizedServerSnapshot,
+  ServerSnapshotTool,
+  ServerSnapshotResource,
+  ServerSnapshotResourceTemplate,
+  ServerSnapshotPrompt,
+  ServerSnapshotDependencies,
+} from "./server-snapshot.js";
+export {
+  diffServerSnapshots,
+  collectAndDiffServerSnapshot,
+  buildServerDiffReport,
+} from "./server-diff.js";
+export type {
+  SnapshotDiffClassification,
+  SnapshotDiffEntityType,
+  SnapshotDiffChangeType,
+  SnapshotDiffFailOn,
+  SnapshotFieldChange,
+  SnapshotEntityChange,
+  SnapshotEntityClassificationSummary,
+  SnapshotDiffSummary,
+  SnapshotSurfaceSummary,
+  ServerSnapshotDiffResult,
+  DiffServerSnapshotsOptions,
+  CollectAndDiffServerSnapshotInput,
+} from "./server-diff.js";
+export {
+  validateToolCallEnvelope,
+  evaluateToolCallOutcome,
+  validateToolCallResult,
+  buildToolCallValidationReport,
+} from "./response-validation.js";
+export type {
+  ToolCallEnvelopeValidationDetails,
+  ToolCallEnvelopeValidationResult,
+  ToolCallOutcomePolicy,
+  ToolCallOutcomeEvaluationResult,
+  ToolCallValidationResult,
+} from "./response-validation.js";
+export { redactSensitiveValue } from "./redaction.js";
+export {
+  summarizeStructuredCases,
+  renderStructuredRunJson,
+  renderStructuredRunJUnitXml,
+} from "./structured-reporting.js";
+export type {
+  StructuredCaseClassification,
+  StructuredCaseResult,
+  StructuredSummaryBucket,
+  StructuredRunSummary,
+  StructuredRunReport,
+} from "./structured-reporting.js";
 export { runOAuthLogin } from "./oauth-login.js";
 export type {
   OAuthLoginConfig,

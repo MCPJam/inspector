@@ -31,12 +31,15 @@ function createProbeResult(
 
 function createMockManager(overrides: Record<string, any> = {}) {
   return {
-    listTools: jest
-      .fn()
-      .mockResolvedValue({
-        tools: [{ name: "echo", description: "Echo input" }],
-      }),
-    getAllToolsMetadata: jest.fn().mockReturnValue({ echo: { title: "Echo" } }),
+    listTools: jest.fn().mockResolvedValue({
+      tools: [
+        {
+          name: "echo",
+          description: "Echo input",
+          _meta: { title: "Echo" },
+        },
+      ],
+    }),
     listResources: jest
       .fn()
       .mockResolvedValue({ resources: [{ uri: "file://note", name: "Note" }] }),

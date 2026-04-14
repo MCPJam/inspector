@@ -1,6 +1,11 @@
 import { probeMcpServer } from "./server-probe.js";
-import { withEphemeralClient } from "./operations.js";
-import { isMethodUnavailableError } from "./mcp-client-manager/index.js";
+import {
+  listAllPrompts,
+  listAllResourceTemplates,
+  listAllResources,
+  listAllTools,
+  withEphemeralClient,
+} from "./operations.js";
 import type {
   MCPClientManager,
   MCPServerConfig,
@@ -353,11 +358,15 @@ async function collectTools(
   error?: ServerDoctorError;
 }> {
   try {
-    const result = await manager.listTools(serverId);
-    const tools = result.tools ?? [];
+    const result = await listAllTools(manager, { serverId });
+    const tools =
+      result.tools?.map((tool) => {
+        const { _meta: _ignoredMeta, ...toolWithoutMeta } = tool;
+        return toolWithoutMeta;
+      }) ?? [];
     return {
       tools,
-      toolsMetadata: manager.getAllToolsMetadata(serverId),
+      toolsMetadata: result.toolsMetadata,
       check: okCheck(describeCount(tools.length, "tool")),
     };
   } catch (error) {
@@ -380,7 +389,7 @@ async function collectResources(
   error?: ServerDoctorError;
 }> {
   try {
-    const result = await manager.listResources(serverId);
+    const result = await listAllResources(manager, { serverId });
     const resources = result.resources ?? [];
     return {
       resources,
@@ -405,7 +414,7 @@ async function collectPrompts(
   error?: ServerDoctorError;
 }> {
   try {
-    const result = await manager.listPrompts(serverId);
+    const result = await listAllPrompts(manager, { serverId });
     const prompts = result.prompts ?? [];
     return {
       prompts,
@@ -430,8 +439,14 @@ async function collectResourceTemplates(
   error?: ServerDoctorError;
 }> {
   try {
-    const result = await manager.listResourceTemplates(serverId);
+    const result = await listAllResourceTemplates(manager, { serverId });
     const resourceTemplates = result.resourceTemplates ?? [];
+    if (result.unsupported) {
+      return {
+        resourceTemplates,
+        check: skippedCheck("Server does not support resources/templates."),
+      };
+    }
     return {
       resourceTemplates,
       check: okCheck(
@@ -439,16 +454,6 @@ async function collectResourceTemplates(
       ),
     };
   } catch (error) {
-    if (
-      isMethodUnavailableError(error, "resources/templates") ||
-      isUnsupportedMethodError(error, "resources/templates")
-    ) {
-      return {
-        resourceTemplates: [],
-        check: skippedCheck("Server does not support resources/templates."),
-      };
-    }
-
     const structured = normalizeServerDoctorError(error);
     return {
       resourceTemplates: [],
@@ -580,24 +585,4 @@ function skippedCheck(detail: string): ServerDoctorCheck {
 
 function describeCount(count: number, label: string): string {
   return `${count} ${label}${count === 1 ? "" : "s"} discovered.`;
-}
-
-function isUnsupportedMethodError(error: unknown, method: string): boolean {
-  const message =
-    error instanceof Error
-      ? error.message
-      : typeof error === "string"
-        ? error
-        : "";
-  const lower = message.toLowerCase();
-  const normalizedMethod = method.toLowerCase();
-
-  return (
-    lower.includes(normalizedMethod) &&
-    (lower.includes("not found") ||
-      lower.includes("not implemented") ||
-      lower.includes("unsupported") ||
-      lower.includes("unavailable") ||
-      lower.includes("does not support"))
-  );
 }
