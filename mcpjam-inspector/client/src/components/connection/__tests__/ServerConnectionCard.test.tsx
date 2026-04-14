@@ -338,7 +338,9 @@ describe("ServerConnectionCard", () => {
     });
 
     it("does not open the actions menu when right-clicking the copy button", () => {
-      render(<ServerConnectionCard server={createServer()} {...defaultProps} />);
+      render(
+        <ServerConnectionCard server={createServer()} {...defaultProps} />,
+      );
 
       fireEvent.contextMenu(
         screen.getByRole("button", { name: "Copy server command" }),

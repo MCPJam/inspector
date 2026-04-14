@@ -1199,7 +1199,9 @@ export function PlaygroundMain({
                 !showPostConnectGuide && "py-8",
               )}
             >
-              <div className={cn("w-full", !showPostConnectGuide && "text-center")}>
+              <div
+                className={cn("w-full", !showPostConnectGuide && "text-center")}
+              >
                 {isAuthLoading ? (
                   <div className="space-y-4 text-center">
                     <div className="mx-auto h-8 w-8 animate-spin rounded-full border-b-2 border-primary" />
@@ -1268,8 +1270,8 @@ export function PlaygroundMain({
                                 : "text-[rgba(61,57,41,0.72)]",
                           )}
                         >
-                          Test prompts, inspect tools, and debug AI-powered apps.
-                          Type a message here, or run a tool on the left.
+                          Test prompts, inspect tools, and debug AI-powered
+                          apps. Type a message here, or run a tool on the left.
                         </p>
                       </div>
                     </div>

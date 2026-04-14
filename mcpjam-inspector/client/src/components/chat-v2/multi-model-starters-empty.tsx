@@ -100,7 +100,9 @@ export function MultiModelStartersEmptyLayout({
               />
             </div>
           ) : null}
-          {!isAuthLoading ? <div className="w-full">{chatInputSlot}</div> : null}
+          {!isAuthLoading ? (
+            <div className="w-full">{chatInputSlot}</div>
+          ) : null}
         </div>
       </div>
     </div>

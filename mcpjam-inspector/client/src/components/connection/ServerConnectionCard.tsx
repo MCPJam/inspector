@@ -392,7 +392,13 @@ export function ServerConnectionCard({
       });
       openDetailModal("configuration", "card_click");
     },
-    [isActionsMenuOpen, isDetailModalEnabled, server.name, posthog, openDetailModal],
+    [
+      isActionsMenuOpen,
+      isDetailModalEnabled,
+      server.name,
+      posthog,
+      openDetailModal,
+    ],
   );
 
   return (
