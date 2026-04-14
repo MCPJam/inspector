@@ -37,19 +37,11 @@ describe("ConfirmChatResetDialog", () => {
     const onConfirm2 = vi.fn();
 
     const { rerender } = render(
-      <ConfirmChatResetDialog
-        open
-        onConfirm={onConfirm1}
-        onCancel={vi.fn()}
-      />,
+      <ConfirmChatResetDialog open onConfirm={onConfirm1} onCancel={vi.fn()} />,
     );
 
     rerender(
-      <ConfirmChatResetDialog
-        open
-        onConfirm={onConfirm2}
-        onCancel={vi.fn()}
-      />,
+      <ConfirmChatResetDialog open onConfirm={onConfirm2} onCancel={vi.fn()} />,
     );
 
     expect(onConfirm1).toHaveBeenCalledTimes(1);
