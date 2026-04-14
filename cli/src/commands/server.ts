@@ -23,10 +23,12 @@ import {
   summarizeServerDoctorTarget,
 } from "../lib/server-doctor";
 import {
+  addRetryOptions,
   addSharedServerOptions,
   describeTarget,
   getGlobalOptions,
   parseHeadersOption,
+  parseRetryPolicy,
   parseServerConfig,
   parsePositiveInteger,
   resolveHttpAccessToken,
@@ -48,40 +50,45 @@ export function registerServerCommands(program: Command): void {
     .command("server")
     .description("Inspect MCP server connectivity and capabilities");
 
-  server
-    .command("probe")
-    .description(
-      "Probe an HTTP MCP server without using the full client connect flow",
-    )
-    .requiredOption("--url <url>", "HTTP MCP server URL")
-    .option("--access-token <token>", "Bearer access token for HTTP servers")
-    .option(
-      "--oauth-access-token <token>",
-      "OAuth bearer access token for HTTP servers",
-    )
-    .option(
-      "--header <header>",
-      'HTTP header in "Key: Value" format. Repeat to send multiple headers.',
-      (value: string, previous: string[] = []) => [...previous, value],
-      [],
-    )
-    .option(
-      "--client-capabilities <json>",
-      "Client capabilities advertised in the initialize probe as a JSON object",
-    )
-    .option(
-      "--protocol-version <version>",
-      "OAuth/MCP protocol version hint used for the initialize probe",
-      "2025-11-25",
-    )
-    .option(
-      "--timeout <ms>",
-      "Request timeout in milliseconds",
-      (value: string) => parsePositiveInteger(value, "Timeout"),
-    )
-    .option("--debug-out <path>", "Write a structured debug artifact to a file")
-    .action(async (options, command) => {
+  addRetryOptions(
+    server
+      .command("probe")
+      .description(
+        "Probe an HTTP MCP server without using the full client connect flow",
+      )
+      .requiredOption("--url <url>", "HTTP MCP server URL")
+      .option("--access-token <token>", "Bearer access token for HTTP servers")
+      .option(
+        "--oauth-access-token <token>",
+        "OAuth bearer access token for HTTP servers",
+      )
+      .option(
+        "--header <header>",
+        'HTTP header in "Key: Value" format. Repeat to send multiple headers.',
+        (value: string, previous: string[] = []) => [...previous, value],
+        [],
+      )
+      .option(
+        "--client-capabilities <json>",
+        "Client capabilities advertised in the initialize probe as a JSON object",
+      )
+      .option(
+        "--protocol-version <version>",
+        "OAuth/MCP protocol version hint used for the initialize probe",
+        "2025-11-25",
+      )
+      .option(
+        "--timeout <ms>",
+        "Request timeout in milliseconds",
+        (value: string) => parsePositiveInteger(value, "Timeout"),
+      )
+      .option(
+        "--debug-out <path>",
+        "Write a structured debug artifact to a file",
+      ),
+  ).action(async (options, command) => {
       const globalOptions = getGlobalOptions(command);
+      const retryPolicy = parseRetryPolicy(options);
       const protocolVersion = options.protocolVersion as
         | "2025-03-26"
         | "2025-06-18"
@@ -125,6 +132,7 @@ export function registerServerCommands(program: Command): void {
               ? config.clientCapabilities
               : undefined,
           timeoutMs: options.timeout ?? globalOptions.timeout,
+          retryPolicy,
         });
       } catch (error) {
         commandError = error;
@@ -185,13 +193,16 @@ export function registerServerCommands(program: Command): void {
       }
     });
 
-  addSharedServerOptions(
-    server
-      .command("doctor")
-      .description("Run a stateless diagnostic sweep against an MCP server")
-      .option("--out <path>", "Write the doctor JSON artifact to a file"),
+  addRetryOptions(
+    addSharedServerOptions(
+      server
+        .command("doctor")
+        .description("Run a stateless diagnostic sweep against an MCP server")
+        .option("--out <path>", "Write the doctor JSON artifact to a file"),
+    ),
   ).action(async (options, command) => {
     const globalOptions = getGlobalOptions(command);
+    const retryPolicy = parseRetryPolicy(options);
     const target = describeTarget(options);
     const collector = globalOptions.rpc
       ? createCliRpcLogCollector({ __cli__: target })
@@ -207,6 +218,7 @@ export function registerServerCommands(program: Command): void {
       target: doctorTarget,
       timeout: globalOptions.timeout,
       rpcLogger: collector?.rpcLogger,
+      retryPolicy,
     });
 
     const jsonPayload = globalOptions.rpc
@@ -229,12 +241,15 @@ export function registerServerCommands(program: Command): void {
     }
   });
 
-  addSharedServerOptions(
-    server
-      .command("info")
-      .description("Get initialization info for an MCP server"),
+  addRetryOptions(
+    addSharedServerOptions(
+      server
+        .command("info")
+        .description("Get initialization info for an MCP server"),
+    ),
   ).action(async (options, command) => {
     const globalOptions = getGlobalOptions(command);
+    const retryPolicy = parseRetryPolicy(options);
     const target = describeTarget(options);
     const collector = globalOptions.rpc
       ? createCliRpcLogCollector({ __cli__: target })
@@ -259,6 +274,7 @@ export function registerServerCommands(program: Command): void {
       {
         timeout: globalOptions.timeout,
         rpcLogger: collector?.rpcLogger,
+        retryPolicy,
       },
     );
 
@@ -268,14 +284,17 @@ export function registerServerCommands(program: Command): void {
     );
   });
 
-  addSharedServerOptions(
-    server
-      .command("validate")
-      .description("Connect to a server and verify the debugger surface works"),
+  addRetryOptions(
+    addSharedServerOptions(
+      server
+        .command("validate")
+        .description("Connect to a server and verify the debugger surface works"),
+    ),
   )
     .option("--debug-out <path>", "Write a structured debug artifact to a file")
     .action(async (options, command) => {
       const globalOptions = getGlobalOptions(command);
+      const retryPolicy = parseRetryPolicy(options);
       const target = describeTarget(options);
       const primaryCollector =
         globalOptions.rpc || options.debugOut
@@ -315,6 +334,7 @@ export function registerServerCommands(program: Command): void {
           {
             timeout: globalOptions.timeout,
             rpcLogger: primaryCollector?.rpcLogger,
+            retryPolicy,
           },
         );
       } catch (error) {
@@ -359,10 +379,13 @@ export function registerServerCommands(program: Command): void {
       );
     });
 
-  addSharedServerOptions(
-    server.command("ping").description("Ping an MCP server"),
+  addRetryOptions(
+    addSharedServerOptions(
+      server.command("ping").description("Ping an MCP server"),
+    ),
   ).action(async (options, command) => {
     const globalOptions = getGlobalOptions(command);
+    const retryPolicy = parseRetryPolicy(options);
     const target = describeTarget(options);
     const collector = globalOptions.rpc
       ? createCliRpcLogCollector({ __cli__: target })
@@ -382,6 +405,7 @@ export function registerServerCommands(program: Command): void {
       {
         timeout: globalOptions.timeout,
         rpcLogger: collector?.rpcLogger,
+        retryPolicy,
       },
     );
 
@@ -391,12 +415,15 @@ export function registerServerCommands(program: Command): void {
     );
   });
 
-  addSharedServerOptions(
-    server
-      .command("capabilities")
-      .description("Get resolved server capabilities"),
+  addRetryOptions(
+    addSharedServerOptions(
+      server
+        .command("capabilities")
+        .description("Get resolved server capabilities"),
+    ),
   ).action(async (options, command) => {
     const globalOptions = getGlobalOptions(command);
+    const retryPolicy = parseRetryPolicy(options);
     const target = describeTarget(options);
     const collector = globalOptions.rpc
       ? createCliRpcLogCollector({ __cli__: target })
@@ -415,6 +442,7 @@ export function registerServerCommands(program: Command): void {
       {
         timeout: globalOptions.timeout,
         rpcLogger: collector?.rpcLogger,
+        retryPolicy,
       },
     );
 
@@ -424,16 +452,21 @@ export function registerServerCommands(program: Command): void {
     );
   });
 
-  addSharedServerOptions(
-    server
-      .command("export")
-      .description("Export server tools, resources, prompts, and capabilities")
-      .option(
-        "--stable",
-        "Emit the deterministic versioned snapshot format for baselines",
-      ),
+  addRetryOptions(
+    addSharedServerOptions(
+      server
+        .command("export")
+        .description(
+          "Export server tools, resources, prompts, and capabilities",
+        )
+        .option(
+          "--stable",
+          "Emit the deterministic versioned snapshot format for baselines",
+        ),
+    ),
   ).action(async (options, command) => {
     const globalOptions = getGlobalOptions(command);
+    const retryPolicy = parseRetryPolicy(options);
     const target = describeTarget(options);
     const collector = globalOptions.rpc
       ? createCliRpcLogCollector({ __cli__: target })
@@ -448,6 +481,7 @@ export function registerServerCommands(program: Command): void {
       target,
       timeout: globalOptions.timeout,
       rpcLogger: collector?.rpcLogger,
+      retryPolicy,
       clientName: "mcpjam",
       serverId: "__cli__",
     });
@@ -463,32 +497,38 @@ export function registerServerCommands(program: Command): void {
     );
   });
 
-  addSharedServerOptions(
-    server
-      .command("diff")
-      .description(
-        "Compare a server snapshot baseline against a live or file snapshot",
-      )
-      .option(
-        "--baseline <path>",
-        "Compare a baseline file to a live server target",
-      )
-      .option("--left <path>", "Left snapshot file for file-vs-file comparison")
-      .option(
-        "--right <path>",
-        "Right snapshot file for file-vs-file comparison",
-      )
-      .option(
-        "--fail-on <policy>",
-        "Diff failure policy: breaking, any, or none",
-      )
-      .option(
-        "--reporter <reporter>",
-        "Structured reporter output: json-summary or junit-xml",
-      )
-      .option("--out <path>", "Write the raw diff JSON artifact to a file"),
+  addRetryOptions(
+    addSharedServerOptions(
+      server
+        .command("diff")
+        .description(
+          "Compare a server snapshot baseline against a live or file snapshot",
+        )
+        .option(
+          "--baseline <path>",
+          "Compare a baseline file to a live server target",
+        )
+        .option(
+          "--left <path>",
+          "Left snapshot file for file-vs-file comparison",
+        )
+        .option(
+          "--right <path>",
+          "Right snapshot file for file-vs-file comparison",
+        )
+        .option(
+          "--fail-on <policy>",
+          "Diff failure policy: breaking, any, or none",
+        )
+        .option(
+          "--reporter <reporter>",
+          "Structured reporter output: json-summary or junit-xml",
+        )
+        .option("--out <path>", "Write the raw diff JSON artifact to a file"),
+    ),
   ).action(async (options, command) => {
     const globalOptions = getGlobalOptions(command);
+    const retryPolicy = parseRetryPolicy(options);
     const reporter = parseReporterFormat(
       options.reporter as string | undefined,
     );
@@ -512,6 +552,7 @@ export function registerServerCommands(program: Command): void {
         target,
         timeout: globalOptions.timeout,
         rpcLogger: collector?.rpcLogger,
+        retryPolicy,
         clientName: "mcpjam",
         serverId: "__cli__",
       });

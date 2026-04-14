@@ -213,4 +213,39 @@ describe("runServerDoctor", () => {
       /continuing with provided credentials/i
     );
   });
+
+  it("passes retry policy through probe and ephemeral manager dependencies", async () => {
+    const retryPolicy = {
+      retries: 2,
+      retryDelayMs: 250,
+    };
+    const probeServer = jest.fn().mockResolvedValue(createProbeResult());
+    const withManager = jest.fn(
+      async (_config, fn, options?: { retryPolicy?: typeof retryPolicy }) => {
+        expect(options?.retryPolicy).toEqual(retryPolicy);
+        return fn(createMockManager(), "srv");
+      }
+    );
+
+    await runServerDoctor(
+      {
+        config: {
+          url: "https://example.com/mcp",
+          timeout: 4_000,
+        },
+        target: { label: "https://example.com/mcp" },
+        timeout: 4_000,
+        retryPolicy,
+      },
+      {
+        probeServer,
+        withManager,
+      }
+    );
+
+    expect(probeServer).toHaveBeenCalledWith(
+      expect.objectContaining({ retryPolicy })
+    );
+    expect(withManager).toHaveBeenCalled();
+  });
 });

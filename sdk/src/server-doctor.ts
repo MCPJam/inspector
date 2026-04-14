@@ -9,6 +9,7 @@ import {
 import type {
   MCPClientManager,
   MCPServerConfig,
+  RetryPolicy,
   RpcLogger,
 } from "./mcp-client-manager/index.js";
 import type { ProbeMcpServerResult } from "./server-probe.js";
@@ -82,12 +83,17 @@ export interface RunServerDoctorInput<TTarget = unknown> {
   target: TTarget;
   timeout: number;
   rpcLogger?: RpcLogger;
+  retryPolicy?: RetryPolicy;
 }
 
 type WithConnectedManager = <T>(
   config: MCPServerConfig,
   fn: (manager: MCPClientManager, serverId: string) => Promise<T>,
-  options?: { timeout?: number; rpcLogger?: RpcLogger }
+  options?: {
+    timeout?: number;
+    rpcLogger?: RpcLogger;
+    retryPolicy?: RetryPolicy;
+  }
 ) => Promise<T>;
 
 export interface ServerDoctorDependencies {
@@ -106,6 +112,7 @@ export async function runServerDoctor<TTarget = unknown>(
       withEphemeralClient(config, fn, {
         timeout: options?.timeout,
         rpcLogger: options?.rpcLogger,
+        retryPolicy: options?.retryPolicy,
         serverId: "__cli__",
         clientName: "mcpjam",
       }));
@@ -159,6 +166,7 @@ export async function runServerDoctor<TTarget = unknown>(
             }
           : {}),
         timeoutMs: input.timeout,
+        retryPolicy: input.retryPolicy,
       });
       result.checks.probe = summarizeProbeCheck(
         result.probe,
@@ -205,6 +213,7 @@ export async function runServerDoctor<TTarget = unknown>(
       {
         timeout: input.timeout,
         rpcLogger: input.rpcLogger,
+        retryPolicy: input.retryPolicy,
       }
     );
 

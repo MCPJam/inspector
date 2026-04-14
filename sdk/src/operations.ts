@@ -14,6 +14,7 @@ import type {
   MCPResourceTemplate,
   MCPServerConfig,
   RpcLogger,
+  RetryPolicy,
 } from "./mcp-client-manager/index.js";
 import { isMethodUnavailableError } from "./mcp-client-manager/index.js";
 
@@ -94,6 +95,8 @@ export interface WithEphemeralClientOptions {
   timeout?: number;
   /** Optional RPC logger for request/response tracing. */
   rpcLogger?: RpcLogger;
+  /** Retry policy for the ephemeral manager and initial connect. */
+  retryPolicy?: RetryPolicy;
 }
 
 // ── Resources ───────────────────────────────────────────────────────
@@ -320,6 +323,7 @@ export async function withEphemeralClient<T>(
       defaultTimeout: options?.timeout ?? 30_000,
       defaultClientName: options?.clientName ?? "mcpjam-sdk",
       lazyConnect: true,
+      retryPolicy: options?.retryPolicy,
       ...(options?.rpcLogger ? { rpcLogger: options.rpcLogger } : {}),
     }
   );

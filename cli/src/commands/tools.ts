@@ -12,10 +12,12 @@ import { withRpcLogsIfRequested } from "../lib/rpc-helpers";
 import { listToolsWithMetadata } from "../lib/server-ops";
 import { summarizeServerDoctorTarget } from "../lib/server-doctor";
 import {
+  addRetryOptions,
   addSharedServerOptions,
   describeTarget,
   getGlobalOptions,
   parseJsonRecord,
+  parseRetryPolicy,
   parseServerConfig,
   resolveAliasedStringOption,
 } from "../lib/server-config";
@@ -26,14 +28,17 @@ export function registerToolsCommands(program: Command): void {
     .command("tools")
     .description("List and invoke MCP server tools");
 
-  addSharedServerOptions(
-    tools
-      .command("list")
-      .description("List tools exposed by an MCP server")
-      .option("--cursor <cursor>", "Pagination cursor")
-      .option("--model-id <model>", "Model id used for token counting"),
+  addRetryOptions(
+    addSharedServerOptions(
+      tools
+        .command("list")
+        .description("List tools exposed by an MCP server")
+        .option("--cursor <cursor>", "Pagination cursor")
+        .option("--model-id <model>", "Model id used for token counting"),
+    ),
   ).action(async (options, command) => {
     const globalOptions = getGlobalOptions(command);
+    const retryPolicy = parseRetryPolicy(options);
     const target = describeTarget(options);
     const collector = globalOptions.rpc
       ? createCliRpcLogCollector({ __cli__: target })
@@ -54,6 +59,7 @@ export function registerToolsCommands(program: Command): void {
       {
         timeout: globalOptions.timeout,
         rpcLogger: collector?.rpcLogger,
+        retryPolicy,
       },
     );
 

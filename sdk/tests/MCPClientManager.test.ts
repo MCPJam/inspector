@@ -1,4 +1,7 @@
-import { MCPClientManager } from "../src/mcp-client-manager";
+import { MCPAuthError, MCPClientManager } from "../src/mcp-client-manager";
+import { realpathSync, rmSync, mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import {
   startMockHttpServer,
   startMockStreamableHttpServer,
@@ -6,6 +9,148 @@ import {
   MOCK_RESOURCES,
   MOCK_PROMPTS,
 } from "./mock-servers";
+
+function seedRegisteredServer(
+  manager: MCPClientManager,
+  serverId: string,
+  config: Record<string, unknown>,
+  timeout = 1000
+): void {
+  (manager as any).registeredServers.set(serverId, {
+    config,
+    timeout,
+  });
+}
+
+function seedLiveState(
+  manager: MCPClientManager,
+  serverId: string,
+  liveState: Record<string, unknown>
+): void {
+  (manager as any).liveClientStates.set(serverId, liveState);
+}
+
+function extractSingleText(result: unknown): string {
+  return (result as any).content[0].text;
+}
+
+function buildInlineCwdServerScript(): string {
+  const sdkCjsRoot = path.dirname(
+    require.resolve("@modelcontextprotocol/sdk/package.json")
+  );
+  const serverIndexPath = JSON.stringify(
+    path.join(sdkCjsRoot, "server", "index.js")
+  );
+  const serverStdioPath = JSON.stringify(
+    path.join(sdkCjsRoot, "server", "stdio.js")
+  );
+  const typesPath = JSON.stringify(path.join(sdkCjsRoot, "types.js"));
+
+  return `
+    const { Server } = require(${serverIndexPath});
+    const { StdioServerTransport } = require(${serverStdioPath});
+    const {
+      CallToolRequestSchema,
+      ListToolsRequestSchema
+    } = require(${typesPath});
+
+    const server = new Server(
+      { name: "cwd-test-server", version: "1.0.0" },
+      { capabilities: { tools: {} } }
+    );
+
+    server.setRequestHandler(ListToolsRequestSchema, async () => ({
+      tools: [
+        {
+          name: "cwd",
+          description: "Returns the current working directory",
+          inputSchema: {
+            type: "object",
+            properties: {},
+            additionalProperties: false
+          }
+        }
+      ]
+    }));
+
+    server.setRequestHandler(CallToolRequestSchema, async (request) => {
+      if (request.params.name !== "cwd") {
+        return {
+          content: [{ type: "text", text: "unknown tool" }],
+          isError: true
+        };
+      }
+
+      return {
+        content: [{ type: "text", text: process.cwd() }]
+      };
+    });
+
+    server.connect(new StdioServerTransport()).catch((error) => {
+      console.error(error);
+      process.exit(1);
+    });
+  `;
+}
+
+function buildInlineStderrFloodServerScript(): string {
+  const sdkCjsRoot = path.dirname(
+    require.resolve("@modelcontextprotocol/sdk/package.json")
+  );
+  const serverIndexPath = JSON.stringify(
+    path.join(sdkCjsRoot, "server", "index.js")
+  );
+  const serverStdioPath = JSON.stringify(
+    path.join(sdkCjsRoot, "server", "stdio.js")
+  );
+  const typesPath = JSON.stringify(path.join(sdkCjsRoot, "types.js"));
+
+  return `
+    const { Server } = require(${serverIndexPath});
+    const { StdioServerTransport } = require(${serverStdioPath});
+    const {
+      CallToolRequestSchema,
+      ListToolsRequestSchema
+    } = require(${typesPath});
+
+    const server = new Server(
+      { name: "stderr-flood-server", version: "1.0.0" },
+      { capabilities: { tools: {} } }
+    );
+
+    const floodChunk = "x".repeat(64 * 1024);
+    const flood = setInterval(() => {
+      for (let i = 0; i < 8; i += 1) {
+        process.stderr.write(floodChunk);
+      }
+    }, 10);
+
+    server.setRequestHandler(ListToolsRequestSchema, async () => ({
+      tools: [
+        {
+          name: "ping",
+          description: "Responds even while stderr is noisy",
+          inputSchema: {
+            type: "object",
+            properties: {},
+            additionalProperties: false
+          }
+        }
+      ]
+    }));
+
+    server.setRequestHandler(CallToolRequestSchema, async () => ({
+      content: [{ type: "text", text: "pong" }]
+    }));
+
+    server.connect(new StdioServerTransport()).catch((error) => {
+      console.error(error);
+      process.exit(1);
+    });
+
+    process.on("exit", () => clearInterval(flood));
+  `;
+}
 
 describe("MCPClientManager", () => {
   describe("constructor", () => {
@@ -91,7 +236,136 @@ describe("MCPClientManager", () => {
       await manager.disconnectServer("everything");
 
       expect(manager.getConnectionStatus("everything")).toBe("disconnected");
+      expect(manager.hasServer("everything")).toBe(true);
+      expect(manager.listServers()).toContain("everything");
     }, 30000);
+  });
+
+  describe("STDIO transport hardening", () => {
+    let manager: MCPClientManager;
+    const inheritedEnvKey = "MCPJAM_TEST_INHERITED_ENV";
+    const overrideEnvKey = "MCPJAM_TEST_OVERRIDE_ENV";
+    let previousInheritedEnv: string | undefined;
+    let previousOverrideEnv: string | undefined;
+
+    beforeEach(() => {
+      previousInheritedEnv = process.env[inheritedEnvKey];
+      previousOverrideEnv = process.env[overrideEnvKey];
+      manager = new MCPClientManager();
+    });
+
+    afterEach(async () => {
+      await manager.disconnectAllServers();
+      if (previousInheritedEnv === undefined) {
+        delete process.env[inheritedEnvKey];
+      } else {
+        process.env[inheritedEnvKey] = previousInheritedEnv;
+      }
+      if (previousOverrideEnv === undefined) {
+        delete process.env[overrideEnvKey];
+      } else {
+        process.env[overrideEnvKey] = previousOverrideEnv;
+      }
+    });
+
+    it("inherits parent process env for stdio servers", async () => {
+      process.env[inheritedEnvKey] = "from-parent";
+
+      await manager.connectToServer("env-inherit", {
+        command: "npx",
+        args: ["-y", "@modelcontextprotocol/server-everything"],
+      });
+
+      const result = await manager.executeTool("env-inherit", "get-env", {});
+      const env = JSON.parse(extractSingleText(result));
+
+      expect(env[inheritedEnvKey]).toBe("from-parent");
+    }, 30000);
+
+    it("lets explicit stdio env override inherited parent values", async () => {
+      process.env[overrideEnvKey] = "from-parent";
+
+      await manager.connectToServer("env-override", {
+        command: "npx",
+        args: ["-y", "@modelcontextprotocol/server-everything"],
+        env: {
+          [overrideEnvKey]: "from-config",
+        },
+      });
+
+      const result = await manager.executeTool("env-override", "get-env", {});
+      const env = JSON.parse(extractSingleText(result));
+
+      expect(env[overrideEnvKey]).toBe("from-config");
+    }, 30000);
+
+    it("passes cwd to stdio child processes", async () => {
+      const cwd = mkdtempSync(path.join(tmpdir(), "mcpjam-cwd-test-"));
+      const resolvedCwd = realpathSync(cwd);
+
+      try {
+        await manager.connectToServer("cwd-server", {
+          command: process.execPath,
+          args: [
+            "-e",
+            buildInlineCwdServerScript(),
+          ],
+          cwd,
+        });
+
+        const result = await manager.executeTool("cwd-server", "cwd", {});
+        expect(extractSingleText(result)).toBe(resolvedCwd);
+      } finally {
+        rmSync(cwd, { recursive: true, force: true });
+      }
+    }, 15000);
+
+    it("surfaces startup stderr when a stdio server fails to initialize", async () => {
+      await expect(
+        manager.connectToServer("stderr-failure", {
+          command: process.execPath,
+          args: [
+            "-e",
+            'console.error("stdio startup failed"); process.exit(1);',
+          ],
+          stderr: "pipe",
+          timeout: 1000,
+        })
+      ).rejects.toThrow(/stdio startup failed/);
+    }, 10000);
+
+    it("keeps stdio server context for silent initialization failures", async () => {
+      await expect(
+        manager.connectToServer("silent-timeout", {
+          command: process.execPath,
+          args: [
+            "-e",
+            "setInterval(() => {}, 1000);",
+          ],
+          stderr: "pipe",
+          timeout: 200,
+        })
+      ).rejects.toThrow(
+        /Failed to connect to MCP server "silent-timeout" via stdio: MCP error -32001: Request timed out/
+      );
+    }, 10000);
+
+    it("keeps draining stderr after startup for noisy stdio servers", async () => {
+      await manager.connectToServer("stderr-flood", {
+        command: process.execPath,
+        args: [
+          "-e",
+          buildInlineStderrFloodServerScript(),
+        ],
+        stderr: "pipe",
+        timeout: 5000,
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 250));
+
+      const result = await manager.executeTool("stderr-flood", "ping", {});
+      expect(extractSingleText(result)).toBe("pong");
+    }, 15000);
   });
 
   describe("HTTP server", () => {
@@ -204,17 +478,14 @@ describe("MCPClientManager", () => {
 
     it("skips non-replayable HTTP configs with custom request state", () => {
       const replayManager = new MCPClientManager();
-      (replayManager as any).clientStates.set("custom-http", {
-        config: {
-          url: "https://example.com/mcp",
-          accessToken: "at_test",
-          requestInit: {
-            headers: {
-              "X-Custom": "1",
-            },
+      seedRegisteredServer(replayManager, "custom-http", {
+        url: "https://example.com/mcp",
+        accessToken: "at_test",
+        requestInit: {
+          headers: {
+            "X-Custom": "1",
           },
         },
-        timeout: 1000,
       });
 
       expect(replayManager.getServerReplayConfigs()).toEqual([]);
@@ -222,15 +493,12 @@ describe("MCPClientManager", () => {
 
     it("returns tokenless replay configs for public HTTP servers with empty headers", () => {
       const replayManager = new MCPClientManager();
-      (replayManager as any).clientStates.set("public-http", {
-        config: {
-          url: "https://example.com/mcp",
-          requestInit: {
-            headers: {},
-          },
-          preferSSE: true,
+      seedRegisteredServer(replayManager, "public-http", {
+        url: "https://example.com/mcp",
+        requestInit: {
+          headers: {},
         },
-        timeout: 1000,
+        preferSSE: true,
       });
 
       expect(replayManager.getServerReplayConfigs()).toEqual([
@@ -244,12 +512,9 @@ describe("MCPClientManager", () => {
 
     it("skips stdio servers when building replay configs", () => {
       const replayManager = new MCPClientManager();
-      (replayManager as any).clientStates.set("stdio-server", {
-        config: {
-          command: "node",
-          args: ["server.js"],
-        },
-        timeout: 1000,
+      seedRegisteredServer(replayManager, "stdio-server", {
+        command: "node",
+        args: ["server.js"],
       });
 
       expect(replayManager.getServerReplayConfigs()).toEqual([]);
@@ -257,14 +522,11 @@ describe("MCPClientManager", () => {
 
     it("skips HTTP configs with unsupported requestInit options", () => {
       const replayManager = new MCPClientManager();
-      (replayManager as any).clientStates.set("request-http", {
-        config: {
-          url: "https://example.com/mcp",
-          requestInit: {
-            method: "POST",
-          },
+      seedRegisteredServer(replayManager, "request-http", {
+        url: "https://example.com/mcp",
+        requestInit: {
+          method: "POST",
         },
-        timeout: 1000,
       });
 
       expect(replayManager.getServerReplayConfigs()).toEqual([]);
@@ -272,16 +534,13 @@ describe("MCPClientManager", () => {
 
     it("extracts bearer auth from requestInit headers for replay configs", () => {
       const replayManager = new MCPClientManager();
-      (replayManager as any).clientStates.set("header-http", {
-        config: {
-          url: "https://example.com/mcp",
-          requestInit: {
-            headers: {
-              Authorization: "Bearer at_from_headers",
-            },
+      seedRegisteredServer(replayManager, "header-http", {
+        url: "https://example.com/mcp",
+        requestInit: {
+          headers: {
+            Authorization: "Bearer at_from_headers",
           },
         },
-        timeout: 1000,
       });
 
       expect(replayManager.getServerReplayConfigs()).toEqual([
@@ -289,6 +548,24 @@ describe("MCPClientManager", () => {
           serverId: "header-http",
           url: "https://example.com/mcp",
           accessToken: "at_from_headers",
+        },
+      ]);
+    });
+
+    it("preserves refresh-token replay configs without live client state", () => {
+      const replayManager = new MCPClientManager();
+      seedRegisteredServer(replayManager, "oauth-refresh", {
+        url: "https://example.com/mcp",
+        refreshToken: "rt_test",
+        clientId: "client_id",
+      });
+
+      expect(replayManager.getServerReplayConfigs()).toEqual([
+        {
+          serverId: "oauth-refresh",
+          url: "https://example.com/mcp",
+          refreshToken: "rt_test",
+          clientId: "client_id",
         },
       ]);
     });
@@ -584,6 +861,485 @@ describe("MCPClientManager", () => {
         })
       ).rejects.toThrow('MCP server "duplicate" is already connected');
     }, 30000);
+
+    it("preserves server inventory after a failed connect attempt", async () => {
+      await expect(
+        manager.connectToServer("failing-http", {
+          url: "http://127.0.0.1:9/mcp",
+          timeout: 250,
+        })
+      ).rejects.toThrow();
+
+      expect(manager.hasServer("failing-http")).toBe(true);
+      expect(manager.listServers()).toContain("failing-http");
+      expect(manager.getConnectionStatus("failing-http")).toBe("disconnected");
+    });
+  });
+
+  describe("retry support", () => {
+    let manager: MCPClientManager;
+
+    beforeEach(() => {
+      manager = new MCPClientManager(
+        {},
+        {
+          lazyConnect: true,
+          retryPolicy: {
+            retries: 1,
+            retryDelayMs: 0,
+          },
+        }
+      );
+    });
+
+    afterEach(async () => {
+      jest.restoreAllMocks();
+      await manager.disconnectAllServers();
+    });
+
+    it("retries direct connectToServer calls on transient failures", async () => {
+      const client = {} as any;
+      const connectSpy = jest
+        .spyOn(manager as any, "connectToServerOnce")
+        .mockRejectedValueOnce(
+          Object.assign(new Error("timed out"), { code: "ETIMEDOUT" })
+        )
+        .mockResolvedValueOnce(client);
+
+      await expect(
+        manager.connectToServer("retry-connect", {
+          command: "node",
+          args: ["server.js"],
+        })
+      ).resolves.toBe(client);
+
+      expect(connectSpy).toHaveBeenCalledTimes(2);
+      expect(manager.hasServer("retry-connect")).toBe(true);
+    });
+
+    it("shares the retried direct connect promise across concurrent callers", async () => {
+      const client = {} as any;
+      const connectSpy = jest
+        .spyOn(manager as any, "connectToServerOnce")
+        .mockRejectedValueOnce(
+          Object.assign(new Error("timed out"), { code: "ETIMEDOUT" })
+        )
+        .mockResolvedValueOnce(client);
+
+      const first = manager.connectToServer("retry-shared", {
+        command: "node",
+        args: ["server.js"],
+      });
+      const second = manager.connectToServer("retry-shared", {
+        command: "node",
+        args: ["server.js"],
+      });
+
+      await expect(Promise.all([first, second])).resolves.toEqual([
+        client,
+        client,
+      ]);
+
+      expect(connectSpy).toHaveBeenCalledTimes(2);
+    });
+
+    it("does not retry direct connectToServer calls on auth errors", async () => {
+      const connectSpy = jest
+        .spyOn(manager as any, "connectToServerOnce")
+        .mockRejectedValue(new MCPAuthError("Unauthorized", 401));
+
+      await expect(
+        manager.connectToServer("auth-connect", {
+          command: "node",
+          args: ["server.js"],
+        })
+      ).rejects.toThrow("Unauthorized");
+
+      expect(connectSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it("stops direct connect retries after disconnect during backoff", async () => {
+      manager = new MCPClientManager(
+        {},
+        {
+          lazyConnect: true,
+          retryPolicy: {
+            retries: 1,
+            retryDelayMs: 25,
+          },
+        }
+      );
+
+      const connectSpy = jest
+        .spyOn(manager as any, "connectToServerOnce")
+        .mockRejectedValue(
+          Object.assign(new Error("timed out"), { code: "ETIMEDOUT" })
+        );
+
+      const promise = manager.connectToServer("retry-disconnect", {
+        command: "node",
+        args: ["server.js"],
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      await manager.disconnectServer("retry-disconnect");
+
+      await expect(promise).rejects.toThrow(
+        'MCP server "retry-disconnect" was disconnected.'
+      );
+      expect(connectSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it("retries read operations as a single ensureConnected plus RPC budget", async () => {
+      const fakeClient = {
+        listTools: jest
+          .fn()
+          .mockRejectedValueOnce(
+            Object.assign(new Error("timed out"), { code: "ETIMEDOUT" })
+          )
+          .mockResolvedValueOnce({ tools: [] }),
+      };
+
+      seedRegisteredServer(manager, "retry-read", {
+        command: "node",
+        args: ["server.js"],
+      });
+
+      const connectSpy = jest
+        .spyOn(manager as any, "connectToServerOnce")
+        .mockImplementation(async (serverId: string) => {
+          seedLiveState(manager, serverId, { client: fakeClient });
+          return fakeClient as any;
+        });
+
+      await expect(manager.listTools("retry-read")).resolves.toEqual({
+        tools: [],
+      });
+
+      expect(connectSpy).toHaveBeenCalledTimes(1);
+      expect(fakeClient.listTools).toHaveBeenCalledTimes(2);
+    });
+
+    it("retries pingServer using the original transport error details", async () => {
+      const fakeClient = {
+        ping: jest
+          .fn()
+          .mockRejectedValueOnce(
+            Object.assign(new Error("server unavailable"), {
+              statusCode: 503,
+            })
+          )
+          .mockResolvedValueOnce(undefined),
+      };
+
+      seedRegisteredServer(manager, "retry-ping", {
+        command: "node",
+        args: ["server.js"],
+      });
+      seedLiveState(manager, "retry-ping", { client: fakeClient });
+
+      await expect(manager.pingServer("retry-ping")).resolves.toBeUndefined();
+
+      expect(fakeClient.ping).toHaveBeenCalledTimes(2);
+    });
+
+    it("retries read operations without tearing down an existing live session", async () => {
+      const fakeClient = {
+        listTools: jest
+          .fn()
+          .mockRejectedValueOnce(
+            Object.assign(new Error("timed out"), { code: "ETIMEDOUT" })
+          )
+          .mockResolvedValueOnce({ tools: [] }),
+      };
+
+      seedRegisteredServer(manager, "retry-live-read", {
+        command: "node",
+        args: ["server.js"],
+      });
+      seedLiveState(manager, "retry-live-read", { client: fakeClient });
+
+      const destroySpy = jest.spyOn(manager as any, "destroyLiveState");
+
+      await expect(manager.listTools("retry-live-read")).resolves.toEqual({
+        tools: [],
+      });
+
+      expect(fakeClient.listTools).toHaveBeenCalledTimes(2);
+      expect(destroySpy).not.toHaveBeenCalled();
+    });
+
+    it("cancels a connect when the client closes during the handshake", async () => {
+      const fakeTransport = {
+        close: jest.fn().mockResolvedValue(undefined),
+      };
+
+      const connectViaStdioSpy = jest
+        .spyOn(manager as any, "connectViaStdio")
+        .mockImplementation(
+          async (
+            _serverId: string,
+            client: { onclose?: () => void },
+            _config: unknown,
+            _timeout: number,
+            _state: unknown
+          ) => {
+            client.onclose?.();
+            return fakeTransport as any;
+          }
+        );
+
+      await expect(
+        manager.connectToServer("closed-during-connect", {
+          command: "node",
+          args: ["server.js"],
+        })
+      ).rejects.toThrow(
+        'MCP server "closed-during-connect" connection was cancelled.'
+      );
+
+      expect(connectViaStdioSpy).toHaveBeenCalledTimes(1);
+      expect(fakeTransport.close).toHaveBeenCalled();
+      expect(manager.getConnectionStatus("closed-during-connect")).toBe(
+        "disconnected"
+      );
+      expect(manager.getClient("closed-during-connect")).toBeUndefined();
+    });
+
+    it("does not retry read operations after the caller aborts during backoff", async () => {
+      manager = new MCPClientManager(
+        {},
+        {
+          lazyConnect: true,
+          retryPolicy: {
+            retries: 1,
+            retryDelayMs: 25,
+          },
+        }
+      );
+
+      const abortController = new AbortController();
+      const fakeClient = {
+        listTools: jest
+          .fn()
+          .mockRejectedValueOnce(
+            Object.assign(new Error("timed out"), { code: "ETIMEDOUT" })
+          )
+          .mockResolvedValueOnce({ tools: [] }),
+      };
+
+      seedRegisteredServer(manager, "retry-read-abort", {
+        command: "node",
+        args: ["server.js"],
+      });
+
+      const connectSpy = jest
+        .spyOn(manager as any, "connectToServerOnce")
+        .mockImplementation(async (serverId: string) => {
+          seedLiveState(manager, serverId, { client: fakeClient });
+          return fakeClient as any;
+        });
+
+      const promise = manager.listTools("retry-read-abort", undefined, {
+        signal: abortController.signal,
+      });
+      setTimeout(() => abortController.abort(new Error("Request cancelled")), 5);
+
+      await expect(promise).rejects.toThrow("Request cancelled");
+      expect(connectSpy).toHaveBeenCalledTimes(1);
+      expect(fakeClient.listTools).toHaveBeenCalledTimes(1);
+    });
+
+    it("stops read retries after disconnect during backoff", async () => {
+      manager = new MCPClientManager(
+        {},
+        {
+          lazyConnect: true,
+          retryPolicy: {
+            retries: 1,
+            retryDelayMs: 25,
+          },
+        }
+      );
+
+      const fakeClient = {
+        listTools: jest
+          .fn()
+          .mockRejectedValueOnce(
+            Object.assign(new Error("timed out"), { code: "ETIMEDOUT" })
+          )
+          .mockResolvedValueOnce({ tools: [] }),
+      };
+
+      seedRegisteredServer(manager, "retry-read-disconnect", {
+        command: "node",
+        args: ["server.js"],
+      });
+      seedLiveState(manager, "retry-read-disconnect", { client: fakeClient });
+
+      const promise = manager.listTools("retry-read-disconnect");
+
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      await manager.disconnectServer("retry-read-disconnect");
+
+      await expect(promise).rejects.toThrow(
+        'MCP server "retry-read-disconnect" was disconnected.'
+      );
+      expect(fakeClient.listTools).toHaveBeenCalledTimes(1);
+    });
+
+    it("keeps executeTool single-shot by default", async () => {
+      const fakeClient = {
+        callTool: jest
+          .fn()
+          .mockRejectedValue(
+            Object.assign(new Error("timed out"), { code: "ETIMEDOUT" })
+          ),
+      };
+
+      seedRegisteredServer(manager, "tool-default", {
+        command: "node",
+        args: ["server.js"],
+      });
+      seedLiveState(manager, "tool-default", { client: fakeClient });
+
+      await expect(
+        manager.executeTool("tool-default", "echo", { message: "hello" })
+      ).rejects.toThrow("timed out");
+
+      expect(fakeClient.callTool).toHaveBeenCalledTimes(1);
+    });
+
+    it("retries executeTool only when explicit retry options are provided", async () => {
+      const fakeClient = {
+        callTool: jest
+          .fn()
+          .mockRejectedValueOnce(
+            Object.assign(new Error("timed out"), { code: "ETIMEDOUT" })
+          )
+          .mockResolvedValueOnce({
+            content: [{ type: "text", text: "ok" }],
+          }),
+      };
+
+      seedRegisteredServer(manager, "tool-retry", {
+        command: "node",
+        args: ["server.js"],
+      });
+      seedLiveState(manager, "tool-retry", { client: fakeClient });
+
+      const connectSpy = jest
+        .spyOn(manager as any, "connectToServerOnce")
+        .mockImplementation(async (serverId: string) => {
+          seedLiveState(manager, serverId, { client: fakeClient });
+          return fakeClient as any;
+        });
+
+      await expect(
+        manager.executeTool(
+          "tool-retry",
+          "echo",
+          { message: "hello" },
+          {
+            retry: {
+              retries: 1,
+              retryDelayMs: 0,
+            },
+          }
+        )
+      ).resolves.toEqual({
+        content: [{ type: "text", text: "ok" }],
+      });
+
+      expect(fakeClient.callTool).toHaveBeenCalledTimes(2);
+      expect(connectSpy).not.toHaveBeenCalled();
+    });
+
+    it("does not retry executeTool after the caller aborts during backoff", async () => {
+      const abortController = new AbortController();
+      const fakeClient = {
+        callTool: jest
+          .fn()
+          .mockRejectedValueOnce(
+            Object.assign(new Error("timed out"), { code: "ETIMEDOUT" })
+          )
+          .mockResolvedValueOnce({
+            content: [{ type: "text", text: "ok" }],
+          }),
+      };
+
+      seedRegisteredServer(manager, "tool-retry-abort", {
+        command: "node",
+        args: ["server.js"],
+      });
+      seedLiveState(manager, "tool-retry-abort", { client: fakeClient });
+
+      const connectSpy = jest
+        .spyOn(manager as any, "connectToServerOnce")
+        .mockImplementation(async (serverId: string) => {
+          seedLiveState(manager, serverId, { client: fakeClient });
+          return fakeClient as any;
+        });
+
+      const promise = manager.executeTool(
+        "tool-retry-abort",
+        "echo",
+        { message: "hello" },
+        {
+          request: {
+            signal: abortController.signal,
+          },
+          retry: {
+            retries: 1,
+            retryDelayMs: 25,
+          },
+        }
+      );
+      setTimeout(
+        () => abortController.abort(new Error("Tool request cancelled")),
+        5
+      );
+
+      await expect(promise).rejects.toThrow("Tool request cancelled");
+      expect(fakeClient.callTool).toHaveBeenCalledTimes(1);
+      expect(connectSpy).toHaveBeenCalledTimes(0);
+    });
+
+    it("treats legacy request options with a task field as request options", async () => {
+      const fakeClient = {
+        callTool: jest.fn().mockResolvedValue({
+          content: [{ type: "text", text: "ok" }],
+        }),
+        request: jest.fn(),
+      };
+
+      seedRegisteredServer(manager, "legacy-request-options", {
+        command: "node",
+        args: ["server.js"],
+      });
+      seedLiveState(manager, "legacy-request-options", { client: fakeClient });
+
+      await expect(
+        manager.executeTool(
+          "legacy-request-options",
+          "echo",
+          { message: "hello" },
+          {
+            timeout: 500,
+            task: { ttl: 60 },
+          } as any
+        )
+      ).resolves.toEqual({
+        content: [{ type: "text", text: "ok" }],
+      });
+
+      expect(fakeClient.callTool).toHaveBeenCalledTimes(1);
+      expect(fakeClient.callTool.mock.calls[0]?.[2]).toMatchObject({
+        timeout: 500,
+        task: { ttl: 60 },
+      });
+      expect(fakeClient.request).not.toHaveBeenCalled();
+    });
   });
 
   describe("multiple servers", () => {
@@ -669,6 +1425,11 @@ describe("MCPClientManager", () => {
 
       expect(manager.getConnectionStatus("disc-a")).toBe("disconnected");
       expect(manager.getConnectionStatus("disc-b")).toBe("disconnected");
+      expect(manager.hasServer("disc-a")).toBe(true);
+      expect(manager.hasServer("disc-b")).toBe(true);
+      expect(manager.listServers()).toEqual(
+        expect.arrayContaining(["disc-a", "disc-b"])
+      );
     }, 30000);
   });
 });

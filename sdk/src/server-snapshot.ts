@@ -8,6 +8,7 @@ import {
 import type {
   MCPClientManager,
   MCPServerConfig,
+  RetryPolicy,
   RpcLogger,
 } from "./mcp-client-manager/index.js";
 
@@ -95,6 +96,7 @@ export interface CollectServerSnapshotInput<TTarget = unknown> {
   target: TTarget;
   timeout: number;
   rpcLogger?: RpcLogger;
+  retryPolicy?: RetryPolicy;
   clientName?: string;
   serverId?: string;
 }
@@ -105,6 +107,7 @@ type WithSnapshotManager = <T>(
   options?: {
     timeout?: number;
     rpcLogger?: RpcLogger;
+    retryPolicy?: RetryPolicy;
     clientName?: string;
     serverId?: string;
   }
@@ -132,6 +135,7 @@ export async function collectServerSnapshot<TTarget = unknown>(
       withEphemeralClient(config, fn, {
         timeout: options?.timeout,
         rpcLogger: options?.rpcLogger,
+        retryPolicy: options?.retryPolicy,
         clientName: options?.clientName ?? "mcpjam-sdk",
         serverId: options?.serverId ?? "__snapshot__",
       }));
@@ -145,6 +149,7 @@ export async function collectServerSnapshot<TTarget = unknown>(
     {
       timeout: input.timeout,
       rpcLogger: input.rpcLogger,
+      retryPolicy: input.retryPolicy,
       clientName: input.clientName,
       serverId: input.serverId,
     }

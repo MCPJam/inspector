@@ -164,7 +164,7 @@ const test = new OAuthConformanceTest({
 });
 
 const result = await test.run();
-console.log(result.passed);  // true
+console.log(result.passed); // true
 console.log(result.summary); // "OAuth conformance passed for ..."
 
 // Suite: test multiple flows at once
@@ -172,12 +172,24 @@ const suite = new OAuthConformanceSuite({
   serverUrl: "https://your-server.com/mcp",
   defaults: { verification: { listTools: true } },
   flows: [
-    { protocolVersion: "2025-11-25", registrationStrategy: "cimd", auth: { mode: "interactive" } },
-    { protocolVersion: "2025-11-25", registrationStrategy: "dcr", auth: { mode: "interactive" } },
+    {
+      protocolVersion: "2025-11-25",
+      registrationStrategy: "cimd",
+      auth: { mode: "interactive" },
+    },
+    {
+      protocolVersion: "2025-11-25",
+      registrationStrategy: "dcr",
+      auth: { mode: "interactive" },
+    },
     {
       protocolVersion: "2025-11-25",
       registrationStrategy: "preregistered",
-      auth: { mode: "client_credentials", clientId: "id", clientSecret: "secret" },
+      auth: {
+        mode: "client_credentials",
+        clientId: "id",
+        clientSecret: "secret",
+      },
       client: { preregistered: { clientId: "id", clientSecret: "secret" } },
     },
   ],
@@ -286,6 +298,40 @@ await manager.pingServer("everything");
 // Disconnect
 await manager.disconnectServer("everything");
 ```
+
+Retry policy is SDK-owned and disabled by default. To enable transient retries for connection and read-style manager operations, pass a manager-level policy:
+
+```ts
+const manager = new MCPClientManager(
+  {},
+  {
+    retryPolicy: {
+      retries: 2,
+      retryDelayMs: 3000,
+    },
+  }
+);
+```
+
+The manager applies that policy to `connectToServer()` when called directly and to read/diagnostic methods such as `listTools`, `listResources`, `readResource`, `listPrompts`, `getPrompt`, `pingServer`, and task reads. Read retries wrap the full connect plus RPC operation, so a single retry budget covers reconnect and the follow-on request together.
+
+Tool execution stays single-shot unless you opt in explicitly at the call site:
+
+```ts
+await manager.executeTool(
+  "everything",
+  "add",
+  { a: 1, b: 2 },
+  {
+    retry: {
+      retries: 1,
+      retryDelayMs: 1000,
+    },
+  }
+);
+```
+
+`withEphemeralClient()`, `probeMcpServer()`, and `runServerDoctor()` also accept the same `retryPolicy` shape. Retry classifiers are intentionally conservative in v1: transient network/connect/reset/DNS/timeout failures and HTTP `408`, `425`, `429`, and `5xx` are retryable; auth, validation, and method-unavailable errors are not.
 
 </details>
 
