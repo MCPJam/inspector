@@ -51,6 +51,7 @@ export function ConfirmChatResetDialog({
   useEffect(() => {
     if (!open) {
       autoConfirmedRef.current = false;
+      setDontShowAgain(false);
       return;
     }
     if (autoConfirmedRef.current) {
