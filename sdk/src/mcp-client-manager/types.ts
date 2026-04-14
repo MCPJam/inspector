@@ -17,6 +17,7 @@ import type {
   Tool as BaseTool,
   Transport,
 } from "@modelcontextprotocol/client";
+import type { RetryPolicy } from "../retry.js";
 import type { RefreshTokenOAuthProvider } from "./refresh-token-auth-provider.js";
 import type { ToolSet } from "ai";
 
@@ -153,16 +154,37 @@ export type ServerSummary = {
 };
 
 /**
- * Internal state for a managed client connection
+ * Shared state for managed client connections.
  */
-export interface ManagedClientState {
-  config: MCPServerConfig;
-  timeout: number;
+export interface BaseClientState {
   client?: Client;
   transport?: Transport;
   authProvider?: RefreshTokenOAuthProvider;
-  stdioStderrCleanup?: () => void;
+}
+
+/**
+ * Internal state for a managed client connection.
+ * Retained for compatibility with external type consumers.
+ */
+export interface ManagedClientState extends BaseClientState {
   promise?: Promise<Client>;
+}
+
+/**
+ * Persistent server registration/configuration state.
+ */
+export interface RegisteredServerState {
+  config: MCPServerConfig;
+  timeout: number;
+}
+
+/**
+ * Live connection state for a registered server.
+ */
+export interface LiveClientState extends BaseClientState {
+  stdioStderrCleanup?: () => void;
+  connectPromise?: Promise<Client>;
+  retryPromise?: Promise<Client>;
 }
 
 // ============================================================================
@@ -225,6 +247,8 @@ export interface MCPClientManagerOptions {
   rpcLogger?: RpcLogger;
   /** Global progress handler */
   progressHandler?: ProgressHandler;
+  /** Default retry policy for retryable manager operations */
+  retryPolicy?: RetryPolicy;
   /**
    * When true, do not connect in the constructor; callers must use connectToServer
    * (e.g. connectReplayManagerServers) to avoid racing eager connects.
@@ -248,6 +272,18 @@ export type TaskOptions = {
   /** Time-to-live for the task in milliseconds */
   ttl?: number;
 };
+
+/**
+ * Preferred executeTool options shape.
+ */
+export interface ExecuteToolRequest {
+  /** Request options for the tool call */
+  request?: ClientRequestOptions;
+  /** Task options for task-augmented tool calls */
+  task?: TaskOptions;
+  /** Explicit retry policy for tool execution */
+  retry?: RetryPolicy;
+}
 
 // ============================================================================
 // Elicitation Types

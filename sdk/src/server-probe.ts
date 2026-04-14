@@ -1,8 +1,11 @@
 import { discoverOAuthProtectedResourceMetadata } from "@modelcontextprotocol/client";
 import { buildResourceMetadataUrl } from "./oauth/state-machines/shared/urls.js";
-import type {
-  OAuthProtocolVersion,
-} from "./oauth/state-machines/types.js";
+import {
+  type RetryPolicy,
+  isRetryableTransientError,
+  retryWithPolicy,
+} from "./retry.js";
+import type { OAuthProtocolVersion } from "./oauth/state-machines/types.js";
 
 export interface ProbeMcpServerConfig {
   url: string;
@@ -14,6 +17,7 @@ export interface ProbeMcpServerConfig {
   fetchFn?: typeof fetch;
   clientName?: string;
   clientVersion?: string;
+  retryPolicy?: RetryPolicy;
 }
 
 export interface ProbeHttpAttempt {
@@ -82,13 +86,13 @@ type ParsedHttpResponse = {
 };
 
 function normalizeProtocolVersion(
-  value: OAuthProtocolVersion | undefined,
+  value: OAuthProtocolVersion | undefined
 ): OAuthProtocolVersion {
   return value ?? "2025-11-25";
 }
 
 function normalizeHeaders(
-  headers: Headers | HeadersInit | undefined,
+  headers: Headers | HeadersInit | undefined
 ): Record<string, string> {
   if (!headers) {
     return {};
@@ -102,25 +106,25 @@ function normalizeHeaders(
 }
 
 function lowerCaseHeaders(
-  headers: Record<string, string>,
+  headers: Record<string, string>
 ): Record<string, string> {
   return Object.fromEntries(
-    Object.entries(headers).map(([key, value]) => [key.toLowerCase(), value]),
+    Object.entries(headers).map(([key, value]) => [key.toLowerCase(), value])
   );
 }
 
 function removeAuthorizationHeader(
-  headers: Record<string, string>,
+  headers: Record<string, string>
 ): Record<string, string> {
   return Object.fromEntries(
     Object.entries(headers).filter(
-      ([key]) => key.toLowerCase() !== "authorization",
-    ),
+      ([key]) => key.toLowerCase() !== "authorization"
+    )
   );
 }
 
 function initializeProtocolVersion(
-  protocolVersion: OAuthProtocolVersion,
+  protocolVersion: OAuthProtocolVersion
 ): string {
   switch (protocolVersion) {
     case "2025-03-26":
@@ -137,7 +141,7 @@ function initializeProtocolVersion(
 
 function buildAuthServerMetadataUrls(
   protocolVersion: OAuthProtocolVersion,
-  authServerUrl: string,
+  authServerUrl: string
 ): string[] {
   const url = new URL(authServerUrl);
   const urls: string[] = [];
@@ -145,10 +149,13 @@ function buildAuthServerMetadataUrls(
   if (protocolVersion === "2025-11-25") {
     if (url.pathname === "/" || url.pathname === "") {
       urls.push(
-        new URL("/.well-known/oauth-authorization-server", url.origin).toString(),
+        new URL(
+          "/.well-known/oauth-authorization-server",
+          url.origin
+        ).toString()
       );
       urls.push(
-        new URL("/.well-known/openid-configuration", url.origin).toString(),
+        new URL("/.well-known/openid-configuration", url.origin).toString()
       );
       return urls;
     }
@@ -159,27 +166,27 @@ function buildAuthServerMetadataUrls(
     urls.push(
       new URL(
         `/.well-known/oauth-authorization-server${pathname}`,
-        url.origin,
-      ).toString(),
+        url.origin
+      ).toString()
     );
     urls.push(
       new URL(
         `/.well-known/openid-configuration${pathname}`,
-        url.origin,
-      ).toString(),
+        url.origin
+      ).toString()
     );
     urls.push(
       new URL(
         `${pathname}/.well-known/openid-configuration`,
-        url.origin,
-      ).toString(),
+        url.origin
+      ).toString()
     );
     return urls;
   }
 
   if (url.pathname === "/" || url.pathname === "") {
     urls.push(
-      new URL("/.well-known/oauth-authorization-server", url.origin).toString(),
+      new URL("/.well-known/oauth-authorization-server", url.origin).toString()
     );
     return urls;
   }
@@ -190,11 +197,11 @@ function buildAuthServerMetadataUrls(
   urls.push(
     new URL(
       `/.well-known/oauth-authorization-server${pathname}`,
-      url.origin,
-    ).toString(),
+      url.origin
+    ).toString()
   );
   urls.push(
-    new URL("/.well-known/oauth-authorization-server", url.origin).toString(),
+    new URL("/.well-known/oauth-authorization-server", url.origin).toString()
   );
   return urls;
 }
@@ -213,7 +220,7 @@ function parseJsonBody(text: string): unknown {
 }
 
 async function readResponseBody(
-  response: Response,
+  response: Response
 ): Promise<{ body?: unknown; contentType?: string }> {
   const contentType = response.headers.get("content-type") ?? undefined;
   if (contentType?.includes("text/event-stream")) {
@@ -241,31 +248,59 @@ async function readResponseBody(
   };
 }
 
-function withTimeoutSignal(
-  timeoutMs: number | undefined,
-): { signal: AbortSignal | undefined; cleanup: () => void } {
+function withTimeoutSignal(timeoutMs: number | undefined): {
+  signal: AbortSignal | undefined;
+  cleanup: () => void;
+  didTimeout: () => boolean;
+} {
   if (!timeoutMs) {
     return {
       signal: undefined,
       cleanup: () => undefined,
+      didTimeout: () => false,
     };
   }
 
   const controller = new AbortController();
-  const handle = setTimeout(() => controller.abort(), timeoutMs);
+  let timedOut = false;
+  const handle = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
   return {
     signal: controller.signal,
     cleanup: () => clearTimeout(handle),
+    didTimeout: () => timedOut,
   };
+}
+
+function createTimeoutError(
+  timeoutMs: number | undefined
+): Error & { code: string } {
+  const error = new Error(
+    timeoutMs ? `Request timed out after ${timeoutMs}ms` : "Request timed out"
+  ) as Error & { code: string };
+  error.name = "TimeoutError";
+  error.code = "ETIMEDOUT";
+  return error;
+}
+
+function isRetryableProbeStatus(status: number): boolean {
+  return (
+    status === 408 ||
+    status === 425 ||
+    status === 429 ||
+    (status >= 500 && status !== 501)
+  );
 }
 
 async function performRequest(
   fetchFn: typeof fetch,
   attempt: ProbeHttpAttempt,
-  timeoutMs: number | undefined,
+  timeoutMs: number | undefined
 ): Promise<ParsedHttpResponse> {
   const startedAt = Date.now();
-  const { signal, cleanup } = withTimeoutSignal(timeoutMs);
+  const { signal, cleanup, didTimeout } = withTimeoutSignal(timeoutMs);
 
   try {
     const response = await fetchFn(attempt.request.url, {
@@ -298,10 +333,13 @@ async function performRequest(
       contentType: parsedBody.contentType,
     };
   } catch (error) {
+    const requestError = didTimeout() ? createTimeoutError(timeoutMs) : error;
     attempt.durationMs = Date.now() - startedAt;
     attempt.error =
-      error instanceof Error ? error.message : String(error);
-    throw error;
+      requestError instanceof Error
+        ? requestError.message
+        : String(requestError);
+    throw requestError;
   } finally {
     cleanup();
   }
@@ -309,7 +347,7 @@ async function performRequest(
 
 function extractInitializeInfo(
   body: unknown,
-  contentType: string | undefined,
+  contentType: string | undefined
 ): ProbeInitializeInfo | undefined {
   if (
     body &&
@@ -317,13 +355,15 @@ function extractInitializeInfo(
     "result" in body &&
     (body as { result?: { protocolVersion?: unknown } }).result?.protocolVersion
   ) {
-    const result = (body as {
-      result: {
-        protocolVersion?: string;
-        serverInfo?: unknown;
-        capabilities?: unknown;
-      };
-    }).result;
+    const result = (
+      body as {
+        result: {
+          protocolVersion?: string;
+          serverInfo?: unknown;
+          capabilities?: unknown;
+        };
+      }
+    ).result;
 
     return {
       protocolVersion: result.protocolVersion,
@@ -342,7 +382,9 @@ function extractInitializeInfo(
   return undefined;
 }
 
-function buildInitializeRequest(config: ProbeMcpServerConfig): ProbeHttpAttempt {
+function buildInitializeRequest(
+  config: ProbeMcpServerConfig
+): ProbeHttpAttempt {
   const protocolVersion = normalizeProtocolVersion(config.protocolVersion);
   const accessToken = config.accessToken?.trim();
   const headers: Record<string, string> = {
@@ -403,11 +445,9 @@ function buildSseProbeRequest(config: ProbeMcpServerConfig): ProbeHttpAttempt {
 
 function resolveRegistrationStrategies(
   protocolVersion: OAuthProtocolVersion,
-  authServerMetadata: Record<string, unknown> | undefined,
+  authServerMetadata: Record<string, unknown> | undefined
 ): Array<"preregistered" | "dcr" | "cimd"> {
-  const strategies: Array<"preregistered" | "dcr" | "cimd"> = [
-    "preregistered",
-  ];
+  const strategies: Array<"preregistered" | "dcr" | "cimd"> = ["preregistered"];
 
   if (authServerMetadata?.registration_endpoint) {
     strategies.push("dcr");
@@ -427,14 +467,14 @@ async function discoverOAuthDetails(
   config: ProbeMcpServerConfig,
   attempts: ProbeHttpAttempt[],
   optional: boolean,
-  wwwAuthenticateHeader: string | undefined,
+  wwwAuthenticateHeader: string | undefined
 ): Promise<ProbeOAuthDetails> {
   const protocolVersion = normalizeProtocolVersion(config.protocolVersion);
   const metadataHeaders = removeAuthorizationHeader(
-    normalizeHeaders(config.headers),
+    normalizeHeaders(config.headers)
   );
   const resourceMetadataUrlFromHeader = wwwAuthenticateHeader?.match(
-    /resource_metadata="([^"]+)"/,
+    /resource_metadata="([^"]+)"/
   )?.[1];
   const resourceMetadataUrl =
     resourceMetadataUrlFromHeader ?? buildResourceMetadataUrl(config.url);
@@ -457,17 +497,18 @@ async function discoverOAuthDetails(
         ...metadataHeaders,
         ...normalizeHeaders(init.headers),
       };
-      const attempt = resourceMetadataAttempt.request.url === url
-        ? resourceMetadataAttempt
-        : {
-            name: "resource_metadata" as const,
-            request: {
-              method: init.method ?? "GET",
-              url,
-              headers: mergedHeaders,
-            },
-            durationMs: 0,
-          };
+      const attempt =
+        resourceMetadataAttempt.request.url === url
+          ? resourceMetadataAttempt
+          : {
+              name: "resource_metadata" as const,
+              request: {
+                method: init.method ?? "GET",
+                url,
+                headers: mergedHeaders,
+              },
+              durationMs: 0,
+            };
       if (attempt !== resourceMetadataAttempt) {
         attempts.push(attempt);
       } else {
@@ -478,7 +519,7 @@ async function discoverOAuthDetails(
       const response = await performRequest(
         config.fetchFn ?? fetch,
         attempt,
-        config.timeoutMs,
+        config.timeoutMs
       );
 
       return new Response(
@@ -487,7 +528,7 @@ async function discoverOAuthDetails(
           status: response.status,
           statusText: response.statusText,
           headers: response.headers,
-        },
+        }
       );
     };
 
@@ -496,18 +537,16 @@ async function discoverOAuthDetails(
       resourceMetadataUrlFromHeader
         ? { resourceMetadataUrl: resourceMetadataUrlFromHeader }
         : undefined,
-      loggingFetch,
+      loggingFetch
     );
 
     const authorizationServerUrl =
       metadata.authorization_servers?.[0] ?? config.url;
     const authMetadataUrls = buildAuthServerMetadataUrls(
       protocolVersion,
-      authorizationServerUrl,
+      authorizationServerUrl
     );
-    let authorizationServerMetadata:
-      | Record<string, unknown>
-      | undefined;
+    let authorizationServerMetadata: Record<string, unknown> | undefined;
     let authorizationServerMetadataUrl: string | undefined;
     let lastAuthError: string | undefined;
 
@@ -527,7 +566,7 @@ async function discoverOAuthDetails(
         const response = await performRequest(
           config.fetchFn ?? fetch,
           authAttempt,
-          config.timeoutMs,
+          config.timeoutMs
         );
 
         if (
@@ -536,7 +575,10 @@ async function discoverOAuthDetails(
           response.body &&
           typeof response.body === "object"
         ) {
-          authorizationServerMetadata = response.body as Record<string, unknown>;
+          authorizationServerMetadata = response.body as Record<
+            string,
+            unknown
+          >;
           authorizationServerMetadataUrl = authMetadataUrl;
           lastAuthError = undefined;
           break;
@@ -544,8 +586,7 @@ async function discoverOAuthDetails(
 
         lastAuthError = `HTTP ${response.status} ${response.statusText}`;
       } catch (error) {
-        lastAuthError =
-          error instanceof Error ? error.message : String(error);
+        lastAuthError = error instanceof Error ? error.message : String(error);
       }
     }
 
@@ -559,7 +600,7 @@ async function discoverOAuthDetails(
       authorizationServerMetadata,
       registrationStrategies: resolveRegistrationStrategies(
         protocolVersion,
-        authorizationServerMetadata,
+        authorizationServerMetadata
       ),
       ...(lastAuthError ? { discoveryError: lastAuthError } : {}),
     };
@@ -579,8 +620,7 @@ async function discoverOAuthDetails(
       wwwAuthenticate: wwwAuthenticateHeader,
       resourceMetadataUrl,
       registrationStrategies: ["preregistered"],
-      discoveryError:
-        error instanceof Error ? error.message : String(error),
+      discoveryError: error instanceof Error ? error.message : String(error),
     };
   }
 }
@@ -593,11 +633,38 @@ function baseOAuthResult(): ProbeOAuthDetails {
   };
 }
 
-export async function probeMcpServer(
+type ProbeMcpServerAttemptResult = {
+  result: ProbeMcpServerResult;
+  retryable: boolean;
+};
+
+function createProbeErrorResult(
   config: ProbeMcpServerConfig,
-): Promise<ProbeMcpServerResult> {
+  protocolVersion: OAuthProtocolVersion,
+  attempts: ProbeHttpAttempt[],
+  error: string,
+  retryable: boolean
+): ProbeMcpServerAttemptResult {
+  return {
+    result: {
+      url: config.url,
+      protocolVersion,
+      status: "error",
+      transport: {
+        attempts,
+      },
+      oauth: baseOAuthResult(),
+      error,
+    },
+    retryable,
+  };
+}
+
+async function probeMcpServerOnce(
+  config: ProbeMcpServerConfig,
+  attempts: ProbeHttpAttempt[]
+): Promise<ProbeMcpServerAttemptResult> {
   const protocolVersion = normalizeProtocolVersion(config.protocolVersion);
-  const attempts: ProbeHttpAttempt[] = [];
   const initializeAttempt = buildInitializeRequest(config);
   attempts.push(initializeAttempt);
 
@@ -605,82 +672,17 @@ export async function probeMcpServer(
     const initializeResponse = await performRequest(
       config.fetchFn ?? fetch,
       initializeAttempt,
-      config.timeoutMs,
+      config.timeoutMs
     );
     const initializeInfo = extractInitializeInfo(
       initializeResponse.body,
-      initializeResponse.contentType,
+      initializeResponse.contentType
     );
-    const wwwAuthenticate =
-      initializeResponse.headers["www-authenticate"];
+    const wwwAuthenticate = initializeResponse.headers["www-authenticate"];
 
     if (initializeResponse.status === 401) {
       return {
-        url: config.url,
-        protocolVersion,
-        status: "oauth_required",
-        transport: {
-          attempts,
-        },
-        oauth: await discoverOAuthDetails(
-          config,
-          attempts,
-          false,
-          wwwAuthenticate,
-        ),
-      };
-    }
-
-    if (initializeResponse.status >= 200 && initializeResponse.status < 300) {
-      const oauth = config.accessToken
-        ? baseOAuthResult()
-        : await discoverOAuthDetails(config, attempts, true, undefined)
-            .catch(() => baseOAuthResult());
-      if (initializeInfo) {
-        return {
-          url: config.url,
-          protocolVersion,
-          status: "ready",
-          transport: {
-            selected: "streamable-http",
-            attempts,
-          },
-          initialize: initializeInfo,
-          oauth,
-        };
-      }
-
-      return {
-        url: config.url,
-        protocolVersion,
-        status: "reachable",
-        transport: {
-          attempts,
-        },
-        oauth,
-        error: "Server responded to initialize but did not return a recognizable MCP initialize result.",
-      };
-    }
-
-    const shouldTrySse =
-      initializeResponse.status === 404 ||
-      initializeResponse.status === 405 ||
-      initializeResponse.status === 406 ||
-      initializeResponse.status === 415 ||
-      initializeResponse.status === 501;
-
-    if (shouldTrySse) {
-      const sseAttempt = buildSseProbeRequest(config);
-      attempts.push(sseAttempt);
-      const sseResponse = await performRequest(
-        config.fetchFn ?? fetch,
-        sseAttempt,
-        config.timeoutMs,
-      );
-      const wwwAuthenticateSse = sseResponse.headers["www-authenticate"];
-
-      if (sseResponse.status === 401) {
-        return {
+        result: {
           url: config.url,
           protocolVersion,
           status: "oauth_required",
@@ -691,8 +693,96 @@ export async function probeMcpServer(
             config,
             attempts,
             false,
-            wwwAuthenticateSse,
+            wwwAuthenticate
           ),
+        },
+        retryable: false,
+      };
+    }
+
+    if (initializeResponse.status >= 200 && initializeResponse.status < 300) {
+      const oauth = config.accessToken
+        ? baseOAuthResult()
+        : await discoverOAuthDetails(config, attempts, true, undefined).catch(
+            () => baseOAuthResult()
+          );
+      if (initializeInfo) {
+        return {
+          result: {
+            url: config.url,
+            protocolVersion,
+            status: "ready",
+            transport: {
+              selected: "streamable-http",
+              attempts,
+            },
+            initialize: initializeInfo,
+            oauth,
+          },
+          retryable: false,
+        };
+      }
+
+      return {
+        result: {
+          url: config.url,
+          protocolVersion,
+          status: "reachable",
+          transport: {
+            attempts,
+          },
+          oauth,
+          error:
+            "Server responded to initialize but did not return a recognizable MCP initialize result.",
+        },
+        retryable: false,
+      };
+    }
+
+    const shouldTrySse =
+      initializeResponse.status === 404 ||
+      initializeResponse.status === 405 ||
+      initializeResponse.status === 406 ||
+      initializeResponse.status === 415 ||
+      initializeResponse.status === 501;
+
+    if (!shouldTrySse && isRetryableProbeStatus(initializeResponse.status)) {
+      return createProbeErrorResult(
+        config,
+        protocolVersion,
+        attempts,
+        `Server responded with HTTP ${initializeResponse.status} ${initializeResponse.statusText} to the initialize probe.`,
+        true
+      );
+    }
+
+    if (shouldTrySse) {
+      const sseAttempt = buildSseProbeRequest(config);
+      attempts.push(sseAttempt);
+      const sseResponse = await performRequest(
+        config.fetchFn ?? fetch,
+        sseAttempt,
+        config.timeoutMs
+      );
+      const wwwAuthenticateSse = sseResponse.headers["www-authenticate"];
+
+      if (sseResponse.status === 401) {
+        return {
+          result: {
+            url: config.url,
+            protocolVersion,
+            status: "oauth_required",
+            transport: {
+              attempts,
+            },
+            oauth: await discoverOAuthDetails(
+              config,
+              attempts,
+              false,
+              wwwAuthenticateSse
+            ),
+          },
+          retryable: false,
         };
       }
 
@@ -703,44 +793,70 @@ export async function probeMcpServer(
       ) {
         const oauth = config.accessToken
           ? baseOAuthResult()
-          : await discoverOAuthDetails(config, attempts, true, undefined)
-              .catch(() => baseOAuthResult());
+          : await discoverOAuthDetails(config, attempts, true, undefined).catch(
+              () => baseOAuthResult()
+            );
         return {
-          url: config.url,
-          protocolVersion,
-          status: "ready",
-          transport: {
-            selected: "sse",
-            attempts,
+          result: {
+            url: config.url,
+            protocolVersion,
+            status: "ready",
+            transport: {
+              selected: "sse",
+              attempts,
+            },
+            initialize: {
+              contentType: sseResponse.contentType,
+            },
+            oauth,
           },
-          initialize: {
-            contentType: sseResponse.contentType,
-          },
-          oauth,
+          retryable: false,
         };
+      }
+
+      if (isRetryableProbeStatus(sseResponse.status)) {
+        return createProbeErrorResult(
+          config,
+          protocolVersion,
+          attempts,
+          `Server responded with HTTP ${sseResponse.status} ${sseResponse.statusText} to the SSE probe.`,
+          true
+        );
       }
     }
 
     return {
-      url: config.url,
-      protocolVersion,
-      status: "reachable",
-      transport: {
-        attempts,
+      result: {
+        url: config.url,
+        protocolVersion,
+        status: "reachable",
+        transport: {
+          attempts,
+        },
+        oauth: baseOAuthResult(),
+        error: `Server responded with HTTP ${initializeResponse.status} ${initializeResponse.statusText} to the initialize probe.`,
       },
-      oauth: baseOAuthResult(),
-      error: `Server responded with HTTP ${initializeResponse.status} ${initializeResponse.statusText} to the initialize probe.`,
+      retryable: false,
     };
   } catch (error) {
-    return {
-      url: config.url,
+    return createProbeErrorResult(
+      config,
       protocolVersion,
-      status: "error",
-      transport: {
-        attempts,
-      },
-      oauth: baseOAuthResult(),
-      error: error instanceof Error ? error.message : String(error),
-    };
+      attempts,
+      error instanceof Error ? error.message : String(error),
+      isRetryableTransientError(error)
+    );
   }
+}
+
+export async function probeMcpServer(
+  config: ProbeMcpServerConfig
+): Promise<ProbeMcpServerResult> {
+  const attempts: ProbeHttpAttempt[] = [];
+  const outcome = await retryWithPolicy({
+    policy: config.retryPolicy,
+    operation: () => probeMcpServerOnce(config, attempts),
+    shouldRetryResult: (result) => result.retryable,
+  });
+  return outcome.result;
 }

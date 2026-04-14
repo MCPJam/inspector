@@ -22,6 +22,8 @@ export type {
   MCPConnectionStatus,
   ServerSummary,
   ManagedClientState,
+  RegisteredServerState,
+  LiveClientState,
 } from "./types.js";
 export type { MCPServerReplayConfig } from "../eval-reporting-types.js";
 
@@ -38,7 +40,11 @@ export type {
 } from "./types.js";
 
 // Types - Tool execution
-export type { ExecuteToolArguments, TaskOptions } from "./types.js";
+export type {
+  ExecuteToolArguments,
+  TaskOptions,
+  ExecuteToolRequest,
+} from "./types.js";
 
 // Types - Request options
 export type {
@@ -98,6 +104,14 @@ export {
   isAuthError,
   isMCPAuthError,
 } from "./errors.js";
+
+export type { RetryPolicy } from "../retry.js";
+export {
+  DEFAULT_RETRY_POLICY,
+  isRetryableTransientError,
+  normalizeRetryPolicy,
+  retryWithPolicy,
+} from "../retry.js";
 
 // Task utilities
 export {
