@@ -43,19 +43,20 @@ export function ConfirmChatResetDialog({
   const [shouldSkip, setShouldSkip] = useState(false);
 
   useEffect(() => {
-    setShouldSkip(getShouldSkipChatResetConfirmation());
-  }, []);
-
-  useEffect(() => {
-    if (open && shouldSkip) {
-      onConfirm();
+    if (open) {
+      const shouldSkipConfirmation = getShouldSkipChatResetConfirmation();
+      setShouldSkip(shouldSkipConfirmation);
+      if (shouldSkipConfirmation) {
+        onConfirm();
+      }
     }
-  }, [open, onConfirm, shouldSkip]);
+  }, [open, onConfirm]);
 
   const handleConfirm = () => {
     if (dontShowAgain && typeof window !== "undefined") {
       try {
         localStorage.setItem(SKIP_CHAT_RESET_CONFIRMATION_KEY, "true");
+        setShouldSkip(true);
       } catch {}
     }
     onConfirm();
