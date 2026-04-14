@@ -338,7 +338,10 @@ export function useAppState({
       const workspaceServers = Object.keys(workspace.servers || {});
       for (const serverName of workspaceServers) {
         const runtimeServer = appState.servers[serverName];
-        if (runtimeServer && isConnectedStatus(runtimeServer.connectionStatus)) {
+        if (
+          runtimeServer &&
+          isConnectedStatus(runtimeServer.connectionStatus)
+        ) {
           await handleDisconnect(serverName);
         }
       }

@@ -687,8 +687,8 @@ export default function App() {
       activeTab === "auth";
     if (!needsServer || selectedMCPConfig) return;
 
-    const firstConnected = Object.entries(workspaceServers).find(
-      ([, server]) => isConnectedStatus((server as any).connectionStatus),
+    const firstConnected = Object.entries(workspaceServers).find(([, server]) =>
+      isConnectedStatus((server as any).connectionStatus),
     );
     if (firstConnected) {
       setSelectedServer(firstConnected[0]);

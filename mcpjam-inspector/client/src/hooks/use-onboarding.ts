@@ -80,8 +80,7 @@ export function useOnboarding({
   const [connectError, setConnectError] = useState<string | null>(null);
   const excalidrawServer = servers[EXCALIDRAW_SERVER_NAME];
   const hasConnectedExcalidraw =
-    !!excalidrawServer &&
-    isConnectedStatus(excalidrawServer.connectionStatus);
+    !!excalidrawServer && isConnectedStatus(excalidrawServer.connectionStatus);
   const isResolvingRemoteCompletion = isAuthLoading;
 
   const didAutoConnectRef = useRef(false);

@@ -319,8 +319,8 @@ export function PlaygroundMain({
 
   const serverConnected = Boolean(
     !!serverName &&
-      !!servers[serverName] &&
-      isConnectedStatus(servers[serverName].connectionStatus),
+    !!servers[serverName] &&
+    isConnectedStatus(servers[serverName].connectionStatus),
   );
 
   const handlePlaygroundServerToggle = useCallback(

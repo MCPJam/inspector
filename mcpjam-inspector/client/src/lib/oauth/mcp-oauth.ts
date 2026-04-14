@@ -18,7 +18,10 @@ import {
   MCPJAM_CLIENT_URI,
   MCPJAM_LOGO_URI,
 } from "@mcpjam/sdk/browser";
-import type { HttpServerConfig, OAuthProtocolVersion } from "@mcpjam/sdk/browser";
+import type {
+  HttpServerConfig,
+  OAuthProtocolVersion,
+} from "@mcpjam/sdk/browser";
 import type { OAuthRegistrationStrategy } from "./profile";
 import { generateRandomString } from "./pkce";
 import { authFetch } from "@/lib/session-token";
@@ -57,24 +60,16 @@ function clearStoredDiscoveryState(serverName: string): void {
   localStorage.removeItem(getDiscoveryStorageKey(serverName));
 }
 
-function isOAuthProtocolVersion(
-  value: unknown,
-): value is OAuthProtocolVersion {
+function isOAuthProtocolVersion(value: unknown): value is OAuthProtocolVersion {
   return (
-    value === "2025-03-26" ||
-    value === "2025-06-18" ||
-    value === "2025-11-25"
+    value === "2025-03-26" || value === "2025-06-18" || value === "2025-11-25"
   );
 }
 
 function isOAuthRegistrationStrategy(
   value: unknown,
 ): value is OAuthRegistrationStrategy {
-  return (
-    value === "dcr" ||
-    value === "preregistered" ||
-    value === "cimd"
-  );
+  return value === "dcr" || value === "preregistered" || value === "cimd";
 }
 
 type OAuthRequestFields = Record<string, string>;
@@ -731,10 +726,7 @@ export async function initiateOAuth(
       JSON.stringify(oauthConfig),
     );
 
-    if (
-      !options.clientId &&
-      options.registrationStrategy !== "preregistered"
-    ) {
+    if (!options.clientId && options.registrationStrategy !== "preregistered") {
       await provider.invalidateCredentials("client");
     }
 

@@ -1,5 +1,9 @@
 import { Hono } from "hono";
-import { connectServerWithReport, type ConnectContext, runServerDoctor } from "@mcpjam/sdk";
+import {
+  connectServerWithReport,
+  type ConnectContext,
+  runServerDoctor,
+} from "@mcpjam/sdk";
 import { WEB_CONNECT_TIMEOUT_MS } from "../../config.js";
 import {
   ErrorCode,
@@ -144,10 +148,7 @@ function parseOAuthContext(
   const protocolVersion = candidate.protocolVersion;
   const registrationStrategy = candidate.registrationStrategy;
 
-  if (
-    protocolVersion !== "2025-06-18" &&
-    protocolVersion !== "2025-11-25"
-  ) {
+  if (protocolVersion !== "2025-06-18" && protocolVersion !== "2025-11-25") {
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,

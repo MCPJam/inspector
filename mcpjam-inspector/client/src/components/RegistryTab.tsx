@@ -359,17 +359,16 @@ function DualTypeAction({
   }
 
   // Check if any variant is connected/added
-  const connectedVariant = variants.find(
-    (v) => isConnectedStatus(v.connectionStatus),
+  const connectedVariant = variants.find((v) =>
+    isConnectedStatus(v.connectionStatus),
   );
   const addedVariant = variants.find((v) => v.connectionStatus === "added");
   const activeVariant = connectedVariant ?? addedVariant;
 
   if (activeVariant) {
-    const disconnectLabel =
-      isConnectedStatus(activeVariant.connectionStatus)
-        ? "Disconnect"
-        : "Remove";
+    const disconnectLabel = isConnectedStatus(activeVariant.connectionStatus)
+      ? "Disconnect"
+      : "Remove";
 
     // Show connected state + dropdown for remaining variants
     const remainingVariants = variants.filter((v) => v !== activeVariant);

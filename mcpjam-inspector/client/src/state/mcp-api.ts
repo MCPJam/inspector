@@ -135,7 +135,11 @@ export async function testConnection(
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ serverConfig, serverId, ...(oauthContext ? { oauthContext } : {}) }),
+      body: JSON.stringify({
+        serverConfig,
+        serverId,
+        ...(oauthContext ? { oauthContext } : {}),
+      }),
     },
     20000, // 20 second timeout
   );
@@ -180,7 +184,11 @@ export async function reconnectServer(
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ serverId, serverConfig, ...(oauthContext ? { oauthContext } : {}) }),
+      body: JSON.stringify({
+        serverId,
+        serverConfig,
+        ...(oauthContext ? { oauthContext } : {}),
+      }),
     },
     20000, // 20 second timeout
   );

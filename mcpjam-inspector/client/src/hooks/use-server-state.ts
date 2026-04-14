@@ -410,14 +410,12 @@ export function useServerState({
   };
 
   const buildOAuthContext = useCallback(
-    (
-      options?: {
-        serverName?: string;
-        oauthProfile?: OAuthTestProfile;
-        useRegistryOAuthProxy?: boolean;
-        usedCustomClientCredentials?: boolean;
-      },
-    ): ConnectContext["oauth"] | undefined => {
+    (options?: {
+      serverName?: string;
+      oauthProfile?: OAuthTestProfile;
+      useRegistryOAuthProxy?: boolean;
+      usedCustomClientCredentials?: boolean;
+    }): ConnectContext["oauth"] | undefined => {
       const storedConfig = options?.serverName
         ? readStoredOAuthConfig(options.serverName)
         : undefined;
@@ -452,9 +450,9 @@ export function useServerState({
         options?.usedCustomClientCredentials ??
         Boolean(
           options?.oauthProfile?.clientId?.trim() ||
-            options?.oauthProfile?.clientSecret?.trim() ||
-            (!useRegistryOAuthProxy &&
-              (parsedClientInfo?.client_id || parsedClientInfo?.client_secret)),
+          options?.oauthProfile?.clientSecret?.trim() ||
+          (!useRegistryOAuthProxy &&
+            (parsedClientInfo?.client_id || parsedClientInfo?.client_secret)),
         );
 
       return {
@@ -480,8 +478,7 @@ export function useServerState({
       const protocolVersion =
         oauthProfile?.protocolVersion ?? storedConfig.protocolVersion;
       const registrationStrategy =
-        oauthProfile?.registrationStrategy ??
-        storedConfig.registrationStrategy;
+        oauthProfile?.registrationStrategy ?? storedConfig.registrationStrategy;
       const clientId =
         oauthProfile?.clientId?.trim() ||
         server.oauthTokens?.client_id ||
@@ -496,7 +493,7 @@ export function useServerState({
         serverUrl,
         ...(clientId ? { clientId } : {}),
         ...(clientSecret ? { clientSecret } : {}),
-        ...(scopesFromProfile ?? storedConfig.scopes
+        ...((scopesFromProfile ?? storedConfig.scopes)
           ? { scopes: scopesFromProfile ?? storedConfig.scopes }
           : {}),
         ...(protocolVersion ? { protocolVersion } : {}),
@@ -1743,7 +1740,7 @@ export function useServerState({
         oauthProfile: server.oauthFlowProfile,
         usedCustomClientCredentials: Boolean(
           server.oauthFlowProfile?.clientId?.trim() ||
-            server.oauthFlowProfile?.clientSecret?.trim(),
+          server.oauthFlowProfile?.clientSecret?.trim(),
         ),
       });
 
@@ -1836,7 +1833,8 @@ export function useServerState({
         }
         logger.error("Reconnection failed", { serverName, result });
         const errorMessage =
-          getConnectionErrorMessage(result) || `Failed to reconnect: ${serverName}`;
+          getConnectionErrorMessage(result) ||
+          `Failed to reconnect: ${serverName}`;
         toast.error(errorMessage);
       } catch (error) {
         const errorMessage =
@@ -1957,10 +1955,9 @@ export function useServerState({
           retryCount: originalServer?.retryCount ?? 0,
           enabled: originalServer?.enabled ?? false,
           oauthTokens: originalServer?.oauthTokens,
-          oauthFlowProfile:
-            formData.useOAuth
-              ? (options?.oauthProfile ?? originalServer?.oauthFlowProfile)
-              : undefined,
+          oauthFlowProfile: formData.useOAuth
+            ? (options?.oauthProfile ?? originalServer?.oauthFlowProfile)
+            : undefined,
           initializationInfo: originalServer?.initializationInfo,
           useOAuth: formData.useOAuth ?? false,
         } as ServerWithName;
@@ -2029,7 +2026,7 @@ export function useServerState({
                 options?.oauthProfile ?? originalServer.oauthFlowProfile,
               usedCustomClientCredentials: Boolean(
                 options?.oauthProfile?.clientId?.trim() ||
-                  originalServer.oauthTokens?.client_id,
+                originalServer.oauthTokens?.client_id,
               ),
             }),
           );

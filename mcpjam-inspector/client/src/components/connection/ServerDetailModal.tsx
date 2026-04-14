@@ -89,7 +89,8 @@ export function ServerDetailModal({
     existingServerNames.includes(trimmedName);
 
   const isConnected = isConnectedStatus(server.connectionStatus);
-  const isOAuthRequired = server.lastConnectionReport?.status === "oauth_required";
+  const isOAuthRequired =
+    server.lastConnectionReport?.status === "oauth_required";
   const { label: connectionStatusLabel, indicatorColor } =
     getConnectionStatusMeta(server.connectionStatus);
 
@@ -300,8 +301,8 @@ export function ServerDetailModal({
                     : isOAuthRequired
                       ? "Authorization required"
                       : server.connectionStatus === "failed"
-                      ? `${connectionStatusLabel} (${server.retryCount})`
-                      : connectionStatusLabel}
+                        ? `${connectionStatusLabel} (${server.retryCount})`
+                        : connectionStatusLabel}
                 </span>
               </span>
               <Switch

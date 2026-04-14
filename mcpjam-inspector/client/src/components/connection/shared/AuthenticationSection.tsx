@@ -58,9 +58,8 @@ export function AuthenticationSection({
   clientSecretError,
 }: AuthenticationSectionProps) {
   const [showAdvancedOAuth, setShowAdvancedOAuth] = useState(false);
-  const supportedStrategies = getSupportedRegistrationStrategies(
-    oauthProtocolVersion,
-  );
+  const supportedStrategies =
+    getSupportedRegistrationStrategies(oauthProtocolVersion);
   const requiresCustomClientId = oauthRegistrationStrategy === "preregistered";
 
   return (

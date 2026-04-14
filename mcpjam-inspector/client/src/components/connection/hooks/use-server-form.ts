@@ -44,10 +44,9 @@ export function useServerForm(
   const [oauthScopesInput, setOauthScopesInput] = useState("");
   const [clientId, setClientId] = useState("");
   const [clientSecret, setClientSecret] = useState("");
-  const [oauthProtocolVersion, setOauthProtocolVersion] =
-    useState<OAuthTestProfile["protocolVersion"]>(
-      EMPTY_OAUTH_TEST_PROFILE.protocolVersion,
-    );
+  const [oauthProtocolVersion, setOauthProtocolVersion] = useState<
+    OAuthTestProfile["protocolVersion"]
+  >(EMPTY_OAUTH_TEST_PROFILE.protocolVersion);
   const [oauthRegistrationStrategy, setOauthRegistrationStrategy] =
     useState<OAuthRegistrationStrategy>(
       EMPTY_OAUTH_TEST_PROFILE.registrationStrategy,
@@ -480,9 +479,7 @@ export function useServerForm(
     clientSecret,
     setClientSecret,
     oauthProtocolVersion,
-    setOauthProtocolVersion: (
-      value: OAuthTestProfile["protocolVersion"],
-    ) => {
+    setOauthProtocolVersion: (value: OAuthTestProfile["protocolVersion"]) => {
       setOauthProtocolVersion(value);
       const supported = getSupportedRegistrationStrategies(value);
       if (!supported.includes(oauthRegistrationStrategy)) {

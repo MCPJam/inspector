@@ -438,8 +438,8 @@ export function ServerConnectionCard({
                     {isOAuthRequired
                       ? "Authorization required"
                       : server.connectionStatus === "failed"
-                      ? `${connectionStatusLabel} (${server.retryCount})`
-                      : connectionStatusLabel}
+                        ? `${connectionStatusLabel} (${server.retryCount})`
+                        : connectionStatusLabel}
                   </span>
                 </span>
 
@@ -532,9 +532,7 @@ export function ServerConnectionCard({
                         });
                         handleExport();
                       }}
-                      disabled={
-                        isExporting || !isConnected
-                      }
+                      disabled={isExporting || !isConnected}
                       className="text-xs cursor-pointer"
                     >
                       {isExporting ? (
@@ -548,9 +546,7 @@ export function ServerConnectionCard({
                       onClick={() => {
                         handleCopyAgentBrief();
                       }}
-                      disabled={
-                        isCopyingBrief || !isConnected
-                      }
+                      disabled={isCopyingBrief || !isConnected}
                       className="text-xs cursor-pointer"
                     >
                       {isCopyingBrief ? (
@@ -704,7 +700,8 @@ export function ServerConnectionCard({
               </div>
               {connectionReport?.issue && (
                 <div className="mt-1 opacity-80">
-                  {connectionReport.issue.code} in {connectionReport.issue.phase}
+                  {connectionReport.issue.code} in{" "}
+                  {connectionReport.issue.phase}
                 </div>
               )}
               {isErrorExpanded &&
@@ -730,11 +727,9 @@ export function ServerConnectionCard({
             </div>
           )}
 
-          {(
-            server.connectionStatus === "failed" ||
+          {(server.connectionStatus === "failed" ||
             server.connectionStatus === "partial" ||
-            isOAuthRequired
-          ) && (
+            isOAuthRequired) && (
             <div
               className="mt-2 text-xs text-muted-foreground"
               onClick={(e) => e.stopPropagation()}

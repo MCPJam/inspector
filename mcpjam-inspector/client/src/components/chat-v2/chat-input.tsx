@@ -657,10 +657,9 @@ export function ChatInput({
                                 .map(([name, server]) => {
                                   const isSelected =
                                     selectedServers?.includes(name) ?? false;
-                                  const isConnected =
-                                    isConnectedStatus(
-                                      server.connectionStatus,
-                                    );
+                                  const isConnected = isConnectedStatus(
+                                    server.connectionStatus,
+                                  );
                                   const isConnecting =
                                     server.connectionStatus === "connecting";
                                   const isFailed =
