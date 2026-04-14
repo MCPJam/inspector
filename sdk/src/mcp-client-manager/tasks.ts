@@ -43,6 +43,13 @@ export const ListTasksResultSchema = z.object({
 });
 
 /**
+ * Result schema for task-augmented tool calls.
+ */
+export const CreateTaskResultSchema = z.object({
+  task: TaskSchema,
+});
+
+/**
  * Task status notification schema
  * Per spec, notification includes the full Task object
  */

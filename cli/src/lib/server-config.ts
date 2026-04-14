@@ -1,10 +1,9 @@
-import type { MCPServerConfig } from "@mcpjam/sdk";
-import { Command } from "commander";
 import {
-  resolveOutputFormat,
-  type OutputFormat,
-  usageError,
-} from "./output";
+  type MCPServerConfig,
+  type RetryPolicy,
+} from "@mcpjam/sdk";
+import { Command } from "commander";
+import { resolveOutputFormat, type OutputFormat, usageError } from "./output";
 
 export interface GlobalOptions {
   format: OutputFormat;
@@ -12,7 +11,10 @@ export interface GlobalOptions {
   rpc: boolean;
 }
 
+type TransportType = "http" | "stdio";
+
 export interface SharedServerTargetOptions {
+  transport?: TransportType;
   url?: string;
   accessToken?: string;
   oauthAccessToken?: string;
@@ -22,10 +24,19 @@ export interface SharedServerTargetOptions {
   header?: string[];
   clientCapabilities?: string | Record<string, unknown>;
   command?: string;
+  args?: string[];
   commandArgs?: string[];
   env?: string[];
+  cwd?: string;
   timeout?: number;
+  retries?: number;
+  retryDelayMs?: number;
 }
+
+const DEFAULT_CLI_RETRY_POLICY: RetryPolicy = {
+  retries: 0,
+  retryDelayMs: 3_000,
+};
 
 function collectString(value: string, previous: string[] = []): string[] {
   return [...previous, value];
@@ -33,20 +44,18 @@ function collectString(value: string, previous: string[] = []): string[] {
 
 export function addSharedServerOptions(command: Command): Command {
   return command
+    .option(
+      "--transport <transport>",
+      'Explicit transport type: "http" or "stdio"',
+    )
     .option("--url <url>", "HTTP MCP server URL")
     .option("--access-token <token>", "Bearer access token for HTTP servers")
     .option(
       "--oauth-access-token <token>",
       "OAuth bearer access token for HTTP servers",
     )
-    .option(
-      "--refresh-token <token>",
-      "OAuth refresh token for HTTP servers",
-    )
-    .option(
-      "--client-id <id>",
-      "OAuth client ID used with --refresh-token",
-    )
+    .option("--refresh-token <token>", "OAuth refresh token for HTTP servers")
+    .option("--client-id <id>", "OAuth client ID used with --refresh-token")
     .option(
       "--client-secret <secret>",
       "OAuth client secret used with --refresh-token",
@@ -63,21 +72,28 @@ export function addSharedServerOptions(command: Command): Command {
     )
     .option("--command <command>", "Command for a stdio MCP server")
     .option(
+      "--args <arg...>",
+      "Preferred stdio command arguments. Pass multiple values or repeat the flag.",
+    )
+    .option(
       "--command-args <arg>",
-      "Stdio command argument. Repeat to pass multiple arguments.",
+      "Legacy stdio command argument. Repeat to pass multiple arguments.",
       collectString,
     )
     .option(
-      "--env <env>",
-      'Stdio environment assignment in "KEY=VALUE" format. Repeat to pass multiple assignments.',
-      collectString,
-    );
+      "-e, --env <env...>",
+      'Stdio environment assignment in "KEY=VALUE" format. Pass multiple values or repeat the flag.',
+    )
+    .option("--cwd <path>", "Working directory for the stdio MCP server process");
 }
 
 export function getGlobalOptions(command: Command): GlobalOptions {
   const options = command.optsWithGlobals() as Partial<GlobalOptions>;
   return {
-    format: resolveOutputFormat(options.format as string | undefined, process.stdout.isTTY),
+    format: resolveOutputFormat(
+      options.format as string | undefined,
+      process.stdout.isTTY,
+    ),
     timeout: options.timeout ?? 30_000,
     rpc: options.rpc ?? false,
   };
@@ -90,6 +106,51 @@ export function parsePositiveInteger(value: string, label = "Value"): number {
   }
 
   return parsed;
+}
+
+export function parseNonNegativeInteger(
+  value: string,
+  label = "Value",
+): number {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    throw usageError(`${label} must be a non-negative integer.`);
+  }
+
+  return parsed;
+}
+
+export function addRetryOptions(command: Command): Command {
+  return command
+    .option(
+      "--retries <count>",
+      "Retry transient failures this many times",
+      (value: string) => parseNonNegativeInteger(value, "Retries"),
+    )
+    .option(
+      "--retry-delay-ms <ms>",
+      "Fixed delay between retries in milliseconds",
+      (value: string) => parseNonNegativeInteger(value, "Retry delay"),
+    );
+}
+
+export function parseRetryPolicy(
+  options: Pick<SharedServerTargetOptions, "retries" | "retryDelayMs"> = {},
+): RetryPolicy | undefined {
+  if (options.retries === undefined && options.retryDelayMs === undefined) {
+    return undefined;
+  }
+
+  const retries = options.retries ?? DEFAULT_CLI_RETRY_POLICY.retries;
+  if (options.retryDelayMs !== undefined && retries === 0) {
+    throw usageError("--retry-delay-ms requires --retries to be greater than 0.");
+  }
+
+  return {
+    retries,
+    retryDelayMs:
+      options.retryDelayMs ?? DEFAULT_CLI_RETRY_POLICY.retryDelayMs,
+  };
 }
 
 export function parseHeadersOption(
@@ -177,7 +238,9 @@ export function resolveAliasedStringOption(
         value: normalized,
       };
     })
-    .filter((entry): entry is { flag: string; value: string } => entry !== undefined);
+    .filter(
+      (entry): entry is { flag: string; value: string } => entry !== undefined,
+    );
 
   const flagsText = aliases.map((alias) => alias.flag).join(" or ");
 
@@ -204,21 +267,21 @@ export function parseServerConfig(
   const command = options.command?.trim();
   const hasUrl = Boolean(url);
   const hasCommand = Boolean(command);
+  const transport = resolveTargetTransport(options, hasUrl, hasCommand);
+  const cwd = options.cwd?.trim();
   const clientCapabilities = resolveClientCapabilities(
     options.clientCapabilities,
   );
 
-  if (hasUrl === hasCommand) {
-    throw usageError("Specify exactly one target: either --url or --command.");
-  }
-
-  if (hasUrl && url) {
+  if (transport === "http" && url) {
     if (
+      (options.args?.length ?? 0) > 0 ||
       (options.commandArgs?.length ?? 0) > 0 ||
-      (options.env?.length ?? 0) > 0
+      (options.env?.length ?? 0) > 0 ||
+      cwd
     ) {
       throw usageError(
-        "--command-args and --env can only be used together with --command.",
+        "--args, --command-args, --env, and --cwd can only be used together with --command.",
       );
     }
 
@@ -281,10 +344,11 @@ export function parseServerConfig(
 
   return {
     command,
-    args: parseCommandArgs(options.commandArgs),
+    args: parseCommandArgs(options.args, options.commandArgs),
     env: parseEnvironmentOption(options.env),
+    ...(cwd ? { cwd } : {}),
     ...(clientCapabilities ? { clientCapabilities } : {}),
-    stderr: "ignore",
+    stderr: "pipe",
     timeout: options.timeout,
   };
 }
@@ -325,12 +389,17 @@ function parseHeader(entry: string): [string, string] {
   return [key, value];
 }
 
-function parseCommandArgs(values: string[] | undefined): string[] | undefined {
-  if (!values || values.length === 0) {
+function parseCommandArgs(
+  values: string[] | undefined,
+  legacyValues: string[] | undefined,
+): string[] | undefined {
+  const combined = [...(values ?? []), ...(legacyValues ?? [])];
+
+  if (combined.length === 0) {
     return undefined;
   }
 
-  return values;
+  return combined;
 }
 
 function parseEnvironmentOption(
@@ -377,17 +446,65 @@ function resolveClientCapabilities(
   return parseUnknownRecord(value, "Client capabilities");
 }
 
+function resolveTargetTransport(
+  options: SharedServerTargetOptions,
+  hasUrl: boolean,
+  hasCommand: boolean,
+): TransportType {
+  const transport = resolveTransportOption(options.transport);
+
+  if (!transport) {
+    if (hasUrl === hasCommand) {
+      throw usageError("Specify exactly one target: either --url or --command.");
+    }
+
+    return hasUrl ? "http" : "stdio";
+  }
+
+  if (transport === "http") {
+    if (!hasUrl) {
+      throw usageError("--transport http requires --url.");
+    }
+    if (hasCommand) {
+      throw usageError("--command can only be used with --transport stdio.");
+    }
+
+    return transport;
+  }
+
+  if (!hasCommand) {
+    throw usageError("--transport stdio requires --command.");
+  }
+  if (hasUrl) {
+    throw usageError("--url can only be used with --transport http.");
+  }
+
+  return transport;
+}
+
+function resolveTransportOption(
+  value: string | undefined,
+): TransportType | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (value === "http" || value === "stdio") {
+    return value;
+  }
+
+  throw usageError(
+    `Invalid transport "${value}". Use "http" or "stdio".`,
+  );
+}
+
 export function resolveHttpAccessToken(
   options: Pick<SharedServerTargetOptions, "accessToken" | "oauthAccessToken">,
 ): string | undefined {
   const accessToken = options.accessToken?.trim();
   const oauthAccessToken = options.oauthAccessToken?.trim();
 
-  if (
-    accessToken &&
-    oauthAccessToken &&
-    accessToken !== oauthAccessToken
-  ) {
+  if (accessToken && oauthAccessToken && accessToken !== oauthAccessToken) {
     throw usageError(
       "--access-token and --oauth-access-token must match when both are provided.",
     );

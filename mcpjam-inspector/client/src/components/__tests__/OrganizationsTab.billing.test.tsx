@@ -2012,4 +2012,42 @@ describe("OrganizationsTab billing", () => {
     ).not.toBeInTheDocument();
     expect(screen.getByTestId("organization-audit-log")).toBeInTheDocument();
   });
+
+  it("calls onOrganizationDeleted and skips the fallback redirect when provided", async () => {
+    window.history.replaceState({}, "", "/#organizations/org-1");
+    const onOrganizationDeleted = vi.fn();
+    deleteOrganizationMock.mockResolvedValue(undefined);
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture({ plan: "free" }),
+      }),
+    );
+
+    render(
+      <OrganizationsTab
+        organizationId="org-1"
+        onOrganizationDeleted={onOrganizationDeleted}
+      />,
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Delete Organization" }),
+    );
+
+    const dialog = await screen.findByRole("alertdialog");
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Delete Organization" }),
+    );
+
+    await waitFor(() => {
+      expect(deleteOrganizationMock).toHaveBeenCalledWith({
+        organizationId: "org-1",
+      });
+    });
+    await waitFor(() => {
+      expect(onOrganizationDeleted).toHaveBeenCalledWith("org-1");
+    });
+
+    expect(window.location.hash).toBe("#organizations/org-1");
+  });
 });
