@@ -1,9 +1,16 @@
+import {
+  CallToolResultSchema,
+  ContentBlockSchema,
+} from "@modelcontextprotocol/sdk/types.js";
 import { redactSensitiveValue } from "./redaction.js";
 import type {
   StructuredCaseResult,
   StructuredRunReport,
 } from "./structured-reporting.js";
 import { summarizeStructuredCases } from "./structured-reporting.js";
+
+const MAX_TEXT_PREVIEW_CHARS = 160;
+const MAX_REPORTED_CONTENT_ITEMS = 10;
 
 export interface ToolCallEnvelopeValidationDetails {
   topLevelType: string;
@@ -62,60 +69,24 @@ export function validateToolCallEnvelope(
     return { passed: false, errors, warnings, details };
   }
 
-  validateIsErrorField(result, errors);
+  if (result.content !== undefined) {
+    details.hasContent = true;
+    if (!Array.isArray(result.content)) {
+      errors.push('Tool call result "content" must be an array when present.');
+      return { passed: false, errors, warnings, details };
+    }
 
-  if (result.content === undefined) {
-    return { passed: errors.length === 0, errors, warnings, details };
+    result.content.forEach((entry) => {
+      if (isRecord(entry) && typeof entry.type === "string" && entry.type.length > 0) {
+        contentItemTypes.push(entry.type);
+      }
+    });
   }
 
-  details.hasContent = true;
-  if (!Array.isArray(result.content)) {
-    errors.push('Tool call result "content" must be an array when present.');
-    return { passed: false, errors, warnings, details };
+  const parsedResult = CallToolResultSchema.safeParse(result);
+  if (!parsedResult.success) {
+    errors.push(...parsedResult.error.issues.map(formatValidationIssue));
   }
-
-  result.content.forEach((entry, index) => {
-    if (!isRecord(entry)) {
-      errors.push(`Content item ${index} must be an object.`);
-      return;
-    }
-
-    if (typeof entry.type !== "string" || entry.type.length === 0) {
-      errors.push(`Content item ${index} must include a string type.`);
-      return;
-    }
-
-    contentItemTypes.push(entry.type);
-
-    switch (entry.type) {
-      case "text":
-        if (typeof entry.text !== "string") {
-          errors.push(
-            `Text content item ${index} must include a string text field.`
-          );
-        }
-        break;
-      case "image":
-        if (!isValidImageContent(entry)) {
-          errors.push(
-            `Image content item ${index} must include either data+mimeType or a url string.`
-          );
-        }
-        break;
-      case "resource":
-        if (!isValidResourceContent(entry)) {
-          errors.push(
-            `Resource content item ${index} must include a resource object with a uri and payload fields.`
-          );
-        }
-        break;
-      default:
-        warnings.push(
-          `Unknown content item type "${entry.type}" at index ${index} was not strictly validated.`
-        );
-        break;
-    }
-  });
 
   return {
     passed: errors.length === 0,
@@ -134,7 +105,13 @@ export function evaluateToolCallOutcome(
   const warnings: string[] = [];
 
   if (isRecord(result)) {
-    validateIsErrorField(result, errors);
+    const parsedResult = CallToolResultSchema.safeParse(result);
+    if (!parsedResult.success) {
+      const isErrorIssues = parsedResult.error.issues
+        .filter((issue) => issue.path[0] === "isError")
+        .map(formatValidationIssue);
+      errors.push(...isErrorIssues);
+    }
   }
 
   const isError = isRecord(result) && result.isError === true;
@@ -235,50 +212,13 @@ export function buildToolCallValidationReport(
       ...(options.metadata ?? {}),
       ...(options.rawResult === undefined
         ? {}
-        : { redactedRawResult: redactSensitiveValue(options.rawResult) }),
+        : {
+            redactedRawResult: redactSensitiveValue(
+              summarizeToolCallResultForReport(options.rawResult)
+            ),
+          }),
     },
   };
-}
-
-function isValidImageContent(entry: Record<string, unknown>): boolean {
-  if (typeof entry.url === "string" && entry.url.length > 0) {
-    return true;
-  }
-
-  return (
-    typeof entry.data === "string" &&
-    entry.data.length > 0 &&
-    typeof entry.mimeType === "string" &&
-    entry.mimeType.length > 0
-  );
-}
-
-function isValidResourceContent(entry: Record<string, unknown>): boolean {
-  if (!isRecord(entry.resource)) {
-    return false;
-  }
-
-  const resource = entry.resource;
-  if (typeof resource.uri !== "string" || resource.uri.length === 0) {
-    return false;
-  }
-
-  return (
-    (typeof resource.text === "string" && resource.text.length > 0) ||
-    (typeof resource.blob === "string" && resource.blob.length > 0)
-  );
-}
-
-function validateIsErrorField(
-  result: Record<string, unknown>,
-  errors: string[]
-): void {
-  if (
-    Object.prototype.hasOwnProperty.call(result, "isError") &&
-    typeof result.isError !== "boolean"
-  ) {
-    errors.push('Tool call result "isError" must be a boolean when present.');
-  }
 }
 
 function describeType(value: unknown): string {
@@ -295,4 +235,164 @@ function describeType(value: unknown): string {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function formatValidationIssue(issue: {
+  path: PropertyKey[];
+  message: string;
+}): string {
+  if (issue.path.length === 0) {
+    return `Tool call result failed MCP validation: ${issue.message}`;
+  }
+
+  const path = issue.path
+    .map((segment) =>
+      typeof segment === "number"
+        ? `[${segment}]`
+        : typeof segment === "string"
+          ? segment
+          : String(segment)
+    )
+    .join(".");
+  const normalizedPath = path.replace(/\.\[/g, "[");
+
+  return `Tool call result failed MCP validation at "${normalizedPath}": ${issue.message}`;
+}
+
+function summarizeToolCallResultForReport(result: unknown): unknown {
+  if (!isRecord(result)) {
+    return compactUnknownValue(result);
+  }
+
+  const summary: Record<string, unknown> = {};
+
+  if (typeof result.isError === "boolean") {
+    summary.isError = result.isError;
+  }
+
+  if (Array.isArray(result.content)) {
+    summary.contentCount = result.content.length;
+    summary.content = result.content
+      .slice(0, MAX_REPORTED_CONTENT_ITEMS)
+      .map((entry) => summarizeContentBlockForReport(entry));
+
+    if (result.content.length > MAX_REPORTED_CONTENT_ITEMS) {
+      summary.truncatedContentItems =
+        result.content.length - MAX_REPORTED_CONTENT_ITEMS;
+    }
+  }
+
+  if (isRecord(result.structuredContent)) {
+    summary.structuredContentKeys = Object.keys(result.structuredContent).sort();
+  }
+
+  if (isRecord(result._meta)) {
+    summary.metaKeys = Object.keys(result._meta).sort();
+  }
+
+  return summary;
+}
+
+function summarizeContentBlockForReport(value: unknown): unknown {
+  if (!isRecord(value) || typeof value.type !== "string") {
+    return compactUnknownValue(value);
+  }
+
+  const parsedBlock = ContentBlockSchema.safeParse(value);
+  if (!parsedBlock.success) {
+    return {
+      type: value.type,
+      invalid: true,
+      issues: parsedBlock.error.issues.map((issue) => issue.message),
+    };
+  }
+
+  const content = parsedBlock.data;
+  switch (content.type) {
+    case "text":
+      return {
+        type: content.type,
+        textLength: content.text.length,
+        textPreview: truncateText(content.text),
+      };
+    case "image":
+    case "audio":
+      return {
+        type: content.type,
+        mimeType: content.mimeType,
+        dataLength: content.data.length,
+      };
+    case "resource":
+      return {
+        type: content.type,
+        resource: summarizeEmbeddedResourceForReport(content.resource),
+      };
+    case "resource_link":
+      return {
+        type: content.type,
+        uri: content.uri,
+        name: content.name,
+        ...(content.title === undefined ? {} : { title: content.title }),
+        ...(content.mimeType === undefined
+          ? {}
+          : { mimeType: content.mimeType }),
+        ...(content.description === undefined
+          ? {}
+          : {
+              descriptionLength: content.description.length,
+              descriptionPreview: truncateText(content.description),
+            }),
+      };
+  }
+}
+
+function summarizeEmbeddedResourceForReport(
+  resource: Record<string, unknown>
+): Record<string, unknown> {
+  const summary: Record<string, unknown> = {
+    uri: resource.uri,
+  };
+
+  if (typeof resource.mimeType === "string") {
+    summary.mimeType = resource.mimeType;
+  }
+
+  if (typeof resource.text === "string") {
+    summary.textLength = resource.text.length;
+    summary.textPreview = truncateText(resource.text);
+  }
+
+  if (typeof resource.blob === "string") {
+    summary.blobLength = resource.blob.length;
+  }
+
+  return summary;
+}
+
+function compactUnknownValue(value: unknown): unknown {
+  if (typeof value === "string") {
+    return truncateText(value);
+  }
+
+  if (Array.isArray(value)) {
+    return {
+      kind: "array",
+      length: value.length,
+    };
+  }
+
+  if (isRecord(value)) {
+    return {
+      kind: "object",
+      keys: Object.keys(value).sort(),
+    };
+  }
+
+  return value;
+}
+
+function truncateText(value: string): string {
+  return value.length <= MAX_TEXT_PREVIEW_CHARS
+    ? value
+    : `${value.slice(0, MAX_TEXT_PREVIEW_CHARS)}…`;
 }

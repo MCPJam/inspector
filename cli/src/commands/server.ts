@@ -455,7 +455,12 @@ export function registerServerCommands(program: Command): void {
       ? serializeStableServerSnapshot(snapshot)
       : serializeServerSnapshot(snapshot, { mode: "raw" });
 
-    writeResult(result, globalOptions.format);
+    writeResult(
+      options.stable
+        ? result
+        : withRpcLogsIfRequested(result, collector, globalOptions),
+      globalOptions.format,
+    );
   });
 
   addSharedServerOptions(
@@ -555,7 +560,10 @@ export function registerServerCommands(program: Command): void {
         }),
       );
     } else {
-      writeResult(rawDiff, globalOptions.format);
+      writeResult(
+        withRpcLogsIfRequested(rawDiff, collector, globalOptions),
+        globalOptions.format,
+      );
     }
 
     if (!rawDiff.passed) {

@@ -34,9 +34,14 @@ function makeReport(): StructuredRunReport {
     durationMs: 10,
     metadata: {
       redactedRawResult: {
-        headers: {
-          Authorization: "Bearer top-secret",
-        },
+        contentCount: 1,
+        content: [
+          {
+            type: "text",
+            textLength: 42,
+            textPreview: "Authorization: Bearer top-secret",
+          },
+        ],
       },
     },
   };
@@ -67,8 +72,8 @@ test("writeReporterResult emits redacted json-summary output", () => {
   assert.equal(payload.schemaVersion, 1);
   assert.equal(payload.kind, "tools-call-validation");
   assert.equal(
-    payload.metadata.redactedRawResult.headers.Authorization,
-    "[REDACTED]",
+    payload.metadata.redactedRawResult.content[0].textPreview,
+    "Authorization: [REDACTED]",
   );
 });
 
