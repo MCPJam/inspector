@@ -3,7 +3,9 @@ import test from "node:test";
 import { Command } from "commander";
 import {
   addSharedServerOptions,
+  parseNonNegativeInteger,
   parseJsonRecord,
+  parseRetryPolicy,
   parseServerConfig,
   resolveAliasedStringOption,
 } from "../src/lib/server-config";
@@ -169,7 +171,9 @@ test("parseServerConfig rejects missing and mixed targets", () => {
       }),
     (error) =>
       error instanceof CliError &&
-      error.message.includes("--access-token and --oauth-access-token must match"),
+      error.message.includes(
+        "--access-token and --oauth-access-token must match",
+      ),
   );
 
   assert.throws(
@@ -290,13 +294,51 @@ test("addSharedServerOptions parses modern stdio aliases", () => {
 });
 
 test("parseJsonRecord rejects non-object JSON", () => {
-  assert.equal(parseJsonRecord('{"message":"hello"}', "Tool parameters")?.message, "hello");
+  assert.equal(
+    parseJsonRecord('{"message":"hello"}', "Tool parameters")?.message,
+    "hello",
+  );
 
   assert.throws(
     () => parseJsonRecord('["hello"]', "Tool parameters"),
     (error) =>
       error instanceof CliError &&
       error.message.includes("Tool parameters must be a JSON object"),
+  );
+});
+
+test("parseNonNegativeInteger accepts zero and rejects negatives", () => {
+  assert.equal(parseNonNegativeInteger("0", "Retries"), 0);
+  assert.equal(parseNonNegativeInteger("12", "Retries"), 12);
+
+  assert.throws(
+    () => parseNonNegativeInteger("-1", "Retries"),
+    (error) =>
+      error instanceof CliError &&
+      error.message.includes("Retries must be a non-negative integer"),
+  );
+});
+
+test("parseRetryPolicy preserves explicit values and fills defaults", () => {
+  assert.deepEqual(parseRetryPolicy({ retries: 2, retryDelayMs: 1500 }), {
+    retries: 2,
+    retryDelayMs: 1500,
+  });
+  assert.deepEqual(parseRetryPolicy({ retries: 3 }), {
+    retries: 3,
+    retryDelayMs: 3000,
+  });
+  assert.equal(parseRetryPolicy({}), undefined);
+});
+
+test("parseRetryPolicy rejects retryDelayMs without retries", () => {
+  assert.throws(
+    () => parseRetryPolicy({ retryDelayMs: 250 }),
+    (error) =>
+      error instanceof CliError &&
+      error.message.includes(
+        "--retry-delay-ms requires --retries to be greater than 0",
+      ),
   );
 });
 

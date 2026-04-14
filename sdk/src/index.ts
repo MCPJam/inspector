@@ -22,6 +22,8 @@ export type {
   MCPConnectionStatus,
   ServerSummary,
   MCPServerSummary,
+  RegisteredServerState,
+  LiveClientState,
 } from "./mcp-client-manager/index.js";
 
 // Handler and callback types
@@ -42,6 +44,7 @@ export type {
   ToolExecuteOptions,
   AiSdkTool,
   ExecuteToolArguments,
+  ExecuteToolRequest,
   TaskOptions,
   ClientCapabilityOptions,
   MCPTask,
@@ -84,6 +87,13 @@ export {
   isAuthError,
   isMCPAuthError,
 } from "./mcp-client-manager/index.js";
+export type { RetryPolicy } from "./retry.js";
+export {
+  DEFAULT_RETRY_POLICY,
+  isRetryableTransientError,
+  normalizeRetryPolicy,
+  retryWithPolicy,
+} from "./retry.js";
 export { EvalReportingError, SdkError } from "./errors.js";
 export { probeMcpServer } from "./server-probe.js";
 export type {
@@ -253,11 +263,7 @@ export {
   buildCspMetaContent,
   buildChatGptRuntimeHead,
 } from "./widget-helpers.js";
-export type {
-  CspMode,
-  WidgetCspMeta,
-  CspConfig,
-} from "./widget-helpers.js";
+export type { CspMode, WidgetCspMeta, CspConfig } from "./widget-helpers.js";
 
 // OAuth proxy helpers (shared by inspector server routes and the CLI)
 export {
@@ -267,10 +273,7 @@ export {
   executeDebugOAuthProxy,
   fetchOAuthMetadata,
 } from "./oauth-proxy.js";
-export type {
-  OAuthProxyRequest,
-  OAuthProxyResponse,
-} from "./oauth-proxy.js";
+export type { OAuthProxyRequest, OAuthProxyResponse } from "./oauth-proxy.js";
 
 // Skill reference (SKILL.md content for agent brief generation)
 export { EXPLORE_TO_SDK_EVALS_SKILL_MD, SKILL_MD } from "./skill-reference.js";
@@ -291,7 +294,10 @@ export type {
 } from "./oauth-conformance/index.js";
 
 // MCP conformance
-export { MCPConformanceTest, MCPConformanceSuite } from "./mcp-conformance/index.js";
+export {
+  MCPConformanceTest,
+  MCPConformanceSuite,
+} from "./mcp-conformance/index.js";
 export type {
   MCPCheckCategory,
   MCPCheckId,
