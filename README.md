@@ -30,7 +30,7 @@ No more ngrok or ChatGPT/Claude subscription needed. MCPJam is the fastest way t
 
 ### 🚀 Quick Start
 
-Open the hosted web app — no install needed:
+Open the hosted web app. No install needed.
 
 👉 [app.mcpjam.com](https://app.mcpjam.com)
 
@@ -40,7 +40,7 @@ Or run MCPJam locally for HTTP/S and local STDIO servers:
 npx @mcpjam/inspector@latest
 ```
 
-<img alt="MCPJam Inspector Demo" src="./docs/images/mcpjam-banner.png">
+<img alt="MCPJam Inspector Demo" src="./docs/images/mcpjam-new-banner.png">
 
 # Table of contents
 
@@ -75,16 +75,16 @@ Node.js 20+ is only required for the terminal install (`npx`). The hosted web ap
 
 ## Hosted Web App
 
-Open [app.mcpjam.com](https://app.mcpjam.com) in your browser — no install required. Always on the latest version, and you can share MCP server links with teammates the same way you'd share a Google Doc.
+Open [app.mcpjam.com](https://app.mcpjam.com) in your browser. No install required. Always on the latest version, and you can share MCP server links with teammates the same way you'd share a Google Doc.
 
 - HTTPS MCP server URLs only (for HTTP or local STDIO servers, use Desktop or Terminal).
-- No STDIO, tunneling, skills, or tasks — those require the local inspector.
+- No STDIO, tunneling, skills, or tasks. Those require the local inspector.
 
 See [Hosted App docs](https://docs.mcpjam.com/hosted/overview) for details.
 
 ## Desktop App
 
-Download the installer for your OS. Supports HTTP/S and local STDIO servers — no Node.js required.
+Download the installer for your OS. Supports HTTP/S and local STDIO servers. No Node.js required.
 
 - [Install Mac](https://github.com/MCPJam/inspector/releases/latest/download/MCPJam.Inspector.dmg)
 - [Install Windows](https://github.com/MCPJam/inspector/releases/latest/download/MCPJam-Inspector-Setup.exe)
@@ -120,7 +120,7 @@ The app is available at `http://127.0.0.1:6274`. Always use `-p 127.0.0.1:6274:6
 | Skills               | Skills in Chat and App Builder; local filesystem only. [Read more](https://docs.mcpjam.com/inspector/skills)                                                                                                       |
 | Workspaces           | Shared server groups with real-time team sync. [Read more](https://docs.mcpjam.com/inspector/workspaces)                                                                                                           |
 | Evals                | Test cases with expected tool calls, run across LLMs, metrics. [Read more](https://docs.mcpjam.com/inspector/test-cases)                                                                                           |
-| CLI                  | Run MCPJam checks, probes, and evals from the terminal — perfect for local dev loops and CI. [Read more](https://docs.mcpjam.com/cli/overview)                                                                     |
+| CLI                  | Run MCPJam checks, probes, and evals from the terminal. Perfect for local dev loops and CI. [Read more](https://docs.mcpjam.com/cli/overview)                                                                      |
 | SDK                  | Programmatic access to MCPJam for custom tooling, scripting, and integrations. [Read more](https://docs.mcpjam.com/sdk)                                                                                            |
 | CI/CD                | Run MCPJam checks and evals in GitHub Actions and other CI systems to gate PRs on regressions. [Read more](https://docs.mcpjam.com/cli/ci)                                                                         |
 
@@ -135,11 +135,15 @@ Debug your server against a model using tool calls or in-panel chat, with Chat, 
 
 <img alt="MCPJam App Builder" src="./docs/images/pizza-demo.png">
 
+<img alt="MCPJam App Builder trace view" src="./docs/images/app-builder-trace.png">
+
+_Trace view: every tool call, agent step, and JSON-RPC message._
+
 ## Chat
 
 Multi-server chat on frontier models for free, or bring your own API key. Chat, Trace, and Raw views; compare up to 3 models side-by-side. View your server's token usage.
 
-<img alt="MCPJam Chat" src="./docs/images/playground.png">
+<img alt="MCPJam Chat comparing frontier models side by side" src="./docs/images/side-bears.png">
 
 ## OAuth Debugger
 
@@ -155,7 +159,7 @@ MCPJam contains all of the tooling to test your MCP server. Manually run tools, 
 
 ## Skills
 
-Use Skills in Chat and App Builder to extend models with local, reusable behaviors. Local filesystem only — your data never leaves your machine. [Read more](https://docs.mcpjam.com/inspector/skills)
+Use Skills in Chat and App Builder to extend models with local, reusable behaviors. Local filesystem only. Your data never leaves your machine. [Read more](https://docs.mcpjam.com/inspector/skills)
 
 ## Workspaces
 
@@ -167,7 +171,7 @@ Define test cases with expected tool calls and run them across multiple LLMs. Tr
 
 ## CLI
 
-Run MCPJam from the terminal for fast local dev loops and CI integration — probe servers, run OAuth checks, inspect tools and resources, and execute evals without leaving your shell. [Read more](https://docs.mcpjam.com/cli/overview)
+Run MCPJam from the terminal for fast local dev loops and CI integration. Probe servers, run OAuth checks, inspect tools and resources, and execute evals without leaving your shell. [Read more](https://docs.mcpjam.com/cli/overview)
 
 ## SDK
 
@@ -200,12 +204,12 @@ Join our [Discord community](https://discord.gg/JEnDtz8X6z) where the contributo
 
 Some of our partners and favorite frameworks:
 
-- [Stytch](https://stytch.com) - Our favorite MCP OAuth provider
-- [xMCP](https://xmcp.dev/) - The Typescript MCP framework. Ship on Vercel instantly.
-- [Alpic](https://alpic.ai/) - Host MCP servers. Try their new [Skybridge framework](https://github.com/alpic-ai/skybridge) for ChatGPT apps!
+- [Stytch](https://stytch.com). Our favorite MCP OAuth provider.
+- [xMCP](https://xmcp.dev/). The Typescript MCP framework. Ship on Vercel instantly.
+- [Alpic](https://alpic.ai/). Host MCP servers. Try their new [Skybridge framework](https://github.com/alpic-ai/skybridge) for ChatGPT apps!
 
 ---
 
 # License 📄
 
-This project is licensed under the **Apache License 2.0** - see the [LICENSE](LICENSE).
+This project is licensed under the **Apache License 2.0**. See the [LICENSE](LICENSE).
