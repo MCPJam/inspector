@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -41,16 +41,28 @@ export function ConfirmChatResetDialog({
 }: ConfirmChatResetDialogProps) {
   const [dontShowAgain, setDontShowAgain] = useState(false);
   const [shouldSkip, setShouldSkip] = useState(false);
+  const autoConfirmedRef = useRef(false);
+  const onConfirmRef = useRef(onConfirm);
 
   useEffect(() => {
-    if (open) {
-      const shouldSkipConfirmation = getShouldSkipChatResetConfirmation();
-      setShouldSkip(shouldSkipConfirmation);
-      if (shouldSkipConfirmation) {
-        onConfirm();
-      }
+    onConfirmRef.current = onConfirm;
+  }, [onConfirm]);
+
+  useEffect(() => {
+    if (!open) {
+      autoConfirmedRef.current = false;
+      return;
     }
-  }, [open, onConfirm]);
+    if (autoConfirmedRef.current) {
+      return;
+    }
+    const shouldSkipConfirmation = getShouldSkipChatResetConfirmation();
+    setShouldSkip(shouldSkipConfirmation);
+    if (shouldSkipConfirmation) {
+      autoConfirmedRef.current = true;
+      onConfirmRef.current();
+    }
+  }, [open]);
 
   const handleConfirm = () => {
     if (dontShowAgain && typeof window !== "undefined") {

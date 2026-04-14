@@ -31,6 +31,31 @@ describe("ConfirmChatResetDialog", () => {
     expect(onConfirm).toHaveBeenCalledTimes(1);
   });
 
+  it("auto-confirms only once when onConfirm reference changes while open", () => {
+    localStorage.setItem(SKIP_CHAT_RESET_CONFIRMATION_KEY, "true");
+    const onConfirm1 = vi.fn();
+    const onConfirm2 = vi.fn();
+
+    const { rerender } = render(
+      <ConfirmChatResetDialog
+        open
+        onConfirm={onConfirm1}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    rerender(
+      <ConfirmChatResetDialog
+        open
+        onConfirm={onConfirm2}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    expect(onConfirm1).toHaveBeenCalledTimes(1);
+    expect(onConfirm2).not.toHaveBeenCalled();
+  });
+
   it("persists skip preference when confirming with don't show again", async () => {
     const user = userEvent.setup();
     const onConfirm = vi.fn();
