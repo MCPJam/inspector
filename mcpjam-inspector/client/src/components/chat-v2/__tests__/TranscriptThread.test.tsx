@@ -263,6 +263,19 @@ describe("TranscriptThread", () => {
     expect(screen.getByTestId("message-assistant-1")).toBeInTheDocument();
   });
 
+  it("disables content-visibility containment while a fullscreen widget is active", () => {
+    render(
+      <TranscriptThread {...defaultProps} fullscreenWidgetId="tool-call-1" />,
+    );
+
+    const wrapper = document.querySelector(
+      '[data-message-id="assistant-1"]',
+    ) as HTMLElement | null;
+    expect(wrapper).not.toBeNull();
+    expect(wrapper?.style.contentVisibility).toBe("");
+    expect(wrapper?.style.containIntrinsicSize).toBe("");
+  });
+
   it("uses the resolved Claude variant to attach an animated footer to the latest assistant message", () => {
     render(
       <TranscriptThread

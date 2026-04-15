@@ -100,6 +100,8 @@ interface TraceViewerProps {
   fullscreenChatDisabled?: boolean;
   fullscreenChatSendBlocked?: boolean;
   onFullscreenChatStop?: () => void;
+  /** Forwarded to `Thread` so ancestors can drop GPU transforms that trap `position: fixed` widgets. */
+  onFullscreenChange?: (isFullscreen: boolean) => void;
   /**
    * When set (live chat), Raw tab shows the resolved model request payload
    * (`system`, `tools`, `messages`) instead of the diagnostic trace blob.
@@ -184,9 +186,18 @@ export function TraceViewer({
   fullscreenChatDisabled = false,
   fullscreenChatSendBlocked,
   onFullscreenChatStop,
+  onFullscreenChange,
   rawRequestPayloadHistory = null,
   rawGrowWithContent = false,
 }: TraceViewerProps) {
+  // Live shells pass send and/or onFullscreenChange; eval/recorded traces keep interactive=false.
+  // When interactive is false, PartSwitch does not forward onRequestFullscreen, so widget fullscreen
+  // cannot notify ancestors to clear transforms that trap position:fixed.
+  const threadInteractive =
+    interactive ||
+    sendFollowUpMessage !== NOOP ||
+    onFullscreenChange != null;
+
   const [viewMode, setViewMode] = useState<
     "timeline" | "chat" | "raw" | "tools"
   >("timeline");
@@ -592,6 +603,7 @@ export function TraceViewer({
                 fullscreenChatDisabled={fullscreenChatDisabled}
                 fullscreenChatSendBlocked={fullscreenChatSendBlocked}
                 onFullscreenChatStop={onFullscreenChatStop}
+                onFullscreenChange={onFullscreenChange}
                 selectedProtocolOverrideIfBothExists={
                   selectedProtocolOverrideIfBothExists
                 }
@@ -599,7 +611,7 @@ export function TraceViewer({
                 toolRenderOverrides={adaptedTrace.toolRenderOverrides}
                 showSaveViewButton={false}
                 minimalMode={true}
-                interactive={interactive}
+                interactive={threadInteractive}
                 reasoningDisplayMode="collapsed"
                 focusMessageId={transcriptNavigation.focusMessageId}
                 highlightedMessageIds={
