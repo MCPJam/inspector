@@ -54,8 +54,9 @@ jobs:
         id: backend_branch
         env:
           TOKEN: ${{ secrets.BACKEND_PREVIEW_DISPATCH_TOKEN }}
+          PR_BRANCH: ${{ steps.meta.outputs.branch }}
         run: |
-          BACKEND_BRANCH=$(git ls-remote --heads "https://x-access-token:${TOKEN}@github.com/${BACKEND_REPO}.git" "${{ steps.meta.outputs.branch }}" || true)
+          BACKEND_BRANCH=$(git ls-remote --heads "https://x-access-token:${TOKEN}@github.com/${BACKEND_REPO}.git" "$PR_BRANCH" || true)
           if [ -n "$BACKEND_BRANCH" ]; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
           else
@@ -208,6 +209,7 @@ jobs:
       BACKEND_REPO: ${{ vars.MCPJAM_BACKEND_REPO || 'MCPJam/mcpjam-backend' }}
       RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
       RAILWAY_PROJECT_ID: ${{ vars.RAILWAY_PROJECT_ID }}
+      RAILWAY_STAGING_ENVIRONMENT: ${{ vars.RAILWAY_STAGING_ENVIRONMENT }}
     steps:
       - name: Install Railway CLI
         run: npm install -g @railway/cli
@@ -249,6 +251,9 @@ jobs:
       STAGING_CONVEX_HTTP_URL: ${{ vars.STAGING_CONVEX_HTTP_URL }}
       STAGING_APP_URL: ${{ vars.STAGING_APP_URL || 'https://staging.mcpjam.com' }}
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
       - name: Install Railway CLI
         run: npm install -g @railway/cli
 

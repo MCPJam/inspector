@@ -397,7 +397,16 @@ jobs:
       - publish-packages
       - docker-release
       - deploy-backend-prod
-    if: inputs.promote_production
+    if: |
+      always() &&
+      inputs.promote_production &&
+      needs.preflight.result == 'success' &&
+      needs.publish-packages.result == 'success' &&
+      needs.docker-release.result == 'success' &&
+      (
+        inputs.deploy_backend_prod != true ||
+        needs.deploy-backend-prod.result == 'success'
+      )
     runs-on: ubuntu-latest
     environment: release
     env:
@@ -442,8 +451,14 @@ jobs:
       needs.preflight.result == 'success' &&
       needs.publish-packages.result == 'success' &&
       (needs.docker-release.result == 'success' || needs.docker-release.result == 'skipped') &&
-      (needs.deploy-backend-prod.result == 'success' || needs.deploy-backend-prod.result == 'skipped') &&
-      (needs.promote-production.result == 'success' || needs.promote-production.result == 'skipped')
+      (
+        (inputs.deploy_backend_prod && needs.deploy-backend-prod.result == 'success') ||
+        (!inputs.deploy_backend_prod && needs.deploy-backend-prod.result == 'skipped')
+      ) &&
+      (
+        (inputs.promote_production && needs.promote-production.result == 'success') ||
+        (!inputs.promote_production && needs.promote-production.result == 'skipped')
+      )
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
