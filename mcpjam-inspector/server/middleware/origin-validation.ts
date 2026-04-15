@@ -48,6 +48,15 @@ export async function originValidationMiddleware(
     return next();
   }
 
+  // Static assets contain no sensitive data and are already excluded from
+  // session auth.  Vite emits <script type="module" crossorigin> and
+  // <link rel="stylesheet" crossorigin>, which cause the browser to attach
+  // an Origin header.  Blocking them here breaks every preview deploy.
+  const path = c.req.path;
+  if (path.startsWith("/assets/")) {
+    return next();
+  }
+
   const origin = c.req.header("Origin");
 
   // No origin header = same-origin request or non-browser client (curl, etc.)

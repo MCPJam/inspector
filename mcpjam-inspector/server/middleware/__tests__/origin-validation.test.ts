@@ -19,9 +19,10 @@ function createTestApp(): Hono {
   // Apply origin validation middleware
   app.use("*", originValidationMiddleware);
 
-  // Test route
+  // Test routes
   app.get("/api/test", (c) => c.json({ message: "success" }));
   app.post("/api/test", (c) => c.json({ message: "success" }));
+  app.get("/assets/*", (c) => c.json({ message: "static asset" }));
 
   return app;
 }
@@ -240,6 +241,24 @@ describe("originValidationMiddleware", () => {
 
       // localhost is no longer allowed when custom origins are set
       expect(res.status).toBe(403);
+    });
+  });
+
+  describe("static asset exemption", () => {
+    it("allows /assets/ requests with any origin (Vite crossorigin modules)", async () => {
+      const res = await app.request("/assets/index-abc123.js", {
+        headers: { Origin: "https://preview.up.railway.app" },
+      });
+
+      expect(res.status).toBe(200);
+    });
+
+    it("allows /assets/ CSS requests with any origin", async () => {
+      const res = await app.request("/assets/index-abc123.css", {
+        headers: { Origin: "https://preview.up.railway.app" },
+      });
+
+      expect(res.status).toBe(200);
     });
   });
 
