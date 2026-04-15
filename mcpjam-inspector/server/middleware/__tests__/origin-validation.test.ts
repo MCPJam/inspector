@@ -230,6 +230,29 @@ describe("originValidationMiddleware", () => {
       expect(res.status).toBe(200);
     });
 
+    it("supports wildcard origins like https://*.up.railway.app", async () => {
+      process.env.ALLOWED_ORIGINS =
+        "https://*.up.railway.app,https://staging.mcpjam.com";
+
+      app = createTestApp();
+
+      const res = await app.request("/api/test", {
+        headers: { Origin: "https://mcp-inspector-pr-1804.up.railway.app" },
+      });
+      expect(res.status).toBe(200);
+    });
+
+    it("blocks origins that don't match wildcard pattern", async () => {
+      process.env.ALLOWED_ORIGINS = "https://*.up.railway.app";
+
+      app = createTestApp();
+
+      const res = await app.request("/api/test", {
+        headers: { Origin: "https://evil.com" },
+      });
+      expect(res.status).toBe(403);
+    });
+
     it("blocks origins not in custom list", async () => {
       process.env.ALLOWED_ORIGINS = "http://only-this.com";
 

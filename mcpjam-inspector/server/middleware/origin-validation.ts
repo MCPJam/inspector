@@ -36,6 +36,38 @@ function getAllowedOrigins(): string[] {
 }
 
 /**
+ * Check whether an origin matches the allowed list.
+ * Supports wildcard entries like `https://*.up.railway.app`.
+ */
+function matchesAllowedOrigin(
+  origin: string,
+  allowedOrigins: string[],
+): boolean {
+  for (const allowed of allowedOrigins) {
+    if (allowed.includes("*")) {
+      // e.g. "https://*.up.railway.app"  →  scheme "https://" + pattern "*.up.railway.app"
+      const schemeEnd = allowed.indexOf("://");
+      if (schemeEnd === -1) continue;
+      const scheme = allowed.slice(0, schemeEnd + 3); // "https://"
+      const pattern = allowed.slice(schemeEnd + 3); // "*.up.railway.app"
+
+      if (!origin.startsWith(scheme)) continue;
+      const originHost = origin.slice(scheme.length); // "foo.up.railway.app"
+
+      if (pattern.startsWith("*.")) {
+        const suffix = pattern.slice(2); // "up.railway.app"
+        if (originHost === suffix || originHost.endsWith(`.${suffix}`)) {
+          return true;
+        }
+      }
+    } else if (origin === allowed) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
  * Origin validation middleware.
  * Blocks requests from non-localhost origins.
  */
@@ -67,7 +99,7 @@ export async function originValidationMiddleware(
 
   const allowedOrigins = getAllowedOrigins();
 
-  if (!allowedOrigins.includes(origin)) {
+  if (!matchesAllowedOrigin(origin, allowedOrigins)) {
     appLogger.warn(`[Security] Blocked request from origin: ${origin}`);
     return c.json(
       {
