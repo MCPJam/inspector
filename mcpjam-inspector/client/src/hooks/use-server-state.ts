@@ -108,7 +108,14 @@ function restorePathAfterOAuthCallback(
   return `${basePath}${savedHash}`;
 }
 
-function requiresFreshOAuthAuthorization(errorMessage?: string): boolean {
+function requiresFreshOAuthAuthorization(error: unknown): boolean {
+  const errorMessage =
+    typeof error === "string"
+      ? error
+      : error instanceof Error
+        ? error.message
+        : "";
+
   if (!errorMessage) {
     return false;
   }
@@ -1665,44 +1672,70 @@ export function useServerState({
         const hostedReconnectConfig = withWorkspaceClientCapabilities(
           server.config,
         );
-        const result = await guardedReconnectServer(
-          serverName,
-          hostedReconnectConfig,
-        );
-        if (isStaleOp(serverName, token)) return;
-        if (result.success) {
-          dispatch({
-            type: "CONNECT_SUCCESS",
-            name: serverName,
-            config: hostedReconnectConfig,
-            tokens: undefined,
-            useOAuth: true,
-          });
-          logger.info("Hosted reconnect successful using stored OAuth", {
+        try {
+          const result = await guardedReconnectServer(
             serverName,
-            result,
-          });
-          storeInitInfo(serverName, result.initInfo).catch((err) =>
-            logger.warn("Failed to fetch init info", { serverName, err }),
+            hostedReconnectConfig,
           );
-          return;
-        }
+          if (isStaleOp(serverName, token)) return;
+          if (result.success) {
+            dispatch({
+              type: "CONNECT_SUCCESS",
+              name: serverName,
+              config: hostedReconnectConfig,
+              tokens: undefined,
+              useOAuth: true,
+            });
+            logger.info("Hosted reconnect successful using stored OAuth", {
+              serverName,
+              result,
+            });
+            storeInitInfo(serverName, result.initInfo).catch((err) =>
+              logger.warn("Failed to fetch init info", { serverName, err }),
+            );
+            return;
+          }
 
-        if (!requiresFreshOAuthAuthorization(result.error)) {
-          dispatch({
-            type: "CONNECT_FAILURE",
-            name: serverName,
-            error: result.error || "Reconnection failed",
-          });
-          logger.error("Hosted reconnect failed", { serverName, result });
-          toast.error(result.error || `Failed to reconnect: ${serverName}`);
-          return;
-        }
+          if (!requiresFreshOAuthAuthorization(result.error)) {
+            dispatch({
+              type: "CONNECT_FAILURE",
+              name: serverName,
+              error: result.error || "Reconnection failed",
+            });
+            logger.error("Hosted reconnect failed", { serverName, result });
+            toast.error(result.error || `Failed to reconnect: ${serverName}`);
+            return;
+          }
 
-        logger.info(
-          "Hosted reconnect requires a fresh OAuth flow after stored credential lookup",
-          { serverName, error: result.error },
-        );
+          logger.info(
+            "Hosted reconnect requires a fresh OAuth flow after stored credential lookup",
+            { serverName, error: result.error },
+          );
+        } catch (error) {
+          if (isStaleOp(serverName, token)) return;
+
+          const errorMessage =
+            error instanceof Error ? error.message : "Unknown error";
+
+          if (!requiresFreshOAuthAuthorization(error)) {
+            dispatch({
+              type: "CONNECT_FAILURE",
+              name: serverName,
+              error: errorMessage,
+            });
+            logger.error("Hosted reconnect failed", {
+              serverName,
+              error: errorMessage,
+            });
+            toast.error(errorMessage || `Failed to reconnect: ${serverName}`);
+            return;
+          }
+
+          logger.info(
+            "Hosted reconnect requires a fresh OAuth flow after stored credential lookup",
+            { serverName, error: errorMessage },
+          );
+        }
       }
 
       try {

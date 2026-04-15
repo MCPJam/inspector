@@ -1,4 +1,4 @@
-import { renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useServerState } from "../use-server-state";
 import { writeHostedOAuthPendingMarker } from "@/lib/hosted-oauth-callback";
@@ -6,6 +6,8 @@ import { writeHostedOAuthPendingMarker } from "@/lib/hosted-oauth-callback";
 const {
   mockHandleOAuthCallback,
   mockListServers,
+  mockReconnectServer,
+  mockEnsureAuthorizedForReconnect,
   mockUseServerMutations,
   mockConvexQuery,
   testConnectionMock,
@@ -13,6 +15,8 @@ const {
 } = vi.hoisted(() => ({
   mockHandleOAuthCallback: vi.fn(),
   mockListServers: vi.fn(),
+  mockReconnectServer: vi.fn(),
+  mockEnsureAuthorizedForReconnect: vi.fn(),
   mockUseServerMutations: vi.fn(() => ({
     createServer: vi.fn(),
     updateServer: vi.fn(),
@@ -37,12 +41,12 @@ vi.mock("@/state/mcp-api", () => ({
   testConnection: testConnectionMock,
   deleteServer: vi.fn(),
   listServers: mockListServers,
-  reconnectServer: vi.fn(),
+  reconnectServer: mockReconnectServer,
   getInitializationInfo: vi.fn(),
 }));
 
 vi.mock("@/state/oauth-orchestrator", () => ({
-  ensureAuthorizedForReconnect: vi.fn(),
+  ensureAuthorizedForReconnect: mockEnsureAuthorizedForReconnect,
 }));
 
 vi.mock("@/lib/oauth/mcp-oauth", () => ({
@@ -81,6 +85,91 @@ vi.mock("../useWorkspaces", () => ({
   useServerMutations: mockUseServerMutations,
 }));
 
+function renderHostedServerState(dispatch = vi.fn()) {
+  return renderHook(() =>
+    useServerState({
+      appState: {
+        activeWorkspaceId: "ws_1",
+        workspaces: {
+          ws_1: {
+            id: "ws_1",
+            name: "Workspace",
+            servers: {
+              asana: {
+                name: "asana",
+                config: {
+                  type: "http",
+                  url: "https://mcp.asana.com/sse",
+                },
+                lastConnectionTime: new Date(),
+                connectionStatus: "disconnected",
+                retryCount: 0,
+                enabled: true,
+                useOAuth: true,
+              },
+            },
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          },
+        },
+        servers: {
+          asana: {
+            name: "asana",
+            config: {
+              type: "http",
+              url: "https://mcp.asana.com/sse",
+            },
+            lastConnectionTime: new Date(),
+            connectionStatus: "disconnected",
+            retryCount: 0,
+            enabled: true,
+            useOAuth: true,
+          },
+        },
+        selectedServer: "asana",
+        selectedMultipleServers: [],
+        isMultiSelectMode: false,
+      } as any,
+      dispatch,
+      isLoading: false,
+      isAuthenticated: true,
+      isAuthLoading: false,
+      isLoadingWorkspaces: false,
+      useLocalFallback: false,
+      effectiveWorkspaces: {
+        ws_1: {
+          id: "ws_1",
+          name: "Workspace",
+          servers: {
+            asana: {
+              name: "asana",
+              config: {
+                type: "http",
+                url: "https://mcp.asana.com/sse",
+              },
+              lastConnectionTime: new Date(),
+              connectionStatus: "disconnected",
+              retryCount: 0,
+              enabled: true,
+              useOAuth: true,
+            },
+          },
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+      } as any,
+      effectiveActiveWorkspaceId: "ws_1",
+      activeWorkspaceServersFlat: [{ _id: "srv_asana", name: "asana" }],
+      logger: {
+        info: vi.fn(),
+        warn: vi.fn(),
+        error: vi.fn(),
+        debug: vi.fn(),
+      },
+    }),
+  );
+}
+
 describe("useServerState hosted OAuth callback guards", () => {
   beforeEach(() => {
     localStorage.clear();
@@ -88,10 +177,16 @@ describe("useServerState hosted OAuth callback guards", () => {
     window.history.replaceState({}, "", "/?code=oauth-code");
     mockHandleOAuthCallback.mockReset();
     mockListServers.mockReset();
+    mockReconnectServer.mockReset();
+    mockEnsureAuthorizedForReconnect.mockReset();
     mockConvexQuery.mockReset();
     testConnectionMock.mockReset();
     toastSuccess.mockReset();
     mockListServers.mockResolvedValue({ success: true, servers: [] });
+    mockReconnectServer.mockResolvedValue({
+      success: true,
+      initInfo: {},
+    });
     testConnectionMock.mockResolvedValue({
       success: true,
       initInfo: {},
@@ -204,6 +299,66 @@ describe("useServerState hosted OAuth callback guards", () => {
           name: "asana",
           useOAuth: true,
           tokens: undefined,
+        }),
+      );
+    });
+  });
+
+  it("reuses hosted stored OAuth credentials on reconnect before falling back to interactive OAuth", async () => {
+    const dispatch = vi.fn();
+    const { result } = renderHostedServerState(dispatch);
+
+    await act(async () => {
+      await result.current.handleReconnect("asana");
+    });
+
+    await waitFor(() => {
+      expect(mockReconnectServer).toHaveBeenCalledWith(
+        "asana",
+        expect.objectContaining({
+          type: "http",
+          url: "https://mcp.asana.com/sse",
+        }),
+      );
+    });
+
+    expect(mockEnsureAuthorizedForReconnect).not.toHaveBeenCalled();
+    expect(dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "CONNECT_SUCCESS",
+        name: "asana",
+        useOAuth: true,
+        tokens: undefined,
+      }),
+    );
+  });
+
+  it("falls back to interactive OAuth when hosted stored-auth reconnect says authorization is required", async () => {
+    mockReconnectServer.mockRejectedValueOnce(
+      new Error(
+        'Server "srv_asana" requires OAuth authentication. Please complete the OAuth flow first.',
+      ),
+    );
+    mockEnsureAuthorizedForReconnect.mockResolvedValueOnce({
+      kind: "error",
+      error: "OAuth init failed",
+    });
+
+    const dispatch = vi.fn();
+    const { result } = renderHostedServerState(dispatch);
+
+    await act(async () => {
+      await result.current.handleReconnect("asana");
+    });
+
+    await waitFor(() => {
+      expect(mockEnsureAuthorizedForReconnect).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: "asana",
+          useOAuth: true,
+        }),
+        expect.objectContaining({
+          beforeRedirect: expect.any(Function),
         }),
       );
     });
