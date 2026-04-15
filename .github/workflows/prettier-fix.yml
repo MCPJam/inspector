@@ -3,15 +3,12 @@ name: Auto Prettier Fix
 on:
   push:
     branches: [main]
-  pull_request:
-    branches: [main]
 
 permissions:
   contents: write
 
 jobs:
   prettier-fix:
-    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     name: Auto-fix Formatting
     defaults:

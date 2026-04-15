@@ -196,7 +196,7 @@ describe("MCPClientManager", () => {
         command: "npx",
         args: ["-y", "@modelcontextprotocol/server-everything"],
       });
-    });
+    }, 60000);
 
     afterAll(async () => {
       await manager.disconnectAllServers();
@@ -1390,7 +1390,7 @@ describe("MCPClientManager", () => {
 
       expect((stdioResult as any).content[0].text).toBe("Echo: from stdio");
       expect((httpResult as any).content[0].text).toBe("Echo: from http");
-    }, 30000);
+    }, 60000);
 
     it("should get tools from all servers", async () => {
       await Promise.all([

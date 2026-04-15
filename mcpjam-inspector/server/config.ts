@@ -18,6 +18,32 @@ export const LOCAL_SERVER_ADDR = `http://localhost:${SERVER_PORT}`;
 // Uses VITE_ prefix so the same variable works for both server and client build
 export const HOSTED_MODE = process.env.VITE_MCPJAM_HOSTED_MODE === "true";
 
+export const NON_PROD_LOCKDOWN = process.env.MCPJAM_NONPROD_LOCKDOWN === "true";
+
+export const EMPLOYEE_EMAIL_DOMAINS = (
+  process.env.MCPJAM_EMPLOYEE_EMAIL_DOMAINS ?? ""
+)
+  .split(",")
+  .map((domain) => domain.trim().toLowerCase())
+  .filter((domain) => domain.length > 0);
+
+export function isAllowedEmployeeEmail(
+  email: string | null | undefined
+): boolean {
+  if (!email || EMPLOYEE_EMAIL_DOMAINS.length === 0) {
+    return false;
+  }
+
+  const normalizedEmail = email.trim().toLowerCase();
+  const atIndex = normalizedEmail.lastIndexOf("@");
+  if (atIndex === -1) {
+    return false;
+  }
+
+  const emailDomain = normalizedEmail.slice(atIndex + 1);
+  return EMPLOYEE_EMAIL_DOMAINS.includes(emailDomain);
+}
+
 // Exact origins allowed for hosted web routes and CORS
 export const WEB_ALLOWED_ORIGINS = (process.env.WEB_ALLOWED_ORIGINS ?? "")
   .split(",")
@@ -31,7 +57,7 @@ const DEFAULT_CORS_ORIGINS = [
   "http://localhost:8080", // Electron renderer dev server
   `http://localhost:${SERVER_PORT}`, // Hono server
   `http://127.0.0.1:${SERVER_PORT}`, // Hono server production
-  "https://staging.app.mcpjam.com", // Hosted deployment
+  "https://staging.mcpjam.com", // Hosted deployment
 ];
 
 // CORS origins:
@@ -51,6 +77,6 @@ export const WEB_STREAM_TIMEOUT_MS = 120_000;
 // These hosts will be allowed to receive session tokens in addition to localhost
 export const ALLOWED_HOSTS = process.env.MCPJAM_ALLOWED_HOSTS
   ? process.env.MCPJAM_ALLOWED_HOSTS.split(",").map((h) =>
-      h.trim().toLowerCase(),
+      h.trim().toLowerCase()
     )
   : [];
