@@ -11,6 +11,8 @@ on:
     types:
       - backend_preview_ready
       - backend_preview_failed
+      - backend_pr_preview_requested
+      - backend_pr_inspector_cleanup
 
 permissions:
   contents: read
@@ -19,6 +21,7 @@ permissions:
 env:
   PREVIEW_COMMENT_MARKER: "<!-- mcpjam-preview -->"
   RAILWAY_ENV_PREFIX: pr-
+  RAILWAY_BACKEND_PR_ENV_PREFIX: pr-be-
 
 jobs:
   upsert-preview:
@@ -92,8 +95,8 @@ jobs:
             VITE_MCPJAM_EMPLOYEE_EMAIL_DOMAINS="$MCPJAM_EMPLOYEE_EMAIL_DOMAINS" \
             VITE_MCPJAM_HOSTED_MODE=true \
             VITE_WORKOS_CLIENT_ID="$STAGING_WORKOS_CLIENT_ID" \
-            ALLOWED_ORIGINS="$STAGING_APP_URL" \
-            WEB_ALLOWED_ORIGINS="$STAGING_APP_URL" \
+            ALLOWED_ORIGINS="https://*.up.railway.app,$STAGING_APP_URL" \
+            WEB_ALLOWED_ORIGINS="https://*.up.railway.app,$STAGING_APP_URL" \
             VITE_CONVEX_URL="$STAGING_VITE_CONVEX_URL" \
             CONVEX_HTTP_URL="$STAGING_CONVEX_HTTP_URL"
 
@@ -213,6 +216,213 @@ jobs:
               body,
             });
 
+  upsert-backend-pr-preview:
+    if: github.event_name == 'repository_dispatch' && github.event.action == 'backend_pr_preview_requested'
+    runs-on: ubuntu-latest
+    env:
+      BACKEND_REPO: ${{ vars.MCPJAM_BACKEND_REPO || 'MCPJam/mcpjam-backend' }}
+      RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
+      RAILWAY_PROJECT_ID: ${{ vars.RAILWAY_PROJECT_ID }}
+      RAILWAY_INSPECTOR_SERVICE: ${{ vars.RAILWAY_INSPECTOR_SERVICE }}
+      RAILWAY_STAGING_ENVIRONMENT: ${{ vars.RAILWAY_STAGING_ENVIRONMENT }}
+      MCPJAM_EMPLOYEE_EMAIL_DOMAINS: ${{ vars.MCPJAM_EMPLOYEE_EMAIL_DOMAINS }}
+      STAGING_WORKOS_CLIENT_ID: ${{ vars.STAGING_WORKOS_CLIENT_ID }}
+      STAGING_VITE_CONVEX_URL: ${{ vars.STAGING_VITE_CONVEX_URL }}
+      STAGING_CONVEX_HTTP_URL: ${{ vars.STAGING_CONVEX_HTTP_URL }}
+      STAGING_APP_URL: ${{ vars.STAGING_APP_URL || 'https://staging.mcpjam.com' }}
+    steps:
+      - name: Checkout default branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.client_payload.inspector_git_ref || 'main' }}
+
+      - name: Install preview tooling
+        run: npm install -g @railway/cli workos
+
+      - name: Resolve preview environment metadata
+        id: meta
+        env:
+          BACKEND_PR_NUMBER: ${{ github.event.client_payload.backend_pr_number }}
+        run: |
+          if ! [[ "$BACKEND_PR_NUMBER" =~ ^[0-9]+$ ]]; then
+            echo "::error::backend_pr_number is missing or non-numeric: '$BACKEND_PR_NUMBER'"
+            exit 1
+          fi
+          echo "environment=${RAILWAY_BACKEND_PR_ENV_PREFIX}${BACKEND_PR_NUMBER}" >> "$GITHUB_OUTPUT"
+          echo "branch=${{ github.event.client_payload.branch }}" >> "$GITHUB_OUTPUT"
+
+      - name: Create or refresh Railway preview environment
+        run: |
+          railway link \
+            --project "$RAILWAY_PROJECT_ID" \
+            --environment "$RAILWAY_STAGING_ENVIRONMENT" \
+            --json >/dev/null
+          railway environment new "${{ steps.meta.outputs.environment }}" \
+            --duplicate "$RAILWAY_STAGING_ENVIRONMENT" \
+            --json >/dev/null || true
+
+      - name: Configure staging-safe preview defaults
+        run: |
+          railway link \
+            --project "$RAILWAY_PROJECT_ID" \
+            --environment "${{ steps.meta.outputs.environment }}" \
+            --service "$RAILWAY_INSPECTOR_SERVICE" \
+            --json >/dev/null
+
+          railway variable set \
+            -e "${{ steps.meta.outputs.environment }}" \
+            -s "$RAILWAY_INSPECTOR_SERVICE" \
+            MCPJAM_NONPROD_LOCKDOWN=true \
+            MCPJAM_EMPLOYEE_EMAIL_DOMAINS="$MCPJAM_EMPLOYEE_EMAIL_DOMAINS" \
+            MCPJAM_ALLOWED_HOSTS="staging.mcpjam.com,*.up.railway.app" \
+            VITE_MCPJAM_NONPROD_LOCKDOWN=true \
+            VITE_MCPJAM_EMPLOYEE_EMAIL_DOMAINS="$MCPJAM_EMPLOYEE_EMAIL_DOMAINS" \
+            VITE_MCPJAM_HOSTED_MODE=true \
+            VITE_WORKOS_CLIENT_ID="$STAGING_WORKOS_CLIENT_ID" \
+            ALLOWED_ORIGINS="https://*.up.railway.app,$STAGING_APP_URL" \
+            WEB_ALLOWED_ORIGINS="https://*.up.railway.app,$STAGING_APP_URL" \
+            VITE_CONVEX_URL="$STAGING_VITE_CONVEX_URL" \
+            CONVEX_HTTP_URL="$STAGING_CONVEX_HTTP_URL"
+
+      - name: Deploy preview to Railway
+        run: |
+          railway up \
+            --ci \
+            --project "$RAILWAY_PROJECT_ID" \
+            --environment "${{ steps.meta.outputs.environment }}" \
+            --service "$RAILWAY_INSPECTOR_SERVICE"
+
+      - name: Read preview public domain
+        id: preview_domain
+        continue-on-error: true
+        run: |
+          DOMAIN=$(railway run \
+            --project "$RAILWAY_PROJECT_ID" \
+            --environment "${{ steps.meta.outputs.environment }}" \
+            --service "$RAILWAY_INSPECTOR_SERVICE" \
+            printenv RAILWAY_PUBLIC_DOMAIN | tail -n 1 | tr -d '\r')
+          if [ -n "$DOMAIN" ]; then
+            echo "url=https://${DOMAIN}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Configure preview origin allowlists
+        if: steps.preview_domain.outputs.url != ''
+        run: |
+          railway link \
+            --project "$RAILWAY_PROJECT_ID" \
+            --environment "${{ steps.meta.outputs.environment }}" \
+            --service "$RAILWAY_INSPECTOR_SERVICE" \
+            --json >/dev/null
+
+          railway variable set \
+            -e "${{ steps.meta.outputs.environment }}" \
+            -s "$RAILWAY_INSPECTOR_SERVICE" \
+            MCPJAM_ALLOWED_HOSTS="staging.mcpjam.com,*.up.railway.app" \
+            ALLOWED_ORIGINS="${{ steps.preview_domain.outputs.url }},$STAGING_APP_URL" \
+            WEB_ALLOWED_ORIGINS="${{ steps.preview_domain.outputs.url }},$STAGING_APP_URL"
+
+      - name: Register preview URL with WorkOS staging
+        if: steps.preview_domain.outputs.url != ''
+        env:
+          STAGING_WORKOS_API_KEY: ${{ secrets.STAGING_WORKOS_API_KEY }}
+        run: |
+          workos config redirect add "${{ steps.preview_domain.outputs.url }}/callback" \
+            --api-key "$STAGING_WORKOS_API_KEY" \
+            --json
+          workos config cors add "${{ steps.preview_domain.outputs.url }}" \
+            --api-key "$STAGING_WORKOS_API_KEY" \
+            --json || true
+
+      - name: Dispatch backend preview request
+        if: steps.preview_domain.outputs.url != ''
+        uses: actions/github-script@v7
+        env:
+          BACKEND_REPO_FULL: ${{ github.event.client_payload.backend_repo }}
+          BACKEND_PR_NUMBER: ${{ github.event.client_payload.backend_pr_number }}
+        with:
+          github-token: ${{ secrets.BACKEND_PREVIEW_DISPATCH_TOKEN }}
+          script: |
+            // Only allow dispatching to the configured backend repo
+            if (process.env.BACKEND_REPO_FULL !== process.env.BACKEND_REPO) {
+              core.setFailed(
+                `backend_repo '${process.env.BACKEND_REPO_FULL}' does not match allowed repo '${process.env.BACKEND_REPO}'`
+              );
+              return;
+            }
+            const [owner, repo] = process.env.BACKEND_REPO.split("/");
+            const [beOwner, beRepo] = process.env.BACKEND_REPO_FULL.split("/");
+            await github.rest.repos.createDispatchEvent({
+              owner,
+              repo,
+              event_type: "inspector_preview_requested",
+              client_payload: {
+                branch: "${{ steps.meta.outputs.branch }}",
+                inspector_repo: context.repo.owner + "/" + context.repo.repo,
+                inspector_pr_number: "0",
+                inspector_environment: "${{ steps.meta.outputs.environment }}",
+                preview_url: "${{ steps.preview_domain.outputs.url }}",
+                comment_issue_owner: beOwner,
+                comment_issue_repo: beRepo,
+                comment_issue_number: String(process.env.BACKEND_PR_NUMBER),
+              },
+            });
+
+      - name: Upsert preview comment on backend PR
+        uses: actions/github-script@v7
+        env:
+          PREVIEW_URL: ${{ steps.preview_domain.outputs.url }}
+          BACKEND_REPO_FULL: ${{ github.event.client_payload.backend_repo }}
+          BACKEND_PR_NUMBER: ${{ github.event.client_payload.backend_pr_number }}
+        with:
+          github-token: ${{ secrets.BACKEND_PREVIEW_DISPATCH_TOKEN }}
+          script: |
+            const marker = process.env.PREVIEW_COMMENT_MARKER;
+            const previewUrl = process.env.PREVIEW_URL;
+            if (process.env.BACKEND_REPO_FULL !== process.env.BACKEND_REPO) {
+              core.setFailed(
+                `backend_repo '${process.env.BACKEND_REPO_FULL}' does not match allowed repo '${process.env.BACKEND_REPO}'`
+              );
+              return;
+            }
+            const [owner, repo] = (process.env.BACKEND_REPO_FULL || "").split("/");
+            const issue_number = Number(process.env.BACKEND_PR_NUMBER);
+            if (!owner || !repo || !issue_number) {
+              core.setFailed("Missing backend_repo or backend_pr_number");
+              return;
+            }
+            const bodyLines = [
+              marker,
+              "### Internal preview",
+              previewUrl
+                ? `Preview URL: ${previewUrl}`
+                : "Preview URL will appear in Railway after the deploy finishes.",
+              "Backend target: Convex preview requested (falls back to staging if deploy fails).",
+              "Access is employee-only in non-production environments.",
+            ];
+            const body = bodyLines.join("\n");
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner,
+              repo,
+              issue_number,
+              per_page: 100,
+            });
+            const existing = comments.find((comment) => comment.body?.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner,
+                repo,
+                comment_id: existing.id,
+                body,
+              });
+              return;
+            }
+            await github.rest.issues.createComment({
+              owner,
+              repo,
+              issue_number,
+              body,
+            });
+
   destroy-preview:
     if: >
       github.event_name == 'pull_request' &&
@@ -253,8 +463,36 @@ jobs:
               },
             });
 
+  destroy-backend-pr-preview:
+    if: github.event_name == 'repository_dispatch' && github.event.action == 'backend_pr_inspector_cleanup'
+    runs-on: ubuntu-latest
+    env:
+      RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
+      RAILWAY_PROJECT_ID: ${{ vars.RAILWAY_PROJECT_ID }}
+      RAILWAY_STAGING_ENVIRONMENT: ${{ vars.RAILWAY_STAGING_ENVIRONMENT }}
+    steps:
+      - name: Install Railway CLI
+        run: npm install -g @railway/cli
+
+      - name: Delete Railway backend-PR preview environment
+        env:
+          BACKEND_PR_NUMBER: ${{ github.event.client_payload.backend_pr_number }}
+        run: |
+          if ! [[ "$BACKEND_PR_NUMBER" =~ ^[0-9]+$ ]]; then
+            echo "::error::backend_pr_number is missing or non-numeric: '$BACKEND_PR_NUMBER'"
+            exit 1
+          fi
+          railway link \
+            --project "$RAILWAY_PROJECT_ID" \
+            --environment "$RAILWAY_STAGING_ENVIRONMENT" \
+            --json >/dev/null
+          railway environment delete "${RAILWAY_BACKEND_PR_ENV_PREFIX}${BACKEND_PR_NUMBER}" \
+            --yes || true
+
   sync-backend-preview:
-    if: github.event_name == 'repository_dispatch'
+    if: >
+      github.event_name == 'repository_dispatch' &&
+      (github.event.action == 'backend_preview_ready' || github.event.action == 'backend_preview_failed')
     runs-on: ubuntu-latest
     env:
       RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
@@ -360,10 +598,47 @@ jobs:
         env:
           PREVIEW_URL: ${{ steps.preview_domain.outputs.url }}
           BACKEND_MODE: ${{ steps.backend_target.outputs.backend_mode }}
+          CROSS_REPO_TOKEN: ${{ secrets.BACKEND_PREVIEW_DISPATCH_TOKEN }}
+          BACKEND_REPO: ${{ vars.MCPJAM_BACKEND_REPO || 'MCPJam/mcpjam-backend' }}
         with:
+          github-token: ${{ (github.event.client_payload.comment_issue_owner || '') != '' && secrets.BACKEND_PREVIEW_DISPATCH_TOKEN || github.token }}
           script: |
             const marker = process.env.PREVIEW_COMMENT_MARKER;
-            const issue_number = context.payload.client_payload.inspector_pr_number;
+            const p = context.payload.client_payload;
+            const issueOwner = p.comment_issue_owner;
+            const issueRepo = p.comment_issue_repo;
+            const issueNumber = issueOwner
+              ? Number(p.comment_issue_number)
+              : Number(p.inspector_pr_number);
+            const owner = issueOwner || context.repo.owner;
+            const repo = issueRepo || context.repo.repo;
+
+            // Fail explicitly if cross-repo commenting was requested but token is missing
+            if (issueOwner && !process.env.CROSS_REPO_TOKEN) {
+              core.setFailed(
+                "Cross-repo comment requested but BACKEND_PREVIEW_DISPATCH_TOKEN is not configured"
+              );
+              return;
+            }
+
+            // Validate cross-repo target matches the allowlisted backend repo
+            if (issueOwner) {
+              const crossRepo = `${issueOwner}/${issueRepo}`;
+              if (crossRepo !== process.env.BACKEND_REPO) {
+                core.setFailed(
+                  `Cross-repo target '${crossRepo}' does not match allowed repo '${process.env.BACKEND_REPO}'`
+                );
+                return;
+              }
+            }
+
+            // Guard against invalid issue number (e.g. sentinel "0" leaking through)
+            if (!issueNumber || issueNumber <= 0) {
+              core.setFailed(
+                `Invalid issue number '${issueNumber}' — cannot post comment`
+              );
+              return;
+            }
             const bodyLines = [
               marker,
               "### Internal preview",
@@ -376,26 +651,26 @@ jobs:
             const body = bodyLines.join("\n");
 
             const comments = await github.paginate(github.rest.issues.listComments, {
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number,
+              owner,
+              repo,
+              issue_number: issueNumber,
               per_page: 100,
             });
 
             const existing = comments.find((comment) => comment.body?.includes(marker));
             if (!existing) {
               await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number,
+                owner,
+                repo,
+                issue_number: issueNumber,
                 body,
               });
               return;
             }
 
             await github.rest.issues.updateComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
+              owner,
+              repo,
               comment_id: existing.id,
               body,
             });

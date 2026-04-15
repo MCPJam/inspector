@@ -19,29 +19,37 @@ function createTestApp(): Hono {
   // Apply origin validation middleware
   app.use("*", originValidationMiddleware);
 
-  // Test route
+  // Test routes
   app.get("/api/test", (c) => c.json({ message: "success" }));
   app.post("/api/test", (c) => c.json({ message: "success" }));
+  app.get("/assets/*", (c) => c.json({ message: "static asset" }));
 
   return app;
 }
 
 describe("originValidationMiddleware", () => {
   let app: Hono;
-  const originalEnv = process.env.ALLOWED_ORIGINS;
+  const originalAllowedOrigins = process.env.ALLOWED_ORIGINS;
+  const originalNonprodLockdown = process.env.MCPJAM_NONPROD_LOCKDOWN;
 
   beforeEach(() => {
     app = createTestApp();
     // Clear any custom allowed origins
     delete process.env.ALLOWED_ORIGINS;
+    delete process.env.MCPJAM_NONPROD_LOCKDOWN;
   });
 
   afterEach(() => {
     // Restore original env
-    if (originalEnv) {
-      process.env.ALLOWED_ORIGINS = originalEnv;
+    if (originalAllowedOrigins) {
+      process.env.ALLOWED_ORIGINS = originalAllowedOrigins;
     } else {
       delete process.env.ALLOWED_ORIGINS;
+    }
+    if (originalNonprodLockdown) {
+      process.env.MCPJAM_NONPROD_LOCKDOWN = originalNonprodLockdown;
+    } else {
+      delete process.env.MCPJAM_NONPROD_LOCKDOWN;
     }
   });
 
@@ -229,6 +237,63 @@ describe("originValidationMiddleware", () => {
       expect(res.status).toBe(200);
     });
 
+    it("supports wildcard origins like https://*.up.railway.app", async () => {
+      process.env.ALLOWED_ORIGINS =
+        "https://*.up.railway.app,https://staging.mcpjam.com";
+      process.env.MCPJAM_NONPROD_LOCKDOWN = "true";
+
+      app = createTestApp();
+
+      const res = await app.request("/api/test", {
+        headers: { Origin: "https://mcp-inspector-pr-1804.up.railway.app" },
+      });
+      expect(res.status).toBe(200);
+    });
+
+    it("blocks origins that don't match wildcard pattern", async () => {
+      process.env.ALLOWED_ORIGINS = "https://*.up.railway.app";
+      process.env.MCPJAM_NONPROD_LOCKDOWN = "true";
+
+      app = createTestApp();
+
+      const res = await app.request("/api/test", {
+        headers: { Origin: "https://evil.com" },
+      });
+      expect(res.status).toBe(403);
+    });
+
+    it("rejects wildcard origin when scheme mismatches (http vs https)", async () => {
+      process.env.ALLOWED_ORIGINS = "https://*.up.railway.app";
+      process.env.MCPJAM_NONPROD_LOCKDOWN = "true";
+
+      app = createTestApp();
+
+      const res = await app.request("/api/test", {
+        headers: { Origin: "http://foo.up.railway.app" },
+      });
+      expect(res.status).toBe(403);
+    });
+
+    it("strips wildcard origins outside non-prod lockdown", async () => {
+      process.env.ALLOWED_ORIGINS =
+        "https://*.up.railway.app,https://staging.mcpjam.com";
+      // MCPJAM_NONPROD_LOCKDOWN is not set — simulates production
+
+      app = createTestApp();
+
+      // Wildcard should be stripped, so Railway origins are blocked
+      const res = await app.request("/api/test", {
+        headers: { Origin: "https://foo.up.railway.app" },
+      });
+      expect(res.status).toBe(403);
+
+      // Exact match should still work
+      const res2 = await app.request("/api/test", {
+        headers: { Origin: "https://staging.mcpjam.com" },
+      });
+      expect(res2.status).toBe(200);
+    });
+
     it("blocks origins not in custom list", async () => {
       process.env.ALLOWED_ORIGINS = "http://only-this.com";
 
@@ -240,6 +305,24 @@ describe("originValidationMiddleware", () => {
 
       // localhost is no longer allowed when custom origins are set
       expect(res.status).toBe(403);
+    });
+  });
+
+  describe("static asset exemption", () => {
+    it("allows /assets/ requests with any origin (Vite crossorigin modules)", async () => {
+      const res = await app.request("/assets/index-abc123.js", {
+        headers: { Origin: "https://preview.up.railway.app" },
+      });
+
+      expect(res.status).toBe(200);
+    });
+
+    it("allows /assets/ CSS requests with any origin", async () => {
+      const res = await app.request("/assets/index-abc123.css", {
+        headers: { Origin: "https://preview.up.railway.app" },
+      });
+
+      expect(res.status).toBe(200);
     });
   });
 
