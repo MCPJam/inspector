@@ -48,6 +48,16 @@ function shouldFetchGuestSessionFromConvex(): boolean {
  * Rate limited to 10 requests per minute per IP.
  */
 guestSession.post("/", async (c) => {
+  if (process.env.MCPJAM_NONPROD_LOCKDOWN === "true") {
+    return c.json(
+      {
+        code: ErrorCode.FORBIDDEN,
+        message: "Guest access is disabled in this environment.",
+      },
+      403,
+    );
+  }
+
   const ip = getClientIp(c);
   const now = Date.now();
 

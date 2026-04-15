@@ -1,48 +1,65 @@
 name: Windows Release
 
 on:
-  push:
-    tags:
-      - "v*"
-  workflow_dispatch:
+  workflow_call:
     inputs:
       version:
-        description: "Version to release (e.g., v1.0.0)"
-        required: false
+        description: "Release version label"
+        required: true
         type: string
-      create_release:
-        description: "Create GitHub release?"
+      apply_release_patch:
+        description: "Apply the shared release patch artifact before building"
         required: false
         default: true
         type: boolean
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Artifact version label"
+        required: false
+        type: string
+      apply_release_patch:
+        description: "Apply release patch artifact from the current run"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   make-windows:
     runs-on: windows-latest
     env:
       WINDOWS_PFX_BASE64: ${{ secrets.WINDOWS_PFX_BASE64 }}
-    defaults:
-      run:
-        working-directory: mcpjam-inspector
+      ARTIFACT_VERSION: ${{ inputs.version != '' && inputs.version || github.sha }}
     steps:
-      - name: Checkout
+      - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup Node
+      - name: Download release patch
+        if: inputs.apply_release_patch
+        uses: actions/download-artifact@v4
+        with:
+          name: release-plan
+          path: .release-plan
+
+      - name: Apply release patch
+        if: inputs.apply_release_patch
+        run: git apply --binary .release-plan/release.patch
+        shell: bash
+
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 24.14.0
 
-      - name: Install dependencies from lockfiles
-        run: npm run deps:ci
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
         shell: powershell
 
       - name: Rebuild native modules for Windows
-        run: |
-          npm rebuild esbuild --verbose
+        run: npm rebuild esbuild --verbose
         shell: powershell
 
       - name: Restore code signing cert
@@ -52,54 +69,32 @@ jobs:
           $bytes = [System.Convert]::FromBase64String($env:WINDOWS_PFX_BASE64)
           [IO.File]::WriteAllBytes("$env:RUNNER_TEMP\\codesign.pfx", $bytes)
 
-      - name: Build
-        run: npm run build
+      - name: Build app
+        run: npm run build -w @mcpjam/inspector
         shell: powershell
 
-      - name: Make (Windows)
+      - name: Make Windows installer
         env:
           WINDOWS_PFX_FILE: ${{ runner.temp }}\\codesign.pfx
           WINDOWS_PFX_PASSWORD: ${{ secrets.WINDOWS_PFX_PASSWORD }}
-        run: npm run electron:make
+        run: npm run electron:make -w @mcpjam/inspector
         shell: powershell
 
       - name: Rename installer to consistent name
         run: |
-          $setupFile = Get-ChildItem -Path "out\make" -Recurse -Name "*Setup.exe" | Select-Object -First 1
+          $setupFile = Get-ChildItem -Path "mcpjam-inspector\\out\\make" -Recurse -Name "*Setup.exe" | Select-Object -First 1
           if ($setupFile) {
-            Copy-Item "out\make\$setupFile" "$env:GITHUB_WORKSPACE\MCPJam-Inspector-Setup.exe"
+            Copy-Item "mcpjam-inspector\\out\\make\\$setupFile" "$env:GITHUB_WORKSPACE\\MCPJam-Inspector-Setup.exe"
             echo "SETUP_PATH=$env:GITHUB_WORKSPACE/MCPJam-Inspector-Setup.exe" >> $env:GITHUB_ENV
           }
         shell: powershell
 
-      - name: Upload build artifacts (if not creating release)
-        if: github.event_name == 'workflow_dispatch' && !inputs.create_release
+      - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: mcpjam-inspector-windows
+          name: inspector-windows-${{ env.ARTIFACT_VERSION }}
           path: |
-            mcpjam-inspector\out\make\**\*Setup.exe
-            mcpjam-inspector\out\make\**\RELEASES
-            mcpjam-inspector\out\make\**\*.nupkg
-          retention-days: 30
-
-      - name: Create GitHub Release
-        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.create_release)
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.event_name == 'workflow_dispatch' && (inputs.version || 'v0.9.14-manual') || github.ref_name }}
-          name: Release ${{ github.event_name == 'workflow_dispatch' && (inputs.version || 'v0.9.14-manual') || github.ref_name }}
-          draft: false
-          prerelease: false
-          files: |
             ${{ env.SETUP_PATH }}
             mcpjam-inspector\out\make\**\RELEASES
             mcpjam-inspector\out\make\**\*.nupkg
-          body: |
-            ## Download for Windows
-            - **Windows Installer**: [MCPJam Inspector Setup.exe](https://github.com/MCPJam/inspector/releases/download/${{ github.event_name == 'workflow_dispatch' && (inputs.version || 'v0.9.14-manual') || github.ref_name }}/MCPJam-Inspector-Setup.exe)
-
-            The installer is code-signed and ready for installation on Windows.
-
-            ## Auto-generated release
-            This release was automatically built and signed by GitHub Actions.
+          retention-days: 14
