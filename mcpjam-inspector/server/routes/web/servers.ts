@@ -187,7 +187,7 @@ async function runHostedDoctor(
   const config = toHttpConfig(
     auth,
     timeoutMs,
-    body.oauthAccessToken,
+    auth.oauthAccessToken ?? body.oauthAccessToken,
     body.clientCapabilities,
   );
 

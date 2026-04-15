@@ -451,10 +451,7 @@ describe("SandboxChatPage", () => {
     });
 
     expect(screen.getByTestId("sandbox-chat-tab")).toBeInTheDocument();
-    expect(mockValidateHostedServer).toHaveBeenCalledWith(
-      "srv_asana",
-      "sandbox-token",
-    );
+    expect(mockValidateHostedServer).toHaveBeenCalledWith("srv_asana", null);
     expect(mockValidateHostedServer).toHaveBeenCalledTimes(1);
   });
 

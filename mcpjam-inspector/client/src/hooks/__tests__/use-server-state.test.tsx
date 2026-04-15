@@ -223,6 +223,7 @@ describe("useServerState OAuth callback failures", () => {
       "OAuth authorization failed: access_denied: User denied access",
     );
     expect(localStorage.getItem("mcp-oauth-pending")).toBeNull();
+    expect(window.location.pathname).toBe("/");
     expect(window.location.search).toBe("");
     expect(window.location.hash).toBe("#demo-server");
   });
@@ -251,6 +252,33 @@ describe("useServerState OAuth callback failures", () => {
       "Error completing OAuth flow: Token exchange failed",
     );
     expect(localStorage.getItem("mcp-oauth-pending")).toBeNull();
+  });
+
+  it("restores the app root after a successful browser OAuth callback", async () => {
+    localStorage.setItem("mcp-oauth-pending", "demo-server");
+    localStorage.setItem("mcp-oauth-return-hash", "#demo-server");
+    handleOAuthCallbackMock.mockResolvedValue({
+      success: true,
+      serverName: "demo-server",
+      serverConfig: {
+        type: "http",
+        url: "https://example.com/mcp",
+      },
+    });
+    window.history.replaceState({}, "", "/oauth/callback?code=test-code");
+
+    const dispatch = vi.fn();
+    renderUseServerState(dispatch);
+
+    await waitFor(() => {
+      expect(toastSuccess).toHaveBeenCalledWith(
+        "OAuth connection successful! Connected to demo-server.",
+      );
+    });
+
+    expect(window.location.pathname).toBe("/");
+    expect(window.location.search).toBe("");
+    expect(window.location.hash).toBe("#demo-server");
   });
 
   it("blocks connect while workspace client config sync is pending", async () => {
