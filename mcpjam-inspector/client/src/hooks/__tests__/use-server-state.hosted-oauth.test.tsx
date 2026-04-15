@@ -366,6 +366,37 @@ describe("useServerState hosted OAuth callback guards", () => {
   });
 
   it("falls back to interactive OAuth when hosted stored-auth reconnect says authorization is required", async () => {
+    mockReconnectServer.mockResolvedValueOnce({
+      success: false,
+      error:
+        'Server "srv_asana" requires OAuth authentication. Please complete the OAuth flow first.',
+    });
+    mockEnsureAuthorizedForReconnect.mockResolvedValueOnce({
+      kind: "error",
+      error: "OAuth init failed",
+    });
+
+    const dispatch = vi.fn();
+    const { result } = renderHostedServerState(dispatch);
+
+    await act(async () => {
+      await result.current.handleReconnect("asana");
+    });
+
+    await waitFor(() => {
+      expect(mockEnsureAuthorizedForReconnect).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: "asana",
+          useOAuth: true,
+        }),
+        expect.objectContaining({
+          beforeRedirect: expect.any(Function),
+        }),
+      );
+    });
+  });
+
+  it("also falls back to interactive OAuth when hosted reconnect throws the same auth error", async () => {
     mockReconnectServer.mockRejectedValueOnce(
       new Error(
         'Server "srv_asana" requires OAuth authentication. Please complete the OAuth flow first.',
