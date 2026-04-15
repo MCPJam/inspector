@@ -1290,7 +1290,7 @@ export function TestTemplateEditor({
       ...Object.fromEntries(
         runModelValues.map((modelValue) => [
           modelValue,
-          "chat" as RunColumnTab,
+          "tools" as RunColumnTab,
         ]),
       ),
     }));
@@ -2337,12 +2337,11 @@ export function TestTemplateEditor({
                         testCase={currentTestCase}
                         serverNames={connectedServerList}
                         workspaceId={workspaceId}
-                        onContinueInChat={onContinueInChat}
                         onStreamingTraceLoaded={() =>
                           clearCompareStreamingState(record.modelValue)
                         }
                         activeTab={
-                          runColumnTabByModel[record.modelValue] ?? "timeline"
+                          runColumnTabByModel[record.modelValue] ?? "tools"
                         }
                         onTabChange={(tab) =>
                           handleRunColumnTabChange(record.modelValue, tab)
@@ -2414,6 +2413,9 @@ function RunColumn({
     }
   }, [showToolsTab, activeTab, onTabChange]);
 
+  const effectiveActiveTab: RunColumnTab =
+    activeTab === "tools" && !showToolsTab ? "timeline" : activeTab;
+
   /** Status marker: pastel fills aligned with metric bar accent colors. */
   const statusIndicatorClass =
     record.status === "running"
@@ -2444,11 +2446,11 @@ function RunColumn({
       ? `${Math.round(record.metrics.durationMs / 100) / 10}s`
       : "—";
   const traceMode =
-    activeTab === "chat"
+    effectiveActiveTab === "chat"
       ? "chat"
-      : activeTab === "timeline"
+      : effectiveActiveTab === "timeline"
         ? "timeline"
-        : activeTab === "raw"
+        : effectiveActiveTab === "raw"
           ? "raw"
           : "tools";
   const streamingTraceEnvelope = useMemo(
@@ -2597,21 +2599,34 @@ function RunColumn({
   return (
     <div className="flex h-auto min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl border border-border/60 bg-card/40 lg:h-full">
       <div className="shrink-0 border-b px-3 py-2">
-        <div className="flex items-start justify-between gap-2">
-          <div className="min-w-0">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex min-w-0 items-center gap-1.5">
             <div className="truncate text-sm font-semibold leading-tight">
               {record.modelLabel}
             </div>
+            {record.result === "passed" ? (
+              <span className="inline-flex shrink-0 items-center rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider bg-emerald-500/15 text-emerald-700 dark:bg-emerald-400/20 dark:text-emerald-300">
+                Pass
+              </span>
+            ) : record.result === "failed" || record.status === "failed" ? (
+              <span className="inline-flex shrink-0 items-center rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider bg-rose-500/15 text-rose-700 dark:bg-rose-400/20 dark:text-rose-300">
+                Fail
+              </span>
+            ) : null}
           </div>
-          <span
-            role="img"
-            className={cn(
-              "inline-flex shrink-0 rounded-full",
-              statusIndicatorClass,
-            )}
-            aria-label={statusLabel}
-            title={statusLabel}
-          />
+          {record.result !== "passed" &&
+          record.result !== "failed" &&
+          record.status !== "failed" ? (
+            <span
+              role="img"
+              className={cn(
+                "inline-flex shrink-0 rounded-full",
+                statusIndicatorClass,
+              )}
+              aria-label={statusLabel}
+              title={statusLabel}
+            />
+          ) : null}
         </div>
 
         {/* Metric comparison bars */}
@@ -2717,7 +2732,7 @@ function RunColumn({
         <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2">
           <div className="flex min-w-0 flex-wrap items-center gap-1.5">
             <TraceViewModeTabs
-              mode={activeTab}
+              mode={effectiveActiveTab}
               onModeChange={onTabChange}
               showToolsTab={showToolsTab}
               className="[&_button]:px-1.5 [&_button]:py-0.5 [&_button]:text-[11px] [&_svg]:h-3 [&_svg]:w-3"
