@@ -19,7 +19,22 @@ import { logger as appLogger } from "../utils/logger.js";
 function getAllowedOrigins(): string[] {
   // Allow override via environment variable
   if (process.env.ALLOWED_ORIGINS) {
-    return process.env.ALLOWED_ORIGINS.split(",").map((o) => o.trim());
+    const origins = process.env.ALLOWED_ORIGINS.split(",").map((o) => o.trim());
+
+    // Wildcard origins (e.g. https://*.up.railway.app) are only safe behind
+    // non-prod lockdown.  Reject them in production to prevent accidental
+    // misconfiguration from weakening origin checks.
+    if (process.env.MCPJAM_NONPROD_LOCKDOWN !== "true") {
+      const wildcards = origins.filter((o) => o.includes("*"));
+      if (wildcards.length > 0) {
+        appLogger.warn(
+          `[Security] Wildcard ALLOWED_ORIGINS rejected outside non-prod lockdown: ${wildcards.join(", ")}`,
+        );
+        return origins.filter((o) => !o.includes("*"));
+      }
+    }
+
+    return origins;
   }
 
   // Default: localhost origins on common dev ports

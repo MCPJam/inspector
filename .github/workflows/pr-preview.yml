@@ -577,6 +577,7 @@ jobs:
         env:
           PREVIEW_URL: ${{ steps.preview_domain.outputs.url }}
           BACKEND_MODE: ${{ steps.backend_target.outputs.backend_mode }}
+          CROSS_REPO_TOKEN: ${{ secrets.BACKEND_PREVIEW_DISPATCH_TOKEN }}
         with:
           github-token: ${{ (github.event.client_payload.comment_issue_owner || '') != '' && secrets.BACKEND_PREVIEW_DISPATCH_TOKEN || github.token }}
           script: |
@@ -589,6 +590,14 @@ jobs:
               : Number(p.inspector_pr_number);
             const owner = issueOwner || context.repo.owner;
             const repo = issueRepo || context.repo.repo;
+
+            // Fail explicitly if cross-repo commenting was requested but token is missing
+            if (issueOwner && !process.env.CROSS_REPO_TOKEN) {
+              core.setFailed(
+                "Cross-repo comment requested but BACKEND_PREVIEW_DISPATCH_TOKEN is not configured"
+              );
+              return;
+            }
             const bodyLines = [
               marker,
               "### Internal preview",
