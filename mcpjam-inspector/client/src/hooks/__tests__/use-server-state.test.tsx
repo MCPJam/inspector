@@ -456,6 +456,145 @@ describe("useServerState OAuth callback failures", () => {
   });
 });
 
+describe("useServerState auth mode regressions", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+    window.history.replaceState({}, "", "/");
+    useClientConfigStore.setState({
+      activeWorkspaceId: null,
+      defaultConfig: null,
+      savedConfig: undefined,
+      draftConfig: null,
+      clientCapabilitiesText: "{}",
+      hostContextText: "{}",
+      clientCapabilitiesError: null,
+      hostContextError: null,
+      isSaving: false,
+      isDirty: false,
+      pendingWorkspaceId: null,
+      pendingSavedConfig: undefined,
+      isAwaitingRemoteEcho: false,
+    });
+    getStoredTokensMock.mockReturnValue(undefined);
+    testConnectionMock.mockResolvedValue({
+      success: true,
+      initInfo: {},
+    });
+    initiateOAuthMock.mockResolvedValue({ success: true });
+    mockConvexQuery.mockResolvedValue(null);
+  });
+
+  it("dispatches explicit non-OAuth success when updating an OAuth server to direct auth", async () => {
+    const { deleteServer } = await import("@/state/mcp-api");
+    vi.mocked(deleteServer).mockResolvedValue({ success: true } as any);
+
+    const appState = createAppState();
+    const oauthServer = {
+      ...appState.servers["demo-server"],
+      connectionStatus: "connected" as const,
+      oauthTokens: {
+        access_token: "expired-token",
+        refresh_token: "refresh-token",
+      },
+      useOAuth: true,
+    };
+    appState.servers["demo-server"] = oauthServer as any;
+    appState.workspaces.default.servers["demo-server"] = {
+      ...oauthServer,
+    } as any;
+
+    const dispatch = vi.fn();
+    const { result } = renderUseServerState(dispatch, appState);
+
+    await act(async () => {
+      await result.current.handleUpdate("demo-server", {
+        name: "demo-server",
+        type: "http",
+        url: "https://example.com/mcp",
+        useOAuth: false,
+      });
+    });
+
+    const connectSuccessAction = dispatch.mock.calls
+      .map(([action]) => action)
+      .find(
+        (
+          action,
+        ): action is Extract<AppAction, { type: "CONNECT_SUCCESS" }> =>
+          action.type === "CONNECT_SUCCESS",
+      );
+
+    expect(connectSuccessAction).toMatchObject({
+      type: "CONNECT_SUCCESS",
+      name: "demo-server",
+      useOAuth: false,
+    });
+    expect(clearOAuthDataMock).toHaveBeenCalledWith("demo-server");
+    expect(initiateOAuthMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps reconnects on the direct path once a server is marked non-OAuth", async () => {
+    const { reconnectServer } = await import("@/state/mcp-api");
+    const { ensureAuthorizedForReconnect } =
+      await import("@/state/oauth-orchestrator");
+    vi.mocked(reconnectServer).mockResolvedValue({
+      success: true,
+      initInfo: {},
+    } as any);
+
+    const appState = createAppState();
+    const directServer = {
+      ...appState.servers["demo-server"],
+      connectionStatus: "connected" as const,
+      oauthTokens: undefined,
+      useOAuth: false,
+    };
+    appState.servers["demo-server"] = directServer as any;
+    appState.workspaces.default.servers["demo-server"] = {
+      ...directServer,
+    } as any;
+
+    vi.mocked(ensureAuthorizedForReconnect).mockResolvedValue({
+      kind: "ready",
+      serverConfig: directServer.config,
+      tokens: undefined,
+    } as any);
+
+    const dispatch = vi.fn();
+    const { result } = renderUseServerState(dispatch, appState);
+
+    await act(async () => {
+      await result.current.handleReconnect("demo-server");
+    });
+
+    expect(vi.mocked(ensureAuthorizedForReconnect)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "demo-server",
+        useOAuth: false,
+      }),
+      expect.any(Object),
+    );
+
+    const connectSuccessAction = dispatch.mock.calls
+      .map(([action]) => action)
+      .find(
+        (
+          action,
+        ): action is Extract<AppAction, { type: "CONNECT_SUCCESS" }> =>
+          action.type === "CONNECT_SUCCESS",
+      );
+
+    expect(connectSuccessAction).toMatchObject({
+      type: "CONNECT_SUCCESS",
+      name: "demo-server",
+      useOAuth: false,
+      tokens: undefined,
+    });
+    expect(initiateOAuthMock).not.toHaveBeenCalled();
+  });
+});
+
 describe("useServerState authenticated fallback persistence", () => {
   beforeEach(() => {
     vi.clearAllMocks();

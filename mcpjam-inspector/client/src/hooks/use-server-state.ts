@@ -685,6 +685,7 @@ export function useServerState({
                   tokens: isHostedWorkspaceCallback
                     ? undefined
                     : getStoredTokens(serverName),
+                  useOAuth: true,
                 });
                 logger.info("OAuth connection successful", { serverName });
                 toast.success(
@@ -940,6 +941,7 @@ export function useServerState({
                 name: formData.name,
                 config: serverConfig,
                 tokens: existingTokens,
+                useOAuth: true,
               });
               toast.success(
                 "Connected successfully with existing OAuth tokens!",
@@ -1007,6 +1009,7 @@ export function useServerState({
                     HOSTED_MODE && isAuthenticated
                       ? undefined
                       : getStoredTokens(formData.name),
+                  useOAuth: true,
                 });
                 toast.success("Connected successfully with OAuth!");
                 storeInitInfo(formData.name, connectionResult.initInfo).catch(
@@ -1062,6 +1065,7 @@ export function useServerState({
             type: "CONNECT_SUCCESS",
             name: formData.name,
             config: mcpConfig,
+            useOAuth: formData.useOAuth ?? false,
           });
           const env = (mcpConfig as any).env;
           if (env && Object.keys(env).length > 0) {
@@ -1278,6 +1282,7 @@ export function useServerState({
             name: serverName,
             config: serverConfig,
             tokens: getStoredTokens(serverName),
+            useOAuth: true,
           });
           await storeInitInfo(serverName, result.initInfo);
           return { success: true };
@@ -1625,6 +1630,7 @@ export function useServerState({
               HOSTED_MODE && isAuthenticated
                 ? undefined
                 : getStoredTokens(serverName),
+            useOAuth: true,
           });
           logger.info("Reconnection with fresh OAuth successful", {
             serverName,
@@ -1677,6 +1683,7 @@ export function useServerState({
             name: serverName,
             config: authResult.serverConfig,
             tokens: authResult.tokens,
+            useOAuth: server.useOAuth === true || authResult.tokens != null,
           });
           logger.info("Reconnection successful", { serverName, result });
           storeInitInfo(serverName, result.initInfo).catch((err) =>
@@ -1871,6 +1878,7 @@ export function useServerState({
               type: "CONNECT_SUCCESS",
               name: originalServerName,
               config: mcpConfig,
+              useOAuth: true,
             });
             await storeInitInfo(originalServerName, result.initInfo);
             toast.success("Server configuration updated successfully!");

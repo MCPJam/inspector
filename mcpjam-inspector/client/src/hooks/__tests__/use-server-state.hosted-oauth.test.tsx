@@ -8,6 +8,7 @@ const {
   mockListServers,
   mockUseServerMutations,
   mockConvexQuery,
+  testConnectionMock,
   toastSuccess,
 } = vi.hoisted(() => ({
   mockHandleOAuthCallback: vi.fn(),
@@ -18,6 +19,7 @@ const {
     deleteServer: vi.fn(),
   })),
   mockConvexQuery: vi.fn(),
+  testConnectionMock: vi.fn(),
   toastSuccess: vi.fn(),
 }));
 
@@ -32,7 +34,7 @@ vi.mock("@/lib/config", () => ({
 }));
 
 vi.mock("@/state/mcp-api", () => ({
-  testConnection: vi.fn(),
+  testConnection: testConnectionMock,
   deleteServer: vi.fn(),
   listServers: mockListServers,
   reconnectServer: vi.fn(),
@@ -87,8 +89,13 @@ describe("useServerState hosted OAuth callback guards", () => {
     mockHandleOAuthCallback.mockReset();
     mockListServers.mockReset();
     mockConvexQuery.mockReset();
+    testConnectionMock.mockReset();
     toastSuccess.mockReset();
     mockListServers.mockResolvedValue({ success: true, servers: [] });
+    testConnectionMock.mockResolvedValue({
+      success: true,
+      initInfo: {},
+    });
   });
 
   it("defers hosted sandbox OAuth callbacks to App.tsx", async () => {
@@ -152,13 +159,15 @@ describe("useServerState hosted OAuth callback guards", () => {
       },
     });
 
+    const dispatch = vi.fn();
+
     renderHook(() =>
       useServerState({
         appState: {
           servers: {},
           selectedMultipleServers: [],
         } as any,
-        dispatch: vi.fn(),
+        dispatch,
         isLoading: false,
         isAuthenticated: true,
         isAuthLoading: false,
@@ -185,6 +194,17 @@ describe("useServerState hosted OAuth callback guards", () => {
           serverName: "asana",
         }),
         "oauth-code",
+      );
+    });
+
+    await waitFor(() => {
+      expect(dispatch).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "CONNECT_SUCCESS",
+          name: "asana",
+          useOAuth: true,
+          tokens: undefined,
+        }),
       );
     });
   });
