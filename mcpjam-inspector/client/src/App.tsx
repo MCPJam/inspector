@@ -94,7 +94,7 @@ import {
   getSandboxPathTokenFromLocation,
 } from "./components/hosted/SandboxChatPage";
 import { useHostedApiContext } from "./hooks/hosted/use-hosted-api-context";
-import { HOSTED_MODE } from "./lib/config";
+import { HOSTED_MODE, NON_PROD_LOCKDOWN } from "./lib/config";
 import {
   clearBillingSignInReturnPath,
   clearCheckoutIntentFromUrl,
@@ -292,6 +292,7 @@ export default function App() {
   const {
     getAccessToken,
     signIn,
+    signOut,
     user: workOsUser,
     isLoading: isWorkOsLoading,
   } = useAuth();
@@ -582,18 +583,22 @@ export default function App() {
   const hasAnyWorkspaceServers = Object.keys(workspaceServers).length > 0;
   const hostedShellGateState = resolveHostedShellGateState({
     hostedMode: HOSTED_MODE,
+    nonProdLockdown: NON_PROD_LOCKDOWN,
     isConvexAuthLoading: isAuthLoading,
     isConvexAuthenticated: isAuthenticated,
     isWorkOsLoading,
     hasWorkOsUser: !!workOsUser,
+    workOsUserEmail: workOsUser?.email ?? null,
     isLoadingRemoteWorkspaces,
   });
   const hostedChatShellGateState = resolveHostedShellGateState({
     hostedMode: HOSTED_MODE,
+    nonProdLockdown: NON_PROD_LOCKDOWN,
     isConvexAuthLoading: isAuthLoading,
     isConvexAuthenticated: isAuthenticated,
     isWorkOsLoading,
     hasWorkOsUser: !!workOsUser,
+    workOsUserEmail: workOsUser?.email ?? null,
     isLoadingRemoteWorkspaces: false,
   });
   const isOnboardingDecisionReady = hostedShellGateState === "ready";
@@ -1934,6 +1939,9 @@ export default function App() {
                 writeSandboxSignInReturnPath(window.location.pathname);
               }
               signIn();
+            }}
+            onSignOut={() => {
+              void signOut();
             }}
           >
             {isSharedChatRoute ? (
