@@ -83,6 +83,7 @@
     "electron:install": "killall 'MCPJam Inspector' 2>/dev/null || true && rm -rf '/Applications/MCPJam Inspector.app' && cp -r 'out/MCPJam Inspector-darwin-arm64/MCPJam Inspector.app' /Applications/ && open '/Applications/MCPJam Inspector.app'",
     "electron:publish": "electron-forge publish",
     "electron:dev": "electron-forge start",
+    "pretest": "node scripts/bundle-sandbox-proxy-html.js",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
