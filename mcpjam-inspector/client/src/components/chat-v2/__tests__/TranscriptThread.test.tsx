@@ -263,6 +263,17 @@ describe("TranscriptThread", () => {
     expect(screen.getByTestId("message-assistant-1")).toBeInTheDocument();
   });
 
+  it("enables content-visibility containment by default", () => {
+    render(<TranscriptThread {...defaultProps} />);
+
+    const wrapper = document.querySelector(
+      '[data-message-id="assistant-1"]',
+    ) as HTMLElement | null;
+    expect(wrapper).not.toBeNull();
+    expect(wrapper?.style.contentVisibility).toBe("auto");
+    expect(wrapper?.style.containIntrinsicSize).toBe("0 160px");
+  });
+
   it("disables content-visibility containment while a fullscreen widget is active", () => {
     render(
       <TranscriptThread {...defaultProps} fullscreenWidgetId="tool-call-1" />,
