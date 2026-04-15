@@ -120,8 +120,7 @@ jobs:
             --ci \
             --project "$RAILWAY_PROJECT_ID" \
             --environment "${{ steps.meta.outputs.environment }}" \
-            --service "$RAILWAY_INSPECTOR_SERVICE" \
-            --path-as-root mcpjam-inspector
+            --service "$RAILWAY_INSPECTOR_SERVICE"
 
       - name: Read preview public domain
         id: preview_domain
@@ -296,8 +295,7 @@ jobs:
             --ci \
             --project "$RAILWAY_PROJECT_ID" \
             --environment "${{ github.event.client_payload.inspector_environment }}" \
-            --service "$RAILWAY_INSPECTOR_SERVICE" \
-            --path-as-root mcpjam-inspector
+            --service "$RAILWAY_INSPECTOR_SERVICE"
 
       - name: Read preview public domain
         id: preview_domain
