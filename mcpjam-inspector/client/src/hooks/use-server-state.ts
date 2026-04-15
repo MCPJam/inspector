@@ -99,6 +99,15 @@ function saveOAuthConfigToLocalStorage(formData: ServerFormData): void {
   }
 }
 
+function restorePathAfterOAuthCallback(
+  currentPathname: string,
+  savedHash: string,
+): string {
+  const basePath =
+    currentPathname === "/oauth/callback" ? "/" : currentPathname;
+  return `${basePath}${savedHash}`;
+}
+
 interface LoggerLike {
   info: (message: string, meta?: Record<string, unknown>) => void;
   warn: (message: string, meta?: Record<string, unknown>) => void;
@@ -789,7 +798,7 @@ export function useServerState({
       window.history.replaceState(
         {},
         document.title,
-        window.location.pathname + savedHash,
+        restorePathAfterOAuthCallback(window.location.pathname, savedHash),
       );
 
       handleOAuthCallbackComplete(
@@ -816,7 +825,7 @@ export function useServerState({
       window.history.replaceState(
         {},
         document.title,
-        window.location.pathname + savedHash,
+        restorePathAfterOAuthCallback(window.location.pathname, savedHash),
       );
     }
   }, [

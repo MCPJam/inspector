@@ -450,6 +450,33 @@ describe("App hosted OAuth callback handling", () => {
     });
   });
 
+  it("does not keep the hosted loading screen for workspace OAuth callbacks", async () => {
+    clearHostedOAuthPendingState();
+    clearSandboxSession();
+    writeHostedOAuthPendingMarker({
+      surface: "workspace",
+      workspaceId: "ws_1",
+      serverId: "srv_asana",
+      serverName: "asana",
+      serverUrl: "https://mcp.asana.com/sse",
+      accessScope: "workspace_member",
+      returnHash: "#servers",
+    });
+    localStorage.setItem("mcp-oauth-pending", "asana");
+    localStorage.setItem("mcp-serverUrl-asana", "https://mcp.asana.com/sse");
+
+    render(<App />);
+
+    expect(
+      screen.queryByTestId("hosted-oauth-loading"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("Servers Tab")).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(mockCompleteHostedOAuthCallback).not.toHaveBeenCalled();
+    });
+  });
+
   it("skips billing queries while a persisted org id is still being validated", () => {
     mockUseAppState.mockImplementation(() => ({
       ...createAppStateMock(),

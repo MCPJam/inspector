@@ -300,9 +300,14 @@ export default function App() {
     isLoading: isWorkOsLoading,
   } = useAuth();
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
-  const [hostedOAuthHandling, setHostedOAuthHandling] = useState(() =>
-    HOSTED_MODE ? getHostedOAuthCallbackContext() !== null : false,
-  );
+  const [hostedOAuthHandling, setHostedOAuthHandling] = useState(() => {
+    if (!HOSTED_MODE) {
+      return false;
+    }
+
+    const callbackContext = getHostedOAuthCallbackContext();
+    return callbackContext != null && callbackContext.surface !== "workspace";
+  });
   const [exitedSharedChat, setExitedSharedChat] = useState(false);
   const [exitedSandboxChat, setExitedSandboxChat] = useState(false);
   const sharedPathToken = HOSTED_MODE ? getSharedPathTokenFromLocation() : null;
@@ -406,7 +411,10 @@ export default function App() {
   // Handle hosted OAuth callback: claim the callback before any hosted page renders.
   useEffect(() => {
     const callbackContext = getHostedOAuthCallbackContext();
-    if (!callbackContext || callbackContext.surface === "workspace") return;
+    if (!callbackContext || callbackContext.surface === "workspace") {
+      setHostedOAuthHandling(false);
+      return;
+    }
 
     const urlParams = new URLSearchParams(window.location.search);
     const code = urlParams.get("code");
