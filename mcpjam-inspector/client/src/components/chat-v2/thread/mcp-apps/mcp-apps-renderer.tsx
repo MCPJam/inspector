@@ -1273,6 +1273,13 @@ export function MCPAppsRenderer({
       if (isMobilePlaygroundMode) {
         return "absolute inset-0 z-10 w-full h-full bg-background flex flex-col";
       }
+      if (isPlaygroundActive) {
+        return [
+          "absolute top-4 left-1/2 -translate-x-1/2 z-40 w-full min-w-[300px] max-w-[min(90vw,1200px)] space-y-2",
+          "bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80",
+          "shadow-xl border border-border/60 rounded-xl p-3",
+        ].join(" ");
+      }
       return [
         "fixed top-4 left-1/2 -translate-x-1/2 z-40 w-full min-w-[300px] max-w-[min(90vw,1200px)] space-y-2",
         "bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80",

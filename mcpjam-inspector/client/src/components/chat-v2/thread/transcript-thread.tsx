@@ -209,7 +209,10 @@ export function TranscriptThread({
     [highlightedMessageIds],
   );
   const shouldUseContentVisibility =
-    focusMessageId === null && highlightedMessageIds.length === 0;
+    focusMessageId === null &&
+    highlightedMessageIds.length === 0 &&
+    fullscreenWidgetId === null &&
+    pipWidgetId === null;
 
   useEffect(() => {
     if (!focusMessageId) {

@@ -4,6 +4,10 @@
 
 export const MCPJAM_HOSTED_APP_ORIGIN = "https://app.mcpjam.com";
 const LOCALHOST_HOSTNAMES = new Set(["localhost", "127.0.0.1"]);
+const HOSTED_REDIRECT_HOSTNAMES = new Set([
+  "app.mcpjam.com",
+  "staging.mcpjam.com",
+]);
 
 /**
  * Static Client ID Metadata Document URL for MCPJam Inspector
@@ -17,7 +21,7 @@ export const MCPJAM_CLIENT_ID =
   "https://www.mcpjam.com/.well-known/oauth/client-metadata.json";
 
 export function resolveBrowserOAuthRedirectOrigin(
-  locationLike: Pick<Location, "protocol" | "origin" | "hostname">,
+  locationLike: Pick<Location, "protocol" | "origin" | "hostname">
 ): string {
   if (locationLike.protocol !== "http:" && locationLike.protocol !== "https:") {
     // Defensive fallback for non-browser-like locations. Electron exits earlier.
@@ -29,7 +33,7 @@ export function resolveBrowserOAuthRedirectOrigin(
   }
 
   if (
-    locationLike.hostname === "app.mcpjam.com" ||
+    HOSTED_REDIRECT_HOSTNAMES.has(locationLike.hostname) ||
     locationLike.hostname.endsWith(".app.mcpjam.com")
   ) {
     return locationLike.origin;
@@ -45,7 +49,9 @@ export function getRedirectUri(): string {
   }
 
   if (typeof window !== "undefined") {
-    return `${resolveBrowserOAuthRedirectOrigin(window.location)}/oauth/callback`;
+    return `${resolveBrowserOAuthRedirectOrigin(
+      window.location
+    )}/oauth/callback`;
   }
 
   // Default fallback
