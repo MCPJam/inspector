@@ -3,7 +3,7 @@ import { useConvexAuth } from "convex/react";
 import { usePostHog } from "posthog-js/react";
 import { Button } from "@/components/ui/button";
 import { DiscordIcon } from "@/components/ui/discord-icon";
-import { GitHubIcon } from "@/components/ui/github-icon";
+import { GitHubStarButton } from "@/components/ui/github-star-button";
 import {
   ActiveServerSelector,
   ActiveServerSelectorProps,
@@ -34,18 +34,6 @@ export function AuthUpperArea({
         >
           <DiscordIcon className="h-10 w-10" />
           <span className="sr-only">Discord</span>
-        </a>
-      </Button>
-      <Button asChild size="icon" variant="ghost">
-        <a
-          href="https://github.com/MCPJam/inspector"
-          target="_blank"
-          rel="noreferrer"
-          aria-label="Visit the GitHub repository"
-          title="Visit the GitHub repository"
-        >
-          <GitHubIcon className="h-10 w-10" />
-          <span className="sr-only">GitHub</span>
         </a>
       </Button>
     </div>
@@ -95,6 +83,7 @@ export function AuthUpperArea({
             </Button>
           </>
         )}
+        <GitHubStarButton />
       </div>
     </div>
   );
