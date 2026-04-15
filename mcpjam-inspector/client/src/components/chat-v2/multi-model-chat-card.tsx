@@ -542,8 +542,6 @@ export function MultiModelChatCard({
                     hideToolbar
                     fillContent
                     onRevealNavigateToChat={navigateTraceRevealToChat}
-                  displayMode={displayMode}
-                  onDisplayModeChange={onDisplayModeChange}
                     onFullscreenChange={setIsWidgetFullscreen}
                     rawGrowWithContent
                     rawRequestPayloadHistory={{
@@ -570,8 +568,6 @@ export function MultiModelChatCard({
                   fillContent
                   onRevealNavigateToChat={navigateTraceRevealToChat}
                   sendFollowUpMessage={handleSendFollowUp}
-                  displayMode={displayMode}
-                  onDisplayModeChange={onDisplayModeChange}
                   enableFullscreenChatOverlay
                   fullscreenChatPlaceholder={placeholder}
                   fullscreenChatSendBlocked={fullscreenChatSendBlocked}
@@ -607,8 +603,6 @@ export function MultiModelChatCard({
                     hideToolbar
                     fillContent
                     onRevealNavigateToChat={navigateTraceRevealToChat}
-                    displayMode={displayMode}
-                    onDisplayModeChange={onDisplayModeChange}
                     onFullscreenChange={setIsWidgetFullscreen}
                     rawRequestPayloadHistory={{
                       entries: requestPayloadHistory,

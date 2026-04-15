@@ -190,13 +190,8 @@ export function TraceViewer({
   rawRequestPayloadHistory = null,
   rawGrowWithContent = false,
 }: TraceViewerProps) {
-  // Live shells pass send and/or onFullscreenChange; eval/recorded traces keep interactive=false.
-  // When interactive is false, PartSwitch does not forward onRequestFullscreen, so widget fullscreen
-  // cannot notify ancestors to clear transforms that trap position:fixed.
-  const threadInteractive =
-    interactive ||
-    sendFollowUpMessage !== NOOP ||
-    onFullscreenChange != null;
+  // Only live chat shells should opt into the interactive widget path.
+  const threadInteractive = interactive || sendFollowUpMessage !== NOOP;
 
   const [viewMode, setViewMode] = useState<
     "timeline" | "chat" | "raw" | "tools"
