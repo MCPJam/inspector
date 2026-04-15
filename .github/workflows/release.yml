@@ -278,7 +278,10 @@ jobs:
         run: npm ci --legacy-peer-deps
 
       - name: Build SDK
-        if: needs.preflight.outputs.publish_sdk == 'true'
+        if: |
+          needs.preflight.outputs.publish_sdk == 'true' ||
+          needs.preflight.outputs.publish_cli == 'true' ||
+          needs.preflight.outputs.publish_inspector == 'true'
         run: npm run build -w @mcpjam/sdk
 
       - name: Build CLI
