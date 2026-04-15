@@ -73,6 +73,7 @@ WORKDIR /usr/src/app/mcpjam-inspector
 
 COPY package.json /usr/src/app/package.json
 COPY sdk/package.json /usr/src/app/sdk/package.json
+COPY cli/package.json /usr/src/app/cli/package.json
 COPY mcpjam-inspector/package.json ./package.json
 
 COPY --from=deps /usr/src/app/node_modules /usr/src/app/node_modules

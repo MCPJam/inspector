@@ -64,10 +64,13 @@ jobs:
 
       - name: Create or refresh Railway preview environment
         run: |
-          railway environment new "${{ steps.meta.outputs.environment }}" \
+          railway link \
             --project "$RAILWAY_PROJECT_ID" \
+            --environment "$RAILWAY_STAGING_ENVIRONMENT" \
+            --json >/dev/null
+          railway environment new "${{ steps.meta.outputs.environment }}" \
             --duplicate "$RAILWAY_STAGING_ENVIRONMENT" \
-            --yes || true
+            --json >/dev/null || true
 
       - name: Configure staging-safe preview defaults
         run: |
@@ -211,8 +214,11 @@ jobs:
 
       - name: Delete Railway preview environment
         run: |
-          railway environment delete "${RAILWAY_ENV_PREFIX}${{ github.event.pull_request.number }}" \
+          railway link \
             --project "$RAILWAY_PROJECT_ID" \
+            --environment "$RAILWAY_STAGING_ENVIRONMENT" \
+            --json >/dev/null
+          railway environment delete "${RAILWAY_ENV_PREFIX}${{ github.event.pull_request.number }}" \
             --yes || true
 
       - name: Dispatch backend preview cleanup
