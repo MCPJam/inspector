@@ -244,6 +244,10 @@ jobs:
         env:
           BACKEND_PR_NUMBER: ${{ github.event.client_payload.backend_pr_number }}
         run: |
+          if ! [[ "$BACKEND_PR_NUMBER" =~ ^[0-9]+$ ]]; then
+            echo "::error::backend_pr_number is missing or non-numeric: '$BACKEND_PR_NUMBER'"
+            exit 1
+          fi
           echo "environment=${RAILWAY_BACKEND_PR_ENV_PREFIX}${BACKEND_PR_NUMBER}" >> "$GITHUB_OUTPUT"
           echo "branch=${{ github.event.client_payload.branch }}" >> "$GITHUB_OUTPUT"
 
@@ -338,6 +342,13 @@ jobs:
         with:
           github-token: ${{ secrets.BACKEND_PREVIEW_DISPATCH_TOKEN }}
           script: |
+            // Only allow dispatching to the configured backend repo
+            if (process.env.BACKEND_REPO_FULL !== process.env.BACKEND_REPO) {
+              core.setFailed(
+                `backend_repo '${process.env.BACKEND_REPO_FULL}' does not match allowed repo '${process.env.BACKEND_REPO}'`
+              );
+              return;
+            }
             const [owner, repo] = process.env.BACKEND_REPO.split("/");
             const [beOwner, beRepo] = process.env.BACKEND_REPO_FULL.split("/");
             await github.rest.repos.createDispatchEvent({
@@ -367,6 +378,12 @@ jobs:
           script: |
             const marker = process.env.PREVIEW_COMMENT_MARKER;
             const previewUrl = process.env.PREVIEW_URL;
+            if (process.env.BACKEND_REPO_FULL !== process.env.BACKEND_REPO) {
+              core.setFailed(
+                `backend_repo '${process.env.BACKEND_REPO_FULL}' does not match allowed repo '${process.env.BACKEND_REPO}'`
+              );
+              return;
+            }
             const [owner, repo] = (process.env.BACKEND_REPO_FULL || "").split("/");
             const issue_number = Number(process.env.BACKEND_PR_NUMBER);
             if (!owner || !repo || !issue_number) {
@@ -461,6 +478,10 @@ jobs:
         env:
           BACKEND_PR_NUMBER: ${{ github.event.client_payload.backend_pr_number }}
         run: |
+          if ! [[ "$BACKEND_PR_NUMBER" =~ ^[0-9]+$ ]]; then
+            echo "::error::backend_pr_number is missing or non-numeric: '$BACKEND_PR_NUMBER'"
+            exit 1
+          fi
           railway link \
             --project "$RAILWAY_PROJECT_ID" \
             --environment "$RAILWAY_STAGING_ENVIRONMENT" \
@@ -578,6 +599,7 @@ jobs:
           PREVIEW_URL: ${{ steps.preview_domain.outputs.url }}
           BACKEND_MODE: ${{ steps.backend_target.outputs.backend_mode }}
           CROSS_REPO_TOKEN: ${{ secrets.BACKEND_PREVIEW_DISPATCH_TOKEN }}
+          BACKEND_REPO: ${{ vars.MCPJAM_BACKEND_REPO || 'MCPJam/mcpjam-backend' }}
         with:
           github-token: ${{ (github.event.client_payload.comment_issue_owner || '') != '' && secrets.BACKEND_PREVIEW_DISPATCH_TOKEN || github.token }}
           script: |
@@ -595,6 +617,25 @@ jobs:
             if (issueOwner && !process.env.CROSS_REPO_TOKEN) {
               core.setFailed(
                 "Cross-repo comment requested but BACKEND_PREVIEW_DISPATCH_TOKEN is not configured"
+              );
+              return;
+            }
+
+            // Validate cross-repo target matches the allowlisted backend repo
+            if (issueOwner) {
+              const crossRepo = `${issueOwner}/${issueRepo}`;
+              if (crossRepo !== process.env.BACKEND_REPO) {
+                core.setFailed(
+                  `Cross-repo target '${crossRepo}' does not match allowed repo '${process.env.BACKEND_REPO}'`
+                );
+                return;
+              }
+            }
+
+            // Guard against invalid issue number (e.g. sentinel "0" leaking through)
+            if (!issueNumber || issueNumber <= 0) {
+              core.setFailed(
+                `Invalid issue number '${issueNumber}' — cannot post comment`
               );
               return;
             }
