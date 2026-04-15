@@ -203,6 +203,7 @@ export interface UseChatSessionReturn {
     options?: {
       resetReason?: ChatSessionResetReason;
       toolRenderOverrides?: Record<string, ToolRenderOverride>;
+      requestPayloadHistory?: LiveChatTraceRequestPayloadEntry[];
     },
   ) => void;
   loadChatSession: (
@@ -321,6 +322,7 @@ interface PendingSessionHydration {
   sessionId: string;
   messages: UIMessage[];
   resumedVersion: number | null;
+  requestPayloadHistory?: LiveChatTraceRequestPayloadEntry[];
   toolRenderOverrides?: Record<
     string,
     import("@/components/chat-v2/thread/tool-render-overrides").ToolRenderOverride
@@ -341,6 +343,38 @@ function createEmptyLiveTraceState(): LiveTraceAccumulatorState {
     activeTurnId: null,
     activeTurnHasSnapshot: false,
     anySnapshotSeen: false,
+  };
+}
+
+function createLiveTraceStateFromRequestPayloadHistory(
+  requestPayloadHistory?: LiveChatTraceRequestPayloadEntry[],
+): LiveTraceAccumulatorState {
+  const base = createEmptyLiveTraceState();
+  if (!Array.isArray(requestPayloadHistory) || requestPayloadHistory.length === 0) {
+    return base;
+  }
+
+  return {
+    ...base,
+    requestPayloadHistory: requestPayloadHistory.map((entry) => ({
+      ...entry,
+      payload: {
+        ...entry.payload,
+        tools: Object.fromEntries(
+          Object.entries(entry.payload.tools ?? {}).map(([toolName, tool]) => [
+            toolName,
+            {
+              ...tool,
+              inputSchema:
+                tool.inputSchema && typeof tool.inputSchema === "object"
+                  ? { ...tool.inputSchema }
+                  : tool.inputSchema,
+            },
+          ]),
+        ),
+        messages: [...entry.payload.messages],
+      },
+    })),
   };
 }
 
@@ -799,6 +833,10 @@ export function useChatSession({
   const pendingSessionHydrationRef = useRef<PendingSessionHydration | null>(
     null,
   );
+  const nextLiveTraceSeedRef = useRef<{
+    sessionId: string;
+    requestPayloadHistory: LiveChatTraceRequestPayloadEntry[];
+  } | null>(null);
   const selectedServersSignature = useMemo(
     () => selectedServers.join("\u0000"),
     [selectedServers],
@@ -847,6 +885,7 @@ export function useChatSession({
   );
   const clearPendingSessionHydration = useCallback(() => {
     const pendingHydration = pendingSessionHydrationRef.current;
+    nextLiveTraceSeedRef.current = null;
     if (!pendingHydration) {
       return;
     }
@@ -1135,11 +1174,20 @@ export function useChatSession({
         setPersistedSnapshotToolCallIds(
           hydration.persistedSnapshotToolCallIds ?? [],
         );
+        setLiveTraceState(
+          createLiveTraceStateFromRequestPayloadHistory(
+            hydration.requestPayloadHistory,
+          ),
+        );
         setHydrationTick((t) => t + 1);
         return Promise.resolve();
       }
 
       return new Promise<void>((resolve) => {
+        nextLiveTraceSeedRef.current = {
+          sessionId: hydration.sessionId,
+          requestPayloadHistory: hydration.requestPayloadHistory ?? [],
+        };
         pendingSessionHydrationRef.current = {
           ...hydration,
           resolve,
@@ -1147,7 +1195,12 @@ export function useChatSession({
         setChatSessionId(hydration.sessionId);
       });
     },
-    [clearPendingSessionHydration, baseSetMessages, syncResumedVersion],
+    [
+      clearPendingSessionHydration,
+      baseSetMessages,
+      syncResumedVersion,
+      syncRestoredToolRenderOverrides,
+    ],
   );
 
   const [traceTranscriptFromUi, setTraceTranscriptFromUi] = useState<
@@ -1236,6 +1289,17 @@ export function useChatSession({
     livePreviewSpanCount > 0 || (liveTraceEnvelope?.spans?.length ?? 0) > 0;
 
   useEffect(() => {
+    const pendingSeed = nextLiveTraceSeedRef.current;
+    if (pendingSeed?.sessionId === chatSessionId) {
+      nextLiveTraceSeedRef.current = null;
+      setLiveTraceState(
+        createLiveTraceStateFromRequestPayloadHistory(
+          pendingSeed.requestPayloadHistory,
+        ),
+      );
+      return;
+    }
+
     setLiveTraceState(createEmptyLiveTraceState());
   }, [chatSessionId]);
 
@@ -1265,10 +1329,15 @@ export function useChatSession({
         ) {
           const nextSessionId = generateId();
           clearPendingSessionHydration();
+          nextLiveTraceSeedRef.current = {
+            sessionId: nextSessionId,
+            requestPayloadHistory: [],
+          };
           pendingSessionHydrationRef.current = {
             sessionId: nextSessionId,
             messages: nextMessages,
             resumedVersion: null,
+            requestPayloadHistory: [],
             persistedSnapshotToolCallIds: [],
           };
           queueMicrotask(() => {
@@ -1340,6 +1409,7 @@ export function useChatSession({
   const resetChat = useCallback(() => {
     skipNextForkDetectionRef.current = true;
     clearPendingSessionHydration();
+    nextLiveTraceSeedRef.current = null;
     setChatSessionId(generateId());
     setMessages([]);
     setPersistedSnapshotToolCallIds([]);
@@ -1359,6 +1429,7 @@ export function useChatSession({
       options?: {
         resetReason?: ChatSessionResetReason;
         toolRenderOverrides?: Record<string, ToolRenderOverride>;
+        requestPayloadHistory?: LiveChatTraceRequestPayloadEntry[];
       },
     ) => {
       skipNextForkDetectionRef.current = true;
@@ -1366,6 +1437,7 @@ export function useChatSession({
         sessionId: generateId(),
         messages,
         resumedVersion: null,
+        requestPayloadHistory: options?.requestPayloadHistory,
         toolRenderOverrides: options?.toolRenderOverrides,
         persistedSnapshotToolCallIds: [],
       });

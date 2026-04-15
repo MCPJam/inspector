@@ -86,6 +86,7 @@ import type {
 } from "./types";
 import type { EvalExportDraftInput } from "@/lib/evals/eval-export";
 import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
+import { buildEvalRequestPayloadHistory } from "@/lib/eval-request-payload-history";
 import { ProviderLogo } from "@/components/chat-v2/chat-input/model/provider-logo";
 import {
   reduceEvalStreamEvent,
@@ -2389,7 +2390,13 @@ function RunColumn({
   onTabChange: (tab: RunColumnTab) => void;
   onRetry: () => void;
 }) {
-  const { toolsMetadata, toolServerMap, connectedServerIds } =
+  const {
+    toolsMetadata,
+    serializedTools,
+    toolServerMap,
+    connectedServerIds,
+    isReady: isToolContextReady,
+  } =
     useEvalTraceToolContext({
       serverNames,
       workspaceId,
@@ -2465,14 +2472,41 @@ function RunColumn({
     onTraceLoaded: onStreamingTraceLoaded,
     enabled: !!record.iteration,
   });
-  const continueInChatPayload = useMemo(() => {
-    if (!onContinueInChat) {
-      return null;
-    }
-
-    const sourceTrace = (persistedTraceBlob ??
-      streamingTraceEnvelope) as Record<string, unknown> | null;
-
+  const sourceTrace = useMemo(
+    () =>
+      (persistedTraceBlob ?? streamingTraceEnvelope) as {
+        messages?: unknown[];
+        spans?: Array<{
+          id: string;
+          category: "step" | "llm" | "tool" | "error";
+          startMs: number;
+          endMs: number;
+          promptIndex?: number;
+          stepIndex?: number;
+          messageStartIndex?: number;
+          messageEndIndex?: number;
+        }>;
+      } | null,
+    [persistedTraceBlob, streamingTraceEnvelope],
+  );
+  const advancedConfig = useMemo(
+    () =>
+      record.iteration?.testCaseSnapshot?.advancedConfig ??
+      testCase?.advancedConfig,
+    [
+      record.iteration?.testCaseSnapshot?.advancedConfig,
+      testCase?.advancedConfig,
+    ],
+  );
+  const continueInChatSystemPrompt =
+    typeof advancedConfig?.system === "string"
+      ? advancedConfig.system
+      : undefined;
+  const continueInChatTemperature =
+    typeof advancedConfig?.temperature === "number"
+      ? advancedConfig.temperature
+      : undefined;
+  const continueInChatMessages = useMemo(() => {
     if (!sourceTrace) {
       return null;
     }
@@ -2484,40 +2518,63 @@ function RunColumn({
       connectedServerIds,
     });
 
-    if (adaptedTrace.messages.length === 0) {
-      return null;
+    return adaptedTrace.messages.length > 0 ? adaptedTrace.messages : null;
+  }, [connectedServerIds, sourceTrace, toolServerMap, toolsMetadata]);
+  const canContinueInChat = useMemo(() => {
+    if (!onContinueInChat || !sourceTrace || !continueInChatMessages) {
+      return false;
     }
 
-    const advancedConfig =
-      record.iteration?.testCaseSnapshot?.advancedConfig ??
-      testCase?.advancedConfig;
-    const systemPrompt =
-      typeof advancedConfig?.system === "string"
-        ? advancedConfig.system
-        : undefined;
-    const temperature =
-      typeof advancedConfig?.temperature === "number"
-        ? advancedConfig.temperature
-        : undefined;
+    if (!isToolContextReady) {
+      return false;
+    }
 
-    return {
-      messages: adaptedTrace.messages,
+    return (
+      buildEvalRequestPayloadHistory({
+        trace: sourceTrace,
+        systemPrompt: continueInChatSystemPrompt,
+        tools: serializedTools,
+      }).length > 0
+    );
+  }, [
+    continueInChatMessages,
+    continueInChatSystemPrompt,
+    isToolContextReady,
+    onContinueInChat,
+    serializedTools,
+    sourceTrace,
+  ]);
+  const handleContinueInChat = useCallback(() => {
+    if (!onContinueInChat || !sourceTrace || !continueInChatMessages) {
+      return;
+    }
+
+    const requestPayloadHistory = buildEvalRequestPayloadHistory({
+      trace: sourceTrace,
+      systemPrompt: continueInChatSystemPrompt,
+      tools: serializedTools,
+    });
+    if (requestPayloadHistory.length === 0) {
+      return;
+    }
+
+    onContinueInChat({
+      messages: continueInChatMessages,
       serverNames,
       modelId: record.model,
-      systemPrompt,
-      temperature,
-    } satisfies Omit<EvalChatHandoff, "id">;
+      systemPrompt: continueInChatSystemPrompt,
+      temperature: continueInChatTemperature,
+      requestPayloadHistory,
+    });
   }, [
-    connectedServerIds,
+    continueInChatMessages,
+    continueInChatSystemPrompt,
+    continueInChatTemperature,
     onContinueInChat,
-    persistedTraceBlob,
-    record.iteration?.testCaseSnapshot?.advancedConfig,
     record.model,
+    serializedTools,
     serverNames,
-    streamingTraceEnvelope,
-    testCase?.advancedConfig,
-    toolServerMap,
-    toolsMetadata,
+    sourceTrace,
   ]);
   const hasStreamingTrace = streamingTraceEnvelope != null;
   const isWaitingForFirstTimelineSnapshot =
@@ -2730,11 +2787,8 @@ function RunColumn({
                 size="sm"
                 variant="outline"
                 className="h-7 shrink-0 px-2 text-[11px]"
-                onClick={() =>
-                  continueInChatPayload &&
-                  onContinueInChat(continueInChatPayload)
-                }
-                disabled={!continueInChatPayload}
+                onClick={handleContinueInChat}
+                disabled={!canContinueInChat}
               >
                 Continue in Chat
               </Button>

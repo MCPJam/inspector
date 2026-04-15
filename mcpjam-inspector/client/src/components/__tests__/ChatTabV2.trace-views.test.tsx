@@ -180,14 +180,27 @@ vi.mock("@/components/evals/trace-viewer", () => ({
   TraceViewer: ({
     forcedViewMode,
     trace,
+    rawRequestPayloadHistory,
   }: {
     forcedViewMode?: "timeline" | "raw" | "chat";
     trace?: unknown;
+    rawRequestPayloadHistory?: {
+      entries: unknown[];
+      hasUiMessages: boolean;
+    } | null;
   }) => (
     <div
       data-testid="trace-viewer"
       data-mode={forcedViewMode ?? "timeline"}
       data-trace={JSON.stringify(trace ?? null)}
+      data-raw-history-length={String(
+        rawRequestPayloadHistory?.entries.length ?? 0,
+      )}
+      data-raw-has-ui-messages={
+        rawRequestPayloadHistory == null
+          ? "none"
+          : String(rawRequestPayloadHistory.hasUiMessages)
+      }
     />
   ),
 }));
@@ -324,6 +337,9 @@ describe("ChatTabV2 trace views", () => {
       hasLiveTimelineContent: false,
       traceViewsSupported: false,
       isStreaming: false,
+      startChatWithMessages: vi.fn(),
+      setSystemPrompt: vi.fn(),
+      setTemperature: vi.fn(),
     });
   });
 
@@ -370,6 +386,136 @@ describe("ChatTabV2 trace views", () => {
     expect(within(pending).getByTestId("trace-raw-view")).toBeInTheDocument();
     expect(screen.getByText(/Sample raw request/i)).toBeInTheDocument();
     expect(screen.getByTestId("chat-input")).toBeInTheDocument();
+  });
+
+  it("passes eval handoff raw history into the seeded chat session", async () => {
+    const handoff = {
+      id: "eval-handoff-1",
+      messages: [
+        {
+          id: "seed-user",
+          role: "user",
+          parts: [{ type: "text", text: "seeded prompt" }],
+        },
+        {
+          id: "seed-assistant",
+          role: "assistant",
+          parts: [{ type: "text", text: "seeded reply" }],
+        },
+      ],
+      serverNames: ["server-1"],
+      systemPrompt: "Be concise.",
+      temperature: 0.2,
+      requestPayloadHistory: [
+        {
+          turnId: "eval-turn-1",
+          promptIndex: 0,
+          stepIndex: 0,
+          payload: {
+            system: "Be concise.",
+            tools: {},
+            messages: [{ role: "user", content: "seeded prompt" }],
+          },
+        },
+      ],
+    };
+
+    render(
+      <ChatTabV2
+        {...defaultProps}
+        enableTraceViews={true}
+        evalChatHandoff={handoff}
+        onEvalChatHandoffConsumed={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(mockUseChatSession.startChatWithMessages).toHaveBeenCalledWith(
+        handoff.messages,
+        {
+          requestPayloadHistory: handoff.requestPayloadHistory,
+        },
+      );
+    });
+
+    expect(mockUseChatSession.setSystemPrompt).toHaveBeenCalledWith(
+      "Be concise.",
+    );
+    expect(mockUseChatSession.setTemperature).toHaveBeenCalledWith(0.2);
+  });
+
+  it("shows raw JSON immediately after an eval handoff seeds request payload history", async () => {
+    mockUseChatSession.traceViewsSupported = true;
+    mockUseChatSession.startChatWithMessages = vi.fn(
+      (messages: unknown[], options?: { requestPayloadHistory?: unknown[] }) => {
+        mockUseChatSession.messages = messages;
+        mockUseChatSession.requestPayloadHistory =
+          options?.requestPayloadHistory ?? [];
+      },
+    );
+
+    const handoff = {
+      id: "eval-handoff-raw-1",
+      messages: [
+        {
+          id: "seed-user",
+          role: "user",
+          parts: [{ type: "text", text: "seeded prompt" }],
+        },
+        {
+          id: "seed-assistant",
+          role: "assistant",
+          parts: [{ type: "text", text: "seeded reply" }],
+        },
+      ],
+      serverNames: ["server-1"],
+      requestPayloadHistory: [
+        {
+          turnId: "eval-turn-1",
+          promptIndex: 0,
+          stepIndex: 0,
+          payload: {
+            system: "Be concise.",
+            tools: {},
+            messages: [{ role: "user", content: "seeded prompt" }],
+          },
+        },
+      ],
+    };
+
+    const view = render(
+      <ChatTabV2
+        {...defaultProps}
+        enableTraceViews={true}
+        evalChatHandoff={handoff}
+        onEvalChatHandoffConsumed={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(mockUseChatSession.startChatWithMessages).toHaveBeenCalled();
+    });
+
+    view.rerender(
+      <ChatTabV2
+        {...defaultProps}
+        enableTraceViews={true}
+        evalChatHandoff={handoff}
+        onEvalChatHandoffConsumed={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Raw" }));
+
+    expect(screen.queryByTestId("chat-live-raw-pending")).not.toBeInTheDocument();
+    expect(screen.getByTestId("trace-viewer")).toHaveAttribute(
+      "data-raw-history-length",
+      "1",
+    );
+    expect(screen.getByTestId("trace-viewer")).toHaveAttribute(
+      "data-raw-has-ui-messages",
+      "true",
+    );
   });
 
   it("shows the Runs-style timeline empty state before the first streamed snapshot while keeping the thread mounted", () => {

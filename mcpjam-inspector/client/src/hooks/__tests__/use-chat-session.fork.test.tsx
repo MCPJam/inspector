@@ -352,7 +352,20 @@ describe("useChatSession fork preservation", () => {
           role: "assistant",
           parts: [{ type: "text", text: "seeded reply" }],
         } as any,
-      ]);
+      ], {
+        requestPayloadHistory: [
+          {
+            turnId: "eval-turn-1",
+            promptIndex: 0,
+            stepIndex: 0,
+            payload: {
+              system: "Be concise.",
+              tools: {},
+              messages: [{ role: "user", content: "seeded prompt" }],
+            },
+          },
+        ],
+      });
     });
 
     await waitFor(() => {
@@ -369,6 +382,18 @@ describe("useChatSession fork preservation", () => {
         id: "seed-assistant",
         role: "assistant",
         parts: [{ type: "text", text: "seeded reply" }],
+      },
+    ]);
+    expect(result.current.requestPayloadHistory).toEqual([
+      {
+        turnId: "eval-turn-1",
+        promptIndex: 0,
+        stepIndex: 0,
+        payload: {
+          system: "Be concise.",
+          tools: {},
+          messages: [{ role: "user", content: "seeded prompt" }],
+        },
       },
     ]);
   });

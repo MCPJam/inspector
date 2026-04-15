@@ -101,6 +101,17 @@ describe("useEvalTraceToolContext", () => {
     });
 
     expect(mockState.listTools).toHaveBeenCalledWith({ serverId: "alpha" });
+    expect(result.current.serializedTools).toEqual({
+      create_view: {
+        name: "create_view",
+        description: undefined,
+        inputSchema: {
+          type: "object",
+          properties: {},
+          additionalProperties: false,
+        },
+      },
+    });
     expect(result.current.toolServerMap).toEqual({ create_view: "alpha" });
     expect(result.current.connectedServerIds).toContain("alpha");
   });

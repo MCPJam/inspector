@@ -1260,7 +1260,9 @@ export function ChatTabV2({
       setSelectedModelIds([String(selectedModel.id)]);
     }
 
-    startChatWithMessages(evalChatHandoff.messages);
+    startChatWithMessages(evalChatHandoff.messages, {
+      requestPayloadHistory: evalChatHandoff.requestPayloadHistory,
+    });
     appliedEvalChatHandoffIdRef.current = evalChatHandoff.id;
 
     if (typeof evalChatHandoff.systemPrompt === "string") {

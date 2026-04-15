@@ -1,21 +1,24 @@
 import { useEffect, useMemo, useState } from "react";
 import { useConvexAuth } from "convex/react";
-import {
-  listTools,
-  type ListToolsResultWithMetadata,
-  type ToolServerMap,
-} from "@/lib/apis/mcp-tools-api";
+import { listTools, type ToolServerMap } from "@/lib/apis/mcp-tools-api";
 import { HOSTED_MODE } from "@/lib/config";
 import { CLIENT_CONFIG_SYNC_PENDING_ERROR_MESSAGE } from "@/lib/client-config";
 import { buildOAuthTokensByServerId } from "@/lib/oauth/oauth-tokens";
 import { useWorkspaceServers } from "@/hooks/useViews";
 import { useSharedAppState } from "@/state/app-state-context";
 import { useClientConfigStore } from "@/stores/client-config-store";
+import type { SerializedModelRequestTool } from "@/shared/model-request-payload";
 
 const EMPTY_SERVER_NAMES: string[] = [];
+const DEFAULT_INPUT_SCHEMA: Record<string, unknown> = {
+  type: "object",
+  properties: {},
+  additionalProperties: false,
+};
 
 type EvalTraceToolContextState = {
   toolsMetadata: Record<string, Record<string, unknown>>;
+  serializedTools: Record<string, SerializedModelRequestTool>;
   toolServerMap: ToolServerMap;
   connectedServerIds: string[];
   hostedSelectedServerIds: string[];
@@ -30,6 +33,7 @@ function buildEmptyState(
 ): EvalTraceToolContextState {
   return {
     toolsMetadata: {},
+    serializedTools: {},
     toolServerMap: {},
     connectedServerIds: [],
     hostedSelectedServerIds: [],
@@ -61,6 +65,14 @@ function isTransientHostedToolContextError(error: unknown): boolean {
     withMessage.message.startsWith("Hosted server not found for ") ||
     /\b(401|403)\b|unauthorized|forbidden/i.test(withMessage.message)
   );
+}
+
+function normalizeToolInputSchema(value: unknown): Record<string, unknown> {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+
+  return DEFAULT_INPUT_SCHEMA;
 }
 
 export function useEvalTraceToolContext({
@@ -143,6 +155,7 @@ export function useEvalTraceToolContext({
       setState((previous) =>
         buildEmptyState({
           toolsMetadata: previous.toolsMetadata,
+          serializedTools: previous.serializedTools,
           toolServerMap: previous.toolServerMap,
           connectedServerIds: previous.connectedServerIds,
           hostedSelectedServerIds,
@@ -158,6 +171,7 @@ export function useEvalTraceToolContext({
     setState((previous) =>
       buildEmptyState({
         toolsMetadata: previous.toolsMetadata,
+        serializedTools: previous.serializedTools,
         toolServerMap: previous.toolServerMap,
         connectedServerIds: previous.connectedServerIds,
         hostedSelectedServerIds,
@@ -180,6 +194,8 @@ export function useEvalTraceToolContext({
         }
 
         const nextToolsMetadata: Record<string, Record<string, unknown>> = {};
+        const nextSerializedTools: Record<string, SerializedModelRequestTool> =
+          {};
         const nextToolServerMap: ToolServerMap = {};
         const nextConnectedServerIds = new Set<string>();
         const hostedServerIdByName = new Map(
@@ -202,6 +218,16 @@ export function useEvalTraceToolContext({
 
           for (const tool of result.tools ?? []) {
             nextToolServerMap[tool.name] = resolvedServerId;
+            nextSerializedTools[tool.name] = {
+              name: tool.name,
+              description:
+                typeof tool.description === "string"
+                  ? tool.description
+                  : undefined,
+              inputSchema: normalizeToolInputSchema(
+                (tool as { inputSchema?: unknown }).inputSchema,
+              ),
+            };
           }
 
           if (result.toolsMetadata) {
@@ -216,6 +242,7 @@ export function useEvalTraceToolContext({
         setState(
           buildEmptyState({
             toolsMetadata: nextToolsMetadata,
+            serializedTools: nextSerializedTools,
             toolServerMap: nextToolServerMap,
             connectedServerIds: Array.from(nextConnectedServerIds),
             hostedSelectedServerIds,
@@ -232,6 +259,7 @@ export function useEvalTraceToolContext({
           setState((previous) =>
             buildEmptyState({
               toolsMetadata: previous.toolsMetadata,
+              serializedTools: previous.serializedTools,
               toolServerMap: previous.toolServerMap,
               connectedServerIds: previous.connectedServerIds,
               hostedSelectedServerIds,
