@@ -1290,7 +1290,7 @@ export function TestTemplateEditor({
       ...Object.fromEntries(
         runModelValues.map((modelValue) => [
           modelValue,
-          "tools" as RunColumnTab,
+          "chat" as RunColumnTab,
         ]),
       ),
     }));
@@ -2407,12 +2407,6 @@ function RunColumn({
   const showToolsTab =
     expectedToolCalls.length > 0 || actualToolCalls.length > 0;
 
-  useEffect(() => {
-    if (!showToolsTab && activeTab === "tools") {
-      onTabChange("timeline");
-    }
-  }, [showToolsTab, activeTab, onTabChange]);
-
   const effectiveActiveTab: RunColumnTab =
     activeTab === "tools" && !showToolsTab ? "timeline" : activeTab;
 
@@ -2605,11 +2599,11 @@ function RunColumn({
               {record.modelLabel}
             </div>
             {record.result === "passed" ? (
-              <span className="inline-flex shrink-0 items-center rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider bg-emerald-500/15 text-emerald-700 dark:bg-emerald-400/20 dark:text-emerald-300">
+              <span className="inline-flex shrink-0 items-center rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider bg-emerald-500/15 text-emerald-700 dark:bg-emerald-400/20 dark:text-emerald-300" aria-label={statusLabel}>
                 Pass
               </span>
             ) : record.result === "failed" || record.status === "failed" ? (
-              <span className="inline-flex shrink-0 items-center rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider bg-rose-500/15 text-rose-700 dark:bg-rose-400/20 dark:text-rose-300">
+              <span className="inline-flex shrink-0 items-center rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider bg-rose-500/15 text-rose-700 dark:bg-rose-400/20 dark:text-rose-300" aria-label={statusLabel}>
                 Fail
               </span>
             ) : null}
