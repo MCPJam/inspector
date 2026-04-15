@@ -2,6 +2,7 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useServerState } from "../use-server-state";
 import { writeHostedOAuthPendingMarker } from "@/lib/hosted-oauth-callback";
+import { getDefaultClientCapabilities } from "@mcpjam/sdk/browser";
 
 const {
   mockHandleOAuthCallback,
@@ -85,7 +86,16 @@ vi.mock("../useWorkspaces", () => ({
   useServerMutations: mockUseServerMutations,
 }));
 
-function renderHostedServerState(dispatch = vi.fn()) {
+function renderHostedServerState(
+  dispatch = vi.fn(),
+  options?: {
+    workspaceClientConfig?: {
+      version: 1;
+      clientCapabilities: Record<string, unknown>;
+      hostContext: Record<string, unknown>;
+    };
+  },
+) {
   return renderHook(() =>
     useServerState({
       appState: {
@@ -94,6 +104,7 @@ function renderHostedServerState(dispatch = vi.fn()) {
           ws_1: {
             id: "ws_1",
             name: "Workspace",
+            clientConfig: options?.workspaceClientConfig,
             servers: {
               asana: {
                 name: "asana",
@@ -140,6 +151,7 @@ function renderHostedServerState(dispatch = vi.fn()) {
         ws_1: {
           id: "ws_1",
           name: "Workspace",
+          clientConfig: options?.workspaceClientConfig,
           servers: {
             asana: {
               name: "asana",
@@ -305,8 +317,20 @@ describe("useServerState hosted OAuth callback guards", () => {
   });
 
   it("reuses hosted stored OAuth credentials on reconnect before falling back to interactive OAuth", async () => {
+    const workspaceClientConfig = {
+      version: 1 as const,
+      clientCapabilities: {
+        ...(getDefaultClientCapabilities() as Record<string, unknown>),
+        experimental: {
+          workspaceProfile: {},
+        },
+      },
+      hostContext: {},
+    };
     const dispatch = vi.fn();
-    const { result } = renderHostedServerState(dispatch);
+    const { result } = renderHostedServerState(dispatch, {
+      workspaceClientConfig,
+    });
 
     await act(async () => {
       await result.current.handleReconnect("asana");
@@ -318,6 +342,11 @@ describe("useServerState hosted OAuth callback guards", () => {
         expect.objectContaining({
           type: "http",
           url: "https://mcp.asana.com/sse",
+          clientCapabilities: expect.objectContaining({
+            experimental: {
+              workspaceProfile: {},
+            },
+          }),
         }),
       );
     });
@@ -329,6 +358,9 @@ describe("useServerState hosted OAuth callback guards", () => {
         name: "asana",
         useOAuth: true,
         tokens: undefined,
+        config: expect.not.objectContaining({
+          clientCapabilities: expect.anything(),
+        }),
       }),
     );
   });

@@ -1682,7 +1682,7 @@ export function useServerState({
             dispatch({
               type: "CONNECT_SUCCESS",
               name: serverName,
-              config: hostedReconnectConfig,
+              config: server.config,
               tokens: undefined,
               useOAuth: true,
             });
