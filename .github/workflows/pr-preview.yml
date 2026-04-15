@@ -97,25 +97,6 @@ jobs:
             VITE_CONVEX_URL="$STAGING_VITE_CONVEX_URL" \
             CONVEX_HTTP_URL="$STAGING_CONVEX_HTTP_URL"
 
-      - name: Dispatch backend preview request
-        if: steps.backend_branch.outputs.exists == 'true'
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ secrets.BACKEND_PREVIEW_DISPATCH_TOKEN }}
-          script: |
-            const [owner, repo] = process.env.BACKEND_REPO.split("/");
-            await github.rest.repos.createDispatchEvent({
-              owner,
-              repo,
-              event_type: "inspector_preview_requested",
-              client_payload: {
-                branch: "${{ steps.meta.outputs.branch }}",
-                inspector_repo: context.repo.owner + "/" + context.repo.repo,
-                inspector_pr_number: context.payload.pull_request.number,
-                inspector_environment: "${{ steps.meta.outputs.environment }}",
-              },
-            });
-
       - name: Deploy preview to Railway
         run: |
           railway up \
@@ -164,6 +145,26 @@ jobs:
           workos config cors add "${{ steps.preview_domain.outputs.url }}" \
             --api-key "$STAGING_WORKOS_API_KEY" \
             --json || true
+
+      - name: Dispatch backend preview request
+        if: steps.backend_branch.outputs.exists == 'true' && steps.preview_domain.outputs.url != ''
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.BACKEND_PREVIEW_DISPATCH_TOKEN }}
+          script: |
+            const [owner, repo] = process.env.BACKEND_REPO.split("/");
+            await github.rest.repos.createDispatchEvent({
+              owner,
+              repo,
+              event_type: "inspector_preview_requested",
+              client_payload: {
+                branch: "${{ steps.meta.outputs.branch }}",
+                inspector_repo: context.repo.owner + "/" + context.repo.repo,
+                inspector_pr_number: context.payload.pull_request.number,
+                inspector_environment: "${{ steps.meta.outputs.environment }}",
+                preview_url: "${{ steps.preview_domain.outputs.url }}",
+              },
+            });
 
       - name: Upsert preview comment
         uses: actions/github-script@v7
