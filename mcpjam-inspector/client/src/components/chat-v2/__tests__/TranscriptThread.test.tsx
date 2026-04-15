@@ -276,6 +276,17 @@ describe("TranscriptThread", () => {
     expect(wrapper?.style.containIntrinsicSize).toBe("");
   });
 
+  it("disables content-visibility containment while a pip widget is active", () => {
+    render(<TranscriptThread {...defaultProps} pipWidgetId="tool-call-1" />);
+
+    const wrapper = document.querySelector(
+      '[data-message-id="assistant-1"]',
+    ) as HTMLElement | null;
+    expect(wrapper).not.toBeNull();
+    expect(wrapper?.style.contentVisibility).toBe("");
+    expect(wrapper?.style.containIntrinsicSize).toBe("");
+  });
+
   it("uses the resolved Claude variant to attach an animated footer to the latest assistant message", () => {
     render(
       <TranscriptThread
