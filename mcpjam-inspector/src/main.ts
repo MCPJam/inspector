@@ -80,6 +80,42 @@ function isHostedAuthNavigation(url: string): boolean {
   }
 }
 
+function createElectronHostedAuthNavigationUrl(url: string): string {
+  try {
+    const urlObj = new URL(url);
+    const rawState = urlObj.searchParams.get("state");
+    let parsedState: unknown = undefined;
+
+    if (rawState) {
+      try {
+        parsedState = JSON.parse(rawState);
+      } catch {
+        parsedState = rawState;
+      }
+    }
+
+    const nextState =
+      parsedState && typeof parsedState === "object" && !Array.isArray(parsedState)
+        ? {
+            ...(parsedState as Record<string, unknown>),
+            __mcpjam_electron_hosted_auth: true,
+          }
+        : parsedState === undefined
+          ? {
+              __mcpjam_electron_hosted_auth: true,
+            }
+          : {
+              __mcpjam_electron_hosted_auth: true,
+              originalState: parsedState,
+            };
+
+    urlObj.searchParams.set("state", JSON.stringify(nextState));
+    return urlObj.toString();
+  } catch {
+    return url;
+  }
+}
+
 function buildRendererCallbackUrl(
   callbackUrl: URL,
   baseUrl: string,
@@ -166,7 +202,7 @@ function createMainWindow(serverUrl: string): BrowserWindow {
 
     log.info("Opening hosted auth in system browser");
     event.preventDefault();
-    void shell.openExternal(url);
+    void shell.openExternal(createElectronHostedAuthNavigationUrl(url));
   };
 
   window.webContents.on(

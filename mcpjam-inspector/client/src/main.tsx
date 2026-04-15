@@ -10,7 +10,12 @@ import { ConvexProviderWithAuthKit } from "@convex-dev/workos";
 import { initSentry } from "./lib/sentry.js";
 import { IframeRouterError } from "./components/IframeRouterError.jsx";
 import { initializeSessionToken } from "./lib/session-token.js";
+import OAuthDesktopReturnNotice from "./components/oauth/OAuthDesktopReturnNotice";
 import { HOSTED_MODE } from "./lib/config";
+import {
+  buildElectronHostedAuthCallbackUrl,
+  resolveWorkosRedirectUri,
+} from "./lib/electron-hosted-auth";
 
 // Initialize Sentry before React mounts
 initSentry();
@@ -55,16 +60,16 @@ if (isInIframe) {
     const envRedirect =
       (import.meta.env.VITE_WORKOS_REDIRECT_URI as string) || undefined;
     if (typeof window === "undefined") return envRedirect ?? "/callback";
-    if ((window as any)?.isElectron) {
-      return envRedirect ?? "mcpjam://oauth/callback";
-    }
-    const isBrowserHttp =
-      window.location.protocol === "http:" ||
-      window.location.protocol === "https:";
-    if (isBrowserHttp) return `${window.location.origin}/callback`;
-    if (envRedirect) return envRedirect;
-    return `${window.location.origin}/callback`;
+    return resolveWorkosRedirectUri({
+      envRedirect,
+      isElectron: window.isElectron === true,
+      location: window.location,
+    });
   })();
+  const electronHostedAuthCallbackUrl =
+    typeof window === "undefined" || window.isElectron
+      ? null
+      : buildElectronHostedAuthCallbackUrl(window.location);
 
   // Warn if critical env vars are missing
   if (!convexUrl) {
@@ -120,6 +125,17 @@ if (isInIframe) {
   // Async bootstrap to initialize session token before rendering
   async function bootstrap() {
     const root = createRoot(document.getElementById("root")!);
+
+    if (electronHostedAuthCallbackUrl) {
+      root.render(
+        <StrictMode>
+          <OAuthDesktopReturnNotice
+            returnToElectronUrl={electronHostedAuthCallbackUrl}
+          />
+        </StrictMode>,
+      );
+      return;
+    }
 
     try {
       if (!HOSTED_MODE) {

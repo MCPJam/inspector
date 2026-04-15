@@ -90,6 +90,7 @@ import { SidebarUser } from "../sidebar-user";
 
 describe("SidebarUser - organization navigation", () => {
   beforeEach(() => {
+    signOutMock.mockClear();
     window.location.hash = "";
   });
 
@@ -134,5 +135,15 @@ describe("SidebarUser - organization navigation", () => {
     expect(screen.getByText("Admin Org")).toBeDefined();
     expect(screen.getByText("Member Org")).toBeDefined();
     expect(screen.getByText("Owner Org")).toBeDefined();
+  });
+
+  it("returns logout to the app origin instead of the callback route", () => {
+    render(<SidebarUser />);
+
+    fireEvent.click(screen.getByText("Log out"));
+
+    expect(signOutMock).toHaveBeenCalledWith({
+      returnTo: window.location.origin,
+    });
   });
 });
