@@ -44,6 +44,7 @@ vi.mock("@/state/oauth-orchestrator", () => ({
 }));
 
 vi.mock("@/lib/oauth/mcp-oauth", () => ({
+  completeHostedOAuthCallback: mockHandleOAuthCallback,
   handleOAuthCallback: mockHandleOAuthCallback,
   getStoredTokens: vi.fn(),
   clearOAuthData: vi.fn(),
@@ -128,5 +129,63 @@ describe("useServerState hosted OAuth callback guards", () => {
       expect(mockHandleOAuthCallback).not.toHaveBeenCalled();
     });
     expect(toastSuccess).not.toHaveBeenCalled();
+  });
+
+  it("completes hosted workspace OAuth callbacks through the backend path", async () => {
+    writeHostedOAuthPendingMarker({
+      surface: "workspace",
+      workspaceId: "ws_1",
+      serverId: "srv_asana",
+      serverName: "asana",
+      serverUrl: "https://mcp.asana.com/sse",
+      accessScope: "workspace_member",
+      returnHash: "#servers",
+    });
+    localStorage.setItem("mcp-oauth-pending", "asana");
+    localStorage.setItem("mcp-serverUrl-asana", "https://mcp.asana.com/sse");
+    mockHandleOAuthCallback.mockResolvedValue({
+      success: true,
+      serverName: "asana",
+      serverConfig: {
+        url: "https://mcp.asana.com/sse",
+        requestInit: { headers: {} },
+      },
+    });
+
+    renderHook(() =>
+      useServerState({
+        appState: {
+          servers: {},
+          selectedMultipleServers: [],
+        } as any,
+        dispatch: vi.fn(),
+        isLoading: false,
+        isAuthenticated: true,
+        isAuthLoading: false,
+        isLoadingWorkspaces: false,
+        useLocalFallback: false,
+        effectiveWorkspaces: {} as any,
+        effectiveActiveWorkspaceId: "ws_1",
+        activeWorkspaceServersFlat: [],
+        logger: {
+          info: vi.fn(),
+          warn: vi.fn(),
+          error: vi.fn(),
+          debug: vi.fn(),
+        },
+      }),
+    );
+
+    await waitFor(() => {
+      expect(mockHandleOAuthCallback).toHaveBeenCalledWith(
+        expect.objectContaining({
+          surface: "workspace",
+          workspaceId: "ws_1",
+          serverId: "srv_asana",
+          serverName: "asana",
+        }),
+        "oauth-code",
+      );
+    });
   });
 });

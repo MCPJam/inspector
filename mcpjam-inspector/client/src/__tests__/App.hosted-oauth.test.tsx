@@ -28,6 +28,7 @@ const {
   createAppStateMock,
   mockAppBuilderTabMounts,
   mockConvexAuthState,
+  mockCompleteHostedOAuthCallback,
   mockHandleOAuthCallback,
   mockHostedShellGateState,
   mockMCPSidebar,
@@ -90,6 +91,7 @@ const {
       isAuthenticated: true,
       isLoading: false,
     },
+    mockCompleteHostedOAuthCallback: vi.fn(),
     mockHandleOAuthCallback: vi.fn(),
     mockHostedShellGateState: {
       value: "ready" as
@@ -199,6 +201,7 @@ vi.mock("../lib/theme-utils", () => ({
 }));
 
 vi.mock("../lib/oauth/mcp-oauth", () => ({
+  completeHostedOAuthCallback: mockCompleteHostedOAuthCallback,
   handleOAuthCallback: mockHandleOAuthCallback,
 }));
 
@@ -371,6 +374,7 @@ describe("App hosted OAuth callback handling", () => {
     mockWorkOsAuthState.signIn = vi.fn();
     mockWorkOsAuthState.user = null;
     mockWorkOsAuthState.isLoading = false;
+    mockCompleteHostedOAuthCallback.mockReset();
     mockHandleOAuthCallback.mockReset();
     mockOrganizationsTab.mockReset();
     mockOrganizationsTab.mockImplementation(() => <div />);
@@ -380,6 +384,9 @@ describe("App hosted OAuth callback handling", () => {
     mockMCPSidebar.mockImplementation(() => <div data-testid="mcp-sidebar" />);
     mockPosthogCapture.mockReset();
     mockAppBuilderTabMounts.mockReset();
+    mockCompleteHostedOAuthCallback.mockImplementation(
+      () => new Promise<never>(() => {}),
+    );
     mockHandleOAuthCallback.mockImplementation(
       () => new Promise<never>(() => {}),
     );
@@ -433,7 +440,13 @@ describe("App hosted OAuth callback handling", () => {
       screen.queryByRole("button", { name: "Authorize" }),
     ).not.toBeInTheDocument();
     await waitFor(() => {
-      expect(mockHandleOAuthCallback).toHaveBeenCalledWith("oauth-code");
+      expect(mockCompleteHostedOAuthCallback).toHaveBeenCalledWith(
+        expect.objectContaining({
+          surface: "sandbox",
+          serverName: "asana",
+        }),
+        "oauth-code",
+      );
     });
   });
 
@@ -678,7 +691,13 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(mockHandleOAuthCallback).toHaveBeenCalledWith("oauth-code");
+      expect(mockCompleteHostedOAuthCallback).toHaveBeenCalledWith(
+        expect.objectContaining({
+          surface: "sandbox",
+          serverName: "asana",
+        }),
+        "oauth-code",
+      );
     });
 
     expect(setActiveOrganizationId).not.toHaveBeenCalled();
@@ -1823,7 +1842,7 @@ describe("App hosted OAuth callback handling", () => {
       serverUrl: "https://mcp.asana.com/sse",
       returnHash: "#sandboxes",
     });
-    mockHandleOAuthCallback.mockResolvedValue({
+    mockCompleteHostedOAuthCallback.mockResolvedValue({
       success: true,
       serverName: "asana",
       serverConfig: {

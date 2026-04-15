@@ -22,12 +22,17 @@ import {
 import type { ServerFormData } from "@/shared/types.js";
 import { toMCPConfig } from "@/state/server-helpers";
 import {
+  completeHostedOAuthCallback,
   handleOAuthCallback,
   getStoredTokens,
   clearOAuthData,
   initiateOAuth,
 } from "@/lib/oauth/mcp-oauth";
-import { getHostedOAuthCallbackContext } from "@/lib/hosted-oauth-callback";
+import {
+  clearHostedOAuthPendingState,
+  getHostedOAuthCallbackContext,
+  writeHostedOAuthPendingMarker,
+} from "@/lib/hosted-oauth-callback";
 import { HOSTED_MODE } from "@/lib/config";
 import { injectHostedServerMapping } from "@/lib/apis/web/context";
 import type { OAuthTestProfile } from "@/lib/oauth/profile";
@@ -173,6 +178,7 @@ export function useServerState({
         });
       }
 
+      clearHostedOAuthPendingState();
       localStorage.removeItem("mcp-oauth-return-hash");
       localStorage.removeItem("mcp-oauth-pending");
 
@@ -182,6 +188,39 @@ export function useServerState({
   );
   const isStaleOp = (name: string, token: number) =>
     (opTokenRef.current.get(name) ?? 0) !== token;
+
+  const prepareHostedWorkspaceOAuthRedirect = useCallback(
+    (params: {
+      serverId?: string | null;
+      serverName: string;
+      serverUrl?: string | null;
+    }): boolean => {
+      if (
+        !HOSTED_MODE ||
+        !isAuthenticated ||
+        !effectiveActiveWorkspaceId ||
+        !params.serverId ||
+        !params.serverUrl
+      ) {
+        return false;
+      }
+
+      const returnHash = window.location.hash || "#servers";
+      clearHostedOAuthPendingState();
+      writeHostedOAuthPendingMarker({
+        surface: "workspace",
+        workspaceId: effectiveActiveWorkspaceId,
+        serverId: params.serverId,
+        serverName: params.serverName,
+        serverUrl: params.serverUrl,
+        accessScope: "workspace_member",
+        returnHash,
+      });
+      localStorage.setItem("mcp-oauth-return-hash", returnHash);
+      return true;
+    },
+    [effectiveActiveWorkspaceId, isAuthenticated],
+  );
 
   const activeWorkspace = useMemo(() => {
     const workspace = effectiveWorkspaces[effectiveActiveWorkspaceId];
@@ -593,13 +632,26 @@ export function useServerState({
   );
 
   const handleOAuthCallbackComplete = useCallback(
-    async (code: string) => {
+    async (
+      code: string,
+      hostedCallbackContext: ReturnType<typeof getHostedOAuthCallbackContext>,
+    ) => {
       const pendingServerName = localStorage.getItem("mcp-oauth-pending");
+      const isHostedWorkspaceCallback =
+        HOSTED_MODE &&
+        isAuthenticated &&
+        hostedCallbackContext?.surface === "workspace";
 
       try {
-        const result = await handleOAuthCallback(code);
+        const result = isHostedWorkspaceCallback
+          ? await completeHostedOAuthCallback(hostedCallbackContext, code)
+          : await handleOAuthCallback(code);
 
         localStorage.removeItem("mcp-oauth-return-hash");
+        if (isHostedWorkspaceCallback) {
+          clearHostedOAuthPendingState();
+          localStorage.removeItem("mcp-oauth-pending");
+        }
 
         if (result.success && result.serverConfig && result.serverName) {
           const serverName = result.serverName;
@@ -617,14 +669,16 @@ export function useServerState({
               serverName,
             );
             if (connectionResult.success) {
-              dispatch({
-                type: "CONNECT_SUCCESS",
-                name: serverName,
-                config: result.serverConfig,
-                tokens: getStoredTokens(serverName),
-              });
-              logger.info("OAuth connection successful", { serverName });
-              toast.success(
+                dispatch({
+                  type: "CONNECT_SUCCESS",
+                  name: serverName,
+                  config: result.serverConfig,
+                  tokens: isHostedWorkspaceCallback
+                    ? undefined
+                    : getStoredTokens(serverName),
+                });
+                logger.info("OAuth connection successful", { serverName });
+                toast.success(
                 `OAuth connection successful! Connected to ${serverName}.`,
               );
               storeInitInfo(serverName, connectionResult.initInfo).catch(
@@ -689,6 +743,7 @@ export function useServerState({
     [
       dispatch,
       failPendingOAuthConnection,
+      isAuthenticated,
       logger,
       storeInitInfo,
       guardedTestConnection,
@@ -719,8 +774,10 @@ export function useServerState({
     const hostedOAuthCallbackContext = HOSTED_MODE
       ? getHostedOAuthCallbackContext()
       : null;
+    const isHostedWorkspaceCallback =
+      hostedOAuthCallbackContext?.surface === "workspace";
     if (code) {
-      if (hostedOAuthCallbackContext) {
+      if (hostedOAuthCallbackContext && !isHostedWorkspaceCallback) {
         return; // Handled by App.tsx hosted OAuth interception
       }
       if (oauthCallbackHandledRef.current) {
@@ -735,9 +792,12 @@ export function useServerState({
         window.location.pathname + savedHash,
       );
 
-      handleOAuthCallbackComplete(code);
+      handleOAuthCallbackComplete(
+        code,
+        isHostedWorkspaceCallback ? hostedOAuthCallbackContext : null,
+      );
     } else if (error) {
-      if (hostedOAuthCallbackContext) {
+      if (hostedOAuthCallbackContext && !isHostedWorkspaceCallback) {
         return; // Handled by App.tsx hosted OAuth interception
       }
       const errorMessage = errorDescription
@@ -791,6 +851,7 @@ export function useServerState({
         select: true,
       });
       const token = nextOpToken(formData.name);
+      let hostedServerId: string | undefined;
 
       const serverEntryForSave: ServerWithName = {
         name: formData.name,
@@ -808,6 +869,7 @@ export function useServerState({
             serverEntryForSave,
           );
           if (serverId) {
+            hostedServerId = serverId;
             injectHostedServerMapping(formData.name, serverId);
           }
         } catch (err) {
@@ -914,6 +976,11 @@ export function useServerState({
           if (oauthInputs.scopes && oauthInputs.scopes.length > 0) {
             oauthOptions.scopes = oauthInputs.scopes;
           }
+          prepareHostedWorkspaceOAuthRedirect({
+            serverId: hostedServerId,
+            serverName: formData.name,
+            serverUrl: formData.url,
+          });
           const oauthResult = await initiateOAuth(oauthOptions);
           if (oauthResult.success) {
             if (oauthResult.serverConfig) {
@@ -927,7 +994,10 @@ export function useServerState({
                   type: "CONNECT_SUCCESS",
                   name: formData.name,
                   config: oauthResult.serverConfig,
-                  tokens: getStoredTokens(formData.name),
+                  tokens:
+                    HOSTED_MODE && isAuthenticated
+                      ? undefined
+                      : getStoredTokens(formData.name),
                 });
                 toast.success("Connected successfully with OAuth!");
                 storeInitInfo(formData.name, connectionResult.initInfo).catch(
@@ -1037,6 +1107,7 @@ export function useServerState({
       appState.workspaces,
       appState.activeWorkspaceId,
       notifyIfClientConfigSyncPending,
+      prepareHostedWorkspaceOAuthRedirect,
       resolveOAuthInitiationInputs,
       syncServerToConvex,
       logger,
@@ -1490,6 +1561,9 @@ export function useServerState({
         config: server.config,
       });
       const token = nextOpToken(serverName);
+      const hostedWorkspaceServerId = activeWorkspaceServersFlat?.find(
+        (remoteServer) => remoteServer.name === serverName,
+      )?._id;
 
       if (options?.forceOAuthFlow) {
         clearOAuthData(serverName);
@@ -1505,6 +1579,11 @@ export function useServerState({
           return;
         }
 
+        prepareHostedWorkspaceOAuthRedirect({
+          serverId: hostedWorkspaceServerId,
+          serverName,
+          serverUrl,
+        });
         const oauthResult = await initiateOAuth({
           serverName,
           serverUrl,
@@ -1533,7 +1612,10 @@ export function useServerState({
             type: "CONNECT_SUCCESS",
             name: serverName,
             config: oauthResult.serverConfig!,
-            tokens: getStoredTokens(serverName),
+            tokens:
+              HOSTED_MODE && isAuthenticated
+                ? undefined
+                : getStoredTokens(serverName),
           });
           logger.info("Reconnection with fresh OAuth successful", {
             serverName,
@@ -1552,8 +1634,18 @@ export function useServerState({
       }
 
       try {
-        const authResult: OAuthResult =
-          await ensureAuthorizedForReconnect(server);
+        const authResult: OAuthResult = await ensureAuthorizedForReconnect(
+          server,
+          {
+            beforeRedirect: (oauthOptions) => {
+              prepareHostedWorkspaceOAuthRedirect({
+                serverId: hostedWorkspaceServerId,
+                serverName,
+                serverUrl: oauthOptions.serverUrl,
+              });
+            },
+          },
+        );
         if (authResult.kind === "redirect") return;
         if (authResult.kind === "error") {
           if (isStaleOp(serverName, token)) return;
@@ -1608,11 +1700,14 @@ export function useServerState({
       }
     },
     [
+      activeWorkspaceServersFlat,
+      isAuthenticated,
       effectiveServers,
       storeInitInfo,
       logger,
       dispatch,
       notifyIfClientConfigSyncPending,
+      prepareHostedWorkspaceOAuthRedirect,
       guardedReconnectServer,
       withWorkspaceClientCapabilities,
     ],

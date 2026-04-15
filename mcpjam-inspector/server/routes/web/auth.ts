@@ -134,6 +134,7 @@ export type ConvexAuthorizeResponse = {
   authorized: boolean;
   role: "owner" | "admin" | "member";
   accessLevel: "workspace_member" | "shared_chat";
+  oauthAccessToken?: string | null;
   permissions: {
     chatOnly: boolean;
   };
@@ -295,7 +296,7 @@ export async function createAuthorizedManager(
         shareToken: options?.shareToken,
         sandboxToken: options?.sandboxToken,
       });
-      const oauthToken = oauthTokens?.[serverId];
+      const oauthToken = auth.oauthAccessToken ?? oauthTokens?.[serverId];
 
       if (auth.serverConfig.useOAuth) {
         if (auth.serverConfig.url) {

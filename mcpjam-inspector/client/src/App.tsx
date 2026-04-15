@@ -155,7 +155,10 @@ import {
   sanitizeHostedOAuthErrorMessage,
   writeHostedOAuthResumeMarker,
 } from "./lib/hosted-oauth-resume";
-import { handleOAuthCallback } from "./lib/oauth/mcp-oauth";
+import {
+  completeHostedOAuthCallback,
+  handleOAuthCallback,
+} from "./lib/oauth/mcp-oauth";
 import { getEffectiveWorkspaceClientCapabilities } from "./lib/client-config";
 import { buildEvalsHash } from "./lib/evals-router";
 import { withTestingSurface } from "./lib/testing-surface";
@@ -403,7 +406,7 @@ export default function App() {
   // Handle hosted OAuth callback: claim the callback before any hosted page renders.
   useEffect(() => {
     const callbackContext = getHostedOAuthCallbackContext();
-    if (!callbackContext) return;
+    if (!callbackContext || callbackContext.surface === "workspace") return;
 
     const urlParams = new URLSearchParams(window.location.search);
     const code = urlParams.get("code");
@@ -438,7 +441,12 @@ export default function App() {
       return;
     }
 
-    handleOAuthCallback(code)
+    const completeCallback =
+      isAuthenticated
+        ? completeHostedOAuthCallback(callbackContext, code)
+        : handleOAuthCallback(code);
+
+    completeCallback
       .then((result) => {
         if (result.success) {
           finalizeHostedOAuth(null);
@@ -467,7 +475,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [isAuthenticated]);
 
   usePostHogIdentify();
 
