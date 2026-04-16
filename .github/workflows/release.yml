@@ -306,6 +306,7 @@ jobs:
 
       - name: Upload SDK sourcemaps
         if: needs.preflight.outputs.publish_sdk == 'true'
+        continue-on-error: true
         run: |
           version=$(node -p "require('./sdk/package.json').version")
           npx @sentry/cli sourcemaps upload \
