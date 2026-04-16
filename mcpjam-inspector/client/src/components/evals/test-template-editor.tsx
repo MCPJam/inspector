@@ -119,8 +119,6 @@ interface TestTemplateEditorProps {
   openCompareFromRoute?: boolean;
   /** Deep link: exact iteration to anchor compare hydration to. */
   openCompareIterationId?: string | null;
-  /** Remove `compare=1` from the hash after handling {@link openCompareFromRoute}. */
-  onClearOpenCompareRoute?: () => void;
 }
 
 const createEmptyPromptTurn = (index: number): PromptTurn => ({
@@ -302,13 +300,14 @@ export function TestTemplateEditor({
   onContinueInChat,
   openCompareFromRoute = false,
   openCompareIterationId = null,
-  onClearOpenCompareRoute,
 }: TestTemplateEditorProps) {
   const { getAccessToken } = useAuth();
   const { getToken, hasToken } = useAiProviderKeys();
   const [editForm, setEditForm] = useState<TestTemplate | null>(null);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
-  const [editorMode, setEditorMode] = useState<EditorMode>("config");
+  const [editorMode, setEditorMode] = useState<EditorMode>(
+    openCompareFromRoute ? "run" : "config",
+  );
   const [availableTools, setAvailableTools] = useState<
     Array<{
       name: string;
@@ -389,7 +388,7 @@ export function TestTemplateEditor({
   }) as any;
 
   useEffect(() => {
-    setEditorMode("config");
+    setEditorMode(openCompareFromRoute ? "run" : "config");
     setCompareRunRecords({});
     setActiveCompareRunId(null);
     setRunColumnTabByModel({});
@@ -397,11 +396,17 @@ export function TestTemplateEditor({
     setExpandedPromptTurnIds([]);
     initializedSelectionCaseRef.current = null;
     setAddModelMenuOpen(false);
-  }, [selectedTestCaseId]);
+  }, [openCompareFromRoute, selectedTestCaseId]);
 
   useEffect(() => {
     setRouteCompareAnchorIterationId(openCompareIterationId);
   }, [openCompareIterationId, selectedTestCaseId]);
+
+  useEffect(() => {
+    if (openCompareFromRoute) {
+      setEditorMode("run");
+    }
+  }, [openCompareFromRoute, openCompareIterationId, selectedTestCaseId]);
 
   const clearCompareStreamingState = useCallback((modelValue: string) => {
     setCompareRunRecords((previous) => {
@@ -1026,67 +1031,6 @@ export function TestTemplateEditor({
     [currentTestCase?._id, selectedModelValues, suiteId],
   );
 
-  const openCompareRouteHandledRef = useRef<string | null>(null);
-  useEffect(() => {
-    const compareRouteKey = `${selectedTestCaseId}:${openCompareIterationId ?? ""}`;
-    if (!openCompareFromRoute) {
-      openCompareRouteHandledRef.current = null;
-      return;
-    }
-    if (
-      !onClearOpenCompareRoute ||
-      openCompareRouteHandledRef.current === compareRouteKey
-    ) {
-      return;
-    }
-    if (!currentTestCase?._id || recentIterations === undefined) {
-      return;
-    }
-    if (
-      routeCompareAnchorIterationId &&
-      routeCompareAnchorIteration === undefined
-    ) {
-      return;
-    }
-    if (initializedSelectionCaseRef.current !== currentTestCase._id) {
-      return;
-    }
-    if (selectedModelValues.length === 0) {
-      const caseListsModels =
-        (currentTestCase.models?.filter((m) => m.provider && m.model).length ??
-          0) > 0;
-      if (caseListsModels || modelOptions.length > 0) {
-        return;
-      }
-      openCompareRouteHandledRef.current = compareRouteKey;
-      onClearOpenCompareRoute();
-      return;
-    }
-    if (!hasRunViewContent) {
-      if (recentIterations.length === 0) {
-        openCompareRouteHandledRef.current = compareRouteKey;
-        onClearOpenCompareRoute();
-      }
-      return;
-    }
-    openCompareRouteHandledRef.current = compareRouteKey;
-    openRunView("config_toggle");
-    onClearOpenCompareRoute();
-  }, [
-    currentTestCase?._id,
-    openCompareFromRoute,
-    openCompareIterationId,
-    hasRunViewContent,
-    modelOptions.length,
-    onClearOpenCompareRoute,
-    openRunView,
-    recentIterations,
-    routeCompareAnchorIteration,
-    routeCompareAnchorIterationId,
-    selectedModelValues.length,
-    selectedTestCaseId,
-  ]);
-
   const handleAddModel = (modelValue: string) => {
     setSelectedModelValues((previous) => {
       if (previous.includes(modelValue)) {
@@ -1629,7 +1573,27 @@ export function TestTemplateEditor({
     });
   };
 
+  const compareRouteLoadingState = (
+    <div className="flex h-full items-center justify-center">
+      <div className="text-center">
+        <Loader2 className="mx-auto size-5 animate-spin text-muted-foreground" />
+        <p className="mt-3 text-xs text-muted-foreground">Loading results...</p>
+      </div>
+    </div>
+  );
+  const isCompareRouteLoading =
+    openCompareFromRoute &&
+    (testCases === undefined ||
+      (currentTestCase?._id != null &&
+        initializedSelectionCaseRef.current !== currentTestCase._id) ||
+      (currentTestCase?._id != null && recentIterations === undefined) ||
+      (routeCompareAnchorIterationId != null &&
+        routeCompareAnchorIteration === undefined));
+
   if (!currentTestCase) {
+    if (isCompareRouteLoading) {
+      return compareRouteLoadingState;
+    }
     return (
       <div className="flex h-full items-center justify-center">
         <p className="text-xs text-muted-foreground">Loading test case...</p>
@@ -1694,6 +1658,10 @@ export function TestTemplateEditor({
     Boolean(onOpenLastRun) &&
     Boolean(lastSavedIteration?.suiteRunId) &&
     Boolean(lastSavedIteration?._id);
+
+  if (editorMode === "run" && isCompareRouteLoading) {
+    return compareRouteLoadingState;
+  }
 
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-background">
