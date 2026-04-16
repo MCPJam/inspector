@@ -20,6 +20,9 @@ export type OAuthResult = OAuthReady | OAuthRedirect | OAuthError;
 
 export async function ensureAuthorizedForReconnect(
   server: ServerWithName,
+  options?: {
+    beforeRedirect?: (oauthOptions: MCPOAuthOptions) => void;
+  },
 ): Promise<OAuthResult> {
   // If server is explicitly configured without OAuth, skip OAuth flow entirely
   // This handles the case where a server was saved with "No Authentication"
@@ -75,6 +78,7 @@ export async function ensureAuthorizedForReconnect(
       registryServerId: oauthConfig.registryServerId,
       useRegistryOAuthProxy: oauthConfig.useRegistryOAuthProxy,
     } as MCPOAuthOptions;
+    options?.beforeRedirect?.(opts);
     const init = await initiateOAuth(opts);
     if (init.success && init.serverConfig) {
       return {

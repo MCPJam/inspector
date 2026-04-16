@@ -1,36 +1,54 @@
 name: Mac Release
 
 on:
-  push:
-    tags:
-      - "v*"
+  workflow_call:
+    inputs:
+      version:
+        description: "Release version label"
+        required: true
+        type: string
+      apply_release_patch:
+        description: "Apply the shared release patch artifact before building"
+        required: false
+        default: true
+        type: boolean
   workflow_dispatch:
     inputs:
       version:
-        description: "Version to release (e.g., v1.0.0)"
+        description: "Artifact version label"
         required: false
         type: string
-      create_release:
-        description: "Create GitHub release?"
+      apply_release_patch:
+        description: "Apply release patch artifact from the current run"
         required: false
-        default: true
+        default: false
         type: boolean
 
 env:
   NODE_VERSION: "24.14.0"
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build-mac:
     runs-on: macos-latest
-    defaults:
-      run:
-        working-directory: mcpjam-inspector
+    env:
+      ARTIFACT_VERSION: ${{ inputs.version != '' && inputs.version || github.sha }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Download release patch
+        if: inputs.apply_release_patch
+        uses: actions/download-artifact@v4
+        with:
+          name: release-plan
+          path: .release-plan
+
+      - name: Apply release patch
+        if: inputs.apply_release_patch
+        run: git apply --binary .release-plan/release.patch
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -38,51 +56,39 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           registry-url: "https://registry.npmjs.org"
 
-      - name: Install dependencies from lockfiles
-        run: npm run deps:ci
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
 
       - name: Setup Apple certificates and API key
         run: |
-          # Create API key file
           echo "${{ secrets.APPLE_API_KEY_CONTENT }}" | base64 -d > /tmp/AuthKey.p8
-
-          # Create certificates directory
           mkdir -p ~/certificates
-
-          # Decode and install Developer ID Application certificate
           echo "${{ secrets.DEVELOPER_ID_APPLICATION_CERT }}" | base64 -d > ~/certificates/developer_id_application.p12
 
-          # Create temporary keychain
           security create-keychain -p "temp_keychain_password" build.keychain
           security default-keychain -s build.keychain
           security unlock-keychain -p "temp_keychain_password" build.keychain
           security set-keychain-settings -t 3600 -u build.keychain
 
-          # Import certificate
-          security import ~/certificates/developer_id_application.p12 -k build.keychain -P "${{ secrets.DEVELOPER_ID_APPLICATION_PASSWORD }}" -T /usr/bin/codesign
+          security import ~/certificates/developer_id_application.p12 \
+            -k build.keychain \
+            -P "${{ secrets.DEVELOPER_ID_APPLICATION_PASSWORD }}" \
+            -T /usr/bin/codesign
 
-          # Enable codesign to access keychain
           security set-key-partition-list -S apple-tool:,apple: -s -k "temp_keychain_password" build.keychain
 
-          # Set identity for Electron Forge
           echo "MAC_CODESIGN_IDENTITY=Developer ID Application: Marcelo Jimenez (TLBS4N7QZ3)" >> $GITHUB_ENV
           echo "APPLE_API_KEY_FILE=/tmp/AuthKey.p8" >> $GITHUB_ENV
-        env:
-          APPLE_API_KEY_CONTENT: ${{ secrets.APPLE_API_KEY_CONTENT }}
-          DEVELOPER_ID_APPLICATION_CERT: ${{ secrets.DEVELOPER_ID_APPLICATION_CERT }}
-          DEVELOPER_ID_APPLICATION_PASSWORD: ${{ secrets.DEVELOPER_ID_APPLICATION_PASSWORD }}
 
       - name: Build and sign application
         run: |
-          npm run build
+          npm run build -w @mcpjam/inspector
 
-          # Clean up any mounted volumes before making
           sudo diskutil unmountDisk force /Volumes/"MCPJam Inspector" 2>/dev/null || true
           hdiutil detach /Volumes/"MCPJam Inspector" -force 2>/dev/null || true
 
-          npm run electron:make
+          npm run electron:make -w @mcpjam/inspector
 
-          # Clean up any mounted volumes after making
           sudo diskutil unmountDisk force /Volumes/"MCPJam Inspector" 2>/dev/null || true
           hdiutil detach /Volumes/"MCPJam Inspector" -force 2>/dev/null || true
         env:
@@ -92,49 +98,32 @@ jobs:
 
       - name: Notarize and staple DMG
         run: |
-          # Find the DMG file
           DMG_PATH=$(find "$GITHUB_WORKSPACE/mcpjam-inspector/out/make" -name "*.dmg" | head -n1)
-
           if [ ! -f "$DMG_PATH" ]; then
-            echo "DMG file not found!"
+            echo "DMG file not found" >&2
             exit 1
           fi
 
-          echo "Found DMG: $DMG_PATH"
-
-          # Notarize the DMG
           xcrun notarytool submit "$DMG_PATH" \
             --key /tmp/AuthKey.p8 \
             --key-id "${{ secrets.APPLE_API_KEY_ID }}" \
             --issuer "${{ secrets.APPLE_API_ISSUER_ID }}" \
             --wait
 
-          # Staple the DMG
           xcrun stapler staple "$DMG_PATH"
           xcrun stapler validate "$DMG_PATH"
 
-          echo "✅ DMG successfully notarized and stapled"
-
-          # Rename DMG to consistent name
           cp "$DMG_PATH" "$GITHUB_WORKSPACE/MCPJam Inspector.dmg"
           echo "DMG_PATH=$GITHUB_WORKSPACE/MCPJam Inspector.dmg" >> $GITHUB_ENV
-        env:
-          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
-          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
 
-      - name: Notarize and staple ZIP
+      - name: Notarize ZIP
         run: |
-          # Find the ZIP file
           ZIP_PATH=$(find "$GITHUB_WORKSPACE/mcpjam-inspector/out/make" -name "*.zip" | head -n1)
-
           if [ ! -f "$ZIP_PATH" ]; then
-            echo "ZIP file not found!"
+            echo "ZIP file not found" >&2
             exit 1
           fi
 
-          echo "Found ZIP: $ZIP_PATH"
-
-          # Notarize the ZIP
           xcrun notarytool submit "$ZIP_PATH" \
             --key /tmp/AuthKey.p8 \
             --key-id "${{ secrets.APPLE_API_KEY_ID }}" \
@@ -142,30 +131,23 @@ jobs:
             --wait
 
           echo "ZIP_PATH=$ZIP_PATH" >> $GITHUB_ENV
-        env:
-          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
-          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
 
       - name: Create stapled app ZIP for auto-updates
         run: |
-          # Extract the notarized ZIP to get the app
           cd "$(dirname "$ZIP_PATH")"
           unzip -q "$(basename "$ZIP_PATH")" -d notarized
 
-          # Find and staple the app
           APP_PATH=$(find notarized -name "*.app" | head -n1)
           if [ ! -d "$APP_PATH" ]; then
-            echo "App not found in ZIP!"
+            echo "App not found in ZIP" >&2
             exit 1
           fi
 
           xcrun stapler staple "$APP_PATH"
           xcrun stapler validate "$APP_PATH"
 
-          # Create new ZIP with stapled app
           STAPLED_ZIP="$GITHUB_WORKSPACE/MCPJam Inspector-stapled.zip"
           ditto -c -k --keepParent "$APP_PATH" "$STAPLED_ZIP"
-
           echo "STAPLED_ZIP=$STAPLED_ZIP" >> $GITHUB_ENV
 
       - name: Clean up sensitive files
@@ -175,35 +157,12 @@ jobs:
           rm -rf ~/certificates
           security delete-keychain build.keychain || true
 
-      - name: Upload build artifacts (if not creating release)
-        if: github.event_name == 'workflow_dispatch' && !inputs.create_release
+      - name: Upload macOS artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: mcpjam-inspector-macos
+          name: inspector-macos-${{ env.ARTIFACT_VERSION }}
           path: |
             ${{ env.DMG_PATH }}
             ${{ env.ZIP_PATH }}
             ${{ env.STAPLED_ZIP }}
-          retention-days: 30
-
-      - name: Create GitHub Release
-        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.create_release)
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.event_name == 'workflow_dispatch' && (inputs.version || 'v0.9.14-manual') || github.ref_name }}
-          name: Release ${{ github.event_name == 'workflow_dispatch' && (inputs.version || 'v0.9.14-manual') || github.ref_name }}
-          draft: false
-          prerelease: false
-          files: |
-            ${{ env.DMG_PATH }}
-            ${{ env.ZIP_PATH }}
-            ${{ env.STAPLED_ZIP }}
-          body: |
-            ## Download
-            - **macOS DMG**: [MCPJam Inspector.dmg](${{ github.server_url }}/${{ github.repository }}/releases/download/${{ github.event_name == 'workflow_dispatch' && (inputs.version || 'v0.9.14-manual') || github.ref_name }}/MCPJam%20Inspector.dmg)
-            - **macOS ZIP**: [MCPJam Inspector ZIP](${{ github.server_url }}/${{ github.repository }}/releases/download/${{ github.event_name == 'workflow_dispatch' && (inputs.version || 'v0.9.14-manual') || github.ref_name }}/MCPJam%20Inspector-darwin-arm64-0.9.14.zip)
-
-            Both files are notarized and stapled for seamless installation on macOS.
-
-            ## Auto-generated release
-            This release was automatically built and notarized by GitHub Actions.
+          retention-days: 14

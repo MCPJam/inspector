@@ -21,6 +21,7 @@ vi.mock("framer-motion", async (importOriginal) => {
 const mockThread = vi.fn();
 const mockFullscreenChatOverlay = vi.fn();
 const mockMultiModelPlaygroundCard = vi.fn();
+const mockTraceViewer = vi.fn();
 
 // Mock lucide-react icons
 vi.mock("lucide-react", () => ({
@@ -305,19 +306,21 @@ vi.mock("@/components/chat-v2/error", () => ({
 }));
 
 vi.mock("@/components/evals/trace-viewer", () => ({
-  TraceViewer: ({
-    forcedViewMode,
-    trace,
-  }: {
+  TraceViewer: (props: {
     forcedViewMode?: "chat" | "timeline" | "raw";
     trace?: unknown;
-  }) => (
-    <div
-      data-testid="trace-viewer"
-      data-mode={forcedViewMode ?? "timeline"}
-      data-trace={JSON.stringify(trace ?? null)}
-    />
-  ),
+    displayMode?: "inline" | "pip" | "fullscreen";
+    onDisplayModeChange?: (mode: "inline" | "pip" | "fullscreen") => void;
+  }) => {
+    mockTraceViewer(props);
+    return (
+      <div
+        data-testid="trace-viewer"
+        data-mode={props.forcedViewMode ?? "timeline"}
+        data-trace={JSON.stringify(props.trace ?? null)}
+      />
+    );
+  },
 }));
 
 vi.mock("@/components/evals/trace-view-mode-tabs", () => {
@@ -971,6 +974,25 @@ describe("PlaygroundMain", () => {
         screen.getByTestId("playground-trace-diagnostics"),
       ).toBeInTheDocument();
       expect(screen.getByTestId("thread")).toBeInTheDocument();
+    });
+
+    it("passes controlled display mode props into live trace viewers", () => {
+      mockUseChatSession.messages = [
+        { id: "1", role: "user", parts: [{ type: "text", text: "Hello" }] },
+      ];
+      mockUseChatSession.traceViewsSupported = true;
+      mockUseChatSession.hasTraceSnapshot = true;
+      mockUseChatSession.hasLiveTimelineContent = true;
+      mockUseChatSession.liveTraceEnvelope = sampleLiveTraceEnvelope;
+
+      render(<PlaygroundMain {...defaultProps} enableTraceViews={true} />);
+
+      fireEvent.click(screen.getByRole("button", { name: "Trace" }));
+
+      expect(mockTraceViewer).toHaveBeenCalled();
+      const props = mockTraceViewer.mock.calls.at(-1)?.[0];
+      expect(props.displayMode).toBe("inline");
+      expect(props.onDisplayModeChange).toEqual(expect.any(Function));
     });
 
     it("prefers the streamed live trace over the prelude trace once a snapshot exists", async () => {

@@ -55,6 +55,18 @@ export function TraceViewModeTabs({
         className,
       )}
     >
+      {showToolsTab ? (
+        <button
+          type="button"
+          onClick={() => handleModeChange("tools")}
+          className={tabClass(mode === "tools")}
+          title="Expected vs actual tool calls"
+          data-testid="trace-viewer-tools-tab"
+        >
+          <GitCompare className="h-3 w-3 shrink-0" />
+          <span className="truncate">Results</span>
+        </button>
+      ) : null}
       <button
         type="button"
         onClick={() => handleModeChange("timeline")}
@@ -82,18 +94,6 @@ export function TraceViewModeTabs({
         <Code2 className="h-3 w-3 shrink-0" />
         <span className="truncate">Raw</span>
       </button>
-      {showToolsTab ? (
-        <button
-          type="button"
-          onClick={() => handleModeChange("tools")}
-          className={tabClass(mode === "tools")}
-          title="Expected vs actual tool calls"
-          data-testid="trace-viewer-tools-tab"
-        >
-          <GitCompare className="h-3 w-3 shrink-0" />
-          <span className="truncate">Tools</span>
-        </button>
-      ) : null}
     </div>
   );
 }

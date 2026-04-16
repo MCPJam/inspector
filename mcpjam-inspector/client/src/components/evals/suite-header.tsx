@@ -376,7 +376,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
         {onOpenExportSuite ? (
           <Button size="sm" variant="outline" onClick={onOpenExportSuite}>
             <Code2 className="mr-2 h-4 w-4" />
-            Export
+            Setup SDK
           </Button>
         ) : null}
 

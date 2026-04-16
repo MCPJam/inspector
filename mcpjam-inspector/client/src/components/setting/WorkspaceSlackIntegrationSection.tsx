@@ -186,19 +186,6 @@ export function WorkspaceSlackIntegrationSection({
               <Badge variant={isConnected ? "secondary" : "outline"}>
                 {isConnected ? "Connected" : "Not connected"}
               </Badge>
-              {status?.lastTestStatus ? (
-                <Badge
-                  variant={
-                    status.lastTestStatus === "success"
-                      ? "secondary"
-                      : "destructive"
-                  }
-                >
-                  {status.lastTestStatus === "success"
-                    ? "Last test passed"
-                    : "Last test failed"}
-                </Badge>
-              ) : null}
             </div>
             <p className="text-sm text-muted-foreground">
               Send workspace notifications to a Slack channel with an incoming

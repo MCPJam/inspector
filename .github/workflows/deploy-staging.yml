@@ -1,0 +1,62 @@
+name: Deploy Staging
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: inspector-staging
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: staging
+      url: ${{ vars.STAGING_APP_URL || 'https://staging.mcpjam.com' }}
+    env:
+      RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
+      RAILWAY_PROJECT_ID: ${{ vars.RAILWAY_PROJECT_ID }}
+      RAILWAY_INSPECTOR_SERVICE: ${{ vars.RAILWAY_INSPECTOR_SERVICE }}
+      RAILWAY_STAGING_ENVIRONMENT: ${{ vars.RAILWAY_STAGING_ENVIRONMENT }}
+    steps:
+      - name: Enforce main branch
+        run: |
+          if [ "${GITHUB_REF_NAME}" != "main" ]; then
+            echo "deploy-staging.yml must run from main" >&2
+            exit 1
+          fi
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Install dependencies and format
+        working-directory: mcpjam-inspector
+        run: |
+          npm ci
+          npm run prettier-fix
+
+      - name: Install Railway CLI
+        run: npm install -g @railway/cli
+
+      - name: Deploy inspector to Railway staging
+        run: |
+          railway up \
+            --ci \
+            --project "$RAILWAY_PROJECT_ID" \
+            --environment "$RAILWAY_STAGING_ENVIRONMENT" \
+            --service "$RAILWAY_INSPECTOR_SERVICE"
+
+  smoke:
+    needs: deploy
+    uses: ./.github/workflows/post-deploy-staging.yml

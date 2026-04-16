@@ -1,0 +1,67 @@
+name: Post-Deploy Staging Smoke
+
+on:
+  workflow_call:
+    inputs:
+      base_url:
+        description: "Optional staging base URL override"
+        required: false
+        type: string
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: "Optional staging base URL override"
+        required: false
+        type: string
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve staging URL
+        id: target
+        shell: bash
+        run: |
+          BASE_URL="${{ inputs.base_url }}"
+          if [ -z "$BASE_URL" ]; then
+            BASE_URL="${{ vars.STAGING_APP_URL }}"
+          fi
+          if [ -z "$BASE_URL" ]; then
+            BASE_URL="https://staging.mcpjam.com"
+          fi
+          echo "base_url=$BASE_URL" >> "$GITHUB_OUTPUT"
+
+      - name: Check public health endpoints
+        env:
+          BASE_URL: ${{ steps.target.outputs.base_url }}
+        shell: bash
+        run: |
+          curl --fail --silent --show-error "$BASE_URL/health" >/tmp/health.json
+          curl --fail --silent --show-error "$BASE_URL/api/mcp/health" >/tmp/mcp-health.json
+          curl --fail --silent --show-error "$BASE_URL/api/apps/health" >/tmp/apps-health.json
+
+      - name: Check unauthenticated web route is denied
+        env:
+          BASE_URL: ${{ steps.target.outputs.base_url }}
+        shell: bash
+        run: |
+          STATUS="$(curl --silent --output /tmp/web-auth.json --write-out '%{http_code}' \
+            -X POST \
+            -H 'Content-Type: application/json' \
+            "$BASE_URL/api/web/tools/list" \
+            -d '{"workspaceId":"smoke","serverId":"smoke"}')"
+
+          if [ "$STATUS" != "401" ] && [ "$STATUS" != "403" ]; then
+            echo "Expected 401 or 403 from /api/web/tools/list, got $STATUS"
+            cat /tmp/web-auth.json
+            exit 1
+          fi
+
+      - name: Summarize smoke result
+        env:
+          BASE_URL: ${{ steps.target.outputs.base_url }}
+        run: |
+          echo "## ✅ Staging HTTP smoke passed" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Target: \`$BASE_URL\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Checked: \`/health\`, \`/api/mcp/health\`, \`/api/apps/health\`, unauthenticated \`/api/web/tools/list\`" >> "$GITHUB_STEP_SUMMARY"

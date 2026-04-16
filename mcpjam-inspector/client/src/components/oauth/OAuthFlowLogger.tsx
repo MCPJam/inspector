@@ -348,12 +348,20 @@ export function OAuthFlowLogger({
             {/* Configuration badges */}
             <div className="flex flex-wrap gap-1.5">
               {summary.protocol && (
-                <Badge variant="secondary" className="text-xs">
+                <Badge
+                  variant="secondary"
+                  className="text-xs cursor-pointer hover:bg-secondary/80"
+                  onClick={actions?.onConfigure}
+                >
                   {summary.protocol}
                 </Badge>
               )}
               {summary.registration && (
-                <Badge variant="secondary" className="text-xs">
+                <Badge
+                  variant="secondary"
+                  className="text-xs cursor-pointer hover:bg-secondary/80"
+                  onClick={actions?.onConfigure}
+                >
                   {summary.registration}
                 </Badge>
               )}

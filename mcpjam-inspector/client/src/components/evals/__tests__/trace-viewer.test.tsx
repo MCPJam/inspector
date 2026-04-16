@@ -51,6 +51,9 @@ vi.mock("@/components/ui/json-editor", () => ({
     mockJsonEditor(props);
     return <div data-testid="json-editor">{JSON.stringify(props.value)}</div>;
   },
+  ScrollableJsonView: ({ value }: { value: unknown }) => (
+    <div data-testid="json-editor">{JSON.stringify(value)}</div>
+  ),
 }));
 
 vi.mock("@/components/ui/tooltip", () => ({
@@ -1159,6 +1162,17 @@ describe("TraceViewer", () => {
 
   it("does not wire action handlers when interactive={false}", () => {
     render(<TraceViewer trace={toolTrace} />);
+    openChatTab();
+
+    const lastCall = mockMessageView.mock.calls[0][0];
+    expect(lastCall.interactive).toBe(false);
+    expect(lastCall.minimalMode).toBe(true);
+  });
+
+  it("keeps trace chat read-only when only onFullscreenChange is provided", () => {
+    render(
+      <TraceViewer trace={toolTrace} onFullscreenChange={vi.fn()} />,
+    );
     openChatTab();
 
     const lastCall = mockMessageView.mock.calls[0][0];

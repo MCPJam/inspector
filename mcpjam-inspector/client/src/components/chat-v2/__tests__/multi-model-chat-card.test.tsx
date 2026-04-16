@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { render, screen, waitFor } from "@testing-library/react";
+import { useState, type ComponentProps } from "react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { UIMessage } from "ai";
 import { MultiModelChatCard } from "../multi-model-chat-card";
@@ -27,6 +27,8 @@ vi.mock("use-stick-to-bottom", () => {
 });
 
 const startChatWithMessages = vi.fn();
+const mockTraceViewer = vi.fn();
+const mockModelCompareCardHeader = vi.fn();
 
 const mockUseChatSession = {
   messages: [],
@@ -58,7 +60,27 @@ vi.mock("@/components/chat-v2/thread", () => ({
 }));
 
 vi.mock("@/components/evals/trace-viewer", () => ({
-  TraceViewer: () => <div data-testid="trace-viewer" />,
+  TraceViewer: (props: {
+    forcedViewMode?: "timeline" | "chat" | "raw" | "tools";
+    onRevealNavigateToChat?: () => void;
+    displayMode?: unknown;
+    onDisplayModeChange?: unknown;
+  }) => {
+    mockTraceViewer(props);
+    return (
+      <div data-testid="trace-viewer">
+        <div data-testid="trace-viewer-mode">
+          {props.forcedViewMode ?? "timeline"}
+        </div>
+        <button
+          type="button"
+          onClick={() => props.onRevealNavigateToChat?.()}
+        >
+          Reveal Trace Chat
+        </button>
+      </div>
+    );
+  },
 }));
 
 vi.mock("@/components/chat-v2/error", () => ({
@@ -77,9 +99,23 @@ vi.mock("@/components/chat-v2/shared/chat-helpers", async (importOriginal) => {
 });
 
 vi.mock("../model-compare-card-header", () => ({
-  ModelCompareCardHeader: ({ model }: { model: { name: string } }) => (
-    <div data-testid="compare-card-header">{model.name}</div>
-  ),
+  ModelCompareCardHeader: (props: {
+    model: { name: string };
+    onModeChange: (mode: "chat" | "timeline" | "raw") => void;
+  }) => {
+    mockModelCompareCardHeader(props);
+    return (
+      <div>
+        <div data-testid="compare-card-header">{props.model.name}</div>
+        <button type="button" onClick={() => props.onModeChange("raw")}>
+          Switch to Raw
+        </button>
+        <button type="button" onClick={() => props.onModeChange("timeline")}>
+          Switch to Timeline
+        </button>
+      </div>
+    );
+  },
 }));
 
 const model = {
@@ -135,11 +171,55 @@ const seedMessages: UIMessage[] = [
     role: "user",
     parts: [{ type: "text", text: "hello" }],
   },
+  {
+    id: "a1",
+    role: "assistant",
+    parts: [{ type: "text", text: "hi there" }],
+  },
 ];
+
+function renderCard(
+  overrides: Partial<ComponentProps<typeof MultiModelChatCard>> = {},
+) {
+  return render(
+    <MultiModelChatCard
+      model={model}
+      comparisonSummaries={[]}
+      selectedServers={[]}
+      selectedServerInstructions={{}}
+      broadcastRequest={null}
+      stopRequestId={0}
+      placeholder="Message"
+      reasoningDisplayMode="inline"
+      initialSystemPrompt=""
+      initialTemperature={0.7}
+      initialRequireToolApproval={false}
+      onSummaryChange={vi.fn()}
+      {...overrides}
+    />,
+  );
+}
 
 describe("MultiModelChatCard", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockUseChatSession.messages = [];
+    mockUseChatSession.setMessages = vi.fn();
+    mockUseChatSession.sendMessage = vi.fn();
+    mockUseChatSession.stop = vi.fn();
+    mockUseChatSession.status = "ready";
+    mockUseChatSession.error = undefined;
+    mockUseChatSession.chatSessionId = "chat-session-1";
+    mockUseChatSession.toolsMetadata = {};
+    mockUseChatSession.toolServerMap = {};
+    mockUseChatSession.liveTraceEnvelope = null;
+    mockUseChatSession.requestPayloadHistory = [];
+    mockUseChatSession.hasTraceSnapshot = false;
+    mockUseChatSession.hasLiveTimelineContent = false;
+    mockUseChatSession.traceViewsSupported = true;
+    mockUseChatSession.isStreaming = false;
+    mockUseChatSession.addToolApprovalResponse = vi.fn();
+    mockUseChatSession.systemPrompt = "";
   });
 
   it("does not loop when parent passes inline summary handlers", () => {
@@ -283,5 +363,44 @@ describe("MultiModelChatCard", () => {
     const root = screen.getByTestId("multi-model-chat-card-root");
     expect(root.className).not.toMatch(/min-h-\[\d+rem\]/);
     expect(root.className).toContain("min-h-0");
+  });
+
+  it("does not pass display-mode props into raw and timeline compare trace viewers", () => {
+    mockUseChatSession.messages = seedMessages;
+    mockUseChatSession.hasLiveTimelineContent = true;
+
+    renderCard();
+
+    fireEvent.click(screen.getByRole("button", { name: "Switch to Raw" }));
+
+    expect(screen.getByTestId("trace-viewer")).toBeInTheDocument();
+    expect(screen.getByTestId("trace-viewer-mode")).toHaveTextContent("raw");
+    expect(mockTraceViewer).toHaveBeenCalled();
+    let props = mockTraceViewer.mock.calls.at(-1)?.[0];
+    expect(props.displayMode).toBeUndefined();
+    expect(props.onDisplayModeChange).toBeUndefined();
+
+    fireEvent.click(screen.getByRole("button", { name: "Switch to Timeline" }));
+
+    expect(screen.getByTestId("trace-viewer-mode")).toHaveTextContent(
+      "timeline",
+    );
+    props = mockTraceViewer.mock.calls.at(-1)?.[0];
+    expect(props.displayMode).toBeUndefined();
+    expect(props.onDisplayModeChange).toBeUndefined();
+  });
+
+  it("does not pass display-mode props into the revealed compare trace chat branch", () => {
+    mockUseChatSession.messages = seedMessages;
+
+    renderCard();
+
+    fireEvent.click(screen.getByRole("button", { name: "Switch to Raw" }));
+    fireEvent.click(screen.getByRole("button", { name: "Reveal Trace Chat" }));
+
+    expect(screen.getByTestId("trace-viewer-mode")).toHaveTextContent("chat");
+    const props = mockTraceViewer.mock.calls.at(-1)?.[0];
+    expect(props.displayMode).toBeUndefined();
+    expect(props.onDisplayModeChange).toBeUndefined();
   });
 });

@@ -87,6 +87,7 @@ export type AppAction =
       name: string;
       config: MCPServerConfig;
       tokens?: OauthTokens;
+      useOAuth?: boolean;
     }
   | { type: "CONNECT_FAILURE"; name: string; error: string }
   | { type: "RECONNECT_REQUEST"; name: string; config: MCPServerConfig }

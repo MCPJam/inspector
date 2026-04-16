@@ -105,7 +105,7 @@ export function MultiModelChatCard({
       };
     }[]
   >([]);
-  const [isWidgetFullscreen, setIsWidgetFullscreen] = useState(false);
+  const [, setIsWidgetFullscreen] = useState(false);
   const [traceViewMode, setTraceViewMode] = useState<ChatTraceViewMode>("chat");
   const [revealedInChat, setRevealedInChat] = useState(false);
   const lastBroadcastRequestIdRef = useRef<number | null>(null);
@@ -509,12 +509,7 @@ export function MultiModelChatCard({
         showComparisonChrome={showComparisonChrome}
       />
 
-      <div
-        className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
-        style={{
-          transform: isWidgetFullscreen ? "none" : "translateZ(0)",
-        }}
-      >
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         {errorMessage ? (
           <div className="px-3 pt-3">
             <ErrorBox
@@ -550,6 +545,7 @@ export function MultiModelChatCard({
                     hideToolbar
                     fillContent
                     onRevealNavigateToChat={navigateTraceRevealToChat}
+                    onFullscreenChange={setIsWidgetFullscreen}
                     rawGrowWithContent
                     rawRequestPayloadHistory={{
                       entries: requestPayloadHistory,
@@ -579,6 +575,7 @@ export function MultiModelChatCard({
                   fullscreenChatPlaceholder={placeholder}
                   fullscreenChatSendBlocked={fullscreenChatSendBlocked}
                   onFullscreenChatStop={stop}
+                  onFullscreenChange={setIsWidgetFullscreen}
                   onToolApprovalResponse={addToolApprovalResponse}
                   rawRequestPayloadHistory={{
                     entries: requestPayloadHistory,
@@ -609,6 +606,7 @@ export function MultiModelChatCard({
                     hideToolbar
                     fillContent
                     onRevealNavigateToChat={navigateTraceRevealToChat}
+                    onFullscreenChange={setIsWidgetFullscreen}
                     rawRequestPayloadHistory={{
                       entries: requestPayloadHistory,
                       hasUiMessages: !isThreadEmpty,
