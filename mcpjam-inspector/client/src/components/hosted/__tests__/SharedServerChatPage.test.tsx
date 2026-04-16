@@ -253,10 +253,7 @@ describe("SharedServerChatPage", () => {
     });
 
     expect(screen.getByTestId("shared-chat-tab")).toBeInTheDocument();
-    expect(mockValidateHostedServer).toHaveBeenCalledWith(
-      "srv_asana",
-      "oauth-token",
-    );
+    expect(mockValidateHostedServer).toHaveBeenCalledWith("srv_asana", null);
     expect(mockValidateHostedServer).toHaveBeenCalledTimes(1);
   });
 

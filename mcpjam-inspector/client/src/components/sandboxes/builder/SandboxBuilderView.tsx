@@ -1116,9 +1116,9 @@ export function SandboxBuilderView({
                             </Button>
                           </div>
                         ) : null}
-                        <div className="flex min-h-0 flex-1 flex-col">
+                        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
                           {sandbox?.link?.token ? (
-                            <div className="relative flex min-h-0 flex-1 flex-col">
+                            <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
                               <SandboxHostStyleProvider
                                 value={draftSandboxConfig.hostStyle}
                               >

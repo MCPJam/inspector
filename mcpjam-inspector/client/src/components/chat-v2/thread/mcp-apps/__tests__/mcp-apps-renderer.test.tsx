@@ -83,6 +83,16 @@ const mockPreferencesState = {
   hostStyle: "claude" as const,
 };
 
+const mockPlaygroundStoreState = {
+  isPlaygroundActive: false,
+  mcpAppsCspMode: "permissive" as const,
+  globals: { locale: "en-US", timeZone: "UTC" },
+  displayMode: "inline" as const,
+  capabilities: { hover: true, touch: false },
+  safeAreaInsets: { top: 0, right: 0, bottom: 0, left: 0 },
+  deviceType: "desktop" as const,
+};
+
 // ── Module mocks ───────────────────────────────────────────────────────────
 vi.mock("@modelcontextprotocol/ext-apps/app-bridge", () => ({
   AppBridge: vi.fn().mockImplementation(() => mockBridge),
@@ -130,15 +140,7 @@ vi.mock("@/stores/preferences/preferences-provider", () => ({
 
 vi.mock("@/stores/ui-playground-store", () => ({
   useUIPlaygroundStore: (selector: any) =>
-    selector({
-      isPlaygroundActive: false,
-      mcpAppsCspMode: "permissive",
-      globals: { locale: "en-US", timeZone: "UTC" },
-      displayMode: "inline",
-      capabilities: { hover: true, touch: false },
-      safeAreaInsets: { top: 0, right: 0, bottom: 0, left: 0 },
-      deviceType: "desktop",
-    }),
+    selector(mockPlaygroundStoreState),
 }));
 
 vi.mock("@/stores/client-config-store", () => ({
@@ -207,6 +209,15 @@ describe("MCPAppsRenderer tool input streaming", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockClientConfigStoreState.draftConfig = undefined;
+    Object.assign(mockPlaygroundStoreState, {
+      isPlaygroundActive: false,
+      mcpAppsCspMode: "permissive",
+      globals: { locale: "en-US", timeZone: "UTC" },
+      displayMode: "inline",
+      capabilities: { hover: true, touch: false },
+      safeAreaInsets: { top: 0, right: 0, bottom: 0, left: 0 },
+      deviceType: "desktop",
+    });
     mockBridge.sendToolInput.mockClear();
     mockBridge.sendToolInputPartial.mockClear();
     mockBridge.sendToolResult.mockClear();
@@ -337,6 +348,53 @@ describe("MCPAppsRenderer tool input streaming", () => {
         }),
       );
     });
+  });
+
+  it("anchors desktop playground PiP to the playground shell instead of the viewport", async () => {
+    Object.assign(mockPlaygroundStoreState, {
+      isPlaygroundActive: true,
+      displayMode: "pip",
+      deviceType: "desktop",
+    });
+
+    render(
+      <MCPAppsRenderer
+        {...baseProps}
+        cachedWidgetHtmlUrl="blob:cached"
+        displayMode="pip"
+        pipWidgetId="call-1"
+      />,
+    );
+
+    const iframe = await screen.findByTestId("sandboxed-iframe");
+    const container = iframe.parentElement as HTMLElement | null;
+    expect(container).not.toBeNull();
+    expect(container?.className).toContain("absolute");
+    expect(container?.className).not.toContain("fixed");
+    expect(container?.className).toContain("top-4");
+  });
+
+  it("keeps desktop playground fullscreen as a fixed breakout overlay", async () => {
+    Object.assign(mockPlaygroundStoreState, {
+      isPlaygroundActive: true,
+      displayMode: "fullscreen",
+      deviceType: "desktop",
+    });
+
+    render(
+      <MCPAppsRenderer
+        {...baseProps}
+        cachedWidgetHtmlUrl="blob:cached"
+        displayMode="fullscreen"
+        fullscreenWidgetId="call-1"
+      />,
+    );
+
+    const iframe = await screen.findByTestId("sandboxed-iframe");
+    const container = iframe.parentElement as HTMLElement | null;
+    expect(container).not.toBeNull();
+    expect(container?.className).toContain("fixed");
+    expect(container?.className).toContain("inset-0");
   });
 
   it("pushes updated host context when the workspace client profile changes", async () => {

@@ -271,7 +271,7 @@ export function OAuthProfileModal({
               required
             />
           </div>
-          <div className="space-y-6 max-h-[65vh] overflow-y-auto pr-1 pb-4">
+          <div className="space-y-6 max-h-[65vh] overflow-y-auto px-1 pb-4">
             <div className="space-y-4">
               <div className="space-y-2">
                 <Label

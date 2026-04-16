@@ -27,5 +27,5 @@ export const EMPTY_OAUTH_TEST_PROFILE: OAuthTestProfile = {
   scopes: "",
   customHeaders: [],
   protocolVersion: "2025-11-25",
-  registrationStrategy: "cimd",
+  registrationStrategy: "dcr",
 };

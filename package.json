@@ -1,8 +1,27 @@
 {
+  "name": "mcpjam-workspace",
+  "private": true,
+  "workspaces": [
+    "sdk",
+    "cli",
+    "mcpjam-inspector",
+    "soundcheck",
+    "mcp"
+  ],
   "scripts": {
-    "test": "npm --prefix ./sdk test && npm --prefix ./sdk run build && npm --prefix ./cli install ./sdk --no-save && npm --prefix ./cli test && npm --prefix ./mcpjam-inspector install ./sdk --no-save && npm --prefix ./mcpjam-inspector test && npm --prefix ./mcp install && npm --prefix ./mcp run typecheck"
+    "build": "npm run build -w @mcpjam/sdk && npm run build -w @mcpjam/cli && npm run build -w @mcpjam/inspector",
+    "build:packages": "npm run build -w @mcpjam/sdk && npm run build -w @mcpjam/cli",
+    "build:inspector": "npm run build -w @mcpjam/inspector",
+    "typecheck": "npm run typecheck -w @mcpjam/sdk && npm run build -w @mcpjam/sdk && npm run typecheck -w @mcpjam/cli && npm run typecheck -w @mcpjam/mcp",
+    "test": "npm run test:ordered",
+    "test:ordered": "npm run test -w @mcpjam/sdk && npm run build -w @mcpjam/sdk && npm run test -w @mcpjam/cli && npm run test -w @mcpjam/inspector && npm run typecheck -w @mcpjam/mcp",
+    "verify": "npm run typecheck && npm run test:ordered && npm run build:inspector",
+    "release:status": "changeset status",
+    "release:version": "changeset version",
+    "release:publish": "changeset publish"
   },
   "devDependencies": {
+    "@changesets/cli": "^2.29.7",
     "@types/dagre": "^0.7.54"
   }
 }

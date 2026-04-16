@@ -127,11 +127,59 @@ describe("ServerConnectionCard detail modal trigger", () => {
     );
   });
 
+  it("right-click opens the actions menu without opening the detail modal", async () => {
+    const { container } = render(
+      <ServerConnectionCard server={createServer()} {...defaultProps} />,
+    );
+
+    const card = container.querySelector("[data-slot='card']");
+    fireEvent.contextMenu(card!);
+
+    expect(await screen.findByText("Configure")).toBeInTheDocument();
+    expect(defaultProps.onOpenDetailModal).not.toHaveBeenCalled();
+  });
+
+  it("suppresses the next card click after opening the actions menu", () => {
+    const { container } = render(
+      <ServerConnectionCard server={createServer()} {...defaultProps} />,
+    );
+
+    const card = container.querySelector("[data-slot='card']");
+    fireEvent.contextMenu(card!);
+    fireEvent.click(card!);
+
+    expect(defaultProps.onOpenDetailModal).not.toHaveBeenCalled();
+  });
+
+  it("keeps suppressing card clicks while the actions menu stays open", () => {
+    vi.useFakeTimers();
+
+    try {
+      const { container } = render(
+        <ServerConnectionCard server={createServer()} {...defaultProps} />,
+      );
+
+      const card = container.querySelector("[data-slot='card']");
+      fireEvent.contextMenu(card!);
+
+      vi.advanceTimersByTime(1000);
+      fireEvent.click(card!);
+
+      expect(defaultProps.onOpenDetailModal).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("configure menu item requests the shared modal on configuration", async () => {
     const user = userEvent.setup();
     render(<ServerConnectionCard server={createServer()} {...defaultProps} />);
 
-    fireEvent.pointerDown(screen.getAllByRole("button")[0]);
+    fireEvent.pointerDown(
+      screen.getByRole("button", {
+        name: "Open actions menu for test-server",
+      }),
+    );
     await user.click(await screen.findByText("Configure"));
 
     expect(defaultProps.onOpenDetailModal).toHaveBeenCalledWith(
@@ -159,7 +207,9 @@ describe("ServerConnectionCard detail modal trigger", () => {
   it("copy button does not request the shared modal", () => {
     render(<ServerConnectionCard server={createServer()} {...defaultProps} />);
 
-    fireEvent.click(screen.getAllByRole("button")[1]);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Copy server command" }),
+    );
 
     expect(defaultProps.onOpenDetailModal).not.toHaveBeenCalled();
   });

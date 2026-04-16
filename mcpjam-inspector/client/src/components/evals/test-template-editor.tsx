@@ -119,8 +119,6 @@ interface TestTemplateEditorProps {
   openCompareFromRoute?: boolean;
   /** Deep link: exact iteration to anchor compare hydration to. */
   openCompareIterationId?: string | null;
-  /** Remove `compare=1` from the hash after handling {@link openCompareFromRoute}. */
-  onClearOpenCompareRoute?: () => void;
 }
 
 const createEmptyPromptTurn = (index: number): PromptTurn => ({
@@ -302,13 +300,14 @@ export function TestTemplateEditor({
   onContinueInChat,
   openCompareFromRoute = false,
   openCompareIterationId = null,
-  onClearOpenCompareRoute,
 }: TestTemplateEditorProps) {
   const { getAccessToken } = useAuth();
   const { getToken, hasToken } = useAiProviderKeys();
   const [editForm, setEditForm] = useState<TestTemplate | null>(null);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
-  const [editorMode, setEditorMode] = useState<EditorMode>("config");
+  const [editorMode, setEditorMode] = useState<EditorMode>(
+    openCompareFromRoute ? "run" : "config",
+  );
   const [availableTools, setAvailableTools] = useState<
     Array<{
       name: string;
@@ -389,7 +388,7 @@ export function TestTemplateEditor({
   }) as any;
 
   useEffect(() => {
-    setEditorMode("config");
+    setEditorMode(openCompareFromRoute ? "run" : "config");
     setCompareRunRecords({});
     setActiveCompareRunId(null);
     setRunColumnTabByModel({});
@@ -397,11 +396,17 @@ export function TestTemplateEditor({
     setExpandedPromptTurnIds([]);
     initializedSelectionCaseRef.current = null;
     setAddModelMenuOpen(false);
-  }, [selectedTestCaseId]);
+  }, [openCompareFromRoute, selectedTestCaseId]);
 
   useEffect(() => {
     setRouteCompareAnchorIterationId(openCompareIterationId);
   }, [openCompareIterationId, selectedTestCaseId]);
+
+  useEffect(() => {
+    if (openCompareFromRoute) {
+      setEditorMode("run");
+    }
+  }, [openCompareFromRoute, openCompareIterationId, selectedTestCaseId]);
 
   const clearCompareStreamingState = useCallback((modelValue: string) => {
     setCompareRunRecords((previous) => {
@@ -1026,67 +1031,6 @@ export function TestTemplateEditor({
     [currentTestCase?._id, selectedModelValues, suiteId],
   );
 
-  const openCompareRouteHandledRef = useRef<string | null>(null);
-  useEffect(() => {
-    const compareRouteKey = `${selectedTestCaseId}:${openCompareIterationId ?? ""}`;
-    if (!openCompareFromRoute) {
-      openCompareRouteHandledRef.current = null;
-      return;
-    }
-    if (
-      !onClearOpenCompareRoute ||
-      openCompareRouteHandledRef.current === compareRouteKey
-    ) {
-      return;
-    }
-    if (!currentTestCase?._id || recentIterations === undefined) {
-      return;
-    }
-    if (
-      routeCompareAnchorIterationId &&
-      routeCompareAnchorIteration === undefined
-    ) {
-      return;
-    }
-    if (initializedSelectionCaseRef.current !== currentTestCase._id) {
-      return;
-    }
-    if (selectedModelValues.length === 0) {
-      const caseListsModels =
-        (currentTestCase.models?.filter((m) => m.provider && m.model).length ??
-          0) > 0;
-      if (caseListsModels || modelOptions.length > 0) {
-        return;
-      }
-      openCompareRouteHandledRef.current = compareRouteKey;
-      onClearOpenCompareRoute();
-      return;
-    }
-    if (!hasRunViewContent) {
-      if (recentIterations.length === 0) {
-        openCompareRouteHandledRef.current = compareRouteKey;
-        onClearOpenCompareRoute();
-      }
-      return;
-    }
-    openCompareRouteHandledRef.current = compareRouteKey;
-    openRunView("config_toggle");
-    onClearOpenCompareRoute();
-  }, [
-    currentTestCase?._id,
-    openCompareFromRoute,
-    openCompareIterationId,
-    hasRunViewContent,
-    modelOptions.length,
-    onClearOpenCompareRoute,
-    openRunView,
-    recentIterations,
-    routeCompareAnchorIteration,
-    routeCompareAnchorIterationId,
-    selectedModelValues.length,
-    selectedTestCaseId,
-  ]);
-
   const handleAddModel = (modelValue: string) => {
     setSelectedModelValues((previous) => {
       if (previous.includes(modelValue)) {
@@ -1629,7 +1573,27 @@ export function TestTemplateEditor({
     });
   };
 
+  const compareRouteLoadingState = (
+    <div className="flex h-full items-center justify-center">
+      <div className="text-center">
+        <Loader2 className="mx-auto size-5 animate-spin text-muted-foreground" />
+        <p className="mt-3 text-xs text-muted-foreground">Loading results...</p>
+      </div>
+    </div>
+  );
+  const isCompareRouteLoading =
+    openCompareFromRoute &&
+    (testCases === undefined ||
+      (currentTestCase?._id != null &&
+        initializedSelectionCaseRef.current !== currentTestCase._id) ||
+      (currentTestCase?._id != null && recentIterations === undefined) ||
+      (routeCompareAnchorIterationId != null &&
+        routeCompareAnchorIteration === undefined));
+
   if (!currentTestCase) {
+    if (isCompareRouteLoading) {
+      return compareRouteLoadingState;
+    }
     return (
       <div className="flex h-full items-center justify-center">
         <p className="text-xs text-muted-foreground">Loading test case...</p>
@@ -1694,6 +1658,10 @@ export function TestTemplateEditor({
     Boolean(onOpenLastRun) &&
     Boolean(lastSavedIteration?.suiteRunId) &&
     Boolean(lastSavedIteration?._id);
+
+  if (editorMode === "run" && isCompareRouteLoading) {
+    return compareRouteLoadingState;
+  }
 
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-background">
@@ -2337,12 +2305,11 @@ export function TestTemplateEditor({
                         testCase={currentTestCase}
                         serverNames={connectedServerList}
                         workspaceId={workspaceId}
-                        onContinueInChat={onContinueInChat}
                         onStreamingTraceLoaded={() =>
                           clearCompareStreamingState(record.modelValue)
                         }
                         activeTab={
-                          runColumnTabByModel[record.modelValue] ?? "timeline"
+                          runColumnTabByModel[record.modelValue] ?? "tools"
                         }
                         onTabChange={(tab) =>
                           handleRunColumnTabChange(record.modelValue, tab)
@@ -2408,11 +2375,8 @@ function RunColumn({
   const showToolsTab =
     expectedToolCalls.length > 0 || actualToolCalls.length > 0;
 
-  useEffect(() => {
-    if (!showToolsTab && activeTab === "tools") {
-      onTabChange("timeline");
-    }
-  }, [showToolsTab, activeTab, onTabChange]);
+  const effectiveActiveTab: RunColumnTab =
+    activeTab === "tools" && !showToolsTab ? "timeline" : activeTab;
 
   /** Status marker: pastel fills aligned with metric bar accent colors. */
   const statusIndicatorClass =
@@ -2444,11 +2408,11 @@ function RunColumn({
       ? `${Math.round(record.metrics.durationMs / 100) / 10}s`
       : "—";
   const traceMode =
-    activeTab === "chat"
+    effectiveActiveTab === "chat"
       ? "chat"
-      : activeTab === "timeline"
+      : effectiveActiveTab === "timeline"
         ? "timeline"
-        : activeTab === "raw"
+        : effectiveActiveTab === "raw"
           ? "raw"
           : "tools";
   const streamingTraceEnvelope = useMemo(
@@ -2597,21 +2561,34 @@ function RunColumn({
   return (
     <div className="flex h-auto min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl border border-border/60 bg-card/40 lg:h-full">
       <div className="shrink-0 border-b px-3 py-2">
-        <div className="flex items-start justify-between gap-2">
-          <div className="min-w-0">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex min-w-0 items-center gap-1.5">
             <div className="truncate text-sm font-semibold leading-tight">
               {record.modelLabel}
             </div>
+            {record.result === "passed" ? (
+              <span className="inline-flex shrink-0 items-center rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider bg-emerald-500/15 text-emerald-700 dark:bg-emerald-400/20 dark:text-emerald-300" aria-label={statusLabel}>
+                Pass
+              </span>
+            ) : record.result === "failed" || record.status === "failed" ? (
+              <span className="inline-flex shrink-0 items-center rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider bg-rose-500/15 text-rose-700 dark:bg-rose-400/20 dark:text-rose-300" aria-label={statusLabel}>
+                Fail
+              </span>
+            ) : null}
           </div>
-          <span
-            role="img"
-            className={cn(
-              "inline-flex shrink-0 rounded-full",
-              statusIndicatorClass,
-            )}
-            aria-label={statusLabel}
-            title={statusLabel}
-          />
+          {record.result !== "passed" &&
+          record.result !== "failed" &&
+          record.status !== "failed" ? (
+            <span
+              role="img"
+              className={cn(
+                "inline-flex shrink-0 rounded-full",
+                statusIndicatorClass,
+              )}
+              aria-label={statusLabel}
+              title={statusLabel}
+            />
+          ) : null}
         </div>
 
         {/* Metric comparison bars */}
@@ -2717,7 +2694,7 @@ function RunColumn({
         <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2">
           <div className="flex min-w-0 flex-wrap items-center gap-1.5">
             <TraceViewModeTabs
-              mode={activeTab}
+              mode={effectiveActiveTab}
               onModeChange={onTabChange}
               showToolsTab={showToolsTab}
               className="[&_button]:px-1.5 [&_button]:py-0.5 [&_button]:text-[11px] [&_svg]:h-3 [&_svg]:w-3"
