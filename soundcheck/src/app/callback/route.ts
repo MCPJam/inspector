@@ -1,3 +1,5 @@
 // WorkOS AuthKit callback route. Completes the sign-in redirect and
 // returns the user to `/` afterward.
-export { handleAuth as GET } from "@workos-inc/authkit-nextjs";
+import { handleAuth } from "@workos-inc/authkit-nextjs";
+
+export const GET = handleAuth();
