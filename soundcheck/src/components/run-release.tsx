@@ -34,6 +34,15 @@ export function RunRelease() {
 
   const impactsProd = deployBackend || promoteProd;
 
+  // Reset gated flags when scope changes so a stale `true` can't slip into
+  // the confirmation modal or the dispatch payload. The checkbox disabling
+  // is only a UI hint — state must follow.
+  function changeScope(next: Scope) {
+    setScope(next);
+    if (next !== "full") setDeployBackend(false);
+    if (next === "packages-only") setPromoteProd(false);
+  }
+
   function onSubmit() {
     setConfirming(true);
   }
@@ -104,7 +113,7 @@ export function RunRelease() {
                   name="scope"
                   value={s}
                   checked={scope === s}
-                  onChange={() => setScope(s)}
+                  onChange={() => changeScope(s)}
                   className="accent-neutral-800 dark:accent-neutral-200"
                 />
                 <span className="font-mono text-xs text-neutral-700 dark:text-neutral-200">

@@ -20,7 +20,7 @@
 
 import { NextResponse } from "next/server";
 import { withAuth } from "@workos-inc/authkit-nextjs";
-import { isAllowedEmployeeEmail, isLockdownEnabled } from "@/lib/lockdown";
+import { isAllowedEmployeeEmail } from "@/lib/lockdown";
 import { dispatchWorkflow } from "@/lib/github";
 
 export const dynamic = "force-dynamic";
@@ -55,9 +55,27 @@ function parseBody(raw: unknown): DispatchBody | null {
 }
 
 export async function POST(request: Request) {
-  // ── 1. Re-enforce lockdown server-side ──────────────────────────────
+  // ── 1. Enforce employee-only — unconditionally ──────────────────────
+  // Unlike the read tiles (which follow the MCPJAM_NONPROD_LOCKDOWN flag),
+  // this route hands out the write-scoped PAT and dispatches production.
+  // A forgotten/flipped lockdown env var must NOT open it up to every
+  // WorkOS tenant user. The employee-email gate is required regardless of
+  // lockdown mode.
   const { user } = await withAuth({ ensureSignedIn: true });
-  if (isLockdownEnabled() && !isAllowedEmployeeEmail(user.email)) {
+  let allowed = false;
+  try {
+    allowed = isAllowedEmployeeEmail(user.email);
+  } catch (err) {
+    // isAllowedEmployeeEmail throws when lockdown is on and the allowed-
+    // domains env var is empty. Convert to a 500 so the failure is
+    // observable without leaking a stack trace.
+    console.error("dispatch route: lockdown misconfigured:", err);
+    return NextResponse.json(
+      { error: "Server lockdown env not configured" },
+      { status: 500 }
+    );
+  }
+  if (!allowed) {
     return NextResponse.json({ error: "Not authorized" }, { status: 403 });
   }
 

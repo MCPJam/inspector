@@ -63,7 +63,11 @@ export async function ReleaseProgress() {
         revalidate: 10
       })
     ]);
-    activeRun = [...queued, ...inProgress][0] ?? null;
+    // Prefer an actively executing run over a queued one — a queued run has
+    // no job data yet, so the stepper would collapse to "pending" and hide
+    // the real progress of whatever is currently running. Fall back to
+    // queued only if nothing is actively running.
+    activeRun = inProgress[0] ?? queued[0] ?? null;
   } catch (err) {
     return (
       <Tile title="Release progress">
@@ -266,7 +270,12 @@ function JobRow({ name, job }: { name: string; job: WorkflowJob | null }) {
 }
 
 function FailingStep({ job }: { job: WorkflowJob }) {
-  const failing = job.steps.find((s) => s.conclusion === "failure");
+  // `jobTone` above treats `failure` and `timed_out` identically; match that
+  // here so a timed-out job surfaces its culprit step instead of rendering
+  // just the tone badge with no detail.
+  const failing = job.steps.find(
+    (s) => s.conclusion === "failure" || s.conclusion === "timed_out"
+  );
   if (!failing) return null;
   return (
     <span className="text-xs text-red-500">

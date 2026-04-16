@@ -172,7 +172,12 @@ function FailureRow({ row }: { row: Row }) {
   }
 
   const { run, failingJob, annotations } = row;
-  const failingStep = failingJob?.steps.find((s) => s.conclusion === "failure");
+  // Mirror the job filter above: a timed-out job's failing step is still
+  // the most useful thing to show, and silently dropping it would hide the
+  // primary signal of the row.
+  const failingStep = failingJob?.steps.find(
+    (s) => s.conclusion === "failure" || s.conclusion === "timed_out"
+  );
   return (
     <li className="space-y-2">
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-sm">
