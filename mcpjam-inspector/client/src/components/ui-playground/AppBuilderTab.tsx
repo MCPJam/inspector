@@ -377,6 +377,7 @@ export function AppBuilderTab({
           order={2}
           defaultSize={centerPanelDefaultSize}
           minSize={PANEL_SIZES.CENTER.MIN}
+          className="min-h-0 min-w-0 overflow-hidden"
         >
           <PlaygroundMain
             serverName={serverName || ""}
