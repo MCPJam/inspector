@@ -34,7 +34,10 @@ interface WorkspaceSettingsTabProps {
     updates: Partial<Workspace>,
   ) => Promise<void>;
   onDeleteWorkspace: (workspaceId: string) => Promise<boolean>;
-  onWorkspaceShared: (sharedWorkspaceId: string) => void;
+  onWorkspaceShared: (
+    sharedWorkspaceId: string,
+    sourceWorkspaceId?: string,
+  ) => void;
   onNavigateAway: () => void;
 }
 
