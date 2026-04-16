@@ -414,6 +414,15 @@ export function useAppState({
       serverState.connectedOrConnectingServerConfigs,
     selectedServerEntry: serverState.selectedServerEntry,
     selectedMCPConfig: serverState.selectedMCPConfig,
+    // True when the currently selected server exists in runtime state
+    // (`appState.servers`) but has not yet propagated to the persisted
+    // workspace servers (e.g. Convex round-trip pending for logged-in users).
+    // Consumers can use this to show a loading state rather than an
+    // incorrect "No Server Selected" empty state during the sync window.
+    isSelectedServerSyncing:
+      appState.selectedServer !== "none" &&
+      !!appState.servers[appState.selectedServer] &&
+      !serverState.workspaceServers[appState.selectedServer],
     selectedMCPConfigs: serverState.selectedMCPConfigs,
     selectedMCPConfigsMap: serverState.selectedMCPConfigsMap,
     isMultiSelectMode: serverState.isMultiSelectMode,
