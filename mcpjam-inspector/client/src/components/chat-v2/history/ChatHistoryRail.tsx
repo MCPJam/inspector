@@ -17,6 +17,7 @@ import { ChatHistoryRow } from "./ChatHistoryRow";
 import { useChatHistory } from "./use-chat-history";
 import type { ChatHistorySession } from "@/lib/apis/web/chat-history-api";
 import { useWorkspaceMembers } from "@/hooks/useWorkspaces";
+import type { SandboxHostStyle } from "@/lib/sandbox-host-style";
 import {
   buildWorkspaceOwnerProfileByUserId,
   resolveWorkspaceThreadOwnerAvatar,
@@ -25,10 +26,27 @@ import {
 /** Delays (ms) after a turn completes to re-fetch list while backend ingestion may still be running. */
 const HISTORY_REFETCH_RETRY_DELAYS_MS = [250, 800, 2000] as const;
 
+/**
+ * Token sets keyed on the user's host-style preference. ChatGPT mimics use the
+ * general `accent` family; Claude mimics tie into `sidebar-accent` so the
+ * highlight feels like a continuation of the sidebar tab.
+ */
+export const CHAT_HISTORY_STRONG_BG_CLASS: Record<SandboxHostStyle, string> = {
+  chatgpt: "bg-accent text-accent-foreground",
+  claude: "bg-sidebar-accent text-sidebar-accent-foreground",
+};
+export const CHAT_HISTORY_STRONG_HOVER_CLASS: Record<SandboxHostStyle, string> =
+  {
+    chatgpt: "hover:bg-accent/80",
+    claude: "hover:bg-sidebar-accent/80",
+  };
+
 type ArchiveSectionScope = "personal" | "workspace";
 
 interface ChatHistoryRailProps {
   activeSessionId?: string | null;
+  /** Which host aesthetic to mimic for strong-highlight tokens (falls back to "claude"). */
+  hostStyle?: SandboxHostStyle;
   isAuthenticated: boolean;
   isStreaming: boolean;
   workspaceId?: string | null;
@@ -67,6 +85,7 @@ function ThreadSection({
   onNewChat,
   newChatDisabled,
   defaultOpen = true,
+  hostStyle,
   children,
 }: {
   headingId: string;
@@ -82,6 +101,7 @@ function ThreadSection({
   onNewChat: (options?: { shared?: boolean }) => void;
   newChatDisabled: boolean;
   defaultOpen?: boolean;
+  hostStyle: SandboxHostStyle;
   children: ReactNode;
 }) {
   const [open, setOpen] = useState(defaultOpen);
@@ -101,7 +121,9 @@ function ThreadSection({
               aria-label={triggerLabel}
               className={cn(
                 "flex w-full min-w-0 cursor-pointer items-center gap-1.5 rounded-md px-1.5 py-1.5 text-left text-xs outline-none transition-[background-color,color] duration-150 ease-out",
-                "text-muted-foreground no-underline hover:bg-accent/60",
+                "no-underline",
+                CHAT_HISTORY_STRONG_BG_CLASS[hostStyle],
+                CHAT_HISTORY_STRONG_HOVER_CLASS[hostStyle],
                 "focus-visible:ring-2 focus-visible:ring-ring/40",
               )}
             >
@@ -190,6 +212,7 @@ function ThreadSection({
 
 export function ChatHistoryRail({
   activeSessionId,
+  hostStyle = "claude",
   isAuthenticated,
   isStreaming,
   workspaceId,
@@ -288,7 +311,21 @@ export function ChatHistoryRail({
 
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-col border-r">
-      <ScrollArea className="min-h-0 min-w-0 flex-1">
+      <ScrollArea
+        className={cn(
+          "min-h-0 min-w-0 flex-1",
+          // Scrollbar: scoped polish — narrower, softer thumb, subtle hover expand.
+          "[&_[data-slot=scroll-area-scrollbar]]:z-20",
+          "[&_[data-slot=scroll-area-scrollbar]]:w-1.5",
+          "[&_[data-slot=scroll-area-scrollbar]]:transition-[width,background-color]",
+          "[&_[data-slot=scroll-area-scrollbar]]:duration-150",
+          "hover:[&_[data-slot=scroll-area-scrollbar]]:w-2",
+          "[&_[data-slot=scroll-area-thumb]]:bg-muted-foreground/30",
+          "[&_[data-slot=scroll-area-thumb]]:transition-colors",
+          "[&_[data-slot=scroll-area-thumb]]:duration-150",
+          "hover:[&_[data-slot=scroll-area-thumb]]:bg-muted-foreground/60",
+        )}
+      >
         <div className="min-w-0 px-1 py-1">
           {loading && personal.length === 0 && workspace.length === 0 && (
             <div className="flex items-center justify-center py-8">
@@ -334,6 +371,7 @@ export function ChatHistoryRail({
                   }
                   onNewChat={onNewChat}
                   newChatDisabled={isStreaming}
+                  hostStyle={hostStyle}
                 >
                   {personal.map((session) => (
                     <ChatHistoryRow
@@ -342,6 +380,7 @@ export function ChatHistoryRail({
                       isActive={session._id === activeSessionId}
                       isAuthenticated={isAuthenticated}
                       isStreaming={isStreaming}
+                      hostStyle={hostStyle}
                       onSelect={onSelectThread}
                       onActionComplete={onSessionAction}
                       actions={actions}
@@ -367,6 +406,7 @@ export function ChatHistoryRail({
                   }
                   onNewChat={() => onNewChat({ shared: true })}
                   newChatDisabled={isStreaming}
+                  hostStyle={hostStyle}
                 >
                   {workspace.map((session) => (
                     <ChatHistoryRow
@@ -375,6 +415,7 @@ export function ChatHistoryRail({
                       isActive={session._id === activeSessionId}
                       isAuthenticated={isAuthenticated}
                       isStreaming={isStreaming}
+                      hostStyle={hostStyle}
                       onSelect={onSelectThread}
                       onActionComplete={onSessionAction}
                       workspaceThreadOwner={resolveWorkspaceThreadOwnerAvatar(
