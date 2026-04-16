@@ -246,6 +246,11 @@ const navigationSections: NavSection[] = [
         featureFlag: "mcpjam-learning",
       },
       {
+        title: "Conformance",
+        url: "#conformance",
+        icon: FlaskConical,
+      },
+      {
         title: "OAuth Debugger",
         url: "#oauth-flow",
         icon: Workflow,

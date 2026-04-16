@@ -67,6 +67,14 @@ describe("hosted-tab-policy", () => {
     expect(isHostedHashTabBlocked("oauth-flow")).toBe(false);
   });
 
+  it("allows conformance in hosted sidebar", () => {
+    expect(HOSTED_SIDEBAR_ALLOWED_TABS).toContain("conformance");
+    expect(HOSTED_HASH_ALLOWED_TABS).toContain("conformance");
+    expect(isHostedSidebarTabAllowed("conformance")).toBe(true);
+    expect(isHostedHashTabAllowed("conformance")).toBe(true);
+    expect(isHostedHashTabBlocked("conformance")).toBe(false);
+  });
+
   it("allows learning in hosted navigation", () => {
     expect(HOSTED_SIDEBAR_ALLOWED_TABS).toContain("learning");
     expect(HOSTED_HASH_ALLOWED_TABS).toContain("learning");

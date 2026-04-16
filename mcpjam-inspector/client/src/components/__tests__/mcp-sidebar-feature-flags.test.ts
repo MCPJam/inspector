@@ -207,6 +207,7 @@ describe("getHostedNavigationSections", () => {
             icon: FakeIcon,
             billingFeature: "evals",
           },
+          { title: "Conformance", url: "#conformance", icon: FakeIcon },
           { title: "OAuth Debugger", url: "#oauth-flow", icon: FakeIcon },
         ],
       },
@@ -226,6 +227,11 @@ describe("getHostedNavigationSections", () => {
         url: "#ci-evals",
         icon: FakeIcon,
         billingFeature: "evals",
+      },
+      {
+        title: "Conformance",
+        url: "#conformance",
+        icon: FakeIcon,
       },
       {
         title: "OAuth Debugger",

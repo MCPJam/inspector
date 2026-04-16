@@ -5,14 +5,11 @@ import {
   ExternalLink,
   ChevronDown,
   ChevronRight,
-  FlaskConical,
 } from "lucide-react";
 import { ServerWithName } from "@/hooks/use-app-state";
 import { getStoredTokensState } from "@/lib/oauth/mcp-oauth";
 import { decodeJWT } from "@/lib/oauth/jwt-decoder";
 import { ScrollableJsonView } from "@/components/ui/json-editor";
-import { Button } from "@/components/ui/button";
-import { ConformancePanel } from "@/components/conformance/ConformancePanel";
 
 interface ServerInfoContentProps {
   server: ServerWithName;
@@ -25,7 +22,6 @@ export function ServerInfoContent({
 }: ServerInfoContentProps) {
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [expandedTokens, setExpandedTokens] = useState<Set<string>>(new Set());
-  const [conformanceOpen, setConformanceOpen] = useState(false);
 
   const storedTokensState = server.oauthTokens
     ? { tokens: undefined, isInvalid: false }
@@ -306,25 +302,6 @@ export function ServerInfoContent({
       )}
 
       {renderOAuthTokensSection()}
-
-      {/* Conformance */}
-      <div className="pt-2">
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => setConformanceOpen(true)}
-          className="gap-1.5"
-        >
-          <FlaskConical className="h-3.5 w-3.5" />
-          Run conformance
-        </Button>
-      </div>
-
-      <ConformancePanel
-        open={conformanceOpen}
-        onOpenChange={setConformanceOpen}
-        server={server}
-      />
     </div>
   );
 }

@@ -7,7 +7,6 @@ import type {
 } from "@mcpjam/sdk";
 import type { ServerWithName } from "@/hooks/use-app-state";
 
-// Mock the conformance API
 const mockRunProtocol = vi.fn();
 const mockRunApps = vi.fn();
 const mockStartOAuth = vi.fn();
@@ -38,7 +37,7 @@ vi.mock("@/components/oauth/utils", () => ({
   }),
 }));
 
-import { ConformancePanel } from "../ConformancePanel";
+import { ConformanceTab } from "../ConformancePanel";
 
 function createProtocolResult(
   overrides: Partial<MCPConformanceResult> = {},
@@ -121,6 +120,16 @@ function clickRow(title: string) {
   fireEvent.click(button!);
 }
 
+function createDeferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 function createHttpServer(
   overrides: Partial<ServerWithName> = {},
 ): ServerWithName {
@@ -159,28 +168,30 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
-describe("ConformancePanel", () => {
-  it("renders panel title for HTTP server", () => {
-    render(
-      <ConformancePanel
-        open={true}
-        onOpenChange={vi.fn()}
-        server={createHttpServer()}
-      />,
-    );
+describe("ConformanceTab", () => {
+  it("renders the tab title for an HTTP server", () => {
+    render(<ConformanceTab server={createHttpServer()} />);
 
     expect(screen.getByText("Conformance")).toBeDefined();
     expect(screen.getByText("Run available checks")).toBeDefined();
+    expect(
+      screen.getByText(/Run Protocol, Apps, and OAuth checks against/),
+    ).toBeDefined();
+  });
+
+  it("shows an empty state when no server is selected", () => {
+    render(<ConformanceTab server={null} />);
+
+    expect(screen.getByText("No server selected")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Select a connected server above to run conformance checks.",
+      ),
+    ).toBeInTheDocument();
   });
 
   it("shows all three suite sections", () => {
-    render(
-      <ConformancePanel
-        open={true}
-        onOpenChange={vi.fn()}
-        server={createHttpServer()}
-      />,
-    );
+    render(<ConformanceTab server={createHttpServer()} />);
 
     expect(screen.getByText("Protocol")).toBeDefined();
     expect(screen.getByText("Apps")).toBeDefined();
@@ -188,41 +199,20 @@ describe("ConformancePanel", () => {
   });
 
   it("marks Protocol and OAuth as unavailable for stdio servers", () => {
-    render(
-      <ConformancePanel
-        open={true}
-        onOpenChange={vi.fn()}
-        server={createStdioServer()}
-      />,
-    );
+    render(<ConformanceTab server={createStdioServer()} />);
 
-    const unavailableText = screen.getAllByText("Unavailable");
-    expect(unavailableText.length).toBeGreaterThanOrEqual(2);
+    expect(
+      screen.getByText("Protocol conformance requires HTTP transport"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("OAuth conformance requires HTTP transport"),
+    ).toBeInTheDocument();
   });
 
-  it("shows negative checks toggle", () => {
-    render(
-      <ConformancePanel
-        open={true}
-        onOpenChange={vi.fn()}
-        server={createHttpServer()}
-      />,
-    );
+  it("shows the negative checks toggle", () => {
+    render(<ConformanceTab server={createHttpServer()} />);
 
     expect(screen.getByText("Run negative OAuth checks")).toBeDefined();
-  });
-
-  it("does not render when closed", () => {
-    const { container } = render(
-      <ConformancePanel
-        open={false}
-        onOpenChange={vi.fn()}
-        server={createHttpServer()}
-      />,
-    );
-
-    // Sheet content should not be visible
-    expect(container.querySelector("[data-slot='sheet-content']")).toBeNull();
   });
 
   it("expands passed protocol rows and shows descriptions and details", async () => {
@@ -245,13 +235,7 @@ describe("ConformancePanel", () => {
       }),
     });
 
-    render(
-      <ConformancePanel
-        open={true}
-        onOpenChange={vi.fn()}
-        server={createHttpServer()}
-      />,
-    );
+    render(<ConformanceTab server={createHttpServer()} />);
 
     fireEvent.click(screen.getByText("Run available checks"));
     await screen.findByText("Protocol summary");
@@ -284,13 +268,7 @@ describe("ConformancePanel", () => {
       }),
     });
 
-    render(
-      <ConformancePanel
-        open={true}
-        onOpenChange={vi.fn()}
-        server={createHttpServer()}
-      />,
-    );
+    render(<ConformanceTab server={createHttpServer()} />);
 
     fireEvent.click(screen.getByText("Run available checks"));
     await screen.findByText("Apps summary");
@@ -323,13 +301,7 @@ describe("ConformancePanel", () => {
       }),
     });
 
-    render(
-      <ConformancePanel
-        open={true}
-        onOpenChange={vi.fn()}
-        server={createHttpServer()}
-      />,
-    );
+    render(<ConformanceTab server={createHttpServer()} />);
 
     fireEvent.click(screen.getByText("Run available checks"));
     await screen.findByText("Protocol summary");
@@ -369,13 +341,7 @@ describe("ConformancePanel", () => {
       }),
     });
 
-    render(
-      <ConformancePanel
-        open={true}
-        onOpenChange={vi.fn()}
-        server={createHttpServer()}
-      />,
-    );
+    render(<ConformanceTab server={createHttpServer()} />);
 
     fireEvent.click(screen.getByText("Run available checks"));
     await screen.findByText("OAuth summary");
@@ -417,13 +383,7 @@ describe("ConformancePanel", () => {
       }),
     });
 
-    render(
-      <ConformancePanel
-        open={true}
-        onOpenChange={vi.fn()}
-        server={createHttpServer()}
-      />,
-    );
+    render(<ConformanceTab server={createHttpServer()} />);
 
     fireEvent.click(screen.getByText("Run available checks"));
     await screen.findByText("Protocol summary");
@@ -435,6 +395,70 @@ describe("ConformancePanel", () => {
 
     await waitFor(() => {
       expect(screen.queryByText("Rerun detail body")).toBeNull();
+    });
+  });
+
+  it("resets state on server switch and ignores stale async completions", async () => {
+    const staleProtocolRun = createDeferred<{
+      success: boolean;
+      result: MCPConformanceResult;
+    }>();
+
+    mockRunProtocol.mockImplementationOnce(() => staleProtocolRun.promise);
+    mockRunApps.mockResolvedValue({ success: true, result: createAppsResult() });
+    mockStartOAuth.mockResolvedValue({
+      phase: "complete",
+      result: createOAuthResult(),
+    });
+
+    const serverA = createHttpServer({
+      name: "http-server-a",
+      config: {
+        url: "https://example.com/a",
+        timeout: 30000,
+      },
+    });
+    const serverB = createHttpServer({
+      name: "http-server-b",
+      config: {
+        url: "https://example.com/b",
+        timeout: 30000,
+      },
+    });
+
+    const { rerender } = render(<ConformanceTab server={serverA} />);
+
+    fireEvent.click(screen.getByText("Run available checks"));
+    await screen.findByText("Apps summary");
+
+    rerender(<ConformanceTab server={serverB} />);
+
+    expect(screen.queryByText("Apps summary")).toBeNull();
+    expect(screen.queryByText("Protocol summary")).toBeNull();
+    expect(
+      screen.getByText(/Run Protocol, Apps, and OAuth checks against http-server-b/),
+    ).toBeInTheDocument();
+
+    mockRunProtocol.mockResolvedValueOnce({
+      success: true,
+      result: createProtocolResult({
+        summary: "Fresh protocol summary",
+      }),
+    });
+
+    fireEvent.click(screen.getByText("Run available checks"));
+    await screen.findByText("Fresh protocol summary");
+
+    staleProtocolRun.resolve({
+      success: true,
+      result: createProtocolResult({
+        summary: "Stale protocol summary",
+      }),
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("Fresh protocol summary")).toBeInTheDocument();
+      expect(screen.queryByText("Stale protocol summary")).toBeNull();
     });
   });
 });

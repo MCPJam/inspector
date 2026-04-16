@@ -31,6 +31,7 @@ import { WorkspaceClientConfigSync } from "./components/client-config/WorkspaceC
 import { TracingTab } from "./components/TracingTab";
 import { AuthTab } from "./components/AuthTab";
 import { OAuthFlowTab } from "./components/OAuthFlowTab";
+import { ConformanceTab } from "./components/conformance/ConformancePanel";
 import { ErrorBoundary } from "./components/evals/ErrorBoundary";
 import { AppBuilderTab } from "./components/ui-playground/AppBuilderTab";
 import { EmptyState } from "./components/ui/empty-state";
@@ -704,6 +705,7 @@ export default function App() {
       activeTab === "resources" ||
       activeTab === "prompts" ||
       activeTab === "tasks" ||
+      activeTab === "conformance" ||
       activeTab === "auth";
     if (!needsServer || selectedMCPConfig) return;
 
@@ -1517,6 +1519,7 @@ export default function App() {
     activeTab === "resources" ||
     activeTab === "prompts" ||
     activeTab === "tasks" ||
+    activeTab === "conformance" ||
     activeTab === "oauth-flow" ||
     activeTab === "chat" ||
     activeTab === "evals" ||
@@ -1699,6 +1702,9 @@ export default function App() {
             ) : null)}
           {activeTab === "views" && (
             <ViewsTab selectedServer={appState.selectedServer} />
+          )}
+          {activeTab === "conformance" && (
+            <ConformanceTab server={selectedMCPConfig ?? null} />
           )}
           {activeTab === "sandboxes" &&
             (billingUiEnabled &&
