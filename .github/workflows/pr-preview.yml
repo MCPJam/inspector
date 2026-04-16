@@ -30,6 +30,9 @@ jobs:
       github.event.action != 'closed' &&
       github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
+    environment:
+      name: preview-pr-${{ github.event.pull_request.number }}
+      url: ${{ steps.preview_domain.outputs.url }}
     env:
       BACKEND_REPO: ${{ vars.MCPJAM_BACKEND_REPO || 'MCPJam/mcpjam-backend' }}
       RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
@@ -219,6 +222,9 @@ jobs:
   upsert-backend-pr-preview:
     if: github.event_name == 'repository_dispatch' && github.event.action == 'backend_pr_preview_requested'
     runs-on: ubuntu-latest
+    environment:
+      name: preview-pr-be-${{ github.event.client_payload.backend_pr_number }}
+      url: ${{ steps.preview_domain.outputs.url }}
     env:
       BACKEND_REPO: ${{ vars.MCPJAM_BACKEND_REPO || 'MCPJam/mcpjam-backend' }}
       RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
