@@ -3,8 +3,8 @@ import { writeFileSync, mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
-import { loadSuiteConfig } from "../src/lib/config-file";
-import { CliError } from "../src/lib/output";
+import { loadSuiteConfig } from "../src/lib/config-file.js";
+import { CliError } from "../src/lib/output.js";
 
 function withTempFile(content: string, fn: (path: string) => void) {
   const dir = mkdtempSync(join(tmpdir(), "cli-config-test-"));

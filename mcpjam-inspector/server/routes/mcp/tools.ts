@@ -3,7 +3,7 @@ import type {
   ElicitRequest,
   ElicitResult,
   ListToolsResult,
-} from "@modelcontextprotocol/sdk/types.js";
+} from "@modelcontextprotocol/client";
 import "../../types/hono"; // Type extensions
 import { listTools as listToolsShared } from "../../utils/route-handlers.js";
 

@@ -1,4 +1,4 @@
-import type { OAuthFlowStep } from "../types";
+import type { OAuthFlowStep } from "../types.js";
 
 export interface OAuthStepInfo {
   title: string;

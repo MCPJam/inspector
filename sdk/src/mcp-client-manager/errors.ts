@@ -64,8 +64,8 @@ export function isAuthError(error: unknown): {
     return { isAuth: false };
   }
 
-  // Check for MCP SDK's UnauthorizedError by class name
-  // (We check by name to avoid importing from @modelcontextprotocol/sdk)
+  // Check for MCP client's UnauthorizedError by class name
+  // (We check by name to avoid importing the runtime class here)
   if (error.name === "UnauthorizedError") {
     return { isAuth: true, statusCode: 401 };
   }

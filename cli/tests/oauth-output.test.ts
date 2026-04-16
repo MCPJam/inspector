@@ -10,11 +10,11 @@ import {
   renderOAuthConformanceResult,
   renderOAuthConformanceSuiteResult,
   resolveOAuthOutputFormat,
-} from "../src/lib/oauth-output";
+} from "../src/lib/oauth-output.js";
 import {
   singleResultToJUnitXml,
   suiteResultToJUnitXml,
-} from "../src/lib/junit-xml";
+} from "../src/lib/junit-xml.js";
 
 function createSingleResult(): ConformanceResult {
   return {

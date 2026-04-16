@@ -5,6 +5,24 @@ import {
   DeployDiff,
   DeployDiffSkeleton
 } from "@/components/deploy-diff";
+import {
+  ReleaseReadiness,
+  ReleaseReadinessSkeleton
+} from "@/components/release-readiness";
+import {
+  ReleaseDryRun,
+  ReleaseDryRunSkeleton
+} from "@/components/release-dry-run";
+import {
+  ReleaseProgress,
+  ReleaseProgressSkeleton
+} from "@/components/release-progress";
+import {
+  DeployFailures,
+  DeployFailuresSkeleton
+} from "@/components/deploy-failures";
+import { RunRelease } from "@/components/run-release";
+import { Section } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
 
@@ -31,38 +49,72 @@ export default async function Home() {
         </p>
       </header>
 
-      <section className="mb-6">
-        <h2 className="text-xs font-semibold uppercase tracking-wide text-neutral-400">
-          Deploy diff
-        </h2>
-        <p className="mt-1 text-xs text-neutral-500">
-          What production is missing vs. staging. Use this to decide whether
-          to cut a release.
-        </p>
-      </section>
+      <Section
+        title="Deploy diff"
+        description="What production is missing vs. staging. Use this to decide whether to cut a release."
+      >
+        <div className="grid gap-4 md:grid-cols-2">
+          <Suspense fallback={<DeployDiffSkeleton title="Inspector" />}>
+            <DeployDiff
+              title="Inspector"
+              owner="MCPJam"
+              repo="inspector"
+              stagingEnvironment="staging"
+              productionEnvironment="production"
+              repoUrl="https://github.com/MCPJam/inspector"
+            />
+          </Suspense>
+          <Suspense fallback={<DeployDiffSkeleton title="Backend" />}>
+            <DeployDiff
+              title="Backend"
+              owner="MCPJam"
+              repo="mcpjam-backend"
+              stagingEnvironment="backend-staging"
+              productionEnvironment="backend-production"
+              repoUrl="https://github.com/MCPJam/mcpjam-backend"
+            />
+          </Suspense>
+        </div>
+      </Section>
 
-      <div className="grid gap-4 md:grid-cols-2">
-        <Suspense fallback={<DeployDiffSkeleton title="Inspector" />}>
-          <DeployDiff
-            title="Inspector"
-            owner="MCPJam"
-            repo="inspector"
-            stagingEnvironment="staging"
-            productionEnvironment="production"
-            repoUrl="https://github.com/MCPJam/inspector"
-          />
+      <Section
+        title="Release readiness"
+        description="Checks that mirror release.yml's preflight gates. Green across the board means the Release workflow will pass preflight."
+      >
+        <Suspense fallback={<ReleaseReadinessSkeleton />}>
+          <ReleaseReadiness />
         </Suspense>
-        <Suspense fallback={<DeployDiffSkeleton title="Backend" />}>
-          <DeployDiff
-            title="Backend"
-            owner="MCPJam"
-            repo="mcpjam-backend"
-            stagingEnvironment="backend-staging"
-            productionEnvironment="backend-production"
-            repoUrl="https://github.com/MCPJam/mcpjam-backend"
-          />
+      </Section>
+
+      <Section
+        title="Release preview & dispatch"
+        description="What Release would publish from main right now, and the button to dispatch it."
+      >
+        <div className="grid gap-4 md:grid-cols-2">
+          <Suspense fallback={<ReleaseDryRunSkeleton />}>
+            <ReleaseDryRun />
+          </Suspense>
+          <RunRelease />
+        </div>
+      </Section>
+
+      <Section
+        title="Release progress"
+        description="In-flight release.yml run, with a per-job stepper. Polls every 10s while a run is live."
+      >
+        <Suspense fallback={<ReleaseProgressSkeleton />}>
+          <ReleaseProgress />
         </Suspense>
-      </div>
+      </Section>
+
+      <Section
+        title="Recent failures"
+        description="Most recent failure per deploy workflow (last 7 days). Check-run annotations inline so you don't have to open GH Actions."
+      >
+        <Suspense fallback={<DeployFailuresSkeleton />}>
+          <DeployFailures />
+        </Suspense>
+      </Section>
     </main>
   );
 }

@@ -2,7 +2,7 @@
  * Default values and constants for MCPClientManager
  */
 
-import { DEFAULT_REQUEST_TIMEOUT_MSEC } from "@modelcontextprotocol/sdk/shared/protocol.js";
+import { DEFAULT_REQUEST_TIMEOUT_MSEC } from "@modelcontextprotocol/client";
 
 /** Default client version to report to servers */
 export const DEFAULT_CLIENT_VERSION = "1.0.0";

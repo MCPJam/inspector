@@ -5,7 +5,7 @@
  */
 
 import { RefreshCw } from "lucide-react";
-import type { Tool } from "@modelcontextprotocol/sdk/types.js";
+import type { Tool } from "@modelcontextprotocol/client";
 import { SearchInput } from "../ui/search-input";
 import { detectUIType, UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";

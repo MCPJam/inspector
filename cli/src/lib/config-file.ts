@@ -1,11 +1,11 @@
 import { readFileSync } from "node:fs";
 import type { OAuthConformanceSuiteConfig } from "@mcpjam/sdk";
-import { usageError } from "./output";
+import { usageError } from "./output.js";
 import {
   VALID_PROTOCOL_VERSIONS,
   VALID_REGISTRATION_STRATEGIES,
   VALID_AUTH_MODES,
-} from "./oauth-enums";
+} from "./oauth-enums.js";
 
 function assertValidUrl(value: unknown, label: string): void {
   if (typeof value !== "string" || !value.trim()) {

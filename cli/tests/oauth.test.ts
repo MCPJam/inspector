@@ -4,8 +4,8 @@ import {
   buildOAuthConformanceConfig,
   buildOAuthLoginSnapshotConfig,
   summarizeOAuthLoginCommandInput,
-} from "../src/commands/oauth";
-import { CliError } from "../src/lib/output";
+} from "../src/commands/oauth.js";
+import { CliError } from "../src/lib/output.js";
 
 test("buildOAuthConformanceConfig defaults to interactive auth", () => {
   const config = buildOAuthConformanceConfig({

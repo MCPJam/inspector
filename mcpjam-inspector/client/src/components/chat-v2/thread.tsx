@@ -5,7 +5,7 @@ import {
   useSandboxHostTheme,
 } from "@/contexts/sandbox-host-style-context";
 import { UIMessage } from "@ai-sdk/react";
-import type { ContentBlock } from "@modelcontextprotocol/sdk/types.js";
+import type { ContentBlock } from "@modelcontextprotocol/client";
 import type { TranscriptThreadProps } from "./thread/transcript-thread";
 
 import { ModelDefinition } from "@/shared/types";

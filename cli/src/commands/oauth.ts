@@ -13,33 +13,33 @@ import { Command } from "commander";
 import {
   parseHeadersOption,
   parsePositiveInteger,
-} from "../lib/server-config";
+} from "../lib/server-config.js";
 import {
   VALID_PROTOCOL_VERSIONS,
   VALID_REGISTRATION_STRATEGIES,
   VALID_AUTH_MODES,
-} from "../lib/oauth-enums";
+} from "../lib/oauth-enums.js";
 import {
   cliError,
   setProcessExitCode,
   usageError,
   writeResult,
-} from "../lib/output";
-import { loadSuiteConfig } from "../lib/config-file";
+} from "../lib/output.js";
+import { loadSuiteConfig } from "../lib/config-file.js";
 import {
   renderOAuthConformanceResult,
   renderOAuthConformanceSuiteResult,
   resolveOAuthOutputFormat,
   type OAuthOutputFormat,
-} from "../lib/oauth-output";
+} from "../lib/oauth-output.js";
 import {
   buildCommandArtifactError,
   writeCommandDebugArtifact,
-} from "../lib/debug-artifact";
+} from "../lib/debug-artifact.js";
 import {
   createCliRpcLogCollector,
-} from "../lib/rpc-logs";
-import { summarizeServerDoctorTarget } from "../lib/server-doctor";
+} from "../lib/rpc-logs.js";
+import { summarizeServerDoctorTarget } from "../lib/server-doctor.js";
 import type { MCPServerConfig, OAuthLoginResult } from "@mcpjam/sdk";
 
 const DYNAMIC_CLIENT_ID_PLACEHOLDER = "__dynamic_registration_client__";
