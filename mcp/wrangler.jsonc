@@ -18,6 +18,25 @@
       }
     ]
   },
+  "env": {
+    "staging": {
+      "workers_dev": true,
+      "migrations": [
+        {
+          "tag": "v1",
+          "new_sqlite_classes": ["McpJamMcpServer"]
+        }
+      ],
+      "durable_objects": {
+        "bindings": [
+          {
+            "class_name": "McpJamMcpServer",
+            "name": "MCP_OBJECT"
+          }
+        ]
+      }
+    }
+  },
   "observability": {
     "enabled": true
   }
