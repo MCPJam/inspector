@@ -2,6 +2,8 @@ import {
   compareCommits,
   getLatestEnvironmentDeployment
 } from "@/lib/github";
+import { formatRelativeTime, shortSha } from "@/lib/format";
+import { Tile } from "@/components/ui";
 
 interface Props {
   title: string;
@@ -11,17 +13,6 @@ interface Props {
   productionEnvironment: string;
   /** Public repo URL for linking SHAs in the staging+production sync case. */
   repoUrl: string;
-}
-
-function formatRelativeTime(iso: string): string {
-  const diffMs = Date.now() - new Date(iso).getTime();
-  const minute = 60 * 1000;
-  const hour = 60 * minute;
-  const day = 24 * hour;
-  if (diffMs >= day) return `${Math.floor(diffMs / day)}d ago`;
-  if (diffMs >= hour) return `${Math.floor(diffMs / hour)}h ago`;
-  if (diffMs >= minute) return `${Math.floor(diffMs / minute)}m ago`;
-  return "just now";
 }
 
 type Category = "feat" | "fix" | "chore" | "other";
@@ -48,23 +39,6 @@ function describeCategories(
     parts.push(`${counts.other} other commit${counts.other === 1 ? "" : "s"}`);
   }
   return parts.length > 0 ? parts.join(", ") : `${total} commit${total === 1 ? "" : "s"}`;
-}
-
-function Tile({
-  title,
-  children
-}: {
-  title: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <section className="rounded-lg border border-neutral-200 dark:border-neutral-800 p-6 bg-white/0">
-      <h3 className="text-sm font-medium text-neutral-700 dark:text-neutral-200">
-        {title}
-      </h3>
-      <div className="mt-3">{children}</div>
-    </section>
-  );
 }
 
 export async function DeployDiff({
@@ -123,7 +97,7 @@ export async function DeployDiff({
             target="_blank"
             rel="noreferrer"
           >
-            {production.sha.slice(0, 7)}
+            {shortSha(production.sha)}
           </a>
           . Last promoted {formatRelativeTime(production.createdAt)}.
         </p>
@@ -191,7 +165,7 @@ export async function DeployDiff({
               target="_blank"
               rel="noreferrer"
             >
-              {c.sha.slice(0, 7)}
+              {shortSha(c.sha)}
             </a>{" "}
             <span className="text-neutral-700 dark:text-neutral-200">
               {c.message}
