@@ -108,6 +108,26 @@ function restorePathAfterOAuthCallback(
   return `${basePath}${savedHash}`;
 }
 
+function requiresFreshOAuthAuthorization(error: unknown): boolean {
+  const errorMessage =
+    typeof error === "string"
+      ? error
+      : error instanceof Error
+        ? error.message
+        : "";
+
+  if (!errorMessage) {
+    return false;
+  }
+
+  const normalized = errorMessage.toLowerCase();
+  return (
+    normalized.includes("requires oauth authentication") ||
+    (normalized.includes("authentication failed") &&
+      normalized.includes("invalid_token"))
+  );
+}
+
 interface LoggerLike {
   info: (message: string, meta?: Record<string, unknown>) => void;
   warn: (message: string, meta?: Record<string, unknown>) => void;
@@ -1646,6 +1666,76 @@ export function useServerState({
           error: result.error || "Reconnection failed after OAuth",
         });
         return;
+      }
+
+      if (HOSTED_MODE && isAuthenticated && server.useOAuth === true) {
+        const hostedReconnectConfig = withWorkspaceClientCapabilities(
+          server.config,
+        );
+        try {
+          const result = await guardedReconnectServer(
+            serverName,
+            hostedReconnectConfig,
+          );
+          if (isStaleOp(serverName, token)) return;
+          if (result.success) {
+            dispatch({
+              type: "CONNECT_SUCCESS",
+              name: serverName,
+              config: server.config,
+              tokens: undefined,
+              useOAuth: true,
+            });
+            logger.info("Hosted reconnect successful using stored OAuth", {
+              serverName,
+              result,
+            });
+            storeInitInfo(serverName, result.initInfo).catch((err) =>
+              logger.warn("Failed to fetch init info", { serverName, err }),
+            );
+            return;
+          }
+
+          if (!requiresFreshOAuthAuthorization(result.error)) {
+            dispatch({
+              type: "CONNECT_FAILURE",
+              name: serverName,
+              error: result.error || "Reconnection failed",
+            });
+            logger.error("Hosted reconnect failed", { serverName, result });
+            toast.error(result.error || `Failed to reconnect: ${serverName}`);
+            return;
+          }
+
+          logger.info(
+            "Hosted reconnect requires a fresh OAuth flow after stored credential lookup",
+            { serverName, error: result.error },
+          );
+        } catch (error) {
+          if (isStaleOp(serverName, token)) return;
+
+          const errorMessage =
+            error instanceof Error ? error.message : "Unknown error";
+
+          if (!requiresFreshOAuthAuthorization(error)) {
+            dispatch({
+              type: "CONNECT_FAILURE",
+              name: serverName,
+              error: errorMessage,
+            });
+            logger.error("Hosted reconnect failed", {
+              serverName,
+              error: errorMessage,
+            });
+            toast.error(errorMessage || `Failed to reconnect: ${serverName}`);
+            return;
+          }
+
+          logger.info(
+            "Hosted reconnect requires a fresh OAuth flow after stored credential lookup",
+            { serverName, error: errorMessage },
+          );
+        }
       }
 
       try {
