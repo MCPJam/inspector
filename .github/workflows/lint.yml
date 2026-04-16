@@ -1,4 +1,4 @@
-name: Prettier and Build Check
+name: Build and Test
 
 on:
   pull_request:
@@ -12,7 +12,7 @@ env:
 jobs:
   build:
     runs-on: ubuntu-latest
-    name: Workspace Build and Start Check
+    name: Build and Test
 
     steps:
       - name: Checkout code
