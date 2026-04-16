@@ -220,7 +220,7 @@ export function ChatTabV2({
     [],
   );
   const [elicitationLoading, setElicitationLoading] = useState(false);
-  const [isWidgetFullscreen, setIsWidgetFullscreen] = useState(false);
+  const [, setIsWidgetFullscreen] = useState(false);
   const [broadcastRequest, setBroadcastRequest] =
     useState<BroadcastChatTurnRequest | null>(null);
   const [stopBroadcastRequestId, setStopBroadcastRequestId] = useState(0);
@@ -1945,12 +1945,7 @@ export function ChatTabV2({
           minSize={40}
           className="min-w-0"
         >
-          <div
-            className="flex flex-col bg-background h-full min-h-0 overflow-hidden"
-            style={{
-              transform: isWidgetFullscreen ? "none" : "translateZ(0)",
-            }}
-          >
+          <div className="flex flex-col bg-background h-full min-h-0 overflow-hidden">
             {isMultiModelLayoutMode ? (
               <div className="flex flex-1 min-h-0 flex-col overflow-hidden">
                 {showTopTraceViewTabs ? (
@@ -2215,6 +2210,7 @@ export function ChatTabV2({
                                       setTraceViewMode("chat");
                                       setRevealedInChat(true);
                                     }}
+                                    onFullscreenChange={setIsWidgetFullscreen}
                                     rawGrowWithContent
                                     rawRequestPayloadHistory={{
                                       entries: requestPayloadHistory,
@@ -2252,6 +2248,7 @@ export function ChatTabV2({
                                   setTraceViewMode("chat");
                                   setRevealedInChat(true);
                                 }}
+                                onFullscreenChange={setIsWidgetFullscreen}
                                 rawRequestPayloadHistory={{
                                   entries: requestPayloadHistory,
                                   hasUiMessages: !isThreadEmpty,

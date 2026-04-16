@@ -11,8 +11,13 @@ import {
 
 export interface HostedOAuthPendingMarker {
   surface: HostedOAuthSurface;
+  workspaceId?: string | null;
+  serverId?: string | null;
   serverName: string;
   serverUrl: string | null;
+  accessScope?: "workspace_member" | "chat_v2";
+  shareToken?: string | null;
+  sandboxToken?: string | null;
   returnHash: string | null;
   startedAt: number;
 }
@@ -67,7 +72,12 @@ export function writeHostedOAuthPendingMarker(
       HOSTED_OAUTH_PENDING_STORAGE_KEY,
       JSON.stringify({
         ...marker,
+        workspaceId: marker.workspaceId ?? null,
+        serverId: marker.serverId ?? null,
         serverUrl: marker.serverUrl ?? null,
+        accessScope: marker.accessScope ?? null,
+        shareToken: marker.shareToken ?? null,
+        sandboxToken: marker.sandboxToken ?? null,
         returnHash: normalizeHostedOAuthReturnHash(marker.returnHash),
         startedAt: Date.now(),
       }),
@@ -86,7 +96,9 @@ export function readHostedOAuthPendingMarker(): HostedOAuthPendingMarker | null 
     if (
       !parsed ||
       typeof parsed !== "object" ||
-      (parsed.surface !== "sandbox" && parsed.surface !== "shared") ||
+      (parsed.surface !== "sandbox" &&
+        parsed.surface !== "shared" &&
+        parsed.surface !== "workspace") ||
       typeof parsed.serverName !== "string" ||
       typeof parsed.startedAt !== "number"
     ) {
@@ -101,8 +113,20 @@ export function readHostedOAuthPendingMarker(): HostedOAuthPendingMarker | null 
 
     return {
       surface: parsed.surface,
+      workspaceId:
+        typeof parsed.workspaceId === "string" ? parsed.workspaceId : null,
+      serverId: typeof parsed.serverId === "string" ? parsed.serverId : null,
       serverName: parsed.serverName,
       serverUrl: typeof parsed.serverUrl === "string" ? parsed.serverUrl : null,
+      accessScope:
+        parsed.accessScope === "workspace_member" ||
+        parsed.accessScope === "chat_v2"
+          ? parsed.accessScope
+          : undefined,
+      shareToken:
+        typeof parsed.shareToken === "string" ? parsed.shareToken : null,
+      sandboxToken:
+        typeof parsed.sandboxToken === "string" ? parsed.sandboxToken : null,
       returnHash: normalizeHostedOAuthReturnHash(parsed.returnHash),
       startedAt: parsed.startedAt,
     };
@@ -210,8 +234,13 @@ export function getHostedOAuthCallbackContext(): HostedOAuthCallbackContext | nu
 
   return {
     surface,
+    workspaceId: null,
+    serverId: null,
     serverName,
     serverUrl,
+    accessScope: undefined,
+    shareToken: null,
+    sandboxToken: null,
     returnHash: normalizeHostedOAuthReturnHash(
       localStorage.getItem("mcp-oauth-return-hash"),
     ),
@@ -231,6 +260,10 @@ export function resolveHostedOAuthReturnHash(
     return sandboxSession
       ? `#${slugify(sandboxSession.payload.name)}`
       : "#sandbox";
+  }
+
+  if (context.surface === "workspace") {
+    return "#servers";
   }
 
   const sharedSession = readSharedServerSession();

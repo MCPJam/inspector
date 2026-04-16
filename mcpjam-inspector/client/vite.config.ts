@@ -8,8 +8,19 @@ import { readFileSync } from "fs";
 
 const clientDir = fileURLToPath(new URL(".", import.meta.url));
 const rootDir = path.resolve(clientDir, "..");
+const workspaceNodeModulesDir = path.resolve(rootDir, "../node_modules");
 // The linked local SDK package can advertise ./browser before dist/browser.* exists.
 const sdkBrowserEntry = path.resolve(rootDir, "../sdk/src/browser.ts");
+// Bypass stale Vite optimized deps for MCP SDK auth helpers by resolving
+// directly to the installed ESM entrypoints.
+const mcpSdkClientAuthEntry = path.resolve(
+  workspaceNodeModulesDir,
+  "@modelcontextprotocol/sdk/dist/esm/client/auth.js",
+);
+const mcpSdkSharedAuthEntry = path.resolve(
+  workspaceNodeModulesDir,
+  "@modelcontextprotocol/sdk/dist/esm/shared/auth.js",
+);
 
 // Read version from package.json
 const packageJson = JSON.parse(
@@ -44,12 +55,15 @@ export default defineConfig(({ mode }) => {
         "@/shared": path.resolve(clientDir, "../shared"),
         "@": path.resolve(clientDir, "./src"),
         "@mcpjam/sdk/browser": sdkBrowserEntry,
-        // Force React resolution to prevent conflicts with @mcp-ui/client
-        react: path.resolve(clientDir, "../node_modules/react"),
-        "react-dom": path.resolve(clientDir, "../node_modules/react-dom"),
+        "@modelcontextprotocol/sdk/client/auth.js": mcpSdkClientAuthEntry,
+        "@modelcontextprotocol/sdk/shared/auth.js": mcpSdkSharedAuthEntry,
+        // Resolve shared frontend deps from the workspace root now that installs
+        // are hoisted to a single lockfile-managed node_modules tree.
+        react: path.resolve(workspaceNodeModulesDir, "react"),
+        "react-dom": path.resolve(workspaceNodeModulesDir, "react-dom"),
         "@mcp-ui/client": path.resolve(
-          clientDir,
-          "../node_modules/@mcp-ui/client",
+          workspaceNodeModulesDir,
+          "@mcp-ui/client",
         ),
       },
       dedupe: ["react", "react-dom"],
@@ -61,6 +75,10 @@ export default defineConfig(({ mode }) => {
         "react-dom",
         "react/jsx-runtime",
         "react/jsx-dev-runtime",
+      ],
+      exclude: [
+        "@modelcontextprotocol/sdk/client/auth.js",
+        "@modelcontextprotocol/sdk/shared/auth.js",
       ],
       // Force re-optimization to clear any cached conflicts
       force: env.FORCE_OPTIMIZE === "true",

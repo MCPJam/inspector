@@ -142,6 +142,9 @@ export function SharedServerChatPage({
     surface: "shared",
     pendingKey: SHARED_OAUTH_PENDING_KEY,
     servers: oauthServers,
+    workspaceId: session?.payload.workspaceId ?? null,
+    shareToken: session?.token,
+    isAuthenticated,
   });
 
   const oauthTokensForChat = useMemo(() => {
