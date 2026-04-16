@@ -49,8 +49,11 @@ export function ThreePanelLayout({
     useJsonRpcPanelVisibility();
 
   return (
-    <div className="h-full flex flex-col">
-      <ResizablePanelGroup direction="horizontal" className="flex-1">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden">
+      <ResizablePanelGroup
+        direction="horizontal"
+        className="flex-1 min-h-0 overflow-hidden"
+      >
         {/* Left Panel - Sidebar */}
         {sidebarVisible ? (
           <>
@@ -63,6 +66,7 @@ export function ThreePanelLayout({
               collapsible={true}
               collapsedSize={0}
               onCollapse={() => onSidebarVisibilityChange(false)}
+              className="min-h-0 overflow-hidden"
             >
               {sidebar}
             </ResizablePanel>
@@ -82,6 +86,7 @@ export function ThreePanelLayout({
           order={2}
           defaultSize={isJsonRpcPanelVisible ? 40 : 65}
           minSize={30}
+          className="min-h-0 overflow-hidden"
         >
           {content}
         </ResizablePanel>

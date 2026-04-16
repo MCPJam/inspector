@@ -607,6 +607,15 @@ describe("PlaygroundMain", () => {
       expect(screen.getByTestId("chat-input")).toBeInTheDocument();
     });
 
+    it("renders the empty-state composer in mobile fullscreen takeover mode", () => {
+      render(<PlaygroundMain {...defaultProps} displayMode="fullscreen" />);
+
+      expect(screen.getByTestId("chat-input")).toBeInTheDocument();
+      expect(
+        screen.queryByTestId("fullscreen-overlay"),
+      ).not.toBeInTheDocument();
+    });
+
     it("renders device controls", () => {
       render(<PlaygroundMain {...defaultProps} />);
 

@@ -1949,7 +1949,7 @@ export function ChatTabV2({
                   : 100
           }
           minSize={40}
-          className="min-w-0"
+          className="min-h-0 min-w-0 overflow-hidden"
         >
           <div className="relative flex flex-col bg-background h-full min-h-0 overflow-hidden">
             {loadingHistorySessionId && (
@@ -2372,36 +2372,55 @@ export function ChatTabV2({
                   !showLiveTraceDiagnostics &&
                   !revealedInChat &&
                   (minimalMode ? (
-                    <div className="flex-1 flex flex-col min-h-0">
-                      <div className="flex-1 flex flex-col items-center justify-center px-4">
-                        {isAuthLoading ? (
-                          <div className="text-center space-y-4">
-                            <div className="mx-auto h-8 w-8 animate-spin rounded-full border-b-2 border-primary" />
-                            <p className="text-sm text-muted-foreground">
-                              Loading...
-                            </p>
+                    <div
+                      className="flex flex-1 min-h-0 flex-col overflow-hidden"
+                      data-empty-layout="minimal"
+                      data-testid="chat-empty-state-shell"
+                    >
+                      <div
+                        className="flex min-h-0 flex-1 flex-col overflow-hidden"
+                        data-testid="chat-empty-state-body"
+                      >
+                        <div
+                          className="flex min-h-0 flex-1 flex-col overflow-hidden"
+                          data-testid="chat-empty-state-content"
+                        >
+                          <div className="flex flex-1 flex-col items-center justify-center px-4">
+                            {isAuthLoading ? (
+                              <div className="text-center space-y-4">
+                                <div className="mx-auto h-8 w-8 animate-spin rounded-full border-b-2 border-primary" />
+                                <p className="text-sm text-muted-foreground">
+                                  Loading...
+                                </p>
+                              </div>
+                            ) : showDisabledCallout ? (
+                              <MCPJamFreeModelsPrompt onSignUp={handleSignUp} />
+                            ) : null}
                           </div>
-                        ) : showDisabledCallout ? (
-                          <MCPJamFreeModelsPrompt onSignUp={handleSignUp} />
-                        ) : null}
+
+                          {showStarterPrompts && (
+                            <div className="flex flex-wrap justify-center gap-2 px-4 pb-4">
+                              {STARTER_PROMPTS.map((prompt) => (
+                                <button
+                                  key={prompt.text}
+                                  type="button"
+                                  onClick={() =>
+                                    handleStarterPrompt(prompt.text)
+                                  }
+                                  className="rounded-full border border-border/40 bg-transparent px-3 py-1.5 text-xs text-muted-foreground transition hover:border-foreground/40 hover:bg-accent cursor-pointer font-light"
+                                >
+                                  {prompt.label}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
                       </div>
 
-                      {showStarterPrompts && (
-                        <div className="flex flex-wrap justify-center gap-2 px-4 pb-4">
-                          {STARTER_PROMPTS.map((prompt) => (
-                            <button
-                              key={prompt.text}
-                              type="button"
-                              onClick={() => handleStarterPrompt(prompt.text)}
-                              className="rounded-full border border-border/40 bg-transparent px-3 py-1.5 text-xs text-muted-foreground transition hover:border-foreground/40 hover:bg-accent cursor-pointer font-light"
-                            >
-                              {prompt.label}
-                            </button>
-                          ))}
-                        </div>
-                      )}
-
-                      <div className="bg-background/80 backdrop-blur-sm border-t border-border flex-shrink-0">
+                      <div
+                        className="bg-background/80 backdrop-blur-sm border-t border-border flex-shrink-0"
+                        data-testid="chat-empty-state-footer"
+                      >
                         {!isAuthLoading && (
                           <div className="max-w-4xl mx-auto p-4">
                             <ChatInput
@@ -2416,50 +2435,59 @@ export function ChatTabV2({
                       </div>
                     </div>
                   ) : (
-                    <div className="flex-1 flex items-center justify-center overflow-y-auto px-4">
-                      <div className="w-full max-w-3xl space-y-6 py-8">
-                        {isAuthLoading ? (
-                          <div className="text-center space-y-4">
-                            <div className="mx-auto h-8 w-8 animate-spin rounded-full border-b-2 border-primary" />
-                            <p className="text-sm text-muted-foreground">
-                              Loading...
-                            </p>
-                          </div>
-                        ) : showDisabledCallout ? (
-                          <div className="space-y-4">
-                            <MCPJamFreeModelsPrompt onSignUp={handleSignUp} />
-                          </div>
-                        ) : null}
-
-                        <div className="space-y-4">
-                          {showStarterPrompts && (
-                            <div className="text-center">
-                              <p className="text-sm text-muted-foreground mb-3">
-                                Try one of these to get started
+                    <div
+                      className="flex flex-1 min-h-0 overflow-hidden"
+                      data-empty-layout="standard"
+                      data-testid="chat-empty-state-shell"
+                    >
+                      <div
+                        className="flex h-full min-h-0 flex-1 items-center justify-center px-4"
+                        data-testid="chat-empty-state-body"
+                      >
+                        <div className="min-h-0 max-h-full w-full max-w-3xl shrink space-y-6 overflow-y-auto overscroll-contain py-8">
+                          {isAuthLoading ? (
+                            <div className="text-center space-y-4">
+                              <div className="mx-auto h-8 w-8 animate-spin rounded-full border-b-2 border-primary" />
+                              <p className="text-sm text-muted-foreground">
+                                Loading...
                               </p>
-                              <div className="flex flex-wrap justify-center gap-2">
-                                {STARTER_PROMPTS.map((prompt) => (
-                                  <button
-                                    key={prompt.text}
-                                    type="button"
-                                    onClick={() =>
-                                      handleStarterPrompt(prompt.text)
-                                    }
-                                    className="rounded-full border border-border bg-background px-4 py-2 text-sm text-foreground transition hover:border-foreground hover:bg-accent cursor-pointer font-light"
-                                  >
-                                    {prompt.label}
-                                  </button>
-                                ))}
-                              </div>
                             </div>
-                          )}
+                          ) : showDisabledCallout ? (
+                            <div className="space-y-4">
+                              <MCPJamFreeModelsPrompt onSignUp={handleSignUp} />
+                            </div>
+                          ) : null}
 
-                          {!isAuthLoading && (
-                            <ChatInput
-                              {...sharedChatInputProps}
-                              hasMessages={false}
-                            />
-                          )}
+                          <div className="space-y-4">
+                            {showStarterPrompts && (
+                              <div className="text-center">
+                                <p className="text-sm text-muted-foreground mb-3">
+                                  Try one of these to get started
+                                </p>
+                                <div className="flex flex-wrap justify-center gap-2">
+                                  {STARTER_PROMPTS.map((prompt) => (
+                                    <button
+                                      key={prompt.text}
+                                      type="button"
+                                      onClick={() =>
+                                        handleStarterPrompt(prompt.text)
+                                      }
+                                      className="rounded-full border border-border bg-background px-4 py-2 text-sm text-foreground transition hover:border-foreground hover:bg-accent cursor-pointer font-light"
+                                    >
+                                      {prompt.label}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+
+                            {!isAuthLoading && (
+                              <ChatInput
+                                {...sharedChatInputProps}
+                                hasMessages={false}
+                              />
+                            )}
+                          </div>
                         </div>
                       </div>
                     </div>

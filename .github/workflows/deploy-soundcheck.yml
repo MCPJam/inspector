@@ -1,0 +1,39 @@
+name: Deploy Soundcheck
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "soundcheck/**"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/deploy-soundcheck.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: soundcheck
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy to Railway
+    runs-on: ubuntu-latest
+    environment:
+      name: soundcheck
+      url: https://soundcheck.mcpjam.com
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Railway CLI
+        run: npm i -g @railway/cli
+
+      - name: Deploy
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_SOUNDCHECK_TOKEN }}
+        run: railway up --service mcpjam-soundcheck --ci
