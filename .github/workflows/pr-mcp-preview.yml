@@ -45,9 +45,12 @@ jobs:
       github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    environment:
-      name: mcp-preview-pr-${{ github.event.pull_request.number }}
-      url: ${{ steps.preview.outputs.deployment-url }}
+    # Deliberately no `environment:` declaration — we don't want to create a
+    # `mcp-preview-pr-<n>` environment per PR (clutters the Environments
+    # list), and we don't want PR-preview deployments to show up in
+    # `mcp-staging`'s deployment history (would confuse Soundcheck's
+    # deploy-diff tile). Secrets are read from repo level; the per-PR URL
+    # is surfaced via the PR comment, which is where reviewers look anyway.
     steps:
       - name: Require Cloudflare credentials
         env:
