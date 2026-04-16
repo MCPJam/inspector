@@ -1,6 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
-import { renderWithProviders, screen, waitFor, within } from "@/test";
+import {
+  fireEvent,
+  renderWithProviders,
+  screen,
+  waitFor,
+  within,
+} from "@/test";
 import { TestCasesOverview } from "../test-cases-overview";
 
 const useConvexMock = vi.hoisted(() => vi.fn());
@@ -386,5 +392,127 @@ describe("TestCasesOverview", () => {
         name: /Select case Create a simple flowchart diagram/i,
       }),
     ).toBeInTheDocument();
+  });
+
+  it("shows a disconnected playground empty state when no cases exist", () => {
+    useConvexMock.mockReturnValue({ query: vi.fn() });
+    useQueryMock.mockReturnValue(undefined);
+
+    renderWithProviders(
+      <TestCasesOverview
+        suite={{
+          ...suite,
+          environment: { servers: ["playground-server"] },
+        }}
+        cases={[]}
+        allIterations={[]}
+        runsViewMode="test-cases"
+        onViewModeChange={vi.fn()}
+        onTestCaseClick={vi.fn()}
+        hideViewModeSelect
+        connectedServerNames={new Set()}
+        onDeleteTestCasesBatch={vi.fn().mockResolvedValue(undefined)}
+        runTrendData={[]}
+        modelStats={[]}
+        runsLoading={false}
+      />,
+    );
+
+    expect(
+      screen.getByText("Start playground-server to generate tests"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Playground can automatically generate test cases once a server is connected.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("checkbox", { name: /Select all cases/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps a persistent batch header in playground mode", async () => {
+    useConvexMock.mockReturnValue({ query: vi.fn() });
+    useQueryMock.mockReturnValue(undefined);
+    const user = userEvent.setup();
+
+    renderWithProviders(
+      <TestCasesOverview
+        suite={suite}
+        cases={[baseCase]}
+        allIterations={[]}
+        runsViewMode="test-cases"
+        onViewModeChange={vi.fn()}
+        onTestCaseClick={vi.fn()}
+        hideViewModeSelect
+        onDeleteTestCasesBatch={vi.fn().mockResolvedValue(undefined)}
+        runTrendData={[]}
+        modelStats={[]}
+        runsLoading={false}
+      />,
+    );
+
+    expect(screen.getByText("Select all")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Cancel" }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Delete" }),
+    ).toBeDisabled();
+    await user.click(
+      screen.getByRole("checkbox", {
+        name: /Select case Create a simple flowchart diagram/i,
+      }),
+    );
+
+    expect(screen.getByText("Select all")).toBeInTheDocument();
+    expect(screen.getByText("1 selected")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Cancel" }),
+    ).toBeEnabled();
+    expect(
+      screen.getByRole("button", { name: "Delete" }),
+    ).toBeEnabled();
+  });
+
+  it("toggles row selection on right-click without opening the test case", () => {
+    const onTestCaseClick = vi.fn();
+    useConvexMock.mockReturnValue({ query: vi.fn() });
+    useQueryMock.mockReturnValue(undefined);
+
+    renderWithProviders(
+      <TestCasesOverview
+        suite={suite}
+        cases={[baseCase]}
+        allIterations={[]}
+        runsViewMode="test-cases"
+        onViewModeChange={vi.fn()}
+        onTestCaseClick={onTestCaseClick}
+        hideViewModeSelect
+        onDeleteTestCasesBatch={vi.fn().mockResolvedValue(undefined)}
+        runTrendData={[]}
+        modelStats={[]}
+        runsLoading={false}
+      />,
+    );
+
+    const row = screen.getByTestId("test-case-row-case-1");
+    const checkbox = screen.getByRole("checkbox", {
+      name: /Select case Create a simple flowchart diagram/i,
+    });
+
+    const firstContextMenu = fireEvent.contextMenu(row);
+    expect(firstContextMenu).toBe(false);
+    expect(checkbox).toBeChecked();
+
+    const secondEvent = new MouseEvent("contextmenu", {
+      bubbles: true,
+      cancelable: true,
+    });
+    fireEvent(row, secondEvent);
+
+    expect(secondEvent.defaultPrevented).toBe(true);
+    expect(checkbox).not.toBeChecked();
+    expect(onTestCaseClick).not.toHaveBeenCalled();
   });
 });
