@@ -29,6 +29,15 @@ permissions:
   pull-requests: write
 
 concurrency:
+  # Per-PR group with cancel-in-progress. Semantics worth knowing:
+  #   - Two rapid pushes on the same PR: the older upload is cancelled so
+  #     the comment always reflects the newest SHA.
+  #   - Close mid-upload: the in-flight upsert is cancelled and
+  #     destroy-mcp-preview runs — correct, no point finishing a version
+  #     upload for a just-closed PR.
+  #   - Close+reopen in quick succession can race the comment state
+  #     (destroy wins, then upsert overwrites). Acceptable; reviewers will
+  #     see the live URL once the second upload completes.
   group: mcp-preview-pr-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
