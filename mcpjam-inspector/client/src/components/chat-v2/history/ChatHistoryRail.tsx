@@ -26,21 +26,6 @@ import {
 /** Delays (ms) after a turn completes to re-fetch list while backend ingestion may still be running. */
 const HISTORY_REFETCH_RETRY_DELAYS_MS = [250, 800, 2000] as const;
 
-/**
- * Token sets keyed on the user's host-style preference. ChatGPT mimics use the
- * general `accent` family; Claude mimics tie into `sidebar-accent` so the
- * highlight feels like a continuation of the sidebar tab.
- */
-export const CHAT_HISTORY_STRONG_BG_CLASS: Record<SandboxHostStyle, string> = {
-  chatgpt: "bg-accent text-accent-foreground",
-  claude: "bg-sidebar-accent text-sidebar-accent-foreground",
-};
-export const CHAT_HISTORY_STRONG_HOVER_CLASS: Record<SandboxHostStyle, string> =
-  {
-    chatgpt: "hover:bg-accent/80",
-    claude: "hover:bg-sidebar-accent/80",
-  };
-
 type ArchiveSectionScope = "personal" | "workspace";
 
 interface ChatHistoryRailProps {
@@ -85,7 +70,6 @@ function ThreadSection({
   onNewChat,
   newChatDisabled,
   defaultOpen = true,
-  hostStyle,
   children,
 }: {
   headingId: string;
@@ -101,7 +85,6 @@ function ThreadSection({
   onNewChat: (options?: { shared?: boolean }) => void;
   newChatDisabled: boolean;
   defaultOpen?: boolean;
-  hostStyle: SandboxHostStyle;
   children: ReactNode;
 }) {
   const [open, setOpen] = useState(defaultOpen);
@@ -121,9 +104,7 @@ function ThreadSection({
               aria-label={triggerLabel}
               className={cn(
                 "flex w-full min-w-0 cursor-pointer items-center gap-1.5 rounded-md px-1.5 py-1.5 text-left text-xs outline-none transition-[background-color,color] duration-150 ease-out",
-                "no-underline",
-                CHAT_HISTORY_STRONG_BG_CLASS[hostStyle],
-                CHAT_HISTORY_STRONG_HOVER_CLASS[hostStyle],
+                "text-muted-foreground no-underline hover:bg-accent/60",
                 "focus-visible:ring-2 focus-visible:ring-ring/40",
               )}
             >
@@ -371,7 +352,6 @@ export function ChatHistoryRail({
                   }
                   onNewChat={onNewChat}
                   newChatDisabled={isStreaming}
-                  hostStyle={hostStyle}
                 >
                   {personal.map((session) => (
                     <ChatHistoryRow
@@ -406,7 +386,6 @@ export function ChatHistoryRail({
                   }
                   onNewChat={() => onNewChat({ shared: true })}
                   newChatDisabled={isStreaming}
-                  hostStyle={hostStyle}
                 >
                   {workspace.map((session) => (
                     <ChatHistoryRow

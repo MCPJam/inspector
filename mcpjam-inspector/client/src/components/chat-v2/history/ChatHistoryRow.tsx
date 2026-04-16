@@ -19,7 +19,7 @@ import { getModelById } from "@/shared/types";
 import { getInitials } from "@/lib/utils";
 import type { WorkspaceThreadOwnerAvatar } from "./workspace-thread-owner-avatar";
 import type { SandboxHostStyle } from "@/lib/sandbox-host-style";
-import { CHAT_HISTORY_STRONG_BG_CLASS } from "./ChatHistoryRail";
+import { CHAT_HISTORY_STRONG_BG_CLASS } from "./chat-history-theme";
 
 function formatChatHistoryModelLabel(
   session: ChatHistorySession,
