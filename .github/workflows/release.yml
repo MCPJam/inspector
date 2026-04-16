@@ -29,6 +29,7 @@ env:
 permissions:
   contents: write
   actions: read
+  packages: write
 
 jobs:
   preflight:
@@ -71,7 +72,7 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            const workflowId = "post-deploy-staging.yml";
+            const workflowId = "deploy-staging.yml";
             const { owner, repo } = context.repo;
             const headSha = context.sha;
             const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
@@ -89,12 +90,12 @@ jobs:
 
             if (!matchingRun) {
               core.setFailed(
-                `No successful ${workflowId} run found for ${headSha}. Deploy the candidate SHA to staging and wait for smoke checks first.`
+                `No successful ${workflowId} run found for ${headSha}. Deploy the candidate SHA to staging and wait for the staging deploy + smoke workflow first.`
               );
               return;
             }
 
-            core.info(`Found successful staging smoke run ${matchingRun.id} for ${headSha}.`);
+            core.info(`Found successful staging deploy run ${matchingRun.id} for ${headSha}.`);
 
       - name: Compute changeset release plan
         run: npx changeset status --output=.changeset/status.json
@@ -305,6 +306,7 @@ jobs:
 
       - name: Upload SDK sourcemaps
         if: needs.preflight.outputs.publish_sdk == 'true'
+        continue-on-error: true
         run: |
           version=$(node -p "require('./sdk/package.json').version")
           npx @sentry/cli sourcemaps upload \
@@ -333,7 +335,7 @@ jobs:
       - publish-packages
     if: inputs.deploy_backend_prod
     runs-on: ubuntu-latest
-    environment: release
+    environment: backend-production
     steps:
       - name: Dispatch and wait for backend production deployment
         uses: actions/github-script@v7
@@ -411,7 +413,9 @@ jobs:
         needs.deploy-backend-prod.result == 'success'
       )
     runs-on: ubuntu-latest
-    environment: release
+    environment:
+      name: production
+      url: ${{ vars.PRODUCTION_APP_URL || 'https://mcpjam.com' }}
     env:
       RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
       RAILWAY_PROJECT_ID: ${{ vars.RAILWAY_PROJECT_ID }}
@@ -439,8 +443,7 @@ jobs:
             --ci \
             --project "$RAILWAY_PROJECT_ID" \
             --environment "$RAILWAY_PRODUCTION_ENVIRONMENT" \
-            --service "$RAILWAY_INSPECTOR_SERVICE" \
-            --path-as-root mcpjam-inspector
+            --service "$RAILWAY_INSPECTOR_SERVICE"
 
   finalize:
     needs:
