@@ -94,7 +94,7 @@ import {
   getSandboxPathTokenFromLocation,
 } from "./components/hosted/SandboxChatPage";
 import { useHostedApiContext } from "./hooks/hosted/use-hosted-api-context";
-import { HOSTED_MODE } from "./lib/config";
+import { HOSTED_MODE, NON_PROD_LOCKDOWN } from "./lib/config";
 import {
   clearBillingSignInReturnPath,
   clearCheckoutIntentFromUrl,
@@ -155,7 +155,10 @@ import {
   sanitizeHostedOAuthErrorMessage,
   writeHostedOAuthResumeMarker,
 } from "./lib/hosted-oauth-resume";
-import { handleOAuthCallback } from "./lib/oauth/mcp-oauth";
+import {
+  completeHostedOAuthCallback,
+  handleOAuthCallback,
+} from "./lib/oauth/mcp-oauth";
 import { getEffectiveWorkspaceClientCapabilities } from "./lib/client-config";
 import { buildEvalsHash } from "./lib/evals-router";
 import { withTestingSurface } from "./lib/testing-surface";
@@ -293,13 +296,19 @@ export default function App() {
   const {
     getAccessToken,
     signIn,
+    signOut,
     user: workOsUser,
     isLoading: isWorkOsLoading,
   } = useAuth();
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
-  const [hostedOAuthHandling, setHostedOAuthHandling] = useState(() =>
-    HOSTED_MODE ? getHostedOAuthCallbackContext() !== null : false,
-  );
+  const [hostedOAuthHandling, setHostedOAuthHandling] = useState(() => {
+    if (!HOSTED_MODE) {
+      return false;
+    }
+
+    const callbackContext = getHostedOAuthCallbackContext();
+    return callbackContext != null && callbackContext.surface !== "workspace";
+  });
   const [exitedSharedChat, setExitedSharedChat] = useState(false);
   const [exitedSandboxChat, setExitedSandboxChat] = useState(false);
   const sharedPathToken = HOSTED_MODE ? getSharedPathTokenFromLocation() : null;
@@ -403,7 +412,10 @@ export default function App() {
   // Handle hosted OAuth callback: claim the callback before any hosted page renders.
   useEffect(() => {
     const callbackContext = getHostedOAuthCallbackContext();
-    if (!callbackContext) return;
+    if (!callbackContext || callbackContext.surface === "workspace") {
+      setHostedOAuthHandling(false);
+      return;
+    }
 
     const urlParams = new URLSearchParams(window.location.search);
     const code = urlParams.get("code");
@@ -438,7 +450,12 @@ export default function App() {
       return;
     }
 
-    handleOAuthCallback(code)
+    const completeCallback =
+      isAuthenticated
+        ? completeHostedOAuthCallback(callbackContext, code)
+        : handleOAuthCallback(code);
+
+    completeCallback
       .then((result) => {
         if (result.success) {
           finalizeHostedOAuth(null);
@@ -467,7 +484,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [isAuthenticated]);
 
   usePostHogIdentify();
 
@@ -583,18 +600,22 @@ export default function App() {
   const hasAnyWorkspaceServers = Object.keys(workspaceServers).length > 0;
   const hostedShellGateState = resolveHostedShellGateState({
     hostedMode: HOSTED_MODE,
+    nonProdLockdown: NON_PROD_LOCKDOWN,
     isConvexAuthLoading: isAuthLoading,
     isConvexAuthenticated: isAuthenticated,
     isWorkOsLoading,
     hasWorkOsUser: !!workOsUser,
+    workOsUserEmail: workOsUser?.email ?? null,
     isLoadingRemoteWorkspaces,
   });
   const hostedChatShellGateState = resolveHostedShellGateState({
     hostedMode: HOSTED_MODE,
+    nonProdLockdown: NON_PROD_LOCKDOWN,
     isConvexAuthLoading: isAuthLoading,
     isConvexAuthenticated: isAuthenticated,
     isWorkOsLoading,
     hasWorkOsUser: !!workOsUser,
+    workOsUserEmail: workOsUser?.email ?? null,
     isLoadingRemoteWorkspaces: false,
   });
   const isOnboardingDecisionReady = hostedShellGateState === "ready";
@@ -1535,7 +1556,9 @@ export default function App() {
         onDeleteWorkspace={handleDeleteWorkspace}
         isLoadingWorkspaces={isLoadingRemoteWorkspaces}
         activeOrganizationId={activeOrganizationId}
+        activeOrganizationName={activeOrganizationName}
         onSwitchOrganization={handleSidebarSwitchOrganization}
+        onWorkspaceShared={handleWorkspaceShared}
         billingUiEnabled={billingUiEnabled}
         billingGateDenied={sidebarGateDenied}
         billingGateEnforcementActive={billingGateEnforcementActive}
@@ -1935,6 +1958,9 @@ export default function App() {
                 writeSandboxSignInReturnPath(window.location.pathname);
               }
               signIn();
+            }}
+            onSignOut={() => {
+              void signOut();
             }}
           >
             {isSharedChatRoute ? (

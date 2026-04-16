@@ -1,0 +1,15 @@
+# Railway service config for mcpjam-soundcheck.
+#
+# The Railway service is configured with:
+#   - Root directory: /            (monorepo root)
+#   - Builder:        NIXPACKS
+#
+# Nixpacks detects the monorepo lockfile and installs with
+# `npm ci --legacy-peer-deps`, then runs the buildCommand below.
+
+[build]
+buildCommand = "npm run build -w @mcpjam/soundcheck"
+
+[deploy]
+startCommand = "npm run start -w @mcpjam/soundcheck"
+restartPolicyType = "ON_FAILURE"

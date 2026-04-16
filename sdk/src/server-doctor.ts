@@ -312,7 +312,7 @@ export async function collectConnectedServerDoctorState(
 
 export function buildConnectedServerDoctorResult<TTarget = unknown>(
   target: TTarget,
-  collected: ConnectedServerDoctorState,
+  collected: ConnectedServerDoctorState
 ): ServerDoctorResult<TTarget> {
   const result: ServerDoctorResult<TTarget> = {
     target,
@@ -606,10 +606,22 @@ function deriveDoctorStatus<TTarget>(
 }
 
 function hasConnectionCredentials(config: MCPServerConfig): boolean {
-  return (
-    "url" in config &&
-    Boolean(resolveProbeAccessToken(config) || config.refreshToken)
-  );
+  if (!("url" in config)) {
+    return false;
+  }
+
+  if (resolveProbeAccessToken(config) || config.refreshToken) {
+    return true;
+  }
+
+  const headers = extractHeaders(config.requestInit?.headers);
+  return Object.entries(headers).some(([key, value]) => {
+    if (typeof value !== "string" || !value.trim()) {
+      return false;
+    }
+
+    return key.toLowerCase() !== "authorization";
+  });
 }
 
 function okCheck(detail: string): ServerDoctorCheck {

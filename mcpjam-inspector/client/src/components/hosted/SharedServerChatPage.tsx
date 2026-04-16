@@ -142,6 +142,9 @@ export function SharedServerChatPage({
     surface: "shared",
     pendingKey: SHARED_OAUTH_PENDING_KEY,
     servers: oauthServers,
+    workspaceId: session?.payload.workspaceId ?? null,
+    shareToken: session?.token,
+    isAuthenticated,
   });
 
   const oauthTokensForChat = useMemo(() => {
@@ -475,7 +478,7 @@ export function SharedServerChatPage({
     }
 
     return (
-      <div className="flex min-h-0 flex-1">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         <ChatTabV2
           connectedOrConnectingServerConfigs={sharedServerConfigs}
           selectedServerNames={[selectedServerName]}
@@ -491,7 +494,7 @@ export function SharedServerChatPage({
   };
 
   return (
-    <div className="flex h-svh min-h-0 flex-col">
+    <div className="flex h-svh min-h-0 flex-col overflow-hidden">
       <header className="border-b border-border/50 bg-background/95 backdrop-blur">
         <div className="mx-auto flex w-full max-w-6xl items-center justify-between px-4 py-2.5">
           <h1 className="min-w-0 flex-1 truncate text-sm font-semibold text-foreground">

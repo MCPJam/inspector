@@ -53,6 +53,7 @@ export interface HostedOAuthServerDescriptor {
 function buildHostedOAuthStateMap(
   oauthServers: HostedOAuthServerDescriptor[],
   surface: HostedOAuthSurface,
+  isAuthenticated: boolean,
   previous: Record<string, HostedOAuthState> = {},
 ): Record<string, HostedOAuthState> {
   const resumeMarker = readHostedOAuthResumeMarker(surface);
@@ -85,9 +86,12 @@ function buildHostedOAuthStateMap(
       status = "error";
       errorMessage = resumeMarker.errorMessage;
     } else if (matchesResume) {
-      status = hasToken ? "verifying" : "resuming";
+      status = hasToken || isAuthenticated ? "verifying" : "resuming";
       errorMessage = null;
     } else if (hasToken) {
+      status = existing?.status === "ready" ? "ready" : "verifying";
+      errorMessage = null;
+    } else if (isAuthenticated) {
       status = existing?.status === "ready" ? "ready" : "verifying";
       errorMessage = null;
     } else if (existing?.status === "error") {
@@ -144,7 +148,7 @@ async function waitForStoredAccessToken(
 
 async function validateWithRetry(
   serverId: string,
-  oauthAccessToken: string,
+  oauthAccessToken?: string,
 ): Promise<{ ok: true } | { ok: false; error: unknown }> {
   let lastError: unknown = null;
 
@@ -169,6 +173,10 @@ export interface UseHostedOAuthGateOptions {
   surface: HostedOAuthSurface;
   pendingKey: string;
   servers: HostedOAuthServerDescriptor[];
+  workspaceId?: string | null;
+  shareToken?: string;
+  sandboxToken?: string;
+  isAuthenticated?: boolean;
 }
 
 export interface UseHostedOAuthGateResult {
@@ -186,6 +194,10 @@ export function useHostedOAuthGate({
   surface,
   pendingKey,
   servers,
+  workspaceId,
+  shareToken,
+  sandboxToken,
+  isAuthenticated = false,
 }: UseHostedOAuthGateOptions): UseHostedOAuthGateResult {
   const oauthServers = useMemo(
     () => servers.filter((server) => server.useOAuth),
@@ -193,7 +205,7 @@ export function useHostedOAuthGate({
   );
   const [oauthStateByServerId, setOAuthStateByServerId] = useState<
     Record<string, HostedOAuthState>
-  >(() => buildHostedOAuthStateMap(oauthServers, surface));
+  >(() => buildHostedOAuthStateMap(oauthServers, surface, isAuthenticated));
   const oauthStateByServerIdRef = useRef(oauthStateByServerId);
   const processingServerIdsRef = useRef<Set<string>>(new Set());
   const isUnmountedRef = useRef(false);
@@ -211,9 +223,14 @@ export function useHostedOAuthGate({
 
   useEffect(() => {
     setOAuthStateByServerId((previous) =>
-      buildHostedOAuthStateMap(oauthServers, surface, previous),
+      buildHostedOAuthStateMap(
+        oauthServers,
+        surface,
+        isAuthenticated,
+        previous,
+      ),
     );
-  }, [oauthServers, surface]);
+  }, [oauthServers, surface, isAuthenticated]);
 
   useEffect(() => {
     if (oauthServers.length === 0) {
@@ -240,7 +257,7 @@ export function useHostedOAuthGate({
 
         if (isUnmountedRef.current) return;
 
-        if (!accessToken) {
+        if (!accessToken && !isAuthenticated) {
           clearHostedOAuthResumeMarker();
           setStoredOAuthTokenState(
             server.serverName,
@@ -271,10 +288,7 @@ export function useHostedOAuthGate({
           }));
         }
 
-        const validation = await validateWithRetry(
-          server.serverId,
-          accessToken,
-        );
+        const validation = await validateWithRetry(server.serverId, accessToken);
         if (isUnmountedRef.current) return;
 
         if (validation.ok) {
@@ -326,7 +340,7 @@ export function useHostedOAuthGate({
         void processServer(server, currentStatus);
       }
     }
-  }, [oauthServers, oauthStateByServerId, surface]);
+  }, [oauthServers, oauthStateByServerId, surface, isAuthenticated]);
 
   const authorizeServer = useCallback(
     async (server: HostedOAuthServerDescriptor) => {
@@ -359,8 +373,13 @@ export function useHostedOAuthGate({
         window.location.hash || `#${slugify(server.serverName)}`;
       writeHostedOAuthPendingMarker({
         surface,
+        workspaceId,
+        serverId: server.serverId,
         serverName: server.serverName,
         serverUrl: server.serverUrl,
+        accessScope: isAuthenticated ? "chat_v2" : undefined,
+        shareToken,
+        sandboxToken,
         returnHash,
       });
       localStorage.setItem(pendingKey, "true");
@@ -408,14 +427,14 @@ export function useHostedOAuthGate({
       setOAuthStateByServerId((previous) => ({
         ...previous,
         [server.serverId]: {
-          status: accessToken ? "verifying" : "resuming",
+          status: accessToken || isAuthenticated ? "verifying" : "resuming",
           errorMessage: null,
           serverUrl:
             previous[server.serverId]?.serverUrl ?? server.serverUrl ?? null,
         },
       }));
     },
-    [pendingKey, surface],
+    [isAuthenticated, pendingKey, sandboxToken, shareToken, surface, workspaceId],
   );
 
   const markOAuthRequired = useCallback(

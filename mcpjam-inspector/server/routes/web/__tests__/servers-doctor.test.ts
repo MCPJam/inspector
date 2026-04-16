@@ -11,6 +11,7 @@ vi.mock("@mcpjam/sdk", async () => {
 
   return {
     ...actual,
+    DEFAULT_RETRY_POLICY: actual.DEFAULT_RETRY_POLICY,
     runServerDoctor: runServerDoctorMock,
     isMCPAuthError: vi.fn().mockReturnValue(false),
   };
@@ -28,6 +29,11 @@ vi.mock("../../../utils/oauth-proxy.js", () => ({
   validateUrl: vi.fn().mockResolvedValue({
     url: new URL("https://guest.example.com/mcp"),
   }),
+}));
+
+vi.mock("../../apps/SandboxProxyHtml.bundled.js", () => ({
+  CHATGPT_APPS_SANDBOX_PROXY_HTML: "<html></html>",
+  MCP_APPS_SANDBOX_PROXY_HTML: "<html></html>",
 }));
 
 import webRoutes from "../index.js";
@@ -159,6 +165,68 @@ describe("web servers/doctor", () => {
           serverId: "srv-1",
           label: "Example",
           url: "https://server.example.com/mcp",
+        }),
+      }),
+    );
+  });
+
+  it("prefers the backend-issued oauthAccessToken when the request does not provide one", async () => {
+    global.fetch = vi.fn(async (input) => {
+      if (String(input).endsWith("/web/authorize")) {
+        return new Response(
+          JSON.stringify({
+            authorized: true,
+            role: "member",
+            accessLevel: "workspace_member",
+            oauthAccessToken: "durable-token",
+            permissions: { chatOnly: false },
+            serverConfig: {
+              transportType: "http",
+              url: "https://server.example.com/mcp",
+              headers: { "X-Test": "yes" },
+              useOAuth: true,
+            },
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          },
+        );
+      }
+
+      throw new Error(`Unexpected fetch: ${String(input)}`);
+    }) as typeof fetch;
+
+    const app = new Hono();
+    app.use("*", async (c, next) => {
+      (c as any).mcpClientManager = {};
+      await next();
+    });
+    app.route("/api/web", webRoutes);
+
+    const response = await postJson(
+      app,
+      "/api/web/servers/doctor",
+      {
+        workspaceId: "workspace-1",
+        serverId: "srv-1",
+        serverName: "Example",
+      },
+      "test-token",
+    );
+
+    const { status } = await expectJson<{ status: string }>(response);
+
+    expect(status).toBe(200);
+    expect(runServerDoctorMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        config: expect.objectContaining({
+          requestInit: {
+            headers: {
+              "X-Test": "yes",
+              Authorization: "Bearer durable-token",
+            },
+          },
         }),
       }),
     );

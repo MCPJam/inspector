@@ -142,6 +142,7 @@ export function AuthenticationSection({
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
+                        <SelectItem value="2025-03-26">2025-03-26</SelectItem>
                         <SelectItem value="2025-06-18">2025-06-18</SelectItem>
                         <SelectItem value="2025-11-25">2025-11-25</SelectItem>
                       </SelectContent>

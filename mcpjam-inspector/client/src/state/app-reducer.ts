@@ -59,6 +59,9 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         retryCount: 0,
         enabled: true,
       };
+      const shouldUseOAuth =
+        action.useOAuth ??
+        (baseServer.useOAuth === true || action.tokens != null);
       const nextStatus: ConnectionStatus =
         action.report?.status === "partial" ? "partial" : "connected";
       const nextServer = setStatus(baseServer, nextStatus, {
@@ -69,7 +72,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         lastConnectionReport: action.report,
         oauthTokens: action.tokens,
         enabled: true,
-        useOAuth: baseServer.useOAuth ?? action.tokens != null,
+        useOAuth: shouldUseOAuth,
         ...(action.report
           ? { initializationInfo: action.report.initInfo ?? undefined }
           : {}),

@@ -1,8 +1,5 @@
 import { MCPClientManager, isAuthError } from "./mcp-client-manager/index.js";
-import type {
-  MCPServerConfig,
-  RpcLogger,
-} from "./mcp-client-manager/index.js";
+import type { MCPServerConfig, RpcLogger } from "./mcp-client-manager/index.js";
 import type { RetryPolicy } from "./retry.js";
 import {
   buildConnectedServerDoctorResult,
@@ -43,7 +40,7 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 
 export async function connectServerWithReport(
   input: ConnectServerWithReportInput,
-  dependencies: ConnectServerWithReportDependencies = {},
+  dependencies: ConnectServerWithReportDependencies = {}
 ): Promise<ConnectReport> {
   const serverId = input.serverId ?? DEFAULT_SERVER_ID;
   const timeout = input.timeout ?? DEFAULT_TIMEOUT_MS;
@@ -58,7 +55,7 @@ export async function connectServerWithReport(
         lazyConnect: true,
         ...(input.retryPolicy ? { retryPolicy: input.retryPolicy } : {}),
         ...(input.rpcLogger ? { rpcLogger: input.rpcLogger } : {}),
-      },
+      }
     );
 
   const reportContext: ConnectContext = {
@@ -81,13 +78,12 @@ export async function connectServerWithReport(
           ? undefined
           : await collectFailureDiagnostics(
               input,
-              dependencies.runDoctor ?? runServerDoctor,
+              dependencies.runDoctor ?? runServerDoctor
             );
 
       return {
         success: false,
-        status:
-          issue.code === "OAUTH_REQUIRED" ? "oauth_required" : "failed",
+        status: issue.code === "OAUTH_REQUIRED" ? "oauth_required" : "failed",
         target: input.target,
         initInfo: manager.getInitializationInfo(serverId) ?? null,
         issue,
@@ -119,7 +115,7 @@ export async function connectServerWithReport(
           dependencies.collectConnectedState ??
             collectConnectedServerDoctorState,
           dependencies.buildConnectedDoctorResult ??
-            buildConnectedServerDoctorResult,
+            buildConnectedServerDoctorResult
         );
       } catch {
         diagnostics = undefined;
@@ -144,7 +140,7 @@ export async function connectServerWithReport(
 
 async function collectFailureDiagnostics(
   input: ConnectServerWithReportInput,
-  runDoctorFn: typeof runServerDoctor,
+  runDoctorFn: typeof runServerDoctor
 ): Promise<ServerDoctorResult | undefined> {
   try {
     return await runDoctorFn({
@@ -165,7 +161,7 @@ async function collectPartialDiagnostics(
   target: string,
   error: unknown,
   collectConnectedState: typeof collectConnectedServerDoctorState,
-  buildConnectedDoctorResultFn: typeof buildConnectedServerDoctorResult,
+  buildConnectedDoctorResultFn: typeof buildConnectedServerDoctorResult
 ): Promise<ServerDoctorResult> {
   const collected = await collectConnectedState(manager, serverId);
   const diagnostics = buildConnectedDoctorResultFn(target, collected);
@@ -183,7 +179,7 @@ async function collectPartialDiagnostics(
 
 function classifyConnectIssue(
   error: unknown,
-  config: MCPServerConfig,
+  config: MCPServerConfig
 ): ConnectIssue {
   const normalized = normalizeServerDoctorError(error);
   const auth = isAuthError(error);
@@ -222,7 +218,7 @@ function classifyConnectIssue(
       "TRANSPORT_NEGOTIATION_FAILED",
       "connect",
       normalized.message,
-      true,
+      true
     );
   }
 
@@ -235,7 +231,7 @@ function classifyValidationIssue(error: unknown): ConnectIssue {
     "POST_CONNECT_VALIDATION_FAILED",
     "post_connect",
     normalized.message,
-    false,
+    false
   );
 }
 
@@ -243,7 +239,7 @@ function issue(
   code: ConnectIssueCode,
   phase: ConnectPhase,
   message: string,
-  retryable?: boolean,
+  retryable?: boolean
 ): ConnectIssue {
   return {
     code,
@@ -268,20 +264,30 @@ function hasConnectionCredentials(config: MCPServerConfig): boolean {
 
   const headers = extractHeaders(config.requestInit?.headers);
   const authorization = headers.Authorization ?? headers.authorization;
-  return (
+  if (
     typeof authorization === "string" &&
     /^Bearer\s+.+$/i.test(authorization.trim())
-  );
+  ) {
+    return true;
+  }
+
+  return Object.entries(headers).some(([key, value]) => {
+    if (typeof value !== "string" || !value.trim()) {
+      return false;
+    }
+
+    return key.toLowerCase() !== "authorization";
+  });
 }
 
 function resolveRequestedClientCapabilities(
-  config: MCPServerConfig,
+  config: MCPServerConfig
 ): Record<string, unknown> | undefined {
   return config.clientCapabilities ?? config.capabilities;
 }
 
 function extractHeaders(
-  headers: HeadersInit | undefined,
+  headers: HeadersInit | undefined
 ): Record<string, string> {
   if (!headers) {
     return {};
@@ -297,11 +303,11 @@ function extractHeaders(
 
   if (Array.isArray(headers)) {
     return Object.fromEntries(
-      headers.map(([key, value]) => [key, String(value)]),
+      headers.map(([key, value]) => [key, String(value)])
     );
   }
 
   return Object.fromEntries(
-    Object.entries(headers).map(([key, value]) => [key, String(value)]),
+    Object.entries(headers).map(([key, value]) => [key, String(value)])
   );
 }

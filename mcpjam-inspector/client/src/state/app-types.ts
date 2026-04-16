@@ -90,6 +90,7 @@ export type AppAction =
       config: MCPServerConfig;
       tokens?: OauthTokens;
       report?: ConnectReport;
+      useOAuth?: boolean;
     }
   | {
       type: "CONNECT_FAILURE";

@@ -164,7 +164,7 @@ export function MultiModelPlaygroundCard({
   const [traceViewMode, setTraceViewMode] =
     useState<PlaygroundTraceViewMode>("chat");
   const [revealedInChat, setRevealedInChat] = useState(false);
-  const [isWidgetFullscreen, setIsWidgetFullscreen] = useState(false);
+  const [, setIsWidgetFullscreen] = useState(false);
   const [preludeTraceExecutions, setPreludeTraceExecutions] = useState<
     PreludeTraceExecution[]
   >([]);
@@ -325,7 +325,7 @@ export function MultiModelPlaygroundCard({
   const shellHeightClass =
     isMobileFullTakeover || isTabletFullscreenTakeover
       ? "min-h-[34rem]"
-      : "min-h-[32rem]";
+      : "";
 
   useEffect(() => {
     onSummaryChangeRef.current = onSummaryChange;
@@ -554,7 +554,10 @@ export function MultiModelPlaygroundCard({
   );
 
   return (
-    <div className="flex h-full min-h-[34rem] min-w-0 flex-col overflow-hidden rounded-2xl border border-border/60 bg-card/40">
+    <div
+      data-testid="multi-model-playground-card-root"
+      className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl border border-border/60 bg-card/40"
+    >
       <ModelCompareCardHeader
         model={model}
         summary={summary}
@@ -565,12 +568,7 @@ export function MultiModelPlaygroundCard({
         showComparisonChrome={showComparisonChrome}
       />
 
-      <div
-        className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
-        style={{
-          transform: isWidgetFullscreen ? "none" : "translateZ(0)",
-        }}
-      >
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         {errorMessage ? (
           <div className="px-3 pt-3">
             <ErrorBox
@@ -615,6 +613,7 @@ export function MultiModelPlaygroundCard({
                   fullscreenChatPlaceholder="Message…"
                   fullscreenChatSendBlocked={fullscreenChatSendBlocked}
                   onFullscreenChatStop={stop}
+                  onFullscreenChange={setIsWidgetFullscreen}
                   onToolApprovalResponse={addToolApprovalResponse}
                   rawRequestPayloadHistory={{
                     entries: requestPayloadHistory,
@@ -641,6 +640,9 @@ export function MultiModelPlaygroundCard({
                   hideToolbar
                   fillContent
                   onRevealNavigateToChat={navigateTraceRevealToChat}
+                  displayMode={displayMode}
+                  onDisplayModeChange={onDisplayModeChange}
+                  onFullscreenChange={setIsWidgetFullscreen}
                   rawRequestPayloadHistory={{
                     entries: requestPayloadHistory,
                     hasUiMessages: !isThreadEmpty,

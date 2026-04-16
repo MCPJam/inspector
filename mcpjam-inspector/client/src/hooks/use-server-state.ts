@@ -28,6 +28,7 @@ import {
 import type { ServerFormData } from "@/shared/types.js";
 import { toMCPConfig } from "@/state/server-helpers";
 import {
+  completeHostedOAuthCallback,
   handleOAuthCallback,
   getStoredTokens,
   clearOAuthData,
@@ -35,7 +36,11 @@ import {
   type MCPOAuthOptions,
   readStoredOAuthConfig,
 } from "@/lib/oauth/mcp-oauth";
-import { getHostedOAuthCallbackContext } from "@/lib/hosted-oauth-callback";
+import {
+  clearHostedOAuthPendingState,
+  getHostedOAuthCallbackContext,
+  writeHostedOAuthPendingMarker,
+} from "@/lib/hosted-oauth-callback";
 import { HOSTED_MODE } from "@/lib/config";
 import { injectHostedServerMapping } from "@/lib/apis/web/context";
 import type { OAuthTestProfile } from "@/lib/oauth/profile";
@@ -176,6 +181,35 @@ function parseOAuthScopes(scopes: string | undefined): string[] | undefined {
   return parsed.length > 0 ? parsed : undefined;
 }
 
+function restorePathAfterOAuthCallback(
+  currentPathname: string,
+  savedHash: string,
+): string {
+  const basePath =
+    currentPathname === "/oauth/callback" ? "/" : currentPathname;
+  return `${basePath}${savedHash}`;
+}
+
+function requiresFreshOAuthAuthorization(error: unknown): boolean {
+  const errorMessage =
+    typeof error === "string"
+      ? error
+      : error instanceof Error
+        ? error.message
+        : "";
+
+  if (!errorMessage) {
+    return false;
+  }
+
+  const normalized = errorMessage.toLowerCase();
+  return (
+    normalized.includes("requires oauth authentication") ||
+    (normalized.includes("authentication failed") &&
+      normalized.includes("invalid_token"))
+  );
+}
+
 interface LoggerLike {
   info: (message: string, meta?: Record<string, unknown>) => void;
   warn: (message: string, meta?: Record<string, unknown>) => void;
@@ -255,6 +289,7 @@ export function useServerState({
         });
       }
 
+      clearHostedOAuthPendingState();
       localStorage.removeItem("mcp-oauth-return-hash");
       localStorage.removeItem("mcp-oauth-pending");
 
@@ -264,6 +299,39 @@ export function useServerState({
   );
   const isStaleOp = (name: string, token: number) =>
     (opTokenRef.current.get(name) ?? 0) !== token;
+
+  const prepareHostedWorkspaceOAuthRedirect = useCallback(
+    (params: {
+      serverId?: string | null;
+      serverName: string;
+      serverUrl?: string | null;
+    }): boolean => {
+      if (
+        !HOSTED_MODE ||
+        !isAuthenticated ||
+        !effectiveActiveWorkspaceId ||
+        !params.serverId ||
+        !params.serverUrl
+      ) {
+        return false;
+      }
+
+      const returnHash = window.location.hash || "#servers";
+      clearHostedOAuthPendingState();
+      writeHostedOAuthPendingMarker({
+        surface: "workspace",
+        workspaceId: effectiveActiveWorkspaceId,
+        serverId: params.serverId,
+        serverName: params.serverName,
+        serverUrl: params.serverUrl,
+        accessScope: "workspace_member",
+        returnHash,
+      });
+      localStorage.setItem("mcp-oauth-return-hash", returnHash);
+      return true;
+    },
+    [effectiveActiveWorkspaceId, isAuthenticated],
+  );
 
   const activeWorkspace = useMemo(() => {
     const workspace = effectiveWorkspaces[effectiveActiveWorkspaceId];
@@ -429,13 +497,21 @@ export function useServerState({
         storedConfig?.registrationStrategy;
 
       if (
+        protocolVersion !== "2025-03-26" &&
         protocolVersion !== "2025-06-18" &&
         protocolVersion !== "2025-11-25"
       ) {
         return undefined;
       }
 
-      if (
+      if (protocolVersion === "2025-03-26") {
+        if (
+          registrationStrategy !== "dcr" &&
+          registrationStrategy !== "preregistered"
+        ) {
+          return undefined;
+        }
+      } else if (
         registrationStrategy !== "dcr" &&
         registrationStrategy !== "preregistered" &&
         registrationStrategy !== "cimd"
@@ -522,6 +598,7 @@ export function useServerState({
       result: ConnectionApiResponse,
       options?: {
         tokens?: ReturnType<typeof getStoredTokens>;
+        useOAuth?: boolean;
         successToast?: string;
         failureToast?: string;
       },
@@ -532,6 +609,9 @@ export function useServerState({
           name: serverName,
           config: serverConfig,
           ...(options?.tokens ? { tokens: options.tokens } : {}),
+          ...(options?.useOAuth !== undefined
+            ? { useOAuth: options.useOAuth }
+            : {}),
           ...(result.report ? { report: result.report } : {}),
         });
         await storeInitInfo(
@@ -846,13 +926,26 @@ export function useServerState({
   );
 
   const handleOAuthCallbackComplete = useCallback(
-    async (code: string) => {
+    async (
+      code: string,
+      hostedCallbackContext: ReturnType<typeof getHostedOAuthCallbackContext>,
+    ) => {
       const pendingServerName = localStorage.getItem("mcp-oauth-pending");
+      const isHostedWorkspaceCallback =
+        HOSTED_MODE &&
+        isAuthenticated &&
+        hostedCallbackContext?.surface === "workspace";
 
       try {
-        const result = await handleOAuthCallback(code);
+        const result = isHostedWorkspaceCallback
+          ? await completeHostedOAuthCallback(hostedCallbackContext, code)
+          : await handleOAuthCallback(code);
 
         localStorage.removeItem("mcp-oauth-return-hash");
+        if (isHostedWorkspaceCallback) {
+          clearHostedOAuthPendingState();
+          localStorage.removeItem("mcp-oauth-pending");
+        }
 
         if (result.success && result.serverConfig && result.serverName) {
           const serverName = result.serverName;
@@ -877,7 +970,10 @@ export function useServerState({
                 result.serverConfig,
                 connectionResult,
                 {
-                  tokens: getStoredTokens(serverName),
+                  tokens: isHostedWorkspaceCallback
+                    ? undefined
+                    : getStoredTokens(serverName),
+                  useOAuth: true,
                 },
               )
             ) {
@@ -936,6 +1032,7 @@ export function useServerState({
       completeConnection,
       failPendingOAuthConnection,
       getConnectionErrorMessage,
+      isAuthenticated,
       logger,
       guardedTestConnection,
       withWorkspaceClientCapabilities,
@@ -965,8 +1062,10 @@ export function useServerState({
     const hostedOAuthCallbackContext = HOSTED_MODE
       ? getHostedOAuthCallbackContext()
       : null;
+    const isHostedWorkspaceCallback =
+      hostedOAuthCallbackContext?.surface === "workspace";
     if (code) {
-      if (hostedOAuthCallbackContext) {
+      if (hostedOAuthCallbackContext && !isHostedWorkspaceCallback) {
         return; // Handled by App.tsx hosted OAuth interception
       }
       if (oauthCallbackHandledRef.current) {
@@ -978,12 +1077,15 @@ export function useServerState({
       window.history.replaceState(
         {},
         document.title,
-        window.location.pathname + savedHash,
+        restorePathAfterOAuthCallback(window.location.pathname, savedHash),
       );
 
-      handleOAuthCallbackComplete(code);
+      handleOAuthCallbackComplete(
+        code,
+        isHostedWorkspaceCallback ? hostedOAuthCallbackContext : null,
+      );
     } else if (error) {
-      if (hostedOAuthCallbackContext) {
+      if (hostedOAuthCallbackContext && !isHostedWorkspaceCallback) {
         return; // Handled by App.tsx hosted OAuth interception
       }
       const errorMessage = errorDescription
@@ -1002,7 +1104,7 @@ export function useServerState({
       window.history.replaceState(
         {},
         document.title,
-        window.location.pathname + savedHash,
+        restorePathAfterOAuthCallback(window.location.pathname, savedHash),
       );
     }
   }, [
@@ -1040,6 +1142,7 @@ export function useServerState({
         select: true,
       });
       const token = nextOpToken(formData.name);
+      let hostedServerId: string | undefined;
 
       const serverEntryForSave: ServerWithName = {
         name: formData.name,
@@ -1057,6 +1160,7 @@ export function useServerState({
             serverEntryForSave,
           );
           if (serverId) {
+            hostedServerId = serverId;
             injectHostedServerMapping(formData.name, serverId);
           }
         } catch (err) {
@@ -1128,7 +1232,7 @@ export function useServerState({
                 formData.name,
                 serverConfig,
                 connectionResult,
-                { tokens: existingTokens },
+                { tokens: existingTokens, useOAuth: true },
               )
             ) {
               toast.success(
@@ -1174,6 +1278,11 @@ export function useServerState({
           if (oauthInputs.scopes && oauthInputs.scopes.length > 0) {
             oauthOptions.scopes = oauthInputs.scopes;
           }
+          prepareHostedWorkspaceOAuthRedirect({
+            serverId: hostedServerId,
+            serverName: formData.name,
+            serverUrl: formData.url,
+          });
           const oauthResult = await initiateOAuth(oauthOptions);
           if (oauthResult.success) {
             if (oauthResult.serverConfig) {
@@ -1188,7 +1297,13 @@ export function useServerState({
                   formData.name,
                   oauthResult.serverConfig,
                   connectionResult,
-                  { tokens: getStoredTokens(formData.name) },
+                  {
+                    tokens:
+                      HOSTED_MODE && isAuthenticated
+                        ? undefined
+                        : getStoredTokens(formData.name),
+                    useOAuth: true,
+                  },
                 )
               ) {
                 toast.success("Connected successfully with OAuth!");
@@ -1234,7 +1349,11 @@ export function useServerState({
           }),
         );
         if (isStaleOp(formData.name, token)) return;
-        if (await completeConnection(formData.name, mcpConfig, result)) {
+        if (
+          await completeConnection(formData.name, mcpConfig, result, {
+            useOAuth: formData.useOAuth ?? false,
+          })
+        ) {
           const env = (mcpConfig as any).env;
           if (env && Object.keys(env).length > 0) {
             localStorage.setItem(
@@ -1277,6 +1396,7 @@ export function useServerState({
       appState.workspaces,
       appState.activeWorkspaceId,
       notifyIfClientConfigSyncPending,
+      prepareHostedWorkspaceOAuthRedirect,
       resolveOAuthInitiationInputs,
       syncServerToConvex,
       logger,
@@ -1446,6 +1566,7 @@ export function useServerState({
         if (
           await completeConnection(serverName, serverConfig, result, {
             tokens: getStoredTokens(serverName),
+            useOAuth: true,
           })
         ) {
           return { success: true };
@@ -1743,6 +1864,9 @@ export function useServerState({
           server.oauthFlowProfile?.clientSecret?.trim(),
         ),
       });
+      const hostedWorkspaceServerId = activeWorkspaceServersFlat?.find(
+        (remoteServer) => remoteServer.name === serverName,
+      )?._id;
 
       if (options?.forceOAuthFlow) {
         const serverUrl = (server.config as any)?.url?.toString?.();
@@ -1755,6 +1879,11 @@ export function useServerState({
           return;
         }
 
+        prepareHostedWorkspaceOAuthRedirect({
+          serverId: hostedWorkspaceServerId,
+          serverName,
+          serverUrl,
+        });
         const reconnectOAuthOptions = buildReconnectOAuthOptions(
           serverName,
           server,
@@ -1789,7 +1918,13 @@ export function useServerState({
             serverName,
             oauthResult.serverConfig!,
             result,
-            { tokens: getStoredTokens(serverName) },
+            {
+              tokens:
+                HOSTED_MODE && isAuthenticated
+                  ? undefined
+                  : getStoredTokens(serverName),
+              useOAuth: true,
+            },
           )
         ) {
           logger.info("Reconnection with fresh OAuth successful", {
@@ -1800,9 +1935,89 @@ export function useServerState({
         return;
       }
 
+      if (HOSTED_MODE && isAuthenticated && server.useOAuth === true) {
+        const hostedReconnectConfig = withWorkspaceClientCapabilities(
+          server.config,
+        );
+        try {
+          const result = await guardedReconnectServer(
+            serverName,
+            hostedReconnectConfig,
+          );
+          if (isStaleOp(serverName, token)) return;
+          if (result.success) {
+            dispatch({
+              type: "CONNECT_SUCCESS",
+              name: serverName,
+              config: server.config,
+              tokens: undefined,
+              useOAuth: true,
+            });
+            logger.info("Hosted reconnect successful using stored OAuth", {
+              serverName,
+              result,
+            });
+            storeInitInfo(serverName, result.initInfo).catch((err) =>
+              logger.warn("Failed to fetch init info", { serverName, err }),
+            );
+            return;
+          }
+
+          if (!requiresFreshOAuthAuthorization(result.error)) {
+            dispatch({
+              type: "CONNECT_FAILURE",
+              name: serverName,
+              error: result.error || "Reconnection failed",
+            });
+            logger.error("Hosted reconnect failed", { serverName, result });
+            toast.error(result.error || `Failed to reconnect: ${serverName}`);
+            return;
+          }
+
+          logger.info(
+            "Hosted reconnect requires a fresh OAuth flow after stored credential lookup",
+            { serverName, error: result.error },
+          );
+        } catch (error) {
+          if (isStaleOp(serverName, token)) return;
+
+          const errorMessage =
+            error instanceof Error ? error.message : "Unknown error";
+
+          if (!requiresFreshOAuthAuthorization(error)) {
+            dispatch({
+              type: "CONNECT_FAILURE",
+              name: serverName,
+              error: errorMessage,
+            });
+            logger.error("Hosted reconnect failed", {
+              serverName,
+              error: errorMessage,
+            });
+            toast.error(errorMessage || `Failed to reconnect: ${serverName}`);
+            return;
+          }
+
+          logger.info(
+            "Hosted reconnect requires a fresh OAuth flow after stored credential lookup",
+            { serverName, error: errorMessage },
+          );
+        }
+      }
+
       try {
-        const authResult: OAuthResult =
-          await ensureAuthorizedForReconnect(server);
+        const authResult: OAuthResult = await ensureAuthorizedForReconnect(
+          server,
+          {
+            beforeRedirect: (oauthOptions) => {
+              prepareHostedWorkspaceOAuthRedirect({
+                serverId: hostedWorkspaceServerId,
+                serverName,
+                serverUrl: oauthOptions.serverUrl,
+              });
+            },
+          },
+        );
         if (authResult.kind === "redirect") return;
         if (authResult.kind === "error") {
           if (isStaleOp(serverName, token)) return;
@@ -1825,7 +2040,10 @@ export function useServerState({
             serverName,
             authResult.serverConfig,
             result,
-            { tokens: authResult.tokens },
+            {
+              tokens: authResult.tokens,
+              useOAuth: server.useOAuth === true || authResult.tokens != null,
+            },
           )
         ) {
           logger.info("Reconnection successful", { serverName, result });
@@ -1852,6 +2070,8 @@ export function useServerState({
       }
     },
     [
+      activeWorkspaceServersFlat,
+      isAuthenticated,
       effectiveServers,
       logger,
       dispatch,
@@ -1860,6 +2080,7 @@ export function useServerState({
       buildOAuthContext,
       completeConnection,
       getConnectionErrorMessage,
+      prepareHostedWorkspaceOAuthRedirect,
       guardedReconnectServer,
       withWorkspaceClientCapabilities,
     ],
@@ -1941,6 +2162,15 @@ export function useServerState({
 
       if (skipAutoConnect) {
         const mcpConfig = toMCPConfig(formData);
+        const nextOAuthProfile = formData.useOAuth
+          ? (options?.oauthProfile ?? originalServer?.oauthFlowProfile)
+          : undefined;
+        if (isRename && formData.useOAuth) {
+          saveOAuthConfigToLocalStorage(formData, {
+            oauthProfile: nextOAuthProfile,
+            preserveExistingConfigFrom: originalServerName,
+          });
+        }
         if (isRename) {
           await handleDisconnect(originalServerName);
           await removeServerFromStateAndCloud(originalServerName);
@@ -1955,9 +2185,7 @@ export function useServerState({
           retryCount: originalServer?.retryCount ?? 0,
           enabled: originalServer?.enabled ?? false,
           oauthTokens: originalServer?.oauthTokens,
-          oauthFlowProfile: formData.useOAuth
-            ? (options?.oauthProfile ?? originalServer?.oauthFlowProfile)
-            : undefined,
+          oauthFlowProfile: nextOAuthProfile,
           initializationInfo: originalServer?.initializationInfo,
           useOAuth: formData.useOAuth ?? false,
         } as ServerWithName;
@@ -1981,9 +2209,7 @@ export function useServerState({
 
         saveOAuthConfigToLocalStorage(formData, {
           oauthProfile: updatedServer.oauthFlowProfile,
-          preserveExistingConfigFrom: isRename
-            ? originalServerName
-            : nextServerName,
+          preserveExistingConfigFrom: nextServerName,
         });
         if (appState.selectedServer === originalServerName && isRename) {
           setSelectedServer(nextServerName);
@@ -2030,7 +2256,11 @@ export function useServerState({
               ),
             }),
           );
-          if (await completeConnection(originalServerName, mcpConfig, result)) {
+          if (
+            await completeConnection(originalServerName, mcpConfig, result, {
+              useOAuth: true,
+            })
+          ) {
             toast.success("Server configuration updated successfully!");
             return { ok: true, serverName: originalServerName };
           }

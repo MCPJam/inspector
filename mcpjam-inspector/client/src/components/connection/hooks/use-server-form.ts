@@ -1,7 +1,11 @@
 import { useState, useEffect, useRef } from "react";
 import { ServerFormData } from "@/shared/types.js";
 import { ServerWithName } from "@/hooks/use-app-state";
-import { hasOAuthConfig, getStoredTokens } from "@/lib/oauth/mcp-oauth";
+import {
+  hasOAuthConfig,
+  getStoredTokens,
+  readStoredOAuthConfig,
+} from "@/lib/oauth/mcp-oauth";
 import { HOSTED_MODE } from "@/lib/config";
 import {
   getDefaultRegistrationStrategy,
@@ -86,6 +90,8 @@ export function useServerForm(
       let scopes: string[] = [];
       let clientIdValue = "";
       let clientSecretValue = "";
+      let protocolVersionValue = oauthProfile.protocolVersion;
+      let registrationStrategyValue = oauthProfile.registrationStrategy;
 
       if (isHttpServer) {
         // Check if OAuth is configured by looking at multiple sources:
@@ -95,18 +101,14 @@ export function useServerForm(
         const hasStoredOAuthConfig = hasOAuthConfig(server.name);
         hasOAuth = hasOAuthTokens || hasStoredOAuthConfig;
 
-        const storedOAuthConfig = localStorage.getItem(
-          `mcp-oauth-config-${server.name}`,
-        );
+        const storedOAuthConfig = readStoredOAuthConfig(server.name);
         const storedClientInfo = localStorage.getItem(
           `mcp-client-${server.name}`,
         );
         const storedTokens = getStoredTokens(server.name);
 
         const clientInfo = storedClientInfo ? JSON.parse(storedClientInfo) : {};
-        const oauthConfig = storedOAuthConfig
-          ? JSON.parse(storedOAuthConfig)
-          : {};
+        const oauthConfig = storedOAuthConfig ?? {};
 
         // Retrieve scopes from multiple sources (prioritize stored tokens/storage)
         scopes =
@@ -119,6 +121,14 @@ export function useServerForm(
         clientIdValue = storedTokens?.client_id || clientInfo?.client_id || "";
 
         clientSecretValue = clientInfo?.client_secret || "";
+        protocolVersionValue =
+          server.oauthFlowProfile?.protocolVersion ??
+          storedOAuthConfig.protocolVersion ??
+          oauthProfile.protocolVersion;
+        registrationStrategyValue =
+          server.oauthFlowProfile?.registrationStrategy ??
+          storedOAuthConfig.registrationStrategy ??
+          oauthProfile.registrationStrategy;
       }
 
       // Derive local values used for both state initialization and snapshot
@@ -158,8 +168,8 @@ export function useServerForm(
       // Don't set a default scope for existing servers - use what's configured
       // Only set default for new servers
       setOauthScopesInput(scopes.join(" "));
-      setOauthProtocolVersion(oauthProfile.protocolVersion);
-      setOauthRegistrationStrategy(oauthProfile.registrationStrategy);
+      setOauthProtocolVersion(protocolVersionValue);
+      setOauthRegistrationStrategy(registrationStrategyValue);
       setRequestTimeout(timeoutValue);
 
       // Set auth type based on multiple OAuth detection sources
@@ -217,8 +227,8 @@ export function useServerForm(
         useCustomClientId: !!clientIdValue,
         clientId: clientIdValue,
         clientSecret: clientSecretValue,
-        oauthProtocolVersion: oauthProfile.protocolVersion,
-        oauthRegistrationStrategy: oauthProfile.registrationStrategy,
+        oauthProtocolVersion: protocolVersionValue,
+        oauthRegistrationStrategy: registrationStrategyValue,
         envVars: envArray.map(({ key, value }) => ({ key, value })),
         customHeaders: headersArray.map(({ key, value }) => ({ key, value })),
         requestTimeout: timeoutValue,
@@ -399,17 +409,23 @@ export function useServerForm(
     };
   };
 
-  const buildOAuthProfile = (): OAuthTestProfile => ({
-    serverUrl: url.trim(),
-    clientId: clientId.trim(),
-    clientSecret: clientSecret.trim(),
-    scopes: oauthScopesInput.trim(),
-    customHeaders: customHeaders
-      .filter(({ key }) => key.trim().length > 0)
-      .map(({ key, value }) => ({ key: key.trim(), value })),
-    protocolVersion: oauthProtocolVersion,
-    registrationStrategy: oauthRegistrationStrategy,
-  });
+  const buildOAuthProfile = (): OAuthTestProfile => {
+    const persistCustomCredentials =
+      authType === "oauth" &&
+      (useCustomClientId || oauthRegistrationStrategy === "preregistered");
+
+    return {
+      serverUrl: url.trim(),
+      clientId: persistCustomCredentials ? clientId.trim() : "",
+      clientSecret: persistCustomCredentials ? clientSecret.trim() : "",
+      scopes: oauthScopesInput.trim(),
+      customHeaders: customHeaders
+        .filter(({ key }) => key.trim().length > 0)
+        .map(({ key, value }) => ({ key: key.trim(), value })),
+      protocolVersion: oauthProtocolVersion,
+      registrationStrategy: oauthRegistrationStrategy,
+    };
+  };
 
   const resetForm = () => {
     setName("");
