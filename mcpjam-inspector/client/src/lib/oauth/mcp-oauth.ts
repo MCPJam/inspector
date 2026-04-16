@@ -8,11 +8,11 @@ import {
   discoverOAuthServerInfo,
   fetchToken,
   selectResourceURL,
-} from "@modelcontextprotocol/sdk/client/auth.js";
+} from "@mcpjam/sdk/browser";
 import type {
   OAuthClientProvider,
   OAuthDiscoveryState,
-} from "@modelcontextprotocol/sdk/client/auth.js";
+} from "@mcpjam/sdk/browser";
 import type { HttpServerConfig } from "@mcpjam/sdk/browser";
 import { generateRandomString } from "./pkce";
 import { authFetch } from "@/lib/session-token";

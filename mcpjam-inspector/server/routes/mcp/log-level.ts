@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import type { LoggingLevel } from "@modelcontextprotocol/sdk/types.js";
+import type { LoggingLevel } from "@modelcontextprotocol/client";
 import "../../types/hono"; // Extend Hono context
 import { logger } from "../../utils/logger";
 

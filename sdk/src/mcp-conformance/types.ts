@@ -1,4 +1,4 @@
-import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import type { Client } from "@modelcontextprotocol/client";
 import type { MCPClientManager } from "../mcp-client-manager/index.js";
 
 export const MCP_CHECK_CATEGORIES = [

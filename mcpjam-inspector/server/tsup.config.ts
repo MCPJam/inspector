@@ -8,7 +8,7 @@ const rootDir = join(serverDir, "..");
 export default defineConfig({
   entry: ["server/index.ts"],
   format: ["esm"],
-  target: "node18",
+  target: "node22",
   outDir: join(rootDir, "dist/server"),
   clean: true,
   bundle: true,
@@ -18,7 +18,6 @@ export default defineConfig({
     // External packages that should not be bundled
     "@hono/node-server",
     "hono",
-    "@modelcontextprotocol/sdk",
     "ai",
     "@ai-sdk/anthropic",
     "@ai-sdk/openai",
@@ -51,8 +50,8 @@ export default defineConfig({
     options.mainFields = ["module", "main"];
     // Configure path aliases for local SDK build outputs, including subpaths.
     options.alias = {
-      "@mcpjam/sdk": join(rootDir, "../sdk/dist/index.mjs"),
-      "@mcpjam/sdk/operations": join(rootDir, "../sdk/dist/operations.mjs"),
+      "@mcpjam/sdk": join(rootDir, "../sdk/dist/index.js"),
+      "@mcpjam/sdk/operations": join(rootDir, "../sdk/dist/operations.js"),
     };
   },
 });

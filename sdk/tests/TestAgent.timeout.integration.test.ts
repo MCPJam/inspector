@@ -3,10 +3,10 @@ import { MockLanguageModelV3 } from "ai/test";
 import { TestAgent } from "../src/TestAgent";
 
 let currentModel: MockLanguageModelV3;
-const mockCreateModelFromString = jest.fn(() => currentModel);
+const mockCreateModelFromString = vi.fn(() => currentModel);
 
-jest.mock("../src/model-factory", () => {
-  const actual = jest.requireActual("../src/model-factory");
+vi.mock("../src/model-factory", async () => {
+  const actual = await vi.importActual("../src/model-factory");
   return {
     ...actual,
     createModelFromString: (...args: any[]) =>
