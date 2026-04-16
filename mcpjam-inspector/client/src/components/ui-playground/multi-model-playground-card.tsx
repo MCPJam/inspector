@@ -325,7 +325,7 @@ export function MultiModelPlaygroundCard({
   const shellHeightClass =
     isMobileFullTakeover || isTabletFullscreenTakeover
       ? "min-h-[34rem]"
-      : "min-h-[32rem]";
+      : "";
 
   useEffect(() => {
     onSummaryChangeRef.current = onSummaryChange;
@@ -554,7 +554,10 @@ export function MultiModelPlaygroundCard({
   );
 
   return (
-    <div className="flex h-full min-h-[34rem] min-w-0 flex-col overflow-hidden rounded-2xl border border-border/60 bg-card/40">
+    <div
+      data-testid="multi-model-playground-card-root"
+      className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl border border-border/60 bg-card/40"
+    >
       <ModelCompareCardHeader
         model={model}
         summary={summary}
