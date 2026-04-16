@@ -333,7 +333,7 @@ jobs:
       - publish-packages
     if: inputs.deploy_backend_prod
     runs-on: ubuntu-latest
-    environment: release
+    environment: backend-production
     steps:
       - name: Dispatch and wait for backend production deployment
         uses: actions/github-script@v7
@@ -411,7 +411,9 @@ jobs:
         needs.deploy-backend-prod.result == 'success'
       )
     runs-on: ubuntu-latest
-    environment: release
+    environment:
+      name: production
+      url: ${{ vars.PRODUCTION_APP_URL || 'https://mcpjam.com' }}
     env:
       RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
       RAILWAY_PROJECT_ID: ${{ vars.RAILWAY_PROJECT_ID }}
