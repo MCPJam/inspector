@@ -107,6 +107,39 @@ function createServer(
   };
 }
 
+function createLoadedAppState(selectedServerState?: {
+  name: string;
+  connectionStatus: "connected" | "disconnected" | "failed";
+}) {
+  const baseWorkspace = {
+    ...initialAppState.workspaces.default,
+    servers: {},
+    createdAt: new Date("2026-01-01T00:00:00.000Z"),
+    updatedAt: new Date("2026-01-01T00:00:00.000Z"),
+  };
+
+  if (!selectedServerState) {
+    return {
+      ...initialAppState,
+      workspaces: { default: baseWorkspace },
+    };
+  }
+
+  return {
+    ...initialAppState,
+    workspaces: { default: baseWorkspace },
+    servers: {
+      [selectedServerState.name]: createServer(
+        selectedServerState.name,
+        selectedServerState.connectionStatus === "disconnected"
+          ? "disconnected"
+          : "connected",
+      ),
+    },
+    selectedServer: selectedServerState.name,
+  };
+}
+
 describe("useAppState active organization recovery", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -246,6 +279,101 @@ describe("useAppState active organization recovery", () => {
         name: "linear",
         connectionStatus: "disconnected",
       }),
+    });
+  });
+
+  it("keeps the syncing flag on while a runtime-only selected server is still awaiting cloud echo", async () => {
+    loadAppStateMock.mockReturnValue(
+      createLoadedAppState({
+        name: "pending-server",
+        connectionStatus: "connected",
+      }),
+    );
+    Object.assign(workspaceStateValue, {
+      effectiveWorkspaces: {
+        default: {
+          ...initialAppState.workspaces.default,
+          servers: {},
+          createdAt: new Date("2026-01-01T00:00:00.000Z"),
+          updatedAt: new Date("2026-01-01T00:00:00.000Z"),
+        },
+      },
+      effectiveActiveWorkspaceId: "default",
+      remoteWorkspaces: [],
+      useLocalFallback: false,
+    });
+    Object.assign(serverStateValue, {
+      workspaceServers: {},
+      selectedMCPConfig: undefined,
+    });
+
+    const { result } = renderHook(() =>
+      useAppState({
+        currentUserId: "user-1",
+        routeOrganizationId: undefined,
+        hasOrganizations: false,
+        isLoadingOrganizations: false,
+        validOrganizations: [],
+      }),
+    );
+
+    await waitFor(() => {
+      expect(result.current.isSelectedServerSyncing).toBe(true);
+    });
+  });
+
+  it("drops the syncing flag once the runtime-only selected server has already failed", async () => {
+    const failedServer = {
+      ...createServer("failed-server"),
+      connectionStatus: "failed" as const,
+      enabled: true,
+    };
+
+    loadAppStateMock.mockReturnValue({
+      ...initialAppState,
+      workspaces: {
+        default: {
+          ...initialAppState.workspaces.default,
+          servers: {},
+          createdAt: new Date("2026-01-01T00:00:00.000Z"),
+          updatedAt: new Date("2026-01-01T00:00:00.000Z"),
+        },
+      },
+      servers: {
+        "failed-server": failedServer,
+      },
+      selectedServer: "failed-server",
+    });
+    Object.assign(workspaceStateValue, {
+      effectiveWorkspaces: {
+        default: {
+          ...initialAppState.workspaces.default,
+          servers: {},
+          createdAt: new Date("2026-01-01T00:00:00.000Z"),
+          updatedAt: new Date("2026-01-01T00:00:00.000Z"),
+        },
+      },
+      effectiveActiveWorkspaceId: "default",
+      remoteWorkspaces: [],
+      useLocalFallback: false,
+    });
+    Object.assign(serverStateValue, {
+      workspaceServers: {},
+      selectedMCPConfig: undefined,
+    });
+
+    const { result } = renderHook(() =>
+      useAppState({
+        currentUserId: "user-1",
+        routeOrganizationId: undefined,
+        hasOrganizations: false,
+        isLoadingOrganizations: false,
+        validOrganizations: [],
+      }),
+    );
+
+    await waitFor(() => {
+      expect(result.current.isSelectedServerSyncing).toBe(false);
     });
   });
 });

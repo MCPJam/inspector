@@ -398,6 +398,16 @@ export function useAppState({
 
   const isCloudSyncActive =
     isAuthenticated && !useLocalFallback && remoteWorkspaces !== undefined;
+  const selectedRuntimeServer =
+    appState.selectedServer !== "none"
+      ? appState.servers[appState.selectedServer]
+      : undefined;
+  const isSelectedServerSyncing =
+    isCloudSyncActive &&
+    !!selectedRuntimeServer &&
+    !serverState.workspaceServers[appState.selectedServer] &&
+    selectedRuntimeServer.connectionStatus !== "failed" &&
+    selectedRuntimeServer.connectionStatus !== "disconnected";
 
   return {
     appState,
@@ -414,15 +424,11 @@ export function useAppState({
       serverState.connectedOrConnectingServerConfigs,
     selectedServerEntry: serverState.selectedServerEntry,
     selectedMCPConfig: serverState.selectedMCPConfig,
-    // True when the currently selected server exists in runtime state
-    // (`appState.servers`) but has not yet propagated to the persisted
-    // workspace servers (e.g. Convex round-trip pending for logged-in users).
-    // Consumers can use this to show a loading state rather than an
-    // incorrect "No Server Selected" empty state during the sync window.
-    isSelectedServerSyncing:
-      appState.selectedServer !== "none" &&
-      !!appState.servers[appState.selectedServer] &&
-      !serverState.workspaceServers[appState.selectedServer],
+    // True when the currently selected server exists only in runtime state and
+    // is still in a non-terminal state while cloud sync catches up. Once the
+    // connection has failed or been disconnected, stop showing a loading UI
+    // and let consumers fall back to the normal empty/error states.
+    isSelectedServerSyncing,
     selectedMCPConfigs: serverState.selectedMCPConfigs,
     selectedMCPConfigsMap: serverState.selectedMCPConfigsMap,
     isMultiSelectMode: serverState.isMultiSelectMode,
