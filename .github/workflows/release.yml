@@ -29,6 +29,7 @@ env:
 permissions:
   contents: write
   actions: read
+  packages: write
 
 jobs:
   preflight:
