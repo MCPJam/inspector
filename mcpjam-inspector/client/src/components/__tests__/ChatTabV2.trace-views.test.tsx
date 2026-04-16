@@ -354,6 +354,20 @@ describe("ChatTabV2 trace views", () => {
     expect(screen.getByTestId("trace-view-tabs")).toBeInTheDocument();
   });
 
+  it("lets the standard empty-state content scroll within the centered shell on short viewports", () => {
+    mockUseChatSession.messages = [];
+
+    render(<ChatTabV2 {...defaultProps} />);
+
+    const body = screen.getByTestId("chat-empty-state-body");
+    const content = body.firstElementChild;
+
+    expect(body).not.toHaveClass("overflow-hidden");
+    expect(content).toBeInstanceOf(HTMLElement);
+    expect(content).toHaveClass("overflow-y-auto", "overscroll-contain");
+    expect(content).not.toHaveClass("shrink-0");
+  });
+
   it("shows the sample raw JSON empty state on an empty thread when Raw is selected", () => {
     mockUseChatSession.messages = [];
     mockUseChatSession.traceViewsSupported = true;
