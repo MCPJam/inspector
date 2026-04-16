@@ -336,11 +336,7 @@ export function useWorkspaceState({
     pending.resolve();
   }, [convexWorkspaces]);
 
-  const localFallbackWorkspaces = useMemo((): Record<string, Workspace> => {
-    if (!useLocalFallback) {
-      return appState.workspaces;
-    }
-
+  const scopedLocalWorkspaces = useMemo((): Record<string, Workspace> => {
     if (!shouldScopeLocalFallbackByOrganization) {
       return appState.workspaces;
     }
@@ -350,12 +346,53 @@ export function useWorkspaceState({
         ([, workspace]) => workspace.organizationId === workspaceOrganizationId,
       ),
     );
-  }, [
-    useLocalFallback,
-    appState.workspaces,
-    shouldScopeLocalFallbackByOrganization,
-    workspaceOrganizationId,
-  ]);
+  }, [appState.workspaces, shouldScopeLocalFallbackByOrganization, workspaceOrganizationId]);
+
+  const localFallbackWorkspaces = useMemo((): Record<string, Workspace> => {
+    if (!useLocalFallback) {
+      return appState.workspaces;
+    }
+
+    return scopedLocalWorkspaces;
+  }, [useLocalFallback, appState.workspaces, scopedLocalWorkspaces]);
+
+  const authenticatedMergedWorkspaces = useMemo((): Record<string, Workspace> => {
+    const workspacesWithoutRemoteMatch = Object.fromEntries(
+      Object.entries(scopedLocalWorkspaces).filter(([localWorkspaceId, workspace]) => {
+        if (convexWorkspaces[localWorkspaceId]) {
+          return false;
+        }
+
+        if (
+          workspace.sharedWorkspaceId &&
+          convexWorkspaces[workspace.sharedWorkspaceId]
+        ) {
+          return false;
+        }
+
+        return true;
+      }),
+    );
+
+    return {
+      ...convexWorkspaces,
+      ...workspacesWithoutRemoteMatch,
+    };
+  }, [convexWorkspaces, scopedLocalWorkspaces]);
+
+  const activeScopedLocalWorkspace = useMemo(
+    () => scopedLocalWorkspaces[appState.activeWorkspaceId],
+    [scopedLocalWorkspaces, appState.activeWorkspaceId],
+  );
+
+  const activeScopedRemoteWorkspaceId =
+    activeScopedLocalWorkspace?.sharedWorkspaceId ?? null;
+
+  const shouldKeepLocalActiveWorkspace = Boolean(
+    activeScopedLocalWorkspace &&
+      (!activeScopedRemoteWorkspaceId ||
+        !convexWorkspaces[activeScopedRemoteWorkspaceId]),
+  );
 
   const effectiveWorkspaces = useMemo((): Record<string, Workspace> => {
     if (shouldTreatRemoteWorkspacesAsEmpty) {
@@ -365,7 +402,7 @@ export function useWorkspaceState({
       return localFallbackWorkspaces;
     }
     if (isAuthenticated && remoteWorkspaces !== undefined) {
-      return convexWorkspaces;
+      return authenticatedMergedWorkspaces;
     }
     if (isAuthenticated) {
       return {};
@@ -379,7 +416,7 @@ export function useWorkspaceState({
     localFallbackWorkspaces,
     isAuthenticated,
     remoteWorkspaces,
-    convexWorkspaces,
+    authenticatedMergedWorkspaces,
     isAuthLoading,
     convexActiveWorkspaceId,
     shouldTreatRemoteWorkspacesAsEmpty,
@@ -402,6 +439,20 @@ export function useWorkspaceState({
     }
     if (isAuthenticated && remoteWorkspaces !== undefined) {
       if (
+        shouldKeepLocalActiveWorkspace &&
+        effectiveWorkspaces[appState.activeWorkspaceId]
+      ) {
+        return appState.activeWorkspaceId;
+      }
+
+      if (
+        activeScopedRemoteWorkspaceId &&
+        effectiveWorkspaces[activeScopedRemoteWorkspaceId]
+      ) {
+        return activeScopedRemoteWorkspaceId;
+      }
+
+      if (
         convexActiveWorkspaceId &&
         effectiveWorkspaces[convexActiveWorkspaceId]
       ) {
@@ -415,10 +466,13 @@ export function useWorkspaceState({
     useLocalFallback,
     appState.activeWorkspaceId,
     localFallbackWorkspaces,
+    scopedLocalWorkspaces,
     isAuthenticated,
     remoteWorkspaces,
     convexActiveWorkspaceId,
     effectiveWorkspaces,
+    activeScopedRemoteWorkspaceId,
+    shouldKeepLocalActiveWorkspace,
     shouldTreatRemoteWorkspacesAsEmpty,
   ]);
 
@@ -450,18 +504,32 @@ export function useWorkspaceState({
     }
 
     if (isAuthenticated && remoteWorkspaces && remoteWorkspaces.length > 0) {
+      if (shouldKeepLocalActiveWorkspace) {
+        if (convexActiveWorkspaceId) {
+          clearConvexActiveWorkspaceSelection();
+        }
+        return;
+      }
+
       if (
         !convexActiveWorkspaceId ||
         !convexWorkspaces[convexActiveWorkspaceId]
       ) {
-        const savedActiveId = localStorage.getItem(
-          "convex-active-workspace-id",
-        );
+        if (
+          activeScopedRemoteWorkspaceId &&
+          convexWorkspaces[activeScopedRemoteWorkspaceId]
+        ) {
+          setConvexActiveWorkspaceId(activeScopedRemoteWorkspaceId);
+          return;
+        }
+
+        const savedActiveId = localStorage.getItem("convex-active-workspace-id");
         if (savedActiveId && convexWorkspaces[savedActiveId]) {
           setConvexActiveWorkspaceId(savedActiveId);
-        } else {
-          setConvexActiveWorkspaceId(remoteWorkspaces[0]._id);
+          return;
         }
+
+        setConvexActiveWorkspaceId(remoteWorkspaces[0]._id);
       }
     }
   }, [
@@ -469,6 +537,9 @@ export function useWorkspaceState({
     remoteWorkspaces,
     convexActiveWorkspaceId,
     convexWorkspaces,
+    activeScopedRemoteWorkspaceId,
+    shouldKeepLocalActiveWorkspace,
+    clearConvexActiveWorkspaceSelection,
     shouldTreatRemoteWorkspacesAsEmpty,
   ]);
 
@@ -984,21 +1055,45 @@ export function useWorkspaceState({
   );
 
   const handleWorkspaceShared = useCallback(
-    (convexWorkspaceId: string) => {
+    (convexWorkspaceId: string, sourceWorkspaceId?: string) => {
+      const resolvedSourceWorkspaceId =
+        sourceWorkspaceId ?? appState.activeWorkspaceId;
+      const shouldKeepActiveWorkspace =
+        resolvedSourceWorkspaceId === appState.activeWorkspaceId;
+
       if (isAuthenticated) {
-        setConvexActiveWorkspaceId(convexWorkspaceId);
-        logger.info("Switched to newly shared workspace", {
+        if (appState.workspaces[resolvedSourceWorkspaceId]) {
+          dispatch({
+            type: "UPDATE_WORKSPACE",
+            workspaceId: resolvedSourceWorkspaceId,
+            updates: { sharedWorkspaceId: convexWorkspaceId },
+          });
+        }
+
+        if (shouldKeepActiveWorkspace) {
+          setConvexActiveWorkspaceId(convexWorkspaceId);
+        }
+
+        logger.info("Workspace shared", {
           convexWorkspaceId,
+          sourceWorkspaceId,
+          switchedActiveWorkspace: shouldKeepActiveWorkspace,
         });
       } else {
         dispatch({
           type: "UPDATE_WORKSPACE",
-          workspaceId: appState.activeWorkspaceId,
+          workspaceId: resolvedSourceWorkspaceId,
           updates: { sharedWorkspaceId: convexWorkspaceId },
         });
       }
     },
-    [isAuthenticated, logger, dispatch, appState.activeWorkspaceId],
+    [
+      isAuthenticated,
+      logger,
+      dispatch,
+      appState.activeWorkspaceId,
+      appState.workspaces,
+    ],
   );
 
   const handleExportWorkspace = useCallback(

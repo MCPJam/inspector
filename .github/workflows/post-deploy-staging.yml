@@ -1,25 +1,31 @@
 name: Post-Deploy Staging Smoke
 
 on:
-  deployment_status:
+  workflow_call:
+    inputs:
+      base_url:
+        description: "Optional staging base URL override"
+        required: false
+        type: string
   workflow_dispatch:
+    inputs:
+      base_url:
+        description: "Optional staging base URL override"
+        required: false
+        type: string
 
 jobs:
   smoke:
-    if: >
-      github.event_name == 'workflow_dispatch' ||
-      (
-        github.event_name == 'deployment_status' &&
-        github.event.deployment.environment == 'staging' &&
-        github.event.deployment_status.state == 'success'
-      )
     runs-on: ubuntu-latest
     steps:
       - name: Resolve staging URL
         id: target
         shell: bash
         run: |
-          BASE_URL="${{ vars.STAGING_APP_URL }}"
+          BASE_URL="${{ inputs.base_url }}"
+          if [ -z "$BASE_URL" ]; then
+            BASE_URL="${{ vars.STAGING_APP_URL }}"
+          fi
           if [ -z "$BASE_URL" ]; then
             BASE_URL="https://staging.mcpjam.com"
           fi
