@@ -51,6 +51,9 @@ vi.mock("@/components/ui/json-editor", () => ({
     mockJsonEditor(props);
     return <div data-testid="json-editor">{JSON.stringify(props.value)}</div>;
   },
+  ScrollableJsonView: ({ value }: { value: unknown }) => (
+    <div data-testid="json-editor">{JSON.stringify(value)}</div>
+  ),
 }));
 
 vi.mock("@/components/ui/tooltip", () => ({

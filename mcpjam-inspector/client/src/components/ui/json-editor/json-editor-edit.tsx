@@ -568,10 +568,8 @@ export function JsonEditorEdit({
               <div
                 ref={lineNumbersRef}
                 className={cn(
-                  "flex-shrink-0 border-r border-border/50 bg-muted/50 text-right select-none",
-                  readOnlyAutoHeight
-                    ? "self-start"
-                    : "sticky left-0 z-20 self-stretch",
+                  "flex-shrink-0 border-r border-border/50 bg-muted/50 text-right select-none self-stretch",
+                  !readOnlyAutoHeight && "sticky left-0 z-20",
                 )}
                 style={{ width: "3rem" }}
               >
