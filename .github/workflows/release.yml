@@ -1,0 +1,523 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      scope:
+        description: "Which release surface to publish"
+        required: true
+        default: full
+        type: choice
+        options:
+          - packages-only
+          - inspector-only
+          - full
+      deploy_backend_prod:
+        description: "Dispatch backend production deployment"
+        required: false
+        default: false
+        type: boolean
+      promote_production:
+        description: "Deploy inspector production after publish"
+        required: false
+        default: false
+        type: boolean
+
+env:
+  NODE_VERSION: "24.14.0"
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    outputs:
+      publish_any: ${{ steps.plan.outputs.publish_any }}
+      publish_sdk: ${{ steps.plan.outputs.publish_sdk }}
+      publish_cli: ${{ steps.plan.outputs.publish_cli }}
+      publish_inspector: ${{ steps.plan.outputs.publish_inspector }}
+      build_inspector_artifacts: ${{ steps.plan.outputs.build_inspector_artifacts }}
+      inspector_version: ${{ steps.plan.outputs.inspector_version }}
+      release_tag: ${{ steps.plan.outputs.release_tag }}
+      scope: ${{ steps.plan.outputs.scope }}
+    steps:
+      - name: Enforce main branch
+        run: |
+          if [ "${GITHUB_REF_NAME}" != "main" ]; then
+            echo "release.yml must run from main" >&2
+            exit 1
+          fi
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Verify workspace
+        run: npm run verify
+
+      - name: Require green staging smoke for candidate SHA
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const workflowId = "post-deploy-staging.yml";
+            const { owner, repo } = context.repo;
+            const headSha = context.sha;
+            const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
+              owner,
+              repo,
+              workflow_id: workflowId,
+              branch: "main",
+              status: "completed",
+              per_page: 100,
+            });
+
+            const matchingRun = runs.find(
+              (run) => run.head_sha === headSha && run.conclusion === "success"
+            );
+
+            if (!matchingRun) {
+              core.setFailed(
+                `No successful ${workflowId} run found for ${headSha}. Deploy the candidate SHA to staging and wait for smoke checks first.`
+              );
+              return;
+            }
+
+            core.info(`Found successful staging smoke run ${matchingRun.id} for ${headSha}.`);
+
+      - name: Compute changeset release plan
+        run: npx changeset status --output=.changeset/status.json
+
+      - name: Select release scope
+        id: plan
+        env:
+          RELEASE_SCOPE: ${{ inputs.scope }}
+          DEPLOY_BACKEND_PROD: ${{ inputs.deploy_backend_prod }}
+          PROMOTE_PRODUCTION: ${{ inputs.promote_production }}
+        run: |
+          node <<'NODE'
+          const fs = require("node:fs");
+
+          const status = JSON.parse(fs.readFileSync(".changeset/status.json", "utf8"));
+          const releases = new Map(
+            (status.releases || []).map((release) => [release.name, release])
+          );
+          const scope = process.env.RELEASE_SCOPE;
+
+          const changed = {
+            sdk: releases.has("@mcpjam/sdk"),
+            cli: releases.has("@mcpjam/cli"),
+            inspector: releases.has("@mcpjam/inspector"),
+          };
+
+          let selected = { ...changed };
+          if (scope === "packages-only") {
+            if (changed.inspector) {
+              throw new Error(
+                'scope="packages-only" cannot be used while @mcpjam/inspector has pending changesets.'
+              );
+            }
+            selected.inspector = false;
+          } else if (scope === "inspector-only") {
+            if (changed.sdk || changed.cli) {
+              throw new Error(
+                'scope="inspector-only" cannot be used while sdk or cli have pending changesets.'
+              );
+            }
+            selected.sdk = false;
+            selected.cli = false;
+          } else if (scope !== "full") {
+            throw new Error(`Unsupported release scope: ${scope}`);
+          }
+
+          if (!selected.sdk && !selected.cli && !selected.inspector) {
+            throw new Error(
+              `Scope "${scope}" does not include any unpublished changesets.`
+            );
+          }
+
+          if (
+            process.env.DEPLOY_BACKEND_PROD === "true" &&
+            scope !== "full"
+          ) {
+            throw new Error(
+              "deploy_backend_prod=true is only supported with scope=full."
+            );
+          }
+
+          if (
+            process.env.PROMOTE_PRODUCTION === "true" &&
+            !selected.inspector
+          ) {
+            throw new Error(
+              "promote_production=true requires an inspector release in the selected scope."
+            );
+          }
+
+          const inspectorVersion =
+            releases.get("@mcpjam/inspector")?.newVersion ?? "";
+          const outputs = {
+            scope,
+            publish_any: String(selected.sdk || selected.cli || selected.inspector),
+            publish_sdk: String(selected.sdk),
+            publish_cli: String(selected.cli),
+            publish_inspector: String(selected.inspector),
+            build_inspector_artifacts: String(selected.inspector),
+            inspector_version: inspectorVersion,
+            release_tag: inspectorVersion ? `v${inspectorVersion}` : "",
+          };
+
+          const outputFile = process.env.GITHUB_OUTPUT;
+          for (const [key, value] of Object.entries(outputs)) {
+            fs.appendFileSync(outputFile, `${key}=${value}\n`);
+          }
+          NODE
+
+      - name: Version packages with Changesets
+        run: npx changeset version
+
+      - name: Refresh root lockfile
+        run: npm install --package-lock-only --legacy-peer-deps
+
+      - name: Create release patch
+        run: git diff --binary > release.patch
+
+      - name: Upload release plan artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-plan
+          path: |
+            .changeset/status.json
+            release.patch
+          retention-days: 7
+
+  build-mac:
+    needs: preflight
+    if: needs.preflight.outputs.build_inspector_artifacts == 'true'
+    uses: ./.github/workflows/mac-release.yml
+    with:
+      version: ${{ needs.preflight.outputs.inspector_version }}
+      apply_release_patch: true
+    secrets: inherit
+
+  build-windows:
+    needs: preflight
+    if: needs.preflight.outputs.build_inspector_artifacts == 'true'
+    uses: ./.github/workflows/windows-release.yml
+    with:
+      version: ${{ needs.preflight.outputs.inspector_version }}
+      apply_release_patch: true
+    secrets: inherit
+
+  artifact-gate:
+    needs:
+      - preflight
+      - build-mac
+      - build-windows
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require desktop artifact jobs when inspector is included
+        run: |
+          if [ "${{ needs.preflight.result }}" != "success" ]; then
+            echo "Preflight failed." >&2
+            exit 1
+          fi
+
+          if [ "${{ needs.preflight.outputs.build_inspector_artifacts }}" != "true" ]; then
+            exit 0
+          fi
+
+          if [ "${{ needs.build-mac.result }}" != "success" ]; then
+            echo "Mac artifact build failed." >&2
+            exit 1
+          fi
+
+          if [ "${{ needs.build-windows.result }}" != "success" ]; then
+            echo "Windows artifact build failed." >&2
+            exit 1
+          fi
+
+  publish-packages:
+    needs:
+      - preflight
+      - artifact-gate
+    if: needs.preflight.outputs.publish_any == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download release patch
+        uses: actions/download-artifact@v4
+        with:
+          name: release-plan
+          path: .release-plan
+
+      - name: Apply release patch
+        run: git apply --binary .release-plan/release.patch
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Build SDK
+        if: |
+          needs.preflight.outputs.publish_sdk == 'true' ||
+          needs.preflight.outputs.publish_cli == 'true' ||
+          needs.preflight.outputs.publish_inspector == 'true'
+        run: npm run build -w @mcpjam/sdk
+
+      - name: Build CLI
+        if: needs.preflight.outputs.publish_cli == 'true'
+        run: npm run build -w @mcpjam/cli
+
+      - name: Build Inspector package
+        if: needs.preflight.outputs.publish_inspector == 'true'
+        run: npm run build -w @mcpjam/inspector
+
+      - name: Inject SDK sourcemap debug ids
+        if: needs.preflight.outputs.publish_sdk == 'true'
+        run: npx @sentry/cli sourcemaps inject ./sdk/dist
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+
+      - name: Publish package set
+        run: npx changeset publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Upload SDK sourcemaps
+        if: needs.preflight.outputs.publish_sdk == 'true'
+        run: |
+          version=$(node -p "require('./sdk/package.json').version")
+          npx @sentry/cli sourcemaps upload \
+            --release="@mcpjam/sdk@${version}" \
+            --org=mcpjam-gh \
+            --project=mcpjam-sdk \
+            ./sdk/dist
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+
+  docker-release:
+    needs:
+      - preflight
+      - publish-packages
+    if: needs.preflight.outputs.build_inspector_artifacts == 'true'
+    uses: ./.github/workflows/docker-build-deploy.yml
+    with:
+      version: ${{ needs.preflight.outputs.inspector_version }}
+      push: true
+      apply_release_patch: true
+    secrets: inherit
+
+  deploy-backend-prod:
+    needs:
+      - preflight
+      - publish-packages
+    if: inputs.deploy_backend_prod
+    runs-on: ubuntu-latest
+    environment: release
+    steps:
+      - name: Dispatch and wait for backend production deployment
+        uses: actions/github-script@v7
+        env:
+          BACKEND_REPO: ${{ vars.MCPJAM_BACKEND_REPO || 'MCPJam/mcpjam-backend' }}
+        with:
+          github-token: ${{ secrets.BACKEND_PREVIEW_DISPATCH_TOKEN }}
+          script: |
+            const [owner, repo] = process.env.BACKEND_REPO.split("/");
+            const dispatchTime = new Date();
+            await github.rest.repos.createDispatchEvent({
+              owner,
+              repo,
+              event_type: "inspector_release_promote",
+              client_payload: {
+                sha: context.sha,
+                ref: context.ref,
+                scope: "${{ needs.preflight.outputs.scope }}",
+                release_tag: "${{ needs.preflight.outputs.release_tag }}",
+              },
+            });
+
+            const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+            for (let attempt = 0; attempt < 40; attempt += 1) {
+              await sleep(15000);
+              const { data } = await github.rest.actions.listWorkflowRuns({
+                owner,
+                repo,
+                workflow_id: "deploy-production.yml",
+                event: "repository_dispatch",
+                per_page: 20,
+              });
+
+              const matchingRun = data.workflow_runs.find(
+                (run) => new Date(run.created_at) >= dispatchTime
+              );
+
+              if (!matchingRun) {
+                core.info(`No backend production workflow run found yet (attempt ${attempt + 1}/40).`);
+                continue;
+              }
+
+              core.info(
+                `Backend production workflow ${matchingRun.id} is ${matchingRun.status}/${matchingRun.conclusion ?? "pending"}.`
+              );
+
+              if (matchingRun.status !== "completed") {
+                continue;
+              }
+
+              if (matchingRun.conclusion !== "success") {
+                core.setFailed(
+                  `Backend production deployment failed with conclusion ${matchingRun.conclusion}.`
+                );
+              }
+              return;
+            }
+
+            core.setFailed("Timed out waiting for backend production deployment to finish.");
+
+  promote-production:
+    needs:
+      - preflight
+      - publish-packages
+      - docker-release
+      - deploy-backend-prod
+    if: |
+      always() &&
+      inputs.promote_production &&
+      needs.preflight.result == 'success' &&
+      needs.publish-packages.result == 'success' &&
+      needs.docker-release.result == 'success' &&
+      (
+        inputs.deploy_backend_prod != true ||
+        needs.deploy-backend-prod.result == 'success'
+      )
+    runs-on: ubuntu-latest
+    environment: release
+    env:
+      RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
+      RAILWAY_PROJECT_ID: ${{ vars.RAILWAY_PROJECT_ID }}
+      RAILWAY_INSPECTOR_SERVICE: ${{ vars.RAILWAY_INSPECTOR_SERVICE }}
+      RAILWAY_PRODUCTION_ENVIRONMENT: ${{ vars.RAILWAY_PRODUCTION_ENVIRONMENT }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download release patch
+        uses: actions/download-artifact@v4
+        with:
+          name: release-plan
+          path: .release-plan
+
+      - name: Apply release patch
+        run: git apply --binary .release-plan/release.patch
+
+      - name: Install Railway CLI
+        run: npm install -g @railway/cli
+
+      - name: Deploy inspector to Railway production
+        run: |
+          railway up \
+            --ci \
+            --project "$RAILWAY_PROJECT_ID" \
+            --environment "$RAILWAY_PRODUCTION_ENVIRONMENT" \
+            --service "$RAILWAY_INSPECTOR_SERVICE" \
+            --path-as-root mcpjam-inspector
+
+  finalize:
+    needs:
+      - preflight
+      - publish-packages
+      - docker-release
+      - deploy-backend-prod
+      - promote-production
+    if: |
+      always() &&
+      needs.preflight.result == 'success' &&
+      needs.publish-packages.result == 'success' &&
+      (needs.docker-release.result == 'success' || needs.docker-release.result == 'skipped') &&
+      (
+        (inputs.deploy_backend_prod && needs.deploy-backend-prod.result == 'success') ||
+        (!inputs.deploy_backend_prod && needs.deploy-backend-prod.result == 'skipped')
+      ) &&
+      (
+        (inputs.promote_production && needs.promote-production.result == 'success') ||
+        (!inputs.promote_production && needs.promote-production.result == 'skipped')
+      )
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download release patch
+        uses: actions/download-artifact@v4
+        with:
+          name: release-plan
+          path: .release-plan
+
+      - name: Apply release patch
+        run: git apply --binary .release-plan/release.patch
+
+      - name: Commit version changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git status --short
+          git commit -m "chore(release): version packages"
+
+      - name: Push release commit
+        run: git push origin HEAD:main
+
+      - name: Create and push release tag
+        if: needs.preflight.outputs.release_tag != ''
+        run: |
+          git tag "${{ needs.preflight.outputs.release_tag }}"
+          git push origin "${{ needs.preflight.outputs.release_tag }}"
+
+      - name: Download macOS artifacts
+        if: needs.preflight.outputs.build_inspector_artifacts == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: inspector-macos-${{ needs.preflight.outputs.inspector_version }}
+          path: .release-assets/macos
+
+      - name: Download Windows artifacts
+        if: needs.preflight.outputs.build_inspector_artifacts == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: inspector-windows-${{ needs.preflight.outputs.inspector_version }}
+          path: .release-assets/windows
+
+      - name: Create GitHub release
+        if: needs.preflight.outputs.release_tag != ''
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.preflight.outputs.release_tag }}
+          name: Release ${{ needs.preflight.outputs.release_tag }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          files: |
+            .release-assets/macos/**
+            .release-assets/windows/**

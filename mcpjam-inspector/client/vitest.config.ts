@@ -2,15 +2,16 @@ import { defineConfig } from "vitest/config";
 import path from "path";
 
 const rootDir = path.resolve(__dirname, "..");
+const workspaceNodeModulesDir = path.resolve(rootDir, "../node_modules");
 // The linked local SDK package can advertise ./browser before dist/browser.* exists.
 const sdkBrowserEntry = path.resolve(rootDir, "../sdk/src/browser.ts");
 const mcpSdkClientAuthEntry = path.resolve(
-  rootDir,
-  "node_modules/@modelcontextprotocol/sdk/dist/esm/client/auth.js",
+  workspaceNodeModulesDir,
+  "@modelcontextprotocol/sdk/dist/esm/client/auth.js",
 );
 const mcpSdkSharedAuthEntry = path.resolve(
-  rootDir,
-  "node_modules/@modelcontextprotocol/sdk/dist/esm/shared/auth.js",
+  workspaceNodeModulesDir,
+  "@modelcontextprotocol/sdk/dist/esm/shared/auth.js",
 );
 
 export default defineConfig({

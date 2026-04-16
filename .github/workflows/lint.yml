@@ -6,13 +6,13 @@ on:
   push:
     branches: [main]
 
+env:
+  NODE_VERSION: "24.14.0"
+
 jobs:
   build:
     runs-on: ubuntu-latest
-    name: Build and Test
-    defaults:
-      run:
-        working-directory: mcpjam-inspector
+    name: Workspace Build and Start Check
 
     steps:
       - name: Checkout code
@@ -21,33 +21,30 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "24.14.0"
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
 
-      - name: Install dependencies
-        run: |
-          npm ci
+      - name: Install workspace dependencies
+        run: npm ci --legacy-peer-deps
 
-      - name: Install SDK dependencies
-        run: |
-          npm --prefix ../sdk ci
+      - name: Typecheck releasable packages
+        run: npm run typecheck
 
-      - name: Build project
-        run: |
-          echo "🏗️ Building project..."
-          npm run build
-          echo "✅ Build completed successfully!"
+      - name: Build inspector package
+        run: npm run build:inspector
 
       - name: Test production start
+        shell: bash
         run: |
-          echo "🧪 Testing production start..."
-          timeout 3s npm start || EXIT_CODE=$?
-          if [ $EXIT_CODE -eq 124 ]; then
-            echo "✅ Production server started successfully (timed out as expected)"
+          EXIT_CODE=0
+          timeout 10s npm run start -w @mcpjam/inspector || EXIT_CODE=$?
+          if [ "$EXIT_CODE" -eq 124 ]; then
+            echo "Inspector started successfully (timed out as expected)"
             exit 0
-          elif [ $EXIT_CODE -eq 0 ]; then
-            echo "✅ Production server started successfully"
-            exit 0
-          else
-            echo "❌ Production server failed to start with exit code $EXIT_CODE"
-            exit 1
           fi
+          if [ "$EXIT_CODE" -eq 0 ]; then
+            echo "Inspector started successfully"
+            exit 0
+          fi
+          echo "Inspector failed to start with exit code $EXIT_CODE"
+          exit "$EXIT_CODE"

@@ -1667,6 +1667,10 @@ export function PlaygroundMain({
                                   onRevealNavigateToChat={() =>
                                     setTraceViewMode("chat")
                                   }
+                                  sendFollowUpMessage={handleSendFollowUp}
+                                  displayMode={displayMode}
+                                  onDisplayModeChange={handleDisplayModeChange}
+                                  onFullscreenChange={setIsWidgetFullscreen}
                                   rawGrowWithContent
                                   rawRequestPayloadHistory={{
                                     entries: requestPayloadHistory,
@@ -1696,6 +1700,10 @@ export function PlaygroundMain({
                               onRevealNavigateToChat={() =>
                                 setTraceViewMode("chat")
                               }
+                              sendFollowUpMessage={handleSendFollowUp}
+                              displayMode={displayMode}
+                              onDisplayModeChange={handleDisplayModeChange}
+                              onFullscreenChange={setIsWidgetFullscreen}
                               rawRequestPayloadHistory={{
                                 entries: requestPayloadHistory,
                                 hasUiMessages: !isThreadEmpty,
@@ -1758,7 +1766,6 @@ export function PlaygroundMain({
                           ? "100%"
                           : deviceConfig.height,
                       maxHeight: "100%",
-                      transform: isWidgetFullscreen ? "none" : "translateZ(0)",
                       backgroundColor: showPostConnectGuide
                         ? undefined
                         : hostBackgroundColor,

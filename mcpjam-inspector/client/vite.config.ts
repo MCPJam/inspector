@@ -8,17 +8,18 @@ import { readFileSync } from "fs";
 
 const clientDir = fileURLToPath(new URL(".", import.meta.url));
 const rootDir = path.resolve(clientDir, "..");
+const workspaceNodeModulesDir = path.resolve(rootDir, "../node_modules");
 // The linked local SDK package can advertise ./browser before dist/browser.* exists.
 const sdkBrowserEntry = path.resolve(rootDir, "../sdk/src/browser.ts");
 // Bypass stale Vite optimized deps for MCP SDK auth helpers by resolving
 // directly to the installed ESM entrypoints.
 const mcpSdkClientAuthEntry = path.resolve(
-  rootDir,
-  "node_modules/@modelcontextprotocol/sdk/dist/esm/client/auth.js",
+  workspaceNodeModulesDir,
+  "@modelcontextprotocol/sdk/dist/esm/client/auth.js",
 );
 const mcpSdkSharedAuthEntry = path.resolve(
-  rootDir,
-  "node_modules/@modelcontextprotocol/sdk/dist/esm/shared/auth.js",
+  workspaceNodeModulesDir,
+  "@modelcontextprotocol/sdk/dist/esm/shared/auth.js",
 );
 
 // Read version from package.json
@@ -56,12 +57,13 @@ export default defineConfig(({ mode }) => {
         "@mcpjam/sdk/browser": sdkBrowserEntry,
         "@modelcontextprotocol/sdk/client/auth.js": mcpSdkClientAuthEntry,
         "@modelcontextprotocol/sdk/shared/auth.js": mcpSdkSharedAuthEntry,
-        // Force React resolution to prevent conflicts with @mcp-ui/client
-        react: path.resolve(clientDir, "../node_modules/react"),
-        "react-dom": path.resolve(clientDir, "../node_modules/react-dom"),
+        // Resolve shared frontend deps from the workspace root now that installs
+        // are hoisted to a single lockfile-managed node_modules tree.
+        react: path.resolve(workspaceNodeModulesDir, "react"),
+        "react-dom": path.resolve(workspaceNodeModulesDir, "react-dom"),
         "@mcp-ui/client": path.resolve(
-          clientDir,
-          "../node_modules/@mcp-ui/client",
+          workspaceNodeModulesDir,
+          "@mcp-ui/client",
         ),
       },
       dedupe: ["react", "react-dom"],

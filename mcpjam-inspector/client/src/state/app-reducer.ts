@@ -60,6 +60,9 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         retryCount: 0,
         enabled: true,
       };
+      const shouldUseOAuth =
+        action.useOAuth ??
+        (baseServer.useOAuth === true || action.tokens != null);
       const nextServer = setStatus(baseServer, "connected", {
         config: action.config,
         lastConnectionTime: new Date(),
@@ -67,8 +70,9 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         lastError: undefined,
         oauthTokens: action.tokens,
         enabled: true,
-        // Track whether this server uses OAuth based on whether tokens were provided
-        useOAuth: action.tokens != null,
+        // Hosted workspace OAuth can succeed without browser-side tokens.
+        // Preserve explicit auth mode when the dispatch provides it.
+        useOAuth: shouldUseOAuth,
       });
       return {
         ...state,

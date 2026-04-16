@@ -18,6 +18,7 @@ import { generateRandomString } from "./pkce";
 import { authFetch } from "@/lib/session-token";
 import { HOSTED_MODE } from "@/lib/config";
 import { captureServerDetailModalOAuthResume } from "@/lib/server-detail-modal-resume";
+import type { HostedOAuthCallbackContext } from "@/lib/hosted-oauth-callback";
 import { getRedirectUri } from "./constants";
 import { getConvexSiteUrl } from "@/lib/convex-site-url";
 
@@ -27,6 +28,11 @@ const originalFetch = window.fetch;
 interface StoredOAuthDiscoveryState {
   serverUrl: string;
   discoveryState: OAuthDiscoveryState;
+}
+
+interface StoredOAuthClientInformation {
+  client_id?: string;
+  client_secret?: string;
 }
 
 export interface StoredOAuthConfig {
@@ -433,6 +439,12 @@ export interface OAuthResult {
   error?: string;
 }
 
+interface HostedOAuthCompletionResponse {
+  success: boolean;
+  expiresAt?: number | null;
+  kind?: "generic" | "registry";
+}
+
 /**
  * Simple localStorage-based OAuth provider for MCP
  */
@@ -610,6 +622,29 @@ export class MCPOAuthProvider implements OAuthClientProvider {
   }
 }
 
+function readStoredClientInformation(
+  serverName: string,
+): StoredOAuthClientInformation {
+  try {
+    const stored = localStorage.getItem(`mcp-client-${serverName}`);
+    if (!stored) {
+      return {};
+    }
+
+    const parsed = JSON.parse(stored) as StoredOAuthClientInformation;
+    return {
+      client_id:
+        typeof parsed.client_id === "string" ? parsed.client_id : undefined,
+      client_secret:
+        typeof parsed.client_secret === "string"
+          ? parsed.client_secret
+          : undefined,
+    };
+  } catch {
+    return {};
+  }
+}
+
 /**
  * Initiates OAuth flow for an MCP server
  */
@@ -726,6 +761,112 @@ export async function initiateOAuth(
   }
 }
 
+function formatOAuthCallbackError(error: unknown): string {
+  let errorMessage = "Unknown callback error";
+
+  if (error instanceof Error) {
+    errorMessage = error.message;
+
+    if (
+      errorMessage.includes("invalid_client") ||
+      errorMessage.includes("client_id")
+    ) {
+      return "Invalid client ID during token exchange. Please verify the client ID is correctly registered.";
+    }
+    if (errorMessage.includes("unauthorized_client")) {
+      return "Client not authorized for token exchange. The client ID may not match the one used for authorization.";
+    }
+    if (errorMessage.includes("invalid_grant")) {
+      return "Authorization code invalid or expired. Please try the OAuth flow again.";
+    }
+  }
+
+  return errorMessage;
+}
+
+export async function completeHostedOAuthCallback(
+  context: HostedOAuthCallbackContext,
+  authorizationCode: string,
+): Promise<OAuthResult & { serverName?: string; expiresAt?: number | null }> {
+  const serverName = context.serverName || localStorage.getItem("mcp-oauth-pending");
+
+  try {
+    if (!serverName) {
+      throw new Error("No pending OAuth flow found");
+    }
+    if (!context.workspaceId || !context.serverId) {
+      throw new Error("Hosted OAuth callback is missing server context");
+    }
+
+    const serverUrl =
+      context.serverUrl || localStorage.getItem(`mcp-serverUrl-${serverName}`);
+    if (!serverUrl) {
+      throw new Error("Server URL not found for OAuth callback");
+    }
+
+    const codeVerifier = localStorage.getItem(`mcp-verifier-${serverName}`);
+    if (!codeVerifier) {
+      throw new Error("Code verifier not found");
+    }
+
+    const clientInformation = readStoredClientInformation(serverName);
+    if (!clientInformation.client_id) {
+      throw new Error("OAuth client ID not found");
+    }
+
+    const convexSiteUrl = getConvexSiteUrl();
+    const response = await authFetch(`${convexSiteUrl}/web/oauth/complete`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        workspaceId: context.workspaceId,
+        serverId: context.serverId,
+        serverUrl,
+        code: authorizationCode,
+        codeVerifier,
+        redirectUri: getRedirectUri(),
+        clientInformation: {
+          clientId: clientInformation.client_id,
+          ...(clientInformation.client_secret
+            ? { clientSecret: clientInformation.client_secret }
+            : {}),
+        },
+        ...(context.accessScope ? { accessScope: context.accessScope } : {}),
+        ...(context.shareToken ? { shareToken: context.shareToken } : {}),
+        ...(context.sandboxToken ? { sandboxToken: context.sandboxToken } : {}),
+      }),
+    });
+
+    if (!response.ok) {
+      const responseText = await response.text();
+      throw new Error(responseText || `Hosted OAuth callback failed (${response.status})`);
+    }
+
+    const result =
+      (await response.json()) as HostedOAuthCompletionResponse | null;
+    if (!result?.success) {
+      throw new Error("Hosted OAuth callback failed");
+    }
+
+    localStorage.removeItem(`mcp-tokens-${serverName}`);
+    localStorage.removeItem(`mcp-verifier-${serverName}`);
+
+    return {
+      success: true,
+      serverName,
+      serverConfig: createServerConfig(serverUrl),
+      expiresAt: result.expiresAt ?? null,
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error: formatOAuthCallbackError(error),
+    };
+  }
+}
+
 /**
  * Handles OAuth callback and completes the flow
  */
@@ -799,30 +940,9 @@ export async function handleOAuthCallback(
       serverName, // Return server name so caller doesn't need to look it up
     };
   } catch (error) {
-    let errorMessage = "Unknown callback error";
-
-    if (error instanceof Error) {
-      errorMessage = error.message;
-
-      // Provide more helpful error messages for common client ID issues
-      if (
-        errorMessage.includes("invalid_client") ||
-        errorMessage.includes("client_id")
-      ) {
-        errorMessage =
-          "Invalid client ID during token exchange. Please verify the client ID is correctly registered.";
-      } else if (errorMessage.includes("unauthorized_client")) {
-        errorMessage =
-          "Client not authorized for token exchange. The client ID may not match the one used for authorization.";
-      } else if (errorMessage.includes("invalid_grant")) {
-        errorMessage =
-          "Authorization code invalid or expired. Please try the OAuth flow again.";
-      }
-    }
-
     return {
       success: false,
-      error: errorMessage,
+      error: formatOAuthCallbackError(error),
     };
   } finally {
     // Restore original fetch
@@ -1015,7 +1135,10 @@ export function clearOAuthData(serverName: string): void {
 /**
  * Creates MCP server configuration with OAuth tokens
  */
-function createServerConfig(serverUrl: string, tokens: any): HttpServerConfig {
+export function createServerConfig(
+  serverUrl: string,
+  tokens?: { access_token?: string | null },
+): HttpServerConfig {
   // Note: We don't include authProvider in the config because it can't be serialized
   // when sent to the backend via JSON. The backend will use the Authorization header instead.
   // Token refresh should be handled separately if the token expires.
@@ -1023,7 +1146,7 @@ function createServerConfig(serverUrl: string, tokens: any): HttpServerConfig {
   return {
     url: serverUrl,
     requestInit: {
-      headers: tokens.access_token
+      headers: tokens?.access_token
         ? {
             Authorization: `Bearer ${tokens.access_token}`,
           }
