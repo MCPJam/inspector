@@ -399,7 +399,10 @@ interface ServersTabProps {
   organizationId: string | null;
   isBillingContextPending?: boolean;
   isLoadingWorkspaces?: boolean;
-  onWorkspaceShared?: (sharedWorkspaceId: string) => void;
+  onWorkspaceShared?: (
+    sharedWorkspaceId: string,
+    sourceWorkspaceId?: string,
+  ) => void;
   onLeaveWorkspace?: () => void;
   isRegistryEnabled?: boolean;
   onNavigateToRegistry?: () => void;

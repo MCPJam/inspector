@@ -1555,7 +1555,9 @@ export default function App() {
         onDeleteWorkspace={handleDeleteWorkspace}
         isLoadingWorkspaces={isLoadingRemoteWorkspaces}
         activeOrganizationId={activeOrganizationId}
+        activeOrganizationName={activeOrganizationName}
         onSwitchOrganization={handleSidebarSwitchOrganization}
+        onWorkspaceShared={handleWorkspaceShared}
         billingUiEnabled={billingUiEnabled}
         billingGateDenied={sidebarGateDenied}
         billingGateEnforcementActive={billingGateEnforcementActive}
