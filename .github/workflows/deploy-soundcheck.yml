@@ -36,4 +36,4 @@ jobs:
       - name: Deploy
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_SOUNDCHECK_TOKEN }}
-        run: railway up --service mcpjam-soundcheck --detach
+        run: railway up --service mcpjam-soundcheck --ci

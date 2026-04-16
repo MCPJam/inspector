@@ -12,6 +12,8 @@
  *   - If lockdown is off, everyone signed in via WorkOS passes.
  *   - If lockdown is on, only signed-in users whose email domain appears in
  *     the comma-separated `MCPJAM_EMPLOYEE_EMAIL_DOMAINS` list pass.
+ *   - If lockdown is on but the allowed-domains list is empty, fail loudly
+ *     instead of silently locking everyone out.
  */
 
 export function isLockdownEnabled(): boolean {
@@ -29,8 +31,23 @@ function getAllowedDomains(): string[] {
 export function isAllowedEmployeeEmail(
   email: string | undefined | null
 ): boolean {
+  const allowedDomains = getAllowedDomains();
+
+  if (isLockdownEnabled() && allowedDomains.length === 0) {
+    throw new Error(
+      "MCPJAM_EMPLOYEE_EMAIL_DOMAINS must be set when MCPJAM_NONPROD_LOCKDOWN=true"
+    );
+  }
+
   if (!email) return false;
-  const domain = email.split("@")[1]?.toLowerCase();
-  if (!domain) return false;
-  return getAllowedDomains().includes(domain);
+
+  // Match the parsing in mcpjam-inspector/server/config.ts: normalize first,
+  // then take the substring after the LAST `@`. Using `split("@")[1]` would
+  // incorrectly accept addresses like `a@allowed.com@evil.com`.
+  const normalized = email.trim().toLowerCase();
+  const atIndex = normalized.lastIndexOf("@");
+  if (atIndex === -1 || atIndex === normalized.length - 1) return false;
+  const domain = normalized.slice(atIndex + 1);
+
+  return allowedDomains.includes(domain);
 }

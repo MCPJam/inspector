@@ -44,7 +44,7 @@ email to be under a domain listed in `MCPJAM_EMPLOYEE_EMAIL_DOMAINS` while
 
 Auto-deploys on push to `main` via `.github/workflows/deploy-soundcheck.yml`
 when `soundcheck/**`, root `package.json`, root `package-lock.json`, or the
-workflow file itself changes. The workflow runs `railway up` against the
+workflow file itself changes. The workflow runs `railway up --ci` against the
 `mcpjam-soundcheck` Railway service with a service-scoped token.
 
 This workflow is independent of `release.yml`. Soundcheck is never part of
@@ -52,18 +52,30 @@ the customer release pipeline.
 
 ## Secrets & rotation
 
-All secrets live in the Railway env for the `mcpjam-soundcheck` service.
-Never in source.
+All secrets live outside source. There are two distinct buckets — one for the
+running app, one for the deploy workflow.
+
+### Runtime secrets (set on the Railway `mcpjam-soundcheck` service env)
+
+Read by the Soundcheck app at request time to populate tiles.
 
 | Secret | Purpose | Rotation |
 |---|---|---|
-| `RAILWAY_API_TOKEN` | Read Railway envs + deploys | 90 days |
+| `RAILWAY_API_TOKEN` | Read Railway envs + deployments for dashboard tiles | 90 days |
 | `CONVEX_DEPLOY_KEY_STAGING` | Read backend-staging state | 90 days |
 | `CONVEX_DEPLOY_KEY_PROD` | Read backend-prod state | 90 days |
 | `GITHUB_PAT` | GitHub REST + Compare + Actions (fine-grained, read-only, scoped to both repos) | 90 days |
 | `WORKOS_API_KEY`, `WORKOS_CLIENT_ID`, `WORKOS_COOKIE_PASSWORD` | Auth | per existing WorkOS policy |
 | `MCPJAM_NONPROD_LOCKDOWN=true` | Employee gate on | n/a |
 | `MCPJAM_EMPLOYEE_EMAIL_DOMAINS=mcpjam.com` | Allowed email domains | n/a |
+
+### CI secrets (set as GitHub repo secrets on `MCPJam/inspector`)
+
+Read by `deploy-soundcheck.yml` only. Not used by the running app.
+
+| Secret | Purpose | Rotation |
+|---|---|---|
+| `RAILWAY_SOUNDCHECK_TOKEN` | Service-scoped Railway token used by the deploy workflow to run `railway up` | 90 days |
 
 **Rotation owner:** Marcelo (chelojimenez). Reviewed quarterly.
 
