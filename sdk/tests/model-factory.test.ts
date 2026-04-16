@@ -6,9 +6,9 @@ import {
 } from "../src/model-factory";
 
 // Mock all provider packages
-jest.mock("@ai-sdk/anthropic", () => ({
-  createAnthropic: jest.fn(() => {
-    const modelFn = jest.fn((modelId: string) => ({
+vi.mock("@ai-sdk/anthropic", () => ({
+  createAnthropic: vi.fn(() => {
+    const modelFn = vi.fn((modelId: string) => ({
       provider: "anthropic",
       modelId,
       type: "mock-model",
@@ -17,14 +17,14 @@ jest.mock("@ai-sdk/anthropic", () => ({
   }),
 }));
 
-jest.mock("@ai-sdk/openai", () => ({
-  createOpenAI: jest.fn(() => {
-    const modelFn = jest.fn((modelId: string) => ({
+vi.mock("@ai-sdk/openai", () => ({
+  createOpenAI: vi.fn(() => {
+    const modelFn = vi.fn((modelId: string) => ({
       provider: "openai",
       modelId,
       type: "mock-model",
     }));
-    modelFn.chat = jest.fn((modelId: string) => ({
+    modelFn.chat = vi.fn((modelId: string) => ({
       provider: "openai-chat",
       modelId,
       type: "mock-model",
@@ -33,9 +33,9 @@ jest.mock("@ai-sdk/openai", () => ({
   }),
 }));
 
-jest.mock("@ai-sdk/deepseek", () => ({
-  createDeepSeek: jest.fn(() => {
-    const modelFn = jest.fn((modelId: string) => ({
+vi.mock("@ai-sdk/deepseek", () => ({
+  createDeepSeek: vi.fn(() => {
+    const modelFn = vi.fn((modelId: string) => ({
       provider: "deepseek",
       modelId,
       type: "mock-model",
@@ -44,9 +44,9 @@ jest.mock("@ai-sdk/deepseek", () => ({
   }),
 }));
 
-jest.mock("@ai-sdk/google", () => ({
-  createGoogleGenerativeAI: jest.fn(() => {
-    const modelFn = jest.fn((modelId: string) => ({
+vi.mock("@ai-sdk/google", () => ({
+  createGoogleGenerativeAI: vi.fn(() => {
+    const modelFn = vi.fn((modelId: string) => ({
       provider: "google",
       modelId,
       type: "mock-model",
@@ -55,9 +55,9 @@ jest.mock("@ai-sdk/google", () => ({
   }),
 }));
 
-jest.mock("@ai-sdk/azure", () => ({
-  createAzure: jest.fn(() => {
-    const modelFn = jest.fn((modelId: string) => ({
+vi.mock("@ai-sdk/azure", () => ({
+  createAzure: vi.fn(() => {
+    const modelFn = vi.fn((modelId: string) => ({
       provider: "azure",
       modelId,
       type: "mock-model",
@@ -66,9 +66,9 @@ jest.mock("@ai-sdk/azure", () => ({
   }),
 }));
 
-jest.mock("@ai-sdk/mistral", () => ({
-  createMistral: jest.fn(() => {
-    const modelFn = jest.fn((modelId: string) => ({
+vi.mock("@ai-sdk/mistral", () => ({
+  createMistral: vi.fn(() => {
+    const modelFn = vi.fn((modelId: string) => ({
       provider: "mistral",
       modelId,
       type: "mock-model",
@@ -77,9 +77,9 @@ jest.mock("@ai-sdk/mistral", () => ({
   }),
 }));
 
-jest.mock("@ai-sdk/xai", () => ({
-  createXai: jest.fn(() => {
-    const modelFn = jest.fn((modelId: string) => ({
+vi.mock("@ai-sdk/xai", () => ({
+  createXai: vi.fn(() => {
+    const modelFn = vi.fn((modelId: string) => ({
       provider: "xai",
       modelId,
       type: "mock-model",
@@ -88,9 +88,9 @@ jest.mock("@ai-sdk/xai", () => ({
   }),
 }));
 
-jest.mock("@openrouter/ai-sdk-provider", () => ({
-  createOpenRouter: jest.fn(() => {
-    const modelFn = jest.fn((modelId: string) => ({
+vi.mock("@openrouter/ai-sdk-provider", () => ({
+  createOpenRouter: vi.fn(() => {
+    const modelFn = vi.fn((modelId: string) => ({
       provider: "openrouter",
       modelId,
       type: "mock-model",
@@ -99,9 +99,9 @@ jest.mock("@openrouter/ai-sdk-provider", () => ({
   }),
 }));
 
-jest.mock("ollama-ai-provider-v2", () => ({
-  createOllama: jest.fn(() => {
-    const modelFn = jest.fn((modelId: string) => ({
+vi.mock("ollama-ai-provider-v2", () => ({
+  createOllama: vi.fn(() => {
+    const modelFn = vi.fn((modelId: string) => ({
       provider: "ollama",
       modelId,
       type: "mock-model",
@@ -123,7 +123,7 @@ import { createOllama } from "ollama-ai-provider-v2";
 
 describe("model-factory", () => {
   beforeEach(() => {
-    jest.clearAllMocks();
+    vi.clearAllMocks();
   });
 
   describe("parseLLMString", () => {

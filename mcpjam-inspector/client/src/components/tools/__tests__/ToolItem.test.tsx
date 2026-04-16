@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { ToolItem } from "../ToolItem";
-import type { Tool } from "@modelcontextprotocol/sdk/types.js";
+import type { Tool } from "@modelcontextprotocol/client";
 
 describe("ToolItem", () => {
   const createTool = (overrides: Partial<Tool> = {}): Tool => ({

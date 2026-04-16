@@ -23,7 +23,7 @@ import {
   type UiLogEvent,
   type UiProtocol,
 } from "@/stores/traffic-log-store";
-import type { LoggingLevel } from "@modelcontextprotocol/sdk/types.js";
+import type { LoggingLevel } from "@modelcontextprotocol/client";
 import { setServerLoggingLevel } from "@/state/mcp-api";
 import { toast } from "sonner";
 import { useSharedAppState } from "@/state/app-state-context";

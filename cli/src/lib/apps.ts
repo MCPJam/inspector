@@ -8,7 +8,7 @@ import {
   injectScripts,
   type WidgetCspMeta,
 } from "@mcpjam/sdk";
-import { cliError } from "./output";
+import { cliError } from "./output.js";
 
 type Manager = MCPClientManager;
 

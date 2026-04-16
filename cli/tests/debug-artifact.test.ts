@@ -8,8 +8,8 @@ import {
   buildCommandArtifactError,
   buildDebugArtifactEnvelope,
   writeCommandDebugArtifact,
-} from "../src/lib/debug-artifact";
-import { createCliRpcLogCollector } from "../src/lib/rpc-logs";
+} from "../src/lib/debug-artifact.js";
+import { createCliRpcLogCollector } from "../src/lib/rpc-logs.js";
 
 function createDoctorResult<TTarget>(target: TTarget): ServerDoctorResult<TTarget> {
   return {

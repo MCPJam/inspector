@@ -1,11 +1,9 @@
 import type {
   JSONRPCMessage,
   MessageExtraInfo,
-} from "@modelcontextprotocol/sdk/types.js";
-import type {
   Transport,
   TransportSendOptions,
-} from "@modelcontextprotocol/sdk/shared/transport.js";
+} from "@modelcontextprotocol/client";
 
 export class LoggingTransport implements Transport {
   private inner: Transport;

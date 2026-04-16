@@ -1,5 +1,5 @@
 import type { HttpServerConfig, MCPServerConfig } from "@mcpjam/sdk/browser";
-import type { LoggingLevel } from "@modelcontextprotocol/sdk/types.js";
+import type { LoggingLevel } from "@modelcontextprotocol/client";
 import { authFetch } from "@/lib/session-token";
 import { HOSTED_MODE } from "@/lib/config";
 import {

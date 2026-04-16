@@ -3,14 +3,14 @@ import { runTransportChecks } from "../../src/mcp-conformance/checks/transport.j
 import { TOOL_CHECKS } from "../../src/mcp-conformance/checks/tools.js";
 import * as operations from "../../src/operations.js";
 
-jest.mock("../../src/operations.js", () => ({
-  listPrompts: jest.fn(),
-  listResources: jest.fn(),
-  listTools: jest.fn(),
-  withEphemeralClient: jest.fn(),
+vi.mock("../../src/operations.js", () => ({
+  listPrompts: vi.fn(),
+  listResources: vi.fn(),
+  listTools: vi.fn(),
+  withEphemeralClient: vi.fn(),
 }));
 
-const mockedOperations = jest.mocked(operations);
+const mockedOperations = vi.mocked(operations);
 
 function jsonResponse(body: unknown, init: ResponseInit = {}): Response {
   const headers = new Headers(init.headers);
@@ -67,7 +67,7 @@ function createTransportContext(fetchFn: typeof fetch) {
 
 describe("mcp conformance unit checks", () => {
   afterEach(() => {
-    jest.resetAllMocks();
+    vi.resetAllMocks();
   });
 
   it("accepts tools whose inputSchema omits a top-level type", async () => {
@@ -81,7 +81,7 @@ describe("mcp conformance unit checks", () => {
 
     const result = await check.run({
       manager: {
-        listTools: jest.fn().mockResolvedValue({
+        listTools: vi.fn().mockResolvedValue({
           tools: [{ name: "echo", inputSchema: {} }],
         }),
       } as any,
@@ -96,8 +96,8 @@ describe("mcp conformance unit checks", () => {
       async (_config, fn) =>
         fn(
           {
-            getClient: jest.fn().mockReturnValue({}),
-            getInitializationInfo: jest.fn().mockReturnValue({
+            getClient: vi.fn().mockReturnValue({}),
+            getInitializationInfo: vi.fn().mockReturnValue({
               protocolVersion: "2025-11-25",
               transport: "streamable-http",
               serverCapabilities: {},
@@ -134,7 +134,7 @@ describe("mcp conformance unit checks", () => {
   });
 
   it("reports protocol checks in the protocol category", async () => {
-    const fetchFn = jest.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+    const fetchFn = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body ?? "{}")) as { method?: string };
 
       if (body.method === "initialize") {
@@ -175,7 +175,7 @@ describe("mcp conformance unit checks", () => {
   });
 
   it("does not count truncated SSE frames as complete events", async () => {
-    const fetchFn = jest.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+    const fetchFn = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body ?? "{}")) as { method?: string };
 
       if (body.method === "initialize") {
@@ -211,7 +211,7 @@ describe("mcp conformance unit checks", () => {
 
   it("returns structured transport failures instead of throwing on stream errors", async () => {
     let postCount = 0;
-    const fetchFn = jest.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+    const fetchFn = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body ?? "{}")) as { method?: string };
 
       if (body.method === "initialize") {

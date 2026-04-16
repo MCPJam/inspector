@@ -2,28 +2,25 @@
  * Notification handler management for MCPClientManager
  */
 
-import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import {
-  ResourceListChangedNotificationSchema,
-  ResourceUpdatedNotificationSchema,
-  PromptListChangedNotificationSchema,
-  ProgressNotificationSchema,
-} from "@modelcontextprotocol/sdk/types.js";
+  type Client,
+  type NotificationMethod,
+} from "@modelcontextprotocol/client";
 import type { ProgressHandler } from "./types.js";
 
+export const ResourceListChangedNotificationMethod =
+  "notifications/resources/list_changed" as const;
+export const ResourceUpdatedNotificationMethod =
+  "notifications/resources/updated" as const;
+export const PromptListChangedNotificationMethod =
+  "notifications/prompts/list_changed" as const;
+export const ProgressNotificationMethod = "notifications/progress" as const;
+
 // Type aliases for notification handling
-type NotificationSchema = Parameters<Client["setNotificationHandler"]>[0];
+type NotificationMethodName = Parameters<Client["setNotificationHandler"]>[0];
 type NotificationHandler = Parameters<Client["setNotificationHandler"]>[1];
 
-// Re-export notification schemas for convenience
-export {
-  ResourceListChangedNotificationSchema,
-  ResourceUpdatedNotificationSchema,
-  PromptListChangedNotificationSchema,
-  ProgressNotificationSchema,
-};
-
-export type { NotificationSchema, NotificationHandler };
+export type { NotificationMethodName, NotificationHandler };
 
 /**
  * Manages notification handlers for multiple MCP servers.
@@ -32,48 +29,48 @@ export type { NotificationSchema, NotificationHandler };
 export class NotificationManager {
   private handlers = new Map<
     string,
-    Map<NotificationSchema, Set<NotificationHandler>>
+    Map<NotificationMethodName, Set<NotificationHandler>>
   >();
 
   /**
-   * Adds a notification handler for a specific server and schema.
+   * Adds a notification handler for a specific server and method.
    *
    * @param serverId - The server ID
-   * @param schema - The notification schema to handle
+   * @param method - The notification method to handle
    * @param handler - The handler function
    */
   addHandler(
     serverId: string,
-    schema: NotificationSchema,
+    method: NotificationMethodName,
     handler: NotificationHandler
   ): void {
     const serverHandlers = this.handlers.get(serverId) ?? new Map();
-    const handlersForSchema =
-      serverHandlers.get(schema) ?? new Set<NotificationHandler>();
-    handlersForSchema.add(handler);
-    serverHandlers.set(schema, handlersForSchema);
+    const handlersForMethod =
+      serverHandlers.get(method) ?? new Set<NotificationHandler>();
+    handlersForMethod.add(handler);
+    serverHandlers.set(method, handlersForMethod);
     this.handlers.set(serverId, serverHandlers);
   }
 
   /**
-   * Creates a dispatcher function that invokes all handlers for a schema.
+   * Creates a dispatcher function that invokes all handlers for a method.
    *
    * @param serverId - The server ID
-   * @param schema - The notification schema
+   * @param method - The notification method
    * @returns A handler that dispatches to all registered handlers
    */
   createDispatcher(
     serverId: string,
-    schema: NotificationSchema
+    method: NotificationMethodName
   ): NotificationHandler {
     return (notification) => {
       const serverHandlers = this.handlers.get(serverId);
-      const handlersForSchema = serverHandlers?.get(schema);
-      if (!handlersForSchema || handlersForSchema.size === 0) {
+      const handlersForMethod = serverHandlers?.get(method);
+      if (!handlersForMethod || handlersForMethod.size === 0) {
         return;
       }
 
-      for (const handler of handlersForSchema) {
+      for (const handler of handlersForMethod) {
         try {
           handler(notification);
         } catch {
@@ -95,10 +92,10 @@ export class NotificationManager {
       return;
     }
 
-    for (const [schema] of serverHandlers) {
+    for (const [method] of serverHandlers) {
       client.setNotificationHandler(
-        schema,
-        this.createDispatcher(serverId, schema)
+        method,
+        this.createDispatcher(serverId, method)
       );
     }
   }
@@ -113,12 +110,12 @@ export class NotificationManager {
   }
 
   /**
-   * Gets handler schemas registered for a server.
+   * Gets handler methods registered for a server.
    *
    * @param serverId - The server ID
-   * @returns Array of registered notification schemas
+   * @returns Array of registered notification methods
    */
-  getSchemas(serverId: string): NotificationSchema[] {
+  getMethods(serverId: string): NotificationMethod[] {
     const serverHandlers = this.handlers.get(serverId);
     return serverHandlers ? Array.from(serverHandlers.keys()) : [];
   }
@@ -136,8 +133,8 @@ export function applyProgressHandler(
   client: Client,
   progressHandler: ProgressHandler
 ): void {
-  client.setNotificationHandler(ProgressNotificationSchema, (notification) => {
-    const params = notification.params;
+  client.setNotificationHandler(ProgressNotificationMethod, (notification) => {
+    const params = notification.params ?? { progressToken: 0, progress: 0 };
     progressHandler({
       serverId,
       progressToken: params.progressToken,
