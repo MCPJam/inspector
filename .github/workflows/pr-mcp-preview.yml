@@ -91,7 +91,7 @@ jobs:
         run: npm run typecheck -w @mcpjam/mcp
 
       - name: Upload preview version
-        id: preview
+        id: wrangler
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -100,20 +100,35 @@ jobs:
           workingDirectory: "mcp"
           command: versions upload --env staging --message "PR #${{ github.event.pull_request.number }} @ ${{ github.event.pull_request.head.sha }}"
 
-      - name: Smoke test preview URL
+      - name: Resolve preview URL
+        id: preview
         env:
-          DEPLOYMENT_URL: ${{ steps.preview.outputs.deployment-url }}
+          # The wrangler-action's built-in `deployment-url` output is only
+          # populated for `deploy` (from `.wrangler/deployment-meta/deploy.json`).
+          # For `versions upload` we parse the "Version Preview URL:" line
+          # wrangler prints to stdout when `preview_urls: true` is set on the
+          # env in wrangler.jsonc.
+          WRANGLER_STDOUT: ${{ steps.wrangler.outputs.command-output }}
         run: |
-          if [ -z "$DEPLOYMENT_URL" ]; then
-            echo "Wrangler action did not return a deployment URL." >&2
+          url=$(echo "$WRANGLER_STDOUT" | grep -oE 'https://[a-z0-9-]+-mcpjam-mcp-staging\.[a-z0-9-]+\.workers\.dev' | head -1)
+          if [ -z "$url" ]; then
+            echo "Could not find preview URL in wrangler output. Confirm 'preview_urls: true' is set on env.staging in mcp/wrangler.jsonc and that the staging worker has been deployed at least once with that setting." >&2
+            echo "--- wrangler stdout ---" >&2
+            echo "$WRANGLER_STDOUT" >&2
             exit 1
           fi
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+
+      - name: Smoke test preview URL
+        env:
+          DEPLOYMENT_URL: ${{ steps.preview.outputs.url }}
+        run: |
           curl --fail --silent --show-error "$DEPLOYMENT_URL" | grep -q "MCPJam MCP"
 
       - name: Upsert PR preview comment
         uses: actions/github-script@v7
         env:
-          PREVIEW_URL: ${{ steps.preview.outputs.deployment-url }}
+          PREVIEW_URL: ${{ steps.preview.outputs.url }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         with:
           script: |
@@ -163,7 +178,7 @@ jobs:
 
       - name: Summarize MCP preview
         env:
-          DEPLOYMENT_URL: ${{ steps.preview.outputs.deployment-url }}
+          DEPLOYMENT_URL: ${{ steps.preview.outputs.url }}
         run: |
           echo "## ✅ MCP preview uploaded" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"

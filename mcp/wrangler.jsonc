@@ -21,6 +21,11 @@
   "env": {
     "staging": {
       "workers_dev": true,
+      // Enables per-version preview URLs (format:
+      // https://<version-id>-mcpjam-mcp-staging.<subdomain>.workers.dev).
+      // Required for pr-mcp-preview.yml's `wrangler versions upload` flow —
+      // without this, versions are uploaded but have no accessible URL.
+      "preview_urls": true,
       "migrations": [
         {
           "tag": "v1",
