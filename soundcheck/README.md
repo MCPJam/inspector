@@ -4,7 +4,7 @@ MCPJam's internal deployment dashboard.
 
 Soundcheck is **not** published to npm and is **not** bundled into
 `@mcpjam/inspector`. It deploys as its own Railway service
-(`mcpjam-soundcheck`) at `https://ops.mcpjam.com` and renders a cross-repo
+(`mcpjam-soundcheck`) at `https://soundcheck.mcpjam.com` and renders a cross-repo
 view of MCPJam's delivery state.
 
 It is a decision aid, not a status board. Every feature answers a recurring

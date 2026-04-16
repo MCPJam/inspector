@@ -20,7 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: soundcheck
-      url: https://ops.mcpjam.com
+      url: https://soundcheck.mcpjam.com
     steps:
       - name: Checkout
         uses: actions/checkout@v4
