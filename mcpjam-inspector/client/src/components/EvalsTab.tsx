@@ -137,6 +137,23 @@ export function EvalsTab({
   }, [selectedSuite, suiteDetails, activeIterations]);
   const exploreSuite = selectedSuite;
   const exploreCases = suiteDetails?.testCases ?? EMPTY_CASES;
+  const exploreCaseIdsSignature = useMemo(
+    () => exploreCases.map((testCase) => testCase._id).join("\u0000"),
+    [exploreCases],
+  );
+  const exploreRunIdsSignature = useMemo(
+    () => runsForSelectedSuite.map((run) => run._id).join("\u0000"),
+    [runsForSelectedSuite],
+  );
+  const iterationRunIdsSignature = useMemo(
+    () =>
+      sortedIterations
+        .flatMap((iteration) =>
+          iteration.suiteRunId ? [iteration.suiteRunId] : [],
+        )
+        .join("\u0000"),
+    [sortedIterations],
+  );
 
   useEffect(() => {
     if (
@@ -237,17 +254,24 @@ export function EvalsTab({
 
   useEffect(() => {
     if (!exploreSuite) return;
+    const testCaseIds = exploreCaseIdsSignature
+      ? exploreCaseIdsSignature.split("\u0000")
+      : [];
+    const runIds = exploreRunIdsSignature
+      ? exploreRunIdsSignature.split("\u0000")
+      : [];
+    const iterationRunIds = iterationRunIdsSignature
+      ? iterationRunIdsSignature.split("\u0000")
+      : [];
     const redirectRoute = getPlaygroundCasesRedirect({
       route,
       exploreSuiteId: exploreSuite._id,
       isSuiteDetailsLoading: queries.isSuiteDetailsLoading,
       isSuiteRunsLoading: queries.isSuiteRunsLoading,
       runsCount: runsForSelectedSuite.length,
-      testCaseIds: exploreCases.map((testCase) => testCase._id),
-      runIds: runsForSelectedSuite.map((run) => run._id),
-      iterationRunIds: sortedIterations.flatMap((iteration) =>
-        iteration.suiteRunId ? [iteration.suiteRunId] : [],
-      ),
+      testCaseIds,
+      runIds,
+      iterationRunIds,
     });
     if (!redirectRoute) {
       return;
@@ -255,13 +279,14 @@ export function EvalsTab({
 
     navigatePlaygroundEvalsRoute(redirectRoute, { replace: true });
   }, [
-    exploreCases,
+    exploreCaseIdsSignature,
     exploreSuite,
+    exploreRunIdsSignature,
+    iterationRunIdsSignature,
     queries.isSuiteDetailsLoading,
     queries.isSuiteRunsLoading,
     route,
-    runsForSelectedSuite,
-    sortedIterations,
+    runsForSelectedSuite.length,
   ]);
 
   const handleGenerateMore = useCallback(async () => {
