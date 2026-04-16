@@ -4,23 +4,23 @@ import type { ToolSet } from "ai";
 import type { Tool } from "../src/mcp-client-manager/types";
 
 // Mock the ai module
-jest.mock("ai", () => ({
-  generateText: jest.fn(),
-  hasToolCall: jest.fn((name: string) => ({
+vi.mock("ai", () => ({
+  generateText: vi.fn(),
+  hasToolCall: vi.fn((name: string) => ({
     type: "hasToolCall",
     value: name,
   })),
-  stepCountIs: jest.fn((n: number) => ({ type: "stepCount", value: n })),
-  dynamicTool: jest.fn((config: any) => ({
+  stepCountIs: vi.fn((n: number) => ({ type: "stepCount", value: n })),
+  dynamicTool: vi.fn((config: any) => ({
     ...config,
     type: "dynamic",
   })),
-  jsonSchema: jest.fn((schema: any) => schema),
+  jsonSchema: vi.fn((schema: any) => schema),
 }));
 
 // Mock the model factory
-jest.mock("../src/model-factory", () => ({
-  createModelFromString: jest.fn(() => ({})),
+vi.mock("../src/model-factory", () => ({
+  createModelFromString: vi.fn(() => ({})),
 }));
 
 import { generateText, hasToolCall, jsonSchema, stepCountIs } from "ai";
@@ -133,7 +133,7 @@ describe("TestAgent", () => {
         },
         required: ["title"],
       }),
-      execute: jest.fn(async (args: { title: string }) => ({
+      execute: vi.fn(async (args: { title: string }) => ({
         content: [{ type: "text", text: `Created ${args.title}` }],
       })),
     } as ToolSet[string] & { _serverId?: string };
@@ -146,7 +146,7 @@ describe("TestAgent", () => {
   }
 
   beforeEach(() => {
-    jest.clearAllMocks();
+    vi.clearAllMocks();
   });
 
   describe("constructor", () => {
@@ -349,7 +349,7 @@ describe("TestAgent", () => {
               { a: 2, b: 3 },
               {
                 toolCallId: "call-1",
-                abortSignal: { throwIfAborted: jest.fn() },
+                abortSignal: { throwIfAborted: vi.fn() },
               }
             )
         );
@@ -463,7 +463,7 @@ describe("TestAgent", () => {
               { a: 2, b: 3 },
               {
                 toolCallId: "call-1",
-                abortSignal: { throwIfAborted: jest.fn() },
+                abortSignal: { throwIfAborted: vi.fn() },
               }
             )
         );
@@ -537,7 +537,7 @@ describe("TestAgent", () => {
     it("captures widget snapshots across multiple MCP App tool calls", async () => {
       const tools = createMcpAppToolSet();
       const mockManager = {
-        getToolMetadata: jest.fn().mockReturnValue({
+        getToolMetadata: vi.fn().mockReturnValue({
           ui: { resourceUri: "ui://widget/create-view.html" },
         }),
         readResource: jest
@@ -575,13 +575,13 @@ describe("TestAgent", () => {
       mockGenerateText.mockImplementationOnce(async (params: any) => {
         await params.tools.create_view.execute(
           { title: "Flow 1" },
-          { toolCallId: "call-1", abortSignal: { throwIfAborted: jest.fn() } }
+          { toolCallId: "call-1", abortSignal: { throwIfAborted: vi.fn() } }
         );
         params.onStepFinish?.();
 
         await params.tools.create_view.execute(
           { title: "Flow 2" },
-          { toolCallId: "call-2", abortSignal: { throwIfAborted: jest.fn() } }
+          { toolCallId: "call-2", abortSignal: { throwIfAborted: vi.fn() } }
         );
         params.onStepFinish?.();
 
@@ -654,19 +654,19 @@ describe("TestAgent", () => {
     });
 
     it("warns and skips widget snapshots when resource reads fail", async () => {
-      const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
       const tools = createMcpAppToolSet();
       const mockManager = {
-        getToolMetadata: jest.fn().mockReturnValue({
+        getToolMetadata: vi.fn().mockReturnValue({
           ui: { resourceUri: "ui://widget/create-view.html" },
         }),
-        readResource: jest.fn().mockRejectedValue(new Error("server hiccup")),
+        readResource: vi.fn().mockRejectedValue(new Error("server hiccup")),
       };
 
       mockGenerateText.mockImplementationOnce(async (params: any) => {
         await params.tools.create_view.execute(
           { title: "Flow 1" },
-          { toolCallId: "call-1", abortSignal: { throwIfAborted: jest.fn() } }
+          { toolCallId: "call-1", abortSignal: { throwIfAborted: vi.fn() } }
         );
         params.onStepFinish?.();
 
@@ -782,7 +782,7 @@ describe("TestAgent", () => {
             },
             required: ["a", "b"],
           }),
-          execute: jest.fn(async (_args, options) => {
+          execute: vi.fn(async (_args, options) => {
             notifyExecuteStarted?.();
             await new Promise((_, reject) => {
               options?.abortSignal?.addEventListener(
@@ -1239,14 +1239,14 @@ describe("TestAgent", () => {
 
   describe("stopWhen", () => {
     it("should merge a single stop condition with maxSteps and still execute tools", async () => {
-      const stopCondition = jest.fn(() => false);
+      const stopCondition = vi.fn(() => false);
       const guard = { kind: "max-step-guard" } as any;
       mockStepCountIs.mockReturnValueOnce(guard);
 
       mockGenerateText.mockImplementationOnce(async (params: any) => {
         const result = await params.tools.add.execute(
           { a: 2, b: 3 },
-          { abortSignal: { throwIfAborted: jest.fn() } }
+          { abortSignal: { throwIfAborted: vi.fn() } }
         );
         expect(result).toBe(5);
         params.onStepFinish?.();
@@ -1287,8 +1287,8 @@ describe("TestAgent", () => {
     });
 
     it("should merge multiple stop conditions with maxSteps", async () => {
-      const stopA = jest.fn(() => false);
-      const stopB = jest.fn(() => true);
+      const stopA = vi.fn(() => false);
+      const stopB = vi.fn(() => true);
       const guard = { kind: "max-step-guard" } as any;
       mockStepCountIs.mockReturnValueOnce(guard);
 
@@ -1365,10 +1365,10 @@ describe("TestAgent", () => {
     });
 
     it("should short-circuit the targeted tool and preserve tool arguments", async () => {
-      const addExecute = jest.fn(
+      const addExecute = vi.fn(
         async (args: { a: number; b: number }) => args.a + args.b
       );
-      const subtractExecute = jest.fn(
+      const subtractExecute = vi.fn(
         async (args: { a: number; b: number }) => args.a - args.b
       );
       const tools: ToolSet = {
@@ -1403,14 +1403,14 @@ describe("TestAgent", () => {
           { a: 2, b: 3 },
           {
             toolCallId: "call-add",
-            abortSignal: { throwIfAborted: jest.fn() },
+            abortSignal: { throwIfAborted: vi.fn() },
           }
         );
         const subtractResult = await params.tools.subtract.execute(
           { a: 5, b: 2 },
           {
             toolCallId: "call-subtract",
-            abortSignal: { throwIfAborted: jest.fn() },
+            abortSignal: { throwIfAborted: vi.fn() },
           }
         );
 
@@ -1463,16 +1463,16 @@ describe("TestAgent", () => {
       const tools = createMcpAppToolSet();
       const createViewExecute = (tools.create_view as any).execute as jest.Mock;
       const mockManager = {
-        getToolMetadata: jest.fn().mockReturnValue({
+        getToolMetadata: vi.fn().mockReturnValue({
           ui: { resourceUri: "ui://widget/create-view.html" },
         }),
-        readResource: jest.fn(),
+        readResource: vi.fn(),
       };
 
       mockGenerateText.mockImplementationOnce(async (params: any) => {
         await params.tools.create_view.execute(
           { title: "Flow 1" },
-          { toolCallId: "call-1", abortSignal: { throwIfAborted: jest.fn() } }
+          { toolCallId: "call-1", abortSignal: { throwIfAborted: vi.fn() } }
         );
 
         return {

@@ -5,7 +5,7 @@ import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { startMockHttpServer } from "../../sdk/tests/mock-servers";
+import { startMockHttpServer } from "../../sdk/tests/mock-servers/index.js";
 
 const CLI_DIR = process.cwd();
 const requireFromCli = createRequire(path.join(CLI_DIR, "package.json"));

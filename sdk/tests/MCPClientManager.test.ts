@@ -346,7 +346,7 @@ describe("MCPClientManager", () => {
           timeout: 200,
         })
       ).rejects.toThrow(
-        /Failed to connect to MCP server "silent-timeout" via stdio: MCP error -32001: Request timed out/
+        /Failed to connect to MCP server "silent-timeout" via stdio: Request timed out/
       );
     }, 10000);
 
@@ -1334,7 +1334,7 @@ describe("MCPClientManager", () => {
       });
 
       expect(fakeClient.callTool).toHaveBeenCalledTimes(1);
-      expect(fakeClient.callTool.mock.calls[0]?.[2]).toMatchObject({
+      expect(fakeClient.callTool.mock.calls[0]?.[1]).toMatchObject({
         timeout: 500,
         task: { ttl: 60 },
       });

@@ -4,12 +4,12 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import type { ProbeMcpServerResult, ServerDoctorResult } from "@mcpjam/sdk";
-import { writeDebugArtifact } from "../src/lib/debug-artifact";
+import { writeDebugArtifact } from "../src/lib/debug-artifact.js";
 import {
   formatServerDoctorHuman,
   summarizeServerDoctorTarget,
-} from "../src/lib/server-doctor";
-import { attachCliRpcLogs, createCliRpcLogCollector } from "../src/lib/rpc-logs";
+} from "../src/lib/server-doctor.js";
+import { attachCliRpcLogs, createCliRpcLogCollector } from "../src/lib/rpc-logs.js";
 
 function createProbeResult(
   overrides: Partial<ProbeMcpServerResult> = {},
@@ -153,7 +153,7 @@ test("writeDebugArtifact persists JSON payloads", async () => {
 });
 
 test("formatServerDoctorHuman renders a concise summary and artifact path", () => {
-  const result: ServerDoctorResult<import("../src/lib/server-doctor").ServerDoctorTargetSummary> = {
+  const result: ServerDoctorResult<import("../src/lib/server-doctor.js").ServerDoctorTargetSummary> = {
     target: {
       kind: "http",
       label: "https://example.com/mcp",

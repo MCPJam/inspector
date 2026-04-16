@@ -4,8 +4,8 @@ import { OAuthProxyError } from "@mcpjam/sdk";
 import {
   mapOAuthProxyError,
   parseProxyBody,
-} from "../src/commands/oauth";
-import { CliError } from "../src/lib/output";
+} from "../src/commands/oauth.js";
+import { CliError } from "../src/lib/output.js";
 
 test("parseProxyBody parses JSON values and preserves raw strings", () => {
   assert.deepEqual(parseProxyBody('{"client_id":"abc"}'), {

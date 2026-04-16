@@ -3,7 +3,7 @@ import type {
   ElicitRequest,
   ElicitResult,
   ListToolsResult,
-} from "@modelcontextprotocol/sdk/types.js";
+} from "@modelcontextprotocol/client";
 import type { MCPTask, TaskOptions } from "@mcpjam/sdk/browser";
 import { authFetch } from "@/lib/session-token";
 import { executeHostedTool, listHostedTools } from "@/lib/apis/web/tools-api";
