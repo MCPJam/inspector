@@ -119,6 +119,7 @@ const MCPJAM_PROVIDED_MODEL_IDS: string[] = [
   "anthropic/claude-opus-4.6-fast",
   "anthropic/claude-sonnet-4.6",
   "anthropic/claude-opus-4.6",
+  "anthropic/claude-opus-4.7",
   "openai/gpt-5.1-codex-mini",
   "openai/gpt-5-mini",
   "openai/gpt-5.4",
@@ -156,8 +157,14 @@ const MCPJAM_PROVIDED_MODEL_IDS: string[] = [
 ];
 
 const MCPJAM_GUEST_GATED_MODEL_IDS = [
+  "openai/gpt-5.4",
+  "openai/gpt-5.4-mini",
+  "openai/gpt-5.4-nano",
   "openai/gpt-5.4-pro",
+  "anthropic/claude-opus-4.6-fast",
+  "anthropic/claude-sonnet-4.6",
   "anthropic/claude-opus-4.6",
+  "anthropic/claude-opus-4.7",
   "google/gemini-3.1-pro-preview",
 ] as const;
 
@@ -451,6 +458,7 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
   ),
   freeModel("anthropic/claude-sonnet-4.6", "Claude Sonnet 4.6", "anthropic"),
   freeModel("anthropic/claude-opus-4.6", "Claude Opus 4.6", "anthropic"),
+  freeModel("anthropic/claude-opus-4.7", "Claude Opus 4.7", "anthropic"),
   {
     id: "openai/gpt-5.1-codex-mini",
     name: "GPT-5.1 Codex Mini (Free)",

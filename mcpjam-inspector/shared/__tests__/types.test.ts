@@ -16,9 +16,18 @@ describe("MCPJam-provided model classification", () => {
     expect(isMCPJamProvidedModel("openai/gpt-5.4")).toBe(true);
     expect(isMCPJamProvidedModel("qwen/qwen3.6-plus")).toBe(true);
     expect(isMCPJamGuestAllowedModel("openai/gpt-oss-120b")).toBe(true);
-    expect(isMCPJamGuestAllowedModel("openai/gpt-5.4")).toBe(true);
+    expect(isMCPJamGuestAllowedModel("openai/gpt-5.4")).toBe(false);
+    expect(isMCPJamGuestAllowedModel("openai/gpt-5.4-mini")).toBe(false);
+    expect(isMCPJamGuestAllowedModel("openai/gpt-5.4-nano")).toBe(false);
     expect(isMCPJamGuestAllowedModel("openai/gpt-5.4-pro")).toBe(false);
     expect(isMCPJamGuestAllowedModel("anthropic/claude-opus-4.6")).toBe(false);
+    expect(isMCPJamGuestAllowedModel("anthropic/claude-opus-4.6-fast")).toBe(
+      false,
+    );
+    expect(isMCPJamGuestAllowedModel("anthropic/claude-sonnet-4.6")).toBe(
+      false,
+    );
+    expect(isMCPJamGuestAllowedModel("anthropic/claude-opus-4.7")).toBe(false);
     expect(isMCPJamGuestAllowedModel("google/gemini-3.1-pro-preview")).toBe(
       false,
     );
