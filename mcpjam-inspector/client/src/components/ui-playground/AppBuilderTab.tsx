@@ -127,6 +127,9 @@ export function AppBuilderTab({
   useLayoutEffect(() => {
     onOnboardingChange?.(false);
     setMcpSidebarOpen(true);
+  }, [onOnboardingChange, setMcpSidebarOpen]);
+
+  useLayoutEffect(() => {
     // NUX: collapse tools sidebar for the whole first-run connect + guided flow. While the server is
     // still connecting, `isGuidedPostConnect` is false (no connected server yet); include phase so we
     // don't flash the sidebar open until connect completes.
@@ -138,18 +141,19 @@ export function AppBuilderTab({
     } else {
       setSidebarVisible(true);
     }
+  }, [
+    onboarding.phase,
+    onboarding.isGuidedPostConnect,
+    setSidebarVisible,
+  ]);
+
+  useLayoutEffect(() => {
     return () => {
       onOnboardingChange?.(false);
       setSidebarVisible(true);
       setMcpSidebarOpen(true);
     };
-  }, [
-    onboarding.phase,
-    onboarding.isGuidedPostConnect,
-    onOnboardingChange,
-    setMcpSidebarOpen,
-    setSidebarVisible,
-  ]);
+  }, [onOnboardingChange, setMcpSidebarOpen, setSidebarVisible]);
 
   // Log when App Builder tab is viewed
   useEffect(() => {

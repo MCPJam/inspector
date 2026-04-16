@@ -19,7 +19,10 @@ interface WorkspaceMembersFacepileProps {
   organizationId?: string;
   visibility?: WorkspaceVisibility;
   organizationName?: string;
-  onWorkspaceShared?: (sharedWorkspaceId: string) => void;
+  onWorkspaceShared?: (
+    sharedWorkspaceId: string,
+    sourceWorkspaceId?: string,
+  ) => void;
 }
 
 export function WorkspaceMembersFacepile({

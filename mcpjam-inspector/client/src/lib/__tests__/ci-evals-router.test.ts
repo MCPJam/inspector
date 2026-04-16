@@ -214,7 +214,7 @@ describe("ci-evals-router", () => {
     expect(window.location.hash).toBe("#/ci-evals/suite/s_abc/test/t_def/edit");
   });
 
-  it("navigates to test edit route with openCompare", () => {
+  it("navigates to test edit route with compare=1", () => {
     navigateToCiEvalsRoute({
       type: "test-edit",
       suiteId: "s_abc",
@@ -226,7 +226,7 @@ describe("ci-evals-router", () => {
     );
   });
 
-  it("navigates to test edit route with openCompare and iteration", () => {
+  it("navigates to test edit route with compare=1 and iteration", () => {
     navigateToCiEvalsRoute({
       type: "test-edit",
       suiteId: "s_abc",

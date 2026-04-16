@@ -113,7 +113,7 @@ vi.mock("convex/react", () => ({
   useConvexAuth: () => useConvexAuthMock,
 }));
 
-describe("TestTemplateEditor openCompareFromRoute", () => {
+describe("TestTemplateEditor run view from route", () => {
   const baseIteration: EvalIteration = {
     _id: "iter-1",
     testCaseId: "case-1",
@@ -279,9 +279,7 @@ describe("TestTemplateEditor openCompareFromRoute", () => {
     );
   });
 
-  it("opens compare run mode and clears route when openCompareFromRoute is set", async () => {
-    const onClearOpenCompareRoute = vi.fn();
-
+  it("opens compare run mode when the route requests run view", async () => {
     renderWithProviders(
       <TestTemplateEditor
         suiteId="suite-1"
@@ -296,12 +294,10 @@ describe("TestTemplateEditor openCompareFromRoute", () => {
           } as any,
         ]}
         openCompareFromRoute
-        onClearOpenCompareRoute={onClearOpenCompareRoute}
       />,
     );
 
     await waitFor(() => {
-      expect(onClearOpenCompareRoute).toHaveBeenCalled();
       expect(screen.queryByText("No compare run yet")).not.toBeInTheDocument();
     });
 
@@ -314,8 +310,93 @@ describe("TestTemplateEditor openCompareFromRoute", () => {
     ).toBeInTheDocument();
   });
 
+  it("shows a loading spinner instead of config UI while route-open compare data is unresolved", async () => {
+    let queriesReady = false;
+    useQueryMock.mockImplementation((name: string, args: unknown) => {
+      if (!queriesReady) {
+        if (name === "testSuites:listTestCases") {
+          return undefined;
+        }
+        if (name === "testSuites:getTestSuite") {
+          return {
+            _id: "suite-1",
+            environment: { servers: ["srv"] },
+          };
+        }
+        return undefined;
+      }
+
+      if (name === "testSuites:listTestCases") {
+        return [caseDoc];
+      }
+      if (name === "testSuites:getTestSuite") {
+        return {
+          _id: "suite-1",
+          environment: { servers: ["srv"] },
+        };
+      }
+      if (name === "testSuites:listTestIterations" && args !== "skip") {
+        return [baseIteration];
+      }
+      if (
+        name === "testSuites:getTestIteration" &&
+        typeof args === "object" &&
+        args !== null &&
+        (args as { iterationId?: string }).iterationId === baseIteration._id
+      ) {
+        return baseIteration;
+      }
+      return undefined;
+    });
+
+    const view = renderWithProviders(
+      <TestTemplateEditor
+        suiteId="suite-1"
+        selectedTestCaseId="case-1"
+        connectedServerNames={new Set(["srv"])}
+        workspaceId={null}
+        availableModels={[
+          {
+            provider: "openai",
+            model: "gpt-4",
+            label: "GPT-4",
+          } as any,
+        ]}
+        openCompareFromRoute
+      />,
+    );
+
+    expect(screen.getByText("Loading results...")).toBeInTheDocument();
+    expect(screen.queryByText("User prompt")).not.toBeInTheDocument();
+
+    queriesReady = true;
+    view.rerender(
+      <PreferencesStoreProvider themeMode="light" themePreset="default">
+        <TestTemplateEditor
+          suiteId="suite-1"
+          selectedTestCaseId="case-1"
+          connectedServerNames={new Set(["srv"])}
+          workspaceId={null}
+          availableModels={[
+            {
+              provider: "openai",
+              model: "gpt-4",
+              label: "GPT-4",
+            } as any,
+          ]}
+          openCompareFromRoute
+        />
+      </PreferencesStoreProvider>,
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: /retry all/i }),
+      ).toBeInTheDocument();
+    });
+  });
+
   it("prefers the explicitly selected iteration over newer historical compare data", async () => {
-    const onClearOpenCompareRoute = vi.fn();
     const clickedIteration: EvalIteration = {
       ...baseIteration,
       _id: "iter-clicked",
@@ -372,12 +453,10 @@ describe("TestTemplateEditor openCompareFromRoute", () => {
         ]}
         openCompareFromRoute
         openCompareIterationId={clickedIteration._id}
-        onClearOpenCompareRoute={onClearOpenCompareRoute}
       />,
     );
 
     await waitFor(() => {
-      expect(onClearOpenCompareRoute).toHaveBeenCalled();
       expect(screen.getByTestId("eval-trace-surface")).toHaveTextContent(
         clickedIteration._id,
       );

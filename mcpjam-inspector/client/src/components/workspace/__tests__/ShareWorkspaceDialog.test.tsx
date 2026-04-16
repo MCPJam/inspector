@@ -4,7 +4,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ShareWorkspaceDialog } from "../ShareWorkspaceDialog";
 
 const mockCapture = vi.fn();
+let mockBillingUiFlag = false;
 const mockUseWorkspaceMembers = vi.fn();
+const mockUseOrganizationBilling = vi.fn();
+const mockResolveBillingGateState = vi.fn();
 const mockCreateWorkspace = vi.fn();
 const mockInviteWorkspaceMember = vi.fn();
 const mockRemoveWorkspaceMember = vi.fn();
@@ -17,7 +20,8 @@ vi.mock("posthog-js/react", () => ({
   usePostHog: () => ({
     capture: mockCapture,
   }),
-  useFeatureFlagEnabled: () => false,
+  useFeatureFlagEnabled: (flag: string) =>
+    flag === "billing-entitlements-ui" ? mockBillingUiFlag : false,
 }));
 
 vi.mock("convex/react", () => ({
@@ -41,6 +45,24 @@ vi.mock("sonner", () => ({
     error: (...args: unknown[]) => mockToastError(...args),
   },
 }));
+
+vi.mock("@/hooks/useOrganizationBilling", () => ({
+  useOrganizationBilling: (...args: unknown[]) =>
+    mockUseOrganizationBilling(...args),
+}));
+
+vi.mock("@/lib/billing-gates", async () => {
+  const actual =
+    await vi.importActual<typeof import("@/lib/billing-gates")>(
+      "@/lib/billing-gates",
+    );
+
+  return {
+    ...actual,
+    resolveBillingGateState: (...args: unknown[]) =>
+      mockResolveBillingGateState(...args),
+  };
+});
 
 vi.mock("@/hooks/useWorkspaces", async () => {
   const actual = await vi.importActual<typeof import("@/hooks/useWorkspaces")>(
@@ -115,7 +137,7 @@ function renderDialog(
   const onClose = vi.fn();
   const onWorkspaceShared = vi.fn();
 
-  render(
+  const renderResult = render(
     <ShareWorkspaceDialog
       isOpen
       onClose={onClose}
@@ -137,6 +159,7 @@ function renderDialog(
   );
 
   return {
+    ...renderResult,
     onClose,
     onWorkspaceShared,
   };
@@ -146,12 +169,27 @@ describe("ShareWorkspaceDialog", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     window.location.hash = "";
+    mockBillingUiFlag = false;
 
     mockCreateWorkspace.mockResolvedValue("ws-created");
     mockInviteWorkspaceMember.mockResolvedValue({
       changed: true,
       kind: "workspace_invite_pending",
       isPending: true,
+    });
+    mockUseOrganizationBilling.mockReturnValue({
+      billingStatus: null,
+      organizationPremiumness: null,
+      planCatalog: null,
+      isLoadingBilling: false,
+      isLoadingOrganizationPremiumness: false,
+    });
+    mockResolveBillingGateState.mockReturnValue({
+      isDenied: false,
+      isLoading: false,
+      denialMessage: null,
+      upgradePlan: null,
+      organizationId: "org-1",
     });
     mockRemoveWorkspaceMember.mockResolvedValue({
       success: true,
@@ -322,6 +360,7 @@ describe("ShareWorkspaceDialog", () => {
 
     await waitFor(() => {
       expect(mockCreateWorkspace).toHaveBeenCalledWith({
+        organizationId: "org-1",
         name: "Acme",
         servers: {},
         visibility: "private",
@@ -336,6 +375,336 @@ describe("ShareWorkspaceDialog", () => {
     expect(mockToastSuccess).toHaveBeenCalledWith(
       "Invitation sent to invitee@example.com. They'll get workspace access once they join the organization.",
     );
+  });
+
+  it("shows a workspace picker only when multiple workspaces are available", () => {
+    renderDialog({
+      availableWorkspaces: {
+        "workspace-a": {
+          id: "workspace-a",
+          name: "Acme",
+          servers: {},
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          sharedWorkspaceId: "ws-1",
+          organizationId: "org-1",
+          visibility: "public",
+        },
+      },
+      activeWorkspaceId: "workspace-a",
+    });
+
+    expect(
+      screen.queryByRole("button", { name: "Select workspace" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("lets multi-workspace users switch invite targets inside the dialog", async () => {
+    mockUseWorkspaceMembers.mockImplementation(
+      ({ workspaceId }: { workspaceId: string | null }) => {
+        const memberEmail =
+          workspaceId === "ws-2"
+            ? "beta-member@example.com"
+            : "alpha-member@example.com";
+
+        return {
+          members: [
+            createMember({
+              email: "owner@example.com",
+              role: "owner",
+            }),
+            createMember({
+              email: memberEmail,
+              role: "member",
+            }),
+          ],
+          activeMembers: [
+            createMember({
+              email: "owner@example.com",
+              role: "owner",
+            }),
+            createMember({
+              email: memberEmail,
+              role: "member",
+            }),
+          ],
+          pendingMembers: [],
+          canManageMembers: true,
+          isLoading: false,
+          hasPendingMembers: false,
+        };
+      },
+    );
+
+    renderDialog({
+      availableWorkspaces: {
+        "workspace-a": {
+          id: "workspace-a",
+          name: "Acme",
+          servers: {},
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          sharedWorkspaceId: "ws-1",
+          organizationId: "org-1",
+          visibility: "public",
+        },
+        "workspace-b": {
+          id: "workspace-b",
+          name: "Beta",
+          servers: {},
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          sharedWorkspaceId: "ws-2",
+          organizationId: "org-1",
+          visibility: "private",
+        },
+        "workspace-c": {
+          id: "workspace-c",
+          name: "Gamma",
+          servers: {},
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          sharedWorkspaceId: "ws-3",
+          organizationId: "org-1",
+          visibility: "public",
+        },
+      },
+      activeWorkspaceId: "workspace-a",
+    });
+
+    expect(
+      screen.getByRole("heading", { name: 'Share "Acme" Workspace' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getAllByText("alpha-member@example.com").length,
+    ).toBeGreaterThan(0);
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Select workspace" }));
+    await user.click(screen.getByRole("menuitemradio", { name: /Beta/ }));
+
+    expect(
+      screen.getByRole("heading", { name: 'Share "Beta" Workspace' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getAllByText("beta-member@example.com").length,
+    ).toBeGreaterThan(0);
+    expect(screen.getByText("Private to members")).toBeInTheDocument();
+    expect(screen.queryAllByText("alpha-member@example.com")).toHaveLength(0);
+  });
+
+  it("keeps the chosen workspace selected when workspaces refresh while open", async () => {
+    const currentUser = {
+      email: "owner@example.com",
+      firstName: "Owner",
+      lastName: "Example",
+    } as any;
+    const availableWorkspaces = {
+      "workspace-a": {
+        id: "workspace-a",
+        name: "Acme",
+        servers: {},
+        createdAt: new Date("2026-04-01T00:00:00Z"),
+        updatedAt: new Date("2026-04-01T00:00:00Z"),
+        sharedWorkspaceId: "ws-1",
+        organizationId: "org-1",
+        visibility: "public" as const,
+      },
+      "workspace-b": {
+        id: "workspace-b",
+        name: "Beta",
+        servers: {},
+        createdAt: new Date("2026-04-02T00:00:00Z"),
+        updatedAt: new Date("2026-04-02T00:00:00Z"),
+        sharedWorkspaceId: "ws-2",
+        organizationId: "org-1",
+        visibility: "private" as const,
+      },
+    };
+
+    const { rerender } = render(
+      <ShareWorkspaceDialog
+        isOpen
+        onClose={vi.fn()}
+        workspaceName="Acme"
+        workspaceServers={{}}
+        sharedWorkspaceId="ws-1"
+        organizationId="org-1"
+        visibility="public"
+        currentUser={currentUser}
+        onWorkspaceShared={vi.fn()}
+        availableWorkspaces={availableWorkspaces}
+        activeWorkspaceId="workspace-a"
+      />,
+    );
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Select workspace" }));
+    await user.click(screen.getByRole("menuitemradio", { name: /Beta/ }));
+
+    expect(
+      screen.getByRole("heading", { name: 'Share "Beta" Workspace' }),
+    ).toBeInTheDocument();
+
+    rerender(
+      <ShareWorkspaceDialog
+        isOpen
+        onClose={vi.fn()}
+        workspaceName="Acme"
+        workspaceServers={{}}
+        sharedWorkspaceId="ws-1"
+        organizationId="org-1"
+        visibility="public"
+        currentUser={currentUser}
+        onWorkspaceShared={vi.fn()}
+        availableWorkspaces={{
+          "workspace-a": {
+            ...availableWorkspaces["workspace-a"],
+            updatedAt: new Date("2026-04-03T00:00:00Z"),
+          },
+          "workspace-b": {
+            ...availableWorkspaces["workspace-b"],
+            updatedAt: new Date("2026-04-04T00:00:00Z"),
+          },
+        }}
+        activeWorkspaceId="workspace-a"
+      />,
+    );
+
+    expect(
+      screen.getByRole("heading", { name: 'Share "Beta" Workspace' }),
+    ).toBeInTheDocument();
+  });
+
+  it("creates and shares the selected workspace when inviting from the picker", async () => {
+    const { onWorkspaceShared } = renderDialog({
+      availableWorkspaces: {
+        "workspace-a": {
+          id: "workspace-a",
+          name: "Acme",
+          servers: {},
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          sharedWorkspaceId: "ws-1",
+          organizationId: "org-1",
+          visibility: "public",
+        },
+        "workspace-b": {
+          id: "workspace-b",
+          name: "Beta",
+          servers: {
+            "beta-server": {
+              name: "Beta Server",
+            } as any,
+          },
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          organizationId: "org-1",
+          visibility: "private",
+        },
+      },
+      activeWorkspaceId: "workspace-a",
+    });
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Select workspace" }));
+    await user.click(screen.getByRole("menuitemradio", { name: /Beta/ }));
+
+    fireEvent.change(screen.getByPlaceholderText("Add people, emails..."), {
+      target: { value: "invitee@example.com" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Invite" }));
+
+    await waitFor(() => {
+      expect(mockCreateWorkspace).toHaveBeenCalledWith(
+        expect.objectContaining({
+          organizationId: "org-1",
+          name: "Beta",
+          visibility: "private",
+        }),
+      );
+    });
+    expect(onWorkspaceShared).toHaveBeenCalledWith("ws-created", "workspace-b");
+    expect(mockInviteWorkspaceMember).toHaveBeenCalledWith({
+      workspaceId: "ws-created",
+      email: "invitee@example.com",
+      role: "editor",
+    });
+  });
+
+  it("disables Invite and shows inline validation for invalid emails", () => {
+    renderDialog();
+
+    fireEvent.change(screen.getByPlaceholderText("Add people, emails..."), {
+      target: { value: "not-an-email" },
+    });
+
+    expect(
+      screen.getByText("Enter a valid email address."),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Invite" })).toBeDisabled();
+  });
+
+  it("shows the member limit upsell and re-enables Invite when the gate clears", () => {
+    mockBillingUiFlag = true;
+    mockUseOrganizationBilling.mockReturnValue({
+      billingStatus: {
+        canManageBilling: true,
+      },
+      organizationPremiumness: null,
+      planCatalog: null,
+      isLoadingBilling: false,
+      isLoadingOrganizationPremiumness: false,
+    });
+    mockResolveBillingGateState.mockReturnValue({
+      isDenied: true,
+      isLoading: false,
+      denialMessage: "Member limit reached",
+      upgradePlan: "pro",
+      organizationId: "org-1",
+    });
+
+    const { rerender } = renderDialog();
+
+    fireEvent.change(screen.getByPlaceholderText("Add people, emails..."), {
+      target: { value: "invitee@example.com" },
+    });
+
+    expect(screen.getByTestId("member-limit-upsell")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Invite" })).toBeDisabled();
+
+    mockResolveBillingGateState.mockReturnValue({
+      isDenied: false,
+      isLoading: false,
+      denialMessage: null,
+      upgradePlan: null,
+      organizationId: "org-1",
+    });
+
+    rerender(
+      <ShareWorkspaceDialog
+        isOpen
+        onClose={vi.fn()}
+        workspaceName="Acme"
+        workspaceServers={{}}
+        sharedWorkspaceId="ws-1"
+        organizationId="org-1"
+        visibility="public"
+        currentUser={
+          {
+            email: "owner@example.com",
+            firstName: "Owner",
+            lastName: "Example",
+          } as any
+        }
+        onWorkspaceShared={vi.fn()}
+      />,
+    );
+
+    expect(
+      screen.queryByTestId("member-limit-upsell"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Invite" })).toBeEnabled();
   });
 
   it("calls the workspace-scoped removal mutation via role dropdown", async () => {

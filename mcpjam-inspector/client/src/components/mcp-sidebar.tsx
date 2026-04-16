@@ -18,6 +18,7 @@ import {
   LayoutGrid,
   GitBranch,
   Puzzle,
+  UserPlus,
 } from "lucide-react";
 import { usePostHog, useFeatureFlagEnabled } from "posthog-js/react";
 import { standardEventProps } from "@/lib/PosthogUtils";
@@ -41,10 +42,12 @@ import {
 } from "@/components/ui/sidebar";
 import { cn } from "@/lib/utils";
 import { useConvexAuth } from "convex/react";
+import { useAuth } from "@workos-inc/authkit-react";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { MCPIcon } from "@/components/ui/mcp-icon";
 import { SidebarUser } from "@/components/sidebar/sidebar-user";
 import { SidebarWorkspaceSelector } from "@/components/sidebar/sidebar-workspace-selector";
+import { ShareWorkspaceDialog } from "@/components/workspace/ShareWorkspaceDialog";
 import { useUpdateNotification } from "@/hooks/useUpdateNotification";
 import { Button } from "@/components/ui/button";
 import {
@@ -344,9 +347,14 @@ interface MCPSidebarProps extends React.ComponentProps<typeof Sidebar> {
   onDeleteWorkspace: (workspaceId: string) => void;
   isLoadingWorkspaces?: boolean;
   activeOrganizationId?: string;
+  activeOrganizationName?: string;
   onSwitchOrganization?: (
     organizationId: string,
     section?: OrganizationRouteSection,
+  ) => void;
+  onWorkspaceShared?: (
+    sharedWorkspaceId: string,
+    sourceWorkspaceId?: string,
   ) => void;
   billingGateDenied?: Partial<Record<BillingFeatureName, boolean>>;
   billingGateEnforcementActive?: boolean;
@@ -510,7 +518,9 @@ export function MCPSidebar({
   onDeleteWorkspace,
   isLoadingWorkspaces,
   activeOrganizationId,
+  activeOrganizationName,
   onSwitchOrganization,
+  onWorkspaceShared,
   billingGateDenied = {},
   billingGateEnforcementActive = false,
   billingUiEnabled = false,
@@ -527,9 +537,11 @@ export function MCPSidebar({
   const evaluateRunsEnabled = useFeatureFlagEnabled("evaluate-runs");
   const learnMoreEnabled = useFeatureFlagEnabled("learn-more-enabled");
   const { isAuthenticated } = useConvexAuth();
+  const { user } = useAuth();
   const learningEnabled = !!learningFlagEnabled && isAuthenticated;
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const { updateReady, restartAndInstall } = useUpdateNotification();
+  const [showInviteDialog, setShowInviteDialog] = useState(false);
   const [toolsDataMap, setToolsDataMap] = useState<
     Record<string, ListToolsResultWithMetadata | null>
   >({});
@@ -538,6 +550,20 @@ export function MCPSidebar({
   });
   const learnMore = useLearnMore();
   const { state, isMobile } = useSidebar();
+  const activeWorkspace = workspaces[activeWorkspaceId];
+  const inviteableWorkspaces = useMemo(() => {
+    if (!activeWorkspace?.organizationId) {
+      return workspaces;
+    }
+
+    return Object.fromEntries(
+      Object.entries(workspaces).filter(
+        ([, workspace]) =>
+          workspace.organizationId === activeWorkspace.organizationId,
+      ),
+    );
+  }, [activeWorkspace?.organizationId, workspaces]);
+  const shouldShowInviteCta = isAuthenticated && !!user && !!activeWorkspace;
 
   // Get list of connected server names
   const connectedServerNames = useMemo(() => {
@@ -785,12 +811,43 @@ export function MCPSidebar({
           })}
         </SidebarContent>
         <SidebarFooter>
+          {shouldShowInviteCta ? (
+            <SidebarMenu>
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  tooltip="Invite team members"
+                  onClick={() => setShowInviteDialog(true)}
+                >
+                  <UserPlus className="h-4 w-4" />
+                  <span className="group-data-[collapsible=icon]:hidden">
+                    Invite team members
+                  </span>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            </SidebarMenu>
+          ) : null}
           <SidebarUser
             activeOrganizationId={activeOrganizationId}
             onSwitchOrganization={onSwitchOrganization}
           />
         </SidebarFooter>
       </Sidebar>
+      {shouldShowInviteCta && user && activeWorkspace ? (
+        <ShareWorkspaceDialog
+          isOpen={showInviteDialog}
+          onClose={() => setShowInviteDialog(false)}
+          workspaceName={activeWorkspace.name}
+          workspaceServers={activeWorkspace.servers}
+          sharedWorkspaceId={activeWorkspace.sharedWorkspaceId}
+          organizationId={activeWorkspace.organizationId}
+          visibility={activeWorkspace.visibility}
+          organizationName={activeOrganizationName}
+          currentUser={user}
+          onWorkspaceShared={onWorkspaceShared}
+          availableWorkspaces={inviteableWorkspaces}
+          activeWorkspaceId={activeWorkspaceId}
+        />
+      ) : null}
       {learnMoreEnabled && (
         <LearnMoreExpandedPanel
           tabId={learnMore.expandedTabId}

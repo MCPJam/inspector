@@ -602,7 +602,7 @@ export function ServerConnectionCard({
                       )}
                       {isCopyingBrief
                         ? "Copying..."
-                        : "Copy markdown for server evals"}
+                        : "Copy markdown for evals"}
                     </DropdownMenuItem>
                     <Separator />
                     <DropdownMenuItem
