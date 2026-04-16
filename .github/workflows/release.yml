@@ -317,18 +317,6 @@ jobs:
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
 
-  docker-release:
-    needs:
-      - preflight
-      - publish-packages
-    if: needs.preflight.outputs.build_inspector_artifacts == 'true'
-    uses: ./.github/workflows/docker-build-deploy.yml
-    with:
-      version: ${{ needs.preflight.outputs.inspector_version }}
-      push: true
-      apply_release_patch: true
-    secrets: inherit
-
   deploy-backend-prod:
     needs:
       - preflight
@@ -400,14 +388,12 @@ jobs:
     needs:
       - preflight
       - publish-packages
-      - docker-release
       - deploy-backend-prod
     if: |
       always() &&
       inputs.promote_production &&
       needs.preflight.result == 'success' &&
       needs.publish-packages.result == 'success' &&
-      needs.docker-release.result == 'success' &&
       (
         inputs.deploy_backend_prod != true ||
         needs.deploy-backend-prod.result == 'success'
@@ -449,14 +435,12 @@ jobs:
     needs:
       - preflight
       - publish-packages
-      - docker-release
       - deploy-backend-prod
       - promote-production
     if: |
       always() &&
       needs.preflight.result == 'success' &&
       needs.publish-packages.result == 'success' &&
-      (needs.docker-release.result == 'success' || needs.docker-release.result == 'skipped') &&
       (
         (inputs.deploy_backend_prod && needs.deploy-backend-prod.result == 'success') ||
         (!inputs.deploy_backend_prod && needs.deploy-backend-prod.result == 'skipped')
