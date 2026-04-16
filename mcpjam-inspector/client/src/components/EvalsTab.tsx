@@ -22,7 +22,7 @@ import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
 import type { EvalCase } from "./evals/types";
 import { EXPLORE_SUITE_TAG, isExploreSuite } from "./evals/constants";
-import { shouldAutoOpenPlaygroundCasesView } from "./evals/playground-route-preferences";
+import { getPlaygroundCasesRedirect } from "./evals/playground-route-preferences";
 
 interface EvalsTabProps {
   selectedServer?: string;
@@ -237,31 +237,31 @@ export function EvalsTab({
 
   useEffect(() => {
     if (!exploreSuite) return;
-    if (
-      !shouldAutoOpenPlaygroundCasesView({
-        route,
-        exploreSuiteId: exploreSuite._id,
-        isSuiteDetailsLoading: queries.isSuiteDetailsLoading,
-        runsCount: runsForSelectedSuite.length,
-      })
-    ) {
+    const redirectRoute = getPlaygroundCasesRedirect({
+      route,
+      exploreSuiteId: exploreSuite._id,
+      isSuiteDetailsLoading: queries.isSuiteDetailsLoading,
+      isSuiteRunsLoading: queries.isSuiteRunsLoading,
+      runsCount: runsForSelectedSuite.length,
+      testCaseIds: exploreCases.map((testCase) => testCase._id),
+      runIds: runsForSelectedSuite.map((run) => run._id),
+      iterationRunIds: sortedIterations.flatMap((iteration) =>
+        iteration.suiteRunId ? [iteration.suiteRunId] : [],
+      ),
+    });
+    if (!redirectRoute) {
       return;
     }
 
-    navigatePlaygroundEvalsRoute(
-      {
-        type: "suite-overview",
-        suiteId: exploreSuite._id,
-        view: "test-cases",
-      },
-      { replace: route.type !== "test-detail" && route.type !== "test-edit" },
-    );
+    navigatePlaygroundEvalsRoute(redirectRoute, { replace: true });
   }, [
-    exploreCases.length,
+    exploreCases,
     exploreSuite,
     queries.isSuiteDetailsLoading,
+    queries.isSuiteRunsLoading,
     route,
-    runsForSelectedSuite.length,
+    runsForSelectedSuite,
+    sortedIterations,
   ]);
 
   const handleGenerateMore = useCallback(async () => {
