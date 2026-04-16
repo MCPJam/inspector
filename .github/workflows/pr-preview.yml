@@ -7,6 +7,16 @@ on:
       - synchronize
       - reopened
       - closed
+    # MCP-only PRs have their own preview pipeline (pr-mcp-preview.yml) that
+    # uploads a Cloudflare Worker version per push and posts a unique URL.
+    # Skip the full Railway inspector preview for PRs whose diff is confined
+    # to the MCP worker and its associated workflow files — GitHub still
+    # fires this workflow for any PR whose diff touches at least one
+    # non-ignored path, so mixed PRs still get the inspector preview.
+    paths-ignore:
+      - "mcp/**"
+      - ".github/workflows/pr-mcp-preview.yml"
+      - ".github/workflows/deploy-mcp-staging.yml"
   repository_dispatch:
     types:
       - backend_preview_ready

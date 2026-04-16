@@ -40,10 +40,20 @@ It is ignored by Changesets alongside `@mcpjam/soundcheck`.
 
 The intended rollout path is:
 
-- push to `main` → auto-deploy `mcpjam-mcp-staging` via GitHub Actions
-- manual production deployment remains a separate, explicit step
+- open/push a PR touching `mcp/**` → `pr-mcp-preview.yml` uploads a new
+  Worker version via `wrangler versions upload --env staging` and posts a
+  per-PR preview URL as a PR comment. The live `mcpjam-mcp-staging` worker
+  is **not** promoted.
+- push to `main` → `deploy-mcp-staging.yml` auto-deploys the live
+  `mcpjam-mcp-staging` worker.
+- manual production deployment remains a separate, explicit step.
 
-The staging workflow expects these GitHub Actions secrets:
+PRs that touch only `mcp/**` are intentionally excluded from the Railway
+inspector preview (`pr-preview.yml`'s `paths-ignore` block) — the MCP
+preview URL is the one you want for those changes.
+
+Both the staging deploy and the PR preview workflow expect these GitHub
+Actions secrets:
 
 - `CLOUDFLARE_ACCOUNT_ID`
 - `CLOUDFLARE_API_TOKEN`
