@@ -44,7 +44,9 @@ function describeCategories(
   if (counts.feat > 0) parts.push(`${counts.feat} feature${counts.feat === 1 ? "" : "s"}`);
   if (counts.fix > 0) parts.push(`${counts.fix} fix${counts.fix === 1 ? "" : "es"}`);
   if (counts.chore > 0) parts.push(`${counts.chore} chore${counts.chore === 1 ? "" : "s"}`);
-  if (counts.other > 0) parts.push(`${counts.other} other`);
+  if (counts.other > 0) {
+    parts.push(`${counts.other} other commit${counts.other === 1 ? "" : "s"}`);
+  }
   return parts.length > 0 ? parts.join(", ") : `${total} commit${total === 1 ? "" : "s"}`;
 }
 
@@ -93,7 +95,7 @@ export async function DeployDiff({
     return (
       <Tile title={title}>
         <p className="text-sm text-neutral-500">
-          No production deployment recorded yet for{" "}
+          No successful production deployment recorded for{" "}
           <code>{productionEnvironment}</code>.
         </p>
       </Tile>
@@ -103,7 +105,7 @@ export async function DeployDiff({
     return (
       <Tile title={title}>
         <p className="text-sm text-neutral-500">
-          No staging deployment recorded yet for{" "}
+          No successful staging deployment recorded for{" "}
           <code>{stagingEnvironment}</code>.
         </p>
       </Tile>
@@ -156,6 +158,14 @@ export async function DeployDiff({
   const breakdown = describeCategories(counts, diff.aheadBy);
   const compareUrl = `${repoUrl}/compare/${production.sha}...${staging.sha}`;
 
+  // GitHub Compare returns commits in chronological order (oldest first).
+  // Flip so the newest work shows up on top — that's what matters when
+  // deciding "should we cut a release?". Overflow count uses `aheadBy`
+  // rather than `commits.length` because the compare endpoint caps commits
+  // at 250 for wide diffs.
+  const preview = diff.commits.slice(-8).reverse();
+  const hidden = diff.aheadBy - preview.length;
+
   return (
     <Tile title={title}>
       <p className="text-sm text-neutral-500">
@@ -173,7 +183,7 @@ export async function DeployDiff({
       </p>
 
       <ul className="mt-4 space-y-1">
-        {diff.commits.slice(0, 8).map((c) => (
+        {preview.map((c) => (
           <li key={c.sha} className="text-xs text-neutral-500">
             <a
               href={c.url}
@@ -189,9 +199,9 @@ export async function DeployDiff({
             <span className="text-neutral-400">— {c.author}</span>
           </li>
         ))}
-        {diff.commits.length > 8 && (
+        {hidden > 0 && (
           <li className="text-xs text-neutral-400">
-            + {diff.commits.length - 8} more
+            + {hidden} earlier commit{hidden === 1 ? "" : "s"}
           </li>
         )}
       </ul>
