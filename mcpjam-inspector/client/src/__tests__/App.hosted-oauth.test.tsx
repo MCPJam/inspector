@@ -2116,6 +2116,23 @@ describe("App hosted OAuth callback handling", () => {
     expect(screen.queryByTestId("ci-evals-tab")).not.toBeInTheDocument();
   });
 
+  it("redirects conformance to servers when the feature flag is disabled", async () => {
+    clearHostedOAuthPendingState();
+    clearSandboxSession();
+    window.history.replaceState({}, "", "/#/conformance");
+    mockHandleOAuthCallback.mockReset();
+
+    mockUseFeatureFlagEnabled.mockImplementation((flag: string) =>
+      flag === "playground-enabled",
+    );
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(window.location.hash).toBe("#servers");
+    });
+  });
+
   it("still applies the CI billing redirect when evaluate-runs is enabled", async () => {
     clearHostedOAuthPendingState();
     clearSandboxSession();

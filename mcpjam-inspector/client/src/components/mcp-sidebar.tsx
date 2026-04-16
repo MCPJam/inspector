@@ -249,6 +249,7 @@ const navigationSections: NavSection[] = [
         title: "Conformance",
         url: "#conformance",
         icon: FlaskConical,
+        featureFlag: "conformance-enabled",
       },
       {
         title: "OAuth Debugger",
@@ -541,6 +542,7 @@ export function MCPSidebar({
   const evalsEnabled = useFeatureFlagEnabled("evals-enabled");
   const evaluateRunsEnabled = useFeatureFlagEnabled("evaluate-runs");
   const learnMoreEnabled = useFeatureFlagEnabled("learn-more-enabled");
+  const conformanceEnabled = useFeatureFlagEnabled("conformance-enabled");
   const { isAuthenticated } = useConvexAuth();
   const { user } = useAuth();
   const learningEnabled = !!learningFlagEnabled && isAuthenticated;
@@ -663,6 +665,7 @@ export function MCPSidebar({
       "client-config-enabled": !!clientConfigEnabled && isAuthenticated,
       "registry-enabled": registryEnabled === true,
       "evals-enabled": !!evalsEnabled,
+      "conformance-enabled": conformanceEnabled === true,
     }),
     [
       learningEnabled,
@@ -670,6 +673,7 @@ export function MCPSidebar({
       clientConfigEnabled,
       registryEnabled,
       evalsEnabled,
+      conformanceEnabled,
       isAuthenticated,
     ],
   );

@@ -291,6 +291,7 @@ export default function App() {
   const learningEnabled = useFeatureFlagEnabled("mcpjam-learning");
   const clientConfigEnabled = useFeatureFlagEnabled("client-config-enabled");
   const registryEnabled = useFeatureFlagEnabled("registry-enabled");
+  const conformanceEnabled = useFeatureFlagEnabled("conformance-enabled");
   const playgroundEnabled = useFeatureFlagEnabled("playground-enabled");
   const evaluateRunsEnabled = useFeatureFlagEnabled("evaluate-runs");
   const {
@@ -1248,8 +1249,11 @@ export default function App() {
       (clientConfigEnabled !== true || !isAuthenticated)
     ) {
       applyNavigation("servers", { updateHash: true });
+    } else if (activeTab === "conformance" && conformanceEnabled !== true) {
+      applyNavigation("servers", { updateHash: true });
     }
   }, [
+    conformanceEnabled,
     clientConfigEnabled,
     registryEnabled,
     learningEnabled,

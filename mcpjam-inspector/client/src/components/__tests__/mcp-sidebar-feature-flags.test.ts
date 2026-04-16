@@ -131,6 +131,34 @@ describe("filterByFeatureFlags", () => {
       ),
     ).toEqual(["Playground", "Runs"]);
   });
+
+  it("hides Conformance when the feature flag is off", () => {
+    const result = filterByFeatureFlags(
+      [
+        {
+          id: "others",
+          items: [
+            {
+              title: "Conformance",
+              url: "#conformance",
+              icon: FakeIcon,
+              featureFlag: "conformance-enabled",
+            },
+            {
+              title: "OAuth Debugger",
+              url: "#oauth-flow",
+              icon: FakeIcon,
+            },
+          ],
+        },
+      ],
+      { "conformance-enabled": false },
+    );
+
+    expect(result[0].items.map((item) => item.title)).toEqual([
+      "OAuth Debugger",
+    ]);
+  });
 });
 
 describe("applyBillingGateNavState", () => {
@@ -207,7 +235,12 @@ describe("getHostedNavigationSections", () => {
             icon: FakeIcon,
             billingFeature: "evals",
           },
-          { title: "Conformance", url: "#conformance", icon: FakeIcon },
+          {
+            title: "Conformance",
+            url: "#conformance",
+            icon: FakeIcon,
+            featureFlag: "conformance-enabled",
+          },
           { title: "OAuth Debugger", url: "#oauth-flow", icon: FakeIcon },
         ],
       },
@@ -232,6 +265,7 @@ describe("getHostedNavigationSections", () => {
         title: "Conformance",
         url: "#conformance",
         icon: FakeIcon,
+        featureFlag: "conformance-enabled",
       },
       {
         title: "OAuth Debugger",
