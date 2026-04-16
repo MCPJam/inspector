@@ -7,5 +7,5 @@
   "access": "public",
   "baseBranch": "main",
   "updateInternalDependencies": "patch",
-  "ignore": ["@mcpjam/soundcheck"]
+  "ignore": ["@mcpjam/soundcheck", "@mcpjam/mcp"]
 }
