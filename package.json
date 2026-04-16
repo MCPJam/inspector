@@ -5,15 +5,16 @@
     "sdk",
     "cli",
     "mcpjam-inspector",
-    "soundcheck"
+    "soundcheck",
+    "mcp"
   ],
   "scripts": {
     "build": "npm run build -w @mcpjam/sdk && npm run build -w @mcpjam/cli && npm run build -w @mcpjam/inspector",
     "build:packages": "npm run build -w @mcpjam/sdk && npm run build -w @mcpjam/cli",
     "build:inspector": "npm run build -w @mcpjam/inspector",
-    "typecheck": "npm run typecheck -w @mcpjam/sdk && npm run build -w @mcpjam/sdk && npm run typecheck -w @mcpjam/cli",
+    "typecheck": "npm run typecheck -w @mcpjam/sdk && npm run build -w @mcpjam/sdk && npm run typecheck -w @mcpjam/cli && npm run typecheck -w @mcpjam/mcp",
     "test": "npm run test:ordered",
-    "test:ordered": "npm run test -w @mcpjam/sdk && npm run build -w @mcpjam/sdk && npm run test -w @mcpjam/cli && npm run test -w @mcpjam/inspector",
+    "test:ordered": "npm run test -w @mcpjam/sdk && npm run build -w @mcpjam/sdk && npm run test -w @mcpjam/cli && npm run test -w @mcpjam/inspector && npm run typecheck -w @mcpjam/mcp",
     "verify": "npm run typecheck && npm run test:ordered && npm run build:inspector",
     "release:status": "changeset status",
     "release:version": "changeset version",
