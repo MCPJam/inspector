@@ -591,54 +591,6 @@ export function useServerState({
     [],
   );
 
-  const completeConnection = useCallback(
-    async (
-      serverName: string,
-      serverConfig: MCPServerConfig,
-      result: ConnectionApiResponse,
-      options?: {
-        tokens?: ReturnType<typeof getStoredTokens>;
-        useOAuth?: boolean;
-        successToast?: string;
-        failureToast?: string;
-      },
-    ): Promise<boolean> => {
-      if (result.success) {
-        dispatch({
-          type: "CONNECT_SUCCESS",
-          name: serverName,
-          config: serverConfig,
-          ...(options?.tokens ? { tokens: options.tokens } : {}),
-          ...(options?.useOAuth !== undefined
-            ? { useOAuth: options.useOAuth }
-            : {}),
-          ...(result.report ? { report: result.report } : {}),
-        });
-        await storeInitInfo(
-          serverName,
-          result.report?.initInfo ?? result.initInfo,
-        );
-        if (options?.successToast) {
-          toast.success(options.successToast);
-        }
-        return true;
-      }
-
-      const errorMessage = getConnectionErrorMessage(result);
-      dispatch({
-        type: "CONNECT_FAILURE",
-        name: serverName,
-        error: errorMessage,
-        ...(result.report ? { report: result.report } : {}),
-      });
-      if (options?.failureToast) {
-        toast.error(options.failureToast.replace("{error}", errorMessage));
-      }
-      return false;
-    },
-    [dispatch, getConnectionErrorMessage, storeInitInfo],
-  );
-
   const setSelectedMultipleServersToAllServers = useCallback(() => {
     const connectedNames = Object.entries(appState.servers)
       .filter(([, s]) => isConnectedStatus(s.connectionStatus))
@@ -876,6 +828,54 @@ export function useServerState({
       }
     },
     [dispatch, fetchAndStoreInitInfo],
+  );
+
+  const completeConnection = useCallback(
+    async (
+      serverName: string,
+      serverConfig: MCPServerConfig,
+      result: ConnectionApiResponse,
+      options?: {
+        tokens?: ReturnType<typeof getStoredTokens>;
+        useOAuth?: boolean;
+        successToast?: string;
+        failureToast?: string;
+      },
+    ): Promise<boolean> => {
+      if (result.success) {
+        dispatch({
+          type: "CONNECT_SUCCESS",
+          name: serverName,
+          config: serverConfig,
+          ...(options?.tokens ? { tokens: options.tokens } : {}),
+          ...(options?.useOAuth !== undefined
+            ? { useOAuth: options.useOAuth }
+            : {}),
+          ...(result.report ? { report: result.report } : {}),
+        });
+        await storeInitInfo(
+          serverName,
+          result.report?.initInfo ?? result.initInfo,
+        );
+        if (options?.successToast) {
+          toast.success(options.successToast);
+        }
+        return true;
+      }
+
+      const errorMessage = getConnectionErrorMessage(result);
+      dispatch({
+        type: "CONNECT_FAILURE",
+        name: serverName,
+        error: errorMessage,
+        ...(result.report ? { report: result.report } : {}),
+      });
+      if (options?.failureToast) {
+        toast.error(options.failureToast.replace("{error}", errorMessage));
+      }
+      return false;
+    },
+    [dispatch, getConnectionErrorMessage, storeInitInfo],
   );
 
   const resolveOAuthInitiationInputs = useCallback(
