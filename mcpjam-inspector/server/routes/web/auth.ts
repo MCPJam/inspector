@@ -7,6 +7,7 @@ import {
   attachHostedRpcLogs,
   createHostedRpcLogCollector,
 } from "./hosted-rpc-logs.js";
+import { INSPECTOR_MCP_RETRY_POLICY } from "../../utils/mcp-retry-policy.js";
 import {
   ErrorCode,
   WebRouteError,
@@ -133,6 +134,7 @@ export type ConvexAuthorizeResponse = {
   authorized: boolean;
   role: "owner" | "admin" | "member";
   accessLevel: "workspace_member" | "shared_chat";
+  oauthAccessToken?: string | null;
   permissions: {
     chatOnly: boolean;
   };
@@ -294,7 +296,7 @@ export async function createAuthorizedManager(
         shareToken: options?.shareToken,
         sandboxToken: options?.sandboxToken,
       });
-      const oauthToken = oauthTokens?.[serverId];
+      const oauthToken = auth.oauthAccessToken ?? oauthTokens?.[serverId];
 
       if (auth.serverConfig.useOAuth) {
         if (auth.serverConfig.url) {
@@ -324,6 +326,7 @@ export async function createAuthorizedManager(
   const manager = new MCPClientManager(Object.fromEntries(configEntries), {
     defaultTimeout: timeoutMs,
     rpcLogger: options?.rpcLogger,
+    retryPolicy: INSPECTOR_MCP_RETRY_POLICY,
   });
   return { manager, oauthServerUrls };
 }
@@ -511,6 +514,7 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
         {
           defaultTimeout: timeoutMs,
           rpcLogger: rpcCollector?.rpcLogger,
+          retryPolicy: INSPECTOR_MCP_RETRY_POLICY,
         },
       );
 

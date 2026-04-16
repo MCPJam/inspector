@@ -7,27 +7,22 @@ import {
   type MCPAppsCheckId,
   type MCPAppsConformanceConfig,
 } from "@mcpjam/sdk";
-import {
-  buildChatGptWidgetContent,
-  buildMcpWidgetContent,
-} from "../lib/apps";
+import { buildChatGptWidgetContent, buildMcpWidgetContent } from "../lib/apps";
 import { withEphemeralManager } from "../lib/ephemeral";
 import { createCliRpcLogCollector } from "../lib/rpc-logs";
 import { withRpcLogsIfRequested } from "../lib/rpc-helpers";
 import {
+  addRetryOptions,
   addSharedServerOptions,
   describeTarget,
   getGlobalOptions,
   parseJsonRecord,
+  parseRetryPolicy,
   parseServerConfig,
   resolveAliasedStringOption,
   type SharedServerTargetOptions,
 } from "../lib/server-config";
-import {
-  setProcessExitCode,
-  usageError,
-  writeResult,
-} from "../lib/output";
+import { setProcessExitCode, usageError, writeResult } from "../lib/output";
 
 const APPS_CHECK_IDS_BY_CATEGORY: Record<
   MCPAppsCheckCategory,
@@ -54,7 +49,9 @@ export interface AppsConformanceOptions extends SharedServerTargetOptions {
 export function registerAppsCommands(program: Command): void {
   const apps = program
     .command("apps")
-    .description("MCP Apps utilities, widget extraction, and conformance checks");
+    .description(
+      "MCP Apps utilities, widget extraction, and conformance checks",
+    );
 
   addSharedServerOptions(
     apps
@@ -96,26 +93,32 @@ export function registerAppsCommands(program: Command): void {
     }
   });
 
-  addSharedServerOptions(
-    apps
-      .command("mcp-widget")
-      .description("Fetch hosted-style MCP App widget content")
-      .option("--resource-uri <uri>", "Widget resource URI")
-      .option("--uri <uri>", "Alias for --resource-uri")
-      .requiredOption("--tool-id <id>", "Tool call id used for runtime injection")
-      .requiredOption("--tool-name <name>", "Tool name used for runtime injection")
-      .option("--tool-input <json>", "Tool input payload as JSON")
-      .option("--tool-output <json>", "Tool output payload as JSON")
-      .option("--theme <theme>", "Widget theme: light or dark")
-      .option(
-        "--csp-mode <mode>",
-        "CSP mode: permissive or widget-declared",
-      )
-      .option("--template <uri>", "Optional ui:// template override")
-      .option("--view-mode <mode>", "Widget view mode")
-      .option("--view-params <json>", "Widget view params as JSON"),
+  addRetryOptions(
+    addSharedServerOptions(
+      apps
+        .command("mcp-widget")
+        .description("Fetch hosted-style MCP App widget content")
+        .option("--resource-uri <uri>", "Widget resource URI")
+        .option("--uri <uri>", "Alias for --resource-uri")
+        .requiredOption(
+          "--tool-id <id>",
+          "Tool call id used for runtime injection",
+        )
+        .requiredOption(
+          "--tool-name <name>",
+          "Tool name used for runtime injection",
+        )
+        .option("--tool-input <json>", "Tool input payload as JSON")
+        .option("--tool-output <json>", "Tool output payload as JSON")
+        .option("--theme <theme>", "Widget theme: light or dark")
+        .option("--csp-mode <mode>", "CSP mode: permissive or widget-declared")
+        .option("--template <uri>", "Optional ui:// template override")
+        .option("--view-mode <mode>", "Widget view mode")
+        .option("--view-params <json>", "Widget view params as JSON"),
+    ),
   ).action(async (options, command) => {
     const globalOptions = getGlobalOptions(command);
+    const retryPolicy = parseRetryPolicy(options);
     const target = describeTarget(options);
     const collector = globalOptions.rpc
       ? createCliRpcLogCollector({ __cli__: target })
@@ -152,35 +155,48 @@ export function registerAppsCommands(program: Command): void {
       {
         timeout: globalOptions.timeout,
         rpcLogger: collector?.rpcLogger,
+        retryPolicy,
       },
     );
 
-    writeResult(withRpcLogsIfRequested(result, collector, globalOptions), globalOptions.format);
+    writeResult(
+      withRpcLogsIfRequested(result, collector, globalOptions),
+      globalOptions.format,
+    );
   });
 
-  addSharedServerOptions(
-    apps
-      .command("chatgpt-widget")
-      .description("Fetch hosted-style ChatGPT App widget content")
-      .option("--resource-uri <uri>", "Widget resource URI")
-      .option("--uri <uri>", "Alias for --resource-uri")
-      .requiredOption("--tool-id <id>", "Tool call id used for runtime injection")
-      .requiredOption("--tool-name <name>", "Tool name used for runtime injection")
-      .option("--tool-input <json>", "Tool input payload as JSON")
-      .option("--tool-output <json>", "Tool output payload as JSON")
-      .option(
-        "--tool-response-metadata <json>",
-        "Tool response metadata as a JSON object",
-      )
-      .option("--theme <theme>", "Widget theme: light or dark")
-      .option(
-        "--csp-mode <mode>",
-        "CSP mode: permissive or widget-declared",
-      )
-      .option("--locale <locale>", "Locale override")
-      .option("--device-type <type>", "Device type: mobile, tablet, or desktop"),
+  addRetryOptions(
+    addSharedServerOptions(
+      apps
+        .command("chatgpt-widget")
+        .description("Fetch hosted-style ChatGPT App widget content")
+        .option("--resource-uri <uri>", "Widget resource URI")
+        .option("--uri <uri>", "Alias for --resource-uri")
+        .requiredOption(
+          "--tool-id <id>",
+          "Tool call id used for runtime injection",
+        )
+        .requiredOption(
+          "--tool-name <name>",
+          "Tool name used for runtime injection",
+        )
+        .option("--tool-input <json>", "Tool input payload as JSON")
+        .option("--tool-output <json>", "Tool output payload as JSON")
+        .option(
+          "--tool-response-metadata <json>",
+          "Tool response metadata as a JSON object",
+        )
+        .option("--theme <theme>", "Widget theme: light or dark")
+        .option("--csp-mode <mode>", "CSP mode: permissive or widget-declared")
+        .option("--locale <locale>", "Locale override")
+        .option(
+          "--device-type <type>",
+          "Device type: mobile, tablet, or desktop",
+        ),
+    ),
   ).action(async (options, command) => {
     const globalOptions = getGlobalOptions(command);
+    const retryPolicy = parseRetryPolicy(options);
     const target = describeTarget(options);
     const collector = globalOptions.rpc
       ? createCliRpcLogCollector({ __cli__: target })
@@ -221,10 +237,14 @@ export function registerAppsCommands(program: Command): void {
       {
         timeout: globalOptions.timeout,
         rpcLogger: collector?.rpcLogger,
+        retryPolicy,
       },
     );
 
-    writeResult(withRpcLogsIfRequested(result, collector, globalOptions), globalOptions.format);
+    writeResult(
+      withRpcLogsIfRequested(result, collector, globalOptions),
+      globalOptions.format,
+    );
   });
 }
 

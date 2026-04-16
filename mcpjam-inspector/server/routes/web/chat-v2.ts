@@ -29,6 +29,7 @@ import {
   attachHostedRpcLogs,
   createHostedRpcLogCollector,
 } from "./hosted-rpc-logs.js";
+import { INSPECTOR_MCP_RETRY_POLICY } from "../../utils/mcp-retry-policy.js";
 
 const chatV2 = new Hono();
 
@@ -154,6 +155,7 @@ chatV2.post("/", async (c) => {
           {
             defaultTimeout: WEB_STREAM_TIMEOUT_MS,
             rpcLogger: rpcCollector.rpcLogger,
+            retryPolicy: INSPECTOR_MCP_RETRY_POLICY,
           },
         );
       } else {
@@ -163,6 +165,7 @@ chatV2.post("/", async (c) => {
           {
             defaultTimeout: WEB_STREAM_TIMEOUT_MS,
             rpcLogger: rpcCollector.rpcLogger,
+            retryPolicy: INSPECTOR_MCP_RETRY_POLICY,
           },
         );
       }

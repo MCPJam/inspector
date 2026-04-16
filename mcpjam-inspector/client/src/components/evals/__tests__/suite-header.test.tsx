@@ -169,7 +169,7 @@ describe("SuiteHeader", () => {
     expect(onShowCasesSidebar).toHaveBeenCalled();
   });
 
-  it("fires the export callback when Export is clicked", async () => {
+  it("fires the export callback when Setup SDK is clicked", async () => {
     const user = userEvent.setup();
     const onOpenExportSuite = vi.fn();
 
@@ -182,7 +182,7 @@ describe("SuiteHeader", () => {
       />,
     );
 
-    await user.click(screen.getByRole("button", { name: "Export" }));
+    await user.click(screen.getByRole("button", { name: "Setup SDK" }));
 
     expect(onOpenExportSuite).toHaveBeenCalledTimes(1);
   });

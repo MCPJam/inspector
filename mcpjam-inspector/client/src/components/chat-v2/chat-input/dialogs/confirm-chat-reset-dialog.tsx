@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -14,6 +14,18 @@ import { Label } from "@/components/ui/label";
 
 const SKIP_CHAT_RESET_CONFIRMATION_KEY = "skipChatResetConfirmation";
 
+const getShouldSkipChatResetConfirmation = () => {
+  if (typeof window === "undefined") {
+    return false;
+  }
+
+  try {
+    return localStorage.getItem(SKIP_CHAT_RESET_CONFIRMATION_KEY) === "true";
+  } catch {
+    return false;
+  }
+};
+
 interface ConfirmChatResetDialogProps {
   open: boolean;
   onConfirm: () => void;
@@ -28,26 +40,41 @@ export function ConfirmChatResetDialog({
   message = "Resetting the chat will clear your current conversation thread. This action cannot be undone.",
 }: ConfirmChatResetDialogProps) {
   const [dontShowAgain, setDontShowAgain] = useState(false);
+  const [shouldSkip, setShouldSkip] = useState(false);
+  const autoConfirmedRef = useRef(false);
+  const onConfirmRef = useRef(onConfirm);
 
   useEffect(() => {
-    if (open) {
-      const shouldSkip =
-        localStorage.getItem(SKIP_CHAT_RESET_CONFIRMATION_KEY) === "true";
-      if (shouldSkip) {
-        onConfirm();
-      }
+    onConfirmRef.current = onConfirm;
+  }, [onConfirm]);
+
+  useEffect(() => {
+    if (!open) {
+      autoConfirmedRef.current = false;
+      setDontShowAgain(false);
+      return;
     }
-  }, [open, onConfirm]);
+    if (autoConfirmedRef.current) {
+      return;
+    }
+    const shouldSkipConfirmation = getShouldSkipChatResetConfirmation();
+    setShouldSkip(shouldSkipConfirmation);
+    if (shouldSkipConfirmation) {
+      autoConfirmedRef.current = true;
+      onConfirmRef.current();
+    }
+  }, [open]);
 
   const handleConfirm = () => {
-    if (dontShowAgain) {
-      localStorage.setItem(SKIP_CHAT_RESET_CONFIRMATION_KEY, "true");
+    if (dontShowAgain && typeof window !== "undefined") {
+      try {
+        localStorage.setItem(SKIP_CHAT_RESET_CONFIRMATION_KEY, "true");
+        setShouldSkip(true);
+      } catch {}
     }
     onConfirm();
   };
 
-  const shouldSkip =
-    localStorage.getItem(SKIP_CHAT_RESET_CONFIRMATION_KEY) === "true";
   if (shouldSkip) {
     return null;
   }

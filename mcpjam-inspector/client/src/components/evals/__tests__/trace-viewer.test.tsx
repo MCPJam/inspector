@@ -1165,4 +1165,15 @@ describe("TraceViewer", () => {
     expect(lastCall.interactive).toBe(false);
     expect(lastCall.minimalMode).toBe(true);
   });
+
+  it("keeps trace chat read-only when only onFullscreenChange is provided", () => {
+    render(
+      <TraceViewer trace={toolTrace} onFullscreenChange={vi.fn()} />,
+    );
+    openChatTab();
+
+    const lastCall = mockMessageView.mock.calls[0][0];
+    expect(lastCall.interactive).toBe(false);
+    expect(lastCall.minimalMode).toBe(true);
+  });
 });

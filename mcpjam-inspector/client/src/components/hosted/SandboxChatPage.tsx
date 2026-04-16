@@ -369,6 +369,9 @@ export function SandboxChatPage({
     surface: "sandbox",
     pendingKey: SANDBOX_OAUTH_PENDING_KEY,
     servers: oauthServers,
+    workspaceId: session?.payload.workspaceId ?? null,
+    sandboxToken: session?.token,
+    isAuthenticated,
   });
 
   const sandboxServerConfigs = useMemo(() => {

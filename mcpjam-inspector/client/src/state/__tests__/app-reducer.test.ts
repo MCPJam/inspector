@@ -213,6 +213,63 @@ describe("appReducer", () => {
       expect(result.servers["oauth-server"].useOAuth).toBe(true);
     });
 
+    it("preserves OAuth mode when hosted auth succeeds without browser tokens", () => {
+      const server = createServer("oauth-server", {
+        connectionStatus: "connecting",
+        useOAuth: true,
+      });
+      const workspace: Workspace = {
+        id: "workspace-1",
+        name: "Test",
+        servers: { "oauth-server": server },
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+      const state = createInitialState({
+        servers: { "oauth-server": server },
+        workspaces: { "workspace-1": workspace },
+        activeWorkspaceId: "workspace-1",
+      });
+
+      const result = appReducer(state, {
+        type: "CONNECT_SUCCESS",
+        name: "oauth-server",
+        config: server.config,
+      });
+
+      expect(result.servers["oauth-server"].useOAuth).toBe(true);
+      expect(result.servers["oauth-server"].oauthTokens).toBeUndefined();
+    });
+
+    it("allows explicit non-OAuth success to clear stale OAuth mode", () => {
+      const server = createServer("oauth-server", {
+        connectionStatus: "connecting",
+        useOAuth: true,
+      });
+      const workspace: Workspace = {
+        id: "workspace-1",
+        name: "Test",
+        servers: { "oauth-server": server },
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+      const state = createInitialState({
+        servers: { "oauth-server": server },
+        workspaces: { "workspace-1": workspace },
+        activeWorkspaceId: "workspace-1",
+      });
+
+      const result = appReducer(state, {
+        type: "CONNECT_SUCCESS",
+        name: "oauth-server",
+        config: server.config,
+        useOAuth: false,
+      });
+
+      expect(result.servers["oauth-server"].useOAuth).toBe(false);
+      expect(result.servers["oauth-server"].oauthTokens).toBeUndefined();
+    });
+
     it("creates server if it does not exist (Convex-synced servers)", () => {
       const workspace: Workspace = {
         id: "workspace-1",
