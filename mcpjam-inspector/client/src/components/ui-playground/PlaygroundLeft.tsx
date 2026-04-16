@@ -124,6 +124,11 @@ export function PlaygroundLeft({
     onLoadRequest(req);
   };
 
+  const handleToolListSelect = (name: string) => {
+    onSelectTool(name);
+    setIsListExpanded(false);
+  };
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     if (e.key !== "Enter" || e.metaKey || e.ctrlKey || e.altKey) return;
     const target = e.target as HTMLElement | null;
@@ -167,7 +172,7 @@ export function PlaygroundLeft({
           fetchingTools={fetchingTools}
           searchQuery={searchQuery}
           onSearchQueryChange={setSearchQuery}
-          onSelectTool={onSelectTool}
+          onSelectTool={handleToolListSelect}
           onCollapseList={() => setIsListExpanded(false)}
         />
       ) : (
