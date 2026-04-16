@@ -10,6 +10,12 @@ import { ServerWithName } from "@/hooks/use-app-state";
 import { getStoredTokensState } from "@/lib/oauth/mcp-oauth";
 import { decodeJWT } from "@/lib/oauth/jwt-decoder";
 import { ScrollableJsonView } from "@/components/ui/json-editor";
+import { useSharedAppState } from "@/state/app-state-context";
+import {
+  useInspectionStore,
+  inspectionStoreKey,
+} from "@/stores/inspection-store";
+import { ServerChangesPanel } from "./ServerChangesPanel";
 
 interface ServerInfoContentProps {
   server: ServerWithName;
@@ -20,6 +26,10 @@ export function ServerInfoContent({
   server,
   needsReconnect = false,
 }: ServerInfoContentProps) {
+  const { activeWorkspaceId } = useSharedAppState();
+  const storeKey = inspectionStoreKey(activeWorkspaceId, server.name);
+  const inspectionRecord = useInspectionStore((s) => s.records[storeKey]);
+
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [expandedTokens, setExpandedTokens] = useState<Set<string>>(new Set());
 
@@ -203,6 +213,9 @@ export function ServerInfoContent({
           payload. Reconnect the server to apply the workspace client profile.
         </div>
       ) : null}
+
+      <ServerChangesPanel diff={inspectionRecord?.latestDiff} />
+
       {serverName && (
         <div>
           <div className="text-sm font-medium text-muted-foreground mb-1">

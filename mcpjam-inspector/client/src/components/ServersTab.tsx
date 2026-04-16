@@ -87,6 +87,10 @@ import {
   readServerDetailModalOAuthResume,
   writeOpenServerDetailModalState,
 } from "@/lib/server-detail-modal-resume";
+import {
+  readInspectionDetailRequest,
+  clearInspectionDetailRequest,
+} from "@/lib/inspection-detail-request";
 import { cn } from "@/lib/utils";
 import { compareQuickConnectCatalogCards } from "@/lib/quick-connect-catalog-sort";
 import { toast } from "sonner";
@@ -596,6 +600,27 @@ export function ServersTab({
       serverSnapshot: resumeServer,
     }));
     clearServerDetailModalOAuthResume();
+  }, [detailModalState.isOpen, workspaceServers]);
+
+  // Consume inspection detail request (from toast "View changes" CTA)
+  useEffect(() => {
+    if (detailModalState.isOpen) return;
+
+    const request = readInspectionDetailRequest();
+    if (!request) return;
+
+    clearInspectionDetailRequest();
+
+    const server = workspaceServers[request.serverName];
+    if (!server) return;
+
+    setDetailModalState((prev) => ({
+      isOpen: true,
+      serverName: server.name,
+      defaultTab: "overview",
+      sessionKey: prev.sessionKey + 1,
+      serverSnapshot: server,
+    }));
   }, [detailModalState.isOpen, workspaceServers]);
 
   useEffect(() => {

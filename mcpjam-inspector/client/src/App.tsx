@@ -54,6 +54,8 @@ import {
   DialogTitle,
 } from "./components/ui/dialog";
 import { useAppState } from "./hooks/use-app-state";
+import { useInspectionCoordinator } from "./hooks/use-inspection-coordinator";
+import { writeInspectionDetailRequest } from "./lib/inspection-detail-request";
 import { PreferencesStoreProvider } from "./stores/preferences/preferences-provider";
 import { Toaster } from "./components/ui/sonner";
 import { useElectronOAuth } from "./hooks/useElectronOAuth";
@@ -258,6 +260,21 @@ function AppChromeHeader({ hidden, ...props }: AppChromeHeaderProps) {
   }
 
   return <Header {...props} />;
+}
+
+/**
+ * Zero-UI bridge component rendered inside AppStateProvider so the
+ * inspection coordinator hook has access to useSharedAppState().
+ */
+function InspectionCoordinatorBridge({
+  workspaceServers,
+  onViewChanges,
+}: {
+  workspaceServers: Record<string, import("./state/app-types").ServerWithName>;
+  onViewChanges: (serverName: string) => void;
+}) {
+  useInspectionCoordinator(workspaceServers, onViewChanges);
+  return null;
 }
 
 export default function App() {
@@ -1035,6 +1052,15 @@ export default function App() {
       isSharedChatRoute,
       setSelectedMultipleServersToAllServers,
     ],
+  );
+
+  // Callback for inspection toast "View changes" action
+  const handleInspectionViewChanges = useCallback(
+    (serverName: string) => {
+      writeInspectionDetailRequest(serverName);
+      applyNavigation("servers", { updateHash: true });
+    },
+    [applyNavigation],
   );
 
   // Sync tab with hash on mount and when hash changes
@@ -1933,6 +1959,10 @@ export default function App() {
         savedClientConfig={activeWorkspace?.clientConfig}
       />
       <AppStateProvider appState={effectiveAppState}>
+        <InspectionCoordinatorBridge
+          workspaceServers={workspaceServers}
+          onViewChanges={handleInspectionViewChanges}
+        />
         <Toaster />
         <div
           aria-hidden={shouldShowBillingHandoffOverlay || undefined}
