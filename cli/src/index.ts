@@ -2,6 +2,7 @@ import { Command, CommanderError } from "commander";
 import { version as pkgVersion } from "../package.json";
 import { registerAppsCommands } from "./commands/apps";
 import { registerProtocolCommands } from "./commands/conformance";
+import { registerEvalsCommands } from "./commands/evals";
 import { registerOAuthCommands } from "./commands/oauth";
 import { registerPromptCommands } from "./commands/prompts";
 import { registerResourcesCommands } from "./commands/resources";
@@ -40,6 +41,7 @@ async function main(argv: readonly string[] = process.argv): Promise<number> {
   registerAppsCommands(program);
   registerOAuthCommands(program);
   registerProtocolCommands(program);
+  registerEvalsCommands(program);
 
   if (argv.length <= 2) {
     program.outputHelp();
