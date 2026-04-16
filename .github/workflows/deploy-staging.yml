@@ -33,6 +33,17 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Install dependencies and format
+        working-directory: mcpjam-inspector
+        run: |
+          npm ci
+          npm run prettier-fix
+
       - name: Install Railway CLI
         run: npm install -g @railway/cli
 

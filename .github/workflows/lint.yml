@@ -1,4 +1,4 @@
-name: Prettier and Build Check
+name: Build and Test
 
 on:
   pull_request:
