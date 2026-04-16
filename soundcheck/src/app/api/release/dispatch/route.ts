@@ -136,8 +136,15 @@ export async function POST(request: Request) {
       writeToken
     );
   } catch (err) {
+    // Log the full message server-side; return a sanitized response so we
+    // don't leak GitHub API internals (PAT-scope diagnostics, hidden
+    // workflow-file "Not Found"s, etc.) into the browser.
+    console.error("dispatch route: workflow dispatch failed:", err);
     return NextResponse.json(
-      { error: (err as Error).message },
+      {
+        error:
+          "Failed to dispatch release.yml. Check Soundcheck server logs for details."
+      },
       { status: 502 }
     );
   }

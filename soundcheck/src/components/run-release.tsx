@@ -13,7 +13,7 @@
  * JSON to it.
  */
 
-import { useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Badge, Tile } from "@/components/ui";
 
@@ -220,14 +220,56 @@ function ConfirmModal({
   deployBackend: boolean;
   promoteProd: boolean;
 }) {
+  const cancelRef = useRef<HTMLButtonElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+
+  // "The one path to production" deserves a real modal: name it for screen
+  // readers, trap focus inside, and let Escape dismiss it (but only when
+  // nothing is mid-dispatch — we don't want a stray keystroke to abandon an
+  // in-flight confirm-click).
+  useEffect(() => {
+    cancelRef.current?.focus();
+
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape" && !busy) {
+        e.preventDefault();
+        onCancel();
+        return;
+      }
+      if (e.key !== "Tab" || !dialogRef.current) return;
+      const focusables = dialogRef.current.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), [href], input:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      );
+      if (focusables.length === 0) return;
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      const active = document.activeElement as HTMLElement | null;
+      if (e.shiftKey && active === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && active === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [busy, onCancel]);
+
   return (
     <div
       role="dialog"
       aria-modal="true"
+      aria-labelledby="confirm-release-title"
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
     >
-      <div className="w-full max-w-md rounded-lg border border-neutral-200 bg-white p-6 text-neutral-900 shadow-xl dark:border-neutral-800 dark:bg-neutral-950 dark:text-neutral-100">
-        <h2 className="text-base font-semibold">Confirm release dispatch</h2>
+      <div
+        ref={dialogRef}
+        className="w-full max-w-md rounded-lg border border-neutral-200 bg-white p-6 text-neutral-900 shadow-xl dark:border-neutral-800 dark:bg-neutral-950 dark:text-neutral-100"
+      >
+        <h2 id="confirm-release-title" className="text-base font-semibold">
+          Confirm release dispatch
+        </h2>
         <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">
           This will dispatch{" "}
           <span className="font-mono">release.yml</span> on{" "}
@@ -263,6 +305,7 @@ function ConfirmModal({
         ) : null}
         <div className="mt-6 flex justify-end gap-2">
           <button
+            ref={cancelRef}
             type="button"
             onClick={onCancel}
             disabled={busy}
