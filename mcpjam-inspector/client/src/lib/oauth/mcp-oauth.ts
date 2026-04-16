@@ -8,18 +8,14 @@ import {
   discoverOAuthServerInfo,
   fetchToken,
   selectResourceURL,
-} from "@modelcontextprotocol/sdk/client/auth.js";
-import type {
-  OAuthClientProvider,
-  OAuthDiscoveryState,
-} from "@modelcontextprotocol/sdk/client/auth.js";
-import {
   DEFAULT_MCPJAM_CLIENT_ID_METADATA_URL,
   MCPJAM_CLIENT_URI,
   MCPJAM_LOGO_URI,
 } from "@mcpjam/sdk/browser";
 import type {
   HttpServerConfig,
+  OAuthClientProvider,
+  OAuthDiscoveryState,
   OAuthProtocolVersion,
 } from "@mcpjam/sdk/browser";
 import type { OAuthRegistrationStrategy } from "./profile";

@@ -48,6 +48,12 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Resolve deployed commit metadata
+        id: preview_commit
+        run: |
+          echo "deployed_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "head_sha=${{ github.event.pull_request.head.sha }}" >> "$GITHUB_OUTPUT"
+
       - name: Install preview tooling
         run: npm install -g @railway/cli workos
 
@@ -165,6 +171,8 @@ jobs:
               event_type: "inspector_preview_requested",
               client_payload: {
                 branch: "${{ steps.meta.outputs.branch }}",
+                inspector_sha: "${{ steps.preview_commit.outputs.deployed_sha }}",
+                inspector_head_sha: "${{ steps.preview_commit.outputs.head_sha }}",
                 inspector_repo: context.repo.owner + "/" + context.repo.repo,
                 inspector_pr_number: context.payload.pull_request.number,
                 inspector_environment: "${{ steps.meta.outputs.environment }}",
@@ -177,21 +185,35 @@ jobs:
         env:
           PREVIEW_URL: ${{ steps.preview_domain.outputs.url }}
           BACKEND_MODE: ${{ steps.backend_branch.outputs.exists == 'true' && 'preview requested' || 'staging fallback' }}
+          PREVIEW_DEPLOYED_SHA: ${{ steps.preview_commit.outputs.deployed_sha }}
+          PREVIEW_HEAD_SHA: ${{ steps.preview_commit.outputs.head_sha }}
         with:
           script: |
             const marker = process.env.PREVIEW_COMMENT_MARKER;
             const previewUrl = process.env.PREVIEW_URL;
             const backendMode = process.env.BACKEND_MODE;
+            const deployedSha = process.env.PREVIEW_DEPLOYED_SHA;
+            const headSha = process.env.PREVIEW_HEAD_SHA;
             const issue_number = context.payload.pull_request.number;
+            const commitLink = (sha) =>
+              sha
+                ? `[${sha.slice(0, 7)}](https://github.com/${context.repo.owner}/${context.repo.repo}/commit/${sha})`
+                : null;
             const bodyLines = [
               marker,
               "### Internal preview",
               previewUrl
                 ? `Preview URL: ${previewUrl}`
                 : "Preview URL will appear in Railway after the deploy finishes.",
+              deployedSha
+                ? `Deployed commit: ${commitLink(deployedSha)}`
+                : null,
+              headSha && headSha !== deployedSha
+                ? `PR head commit: ${commitLink(headSha)}`
+                : null,
               `Backend target: ${backendMode}.`,
               "Access is employee-only in non-production environments.",
-            ];
+            ].filter(Boolean);
             const body = bodyLines.join("\n");
 
             const comments = await github.paginate(github.rest.issues.listComments, {
@@ -240,7 +262,13 @@ jobs:
       - name: Checkout default branch
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.client_payload.inspector_git_ref || 'main' }}
+          ref: ${{ github.event.client_payload.inspector_sha || github.event.client_payload.inspector_git_ref || github.event.client_payload.branch || 'main' }}
+
+      - name: Resolve deployed commit metadata
+        id: preview_commit
+        run: |
+          echo "deployed_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "head_sha=${{ github.event.client_payload.inspector_head_sha || '' }}" >> "$GITHUB_OUTPUT"
 
       - name: Install preview tooling
         run: npm install -g @railway/cli workos
@@ -363,6 +391,8 @@ jobs:
               event_type: "inspector_preview_requested",
               client_payload: {
                 branch: "${{ steps.meta.outputs.branch }}",
+                inspector_sha: "${{ steps.preview_commit.outputs.deployed_sha }}",
+                inspector_head_sha: "${{ steps.preview_commit.outputs.head_sha || steps.preview_commit.outputs.deployed_sha }}",
                 inspector_repo: context.repo.owner + "/" + context.repo.repo,
                 inspector_pr_number: "0",
                 inspector_environment: "${{ steps.meta.outputs.environment }}",
@@ -379,11 +409,15 @@ jobs:
           PREVIEW_URL: ${{ steps.preview_domain.outputs.url }}
           BACKEND_REPO_FULL: ${{ github.event.client_payload.backend_repo }}
           BACKEND_PR_NUMBER: ${{ github.event.client_payload.backend_pr_number }}
+          PREVIEW_DEPLOYED_SHA: ${{ steps.preview_commit.outputs.deployed_sha }}
+          PREVIEW_HEAD_SHA: ${{ steps.preview_commit.outputs.head_sha || steps.preview_commit.outputs.deployed_sha }}
         with:
           github-token: ${{ secrets.BACKEND_PREVIEW_DISPATCH_TOKEN }}
           script: |
             const marker = process.env.PREVIEW_COMMENT_MARKER;
             const previewUrl = process.env.PREVIEW_URL;
+            const deployedSha = process.env.PREVIEW_DEPLOYED_SHA;
+            const headSha = process.env.PREVIEW_HEAD_SHA;
             if (process.env.BACKEND_REPO_FULL !== process.env.BACKEND_REPO) {
               core.setFailed(
                 `backend_repo '${process.env.BACKEND_REPO_FULL}' does not match allowed repo '${process.env.BACKEND_REPO}'`
@@ -402,9 +436,15 @@ jobs:
               previewUrl
                 ? `Preview URL: ${previewUrl}`
                 : "Preview URL will appear in Railway after the deploy finishes.",
+              deployedSha
+                ? `Deployed commit: [${deployedSha.slice(0, 7)}](https://github.com/${context.repo.owner}/${context.repo.repo}/commit/${deployedSha})`
+                : null,
+              headSha && headSha !== deployedSha
+                ? `PR head commit: [${headSha.slice(0, 7)}](https://github.com/${context.repo.owner}/${context.repo.repo}/commit/${headSha})`
+                : null,
               "Backend target: Convex preview requested (falls back to staging if deploy fails).",
               "Access is employee-only in non-production environments.",
-            ];
+            ].filter(Boolean);
             const body = bodyLines.join("\n");
             const comments = await github.paginate(github.rest.issues.listComments, {
               owner,
@@ -512,6 +552,14 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.client_payload.inspector_sha || github.event.client_payload.inspector_git_ref || github.event.client_payload.branch || 'main' }}
+
+      - name: Resolve deployed commit metadata
+        id: preview_commit
+        run: |
+          echo "deployed_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "head_sha=${{ github.event.client_payload.inspector_head_sha || '' }}" >> "$GITHUB_OUTPUT"
 
       - name: Install preview tooling
         run: npm install -g @railway/cli workos
@@ -604,12 +652,16 @@ jobs:
         env:
           PREVIEW_URL: ${{ steps.preview_domain.outputs.url }}
           BACKEND_MODE: ${{ steps.backend_target.outputs.backend_mode }}
+          PREVIEW_DEPLOYED_SHA: ${{ steps.preview_commit.outputs.deployed_sha }}
+          PREVIEW_HEAD_SHA: ${{ steps.preview_commit.outputs.head_sha }}
           CROSS_REPO_TOKEN: ${{ secrets.BACKEND_PREVIEW_DISPATCH_TOKEN }}
           BACKEND_REPO: ${{ vars.MCPJAM_BACKEND_REPO || 'MCPJam/mcpjam-backend' }}
         with:
           github-token: ${{ (github.event.client_payload.comment_issue_owner || '') != '' && secrets.BACKEND_PREVIEW_DISPATCH_TOKEN || github.token }}
           script: |
             const marker = process.env.PREVIEW_COMMENT_MARKER;
+            const deployedSha = process.env.PREVIEW_DEPLOYED_SHA;
+            const headSha = process.env.PREVIEW_HEAD_SHA;
             const p = context.payload.client_payload;
             const issueOwner = p.comment_issue_owner;
             const issueRepo = p.comment_issue_repo;
@@ -618,6 +670,10 @@ jobs:
               : Number(p.inspector_pr_number);
             const owner = issueOwner || context.repo.owner;
             const repo = issueRepo || context.repo.repo;
+            const commitLink = (sha) =>
+              sha
+                ? `[${sha.slice(0, 7)}](https://github.com/${context.repo.owner}/${context.repo.repo}/commit/${sha})`
+                : null;
 
             // Fail explicitly if cross-repo commenting was requested but token is missing
             if (issueOwner && !process.env.CROSS_REPO_TOKEN) {
@@ -651,9 +707,15 @@ jobs:
               process.env.PREVIEW_URL
                 ? `Preview URL: ${process.env.PREVIEW_URL}`
                 : "Preview URL will appear in Railway after the deploy finishes.",
+              deployedSha
+                ? `Deployed commit: ${commitLink(deployedSha)}`
+                : null,
+              headSha && headSha !== deployedSha
+                ? `PR head commit: ${commitLink(headSha)}`
+                : null,
               `Backend target: ${process.env.BACKEND_MODE}.`,
               "Access is employee-only in non-production environments.",
-            ];
+            ].filter(Boolean);
             const body = bodyLines.join("\n");
 
             const comments = await github.paginate(github.rest.issues.listComments, {

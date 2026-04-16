@@ -1,7 +1,7 @@
 import { memo } from "react";
 import { UIMessage } from "@ai-sdk/react";
 import { MessageCircle } from "lucide-react";
-import type { ContentBlock } from "@modelcontextprotocol/sdk/types.js";
+import type { ContentBlock } from "@modelcontextprotocol/client";
 
 import { UserMessageBubble } from "./user-message-bubble";
 import { PartSwitch } from "./part-switch";

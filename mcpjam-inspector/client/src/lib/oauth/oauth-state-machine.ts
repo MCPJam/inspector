@@ -6,7 +6,7 @@ import {
   exchangeAuthorization,
   discoverOAuthProtectedResourceMetadata,
   selectResourceURL,
-} from "@modelcontextprotocol/sdk/client/auth.js";
+} from "@mcpjam/sdk/browser";
 import { DebugMCPOAuthClientProvider } from "./debug-oauth-provider";
 
 export interface StateMachineContext {

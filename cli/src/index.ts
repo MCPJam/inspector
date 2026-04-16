@@ -1,19 +1,21 @@
 import { Command, CommanderError } from "commander";
-import { version as pkgVersion } from "../package.json";
-import { registerAppsCommands } from "./commands/apps";
-import { registerProtocolCommands } from "./commands/conformance";
-import { registerOAuthCommands } from "./commands/oauth";
-import { registerPromptCommands } from "./commands/prompts";
-import { registerResourcesCommands } from "./commands/resources";
-import { registerServerCommands } from "./commands/server";
-import { registerToolsCommands } from "./commands/tools";
+import packageJson from "../package.json" with { type: "json" };
+import { registerAppsCommands } from "./commands/apps.js";
+import { registerProtocolCommands } from "./commands/conformance.js";
+import { registerOAuthCommands } from "./commands/oauth.js";
+import { registerPromptCommands } from "./commands/prompts.js";
+import { registerResourcesCommands } from "./commands/resources.js";
+import { registerServerCommands } from "./commands/server.js";
+import { registerToolsCommands } from "./commands/tools.js";
 import {
   detectOutputFormatFromArgv,
   normalizeCliError,
   usageError,
   writeError,
-} from "./lib/output";
-import { addGlobalOptions } from "./lib/server-config";
+} from "./lib/output.js";
+import { addGlobalOptions } from "./lib/server-config.js";
+
+const pkgVersion = packageJson.version;
 
 async function main(argv: readonly string[] = process.argv): Promise<number> {
   const program = addGlobalOptions(

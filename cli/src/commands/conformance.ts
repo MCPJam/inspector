@@ -8,14 +8,14 @@ import { Command } from "commander";
 import {
   parseHeadersOption,
   parsePositiveInteger,
-} from "../lib/server-config";
+} from "../lib/server-config.js";
 import {
   resolveOutputFormat,
   setProcessExitCode,
   usageError,
   writeResult,
   type OutputFormat,
-} from "../lib/output";
+} from "../lib/output.js";
 
 export interface ProtocolConformanceOptions {
   url: string;

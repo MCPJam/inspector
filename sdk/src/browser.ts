@@ -52,6 +52,29 @@ export type {
 } from "./connect-report-types.js";
 
 export {
+  auth,
+  discoverAuthorizationServerMetadata,
+  discoverOAuthMetadata,
+  discoverOAuthProtectedResourceMetadata,
+  discoverOAuthServerInfo,
+  exchangeAuthorization,
+  fetchToken,
+  registerClient,
+  selectResourceURL,
+  startAuthorization,
+} from "./oauth/browser-auth.js";
+export type {
+  OAuthClientInformation,
+  OAuthClientInformationFull,
+  OAuthClientMetadata,
+  OAuthClientProvider,
+  OAuthDiscoveryState,
+  OAuthMetadata,
+  OAuthProtectedResourceMetadata,
+  OAuthTokens,
+} from "@modelcontextprotocol/client";
+
+export {
   DEFAULT_MCPJAM_CLIENT_ID_METADATA_URL,
   MCPJAM_CLIENT_URI,
   MCPJAM_LOGO_URI,

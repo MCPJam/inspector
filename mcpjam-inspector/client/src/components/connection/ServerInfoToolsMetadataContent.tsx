@@ -1,6 +1,6 @@
 import type { ListToolsResultWithMetadata } from "@/lib/apis/mcp-tools-api";
 import { ScrollableJsonView } from "@/components/ui/json-editor";
-import { Tool } from "@modelcontextprotocol/sdk/types.js";
+import type { Tool } from "@modelcontextprotocol/client";
 
 interface ServerInfoToolsMetadataContentProps {
   toolsData: ListToolsResultWithMetadata | null;

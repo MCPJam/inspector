@@ -1,7 +1,9 @@
-const mockCaptureEvalReportingFailure = jest.fn().mockResolvedValue(undefined);
+const sentryMocks = vi.hoisted(() => ({
+  captureEvalReportingFailure: vi.fn().mockResolvedValue(undefined),
+}));
 
-jest.mock("../src/sentry", () => ({
-  captureEvalReportingFailure: mockCaptureEvalReportingFailure,
+vi.mock("../src/sentry", () => ({
+  captureEvalReportingFailure: sentryMocks.captureEvalReportingFailure,
 }));
 
 import { createEvalRunReporter } from "../src/eval-run-reporter";
@@ -29,8 +31,8 @@ describe("createEvalRunReporter", () => {
 
   afterEach(() => {
     global.fetch = originalFetch;
-    mockCaptureEvalReportingFailure.mockClear();
-    jest.restoreAllMocks();
+    sentryMocks.captureEvalReportingFailure.mockClear();
+    vi.restoreAllMocks();
   });
 
   it("generates monotonic externalIterationId values across multiple flushes", async () => {
@@ -222,7 +224,7 @@ describe("createEvalRunReporter", () => {
   });
 
   it("resolves replay configs from agent for one-shot finalize", async () => {
-    const fetchMock = jest.fn().mockResolvedValue(
+    const fetchMock = vi.fn().mockResolvedValue(
       okResponse({
         suiteId: "suite_1",
         runId: "run_1",
@@ -234,7 +236,7 @@ describe("createEvalRunReporter", () => {
     global.fetch = fetchMock as any;
 
     const agent = {
-      getServerReplayConfigs: jest.fn().mockReturnValue([
+      getServerReplayConfigs: vi.fn().mockReturnValue([
         {
           serverId: "agent",
           url: "https://agent.example.com/mcp",
@@ -288,10 +290,10 @@ describe("createEvalRunReporter", () => {
     global.fetch = fetchMock as any;
 
     const agent = {
-      getServerReplayConfigs: jest.fn().mockReturnValue([]),
+      getServerReplayConfigs: vi.fn().mockReturnValue([]),
     };
     const mcpClientManager = {
-      getServerReplayConfigs: jest.fn().mockReturnValue([
+      getServerReplayConfigs: vi.fn().mockReturnValue([
         {
           serverId: "manager",
           url: "https://manager.example.com/mcp",
@@ -331,7 +333,7 @@ describe("createEvalRunReporter", () => {
   });
 
   it("filters inferred replay configs by serverNames for reporter uploads", async () => {
-    const fetchMock = jest.fn().mockResolvedValue(
+    const fetchMock = vi.fn().mockResolvedValue(
       okResponse({
         suiteId: "suite_1",
         runId: "run_1",
@@ -343,7 +345,7 @@ describe("createEvalRunReporter", () => {
     global.fetch = fetchMock as any;
 
     const agent = {
-      getServerReplayConfigs: jest.fn().mockReturnValue([
+      getServerReplayConfigs: vi.fn().mockReturnValue([
         {
           serverId: "asana",
           url: "https://asana.example.com/mcp",
@@ -581,7 +583,7 @@ describe("createEvalRunReporter", () => {
     }
 
     it("recordFromRun adds results and tracks count", async () => {
-      const fetchMock = jest.fn().mockResolvedValue(
+      const fetchMock = vi.fn().mockResolvedValue(
         okResponse({
           suiteId: "suite_1",
           runId: "run_1",
@@ -603,7 +605,7 @@ describe("createEvalRunReporter", () => {
     });
 
     it("recordFromSuiteRun adds results and tracks count", async () => {
-      const fetchMock = jest.fn().mockResolvedValue(
+      const fetchMock = vi.fn().mockResolvedValue(
         okResponse({
           suiteId: "suite_1",
           runId: "run_1",
@@ -709,8 +711,8 @@ describe("createEvalRunReporter", () => {
 
       await reporter.flush();
 
-      expect(mockCaptureEvalReportingFailure).toHaveBeenCalledTimes(1);
-      expect(mockCaptureEvalReportingFailure).toHaveBeenCalledWith(
+      expect(sentryMocks.captureEvalReportingFailure).toHaveBeenCalledTimes(1);
+      expect(sentryMocks.captureEvalReportingFailure).toHaveBeenCalledWith(
         expect.any(Error),
         expect.objectContaining({
           apiKey: "mcpjam_test_key",
@@ -763,8 +765,8 @@ describe("createEvalRunReporter", () => {
         failed: 0,
         passRate: 1,
       });
-      expect(mockCaptureEvalReportingFailure).toHaveBeenCalledTimes(1);
-      expect(mockCaptureEvalReportingFailure).toHaveBeenCalledWith(
+      expect(sentryMocks.captureEvalReportingFailure).toHaveBeenCalledTimes(1);
+      expect(sentryMocks.captureEvalReportingFailure).toHaveBeenCalledWith(
         expect.any(Error),
         expect.objectContaining({
           apiKey: "mcpjam_test_key",
