@@ -153,6 +153,44 @@ export async function McpDeployStatus() {
   }
 
   const compareUrl = `${REPO_URL}/compare/${liveRun.headSha}...${mainHead.sha}`;
+
+  // Divergent-history guard: the SHAs differ but main isn't ahead of live.
+  // Usually means main was force-pushed or rolled back after the last
+  // successful staging deploy, so the worker is now running commits that
+  // aren't on main. Worth flagging — the normal "N commits ahead" framing
+  // would render "0 commits ahead" here, which is confusing.
+  if (diff.aheadBy === 0) {
+    return (
+      <Tile
+        title="MCP"
+        eyebrow={
+          diff.behindBy > 0 ? "Staging ahead of main" : "Diverged from main"
+        }
+        accent="warning"
+        action={<TileAction href={compareUrl}>compare</TileAction>}
+      >
+        <HeroStat
+          value={diff.behindBy}
+          tone="warning"
+          label={
+            diff.behindBy === 1 ? "commit not on main" : "commits not on main"
+          }
+          sublabel={
+            <>
+              Main was likely force-pushed or rolled back · live staging SHA{" "}
+              <Sha
+                href={`${REPO_URL}/commit/${liveRun.headSha}`}
+                sha={shortSha(liveRun.headSha)}
+              />{" "}
+              · last deployed {formatRelativeTime(deployedAt(liveRun))}
+            </>
+          }
+          href={compareUrl}
+        />
+      </Tile>
+    );
+  }
+
   const preview = diff.commits.slice(-6).reverse();
   const hidden = diff.aheadBy - preview.length;
   const tone = driftTone(diff.aheadBy, deployedAt(liveRun));
