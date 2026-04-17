@@ -8,20 +8,30 @@ on:
       - reopened
       - closed
     # MCP-only PRs have their own preview pipeline (pr-mcp-preview.yml) that
-    # uploads a Cloudflare Worker version per push and posts a unique URL.
-    # Skip the full Railway inspector preview for PRs whose diff is confined
-    # to the MCP worker and its associated workflow file — GitHub still
-    # fires this workflow for any PR whose diff touches at least one
-    # non-ignored path, so mixed PRs still get the inspector preview.
+    # deploys a dedicated per-PR worker. Skip the full Railway inspector
+    # preview when a PR's diff is confined to MCP-only concerns: the `mcp/`
+    # package itself, its PR-preview workflow, and its staging-deploy
+    # workflow. GitHub still fires this workflow for any PR whose diff
+    # touches at least one non-ignored path, so mixed PRs still get the
+    # inspector preview.
     #
-    # If `upsert-preview` is ever added as a required status check in branch
-    # protection, MCP-only PRs will show it perpetually "Pending" and be
-    # blocked from merging — GitHub's path filter skips the workflow entirely
-    # rather than marking it green. Fix at that time by either relaxing the
-    # branch-protection rule or adding a companion always-succeeds job.
+    # Known rare edge case: if a PR opens with mixed MCP + non-MCP changes
+    # (Railway preview env created), then is force-pushed to remove all
+    # non-MCP changes before close, GitHub evaluates paths-ignore against
+    # the final PR diff and skips the `closed` event too — orphaning the
+    # Railway env. Manual cleanup via the Railway dashboard is the current
+    # answer; a follow-up can split `destroy-preview` into its own
+    # always-on-close workflow if this becomes real.
+    #
+    # If `upsert-preview` is ever added as a required status check in
+    # branch protection, MCP-only PRs will show it perpetually "Pending"
+    # and be blocked from merging — GitHub's path filter skips the workflow
+    # entirely rather than marking it green. Fix at that time by relaxing
+    # the rule or adding a companion always-succeeds job.
     paths-ignore:
       - "mcp/**"
       - ".github/workflows/pr-mcp-preview.yml"
+      - ".github/workflows/deploy-mcp-staging.yml"
   repository_dispatch:
     types:
       - backend_preview_ready
