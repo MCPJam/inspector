@@ -562,6 +562,7 @@ export default function App() {
     workspaceServers,
     connectedOrConnectingServerConfigs,
     selectedMCPConfig,
+    selectedServerEntry,
     isSelectedServerSyncing,
     handleConnect,
     handleDisconnect,
@@ -1721,7 +1722,7 @@ export default function App() {
             <ViewsTab selectedServer={appState.selectedServer} />
           )}
           {activeTab === "conformance" && (
-            <ConformanceTab server={selectedMCPConfig ?? null} />
+            <ConformanceTab server={selectedServerEntry ?? null} />
           )}
           {activeTab === "sandboxes" &&
             (billingUiEnabled &&
