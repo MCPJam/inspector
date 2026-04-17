@@ -41,6 +41,19 @@ export function RunRelease() {
     setScope(next);
     if (next !== "full") setDeployBackend(false);
     if (next === "packages-only") setPromoteProd(false);
+    // Any edit to the form is implicitly "I'm preparing the next dispatch" —
+    // clear stale success/error feedback from an earlier run so the chip
+    // next to the button always reflects the current form state.
+    setFeedback({ kind: "idle" });
+  }
+
+  function changeDeployBackend(v: boolean) {
+    setDeployBackend(v);
+    setFeedback({ kind: "idle" });
+  }
+  function changePromoteProd(v: boolean) {
+    setPromoteProd(v);
+    setFeedback({ kind: "idle" });
   }
 
   function onSubmit() {
@@ -90,23 +103,29 @@ export function RunRelease() {
   }
 
   return (
-    <Tile title="Run release">
-      <p className="mb-3 text-xs text-neutral-500">
-        Dispatches <span className="font-mono">release.yml</span> on{" "}
-        <span className="font-mono">main</span>. This is the one path to
-        production.
+    <Tile
+      title="Run release"
+      eyebrow="The one path to production"
+      accent={impactsProd ? "warning" : "info"}
+    >
+      <p className="mb-5 text-xs leading-relaxed text-ink-400">
+        Dispatches{" "}
+        <span className="font-mono text-ink-200">release.yml</span> on{" "}
+        <span className="font-mono text-ink-200">main</span>. Confirmation
+        required; the server re-checks your email before touching the write
+        token.
       </p>
 
-      <div className="space-y-4">
+      <div className="space-y-5">
         <fieldset className="space-y-2">
-          <legend className="text-xs font-medium text-neutral-700 dark:text-neutral-200">
-            scope
+          <legend className="mb-2 text-[10px] font-medium uppercase tracking-[0.14em] text-ink-500">
+            Scope
           </legend>
-          <div className="space-y-1.5">
+          <div className="space-y-2">
             {(["full", "packages-only", "inspector-only"] as const).map((s) => (
               <label
                 key={s}
-                className="flex cursor-pointer items-center gap-2 text-sm"
+                className={`flex cursor-pointer items-center gap-3 rounded-lg border px-3 py-2 text-sm transition-colors ${scope === s ? "border-signal-wait/40 bg-signal-wait/5" : "border-ink-800 hover:border-ink-700 hover:bg-ink-800/30"}`}
               >
                 <input
                   type="radio"
@@ -114,73 +133,81 @@ export function RunRelease() {
                   value={s}
                   checked={scope === s}
                   onChange={() => changeScope(s)}
-                  className="accent-neutral-800 dark:accent-neutral-200"
+                  className="accent-signal-wait"
                 />
-                <span className="font-mono text-xs text-neutral-700 dark:text-neutral-200">
-                  {s}
-                </span>
-                <span className="text-xs text-neutral-500">{SCOPE_HINT[s]}</span>
+                <span className="font-mono text-xs text-ink-100">{s}</span>
+                <span className="text-xs text-ink-400">{SCOPE_HINT[s]}</span>
               </label>
             ))}
           </div>
         </fieldset>
 
-        <div className="space-y-1.5">
-          <label className="flex cursor-pointer items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              checked={deployBackend}
-              onChange={(e) => setDeployBackend(e.target.checked)}
-              className="accent-neutral-800 dark:accent-neutral-200"
-              disabled={scope !== "full"}
-            />
-            <span className="font-mono text-xs text-neutral-700 dark:text-neutral-200">
-              deploy_backend_prod
-            </span>
-            <span className="text-xs text-neutral-500">
-              dispatch backend prod deploy (scope=full only)
-            </span>
-          </label>
-          <label className="flex cursor-pointer items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              checked={promoteProd}
-              onChange={(e) => setPromoteProd(e.target.checked)}
-              className="accent-neutral-800 dark:accent-neutral-200"
-              disabled={scope === "packages-only"}
-            />
-            <span className="font-mono text-xs text-neutral-700 dark:text-neutral-200">
-              promote_production
-            </span>
-            <span className="text-xs text-neutral-500">
-              deploy inspector to Railway prod after publish
-            </span>
-          </label>
-        </div>
+        <fieldset className="space-y-2">
+          <legend className="mb-2 text-[10px] font-medium uppercase tracking-[0.14em] text-ink-500">
+            Production flags
+          </legend>
+          <div className="space-y-2">
+            <label className={`flex cursor-pointer items-start gap-3 rounded-lg border border-ink-800 px-3 py-2 text-sm ${scope !== "full" ? "opacity-50" : "hover:border-ink-700"}`}>
+              <input
+                type="checkbox"
+                checked={deployBackend}
+                onChange={(e) => changeDeployBackend(e.target.checked)}
+                className="mt-0.5 accent-signal-wait"
+                disabled={scope !== "full"}
+              />
+              <div className="min-w-0">
+                <div className="font-mono text-xs text-ink-100">
+                  deploy_backend_prod
+                </div>
+                <div className="mt-0.5 text-xs text-ink-400">
+                  Dispatch backend production deploy (scope=full only).
+                </div>
+              </div>
+            </label>
+            <label className={`flex cursor-pointer items-start gap-3 rounded-lg border border-ink-800 px-3 py-2 text-sm ${scope === "packages-only" ? "opacity-50" : "hover:border-ink-700"}`}>
+              <input
+                type="checkbox"
+                checked={promoteProd}
+                onChange={(e) => changePromoteProd(e.target.checked)}
+                className="mt-0.5 accent-signal-wait"
+                disabled={scope === "packages-only"}
+              />
+              <div className="min-w-0">
+                <div className="font-mono text-xs text-ink-100">
+                  promote_production
+                </div>
+                <div className="mt-0.5 text-xs text-ink-400">
+                  Deploy inspector to Railway prod after publish.
+                </div>
+              </div>
+            </label>
+          </div>
+        </fieldset>
 
         {impactsProd ? (
-          <div className="rounded border border-amber-500/30 bg-amber-500/5 p-2 text-xs text-amber-700 dark:text-amber-400">
-            This run will touch production.
+          <div className="rounded-lg border border-signal-wait/30 bg-signal-wait/5 px-3 py-2 text-xs text-signal-wait">
+            <span className="font-medium">Heads up —</span> this run will
+            touch production.
           </div>
         ) : null}
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-3 pt-1">
           <button
             type="button"
             onClick={onSubmit}
             disabled={isPending}
-            className="rounded bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-neutral-700 disabled:opacity-50 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-white"
+            className={`rounded-full px-5 py-2 text-xs font-medium tracking-wide transition-all disabled:opacity-50 ${impactsProd ? "bg-signal-wait text-ink-950 hover:bg-signal-wait/90 shadow-[0_0_20px_-5px_rgba(232,195,102,0.6)]" : "bg-ink-100 text-ink-950 hover:bg-white"}`}
           >
-            Run release…
+            Run release →
           </button>
           {feedback.kind === "ok" ? (
-            <Badge tone="success">dispatched</Badge>
+            <>
+              <Badge tone="success">dispatched</Badge>
+              <span className="text-xs text-ink-400">{feedback.message}</span>
+            </>
           ) : null}
           {feedback.kind === "error" ? (
-            <span className="text-xs text-red-500">{feedback.message}</span>
-          ) : null}
-          {feedback.kind === "ok" ? (
-            <span className="text-xs text-neutral-500">{feedback.message}</span>
+            <span className="text-xs text-signal-stop">{feedback.message}</span>
           ) : null}
         </div>
       </div>
@@ -256,60 +283,75 @@ function ConfirmModal({
     return () => window.removeEventListener("keydown", onKey);
   }, [busy, onCancel]);
 
+  const impactsProd = deployBackend || promoteProd;
   return (
     <div
       role="dialog"
       aria-modal="true"
       aria-labelledby="confirm-release-title"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4"
     >
       <div
         ref={dialogRef}
-        className="w-full max-w-md rounded-lg border border-neutral-200 bg-white p-6 text-neutral-900 shadow-xl dark:border-neutral-800 dark:bg-neutral-950 dark:text-neutral-100"
+        className={`panel w-full max-w-md p-7 text-ink-100 ${impactsProd ? "panel-accent-wait" : "panel-accent-info"}`}
       >
-        <h2 id="confirm-release-title" className="text-base font-semibold">
-          Confirm release dispatch
+        <div className="text-[10px] font-medium uppercase tracking-[0.18em] text-ink-500">
+          Final confirmation
+        </div>
+        <h2
+          id="confirm-release-title"
+          className="display-hero mt-1 text-2xl text-ink-100"
+        >
+          Dispatch{" "}
+          <span className="font-mono text-[0.85em]">release.yml</span>?
         </h2>
-        <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">
-          This will dispatch{" "}
-          <span className="font-mono">release.yml</span> on{" "}
-          <span className="font-mono">main</span> with:
+        <p className="mt-3 text-sm leading-relaxed text-ink-400">
+          Fires on{" "}
+          <span className="font-mono text-ink-200">main</span> with these
+          inputs:
         </p>
-        <ul className="mt-3 space-y-1 text-sm">
-          <li>
-            <span className="font-mono text-xs text-neutral-500">scope</span>:{" "}
-            <span className="font-mono font-semibold">{scope}</span>
-          </li>
-          <li>
-            <span className="font-mono text-xs text-neutral-500">
+
+        <dl className="mt-4 space-y-2 border-l border-ink-800 pl-4 text-sm">
+          <div className="flex gap-3">
+            <dt className="w-44 font-mono text-xs text-ink-500">scope</dt>
+            <dd className="font-mono text-xs text-ink-100">{scope}</dd>
+          </div>
+          <div className="flex gap-3">
+            <dt className="w-44 font-mono text-xs text-ink-500">
               deploy_backend_prod
-            </span>
-            :{" "}
-            <span className="font-mono font-semibold">
+            </dt>
+            <dd
+              className={`font-mono text-xs ${deployBackend ? "text-signal-wait" : "text-ink-400"}`}
+            >
               {String(deployBackend)}
-            </span>
-          </li>
-          <li>
-            <span className="font-mono text-xs text-neutral-500">
+            </dd>
+          </div>
+          <div className="flex gap-3">
+            <dt className="w-44 font-mono text-xs text-ink-500">
               promote_production
-            </span>
-            :{" "}
-            <span className="font-mono font-semibold">{String(promoteProd)}</span>
-          </li>
-        </ul>
-        {(deployBackend || promoteProd) ? (
-          <p className="mt-4 rounded border border-amber-500/30 bg-amber-500/5 p-2 text-xs text-amber-700 dark:text-amber-400">
+            </dt>
+            <dd
+              className={`font-mono text-xs ${promoteProd ? "text-signal-wait" : "text-ink-400"}`}
+            >
+              {String(promoteProd)}
+            </dd>
+          </div>
+        </dl>
+
+        {impactsProd ? (
+          <p className="mt-5 rounded-lg border border-signal-wait/30 bg-signal-wait/5 px-3 py-2.5 text-xs leading-relaxed text-signal-wait">
             This is the one path to production. Release.yml will refuse to run
             unless deploy-staging.yml is green for the current main SHA.
           </p>
         ) : null}
-        <div className="mt-6 flex justify-end gap-2">
+
+        <div className="mt-7 flex justify-end gap-2">
           <button
             ref={cancelRef}
             type="button"
             onClick={onCancel}
             disabled={busy}
-            className="rounded border border-neutral-200 px-3 py-1.5 text-xs font-medium text-neutral-700 hover:bg-neutral-100 disabled:opacity-50 dark:border-neutral-800 dark:text-neutral-200 dark:hover:bg-neutral-900"
+            className="rounded-full border border-ink-700 px-4 py-2 text-xs font-medium text-ink-200 transition-colors hover:bg-ink-800 disabled:opacity-50"
           >
             Cancel
           </button>
@@ -317,9 +359,9 @@ function ConfirmModal({
             type="button"
             onClick={onConfirm}
             disabled={busy}
-            className="rounded bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-neutral-700 disabled:opacity-50 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-white"
+            className={`rounded-full px-5 py-2 text-xs font-medium tracking-wide transition-all disabled:opacity-50 ${impactsProd ? "bg-signal-wait text-ink-950 hover:bg-signal-wait/90 shadow-[0_0_20px_-5px_rgba(232,195,102,0.6)]" : "bg-ink-100 text-ink-950 hover:bg-white"}`}
           >
-            {busy ? "Dispatching…" : "Dispatch release"}
+            {busy ? "Dispatching…" : "Dispatch release →"}
           </button>
         </div>
       </div>

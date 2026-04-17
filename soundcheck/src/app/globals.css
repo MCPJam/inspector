@@ -3,11 +3,226 @@
 @tailwind utilities;
 
 :root {
-  color-scheme: light dark;
+  color-scheme: dark;
+
+  --bg-base: #0a0a0c;
+  --bg-panel: #111116;
+  --bg-panel-raised: #16161d;
+  --edge-hairline: rgba(245, 244, 239, 0.06);
+  --edge-strong: rgba(245, 244, 239, 0.12);
+  --text-primary: #f5f4ef;
+  --text-secondary: #9a9aa0;
+  --text-muted: #5a5a68;
+}
+
+html,
+body {
+  background: var(--bg-base);
+  color: var(--text-primary);
 }
 
 body {
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
-    Roboto, Helvetica, Arial, sans-serif;
   margin: 0;
+  font-feature-settings:
+    "ss01" on,
+    "cv11" on;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  min-height: 100vh;
+  position: relative;
+}
+
+/* Atmospheric background: radial warm glow + film grain.
+   Both are purely decorative, pointer-events:none. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -2;
+  background:
+    radial-gradient(
+      ellipse 80% 60% at 20% 0%,
+      rgba(232, 195, 102, 0.04),
+      transparent 60%
+    ),
+    radial-gradient(
+      ellipse 60% 50% at 90% 10%,
+      rgba(140, 180, 216, 0.035),
+      transparent 60%
+    ),
+    radial-gradient(
+      ellipse 100% 70% at 50% 120%,
+      rgba(127, 217, 154, 0.025),
+      transparent 60%
+    );
+  pointer-events: none;
+}
+
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  opacity: 0.035;
+  pointer-events: none;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.6 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* Selection matches the editorial feel */
+::selection {
+  background: rgba(232, 195, 102, 0.25);
+  color: #f5f4ef;
+}
+
+/* Thin, warm scrollbar */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(245, 244, 239, 0.08);
+  border-radius: 10px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(245, 244, 239, 0.15);
+  background-clip: padding-box;
+  border: 2px solid transparent;
+}
+
+/* Hairline divider utility */
+.hairline {
+  background-image: linear-gradient(
+    to right,
+    transparent,
+    var(--edge-hairline) 12%,
+    var(--edge-hairline) 88%,
+    transparent
+  );
+  height: 1px;
+}
+
+/* Panel — the base card surface. Slightly raised, subtle inner highlight. */
+.panel {
+  background:
+    linear-gradient(
+      180deg,
+      rgba(245, 244, 239, 0.015),
+      transparent 40%
+    ),
+    var(--bg-panel);
+  border: 1px solid var(--edge-hairline);
+  border-radius: 14px;
+  box-shadow:
+    0 1px 0 rgba(245, 244, 239, 0.03) inset,
+    0 20px 60px -20px rgba(0, 0, 0, 0.5);
+}
+
+.panel-accent-go {
+  border-left: 2px solid rgba(127, 217, 154, 0.7);
+}
+.panel-accent-stop {
+  border-left: 2px solid rgba(240, 141, 135, 0.75);
+}
+.panel-accent-wait {
+  border-left: 2px solid rgba(232, 195, 102, 0.75);
+}
+.panel-accent-info {
+  border-left: 2px solid rgba(140, 180, 216, 0.5);
+}
+
+/* Roman-numeral section marker */
+.numeral {
+  font-family: var(--font-display);
+  font-style: italic;
+  font-weight: 400;
+  font-size: 1.25rem;
+  line-height: 1;
+  color: var(--text-muted);
+  letter-spacing: 0.01em;
+}
+
+.display-hero {
+  font-family: var(--font-display);
+  font-weight: 400;
+  letter-spacing: -0.02em;
+  line-height: 0.95;
+}
+
+/* Monospace tag used for SHAs — slight tracking in, subtle uppercase weight */
+.tag-mono {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.02em;
+  color: var(--text-secondary);
+}
+
+/* Glow status dots — more refined than solid circles */
+.dot {
+  position: relative;
+  display: inline-block;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 9999px;
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.02);
+}
+.dot::after {
+  content: "";
+  position: absolute;
+  inset: -6px;
+  border-radius: 9999px;
+  background: currentColor;
+  opacity: 0.2;
+  filter: blur(4px);
+}
+.dot-go {
+  background: #7fd99a;
+  color: #7fd99a;
+}
+.dot-stop {
+  background: #f08d87;
+  color: #f08d87;
+}
+.dot-wait {
+  background: #e8c366;
+  color: #e8c366;
+}
+.dot-info {
+  background: #8cb4d8;
+  color: #8cb4d8;
+}
+.dot-run {
+  background: #8cb4d8;
+  color: #8cb4d8;
+  animation: pulse-soft 1.6s ease-in-out infinite;
+}
+.dot-neutral {
+  background: #3a3a48;
+  color: #3a3a48;
+}
+.dot-neutral::after {
+  display: none;
+}
+
+@keyframes pulse-soft {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(0.85);
+    opacity: 0.55;
+  }
+}
+
+/* Focus ring — warm, accessible. The ring inherits whatever radius the
+   focused element already has; we don't force a shape on it. */
+:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(232, 195, 102, 0.6);
 }

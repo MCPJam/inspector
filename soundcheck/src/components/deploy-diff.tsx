@@ -3,7 +3,8 @@ import {
   getLatestEnvironmentDeployment
 } from "@/lib/github";
 import { formatRelativeTime, shortSha } from "@/lib/format";
-import { Tile } from "@/components/ui";
+import { HeroStat, Sha, Tile, TileAction } from "@/components/ui";
+import type { StatusTone } from "@/components/ui";
 
 interface Props {
   title: string;
@@ -27,18 +28,31 @@ function categorize(message: string): Category {
   return "other";
 }
 
-function describeCategories(
-  counts: Record<Category, number>,
-  total: number
-): string {
-  const parts: string[] = [];
-  if (counts.feat > 0) parts.push(`${counts.feat} feature${counts.feat === 1 ? "" : "s"}`);
-  if (counts.fix > 0) parts.push(`${counts.fix} fix${counts.fix === 1 ? "" : "es"}`);
-  if (counts.chore > 0) parts.push(`${counts.chore} chore${counts.chore === 1 ? "" : "s"}`);
-  if (counts.other > 0) {
-    parts.push(`${counts.other} other commit${counts.other === 1 ? "" : "s"}`);
+function categoryLabel(cat: Category, count: number): string {
+  if (cat === "other") return "other";
+  if (count === 1) {
+    return cat === "feat" ? "feature" : cat === "fix" ? "fix" : "chore";
   }
-  return parts.length > 0 ? parts.join(", ") : `${total} commit${total === 1 ? "" : "s"}`;
+  return cat === "feat" ? "features" : cat === "fix" ? "fixes" : "chores";
+}
+
+const CATEGORY_COLOR: Record<Category, string> = {
+  feat: "text-signal-go",
+  fix: "text-signal-wait",
+  chore: "text-ink-300",
+  other: "text-ink-400"
+};
+
+function driftTone(aheadBy: number, promotedIso: string): StatusTone {
+  if (aheadBy === 0) return "success";
+  // An unparseable promoted-at shouldn't silently resolve to the low-severity
+  // "info" tone — it usually means the deployment record is ancient or
+  // malformed. Treat it as "warning" so the tile at least flags attention.
+  const promotedMs = Date.parse(promotedIso);
+  if (!Number.isFinite(promotedMs)) return "warning";
+  const ageDays = (Date.now() - promotedMs) / (24 * 60 * 60 * 1000);
+  if (aheadBy > 100 || ageDays > 21) return "warning";
+  return "info";
 }
 
 export async function DeployDiff({
@@ -57,8 +71,8 @@ export async function DeployDiff({
     ]);
   } catch (err) {
     return (
-      <Tile title={title}>
-        <p className="text-sm text-red-500">
+      <Tile title={title} accent="failure">
+        <p className="text-sm text-signal-stop">
           Failed to read deployments: {(err as Error).message}
         </p>
       </Tile>
@@ -67,20 +81,23 @@ export async function DeployDiff({
 
   if (!production) {
     return (
-      <Tile title={title}>
-        <p className="text-sm text-neutral-500">
+      <Tile title={title} accent="warning">
+        <p className="text-sm text-ink-400">
           No successful production deployment recorded for{" "}
-          <code>{productionEnvironment}</code>.
+          <code className="font-mono text-ink-200">
+            {productionEnvironment}
+          </code>
+          .
         </p>
       </Tile>
     );
   }
   if (!staging) {
     return (
-      <Tile title={title}>
-        <p className="text-sm text-neutral-500">
+      <Tile title={title} accent="warning">
+        <p className="text-sm text-ink-400">
           No successful staging deployment recorded for{" "}
-          <code>{stagingEnvironment}</code>.
+          <code className="font-mono text-ink-200">{stagingEnvironment}</code>.
         </p>
       </Tile>
     );
@@ -88,19 +105,23 @@ export async function DeployDiff({
 
   if (staging.sha === production.sha) {
     return (
-      <Tile title={title}>
-        <p className="text-sm text-neutral-500">
-          In sync on{" "}
-          <a
-            href={`${repoUrl}/commit/${production.sha}`}
-            className="font-mono text-neutral-400 hover:underline"
-            target="_blank"
-            rel="noreferrer"
-          >
-            {shortSha(production.sha)}
-          </a>
-          . Last promoted {formatRelativeTime(production.createdAt)}.
-        </p>
+      <Tile
+        title={title}
+        eyebrow="In sync"
+        accent="success"
+        action={<TileAction href={`${repoUrl}/commits/main`}>history</TileAction>}
+      >
+        <HeroStat
+          value="0"
+          tone="success"
+          label="Staging = production"
+          sublabel={
+            <>
+              On <Sha href={`${repoUrl}/commit/${production.sha}`} sha={shortSha(production.sha)} />
+              {" "}· last promoted {formatRelativeTime(production.createdAt)}
+            </>
+          }
+        />
       </Tile>
     );
   }
@@ -110,8 +131,8 @@ export async function DeployDiff({
     diff = await compareCommits(owner, repo, production.sha, staging.sha);
   } catch (err) {
     return (
-      <Tile title={title}>
-        <p className="text-sm text-red-500">
+      <Tile title={title} accent="failure">
+        <p className="text-sm text-signal-stop">
           Failed to compare commits: {(err as Error).message}
         </p>
       </Tile>
@@ -128,53 +149,55 @@ export async function DeployDiff({
     counts[categorize(c.message)]++;
   }
 
-  const commitWord = diff.aheadBy === 1 ? "commit" : "commits";
-  const breakdown = describeCategories(counts, diff.aheadBy);
   const compareUrl = `${repoUrl}/compare/${production.sha}...${staging.sha}`;
-
-  // GitHub Compare returns commits in chronological order (oldest first).
-  // Flip so the newest work shows up on top — that's what matters when
-  // deciding "should we cut a release?". Overflow count uses `aheadBy`
-  // rather than `commits.length` because the compare endpoint caps commits
-  // at 250 for wide diffs.
-  const preview = diff.commits.slice(-8).reverse();
+  const preview = diff.commits.slice(-6).reverse();
   const hidden = diff.aheadBy - preview.length;
+  const tone = driftTone(diff.aheadBy, production.createdAt);
 
   return (
-    <Tile title={title}>
-      <p className="text-sm text-neutral-500">
-        Production is{" "}
-        <a
-          href={compareUrl}
-          className="font-medium text-neutral-700 dark:text-neutral-200 hover:underline"
-          target="_blank"
-          rel="noreferrer"
-        >
-          {diff.aheadBy} {commitWord} behind staging
-        </a>{" "}
-        ({breakdown}). Last promoted{" "}
-        {formatRelativeTime(production.createdAt)}.
-      </p>
+    <Tile
+      title={title}
+      eyebrow="Production behind staging"
+      accent={tone}
+      action={<TileAction href={compareUrl}>compare</TileAction>}
+    >
+      <HeroStat
+        value={diff.aheadBy}
+        tone={tone}
+        label={diff.aheadBy === 1 ? "commit ahead" : "commits ahead"}
+        sublabel={`Last promoted ${formatRelativeTime(production.createdAt)}`}
+        href={compareUrl}
+      />
 
-      <ul className="mt-4 space-y-1">
+      {/* Category breakdown — small strip with typed counts */}
+      <div className="mt-5 flex flex-wrap gap-x-5 gap-y-1 text-[11px] font-medium uppercase tracking-wider">
+        {(Object.keys(counts) as Category[]).map((cat) =>
+          counts[cat] > 0 ? (
+            <span key={cat} className={CATEGORY_COLOR[cat]}>
+              <span className="tabular-nums">{counts[cat]}</span>
+              <span className="ml-1 text-ink-500">
+                {categoryLabel(cat, counts[cat])}
+              </span>
+            </span>
+          ) : null
+        )}
+      </div>
+
+      <div className="my-5 hairline" />
+
+      {/* Commit feed */}
+      <ul className="space-y-2">
         {preview.map((c) => (
-          <li key={c.sha} className="text-xs text-neutral-500">
-            <a
-              href={c.url}
-              className="font-mono text-neutral-400 hover:underline"
-              target="_blank"
-              rel="noreferrer"
-            >
-              {shortSha(c.sha)}
-            </a>{" "}
-            <span className="text-neutral-700 dark:text-neutral-200">
-              {c.message}
-            </span>{" "}
-            <span className="text-neutral-400">— {c.author}</span>
+          <li key={c.sha} className="group flex gap-3 text-xs leading-relaxed">
+            <Sha href={c.url} sha={shortSha(c.sha)} />
+            <div className="min-w-0 flex-1">
+              <span className="text-ink-100">{truncate(c.message, 84)}</span>
+              <span className="ml-2 text-ink-500">— {c.author}</span>
+            </div>
           </li>
         ))}
         {hidden > 0 && (
-          <li className="text-xs text-neutral-400">
+          <li className="pt-1 text-[11px] italic text-ink-500">
             + {hidden} earlier commit{hidden === 1 ? "" : "s"}
           </li>
         )}
@@ -183,10 +206,23 @@ export async function DeployDiff({
   );
 }
 
+function truncate(s: string, max: number): string {
+  if (s.length <= max) return s;
+  return s.slice(0, max - 1).trimEnd() + "…";
+}
+
 export function DeployDiffSkeleton({ title }: { title: string }) {
   return (
-    <Tile title={title}>
-      <p className="text-sm text-neutral-400">Loading…</p>
+    <Tile title={title} eyebrow="Computing diff">
+      <div className="flex items-end gap-4">
+        <span className="display-hero text-6xl text-ink-700 animate-pulse">
+          …
+        </span>
+        <div className="pb-2">
+          <div className="h-3 w-32 rounded bg-ink-800 animate-pulse" />
+          <div className="mt-2 h-2.5 w-24 rounded bg-ink-800/60 animate-pulse" />
+        </div>
+      </div>
     </Tile>
   );
 }
