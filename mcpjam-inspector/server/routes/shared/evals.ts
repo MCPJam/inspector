@@ -6,7 +6,10 @@ import {
   convertToEvalTestCases,
   generateNegativeTestCases,
 } from "../../services/negative-test-agent";
-import { startSuiteRunWithRecorder } from "../../services/evals/recorder";
+import {
+  createEphemeralRunRecorder,
+  startSuiteRunWithRecorder,
+} from "../../services/evals/recorder";
 import {
   captureToolSnapshotForEvalAuthoring,
   storeReplayConfig,
@@ -122,6 +125,57 @@ export const RunTestCaseRequestSchema = z.object({
 });
 
 export type RunTestCaseRequest = z.infer<typeof RunTestCaseRequestSchema>;
+
+/**
+ * Inline run request — carries the full test case config in the body so the
+ * runner never reads/writes Convex. Used by the guest playground where no
+ * Convex-backed testCase exists.
+ */
+export const RunInlineTestCaseRequestSchema = z.object({
+  model: z.string(),
+  provider: z.string(),
+  compareRunId: z.string().optional(),
+  serverIds: z
+    .array(z.string())
+    .min(1, { message: "At least one server must be selected" }),
+  modelApiKeys: z.record(z.string(), z.string()).optional(),
+  /**
+   * Optional bearer used only for Convex-routed LLM calls (MCPJam-provided
+   * models). Direct provider runs via AI SDK do not use this token. In hosted
+   * mode this is set from the Authorization header; in local mode the client
+   * passes a guest JWT inline.
+   */
+  convexAuthToken: z.string().optional(),
+  test: z.object({
+    title: z.string(),
+    query: z.string(),
+    runs: z.number().int().positive().optional(),
+    expectedToolCalls: z
+      .array(
+        z.object({
+          toolName: z.string(),
+          arguments: z.record(z.string(), z.any()),
+        }),
+      )
+      .optional(),
+    isNegativeTest: z.boolean().optional(),
+    scenario: z.string().optional(),
+    expectedOutput: z.string().optional(),
+    promptTurns: z.array(promptTurnSchema).optional(),
+    advancedConfig: z
+      .object({
+        system: z.string().optional(),
+        temperature: z.number().optional(),
+        toolChoice: toolChoiceSchema.optional(),
+      })
+      .passthrough()
+      .optional(),
+  }),
+});
+
+export type RunInlineTestCaseRequest = z.infer<
+  typeof RunInlineTestCaseRequestSchema
+>;
 
 export const GenerateTestsRequestSchema = z.object({
   serverIds: z
@@ -620,6 +674,190 @@ export async function runEvalTestCaseWithManager(
     message: "Test case completed successfully",
     iteration: latestIteration,
   };
+}
+
+/**
+ * Guest-mode counterpart to `runEvalTestCaseWithManager`. Runs an inline test
+ * case using an in-memory recorder so iterations never hit Convex. Returns the
+ * full iteration payload (with messages/spans) for the client to store locally.
+ *
+ * Callers: the guest inline run route. `convexAuthToken` is the guest JWT and
+ * is passed through so the streaming endpoint (for MCPJam-provided models)
+ * can still authorize the backend LLM call.
+ */
+export async function runInlineEvalTestCaseWithManager(
+  clientManager: MCPClientManager,
+  request: RunInlineTestCaseRequest,
+  options: { convexAuthToken: string },
+) {
+  const { model, provider, compareRunId, serverIds, modelApiKeys, test } =
+    request;
+  const resolvedServerIds = resolveServerIdsOrThrow(serverIds, clientManager);
+  const { convexClient, convexHttpUrl } = createConvexClients(
+    options.convexAuthToken,
+  );
+
+  const recorder = createEphemeralRunRecorder();
+  const testForRunner = {
+    title: test.title,
+    query: test.query,
+    runs: test.runs ?? 1,
+    model,
+    provider,
+    expectedToolCalls: (test.expectedToolCalls ?? []) as Array<{
+      toolName: string;
+      arguments: Record<string, any>;
+    }>,
+    isNegativeTest: test.isNegativeTest,
+    scenario: test.scenario,
+    expectedOutput: test.expectedOutput,
+    promptTurns: test.promptTurns as PromptTurn[] | undefined,
+    advancedConfig: test.advancedConfig,
+  };
+
+  await runEvalSuiteWithAiSdk({
+    suiteId: recorder.suiteId,
+    runId: null,
+    config: {
+      tests: [testForRunner],
+      environment: { servers: resolvedServerIds },
+    },
+    modelApiKeys: modelApiKeys ?? undefined,
+    convexClient,
+    convexHttpUrl,
+    convexAuthToken: options.convexAuthToken,
+    mcpClientManager: clientManager,
+    recorder,
+    persist: false,
+    compareRunId,
+  });
+
+  const [iteration] = recorder.getIterations();
+  if (!iteration) {
+    throw new WebRouteError(
+      500,
+      ErrorCode.INTERNAL_ERROR,
+      "Inline run did not produce an iteration",
+    );
+  }
+
+  return {
+    success: true,
+    message: "Test case completed successfully",
+    iteration,
+  };
+}
+
+export async function streamInlineEvalTestCaseWithManager(
+  clientManager: MCPClientManager,
+  request: RunInlineTestCaseRequest,
+  options: {
+    convexAuthToken: string;
+    onStreamComplete?: () => void;
+  },
+): Promise<ReadableStream<Uint8Array>> {
+  const { model, provider, compareRunId, serverIds, modelApiKeys, test } =
+    request;
+  const resolvedServerIds = resolveServerIdsOrThrow(serverIds, clientManager);
+  const { convexClient, convexHttpUrl } = createConvexClients(
+    options.convexAuthToken,
+  );
+
+  const testForRunner = {
+    title: test.title,
+    query: test.query,
+    runs: test.runs ?? 1,
+    model,
+    provider,
+    expectedToolCalls: (test.expectedToolCalls ?? []) as Array<{
+      toolName: string;
+      arguments: Record<string, any>;
+    }>,
+    isNegativeTest: test.isNegativeTest,
+    scenario: test.scenario,
+    expectedOutput: test.expectedOutput,
+    promptTurns: test.promptTurns as PromptTurn[] | undefined,
+    advancedConfig: test.advancedConfig,
+  };
+
+  const tools = (await clientManager.getToolsForAiSdk(
+    resolvedServerIds,
+  )) as Record<string, any>;
+  const recorder = createEphemeralRunRecorder();
+  const encoder = new TextEncoder();
+
+  const sseEncode = (event: EvalStreamEvent): Uint8Array =>
+    encoder.encode(`data: ${JSON.stringify(event)}\n\n`);
+
+  return new ReadableStream<Uint8Array>({
+    async start(controller) {
+      try {
+        const outcomes = await streamTestCase({
+          test: testForRunner,
+          tools,
+          recorder,
+          modelApiKeys: modelApiKeys ?? undefined,
+          convexHttpUrl,
+          convexAuthToken: options.convexAuthToken,
+          convexClient,
+          suiteId: recorder.suiteId,
+          runId: null,
+          compareRunId,
+          persist: false,
+          emit: (event: EvalStreamEvent) => {
+            try {
+              controller.enqueue(sseEncode(event));
+            } catch {
+              // controller may be closed
+            }
+          },
+        });
+
+        const expectedIterationId = outcomes[0]?.iterationId;
+        const iteration =
+          recorder
+            .getIterations()
+            .find((record) => record._id === expectedIterationId) ??
+          recorder.getIterations()[0] ??
+          null;
+
+        if (!iteration) {
+          throw new WebRouteError(
+            500,
+            ErrorCode.INTERNAL_ERROR,
+            "Inline stream did not produce an iteration",
+          );
+        }
+
+        controller.enqueue(
+          sseEncode({
+            type: "complete",
+            iterationId: iteration._id,
+            iteration,
+          }),
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        controller.enqueue(
+          sseEncode({
+            type: "error",
+            message,
+            details:
+              error instanceof WebRouteError && error.details
+                ? JSON.stringify(error.details)
+                : undefined,
+          }),
+        );
+      } finally {
+        try {
+          controller.close();
+        } catch {
+          // already closed
+        }
+        options.onStreamComplete?.();
+      }
+    },
+  });
 }
 
 export async function generateEvalTestsWithManager(

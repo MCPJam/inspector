@@ -4,6 +4,7 @@ import { createFetchResponse } from "@/test";
 const authFetchMock = vi.fn();
 const listHostedToolsMock = vi.fn();
 const buildHostedServerBatchRequestMock = vi.fn();
+const buildHostedServerRequestMock = vi.fn();
 
 vi.mock("@/lib/config", () => ({
   HOSTED_MODE: true,
@@ -20,6 +21,8 @@ vi.mock("@/lib/apis/web/tools-api", () => ({
 vi.mock("@/lib/apis/web/context", () => ({
   buildHostedServerBatchRequest: (...args: unknown[]) =>
     buildHostedServerBatchRequestMock(...args),
+  buildHostedServerRequest: (...args: unknown[]) =>
+    buildHostedServerRequestMock(...args),
 }));
 
 import {
@@ -28,6 +31,7 @@ import {
   listEvalTools,
   runEvals,
   runEvalTestCase,
+  streamInlineEvalTestCaseGuest,
   streamEvalTestCase,
 } from "../evals-api";
 
@@ -54,6 +58,11 @@ describe("evals-api hosted mode", () => {
         };
       },
     );
+    buildHostedServerRequestMock.mockImplementation((serverName: string) => ({
+      serverUrl: `https://${serverName.toLowerCase().replace(/\s+/g, "-")}.example.com/mcp`,
+      serverHeaders: { Authorization: "Bearer guest-oauth-token" },
+      serverName,
+    }));
     authFetchMock.mockResolvedValue(createFetchResponse({ success: true }));
   });
 
@@ -227,6 +236,82 @@ describe("evals-api hosted mode", () => {
       expect.objectContaining({
         type: "complete",
         iteration: { _id: "iter-1" },
+      }),
+    ]);
+  });
+
+  it("uses /api/web/evals/stream-test-case-inline for hosted guest compare streaming", async () => {
+    const encoder = new TextEncoder();
+    authFetchMock.mockResolvedValueOnce(
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(
+              encoder.encode(
+                [
+                  'data: {"type":"trace_snapshot","turnIndex":0,"snapshotKind":"step_finish","trace":{"traceVersion":1,"messages":[{"role":"user","content":"Hello"}]},"actualToolCalls":[],"usage":{"inputTokens":1,"outputTokens":1,"totalTokens":2}}',
+                  "",
+                  'data: {"type":"complete","iteration":{"_id":"guestiter-1"}}',
+                  "",
+                ].join("\n"),
+              ),
+            );
+            controller.close();
+          },
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "text/event-stream" },
+        },
+      ),
+    );
+
+    const events: unknown[] = [];
+    await streamInlineEvalTestCaseGuest(
+      {
+        serverNameOrId: "Server A",
+        model: "gpt-4",
+        provider: "openai",
+        compareRunId: "cmp_guest",
+        test: {
+          title: "Guest compare",
+          query: "Hello",
+        },
+      },
+      (event) => {
+        events.push(event);
+      },
+    );
+
+    expect(buildHostedServerRequestMock).toHaveBeenCalledWith("Server A");
+    expect(authFetchMock).toHaveBeenCalledWith(
+      "/api/web/evals/stream-test-case-inline",
+      expect.objectContaining({
+        method: "POST",
+      }),
+    );
+
+    const body = JSON.parse(authFetchMock.mock.calls[0][1].body);
+    expect(body).toMatchObject({
+      serverIds: ["__guest__"],
+      serverUrl: "https://server-a.example.com/mcp",
+      serverHeaders: { Authorization: "Bearer guest-oauth-token" },
+      model: "gpt-4",
+      provider: "openai",
+      compareRunId: "cmp_guest",
+      test: {
+        title: "Guest compare",
+        query: "Hello",
+      },
+    });
+    expect(events).toEqual([
+      expect.objectContaining({
+        type: "trace_snapshot",
+        snapshotKind: "step_finish",
+      }),
+      expect.objectContaining({
+        type: "complete",
+        iteration: { _id: "guestiter-1" },
       }),
     ]);
   });

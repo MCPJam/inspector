@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { PreferencesStoreProvider } from "@/stores/preferences/preferences-provider";
+import { useGuestEvalsStore } from "@/stores/guest-evals-store";
 import { TestTemplateEditor } from "../test-template-editor";
 import type { EvalIteration } from "../types";
 
@@ -26,6 +27,7 @@ const useMutationMock = vi.hoisted(() => vi.fn(() => vi.fn()));
 const useQueryMock = vi.hoisted(() => vi.fn());
 const updateTestCaseMutationMock = vi.hoisted(() => vi.fn());
 const streamEvalTestCaseMock = vi.hoisted(() => vi.fn());
+const streamInlineEvalTestCaseGuestMock = vi.hoisted(() => vi.fn());
 const useAuthMock = vi.hoisted(() => ({
   getAccessToken: vi.fn().mockResolvedValue("token"),
 }));
@@ -57,9 +59,14 @@ vi.mock("@/state/app-state-context", () => ({
   }),
 }));
 
-vi.mock("@/hooks/useViews", () => ({
-  useWorkspaceServers: () => workspaceServersMock,
-}));
+vi.mock("@/hooks/useViews", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/hooks/useViews")>();
+  return {
+    ...actual,
+    useWorkspaceServers: () => workspaceServersMock,
+  };
+});
 
 vi.mock("@/stores/client-config-store", () => ({
   useClientConfigStore: (selector: (state: any) => unknown) =>
@@ -103,6 +110,8 @@ vi.mock("@/lib/PosthogUtils", () => ({
 vi.mock("@/lib/apis/evals-api", () => ({
   listEvalTools: vi.fn().mockResolvedValue([]),
   runEvalTestCase: vi.fn(),
+  streamInlineEvalTestCaseGuest: (...args: unknown[]) =>
+    streamInlineEvalTestCaseGuestMock(...args),
   streamEvalTestCase: (...args: unknown[]) => streamEvalTestCaseMock(...args),
 }));
 
@@ -216,6 +225,7 @@ describe("TestTemplateEditor run view from route", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    useGuestEvalsStore.setState({ serverBuckets: {} });
     useMutationMock.mockReturnValue(updateTestCaseMutationMock);
     useQueryMock.mockImplementation((name: string, args: unknown) => {
       if (name === "testSuites:listTestCases") {
@@ -573,6 +583,157 @@ describe("TestTemplateEditor run view from route", () => {
     expect(retryRequest.provider).toBe("openai");
     expect(retryRequest.model).toBe("gpt-4");
     expect(updateTestCaseMutationMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("streams guest compare runs and stores completed guest iterations locally", async () => {
+    const user = userEvent.setup();
+    const delayedCompletion = createDeferred();
+    const guestSuiteId = "guestsuite-srv";
+    const guestSuite = {
+      _id: guestSuiteId,
+      createdBy: "__guest__",
+      name: "srv",
+      description: "Guest suite",
+      configRevision: "",
+      environment: { servers: ["srv"] },
+      createdAt: 1,
+      updatedAt: 1,
+      source: "ui",
+    };
+    useGuestEvalsStore.setState({
+      serverBuckets: {
+        srv: {
+          suite: guestSuite as any,
+          testCases: [caseDoc as any],
+          iterations: [],
+        },
+      },
+    });
+
+    streamInlineEvalTestCaseGuestMock.mockImplementation(
+      async (
+        request: {
+          provider: string;
+          model: string;
+          compareRunId?: string;
+        },
+        onEvent: (event: any) => void,
+      ) => {
+        const iterationId = `guestiter-${request.provider}-${request.model}`;
+        onEvent({
+          type: "trace_snapshot",
+          turnIndex: 0,
+          snapshotKind: "step_finish",
+          trace: {
+            traceVersion: 1,
+            messages: [{ role: "user", content: "hello" }],
+          },
+          actualToolCalls: [],
+          usage: {
+            inputTokens: 3,
+            outputTokens: 2,
+            totalTokens: 5,
+          },
+        });
+
+        if (request.provider === "anthropic") {
+          await delayedCompletion.promise;
+        }
+
+        onEvent({
+          type: "complete",
+          iterationId,
+          iteration: {
+            ...baseIteration,
+            _id: iterationId,
+            createdBy: "__guest__",
+            createdAt: Date.now(),
+            startedAt: Date.now(),
+            updatedAt: Date.now() + 100,
+            suiteRunId: undefined,
+            messages: [{ role: "user", content: "hello" }],
+            metadata: request.compareRunId
+              ? { compareRunId: request.compareRunId }
+              : undefined,
+            testCaseSnapshot: {
+              ...baseIteration.testCaseSnapshot!,
+              provider: request.provider,
+              model: request.model,
+            },
+          },
+        });
+      },
+    );
+
+    renderWithProviders(
+      <TestTemplateEditor
+        suiteId={guestSuiteId}
+        selectedTestCaseId="case-1"
+        connectedServerNames={new Set(["srv"])}
+        workspaceId={null}
+        isDirectGuest
+        availableModels={[
+          {
+            provider: "openai",
+            id: "gpt-4",
+            model: "gpt-4",
+            name: "GPT-4",
+            label: "GPT-4",
+          } as any,
+          {
+            provider: "anthropic",
+            id: "claude-4.5-sonnet",
+            model: "claude-4.5-sonnet",
+            name: "Claude 4.5 Sonnet",
+            label: "Claude 4.5 Sonnet",
+          } as any,
+        ]}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /run$/i })).toBeInTheDocument();
+    });
+
+    await user.click(
+      screen.getByRole("button", { name: /add model to compare/i }),
+    );
+    await user.click(screen.getByText("Claude 4.5 Sonnet"));
+    await user.click(screen.getByRole("button", { name: /run compare/i }));
+
+    await waitFor(() => {
+      expect(streamInlineEvalTestCaseGuestMock).toHaveBeenCalledTimes(2);
+    });
+
+    expect(streamEvalTestCaseMock).not.toHaveBeenCalled();
+    expect(getMetricRunningSpinnerCount(getCompareCard("Claude 4.5 Sonnet"))).toBe(
+      2,
+    );
+
+    delayedCompletion.resolve();
+
+    await waitFor(() => {
+      expect(
+        useGuestEvalsStore
+          .getState()
+          .getBucketBySuiteId(guestSuiteId)
+          ?.iterations.length,
+      ).toBe(2);
+    });
+
+    const guestIterations =
+      useGuestEvalsStore
+        .getState()
+        .getBucketBySuiteId(guestSuiteId)
+        ?.iterations ?? [];
+    expect(guestIterations.every((iteration) => iteration.testCaseId === "case-1")).toBe(
+      true,
+    );
+    expect(
+      guestIterations.every(
+        (iteration) => iteration.metadata?.compareRunId != null,
+      ),
+    ).toBe(true);
   });
 
   it("renders running spinners in the eval compare metric bars", async () => {

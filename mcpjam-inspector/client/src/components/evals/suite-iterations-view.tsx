@@ -103,6 +103,7 @@ export function SuiteIterationsView({
   onRunTestCase,
   runningTestCaseId = null,
   onContinueInChat,
+  isDirectGuest = false,
 }: {
   suite: EvalSuite;
   cases: EvalCase[];
@@ -162,6 +163,8 @@ export function SuiteIterationsView({
   onRunTestCase?: (testCase: EvalCase) => void;
   runningTestCaseId?: string | null;
   onContinueInChat?: (handoff: Omit<EvalChatHandoff, "id">) => void;
+  /** When true, source all data from the guest evals store instead of Convex. */
+  isDirectGuest?: boolean;
 }) {
   const appState = useSharedAppState();
   // Derive view state from route
@@ -482,6 +485,7 @@ export function SuiteIterationsView({
                   connectedServerNames={connectedServerNames}
                   workspaceId={workspaceId}
                   availableModels={availableModels}
+                  isDirectGuest={isDirectGuest}
                   onExportDraft={handleOpenDraftExport}
                   openCompareFromRoute={
                     route.type === "test-edit" && Boolean(route.openCompare)
@@ -646,6 +650,7 @@ export function SuiteIterationsView({
                     )
                   ) : (
                     <TestCasesOverview
+                      isDirectGuest={isDirectGuest}
                       suite={suite}
                       cases={cases}
                       allIterations={allIterations}

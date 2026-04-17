@@ -73,6 +73,8 @@ interface TestCasesOverviewProps {
    * When set (e.g. playground), show run-style selection + batch delete for test cases.
    */
   onDeleteTestCasesBatch?: (testCaseIds: string[]) => Promise<void>;
+  /** When true, skip Convex hydration and trust the caller-provided `cases`/`allIterations`. */
+  isDirectGuest?: boolean;
 }
 
 export function TestCasesOverview({
@@ -90,11 +92,12 @@ export function TestCasesOverview({
   runningTestCaseId = null,
   blockTestCaseRuns = false,
   connectedServerNames,
+  isDirectGuest = false,
 }: TestCasesOverviewProps) {
   const convex = useConvex();
   const liveCases = useQuery(
     "testSuites:listTestCases" as any,
-    { suiteId: suite._id } as any,
+    isDirectGuest ? "skip" : ({ suiteId: suite._id } as any),
   ) as EvalCase[] | undefined;
   const [hydratedIterations, setHydratedIterations] = useState<EvalIteration[]>(
     [],
@@ -177,6 +180,10 @@ export function TestCasesOverview({
   }, [onDeleteTestCasesBatch, selectedCaseIds]);
 
   useEffect(() => {
+    if (isDirectGuest) {
+      setHydratedIterations((current) => (current.length === 0 ? current : []));
+      return;
+    }
     const localIterationIds = new Set(
       allIterations.map((iteration) => iteration._id),
     );
@@ -257,7 +264,7 @@ export function TestCasesOverview({
     return () => {
       cancelled = true;
     };
-  }, [allIterations, convex, effectiveCases]);
+  }, [allIterations, convex, effectiveCases, isDirectGuest]);
 
   const effectiveIterations = useMemo(() => {
     const deduped = new Map<string, EvalIteration>();
@@ -410,15 +417,20 @@ export function TestCasesOverview({
               const isThisCaseRunning = runningTestCaseId === testCase._id;
               const isAnotherCaseRunning =
                 runningTestCaseId != null && runningTestCaseId !== testCase._id;
+              // Guests rely on the local persistent MCP manager; skip the
+              // suite-server-connected gate and let the runner surface a
+              // connection error if the server is actually missing.
+              const serverGateBlocked =
+                !isDirectGuest && missingServers.length > 0;
               const runDisabled =
                 !onRunTestCase ||
                 blockTestCaseRuns ||
                 isAnotherCaseRunning ||
                 !hasModels ||
-                missingServers.length > 0 ||
+                serverGateBlocked ||
                 isThisCaseRunning;
               const disconnectedRunTooltip =
-                missingServers.length > 0
+                serverGateBlocked
                   ? `Connect: ${missingServers.join(", ")}`
                   : null;
 

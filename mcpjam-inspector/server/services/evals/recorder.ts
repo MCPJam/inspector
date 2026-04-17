@@ -3,6 +3,7 @@ import type { ConvexHttpClient } from "convex/browser";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 import type { PromptTraceSummary } from "@/shared/eval-trace";
 import type { PromptTurn } from "@/shared/prompt-turns";
+import { randomUUID } from "node:crypto";
 import type { UsageTotals } from "./types";
 import { logger } from "../../utils/logger";
 import type { ServerToolSnapshot } from "../../utils/export-helpers.js";
@@ -275,6 +276,134 @@ export const createSuiteRunRecorder = ({
           new Error(errorMessage),
         );
       }
+    },
+  };
+};
+
+/**
+ * Captured output from a single ephemeral iteration run. Mirrors the
+ * `testIteration` fields the client needs to render results, without ever
+ * hitting Convex. Used by the guest inline run path.
+ */
+export type EphemeralIterationRecord = {
+  _id: string;
+  testCaseId?: string;
+  testCaseSnapshot?: {
+    title: string;
+    query: string;
+    provider: string;
+    model: string;
+    runs?: number;
+    expectedToolCalls: Array<{
+      toolName: string;
+      arguments: Record<string, any>;
+    }>;
+    isNegativeTest?: boolean;
+    expectedOutput?: string;
+    promptTurns?: PromptTurn[];
+    advancedConfig?: Record<string, unknown>;
+  };
+  iterationNumber: number;
+  startedAt: number;
+  createdAt: number;
+  updatedAt: number;
+  status: "pending" | "running" | "completed" | "failed" | "cancelled";
+  result: "pending" | "passed" | "failed" | "cancelled";
+  actualToolCalls: Array<{ toolName: string; arguments: Record<string, any> }>;
+  tokensUsed: number;
+  messages?: ModelMessage[];
+  spans?: EvalTraceSpan[];
+  prompts?: PromptTraceSummary[];
+  error?: string;
+  errorDetails?: string;
+  resultSource?: "reported" | "derived";
+  metadata?: Record<string, string | number | boolean>;
+};
+
+export type EphemeralRunRecorder = SuiteRunRecorder & {
+  getIterations(): EphemeralIterationRecord[];
+};
+
+/**
+ * In-memory recorder used by the guest inline run path. Captures iteration
+ * start/finish calls so the caller can return the full iteration payload
+ * without ever writing to Convex. The SuiteRunRecorder contract is still
+ * honored so the rest of the runner does not need to special-case guests.
+ */
+export const createEphemeralRunRecorder = (): EphemeralRunRecorder => {
+  const iterations = new Map<string, EphemeralIterationRecord>();
+  const makeGuestId = (prefix: "run" | "suite" | "iter") =>
+    `guest${prefix}-${randomUUID().replace(/[^A-Za-z0-9_-]/g, "")}`;
+
+  return {
+    runId: makeGuestId("run"),
+    suiteId: makeGuestId("suite"),
+    async startIteration({
+      testCaseId,
+      testCaseSnapshot,
+      iterationNumber,
+      startedAt,
+    }) {
+      const id = makeGuestId("iter");
+      iterations.set(id, {
+        _id: id,
+        testCaseId,
+        testCaseSnapshot,
+        iterationNumber,
+        startedAt,
+        createdAt: startedAt,
+        updatedAt: startedAt,
+        status: "running",
+        result: "pending",
+        actualToolCalls: [],
+        tokensUsed: 0,
+      });
+      return id;
+    },
+    async finishIteration({
+      iterationId,
+      passed,
+      toolsCalled,
+      usage,
+      messages,
+      spans,
+      prompts,
+      status,
+      startedAt,
+      error,
+      errorDetails,
+      resultSource,
+      metadata,
+    }) {
+      if (!iterationId) return;
+      const current = iterations.get(iterationId);
+      if (!current) return;
+      const iterationStatus = status ?? (passed ? "completed" : "failed");
+      const result = passed ? "passed" : "failed";
+      iterations.set(iterationId, {
+        ...current,
+        updatedAt: Date.now(),
+        startedAt: startedAt ?? current.startedAt,
+        status: iterationStatus,
+        result,
+        actualToolCalls: toolsCalled,
+        tokensUsed: usage.totalTokens ?? 0,
+        messages,
+        ...(spans?.length ? { spans } : {}),
+        ...(prompts?.length ? { prompts } : {}),
+        error,
+        errorDetails,
+        resultSource,
+        metadata,
+      });
+    },
+    async finalize() {
+      // no-op: guest inline runs are per-case, not wrapped in a suite run
+    },
+    getIterations() {
+      return Array.from(iterations.values()).sort(
+        (a, b) => a.iterationNumber - b.iterationNumber,
+      );
     },
   };
 };

@@ -99,6 +99,13 @@ export type RunEvalSuiteOptions = {
   recorder?: SuiteRunRecorder | null;
   testCaseId?: string; // For quick runs, associate iterations with a specific test case
   compareRunId?: string; // For quick compare runs, group related iterations in metadata
+  /**
+   * When false, the runner writes NOTHING to Convex. Used by the guest inline
+   * run path: the provided `recorder` handles iteration start/finish in memory
+   * and the iteration payload is returned to the caller. Defaults to true for
+   * back-compat with suite runs + authed quick runs.
+   */
+  persist?: boolean;
 };
 
 /** One executed iteration inside a suite/quick run (evaluation + optional persisted iteration id). */
@@ -471,6 +478,8 @@ type RunIterationBaseParams = {
   runId: string | null; // For cancellation checks
   abortSignal?: AbortSignal; // For aborting in-flight requests
   compareRunId?: string;
+  /** When false, skip all Convex reads/writes in this iteration. */
+  persist?: boolean;
 };
 
 type RunIterationAiSdkParams = RunIterationBaseParams & {
@@ -505,11 +514,12 @@ const runIterationWithAiSdk = async ({
   runId,
   abortSignal,
   compareRunId,
+  persist = true,
 }: RunIterationAiSdkParams) => {
   const resolvedTest = resolveEvalTestCase(test);
 
   // Check if run was cancelled before starting iteration
-  if (runId !== null) {
+  if (persist && runId !== null) {
     try {
       const currentRun = await convexClient.query(
         "testSuites:getTestSuiteRun" as any,
@@ -602,7 +612,9 @@ const runIterationWithAiSdk = async ({
 
   const iterationId = recorder
     ? await recorder.startIteration(iterationParams)
-    : await createIterationDirectly(convexClient, iterationParams);
+    : persist
+      ? await createIterationDirectly(convexClient, iterationParams)
+      : undefined;
 
   const baseMessages: ModelMessage[] = [];
   if (system) {
@@ -934,11 +946,12 @@ const runIterationViaBackend = async ({
   runId,
   abortSignal,
   compareRunId,
+  persist = true,
 }: RunIterationBackendParams) => {
   const resolvedTest = resolveEvalTestCase(test);
 
   // Check if run was cancelled before starting iteration
-  if (runId !== null) {
+  if (persist && runId !== null) {
     try {
       const currentRun = await convexClient.query(
         "testSuites:getTestSuiteRun" as any,
@@ -1022,7 +1035,9 @@ const runIterationViaBackend = async ({
 
   const iterationId = recorder
     ? await recorder.startIteration(iterationParams)
-    : await createIterationDirectly(convexClient, iterationParams);
+    : persist
+      ? await createIterationDirectly(convexClient, iterationParams)
+      : undefined;
 
   const toolDefs = Object.entries(tools).map(([name, tool]) => {
     const schema = (tool as any)?.inputSchema;
@@ -1455,6 +1470,7 @@ const runTestCase = async (params: {
   runId: string | null;
   abortSignal?: AbortSignal;
   compareRunId?: string;
+  persist?: boolean;
 }) => {
   const {
     test,
@@ -1469,6 +1485,7 @@ const runTestCase = async (params: {
     runId,
     abortSignal,
     compareRunId,
+    persist = true,
   } = params;
   const testCaseId = test.testCaseId || parentTestCaseId;
   const modelDefinition = buildModelDefinition(test);
@@ -1492,6 +1509,7 @@ const runTestCase = async (params: {
         runId,
         abortSignal,
         compareRunId,
+        persist,
       });
       outcomes.push(iterationOutcome);
       continue;
@@ -1510,6 +1528,7 @@ const runTestCase = async (params: {
       runId,
       abortSignal,
       compareRunId,
+      persist,
     });
     outcomes.push(iterationOutcome);
   }
@@ -1529,6 +1548,7 @@ export const runEvalSuiteWithAiSdk = async ({
   recorder: providedRecorder,
   testCaseId,
   compareRunId,
+  persist = true,
 }: RunEvalSuiteOptions): Promise<RunEvalSuiteWithAiSdkResult | undefined> => {
   const tests = config.tests ?? [];
   const serverIds = config.environment?.servers ?? [];
@@ -1537,10 +1557,11 @@ export const runEvalSuiteWithAiSdk = async ({
     throw new Error("No tests supplied for eval run");
   }
 
-  // For quick runs (runId === null), we don't need a recorder
+  // For quick runs (runId === null), we don't need a recorder unless one was
+  // provided (e.g. the ephemeral recorder used by the guest inline path).
   const recorder =
     runId === null
-      ? null
+      ? (providedRecorder ?? null)
       : (providedRecorder ??
         createSuiteRunRecorder({
           convexClient,
@@ -1598,6 +1619,7 @@ export const runEvalSuiteWithAiSdk = async ({
         suiteId,
         runId,
         abortSignal: abortController.signal,
+        persist,
       }),
     );
 
@@ -1753,13 +1775,14 @@ const streamIterationWithAiSdk = async ({
   abortSignal,
   emit,
   compareRunId,
+  persist = true,
 }: RunIterationAiSdkParams & {
   emit: StreamEmit;
 }): Promise<EvalIterationOutcome> => {
   const resolvedTest = resolveEvalTestCase(test);
 
   // Check if run was cancelled before starting iteration
-  if (runId !== null) {
+  if (persist && runId !== null) {
     try {
       const currentRun = await convexClient.query(
         "testSuites:getTestSuiteRun" as any,
@@ -1849,7 +1872,9 @@ const streamIterationWithAiSdk = async ({
 
   const iterationId = recorder
     ? await recorder.startIteration(iterationParams)
-    : await createIterationDirectly(convexClient, iterationParams);
+    : persist
+      ? await createIterationDirectly(convexClient, iterationParams)
+      : undefined;
 
   const baseMessages: ModelMessage[] = [];
   if (system) {
@@ -2143,7 +2168,7 @@ const streamIterationWithAiSdk = async ({
 
     if (recorder) {
       await recorder.finishIteration(finishParams);
-    } else {
+    } else if (persist) {
       await finishIterationDirectly(convexClient, finishParams);
     }
 
@@ -2262,7 +2287,7 @@ const streamIterationWithAiSdk = async ({
 
     if (recorder) {
       await recorder.finishIteration(failParams);
-    } else {
+    } else if (persist) {
       await finishIterationDirectly(convexClient, failParams);
     }
     return {
@@ -2285,13 +2310,14 @@ const streamIterationViaBackend = async ({
   abortSignal,
   emit,
   compareRunId,
+  persist = true,
 }: RunIterationBackendParams & {
   emit: StreamEmit;
 }): Promise<EvalIterationOutcome> => {
   const resolvedTest = resolveEvalTestCase(test);
 
   // Check if run was cancelled before starting iteration
-  if (runId !== null) {
+  if (persist && runId !== null) {
     try {
       const currentRun = await convexClient.query(
         "testSuites:getTestSuiteRun" as any,
@@ -2374,7 +2400,9 @@ const streamIterationViaBackend = async ({
 
   const iterationId = recorder
     ? await recorder.startIteration(iterationParams)
-    : await createIterationDirectly(convexClient, iterationParams);
+    : persist
+      ? await createIterationDirectly(convexClient, iterationParams)
+      : undefined;
 
   const toolDefs = Object.entries(tools).map(([name, tool]) => {
     const schema = (tool as any)?.inputSchema;
@@ -2958,7 +2986,7 @@ const streamIterationViaBackend = async ({
 
   if (recorder) {
     await recorder.finishIteration(finishParams);
-  } else {
+  } else if (persist) {
     await finishIterationDirectly(convexClient, finishParams);
   }
 
@@ -2982,6 +3010,7 @@ export const streamTestCase = async (params: {
   abortSignal?: AbortSignal;
   emit: StreamEmit;
   compareRunId?: string;
+  persist?: boolean;
 }) => {
   const {
     test,
@@ -2997,6 +3026,7 @@ export const streamTestCase = async (params: {
     abortSignal,
     emit,
     compareRunId,
+    persist = true,
   } = params;
   const testCaseId = test.testCaseId || parentTestCaseId;
   const modelDefinition = buildModelDefinition(test);
@@ -3021,6 +3051,7 @@ export const streamTestCase = async (params: {
         abortSignal,
         emit,
         compareRunId,
+        persist,
       });
       outcomes.push(iterationOutcome);
       continue;
@@ -3040,6 +3071,7 @@ export const streamTestCase = async (params: {
       abortSignal,
       emit,
       compareRunId,
+      persist,
     });
     outcomes.push(iterationOutcome);
   }

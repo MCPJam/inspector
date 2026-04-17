@@ -8,6 +8,7 @@ import {
 } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { useAuth } from "@workos-inc/authkit-react";
+import { useGuestEvalsStore } from "@/stores/guest-evals-store";
 import posthog from "posthog-js";
 import {
   ArrowLeft,
@@ -27,6 +28,7 @@ import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import {
   listEvalTools,
   runEvalTestCase,
+  streamInlineEvalTestCaseGuest,
   streamEvalTestCase,
 } from "@/lib/apis/evals-api";
 import { Button } from "@/components/ui/button";
@@ -119,6 +121,12 @@ interface TestTemplateEditorProps {
   openCompareFromRoute?: boolean;
   /** Deep link: exact iteration to anchor compare hydration to. */
   openCompareIterationId?: string | null;
+  /**
+   * When true, reads/writes go through the guest evals store instead of Convex.
+   * The run/compare surfaces are disabled for guests in v1 — iteration state is
+   * still sourced from the local store so previously-run results remain visible.
+   */
+  isDirectGuest?: boolean;
 }
 
 const createEmptyPromptTurn = (index: number): PromptTurn => ({
@@ -300,6 +308,7 @@ export function TestTemplateEditor({
   onContinueInChat,
   openCompareFromRoute = false,
   openCompareIterationId = null,
+  isDirectGuest = false,
 }: TestTemplateEditorProps) {
   const { getAccessToken } = useAuth();
   const { getToken, hasToken } = useAiProviderKeys();
@@ -352,40 +361,83 @@ export function TestTemplateEditor({
   const compareRunUserStoppedRef = useRef(false);
   const initializedSelectionCaseRef = useRef<string | null>(null);
 
-  const testCases = useQuery("testSuites:listTestCases" as any, {
-    suiteId,
-  }) as any[] | undefined;
-  const updateTestCaseMutation = useMutation(
+  const guestBucket = useGuestEvalsStore((state) => {
+    if (!isDirectGuest) return null;
+    return (
+      Object.values(state.serverBuckets).find(
+        (bucket) => bucket.suite._id === suiteId,
+      ) ?? null
+    );
+  });
+  const guestUpdateTestCase = useGuestEvalsStore(
+    (state) => state.updateTestCase,
+  );
+
+  const convexTestCases = useQuery(
+    "testSuites:listTestCases" as any,
+    isDirectGuest ? "skip" : { suiteId },
+  ) as any[] | undefined;
+  const testCases = isDirectGuest
+    ? (guestBucket?.testCases ?? [])
+    : convexTestCases;
+
+  const convexUpdateTestCaseMutation = useMutation(
     "testSuites:updateTestCase" as any,
   );
+  const updateTestCaseMutation = isDirectGuest
+    ? async (args: { testCaseId: string; [key: string]: unknown }) => {
+        const { testCaseId, ...updates } = args;
+        guestUpdateTestCase(testCaseId, updates as any);
+        return null;
+      }
+    : convexUpdateTestCaseMutation;
 
   const currentTestCase = useMemo(() => {
     if (!testCases) return null;
     return testCases.find((tc: any) => tc._id === selectedTestCaseId) || null;
   }, [testCases, selectedTestCaseId]);
 
-  const routeCompareAnchorIteration = useQuery(
+  const convexRouteCompareAnchorIteration = useQuery(
     "testSuites:getTestIteration" as any,
-    routeCompareAnchorIterationId
+    !isDirectGuest && routeCompareAnchorIterationId
       ? { iterationId: routeCompareAnchorIterationId }
       : "skip",
   ) as EvalIteration | null | undefined;
-  const lastSavedIteration = useQuery(
+  const routeCompareAnchorIteration = isDirectGuest
+    ? (guestBucket?.iterations.find(
+        (i) => i._id === routeCompareAnchorIterationId,
+      ) ?? null)
+    : convexRouteCompareAnchorIteration;
+
+  const convexLastSavedIteration = useQuery(
     "testSuites:getTestIteration" as any,
-    currentTestCase?.lastMessageRun
+    !isDirectGuest && currentTestCase?.lastMessageRun
       ? { iterationId: currentTestCase.lastMessageRun }
       : "skip",
   ) as EvalIteration | undefined;
-  const recentIterations = useQuery(
+  const lastSavedIteration = isDirectGuest
+    ? (guestBucket?.iterations.find(
+        (i) => i._id === currentTestCase?.lastMessageRun,
+      ) ?? undefined)
+    : convexLastSavedIteration;
+
+  const convexRecentIterations = useQuery(
     "testSuites:listTestIterations" as any,
-    currentTestCase?._id
+    !isDirectGuest && currentTestCase?._id
       ? ({ testCaseId: currentTestCase._id, limit: 200 } as any)
       : "skip",
   ) as EvalIteration[] | undefined;
+  const recentIterations = isDirectGuest
+    ? (guestBucket?.iterations.filter(
+        (i) => i.testCaseId === currentTestCase?._id,
+      ) ?? [])
+    : convexRecentIterations;
 
-  const suite = useQuery("testSuites:getTestSuite" as any, {
-    suiteId,
-  }) as any;
+  const convexSuite = useQuery(
+    "testSuites:getTestSuite" as any,
+    isDirectGuest ? "skip" : { suiteId },
+  ) as any;
+  const suite = isDirectGuest ? (guestBucket?.suite ?? null) : convexSuite;
 
   useEffect(() => {
     setEditorMode(openCompareFromRoute ? "run" : "config");
@@ -447,7 +499,10 @@ export function TestTemplateEditor({
     );
   }, [suite, connectedServerNames]);
 
-  const canRun = missingServers.length === 0;
+  // Guests rely on the local persistent MCP manager; don't block Run on the
+  // connected-servers check — the runner surfaces a connection error if the
+  // server is genuinely missing.
+  const canRun = isDirectGuest || missingServers.length === 0;
 
   useEffect(() => {
     let cancelled = false;
@@ -1162,11 +1217,14 @@ export function TestTemplateEditor({
         });
 
         const preparedRun = await prepareSingleTestCaseRun({
-          workspaceId,
+          workspaceId: isDirectGuest ? null : workspaceId,
           suite,
           testCase: currentTestCase,
           selectedModel: modelValue,
-          getAccessToken,
+          // Guests have no WorkOS session; calling WorkOS `getAccessToken`
+          // directly throws `LoginRequiredError`. Swallow it — the inline
+          // guest path attaches the guest JWT separately.
+          getAccessToken: isDirectGuest ? async () => null : getAccessToken,
           getToken,
           hasToken,
           testCaseOverrides: {
@@ -1306,113 +1364,170 @@ export function TestTemplateEditor({
           compareAbortControllersRef.current[modelValue] = abortController;
 
           try {
-            await streamEvalTestCase(
-              {
-                ...request.request,
-                compareRunId,
-                skipLastMessageRunUpdate: true,
-              },
-              (event) => {
-                if (compareRequestGenByModelRef.current[modelValue] !== myGen)
-                  return;
+            const handleStreamEvent = (event: any) => {
+              if (compareRequestGenByModelRef.current[modelValue] !== myGen) {
+                return;
+              }
 
-                if (event.type === "complete") {
-                  const record = buildCompareRunRecord({
-                    modelValue,
-                    modelLabel,
-                    iteration: (event.iteration as EvalIteration) ?? null,
-                    completedAt: Date.now(),
-                  });
-                  setCompareRunRecords((previous) => ({
-                    ...previous,
-                    [modelValue]: {
-                      ...record,
-                      streamingTrace: previous[modelValue]?.streamingTrace,
-                      streamingDraftMessages:
-                        previous[modelValue]?.streamingDraftMessages,
-                      streamingActualToolCalls:
-                        previous[modelValue]?.streamingActualToolCalls,
-                      streamingMetrics: previous[modelValue]?.streamingMetrics,
-                    },
-                  }));
+              if (event.type === "complete") {
+                const iteration = event.iteration
+                  ? ({
+                      ...event.iteration,
+                      ...(isDirectGuest
+                        ? {
+                            testCaseId: currentTestCase._id,
+                            metadata: {
+                              ...(event.iteration.metadata ?? {}),
+                              compareRunId,
+                            },
+                          }
+                        : {}),
+                    } as EvalIteration)
+                  : null;
 
-                  posthog.capture("compare_model_completed", {
-                    location: "test_template_editor",
-                    platform: detectPlatform(),
-                    environment: detectEnvironment(),
-                    suite_id: suiteId,
-                    test_case_id: currentTestCase._id,
-                    compare_run_id: compareRunId,
-                    model: modelValue,
-                    result: record.result ?? "unknown",
-                    duration_ms: record.metrics.durationMs ?? null,
-                    tool_call_count: record.metrics.toolCallCount,
-                    mismatch_count: record.metrics.mismatchCount,
-                  });
-                  return;
+                if (isDirectGuest && iteration) {
+                  useGuestEvalsStore.getState().addIteration(iteration);
                 }
 
-                if (event.type === "error") {
-                  setCompareRunRecords((previous) => {
-                    const existing = previous[modelValue];
-                    const failedRecord: CompareRunRecord = {
-                      ...buildCompareRunRecord({
-                        modelValue,
-                        modelLabel,
-                        iteration: null,
-                        error: event.message,
-                        startedAt: existing?.startedAt ?? Date.now(),
-                        completedAt: Date.now(),
-                      }),
-                      status: "failed",
-                      error: event.message,
-                      streamingTrace: existing?.streamingTrace,
-                      streamingDraftMessages: existing?.streamingDraftMessages,
-                      streamingActualToolCalls:
-                        existing?.streamingActualToolCalls,
-                      streamingMetrics: existing?.streamingMetrics,
-                    };
-                    return {
-                      ...previous,
-                      [modelValue]: failedRecord,
-                    };
-                  });
-                  return;
-                }
+                const record = buildCompareRunRecord({
+                  modelValue,
+                  modelLabel,
+                  iteration,
+                  completedAt: Date.now(),
+                });
+                setCompareRunRecords((previous) => ({
+                  ...previous,
+                  [modelValue]: {
+                    ...record,
+                    streamingTrace: previous[modelValue]?.streamingTrace,
+                    streamingDraftMessages:
+                      previous[modelValue]?.streamingDraftMessages,
+                    streamingActualToolCalls:
+                      previous[modelValue]?.streamingActualToolCalls,
+                    streamingMetrics: previous[modelValue]?.streamingMetrics,
+                  },
+                }));
 
-                // Reduce stream event into progressive state
+                posthog.capture("compare_model_completed", {
+                  location: "test_template_editor",
+                  platform: detectPlatform(),
+                  environment: detectEnvironment(),
+                  suite_id: suiteId,
+                  test_case_id: currentTestCase._id,
+                  compare_run_id: compareRunId,
+                  model: modelValue,
+                  result: record.result ?? "unknown",
+                  duration_ms: record.metrics.durationMs ?? null,
+                  tool_call_count: record.metrics.toolCallCount,
+                  mismatch_count: record.metrics.mismatchCount,
+                });
+                return;
+              }
+
+              if (event.type === "error") {
                 setCompareRunRecords((previous) => {
                   const existing = previous[modelValue];
-                  if (!existing) return previous;
-                  const streamState = reduceEvalStreamEvent(
-                    {
-                      trace: existing.streamingTrace ?? null,
-                      draftMessages: existing.streamingDraftMessages ?? [],
-                      actualToolCalls: existing.streamingActualToolCalls ?? [],
-                      tokensUsed: existing.streamingMetrics?.tokensUsed ?? 0,
-                      toolCallCount:
-                        existing.streamingMetrics?.toolCallCount ?? 0,
-                      currentTurnIndex: initialEvalStreamState.currentTurnIndex,
-                    },
-                    event,
-                  );
+                  const failedRecord: CompareRunRecord = {
+                    ...buildCompareRunRecord({
+                      modelValue,
+                      modelLabel,
+                      iteration: null,
+                      error: event.message,
+                      startedAt: existing?.startedAt ?? Date.now(),
+                      completedAt: Date.now(),
+                    }),
+                    status: "failed",
+                    error: event.message,
+                    streamingTrace: existing?.streamingTrace,
+                    streamingDraftMessages: existing?.streamingDraftMessages,
+                    streamingActualToolCalls:
+                      existing?.streamingActualToolCalls,
+                    streamingMetrics: existing?.streamingMetrics,
+                  };
                   return {
                     ...previous,
-                    [modelValue]: {
-                      ...existing,
-                      streamingTrace: streamState.trace ?? undefined,
-                      streamingDraftMessages: streamState.draftMessages,
-                      streamingActualToolCalls: streamState.actualToolCalls,
-                      streamingMetrics: {
-                        tokensUsed: streamState.tokensUsed,
-                        toolCallCount: streamState.toolCallCount,
-                      },
-                    },
+                    [modelValue]: failedRecord,
                   };
                 });
-              },
-              abortController.signal,
-            );
+                return;
+              }
+
+              setCompareRunRecords((previous) => {
+                const existing = previous[modelValue];
+                if (!existing) return previous;
+                const streamState = reduceEvalStreamEvent(
+                  {
+                    trace: existing.streamingTrace ?? null,
+                    draftMessages: existing.streamingDraftMessages ?? [],
+                    actualToolCalls: existing.streamingActualToolCalls ?? [],
+                    tokensUsed: existing.streamingMetrics?.tokensUsed ?? 0,
+                    toolCallCount:
+                      existing.streamingMetrics?.toolCallCount ?? 0,
+                    currentTurnIndex: initialEvalStreamState.currentTurnIndex,
+                  },
+                  event,
+                );
+                return {
+                  ...previous,
+                  [modelValue]: {
+                    ...existing,
+                    streamingTrace: streamState.trace ?? undefined,
+                    streamingDraftMessages: streamState.draftMessages,
+                    streamingActualToolCalls: streamState.actualToolCalls,
+                    streamingMetrics: {
+                      tokensUsed: streamState.tokensUsed,
+                      toolCallCount: streamState.toolCallCount,
+                    },
+                  },
+                };
+              });
+            };
+
+            if (isDirectGuest) {
+              const serverName = suite.environment?.servers?.[0];
+              if (!serverName) {
+                throw new Error(
+                  "Guest runs need a server on this suite's environment.",
+                );
+              }
+              const [providerPart, ...modelParts] = modelValue.split("/");
+              await streamInlineEvalTestCaseGuest(
+                {
+                  serverNameOrId: serverName,
+                  provider: providerPart ?? "",
+                  model: modelParts.join("/"),
+                  compareRunId,
+                  modelApiKeys: request.request.modelApiKeys,
+                  test: {
+                    title: currentTestCase.title,
+                    query: savePayload.query,
+                    runs: savePayload.runs,
+                    expectedToolCalls:
+                      (savePayload.expectedToolCalls as Array<{
+                        toolName: string;
+                        arguments: Record<string, unknown>;
+                      }>) ?? [],
+                    isNegativeTest: savePayload.isNegativeTest,
+                    scenario: savePayload.scenario,
+                    expectedOutput: savePayload.expectedOutput,
+                    promptTurns: savePayload.promptTurns,
+                    advancedConfig: savePayload.advancedConfig,
+                  },
+                },
+                handleStreamEvent,
+                abortController.signal,
+              );
+            } else {
+              await streamEvalTestCase(
+                {
+                  ...request.request,
+                  compareRunId,
+                  skipLastMessageRunUpdate: true,
+                },
+                handleStreamEvent,
+                abortController.signal,
+              );
+            }
 
             // Stream completed — return the final record
             return new Promise<CompareRunRecord>((resolve) => {
@@ -1761,7 +1876,7 @@ export function TestTemplateEditor({
                     disabled={!editForm}
                   >
                     <Code2 className="mr-2 h-3.5 w-3.5" />
-                    Export
+                    Setup SDK
                   </Button>
                 ) : null}
                 {hasUnsavedChanges ? (

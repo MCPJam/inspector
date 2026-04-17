@@ -10,11 +10,14 @@ import {
   GenerateNegativeTestsRequestSchema,
   GenerateTestsRequestSchema,
   RunEvalsRequestSchema,
+  RunInlineTestCaseRequestSchema,
   RunTestCaseRequestSchema,
   generateEvalTestsWithManager,
   generateNegativeEvalTestsWithManager,
   runEvalsWithManager,
   runEvalTestCaseWithManager,
+  runInlineEvalTestCaseWithManager,
+  streamInlineEvalTestCaseWithManager,
   streamEvalTestCaseWithManager,
 } from "../shared/evals.js";
 
@@ -240,6 +243,42 @@ evals.post("/run-test-case", async (c) => {
   }
 });
 
+/**
+ * Local inline run — used by the guest playground in npx/electron. Accepts the
+ * full test config inline so no Convex testCase record is required. Writes are
+ * captured by an in-memory recorder; the iteration is returned to the client.
+ * `convexAuthToken` (guest JWT) is only used by the Convex-routed LLM proxy
+ * when MCPJam-provided models are selected.
+ */
+evals.post("/run-test-case-inline", async (c) => {
+  try {
+    const body = await c.req.json();
+    const validationResult = RunInlineTestCaseRequestSchema.safeParse(body);
+    if (!validationResult.success) {
+      return c.json(
+        {
+          error: "Invalid request body",
+          details: validationResult.error.issues,
+        },
+        400,
+      );
+    }
+
+    return c.json(
+      await runInlineEvalTestCaseWithManager(
+        c.mcpClientManager,
+        validationResult.data,
+        {
+          convexAuthToken: validationResult.data.convexAuthToken ?? "",
+        },
+      ),
+    );
+  } catch (error) {
+    logger.error("[Error running inline test case]", error);
+    return jsonRouteError(c, error);
+  }
+});
+
 evals.post("/stream-test-case", async (c) => {
   try {
     const body = await c.req.json();
@@ -268,6 +307,41 @@ evals.post("/stream-test-case", async (c) => {
     });
   } catch (error) {
     logger.error("[Error streaming test case]", error);
+    return jsonRouteError(c, error);
+  }
+});
+
+evals.post("/stream-test-case-inline", async (c) => {
+  try {
+    const body = await c.req.json();
+    const validationResult = RunInlineTestCaseRequestSchema.safeParse(body);
+    if (!validationResult.success) {
+      return c.json(
+        {
+          error: "Invalid request body",
+          details: validationResult.error.issues,
+        },
+        400,
+      );
+    }
+
+    const stream = await streamInlineEvalTestCaseWithManager(
+      c.mcpClientManager,
+      validationResult.data,
+      {
+        convexAuthToken: validationResult.data.convexAuthToken ?? "",
+      },
+    );
+
+    return new Response(stream, {
+      headers: {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive",
+      },
+    });
+  } catch (error) {
+    logger.error("[Error streaming inline test case]", error);
     return jsonRouteError(c, error);
   }
 });

@@ -16,6 +16,9 @@ const mocks = vi.hoisted(() => ({
   navigatePlaygroundEvalsRoute: vi.fn(),
   createTestSuiteMutation: vi.fn(),
   updateSuiteMutation: vi.fn(),
+  handleGenerateTests: vi.fn(),
+  ensureGuestSuite: vi.fn(),
+  isDirectGuest: false,
 }));
 
 vi.mock("@workos-inc/authkit-react", () => ({
@@ -40,6 +43,10 @@ vi.mock("@/hooks/use-eval-tab-context", () => ({
     canDeleteRuns: false,
     availableModels: [],
   }),
+}));
+
+vi.mock("@/hooks/use-is-direct-guest", () => ({
+  useIsDirectGuest: () => mocks.isDirectGuest,
 }));
 
 vi.mock("@/state/app-state-context", () => ({
@@ -104,7 +111,7 @@ vi.mock("../evals/use-eval-handlers", () => ({
     cancellingRunId: null,
     runningTestCaseId: null,
     isGeneratingTests: false,
-    handleGenerateTests: vi.fn(),
+    handleGenerateTests: mocks.handleGenerateTests,
     handleCreateTestCase: vi.fn(),
     handleRerun: vi.fn(),
     handleCancelRun: vi.fn(),
@@ -117,6 +124,13 @@ vi.mock("../evals/use-eval-handlers", () => ({
     confirmDeleteRun: vi.fn(),
     confirmDeleteTestCase: vi.fn(),
   }),
+}));
+
+vi.mock("@/stores/guest-evals-store", () => ({
+  useGuestEvalsStore: (selector: (state: { ensureSuite: typeof mocks.ensureGuestSuite }) => unknown) =>
+    selector({
+      ensureSuite: mocks.ensureGuestSuite,
+    }),
 }));
 
 vi.mock("../evals/use-eval-queries", () => ({
@@ -217,6 +231,7 @@ function makeSuiteQueries(serverName: string, suiteId: string, testId: string) {
 describe("EvalsTab route guard", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.isDirectGuest = false;
     mocks.route.current = {
       type: "test-edit",
       suiteId: "suite-a",
@@ -283,6 +298,58 @@ describe("EvalsTab route guard", () => {
           view: "test-cases",
         },
         { replace: true },
+      );
+    });
+  });
+
+  it("creates the signed-in suite after a guest initialized the same server in the same tab", async () => {
+    mocks.useEvalQueries.mockReturnValue({
+      suiteOverview: [],
+      suiteDetails: undefined,
+      suiteRuns: undefined,
+      selectedSuiteEntry: null,
+      selectedSuite: null,
+      sortedIterations: [],
+      runsForSelectedSuite: [],
+      activeIterations: [],
+      sortedSuites: [],
+      isOverviewLoading: false,
+      isSuiteDetailsLoading: false,
+      isSuiteRunsLoading: false,
+      enableOverviewQuery: true,
+      enableSuiteDetailsQuery: false,
+    });
+    mocks.createTestSuiteMutation.mockResolvedValue({ _id: "suite-created" });
+
+    mocks.isDirectGuest = true;
+    const view = render(
+      <EvalsTab selectedServer="server-a" workspaceId="ws-1" />,
+    );
+
+    await waitFor(() => {
+      expect(mocks.ensureGuestSuite).toHaveBeenCalledWith("server-a");
+    });
+
+    mocks.isDirectGuest = false;
+    view.rerender(<EvalsTab selectedServer="server-a" workspaceId="ws-1" />);
+
+    await waitFor(() => {
+      expect(mocks.createTestSuiteMutation).toHaveBeenCalledWith({
+        workspaceId: "ws-1",
+        name: "server-a",
+        description: "Explore cases for server-a",
+        environment: { servers: ["server-a"] },
+      });
+    });
+
+    await waitFor(() => {
+      expect(mocks.updateSuiteMutation).toHaveBeenCalledWith({
+        suiteId: "suite-created",
+        tags: ["explore"],
+      });
+      expect(mocks.handleGenerateTests).toHaveBeenCalledWith(
+        "suite-created",
+        ["server-a"],
       );
     });
   });

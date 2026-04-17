@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { startSuiteRunWithRecorder } from "../recorder.js";
+import {
+  createEphemeralRunRecorder,
+  startSuiteRunWithRecorder,
+} from "../recorder.js";
 
 describe("startSuiteRunWithRecorder", () => {
   it("forwards tool snapshot metadata when creating a suite run", async () => {
@@ -151,5 +154,95 @@ describe("startSuiteRunWithRecorder", () => {
         },
       }),
     );
+  });
+});
+
+describe("createEphemeralRunRecorder", () => {
+  it("stores inline trace payloads with router-safe guest ids", async () => {
+    const recorder = createEphemeralRunRecorder();
+    const startedAt = 1_234;
+
+    expect(recorder.runId).toMatch(/^guestrun-[A-Za-z0-9_-]+$/);
+    expect(recorder.suiteId).toMatch(/^guestsuite-[A-Za-z0-9_-]+$/);
+
+    const iterationId = await recorder.startIteration({
+      testCaseId: "guestcase-1",
+      testCaseSnapshot: {
+        title: "Guest run",
+        query: "hello",
+        provider: "openai",
+        model: "gpt-4",
+        expectedToolCalls: [],
+      },
+      iterationNumber: 1,
+      startedAt,
+    });
+
+    expect(iterationId).toMatch(/^guestiter-[A-Za-z0-9_-]+$/);
+
+    await recorder.finishIteration({
+      iterationId,
+      passed: false,
+      toolsCalled: [{ toolName: "search", arguments: { q: "hello" } }],
+      usage: {
+        inputTokens: 10,
+        outputTokens: 5,
+        totalTokens: 15,
+      },
+      messages: [{ role: "user", content: [{ type: "text", text: "hello" }] }],
+      spans: [
+        {
+          id: "step-1",
+          name: "Search",
+          category: "step",
+          startMs: 0,
+          endMs: 1,
+        },
+      ],
+      prompts: [
+        {
+          promptIndex: 0,
+          prompt: "hello",
+          expectedToolCalls: [],
+          actualToolCalls: [{ toolName: "search", arguments: { q: "hello" } }],
+          passed: false,
+          missing: [],
+          unexpected: [],
+          argumentMismatches: [],
+        },
+      ],
+      resultSource: "derived",
+      metadata: { compareRunId: "cmp_guest_1" },
+      error: "No answer",
+    });
+
+    expect(recorder.getIterations()).toEqual([
+      expect.objectContaining({
+        _id: iterationId,
+        testCaseId: "guestcase-1",
+        startedAt,
+        status: "failed",
+        result: "failed",
+        tokensUsed: 15,
+        actualToolCalls: [{ toolName: "search", arguments: { q: "hello" } }],
+        messages: [
+          { role: "user", content: [{ type: "text", text: "hello" }] },
+        ],
+        spans: [
+          expect.objectContaining({
+            id: "step-1",
+            name: "Search",
+          }),
+        ],
+        prompts: [
+          expect.objectContaining({
+            prompt: "hello",
+            passed: false,
+          }),
+        ],
+        metadata: { compareRunId: "cmp_guest_1" },
+        error: "No answer",
+      }),
+    ]);
   });
 });

@@ -1,5 +1,9 @@
 import type { PromptTurn } from "@/shared/prompt-turns";
-import type { EvalTraceBlobV1 } from "@/shared/eval-trace";
+import type {
+  EvalTraceBlobV1,
+  EvalTraceSpan,
+  PromptTraceSummary,
+} from "@/shared/eval-trace";
 import type { EvalStreamToolCall } from "@/shared/eval-stream-events";
 import type { TraceMessage } from "./trace-viewer-adapter";
 
@@ -102,6 +106,9 @@ export type EvalIteration = {
   iterationNumber: number;
   updatedAt: number;
   blob?: string;
+  messages?: EvalTraceBlobV1["messages"];
+  spans?: EvalTraceSpan[];
+  prompts?: PromptTraceSummary[];
   status: "pending" | "running" | "completed" | "failed" | "cancelled";
   result: "pending" | "passed" | "failed" | "cancelled";
   actualToolCalls: Array<{

@@ -1,6 +1,7 @@
 import type { ConvexReactClient } from "convex/react";
 import {
   generateEvalTests,
+  generateEvalTestsGuest,
   type GeneratedEvalTestCase,
 } from "@/lib/apis/evals-api";
 import type { PromptTurn } from "@/shared/prompt-turns";
@@ -102,6 +103,14 @@ export type GenerateAndPersistEvalTestsOptions = {
   createTestCase: (input: CreateEvalTestCaseInput) => Promise<unknown>;
   /** When true, skips API call and creation if the suite already has test cases. */
   skipIfExistingCases?: boolean;
+  /**
+   * When true, uses the guest generate path (direct serverUrl, no Convex) and
+   * skips Convex-backed existing-case lookup. Caller is responsible for
+   * providing a `listExistingCases` function to mirror the same skip behavior.
+   */
+  isDirectGuest?: boolean;
+  /** Override the listing source (used for guest mode, where Convex is not available). */
+  listExistingCases?: () => Array<Record<string, unknown>> | Promise<Array<Record<string, unknown>>>;
 };
 
 export type GenerateAndPersistEvalTestsResult = {
@@ -121,16 +130,23 @@ export async function generateAndPersistEvalTests(
     serverIds,
     createTestCase,
     skipIfExistingCases = false,
+    isDirectGuest = false,
+    listExistingCases,
   } = options;
 
-  const existingTestCases = await convex.query(
-    "testSuites:listTestCases" as any,
-    { suiteId },
-  );
-
-  const existingList = Array.isArray(existingTestCases)
-    ? (existingTestCases as Array<Record<string, unknown>>)
-    : [];
+  let existingList: Array<Record<string, unknown>> = [];
+  if (listExistingCases) {
+    const listed = await listExistingCases();
+    existingList = Array.isArray(listed) ? listed : [];
+  } else if (!isDirectGuest) {
+    const existingTestCases = await convex.query(
+      "testSuites:listTestCases" as any,
+      { suiteId },
+    );
+    existingList = Array.isArray(existingTestCases)
+      ? (existingTestCases as Array<Record<string, unknown>>)
+      : [];
+  }
 
   if (skipIfExistingCases && existingList.length > 0) {
     return {
@@ -145,16 +161,21 @@ export async function generateAndPersistEvalTests(
     modelsToUse = defaultEvalModels();
   }
 
-  const accessToken = await getAccessToken();
-  if (!accessToken) {
+  // Guests don't have a WorkOS token; the guest JWT is attached via authFetch.
+  const accessToken = isDirectGuest
+    ? undefined
+    : (await getAccessToken()) ?? null;
+  if (!isDirectGuest && !accessToken) {
     throw new Error("Not authenticated");
   }
 
-  const result = await generateEvalTests({
-    workspaceId,
-    serverIds,
-    convexAuthToken: accessToken,
-  });
+  const result = isDirectGuest
+    ? await generateEvalTestsGuest({ serverNameOrId: serverIds[0]! })
+    : await generateEvalTests({
+        workspaceId,
+        serverIds,
+        convexAuthToken: accessToken,
+      });
 
   const tests = result.tests ?? [];
   if (tests.length === 0) {

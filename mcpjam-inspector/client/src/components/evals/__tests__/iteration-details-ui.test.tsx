@@ -206,6 +206,54 @@ describe("IterationDetails full layout (trace-first)", () => {
       container.querySelector('[data-testid="iteration-tool-calls-section"]'),
     ).toBeNull();
   });
+
+  it("renders inline guest trace data without fetching a blob", async () => {
+    const inlineIteration: EvalIteration = {
+      ...iteration,
+      _id: "guestiter-1",
+      messages: [{ role: "user", content: "hello" }] as EvalIteration["messages"],
+      spans: [
+        {
+          id: "step-1",
+          name: "Step 1",
+          category: "step",
+          startMs: 0,
+          endMs: 1,
+        },
+      ],
+      prompts: [
+        {
+          promptIndex: 0,
+          prompt: "hello",
+          expectedToolCalls: [],
+          actualToolCalls: [],
+          passed: true,
+          missing: [],
+          unexpected: [],
+          argumentMismatches: [],
+        },
+      ],
+    };
+
+    const { container } = render(
+      <IterationDetails
+        layoutMode="full"
+        iteration={inlineIteration}
+        testCase={testCase}
+      />,
+    );
+
+    const viewer = await screen.findByTestId("mock-trace-viewer");
+
+    expect(viewer).toHaveAttribute("data-chrome-density", "compact");
+    expect(mockGetBlob).not.toHaveBeenCalled();
+    expect(
+      container.querySelector('[data-testid="iteration-tool-calls-section"]'),
+    ).toBeNull();
+    expect(
+      container.querySelector('[data-testid="iteration-trace-section"]'),
+    ).not.toBeNull();
+  });
 });
 
 describe("IterationDetails trace blob load error", () => {

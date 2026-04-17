@@ -1,26 +1,39 @@
 import { Hono } from "hono";
+import { MCPClientManager } from "@mcpjam/sdk";
 import { z } from "zod";
 import { createConvexClient } from "../../services/evals/route-helpers.js";
 import { executeSuiteReplayFromRun } from "../../services/evals/replay-suite-run.js";
 import { runTraceRepairJob } from "../../services/evals/trace-repair-runner.js";
 import { logger } from "../../utils/logger.js";
+import { INSPECTOR_MCP_RETRY_POLICY } from "../../utils/mcp-retry-policy.js";
+import { OAuthProxyError, validateUrl } from "../../utils/oauth-proxy.js";
 import {
   createAuthorizedManager,
+  guestServerInputSchema,
   handleRoute,
   parseWithSchema,
   readJsonBody,
   withEphemeralConnection,
 } from "./auth.js";
-import { assertBearerToken, ErrorCode, WebRouteError } from "./errors.js";
+import {
+  assertBearerToken,
+  ErrorCode,
+  WebRouteError,
+  mapRuntimeError,
+  webError,
+} from "./errors.js";
 import {
   GenerateNegativeTestsRequestSchema,
   GenerateTestsRequestSchema,
   RunEvalsRequestSchema,
+  RunInlineTestCaseRequestSchema,
   RunTestCaseRequestSchema,
   generateEvalTestsWithManager,
   generateNegativeEvalTestsWithManager,
   runEvalsWithManager,
   runEvalTestCaseWithManager,
+  runInlineEvalTestCaseWithManager,
+  streamInlineEvalTestCaseWithManager,
   streamEvalTestCaseWithManager,
 } from "../shared/evals.js";
 
@@ -45,6 +58,15 @@ const hostedRunEvalsSchema = RunEvalsRequestSchema.omit({
 const hostedRunTestCaseSchema = RunTestCaseRequestSchema.omit({
   serverIds: true,
   convexAuthToken: true,
+}).extend(hostedBatchSchema.shape);
+
+/**
+ * Inline-run schema. Guests submit the full test config inline (no Convex
+ * testCaseId). The guest path in `withEphemeralConnection` adds a synthetic
+ * `workspaceId: "__guest__"` so this schema still parses.
+ */
+const hostedRunInlineTestCaseSchema = RunInlineTestCaseRequestSchema.omit({
+  serverIds: true,
 }).extend(hostedBatchSchema.shape);
 
 const hostedGenerateTestsSchema = GenerateTestsRequestSchema.omit({
@@ -116,6 +138,24 @@ evals.post("/run-test-case", async (c) =>
   ),
 );
 
+/**
+ * Guest inline run: runs a test case that only exists client-side. No Convex
+ * writes. Returns the full iteration object inline. Routed through
+ * `withEphemeralConnection` so the existing guest path (serverUrl + guest JWT)
+ * authorizes and connects without a workspace.
+ */
+evals.post("/run-test-case-inline", async (c) =>
+  withEphemeralConnection(
+    c,
+    hostedRunInlineTestCaseSchema,
+    (manager, body) =>
+      runInlineEvalTestCaseWithManager(manager, body, {
+        convexAuthToken: assertBearerToken(c),
+      }),
+    { rpcLogs: false },
+  ),
+);
+
 evals.post("/stream-test-case", async (c) => {
   const bearerToken = assertBearerToken(c);
   const rawBody = await readJsonBody<Record<string, unknown>>(c);
@@ -168,6 +208,90 @@ evals.post("/stream-test-case", async (c) => {
   } catch (error) {
     await manager.disconnectAllServers();
     throw error;
+  }
+});
+
+evals.post("/stream-test-case-inline", async (c) => {
+  const bearerToken = assertBearerToken(c);
+  const rawBody = await readJsonBody<Record<string, unknown>>(c);
+
+  try {
+    const guestId = c.get("guestId") as string | undefined;
+    if (!guestId) {
+      throw new WebRouteError(
+        401,
+        ErrorCode.UNAUTHORIZED,
+        "Valid guest token required. Please refresh the page to obtain a new session.",
+      );
+    }
+
+    const guestInput = parseWithSchema(guestServerInputSchema, rawBody);
+    try {
+      await validateUrl(guestInput.serverUrl, true);
+    } catch (error) {
+      if (error instanceof OAuthProxyError) {
+        throw new WebRouteError(
+          error.status,
+          ErrorCode.VALIDATION_ERROR,
+          error.message,
+        );
+      }
+      throw error;
+    }
+
+    const body = parseWithSchema(hostedRunInlineTestCaseSchema, {
+      ...rawBody,
+      workspaceId: "__guest__",
+      serverId: "__guest__",
+    });
+
+    const headers: Record<string, string> = {
+      ...(guestInput.serverHeaders ?? {}),
+    };
+    if (typeof rawBody.oauthAccessToken === "string") {
+      headers["Authorization"] = `Bearer ${rawBody.oauthAccessToken}`;
+    }
+
+    const manager = new MCPClientManager(
+      {
+        __guest__: {
+          url: guestInput.serverUrl,
+          capabilities: guestInput.clientCapabilities,
+          requestInit: { headers },
+          timeout: 60_000,
+        },
+      },
+      {
+        defaultTimeout: 60_000,
+        retryPolicy: INSPECTOR_MCP_RETRY_POLICY,
+      },
+    );
+
+    const stream = await streamInlineEvalTestCaseWithManager(
+      manager,
+      body,
+      {
+        convexAuthToken: bearerToken,
+        onStreamComplete: () => manager.disconnectAllServers(),
+      },
+    );
+
+    return new Response(stream, {
+      headers: {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive",
+      },
+    });
+  } catch (error) {
+    const routeError = mapRuntimeError(error);
+    return webError(
+      c,
+      routeError.status,
+      routeError.code,
+      routeError.message,
+      routeError.details,
+    );
   }
 });
 

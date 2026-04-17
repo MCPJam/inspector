@@ -29,9 +29,11 @@ import {
   getEvalApiEndpoints,
   runEvals,
   runEvalTestCase,
+  runInlineEvalTestCaseGuest,
 } from "@/lib/apis/evals-api";
 import { generateAndPersistEvalTests } from "@/lib/evals/generate-and-persist-tests";
 import { collectUniqueModelsFromTestCases } from "@/lib/evals/collect-unique-suite-models";
+import { useGuestEvalsStore } from "@/stores/guest-evals-store";
 import {
   getDefaultTestCaseModelValue,
   prepareSingleTestCaseRun,
@@ -66,6 +68,8 @@ interface UseEvalHandlersProps {
    * routes (`#/ci-evals/...`). Defaults to main evals (`#/evals/...`).
    */
   evalsNavigationContext?: "evals" | "ci-evals";
+  /** When true, all Convex reads/writes are routed through the guest store. */
+  isDirectGuest?: boolean;
 }
 
 /**
@@ -80,6 +84,7 @@ export function useEvalHandlers({
   connectedServerNames,
   latestRunBySuiteId,
   evalsNavigationContext = "evals",
+  isDirectGuest = false,
 }: UseEvalHandlersProps) {
   const convex = useConvex();
   const { getAccessToken } = useAuth();
@@ -471,10 +476,12 @@ export function useEvalHandlers({
         const preparedResults = await Promise.allSettled(
           modelValuesToRun.map((selectedModel) =>
             prepareSingleTestCaseRun({
-              workspaceId,
+              workspaceId: isDirectGuest ? null : workspaceId,
               suite,
               testCase,
-              getAccessToken,
+              getAccessToken: isDirectGuest
+                ? async () => null
+                : getAccessToken,
               getToken,
               hasToken,
               selectedModel,
@@ -524,10 +531,62 @@ export function useEvalHandlers({
             });
 
             try {
-              const data = await runEvalTestCase({
-                ...preparedRun.request,
-                skipLastMessageRunUpdate: isMultiModelRun || undefined,
-              });
+              const data = isDirectGuest
+                ? await (async () => {
+                    const serverName = suite.environment?.servers?.[0];
+                    if (!serverName) {
+                      throw new Error(
+                        "Guest runs need a server connected to this suite.",
+                      );
+                    }
+                    const [providerPart, ...modelParts] =
+                      preparedRun.modelValue.split("/");
+                    const modelName = modelParts.join("/");
+                    const result = await runInlineEvalTestCaseGuest({
+                      serverNameOrId: serverName,
+                      provider: providerPart!,
+                      model: modelName,
+                      modelApiKeys: preparedRun.request.modelApiKeys,
+                      test: {
+                        title: testCase.title,
+                        query: testCase.query,
+                        runs: testCase.runs,
+                        expectedToolCalls:
+                          (testCase.expectedToolCalls as Array<{
+                            toolName: string;
+                            arguments: Record<string, unknown>;
+                          }>) ?? [],
+                        isNegativeTest: testCase.isNegativeTest,
+                        scenario: testCase.scenario,
+                        expectedOutput: testCase.expectedOutput,
+                        promptTurns: testCase.promptTurns,
+                        advancedConfig: testCase.advancedConfig,
+                      },
+                    });
+                    if (result?.iteration) {
+                      const storeIteration = {
+                        ...result.iteration,
+                        testCaseId: testCase._id,
+                      };
+                      useGuestEvalsStore
+                        .getState()
+                        .addIteration(storeIteration);
+                      if (!isMultiModelRun) {
+                        useGuestEvalsStore
+                          .getState()
+                          .setLastMessageRun(
+                            testCase._id,
+                            storeIteration._id ?? null,
+                          );
+                      }
+                      return { ...result, iteration: storeIteration };
+                    }
+                    return result;
+                  })()
+                : await runEvalTestCase({
+                    ...preparedRun.request,
+                    skipLastMessageRunUpdate: isMultiModelRun || undefined,
+                  });
               const iteration = data?.iteration;
 
               if (iteration) {
@@ -647,6 +706,7 @@ export function useEvalHandlers({
       getAccessToken,
       getToken,
       hasToken,
+      isDirectGuest,
     ],
   );
 
@@ -800,12 +860,17 @@ export function useEvalHandlers({
 
       try {
         // Get test cases for the suite to extract models
-        const testCases = await convex.query(
-          "testSuites:listTestCases" as any,
-          { suiteId },
-        );
+        const testCases = isDirectGuest
+          ? useGuestEvalsStore.getState().listTestCases(suiteId)
+          : await convex.query("testSuites:listTestCases" as any, {
+              suiteId,
+            });
 
-        const modelsToUse = collectUniqueModelsFromTestCases(testCases);
+        const collectedModels = collectUniqueModelsFromTestCases(testCases);
+        const modelsToUse =
+          collectedModels.length > 0
+            ? collectedModels
+            : [{ provider: "anthropic", model: "anthropic/claude-haiku-4.5" }];
 
         const testCaseId = await mutations.createTestCaseMutation({
           suiteId: suiteId,
@@ -849,6 +914,7 @@ export function useEvalHandlers({
       mutations.createTestCaseMutation,
       convex,
       navigateAfterTestCaseMutation,
+      isDirectGuest,
     ],
   );
 
@@ -980,8 +1046,17 @@ export function useEvalHandlers({
           workspaceId,
           suiteId,
           serverIds,
-          createTestCase: mutations.createTestCaseMutation,
+          createTestCase: mutations.createTestCaseMutation as (
+            input: any,
+          ) => Promise<unknown>,
           skipIfExistingCases: false,
+          isDirectGuest,
+          listExistingCases: isDirectGuest
+            ? () =>
+                useGuestEvalsStore.getState().listTestCases(suiteId) as Array<
+                  Record<string, unknown>
+                >
+            : undefined,
         });
 
         if (outcome.apiReturnedTests === 0) {
@@ -1017,6 +1092,7 @@ export function useEvalHandlers({
       convex,
       mutations.createTestCaseMutation,
       workspaceId,
+      isDirectGuest,
     ],
   );
 

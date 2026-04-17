@@ -4,9 +4,11 @@ import { getSessionToken } from "@/lib/session-token";
 import {
   buildHostedEvalServerBatchRequest,
   buildHostedServerBatchRequest,
+  buildHostedServerRequest,
 } from "@/lib/apis/web/context";
 import { listHostedTools } from "@/lib/apis/web/tools-api";
 import { authFetch } from "@/lib/session-token";
+import { getGuestBearerToken } from "@/lib/guest-session";
 import type { EvalStreamEvent } from "@/shared/eval-stream-events";
 import type { PromptTurn } from "@/shared/prompt-turns";
 
@@ -16,7 +18,9 @@ export const EVALS_API_ENDPOINTS = {
     generateTests: "/api/mcp/evals/generate-tests",
     generateNegativeTests: "/api/mcp/evals/generate-negative-tests",
     runTestCase: "/api/mcp/evals/run-test-case",
+    runTestCaseInline: "/api/mcp/evals/run-test-case-inline",
     streamTestCase: "/api/mcp/evals/stream-test-case",
+    streamTestCaseInline: "/api/mcp/evals/stream-test-case-inline",
     replayRun: "/api/mcp/evals/replay-run",
     traceRepairStart: "/api/mcp/evals/trace-repair/start",
     traceRepairStop: "/api/mcp/evals/trace-repair/stop",
@@ -26,7 +30,9 @@ export const EVALS_API_ENDPOINTS = {
     generateTests: "/api/web/evals/generate-tests",
     generateNegativeTests: "/api/web/evals/generate-negative-tests",
     runTestCase: "/api/web/evals/run-test-case",
+    runTestCaseInline: "/api/web/evals/run-test-case-inline",
     streamTestCase: "/api/web/evals/stream-test-case",
+    streamTestCaseInline: "/api/web/evals/stream-test-case-inline",
     replayRun: "/api/web/evals/replay-run",
     traceRepairStart: "/api/web/evals/trace-repair/start",
     traceRepairStop: "/api/web/evals/trace-repair/stop",
@@ -269,6 +275,205 @@ export async function generateEvalTests(
   });
 }
 
+type GuestServerPayload = {
+  serverUrl: string;
+  serverHeaders?: Record<string, string>;
+  serverName?: string;
+  oauthAccessToken?: string;
+  clientCapabilities?: Record<string, unknown>;
+};
+
+/**
+ * Shape the guest server descriptor into the body fragment that
+ * `withEphemeralConnection`'s guest path expects. Callers spread this into
+ * their request body alongside `serverIds: ["__guest__"]`.
+ */
+function buildGuestEvalServerFragment(
+  serverNameOrId: string,
+): GuestServerPayload {
+  const serverPayload = buildHostedServerRequest(
+    serverNameOrId,
+  ) as GuestServerPayload;
+  if (!serverPayload.serverUrl) {
+    throw new Error(
+      `Guest eval request requires a direct serverUrl for "${serverNameOrId}". Is the server configured locally?`,
+    );
+  }
+  return serverPayload;
+}
+
+/**
+ * Guest-mode variant of `generateEvalTests`. In hosted mode, sends the direct
+ * serverUrl body shape that `withEphemeralConnection`'s guest path recognizes.
+ * In local mode (npx/electron), sends the normal body shape to the local
+ * `/api/mcp/evals/generate-tests` and attaches a guest JWT as `convexAuthToken`
+ * so the Convex LLM proxy accepts the request.
+ */
+export async function generateEvalTestsGuest({
+  serverNameOrId,
+}: {
+  serverNameOrId: string;
+}): Promise<GenerateEvalTestsResponse> {
+  if (isHostedMode()) {
+    const serverPayload = buildGuestEvalServerFragment(serverNameOrId);
+    const body: JsonRecord = {
+      serverIds: ["__guest__"],
+      ...serverPayload,
+    };
+    return postEvalRequest(EVALS_API_ENDPOINTS.hosted.generateTests, body);
+  }
+
+  const guestToken = await getGuestBearerToken();
+  if (!guestToken) {
+    throw new Error(
+      "Could not obtain a guest session. Try refreshing the page.",
+    );
+  }
+  const body: JsonRecord = {
+    serverIds: [serverNameOrId],
+    convexAuthToken: guestToken,
+  };
+  return postEvalRequest(EVALS_API_ENDPOINTS.local.generateTests, body);
+}
+
+export type RunInlineEvalTestCaseGuestRequest = {
+  serverNameOrId: string;
+  model: string;
+  provider: string;
+  compareRunId?: string;
+  modelApiKeys?: Record<string, string>;
+  test: {
+    title: string;
+    query: string;
+    runs?: number;
+    expectedToolCalls?: Array<{
+      toolName: string;
+      arguments: Record<string, unknown>;
+    }>;
+    isNegativeTest?: boolean;
+    scenario?: string;
+    expectedOutput?: string;
+    promptTurns?: PromptTurn[];
+    advancedConfig?: Record<string, unknown>;
+  };
+};
+
+/**
+ * Guest-mode inline run. Hosted mode hits the hosted inline endpoint using the
+ * direct serverUrl body. Local mode (npx/electron) hits the local inline route
+ * which uses the persistent MCP client manager. Both paths run the test with
+ * an ephemeral recorder and return the full iteration object for local storage.
+ */
+export async function runInlineEvalTestCaseGuest(
+  request: RunInlineEvalTestCaseGuestRequest,
+): Promise<{ success: boolean; iteration: any }> {
+  if (isHostedMode()) {
+    const serverPayload = buildGuestEvalServerFragment(request.serverNameOrId);
+    const body: JsonRecord = {
+      serverIds: ["__guest__"],
+      ...serverPayload,
+      model: request.model,
+      provider: request.provider,
+      ...(request.compareRunId ? { compareRunId: request.compareRunId } : {}),
+      ...(request.modelApiKeys ? { modelApiKeys: request.modelApiKeys } : {}),
+      test: request.test as unknown as JsonRecord,
+    };
+    return postEvalRequest(EVALS_API_ENDPOINTS.hosted.runTestCaseInline, body);
+  }
+
+  // Local mode: attach guest JWT so Convex-routed LLM calls (MCPJam models)
+  // are authorized; direct provider calls via AI SDK ignore this token.
+  const guestToken = await getGuestBearerToken();
+  const body: JsonRecord = {
+    serverIds: [request.serverNameOrId],
+    model: request.model,
+    provider: request.provider,
+    ...(request.compareRunId ? { compareRunId: request.compareRunId } : {}),
+    ...(request.modelApiKeys ? { modelApiKeys: request.modelApiKeys } : {}),
+    test: request.test as unknown as JsonRecord,
+    ...(guestToken ? { convexAuthToken: guestToken } : {}),
+  };
+  return postEvalRequest(EVALS_API_ENDPOINTS.local.runTestCaseInline, body);
+}
+
+async function streamEvalRequest(
+  endpoint: string,
+  payload: JsonRecord,
+  onEvent: (event: EvalStreamEvent) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const response = await authFetch(endpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+    signal,
+  });
+
+  if (!response.ok) {
+    let errorMessage = `Request failed (${response.status})`;
+    try {
+      const body = await response.json();
+      if (typeof body?.error === "string") errorMessage = body.error;
+      else if (typeof body?.message === "string") errorMessage = body.message;
+    } catch {
+      // ignore parse errors
+    }
+    throw new Error(errorMessage);
+  }
+
+  const reader = response.body?.getReader();
+  if (!reader) {
+    throw new Error("No response body for streaming");
+  }
+
+  const decoder = new TextDecoder();
+  let buffer = "";
+  const emitSseLine = (line: string) => {
+    const trimmedLine = line.trim();
+    if (!trimmedLine.startsWith("data: ")) {
+      return;
+    }
+    const data = trimmedLine.slice(6).trim();
+    if (!data || data === "[DONE]") {
+      return;
+    }
+    try {
+      const event = JSON.parse(data) as EvalStreamEvent;
+      onEvent(event);
+    } catch {
+      // ignore malformed lines
+    }
+  };
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+
+      for (const line of lines) {
+        emitSseLine(line);
+      }
+    }
+
+    buffer += decoder.decode();
+    for (const line of buffer.split("\n")) {
+      emitSseLine(line);
+    }
+  } finally {
+    try {
+      reader.releaseLock?.();
+    } catch {
+      // ignore
+    }
+  }
+}
+
 export async function generateNegativeEvalTests(
   request: GenerateTestsRequest,
 ): Promise<GenerateEvalTestsResponse> {
@@ -345,74 +550,47 @@ export async function streamEvalTestCase(
     ? (mergeHostedServerBatch(request) as JsonRecord)
     : (request as JsonRecord);
 
-  const response = await authFetch(endpoint, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-    signal,
-  });
+  return streamEvalRequest(endpoint, payload, onEvent, signal);
+}
 
-  if (!response.ok) {
-    let errorMessage = `Request failed (${response.status})`;
-    try {
-      const body = await response.json();
-      if (typeof body?.error === "string") errorMessage = body.error;
-      else if (typeof body?.message === "string") errorMessage = body.message;
-    } catch {
-      // ignore parse errors
-    }
-    throw new Error(errorMessage);
+export async function streamInlineEvalTestCaseGuest(
+  request: RunInlineEvalTestCaseGuestRequest,
+  onEvent: (event: EvalStreamEvent) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  if (isHostedMode()) {
+    const serverPayload = buildGuestEvalServerFragment(request.serverNameOrId);
+    const payload: JsonRecord = {
+      serverIds: ["__guest__"],
+      ...serverPayload,
+      model: request.model,
+      provider: request.provider,
+      ...(request.compareRunId ? { compareRunId: request.compareRunId } : {}),
+      ...(request.modelApiKeys ? { modelApiKeys: request.modelApiKeys } : {}),
+      test: request.test as unknown as JsonRecord,
+    };
+    return streamEvalRequest(
+      EVALS_API_ENDPOINTS.hosted.streamTestCaseInline,
+      payload,
+      onEvent,
+      signal,
+    );
   }
 
-  const reader = response.body?.getReader();
-  if (!reader) {
-    throw new Error("No response body for streaming");
-  }
-
-  const decoder = new TextDecoder();
-  let buffer = "";
-  const emitSseLine = (line: string) => {
-    const trimmedLine = line.trim();
-    if (!trimmedLine.startsWith("data: ")) {
-      return;
-    }
-    const data = trimmedLine.slice(6).trim();
-    if (!data || data === "[DONE]") {
-      return;
-    }
-    try {
-      const event = JSON.parse(data) as EvalStreamEvent;
-      onEvent(event);
-    } catch {
-      // ignore malformed lines
-    }
+  const guestToken = await getGuestBearerToken();
+  const payload: JsonRecord = {
+    serverIds: [request.serverNameOrId],
+    model: request.model,
+    provider: request.provider,
+    ...(request.compareRunId ? { compareRunId: request.compareRunId } : {}),
+    ...(request.modelApiKeys ? { modelApiKeys: request.modelApiKeys } : {}),
+    test: request.test as unknown as JsonRecord,
+    ...(guestToken ? { convexAuthToken: guestToken } : {}),
   };
-
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) {
-        break;
-      }
-
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() || "";
-
-      for (const line of lines) {
-        emitSseLine(line);
-      }
-    }
-
-    buffer += decoder.decode();
-    for (const line of buffer.split("\n")) {
-      emitSseLine(line);
-    }
-  } finally {
-    try {
-      reader.releaseLock?.();
-    } catch {
-      // ignore
-    }
-  }
+  return streamEvalRequest(
+    EVALS_API_ENDPOINTS.local.streamTestCaseInline,
+    payload,
+    onEvent,
+    signal,
+  );
 }

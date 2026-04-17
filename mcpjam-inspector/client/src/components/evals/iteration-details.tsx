@@ -1,5 +1,4 @@
-import { useAction } from "convex/react";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { EvalIteration, EvalCase } from "./types";
 import { TraceViewer } from "./trace-viewer";
 import {
@@ -31,6 +30,7 @@ import {
   resolveIterationDisplayExpectedToolCalls,
   resolvePromptTurns,
 } from "@/shared/prompt-turns";
+import { useEvalTraceBlob } from "./use-eval-trace-blob";
 
 const TOOL_ARGUMENT_BLOCK_THRESHOLD = 120;
 const TOOL_CALLS_SUMMARY_MAX_LEN = 160;
@@ -239,16 +239,8 @@ export function IterationDetails({
   /** Run-level case insight caption; shown under the trace toolbar or at top when no trace blob. */
   caseInsightSlot?: ReactNode;
 }) {
-  const getBlob = useAction(
-    "testSuites:getTestIterationBlob" as any,
-  ) as unknown as (args: { blobId: string }) => Promise<any>;
-
-  const [blob, setBlob] = useState<any>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [blobRetryTick, setBlobRetryTick] = useState(0);
   const [isBlobErrorDetailsOpen, setIsBlobErrorDetailsOpen] = useState(false);
-  const prevBlobIdRef = useRef<string | undefined>(undefined);
   const [toolViewMode, setToolViewMode] = useState<"formatted" | "raw">(
     "formatted",
   );
@@ -263,40 +255,19 @@ export function IterationDetails({
   const [toolCallsSectionOpen, setToolCallsSectionOpen] = useState(() =>
     layoutMode === "full" ? iteration.result !== "passed" : true,
   );
+  const {
+    blob,
+    loading,
+    error,
+  } = useEvalTraceBlob({
+    iteration,
+    enabled: true,
+    retryKey: blobRetryTick,
+  });
 
   useEffect(() => {
-    let cancelled = false;
-    async function run() {
-      if (!iteration.blob) {
-        prevBlobIdRef.current = undefined;
-        setBlob(null);
-        setLoading(false);
-        setError(null);
-        return;
-      }
-      if (prevBlobIdRef.current !== iteration.blob) {
-        prevBlobIdRef.current = iteration.blob;
-        setIsBlobErrorDetailsOpen(false);
-      }
-      setLoading(true);
-      setError(null);
-      try {
-        const data = await getBlob({ blobId: iteration.blob });
-        if (!cancelled) setBlob(data);
-      } catch (e: any) {
-        if (!cancelled) {
-          setError(e?.message || "Failed to load blob");
-          console.error("Blob load error:", e);
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    }
-    run();
-    return () => {
-      cancelled = true;
-    };
-  }, [iteration.blob, getBlob, blobRetryTick]);
+    setIsBlobErrorDetailsOpen(false);
+  }, [iteration._id, iteration.blob]);
 
   useEffect(() => {
     if (layoutMode !== "full") return;
@@ -587,7 +558,12 @@ export function IterationDetails({
 
   const hasToolCalls =
     expectedToolCalls.length > 0 || actualToolCalls.length > 0;
-  const traceFirst = layoutMode === "full" && Boolean(iteration.blob);
+  const hasTraceData = blob != null;
+  const hasTraceSource =
+    Boolean(iteration.blob) || hasTraceData || loading || Boolean(error);
+  const waitingForTraceData =
+    Boolean(iteration.blob) && !hasTraceData && !error;
+  const traceFirst = layoutMode === "full" && hasTraceSource;
   const toolCallsSummary = formatToolCallsSummary(
     expectedToolCalls,
     actualToolCalls,
@@ -702,7 +678,7 @@ export function IterationDetails({
   );
 
   const toolCallsSection =
-    hasToolCalls && !iteration.blob ? (
+    hasToolCalls && !hasTraceSource ? (
       layoutMode === "full" ? (
         <Collapsible
           open={toolCallsSectionOpen}
@@ -754,7 +730,7 @@ export function IterationDetails({
       )
     ) : null;
 
-  const traceSection = iteration.blob ? (
+  const traceSection = hasTraceSource ? (
     <div
       className={cn(
         "flex flex-col",
@@ -770,7 +746,7 @@ export function IterationDetails({
         className={cn(
           layoutMode === "compact" && "rounded-md bg-muted/20 p-3",
           layoutMode === "full" &&
-            iteration.blob &&
+            hasTraceSource &&
             !error &&
             "flex min-h-0 flex-1 flex-col",
           layoutMode === "full" &&
@@ -779,7 +755,7 @@ export function IterationDetails({
             "min-h-[320px] flex flex-col justify-center",
         )}
       >
-        {loading ? (
+        {loading || waitingForTraceData ? (
           <div className="flex items-center justify-center py-8">
             <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
           </div>
@@ -812,7 +788,7 @@ export function IterationDetails({
   ) : null;
 
   const caseInsightFallback =
-    caseInsightSlot && !iteration.blob ? (
+    caseInsightSlot && !hasTraceSource ? (
       <div className="min-w-0" data-testid="iteration-case-insight-fallback">
         {caseInsightSlot}
       </div>
