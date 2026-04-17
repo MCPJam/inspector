@@ -45,6 +45,16 @@ async function flushMicrotasks() {
   });
 }
 
+function createDeferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 vi.mock("@workos-inc/authkit-react", () => ({
   useAuth: () => ({
     signUp: vi.fn(),
@@ -493,6 +503,52 @@ describe("ChatTabV2 history sync", () => {
     expect(screen.getByRole("textbox", { name: "Chat input" })).toHaveValue(
       "Unsaved draft",
     );
+  });
+
+  it("clears the loading scrim when a pending thread selection is canceled", async () => {
+    const deferred = createDeferred<{
+      ok: true;
+      session: typeof mockHistorySession & {
+        messagesBlobUrl: string;
+        resumeConfig: { selectedServers: string[] };
+      };
+      widgetSnapshots: [];
+    }>();
+    mockGetChatHistoryDetail.mockImplementationOnce(() => deferred.promise);
+
+    render(<ChatTabV2 {...defaultProps} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Show threads" }));
+    fireEvent.click(screen.getByRole("button", { name: "Select thread" }));
+    await flushMicrotasks();
+
+    expect(screen.getByLabelText("Loading chat")).toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "New personal thread" }),
+    );
+    await flushMicrotasks();
+
+    expect(screen.queryByLabelText("Loading chat")).not.toBeInTheDocument();
+
+    await act(async () => {
+      deferred.resolve({
+        ok: true,
+        session: {
+          ...mockHistorySession,
+          messagesBlobUrl: "https://storage.test/blob",
+          resumeConfig: {
+            selectedServers: ["server-1"],
+          },
+        },
+        widgetSnapshots: [],
+      });
+      await Promise.resolve();
+    });
+    await flushMicrotasks();
+
+    expect(screen.queryByLabelText("Loading chat")).not.toBeInTheDocument();
+    expect(mockUseChatSession.loadChatSession).not.toHaveBeenCalled();
   });
 
   it("detaches a resumed thread after the refreshed version never advances", async () => {
