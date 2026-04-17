@@ -1,5 +1,9 @@
 import { McpJamMcpServer } from "./server.js";
-import { normalizeIssuer, verifyBearerToken } from "./auth.js";
+import {
+  OAUTH_DISCOVERY_HEADERS,
+  normalizeIssuer,
+  verifyBearerToken,
+} from "./auth.js";
 
 export { McpJamMcpServer };
 
@@ -46,12 +50,27 @@ export default {
       });
     }
 
+    const isWellKnown = url.pathname.startsWith("/.well-known/");
+    if (isWellKnown && request.method === "OPTIONS") {
+      return new Response(null, {
+        status: 204,
+        headers: {
+          ...OAUTH_DISCOVERY_HEADERS,
+          "access-control-allow-methods": "GET, OPTIONS",
+          "access-control-allow-headers": "authorization, content-type",
+          "access-control-max-age": "86400",
+        },
+      });
+    }
+
     if (
       request.method === "GET" &&
       (url.pathname === "/.well-known/oauth-protected-resource/mcp" ||
         url.pathname === "/.well-known/oauth-protected-resource")
     ) {
-      return Response.json(protectedResourceMetadata(origin, issuer));
+      return Response.json(protectedResourceMetadata(origin, issuer), {
+        headers: OAUTH_DISCOVERY_HEADERS,
+      });
     }
 
     if (
@@ -64,6 +83,7 @@ export default {
       return new Response(upstream.body, {
         status: upstream.status,
         headers: {
+          ...OAUTH_DISCOVERY_HEADERS,
           "content-type":
             upstream.headers.get("content-type") ?? "application/json",
         },

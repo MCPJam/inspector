@@ -75,10 +75,16 @@ export async function verifyBearerToken(
   }
 }
 
+export const OAUTH_DISCOVERY_HEADERS = {
+  "access-control-allow-origin": "*",
+  "access-control-expose-headers": "WWW-Authenticate",
+} as const;
+
 function unauthorized(origin: string, description: string): Response {
   return new Response(JSON.stringify({ error: description }), {
     status: 401,
     headers: {
+      ...OAUTH_DISCOVERY_HEADERS,
       "content-type": "application/json",
       "www-authenticate": buildWwwAuthenticate(origin, description),
     },
