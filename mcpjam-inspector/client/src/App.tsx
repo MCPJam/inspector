@@ -293,6 +293,7 @@ export default function App() {
   const registryEnabled = useFeatureFlagEnabled("registry-enabled");
   const playgroundEnabled = useFeatureFlagEnabled("playground-enabled");
   const evaluateRunsEnabled = useFeatureFlagEnabled("evaluate-runs");
+  const xaaEnabled = useFeatureFlagEnabled("xaa");
   const {
     getAccessToken,
     signIn,
@@ -1250,6 +1251,8 @@ export default function App() {
       (clientConfigEnabled !== true || !isAuthenticated)
     ) {
       applyNavigation("servers", { updateHash: true });
+    } else if (activeTab === "xaa-flow" && xaaEnabled !== true) {
+      applyNavigation("servers", { updateHash: true });
     }
   }, [
     clientConfigEnabled,
@@ -1257,6 +1260,7 @@ export default function App() {
     learningEnabled,
     evaluateRunsFlagsLoaded,
     evaluateRunsEnabled,
+    xaaEnabled,
     isAuthenticated,
     activeTab,
     applyNavigation,
@@ -1522,7 +1526,7 @@ export default function App() {
     activeTab === "prompts" ||
     activeTab === "tasks" ||
     activeTab === "oauth-flow" ||
-    activeTab === "xaa-flow" ||
+    (activeTab === "xaa-flow" && xaaEnabled === true) ||
     activeTab === "chat" ||
     activeTab === "evals" ||
     activeTab === "views";
@@ -1531,7 +1535,8 @@ export default function App() {
     shouldShowActiveServerSelector
       ? {
           serverConfigs:
-            activeTab === "oauth-flow" || activeTab === "xaa-flow"
+            activeTab === "oauth-flow" ||
+            (activeTab === "xaa-flow" && xaaEnabled === true)
               ? appState.servers
               : workspaceServers,
           selectedServer: appState.selectedServer,
@@ -1797,7 +1802,7 @@ export default function App() {
               />
             </ErrorBoundary>
           )}
-          {activeTab === "xaa-flow" && (
+          {activeTab === "xaa-flow" && xaaEnabled === true && (
             <ErrorBoundary
               fallback={
                 <div className="flex items-center justify-center h-full text-muted-foreground">
