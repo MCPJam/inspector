@@ -99,3 +99,14 @@ export type {
   RegistrationStrategy2025_06_18,
   RegistrationStrategy2025_11_25,
 } from "./oauth/state-machines/types.js";
+
+// MCP conformance transport support — pure predicate, safe for the browser.
+// UIs use this to decide which suites can run against a given server config.
+export {
+  canRunConformance,
+  isHttpServerConfig,
+} from "./mcp-conformance/transport-support.js";
+export type {
+  ConformanceSuiteId,
+  ConformanceSupport,
+} from "./mcp-conformance/transport-support.js";

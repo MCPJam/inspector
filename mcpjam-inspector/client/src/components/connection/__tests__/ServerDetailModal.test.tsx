@@ -198,6 +198,14 @@ describe("ServerDetailModal", () => {
     ).toBeInTheDocument();
   });
 
+  it("does not show a conformance launch button in overview", () => {
+    render(<ServerDetailModal {...defaultProps} defaultTab="overview" />);
+
+    expect(
+      screen.queryByRole("button", { name: "Run conformance" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("submits the configuration form without closing the modal", async () => {
     const onSubmit = vi.fn().mockResolvedValue({
       ok: true,

@@ -97,6 +97,14 @@ describe("hosted-navigation", () => {
     expect(resolved.shouldClearChatMessages).toBe(true);
   });
 
+  it("treats conformance as a normal hosted app tab", () => {
+    const resolved = resolveHostedNavigation("#conformance", true);
+    expect(resolved.normalizedTab).toBe("conformance");
+    expect(resolved.isBlocked).toBe(false);
+    expect(resolved.shouldSelectAllServers).toBe(false);
+    expect(resolved.shouldClearChatMessages).toBe(true);
+  });
+
   it("exits stale organization routes when switching to a workspace in another org", () => {
     expect(
       getWorkspaceSwitchNavigationTarget({
