@@ -98,12 +98,16 @@ export default {
       const result = await verifyBearerToken(request, issuer, origin);
       if (!result.ok) return result.response;
 
-      (ctx as unknown as { props: Record<string, unknown> }).props = {
-        bearerToken: result.verified.token,
-        claims: result.verified.payload,
+      const authedCtx: ExecutionContext<Record<string, unknown>> = {
+        waitUntil: (promise: Promise<unknown>) => ctx.waitUntil(promise),
+        passThroughOnException: () => ctx.passThroughOnException(),
+        props: {
+          bearerToken: result.verified.token,
+          claims: result.verified.payload,
+        },
       };
 
-      return McpJamMcpServer.serve("/mcp").fetch(request, env, ctx);
+      return McpJamMcpServer.serve("/mcp").fetch(request, env, authedCtx);
     }
 
     if (url.pathname === "/" && request.method === "GET") {
