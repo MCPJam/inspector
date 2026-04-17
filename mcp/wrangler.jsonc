@@ -4,6 +4,10 @@
   "main": "src/index.ts",
   "compatibility_date": "2025-03-10",
   "compatibility_flags": ["nodejs_compat"],
+  "vars": {
+    "AUTHKIT_DOMAIN": "login.mcpjam.com",
+    "CONVEX_URL": "https://outstanding-fennec-304.convex.cloud"
+  },
   "migrations": [
     {
       "tag": "v1",
@@ -21,6 +25,10 @@
   "env": {
     "staging": {
       "workers_dev": true,
+      "vars": {
+        "AUTHKIT_DOMAIN": "dynamic-echo-14-staging.authkit.app",
+        "CONVEX_URL": "https://proper-clownfish-150.convex.cloud"
+      },
       "migrations": [
         {
           "tag": "v1",
