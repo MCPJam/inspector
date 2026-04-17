@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Card } from "./ui/card";
-import { Button } from "./ui/button";
+import { Card } from "@mcpjam/design-system/card";
+import { Button } from "@mcpjam/design-system/button";
 import {
   Plus,
   FileText,
@@ -31,7 +31,7 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from "./ui/dropdown-menu";
+} from "@mcpjam/design-system/dropdown-menu";
 import {
   useRegistryServers,
   getRegistryServerName,
@@ -40,7 +40,7 @@ import {
 } from "@/hooks/useRegistryServers";
 import { formatRegistryStarCount } from "@/lib/format-registry-star-count";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
-import { HoverCard, HoverCardContent, HoverCardTrigger } from "./ui/hover-card";
+import { HoverCard, HoverCardContent, HoverCardTrigger } from "@mcpjam/design-system/hover-card";
 import { BILLING_GATES, useWorkspaceBillingGate } from "@/lib/billing-gates";
 import {
   ResizablePanelGroup,
@@ -50,7 +50,7 @@ import {
 import { CollapsedPanelStrip } from "./ui/collapsed-panel-strip";
 import { LoggerView } from "./logger-view";
 import { useJsonRpcPanelVisibility } from "@/hooks/use-json-rpc-panel";
-import { Skeleton } from "./ui/skeleton";
+import { Skeleton } from "@mcpjam/design-system/skeleton";
 import { useConvexAuth } from "convex/react";
 import { Workspace } from "@/state/app-types";
 import {

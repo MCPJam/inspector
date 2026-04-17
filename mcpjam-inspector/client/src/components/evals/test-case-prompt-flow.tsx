@@ -8,9 +8,9 @@ import {
   GitBranchPlus,
   Trash2,
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
+import { Button } from "@mcpjam/design-system/button";
+import { Label } from "@mcpjam/design-system/label";
+import { Textarea } from "@mcpjam/design-system/textarea";
 import type { PromptTurn } from "@/shared/prompt-turns";
 import { cn } from "@/lib/utils";
 import { ExpectedToolsEditor } from "./expected-tools-editor";

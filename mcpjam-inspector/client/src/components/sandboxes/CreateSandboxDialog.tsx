@@ -11,21 +11,21 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
+} from "@mcpjam/design-system/dialog";
+import { Button } from "@mcpjam/design-system/button";
+import { Input } from "@mcpjam/design-system/input";
+import { Textarea } from "@mcpjam/design-system/textarea";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
-import { Slider } from "@/components/ui/slider";
-import { Switch } from "@/components/ui/switch";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Label } from "@/components/ui/label";
+} from "@mcpjam/design-system/select";
+import { Slider } from "@mcpjam/design-system/slider";
+import { Switch } from "@mcpjam/design-system/switch";
+import { Checkbox } from "@mcpjam/design-system/checkbox";
+import { Label } from "@mcpjam/design-system/label";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 
 interface WorkspaceServerOption {

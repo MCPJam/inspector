@@ -55,7 +55,7 @@ vi.mock("lucide-react", () => ({
 }));
 
 // Mock UI components
-vi.mock("@/components/ui/button", () => ({
+vi.mock("@mcpjam/design-system/button", () => ({
   Button: ({ children, onClick, className, ...props }: any) => (
     <button onClick={onClick} className={className} {...props}>
       {children}
@@ -63,7 +63,7 @@ vi.mock("@/components/ui/button", () => ({
   ),
 }));
 
-vi.mock("@/components/ui/tooltip", () => ({
+vi.mock("@mcpjam/design-system/tooltip", () => ({
   Tooltip: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   TooltipContent: ({ children }: { children: React.ReactNode }) => (
     <div className="tooltip-content">{children}</div>
@@ -77,7 +77,7 @@ vi.mock("@/components/ui/tooltip", () => ({
   }) => <>{children}</>,
 }));
 
-vi.mock("@/components/ui/popover", () => ({
+vi.mock("@mcpjam/design-system/popover", () => ({
   Popover: ({
     children,
     open: _open,
@@ -97,11 +97,11 @@ vi.mock("@/components/ui/popover", () => ({
   }) => <>{children}</>,
 }));
 
-vi.mock("@/components/ui/input", () => ({
+vi.mock("@mcpjam/design-system/input", () => ({
   Input: (props: any) => <input {...props} />,
 }));
 
-vi.mock("@/components/ui/label", () => ({
+vi.mock("@mcpjam/design-system/label", () => ({
   Label: ({ children, ...props }: any) => <label {...props}>{children}</label>,
 }));
 

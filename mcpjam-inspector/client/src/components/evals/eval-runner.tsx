@@ -3,7 +3,7 @@ import { ChevronLeft, ChevronRight, Plus, X } from "lucide-react";
 import { toast } from "sonner";
 import { useConvexAuth } from "convex/react";
 import { useAuth } from "@workos-inc/authkit-react";
-import { Button } from "@/components/ui/button";
+import { Button } from "@mcpjam/design-system/button";
 import {
   Dialog,
   DialogContent,
@@ -11,7 +11,7 @@ import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
-} from "@/components/ui/dialog";
+} from "@mcpjam/design-system/dialog";
 import {
   useAiProviderKeys,
   type ProviderTokens,
@@ -24,7 +24,7 @@ import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from "@/components/ui/tooltip";
+} from "@mcpjam/design-system/tooltip";
 import { WIZARD_STEPS, STORAGE_KEYS, DEFAULTS } from "./constants";
 import { ServersStep } from "./eval-runner/ServersStep";
 import { ModelStep } from "./eval-runner/ModelStep";

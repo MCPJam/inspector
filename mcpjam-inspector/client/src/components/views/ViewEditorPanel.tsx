@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { Save, Loader2, ArrowLeft, Play } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Button } from "@mcpjam/design-system/button";
 import { JsonEditor } from "@/components/ui/json-editor";
 import { InlineEditableText } from "@/components/ui/inline-editable-text";
 import { type AnyView } from "@/hooks/useViews";

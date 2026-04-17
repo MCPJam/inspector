@@ -7,7 +7,7 @@ import { WorkspaceMembersFacepile } from "./workspace/WorkspaceMembersFacepile";
 import { WorkspaceShareButton } from "./workspace/WorkspaceShareButton";
 import { WorkspaceIconPicker } from "./workspace/WorkspaceEmojiPicker";
 
-import { Button } from "./ui/button";
+import { Button } from "@mcpjam/design-system/button";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -18,7 +18,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
   AlertDialogTrigger,
-} from "./ui/alert-dialog";
+} from "@mcpjam/design-system/alert-dialog";
 import type { Workspace } from "@/state/app-types";
 import type { ServerWithName } from "@/hooks/use-app-state";
 import { useWorkspaceMembers } from "@/hooks/useWorkspaces";

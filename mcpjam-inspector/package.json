@@ -168,6 +168,7 @@
     "zustand": "^5.0.6"
   },
   "devDependencies": {
+    "@mcpjam/design-system": "*",
     "@electron-forge/cli": "^7.11.1",
     "@electron-forge/maker-deb": "^7.11.1",
     "@electron-forge/maker-dmg": "^7.11.1",

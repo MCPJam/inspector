@@ -1,6 +1,6 @@
 import { Box, Loader2, Pencil } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Badge } from "@mcpjam/design-system/badge";
+import { Button } from "@mcpjam/design-system/button";
 import type {
   BillingInterval,
   OrganizationBillingStatus,
