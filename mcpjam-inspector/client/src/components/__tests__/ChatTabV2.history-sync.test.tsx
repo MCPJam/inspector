@@ -9,6 +9,7 @@ const mockChatHistoryAction = vi.hoisted(() => vi.fn());
 const mockReactiveHistoryState = vi.hoisted(() => ({
   session: undefined as any,
   widgetSnapshots: undefined as any,
+  turnTraces: undefined as any,
 }));
 const chatSessionOnResetRef = vi.hoisted(() => ({
   current: undefined as undefined | ((reason?: string) => void),
@@ -75,6 +76,9 @@ vi.mock("convex/react", () => ({
     }
     if (name === "directChatHistory:getCurrentSessionWidgetSnapshots") {
       return mockReactiveHistoryState.widgetSnapshots;
+    }
+    if (name === "directChatHistory:getCurrentSessionTurnTraces") {
+      return mockReactiveHistoryState.turnTraces;
     }
     return undefined;
   },
@@ -423,6 +427,7 @@ describe("ChatTabV2 history sync", () => {
     lastUseChatSessionOptionsRef.current = undefined;
     mockReactiveHistoryState.session = undefined;
     mockReactiveHistoryState.widgetSnapshots = undefined;
+    mockReactiveHistoryState.turnTraces = undefined;
     Object.assign(mockUseChatSession, {
       messages: [
         {
@@ -713,6 +718,7 @@ describe("ChatTabV2 history sync", () => {
       },
     };
     mockReactiveHistoryState.widgetSnapshots = [];
+    mockReactiveHistoryState.turnTraces = [];
 
     view.rerender(<ChatTabV2 {...defaultProps} />);
     await flushMicrotasks();

@@ -956,6 +956,10 @@ export function useChatSession({
     [],
   );
   const clearPendingSessionHydration = useCallback(() => {
+    // Drop any queued trace state so a subsequent resetChat / fork does not
+    // re-apply stale hydrated spans to the fresh session when the reset
+    // effect reads pendingLiveTraceStateRef.
+    pendingLiveTraceStateRef.current = null;
     const pendingHydration = pendingSessionHydrationRef.current;
     if (!pendingHydration) {
       return;

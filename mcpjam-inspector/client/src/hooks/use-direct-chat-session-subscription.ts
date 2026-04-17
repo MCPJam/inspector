@@ -1,6 +1,7 @@
 import { useQuery } from "convex/react";
 import type {
   ChatHistoryDetailSession,
+  ChatHistoryTurnTrace,
   ChatHistoryWidgetSnapshot,
 } from "@/lib/apis/web/chat-history-api";
 
@@ -28,5 +29,10 @@ export function useDirectChatSessionSubscription({
     enabled && sessionId ? ({ sessionId } as const) : "skip",
   ) as ChatHistoryWidgetSnapshot[] | undefined;
 
-  return { session, widgetSnapshots };
+  const turnTraces = useQuery(
+    "directChatHistory:getCurrentSessionTurnTraces" as any,
+    enabled && sessionId ? ({ sessionId } as const) : "skip",
+  ) as ChatHistoryTurnTrace[] | undefined;
+
+  return { session, widgetSnapshots, turnTraces };
 }
