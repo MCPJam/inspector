@@ -1082,8 +1082,17 @@ describe("PlaygroundMain", () => {
           name: "Claude Sonnet 4.5",
           provider: "anthropic",
         },
+        {
+          id: "gemini-2.5-pro",
+          name: "Gemini 2.5 Pro",
+          provider: "google",
+        },
       ];
-      mockUseChatSession.selectedModelIds = ["gpt-4", "claude-sonnet-4-5"];
+      mockUseChatSession.selectedModelIds = [
+        "gpt-4",
+        "claude-sonnet-4-5",
+        "gemini-2.5-pro",
+      ];
       mockUseChatSession.multiModelEnabled = true;
       mockUseChatSession.traceViewsSupported = true;
 
@@ -1099,13 +1108,15 @@ describe("PlaygroundMain", () => {
         screen.getByText("Try one of these to get started"),
       ).toBeInTheDocument();
       expect(screen.getAllByTestId("multi-model-playground-card")).toHaveLength(
-        2,
+        3,
       );
       expect(
         screen.getByTestId("playground-multi-model-compare-section"),
       ).toHaveClass("hidden");
       const grid = screen.getByTestId("playground-multi-model-grid");
       expect(grid.className.includes("hidden")).toBe(false);
+      expect(grid).toHaveClass("xl:grid-cols-3");
+      expect(grid).not.toHaveClass("2xl:grid-cols-3");
       expect(screen.getByTestId("trace-view-tabs")).toBeInTheDocument();
       expect(screen.getAllByTestId("chat-input")).not.toHaveLength(0);
       expect(
