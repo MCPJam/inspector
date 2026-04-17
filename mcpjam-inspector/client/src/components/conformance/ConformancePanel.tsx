@@ -20,7 +20,10 @@ import type {
   MCPAppsCheckResult,
   OAuthConformanceStepResult,
 } from "@mcpjam/sdk";
-import { canRunConformance } from "@mcpjam/sdk";
+// Import from the browser-safe SDK entry — the top-level `@mcpjam/sdk` pulls
+// Node-only transitive deps (MCP client SDK uses `node:stream`, etc.) which
+// break the Vite browser bundle.
+import { canRunConformance } from "@mcpjam/sdk/browser";
 import type { OAuthConformanceStartResult } from "@/lib/apis/mcp-conformance-api";
 import {
   runProtocolConformance,
