@@ -115,7 +115,20 @@ jobs:
             echo "Wrangler action did not return a deployment URL." >&2
             exit 1
           fi
-          curl --fail --silent --show-error "$DEPLOYMENT_URL" | grep -q "MCPJam MCP"
+          # workers.dev edge DNS can take a few seconds to route a freshly-
+          # deployed worker (saw ~100ms-too-early 404 in the first run). Retry
+          # up to ~30s before failing — a persistently-404ing URL after that
+          # is a real problem worth surfacing.
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            if curl --fail --silent --show-error "$DEPLOYMENT_URL" | grep -q "MCPJam MCP"; then
+              echo "Smoke OK on attempt $attempt"
+              exit 0
+            fi
+            echo "Attempt $attempt returned non-200 or mismatched content; retrying in 3s…"
+            sleep 3
+          done
+          echo "Preview URL never resolved correctly." >&2
+          exit 1
 
       - name: Upsert PR preview comment
         uses: actions/github-script@v7
