@@ -1761,7 +1761,7 @@ export function TestTemplateEditor({
                     disabled={!editForm}
                   >
                     <Code2 className="mr-2 h-3.5 w-3.5" />
-                    Export
+                    Setup SDK
                   </Button>
                 ) : null}
                 {hasUnsavedChanges ? (

@@ -37,6 +37,7 @@ import { loadInspectorEnv, warnOnConvexDevMisconfiguration } from "./env.js";
 import { startGuestAuthProvisioningInBackground } from "./utils/convex-guest-auth-sync.js";
 import { fetchRemoteGuestJwks } from "./utils/guest-session-source.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "./utils/mcp-retry-policy.js";
+import { initXAAIdpKeyPair } from "./services/xaa-idp-keypair.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -54,6 +55,7 @@ export function createHonoApp() {
 
   // Generate session token for API authentication
   generateSessionToken();
+  initXAAIdpKeyPair();
 
   startGuestAuthProvisioningInBackground();
 

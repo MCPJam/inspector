@@ -54,6 +54,28 @@ describe("filterByFeatureFlags", () => {
     expect(titles).toEqual(["Always Visible"]);
   });
 
+  it("hides XAA Debugger when the xaa flag is off", () => {
+    const result = filterByFeatureFlags(
+      [
+        {
+          id: "others",
+          items: [
+            { title: "OAuth Debugger", url: "#oauth-flow", icon: FakeIcon },
+            {
+              title: "XAA Debugger",
+              url: "#xaa-flow",
+              icon: FakeIcon,
+              featureFlag: "xaa",
+            },
+          ],
+        },
+      ],
+      { xaa: false },
+    );
+
+    expect(result[0].items.map((i) => i.title)).toEqual(["OAuth Debugger"]);
+  });
+
   it("keeps Testing visible when unrelated flags are on", () => {
     const result = filterByFeatureFlags(makeSections(), {
       "registry-enabled": true,
@@ -208,6 +230,7 @@ describe("getHostedNavigationSections", () => {
             billingFeature: "evals",
           },
           { title: "OAuth Debugger", url: "#oauth-flow", icon: FakeIcon },
+          { title: "XAA Debugger", url: "#xaa-flow", icon: FakeIcon },
         ],
       },
     ]);
@@ -230,6 +253,11 @@ describe("getHostedNavigationSections", () => {
       {
         title: "OAuth Debugger",
         url: "#oauth-flow",
+        icon: FakeIcon,
+      },
+      {
+        title: "XAA Debugger",
+        url: "#xaa-flow",
         icon: FakeIcon,
       },
     ]);
