@@ -7,11 +7,14 @@
   "observability": {
     "enabled": true
   },
-  // Named envs fully override the top-level config (they don't merge), so
-  // `migrations`, `durable_objects`, and `vars` are duplicated below.
-  // Top-level DO/migrations/vars blocks are intentionally omitted: every
-  // deploy in CI uses `--env <name>`, and we don't want a bare
-  // `wrangler deploy` to silently land on the unrouted default worker.
+  // Non-inheritable keys (durable_objects, migrations, routes,
+  // workers_dev, vars, and bindings generally) must be specified per
+  // env. Inheritable ones — main, compatibility_date,
+  // compatibility_flags, observability — flow down from the top level
+  // (see https://developers.cloudflare.com/workers/wrangler/configuration/).
+  // Top-level DO/migrations/vars blocks are intentionally omitted so a
+  // bare `wrangler deploy` (no `--env`) can't silently land on an
+  // unrouted default worker; every CI deploy passes `--env <name>`.
   "env": {
     // Per-PR preview workers (`mcpjam-mcp-pr-<n>`) deploy with this env.
     // No custom-domain routes — they're exclusive per worker, so sharing
