@@ -18,6 +18,7 @@ export const HOSTED_SIDEBAR_ALLOWED_TABS = [
   "support",
   "settings",
   "oauth-flow",
+  "xaa-flow",
   "learning",
 ] as const;
 
