@@ -31,6 +31,7 @@ import { WorkspaceClientConfigSync } from "./components/client-config/WorkspaceC
 import { TracingTab } from "./components/TracingTab";
 import { AuthTab } from "./components/AuthTab";
 import { OAuthFlowTab } from "./components/OAuthFlowTab";
+import { ConformanceTab } from "./components/conformance/ConformancePanel";
 import { XAAFlowTab } from "./components/xaa/XAAFlowTab";
 import { ErrorBoundary } from "./components/evals/ErrorBoundary";
 import { AppBuilderTab } from "./components/ui-playground/AppBuilderTab";
@@ -291,6 +292,7 @@ export default function App() {
   const learningEnabled = useFeatureFlagEnabled("mcpjam-learning");
   const clientConfigEnabled = useFeatureFlagEnabled("client-config-enabled");
   const registryEnabled = useFeatureFlagEnabled("registry-enabled");
+  const conformanceEnabled = useFeatureFlagEnabled("mcpjam-conformance");
   const playgroundEnabled = useFeatureFlagEnabled("playground-enabled");
   const evaluateRunsEnabled = useFeatureFlagEnabled("evaluate-runs");
   const xaaEnabled = useFeatureFlagEnabled("xaa");
@@ -560,6 +562,7 @@ export default function App() {
     workspaceServers,
     connectedOrConnectingServerConfigs,
     selectedMCPConfig,
+    selectedServerEntry,
     isSelectedServerSyncing,
     handleConnect,
     handleDisconnect,
@@ -707,6 +710,7 @@ export default function App() {
       activeTab === "resources" ||
       activeTab === "prompts" ||
       activeTab === "tasks" ||
+      activeTab === "conformance" ||
       activeTab === "auth";
     if (!needsServer || selectedMCPConfig) return;
 
@@ -1252,10 +1256,13 @@ export default function App() {
       (clientConfigEnabled !== true || !isAuthenticated)
     ) {
       applyNavigation("servers", { updateHash: true });
+    } else if (activeTab === "conformance" && conformanceEnabled !== true) {
+      applyNavigation("servers", { updateHash: true });
     } else if (activeTab === "xaa-flow" && xaaEnabled !== true) {
       applyNavigation("servers", { updateHash: true });
     }
   }, [
+    conformanceEnabled,
     clientConfigEnabled,
     registryEnabled,
     learningEnabled,
@@ -1526,6 +1533,7 @@ export default function App() {
     activeTab === "resources" ||
     activeTab === "prompts" ||
     activeTab === "tasks" ||
+    activeTab === "conformance" ||
     activeTab === "oauth-flow" ||
     (activeTab === "xaa-flow" && xaaEnabled === true) ||
     activeTab === "chat" ||
@@ -1712,6 +1720,9 @@ export default function App() {
             ) : null)}
           {activeTab === "views" && (
             <ViewsTab selectedServer={appState.selectedServer} />
+          )}
+          {activeTab === "conformance" && (
+            <ConformanceTab server={selectedServerEntry ?? null} />
           )}
           {activeTab === "sandboxes" &&
             (billingUiEnabled &&

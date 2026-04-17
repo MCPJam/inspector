@@ -153,6 +153,34 @@ describe("filterByFeatureFlags", () => {
       ),
     ).toEqual(["Playground", "Runs"]);
   });
+
+  it("hides Conformance when the feature flag is off", () => {
+    const result = filterByFeatureFlags(
+      [
+        {
+          id: "others",
+          items: [
+            {
+              title: "Conformance",
+              url: "#conformance",
+              icon: FakeIcon,
+              featureFlag: "mcpjam-conformance",
+            },
+            {
+              title: "OAuth Debugger",
+              url: "#oauth-flow",
+              icon: FakeIcon,
+            },
+          ],
+        },
+      ],
+      { "mcpjam-conformance": false },
+    );
+
+    expect(result[0].items.map((item) => item.title)).toEqual([
+      "OAuth Debugger",
+    ]);
+  });
 });
 
 describe("applyBillingGateNavState", () => {
@@ -229,6 +257,12 @@ describe("getHostedNavigationSections", () => {
             icon: FakeIcon,
             billingFeature: "evals",
           },
+          {
+            title: "Conformance",
+            url: "#conformance",
+            icon: FakeIcon,
+            featureFlag: "mcpjam-conformance",
+          },
           { title: "OAuth Debugger", url: "#oauth-flow", icon: FakeIcon },
           { title: "XAA Debugger", url: "#xaa-flow", icon: FakeIcon },
         ],
@@ -249,6 +283,12 @@ describe("getHostedNavigationSections", () => {
         url: "#ci-evals",
         icon: FakeIcon,
         billingFeature: "evals",
+      },
+      {
+        title: "Conformance",
+        url: "#conformance",
+        icon: FakeIcon,
+        featureFlag: "mcpjam-conformance",
       },
       {
         title: "OAuth Debugger",
