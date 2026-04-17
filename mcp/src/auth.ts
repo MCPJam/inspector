@@ -43,12 +43,17 @@ export function resourceMetadataUrl(origin: string): string {
   return `${origin}/.well-known/oauth-protected-resource/mcp`;
 }
 
-export function buildWwwAuthenticate(origin: string, description: string): string {
-  return [
-    'Bearer error="unauthorized"',
-    `error_description="${description}"`,
-    `resource_metadata="${resourceMetadataUrl(origin)}"`,
-  ].join(", ");
+export function buildWwwAuthenticate(
+  origin: string,
+  error?: { code: string; description: string },
+): string {
+  const parts = ["Bearer"];
+  if (error) {
+    parts.push(`error="${error.code}"`);
+    parts.push(`error_description="${error.description}"`);
+  }
+  parts.push(`resource_metadata="${resourceMetadataUrl(origin)}"`);
+  return parts[0] + " " + parts.slice(1).join(", ");
 }
 
 export async function verifyBearerToken(
@@ -58,20 +63,14 @@ export async function verifyBearerToken(
 ): Promise<VerifyResult> {
   const token = extractBearerToken(request.headers.get("authorization"));
   if (!token) {
-    return {
-      ok: false,
-      response: unauthorized(origin, "Authorization needed"),
-    };
+    return { ok: false, response: missingTokenResponse(origin) };
   }
 
   try {
     const { payload } = await jwtVerify(token, getJwks(issuer), { issuer });
     return { ok: true, verified: { token, payload } };
   } catch {
-    return {
-      ok: false,
-      response: unauthorized(origin, "Invalid bearer token"),
-    };
+    return { ok: false, response: invalidTokenResponse(origin) };
   }
 }
 
@@ -80,13 +79,28 @@ export const OAUTH_DISCOVERY_HEADERS = {
   "access-control-expose-headers": "WWW-Authenticate",
 } as const;
 
-function unauthorized(origin: string, description: string): Response {
-  return new Response(JSON.stringify({ error: description }), {
+function missingTokenResponse(origin: string): Response {
+  // RFC 6750 §3.1: no error code when credentials are absent.
+  return new Response(JSON.stringify({ error: "Authorization needed" }), {
     status: 401,
     headers: {
       ...OAUTH_DISCOVERY_HEADERS,
       "content-type": "application/json",
-      "www-authenticate": buildWwwAuthenticate(origin, description),
+      "www-authenticate": buildWwwAuthenticate(origin),
+    },
+  });
+}
+
+function invalidTokenResponse(origin: string): Response {
+  return new Response(JSON.stringify({ error: "Invalid bearer token" }), {
+    status: 401,
+    headers: {
+      ...OAUTH_DISCOVERY_HEADERS,
+      "content-type": "application/json",
+      "www-authenticate": buildWwwAuthenticate(origin, {
+        code: "invalid_token",
+        description: "The bearer token is invalid or expired",
+      }),
     },
   });
 }
