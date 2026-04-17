@@ -379,8 +379,14 @@ async function resolveHydratedTurnTraces(
         modelId?: string;
       }>
     | undefined,
-): Promise<HydratedTurnTrace[]> {
-  if (!raw || raw.length === 0) {
+): Promise<HydratedTurnTrace[] | undefined> {
+  // Preserve the `undefined` sentinel so `queueSessionHydration` can tell
+  // "caller didn't provide traces — leave existing state alone" apart from
+  // "caller gave an explicit empty list — zero persisted traces".
+  if (raw === undefined) {
+    return undefined;
+  }
+  if (raw.length === 0) {
     return [];
   }
   const results = await Promise.all(
@@ -395,9 +401,16 @@ async function resolveHydratedTurnTraces(
               spans = parsed as EvalTraceSpan[];
             }
           }
-        } catch {
+        } catch (err) {
           // Span blob fetch failures are non-fatal; the turn survives
-          // without span timing data.
+          // without span timing data. Warn so a misconfiguration
+          // (bad CORS, expired URL, missing blob) surfaces in the
+          // console rather than silently blanking latency/token
+          // numbers in the trace viewer.
+          console.warn(
+            `[useChatSession] Failed to fetch spans for turn ${trace.turnId}:`,
+            err,
+          );
         }
       }
       return {
