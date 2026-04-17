@@ -45,6 +45,7 @@ import {
   mergeLiveChatTraceUsage,
   type LiveChatTraceUsage,
 } from "@/shared/live-chat-trace";
+import type { EvalTraceSpan } from "@/shared/eval-trace";
 
 function formatStreamError(error: unknown, provider?: ModelProvider): string {
   if (!(error instanceof Error)) {
@@ -171,6 +172,16 @@ function streamDirectChatWithLiveTrace(options: {
     toolResults: unknown[];
     usage?: LiveChatTraceUsage;
     finishReason?: string;
+    turnTrace: {
+      turnId: string;
+      promptIndex: number;
+      startedAt: number;
+      endedAt: number;
+      spans: EvalTraceSpan[];
+      usage?: LiveChatTraceUsage;
+      finishReason?: string;
+      modelId: string;
+    };
   }) => Promise<void> | void;
 }): Response {
   const {
@@ -397,6 +408,16 @@ function streamDirectChatWithLiveTrace(options: {
               ),
               usage: traceTurn.turnUsage,
               finishReason: event.finishReason,
+              turnTrace: {
+                turnId: traceTurn.turnId,
+                promptIndex: traceTurn.promptIndex,
+                startedAt: traceTurn.turnStartedAt,
+                endedAt: Date.now(),
+                spans: [...traceTurn.turnSpans],
+                usage: traceTurn.turnUsage,
+                finishReason: event.finishReason,
+                modelId,
+              },
             });
           } catch (error) {
             logger.warn("[mcp/chat-v2] onFinish ingestion error", {
@@ -543,7 +564,7 @@ chatV2.post("/", async (c) => {
         selectedServers,
         requireToolApproval,
         onConversationComplete: chatSessionId
-          ? async (fullHistory) => {
+          ? async (fullHistory, turnTrace) => {
               await persistChatSessionToConvex({
                 chatSessionId,
                 modelId: String(modelDefinition.id),
@@ -562,6 +583,7 @@ chatV2.post("/", async (c) => {
                   selectedServers,
                 },
                 expectedVersion: body.expectedVersion,
+                turnTrace,
               });
             }
           : undefined,
@@ -605,6 +627,7 @@ chatV2.post("/", async (c) => {
             toolResults,
             usage,
             finishReason,
+            turnTrace,
           }) => {
             const persistedUsage = toPersistedUsage(usage);
             await persistChatSessionToConvex({
@@ -632,6 +655,7 @@ chatV2.post("/", async (c) => {
                 selectedServers,
               },
               expectedVersion: body.expectedVersion,
+              turnTrace,
             });
           }
         : undefined,

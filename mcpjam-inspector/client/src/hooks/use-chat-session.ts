@@ -228,6 +228,16 @@ export interface UseChatSessionReturn {
         prefersBorder: boolean;
         widgetHtmlUrl?: string | null;
       }>;
+      turnTraces?: Array<{
+        turnId: string;
+        promptIndex: number;
+        startedAt: number;
+        endedAt: number;
+        finishReason?: string;
+        usage?: LiveChatTraceUsage;
+        spansBlobUrl?: string | null;
+        modelId?: string;
+      }>;
     },
     options?: {
       shouldRestoreResumeConfig?: () => boolean;
@@ -326,6 +336,7 @@ interface PendingSessionHydration {
     import("@/components/chat-v2/thread/tool-render-overrides").ToolRenderOverride
   >;
   persistedSnapshotToolCallIds?: string[];
+  turnTraces?: HydratedTurnTrace[];
   resolve?: () => void;
 }
 
@@ -341,6 +352,102 @@ function createEmptyLiveTraceState(): LiveTraceAccumulatorState {
     activeTurnId: null,
     activeTurnHasSnapshot: false,
     anySnapshotSeen: false,
+  };
+}
+
+export interface HydratedTurnTrace {
+  turnId: string;
+  promptIndex: number;
+  startedAt: number;
+  endedAt: number;
+  finishReason?: string;
+  usage?: LiveChatTraceUsage;
+  spans: EvalTraceSpan[];
+  modelId?: string;
+}
+
+async function resolveHydratedTurnTraces(
+  raw:
+    | Array<{
+        turnId: string;
+        promptIndex: number;
+        startedAt: number;
+        endedAt: number;
+        finishReason?: string;
+        usage?: LiveChatTraceUsage;
+        spansBlobUrl?: string | null;
+        modelId?: string;
+      }>
+    | undefined,
+): Promise<HydratedTurnTrace[]> {
+  if (!raw || raw.length === 0) {
+    return [];
+  }
+  const results = await Promise.all(
+    raw.map(async (trace) => {
+      let spans: EvalTraceSpan[] = [];
+      if (trace.spansBlobUrl) {
+        try {
+          const response = await fetch(trace.spansBlobUrl);
+          if (response.ok) {
+            const parsed = (await response.json()) as unknown;
+            if (Array.isArray(parsed)) {
+              spans = parsed as EvalTraceSpan[];
+            }
+          }
+        } catch {
+          // Span blob fetch failures are non-fatal; the turn survives
+          // without span timing data.
+        }
+      }
+      return {
+        turnId: trace.turnId,
+        promptIndex: trace.promptIndex,
+        startedAt: trace.startedAt,
+        endedAt: trace.endedAt,
+        finishReason: trace.finishReason,
+        usage: trace.usage,
+        spans,
+        modelId: trace.modelId,
+      };
+    }),
+  );
+  return results;
+}
+
+function buildLiveTraceStateFromTurnTraces(
+  traces: HydratedTurnTrace[],
+): LiveTraceAccumulatorState {
+  if (traces.length === 0) {
+    return createEmptyLiveTraceState();
+  }
+
+  const ordered = [...traces].sort(
+    (left, right) => left.promptIndex - right.promptIndex,
+  );
+  const turnOrder: string[] = [];
+  const turns: Record<string, LiveTraceTurnState> = {};
+  for (const trace of ordered) {
+    turnOrder.push(trace.turnId);
+    turns[trace.turnId] = {
+      turnId: trace.turnId,
+      promptIndex: trace.promptIndex,
+      spans: trace.spans,
+      usage: trace.usage,
+      actualToolCalls: [],
+      startedAtMs: trace.startedAt,
+    };
+  }
+
+  return {
+    turnOrder,
+    turns,
+    messages: [],
+    events: [],
+    requestPayloadHistory: [],
+    activeTurnId: null,
+    activeTurnHasSnapshot: false,
+    anySnapshotSeen: true,
   };
 }
 
@@ -799,6 +906,9 @@ export function useChatSession({
   const pendingSessionHydrationRef = useRef<PendingSessionHydration | null>(
     null,
   );
+  const pendingLiveTraceStateRef = useRef<LiveTraceAccumulatorState | null>(
+    null,
+  );
   const selectedServersSignature = useMemo(
     () => selectedServers.join("\u0000"),
     [selectedServers],
@@ -1125,6 +1235,11 @@ export function useChatSession({
     (hydration: PendingSessionHydration) => {
       clearPendingSessionHydration();
 
+      const hydratedTraceState =
+        hydration.turnTraces && hydration.turnTraces.length > 0
+          ? buildLiveTraceStateFromTurnTraces(hydration.turnTraces)
+          : null;
+
       // If the chatSessionId is already the target value, setChatSessionId
       // would be a no-op and the useLayoutEffect that processes the pending
       // hydration would never fire.  Apply the hydration directly instead.
@@ -1135,9 +1250,12 @@ export function useChatSession({
         setPersistedSnapshotToolCallIds(
           hydration.persistedSnapshotToolCallIds ?? [],
         );
+        setLiveTraceState(hydratedTraceState ?? createEmptyLiveTraceState());
         setHydrationTick((t) => t + 1);
         return Promise.resolve();
       }
+
+      pendingLiveTraceStateRef.current = hydratedTraceState;
 
       return new Promise<void>((resolve) => {
         pendingSessionHydrationRef.current = {
@@ -1236,7 +1354,9 @@ export function useChatSession({
     livePreviewSpanCount > 0 || (liveTraceEnvelope?.spans?.length ?? 0) > 0;
 
   useEffect(() => {
-    setLiveTraceState(createEmptyLiveTraceState());
+    const hydratedState = pendingLiveTraceStateRef.current;
+    pendingLiveTraceStateRef.current = null;
+    setLiveTraceState(hydratedState ?? createEmptyLiveTraceState());
   }, [chatSessionId]);
 
   useSharedChatWidgetCapture({
@@ -1398,6 +1518,16 @@ export function useChatSession({
           prefersBorder: boolean;
           widgetHtmlUrl?: string | null;
         }>;
+        turnTraces?: Array<{
+          turnId: string;
+          promptIndex: number;
+          startedAt: number;
+          endedAt: number;
+          finishReason?: string;
+          usage?: LiveChatTraceUsage;
+          spansBlobUrl?: string | null;
+          modelId?: string;
+        }>;
       },
       options?: {
         shouldRestoreResumeConfig?: () => boolean;
@@ -1428,6 +1558,10 @@ export function useChatSession({
         overrides = buildToolRenderOverridesFromSnapshots(traceSnapshots);
       }
 
+      const hydratedTurnTraces = await resolveHydratedTurnTraces(
+        session.turnTraces,
+      );
+
       if (options?.shouldApply && !options.shouldApply()) {
         return;
       }
@@ -1455,6 +1589,7 @@ export function useChatSession({
         resumedVersion: session.version,
         toolRenderOverrides: overrides,
         persistedSnapshotToolCallIds,
+        turnTraces: hydratedTurnTraces,
       });
       onResetRef.current?.("hydrate");
     },

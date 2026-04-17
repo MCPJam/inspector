@@ -81,6 +81,16 @@ export interface MCPJamHandlerOptions {
   requireToolApproval?: boolean;
   onConversationComplete?: (
     fullHistory: ModelMessage[],
+    turnTrace: {
+      turnId: string;
+      promptIndex: number;
+      startedAt: number;
+      endedAt: number;
+      spans: EvalTraceSpan[];
+      usage?: LiveChatTraceUsage;
+      finishReason?: string;
+      modelId: string;
+    },
   ) => Promise<void> | void;
   onStreamComplete?: () => Promise<void> | void;
   onStreamWriterReady?: (writer: {
@@ -1373,7 +1383,16 @@ export async function handleMCPJamFreeChatModel(
       try {
         if (runSucceeded) {
           try {
-            await onConversationComplete?.([...messageHistory]);
+            await onConversationComplete?.([...messageHistory], {
+              turnId: traceTurn.turnId,
+              promptIndex: traceTurn.promptIndex,
+              startedAt: traceTurn.turnStartedAt,
+              endedAt: Date.now(),
+              spans: [...traceTurn.turnSpans],
+              usage: traceTurn.turnUsage,
+              finishReason: steps >= MAX_STEPS ? "length" : "stop",
+              modelId,
+            });
           } catch (persistenceError) {
             logger.error(
               "[mcpjam-stream-handler] Error while persisting conversation",

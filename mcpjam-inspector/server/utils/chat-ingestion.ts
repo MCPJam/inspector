@@ -1,4 +1,5 @@
 import { logger } from "./logger";
+import type { EvalTraceSpan } from "@/shared/eval-trace";
 
 const DEFAULT_INGEST_TIMEOUT_MS = 5_000;
 const MAX_RESPONSE_PREVIEW_CHARS = 200;
@@ -8,6 +9,21 @@ interface ResumeConfig {
   temperature?: number;
   requireToolApproval?: boolean;
   selectedServers?: string[];
+}
+
+export interface PersistedTurnTrace {
+  turnId: string;
+  promptIndex: number;
+  startedAt: number;
+  endedAt: number;
+  spans: EvalTraceSpan[];
+  usage?: {
+    inputTokens?: number;
+    outputTokens?: number;
+    totalTokens?: number;
+  };
+  finishReason?: string;
+  modelId?: string;
 }
 
 interface PersistChatSessionOptions {
@@ -37,6 +53,7 @@ interface PersistChatSessionOptions {
   timeoutMs?: number;
   resumeConfig?: ResumeConfig;
   expectedVersion?: number;
+  turnTrace?: PersistedTurnTrace;
 }
 
 function isAbortError(error: unknown): boolean {
@@ -132,6 +149,7 @@ export async function persistChatSessionToConvex(
         ...(options.expectedVersion !== undefined
           ? { expectedVersion: options.expectedVersion }
           : {}),
+        ...(options.turnTrace ? { turnTrace: options.turnTrace } : {}),
       }),
     });
 

@@ -79,6 +79,7 @@ import {
   getChatHistoryDetail,
   type ChatHistoryDetailSession,
   type ChatHistorySession,
+  type ChatHistoryTurnTrace,
   type ChatHistoryWidgetSnapshot,
 } from "@/lib/apis/web/chat-history-api";
 import { useWorkspaceServers } from "@/hooks/useViews";
@@ -556,6 +557,7 @@ export function ChatTabV2({
       options?: {
         shouldRestoreComposerState?: () => boolean;
         shouldApply?: () => boolean;
+        turnTraces?: ChatHistoryTurnTrace[];
       },
     ) => {
       await loadChatSession(
@@ -565,6 +567,7 @@ export function ChatTabV2({
           resumeConfig: detail.resumeConfig,
           version: detail.version,
           widgetSnapshots,
+          turnTraces: options?.turnTraces,
         },
         {
           shouldRestoreResumeConfig: options?.shouldRestoreComposerState,
@@ -824,7 +827,9 @@ export function ChatTabV2({
           detail.session.resumeConfig?.selectedServers,
         );
 
-        await loadHistorySession(detail.session, detail.widgetSnapshots);
+        await loadHistorySession(detail.session, detail.widgetSnapshots, {
+          turnTraces: detail.turnTraces,
+        });
 
         if (
           historySelectionRequestIdRef.current !== selectionRequestId ||
