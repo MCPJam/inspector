@@ -71,7 +71,7 @@ export const MCP_APPS_GUIDE_METADATA: Record<McpAppsStep, McpAppsStepGuide> = {
   },
 
   widget_component: {
-    title: "Widget code in the sandbox",
+    title: "Widget code in the chatbox",
     summary:
       "The widget runs inside the iframe, receives data from the host, and can ask the host to call tools.",
     category: "protocol",

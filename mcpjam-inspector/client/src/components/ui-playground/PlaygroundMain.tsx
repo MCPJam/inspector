@@ -86,9 +86,9 @@ import { useClientConfigStore } from "@/stores/client-config-store";
 import { extractEffectiveHostDisplayMode } from "@/lib/client-config";
 import { PostConnectGuide } from "@/components/app-builder/PostConnectGuide";
 import {
-  SandboxHostStyleProvider,
-  SandboxHostThemeProvider,
-} from "@/contexts/sandbox-host-style-context";
+  ChatboxHostStyleProvider,
+  ChatboxHostThemeProvider,
+} from "@/contexts/chatbox-host-style-context";
 import { useComposerOnboarding } from "@/hooks/use-composer-onboarding";
 import { useDebouncedXRayPayload } from "@/hooks/use-debounced-x-ray-payload";
 import { useModelSelectorLayoutLock } from "@/hooks/use-model-selector-layout-lock";
@@ -1635,8 +1635,8 @@ export function PlaygroundMain({
         ) : (
           <>
             {showLiveTraceDiagnostics && (
-              <SandboxHostStyleProvider value={hostStyle}>
-                <SandboxHostThemeProvider value={effectiveThreadTheme}>
+              <ChatboxHostStyleProvider value={hostStyle}>
+                <ChatboxHostThemeProvider value={effectiveThreadTheme}>
                   <div
                     className={cn(
                       "flex h-full min-h-0 flex-col overflow-hidden",
@@ -1737,8 +1737,8 @@ export function PlaygroundMain({
                       </div>
                     </div>
                   </div>
-                </SandboxHostThemeProvider>
-              </SandboxHostStyleProvider>
+                </ChatboxHostThemeProvider>
+              </ChatboxHostStyleProvider>
             )}
 
             {/* Device frame container */}
@@ -1746,11 +1746,11 @@ export function PlaygroundMain({
               className="flex h-full items-center justify-center min-h-0 overflow-auto"
               style={showLiveTraceDiagnostics ? { display: "none" } : undefined}
             >
-              <SandboxHostStyleProvider value={hostStyle}>
-                <SandboxHostThemeProvider value={effectiveThreadTheme}>
+              <ChatboxHostStyleProvider value={hostStyle}>
+                <ChatboxHostThemeProvider value={effectiveThreadTheme}>
                   <div
                     className={cn(
-                      "sandbox-host-shell app-theme-scope relative flex flex-col overflow-hidden",
+                      "chatbox-host-shell app-theme-scope relative flex flex-col overflow-hidden",
                       effectiveThreadTheme === "dark" && "dark",
                     )}
                     data-testid="playground-thread-shell"
@@ -1775,8 +1775,8 @@ export function PlaygroundMain({
                       {threadContent}
                     </div>
                   </div>
-                </SandboxHostThemeProvider>
-              </SandboxHostStyleProvider>
+                </ChatboxHostThemeProvider>
+              </ChatboxHostStyleProvider>
             </div>
           </>
         )}

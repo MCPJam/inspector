@@ -60,9 +60,9 @@ import { MCPPromptResultCard } from "@/components/chat-v2/chat-input/prompts/mcp
 import type { SkillResult } from "@/components/chat-v2/chat-input/skills/skill-types";
 import { SkillResultCard } from "@/components/chat-v2/chat-input/skills/skill-result-card";
 import {
-  useSandboxHostStyle,
-  useSandboxHostTheme,
-} from "@/contexts/sandbox-host-style-context";
+  useChatboxHostStyle,
+  useChatboxHostTheme,
+} from "@/contexts/chatbox-host-style-context";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import {
   Popover,
@@ -70,7 +70,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { HostStylePillSelector } from "@/components/shared/HostStylePillSelector";
-import type { SandboxHostStyle } from "@/lib/sandbox-host-style";
+import type { ChatboxHostStyle } from "@/lib/chatbox-host-style";
 
 interface ChatInputProps {
   value: string;
@@ -127,9 +127,9 @@ interface ChatInputProps {
   /** Main chat: show the Claude/ChatGPT host-style selector in the "+" menu. */
   showHostStyleSelector?: boolean;
   /** Current host style for the selector UI. */
-  hostStyle?: SandboxHostStyle;
+  hostStyle?: ChatboxHostStyle;
   /** Shared host-style setter. */
-  onHostStyleChange?: (hostStyle: SandboxHostStyle) => void;
+  onHostStyleChange?: (hostStyle: ChatboxHostStyle) => void;
   /** Onboarding: pulse the send button with glow animation */
   pulseSubmit?: boolean;
   /** Move the textarea caret to the end when this trigger changes */
@@ -142,13 +142,13 @@ interface ChatInputProps {
   onReconnectServer?: (serverName: string) => Promise<void>;
   /** Add a new server (opens the add-server modal). */
   onAddServer?: (formData: ServerFormData) => void;
-  /** Hosted sandbox: optional servers not yet connected (Add server popover). */
-  sandboxAttachableServers?: Array<{
+  /** Hosted chatbox: optional servers not yet connected (Add server popover). */
+  chatboxAttachableServers?: Array<{
     serverId: string;
     serverName: string;
     useOAuth: boolean;
   }>;
-  onAttachSandboxServer?: (serverId: string) => void;
+  onAttachChatboxServer?: (serverId: string) => void;
 }
 
 export function ChatInput({
@@ -201,14 +201,14 @@ export function ChatInput({
   onServerToggle,
   onReconnectServer,
   onAddServer,
-  sandboxAttachableServers,
-  onAttachSandboxServer,
+  chatboxAttachableServers,
+  onAttachChatboxServer,
 }: ChatInputProps) {
-  const sandboxHostStyle = useSandboxHostStyle();
-  const sandboxHostTheme = useSandboxHostTheme();
+  const chatboxHostStyle = useChatboxHostStyle();
+  const chatboxHostTheme = useChatboxHostTheme();
   const globalThemeMode = usePreferencesStore((s) => s.themeMode);
-  const resolvedThemeMode = sandboxHostTheme ?? globalThemeMode;
-  const isDarkSandboxTheme = resolvedThemeMode === "dark";
+  const resolvedThemeMode = chatboxHostTheme ?? globalThemeMode;
+  const isDarkChatboxTheme = resolvedThemeMode === "dark";
   const formRef = useRef<HTMLFormElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -231,7 +231,7 @@ export function ChatInput({
   };
   const [addServerModalOpen, setAddServerModalOpen] = useState(false);
   const [systemPromptOpen, setSystemPromptOpen] = useState(false);
-  const selectorHostStyle = hostStyle ?? sandboxHostStyle;
+  const selectorHostStyle = hostStyle ?? chatboxHostStyle;
   const hasServerRows = Boolean(
     allServerConfigs &&
     onServerToggle &&
@@ -443,38 +443,38 @@ export function ChatInput({
   };
 
   const composerClasses =
-    sandboxHostStyle === "chatgpt"
+    chatboxHostStyle === "chatgpt"
       ? cn(
-          "sandbox-host-composer rounded-[1.75rem]",
-          isDarkSandboxTheme
+          "chatbox-host-composer rounded-[1.75rem]",
+          isDarkChatboxTheme
             ? "border border-white/10 bg-[#303030] shadow-[0_1px_2px_rgba(0,0,0,0.28),0_4px_24px_rgba(130,130,130,0.14)]"
             : "border border-neutral-200/90 bg-white shadow-[0_1px_2px_rgba(0,0,0,0.04),0_4px_22px_rgba(100,100,100,0.08)]",
         )
-      : sandboxHostStyle === "claude"
+      : chatboxHostStyle === "claude"
         ? cn(
-            "sandbox-host-composer rounded-[1.35rem]",
-            isDarkSandboxTheme
+            "chatbox-host-composer rounded-[1.35rem]",
+            isDarkChatboxTheme
               ? "border-[#4b463d] bg-[#30302E] shadow-[0_1px_2px_rgba(0,0,0,0.28),0_4px_22px_rgba(120,120,120,0.12)]"
               : "border border-[#DFDFDB] bg-white shadow-[0_1px_2px_rgba(0,0,0,0.05),0_4px_20px_rgba(110,110,110,0.08)]",
           )
         : "rounded-3xl border border-border/40 bg-muted/70";
   const activeSubmitButtonClasses =
-    sandboxHostStyle === "chatgpt"
-      ? isDarkSandboxTheme
+    chatboxHostStyle === "chatgpt"
+      ? isDarkChatboxTheme
         ? "bg-[#f4f4f4] text-[#1f1f1f] hover:bg-[#e8e8e8]"
         : "bg-[#1f1f1f] text-white hover:bg-[#303030]"
-      : sandboxHostStyle === "claude"
-        ? isDarkSandboxTheme
+      : chatboxHostStyle === "claude"
+        ? isDarkChatboxTheme
           ? "bg-[#d07b53] text-[#fff7f0] hover:bg-[#c06f49]"
           : "bg-[#e27d47] text-white hover:bg-[#d16f3d]"
         : "bg-primary text-primary-foreground hover:bg-primary/90";
   const inactiveSubmitButtonClasses =
-    sandboxHostStyle === "chatgpt"
-      ? isDarkSandboxTheme
+    chatboxHostStyle === "chatgpt"
+      ? isDarkChatboxTheme
         ? "bg-[#3a3a3a] text-[#8a8a8a] cursor-not-allowed"
         : "bg-[#e7e7e7] text-[#9b9b9b] cursor-not-allowed"
-      : sandboxHostStyle === "claude"
-        ? isDarkSandboxTheme
+      : chatboxHostStyle === "claude"
+        ? isDarkChatboxTheme
           ? "bg-[#45413b] text-[#8d857a] cursor-not-allowed"
           : "bg-[#ebe5dc] text-[#b6ada0] cursor-not-allowed"
         : "bg-muted text-muted-foreground cursor-not-allowed";
@@ -506,9 +506,9 @@ export function ChatInput({
           />
 
           {minimalMode &&
-          sandboxAttachableServers &&
-          sandboxAttachableServers.length > 0 &&
-          onAttachSandboxServer ? (
+          chatboxAttachableServers &&
+          chatboxAttachableServers.length > 0 &&
+          onAttachChatboxServer ? (
             <div className="flex flex-wrap items-center gap-2 px-4 pb-1 pt-0.5">
               <Popover>
                 <PopoverTrigger asChild>
@@ -529,12 +529,12 @@ export function ChatInput({
                     Connect an optional server. You may be asked to authorize.
                   </p>
                   <div className="max-h-48 overflow-y-auto">
-                    {sandboxAttachableServers.map((s) => (
+                    {chatboxAttachableServers.map((s) => (
                       <button
                         key={s.serverId}
                         type="button"
                         className="flex w-full items-center justify-between rounded-md px-2 py-2 text-left text-sm hover:bg-muted/80"
-                        onClick={() => onAttachSandboxServer(s.serverId)}
+                        onClick={() => onAttachChatboxServer(s.serverId)}
                       >
                         <span className="truncate font-medium">
                           {s.serverName}

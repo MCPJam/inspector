@@ -28,7 +28,7 @@ describe("BillingUpsellGate", () => {
   it("shows ask-admin copy when user cannot manage billing", () => {
     render(
       <BillingUpsellGate
-        feature="sandboxes"
+        feature="chatboxes"
         currentPlan="free"
         upgradePlan="team"
         canManageBilling={false}

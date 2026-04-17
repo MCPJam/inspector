@@ -33,7 +33,7 @@ const hostedBatchSchema = z.object({
   oauthTokens: z.record(z.string(), z.string()).optional(),
   accessScope: z.enum(["workspace_member", "chat_v2"]).optional(),
   shareToken: z.string().min(1).optional(),
-  sandboxToken: z.string().min(1).optional(),
+  chatboxToken: z.string().min(1).optional(),
 });
 
 const hostedRunEvalsSchema = RunEvalsRequestSchema.omit({
@@ -140,7 +140,7 @@ evals.post("/stream-test-case", async (c) => {
         | "chat_v2"
         | undefined,
       shareToken: body.shareToken as string | undefined,
-      sandboxToken: body.sandboxToken as string | undefined,
+      chatboxToken: body.chatboxToken as string | undefined,
     },
   );
 

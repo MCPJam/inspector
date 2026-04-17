@@ -18,7 +18,7 @@ import type { ChatHistorySession } from "@/lib/apis/web/chat-history-api";
 import { getModelById } from "@/shared/types";
 import { getInitials } from "@/lib/utils";
 import type { WorkspaceThreadOwnerAvatar } from "./workspace-thread-owner-avatar";
-import type { SandboxHostStyle } from "@/lib/sandbox-host-style";
+import type { ChatboxHostStyle } from "@/lib/chatbox-host-style";
 import { CHAT_HISTORY_STRONG_BG_CLASS } from "./chat-history-theme";
 
 function formatChatHistoryModelLabel(
@@ -57,7 +57,7 @@ interface ChatHistoryRowProps {
   isAuthenticated: boolean;
   isStreaming: boolean;
   /** Which host aesthetic governs the active-row highlight (defaults to "claude"). */
-  hostStyle?: SandboxHostStyle;
+  hostStyle?: ChatboxHostStyle;
   onSelect: (session: ChatHistorySession) => void;
   onActionComplete?: (event: {
     action:

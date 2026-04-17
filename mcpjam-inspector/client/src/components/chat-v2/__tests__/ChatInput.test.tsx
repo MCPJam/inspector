@@ -2,9 +2,9 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { ChatInput } from "../chat-input";
 import {
-  SandboxHostStyleProvider,
-  SandboxHostThemeProvider,
-} from "@/contexts/sandbox-host-style-context";
+  ChatboxHostStyleProvider,
+  ChatboxHostThemeProvider,
+} from "@/contexts/chatbox-host-style-context";
 import type { ModelDefinition } from "@/shared/types";
 
 vi.mock("@/stores/preferences/preferences-provider", () => ({
@@ -157,11 +157,11 @@ describe("ChatInput", () => {
       ).toBeInTheDocument();
     });
 
-    it("uses ChatGPT submit styling inside ChatGPT sandboxes", () => {
+    it("uses ChatGPT submit styling inside ChatGPT chatboxes", () => {
       render(
-        <SandboxHostStyleProvider value="chatgpt">
+        <ChatboxHostStyleProvider value="chatgpt">
           <ChatInput {...defaultProps} value="Hello" />
-        </SandboxHostStyleProvider>,
+        </ChatboxHostStyleProvider>,
       );
 
       expect(screen.getByRole("button", { name: "Send message" })).toHaveClass(
@@ -171,11 +171,11 @@ describe("ChatInput", () => {
 
     it("keeps the textarea transparent inside a dark host-scoped composer", () => {
       render(
-        <SandboxHostStyleProvider value="chatgpt">
-          <SandboxHostThemeProvider value="dark">
+        <ChatboxHostStyleProvider value="chatgpt">
+          <ChatboxHostThemeProvider value="dark">
             <ChatInput {...defaultProps} />
-          </SandboxHostThemeProvider>
-        </SandboxHostStyleProvider>,
+          </ChatboxHostThemeProvider>
+        </ChatboxHostStyleProvider>,
       );
 
       expect(screen.getByPlaceholderText("Type your message...")).toHaveClass(

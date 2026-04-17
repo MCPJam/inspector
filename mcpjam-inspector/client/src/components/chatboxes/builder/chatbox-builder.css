@@ -1,0 +1,19 @@
+.chatbox-builder-grid {
+  background-image: none;
+}
+
+.chatbox-builder-card {
+  box-shadow:
+    0 1px 2px oklch(0.1 0 0 / 0.06),
+    0 2px 8px oklch(0.1 0 0 / 0.04);
+}
+
+.chatbox-builder-pane {
+  background: var(--card);
+  backdrop-filter: blur(18px);
+}
+
+.chatbox-builder-grid .react-flow__handle {
+  opacity: 0;
+  pointer-events: none;
+}

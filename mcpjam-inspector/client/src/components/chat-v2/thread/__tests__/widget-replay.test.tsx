@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { WidgetReplay } from "../widget-replay";
-import { SandboxHostStyleProvider } from "@/contexts/sandbox-host-style-context";
+import { ChatboxHostStyleProvider } from "@/contexts/chatbox-host-style-context";
 
 const mockDetectUIType = vi.fn();
 
@@ -50,22 +50,22 @@ describe("WidgetReplay", () => {
     mockDetectUIType.mockReturnValue("openai-sdk-and-mcp-apps");
   });
 
-  it("prefers the OpenAI renderer for ChatGPT sandboxes", () => {
+  it("prefers the OpenAI renderer for ChatGPT chatboxes", () => {
     render(
-      <SandboxHostStyleProvider value="chatgpt">
+      <ChatboxHostStyleProvider value="chatgpt">
         <WidgetReplay {...baseProps} />
-      </SandboxHostStyleProvider>,
+      </ChatboxHostStyleProvider>,
     );
 
     expect(screen.getByTestId("chatgpt-renderer")).toBeInTheDocument();
     expect(screen.queryByTestId("mcp-apps-renderer")).not.toBeInTheDocument();
   });
 
-  it("prefers the MCP Apps renderer for Claude sandboxes", () => {
+  it("prefers the MCP Apps renderer for Claude chatboxes", () => {
     render(
-      <SandboxHostStyleProvider value="claude">
+      <ChatboxHostStyleProvider value="claude">
         <WidgetReplay {...baseProps} />
-      </SandboxHostStyleProvider>,
+      </ChatboxHostStyleProvider>,
     );
 
     expect(screen.getByTestId("mcp-apps-renderer")).toBeInTheDocument();

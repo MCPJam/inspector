@@ -7,9 +7,9 @@ import type {
 } from "@modelcontextprotocol/ext-apps";
 import { CORS_ORIGINS } from "../../config.js";
 import {
-  CHATGPT_APPS_SANDBOX_PROXY_HTML,
-  MCP_APPS_SANDBOX_PROXY_HTML,
-} from "../apps/SandboxProxyHtml.bundled.js";
+  CHATGPT_APPS_CHATBOX_PROXY_HTML,
+  MCP_APPS_CHATBOX_PROXY_HTML,
+} from "../apps/ChatboxProxyHtml.bundled.js";
 import {
   injectOpenAICompat,
   injectScripts,
@@ -88,7 +88,7 @@ const chatgptAppsWidgetContentSchema = workspaceServerSchema.extend({
   deviceType: z.enum(["mobile", "tablet", "desktop"]).optional(),
 });
 
-// ── Sandbox Proxy Routes ─────────────────────────────────────────────
+// ── Chatbox Proxy Routes ─────────────────────────────────────────────
 
 /**
  * Hosted auth exception:
@@ -102,7 +102,7 @@ apps.get("/mcp-apps/sandbox-proxy", (c) => {
   c.header("Cache-Control", "no-cache, no-store, must-revalidate");
   c.header("Content-Security-Policy", buildFrameAncestors());
   c.res.headers.delete("X-Frame-Options");
-  return c.body(MCP_APPS_SANDBOX_PROXY_HTML);
+  return c.body(MCP_APPS_CHATBOX_PROXY_HTML);
 });
 
 apps.get("/chatgpt-apps/sandbox-proxy", (c) => {
@@ -110,7 +110,7 @@ apps.get("/chatgpt-apps/sandbox-proxy", (c) => {
   c.header("Cache-Control", "public, max-age=3600");
   c.header("Content-Security-Policy", buildFrameAncestors());
   c.res.headers.delete("X-Frame-Options");
-  return c.body(CHATGPT_APPS_SANDBOX_PROXY_HTML);
+  return c.body(CHATGPT_APPS_CHATBOX_PROXY_HTML);
 });
 
 // ── MCP Apps Widget Content ──────────────────────────────────────────

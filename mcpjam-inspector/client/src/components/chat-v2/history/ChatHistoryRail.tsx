@@ -17,7 +17,7 @@ import { ChatHistoryRow } from "./ChatHistoryRow";
 import { useChatHistory } from "./use-chat-history";
 import type { ChatHistorySession } from "@/lib/apis/web/chat-history-api";
 import { useWorkspaceMembers } from "@/hooks/useWorkspaces";
-import type { SandboxHostStyle } from "@/lib/sandbox-host-style";
+import type { ChatboxHostStyle } from "@/lib/chatbox-host-style";
 import {
   buildWorkspaceOwnerProfileByUserId,
   resolveWorkspaceThreadOwnerAvatar,
@@ -31,7 +31,7 @@ type ArchiveSectionScope = "personal" | "workspace";
 interface ChatHistoryRailProps {
   activeSessionId?: string | null;
   /** Which host aesthetic to mimic for strong-highlight tokens (falls back to "claude"). */
-  hostStyle?: SandboxHostStyle;
+  hostStyle?: ChatboxHostStyle;
   isAuthenticated: boolean;
   isStreaming: boolean;
   workspaceId?: string | null;

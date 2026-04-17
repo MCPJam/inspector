@@ -76,12 +76,12 @@ describe("getBillingErrorMessage", () => {
     );
   });
 
-  it("formats backend limit payloads for workspace sandboxes", () => {
+  it("formats backend limit payloads for workspace chatboxes", () => {
     const message = getBillingErrorMessage(
       new Error(
         JSON.stringify({
           code: "billing_limit_reached",
-          limit: "maxSandboxesPerWorkspace",
+          limit: "maxChatboxesPerWorkspace",
           allowedValue: 5,
         }),
       ),
@@ -89,7 +89,7 @@ describe("getBillingErrorMessage", () => {
     );
 
     expect(message).toBe(
-      "This workspace has reached its sandbox limit (5). Upgrade to continue.",
+      "This workspace has reached its chatbox limit (5). Upgrade to continue.",
     );
   });
 
@@ -168,7 +168,7 @@ describe("getBillingErrorMessage", () => {
       new Error(
         JSON.stringify({
           code: "billing_feature_not_included",
-          feature: "sandboxes",
+          feature: "chatboxes",
           plan: "free",
           upgradePlan: "starter",
         }),
@@ -177,7 +177,7 @@ describe("getBillingErrorMessage", () => {
     );
 
     expect(message).toBe(
-      "Sandboxes is not included in the Free plan. Upgrade to Starter to continue.",
+      "Chatboxes is not included in the Free plan. Upgrade to Starter to continue.",
     );
   });
 
@@ -186,7 +186,7 @@ describe("getBillingErrorMessage", () => {
       new Error(
         JSON.stringify({
           code: "billing_feature_not_included",
-          feature: "sandboxes",
+          feature: "chatboxes",
           plan: "free",
           upgradePlan: "starter",
         }),
@@ -196,7 +196,7 @@ describe("getBillingErrorMessage", () => {
     );
 
     expect(message).toBe(
-      "Sandboxes is not included in the Free plan. Ask an organization owner to upgrade to Starter.",
+      "Chatboxes is not included in the Free plan. Ask an organization owner to upgrade to Starter.",
     );
   });
 
