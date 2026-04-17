@@ -95,11 +95,26 @@ jobs:
           PR_BRANCH: ${{ steps.meta.outputs.branch }}
         run: |
           set -euo pipefail
+          # GitHub returns 404 for both "branch missing" and "token can't see
+          # this repo" on private repos. Preflight a repo-level GET so only a
+          # real access failure hard-fails; after that, a 404 on the branch
+          # path unambiguously means the branch doesn't exist.
+          ACCESS_CODE=$(curl -sS -o /dev/null -w "%{http_code}" \
+            -H "Authorization: Bearer ${TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${BACKEND_REPO}")
+          if [ "$ACCESS_CODE" != "200" ]; then
+            echo "::error::BACKEND_PREVIEW_DISPATCH_TOKEN cannot access ${BACKEND_REPO} (HTTP $ACCESS_CODE)"
+            exit 1
+          fi
+          # URL-encode slashes in the branch name for the path parameter.
+          ENCODED_BRANCH=$(jq -rn --arg s "$PR_BRANCH" '$s|@uri')
           HTTP_CODE=$(curl -sS -o /dev/null -w "%{http_code}" \
             -H "Authorization: Bearer ${TOKEN}" \
             -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/${BACKEND_REPO}/branches/${PR_BRANCH}")
+            "https://api.github.com/repos/${BACKEND_REPO}/branches/${ENCODED_BRANCH}")
           case "$HTTP_CODE" in
             200) echo "exists=true" >> "$GITHUB_OUTPUT" ;;
             404) echo "exists=false" >> "$GITHUB_OUTPUT" ;;
