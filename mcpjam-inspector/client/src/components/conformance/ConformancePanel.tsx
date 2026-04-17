@@ -57,7 +57,9 @@ interface OAuthSuiteState extends SuiteState {
 }
 
 function isHttpServer(server: ServerWithName): boolean {
-  return "url" in server.config;
+  // `server.config` is typed required but can be undefined during hosted
+  // hydration — guard before using the `in` operator to avoid a TypeError.
+  return !!server.config && "url" in server.config;
 }
 
 function suiteState(
@@ -65,8 +67,7 @@ function suiteState(
   server: ServerWithName,
 ): SuiteState {
   // The SDK's `canRunConformance` is the source of truth for which suites
-  // support which transports. Keep this UI guard aligned with the server
-  // routes by passing the server config through the same predicate.
+  // support which transports. It handles null/undefined configs gracefully.
   const support = canRunConformance(
     suite,
     server.config as Parameters<typeof canRunConformance>[1],
