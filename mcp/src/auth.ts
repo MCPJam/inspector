@@ -32,18 +32,18 @@ export function normalizeIssuer(domain: string | undefined): string | undefined 
   return withScheme.replace(/\/+$/, "");
 }
 
-export function extractBearerToken(header: string | null): string | undefined {
+function extractBearerToken(header: string | null): string | undefined {
   if (!header) return undefined;
   const [type, token] = header.split(" ");
   if (type?.toLowerCase() !== "bearer" || !token) return undefined;
   return token;
 }
 
-export function resourceMetadataUrl(origin: string): string {
+function resourceMetadataUrl(origin: string): string {
   return `${origin}/.well-known/oauth-protected-resource/mcp`;
 }
 
-export function buildWwwAuthenticate(
+function buildWwwAuthenticate(
   origin: string,
   error?: { code: string; description: string },
 ): string {

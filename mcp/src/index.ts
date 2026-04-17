@@ -77,9 +77,19 @@ export default {
       request.method === "GET" &&
       url.pathname === "/.well-known/oauth-authorization-server"
     ) {
-      const upstream = await fetch(
-        `${issuer}/.well-known/oauth-authorization-server`,
+      const upstreamUrl = new URL(
+        "/.well-known/oauth-authorization-server",
+        issuer,
       );
+      let upstream: Response;
+      try {
+        upstream = await fetch(upstreamUrl);
+      } catch {
+        return Response.json(
+          { error: "Authorization server discovery unavailable" },
+          { status: 502, headers: OAUTH_DISCOVERY_HEADERS },
+        );
+      }
       return new Response(upstream.body, {
         status: upstream.status,
         headers: {
