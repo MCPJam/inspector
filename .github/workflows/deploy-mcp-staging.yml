@@ -22,6 +22,12 @@ concurrency:
 
 env:
   NODE_VERSION: "24.14.0"
+  # Hardcoded instead of `steps.deploy.outputs.deployment-url` because
+  # cloudflare/wrangler-action@v3 returns a malformed value for
+  # custom-domain deploys — e.g. `mcp-staging.mcpjam.com (custom domain)`
+  # with no scheme and a trailing suffix (wrangler-action#396). Pinning
+  # the known hostname sidesteps that.
+  STAGING_URL: "https://mcp-staging.mcpjam.com"
 
 jobs:
   deploy:
@@ -79,22 +85,26 @@ jobs:
           command: deploy --env staging
 
       - name: Smoke test landing page
-        env:
-          DEPLOYMENT_URL: ${{ steps.deploy.outputs.deployment-url }}
         run: |
-          if [ -z "$DEPLOYMENT_URL" ]; then
-            echo "Wrangler action did not return a deployment URL." >&2
-            exit 1
-          fi
-
-          curl --fail --silent --show-error "$DEPLOYMENT_URL" | grep -q "MCPJam MCP"
+          # First deploy onto a new custom domain can take up to ~60s for
+          # Cloudflare to provision the edge cert and propagate the
+          # hostname. Budget 20 × 3s = ~60s of retries (plus curl
+          # latency) so the cold-start case actually covers the window.
+          for attempt in $(seq 1 20); do
+            if curl --fail --silent --show-error "$STAGING_URL" | grep -q "MCPJam MCP"; then
+              echo "Smoke OK on attempt $attempt"
+              exit 0
+            fi
+            echo "Attempt $attempt returned non-200 or mismatched content; retrying in 3s…"
+            sleep 3
+          done
+          echo "Staging URL never resolved correctly." >&2
+          exit 1
 
       - name: Summarize staging deployment
-        env:
-          DEPLOYMENT_URL: ${{ steps.deploy.outputs.deployment-url }}
         run: |
           echo "## ✅ MCP staging deployed" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "- Worker: \`mcpjam-mcp-staging\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "- URL: \`$DEPLOYMENT_URL\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "- MCP endpoint: \`${DEPLOYMENT_URL%/}/mcp\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- URL: \`$STAGING_URL\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- MCP endpoint: \`$STAGING_URL/mcp\`" >> "$GITHUB_STEP_SUMMARY"

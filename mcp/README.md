@@ -37,8 +37,9 @@ calls `users:ensureUser` (idempotent) then `users:getCurrentUser`.
 
 | Target | `AUTHKIT_DOMAIN` |
 | --- | --- |
-| Production (`wrangler deploy`) | `login.mcpjam.com` |
-| Staging (`wrangler deploy --env staging`, PR previews, `npm run dev`) | `dynamic-echo-14-staging.authkit.app` |
+| Production (`wrangler deploy --env production`, hostname `mcp.mcpjam.com`) | `login.mcpjam.com` |
+| Staging (`wrangler deploy --env staging`, hostname `mcp-staging.mcpjam.com`) | `dynamic-echo-14-staging.authkit.app` |
+| PR previews (`wrangler deploy --env preview`) and `npm run dev` | `dynamic-echo-14-staging.authkit.app` |
 
 Both domains are the MCPJam tenant — the same one the inspector app authenticates against, so a user signed into the inspector can reach this worker.
 
@@ -54,8 +55,9 @@ own JWT.
 
 ```sh
 npm run dev         # wrangler dev → http://localhost:8787
-npm run deploy:staging  # wrangler deploy --env staging → staging *.workers.dev
-npm run deploy      # wrangler deploy → *.workers.dev
+npm run deploy:staging  # wrangler deploy --env staging → https://mcp-staging.mcpjam.com
+npm run deploy      # wrangler deploy → NOTE: named envs don't merge with the top-level,
+                    # so a bare deploy lands on an unrouted default worker. Use --env.
 npm run typecheck   # tsc --noEmit
 npm run cf-typegen  # regenerate worker-configuration.d.ts
 ```
@@ -98,11 +100,15 @@ The intended rollout path is:
   `https://mcpjam-mcp-pr-<n>.<subdomain>.workers.dev` and posts the URL
   as a PR comment. Each push overwrites the same worker, so the URL is
   stable for the life of the PR. The live `mcpjam-mcp-staging` worker
-  is **not** touched.
+  is **not** touched. PR previews deploy with `--env preview` — they
+  deliberately avoid `--env staging` because staging owns the exclusive
+  `mcp-staging.mcpjam.com` custom domain.
 - close the PR → the per-PR worker is deleted.
 - push to `main` → `deploy-mcp-staging.yml` auto-deploys the live
-  `mcpjam-mcp-staging` worker.
-- manual production deployment remains a separate, explicit step.
+  `mcpjam-mcp-staging` worker at `https://mcp-staging.mcpjam.com/mcp`.
+- `mcp.mcpjam.com` is configured under `env.production` in
+  `wrangler.jsonc` but has no deploy workflow yet — manual production
+  deployment remains a separate, explicit step.
 
 PRs that touch only `mcp/**` are intentionally excluded from the Railway
 inspector preview (`pr-preview.yml`'s `paths-ignore` block) — the MCP
