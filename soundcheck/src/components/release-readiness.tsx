@@ -40,18 +40,18 @@ interface CheckRow {
 
 function Row({ row }: { row: CheckRow }) {
   return (
-    <li className="flex items-start gap-3 py-1.5">
+    <li className="group flex items-start gap-4 py-3">
       <span className="mt-1.5 shrink-0">
         <StatusDot tone={row.tone} />
       </span>
       <div className="min-w-0 flex-1">
-        <div className="text-sm text-neutral-700 dark:text-neutral-200">
+        <div className="text-sm text-ink-100">
           {row.href ? (
             <a
               href={row.href}
               target="_blank"
               rel="noreferrer"
-              className="hover:underline"
+              className="transition-colors group-hover:text-signal-wait hover:underline underline-offset-4 decoration-ink-700"
             >
               {row.label}
             </a>
@@ -59,7 +59,9 @@ function Row({ row }: { row: CheckRow }) {
             row.label
           )}
         </div>
-        <div className="text-xs text-neutral-500">{row.detail}</div>
+        <div className="mt-0.5 text-xs leading-relaxed text-ink-400">
+          {row.detail}
+        </div>
       </div>
     </li>
   );
@@ -67,8 +69,8 @@ function Row({ row }: { row: CheckRow }) {
 
 export function ReleaseReadinessSkeleton() {
   return (
-    <Tile title="Release readiness">
-      <p className="text-sm text-neutral-400">Loading checks…</p>
+    <Tile title="Release readiness" eyebrow="Preflight mirror">
+      <p className="text-sm text-ink-400">Loading checks…</p>
     </Tile>
   );
 }
@@ -221,9 +223,23 @@ export async function ReleaseReadiness() {
     });
   }
 
+  // Derive a top-line tile accent from the rows: red beats amber beats neutral.
+  const hasFailure = rows.some((r) => r.tone === "failure");
+  const hasWarning = rows.some((r) => r.tone === "warning");
+  const accent = hasFailure ? "failure" : hasWarning ? "warning" : "success";
+  const summary = hasFailure
+    ? "Preflight will fail — see blockers below."
+    : hasWarning
+      ? "Preflight will pass, but check the nudges."
+      : "All checks green. You can ship.";
+
   return (
-    <Tile title="Release readiness">
-      <ul className="-mt-1 divide-y divide-neutral-100 dark:divide-neutral-900">
+    <Tile
+      title="Release readiness"
+      eyebrow={summary}
+      accent={accent}
+    >
+      <ul className="-mt-1 divide-y divide-ink-800/60">
         {rows.map((row, i) => (
           <Row key={i} row={row} />
         ))}
