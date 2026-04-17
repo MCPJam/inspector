@@ -8,17 +8,22 @@
     "enabled": true
   },
   // Named envs fully override the top-level config (they don't merge), so
-  // `migrations` and `durable_objects` are duplicated below. Top-level
-  // DO/migrations blocks are intentionally omitted: every deploy in CI
-  // uses `--env <name>`, and we don't want a bare `wrangler deploy` to
-  // silently land on the unrouted default worker.
+  // `migrations`, `durable_objects`, and `vars` are duplicated below.
+  // Top-level DO/migrations/vars blocks are intentionally omitted: every
+  // deploy in CI uses `--env <name>`, and we don't want a bare
+  // `wrangler deploy` to silently land on the unrouted default worker.
   "env": {
     // Per-PR preview workers (`mcpjam-mcp-pr-<n>`) deploy with this env.
     // No custom-domain routes — they're exclusive per worker, so sharing
     // `env.staging` would cause every PR deploy to conflict with the live
-    // staging worker on `mcp-staging.mcpjam.com`.
+    // staging worker on `mcp-staging.mcpjam.com`. Points at the staging
+    // AuthKit/Convex targets so preview workers behave like staging.
     "preview": {
       "workers_dev": true,
+      "vars": {
+        "AUTHKIT_DOMAIN": "dynamic-echo-14-staging.authkit.app",
+        "CONVEX_URL": "https://proper-clownfish-150.convex.cloud"
+      },
       "migrations": [
         {
           "tag": "v1",
@@ -42,6 +47,10 @@
           "custom_domain": true
         }
       ],
+      "vars": {
+        "AUTHKIT_DOMAIN": "dynamic-echo-14-staging.authkit.app",
+        "CONVEX_URL": "https://proper-clownfish-150.convex.cloud"
+      },
       "migrations": [
         {
           "tag": "v1",
@@ -67,6 +76,10 @@
           "custom_domain": true
         }
       ],
+      "vars": {
+        "AUTHKIT_DOMAIN": "login.mcpjam.com",
+        "CONVEX_URL": "https://outstanding-fennec-304.convex.cloud"
+      },
       "migrations": [
         {
           "tag": "v1",
