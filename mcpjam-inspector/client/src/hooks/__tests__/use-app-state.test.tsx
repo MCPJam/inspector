@@ -91,7 +91,7 @@ vi.mock("../use-server-state", () => ({
 
 function createServer(
   name: string,
-  connectionStatus: "connected" | "disconnected" = "connected",
+  connectionStatus: "connected" | "disconnected" | "failed" = "connected",
 ) {
   return {
     name,
@@ -131,9 +131,7 @@ function createLoadedAppState(selectedServerState?: {
     servers: {
       [selectedServerState.name]: createServer(
         selectedServerState.name,
-        selectedServerState.connectionStatus === "disconnected"
-          ? "disconnected"
-          : "connected",
+        selectedServerState.connectionStatus,
       ),
     },
     selectedServer: selectedServerState.name,
