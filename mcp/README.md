@@ -40,10 +40,13 @@ It is ignored by Changesets alongside `@mcpjam/soundcheck`.
 
 The intended rollout path is:
 
-- open/push a PR touching `mcp/**` → `pr-mcp-preview.yml` uploads a new
-  Worker version via `wrangler versions upload --env staging` and posts a
-  per-PR preview URL as a PR comment. The live `mcpjam-mcp-staging` worker
-  is **not** promoted.
+- open/push a PR touching `mcp/**` → `pr-mcp-preview.yml` deploys a
+  dedicated per-PR worker named `mcpjam-mcp-pr-<n>` at
+  `https://mcpjam-mcp-pr-<n>.<subdomain>.workers.dev` and posts the URL
+  as a PR comment. Each push overwrites the same worker, so the URL is
+  stable for the life of the PR. The live `mcpjam-mcp-staging` worker
+  is **not** touched.
+- close the PR → the per-PR worker is deleted.
 - push to `main` → `deploy-mcp-staging.yml` auto-deploys the live
   `mcpjam-mcp-staging` worker.
 - manual production deployment remains a separate, explicit step.

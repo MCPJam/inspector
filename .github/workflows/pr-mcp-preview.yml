@@ -2,13 +2,17 @@ name: PR MCP Preview
 
 # Per-PR preview URLs for the MCP Cloudflare Worker.
 #
-# Every push to a PR that touches mcp/ uploads a new *version* of the
-# staging Worker via `wrangler versions upload --env staging`. Cloudflare
-# returns a unique preview URL per upload (shape:
-# https://<version-id>-mcpjam-mcp-staging.<subdomain>.workers.dev) that
-# routes to that specific version without promoting it. Concurrent PRs
-# don't collide, and no cleanup is needed — version-upload URLs age out
-# per Cloudflare's retention.
+# Every push to a PR that touches mcp/ deploys a dedicated per-PR worker
+# named `mcpjam-mcp-pr-<n>`, served at
+# `https://mcpjam-mcp-pr-<n>.<subdomain>.workers.dev`. The URL is stable
+# per PR — each push overwrites the same worker — so reviewers can
+# bookmark it for the life of the PR. Each PR also gets isolated Durable
+# Object storage (DO namespaces are scoped to the worker name).
+#
+# We used to attempt `wrangler versions upload --env staging`, but
+# per-version preview URLs are a Workers Paid feature. Per-PR full-worker
+# deploys work on the Free plan and are the idiomatic Cloudflare pattern
+# for preview environments.
 #
 # The live `mcpjam-mcp-staging` worker still only changes on merge to
 # main, via .github/workflows/deploy-mcp-staging.yml.
@@ -30,14 +34,14 @@ permissions:
 
 concurrency:
   # Per-PR group with cancel-in-progress. Semantics worth knowing:
-  #   - Two rapid pushes on the same PR: the older upload is cancelled so
+  #   - Two rapid pushes on the same PR: the older deploy is cancelled so
   #     the comment always reflects the newest SHA.
-  #   - Close mid-upload: the in-flight upsert is cancelled and
-  #     destroy-mcp-preview runs — correct, no point finishing a version
-  #     upload for a just-closed PR.
+  #   - Close mid-deploy: the in-flight upsert is cancelled and
+  #     destroy-mcp-preview runs — correct, no point finishing a deploy
+  #     for a just-closed PR.
   #   - Close+reopen in quick succession can race the comment state
   #     (destroy wins, then upsert overwrites). Acceptable; reviewers will
-  #     see the live URL once the second upload completes.
+  #     see the live URL once the second deploy completes.
   group: mcp-preview-pr-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
@@ -54,12 +58,11 @@ jobs:
       github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    # Deliberately no `environment:` declaration — we don't want to create a
-    # `mcp-preview-pr-<n>` environment per PR (clutters the Environments
-    # list), and we don't want PR-preview deployments to show up in
-    # `mcp-staging`'s deployment history (would confuse Soundcheck's
-    # deploy-diff tile). Secrets are read from repo level; the per-PR URL
-    # is surfaced via the PR comment, which is where reviewers look anyway.
+    # Deliberately no `environment:` declaration — we don't want to create
+    # a `mcp-preview-pr-<n>` GitHub environment per PR (clutters the
+    # Environments list), and we don't want PR previews to appear in
+    # `mcp-staging`'s deployment history (would confuse Soundcheck).
+    # Secrets read at repo level; URL is surfaced via the PR comment.
     steps:
       - name: Require Cloudflare credentials
         env:
@@ -90,7 +93,7 @@ jobs:
       - name: Typecheck MCP worker
         run: npm run typecheck -w @mcpjam/mcp
 
-      - name: Upload preview version
+      - name: Deploy per-PR preview worker
         id: wrangler
         uses: cloudflare/wrangler-action@v3
         with:
@@ -98,44 +101,35 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           gitHubToken: ${{ secrets.GITHUB_TOKEN }}
           workingDirectory: "mcp"
-          command: versions upload --env staging --message "PR #${{ github.event.pull_request.number }} @ ${{ github.event.pull_request.head.sha }}"
-
-      - name: Resolve preview URL
-        id: preview
-        env:
-          # The wrangler-action's built-in `deployment-url` output is only
-          # populated for `deploy` (from `.wrangler/deployment-meta/deploy.json`).
-          # For `versions upload` we parse the "Version Preview URL:" line
-          # wrangler prints to stdout when `preview_urls: true` is set on the
-          # env in wrangler.jsonc.
-          WRANGLER_STDOUT: ${{ steps.wrangler.outputs.command-output }}
-        run: |
-          url=$(echo "$WRANGLER_STDOUT" | grep -oE 'https://[a-z0-9-]+-mcpjam-mcp-staging\.[a-z0-9-]+\.workers\.dev' | head -1)
-          if [ -z "$url" ]; then
-            echo "Could not find preview URL in wrangler output. Confirm 'preview_urls: true' is set on env.staging in mcp/wrangler.jsonc and that the staging worker has been deployed at least once with that setting." >&2
-            echo "--- wrangler stdout ---" >&2
-            echo "$WRANGLER_STDOUT" >&2
-            exit 1
-          fi
-          echo "url=$url" >> "$GITHUB_OUTPUT"
+          # `--env staging` uses the staging worker config (workers_dev,
+          # DO bindings, migrations); `--name` overrides the worker name
+          # so the deploy lands on a dedicated `mcpjam-mcp-pr-<n>` worker
+          # instead of overwriting the live staging one.
+          command: deploy --env staging --name mcpjam-mcp-pr-${{ github.event.pull_request.number }}
 
       - name: Smoke test preview URL
         env:
-          DEPLOYMENT_URL: ${{ steps.preview.outputs.url }}
+          DEPLOYMENT_URL: ${{ steps.wrangler.outputs.deployment-url }}
         run: |
+          if [ -z "$DEPLOYMENT_URL" ]; then
+            echo "Wrangler action did not return a deployment URL." >&2
+            exit 1
+          fi
           curl --fail --silent --show-error "$DEPLOYMENT_URL" | grep -q "MCPJam MCP"
 
       - name: Upsert PR preview comment
         uses: actions/github-script@v7
         env:
-          PREVIEW_URL: ${{ steps.preview.outputs.url }}
+          PREVIEW_URL: ${{ steps.wrangler.outputs.deployment-url }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         with:
           script: |
             const marker = process.env.PREVIEW_COMMENT_MARKER;
             const previewUrl = process.env.PREVIEW_URL;
             const headSha = process.env.HEAD_SHA;
             const shortSha = headSha ? headSha.slice(0, 7) : "unknown";
+            const prNumber = process.env.PR_NUMBER;
             const issue_number = context.payload.pull_request.number;
 
             const bodyLines = [
@@ -143,10 +137,10 @@ jobs:
               "### MCP worker preview",
               previewUrl
                 ? `Preview URL: ${previewUrl}`
-                : "Preview URL will appear after the version upload finishes.",
+                : "Preview URL will appear once the deploy finishes.",
               previewUrl ? `MCP endpoint: ${previewUrl.replace(/\/$/, "")}/mcp` : "",
-              `Built from \`${shortSha}\`. Each push uploads a new version — older URLs keep working until Cloudflare expires them.`,
-              "The live `mcpjam-mcp-staging` worker only changes on merge to `main`.",
+              `Built from \`${shortSha}\`. Each push overwrites the \`mcpjam-mcp-pr-${prNumber}\` worker, so the URL is stable for the life of the PR.`,
+              "The live `mcpjam-mcp-staging` worker only changes on merge to `main`. This preview worker is deleted when the PR is closed.",
             ].filter(Boolean);
             const body = bodyLines.join("\n");
 
@@ -178,11 +172,12 @@ jobs:
 
       - name: Summarize MCP preview
         env:
-          DEPLOYMENT_URL: ${{ steps.preview.outputs.url }}
+          DEPLOYMENT_URL: ${{ steps.wrangler.outputs.deployment-url }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          echo "## ✅ MCP preview uploaded" >> "$GITHUB_STEP_SUMMARY"
+          echo "## ✅ MCP preview deployed" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Worker: \`mcpjam-mcp-staging\` (version upload — does not promote)" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Worker: \`mcpjam-mcp-pr-$PR_NUMBER\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- URL: \`$DEPLOYMENT_URL\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- MCP endpoint: \`${DEPLOYMENT_URL%/}/mcp\`" >> "$GITHUB_STEP_SUMMARY"
 
@@ -191,22 +186,57 @@ jobs:
       github.event.action == 'closed' &&
       github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
-      - name: Mark preview comment as expired
+      - name: Require Cloudflare credentials
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          if [ -z "$CLOUDFLARE_ACCOUNT_ID" ] || [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            echo "Missing Cloudflare secrets; skipping cleanup." >&2
+            exit 1
+          fi
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install workspace dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Delete per-PR preview worker
+        # `wrangler delete --force` tears down the per-PR worker and its
+        # Durable Object namespace. If the worker was never created (e.g.
+        # the initial deploy failed), wrangler returns non-zero — we
+        # swallow that so PR close doesn't surface a red X on past PRs.
+        continue-on-error: true
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: "mcp"
+          command: delete --name mcpjam-mcp-pr-${{ github.event.pull_request.number }} --force
+
+      - name: Mark preview comment as deleted
         uses: actions/github-script@v7
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         with:
           script: |
             const marker = process.env.PREVIEW_COMMENT_MARKER;
+            const prNumber = process.env.PR_NUMBER;
             const issue_number = context.payload.pull_request.number;
-            // Cloudflare version uploads self-expire per account retention —
-            // no explicit cleanup API call is needed here. We just update
-            // the PR comment so reviewers don't follow a stale URL.
             const body = [
               marker,
               "### MCP worker preview",
-              "PR closed. Preview URLs will stop working once Cloudflare expires their versions.",
-              "Merged changes go live on `mcpjam-mcp-staging` via `deploy-mcp-staging.yml`.",
+              `Preview worker \`mcpjam-mcp-pr-${prNumber}\` deleted — the preview URL no longer resolves.`,
+              "Merged changes are live on `mcpjam-mcp-staging` via `deploy-mcp-staging.yml`.",
             ].join("\n");
 
             const comments = await github.paginate(
