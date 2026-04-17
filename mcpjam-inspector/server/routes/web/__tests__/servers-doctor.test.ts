@@ -31,9 +31,9 @@ vi.mock("../../../utils/oauth-proxy.js", () => ({
   }),
 }));
 
-vi.mock("../../apps/ChatboxProxyHtml.bundled.js", () => ({
-  CHATGPT_APPS_CHATBOX_PROXY_HTML: "<html></html>",
-  MCP_APPS_CHATBOX_PROXY_HTML: "<html></html>",
+vi.mock("../../apps/SandboxProxyHtml.bundled.js", () => ({
+  CHATGPT_APPS_SANDBOX_PROXY_HTML: "<html></html>",
+  MCP_APPS_SANDBOX_PROXY_HTML: "<html></html>",
 }));
 
 import webRoutes from "../index.js";
