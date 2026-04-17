@@ -95,17 +95,16 @@ jobs:
           PR_BRANCH: ${{ steps.meta.outputs.branch }}
         run: |
           set -euo pipefail
-          # -c http.extraheader= strips the AUTHORIZATION header that
-          # actions/checkout persists for GITHUB_TOKEN; otherwise git uses
-          # it instead of the URL-embedded PAT and 404s on the backend repo.
-          BACKEND_BRANCH=$(git -c http.extraheader= ls-remote --heads \
-            "https://x-access-token:${TOKEN}@github.com/${BACKEND_REPO}.git" \
-            "$PR_BRANCH")
-          if [ -n "$BACKEND_BRANCH" ]; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-          fi
+          HTTP_CODE=$(curl -sS -o /dev/null -w "%{http_code}" \
+            -H "Authorization: Bearer ${TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${BACKEND_REPO}/branches/${PR_BRANCH}")
+          case "$HTTP_CODE" in
+            200) echo "exists=true" >> "$GITHUB_OUTPUT" ;;
+            404) echo "exists=false" >> "$GITHUB_OUTPUT" ;;
+            *) echo "::error::Unexpected HTTP $HTTP_CODE checking ${BACKEND_REPO}/${PR_BRANCH}"; exit 1 ;;
+          esac
 
       - name: Create or refresh Railway preview environment
         run: |
