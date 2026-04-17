@@ -35,10 +35,12 @@ calls `users:ensureUser` (idempotent) then `users:getCurrentUser`.
 
 ### AuthKit domains
 
-| Target | `AUTHKIT_DOMAIN` | WorkOS client id |
-| --- | --- | --- |
-| Production (`wrangler deploy`) | `login.mcpjam.com` | `client_01K4C1TVPBE7JTBFQJF9SDW9P9` |
-| Staging (`wrangler deploy --env staging`, PR previews, `npm run dev`) | `dynamic-echo-14-staging.authkit.app` | `client_01K4C1TVA6CMQ3G32F1P301A9G` |
+| Target | `AUTHKIT_DOMAIN` |
+| --- | --- |
+| Production (`wrangler deploy`) | `login.mcpjam.com` |
+| Staging (`wrangler deploy --env staging`, PR previews, `npm run dev`) | `dynamic-echo-14-staging.authkit.app` |
+
+Both domains are the MCPJam tenant — the same one the inspector app authenticates against, so a user signed into the inspector can reach this worker.
 
 `npm run dev` uses `--env staging` so local development binds against staging.
 Both tenants must have **Client ID Metadata Document** enabled under

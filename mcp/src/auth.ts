@@ -34,9 +34,8 @@ export function normalizeIssuer(domain: string | undefined): string | undefined 
 
 function extractBearerToken(header: string | null): string | undefined {
   if (!header) return undefined;
-  const [type, token] = header.split(" ");
-  if (type?.toLowerCase() !== "bearer" || !token) return undefined;
-  return token;
+  const match = /^Bearer\s+(\S+)\s*$/i.exec(header);
+  return match?.[1];
 }
 
 function resourceMetadataUrl(origin: string): string {
