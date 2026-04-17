@@ -250,7 +250,10 @@ const navigationSections: NavSection[] = [
         title: "Conformance",
         url: "#conformance",
         icon: FlaskConical,
-        featureFlag: "conformance-enabled",
+        // MCPJam-internal flag: rollout is restricted to the MCPJam team in
+        // PostHog. Keep the `mcpjam-` prefix so it's obvious at a glance that
+        // this is an internal-only flag (same convention as `mcpjam-learning`).
+        featureFlag: "mcpjam-conformance",
       },
       {
         title: "OAuth Debugger",
@@ -550,7 +553,7 @@ export function MCPSidebar({
   const evaluateRunsEnabled = useFeatureFlagEnabled("evaluate-runs");
   const xaaEnabled = useFeatureFlagEnabled("xaa");
   const learnMoreEnabled = useFeatureFlagEnabled("learn-more-enabled");
-  const conformanceEnabled = useFeatureFlagEnabled("conformance-enabled");
+  const conformanceEnabled = useFeatureFlagEnabled("mcpjam-conformance");
   const { isAuthenticated } = useConvexAuth();
   const { user } = useAuth();
   const learningEnabled = !!learningFlagEnabled && isAuthenticated;
@@ -673,7 +676,7 @@ export function MCPSidebar({
       "client-config-enabled": !!clientConfigEnabled && isAuthenticated,
       "registry-enabled": registryEnabled === true,
       "evals-enabled": !!evalsEnabled,
-      "conformance-enabled": conformanceEnabled === true,
+      "mcpjam-conformance": conformanceEnabled === true,
       xaa: xaaEnabled === true,
     }),
     [

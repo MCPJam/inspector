@@ -20,6 +20,7 @@ import type {
   MCPAppsCheckResult,
   OAuthConformanceStepResult,
 } from "@mcpjam/sdk";
+import { canRunConformance } from "@mcpjam/sdk";
 import type { OAuthConformanceStartResult } from "@/lib/apis/mcp-conformance-api";
 import {
   runProtocolConformance,
@@ -29,7 +30,6 @@ import {
   completeOAuthConformance,
 } from "@/lib/apis/mcp-conformance-api";
 import { deriveOAuthProfileFromServer } from "@/components/oauth/utils";
-import { isHostedMode } from "@/lib/apis/mode-client";
 
 type SuiteStatus = "idle" | "running" | "done" | "error" | "unavailable";
 
@@ -57,26 +57,32 @@ function isHttpServer(server: ServerWithName): boolean {
   return "url" in server.config;
 }
 
-function createProtocolState(httpServer: boolean): ProtocolSuiteState {
-  return {
-    status: httpServer ? "idle" : "unavailable",
-    unavailableReason: httpServer
-      ? undefined
-      : "Protocol conformance requires HTTP transport",
-  };
+function suiteState(
+  suite: "protocol" | "oauth" | "apps",
+  server: ServerWithName,
+): SuiteState {
+  // The SDK's `canRunConformance` is the source of truth for which suites
+  // support which transports. Keep this UI guard aligned with the server
+  // routes by passing the server config through the same predicate.
+  const support = canRunConformance(
+    suite,
+    server.config as Parameters<typeof canRunConformance>[1],
+  );
+  return support.supported
+    ? { status: "idle" }
+    : { status: "unavailable", unavailableReason: support.reason };
 }
 
-function createAppsState(): AppsSuiteState {
-  return { status: "idle" };
+function createProtocolState(server: ServerWithName): ProtocolSuiteState {
+  return suiteState("protocol", server);
 }
 
-function createOAuthState(httpServer: boolean): OAuthSuiteState {
-  return {
-    status: httpServer ? "idle" : "unavailable",
-    unavailableReason: httpServer
-      ? undefined
-      : "OAuth conformance requires HTTP transport",
-  };
+function createAppsState(server: ServerWithName): AppsSuiteState {
+  return suiteState("apps", server);
+}
+
+function createOAuthState(server: ServerWithName): OAuthSuiteState {
+  return suiteState("oauth", server);
 }
 
 function StatusIcon({ status }: { status: string }) {
@@ -297,11 +303,13 @@ function SuiteSection({
 function ConformanceContent({ server }: { server: ServerWithName }) {
   const httpServer = isHttpServer(server);
   const [protocol, setProtocol] = useState<ProtocolSuiteState>(() =>
-    createProtocolState(httpServer),
+    createProtocolState(server),
   );
-  const [apps, setApps] = useState<AppsSuiteState>(() => createAppsState());
+  const [apps, setApps] = useState<AppsSuiteState>(() =>
+    createAppsState(server),
+  );
   const [oauth, setOAuth] = useState<OAuthSuiteState>(() =>
-    createOAuthState(httpServer),
+    createOAuthState(server),
   );
   const [negativeChecks, setNegativeChecks] = useState(false);
   const [runVersion, setRunVersion] = useState(0);
@@ -334,12 +342,12 @@ function ConformanceContent({ server }: { server: ServerWithName }) {
       latestRunTokenRef.current += 1;
       clearOAuthListeners();
       setRunVersion((value) => value + 1);
-      setProtocol(createProtocolState(httpServer));
-      setApps(createAppsState());
-      setOAuth(createOAuthState(httpServer));
+      setProtocol(createProtocolState(server));
+      setApps(createAppsState(server));
+      setOAuth(createOAuthState(server));
       activeServerNameRef.current = effectiveServerName;
     },
-    [clearOAuthListeners, httpServer],
+    [clearOAuthListeners, server],
   );
 
   useEffect(() => {
@@ -455,9 +463,10 @@ function ConformanceContent({ server }: { server: ServerWithName }) {
 
       try {
         const profile = deriveOAuthProfileFromServer(currentServer);
-        const callbackOrigin = isHostedMode()
-          ? window.location.origin
-          : undefined;
+        // Always send callbackOrigin — both local and hosted modes redirect
+        // back to the inspector's own `/oauth/callback/debug` page so the
+        // server can surface the code back to the SDK runner.
+        const callbackOrigin = window.location.origin;
 
         const startResult = await startOAuthConformance({
           serverNameOrId: serverName,
@@ -551,10 +560,9 @@ function ConformanceContent({ server }: { server: ServerWithName }) {
             // BroadcastChannel not available
           }
 
-          if (!isHostedMode()) {
-            await pollOAuthComplete(sessionId, runToken, serverName);
-            cleanup();
-          }
+          // Both local and hosted modes now rely on the `/oauth/authorize`
+          // endpoint to deliver the code; polling without a code submission
+          // would time out, so we defer all polling to `handleOAuthCallback`.
         }
       } catch (err) {
         if (!isRunActive(runToken, currentServer.name)) return;
@@ -573,9 +581,9 @@ function ConformanceContent({ server }: { server: ServerWithName }) {
     const httpServerNow = isHttpServer(currentServer);
 
     setRunVersion((value) => value + 1);
-    setProtocol(createProtocolState(httpServerNow));
-    setApps(createAppsState());
-    setOAuth(createOAuthState(httpServerNow));
+    setProtocol(createProtocolState(currentServer));
+    setApps(createAppsState(currentServer));
+    setOAuth(createOAuthState(currentServer));
 
     const promises: Promise<void>[] = [];
     if (httpServerNow) {

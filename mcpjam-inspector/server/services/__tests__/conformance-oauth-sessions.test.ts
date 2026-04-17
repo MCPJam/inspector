@@ -11,26 +11,41 @@ import {
 } from "../conformance-oauth-sessions.js";
 import type { ConformanceResult } from "@mcpjam/sdk";
 
+const REDIRECT = "https://inspector.example/oauth/callback/debug";
+
 beforeEach(() => {
   clearAllSessions();
 });
 
 describe("createSession", () => {
-  it("creates a session with authorization URL", () => {
-    const session = createSession(
-      "https://auth.example.com/authorize",
-      "state123",
-    );
+  it("creates a session wrapping an SDK controller", () => {
+    const session = createSession({ redirectUrl: REDIRECT });
     expect(session.id).toBeTruthy();
-    expect(session.authorizationUrl).toBe("https://auth.example.com/authorize");
-    expect(session.expectedState).toBe("state123");
+    expect(session.controller).toBeDefined();
+    expect(session.authorizationUrl).toBeUndefined();
     expect(session.completedSteps).toEqual([]);
   });
 
   it("generates unique session IDs", () => {
-    const s1 = createSession("https://a.com", "s1");
-    const s2 = createSession("https://b.com", "s2");
+    const s1 = createSession({ redirectUrl: REDIRECT });
+    const s2 = createSession({ redirectUrl: REDIRECT });
     expect(s1.id).not.toBe(s2.id);
+  });
+
+  it("mirrors the auth URL onto the session once the runner surfaces it", async () => {
+    const session = createSession({ redirectUrl: REDIRECT });
+    const sdkSession = await session.controller.createSession();
+    // Not awaited on purpose — the production runner awaits its own copy.
+    // Attach a no-op handler to avoid the subsequent clearAllSessions() fail
+    // propagating here as an unhandled rejection.
+    sdkSession
+      .authorize({
+        authorizationUrl: "https://auth.example/authorize",
+        timeoutMs: 5_000,
+      })
+      .catch(() => undefined);
+    await session.controller.awaitAuthorizationUrl;
+    expect(session.authorizationUrl).toBe("https://auth.example/authorize");
   });
 });
 
@@ -40,7 +55,7 @@ describe("getSession", () => {
   });
 
   it("returns session by ID", () => {
-    const created = createSession("https://a.com");
+    const created = createSession({ redirectUrl: REDIRECT });
     const found = getSession(created.id);
     expect(found).toBe(created);
   });
@@ -48,7 +63,7 @@ describe("getSession", () => {
 
 describe("deleteSession", () => {
   it("removes session", () => {
-    const session = createSession("https://a.com");
+    const session = createSession({ redirectUrl: REDIRECT });
     deleteSession(session.id);
     expect(getSession(session.id)).toBeUndefined();
   });
@@ -63,36 +78,26 @@ describe("submitAuthorizationCode", () => {
     expect(submitAuthorizationCode("nonexistent", "code123")).toBe(false);
   });
 
-  it("returns false when session has no resolver", () => {
-    const session = createSession("https://a.com");
-    // No resolver set
-    expect(submitAuthorizationCode(session.id, "code123")).toBe(false);
-  });
+  it("delivers code through the SDK controller to a pending authorize", async () => {
+    const session = createSession({ redirectUrl: REDIRECT });
+    const sdkSession = await session.controller.createSession();
 
-  it("delivers code to resolver", async () => {
-    const session = createSession("https://a.com", "state123");
-    const codePromise = new Promise<{ code: string; state?: string }>(
-      (resolve) => {
-        session.codeResolver = resolve;
-      },
-    );
+    const codePromise = sdkSession.authorize({
+      authorizationUrl: "https://auth.example/authorize?state=s1",
+      expectedState: "s1",
+      timeoutMs: 5_000,
+    });
 
-    const delivered = submitAuthorizationCode(
-      session.id,
-      "auth-code",
-      "state123",
-    );
+    const delivered = submitAuthorizationCode(session.id, "auth-code", "s1");
     expect(delivered).toBe(true);
 
-    const result = await codePromise;
-    expect(result.code).toBe("auth-code");
-    expect(result.state).toBe("state123");
+    await expect(codePromise).resolves.toEqual({ code: "auth-code" });
   });
 });
 
 describe("addCompletedStep", () => {
   it("adds step to session", () => {
-    const session = createSession("https://a.com");
+    const session = createSession({ redirectUrl: REDIRECT });
     addCompletedStep(session.id, "metadata_discovery", "passed");
     expect(session.completedSteps).toEqual([
       { step: "metadata_discovery", status: "passed" },
@@ -108,7 +113,7 @@ describe("addCompletedStep", () => {
 
 describe("setSessionResult", () => {
   it("stores result on session", () => {
-    const session = createSession("https://a.com");
+    const session = createSession({ redirectUrl: REDIRECT });
     const result = {
       passed: true,
       protocolVersion: "2025-11-25" as const,
@@ -125,17 +130,20 @@ describe("setSessionResult", () => {
 });
 
 describe("setSessionError", () => {
-  it("stores error on session", () => {
-    const session = createSession("https://a.com");
+  it("stores error on session and fails the controller", async () => {
+    const session = createSession({ redirectUrl: REDIRECT });
     setSessionError(session.id, "Connection failed");
     expect(session.error).toBe("Connection failed");
+    await expect(session.controller.awaitAuthorizationUrl).rejects.toThrow(
+      "Connection failed",
+    );
   });
 });
 
 describe("clearAllSessions", () => {
   it("removes all sessions", () => {
-    const s1 = createSession("https://a.com");
-    const s2 = createSession("https://b.com");
+    const s1 = createSession({ redirectUrl: REDIRECT });
+    const s2 = createSession({ redirectUrl: REDIRECT });
     clearAllSessions();
     expect(getSession(s1.id)).toBeUndefined();
     expect(getSession(s2.id)).toBeUndefined();

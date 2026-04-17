@@ -5,8 +5,15 @@ vi.mock("@/lib/config", () => ({
   HOSTED_MODE: false,
 }));
 
+// mcp-conformance-api's `localPost` uses `authFetch` under the hood, not
+// `global.fetch`. Route the mock through the same `fetchMock` so tests can
+// configure responses in one place via `fetchMock.mockResolvedValue(...)`.
 vi.mock("@/lib/session-token", () => ({
-  authFetch: vi.fn(),
+  authFetch: (path: string, init?: RequestInit) =>
+    (global.fetch as unknown as (...args: unknown[]) => Promise<Response>)(
+      path,
+      init,
+    ),
 }));
 
 // Mock web context

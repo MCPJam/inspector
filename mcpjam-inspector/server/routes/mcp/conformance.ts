@@ -1,55 +1,36 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import {
-  MCPConformanceTest,
-  MCPAppsConformanceTest,
-  OAuthConformanceTest,
-} from "@mcpjam/sdk";
-import type {
-  MCPConformanceConfig,
-  MCPAppsConformanceConfig,
-  OAuthConformanceConfig,
-  HttpServerConfig,
-  MCPServerConfig,
+  oauthConformanceProfileSchema,
+  type HttpServerConfig,
+  type MCPServerConfig,
 } from "@mcpjam/sdk";
 import "../../types/hono";
 import { logger } from "../../utils/logger";
 import {
-  createSession,
-  getSession,
-  submitAuthorizationCode,
-  addCompletedStep,
-  setSessionResult,
-  setSessionError,
-} from "../../services/conformance-oauth-sessions";
+  OAuthConformanceSessionFailedError,
+  OAuthConformanceSessionNotFoundError,
+  UnsupportedTransportError,
+  assertHttpSupported,
+  completeOAuthConformance,
+  runAppsConformance,
+  runProtocolConformance,
+  startOAuthConformance,
+  submitOAuthConformanceCode,
+} from "../shared/conformance";
 
 const conformance = new Hono();
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
-function getHttpConfig(
-  mcpClientManager: any,
-  serverId: string,
-): { config: HttpServerConfig } | { error: string; code: string } {
-  const serverConfig = mcpClientManager.getServerConfig(serverId) as
-    | MCPServerConfig
-    | undefined;
-  if (!serverConfig) {
-    return { error: "Server not connected", code: "notConnected" };
-  }
-  if (!("url" in serverConfig) || !serverConfig.url) {
-    return {
-      error: "Protocol conformance requires HTTP transport",
-      code: "unsupportedTransport",
-    };
-  }
-  return { config: serverConfig as HttpServerConfig };
-}
+type ServerConfigResolution =
+  | { config: MCPServerConfig }
+  | { error: string; code: string };
 
-function getAnyConfig(
+function resolveServerConfig(
   mcpClientManager: any,
   serverId: string,
-): { config: MCPServerConfig } | { error: string; code: string } {
+): ServerConfigResolution {
   const serverConfig = mcpClientManager.getServerConfig(serverId) as
     | MCPServerConfig
     | undefined;
@@ -57,6 +38,29 @@ function getAnyConfig(
     return { error: "Server not connected", code: "notConnected" };
   }
   return { config: serverConfig };
+}
+
+function toHttpResolved(config: HttpServerConfig) {
+  return {
+    serverUrl: String(config.url),
+    accessToken: config.accessToken,
+    customHeaders: config.requestInit?.headers as
+      | Record<string, string>
+      | undefined,
+  };
+}
+
+function handleUnsupportedTransport(
+  c: any,
+  error: unknown,
+): Response | undefined {
+  if (error instanceof UnsupportedTransportError) {
+    return c.json(
+      { success: false, error: error.message, code: error.code },
+      400,
+    );
+  }
+  return undefined;
 }
 
 // ── POST /protocol ──────────────────────────────────────────────────────
@@ -79,31 +83,19 @@ conformance.post("/protocol", async (c) => {
       );
     }
 
-    const { serverId } = parsed.data;
-    const mcpClientManager = c.mcpClientManager;
-    const resolved = getHttpConfig(mcpClientManager, serverId);
-
+    const resolved = resolveServerConfig(c.mcpClientManager, parsed.data.serverId);
     if ("error" in resolved) {
-      return c.json(
-        { success: false, error: resolved.error, code: resolved.code },
-        400,
-      );
+      return c.json({ success: false, ...resolved }, 400);
     }
 
-    const { config } = resolved;
-    const conformanceConfig: MCPConformanceConfig = {
-      serverUrl: String(config.url),
-      accessToken: config.accessToken,
-      customHeaders: config.requestInit?.headers as
-        | Record<string, string>
-        | undefined,
-    };
-
-    const test = new MCPConformanceTest(conformanceConfig);
-    const result = await test.run();
-
+    assertHttpSupported("protocol", resolved.config);
+    const { result } = await runProtocolConformance(
+      toHttpResolved(resolved.config as HttpServerConfig),
+    );
     return c.json({ success: true, result });
   } catch (error) {
+    const unsupported = handleUnsupportedTransport(c, error);
+    if (unsupported) return unsupported;
     logger.error("[Conformance Protocol]", error);
     return c.json(
       {
@@ -135,27 +127,18 @@ conformance.post("/apps", async (c) => {
       );
     }
 
-    const { serverId } = parsed.data;
-    const mcpClientManager = c.mcpClientManager;
-    const resolved = getAnyConfig(mcpClientManager, serverId);
-
+    const resolved = resolveServerConfig(c.mcpClientManager, parsed.data.serverId);
     if ("error" in resolved) {
-      return c.json(
-        { success: false, error: resolved.error, code: resolved.code },
-        400,
-      );
+      return c.json({ success: false, ...resolved }, 400);
     }
 
-    const serverConfig = { ...resolved.config };
-    // Ensure url is a string — mcpClientManager stores it as a URL object
+    // MCPClientManager stores `url` as a URL object; the SDK expects a string.
+    const serverConfig = { ...resolved.config } as MCPServerConfig;
     if ("url" in serverConfig && serverConfig.url) {
       (serverConfig as any).url = String(serverConfig.url);
     }
-    const test = new MCPAppsConformanceTest(
-      serverConfig as MCPAppsConformanceConfig,
-    );
-    const result = await test.run();
 
+    const { result } = await runAppsConformance(serverConfig);
     return c.json({ success: true, result });
   } catch (error) {
     logger.error("[Conformance Apps]", error);
@@ -173,19 +156,7 @@ conformance.post("/apps", async (c) => {
 
 const oauthStartSchema = z.object({
   serverId: z.string().min(1),
-  oauthProfile: z
-    .object({
-      serverUrl: z.string().optional(),
-      protocolVersion: z.string().optional(),
-      registrationStrategy: z.string().optional(),
-      clientId: z.string().optional(),
-      clientSecret: z.string().optional(),
-      scopes: z.string().optional(),
-      customHeaders: z
-        .array(z.object({ key: z.string(), value: z.string() }))
-        .optional(),
-    })
-    .optional(),
+  oauthProfile: oauthConformanceProfileSchema.optional(),
   runNegativeChecks: z.boolean().optional(),
   callbackOrigin: z.string().optional(),
 });
@@ -204,112 +175,39 @@ conformance.post("/oauth/start", async (c) => {
       );
     }
 
-    const { serverId, oauthProfile, runNegativeChecks } = parsed.data;
-    const mcpClientManager = c.mcpClientManager;
-    const resolved = getHttpConfig(mcpClientManager, serverId);
-
+    const { serverId, oauthProfile, runNegativeChecks, callbackOrigin } =
+      parsed.data;
+    const resolved = resolveServerConfig(c.mcpClientManager, serverId);
     if ("error" in resolved) {
+      return c.json({ success: false, ...resolved }, 400);
+    }
+
+    assertHttpSupported("oauth", resolved.config);
+    const http = toHttpResolved(resolved.config as HttpServerConfig);
+
+    if (!callbackOrigin) {
       return c.json(
-        { success: false, error: resolved.error, code: resolved.code },
+        {
+          success: false,
+          error:
+            "callbackOrigin is required to run OAuth conformance (browser redirect target)",
+          code: "missingCallbackOrigin",
+        },
         400,
       );
     }
 
-    const { config } = resolved;
-    const serverUrl = oauthProfile?.serverUrl || String(config.url);
-
-    const customHeaders =
-      oauthProfile?.customHeaders?.reduce(
-        (acc, { key, value }) => {
-          if (key) acc[key] = value;
-          return acc;
-        },
-        {} as Record<string, string>,
-      ) ?? (config.requestInit?.headers as Record<string, string> | undefined);
-
-    // Capture authorization URL via openUrl callback.
-    // The SDK's interactive mode uses a loopback server by default.
-    // We intercept the openUrl to capture the URL and create a session,
-    // then wait for the browser to complete authorization.
-    let capturedAuthUrl: string | undefined;
-    let sessionId: string | undefined;
-
-    const oauthConfig: OAuthConformanceConfig = {
-      serverUrl,
-      protocolVersion: (oauthProfile?.protocolVersion as any) || "2025-11-25",
-      registrationStrategy:
-        (oauthProfile?.registrationStrategy as any) || "cimd",
-      auth: {
-        mode: "interactive",
-        openUrl: async (url: string) => {
-          // Capture the authorization URL instead of opening the browser
-          capturedAuthUrl = url;
-        },
-      },
-      client: oauthProfile?.clientId
-        ? {
-            preregistered: {
-              clientId: oauthProfile.clientId,
-              clientSecret: oauthProfile.clientSecret,
-            },
-          }
-        : undefined,
-      scopes: oauthProfile?.scopes,
-      customHeaders,
-      oauthConformanceChecks: runNegativeChecks ?? false,
-    };
-
-    const test = new OAuthConformanceTest(oauthConfig);
-
-    // Start the runner in the background. It will pause at the authorization step
-    // where openUrl is called, then wait for the loopback callback.
-    const runnerPromise = test.run().then(
-      (result) => {
-        if (sessionId) setSessionResult(sessionId, result);
-        return result;
-      },
-      (err) => {
-        if (sessionId) {
-          setSessionError(
-            sessionId,
-            err instanceof Error ? err.message : String(err),
-          );
-        }
-        throw err;
-      },
-    );
-
-    // Wait briefly for the authorization URL to be captured via openUrl
-    await new Promise((resolve) => setTimeout(resolve, 3000));
-
-    if (capturedAuthUrl) {
-      // Create a session so the client can track progress
-      const session = createSession(capturedAuthUrl);
-      sessionId = session.id;
-      session.runnerPromise = runnerPromise;
-
-      return c.json({
-        phase: "authorization_needed" as const,
-        sessionId: session.id,
-        authorizationUrl: capturedAuthUrl,
-        completedSteps: session.completedSteps,
-      });
-    }
-
-    // No auth URL captured: test completed without needing authorization
-    try {
-      const result = await runnerPromise;
-      return c.json({ phase: "complete" as const, result });
-    } catch (error) {
-      return c.json(
-        {
-          success: false,
-          error: error instanceof Error ? error.message : "OAuth test failed",
-        },
-        500,
-      );
-    }
+    const result = await startOAuthConformance({
+      defaultServerUrl: http.serverUrl,
+      defaultCustomHeaders: http.customHeaders,
+      redirectUrl: `${callbackOrigin.replace(/\/$/, "")}/oauth/callback/debug`,
+      oauthProfile,
+      runNegativeChecks,
+    });
+    return c.json(result);
   } catch (error) {
+    const unsupported = handleUnsupportedTransport(c, error);
+    if (unsupported) return unsupported;
     logger.error("[Conformance OAuth Start]", error);
     return c.json(
       {
@@ -343,9 +241,7 @@ conformance.post("/oauth/authorize", async (c) => {
       );
     }
 
-    const { sessionId, code, state } = parsed.data;
-    const delivered = submitAuthorizationCode(sessionId, code, state);
-
+    const delivered = submitOAuthConformanceCode(parsed.data);
     if (!delivered) {
       return c.json(
         {
@@ -355,7 +251,6 @@ conformance.post("/oauth/authorize", async (c) => {
         404,
       );
     }
-
     return c.json({ success: true });
   } catch (error) {
     logger.error("[Conformance OAuth Authorize]", error);
@@ -389,59 +284,15 @@ conformance.post("/oauth/complete", async (c) => {
       );
     }
 
-    const { sessionId } = parsed.data;
-    const session = getSession(sessionId);
-
-    if (!session) {
-      return c.json(
-        { success: false, error: "Session not found or expired" },
-        404,
-      );
-    }
-
-    // If result is already available, return it
-    if (session.result) {
-      return c.json({
-        phase: "complete" as const,
-        result: session.result,
-      });
-    }
-
-    if (session.error) {
-      return c.json({ success: false, error: session.error }, 500);
-    }
-
-    // Long-poll: wait up to 25 seconds for completion
-    const startTime = Date.now();
-    const POLL_TIMEOUT_MS = 25_000;
-    const POLL_INTERVAL_MS = 500;
-
-    while (Date.now() - startTime < POLL_TIMEOUT_MS) {
-      await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
-
-      const currentSession = getSession(sessionId);
-      if (!currentSession) {
-        return c.json({ success: false, error: "Session expired" }, 404);
-      }
-
-      if (currentSession.result) {
-        return c.json({
-          phase: "complete" as const,
-          result: currentSession.result,
-        });
-      }
-
-      if (currentSession.error) {
-        return c.json({ success: false, error: currentSession.error }, 500);
-      }
-    }
-
-    // Timeout: return pending status
-    return c.json({
-      phase: "pending" as const,
-      completedSteps: session.completedSteps,
-    });
+    const result = await completeOAuthConformance(parsed.data);
+    return c.json(result);
   } catch (error) {
+    if (error instanceof OAuthConformanceSessionNotFoundError) {
+      return c.json({ success: false, error: error.message }, 404);
+    }
+    if (error instanceof OAuthConformanceSessionFailedError) {
+      return c.json({ success: false, error: error.message }, 500);
+    }
     logger.error("[Conformance OAuth Complete]", error);
     return c.json(
       {

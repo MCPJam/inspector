@@ -164,7 +164,7 @@ describe("filterByFeatureFlags", () => {
               title: "Conformance",
               url: "#conformance",
               icon: FakeIcon,
-              featureFlag: "conformance-enabled",
+              featureFlag: "mcpjam-conformance",
             },
             {
               title: "OAuth Debugger",
@@ -174,7 +174,7 @@ describe("filterByFeatureFlags", () => {
           ],
         },
       ],
-      { "conformance-enabled": false },
+      { "mcpjam-conformance": false },
     );
 
     expect(result[0].items.map((item) => item.title)).toEqual([
@@ -261,7 +261,7 @@ describe("getHostedNavigationSections", () => {
             title: "Conformance",
             url: "#conformance",
             icon: FakeIcon,
-            featureFlag: "conformance-enabled",
+            featureFlag: "mcpjam-conformance",
           },
           { title: "OAuth Debugger", url: "#oauth-flow", icon: FakeIcon },
           { title: "XAA Debugger", url: "#xaa-flow", icon: FakeIcon },
@@ -288,7 +288,7 @@ describe("getHostedNavigationSections", () => {
         title: "Conformance",
         url: "#conformance",
         icon: FakeIcon,
-        featureFlag: "conformance-enabled",
+        featureFlag: "mcpjam-conformance",
       },
       {
         title: "OAuth Debugger",

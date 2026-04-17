@@ -1,22 +1,13 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import {
-  MCPConformanceTest,
-  MCPAppsConformanceTest,
-  OAuthConformanceTest,
-} from "@mcpjam/sdk";
-import type {
-  MCPConformanceConfig,
-  MCPAppsConformanceConfig,
-  OAuthConformanceConfig,
+  oauthConformanceProfileSchema,
+  type MCPAppsConformanceConfig,
 } from "@mcpjam/sdk";
 import {
-  createAuthorizedManager,
-  withManager,
   handleRoute,
   workspaceServerSchema,
   guestServerInputSchema,
-  type ConvexAuthorizeResponse,
 } from "./auth.js";
 import {
   ErrorCode,
@@ -25,15 +16,17 @@ import {
   readJsonBody,
   parseWithSchema,
 } from "./errors.js";
-import { logger } from "../../utils/logger.js";
 import { validateUrl, OAuthProxyError } from "../../utils/oauth-proxy.js";
 import {
-  createSession,
-  getSession,
-  submitAuthorizationCode,
-  setSessionResult,
-  setSessionError,
-} from "../../services/conformance-oauth-sessions.js";
+  OAuthConformanceSessionFailedError,
+  OAuthConformanceSessionNotFoundError,
+  UnsupportedTransportError,
+  completeOAuthConformance,
+  runAppsConformance,
+  runProtocolConformance,
+  startOAuthConformance,
+  submitOAuthConformanceCode,
+} from "../shared/conformance";
 import { authorizeServer, toHttpConfig } from "./auth.js";
 import { WEB_CALL_TIMEOUT_MS } from "../../config.js";
 
@@ -123,7 +116,7 @@ async function resolveHostedHttpConfig(
 
   return {
     serverUrl: auth.serverConfig.url,
-    accessToken: oauthToken ? undefined : undefined, // OAuth token goes in headers
+    accessToken: undefined, // OAuth token goes in headers
     customHeaders: Object.keys(headers).length > 0 ? headers : undefined,
   };
 }
@@ -189,6 +182,28 @@ async function resolveHostedServerConfig(
   return httpConfig as MCPAppsConformanceConfig;
 }
 
+function toWebError(error: unknown): WebRouteError {
+  if (error instanceof WebRouteError) return error;
+  if (error instanceof UnsupportedTransportError) {
+    return new WebRouteError(
+      400,
+      ErrorCode.FEATURE_NOT_SUPPORTED,
+      error.message,
+    );
+  }
+  if (error instanceof OAuthConformanceSessionNotFoundError) {
+    return new WebRouteError(404, ErrorCode.NOT_FOUND, error.message);
+  }
+  if (error instanceof OAuthConformanceSessionFailedError) {
+    return new WebRouteError(500, ErrorCode.INTERNAL_ERROR, error.message);
+  }
+  return new WebRouteError(
+    500,
+    ErrorCode.INTERNAL_ERROR,
+    error instanceof Error ? error.message : "Unknown error",
+  );
+}
+
 // ── POST /protocol ──────────────────────────────────────────────────────
 
 conformanceWeb.post("/protocol", async (c) =>
@@ -197,15 +212,12 @@ conformanceWeb.post("/protocol", async (c) =>
     const body = await readJsonBody<Record<string, unknown>>(c);
     const resolved = await resolveHostedHttpConfig(bearerToken, body);
 
-    const conformanceConfig: MCPConformanceConfig = {
-      serverUrl: resolved.serverUrl,
-      accessToken: resolved.accessToken,
-      customHeaders: resolved.customHeaders,
-    };
-
-    const test = new MCPConformanceTest(conformanceConfig);
-    const result = await test.run();
-    return { success: true, result };
+    try {
+      const { result } = await runProtocolConformance(resolved);
+      return { success: true, result };
+    } catch (error) {
+      throw toWebError(error);
+    }
   }),
 );
 
@@ -217,9 +229,12 @@ conformanceWeb.post("/apps", async (c) =>
     const body = await readJsonBody<Record<string, unknown>>(c);
     const config = await resolveHostedServerConfig(bearerToken, body);
 
-    const test = new MCPAppsConformanceTest(config);
-    const result = await test.run();
-    return { success: true, result };
+    try {
+      const { result } = await runAppsConformance(config);
+      return { success: true, result };
+    } catch (error) {
+      throw toWebError(error);
+    }
   }),
 );
 
@@ -227,23 +242,11 @@ conformanceWeb.post("/apps", async (c) =>
 
 const oauthStartSchema = z
   .object({
-    oauthProfile: z
-      .object({
-        serverUrl: z.string().optional(),
-        protocolVersion: z.string().optional(),
-        registrationStrategy: z.string().optional(),
-        clientId: z.string().optional(),
-        clientSecret: z.string().optional(),
-        scopes: z.string().optional(),
-        customHeaders: z
-          .array(z.object({ key: z.string(), value: z.string() }))
-          .optional(),
-      })
-      .optional(),
+    oauthProfile: oauthConformanceProfileSchema.optional(),
     runNegativeChecks: z.boolean().optional(),
     callbackOrigin: z.string().optional(),
   })
-  .passthrough(); // Allow workspace/guest fields to pass through
+  .passthrough(); // workspace/guest fields pass through to resolveHostedHttpConfig
 
 conformanceWeb.post("/oauth/start", async (c) =>
   handleRoute(c, async () => {
@@ -252,136 +255,24 @@ conformanceWeb.post("/oauth/start", async (c) =>
     const resolved = await resolveHostedHttpConfig(bearerToken, body);
     const parsed = parseWithSchema(oauthStartSchema, body);
 
-    const serverUrl = parsed.oauthProfile?.serverUrl || resolved.serverUrl;
-    const callbackOrigin = parsed.callbackOrigin;
-    const redirectUrl = callbackOrigin
-      ? `${callbackOrigin}/oauth/callback/debug`
-      : undefined;
-
-    const customHeaders =
-      parsed.oauthProfile?.customHeaders?.reduce(
-        (acc, { key, value }) => {
-          if (key) acc[key] = value;
-          return acc;
-        },
-        {} as Record<string, string>,
-      ) ?? resolved.customHeaders;
-
-    // Build OAuth conformance config with interactive mode using custom redirect
-    const oauthConfig: OAuthConformanceConfig = {
-      serverUrl,
-      protocolVersion:
-        (parsed.oauthProfile?.protocolVersion as any) || "2025-11-25",
-      registrationStrategy:
-        (parsed.oauthProfile?.registrationStrategy as any) || "cimd",
-      auth: {
-        mode: "interactive",
-        openUrl: async () => {
-          /* no-op: we capture the URL via the session instead */
-        },
-      },
-      client: parsed.oauthProfile?.clientId
-        ? {
-            preregistered: {
-              clientId: parsed.oauthProfile.clientId,
-              clientSecret: parsed.oauthProfile.clientSecret,
-            },
-          }
-        : undefined,
-      scopes: parsed.oauthProfile?.scopes,
-      customHeaders,
-      redirectUrl,
-      oauthConformanceChecks: parsed.runNegativeChecks ?? false,
-    };
-
-    // Run OAuth conformance with a custom interactive session
-    // that pauses at authorization and captures the URL
-    let sessionId: string | undefined;
-    let capturedAuthUrl: string | undefined;
-    let waitForCode: Promise<{ code: string }> | undefined;
-
-    const test = new OAuthConformanceTest(oauthConfig, {
-      createInteractiveAuthorizationSession: async (options) => {
-        const effectiveRedirectUrl =
-          redirectUrl || options?.redirectUrl || `http://127.0.0.1:0/callback`;
-
-        return {
-          redirectUrl: effectiveRedirectUrl,
-          authorize: async (input) => {
-            capturedAuthUrl = input.authorizationUrl;
-
-            const session = createSession(
-              input.authorizationUrl,
-              input.expectedState,
-            );
-            sessionId = session.id;
-
-            // Wait for code from POST /oauth/authorize
-            const codePromise = new Promise<{ code: string }>(
-              (resolve, reject) => {
-                session.codeResolver = ({ code }) => resolve({ code });
-                session.codeRejecter = reject;
-
-                setTimeout(() => {
-                  reject(new Error("OAuth authorization timed out"));
-                }, input.timeoutMs || 120_000);
-              },
-            );
-            waitForCode = codePromise;
-
-            return codePromise;
-          },
-          stop: async () => {
-            /* cleanup handled by session TTL */
-          },
-        };
-      },
-    });
-
-    // Start runner in background
-    const runnerPromise = test.run().then(
-      (result) => {
-        if (sessionId) setSessionResult(sessionId, result);
-        return result;
-      },
-      (err) => {
-        if (sessionId) {
-          setSessionError(
-            sessionId,
-            err instanceof Error ? err.message : String(err),
-          );
-        }
-        throw err;
-      },
-    );
-
-    // Wait briefly for the authorization URL to be captured
-    await new Promise((resolve) => setTimeout(resolve, 3000));
-
-    if (capturedAuthUrl && sessionId) {
-      const session = getSession(sessionId);
-      if (session) {
-        session.runnerPromise = runnerPromise;
-      }
-
-      return {
-        phase: "authorization_needed" as const,
-        sessionId,
-        authorizationUrl: capturedAuthUrl,
-        completedSteps: session?.completedSteps ?? [],
-      };
+    if (!parsed.callbackOrigin) {
+      throw new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        "callbackOrigin is required to run OAuth conformance",
+      );
     }
 
-    // No auth URL captured: test may have completed or doesn't need OAuth
     try {
-      const result = await runnerPromise;
-      return { phase: "complete" as const, result };
+      return await startOAuthConformance({
+        defaultServerUrl: resolved.serverUrl,
+        defaultCustomHeaders: resolved.customHeaders,
+        redirectUrl: `${parsed.callbackOrigin.replace(/\/$/, "")}/oauth/callback/debug`,
+        oauthProfile: parsed.oauthProfile,
+        runNegativeChecks: parsed.runNegativeChecks,
+      });
     } catch (error) {
-      throw new WebRouteError(
-        500,
-        ErrorCode.INTERNAL_ERROR,
-        error instanceof Error ? error.message : "OAuth test failed",
-      );
+      throw toWebError(error);
     }
   }),
 );
@@ -399,11 +290,7 @@ conformanceWeb.post("/oauth/authorize", async (c) =>
     const body = await readJsonBody<Record<string, unknown>>(c);
     const parsed = parseWithSchema(oauthAuthorizeSchema, body);
 
-    const delivered = submitAuthorizationCode(
-      parsed.sessionId,
-      parsed.code,
-      parsed.state,
-    );
+    const delivered = submitOAuthConformanceCode(parsed);
     if (!delivered) {
       throw new WebRouteError(
         404,
@@ -411,7 +298,6 @@ conformanceWeb.post("/oauth/authorize", async (c) =>
         "Session not found or not waiting for authorization",
       );
     }
-
     return { success: true };
   }),
 );
@@ -426,54 +312,11 @@ conformanceWeb.post("/oauth/complete", async (c) =>
   handleRoute(c, async () => {
     const body = await readJsonBody<Record<string, unknown>>(c);
     const parsed = parseWithSchema(oauthCompleteSchema, body);
-
-    const session = getSession(parsed.sessionId);
-    if (!session) {
-      throw new WebRouteError(
-        404,
-        ErrorCode.NOT_FOUND,
-        "Session not found or expired",
-      );
+    try {
+      return await completeOAuthConformance(parsed);
+    } catch (error) {
+      throw toWebError(error);
     }
-
-    if (session.result) {
-      return { phase: "complete" as const, result: session.result };
-    }
-
-    if (session.error) {
-      throw new WebRouteError(500, ErrorCode.INTERNAL_ERROR, session.error);
-    }
-
-    // Long-poll: wait up to 25 seconds
-    const POLL_TIMEOUT_MS = 25_000;
-    const POLL_INTERVAL_MS = 500;
-    const startTime = Date.now();
-
-    while (Date.now() - startTime < POLL_TIMEOUT_MS) {
-      await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
-
-      const currentSession = getSession(parsed.sessionId);
-      if (!currentSession) {
-        throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Session expired");
-      }
-
-      if (currentSession.result) {
-        return { phase: "complete" as const, result: currentSession.result };
-      }
-
-      if (currentSession.error) {
-        throw new WebRouteError(
-          500,
-          ErrorCode.INTERNAL_ERROR,
-          currentSession.error,
-        );
-      }
-    }
-
-    return {
-      phase: "pending" as const,
-      completedSteps: session.completedSteps,
-    };
   }),
 );
 

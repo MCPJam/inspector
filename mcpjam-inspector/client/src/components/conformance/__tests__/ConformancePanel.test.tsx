@@ -201,12 +201,11 @@ describe("ConformanceTab", () => {
   it("marks Protocol and OAuth as unavailable for stdio servers", () => {
     render(<ConformanceTab server={createStdioServer()} />);
 
-    expect(
-      screen.getByText("Protocol conformance requires HTTP transport"),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText("OAuth conformance requires HTTP transport"),
-    ).toBeInTheDocument();
+    // Both suites share the same reason from the SDK's canRunConformance.
+    const unavailableMessages = screen.getAllByText(
+      /requires an HTTP transport/i,
+    );
+    expect(unavailableMessages.length).toBeGreaterThanOrEqual(2);
   });
 
   it("shows the negative checks toggle", () => {
