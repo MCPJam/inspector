@@ -163,6 +163,7 @@ import { getEffectiveWorkspaceClientCapabilities } from "./lib/client-config";
 import { buildEvalsHash } from "./lib/evals-router";
 import { withTestingSurface } from "./lib/testing-surface";
 import { useClientConfigStore } from "./stores/client-config-store";
+import { isConnectedStatus } from "@/state/app-types";
 
 function getHostedOAuthCallbackErrorMessage(): string {
   const params = new URLSearchParams(window.location.search);
@@ -659,7 +660,7 @@ export default function App() {
   useEffect(() => {
     const connectedServers = new Set(
       Object.entries(appState.servers)
-        .filter(([, server]) => server.connectionStatus === "connected")
+        .filter(([, server]) => isConnectedStatus(server.connectionStatus))
         .map(([name]) => name),
     );
 
@@ -707,8 +708,8 @@ export default function App() {
       activeTab === "auth";
     if (!needsServer || selectedMCPConfig) return;
 
-    const firstConnected = Object.entries(workspaceServers).find(
-      ([, server]) => (server as any).connectionStatus === "connected",
+    const firstConnected = Object.entries(workspaceServers).find(([, server]) =>
+      isConnectedStatus((server as any).connectionStatus),
     );
     if (firstConnected) {
       setSelectedServer(firstConnected[0]);

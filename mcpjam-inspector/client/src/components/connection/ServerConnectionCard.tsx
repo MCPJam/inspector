@@ -58,6 +58,7 @@ import { useConvexAuth } from "convex/react";
 import { HOSTED_MODE } from "@/lib/config";
 import { ShareServerDialog } from "./ShareServerDialog";
 import { useExploreCasesPrefetchOnConnect } from "@/hooks/use-explore-cases-prefetch-on-connect";
+import { isConnectedStatus } from "@/state/app-types";
 
 function isHostedInsecureHttpServer(server: ServerWithName): boolean {
   if (!HOSTED_MODE || !("url" in server.config) || !server.config.url) {
@@ -139,6 +140,9 @@ export function ServerConnectionCard({
     iconClassName,
   } = getConnectionStatusMeta(server.connectionStatus);
   const commandDisplay = getServerCommandDisplay(server.config);
+  const connectionReport = server.lastConnectionReport;
+  const isOAuthRequired = connectionReport?.status === "oauth_required";
+  const errorMessage = connectionReport?.issue?.message ?? server.lastError;
 
   const initializationInfo = server.initializationInfo;
 
@@ -146,13 +150,16 @@ export function ServerConnectionCard({
   const serverIcon = initializationInfo?.serverVersion?.icons?.[0];
   const version = initializationInfo?.serverVersion?.version;
 
-  const isConnected = server.connectionStatus === "connected";
+  const isConnected = isConnectedStatus(server.connectionStatus);
   const isTunnelEnabled = !HOSTED_MODE;
   const canManageTunnels = isAuthenticated;
   const showTunnelActions = isConnected && isTunnelEnabled;
   const hasTunnel = Boolean(tunnelUrl);
   const hasError =
-    server.connectionStatus === "failed" && Boolean(server.lastError);
+    (server.connectionStatus === "failed" ||
+      server.connectionStatus === "partial" ||
+      isOAuthRequired) &&
+    Boolean(errorMessage);
   const isHostedHttpReconnectBlocked = isHostedInsecureHttpServer(server);
   const isPendingConnection =
     server.connectionStatus === "connecting" ||
@@ -473,15 +480,17 @@ export function ServerConnectionCard({
                     />
                   )}
                   <span>
-                    {server.connectionStatus === "failed"
-                      ? `${connectionStatusLabel} (${server.retryCount})`
-                      : connectionStatusLabel}
+                    {isOAuthRequired
+                      ? "Authorization required"
+                      : server.connectionStatus === "failed"
+                        ? `${connectionStatusLabel} (${server.retryCount})`
+                        : connectionStatusLabel}
                   </span>
                 </span>
 
                 <Switch
                   data-server-card-context-menu-exempt
-                  checked={server.connectionStatus === "connected"}
+                  checked={isConnected}
                   onCheckedChange={(checked) => {
                     posthog.capture("connection_switch_toggled", {
                       location: "server_connection_card",
@@ -573,9 +582,7 @@ export function ServerConnectionCard({
                         });
                         handleExport();
                       }}
-                      disabled={
-                        isExporting || server.connectionStatus !== "connected"
-                      }
+                      disabled={isExporting || !isConnected}
                       className="text-xs cursor-pointer"
                     >
                       {isExporting ? (
@@ -589,10 +596,7 @@ export function ServerConnectionCard({
                       onClick={() => {
                         handleCopyAgentBrief();
                       }}
-                      disabled={
-                        isCopyingBrief ||
-                        server.connectionStatus !== "connected"
-                      }
+                      disabled={isCopyingBrief || !isConnected}
                       className="text-xs cursor-pointer"
                     >
                       {isCopyingBrief ? (
@@ -745,12 +749,24 @@ export function ServerConnectionCard({
             >
               <div className="break-all">
                 {isErrorExpanded
-                  ? server.lastError
-                  : server.lastError!.length > 140
-                    ? `${server.lastError!.substring(0, 140)}...`
-                    : server.lastError}
+                  ? errorMessage
+                  : errorMessage!.length > 140
+                    ? `${errorMessage!.substring(0, 140)}...`
+                    : errorMessage}
               </div>
-              {server.lastError!.length > 140 && (
+              {connectionReport?.issue && (
+                <div className="mt-1 opacity-80">
+                  {connectionReport.issue.code} in{" "}
+                  {connectionReport.issue.phase}
+                </div>
+              )}
+              {isErrorExpanded &&
+                connectionReport?.diagnostics?.checks.tools.detail && (
+                  <div className="mt-1 opacity-80">
+                    {connectionReport.diagnostics.checks.tools.detail}
+                  </div>
+                )}
+              {errorMessage!.length > 140 && (
                 <button
                   data-server-card-context-menu-exempt
                   onClick={() => setIsErrorExpanded((prev) => !prev)}
@@ -768,7 +784,9 @@ export function ServerConnectionCard({
             </div>
           )}
 
-          {server.connectionStatus === "failed" && (
+          {(server.connectionStatus === "failed" ||
+            server.connectionStatus === "partial" ||
+            isOAuthRequired) && (
             <div
               className="mt-2 text-xs text-muted-foreground"
               onClick={(e) => e.stopPropagation()}

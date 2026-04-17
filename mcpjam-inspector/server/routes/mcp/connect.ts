@@ -1,3 +1,5 @@
+import { connectServerWithReport } from "@mcpjam/sdk";
+import type { ConnectContext, MCPServerConfig } from "@mcpjam/sdk";
 import { Hono } from "hono";
 import "../../types/hono"; // Type extensions
 import { HOSTED_MODE } from "../../config";
@@ -5,8 +7,31 @@ import { HOSTED_MODE } from "../../config";
 const connect = new Hono();
 
 connect.post("/", async (c) => {
+  let body: {
+    serverConfig?: MCPServerConfig;
+    serverId?: string;
+    oauthContext?: ConnectContext["oauth"];
+  };
+
   try {
-    const { serverConfig, serverId } = await c.req.json();
+    body = (await c.req.json()) as {
+      serverConfig?: MCPServerConfig;
+      serverId?: string;
+      oauthContext?: ConnectContext["oauth"];
+    };
+  } catch (error) {
+    return c.json(
+      {
+        success: false,
+        error: "Failed to parse request body",
+        details: error instanceof Error ? error.message : "Unknown error",
+      },
+      400,
+    );
+  }
+
+  try {
+    const { serverConfig, serverId, oauthContext } = body;
 
     if (!serverConfig) {
       return c.json(
@@ -65,15 +90,16 @@ connect.post("/", async (c) => {
     }
 
     const mcpClientManager = c.mcpClientManager;
-    try {
-      // Disconnect first if already connected to avoid "already connected" errors
-      await mcpClientManager.disconnectServer(serverId);
-      await mcpClientManager.connectToServer(serverId, serverConfig);
-      return c.json({
-        success: true,
-        status: "connected",
-      });
-    } catch (error) {
+    const report = await connectServerWithReport({
+      manager: mcpClientManager,
+      serverId,
+      config: serverConfig,
+      target: serverId,
+      disconnectBeforeConnect: true,
+      ...(oauthContext ? { context: { oauth: oauthContext } } : {}),
+    });
+
+    if (!report.success) {
       try {
         await mcpClientManager.removeServer(serverId);
       } catch (cleanupError) {
@@ -82,24 +108,23 @@ connect.post("/", async (c) => {
           cleanupError,
         );
       }
-
-      return c.json(
-        {
-          success: false,
-          error: `Connection failed for server ${serverId}: ${error instanceof Error ? error.message : "Unknown error"}`,
-          details: error instanceof Error ? error.message : "Unknown error",
-        },
-        500,
-      );
     }
+
+    return c.json({
+      success: report.success,
+      status: report.status,
+      report,
+      initInfo: report.initInfo,
+      ...(report.issue ? { error: report.issue.message } : {}),
+    });
   } catch (error) {
     return c.json(
       {
         success: false,
-        error: "Failed to parse request body",
+        error: error instanceof Error ? error.message : "Failed to connect",
         details: error instanceof Error ? error.message : "Unknown error",
       },
-      400,
+      500,
     );
   }
 });

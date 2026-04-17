@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import {
   buildServerDiffReport,
   collectServerSnapshot,
+  connectServerWithReport,
   diffServerSnapshots,
   probeMcpServer,
   runServerDoctor,
@@ -310,33 +311,19 @@ export function registerServerCommands(program: Command): void {
       const targetSummary = summarizeServerDoctorTarget(target, config);
 
       let result:
-        | {
-            success: true;
-            status: "connected";
-            target: string;
-            initInfo: unknown | null;
-          }
+        | Awaited<ReturnType<typeof connectServerWithReport>>
         | undefined;
       let commandError: unknown;
 
       try {
-        result = await withEphemeralManager(
+        result = await connectServerWithReport({
           config,
-          async (manager, serverId) => {
-            await manager.getToolsForAiSdk([serverId]);
-            return {
-              success: true,
-              status: "connected" as const,
-              target,
-              initInfo: manager.getInitializationInfo(serverId) ?? null,
-            };
-          },
-          {
-            timeout: globalOptions.timeout,
-            rpcLogger: primaryCollector?.rpcLogger,
-            retryPolicy,
-          },
-        );
+          target,
+          serverId: "__cli__",
+          timeout: globalOptions.timeout,
+          rpcLogger: primaryCollector?.rpcLogger,
+          retryPolicy,
+        });
       } catch (error) {
         commandError = error;
       }
@@ -373,10 +360,23 @@ export function registerServerCommands(program: Command): void {
         throw commandError;
       }
 
-      writeResult(
-        withRpcLogsIfRequested(result, primaryCollector, globalOptions),
-        globalOptions.format,
-      );
+      if (!result) {
+        throw operationalError("Validation did not return a result.");
+      }
+
+      if (globalOptions.format === "human") {
+        const suffix = result.issue ? `: ${result.issue.message}` : "";
+        process.stdout.write(`${result.target}: ${result.status}${suffix}\n`);
+      } else {
+        writeResult(
+          withRpcLogsIfRequested(result, primaryCollector, globalOptions),
+          globalOptions.format,
+        );
+      }
+
+      if (result.status !== "connected") {
+        setProcessExitCode(1);
+      }
     });
 
   addRetryOptions(

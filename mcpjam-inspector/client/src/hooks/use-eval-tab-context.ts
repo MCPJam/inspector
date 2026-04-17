@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import { useSharedAppState } from "@/state/app-state-context";
+import { isConnectedStatus } from "@/state/app-types";
 import { useWorkspaceMembers } from "@/hooks/useWorkspaces";
 import { useAvailableEvalModels } from "@/hooks/use-available-eval-models";
 
@@ -21,7 +22,7 @@ export function useEvalTabContext({
     () =>
       new Set(
         Object.entries(appState.servers)
-          .filter(([, server]) => server.connectionStatus === "connected")
+          .filter(([, server]) => isConnectedStatus(server.connectionStatus))
           .map(([name]) => name),
       ),
     [appState.servers],

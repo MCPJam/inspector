@@ -19,6 +19,7 @@ import { type OAuthTestProfile } from "@/lib/oauth/profile";
 import { OAuthFlowLogger } from "./oauth/OAuthFlowLogger";
 import type { ServerFormData } from "@/shared/types.js";
 import type { ServerWithName } from "@/hooks/use-app-state";
+import { isConnectedStatus } from "@/state/app-types";
 import { deriveOAuthProfileFromServer } from "./oauth/utils";
 import { RefreshTokensConfirmModal } from "./oauth/RefreshTokensConfirmModal";
 
@@ -307,7 +308,9 @@ export const OAuthFlowTab = ({
     oauthFlowState.currentStep === "complete";
 
   // Determine if we can apply tokens (flow complete with access token)
-  const isServerConnected = activeServer?.connectionStatus === "connected";
+  const isServerConnected = activeServer
+    ? isConnectedStatus(activeServer.connectionStatus)
+    : false;
   const canApplyTokens =
     oauthFlowState.currentStep === "complete" &&
     oauthFlowState.accessToken &&

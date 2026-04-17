@@ -2,6 +2,11 @@ import { useState } from "react";
 import { Input } from "@/components/ui/input";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import {
+  getSupportedRegistrationStrategies,
+  type OAuthProtocolVersion,
+} from "@mcpjam/sdk/browser";
+import type { OAuthRegistrationStrategy } from "@/lib/oauth/profile";
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -17,6 +22,10 @@ interface AuthenticationSectionProps {
   onBearerTokenChange: (value: string) => void;
   oauthScopesInput: string;
   onOauthScopesChange: (value: string) => void;
+  oauthProtocolVersion: OAuthProtocolVersion;
+  onOauthProtocolVersionChange: (value: OAuthProtocolVersion) => void;
+  oauthRegistrationStrategy: OAuthRegistrationStrategy;
+  onOauthRegistrationStrategyChange: (value: OAuthRegistrationStrategy) => void;
   useCustomClientId: boolean;
   onUseCustomClientIdChange: (value: boolean) => void;
   clientId: string;
@@ -35,6 +44,10 @@ export function AuthenticationSection({
   onBearerTokenChange,
   oauthScopesInput,
   onOauthScopesChange,
+  oauthProtocolVersion,
+  onOauthProtocolVersionChange,
+  oauthRegistrationStrategy,
+  onOauthRegistrationStrategyChange,
   useCustomClientId,
   onUseCustomClientIdChange,
   clientId,
@@ -45,6 +58,9 @@ export function AuthenticationSection({
   clientSecretError,
 }: AuthenticationSectionProps) {
   const [showAdvancedOAuth, setShowAdvancedOAuth] = useState(false);
+  const supportedStrategies =
+    getSupportedRegistrationStrategies(oauthProtocolVersion);
+  const requiresCustomClientId = oauthRegistrationStrategy === "preregistered";
 
   return (
     <div className="space-y-4">
@@ -109,6 +125,56 @@ export function AuthenticationSection({
 
             {showAdvancedOAuth && (
               <div className="px-3 pb-3 space-y-3">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <label className="block text-sm font-medium text-foreground">
+                      Protocol Version
+                    </label>
+                    <Select
+                      value={oauthProtocolVersion}
+                      onValueChange={(value) =>
+                        onOauthProtocolVersionChange(
+                          value as OAuthProtocolVersion,
+                        )
+                      }
+                    >
+                      <SelectTrigger className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="2025-03-26">2025-03-26</SelectItem>
+                        <SelectItem value="2025-06-18">2025-06-18</SelectItem>
+                        <SelectItem value="2025-11-25">2025-11-25</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="block text-sm font-medium text-foreground">
+                      Registration Strategy
+                    </label>
+                    <Select
+                      value={oauthRegistrationStrategy}
+                      onValueChange={(value) =>
+                        onOauthRegistrationStrategyChange(
+                          value as OAuthRegistrationStrategy,
+                        )
+                      }
+                    >
+                      <SelectTrigger className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {supportedStrategies.map((strategy) => (
+                          <SelectItem key={strategy} value={strategy}>
+                            {strategy}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+
                 <div className="space-y-2">
                   <label className="block text-sm font-medium text-foreground">
                     OAuth Scopes
@@ -129,10 +195,11 @@ export function AuthenticationSection({
                     <input
                       type="checkbox"
                       id="useCustomClientId"
-                      checked={useCustomClientId}
+                      checked={requiresCustomClientId || useCustomClientId}
                       onChange={(e) =>
                         onUseCustomClientIdChange(e.target.checked)
                       }
+                      disabled={requiresCustomClientId}
                       className="rounded"
                     />
                     <label
@@ -143,11 +210,13 @@ export function AuthenticationSection({
                     </label>
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    Leave unchecked to use the server's default OAuth flow
+                    {requiresCustomClientId
+                      ? "Pre-registered OAuth requires a client ID."
+                      : "Leave unchecked to use the server's default OAuth flow"}
                   </p>
                 </div>
 
-                {useCustomClientId && (
+                {(requiresCustomClientId || useCustomClientId) && (
                   <div className="space-y-3">
                     <div className="space-y-2">
                       <label className="block text-sm font-medium text-foreground">

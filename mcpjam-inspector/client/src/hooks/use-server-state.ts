@@ -1,19 +1,25 @@
 import { useCallback, useEffect, useMemo, useRef, type Dispatch } from "react";
 import { useConvex } from "convex/react";
 import { toast } from "sonner";
-import type { HttpServerConfig, MCPServerConfig } from "@mcpjam/sdk/browser";
+import type {
+  ConnectContext,
+  HttpServerConfig,
+  MCPServerConfig,
+} from "@mcpjam/sdk/browser";
 import type {
   AppAction,
   AppState,
   ServerWithName,
   Workspace,
 } from "@/state/app-types";
+import { isConnectedStatus } from "@/state/app-types";
 import {
   testConnection,
   deleteServer,
   listServers,
   reconnectServer,
   getInitializationInfo,
+  type ConnectionApiResponse,
 } from "@/state/mcp-api";
 import {
   ensureAuthorizedForReconnect,
@@ -27,6 +33,8 @@ import {
   getStoredTokens,
   clearOAuthData,
   initiateOAuth,
+  type MCPOAuthOptions,
+  readStoredOAuthConfig,
 } from "@/lib/oauth/mcp-oauth";
 import {
   clearHostedOAuthPendingState,
@@ -60,12 +68,22 @@ function shouldSuppressExcalidrawConnectToastForOnboarding(
  * Saves OAuth-related configuration to localStorage for reconnection purposes.
  * This persists server URL, scopes, headers, and client credentials.
  */
-function saveOAuthConfigToLocalStorage(formData: ServerFormData): void {
+function saveOAuthConfigToLocalStorage(
+  formData: ServerFormData,
+  options?: {
+    oauthProfile?: OAuthTestProfile;
+    useRegistryOAuthProxy?: boolean;
+    preserveExistingConfigFrom?: string;
+  },
+): void {
   if (formData.type !== "http" || !formData.useOAuth || !formData.url) {
     return;
   }
 
   localStorage.setItem(`mcp-serverUrl-${formData.name}`, formData.url);
+  const existingConfig = options?.preserveExistingConfigFrom
+    ? readStoredOAuthConfig(options.preserveExistingConfigFrom)
+    : undefined;
 
   const oauthConfig: Record<string, unknown> = {};
   if (formData.oauthScopes && formData.oauthScopes.length > 0) {
@@ -76,6 +94,29 @@ function saveOAuthConfigToLocalStorage(formData: ServerFormData): void {
   }
   if (formData.registryServerId) {
     oauthConfig.registryServerId = formData.registryServerId;
+  } else if (existingConfig?.registryServerId) {
+    oauthConfig.registryServerId = existingConfig.registryServerId;
+  }
+  const useRegistryOAuthProxy =
+    options?.useRegistryOAuthProxy ??
+    (formData.useRegistryOAuthProxy === true
+      ? true
+      : existingConfig?.useRegistryOAuthProxy === true
+        ? true
+        : undefined);
+  if (useRegistryOAuthProxy === true) {
+    oauthConfig.useRegistryOAuthProxy = true;
+  }
+  const protocolVersion =
+    options?.oauthProfile?.protocolVersion ?? existingConfig?.protocolVersion;
+  if (protocolVersion) {
+    oauthConfig.protocolVersion = protocolVersion;
+  }
+  const registrationStrategy =
+    options?.oauthProfile?.registrationStrategy ??
+    existingConfig?.registrationStrategy;
+  if (registrationStrategy) {
+    oauthConfig.registrationStrategy = registrationStrategy;
   }
   if (Object.keys(oauthConfig).length > 0) {
     localStorage.setItem(
@@ -97,6 +138,47 @@ function saveOAuthConfigToLocalStorage(formData: ServerFormData): void {
       JSON.stringify(clientInfo),
     );
   }
+}
+
+function readStoredClientInfo(serverName: string): {
+  client_id?: string;
+  client_secret?: string;
+} | null {
+  try {
+    const raw = localStorage.getItem(`mcp-client-${serverName}`);
+    if (!raw) {
+      return null;
+    }
+
+    const parsed = JSON.parse(raw) as {
+      client_id?: unknown;
+      client_secret?: unknown;
+    };
+
+    return {
+      ...(typeof parsed.client_id === "string"
+        ? { client_id: parsed.client_id }
+        : {}),
+      ...(typeof parsed.client_secret === "string"
+        ? { client_secret: parsed.client_secret }
+        : {}),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function parseOAuthScopes(scopes: string | undefined): string[] | undefined {
+  if (!scopes) {
+    return undefined;
+  }
+
+  const parsed = scopes
+    .split(/\s+/)
+    .map((scope) => scope.trim())
+    .filter((scope) => scope.length > 0);
+
+  return parsed.length > 0 ? parsed : undefined;
 }
 
 function restorePathAfterOAuthCallback(
@@ -281,12 +363,23 @@ export function useServerState({
       serversWithRuntime[name] = {
         ...server,
         config: configWithEnv,
-        connectionStatus: runtimeState?.connectionStatus || "disconnected",
-        oauthTokens: runtimeState?.oauthTokens,
-        initializationInfo: runtimeState?.initializationInfo,
+        connectionStatus:
+          runtimeState?.connectionStatus ??
+          server.connectionStatus ??
+          "disconnected",
+        oauthTokens: runtimeState?.oauthTokens ?? server.oauthTokens,
+        oauthFlowProfile:
+          runtimeState?.oauthFlowProfile ?? server.oauthFlowProfile,
+        initializationInfo:
+          runtimeState?.initializationInfo ?? server.initializationInfo,
         lastConnectionTime:
-          runtimeState?.lastConnectionTime || server.lastConnectionTime,
-        retryCount: runtimeState?.retryCount || 0,
+          runtimeState?.lastConnectionTime ?? server.lastConnectionTime,
+        retryCount: runtimeState?.retryCount ?? server.retryCount ?? 0,
+        lastError: runtimeState?.lastError ?? server.lastError,
+        lastConnectionReport:
+          runtimeState?.lastConnectionReport ?? server.lastConnectionReport,
+        enabled: runtimeState?.enabled ?? server.enabled,
+        useOAuth: runtimeState?.useOAuth ?? server.useOAuth,
       };
     }
 
@@ -339,17 +432,25 @@ export function useServerState({
   }, [isClientConfigSyncPending]);
 
   const guardedTestConnection = useCallback(
-    async (serverConfig: MCPServerConfig, serverName: string) => {
+    async (
+      serverConfig: MCPServerConfig,
+      serverName: string,
+      oauthContext?: ConnectContext["oauth"],
+    ) => {
       assertClientConfigSynced();
-      return testConnection(serverConfig, serverName);
+      return testConnection(serverConfig, serverName, oauthContext);
     },
     [assertClientConfigSynced],
   );
 
   const guardedReconnectServer = useCallback(
-    async (serverName: string, serverConfig: MCPServerConfig) => {
+    async (
+      serverName: string,
+      serverConfig: MCPServerConfig,
+      oauthContext?: ConnectContext["oauth"],
+    ) => {
       assertClientConfigSynced();
-      return reconnectServer(serverName, serverConfig);
+      return reconnectServer(serverName, serverConfig, oauthContext);
     },
     [assertClientConfigSynced],
   );
@@ -376,9 +477,123 @@ export function useServerState({
     return null;
   };
 
+  const buildOAuthContext = useCallback(
+    (options?: {
+      serverName?: string;
+      oauthProfile?: OAuthTestProfile;
+      useRegistryOAuthProxy?: boolean;
+      usedCustomClientCredentials?: boolean;
+    }): ConnectContext["oauth"] | undefined => {
+      const storedConfig = options?.serverName
+        ? readStoredOAuthConfig(options.serverName)
+        : undefined;
+      const useRegistryOAuthProxy =
+        options?.useRegistryOAuthProxy ??
+        storedConfig?.useRegistryOAuthProxy === true;
+      const protocolVersion =
+        options?.oauthProfile?.protocolVersion ?? storedConfig?.protocolVersion;
+      const registrationStrategy =
+        options?.oauthProfile?.registrationStrategy ??
+        storedConfig?.registrationStrategy;
+
+      if (
+        protocolVersion !== "2025-03-26" &&
+        protocolVersion !== "2025-06-18" &&
+        protocolVersion !== "2025-11-25"
+      ) {
+        return undefined;
+      }
+
+      if (protocolVersion === "2025-03-26") {
+        if (
+          registrationStrategy !== "dcr" &&
+          registrationStrategy !== "preregistered"
+        ) {
+          return undefined;
+        }
+      } else if (
+        registrationStrategy !== "dcr" &&
+        registrationStrategy !== "preregistered" &&
+        registrationStrategy !== "cimd"
+      ) {
+        return undefined;
+      }
+
+      const parsedClientInfo = options?.serverName
+        ? readStoredClientInfo(options.serverName)
+        : null;
+      const usedCustomClientCredentials =
+        options?.usedCustomClientCredentials ??
+        Boolean(
+          options?.oauthProfile?.clientId?.trim() ||
+          options?.oauthProfile?.clientSecret?.trim() ||
+          (!useRegistryOAuthProxy &&
+            (parsedClientInfo?.client_id || parsedClientInfo?.client_secret)),
+        );
+
+      return {
+        protocolVersion,
+        registrationStrategy,
+        usedCustomClientCredentials,
+        useRegistryOAuthProxy,
+      };
+    },
+    [],
+  );
+
+  const buildReconnectOAuthOptions = useCallback(
+    (
+      serverName: string,
+      server: ServerWithName,
+      serverUrl: string,
+    ): MCPOAuthOptions => {
+      const storedConfig = readStoredOAuthConfig(serverName);
+      const storedClientInfo = readStoredClientInfo(serverName);
+      const oauthProfile = server.oauthFlowProfile;
+      const scopesFromProfile = parseOAuthScopes(oauthProfile?.scopes);
+      const protocolVersion =
+        oauthProfile?.protocolVersion ?? storedConfig.protocolVersion;
+      const registrationStrategy =
+        oauthProfile?.registrationStrategy ?? storedConfig.registrationStrategy;
+      const clientId =
+        oauthProfile?.clientId?.trim() ||
+        server.oauthTokens?.client_id ||
+        storedClientInfo?.client_id;
+      const clientSecret =
+        oauthProfile?.clientSecret?.trim() ||
+        server.oauthTokens?.client_secret ||
+        storedClientInfo?.client_secret;
+
+      return {
+        serverName,
+        serverUrl,
+        ...(clientId ? { clientId } : {}),
+        ...(clientSecret ? { clientSecret } : {}),
+        ...((scopesFromProfile ?? storedConfig.scopes)
+          ? { scopes: scopesFromProfile ?? storedConfig.scopes }
+          : {}),
+        ...(protocolVersion ? { protocolVersion } : {}),
+        ...(registrationStrategy ? { registrationStrategy } : {}),
+        ...(storedConfig.registryServerId
+          ? { registryServerId: storedConfig.registryServerId }
+          : {}),
+        ...(storedConfig.useRegistryOAuthProxy
+          ? { useRegistryOAuthProxy: true }
+          : {}),
+      };
+    },
+    [],
+  );
+
+  const getConnectionErrorMessage = useCallback(
+    (result: ConnectionApiResponse | { error?: string }) =>
+      result.report?.issue?.message ?? result.error ?? "Connection failed",
+    [],
+  );
+
   const setSelectedMultipleServersToAllServers = useCallback(() => {
     const connectedNames = Object.entries(appState.servers)
-      .filter(([, s]) => s.connectionStatus === "connected")
+      .filter(([, s]) => isConnectedStatus(s.connectionStatus))
       .map(([name]) => name);
     dispatch({ type: "SET_MULTI_SELECTED", names: connectedNames });
   }, [appState.servers, dispatch]);
@@ -615,6 +830,54 @@ export function useServerState({
     [dispatch, fetchAndStoreInitInfo],
   );
 
+  const completeConnection = useCallback(
+    async (
+      serverName: string,
+      serverConfig: MCPServerConfig,
+      result: ConnectionApiResponse,
+      options?: {
+        tokens?: ReturnType<typeof getStoredTokens>;
+        useOAuth?: boolean;
+        successToast?: string;
+        failureToast?: string;
+      },
+    ): Promise<boolean> => {
+      if (result.success) {
+        dispatch({
+          type: "CONNECT_SUCCESS",
+          name: serverName,
+          config: serverConfig,
+          ...(options?.tokens ? { tokens: options.tokens } : {}),
+          ...(options?.useOAuth !== undefined
+            ? { useOAuth: options.useOAuth }
+            : {}),
+          ...(result.report ? { report: result.report } : {}),
+        });
+        await storeInitInfo(
+          serverName,
+          result.report?.initInfo ?? result.initInfo,
+        );
+        if (options?.successToast) {
+          toast.success(options.successToast);
+        }
+        return true;
+      }
+
+      const errorMessage = getConnectionErrorMessage(result);
+      dispatch({
+        type: "CONNECT_FAILURE",
+        name: serverName,
+        error: errorMessage,
+        ...(result.report ? { report: result.report } : {}),
+      });
+      if (options?.failureToast) {
+        toast.error(options.failureToast.replace("{error}", errorMessage));
+      }
+      return false;
+    },
+    [dispatch, getConnectionErrorMessage, storeInitInfo],
+  );
+
   const resolveOAuthInitiationInputs = useCallback(
     async (
       formData: ServerFormData,
@@ -654,7 +917,9 @@ export function useServerState({
         clientSecret: formData.clientSecret,
         registryServerId: formData.registryServerId,
         scopes,
-        useRegistryOAuthProxy: Boolean(clientId && formData.registryServerId),
+        useRegistryOAuthProxy:
+          formData.useRegistryOAuthProxy === true ||
+          Boolean(clientId && formData.registryServerId),
       };
     },
     [convex],
@@ -693,45 +958,36 @@ export function useServerState({
           });
 
           try {
+            const oauthContext = buildOAuthContext({ serverName });
             const connectionResult = await guardedTestConnection(
               withWorkspaceClientCapabilities(result.serverConfig),
               serverName,
+              oauthContext,
             );
-            if (connectionResult.success) {
-                dispatch({
-                  type: "CONNECT_SUCCESS",
-                  name: serverName,
-                  config: result.serverConfig,
+            if (
+              await completeConnection(
+                serverName,
+                result.serverConfig,
+                connectionResult,
+                {
                   tokens: isHostedWorkspaceCallback
                     ? undefined
                     : getStoredTokens(serverName),
                   useOAuth: true,
-                });
-                logger.info("OAuth connection successful", { serverName });
-                toast.success(
+                },
+              )
+            ) {
+              logger.info("OAuth connection successful", { serverName });
+              toast.success(
                 `OAuth connection successful! Connected to ${serverName}.`,
               );
-              storeInitInfo(serverName, connectionResult.initInfo).catch(
-                (err) =>
-                  logger.warn("Failed to fetch init info", {
-                    serverName,
-                    err,
-                  }),
-              );
             } else {
-              dispatch({
-                type: "CONNECT_FAILURE",
-                name: serverName,
-                error:
-                  connectionResult.error ||
-                  "Connection test failed after OAuth",
-              });
               logger.error("OAuth connection test failed", {
                 serverName,
-                error: connectionResult.error,
+                error: getConnectionErrorMessage(connectionResult),
               });
               toast.error(
-                `OAuth succeeded but connection test failed: ${connectionResult.error}`,
+                `OAuth succeeded but connection test failed: ${getConnectionErrorMessage(connectionResult)}`,
               );
             }
           } catch (connectionError) {
@@ -772,10 +1028,12 @@ export function useServerState({
     },
     [
       dispatch,
+      buildOAuthContext,
+      completeConnection,
       failPendingOAuthConnection,
+      getConnectionErrorMessage,
       isAuthenticated,
       logger,
-      storeInitInfo,
       guardedTestConnection,
       withWorkspaceClientCapabilities,
     ],
@@ -862,7 +1120,10 @@ export function useServerState({
   ]);
 
   const handleConnect = useCallback(
-    async (formData: ServerFormData) => {
+    async (
+      formData: ServerFormData,
+      options?: { oauthProfile?: OAuthTestProfile },
+    ) => {
       if (notifyIfClientConfigSyncPending()) {
         return;
       }
@@ -932,10 +1193,20 @@ export function useServerState({
         }
       }
 
-      saveOAuthConfigToLocalStorage(formData);
+      saveOAuthConfigToLocalStorage(formData, {
+        oauthProfile: options?.oauthProfile,
+        preserveExistingConfigFrom: formData.name,
+      });
 
       try {
         if (formData.type === "http" && formData.useOAuth && formData.url) {
+          const oauthContext = buildOAuthContext({
+            serverName: formData.name,
+            oauthProfile: options?.oauthProfile,
+            usedCustomClientCredentials:
+              Boolean(formData.clientId?.trim()) ||
+              Boolean(formData.clientSecret?.trim()),
+          });
           const existingTokens = getStoredTokens(formData.name);
           if (existingTokens?.access_token) {
             logger.info("Connecting with existing OAuth tokens", {
@@ -953,31 +1224,25 @@ export function useServerState({
             const connectionResult = await guardedTestConnection(
               withWorkspaceClientCapabilities(serverConfig),
               formData.name,
+              oauthContext,
             );
             if (isStaleOp(formData.name, token)) return;
-            if (connectionResult.success) {
-              dispatch({
-                type: "CONNECT_SUCCESS",
-                name: formData.name,
-                config: serverConfig,
-                tokens: existingTokens,
-                useOAuth: true,
-              });
+            if (
+              await completeConnection(
+                formData.name,
+                serverConfig,
+                connectionResult,
+                { tokens: existingTokens, useOAuth: true },
+              )
+            ) {
               toast.success(
                 "Connected successfully with existing OAuth tokens!",
-              );
-              storeInitInfo(formData.name, connectionResult.initInfo).catch(
-                (err) =>
-                  logger.warn("Failed to fetch init info", {
-                    serverName: formData.name,
-                    err,
-                  }),
               );
               return;
             }
             logger.warn("Existing tokens failed, will trigger OAuth flow", {
               serverName: formData.name,
-              error: connectionResult.error,
+              error: getConnectionErrorMessage(connectionResult),
             });
           }
 
@@ -996,6 +1261,10 @@ export function useServerState({
           });
 
           const oauthInputs = await resolveOAuthInitiationInputs(formData);
+          saveOAuthConfigToLocalStorage(formData, {
+            oauthProfile: options?.oauthProfile,
+            useRegistryOAuthProxy: oauthInputs.useRegistryOAuthProxy,
+          });
           const oauthOptions: any = {
             serverName: formData.name,
             serverUrl: formData.url,
@@ -1003,6 +1272,8 @@ export function useServerState({
             clientSecret: oauthInputs.clientSecret,
             registryServerId: oauthInputs.registryServerId,
             useRegistryOAuthProxy: oauthInputs.useRegistryOAuthProxy,
+            protocolVersion: options?.oauthProfile?.protocolVersion,
+            registrationStrategy: options?.oauthProfile?.registrationStrategy,
           };
           if (oauthInputs.scopes && oauthInputs.scopes.length > 0) {
             oauthOptions.scopes = oauthInputs.scopes;
@@ -1018,36 +1289,27 @@ export function useServerState({
               const connectionResult = await guardedTestConnection(
                 withWorkspaceClientCapabilities(oauthResult.serverConfig),
                 formData.name,
+                oauthContext,
               );
               if (isStaleOp(formData.name, token)) return;
-              if (connectionResult.success) {
-                dispatch({
-                  type: "CONNECT_SUCCESS",
-                  name: formData.name,
-                  config: oauthResult.serverConfig,
-                  tokens:
-                    HOSTED_MODE && isAuthenticated
-                      ? undefined
-                      : getStoredTokens(formData.name),
-                  useOAuth: true,
-                });
+              if (
+                await completeConnection(
+                  formData.name,
+                  oauthResult.serverConfig,
+                  connectionResult,
+                  {
+                    tokens:
+                      HOSTED_MODE && isAuthenticated
+                        ? undefined
+                        : getStoredTokens(formData.name),
+                    useOAuth: true,
+                  },
+                )
+              ) {
                 toast.success("Connected successfully with OAuth!");
-                storeInitInfo(formData.name, connectionResult.initInfo).catch(
-                  (err) =>
-                    logger.warn("Failed to fetch init info", {
-                      serverName: formData.name,
-                      err,
-                    }),
-                );
               } else {
-                dispatch({
-                  type: "CONNECT_FAILURE",
-                  name: formData.name,
-                  error:
-                    connectionResult.error || "OAuth connection test failed",
-                });
                 toast.error(
-                  `OAuth succeeded but connection failed: ${connectionResult.error}`,
+                  `OAuth succeeded but connection failed: ${getConnectionErrorMessage(connectionResult)}`,
                 );
               }
             } else {
@@ -1078,15 +1340,20 @@ export function useServerState({
         const result = await guardedTestConnection(
           effectiveConfig,
           formData.name,
+          buildOAuthContext({
+            serverName: formData.name,
+            oauthProfile: options?.oauthProfile,
+            usedCustomClientCredentials:
+              Boolean(formData.clientId?.trim()) ||
+              Boolean(formData.clientSecret?.trim()),
+          }),
         );
         if (isStaleOp(formData.name, token)) return;
-        if (result.success) {
-          dispatch({
-            type: "CONNECT_SUCCESS",
-            name: formData.name,
-            config: mcpConfig,
+        if (
+          await completeConnection(formData.name, mcpConfig, result, {
             useOAuth: formData.useOAuth ?? false,
-          });
+          })
+        ) {
           const env = (mcpConfig as any).env;
           if (env && Object.keys(env).length > 0) {
             localStorage.setItem(
@@ -1100,21 +1367,10 @@ export function useServerState({
           ) {
             toast.success("Connected successfully!");
           }
-          storeInitInfo(formData.name, result.initInfo).catch((err) =>
-            logger.warn("Failed to fetch init info", {
-              serverName: formData.name,
-              err,
-            }),
-          );
         } else {
-          dispatch({
-            type: "CONNECT_FAILURE",
-            name: formData.name,
-            error: result.error || "Connection test failed",
-          });
           logger.error("Connection failed", {
             serverName: formData.name,
-            error: result.error,
+            error: getConnectionErrorMessage(result),
           });
           toast.error(`Failed to connect to ${formData.name}`);
         }
@@ -1144,7 +1400,9 @@ export function useServerState({
       resolveOAuthInitiationInputs,
       syncServerToConvex,
       logger,
-      storeInitInfo,
+      buildOAuthContext,
+      completeConnection,
+      getConnectionErrorMessage,
       guardedTestConnection,
       withWorkspaceClientCapabilities,
     ],
@@ -1198,7 +1456,10 @@ export function useServerState({
         server: serverEntry,
       });
 
-      saveOAuthConfigToLocalStorage(formData);
+      saveOAuthConfigToLocalStorage(formData, {
+        oauthProfile: options?.oauthProfile,
+        preserveExistingConfigFrom: formData.name,
+      });
 
       if (
         isAuthenticated &&
@@ -1289,30 +1550,28 @@ export function useServerState({
       const token = nextOpToken(serverName);
 
       try {
+        const oauthContext = buildOAuthContext({
+          serverName,
+          usedCustomClientCredentials:
+            Boolean(tokens.clientId) || Boolean(tokens.clientSecret),
+        });
         const result = await guardedReconnectServer(
           serverName,
           withWorkspaceClientCapabilities(serverConfig),
+          oauthContext,
         );
         if (isStaleOp(serverName, token)) {
           return { success: false, error: "Operation cancelled" };
         }
-        if (result.success) {
-          dispatch({
-            type: "CONNECT_SUCCESS",
-            name: serverName,
-            config: serverConfig,
+        if (
+          await completeConnection(serverName, serverConfig, result, {
             tokens: getStoredTokens(serverName),
             useOAuth: true,
-          });
-          await storeInitInfo(serverName, result.initInfo);
+          })
+        ) {
           return { success: true };
         }
-        dispatch({
-          type: "CONNECT_FAILURE",
-          name: serverName,
-          error: result.error || "Connection failed",
-        });
-        return { success: false, error: result.error };
+        return { success: false, error: getConnectionErrorMessage(result) };
       } catch (error) {
         const errorMessage =
           error instanceof Error ? error.message : "Unknown error";
@@ -1329,7 +1588,9 @@ export function useServerState({
     },
     [
       dispatch,
-      storeInitInfo,
+      buildOAuthContext,
+      completeConnection,
+      getConnectionErrorMessage,
       guardedReconnectServer,
       withWorkspaceClientCapabilities,
     ],
@@ -1595,14 +1856,19 @@ export function useServerState({
         config: server.config,
       });
       const token = nextOpToken(serverName);
+      const oauthContext = buildOAuthContext({
+        serverName,
+        oauthProfile: server.oauthFlowProfile,
+        usedCustomClientCredentials: Boolean(
+          server.oauthFlowProfile?.clientId?.trim() ||
+          server.oauthFlowProfile?.clientSecret?.trim(),
+        ),
+      });
       const hostedWorkspaceServerId = activeWorkspaceServersFlat?.find(
         (remoteServer) => remoteServer.name === serverName,
       )?._id;
 
       if (options?.forceOAuthFlow) {
-        clearOAuthData(serverName);
-        await deleteServer(serverName);
-
         const serverUrl = (server.config as any)?.url?.toString?.();
         if (!serverUrl) {
           dispatch({
@@ -1618,10 +1884,15 @@ export function useServerState({
           serverName,
           serverUrl,
         });
-        const oauthResult = await initiateOAuth({
+        const reconnectOAuthOptions = buildReconnectOAuthOptions(
           serverName,
+          server,
           serverUrl,
-        });
+        );
+        clearOAuthData(serverName);
+        await deleteServer(serverName);
+
+        const oauthResult = await initiateOAuth(reconnectOAuthOptions);
 
         if (oauthResult.success && !oauthResult.serverConfig) {
           return;
@@ -1639,32 +1910,28 @@ export function useServerState({
         const result = await guardedReconnectServer(
           serverName,
           withWorkspaceClientCapabilities(oauthResult.serverConfig!),
+          oauthContext,
         );
         if (isStaleOp(serverName, token)) return;
-        if (result.success) {
-          dispatch({
-            type: "CONNECT_SUCCESS",
-            name: serverName,
-            config: oauthResult.serverConfig!,
-            tokens:
-              HOSTED_MODE && isAuthenticated
-                ? undefined
-                : getStoredTokens(serverName),
-            useOAuth: true,
-          });
+        if (
+          await completeConnection(
+            serverName,
+            oauthResult.serverConfig!,
+            result,
+            {
+              tokens:
+                HOSTED_MODE && isAuthenticated
+                  ? undefined
+                  : getStoredTokens(serverName),
+              useOAuth: true,
+            },
+          )
+        ) {
           logger.info("Reconnection with fresh OAuth successful", {
             serverName,
           });
-          storeInitInfo(serverName, result.initInfo).catch((err) =>
-            logger.warn("Failed to fetch init info", { serverName, err }),
-          );
           return;
         }
-        dispatch({
-          type: "CONNECT_FAILURE",
-          name: serverName,
-          error: result.error || "Reconnection failed after OAuth",
-        });
         return;
       }
 
@@ -1765,30 +2032,27 @@ export function useServerState({
         const result = await guardedReconnectServer(
           serverName,
           withWorkspaceClientCapabilities(authResult.serverConfig),
+          oauthContext,
         );
         if (isStaleOp(serverName, token)) return;
-        if (result.success) {
-          dispatch({
-            type: "CONNECT_SUCCESS",
-            name: serverName,
-            config: authResult.serverConfig,
-            tokens: authResult.tokens,
-            useOAuth: server.useOAuth === true || authResult.tokens != null,
-          });
+        if (
+          await completeConnection(
+            serverName,
+            authResult.serverConfig,
+            result,
+            {
+              tokens: authResult.tokens,
+              useOAuth: server.useOAuth === true || authResult.tokens != null,
+            },
+          )
+        ) {
           logger.info("Reconnection successful", { serverName, result });
-          storeInitInfo(serverName, result.initInfo).catch((err) =>
-            logger.warn("Failed to fetch init info", { serverName, err }),
-          );
           return;
         }
-        dispatch({
-          type: "CONNECT_FAILURE",
-          name: serverName,
-          error: result.error || "Reconnection failed",
-        });
         logger.error("Reconnection failed", { serverName, result });
         const errorMessage =
-          result.error || `Failed to reconnect: ${serverName}`;
+          getConnectionErrorMessage(result) ||
+          `Failed to reconnect: ${serverName}`;
         toast.error(errorMessage);
       } catch (error) {
         const errorMessage =
@@ -1809,10 +2073,13 @@ export function useServerState({
       activeWorkspaceServersFlat,
       isAuthenticated,
       effectiveServers,
-      storeInitInfo,
       logger,
       dispatch,
+      buildReconnectOAuthOptions,
       notifyIfClientConfigSyncPending,
+      buildOAuthContext,
+      completeConnection,
+      getConnectionErrorMessage,
       prepareHostedWorkspaceOAuthRedirect,
       guardedReconnectServer,
       withWorkspaceClientCapabilities,
@@ -1873,6 +2140,7 @@ export function useServerState({
       originalServerName: string,
       formData: ServerFormData,
       skipAutoConnect?: boolean,
+      options?: { oauthProfile?: OAuthTestProfile },
     ): Promise<ServerUpdateResult> => {
       const nextServerName = formData.name.trim();
       if (!nextServerName) {
@@ -1894,6 +2162,15 @@ export function useServerState({
 
       if (skipAutoConnect) {
         const mcpConfig = toMCPConfig(formData);
+        const nextOAuthProfile = formData.useOAuth
+          ? (options?.oauthProfile ?? originalServer?.oauthFlowProfile)
+          : undefined;
+        if (isRename && formData.useOAuth) {
+          saveOAuthConfigToLocalStorage(formData, {
+            oauthProfile: nextOAuthProfile,
+            preserveExistingConfigFrom: originalServerName,
+          });
+        }
         if (isRename) {
           await handleDisconnect(originalServerName);
           await removeServerFromStateAndCloud(originalServerName);
@@ -1908,7 +2185,7 @@ export function useServerState({
           retryCount: originalServer?.retryCount ?? 0,
           enabled: originalServer?.enabled ?? false,
           oauthTokens: originalServer?.oauthTokens,
-          oauthFlowProfile: originalServer?.oauthFlowProfile,
+          oauthFlowProfile: nextOAuthProfile,
           initializationInfo: originalServer?.initializationInfo,
           useOAuth: formData.useOAuth ?? false,
         } as ServerWithName;
@@ -1930,7 +2207,10 @@ export function useServerState({
           await syncServerToConvex(nextServerName, updatedServer);
         }
 
-        saveOAuthConfigToLocalStorage(formData);
+        saveOAuthConfigToLocalStorage(formData, {
+          oauthProfile: updatedServer.oauthFlowProfile,
+          preserveExistingConfigFrom: nextServerName,
+        });
         if (appState.selectedServer === originalServerName && isRename) {
           setSelectedServer(nextServerName);
         }
@@ -1957,20 +2237,30 @@ export function useServerState({
           name: originalServerName,
           config: mcpConfig,
         });
-        saveOAuthConfigToLocalStorage(formData);
+        saveOAuthConfigToLocalStorage(formData, {
+          oauthProfile:
+            options?.oauthProfile ?? originalServer.oauthFlowProfile,
+          preserveExistingConfigFrom: originalServerName,
+        });
         try {
           const result = await guardedTestConnection(
-            withWorkspaceClientCapabilities(originalServer.config),
+            withWorkspaceClientCapabilities(mcpConfig),
             originalServerName,
+            buildOAuthContext({
+              serverName: originalServerName,
+              oauthProfile:
+                options?.oauthProfile ?? originalServer.oauthFlowProfile,
+              usedCustomClientCredentials: Boolean(
+                options?.oauthProfile?.clientId?.trim() ||
+                originalServer.oauthTokens?.client_id,
+              ),
+            }),
           );
-          if (result.success) {
-            dispatch({
-              type: "CONNECT_SUCCESS",
-              name: originalServerName,
-              config: mcpConfig,
+          if (
+            await completeConnection(originalServerName, mcpConfig, result, {
               useOAuth: true,
-            });
-            await storeInitInfo(originalServerName, result.initInfo);
+            })
+          ) {
             toast.success("Server configuration updated successfully!");
             return { ok: true, serverName: originalServerName };
           }
@@ -1989,7 +2279,10 @@ export function useServerState({
         clearOAuthData(originalServerName);
       }
 
-      saveOAuthConfigToLocalStorage(formData);
+      saveOAuthConfigToLocalStorage(formData, {
+        oauthProfile: options?.oauthProfile ?? originalServer?.oauthFlowProfile,
+        preserveExistingConfigFrom: originalServerName,
+      });
 
       if (isRename) {
         await handleDisconnect(originalServerName);
@@ -1997,7 +2290,9 @@ export function useServerState({
       } else {
         await handleDisconnect(originalServerName);
       }
-      await handleConnect(formData);
+      await handleConnect(formData, {
+        oauthProfile: options?.oauthProfile ?? originalServer?.oauthFlowProfile,
+      });
       if (
         appState.selectedServer === originalServerName &&
         nextServerName !== originalServerName
@@ -2015,7 +2310,6 @@ export function useServerState({
       effectiveWorkspaces,
       effectiveActiveWorkspaceId,
       effectiveServers,
-      storeInitInfo,
       handleDisconnect,
       handleConnect,
       isAuthenticated,
@@ -2025,6 +2319,8 @@ export function useServerState({
       useLocalFallback,
       persistServerToLocalWorkspace,
       notifyIfClientConfigSyncPending,
+      buildOAuthContext,
+      completeConnection,
       guardedTestConnection,
     ],
   );
@@ -2036,7 +2332,7 @@ export function useServerState({
     connectedOrConnectingServerConfigs: Object.fromEntries(
       Object.entries(effectiveServers).filter(
         ([, server]) =>
-          server.connectionStatus === "connected" ||
+          isConnectedStatus(server.connectionStatus) ||
           server.connectionStatus === "connecting",
       ),
     ),

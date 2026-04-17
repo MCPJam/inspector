@@ -18,6 +18,7 @@ import { useEvalQueries } from "./evals/use-eval-queries";
 import { useEvalMutations } from "./evals/use-eval-mutations";
 import { useEvalHandlers } from "./evals/use-eval-handlers";
 import { useSharedAppState } from "@/state/app-state-context";
+import { isConnectedStatus } from "@/state/app-types";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
 import type { EvalCase } from "./evals/types";
@@ -66,7 +67,8 @@ export function EvalsTab({
   const isServerConnected =
     selectedServer &&
     selectedServer !== "none" &&
-    appState.servers[selectedServer]?.connectionStatus === "connected";
+    !!appState.servers[selectedServer] &&
+    isConnectedStatus(appState.servers[selectedServer].connectionStatus);
 
   const hasPlaygroundServerTab =
     Boolean(selectedServer) && selectedServer !== "none";

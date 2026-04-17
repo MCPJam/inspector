@@ -1,10 +1,11 @@
-import type { MCPServerConfig } from "@mcpjam/sdk/browser";
+import type { ConnectReport, MCPServerConfig } from "@mcpjam/sdk/browser";
 import { OauthTokens } from "@/shared/types.js";
 import type { OAuthTestProfile } from "@/lib/oauth/profile";
 import type { WorkspaceClientConfig } from "@/lib/client-config";
 
 export type ConnectionStatus =
   | "connected"
+  | "partial"
   | "connecting"
   | "failed"
   | "disconnected"
@@ -41,6 +42,7 @@ export interface ServerWithName {
   connectionStatus: ConnectionStatus;
   retryCount: number;
   lastError?: string;
+  lastConnectionReport?: ConnectReport;
   enabled?: boolean;
   /** Whether OAuth is explicitly enabled for this server. When false, reconnect skips OAuth flow. */
   useOAuth?: boolean;
@@ -87,9 +89,15 @@ export type AppAction =
       name: string;
       config: MCPServerConfig;
       tokens?: OauthTokens;
+      report?: ConnectReport;
       useOAuth?: boolean;
     }
-  | { type: "CONNECT_FAILURE"; name: string; error: string }
+  | {
+      type: "CONNECT_FAILURE";
+      name: string;
+      error: string;
+      report?: ConnectReport;
+    }
   | { type: "RECONNECT_REQUEST"; name: string; config: MCPServerConfig }
   | { type: "DISCONNECT"; name: string; error?: string }
   | { type: "REMOVE_SERVER"; name: string }
@@ -132,3 +140,7 @@ export const initialAppState: AppState = {
   selectedMultipleServers: [],
   isMultiSelectMode: false,
 };
+
+export function isConnectedStatus(status: ConnectionStatus): boolean {
+  return status === "connected" || status === "partial";
+}

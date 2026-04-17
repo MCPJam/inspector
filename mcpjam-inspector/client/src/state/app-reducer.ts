@@ -3,7 +3,6 @@ import {
   AppState,
   ConnectionStatus,
   ServerWithName,
-  Workspace,
 } from "./app-types";
 
 const setStatus = (
@@ -63,16 +62,20 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       const shouldUseOAuth =
         action.useOAuth ??
         (baseServer.useOAuth === true || action.tokens != null);
-      const nextServer = setStatus(baseServer, "connected", {
+      const nextStatus: ConnectionStatus =
+        action.report?.status === "partial" ? "partial" : "connected";
+      const nextServer = setStatus(baseServer, nextStatus, {
         config: action.config,
         lastConnectionTime: new Date(),
         retryCount: 0,
-        lastError: undefined,
+        lastError: action.report?.issue?.message,
+        lastConnectionReport: action.report,
         oauthTokens: action.tokens,
         enabled: true,
-        // Hosted workspace OAuth can succeed without browser-side tokens.
-        // Preserve explicit auth mode when the dispatch provides it.
         useOAuth: shouldUseOAuth,
+        ...(action.report
+          ? { initializationInfo: action.report.initInfo ?? undefined }
+          : {}),
       });
       return {
         ...state,
@@ -106,7 +109,8 @@ export function appReducer(state: AppState, action: AppAction): AppState {
           ...state.servers,
           [action.name]: setStatus(existing, "failed", {
             retryCount: existing.retryCount,
-            lastError: action.error,
+            lastError: action.report?.issue?.message ?? action.error,
+            lastConnectionReport: action.report,
           }),
         },
       };

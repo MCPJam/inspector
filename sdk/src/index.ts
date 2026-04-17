@@ -106,6 +106,7 @@ export type {
 } from "./server-probe.js";
 export {
   runServerDoctor,
+  buildConnectedServerDoctorResult,
   collectConnectedServerDoctorState,
   normalizeServerDoctorError,
 } from "./server-doctor.js";
@@ -119,6 +120,17 @@ export type {
   RunServerDoctorInput,
   ServerDoctorDependencies,
 } from "./server-doctor.js";
+export {
+  connectServerWithReport,
+} from "./connect-report.js";
+export type {
+  ConnectContext,
+  ConnectIssue,
+  ConnectIssueCode,
+  ConnectPhase,
+  ConnectReport,
+  ConnectStatus,
+} from "./connect-report-types.js";
 export {
   collectServerSnapshot,
   collectConnectedServerSnapshot,

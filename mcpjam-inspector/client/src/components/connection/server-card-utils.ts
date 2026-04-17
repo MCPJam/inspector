@@ -1,5 +1,5 @@
 import type { ComponentType } from "react";
-import { Check, Loader2, Wifi, X } from "lucide-react";
+import { AlertCircle, Check, Loader2, Wifi, X } from "lucide-react";
 import type { MCPServerConfig } from "@mcpjam/sdk/browser";
 import type { ConnectionStatus } from "@/state/app-types";
 
@@ -16,6 +16,12 @@ const connectionStatusMeta: Record<ConnectionStatus, ConnectionStatusMeta> = {
     indicatorColor: "#10b981",
     Icon: Check,
     iconClassName: "h-3 w-3 text-green-500",
+  },
+  partial: {
+    label: "Connected with warnings",
+    indicatorColor: "#f59e0b",
+    Icon: AlertCircle,
+    iconClassName: "h-3 w-3 text-amber-500",
   },
   connecting: {
     label: "Finishing setup...",

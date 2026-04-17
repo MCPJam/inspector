@@ -22,6 +22,7 @@ import {
 } from "react";
 import { Braces, Loader2, Trash2 } from "lucide-react";
 import { useAuth } from "@workos-inc/authkit-react";
+import { isConnectedStatus } from "@/state/app-types";
 import type { ContentBlock } from "@modelcontextprotocol/client";
 import type { UIMessage } from "ai";
 import { ModelDefinition } from "@/shared/types";
@@ -308,14 +309,18 @@ export function PlaygroundMain({
   const { isAuthenticated: isConvexAuthenticated } = useConvexAuth();
   const selectedServers = useMemo(
     () =>
-      serverName && servers[serverName]?.connectionStatus === "connected"
+      serverName &&
+      servers[serverName] &&
+      isConnectedStatus(servers[serverName].connectionStatus)
         ? [serverName]
         : [],
     [serverName, servers],
   );
 
   const serverConnected = Boolean(
-    serverName && servers[serverName]?.connectionStatus === "connected",
+    !!serverName &&
+    !!servers[serverName] &&
+    isConnectedStatus(servers[serverName].connectionStatus),
   );
 
   const handlePlaygroundServerToggle = useCallback(

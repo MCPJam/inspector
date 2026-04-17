@@ -23,6 +23,7 @@ import {
   type UiLogEvent,
   type UiProtocol,
 } from "@/stores/traffic-log-store";
+import { isConnectedStatus } from "@/state/app-types";
 import type { LoggingLevel } from "@modelcontextprotocol/client";
 import { setServerLoggingLevel } from "@/state/mcp-api";
 import { toast } from "sonner";
@@ -199,7 +200,7 @@ export function LoggerView({
   >(
     () =>
       Object.entries(appState.servers)
-        .filter(([, server]) => server.connectionStatus === "connected")
+        .filter(([, server]) => isConnectedStatus(server.connectionStatus))
         .map(([id, server]) => ({ id, server })),
     [appState.servers],
   );

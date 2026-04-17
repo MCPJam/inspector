@@ -142,8 +142,20 @@ export function EditServerFormContent({
             onBearerTokenChange={formState.setBearerToken}
             oauthScopesInput={formState.oauthScopesInput}
             onOauthScopesChange={formState.setOauthScopesInput}
+            oauthProtocolVersion={formState.oauthProtocolVersion}
+            onOauthProtocolVersionChange={formState.setOauthProtocolVersion}
+            oauthRegistrationStrategy={formState.oauthRegistrationStrategy}
+            onOauthRegistrationStrategyChange={
+              formState.setOauthRegistrationStrategy
+            }
             useCustomClientId={formState.useCustomClientId}
             onUseCustomClientIdChange={(checked) => {
+              if (
+                formState.oauthRegistrationStrategy === "preregistered" &&
+                !checked
+              ) {
+                return;
+              }
               formState.setUseCustomClientId(checked);
               if (!checked) {
                 formState.setClientId("");

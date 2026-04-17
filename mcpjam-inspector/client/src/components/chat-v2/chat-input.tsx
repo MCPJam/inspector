@@ -8,6 +8,7 @@ import {
 import type { FormEvent, KeyboardEvent } from "react";
 import { usePostHog } from "posthog-js/react";
 import { cn } from "@/lib/chat-utils";
+import { isConnectedStatus } from "@/state/app-types";
 import { standardEventProps } from "@/lib/PosthogUtils";
 import { Button } from "@/components/ui/button";
 import { TextareaAutosize } from "@/components/ui/textarea-autosize";
@@ -657,8 +658,9 @@ export function ChatInput({
                                 .map(([name, server]) => {
                                   const isSelected =
                                     selectedServers?.includes(name) ?? false;
-                                  const isConnected =
-                                    server.connectionStatus === "connected";
+                                  const isConnected = isConnectedStatus(
+                                    server.connectionStatus,
+                                  );
                                   const isConnecting =
                                     server.connectionStatus === "connecting";
                                   const isFailed =

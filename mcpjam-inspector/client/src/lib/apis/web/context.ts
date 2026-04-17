@@ -1,6 +1,7 @@
 import { HOSTED_MODE } from "@/lib/config";
 import { getGuestBearerToken } from "@/lib/guest-session";
 import { CLIENT_CONFIG_SYNC_PENDING_ERROR_MESSAGE } from "@/lib/client-config";
+import type { ConnectContext } from "@mcpjam/sdk/browser";
 import { getDefaultClientCapabilities } from "@mcpjam/sdk/browser";
 
 type GetAccessTokenFn = () => Promise<string | undefined | null>;
@@ -120,6 +121,7 @@ export function buildGuestServerRequest(
   oauthAccessToken?: string,
   clientCapabilities?: Record<string, unknown>,
   serverName?: string,
+  oauthContext?: ConnectContext["oauth"],
 ): Record<string, unknown> {
   const httpConfig = config as {
     url?: string | URL;
@@ -141,6 +143,7 @@ export function buildGuestServerRequest(
       : {}),
     ...(oauthAccessToken ? { oauthAccessToken } : {}),
     ...(clientCapabilities ? { clientCapabilities } : {}),
+    ...(oauthContext ? { oauthContext } : {}),
   };
 }
 
@@ -268,6 +271,7 @@ function getHostedAccessScope(): HostedAccessScope | undefined {
 
 export function buildHostedServerRequest(
   serverNameOrId: string,
+  oauthContext?: ConnectContext["oauth"],
 ): Record<string, unknown> {
   // Guest path: use directly-provided server config (no Convex)
   if (isGuestMode()) {
@@ -289,6 +293,7 @@ export function buildHostedServerRequest(
       oauthToken,
       hostedApiContext.clientCapabilities,
       serverNameOrId,
+      oauthContext,
     );
   }
 
@@ -313,6 +318,7 @@ export function buildHostedServerRequest(
     ...(accessScope ? { accessScope } : {}),
     ...(shareToken ? { shareToken } : {}),
     ...(sandboxToken ? { sandboxToken } : {}),
+    ...(oauthContext ? { oauthContext } : {}),
   };
 }
 

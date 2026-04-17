@@ -15,6 +15,7 @@ import {
   MessageSquareText,
 } from "lucide-react";
 import { ServerWithName, type ServerUpdateResult } from "@/hooks/use-app-state";
+import type { OAuthTestProfile } from "@/lib/oauth/profile";
 import { ServerConnectionCard } from "./connection/ServerConnectionCard";
 import { AddServerModal } from "./connection/AddServerModal";
 import {
@@ -42,6 +43,7 @@ import { formatRegistryStarCount } from "@/lib/format-registry-star-count";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "./ui/hover-card";
 import { BILLING_GATES, useWorkspaceBillingGate } from "@/lib/billing-gates";
+import { isConnectedStatus, Workspace } from "@/state/app-types";
 import {
   ResizablePanelGroup,
   ResizablePanel,
@@ -52,7 +54,6 @@ import { LoggerView } from "./logger-view";
 import { useJsonRpcPanelVisibility } from "@/hooks/use-json-rpc-panel";
 import { Skeleton } from "./ui/skeleton";
 import { useConvexAuth } from "convex/react";
-import { Workspace } from "@/state/app-types";
 import {
   clearPendingQuickConnect,
   readPendingQuickConnect,
@@ -382,7 +383,10 @@ function SortableServerCard({
 
 interface ServersTabProps {
   workspaceServers: Record<string, ServerWithName>;
-  onConnect: (formData: ServerFormData) => void;
+  onConnect: (
+    formData: ServerFormData,
+    options?: { oauthProfile?: OAuthTestProfile },
+  ) => void;
   onDisconnect: (serverName: string) => void;
   onReconnect: (
     serverName: string,
@@ -392,6 +396,7 @@ interface ServersTabProps {
     originalServerName: string,
     formData: ServerFormData,
     skipAutoConnect?: boolean,
+    options?: { oauthProfile?: OAuthTestProfile },
   ) => Promise<ServerUpdateResult>;
   onRemove: (serverName: string) => void;
   workspaces: Record<string, Workspace>;
@@ -537,7 +542,7 @@ export function ServersTab({
       Object.fromEntries(
         Object.entries(workspaceServers).map(([serverName, server]) => [
           serverName,
-          server.connectionStatus === "connected" &&
+          isConnectedStatus(server.connectionStatus) &&
             workspaceClientCapabilitiesNeedReconnect({
               desiredCapabilities: getEffectiveServerClientCapabilities({
                 workspaceClientConfig:
@@ -618,7 +623,7 @@ export function ServersTab({
     }
 
     if (
-      pendingServer.connectionStatus === "connected" ||
+      isConnectedStatus(pendingServer.connectionStatus) ||
       pendingServer.connectionStatus === "failed" ||
       pendingServer.connectionStatus === "disconnected"
     ) {
@@ -717,7 +722,11 @@ export function ServersTab({
   }, []);
 
   const handleSubmitDetailModal = useCallback(
-    async (formData: ServerFormData, originalServerName: string) => {
+    async (
+      formData: ServerFormData,
+      originalServerName: string,
+      options?: { oauthProfile?: OAuthTestProfile },
+    ) => {
       const optimisticServerName = formData.name.trim() || originalServerName;
 
       setDetailModalState((prev) => ({
@@ -728,7 +737,12 @@ export function ServersTab({
           : prev.serverSnapshot,
       }));
 
-      const result = await onUpdate(originalServerName, formData);
+      const result = await onUpdate(
+        originalServerName,
+        formData,
+        undefined,
+        options,
+      );
 
       setDetailModalState((prev) => {
         const liveServer = workspaceServers[result.serverName];
@@ -1229,13 +1243,13 @@ export function ServersTab({
         onClose={() => {
           setIsAddingServer(false);
         }}
-        onSubmit={(formData) => {
+        onSubmit={(formData, options) => {
           posthog.capture("connecting_server", {
             location: "servers_tab",
             platform: detectPlatform(),
             environment: detectEnvironment(),
           });
-          onConnect(formData);
+          onConnect(formData, options);
         }}
       />
 

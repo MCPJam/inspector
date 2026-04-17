@@ -12,6 +12,7 @@ import {
 import { WebApiError } from "@/lib/apis/web/base";
 import { HOSTED_MODE } from "@/lib/config";
 import { peekStoredGuestToken, clearGuestSession } from "@/lib/guest-session";
+import { isConnectedStatus } from "@/state/app-types";
 import { resetTokenCache } from "@/lib/apis/web/context";
 import { toast } from "sonner";
 
@@ -307,7 +308,7 @@ function enrichCatalogCards(
       const liveServer = liveServers?.[getRegistryServerName(server)];
       let connectionStatus: RegistryConnectionStatus = "not_connected";
 
-      if (liveServer?.connectionStatus === "connected") {
+      if (liveServer && isConnectedStatus(liveServer.connectionStatus)) {
         connectionStatus = "connected";
       } else if (liveServer?.connectionStatus === "connecting") {
         connectionStatus = "connecting";
@@ -491,7 +492,7 @@ export function useRegistryServers({
       }
 
       const liveServer = liveServers?.[serverName];
-      if (liveServer?.connectionStatus === "connected") {
+      if (liveServer && isConnectedStatus(liveServer.connectionStatus)) {
         setPendingServerIds((prev) => {
           const next = new Map(prev);
           next.delete(registryServerId);

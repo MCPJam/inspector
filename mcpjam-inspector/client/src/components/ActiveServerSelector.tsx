@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { ServerWithName } from "@/hooks/use-app-state";
+import type { OAuthTestProfile } from "@/lib/oauth/profile";
 import { cn } from "@/lib/utils";
 import { AddServerModal } from "./connection/AddServerModal";
 import { ServerFormData } from "@/shared/types.js";
@@ -31,7 +32,10 @@ export interface ActiveServerSelectorProps {
   isMultiSelectEnabled: boolean;
   onServerChange: (server: string) => void;
   onMultiServerToggle: (server: string) => void;
-  onConnect: (formData: ServerFormData) => void;
+  onConnect: (
+    formData: ServerFormData,
+    options?: { oauthProfile?: OAuthTestProfile },
+  ) => void;
   onReconnect?: (serverName: string) => Promise<void>;
   showOnlyOAuthServers?: boolean; // Only show servers that use OAuth
   showOnlyServersWithViews?: boolean; // Only show servers that have saved views
@@ -50,6 +54,8 @@ function getStatusColor(status: string): string {
   switch (status) {
     case "connected":
       return "bg-green-500 dark:bg-green-400";
+    case "partial":
+      return "bg-amber-500 dark:bg-amber-400";
     case "connecting":
       return "bg-yellow-500 dark:bg-yellow-400 animate-pulse";
     case "failed":
@@ -65,6 +71,8 @@ function getStatusText(status: string): string {
   switch (status) {
     case "connected":
       return "Connected";
+    case "partial":
+      return "Connected with warnings";
     case "connecting":
       return "Connecting...";
     case "failed":
@@ -315,13 +323,13 @@ export function ActiveServerSelector({
         <AddServerModal
           isOpen={isAddModalOpen}
           onClose={() => setIsAddModalOpen(false)}
-          onSubmit={(formData) => {
+          onSubmit={(formData, options) => {
             posthog.capture("connecting_server", {
               location: "active_server_selector",
               platform: detectPlatform(),
               environment: detectEnvironment(),
             });
-            onConnect(formData);
+            onConnect(formData, options);
           }}
         />
 
