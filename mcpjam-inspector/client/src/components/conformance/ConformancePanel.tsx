@@ -699,7 +699,12 @@ export function ConformanceTab({
 }: {
   server?: ServerWithName | null;
 }) {
-  if (!server || server.name === "none") {
+  // In hosted mode `selectedMCPConfig` can arrive as a stub with falsy name
+  // and/or missing config while the workspace is still hydrating — treat any
+  // non-connected shape as "no server selected" so the panel never runs
+  // against `undefined` (which would surface as "Hosted server not found
+  // for 'undefined'" when Apps conformance calls the hosted resolver).
+  if (!server || !server.name || server.name === "none" || !server.config) {
     return (
       <EmptyState
         icon={FlaskConical}
