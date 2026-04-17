@@ -560,6 +560,7 @@ export default function App() {
     workspaceServers,
     connectedOrConnectingServerConfigs,
     selectedMCPConfig,
+    isSelectedServerSyncing,
     handleConnect,
     handleDisconnect,
     handleReconnect,
@@ -1848,6 +1849,7 @@ export default function App() {
               servers={workspaceServers}
               isAuthenticated={isAuthenticated}
               isAuthLoading={isAuthLoading}
+              isServerSyncing={isSelectedServerSyncing}
               onConnect={handleConnect}
               onOnboardingChange={setAppBuilderOnboarding}
               playgroundServerSelectorProps={playgroundServerSelectorProps}

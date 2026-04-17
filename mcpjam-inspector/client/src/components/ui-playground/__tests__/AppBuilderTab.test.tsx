@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { act, render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { AppBuilderTab } from "../AppBuilderTab";
 import type { MCPServerConfig } from "@mcpjam/sdk/browser";
 
@@ -340,6 +340,45 @@ describe("AppBuilderTab", () => {
       render(<AppBuilderTab serverConfig={undefined} serverName="test" />);
 
       expect(screen.getByText("No Server Selected")).toBeInTheDocument();
+    });
+
+    it("shows skeleton (not empty state) while server is syncing and serverConfig is absent", () => {
+      render(
+        <AppBuilderTab
+          serverConfig={undefined}
+          serverName="pending-server"
+          isServerSyncing={true}
+        />,
+      );
+
+      expect(screen.getByTestId("app-builder-skeleton")).toBeInTheDocument();
+      expect(screen.queryByText("No Server Selected")).not.toBeInTheDocument();
+    });
+
+    it("shows 'Still syncing…' fallback after the sync timeout elapses", () => {
+      vi.useFakeTimers();
+      try {
+        render(
+          <AppBuilderTab
+            serverConfig={undefined}
+            serverName="pending-server"
+            isServerSyncing={true}
+          />,
+        );
+
+        expect(screen.getByTestId("app-builder-skeleton")).toBeInTheDocument();
+
+        act(() => {
+          vi.advanceTimersByTime(10000);
+        });
+
+        expect(screen.getByText("Still syncing…")).toBeInTheDocument();
+        expect(
+          screen.queryByTestId("app-builder-skeleton"),
+        ).not.toBeInTheDocument();
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 

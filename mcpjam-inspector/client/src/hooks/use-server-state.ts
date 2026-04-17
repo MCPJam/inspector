@@ -1593,6 +1593,9 @@ export function useServerState({
         type: "RECONNECT_REQUEST",
         name: serverName,
         config: server.config,
+        // User-initiated reconnect → make this the selected server so other
+        // tabs (App Builder, Tools, etc.) follow the most recent intent.
+        select: true,
       });
       const token = nextOpToken(serverName);
       const hostedWorkspaceServerId = activeWorkspaceServersFlat?.find(
