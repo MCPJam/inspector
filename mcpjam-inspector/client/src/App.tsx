@@ -32,6 +32,7 @@ import { TracingTab } from "./components/TracingTab";
 import { AuthTab } from "./components/AuthTab";
 import { OAuthFlowTab } from "./components/OAuthFlowTab";
 import { ConformanceTab } from "./components/conformance/ConformancePanel";
+import { XAAFlowTab } from "./components/xaa/XAAFlowTab";
 import { ErrorBoundary } from "./components/evals/ErrorBoundary";
 import { AppBuilderTab } from "./components/ui-playground/AppBuilderTab";
 import { EmptyState } from "./components/ui/empty-state";
@@ -54,7 +55,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "./components/ui/dialog";
-import { useAppState } from "./hooks/use-app-state";
+import { useAppState, type ServerWithName } from "./hooks/use-app-state";
 import { PreferencesStoreProvider } from "./stores/preferences/preferences-provider";
 import { Toaster } from "./components/ui/sonner";
 import { useElectronOAuth } from "./hooks/useElectronOAuth";
@@ -294,6 +295,7 @@ export default function App() {
   const conformanceEnabled = useFeatureFlagEnabled("conformance-enabled");
   const playgroundEnabled = useFeatureFlagEnabled("playground-enabled");
   const evaluateRunsEnabled = useFeatureFlagEnabled("evaluate-runs");
+  const xaaEnabled = useFeatureFlagEnabled("xaa");
   const {
     getAccessToken,
     signIn,
@@ -560,6 +562,7 @@ export default function App() {
     workspaceServers,
     connectedOrConnectingServerConfigs,
     selectedMCPConfig,
+    isSelectedServerSyncing,
     handleConnect,
     handleDisconnect,
     handleReconnect,
@@ -660,7 +663,7 @@ export default function App() {
   const previousConnectedServersRef = useRef<Set<string> | null>(null);
   useEffect(() => {
     const connectedServers = new Set(
-      Object.entries(appState.servers)
+      Object.entries<ServerWithName>(appState.servers)
         .filter(([, server]) => server.connectionStatus === "connected")
         .map(([name]) => name),
     );
@@ -905,14 +908,17 @@ export default function App() {
   const guestServerConfigs = useMemo(
     () =>
       Object.fromEntries(
-        Object.entries(appState.servers).map(([name, s]) => [name, s.config]),
+        Object.entries<ServerWithName>(appState.servers).map(([name, server]) => [
+          name,
+          server.config,
+        ]),
       ),
     [appState.servers],
   );
   const guestOauthTokensByServerName = useMemo(
     () =>
       Object.fromEntries(
-        Object.entries(appState.servers)
+        Object.entries<ServerWithName>(appState.servers)
           .filter(([, server]) => !!server.oauthTokens?.access_token)
           .map(([name, server]) => [name, server.oauthTokens!.access_token]),
       ),
@@ -1251,6 +1257,8 @@ export default function App() {
       applyNavigation("servers", { updateHash: true });
     } else if (activeTab === "conformance" && conformanceEnabled !== true) {
       applyNavigation("servers", { updateHash: true });
+    } else if (activeTab === "xaa-flow" && xaaEnabled !== true) {
+      applyNavigation("servers", { updateHash: true });
     }
   }, [
     conformanceEnabled,
@@ -1259,6 +1267,7 @@ export default function App() {
     learningEnabled,
     evaluateRunsFlagsLoaded,
     evaluateRunsEnabled,
+    xaaEnabled,
     isAuthenticated,
     activeTab,
     applyNavigation,
@@ -1525,6 +1534,7 @@ export default function App() {
     activeTab === "tasks" ||
     activeTab === "conformance" ||
     activeTab === "oauth-flow" ||
+    (activeTab === "xaa-flow" && xaaEnabled === true) ||
     activeTab === "chat" ||
     activeTab === "evals" ||
     activeTab === "views";
@@ -1533,7 +1543,10 @@ export default function App() {
     shouldShowActiveServerSelector
       ? {
           serverConfigs:
-            activeTab === "oauth-flow" ? appState.servers : workspaceServers,
+            activeTab === "oauth-flow" ||
+            (activeTab === "xaa-flow" && xaaEnabled === true)
+              ? appState.servers
+              : workspaceServers,
           selectedServer: appState.selectedServer,
           onServerChange: setSelectedServer,
           onConnect: handleConnect,
@@ -1800,6 +1813,22 @@ export default function App() {
               />
             </ErrorBoundary>
           )}
+          {activeTab === "xaa-flow" && xaaEnabled === true && (
+            <ErrorBoundary
+              fallback={
+                <div className="flex items-center justify-center h-full text-muted-foreground">
+                  Something went wrong in the XAA Debugger. Try refreshing the
+                  page.
+                </div>
+              }
+            >
+              <XAAFlowTab
+                serverConfigs={appState.servers}
+                selectedServerName={appState.selectedServer}
+                onSelectServer={setSelectedServer}
+              />
+            </ErrorBoundary>
+          )}
           {activeTab === "chat-v2" && (
             <HostStyledChatTabV2
               connectedOrConnectingServerConfigs={
@@ -1830,6 +1859,7 @@ export default function App() {
               servers={workspaceServers}
               isAuthenticated={isAuthenticated}
               isAuthLoading={isAuthLoading}
+              isServerSyncing={isSelectedServerSyncing}
               onConnect={handleConnect}
               onOnboardingChange={setAppBuilderOnboarding}
               playgroundServerSelectorProps={playgroundServerSelectorProps}

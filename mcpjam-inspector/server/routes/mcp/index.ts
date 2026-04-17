@@ -19,6 +19,7 @@ import logLevel from "./log-level";
 import tasks from "./tasks";
 import skills from "./skills";
 import conformance from "./conformance";
+import xaa from "./xaa";
 
 const mcp = new Hono();
 
@@ -63,6 +64,9 @@ mcp.route("/prompts", prompts);
 
 // OAuth proxy endpoints
 mcp.route("/oauth", oauth);
+
+// XAA synthetic issuer + debugger endpoints
+mcp.route("/xaa", xaa);
 
 // Export endpoints - REAL IMPLEMENTATION
 mcp.route("/export", exporter);

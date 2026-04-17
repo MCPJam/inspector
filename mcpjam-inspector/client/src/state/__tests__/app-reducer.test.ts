@@ -153,6 +153,47 @@ describe("appReducer", () => {
     });
   });
 
+  describe("RECONNECT_REQUEST", () => {
+    it("selects the reconnected server when select is true", () => {
+      const existingServer = createServer("server-b", {
+        connectionStatus: "disconnected",
+      });
+      const state = createInitialState({
+        selectedServer: "server-a",
+        servers: { "server-b": existingServer },
+      });
+
+      const result = appReducer(state, {
+        type: "RECONNECT_REQUEST",
+        name: "server-b",
+        config: existingServer.config,
+        select: true,
+      });
+
+      expect(result.selectedServer).toBe("server-b");
+      expect(result.servers["server-b"].connectionStatus).toBe("connecting");
+    });
+
+    it("does not change selection when select is omitted (backwards compatible)", () => {
+      const existingServer = createServer("server-b", {
+        connectionStatus: "disconnected",
+      });
+      const state = createInitialState({
+        selectedServer: "server-a",
+        servers: { "server-b": existingServer },
+      });
+
+      const result = appReducer(state, {
+        type: "RECONNECT_REQUEST",
+        name: "server-b",
+        config: existingServer.config,
+      });
+
+      expect(result.selectedServer).toBe("server-a");
+      expect(result.servers["server-b"].connectionStatus).toBe("connecting");
+    });
+  });
+
   describe("CONNECT_SUCCESS", () => {
     it("updates server to connected state", () => {
       const server = createServer("test", { connectionStatus: "connecting" });

@@ -134,6 +134,10 @@ export function appReducer(state: AppState, action: AppAction): AppState {
           ...state.servers,
           [action.name]: nextServer,
         },
+        // When the user explicitly reconnects a server, make it the selected
+        // one so downstream tabs (App Builder, Tools, etc.) follow the user's
+        // most recent intent instead of a stale prior selection.
+        selectedServer: action.select ? action.name : state.selectedServer,
       };
     }
 

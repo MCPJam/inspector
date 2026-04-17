@@ -6,9 +6,6 @@
  * (with their descriptions = release-note bodies), the projected
  * release_tag, which scopes are valid, and whether desktop artifacts will
  * build.
- *
- * Uses the GitHub contents API to read `.changeset/*.md` + the three
- * package.json files on `main`, so no monorepo checkout is needed.
  */
 
 import { getBranchHead } from "@/lib/github";
@@ -18,15 +15,17 @@ import {
   fetchPendingChangesets,
   type PackageBumpPlan
 } from "@/lib/changesets";
-import { Badge, Tile } from "@/components/ui";
+import { Badge, Tile, TileAction } from "@/components/ui";
 import { shortSha } from "@/lib/format";
 
 const INSPECTOR = { owner: "MCPJam", repo: "inspector" };
 
 export function ReleaseDryRunSkeleton() {
   return (
-    <Tile title="Release dry-run">
-      <p className="text-sm text-neutral-400">Computing projected versions…</p>
+    <Tile title="Release dry-run" eyebrow="Computing plan">
+      <p className="text-sm text-ink-400">
+        Computing projected versions…
+      </p>
     </Tile>
   );
 }
@@ -37,8 +36,8 @@ export async function ReleaseDryRun() {
     head = await getBranchHead(INSPECTOR.owner, INSPECTOR.repo, "main");
   } catch (err) {
     return (
-      <Tile title="Release dry-run">
-        <p className="text-sm text-red-500">
+      <Tile title="Release dry-run" accent="failure">
+        <p className="text-sm text-signal-stop">
           Failed to read main: {(err as Error).message}
         </p>
       </Tile>
@@ -53,8 +52,8 @@ export async function ReleaseDryRun() {
     ]);
   } catch (err) {
     return (
-      <Tile title="Release dry-run">
-        <p className="text-sm text-red-500">
+      <Tile title="Release dry-run" accent="failure">
+        <p className="text-sm text-signal-stop">
           Failed to read release inputs: {(err as Error).message}
         </p>
       </Tile>
@@ -62,32 +61,38 @@ export async function ReleaseDryRun() {
   }
 
   const plan = buildReleasePlan({ changesets, currentVersions });
+  const commitUrl = `https://github.com/${INSPECTOR.owner}/${INSPECTOR.repo}/commit/${head.sha}`;
   const titleAction = (
-    <a
-      href={`https://github.com/${INSPECTOR.owner}/${INSPECTOR.repo}/commit/${head.sha}`}
-      target="_blank"
-      rel="noreferrer"
-      className="font-mono hover:underline"
-    >
-      main @ {shortSha(head.sha)}
-    </a>
+    <TileAction href={commitUrl}>main @ {shortSha(head.sha)}</TileAction>
   );
 
   if (plan.packages.length === 0) {
     return (
-      <Tile title="Release dry-run" action={titleAction}>
-        <p className="text-sm text-neutral-500">
-          No pending changesets. `npx changeset status` would report zero
-          releases, and the Release workflow would fail preflight.
+      <Tile
+        title="Release dry-run"
+        eyebrow="Nothing to publish"
+        accent="warning"
+        action={titleAction}
+      >
+        <p className="text-sm leading-relaxed text-ink-400">
+          No pending changesets.{" "}
+          <code className="font-mono text-ink-200">npx changeset status</code>{" "}
+          would report zero releases, and the Release workflow would fail
+          preflight.
         </p>
       </Tile>
     );
   }
 
   return (
-    <Tile title="Release dry-run" action={titleAction}>
-      <div className="space-y-4">
-        <ul className="space-y-3">
+    <Tile
+      title="Release dry-run"
+      eyebrow={`${plan.packages.length} package${plan.packages.length === 1 ? "" : "s"} would bump`}
+      accent="info"
+      action={titleAction}
+    >
+      <div className="space-y-5">
+        <ul className="space-y-4">
           {plan.packages.map((pkg) => (
             <PackageRow
               key={pkg.name}
@@ -99,22 +104,25 @@ export async function ReleaseDryRun() {
           ))}
         </ul>
 
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-neutral-100 pt-3 text-xs text-neutral-500 dark:border-neutral-900">
-          {plan.releaseTag ? (
-            <span>
-              Tag: <span className="font-mono text-neutral-700 dark:text-neutral-200">{plan.releaseTag}</span>
-            </span>
-          ) : (
-            <span>Tag: none (no inspector bump)</span>
-          )}
+        <div className="hairline" />
+
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-ink-400">
           <span>
-            Desktop artifacts:{" "}
-            <span className="font-medium text-neutral-700 dark:text-neutral-200">
-              {plan.buildDesktopArtifacts ? "yes (mac + windows)" : "no"}
+            <span className="text-ink-500">Tag</span>:{" "}
+            {plan.releaseTag ? (
+              <span className="font-mono text-ink-100">{plan.releaseTag}</span>
+            ) : (
+              <span className="text-ink-500">none (no inspector bump)</span>
+            )}
+          </span>
+          <span>
+            <span className="text-ink-500">Desktop artifacts</span>:{" "}
+            <span className="text-ink-100">
+              {plan.buildDesktopArtifacts ? "mac + windows" : "no"}
             </span>
           </span>
           <span className="flex items-center gap-1.5">
-            Valid scopes:
+            <span className="text-ink-500">Valid scopes</span>:
             {plan.validScopes.length === 0 ? (
               <Badge tone="failure">none</Badge>
             ) : (
@@ -138,31 +146,36 @@ function PackageRow({
   pkg: PackageBumpPlan;
   notesByChangeset: Record<string, string>;
 }) {
+  const bumpTone =
+    pkg.bumpType === "major"
+      ? "warning"
+      : pkg.bumpType === "minor"
+        ? "info"
+        : "neutral";
   return (
     <li className="space-y-1.5">
-      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-sm">
-        <span className="font-mono text-neutral-700 dark:text-neutral-200">
-          {pkg.name}
-        </span>
-        <span className="font-mono text-xs text-neutral-400">
+      <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
+        <span className="font-mono text-sm text-ink-100">{pkg.name}</span>
+        <span className="font-mono text-xs text-ink-500 tabular-nums">
           {pkg.currentVersion}
         </span>
-        <span className="text-xs text-neutral-400">→</span>
-        <span className="font-mono text-xs font-semibold text-neutral-700 dark:text-neutral-200">
+        <span className="text-xs text-ink-600">→</span>
+        <span className="font-mono text-xs font-semibold text-signal-go tabular-nums">
           {pkg.newVersion}
         </span>
-        <Badge tone={pkg.bumpType === "major" ? "warning" : pkg.bumpType === "minor" ? "info" : "neutral"}>
-          {pkg.bumpType}
-        </Badge>
+        <Badge tone={bumpTone}>{pkg.bumpType}</Badge>
       </div>
-      <ul className="ml-0 space-y-1 pl-0">
+      <ul className="space-y-1 border-l border-ink-800 pl-3">
         {pkg.changesets.map((csName) => {
           const note = notesByChangeset[csName]?.trim() ?? "";
           const firstLine = note.split(/\r?\n/)[0] || "(no description)";
           return (
-            <li key={csName} className="flex gap-2 text-xs text-neutral-500">
-              <span className="font-mono text-neutral-400">{csName}</span>
-              <span className="text-neutral-500">— {firstLine}</span>
+            <li
+              key={csName}
+              className="flex gap-2 text-xs leading-relaxed text-ink-400"
+            >
+              <span className="font-mono text-ink-500">{csName}</span>
+              <span className="text-ink-300">— {firstLine}</span>
             </li>
           );
         })}

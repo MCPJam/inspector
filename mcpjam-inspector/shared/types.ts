@@ -145,6 +145,7 @@ const MCPJAM_PROVIDED_MODEL_IDS: string[] = [
   "x-ai/grok-4.20",
   "z-ai/glm-4.7",
   "z-ai/glm-4.7-flash",
+  "z-ai/glm-5.1",
   "minimax/minimax-m2.1",
   "minimax/minimax-m2.7",
   "qwen/qwen3.6-plus",
@@ -554,6 +555,12 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
   {
     id: "z-ai/glm-4.7-flash",
     name: "GLM 4.7 Flash (Free)",
+    provider: "z-ai",
+    contextLength: 200000,
+  },
+  {
+    id: "z-ai/glm-5.1",
+    name: "GLM 5.1 (Free)",
     provider: "z-ai",
     contextLength: 200000,
   },
