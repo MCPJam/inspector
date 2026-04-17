@@ -1,9 +1,9 @@
 import { useState, useRef } from "react";
 import { toast } from "sonner";
-import { Button } from "../ui/button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../ui/dialog";
-import { Label } from "../ui/label";
-import { Card } from "../ui/card";
+import { Button } from "@mcpjam/design-system/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@mcpjam/design-system/dialog";
+import { Label } from "@mcpjam/design-system/label";
+import { Card } from "@mcpjam/design-system/card";
 import { Upload } from "lucide-react";
 import { parseJsonConfig, validateJsonConfig } from "@/lib/json-config-parser";
 import { ServerFormData } from "@/shared/types.js";

@@ -2,10 +2,10 @@ import { useCallback, useRef, useState } from "react";
 import { useConvexAuth } from "convex/react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useFeatureFlagEnabled } from "posthog-js/react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { Button } from "@mcpjam/design-system/button";
+import { Input } from "@mcpjam/design-system/input";
 import { EditableText } from "@/components/ui/editable-text";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@mcpjam/design-system/avatar";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -15,7 +15,7 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
+} from "@mcpjam/design-system/alert-dialog";
 import {
   AlertTriangle,
   Building2,
@@ -29,8 +29,8 @@ import {
   Users,
 } from "lucide-react";
 import { toast } from "sonner";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Card, CardContent, CardHeader, CardTitle } from "@mcpjam/design-system/card";
+import { Alert, AlertDescription, AlertTitle } from "@mcpjam/design-system/alert";
 import {
   Organization,
   OrganizationMember,

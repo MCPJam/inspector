@@ -20,7 +20,7 @@ vi.mock("@/components/ui/sidebar", () => ({
   },
 }));
 
-vi.mock("@/components/ui/tooltip", () => ({
+vi.mock("@mcpjam/design-system/tooltip", () => ({
   Tooltip: ({ children }: any) => <div>{children}</div>,
   TooltipTrigger: ({ children }: any) => <>{children}</>,
   TooltipContent: ({ children }: any) => <div>{children}</div>,

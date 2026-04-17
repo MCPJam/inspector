@@ -1,13 +1,13 @@
 import { useState, useRef, useCallback, useMemo } from "react";
 import { Loader2, Upload, FolderOpen, File, X } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Button } from "@mcpjam/design-system/button";
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
   DialogDescription,
-} from "@/components/ui/dialog";
+} from "@mcpjam/design-system/dialog";
 import { uploadSkillFolder } from "@/lib/apis/mcp-skills-api";
 import type { SkillResult } from "./skill-types";
 import { isValidSkillName } from "../../../../../../shared/skill-types";

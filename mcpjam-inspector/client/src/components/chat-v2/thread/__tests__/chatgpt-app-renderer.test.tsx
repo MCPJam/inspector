@@ -65,7 +65,7 @@ vi.mock("../checkout-dialog", () => ({
   CheckoutDialog: () => null,
 }));
 
-vi.mock("@/components/ui/dialog", () => ({
+vi.mock("@mcpjam/design-system/dialog", () => ({
   Dialog: ({
     open,
     children,

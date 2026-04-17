@@ -6,9 +6,9 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "../ui/dialog";
-import { Button } from "../ui/button";
-import { Checkbox } from "../ui/checkbox";
+} from "@mcpjam/design-system/dialog";
+import { Button } from "@mcpjam/design-system/button";
+import { Checkbox } from "@mcpjam/design-system/checkbox";
 import { AlertTriangle, Cable, Copy, FlaskConical } from "lucide-react";
 
 export const TUNNEL_EXPLANATION_DISMISSED_KEY =

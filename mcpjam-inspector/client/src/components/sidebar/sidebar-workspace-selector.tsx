@@ -5,7 +5,7 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+} from "@mcpjam/design-system/dropdown-menu";
 import {
   SidebarMenu,
   SidebarMenuButton,
@@ -16,10 +16,10 @@ import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from "@/components/ui/tooltip";
-import { Skeleton } from "@/components/ui/skeleton";
+} from "@mcpjam/design-system/tooltip";
+import { Skeleton } from "@mcpjam/design-system/skeleton";
 import { LearnMoreHoverCard } from "@/components/learn-more/LearnMoreHoverCard";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@mcpjam/design-system/avatar";
 import { cn, getInitials } from "@/lib/utils";
 import { useWorkspaceMembers } from "@/hooks/useWorkspaces";
 import { useConvexAuth } from "convex/react";

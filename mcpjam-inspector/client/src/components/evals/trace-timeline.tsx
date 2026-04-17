@@ -27,20 +27,20 @@ import {
 } from "lucide-react";
 import type { EvalTraceSpan, EvalTraceSpanCategory } from "@/shared/eval-trace";
 import { MemoizedMarkdown } from "@/components/chat-v2/thread/memomized-markdown";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Badge } from "@mcpjam/design-system/badge";
+import { Button } from "@mcpjam/design-system/button";
 import {
   HoverCard,
   HoverCardContent,
   HoverCardTrigger,
-} from "@/components/ui/hover-card";
+} from "@mcpjam/design-system/hover-card";
 import { ScrollableJsonView } from "@/components/ui/json-editor";
 import {
   ResizableHandle,
   ResizablePanel,
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { ScrollArea } from "@mcpjam/design-system/scroll-area";
 import { extractTextFromToolResult } from "@/components/chat-v2/shared/tool-result-text";
 import { cn } from "@/lib/utils";
 import {

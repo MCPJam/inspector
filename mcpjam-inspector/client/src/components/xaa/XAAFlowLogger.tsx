@@ -10,16 +10,16 @@ import {
   Pencil,
   RotateCcw,
 } from "lucide-react";
-import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Alert, AlertDescription } from "@mcpjam/design-system/alert";
+import { Badge } from "@mcpjam/design-system/badge";
+import { Button } from "@mcpjam/design-system/button";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
+} from "@mcpjam/design-system/select";
 import { cn } from "@/lib/utils";
 import { HTTPHistoryEntry } from "@/components/oauth/HTTPHistoryEntry";
 import { InfoLogEntry } from "@/components/oauth/InfoLogEntry";

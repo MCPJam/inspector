@@ -11,7 +11,7 @@ import {
 import { CHATGPT_CHAT_BACKGROUND } from "@/config/chatgpt-host-context";
 import { CLAUDE_DESKTOP_CHAT_BACKGROUND } from "@/config/claude-desktop-host-context";
 import { cn } from "@/lib/utils";
-import { Button } from "@/components/ui/button";
+import { Button } from "@mcpjam/design-system/button";
 import { TextareaAutosize } from "@/components/ui/textarea-autosize";
 import {
   LoadingIndicatorContent,

@@ -1,7 +1,7 @@
 import { useMemo, useCallback } from "react";
 import { RefreshCw, FileText, Download } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
+import { Button } from "@mcpjam/design-system/button";
+import { ScrollArea, ScrollBar } from "@mcpjam/design-system/scroll-area";
 import { MemoizedMarkdown } from "@/components/chat-v2/thread/memomized-markdown";
 import type { SkillFileContent } from "@shared/skill-types";
 

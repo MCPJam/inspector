@@ -1,9 +1,9 @@
-import { Button } from "@/components/ui/button";
+import { Button } from "@mcpjam/design-system/button";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from "@/components/ui/tooltip";
+} from "@mcpjam/design-system/tooltip";
 import { cn } from "@/lib/utils";
 import { Loader2, RotateCw, X } from "lucide-react";
 import type { EvalSuite, EvalSuiteRun } from "./types";

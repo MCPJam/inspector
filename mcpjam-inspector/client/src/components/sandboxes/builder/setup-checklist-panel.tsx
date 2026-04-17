@@ -1,17 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, Globe, Loader2, Lock, Plus } from "lucide-react";
 import { toast } from "sonner";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { Badge } from "@mcpjam/design-system/badge";
+import { Button } from "@mcpjam/design-system/button";
+import { Card } from "@mcpjam/design-system/card";
+import { Checkbox } from "@mcpjam/design-system/checkbox";
+import { Input } from "@mcpjam/design-system/input";
+import { Label } from "@mcpjam/design-system/label";
 import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
-} from "@/components/ui/collapsible";
+} from "@mcpjam/design-system/collapsible";
 import {
   Dialog,
   DialogContent,
@@ -19,26 +19,26 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
+} from "@mcpjam/design-system/dialog";
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
-} from "@/components/ui/popover";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+} from "@mcpjam/design-system/popover";
+import { RadioGroup, RadioGroupItem } from "@mcpjam/design-system/radio-group";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
-import { Separator } from "@/components/ui/separator";
-import { Slider } from "@/components/ui/slider";
-import { Switch } from "@/components/ui/switch";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { Textarea } from "@/components/ui/textarea";
-import { ScrollArea } from "@/components/ui/scroll-area";
+} from "@mcpjam/design-system/select";
+import { Separator } from "@mcpjam/design-system/separator";
+import { Slider } from "@mcpjam/design-system/slider";
+import { Switch } from "@mcpjam/design-system/switch";
+import { ToggleGroup, ToggleGroupItem } from "@mcpjam/design-system/toggle-group";
+import { Textarea } from "@mcpjam/design-system/textarea";
+import { ScrollArea } from "@mcpjam/design-system/scroll-area";
 import { SandboxShareSection } from "@/components/sandboxes/SandboxShareSection";
 import type { SandboxSettings, SandboxMode } from "@/hooks/useSandboxes";
 import type { RemoteServer } from "@/hooks/useWorkspaces";

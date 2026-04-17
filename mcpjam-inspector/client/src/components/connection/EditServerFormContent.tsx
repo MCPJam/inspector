@@ -1,11 +1,11 @@
-import { Input } from "../ui/input";
+import { Input } from "@mcpjam/design-system/input";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "../ui/select";
+} from "@mcpjam/design-system/select";
 import { AuthenticationSection } from "./shared/AuthenticationSection";
 import { CustomHeadersSection } from "./shared/CustomHeadersSection";
 import { EnvVarsSection } from "./shared/EnvVarsSection";

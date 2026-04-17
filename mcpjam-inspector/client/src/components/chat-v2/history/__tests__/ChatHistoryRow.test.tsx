@@ -36,7 +36,7 @@ const actions = {
   unpin: vi.fn(),
 };
 
-vi.mock("@/components/ui/dropdown-menu", () => ({
+vi.mock("@mcpjam/design-system/dropdown-menu", () => ({
   DropdownMenu: ({ children }: { children: ReactNode }) => (
     <div>{children}</div>
   ),
@@ -60,11 +60,11 @@ vi.mock("@/components/ui/dropdown-menu", () => ({
   DropdownMenuSeparator: () => null,
 }));
 
-vi.mock("@/components/ui/input", () => ({
+vi.mock("@mcpjam/design-system/input", () => ({
   Input: () => <input data-testid="rename-input" />,
 }));
 
-vi.mock("@/components/ui/tooltip", () => ({
+vi.mock("@mcpjam/design-system/tooltip", () => ({
   Tooltip: ({ children }: { children: ReactNode }) => <>{children}</>,
   TooltipTrigger: ({
     children,

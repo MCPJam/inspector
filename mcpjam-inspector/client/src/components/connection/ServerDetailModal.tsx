@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { toast } from "sonner";
-import { Button } from "../ui/button";
+import { Button } from "@mcpjam/design-system/button";
 import {
   Dialog,
   DialogContent,
@@ -8,9 +8,9 @@ import {
   DialogTitle,
   DialogDescription,
   DialogFooter,
-} from "../ui/dialog";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
-import { Switch } from "../ui/switch";
+} from "@mcpjam/design-system/dialog";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@mcpjam/design-system/tabs";
+import { Switch } from "@mcpjam/design-system/switch";
 import { Loader2 } from "lucide-react";
 import { ServerWithName, type ServerUpdateResult } from "@/hooks/use-app-state";
 import {

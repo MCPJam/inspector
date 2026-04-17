@@ -2,7 +2,7 @@ import { useState } from "react";
 
 import { BadgeCheck, Bell, CreditCard, LogOut } from "lucide-react";
 
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@mcpjam/design-system/avatar";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -10,7 +10,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
   DropdownMenuGroup,
-} from "@/components/ui/dropdown-menu";
+} from "@mcpjam/design-system/dropdown-menu";
 import { cn, getInitials } from "@/lib/utils";
 
 export function AccountSwitcher({

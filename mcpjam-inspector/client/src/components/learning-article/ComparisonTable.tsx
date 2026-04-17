@@ -6,7 +6,7 @@ import {
   TableRow,
   TableHead,
   TableCell,
-} from "@/components/ui/table";
+} from "@mcpjam/design-system/table";
 
 interface ComparisonTableProps {
   headers: string[];

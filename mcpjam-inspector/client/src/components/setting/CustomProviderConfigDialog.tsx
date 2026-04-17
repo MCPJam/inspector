@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import type { CompatibleProtocol, CustomProvider } from "@mcpjam/sdk/browser";
-import { Button } from "../ui/button";
-import { Input } from "../ui/input";
+import { Button } from "@mcpjam/design-system/button";
+import { Input } from "@mcpjam/design-system/input";
 import {
   Dialog,
   DialogContent,
@@ -9,14 +9,14 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "../ui/dialog";
+} from "@mcpjam/design-system/dialog";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "../ui/select";
+} from "@mcpjam/design-system/select";
 
 interface CustomProviderConfigDialogProps {
   open: boolean;

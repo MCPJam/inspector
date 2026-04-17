@@ -6,15 +6,15 @@
  */
 
 import { ChevronDown, ChevronLeft, Save } from "lucide-react";
-import { Button } from "../ui/button";
-import { Switch } from "../ui/switch";
-import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
+import { Button } from "@mcpjam/design-system/button";
+import { Switch } from "@mcpjam/design-system/switch";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@mcpjam/design-system/tooltip";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from "../ui/dropdown-menu";
+} from "@mcpjam/design-system/dropdown-menu";
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
 import { cn } from "@/lib/utils";

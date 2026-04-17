@@ -1,9 +1,9 @@
 import { useState, useCallback, useEffect, useMemo } from "react";
-import { Dialog, DialogContent } from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { Badge } from "@/components/ui/badge";
+import { Dialog, DialogContent } from "@mcpjam/design-system/dialog";
+import { Button } from "@mcpjam/design-system/button";
+import { Input } from "@mcpjam/design-system/input";
+import { RadioGroup, RadioGroupItem } from "@mcpjam/design-system/radio-group";
+import { Badge } from "@mcpjam/design-system/badge";
 import { formatMinorAmount } from "@/lib/currency";
 import {
   Loader2,

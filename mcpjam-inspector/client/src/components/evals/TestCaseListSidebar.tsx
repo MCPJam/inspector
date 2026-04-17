@@ -10,19 +10,19 @@ import {
   FileCode2,
 } from "lucide-react";
 import posthog from "posthog-js";
-import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
+import { Button } from "@mcpjam/design-system/button";
+import { Checkbox } from "@mcpjam/design-system/checkbox";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+} from "@mcpjam/design-system/dropdown-menu";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from "@/components/ui/tooltip";
+} from "@mcpjam/design-system/tooltip";
 import { cn } from "@/lib/utils";
 import { detectPlatform, detectEnvironment } from "@/lib/PosthogUtils";
 import { navigateToEvalsRoute } from "@/lib/evals-router";

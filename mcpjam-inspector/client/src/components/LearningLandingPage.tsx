@@ -1,12 +1,12 @@
 import { ChevronDown, ChevronRight, Clock } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Progress } from "@/components/ui/progress";
+import { Button } from "@mcpjam/design-system/button";
+import { Checkbox } from "@mcpjam/design-system/checkbox";
+import { Progress } from "@mcpjam/design-system/progress";
 import {
   Collapsible,
   CollapsibleTrigger,
   CollapsibleContent,
-} from "@/components/ui/collapsible";
+} from "@mcpjam/design-system/collapsible";
 import {
   LEARNING_GROUPS,
   type LearningGroup,

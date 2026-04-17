@@ -22,15 +22,15 @@ import {
 } from "@/hooks/useSandboxes";
 import { getInitials } from "@/lib/utils";
 import { buildSandboxLink } from "@/lib/sandbox-session";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { Avatar, AvatarFallback, AvatarImage } from "@mcpjam/design-system/avatar";
+import { Button } from "@mcpjam/design-system/button";
+import { Input } from "@mcpjam/design-system/input";
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
-} from "@/components/ui/popover";
-import { Separator } from "@/components/ui/separator";
+} from "@mcpjam/design-system/popover";
+import { Separator } from "@mcpjam/design-system/separator";
 
 interface SandboxShareSectionProps {
   sandbox: SandboxSettings;
