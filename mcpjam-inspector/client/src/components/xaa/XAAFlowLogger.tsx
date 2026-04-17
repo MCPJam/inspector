@@ -5,6 +5,7 @@ import {
   ChevronDown,
   ChevronRight,
   Circle,
+  KeyRound,
   Loader2,
   Pencil,
   RotateCcw,
@@ -12,6 +13,13 @@ import {
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { HTTPHistoryEntry } from "@/components/oauth/HTTPHistoryEntry";
 import { InfoLogEntry } from "@/components/oauth/InfoLogEntry";
@@ -25,7 +33,11 @@ import type {
   XAAFlowState,
   XAAFlowStep,
 } from "@/lib/xaa/types";
-import { NEGATIVE_TEST_MODE_DETAILS } from "@/shared/xaa.js";
+import {
+  NEGATIVE_TEST_MODES,
+  NEGATIVE_TEST_MODE_DETAILS,
+  type NegativeTestMode,
+} from "@/shared/xaa.js";
 
 interface XAAFlowLoggerProps {
   flowState: XAAFlowState;
@@ -36,6 +48,8 @@ interface XAAFlowLoggerProps {
     onConfigure: () => void;
     onReset?: () => void;
     onContinue?: () => void;
+    onChangeNegativeTestMode?: (mode: NegativeTestMode) => void;
+    onShowBootstrap?: () => void;
     continueLabel: string;
     continueDisabled?: boolean;
     resetDisabled?: boolean;
@@ -189,32 +203,63 @@ export function XAAFlowLogger({
         </div>
 
         {hasProfile && (
-          <div className="flex flex-wrap gap-1.5">
-            <Badge variant="secondary" className="text-xs">
-              {negativeModeSummary.label}
-            </Badge>
-            {summary.authzServerIssuer && (
-              <Badge variant="outline" className="text-xs">
-                AuthZ issuer set
-              </Badge>
-            )}
-            {summary.clientId && (
-              <Badge variant="outline" className="text-xs">
-                Client ID set
-              </Badge>
-            )}
-            {summary.scope && (
-              <Badge variant="outline" className="text-xs">
-                {summary.scope}
-              </Badge>
-            )}
-          </div>
-        )}
+          <>
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs text-muted-foreground">Mode</span>
+                <Select
+                  value={summary.negativeTestMode}
+                  onValueChange={(nextValue) =>
+                    actions.onChangeNegativeTestMode?.(
+                      nextValue as NegativeTestMode,
+                    )
+                  }
+                  disabled={!actions.onChangeNegativeTestMode}
+                >
+                  <SelectTrigger className="h-7 w-[180px] text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {NEGATIVE_TEST_MODES.map((mode) => (
+                      <SelectItem
+                        key={mode}
+                        value={mode}
+                        className="text-xs"
+                      >
+                        {NEGATIVE_TEST_MODE_DETAILS[mode].label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              {summary.clientId && (
+                <Badge variant="outline" className="text-xs">
+                  {summary.clientId}
+                </Badge>
+              )}
+              {summary.scope && (
+                <Badge variant="outline" className="text-xs">
+                  {summary.scope}
+                </Badge>
+              )}
+              {actions.onShowBootstrap && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="ml-auto h-7 text-xs"
+                  onClick={actions.onShowBootstrap}
+                >
+                  <KeyRound className="h-3 w-3 mr-1" />
+                  Register issuer
+                </Button>
+              )}
+            </div>
 
-        {hasProfile && (
-          <p className="text-xs text-muted-foreground">
-            {negativeModeSummary.description}
-          </p>
+            <p className="text-xs text-muted-foreground">
+              {negativeModeSummary.description}
+            </p>
+          </>
         )}
       </div>
 

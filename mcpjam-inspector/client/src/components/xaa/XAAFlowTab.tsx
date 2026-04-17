@@ -8,6 +8,8 @@ import type { ServerWithName } from "@/hooks/use-app-state";
 import { XAASequenceDiagram } from "./XAASequenceDiagram";
 import { XAAFlowLogger } from "./XAAFlowLogger";
 import { XAAConfigModal } from "./XAAConfigModal";
+import { XAABootstrapDialog } from "./XAABootstrapDialog";
+import type { NegativeTestMode } from "@/shared/xaa.js";
 import {
   createInitialXAAFlowState,
   type XAAFlowState,
@@ -48,6 +50,7 @@ export function XAAFlowTab({
   onSelectServer,
 }: XAAFlowTabProps) {
   const [isConfigModalOpen, setIsConfigModalOpen] = useState(false);
+  const [isBootstrapDialogOpen, setIsBootstrapDialogOpen] = useState(false);
   const [focusedStep, setFocusedStep] = useState<XAAFlowStep | null>(null);
 
   const httpServers = useMemo(
@@ -89,12 +92,6 @@ export function XAAFlowTab({
   }, [activeServer, profile.serverUrl]);
 
   useEffect(() => {
-    if (!profile.serverUrl.trim()) {
-      setIsConfigModalOpen(true);
-    }
-  }, [profile.serverUrl]);
-
-  useEffect(() => {
     setFocusedStep(null);
   }, [flowState.currentStep]);
 
@@ -112,6 +109,19 @@ export function XAAFlowTab({
     setFlowState(buildFlowStateFromProfile(profileToApply));
     setFocusedStep(null);
   }, [profile]);
+
+  const handleChangeNegativeTestMode = useCallback(
+    (mode: NegativeTestMode) => {
+      setProfile((current) => {
+        const next = { ...current, negativeTestMode: mode };
+        saveStoredXAADebugProfile(next);
+        setFlowState(buildFlowStateFromProfile(next));
+        setFocusedStep(null);
+        return next;
+      });
+    },
+    [],
+  );
 
   const hasProfile = Boolean(profile.serverUrl.trim());
 
@@ -179,6 +189,8 @@ export function XAAFlowTab({
                 onConfigure: () => setIsConfigModalOpen(true),
                 onReset: hasProfile ? () => resetFlow() : undefined,
                 onContinue: continueDisabled ? undefined : handleAdvance,
+                onChangeNegativeTestMode: handleChangeNegativeTestMode,
+                onShowBootstrap: () => setIsBootstrapDialogOpen(true),
                 continueLabel,
                 continueDisabled,
                 resetDisabled: !hasProfile || flowState.isBusy,
@@ -204,6 +216,11 @@ export function XAAFlowTab({
           setProfile(nextProfile);
           resetFlow(nextProfile);
         }}
+      />
+
+      <XAABootstrapDialog
+        open={isBootstrapDialogOpen}
+        onOpenChange={setIsBootstrapDialogOpen}
       />
     </div>
   );

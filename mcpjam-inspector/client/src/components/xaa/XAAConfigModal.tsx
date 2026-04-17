@@ -1,39 +1,28 @@
-import { useEffect, useMemo, useState } from "react";
-import { Copy } from "lucide-react";
+import { useEffect, useState } from "react";
+import { ChevronDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Textarea } from "@/components/ui/textarea";
-import { Alert, AlertDescription } from "@/components/ui/alert";
-import { HOSTED_MODE } from "@/lib/config";
-import { copyToClipboard } from "@/lib/clipboard";
+import { cn } from "@/lib/utils";
 import type { XAADebugProfile } from "@/lib/xaa/profile";
-import {
-  NEGATIVE_TEST_MODES,
-  NEGATIVE_TEST_MODE_DETAILS,
-} from "@/shared/xaa.js";
 
 interface XAAConfigModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   value: XAADebugProfile;
   onSave: (profile: XAADebugProfile) => void;
-}
-
-function getIssuerBaseUrl(): string {
-  if (typeof window === "undefined") {
-    return HOSTED_MODE ? "/api/web/xaa" : "/api/mcp/xaa";
-  }
-
-  return `${window.location.origin}${HOSTED_MODE ? "/api/web/xaa" : "/api/mcp/xaa"}`;
 }
 
 export function XAAConfigModal({
@@ -44,19 +33,18 @@ export function XAAConfigModal({
 }: XAAConfigModalProps) {
   const [draft, setDraft] = useState(value);
   const [error, setError] = useState<string | null>(null);
-  const issuerBaseUrl = useMemo(() => getIssuerBaseUrl(), []);
-  const jwksUrl = `${issuerBaseUrl}/.well-known/jwks.json`;
+  const [identityOpen, setIdentityOpen] = useState(false);
 
   useEffect(() => {
     if (open) {
       setDraft(value);
       setError(null);
+      // Open the advanced section if the user has previously customized it.
+      const hasCustomIdentity =
+        Boolean(value.userId?.trim()) || Boolean(value.email?.trim());
+      setIdentityOpen(hasCustomIdentity);
     }
   }, [open, value]);
-
-  const handleCopy = async (text: string) => {
-    await copyToClipboard(text);
-  };
 
   const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -103,99 +91,103 @@ export function XAAConfigModal({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-3xl">
+      <DialogContent className="max-w-xl flex max-h-[85vh] flex-col">
         <DialogHeader>
           <DialogTitle>Configure XAA Debugger</DialogTitle>
         </DialogHeader>
 
-        <form onSubmit={handleSubmit} className="space-y-6">
-          <div className="grid gap-6 lg:grid-cols-[1.2fr,0.8fr]">
-            <div className="space-y-6">
-              <div className="space-y-3">
-                <div>
-                  <h3 className="text-sm font-semibold">Target configuration</h3>
-                  <p className="text-xs text-muted-foreground">
-                    These values describe the real MCP and authorization servers
-                    you want to validate against.
-                  </p>
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="xaa-server-url">MCP Server URL</Label>
-                  <Input
-                    id="xaa-server-url"
-                    value={draft.serverUrl}
-                    onChange={(event) =>
-                      setDraft((current) => ({
-                        ...current,
-                        serverUrl: event.target.value,
-                      }))
-                    }
-                    placeholder="https://mcp.example.com"
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="xaa-authz-issuer">
-                    Authorization Server Issuer
-                  </Label>
-                  <Input
-                    id="xaa-authz-issuer"
-                    value={draft.authzServerIssuer}
-                    onChange={(event) =>
-                      setDraft((current) => ({
-                        ...current,
-                        authzServerIssuer: event.target.value,
-                      }))
-                    }
-                    placeholder="https://auth.example.com"
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Optional. Leave blank to discover it from MCP resource metadata.
-                  </p>
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="xaa-client-id">Client ID</Label>
-                  <Input
-                    id="xaa-client-id"
-                    value={draft.clientId}
-                    onChange={(event) =>
-                      setDraft((current) => ({
-                        ...current,
-                        clientId: event.target.value,
-                      }))
-                    }
-                    placeholder="mcpjam-debugger"
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="xaa-scope">Scope</Label>
-                  <Textarea
-                    id="xaa-scope"
-                    value={draft.scope}
-                    onChange={(event) =>
-                      setDraft((current) => ({
-                        ...current,
-                        scope: event.target.value,
-                      }))
-                    }
-                    placeholder="read:tools read:resources"
-                    rows={2}
-                  />
-                </div>
+        <form
+          onSubmit={handleSubmit}
+          className="flex min-h-0 flex-1 flex-col"
+        >
+          <div className="flex-1 min-h-0 overflow-y-auto pr-1 space-y-5">
+            <div className="space-y-3">
+              <div className="space-y-2">
+                <Label htmlFor="xaa-server-url">
+                  MCP Server URL <span className="text-red-500">*</span>
+                </Label>
+                <Input
+                  id="xaa-server-url"
+                  value={draft.serverUrl}
+                  onChange={(event) =>
+                    setDraft((current) => ({
+                      ...current,
+                      serverUrl: event.target.value,
+                    }))
+                  }
+                  placeholder="https://mcp.example.com"
+                  autoFocus
+                />
               </div>
 
-              <div className="space-y-3">
-                <div>
-                  <h3 className="text-sm font-semibold">Test configuration</h3>
-                  <p className="text-xs text-muted-foreground">
-                    This controls the simulated user identity and the negative test
-                    mode used to mint the ID-JAG.
-                  </p>
-                </div>
+              <div className="space-y-2">
+                <Label htmlFor="xaa-authz-issuer">
+                  Authorization Server Issuer
+                </Label>
+                <Input
+                  id="xaa-authz-issuer"
+                  value={draft.authzServerIssuer}
+                  onChange={(event) =>
+                    setDraft((current) => ({
+                      ...current,
+                      authzServerIssuer: event.target.value,
+                    }))
+                  }
+                  placeholder="Auto-discovered from MCP resource metadata"
+                />
+              </div>
 
+              <div className="space-y-2">
+                <Label htmlFor="xaa-client-id">
+                  Client ID <span className="text-red-500">*</span>
+                </Label>
+                <Input
+                  id="xaa-client-id"
+                  value={draft.clientId}
+                  onChange={(event) =>
+                    setDraft((current) => ({
+                      ...current,
+                      clientId: event.target.value,
+                    }))
+                  }
+                  placeholder="mcpjam-debugger"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="xaa-scope">Scope</Label>
+                <Input
+                  id="xaa-scope"
+                  value={draft.scope}
+                  onChange={(event) =>
+                    setDraft((current) => ({
+                      ...current,
+                      scope: event.target.value,
+                    }))
+                  }
+                  placeholder="read:tools read:resources"
+                />
+              </div>
+            </div>
+
+            <Collapsible open={identityOpen} onOpenChange={setIdentityOpen}>
+              <CollapsibleTrigger className="flex w-full items-center justify-between rounded-md border border-border bg-muted/30 px-3 py-2 text-sm hover:bg-muted/50 transition-colors">
+                <span className="font-medium">Simulated identity</span>
+                <span className="flex items-center gap-2 text-xs text-muted-foreground">
+                  {identityOpen ? "Hide" : "Customize"}
+                  <ChevronDown
+                    className={cn(
+                      "h-4 w-4 transition-transform",
+                      identityOpen && "rotate-180",
+                    )}
+                  />
+                </span>
+              </CollapsibleTrigger>
+              <CollapsibleContent className="mt-3 space-y-3">
+                <p className="text-xs text-muted-foreground">
+                  The MCPJam issuer mints a mock ID token for this user.
+                  Defaults work for most flows.
+                </p>
                 <div className="grid gap-3 md:grid-cols-2">
                   <div className="space-y-2">
                     <Label htmlFor="xaa-user-id">User ID</Label>
@@ -227,105 +219,20 @@ export function XAAConfigModal({
                     />
                   </div>
                 </div>
-
-                <div className="space-y-2">
-                  <Label>Negative test mode</Label>
-                  <Select
-                    value={draft.negativeTestMode}
-                    onValueChange={(nextValue) =>
-                      setDraft((current) => ({
-                        ...current,
-                        negativeTestMode: nextValue as XAADebugProfile["negativeTestMode"],
-                      }))
-                    }
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {NEGATIVE_TEST_MODES.map((mode) => (
-                        <SelectItem key={mode} value={mode}>
-                          {NEGATIVE_TEST_MODE_DETAILS[mode].label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <p className="text-xs text-muted-foreground">
-                    {NEGATIVE_TEST_MODE_DETAILS[draft.negativeTestMode].description}
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            <div className="space-y-4 rounded-lg border border-border bg-muted/20 p-4">
-              <div>
-                <h3 className="text-sm font-semibold">Trust bootstrap</h3>
-                <p className="text-xs text-muted-foreground mt-1">
-                  The target authorization server must trust the synthetic issuer
-                  before the JWT bearer step can succeed.
-                </p>
-              </div>
-
-              <div className="space-y-3">
-                <div className="space-y-1">
-                  <div className="text-xs font-medium text-muted-foreground">
-                    Synthetic issuer URL
-                  </div>
-                  <div className="rounded-md bg-background border border-border px-3 py-2 text-xs break-all">
-                    {issuerBaseUrl}
-                  </div>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => handleCopy(issuerBaseUrl)}
-                  >
-                    <Copy className="h-3.5 w-3.5 mr-1" />
-                    Copy issuer URL
-                  </Button>
-                </div>
-
-                <div className="space-y-1">
-                  <div className="text-xs font-medium text-muted-foreground">
-                    Synthetic JWKS URL
-                  </div>
-                  <div className="rounded-md bg-background border border-border px-3 py-2 text-xs break-all">
-                    {jwksUrl}
-                  </div>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => handleCopy(jwksUrl)}
-                  >
-                    <Copy className="h-3.5 w-3.5 mr-1" />
-                    Copy JWKS URL
-                  </Button>
-                </div>
-              </div>
-
-              <Alert>
-                <AlertDescription className="text-xs space-y-2">
-                  <p>1. Register the synthetic issuer or JWKS with your authorization server.</p>
-                  <p>2. Make sure the ID-JAG `aud` value matches the authorization server issuer.</p>
-                  <p>3. Make sure the ID-JAG `resource` value matches the MCP server resource identifier.</p>
-                  <p>4. Register MCPJam with the target authorization server using the client ID above.</p>
-                </AlertDescription>
-              </Alert>
-
-              {!HOSTED_MODE && (
-                <p className="text-xs text-muted-foreground">
-                  Local desktop URLs are only usable if the target authorization
-                  server can reach this machine or a public tunnel in front of it.
-                </p>
-              )}
-            </div>
+              </CollapsibleContent>
+            </Collapsible>
           </div>
 
-          {error && <p className="text-sm text-red-600">{error}</p>}
+          {error && (
+            <p className="mt-3 text-sm text-red-600 flex-shrink-0">{error}</p>
+          )}
 
-          <DialogFooter>
-            <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
+          <DialogFooter className="mt-4 flex-shrink-0 border-t border-border pt-3">
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => onOpenChange(false)}
+            >
               Cancel
             </Button>
             <Button type="submit">Save configuration</Button>
