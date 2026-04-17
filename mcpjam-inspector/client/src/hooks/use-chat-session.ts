@@ -1239,9 +1239,16 @@ export function useChatSession({
     (hydration: PendingSessionHydration) => {
       clearPendingSessionHydration();
 
+      // `undefined` means the caller doesn't have authoritative trace data
+      // yet (e.g. the Convex query is still loading, or the paired backend
+      // function is not deployed). In that case we preserve whatever live
+      // trace state already exists rather than wiping it. An empty array
+      // means "definitively zero persisted traces" and does empty the state.
       const hydratedTraceState =
-        hydration.turnTraces && hydration.turnTraces.length > 0
-          ? buildLiveTraceStateFromTurnTraces(hydration.turnTraces)
+        hydration.turnTraces !== undefined
+          ? hydration.turnTraces.length > 0
+            ? buildLiveTraceStateFromTurnTraces(hydration.turnTraces)
+            : createEmptyLiveTraceState()
           : null;
 
       // If the chatSessionId is already the target value, setChatSessionId
@@ -1254,7 +1261,9 @@ export function useChatSession({
         setPersistedSnapshotToolCallIds(
           hydration.persistedSnapshotToolCallIds ?? [],
         );
-        setLiveTraceState(hydratedTraceState ?? createEmptyLiveTraceState());
+        if (hydratedTraceState !== null) {
+          setLiveTraceState(hydratedTraceState);
+        }
         setHydrationTick((t) => t + 1);
         return Promise.resolve();
       }

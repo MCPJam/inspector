@@ -1,7 +1,6 @@
 import { useQuery } from "convex/react";
 import type {
   ChatHistoryDetailSession,
-  ChatHistoryTurnTrace,
   ChatHistoryWidgetSnapshot,
 } from "@/lib/apis/web/chat-history-api";
 
@@ -29,10 +28,11 @@ export function useDirectChatSessionSubscription({
     enabled && sessionId ? ({ sessionId } as const) : "skip",
   ) as ChatHistoryWidgetSnapshot[] | undefined;
 
-  const turnTraces = useQuery(
-    "directChatHistory:getCurrentSessionTurnTraces" as any,
-    enabled && sessionId ? ({ sessionId } as const) : "skip",
-  ) as ChatHistoryTurnTrace[] | undefined;
-
-  return { session, widgetSnapshots, turnTraces };
+  // Note: turnTraces are intentionally NOT subscribed here. They're fetched
+  // once per thread via the REST /chat-history/detail seed path and retained
+  // in liveTraceState for the lifetime of the session. On a reactive refresh
+  // we pass `undefined` for turnTraces to loadChatSession, which treats it as
+  // "preserve existing trace state" rather than wiping it. This keeps the
+  // component safe to render when the paired backend function isn't deployed.
+  return { session, widgetSnapshots };
 }

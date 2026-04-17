@@ -420,7 +420,6 @@ export function ChatTabV2({
   const {
     session: reactiveHistorySession,
     widgetSnapshots: reactiveHistoryWidgetSnapshots,
-    turnTraces: reactiveHistoryTurnTraces,
   } = useDirectChatSessionSubscription({
     sessionId: activeHistorySessionId,
     workspaceId: effectiveHostedWorkspaceId,
@@ -718,10 +717,6 @@ export function ChatTabV2({
       return;
     }
 
-    if (reactiveHistoryTurnTraces === undefined) {
-      return;
-    }
-
     const lastApplied = lastAppliedReactiveVersionRef.current;
     if (
       lastApplied?.sessionId === reactiveHistorySession._id &&
@@ -743,7 +738,10 @@ export function ChatTabV2({
         shouldApply: () =>
           reactiveHistoryLoadRequestIdRef.current === requestId &&
           activeHistorySessionIdRef.current === reactiveHistorySession._id,
-        turnTraces: reactiveHistoryTurnTraces,
+        // Intentionally omit turnTraces here: loadChatSession treats
+        // `undefined` as "preserve existing trace state", so the live
+        // trace viewer is not wiped by reactive session refreshes. Traces
+        // are seeded once via the REST detail path on thread selection.
       },
     ).catch((error) => {
       console.error("[ChatTabV2] Failed to apply reactive chat history", error);
@@ -755,7 +753,6 @@ export function ChatTabV2({
     loadHistorySession,
     reactiveHistorySession,
     reactiveHistoryWidgetSnapshots,
-    reactiveHistoryTurnTraces,
     showHistoryRail,
   ]);
 
