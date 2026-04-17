@@ -33,17 +33,12 @@ const config: Config = {
         }
       },
       keyframes: {
-        "pulse-soft": {
-          "0%, 100%": { opacity: "1", transform: "scale(1)" },
-          "50%": { opacity: "0.6", transform: "scale(0.85)" }
-        },
         "fade-up": {
           "0%": { opacity: "0", transform: "translateY(8px)" },
           "100%": { opacity: "1", transform: "translateY(0)" }
         }
       },
       animation: {
-        "pulse-soft": "pulse-soft 1.6s ease-in-out infinite",
         "fade-up": "fade-up 0.5s ease-out both"
       }
     }

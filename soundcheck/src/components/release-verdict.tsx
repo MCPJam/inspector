@@ -87,7 +87,7 @@ export async function ReleaseVerdict() {
     );
   }
 
-  const [stagingRun, changesets] = await Promise.all([
+  const [stagingRun, changesetsResult] = await Promise.all([
     findSuccessfulRunForSha(
       INSPECTOR.owner,
       INSPECTOR.repo,
@@ -95,22 +95,39 @@ export async function ReleaseVerdict() {
       "main",
       headSha
     ).catch(() => null),
-    fetchPendingChangesets(INSPECTOR.owner, INSPECTOR.repo, headSha).catch(
-      () => null
-    )
+    // Keep fetch errors distinct from "zero changesets": both would render as
+    // "nothing to publish" otherwise, and a silent API failure would let the
+    // verdict confidently lie.
+    fetchPendingChangesets(INSPECTOR.owner, INSPECTOR.repo, headSha)
+      .then((list) => ({ kind: "ok" as const, list }))
+      .catch((err: unknown) => ({
+        kind: "error" as const,
+        message: (err as Error).message
+      }))
   ]);
 
   if (!stagingRun) {
     return (
       <Verdict
         tone="failure"
-        headline={`Hold — staging isn't green for ${shortSha(headSha)}.`}
+        headline={`Staging isn't green for ${shortSha(headSha)}.`}
         detail="release.yml preflight will refuse until deploy-staging.yml succeeds on this exact SHA. Wait for it, or investigate recent failures below."
       />
     );
   }
 
-  if (!changesets || changesets.length === 0) {
+  if (changesetsResult.kind === "error") {
+    return (
+      <Verdict
+        tone="warning"
+        headline="Can't read pending changesets."
+        detail={`Staging is green on ${shortSha(headSha)}, but the changeset lookup failed: ${changesetsResult.message}. Check the readiness tile below.`}
+      />
+    );
+  }
+
+  const changesets = changesetsResult.list;
+  if (changesets.length === 0) {
     return (
       <Verdict
         tone="warning"
@@ -126,7 +143,7 @@ export async function ReleaseVerdict() {
   return (
     <Verdict
       tone="success"
-      headline="Go — all preflight gates are clear."
+      headline="All preflight gates are clear."
       detail={`Staging is green on ${shortSha(headSha)}. ${changesets.length} pending changeset${changesets.length === 1 ? "" : "s"} across ${pkgCount} package${pkgCount === 1 ? "" : "s"}. Dispatch when ready.`}
     />
   );

@@ -28,12 +28,13 @@ function categorize(message: string): Category {
   return "other";
 }
 
-const CATEGORY_LABEL: Record<Category, string> = {
-  feat: "features",
-  fix: "fixes",
-  chore: "chores",
-  other: "other"
-};
+function categoryLabel(cat: Category, count: number): string {
+  if (cat === "other") return "other";
+  if (count === 1) {
+    return cat === "feat" ? "feature" : cat === "fix" ? "fix" : "chore";
+  }
+  return cat === "feat" ? "features" : cat === "fix" ? "fixes" : "chores";
+}
 
 const CATEGORY_COLOR: Record<Category, string> = {
   feat: "text-signal-go",
@@ -43,9 +44,13 @@ const CATEGORY_COLOR: Record<Category, string> = {
 };
 
 function driftTone(aheadBy: number, promotedIso: string): StatusTone {
-  const ageDays =
-    (Date.now() - new Date(promotedIso).getTime()) / (24 * 60 * 60 * 1000);
   if (aheadBy === 0) return "success";
+  // An unparseable promoted-at shouldn't silently resolve to the low-severity
+  // "info" tone — it usually means the deployment record is ancient or
+  // malformed. Treat it as "warning" so the tile at least flags attention.
+  const promotedMs = Date.parse(promotedIso);
+  if (!Number.isFinite(promotedMs)) return "warning";
+  const ageDays = (Date.now() - promotedMs) / (24 * 60 * 60 * 1000);
   if (aheadBy > 100 || ageDays > 21) return "warning";
   return "info";
 }
@@ -170,7 +175,9 @@ export async function DeployDiff({
           counts[cat] > 0 ? (
             <span key={cat} className={CATEGORY_COLOR[cat]}>
               <span className="tabular-nums">{counts[cat]}</span>
-              <span className="ml-1 text-ink-500">{CATEGORY_LABEL[cat]}</span>
+              <span className="ml-1 text-ink-500">
+                {categoryLabel(cat, counts[cat])}
+              </span>
             </span>
           ) : null
         )}

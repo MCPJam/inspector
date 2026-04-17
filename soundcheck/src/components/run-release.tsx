@@ -41,6 +41,19 @@ export function RunRelease() {
     setScope(next);
     if (next !== "full") setDeployBackend(false);
     if (next === "packages-only") setPromoteProd(false);
+    // Any edit to the form is implicitly "I'm preparing the next dispatch" —
+    // clear stale success/error feedback from an earlier run so the chip
+    // next to the button always reflects the current form state.
+    setFeedback({ kind: "idle" });
+  }
+
+  function changeDeployBackend(v: boolean) {
+    setDeployBackend(v);
+    setFeedback({ kind: "idle" });
+  }
+  function changePromoteProd(v: boolean) {
+    setPromoteProd(v);
+    setFeedback({ kind: "idle" });
   }
 
   function onSubmit() {
@@ -138,7 +151,7 @@ export function RunRelease() {
               <input
                 type="checkbox"
                 checked={deployBackend}
-                onChange={(e) => setDeployBackend(e.target.checked)}
+                onChange={(e) => changeDeployBackend(e.target.checked)}
                 className="mt-0.5 accent-signal-wait"
                 disabled={scope !== "full"}
               />
@@ -155,7 +168,7 @@ export function RunRelease() {
               <input
                 type="checkbox"
                 checked={promoteProd}
-                onChange={(e) => setPromoteProd(e.target.checked)}
+                onChange={(e) => changePromoteProd(e.target.checked)}
                 className="mt-0.5 accent-signal-wait"
                 disabled={scope === "packages-only"}
               />

@@ -97,8 +97,8 @@ export async function ReleaseProgress() {
       );
     } catch (err) {
       return (
-        <Tile title="Release progress">
-          <p className="text-sm text-red-500">
+        <Tile title="Release progress" accent="failure">
+          <p className="text-sm text-signal-stop">
             Failed to read workflow runs: {(err as Error).message}
           </p>
         </Tile>
