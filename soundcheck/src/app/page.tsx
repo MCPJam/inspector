@@ -21,6 +21,10 @@ import {
   DeployFailures,
   DeployFailuresSkeleton
 } from "@/components/deploy-failures";
+import {
+  McpDeployStatus,
+  McpDeployStatusSkeleton
+} from "@/components/mcp-deploy-status";
 import { RunRelease } from "@/components/run-release";
 import { ReleaseVerdict, ReleaseVerdictSkeleton } from "@/components/release-verdict";
 import { Section } from "@/components/ui";
@@ -77,9 +81,9 @@ export default async function Home() {
       <Section
         numeral="I"
         title="Deploy diff"
-        description="What production is missing vs. staging. The big number is the headline answer — use it to decide whether to cut a release today."
+        description="What's live where. Inspector + Backend compare production vs. staging; MCP has no prod yet, so it compares staging vs. main. The big number on each tile is the headline answer — use it to decide whether to cut a release today."
       >
-        <div className="grid gap-5 md:grid-cols-2">
+        <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
           <Suspense fallback={<DeployDiffSkeleton title="Inspector" />}>
             <DeployDiff
               title="Inspector"
@@ -99,6 +103,9 @@ export default async function Home() {
               productionEnvironment="backend-production"
               repoUrl="https://github.com/MCPJam/mcpjam-backend"
             />
+          </Suspense>
+          <Suspense fallback={<McpDeployStatusSkeleton />}>
+            <McpDeployStatus />
           </Suspense>
         </div>
       </Section>

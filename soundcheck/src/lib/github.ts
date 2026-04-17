@@ -375,6 +375,29 @@ export async function findSuccessfulRunForSha(
   );
 }
 
+/**
+ * Latest successful run of `workflowFile` on `branch`. Walks back through
+ * the most recent completed runs and returns the first `success`.
+ *
+ * Used by the MCP staging-drift tile: "what SHA was last successfully
+ * deployed?" For services without a production environment (like
+ * mcpjam-mcp-staging today), the SHA of the last green deploy workflow is
+ * the best proxy for "what's live right now".
+ */
+export async function findLatestSuccessfulRun(
+  owner: string,
+  repo: string,
+  workflowFile: string,
+  branch: string
+): Promise<WorkflowRun | null> {
+  const runs = await listWorkflowRuns(owner, repo, workflowFile, {
+    branch,
+    status: "completed",
+    perPage: 30
+  });
+  return runs.find((r) => r.conclusion === "success") ?? null;
+}
+
 export async function getMostRecentFailedRun(
   owner: string,
   repo: string,
