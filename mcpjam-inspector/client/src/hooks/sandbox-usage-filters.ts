@@ -1,10 +1,35 @@
 import type { SharedChatThread } from "@/hooks/useSharedChatThreads";
 
-export type UsageSessionFilter =
+export type UsageFilterPreset =
   | "all"
   | "needs_review"
   | "low_ratings"
   | "no_feedback";
+
+export type UsageDimensionKey =
+  | "geoCountry"
+  | "deviceKind"
+  | "visitorSegment"
+  | "language"
+  | "modelId"
+  | "feedbackBucket";
+
+export type UsageFilterChip =
+  | { kind: "cluster"; clusterId: string; label?: string }
+  | { kind: "dimension"; key: UsageDimensionKey; value: string; label?: string };
+
+export type UsageFilterState = {
+  preset: UsageFilterPreset;
+  chips: UsageFilterChip[];
+};
+
+/** Back-compat alias for the old string-only preset. */
+export type UsageSessionFilter = UsageFilterPreset;
+
+export const EMPTY_USAGE_FILTER: UsageFilterState = {
+  preset: "all",
+  chips: [],
+};
 
 const MEANINGFUL_MESSAGE_THRESHOLD = 4;
 
@@ -15,7 +40,6 @@ function hasNoFeedbackRecord(thread: SharedChatThread): boolean {
   );
 }
 
-/** Heuristic when backend does not yet send explicit review signals. */
 function inferNeedsReviewHeuristic(thread: SharedChatThread): boolean {
   if (thread.authInterrupted) return true;
   if (
@@ -27,9 +51,21 @@ function inferNeedsReviewHeuristic(thread: SharedChatThread): boolean {
   return false;
 }
 
+function threadLanguage(thread: SharedChatThread): string | undefined {
+  return thread.language;
+}
+
+function threadFeedbackBucket(thread: SharedChatThread): string {
+  const r = thread.feedbackRating;
+  if (r == null) return "none";
+  if (r >= 4) return "positive";
+  if (r >= 3) return "neutral";
+  return "negative";
+}
+
 export function threadMatchesUsageFilter(
   thread: SharedChatThread,
-  filter: UsageSessionFilter,
+  filter: UsageFilterPreset,
 ): boolean {
   if (filter === "all") return true;
 
@@ -49,6 +85,72 @@ export function threadMatchesUsageFilter(
   if (rating === 3 && comment.length > 0) return true;
   if (inferNeedsReviewHeuristic(thread)) return true;
   return false;
+}
+
+export function threadMatchesChip(
+  thread: SharedChatThread,
+  chip: UsageFilterChip,
+): boolean {
+  if (chip.kind === "cluster") {
+    return thread.themeClusterId === chip.clusterId;
+  }
+  switch (chip.key) {
+    case "geoCountry":
+      return thread.geoCountry === chip.value;
+    case "deviceKind":
+      return thread.deviceKind === chip.value;
+    case "visitorSegment":
+      return thread.visitorSegment === chip.value;
+    case "language":
+      return threadLanguage(thread) === chip.value;
+    case "modelId":
+      return thread.modelId === chip.value;
+    case "feedbackBucket":
+      return threadFeedbackBucket(thread) === chip.value;
+    default:
+      return false;
+  }
+}
+
+export function threadMatchesFilterState(
+  thread: SharedChatThread,
+  filter: UsageFilterState,
+): boolean {
+  if (!threadMatchesUsageFilter(thread, filter.preset)) return false;
+  for (const chip of filter.chips) {
+    if (!threadMatchesChip(thread, chip)) return false;
+  }
+  return true;
+}
+
+export function toggleChip(
+  filter: UsageFilterState,
+  chip: UsageFilterChip,
+): UsageFilterState {
+  const matches = filter.chips.findIndex((c) => chipKey(c) === chipKey(chip));
+  if (matches >= 0) {
+    return {
+      ...filter,
+      chips: filter.chips.filter((_, i) => i !== matches),
+    };
+  }
+  return { ...filter, chips: [...filter.chips, chip] };
+}
+
+export function chipKey(chip: UsageFilterChip): string {
+  return chip.kind === "cluster"
+    ? `cluster:${chip.clusterId}`
+    : `${chip.key}:${chip.value}`;
+}
+
+export function removeChipByKey(
+  filter: UsageFilterState,
+  key: string,
+): UsageFilterState {
+  return {
+    ...filter,
+    chips: filter.chips.filter((c) => chipKey(c) !== key),
+  };
 }
 
 export function compareThreadsForUsageList(

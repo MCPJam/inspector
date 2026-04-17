@@ -21,9 +21,23 @@ export interface SharedChatThread {
   /** Set when sandbox feedback was recorded for this session. */
   feedbackRating?: number | null;
   feedbackComment?: string | null;
+  feedbackCount?: number;
   toolCallCount?: number;
   /** OAuth or permission flow interrupted the session. */
   authInterrupted?: boolean;
+  // Sandbox usage-insights fields (populated only for sandbox sessions).
+  themeClusterId?: string;
+  themeClusterLabel?: string;
+  themeKeywords?: string[];
+  geoCountry?: string;
+  geoRegion?: string;
+  geoCity?: string;
+  deviceKind?: "desktop" | "mobile" | "tablet" | "bot";
+  userAgentFamily?: string;
+  authType?: "signedIn" | "guest";
+  visitorRecency?: "new" | "returning";
+  visitorSegment?: string;
+  language?: string;
 }
 
 export interface SharedChatWidgetSnapshot {
