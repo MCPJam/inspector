@@ -19,6 +19,7 @@ import {
   GitBranch,
   Puzzle,
   UserPlus,
+  ShieldCheck,
 } from "lucide-react";
 import { usePostHog, useFeatureFlagEnabled } from "posthog-js/react";
 import { standardEventProps } from "@/lib/PosthogUtils";
@@ -249,6 +250,12 @@ const navigationSections: NavSection[] = [
         title: "OAuth Debugger",
         url: "#oauth-flow",
         icon: Workflow,
+      },
+      {
+        title: "XAA Debugger",
+        url: "#xaa-flow",
+        icon: ShieldCheck,
+        featureFlag: "xaa",
       },
       // {
       //   title: "Tracing",
@@ -535,6 +542,7 @@ export function MCPSidebar({
   const registryEnabled = useFeatureFlagEnabled("registry-enabled");
   const evalsEnabled = useFeatureFlagEnabled("evals-enabled");
   const evaluateRunsEnabled = useFeatureFlagEnabled("evaluate-runs");
+  const xaaEnabled = useFeatureFlagEnabled("xaa");
   const learnMoreEnabled = useFeatureFlagEnabled("learn-more-enabled");
   const { isAuthenticated } = useConvexAuth();
   const { user } = useAuth();
@@ -658,6 +666,7 @@ export function MCPSidebar({
       "client-config-enabled": !!clientConfigEnabled && isAuthenticated,
       "registry-enabled": registryEnabled === true,
       "evals-enabled": !!evalsEnabled,
+      xaa: xaaEnabled === true,
     }),
     [
       learningEnabled,
@@ -665,6 +674,7 @@ export function MCPSidebar({
       clientConfigEnabled,
       registryEnabled,
       evalsEnabled,
+      xaaEnabled,
       isAuthenticated,
     ],
   );

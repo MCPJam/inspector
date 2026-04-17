@@ -256,6 +256,9 @@ vi.mock("../components/AuthTab", () => ({
 vi.mock("../components/OAuthFlowTab", () => ({
   OAuthFlowTab: () => <div />,
 }));
+vi.mock("../components/xaa/XAAFlowTab", () => ({
+  XAAFlowTab: () => <div data-testid="xaa-flow-tab">XAA Debugger Tab</div>,
+}));
 vi.mock("../components/ui-playground/AppBuilderTab", () => ({
   AppBuilderTab: ({
     onOnboardingChange,
@@ -2114,6 +2117,41 @@ describe("App hosted OAuth callback handling", () => {
 
     expect(window.location.hash).toBe("#/evals");
     expect(screen.queryByTestId("ci-evals-tab")).not.toBeInTheDocument();
+  });
+
+  it("redirects xaa-flow to Servers when the xaa flag is disabled", async () => {
+    clearHostedOAuthPendingState();
+    clearSandboxSession();
+    window.history.replaceState({}, "", "/#xaa-flow");
+    mockHandleOAuthCallback.mockReset();
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Servers Tab")).toBeInTheDocument();
+    });
+
+    expect(window.location.hash).toBe("#servers");
+    expect(screen.queryByTestId("xaa-flow-tab")).not.toBeInTheDocument();
+  });
+
+  it("renders xaa-flow when the xaa flag is enabled", async () => {
+    clearHostedOAuthPendingState();
+    clearSandboxSession();
+    window.history.replaceState({}, "", "/#xaa-flow");
+    mockHandleOAuthCallback.mockReset();
+    mockUseFeatureFlagEnabled.mockImplementation((flag: string) =>
+      flag === "xaa" ? true : false,
+    );
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("xaa-flow-tab")).toBeInTheDocument();
+    });
+
+    expect(window.location.hash).toBe("#xaa-flow");
+    expect(screen.queryByText("Servers Tab")).not.toBeInTheDocument();
   });
 
   it("still applies the CI billing redirect when evaluate-runs is enabled", async () => {

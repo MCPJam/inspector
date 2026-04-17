@@ -1,4 +1,12 @@
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "tsup";
+
+const here = dirname(fileURLToPath(import.meta.url));
+const { version: SDK_VERSION } = JSON.parse(
+  readFileSync(join(here, "package.json"), "utf8"),
+) as { version: string };
 
 export default defineConfig({
   entry: [
@@ -17,4 +25,7 @@ export default defineConfig({
   treeshake: true,
   minify: false,
   loader: { '.md': 'text' },
+  define: {
+    __MCPJAM_SDK_VERSION__: JSON.stringify(SDK_VERSION),
+  },
 });
