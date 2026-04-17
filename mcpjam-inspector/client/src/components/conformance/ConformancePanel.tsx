@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from "react";
-import { Button } from "@/components/ui/button";
-import { Switch } from "@/components/ui/switch";
+import { Button } from "@mcpjam/design-system/button";
+import { Switch } from "@mcpjam/design-system/switch";
 import { EmptyState } from "@/components/ui/empty-state";
 import {
   CheckCircle2,
