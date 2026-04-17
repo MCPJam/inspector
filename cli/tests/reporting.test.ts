@@ -8,7 +8,7 @@ import {
   parseReporterFormat,
   writeJsonArtifact,
   writeReporterResult,
-} from "../src/lib/reporting";
+} from "../src/lib/reporting.js";
 
 function makeReport(): StructuredRunReport {
   return {

@@ -2,20 +2,17 @@
  * MCPClientManager - Manages multiple MCP server connections
  */
 
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import {
+  type CallToolResult,
+  Client,
+  type LoggingLevel,
+  SSEClientTransport,
+  type ServerCapabilities,
   StdioClientTransport,
-} from "@modelcontextprotocol/sdk/client/stdio.js";
-import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
-import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
-import type { RequestOptions } from "@modelcontextprotocol/sdk/shared/protocol.js";
-import type {
-  LoggingLevel,
-  ServerCapabilities,
-  CallToolResult,
-} from "@modelcontextprotocol/sdk/types.js";
+  StreamableHTTPClientTransport,
+  type Transport,
+  type RequestOptions,
+} from "@modelcontextprotocol/client";
 
 import type {
   MCPClientManagerConfig,
@@ -74,15 +71,15 @@ import { RefreshTokenOAuthProvider } from "./refresh-token-auth-provider.js";
 import {
   NotificationManager,
   applyProgressHandler,
-  ResourceListChangedNotificationSchema,
-  ResourceUpdatedNotificationSchema,
-  PromptListChangedNotificationSchema,
-  type NotificationSchema,
+  PromptListChangedNotificationMethod,
+  ResourceListChangedNotificationMethod,
+  ResourceUpdatedNotificationMethod,
+  type NotificationMethodName,
   type NotificationHandler,
 } from "./notification-handlers.js";
 import { ElicitationManager } from "./elicitation.js";
 import {
-  CreateTaskResultSchema,
+  TaskStatusNotificationMethod,
   listTasks as tasksListTasks,
   getTask as tasksGetTask,
   getTaskResult as tasksGetTaskResult,
@@ -90,7 +87,6 @@ import {
   supportsTasksForToolCalls,
   supportsTasksList,
   supportsTasksCancel,
-  TaskStatusNotificationSchema,
 } from "./tasks.js";
 import {
   convertMCPToolsToVercelTools,
@@ -101,6 +97,10 @@ import {
   mergeClientCapabilities,
   normalizeClientCapabilities,
 } from "./capabilities.js";
+import {
+  assertCallToolResult,
+  isCreateTaskResult,
+} from "./result-guards.js";
 
 /**
  * Manages multiple MCP server connections with support for tools, resources,
@@ -529,7 +529,10 @@ export class MCPClientManager {
                 (args ?? {}) as ExecuteToolArguments,
                 requestOptions
               );
-              return CallToolResultSchema.parse(result);
+              return assertCallToolResult(
+                result,
+                `Tool "${name}" result`
+              );
             },
           });
 
@@ -595,10 +598,14 @@ export class MCPClientManager {
         const taskValue =
           request.task.ttl !== undefined ? { ttl: request.task.ttl } : {};
         const result = await client.request(
-          { method: "tools/call", params: { ...callParams, task: taskValue } },
-          CreateTaskResultSchema,
-          mergedOptions
+          { method: "tools/call", params: callParams },
+          { ...mergedOptions, task: taskValue }
         );
+        if (!isCreateTaskResult(result)) {
+          throw new TypeError(
+            `Server "${serverId}" did not return a CreateTaskResult for task-augmented tools/call.`
+          );
+        }
         return {
           task: result.task,
           _meta: {
@@ -607,7 +614,7 @@ export class MCPClientManager {
         };
       }
 
-      return client.callTool(callParams, CallToolResultSchema, mergedOptions);
+      return client.callTool(callParams, mergedOptions);
     };
 
     return request.retry
@@ -805,16 +812,16 @@ export class MCPClientManager {
    */
   addNotificationHandler(
     serverId: string,
-    schema: NotificationSchema,
+    method: NotificationMethodName,
     handler: NotificationHandler
   ): void {
-    this.notificationManager.addHandler(serverId, schema, handler);
+    this.notificationManager.addHandler(serverId, method, handler);
 
     const client = this.liveClientStates.get(serverId)?.client;
     if (client) {
       client.setNotificationHandler(
-        schema,
-        this.notificationManager.createDispatcher(serverId, schema)
+        method,
+        this.notificationManager.createDispatcher(serverId, method)
       );
     }
   }
@@ -825,7 +832,7 @@ export class MCPClientManager {
   onResourceListChanged(serverId: string, handler: NotificationHandler): void {
     this.addNotificationHandler(
       serverId,
-      ResourceListChangedNotificationSchema,
+      ResourceListChangedNotificationMethod,
       handler
     );
   }
@@ -836,7 +843,7 @@ export class MCPClientManager {
   onResourceUpdated(serverId: string, handler: NotificationHandler): void {
     this.addNotificationHandler(
       serverId,
-      ResourceUpdatedNotificationSchema,
+      ResourceUpdatedNotificationMethod,
       handler
     );
   }
@@ -847,7 +854,7 @@ export class MCPClientManager {
   onPromptListChanged(serverId: string, handler: NotificationHandler): void {
     this.addNotificationHandler(
       serverId,
-      PromptListChangedNotificationSchema,
+      PromptListChangedNotificationMethod,
       handler
     );
   }
@@ -858,7 +865,7 @@ export class MCPClientManager {
   onTaskStatusChanged(serverId: string, handler: NotificationHandler): void {
     this.addNotificationHandler(
       serverId,
-      TaskStatusNotificationSchema,
+      TaskStatusNotificationMethod,
       handler
     );
   }

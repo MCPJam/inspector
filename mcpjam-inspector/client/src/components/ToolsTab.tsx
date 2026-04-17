@@ -4,7 +4,7 @@ import type {
   ElicitRequest,
   ElicitResult,
   Tool,
-} from "@modelcontextprotocol/sdk/types.js";
+} from "@modelcontextprotocol/client";
 import { Wrench } from "lucide-react";
 import { ElicitationDialog } from "./ElicitationDialog";
 import { EmptyState } from "./ui/empty-state";

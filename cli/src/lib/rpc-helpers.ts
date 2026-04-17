@@ -1,4 +1,4 @@
-import { attachCliRpcLogs, type CliRpcLogCollector } from "./rpc-logs";
+import { attachCliRpcLogs, type CliRpcLogCollector } from "./rpc-logs.js";
 
 export function withRpcLogsIfRequested(
   value: unknown,

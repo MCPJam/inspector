@@ -1,8 +1,8 @@
 import { Command } from "commander";
 import { listPrompts, getPrompt } from "@mcpjam/sdk";
-import { withEphemeralManager } from "../lib/ephemeral";
-import { createCliRpcLogCollector } from "../lib/rpc-logs";
-import { withRpcLogsIfRequested } from "../lib/rpc-helpers";
+import { withEphemeralManager } from "../lib/ephemeral.js";
+import { createCliRpcLogCollector } from "../lib/rpc-logs.js";
+import { withRpcLogsIfRequested } from "../lib/rpc-helpers.js";
 import {
   addRetryOptions,
   addSharedServerOptions,
@@ -12,8 +12,8 @@ import {
   parseRetryPolicy,
   parseServerConfig,
   resolveAliasedStringOption,
-} from "../lib/server-config";
-import { writeResult } from "../lib/output";
+} from "../lib/server-config.js";
+import { writeResult } from "../lib/output.js";
 
 export function registerPromptCommands(program: Command): void {
   const prompts = program

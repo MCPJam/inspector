@@ -16,7 +16,6 @@ import type {
   UserModelMessage,
   StepResult,
 } from "ai";
-import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
 import { createModelFromString, parseLLMString } from "./model-factory.js";
 import type { CreateModelOptions } from "./model-factory.js";
 import { extractToolCalls } from "./tool-extraction.js";
@@ -30,6 +29,7 @@ import type {
   MCPServerReplayConfig,
 } from "./eval-reporting-types.js";
 import { ensureJsonSchemaObject } from "./mcp-client-manager/tool-converters.js";
+import { assertCallToolResult } from "./mcp-client-manager/result-guards.js";
 import { buildMcpAppWidgetSnapshot } from "./widget-snapshots.js";
 import { injectOpenAICompat } from "./widget-helpers.js";
 import {
@@ -92,7 +92,7 @@ function convertToToolSet(tools: Tool[]): ToolSet {
       execute: async (args, options) => {
         options?.abortSignal?.throwIfAborted?.();
         const result = await tool.execute(args as Record<string, unknown>);
-        return CallToolResultSchema.parse(result);
+        return assertCallToolResult(result, `Tool "${tool.name}" result`);
       },
     });
 
@@ -340,14 +340,14 @@ export class TestAgent implements EvalAgent {
 
             try {
               if (shouldShortCircuit) {
-                return CallToolResultSchema.parse({
+                return assertCallToolResult({
                   content: [
                     {
                       type: "text",
                       text: "[skipped by stopAfterToolCall]",
                     },
                   ],
-                });
+                }, `Tool "${name}" short-circuit result`);
               }
 
               const result = await originalExecute(args, options);

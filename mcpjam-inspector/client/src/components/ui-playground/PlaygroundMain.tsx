@@ -22,7 +22,7 @@ import {
 } from "react";
 import { Braces, Loader2, Trash2 } from "lucide-react";
 import { useAuth } from "@workos-inc/authkit-react";
-import type { ContentBlock } from "@modelcontextprotocol/sdk/types.js";
+import type { ContentBlock } from "@modelcontextprotocol/client";
 import type { UIMessage } from "ai";
 import { ModelDefinition } from "@/shared/types";
 import { cn } from "@/lib/utils";

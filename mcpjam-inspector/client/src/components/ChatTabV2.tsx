@@ -11,7 +11,7 @@ import type { UIMessage } from "ai";
 import { ScrollToBottomButton } from "@/components/chat-v2/shared/scroll-to-bottom-button";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
-import type { ContentBlock } from "@modelcontextprotocol/sdk/types.js";
+import type { ContentBlock } from "@modelcontextprotocol/client";
 import { toast } from "sonner";
 import { ModelDefinition } from "@/shared/types";
 import { LoggerView } from "./logger-view";
@@ -247,6 +247,9 @@ export function ChatTabV2({
   const [activeHistorySessionId, setActiveHistorySessionId] = useState<
     string | null
   >(null);
+  const [loadingHistorySessionId, setLoadingHistorySessionId] = useState<
+    string | null
+  >(null);
   const [pendingDirectVisibility, setPendingDirectVisibility] = useState<
     "private" | "workspace"
   >("private");
@@ -274,6 +277,14 @@ export function ChatTabV2({
     reactiveHistoryLoadRequestIdRef.current += 1;
     lastAppliedReactiveVersionRef.current = null;
   }, []);
+
+  const cancelPendingHistorySelection = useCallback(() => {
+    historySelectionRequestIdRef.current += 1;
+    pendingHistoryServerSyncRef.current = null;
+    setLoadingHistorySessionId(null);
+    invalidatePendingReactiveHistoryLoad();
+    setActiveHistorySessionId(null);
+  }, [invalidatePendingReactiveHistoryLoad]);
 
   // Filter to only connected servers
   const selectedConnectedServerNames = useMemo(
@@ -394,8 +405,7 @@ export function ChatTabV2({
       setSkillResults([]);
       revokeFileAttachmentUrls(fileAttachments);
       setFileAttachments([]);
-      invalidatePendingReactiveHistoryLoad();
-      setActiveHistorySessionId(null);
+      cancelPendingHistorySelection();
     },
   });
 
@@ -511,8 +521,7 @@ export function ChatTabV2({
   const detachHistorySession = useCallback(
     (toastMessage: string) => {
       resumedThreadSendBaselineRef.current = null;
-      invalidatePendingReactiveHistoryLoad();
-      setActiveHistorySessionId(null);
+      cancelPendingHistorySelection();
       setPendingDirectVisibility("private");
       syncResumedVersion(null);
       if (hasConversationMessages) {
@@ -528,7 +537,7 @@ export function ChatTabV2({
       restoredToolRenderOverrides,
       startChatWithMessages,
       syncResumedVersion,
-      invalidatePendingReactiveHistoryLoad,
+      cancelPendingHistorySelection,
     ],
   );
 
@@ -695,7 +704,6 @@ export function ChatTabV2({
     }
 
     if (reactiveHistorySession === null) {
-      historySelectionRequestIdRef.current += 1;
       detachHistorySession(
         "This chat is no longer available. Continuing locally in a new thread.",
       );
@@ -758,7 +766,6 @@ export function ChatTabV2({
     }
 
     if (activeHistorySessionId) {
-      historySelectionRequestIdRef.current += 1;
       detachHistorySession(
         "This chat is no longer available. Your draft stayed local, and the next send will start a new thread.",
       );
@@ -786,6 +793,7 @@ export function ChatTabV2({
       historySelectionRequestIdRef.current = selectionRequestId;
       pendingHistoryServerSyncRef.current = null;
       setActiveHistorySessionId(session._id);
+      setLoadingHistorySessionId(session._id);
 
       try {
         const detail = await getChatHistoryDetail({
@@ -836,6 +844,10 @@ export function ChatTabV2({
         }
         console.error("[ChatTabV2] Failed to load chat session", err);
         toast.error("Failed to load chat history.");
+      } finally {
+        if (historySelectionRequestIdRef.current === selectionRequestId) {
+          setLoadingHistorySessionId(null);
+        }
       }
     },
     [
@@ -864,22 +876,19 @@ export function ChatTabV2({
         clearComposerDraft();
       }
       resumedThreadSendBaselineRef.current = null;
-      historySelectionRequestIdRef.current += 1;
-      invalidatePendingReactiveHistoryLoad();
-      setActiveHistorySessionId(null);
-      pendingHistoryServerSyncRef.current = null;
+      cancelPendingHistorySelection();
       syncResumedVersion(null);
       baseResetChat();
       setPendingDirectVisibility(options?.shared ? "workspace" : "private");
     },
     [
       baseResetChat,
+      cancelPendingHistorySelection,
       clearComposerDraft,
       ensureDiscardDraftConfirmed,
       hasUnsavedDraft,
       isStreaming,
       syncResumedVersion,
-      invalidatePendingReactiveHistoryLoad,
     ],
   );
 
@@ -889,20 +898,17 @@ export function ChatTabV2({
       if (hasUnsavedDraft) {
         clearComposerDraft();
       }
-      historySelectionRequestIdRef.current += 1;
-      invalidatePendingReactiveHistoryLoad();
-      setActiveHistorySessionId(null);
-      pendingHistoryServerSyncRef.current = null;
+      cancelPendingHistorySelection();
       syncResumedVersion(null);
       baseResetChat();
       setPendingDirectVisibility("private");
     },
     [
       baseResetChat,
+      cancelPendingHistorySelection,
       clearComposerDraft,
       hasUnsavedDraft,
       syncResumedVersion,
-      invalidatePendingReactiveHistoryLoad,
     ],
   );
 
@@ -925,7 +931,6 @@ export function ChatTabV2({
         try {
           const detail = await refreshCurrentHistorySession();
           if (!detail) {
-            historySelectionRequestIdRef.current += 1;
             detachHistorySession(
               "This chat is no longer shared with you. Continuing locally in a new thread.",
             );
@@ -1907,6 +1912,7 @@ export function ChatTabV2({
             >
               <ChatHistoryRail
                 activeSessionId={activeHistorySessionId}
+                hostStyle={hostStyle}
                 isAuthenticated={isConvexAuthenticated}
                 isStreaming={historyRailStreaming}
                 workspaceId={effectiveHostedWorkspaceId}
@@ -1945,7 +1951,16 @@ export function ChatTabV2({
           minSize={40}
           className="min-h-0 min-w-0 overflow-hidden"
         >
-          <div className="flex flex-col bg-background h-full min-h-0 overflow-hidden">
+          <div className="relative flex flex-col bg-background h-full min-h-0 overflow-hidden">
+            {loadingHistorySessionId && (
+              <div
+                className="absolute inset-0 z-30 flex items-center justify-center bg-background/70 backdrop-blur-sm"
+                role="status"
+                aria-label="Loading chat"
+              >
+                <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-primary" />
+              </div>
+            )}
             {isMultiModelLayoutMode ? (
               <div className="flex flex-1 min-h-0 flex-col overflow-hidden">
                 {showTopTraceViewTabs ? (

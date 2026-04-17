@@ -1,7 +1,9 @@
-const mockSpawn = jest.fn();
+const childProcessMocks = vi.hoisted(() => ({
+  spawn: vi.fn(),
+}));
 
-jest.mock("node:child_process", () => ({
-  spawn: mockSpawn,
+vi.mock("node:child_process", () => ({
+  spawn: childProcessMocks.spawn,
 }));
 
 import { EventEmitter } from "node:events";
@@ -12,7 +14,7 @@ import {
 
 describe("interactive authorization session", () => {
   afterEach(() => {
-    mockSpawn.mockReset();
+    childProcessMocks.spawn.mockReset();
   });
 
   it("captures the authorization code from the loopback callback", async () => {
@@ -158,9 +160,9 @@ describe("interactive authorization session", () => {
     const child = new EventEmitter() as EventEmitter & {
       unref: jest.Mock;
     };
-    child.unref = jest.fn();
+    child.unref = vi.fn();
 
-    mockSpawn.mockImplementation(() => {
+    childProcessMocks.spawn.mockImplementation(() => {
       process.nextTick(() => {
         child.emit("spawn");
       });
@@ -169,9 +171,9 @@ describe("interactive authorization session", () => {
 
     await openUrlInBrowser("https://auth.example.com/authorize");
 
-    expect(mockSpawn).toHaveBeenCalledTimes(1);
+    expect(childProcessMocks.spawn).toHaveBeenCalledTimes(1);
     expect(child.unref).toHaveBeenCalledTimes(1);
-    const [command, args, options] = mockSpawn.mock.calls[0];
+    const [command, args, options] = childProcessMocks.spawn.mock.calls[0];
 
     if (process.platform === "darwin") {
       expect(command).toBe("open");

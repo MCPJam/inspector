@@ -4,13 +4,13 @@ import {
   isCallToolResultError,
   validateToolCallResult,
 } from "@mcpjam/sdk";
-import { writeCommandDebugArtifact } from "../lib/debug-artifact";
-import { withEphemeralManager } from "../lib/ephemeral";
-import { parseReporterFormat, writeReporterResult } from "../lib/reporting";
-import { createCliRpcLogCollector } from "../lib/rpc-logs";
-import { withRpcLogsIfRequested } from "../lib/rpc-helpers";
-import { listToolsWithMetadata } from "../lib/server-ops";
-import { summarizeServerDoctorTarget } from "../lib/server-doctor";
+import { writeCommandDebugArtifact } from "../lib/debug-artifact.js";
+import { withEphemeralManager } from "../lib/ephemeral.js";
+import { parseReporterFormat, writeReporterResult } from "../lib/reporting.js";
+import { createCliRpcLogCollector } from "../lib/rpc-logs.js";
+import { withRpcLogsIfRequested } from "../lib/rpc-helpers.js";
+import { listToolsWithMetadata } from "../lib/server-ops.js";
+import { summarizeServerDoctorTarget } from "../lib/server-doctor.js";
 import {
   addRetryOptions,
   addSharedServerOptions,
@@ -20,8 +20,8 @@ import {
   parseRetryPolicy,
   parseServerConfig,
   resolveAliasedStringOption,
-} from "../lib/server-config";
-import { setProcessExitCode, usageError, writeResult } from "../lib/output";
+} from "../lib/server-config.js";
+import { setProcessExitCode, usageError, writeResult } from "../lib/output.js";
 
 export function registerToolsCommands(program: Command): void {
   const tools = program

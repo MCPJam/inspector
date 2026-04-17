@@ -1,7 +1,9 @@
-const mockCaptureEvalReportingFailure = jest.fn().mockResolvedValue(undefined);
+const sentryMocks = vi.hoisted(() => ({
+  captureEvalReportingFailure: vi.fn().mockResolvedValue(undefined),
+}));
 
-jest.mock("../src/sentry", () => ({
-  captureEvalReportingFailure: mockCaptureEvalReportingFailure,
+vi.mock("../src/sentry", () => ({
+  captureEvalReportingFailure: sentryMocks.captureEvalReportingFailure,
 }));
 
 import { uploadEvalArtifact } from "../src/upload-eval-artifact";
@@ -21,8 +23,8 @@ describe("uploadEvalArtifact", () => {
 
   afterEach(() => {
     global.fetch = originalFetch;
-    mockCaptureEvalReportingFailure.mockClear();
-    jest.restoreAllMocks();
+    sentryMocks.captureEvalReportingFailure.mockClear();
+    vi.restoreAllMocks();
   });
 
   it("captures once when artifact parsing fails", async () => {
@@ -35,8 +37,8 @@ describe("uploadEvalArtifact", () => {
       })
     ).rejects.toThrow("customParser is required when format is 'custom'");
 
-    expect(mockCaptureEvalReportingFailure).toHaveBeenCalledTimes(1);
-    expect(mockCaptureEvalReportingFailure).toHaveBeenCalledWith(
+    expect(sentryMocks.captureEvalReportingFailure).toHaveBeenCalledTimes(1);
+    expect(sentryMocks.captureEvalReportingFailure).toHaveBeenCalledWith(
       expect.any(Error),
       expect.objectContaining({
         apiKey: "mcpjam_test_key",
@@ -62,8 +64,8 @@ describe("uploadEvalArtifact", () => {
       })
     ).rejects.toBeInstanceOf(EvalReportingError);
 
-    expect(mockCaptureEvalReportingFailure).toHaveBeenCalledTimes(1);
-    expect(mockCaptureEvalReportingFailure).toHaveBeenCalledWith(
+    expect(sentryMocks.captureEvalReportingFailure).toHaveBeenCalledTimes(1);
+    expect(sentryMocks.captureEvalReportingFailure).toHaveBeenCalledWith(
       expect.any(EvalReportingError),
       expect.objectContaining({
         apiKey: "mcpjam_test_key",

@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import type { ElicitResult } from "@modelcontextprotocol/sdk/types.js";
+import type { ElicitResult } from "@modelcontextprotocol/client";
 import type { MCPClientManager } from "@mcpjam/sdk";
 
 const elicitation = new Hono();
