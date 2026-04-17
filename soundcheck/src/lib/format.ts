@@ -37,3 +37,13 @@ export function formatElapsed(
 export function shortSha(sha: string): string {
   return sha.slice(0, 7);
 }
+
+/**
+ * Truncate a string to `max` characters, appending "…" when cut. Used to
+ * fit long commit subjects into the tile's single-line commit feed
+ * without wrapping. `max` counts the ellipsis as one character.
+ */
+export function truncate(s: string, max: number): string {
+  if (s.length <= max) return s;
+  return s.slice(0, max - 1).trimEnd() + "…";
+}

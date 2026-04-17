@@ -2,7 +2,7 @@ import {
   compareCommits,
   getLatestEnvironmentDeployment
 } from "@/lib/github";
-import { formatRelativeTime, shortSha } from "@/lib/format";
+import { formatRelativeTime, shortSha, truncate } from "@/lib/format";
 import { HeroStat, Sha, Tile, TileAction } from "@/components/ui";
 import type { StatusTone } from "@/components/ui";
 
@@ -204,11 +204,6 @@ export async function DeployDiff({
       </ul>
     </Tile>
   );
-}
-
-function truncate(s: string, max: number): string {
-  if (s.length <= max) return s;
-  return s.slice(0, max - 1).trimEnd() + "…";
 }
 
 export function DeployDiffSkeleton({ title }: { title: string }) {

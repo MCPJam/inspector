@@ -44,6 +44,18 @@ const TARGETS: Target[] = [
     workflowFile: "deploy-soundcheck.yml"
   },
   {
+    label: "MCP · deploy-mcp-staging.yml",
+    owner: "MCPJam",
+    repo: "inspector",
+    workflowFile: "deploy-mcp-staging.yml"
+  },
+  {
+    label: "MCP · pr-mcp-preview.yml",
+    owner: "MCPJam",
+    repo: "inspector",
+    workflowFile: "pr-mcp-preview.yml"
+  },
+  {
     label: "Backend · deploy-staging.yml",
     owner: "MCPJam",
     repo: "mcpjam-backend",
