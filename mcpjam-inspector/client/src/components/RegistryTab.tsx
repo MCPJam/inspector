@@ -13,10 +13,10 @@ import {
   BadgeCheck,
   Star,
 } from "lucide-react";
-import { Card } from "./ui/card";
-import { Button } from "./ui/button";
-import { Badge } from "./ui/badge";
-import { Skeleton } from "./ui/skeleton";
+import { Card } from "@mcpjam/design-system/card";
+import { Button } from "@mcpjam/design-system/button";
+import { Badge } from "@mcpjam/design-system/badge";
+import { Skeleton } from "@mcpjam/design-system/skeleton";
 import { EmptyState } from "./ui/empty-state";
 import {
   DropdownMenu,
@@ -24,7 +24,7 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "./ui/dropdown-menu";
+} from "@mcpjam/design-system/dropdown-menu";
 import {
   useRegistryServers,
   getRegistryServerName,

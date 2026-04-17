@@ -5,8 +5,8 @@
  */
 
 import { Smartphone, Tablet, Monitor, Sun, Moon } from "lucide-react";
-import { Button } from "../ui/button";
-import { ToggleGroup, ToggleGroupItem } from "../ui/toggle-group";
+import { Button } from "@mcpjam/design-system/button";
+import { ToggleGroup, ToggleGroupItem } from "@mcpjam/design-system/toggle-group";
 import type { DeviceType } from "@/stores/ui-playground-store";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { updateThemeMode } from "@/lib/theme-utils";

@@ -1,6 +1,6 @@
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
+import { Button } from "@mcpjam/design-system/button";
+import { Input } from "@mcpjam/design-system/input";
+import { Textarea } from "@mcpjam/design-system/textarea";
 import { Plus, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Combobox } from "@/components/ui/combobox";

@@ -23,37 +23,37 @@ import { useServerMutations } from "@/hooks/useWorkspaces";
 import { AddServerModal } from "@/components/connection/AddServerModal";
 import { SandboxDeleteConfirmDialog } from "@/components/sandboxes/SandboxDeleteConfirmDialog";
 import { SandboxShareSection } from "@/components/sandboxes/SandboxShareSection";
-import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
+import { Button } from "@mcpjam/design-system/button";
+import { Textarea } from "@mcpjam/design-system/textarea";
 import { ChatTabV2 } from "@/components/ChatTabV2";
 import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
-} from "@/components/ui/collapsible";
+} from "@mcpjam/design-system/collapsible";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
-import { Separator } from "@/components/ui/separator";
+} from "@mcpjam/design-system/select";
+import { Separator } from "@mcpjam/design-system/separator";
 import {
   Sheet,
   SheetContent,
   SheetDescription,
   SheetHeader,
   SheetTitle,
-} from "@/components/ui/sheet";
-import { Slider } from "@/components/ui/slider";
-import { Switch } from "@/components/ui/switch";
-import { Label } from "@/components/ui/label";
+} from "@mcpjam/design-system/sheet";
+import { Slider } from "@mcpjam/design-system/slider";
+import { Switch } from "@mcpjam/design-system/switch";
+import { Label } from "@mcpjam/design-system/label";
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
-} from "@/components/ui/popover";
+} from "@mcpjam/design-system/popover";
 import { getLoadingIndicatorVariantForHostStyle } from "@/components/chat-v2/shared/loading-indicator-content";
 import { SandboxHostStyleProvider } from "@/contexts/sandbox-host-style-context";
 import { SandboxHostOnboardingOverlays } from "@/components/hosted/SandboxHostOnboardingOverlays";

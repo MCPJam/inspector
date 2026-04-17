@@ -8,8 +8,8 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+} from "@mcpjam/design-system/dropdown-menu";
+import { Avatar, AvatarFallback, AvatarImage } from "@mcpjam/design-system/avatar";
 import {
   SidebarMenu,
   SidebarMenuButton,
@@ -31,7 +31,7 @@ import { useProfilePicture } from "@/hooks/useProfilePicture";
 import { useOrganizationQueries } from "@/hooks/useOrganizations";
 import { CreateOrganizationDialog } from "@/components/organization/CreateOrganizationDialog";
 import { HOSTED_MODE } from "@/lib/config";
-import { Button } from "@/components/ui/button";
+import { Button } from "@mcpjam/design-system/button";
 import type { OrganizationRouteSection } from "@/lib/hosted-navigation";
 
 export function SidebarUser({

@@ -1,7 +1,7 @@
 import { memo, useMemo } from "react";
 import { ReactFlowProvider } from "@xyflow/react";
 import { Settings } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Button } from "@mcpjam/design-system/button";
 import { DiagramLayout, buildNodesAndEdges } from "@/components/oauth/shared";
 import { buildXAAActions } from "@/lib/xaa/sequence-actions";
 import type { XAAFlowState, XAAFlowStep } from "@/lib/xaa/types";

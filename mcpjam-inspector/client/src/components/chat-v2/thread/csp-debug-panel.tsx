@@ -14,8 +14,8 @@ import {
   Lightbulb,
   ChevronRight,
 } from "lucide-react";
-import { Label } from "@/components/ui/label";
-import { Badge } from "@/components/ui/badge";
+import { Label } from "@mcpjam/design-system/label";
+import { Badge } from "@mcpjam/design-system/badge";
 import type { CspMode } from "@/stores/ui-playground-store";
 import type { CspViolation } from "@/stores/widget-debug-store";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";

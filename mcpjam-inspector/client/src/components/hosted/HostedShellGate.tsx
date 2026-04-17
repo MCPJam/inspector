@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { AlertTriangle, Loader2 } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Button } from "@mcpjam/design-system/button";
 
 export type HostedShellGateState =
   | "ready"

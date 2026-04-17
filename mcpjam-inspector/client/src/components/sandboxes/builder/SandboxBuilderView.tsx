@@ -10,9 +10,9 @@ import {
 } from "lucide-react";
 import { ReactFlowProvider } from "@xyflow/react";
 import { useConvexAuth } from "convex/react";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Card } from "@/components/ui/card";
+import { Button } from "@mcpjam/design-system/button";
+import { Badge } from "@mcpjam/design-system/badge";
+import { Card } from "@mcpjam/design-system/card";
 import {
   ResizableHandle,
   ResizablePanel,
@@ -25,7 +25,7 @@ import {
   SheetDescription,
   SheetHeader,
   SheetTitle,
-} from "@/components/ui/sheet";
+} from "@mcpjam/design-system/sheet";
 import { AddServerModal } from "@/components/connection/AddServerModal";
 import { SandboxUsagePanel } from "@/components/sandboxes/SandboxUsagePanel";
 import {

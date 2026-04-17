@@ -1,15 +1,15 @@
 import { useEffect } from "react";
 import { toast } from "sonner";
-import { Button } from "../ui/button";
-import { Input } from "../ui/input";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../ui/dialog";
+import { Button } from "@mcpjam/design-system/button";
+import { Input } from "@mcpjam/design-system/input";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@mcpjam/design-system/dialog";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "../ui/select";
+} from "@mcpjam/design-system/select";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { ServerFormData } from "@/shared/types.js";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";

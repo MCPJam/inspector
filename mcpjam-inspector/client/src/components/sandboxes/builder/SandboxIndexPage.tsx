@@ -12,16 +12,16 @@ import {
   Sparkles,
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Card, CardInteractive } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
+import { Alert, AlertDescription, AlertTitle } from "@mcpjam/design-system/alert";
+import { Button } from "@mcpjam/design-system/button";
+import { Badge } from "@mcpjam/design-system/badge";
+import { Card, CardInteractive } from "@mcpjam/design-system/card";
+import { Input } from "@mcpjam/design-system/input";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from "@/components/ui/tooltip";
+} from "@mcpjam/design-system/tooltip";
 import type { SandboxListItem } from "@/hooks/useSandboxes";
 import {
   getSandboxHostLogo,

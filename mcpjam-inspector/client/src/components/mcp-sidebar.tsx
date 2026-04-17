@@ -50,12 +50,12 @@ import { SidebarUser } from "@/components/sidebar/sidebar-user";
 import { SidebarWorkspaceSelector } from "@/components/sidebar/sidebar-workspace-selector";
 import { ShareWorkspaceDialog } from "@/components/workspace/ShareWorkspaceDialog";
 import { useUpdateNotification } from "@/hooks/useUpdateNotification";
-import { Button } from "@/components/ui/button";
+import { Button } from "@mcpjam/design-system/button";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from "@/components/ui/tooltip";
+} from "@mcpjam/design-system/tooltip";
 import { HOSTED_MODE } from "@/lib/config";
 import {
   listTools,

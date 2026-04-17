@@ -5,12 +5,12 @@ import {
   ChartTooltip,
   ChartTooltipContent,
 } from "@/components/ui/chart";
-import { Button } from "@/components/ui/button";
+import { Button } from "@mcpjam/design-system/button";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from "@/components/ui/tooltip";
+} from "@mcpjam/design-system/tooltip";
 import { Area, AreaChart, PieChart, Pie, Label } from "recharts";
 import { computeIterationResult } from "./pass-criteria";
 import type { EvalIteration, EvalSuiteRun } from "./types";

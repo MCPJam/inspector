@@ -1,10 +1,6 @@
-import { clsx, type ClassValue } from "clsx";
-import { twMerge } from "tailwind-merge";
 import { format, parseISO } from "date-fns";
 
-export function cn(...inputs: ClassValue[]) {
-  return twMerge(clsx(inputs));
-}
+export { cn } from "@mcpjam/design-system/cn";
 
 export const getInitials = (str: string): string => {
   if (typeof str !== "string" || !str.trim()) return "?";

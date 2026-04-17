@@ -1,8 +1,8 @@
 import { useRef, useState } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useAction, useMutation, useQuery } from "convex/react";
-import { Button } from "@/components/ui/button";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Button } from "@mcpjam/design-system/button";
+import { Avatar, AvatarFallback, AvatarImage } from "@mcpjam/design-system/avatar";
 import { EditableText } from "@/components/ui/editable-text";
 import { getInitials } from "@/lib/utils";
 import { Camera, Loader2 } from "lucide-react";

@@ -5,8 +5,8 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "../ui/dialog";
-import { Button } from "../ui/button";
+} from "@mcpjam/design-system/dialog";
+import { Button } from "@mcpjam/design-system/button";
 import { AlertTriangle } from "lucide-react";
 
 interface RefreshTokensConfirmModalProps {

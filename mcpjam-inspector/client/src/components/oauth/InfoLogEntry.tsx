@@ -16,7 +16,7 @@ import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
-} from "@/components/ui/collapsible";
+} from "@mcpjam/design-system/collapsible";
 import type { InfoLogLevel, LogErrorDetails } from "@mcpjam/sdk/browser";
 
 interface InfoLogEntryProps {

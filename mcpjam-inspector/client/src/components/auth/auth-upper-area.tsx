@@ -1,7 +1,7 @@
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
 import { usePostHog } from "posthog-js/react";
-import { Button } from "@/components/ui/button";
+import { Button } from "@mcpjam/design-system/button";
 import { DiscordIcon } from "@/components/ui/discord-icon";
 import { GitHubStarButton } from "@/components/ui/github-star-button";
 import {

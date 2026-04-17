@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
-import { Button } from "./ui/button";
-import { Badge } from "./ui/badge";
-import { ScrollArea } from "./ui/scroll-area";
+import { Button } from "@mcpjam/design-system/button";
+import { Badge } from "@mcpjam/design-system/badge";
+import { ScrollArea } from "@mcpjam/design-system/scroll-area";
 import {
   ResizablePanelGroup,
   ResizablePanel,
@@ -43,7 +43,7 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from "./ui/alert-dialog";
+} from "@mcpjam/design-system/alert-dialog";
 import { SkillsFileTree } from "./skills/SkillsFileTree";
 import { SkillFileViewer } from "./skills/SkillFileViewer";
 

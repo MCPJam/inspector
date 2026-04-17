@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { formatDistanceToNow } from "date-fns";
 import { Copy, Loader2, MessageSquare } from "lucide-react";
 import { toast } from "sonner";
-import { Button } from "@/components/ui/button";
+import { Button } from "@mcpjam/design-system/button";
 import { copyToClipboard } from "@/lib/clipboard";
 import type { ModelDefinition, ModelProvider } from "@/shared/types";
 import { TranscriptThread } from "@/components/chat-v2/thread/transcript-thread";

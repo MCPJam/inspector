@@ -12,23 +12,23 @@ import {
 } from "@/hooks/useSandboxes";
 import { getInitials } from "@/lib/utils";
 import { buildSandboxLink } from "@/lib/sandbox-session";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Button } from "@/components/ui/button";
+import { Avatar, AvatarFallback, AvatarImage } from "@mcpjam/design-system/avatar";
+import { Button } from "@mcpjam/design-system/button";
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Separator } from "@/components/ui/separator";
+} from "@mcpjam/design-system/dialog";
+import { Input } from "@mcpjam/design-system/input";
+import { Separator } from "@mcpjam/design-system/separator";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
+} from "@mcpjam/design-system/select";
 interface ShareSandboxDialogProps {
   isOpen: boolean;
   onClose: () => void;

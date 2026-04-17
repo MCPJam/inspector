@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Star } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Button } from "@mcpjam/design-system/button";
 import { GitHubIcon } from "@/components/ui/github-icon";
 
 const REPO = "MCPJam/inspector";

@@ -313,7 +313,7 @@ vi.mock("../stores/preferences/preferences-provider", () => ({
     <div>{children}</div>
   ),
 }));
-vi.mock("../components/ui/sonner", () => ({
+vi.mock("@mcpjam/design-system/sonner", () => ({
   Toaster: () => <div />,
 }));
 vi.mock("../state/app-state-context", () => ({

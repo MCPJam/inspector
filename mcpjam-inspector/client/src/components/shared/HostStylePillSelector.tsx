@@ -1,4 +1,4 @@
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { ToggleGroup, ToggleGroupItem } from "@mcpjam/design-system/toggle-group";
 import type { SandboxHostStyle } from "@/lib/sandbox-host-style";
 import { cn } from "@/lib/utils";
 
