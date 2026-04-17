@@ -94,7 +94,13 @@ jobs:
           TOKEN: ${{ secrets.BACKEND_PREVIEW_DISPATCH_TOKEN }}
           PR_BRANCH: ${{ steps.meta.outputs.branch }}
         run: |
-          BACKEND_BRANCH=$(git ls-remote --heads "https://x-access-token:${TOKEN}@github.com/${BACKEND_REPO}.git" "$PR_BRANCH" || true)
+          set -euo pipefail
+          # -c http.extraheader= strips the AUTHORIZATION header that
+          # actions/checkout persists for GITHUB_TOKEN; otherwise git uses
+          # it instead of the URL-embedded PAT and 404s on the backend repo.
+          BACKEND_BRANCH=$(git -c http.extraheader= ls-remote --heads \
+            "https://x-access-token:${TOKEN}@github.com/${BACKEND_REPO}.git" \
+            "$PR_BRANCH")
           if [ -n "$BACKEND_BRANCH" ]; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
           else
