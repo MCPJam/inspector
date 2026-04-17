@@ -95,17 +95,31 @@ jobs:
           PR_BRANCH: ${{ steps.meta.outputs.branch }}
         run: |
           set -euo pipefail
-          # -c http.extraheader= strips the AUTHORIZATION header that
-          # actions/checkout persists for GITHUB_TOKEN; otherwise git uses
-          # it instead of the URL-embedded PAT and 404s on the backend repo.
-          BACKEND_BRANCH=$(git -c http.extraheader= ls-remote --heads \
-            "https://x-access-token:${TOKEN}@github.com/${BACKEND_REPO}.git" \
-            "$PR_BRANCH")
-          if [ -n "$BACKEND_BRANCH" ]; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
+          # GitHub returns 404 for both "branch missing" and "token can't see
+          # this repo" on private repos. Preflight a repo-level GET so only a
+          # real access failure hard-fails; after that, a 404 on the branch
+          # path unambiguously means the branch doesn't exist.
+          ACCESS_CODE=$(curl -sS -o /dev/null -w "%{http_code}" \
+            -H "Authorization: Bearer ${TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${BACKEND_REPO}")
+          if [ "$ACCESS_CODE" != "200" ]; then
+            echo "::error::BACKEND_PREVIEW_DISPATCH_TOKEN cannot access ${BACKEND_REPO} (HTTP $ACCESS_CODE)"
+            exit 1
           fi
+          # URL-encode slashes in the branch name for the path parameter.
+          ENCODED_BRANCH=$(jq -rn --arg s "$PR_BRANCH" '$s|@uri')
+          HTTP_CODE=$(curl -sS -o /dev/null -w "%{http_code}" \
+            -H "Authorization: Bearer ${TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${BACKEND_REPO}/branches/${ENCODED_BRANCH}")
+          case "$HTTP_CODE" in
+            200) echo "exists=true" >> "$GITHUB_OUTPUT" ;;
+            404) echo "exists=false" >> "$GITHUB_OUTPUT" ;;
+            *) echo "::error::Unexpected HTTP $HTTP_CODE checking ${BACKEND_REPO}/${PR_BRANCH}"; exit 1 ;;
+          esac
 
       - name: Create or refresh Railway preview environment
         run: |

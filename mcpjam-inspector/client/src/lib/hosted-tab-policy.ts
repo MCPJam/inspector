@@ -17,6 +17,7 @@ export const HOSTED_SIDEBAR_ALLOWED_TABS = [
   "prompts",
   "support",
   "settings",
+  "conformance",
   "oauth-flow",
   "xaa-flow",
   "learning",
