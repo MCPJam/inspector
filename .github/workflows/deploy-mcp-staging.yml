@@ -87,7 +87,20 @@ jobs:
             exit 1
           fi
 
-          curl --fail --silent --show-error "$DEPLOYMENT_URL" | grep -q "MCPJam MCP"
+          # First deploy onto a new custom domain can take <60s for
+          # Cloudflare to provision the edge cert and propagate the
+          # hostname; retry up to ~30s before failing. Same shape as the
+          # per-PR preview workflow's smoke test.
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            if curl --fail --silent --show-error "$DEPLOYMENT_URL" | grep -q "MCPJam MCP"; then
+              echo "Smoke OK on attempt $attempt"
+              exit 0
+            fi
+            echo "Attempt $attempt returned non-200 or mismatched content; retrying in 3s…"
+            sleep 3
+          done
+          echo "Staging URL never resolved correctly." >&2
+          exit 1
 
       - name: Summarize staging deployment
         env:

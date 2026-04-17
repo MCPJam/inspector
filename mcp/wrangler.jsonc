@@ -4,22 +4,20 @@
   "main": "src/index.ts",
   "compatibility_date": "2025-03-10",
   "compatibility_flags": ["nodejs_compat"],
-  "migrations": [
-    {
-      "tag": "v1",
-      "new_sqlite_classes": ["McpJamMcpServer"]
-    }
-  ],
-  "durable_objects": {
-    "bindings": [
-      {
-        "class_name": "McpJamMcpServer",
-        "name": "MCP_OBJECT"
-      }
-    ]
+  "observability": {
+    "enabled": true
   },
+  // Named envs fully override the top-level config (they don't merge), so
+  // `migrations` and `durable_objects` are duplicated below. Top-level
+  // DO/migrations blocks are intentionally omitted: every deploy in CI
+  // uses `--env <name>`, and we don't want a bare `wrangler deploy` to
+  // silently land on the unrouted default worker.
   "env": {
-    "staging": {
+    // Per-PR preview workers (`mcpjam-mcp-pr-<n>`) deploy with this env.
+    // No custom-domain routes — they're exclusive per worker, so sharing
+    // `env.staging` would cause every PR deploy to conflict with the live
+    // staging worker on `mcp-staging.mcpjam.com`.
+    "preview": {
       "workers_dev": true,
       "migrations": [
         {
@@ -35,9 +33,54 @@
           }
         ]
       }
+    },
+    "staging": {
+      "workers_dev": false,
+      "routes": [
+        {
+          "pattern": "mcp-staging.mcpjam.com",
+          "custom_domain": true
+        }
+      ],
+      "migrations": [
+        {
+          "tag": "v1",
+          "new_sqlite_classes": ["McpJamMcpServer"]
+        }
+      ],
+      "durable_objects": {
+        "bindings": [
+          {
+            "class_name": "McpJamMcpServer",
+            "name": "MCP_OBJECT"
+          }
+        ]
+      }
+    },
+    // Production config is ready but no workflow deploys it yet — prod
+    // rollout is a deliberate future step.
+    "production": {
+      "workers_dev": false,
+      "routes": [
+        {
+          "pattern": "mcp.mcpjam.com",
+          "custom_domain": true
+        }
+      ],
+      "migrations": [
+        {
+          "tag": "v1",
+          "new_sqlite_classes": ["McpJamMcpServer"]
+        }
+      ],
+      "durable_objects": {
+        "bindings": [
+          {
+            "class_name": "McpJamMcpServer",
+            "name": "MCP_OBJECT"
+          }
+        ]
+      }
     }
-  },
-  "observability": {
-    "enabled": true
   }
 }
