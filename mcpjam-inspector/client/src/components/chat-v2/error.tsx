@@ -89,6 +89,7 @@ export function ErrorBox({
           {isPlatformError && (
             <p className="text-xs opacity-75 mt-0.5">
               This is a temporary issue on our end.
+              {code ? ` (${code})` : null}
             </p>
           )}
         </div>
