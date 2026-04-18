@@ -45,12 +45,12 @@ export function ChatboxUsagePanel({ chatbox }: ChatboxUsagePanelProps) {
   // Synchronous latch so double-clicks can't queue two concurrent rebuilds
   // before React commits `rebuildBusy`.
   const rebuildInFlightRef = useRef(false);
-  // Mirror of the current chatbox id so the rebuild `finally` block can
-  // tell whether its owning chatbox is still selected before clearing
-  // the latch — prevents a stale A-rebuild from unlocking B's in-flight
-  // rebuild if the user swaps chatboxes mid-request.
-  const chatboxIdRef = useRef(chatbox.chatboxId);
-  chatboxIdRef.current = chatbox.chatboxId;
+  // Monotonic nonce identifying the currently-owning rebuild invocation.
+  // Each call to `handleRebuild` bumps this; the invocation captures its
+  // own value, and its `finally` only clears the latch when that nonce
+  // still matches — so a stale A-rebuild resolving after B or a later
+  // same-chatbox rebuild has started never unlocks the new one.
+  const rebuildNonceRef = useRef(0);
 
   const selectedThreadId =
     selection.chatboxId === chatbox.chatboxId ? selection.threadId : null;
@@ -76,8 +76,9 @@ export function ChatboxUsagePanel({ chatbox }: ChatboxUsagePanelProps) {
     setFilter(EMPTY_USAGE_FILTER);
     // Reset rebuild state too — an in-flight rebuild belongs to the previous
     // chatbox and shouldn't keep this one's button disabled. The old promise
-    // still resolves; its result just gets ignored because it points at a
-    // stale chatbox id.
+    // still resolves; its nonce no longer matches so its `finally` is a
+    // silent no-op.
+    rebuildNonceRef.current += 1;
     rebuildInFlightRef.current = false;
     setRebuildBusy(false);
   }, [chatbox.chatboxId]);
@@ -116,17 +117,17 @@ export function ChatboxUsagePanel({ chatbox }: ChatboxUsagePanelProps) {
 
   const handleRebuild = useCallback(async () => {
     if (rebuildInFlightRef.current) return;
-    // Stamp this invocation with the current chatbox id. If the user
-    // switches chatboxes before the promise settles, the chatbox-change
-    // effect clears the latch; this `finally` must only clear it when the
-    // request we're awaiting is still the active one — otherwise a stale
-    // A-chatbox rebuild's `finally` would clobber B-chatbox's in-flight
-    // latch and let a user double-trigger.
-    const rebuildingChatboxId = chatbox.chatboxId;
+    // Bump the nonce and capture it. The `finally` compares against the
+    // current nonce: any later invocation (A→B→A→rebuild-again, or just
+    // same-chatbox trigger-again after a chatbox-switch reset) bumps the
+    // counter, so the earlier promise's `finally` finds a mismatch and
+    // leaves the latch alone for the live rebuild.
+    rebuildNonceRef.current += 1;
+    const myNonce = rebuildNonceRef.current;
     rebuildInFlightRef.current = true;
     setRebuildBusy(true);
     try {
-      const result = await rebuild({ chatboxId: rebuildingChatboxId });
+      const result = await rebuild({ chatboxId: chatbox.chatboxId });
       if (result.alreadyRunning) {
         toast.info("A rebuild is already running");
       } else {
@@ -139,7 +140,7 @@ export function ChatboxUsagePanel({ chatbox }: ChatboxUsagePanelProps) {
           : "Rebuild failed. Try again in a few minutes.",
       );
     } finally {
-      if (chatboxIdRef.current === rebuildingChatboxId) {
+      if (rebuildNonceRef.current === myNonce) {
         rebuildInFlightRef.current = false;
         setRebuildBusy(false);
       }
