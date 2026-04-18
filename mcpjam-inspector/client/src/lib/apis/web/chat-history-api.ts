@@ -59,10 +59,27 @@ export interface ChatHistoryWidgetSnapshot {
   widgetHtmlUrl?: string | null;
 }
 
+export interface ChatHistoryTurnTrace {
+  turnId: string;
+  promptIndex: number;
+  startedAt: number;
+  endedAt: number;
+  finishReason?: string;
+  usage?: {
+    inputTokens?: number;
+    outputTokens?: number;
+    totalTokens?: number;
+  };
+  spanCount: number;
+  modelId?: string;
+  spansBlobUrl?: string | null;
+}
+
 export interface ChatHistoryDetailResponse {
   ok: boolean;
   session: ChatHistoryDetailSession;
   widgetSnapshots?: ChatHistoryWidgetSnapshot[];
+  turnTraces?: ChatHistoryTurnTrace[];
 }
 
 export interface GenerateWidgetSnapshotUploadUrlRequest {

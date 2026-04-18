@@ -1,11 +1,14 @@
 /**
  * MCP staging drift tile.
  *
- * The MCP Cloudflare Worker has no production environment today — only
- * `mcpjam-mcp-staging`, auto-deployed by deploy-mcp-staging.yml on every
- * push to main. So the Deploy Diff shape (staging vs prod) doesn't apply.
- * Instead, this tile answers: "what SHA is live on staging, and how many
- * main commits are ahead of it?"
+ * MCP production (mcp.mcpjam.com) deploys via deploy-mcp-prod.yml, which
+ * is gated on a green deploy-mcp-staging.yml run for the same main SHA —
+ * so "staging in sync with main" is the promotion-readiness signal. That
+ * means this tile shows staging vs. main (not staging vs. prod like the
+ * Inspector/Backend tiles): the staging worker is the promotion candidate
+ * for production, and main is what the next staging deploy would ship.
+ * Question answered: "what SHA is live on staging, and how many main
+ * commits are ahead of it?"
  *
  * Data:
  *   - `live SHA` = `head_sha` of the latest successful `deploy-mcp-staging.yml`
