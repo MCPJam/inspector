@@ -81,9 +81,17 @@ describe("web routes — chat-v2 hosted mode", () => {
     emitConstructorRpcLogMock.mockReset();
 
     handleMCPJamFreeChatModelMock.mockImplementation(async (options: any) => {
-      await options.onConversationComplete?.([
-        { role: "user", content: "preview request" },
-      ]);
+      await options.onConversationComplete?.(
+        [{ role: "user", content: "preview request" }],
+        {
+          turnId: "trace_turn_test",
+          promptIndex: 0,
+          startedAt: 1,
+          endedAt: 2,
+          spans: [],
+          modelId: "test-model",
+        },
+      );
       options.onStreamComplete?.();
       return new Response("ok", { status: 200 });
     });
