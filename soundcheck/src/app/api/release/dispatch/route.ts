@@ -151,19 +151,24 @@ export async function POST(request: Request) {
     );
   }
 
-  // ── 4. Audit log (Railway stdout + WorkOS sign-in covers the who) ───
+  // ── 4. Audit log (intent) ───────────────────────────────────────────
+  // Recorded *before* dispatch so we still have an audit trail if the
+  // server crashes mid-flight. A second entry after dispatch carries the
+  // actual outcome — anything reasoning about what *landed* should read
+  // the "outcome" event, not this one.
+  const attemptedWorkflows = [
+    runsRelease ? "release.yml" : null,
+    runsMcp ? "deploy-mcp-prod.yml" : null
+  ].filter(Boolean) as string[];
   console.info(
     JSON.stringify({
-      event: "soundcheck.release.dispatch",
+      event: "soundcheck.release.dispatch.attempt",
       email: user.email,
       scope: parsed.scope,
       deploy_backend_prod: parsed.deploy_backend_prod,
       promote_production: parsed.promote_production,
       deploy_mcp_production: parsed.deploy_mcp_production,
-      workflows_dispatched: [
-        runsRelease ? "release.yml" : null,
-        runsMcp ? "deploy-mcp-prod.yml" : null
-      ].filter(Boolean)
+      workflows_attempted: attemptedWorkflows
     })
   );
 
@@ -226,6 +231,22 @@ export async function POST(request: Request) {
 
   const failed = results.filter((r) => !r.ok);
   const succeeded = results.filter((r) => r.ok);
+
+  // ── 6. Audit log (outcome) ──────────────────────────────────────────
+  // Use a distinct event key so log queries looking for *what actually
+  // landed* don't collide with the intent entry above. Anyone reasoning
+  // about ground truth reads this one.
+  console.info(
+    JSON.stringify({
+      event: "soundcheck.release.dispatch.outcome",
+      email: user.email,
+      scope: parsed.scope,
+      workflows_attempted: attemptedWorkflows,
+      workflows_succeeded: succeeded.map((r) => r.workflow),
+      workflows_failed: failed.map((r) => r.workflow)
+    })
+  );
+
   if (failed.length === results.length) {
     return NextResponse.json(
       {

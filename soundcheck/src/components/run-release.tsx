@@ -62,6 +62,7 @@ export function RunRelease() {
   const [feedback, setFeedback] = useState<
     | { kind: "idle" }
     | { kind: "ok"; message: string }
+    | { kind: "partial"; message: string }
     | { kind: "error"; message: string }
   >({ kind: "idle" });
   const [isPending, startTransition] = useTransition();
@@ -112,7 +113,11 @@ export function RunRelease() {
             deploy_mcp_production: deployMcp
           })
         });
-        const json = (await res.json()) as { error?: string; message?: string };
+        const json = (await res.json()) as {
+          error?: string;
+          message?: string;
+          partial?: boolean;
+        };
         if (!res.ok) {
           setFeedback({
             kind: "error",
@@ -122,7 +127,7 @@ export function RunRelease() {
           return;
         }
         setFeedback({
-          kind: "ok",
+          kind: json.partial ? "partial" : "ok",
           message:
             json.message ??
             "Dispatched. The progress tile should pick it up shortly."
@@ -256,6 +261,12 @@ export function RunRelease() {
               <span className="text-xs text-muted-foreground">
                 {feedback.message}
               </span>
+            </>
+          ) : null}
+          {feedback.kind === "partial" ? (
+            <>
+              <Badge tone="warning">partial</Badge>
+              <span className="text-xs text-warning">{feedback.message}</span>
             </>
           ) : null}
           {feedback.kind === "error" ? (
