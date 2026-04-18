@@ -74,7 +74,7 @@ const LOOKBACK_DAYS = 7;
 export function DeployFailuresSkeleton() {
   return (
     <Tile title="Recent failures" eyebrow="Scanning workflows">
-      <p className="text-sm text-ink-400">Scanning workflows…</p>
+      <p className="text-sm text-muted-foreground">Scanning workflows…</p>
     </Tile>
   );
 }
@@ -111,7 +111,7 @@ export async function DeployFailures() {
       }
       accent={accent}
     >
-      <ul className="-mt-2 divide-y divide-ink-800/60">
+      <ul className="-mt-2 divide-y divide-border">
         {rows.map((row) => (
           <FailureRow key={row.target.label} row={row} />
         ))}
@@ -166,9 +166,9 @@ function FailureRow({ row }: { row: Row }) {
     return (
       <li className="flex items-center gap-3 py-3">
         <Badge tone="success">ok</Badge>
-        <div className="text-sm text-ink-300">
-          <span className="text-ink-100">{row.target.label}</span>
-          <span className="ml-2 text-ink-500">
+        <div className="text-sm text-muted-foreground">
+          <span className="text-foreground">{row.target.label}</span>
+          <span className="ml-2 text-muted-foreground">
             — no failures in the last {LOOKBACK_DAYS}d
           </span>
         </div>
@@ -179,9 +179,9 @@ function FailureRow({ row }: { row: Row }) {
     return (
       <li className="flex items-center gap-3 py-3">
         <Badge tone="warning">error</Badge>
-        <div className="text-sm text-ink-300">
-          <span className="text-ink-100">{row.target.label}</span>
-          <span className="ml-2 text-ink-500">— {row.message}</span>
+        <div className="text-sm text-muted-foreground">
+          <span className="text-foreground">{row.target.label}</span>
+          <span className="ml-2 text-muted-foreground">— {row.message}</span>
         </div>
       </li>
     );
@@ -195,14 +195,14 @@ function FailureRow({ row }: { row: Row }) {
     <li className="space-y-2 py-4">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-sm">
         <Badge tone="failure">{run.conclusion ?? "failed"}</Badge>
-        <span className="font-medium text-ink-100">{row.target.label}</span>
-        <span className="text-xs text-ink-500">
+        <span className="font-medium text-foreground">{row.target.label}</span>
+        <span className="text-xs text-muted-foreground">
           run{" "}
           <a
             href={run.htmlUrl}
             target="_blank"
             rel="noreferrer"
-            className="text-ink-200 hover:text-signal-wait hover:underline underline-offset-4 decoration-ink-600"
+            className="text-foreground hover:text-primary hover:underline underline-offset-4 decoration-border"
           >
             #{run.id}
           </a>{" "}
@@ -210,40 +210,40 @@ function FailureRow({ row }: { row: Row }) {
           <Sha sha={shortSha(run.headSha)} />
           {run.actor ? (
             <>
-              {" "}· by <span className="text-ink-200">{run.actor}</span>
+              {" "}· by <span className="text-foreground">{run.actor}</span>
             </>
           ) : null}
         </span>
       </div>
 
       {failingJob ? (
-        <div className="text-xs text-ink-400">
+        <div className="text-xs text-muted-foreground">
           <a
             href={failingJob.htmlUrl}
             target="_blank"
             rel="noreferrer"
-            className="font-mono text-ink-100 hover:text-signal-wait hover:underline underline-offset-4 decoration-ink-600"
+            className="font-mono text-foreground hover:text-primary hover:underline underline-offset-4 decoration-border"
           >
             {failingJob.name}
           </a>
           {failingStep ? (
             <>
               {" "}failed at step {failingStep.number}:{" "}
-              <span className="text-ink-100">{failingStep.name}</span>
+              <span className="text-foreground">{failingStep.name}</span>
             </>
           ) : null}
         </div>
       ) : null}
 
       {annotations.length > 0 ? (
-        <ul className="space-y-0.5 rounded-lg border border-signal-stop/20 bg-signal-stop/5 p-3">
+        <ul className="space-y-0.5 rounded-lg border border-destructive/30 bg-destructive/10 p-3">
           {annotations.slice(0, 6).map((a, i) => (
             <li
               key={i}
-              className="font-mono text-[11px] leading-tight text-signal-stop"
+              className="font-mono text-[11px] leading-tight text-destructive"
             >
               {a.path ? (
-                <span className="text-signal-stop/70">
+                <span className="text-destructive/70">
                   {a.path}
                   {a.startLine ? `:${a.startLine}` : ""}:{" "}
                 </span>
@@ -253,7 +253,7 @@ function FailureRow({ row }: { row: Row }) {
             </li>
           ))}
           {annotations.length > 6 ? (
-            <li className="text-[11px] italic text-ink-500">
+            <li className="text-[11px] italic text-muted-foreground">
               + {annotations.length - 6} more — see full logs
             </li>
           ) : null}
