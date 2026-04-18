@@ -229,20 +229,23 @@ function JobStepper({ jobs }: { jobs: WorkflowJob[] }) {
   const known = JOB_ORDER.map((n) => ({ name: n, job: byName.get(n) ?? null }));
   const unknown = jobs.filter((j) => !JOB_ORDER.includes(j.name));
 
+  // Rail sits in a positioning wrapper so the <ol> only contains <li> children
+  // (valid list semantics for a11y trees / screen readers).
   return (
-    <ol className="relative space-y-0.5">
-      {/* connecting rail behind the dots */}
+    <div className="relative">
       <div
         className="pointer-events-none absolute bottom-2 left-[3px] top-2 w-px bg-border"
         aria-hidden
       />
-      {known.map(({ name, job }) => (
-        <JobRow key={name} name={name} job={job} />
-      ))}
-      {unknown.map((job) => (
-        <JobRow key={job.name} name={job.name} job={job} />
-      ))}
-    </ol>
+      <ol className="relative space-y-0.5">
+        {known.map(({ name, job }) => (
+          <JobRow key={name} name={name} job={job} />
+        ))}
+        {unknown.map((job) => (
+          <JobRow key={job.name} name={job.name} job={job} />
+        ))}
+      </ol>
+    </div>
   );
 }
 
