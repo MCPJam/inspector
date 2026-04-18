@@ -3,7 +3,7 @@ import { render, screen } from "@testing-library/react";
 import type { ReactElement } from "react";
 import { ThinkingIndicator } from "../shared/thinking-indicator";
 import type { ModelDefinition } from "@/shared/types";
-import { SandboxHostStyleProvider } from "@/contexts/sandbox-host-style-context";
+import { ChatboxHostStyleProvider } from "@/contexts/chatbox-host-style-context";
 import { PreferencesStoreProvider } from "@/stores/preferences/preferences-provider";
 
 const mockUseReducedMotion = vi.hoisted(() => vi.fn(() => false));
@@ -48,11 +48,11 @@ describe("ThinkingIndicator", () => {
     expect(screen.getByLabelText("GPT-4 assistant")).toBeInTheDocument();
   });
 
-  it("hides the leading assistant avatar in sandbox host-style contexts", () => {
+  it("hides the leading assistant avatar in chatbox host-style contexts", () => {
     renderThinkingIndicator(
-      <SandboxHostStyleProvider value="claude">
+      <ChatboxHostStyleProvider value="claude">
         <ThinkingIndicator model={defaultModel} resolvedVariant="default" />
-      </SandboxHostStyleProvider>,
+      </ChatboxHostStyleProvider>,
     );
 
     expect(screen.queryByRole("img")).not.toBeInTheDocument();

@@ -181,6 +181,36 @@ describe("filterByFeatureFlags", () => {
       "OAuth Debugger",
     ]);
   });
+
+  it("keeps Chatboxes behind the existing sandboxes flag", () => {
+    const sections = [
+      {
+        id: "connection",
+        items: [
+          {
+            title: "Chatboxes",
+            url: "#chatboxes",
+            icon: FakeIcon,
+            featureFlag: "sandboxes-enabled",
+          },
+        ],
+      },
+    ];
+
+    expect(
+      filterByFeatureFlags(sections, { "sandboxes-enabled": true })[0].items,
+    ).toEqual([
+      {
+        title: "Chatboxes",
+        url: "#chatboxes",
+        icon: FakeIcon,
+        featureFlag: "sandboxes-enabled",
+      },
+    ]);
+    expect(
+      filterByFeatureFlags(sections, { "sandboxes-enabled": false }),
+    ).toHaveLength(0);
+  });
 });
 
 describe("applyBillingGateNavState", () => {

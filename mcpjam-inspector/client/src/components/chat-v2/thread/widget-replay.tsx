@@ -13,8 +13,8 @@ import {
   readToolResultMeta,
   readToolResultServerId,
 } from "@/lib/tool-result-utils";
-import { useSandboxHostStyle } from "@/contexts/sandbox-host-style-context";
-import { getSandboxProtocolOverride } from "@/lib/sandbox-host-style";
+import { useChatboxHostStyle } from "@/contexts/chatbox-host-style-context";
+import { getChatboxProtocolOverride } from "@/lib/chatbox-host-style";
 import type { DisplayMode } from "@/stores/ui-playground-store";
 
 export interface WidgetReplayProps {
@@ -83,10 +83,10 @@ export function WidgetReplay({
   selectedProtocolOverrideIfBothExists,
   minimalMode = false,
 }: WidgetReplayProps) {
-  const sandboxHostStyle = useSandboxHostStyle();
+  const chatboxHostStyle = useChatboxHostStyle();
   const protocolOverride =
     selectedProtocolOverrideIfBothExists ??
-    getSandboxProtocolOverride(sandboxHostStyle) ??
+    getChatboxProtocolOverride(chatboxHostStyle) ??
     UIType.OPENAI_SDK;
   const effectiveToolMeta =
     renderOverride?.toolMetadata ??

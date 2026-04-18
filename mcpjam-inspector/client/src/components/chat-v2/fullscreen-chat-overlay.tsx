@@ -5,9 +5,9 @@ import type { UIMessage } from "@ai-sdk/react";
 import { ArrowUp, ChevronDown, ChevronUp, Square } from "lucide-react";
 
 import {
-  useSandboxHostStyle,
-  useSandboxHostTheme,
-} from "@/contexts/sandbox-host-style-context";
+  useChatboxHostStyle,
+  useChatboxHostTheme,
+} from "@/contexts/chatbox-host-style-context";
 import { CHATGPT_CHAT_BACKGROUND } from "@/config/chatgpt-host-context";
 import { CLAUDE_DESKTOP_CHAT_BACKGROUND } from "@/config/claude-desktop-host-context";
 import { cn } from "@/lib/utils";
@@ -40,43 +40,43 @@ function getMessagePreviewText(message: UIMessage): string {
 }
 
 function getFullscreenChatAppearance(
-  sandboxHostStyle: "claude" | "chatgpt" | null,
-  isDarkSandboxTheme: boolean,
+  chatboxHostStyle: "claude" | "chatgpt" | null,
+  isDarkChatboxTheme: boolean,
 ) {
   return {
     composerClassName:
-      sandboxHostStyle === "chatgpt"
+      chatboxHostStyle === "chatgpt"
         ? cn(
-            "sandbox-host-composer rounded-[1.75rem]",
-            isDarkSandboxTheme
+            "chatbox-host-composer rounded-[1.75rem]",
+            isDarkChatboxTheme
               ? "border border-white/10 shadow-[0_1px_2px_rgba(0,0,0,0.28),0_4px_24px_rgba(130,130,130,0.14)]"
               : "border border-neutral-200/90 shadow-[0_1px_2px_rgba(0,0,0,0.04),0_4px_22px_rgba(100,100,100,0.08)]",
           )
-        : sandboxHostStyle === "claude"
+        : chatboxHostStyle === "claude"
           ? cn(
-              "sandbox-host-composer rounded-[1.35rem]",
-              isDarkSandboxTheme
+              "chatbox-host-composer rounded-[1.35rem]",
+              isDarkChatboxTheme
                 ? "border-[#4b463d] shadow-[0_1px_2px_rgba(0,0,0,0.28),0_4px_22px_rgba(120,120,120,0.12)]"
                 : "border border-[#DFDFDB] shadow-[0_1px_2px_rgba(0,0,0,0.05),0_4px_20px_rgba(110,110,110,0.08)]",
             )
           : "rounded-full border border-border/40 bg-background/95 backdrop-blur-xl",
     activeSubmitButtonClassName:
-      sandboxHostStyle === "chatgpt"
-        ? isDarkSandboxTheme
+      chatboxHostStyle === "chatgpt"
+        ? isDarkChatboxTheme
           ? "bg-[#f4f4f4] text-[#1f1f1f] hover:bg-[#e8e8e8]"
           : "bg-[#1f1f1f] text-white hover:bg-[#303030]"
-        : sandboxHostStyle === "claude"
-          ? isDarkSandboxTheme
+        : chatboxHostStyle === "claude"
+          ? isDarkChatboxTheme
             ? "bg-[#d07b53] text-[#fff7f0] hover:bg-[#c06f49]"
             : "bg-[#e27d47] text-white hover:bg-[#d16f3d]"
           : "bg-primary text-primary-foreground hover:bg-primary/90",
     inactiveSubmitButtonClassName:
-      sandboxHostStyle === "chatgpt"
-        ? isDarkSandboxTheme
+      chatboxHostStyle === "chatgpt"
+        ? isDarkChatboxTheme
           ? "bg-[#3a3a3a] text-[#8a8a8a] cursor-not-allowed"
           : "bg-[#e7e7e7] text-[#9b9b9b] cursor-not-allowed"
-        : sandboxHostStyle === "claude"
-          ? isDarkSandboxTheme
+        : chatboxHostStyle === "claude"
+          ? isDarkChatboxTheme
             ? "bg-[#45413b] text-[#8d857a] cursor-not-allowed"
             : "bg-[#ebe5dc] text-[#b6ada0] cursor-not-allowed"
           : "bg-muted text-muted-foreground cursor-not-allowed",
@@ -84,14 +84,14 @@ function getFullscreenChatAppearance(
 }
 
 function getFullscreenSurfaceStyle(
-  sandboxHostStyle: "claude" | "chatgpt" | null,
+  chatboxHostStyle: "claude" | "chatgpt" | null,
   resolvedThemeMode: "light" | "dark",
 ): CSSProperties | undefined {
-  if (sandboxHostStyle === "chatgpt") {
+  if (chatboxHostStyle === "chatgpt") {
     return { backgroundColor: CHATGPT_CHAT_BACKGROUND[resolvedThemeMode] };
   }
 
-  if (sandboxHostStyle === "claude") {
+  if (chatboxHostStyle === "claude") {
     return {
       backgroundColor: CLAUDE_DESKTOP_CHAT_BACKGROUND[resolvedThemeMode],
     };
@@ -395,20 +395,20 @@ export function FullscreenChatOverlay({
   onStop,
   onSend,
 }: FullscreenChatOverlayProps) {
-  const sandboxHostStyle = useSandboxHostStyle();
-  const sandboxHostTheme = useSandboxHostTheme();
+  const chatboxHostStyle = useChatboxHostStyle();
+  const chatboxHostTheme = useChatboxHostTheme();
   const resolvedLoadingIndicatorVariant = useResolvedLoadingIndicatorVariant(
     loadingIndicatorVariant,
   );
-  const resolvedThemeMode = sandboxHostTheme ?? "light";
-  const isDarkSandboxTheme = resolvedThemeMode === "dark";
+  const resolvedThemeMode = chatboxHostTheme ?? "light";
+  const isDarkChatboxTheme = resolvedThemeMode === "dark";
   const appearance = useMemo(
-    () => getFullscreenChatAppearance(sandboxHostStyle, isDarkSandboxTheme),
-    [sandboxHostStyle, isDarkSandboxTheme],
+    () => getFullscreenChatAppearance(chatboxHostStyle, isDarkChatboxTheme),
+    [chatboxHostStyle, isDarkChatboxTheme],
   );
   const surfaceStyle = useMemo(
-    () => getFullscreenSurfaceStyle(sandboxHostStyle, resolvedThemeMode),
-    [sandboxHostStyle, resolvedThemeMode],
+    () => getFullscreenSurfaceStyle(chatboxHostStyle, resolvedThemeMode),
+    [chatboxHostStyle, resolvedThemeMode],
   );
 
   return (
