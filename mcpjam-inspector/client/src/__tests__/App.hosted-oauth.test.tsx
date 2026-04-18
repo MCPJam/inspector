@@ -488,7 +488,7 @@ describe("App hosted OAuth callback handling", () => {
     localStorage.removeItem("mcp-oauth-pending");
     localStorage.removeItem("mcp-serverUrl-asana");
     window.history.replaceState({}, "", "/callback");
-    writeChatboxSignInReturnPath("/#asaan");
+    writeChatboxSignInReturnPath("/chatbox/asana/token-123");
     mockConvexAuthState.isAuthenticated = false;
     mockConvexAuthState.isLoading = false;
     mockWorkOsAuthState.user = null;
@@ -504,7 +504,7 @@ describe("App hosted OAuth callback handling", () => {
       screen.queryByTestId("callback-auth-timeout"),
     ).not.toBeInTheDocument();
     expect(mockWorkOsAuthState.signIn).not.toHaveBeenCalled();
-    expect(readChatboxSignInReturnPath()).toBe("/#asaan");
+    expect(readChatboxSignInReturnPath()).toBe("/chatbox/asana/token-123");
   });
 
   it("clears stale client auth state before retrying a timed-out callback", async () => {
@@ -561,9 +561,11 @@ describe("App hosted OAuth callback handling", () => {
         screen.getByRole("button", { name: "Try sign in again" }),
       );
 
-      await waitFor(() => {
-        expect(mockWorkOsAuthState.signIn).toHaveBeenCalledTimes(1);
+      await act(async () => {
+        await Promise.resolve();
       });
+
+      expect(mockWorkOsAuthState.signIn).toHaveBeenCalledTimes(1);
 
       expect(window.location.pathname).toBe("/");
       expect(localStorage.getItem("mcp-oauth-pending")).toBeNull();
@@ -2219,7 +2221,7 @@ describe("App hosted OAuth callback handling", () => {
 
   it("redirects conformance to servers when the feature flag is disabled", async () => {
     clearHostedOAuthPendingState();
-    clearSandboxSession();
+    clearChatboxSession();
     window.history.replaceState({}, "", "/#/conformance");
     mockHandleOAuthCallback.mockReset();
 
