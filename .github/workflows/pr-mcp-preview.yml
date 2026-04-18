@@ -101,11 +101,17 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           gitHubToken: ${{ secrets.GITHUB_TOKEN }}
           workingDirectory: "mcp"
-          # `--env staging` uses the staging worker config (workers_dev,
-          # DO bindings, migrations); `--name` overrides the worker name
-          # so the deploy lands on a dedicated `mcpjam-mcp-pr-<n>` worker
-          # instead of overwriting the live staging one.
-          command: deploy --env staging --name mcpjam-mcp-pr-${{ github.event.pull_request.number }}
+          # `--env preview` uses the preview worker config (workers_dev=true,
+          # no custom-domain routes, DO bindings, migrations); `--name`
+          # overrides the worker name so the deploy lands on a dedicated
+          # `mcpjam-mcp-pr-<n>` worker.
+          #
+          # We deliberately do NOT use `--env staging` here: staging carries
+          # an exclusive `custom_domain: true` binding on
+          # `mcp-staging.mcpjam.com`, and inheriting it from the PR preview
+          # deploy would make every PR fight the live staging worker for
+          # that hostname.
+          command: deploy --env preview --name mcpjam-mcp-pr-${{ github.event.pull_request.number }}
 
       - name: Smoke test preview URL
         env:

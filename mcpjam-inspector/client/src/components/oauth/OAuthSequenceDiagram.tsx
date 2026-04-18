@@ -6,7 +6,7 @@ import type {
 } from "@mcpjam/sdk/browser";
 import { buildOAuthSequenceActions } from "@mcpjam/sdk/browser";
 import { OAuthSequenceDiagramContent } from "@/components/oauth/shared/OAuthSequenceDiagramContent";
-import { Button } from "@/components/ui/button";
+import { Button } from "@mcpjam/design-system/button";
 import { Settings } from "lucide-react";
 
 interface OAuthSequenceDiagramProps {

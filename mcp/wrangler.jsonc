@@ -4,23 +4,85 @@
   "main": "src/index.ts",
   "compatibility_date": "2025-03-10",
   "compatibility_flags": ["nodejs_compat"],
-  "migrations": [
-    {
-      "tag": "v1",
-      "new_sqlite_classes": ["McpJamMcpServer"]
-    }
-  ],
-  "durable_objects": {
-    "bindings": [
-      {
-        "class_name": "McpJamMcpServer",
-        "name": "MCP_OBJECT"
-      }
-    ]
+  "observability": {
+    "enabled": true
   },
+  // Non-inheritable keys (durable_objects, migrations, routes,
+  // workers_dev, vars, and bindings generally) must be specified per
+  // env. Inheritable ones — main, compatibility_date,
+  // compatibility_flags, observability — flow down from the top level
+  // (see https://developers.cloudflare.com/workers/wrangler/configuration/).
+  // Top-level DO/migrations/vars blocks are intentionally omitted so a
+  // bare `wrangler deploy` (no `--env`) can't silently land on an
+  // unrouted default worker; every CI deploy passes `--env <name>`.
   "env": {
-    "staging": {
+    // Per-PR preview workers (`mcpjam-mcp-pr-<n>`) deploy with this env.
+    // No custom-domain routes — they're exclusive per worker, so sharing
+    // `env.staging` would cause every PR deploy to conflict with the live
+    // staging worker on `mcp-staging.mcpjam.com`. Points at the staging
+    // AuthKit/Convex targets so preview workers behave like staging.
+    "preview": {
       "workers_dev": true,
+      "vars": {
+        "AUTHKIT_DOMAIN": "dynamic-echo-14-staging.authkit.app",
+        "CONVEX_URL": "https://proper-clownfish-150.convex.cloud"
+      },
+      "migrations": [
+        {
+          "tag": "v1",
+          "new_sqlite_classes": ["McpJamMcpServer"]
+        }
+      ],
+      "durable_objects": {
+        "bindings": [
+          {
+            "class_name": "McpJamMcpServer",
+            "name": "MCP_OBJECT"
+          }
+        ]
+      }
+    },
+    "staging": {
+      "workers_dev": false,
+      "routes": [
+        {
+          "pattern": "mcp-staging.mcpjam.com",
+          "custom_domain": true
+        }
+      ],
+      "vars": {
+        "AUTHKIT_DOMAIN": "dynamic-echo-14-staging.authkit.app",
+        "CONVEX_URL": "https://proper-clownfish-150.convex.cloud"
+      },
+      "migrations": [
+        {
+          "tag": "v1",
+          "new_sqlite_classes": ["McpJamMcpServer"]
+        }
+      ],
+      "durable_objects": {
+        "bindings": [
+          {
+            "class_name": "McpJamMcpServer",
+            "name": "MCP_OBJECT"
+          }
+        ]
+      }
+    },
+    // Production config is ready but no workflow deploys it yet — prod
+    // rollout is a deliberate future step.
+    "production": {
+      "workers_dev": false,
+      "routes": [
+        {
+          "pattern": "mcp.mcpjam.com",
+          "custom_domain": true
+        }
+      ],
+      "vars": {
+        "AUTHKIT_DOMAIN": "login.mcpjam.com",
+        "CONVEX_URL": "https://outstanding-fennec-304.convex.cloud"
+      },
       "migrations": [
         {
           "tag": "v1",
@@ -36,8 +98,5 @@
         ]
       }
     }
-  },
-  "observability": {
-    "enabled": true
   }
 }

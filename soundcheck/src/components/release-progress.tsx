@@ -48,7 +48,7 @@ const JOB_ORDER = [
 export function ReleaseProgressSkeleton() {
   return (
     <Tile title="Release progress" eyebrow="Checking…">
-      <p className="text-sm text-ink-400">Checking for an active run…</p>
+      <p className="text-sm text-muted-foreground">Checking for an active run…</p>
     </Tile>
   );
 }
@@ -78,7 +78,7 @@ export async function ReleaseProgress() {
   } catch (err) {
     return (
       <Tile title="Release progress" accent="failure">
-        <p className="text-sm text-signal-stop">
+        <p className="text-sm text-destructive">
           Failed to read workflow runs: {(err as Error).message}
         </p>
       </Tile>
@@ -98,7 +98,7 @@ export async function ReleaseProgress() {
     } catch (err) {
       return (
         <Tile title="Release progress" accent="failure">
-          <p className="text-sm text-signal-stop">
+          <p className="text-sm text-destructive">
             Failed to read workflow runs: {(err as Error).message}
           </p>
         </Tile>
@@ -107,7 +107,7 @@ export async function ReleaseProgress() {
     if (!last) {
       return (
         <Tile title="Release progress" eyebrow="No runs yet">
-          <p className="text-sm text-ink-400">
+          <p className="text-sm text-muted-foreground">
             No release.yml runs on record yet.
           </p>
         </Tile>
@@ -128,7 +128,7 @@ export async function ReleaseProgress() {
   } catch (err) {
     return (
       <Tile title="Release progress" accent="failure">
-        <p className="text-sm text-signal-stop">
+        <p className="text-sm text-destructive">
           Active run {activeRun.id}, but failed to read jobs: {(err as Error).message}
         </p>
       </Tile>
@@ -144,22 +144,22 @@ export async function ReleaseProgress() {
         <TileAction href={activeRun.htmlUrl}>Run #{activeRun.id}</TileAction>
       }
     >
-      <div className="mb-5 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-ink-400">
+      <div className="mb-5 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
         <Badge tone="running">running</Badge>
         <span>
-          <span className="font-mono text-ink-200">
+          <span className="font-mono text-foreground">
             {activeRun.headBranch ?? "main"}
           </span>{" "}
           @ <Sha sha={shortSha(activeRun.headSha)} />
         </span>
         {activeRun.actor ? (
-          <span className="text-ink-500">
+          <span className="text-muted-foreground">
             triggered by{" "}
-            <span className="text-ink-200">{activeRun.actor}</span>
+            <span className="text-foreground">{activeRun.actor}</span>
           </span>
         ) : null}
         {activeRun.runStartedAt ? (
-          <span className="text-ink-500">
+          <span className="text-muted-foreground">
             started {formatRelativeTime(activeRun.runStartedAt)}
           </span>
         ) : null}
@@ -189,29 +189,29 @@ function CompletedRunTile({ run }: { run: WorkflowRun }) {
     >
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-sm">
         <Badge tone={tone}>{run.conclusion ?? "unknown"}</Badge>
-        <span className="text-ink-200">
+        <span className="text-foreground">
           {run.displayTitle || "release.yml"}
         </span>
-        <span className="text-xs text-ink-400">
+        <span className="text-xs text-muted-foreground">
           on <Sha sha={shortSha(run.headSha)} />
         </span>
-        <span className="text-xs text-ink-500">
+        <span className="text-xs text-muted-foreground">
           finished {formatRelativeTime(run.updatedAt)}
         </span>
         {run.actor ? (
-          <span className="text-xs text-ink-500">
-            by <span className="text-ink-200">{run.actor}</span>
+          <span className="text-xs text-muted-foreground">
+            by <span className="text-foreground">{run.actor}</span>
           </span>
         ) : null}
       </div>
-      <p className="mt-4 text-xs leading-relaxed text-ink-400">
-        No release.yml run currently in flight. Trigger one from the panel in
+      <p className="mt-4 text-xs leading-relaxed text-muted-foreground">
+        No release.yml run currently in flight. Trigger one from the form in
         the previous section, or{" "}
         <a
           href={`https://github.com/${INSPECTOR.owner}/${INSPECTOR.repo}/actions/workflows/${RELEASE_WORKFLOW}`}
           target="_blank"
           rel="noreferrer"
-          className="text-ink-200 underline underline-offset-4 decoration-ink-600 hover:text-signal-wait"
+          className="text-foreground underline underline-offset-4 decoration-border hover:text-primary"
         >
           open on GitHub
         </a>
@@ -229,20 +229,23 @@ function JobStepper({ jobs }: { jobs: WorkflowJob[] }) {
   const known = JOB_ORDER.map((n) => ({ name: n, job: byName.get(n) ?? null }));
   const unknown = jobs.filter((j) => !JOB_ORDER.includes(j.name));
 
+  // Rail sits in a positioning wrapper so the <ol> only contains <li> children
+  // (valid list semantics for a11y trees / screen readers).
   return (
-    <ol className="relative space-y-0.5">
-      {/* connecting rail behind the dots */}
+    <div className="relative">
       <div
-        className="pointer-events-none absolute bottom-2 left-[3px] top-2 w-px bg-ink-800/80"
+        className="pointer-events-none absolute bottom-2 left-[3px] top-2 w-px bg-border"
         aria-hidden
       />
-      {known.map(({ name, job }) => (
-        <JobRow key={name} name={name} job={job} />
-      ))}
-      {unknown.map((job) => (
-        <JobRow key={job.name} name={job.name} job={job} />
-      ))}
-    </ol>
+      <ol className="relative space-y-0.5">
+        {known.map(({ name, job }) => (
+          <JobRow key={name} name={name} job={job} />
+        ))}
+        {unknown.map((job) => (
+          <JobRow key={job.name} name={job.name} job={job} />
+        ))}
+      </ol>
+    </div>
   );
 }
 
@@ -250,11 +253,11 @@ function JobRow({ name, job }: { name: string; job: WorkflowJob | null }) {
   if (!job) {
     return (
       <li className="relative flex items-center gap-3 py-1.5 pl-0 text-sm">
-        <span className="relative z-10 bg-[var(--bg-panel)] pr-0.5">
+        <span className="relative z-10 bg-card pr-0.5">
           <StatusDot tone="neutral" />
         </span>
-        <span className="font-mono text-xs text-ink-400">{name}</span>
-        <span className="text-[11px] uppercase tracking-wider text-ink-500">
+        <span className="font-mono text-xs text-muted-foreground">{name}</span>
+        <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
           pending
         </span>
       </li>
@@ -264,14 +267,14 @@ function JobRow({ name, job }: { name: string; job: WorkflowJob | null }) {
   const elapsed = formatElapsed(job.startedAt, job.completedAt);
   return (
     <li className="relative flex items-center gap-3 py-1.5 pl-0 text-sm">
-      <span className="relative z-10 bg-[var(--bg-panel)] pr-0.5">
+      <span className="relative z-10 bg-card pr-0.5">
         <StatusDot tone={tone} />
       </span>
       <a
         href={job.htmlUrl}
         target="_blank"
         rel="noreferrer"
-        className="font-mono text-xs text-ink-100 hover:text-signal-wait hover:underline underline-offset-4 decoration-ink-600"
+        className="font-mono text-xs text-foreground hover:text-primary hover:underline underline-offset-4 decoration-border"
       >
         {job.name}
       </a>
@@ -279,7 +282,7 @@ function JobRow({ name, job }: { name: string; job: WorkflowJob | null }) {
         {job.status === "completed" ? job.conclusion ?? "done" : job.status}
       </Badge>
       {elapsed ? (
-        <span className="font-mono text-[11px] text-ink-500 tabular-nums">
+        <span className="font-mono text-[11px] text-muted-foreground tabular-nums">
           {elapsed}
         </span>
       ) : null}
@@ -297,7 +300,7 @@ function FailingStep({ job }: { job: WorkflowJob }) {
   );
   if (!failing) return null;
   return (
-    <span className="text-xs text-signal-stop">
+    <span className="text-xs text-destructive">
       failed at step {failing.number}: {failing.name}
     </span>
   );

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { KeyboardEvent, MouseEvent } from "react";
-import { Card } from "@/components/ui/card";
+import { Card } from "@mcpjam/design-system/card";
 import { Check, ChevronDown, ChevronUp, Copy } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { ServerWithName } from "@/hooks/use-app-state";

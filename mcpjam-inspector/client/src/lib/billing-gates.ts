@@ -22,12 +22,12 @@ export interface BillingGateDefinition {
 }
 
 export const BILLING_GATES = {
-  sandboxes: {
-    gateKey: "sandboxes",
-    feature: "sandboxes",
+  chatboxes: {
+    gateKey: "chatboxes",
+    feature: "chatboxes",
   },
-  sandboxCreation: {
-    gateKey: "maxSandboxesPerWorkspace",
+  chatboxCreation: {
+    gateKey: "maxChatboxesPerWorkspace",
     feature: null,
   },
   memberInvites: {

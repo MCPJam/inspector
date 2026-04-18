@@ -1,34 +1,37 @@
 import { formatDistanceToNow } from "date-fns";
 import { AlertTriangle, MessageSquare, Sparkles } from "lucide-react";
 import { useMemo } from "react";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { ScrollArea } from "@mcpjam/design-system/scroll-area";
 import {
   compareThreadsForUsageList,
+  threadMatchesFilterState,
   threadMatchesUsageFilter,
   type UsageFilterState,
   type UsageSessionFilter,
-} from "@/hooks/sandbox-usage-filters";
+} from "@/hooks/chatbox-usage-filters";
 import {
   useSharedChatThreadList,
   type SharedChatThread,
 } from "@/hooks/useSharedChatThreads";
 
 interface ShareUsageThreadListProps {
-  /** Legacy: resolved internally when threads not provided (serverShare path). */
-  sourceType?: "sandbox" | "serverShare";
+  /** Optional: when `threads` is provided (chatbox Usage panel) these are unused. */
+  sourceType?: "chatbox" | "serverShare";
   sourceId?: string;
   selectedThreadId: string | null;
   onSelectThread: (threadId: string) => void;
-  /** Legacy preset-only filter, for non-sandbox callers. */
+  /** Legacy preset-only filter, for non-chatbox callers (ShareUsageDialog). */
   usageFilter?: UsageSessionFilter;
   /**
    * Preferred: pre-filtered, pre-sorted threads from the panel. When provided,
    * this list is rendered verbatim and the legacy hook call is skipped.
    */
   threads?: SharedChatThread[] | undefined;
+  /**
+   * Richer filter state used by the chatbox Usage panel for empty-state copy
+   * and, on the legacy internal-fetch path, to apply chip filters as well.
+   */
   filterState?: UsageFilterState;
-  onClearChip?: (key: string) => void;
-  chipKey?: (chip: UsageFilterState["chips"][number]) => string;
 }
 
 export function ShareUsageThreadList({
@@ -43,19 +46,20 @@ export function ShareUsageThreadList({
   const legacyThreads = useSharedChatThreadList(
     providedThreads === undefined && sourceType && sourceId
       ? { sourceType, sourceId }
-      : { sourceType: sourceType ?? "sandbox", sourceId: null },
+      : { sourceType: sourceType ?? "chatbox", sourceId: null },
   );
 
   const threads = useMemo(() => {
     if (providedThreads !== undefined) return providedThreads;
     const raw = legacyThreads.threads;
     if (raw === undefined) return undefined;
-    const filtered =
-      usageFilter === "all"
+    const filtered = filterState
+      ? raw.filter((t) => threadMatchesFilterState(t, filterState))
+      : usageFilter === "all"
         ? raw
         : raw.filter((t) => threadMatchesUsageFilter(t, usageFilter));
     return [...filtered].sort(compareThreadsForUsageList);
-  }, [providedThreads, legacyThreads.threads, usageFilter]);
+  }, [providedThreads, legacyThreads.threads, filterState, usageFilter]);
 
   if (threads === undefined) {
     return (

@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect } from "react";
 import { GitBranch, GitCommit, Clock, Loader2 } from "lucide-react";
 import { useQuery } from "convex/react";
-import { Badge } from "@/components/ui/badge";
+import { Badge } from "@mcpjam/design-system/badge";
 import type {
   CommitGroup,
   EvalSuiteRun,

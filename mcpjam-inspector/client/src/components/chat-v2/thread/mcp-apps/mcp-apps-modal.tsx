@@ -4,7 +4,7 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
+} from "@mcpjam/design-system/dialog";
 import {
   SandboxedIframe,
   SandboxedIframeHandle,

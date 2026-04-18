@@ -45,13 +45,13 @@ function Row({ row }: { row: CheckRow }) {
         <StatusDot tone={row.tone} />
       </span>
       <div className="min-w-0 flex-1">
-        <div className="text-sm text-ink-100">
+        <div className="text-sm text-foreground">
           {row.href ? (
             <a
               href={row.href}
               target="_blank"
               rel="noreferrer"
-              className="transition-colors group-hover:text-signal-wait hover:underline underline-offset-4 decoration-ink-700"
+              className="transition-colors group-hover:text-primary hover:underline underline-offset-4 decoration-border"
             >
               {row.label}
             </a>
@@ -59,7 +59,7 @@ function Row({ row }: { row: CheckRow }) {
             row.label
           )}
         </div>
-        <div className="mt-0.5 text-xs leading-relaxed text-ink-400">
+        <div className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
           {row.detail}
         </div>
       </div>
@@ -70,7 +70,7 @@ function Row({ row }: { row: CheckRow }) {
 export function ReleaseReadinessSkeleton() {
   return (
     <Tile title="Release readiness" eyebrow="Preflight mirror">
-      <p className="text-sm text-ink-400">Loading checks…</p>
+      <p className="text-sm text-muted-foreground">Loading checks…</p>
     </Tile>
   );
 }
@@ -239,7 +239,7 @@ export async function ReleaseReadiness() {
       eyebrow={summary}
       accent={accent}
     >
-      <ul className="-mt-1 divide-y divide-ink-800/60">
+      <ul className="-mt-1 divide-y divide-border">
         {rows.map((row, i) => (
           <Row key={i} row={row} />
         ))}

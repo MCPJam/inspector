@@ -2,12 +2,12 @@ import { useState } from "react";
 import { Check, Info } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { OpenRouterModel } from "@/types/model-metadata";
-import { Badge } from "@/components/ui/badge";
+import { Badge } from "@mcpjam/design-system/badge";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from "@/components/ui/tooltip";
+} from "@mcpjam/design-system/tooltip";
 import { getProviderLogo, getProviderColor } from "@/lib/provider-logos";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { ModelDetailsModal } from "./model-details-modal";

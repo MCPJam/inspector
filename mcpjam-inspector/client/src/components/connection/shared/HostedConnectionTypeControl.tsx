@@ -1,16 +1,16 @@
 import type { ReactNode } from "react";
 import { Check, ChevronDown } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Button } from "@mcpjam/design-system/button";
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
-} from "@/components/ui/popover";
+} from "@mcpjam/design-system/popover";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from "@/components/ui/tooltip";
+} from "@mcpjam/design-system/tooltip";
 import {
   getHostedTransportLabel,
   HOSTED_LOCAL_ONLY_TOOLTIP,

@@ -17,7 +17,7 @@ import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
-} from "@/components/ui/collapsible";
+} from "@mcpjam/design-system/collapsible";
 import { cn } from "@/lib/utils";
 import { TagBadges } from "./tag-editor";
 import type {

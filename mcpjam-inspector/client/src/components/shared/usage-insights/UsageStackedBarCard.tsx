@@ -1,11 +1,18 @@
 import { Bar, BarChart, CartesianGrid, Legend, XAxis, YAxis } from "recharts";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "@mcpjam/design-system/card";
 import {
   ChartContainer,
   ChartTooltip,
   ChartTooltipContent,
   type ChartConfig,
 } from "@/components/ui/chart";
+
+export type FeedbackBucketKey = "positive" | "neutral" | "negative" | "none";
 
 export type StackedDatum = {
   key: string;
@@ -20,7 +27,12 @@ interface UsageStackedBarCardProps {
   title: string;
   description?: string;
   data: StackedDatum[];
-  onSegmentClick?: (datum: StackedDatum) => void;
+  /**
+   * Called when a stacked segment is clicked. Receives both the visitor-segment
+   * datum and the specific feedback-bucket key so callers can add a precise
+   * `feedbackBucket` chip instead of filtering by the whole stack.
+   */
+  onSegmentClick?: (datum: StackedDatum, bucket: FeedbackBucketKey) => void;
   emptyState?: React.ReactNode;
 }
 
@@ -70,17 +82,17 @@ export function UsageStackedBarCard({
                 iconType="square"
               />
               {(["positive", "neutral", "negative", "none"] as const).map(
-                (key) => (
+                (bucketKey) => (
                   <Bar
-                    key={key}
-                    dataKey={key}
+                    key={bucketKey}
+                    dataKey={bucketKey}
                     stackId="feedback"
-                    fill={`var(--color-${key})`}
+                    fill={`var(--color-${bucketKey})`}
                     radius={0}
                     onClick={(payload) => {
                       if (!onSegmentClick) return;
                       const datum = payload?.payload as StackedDatum | undefined;
-                      if (datum) onSegmentClick(datum);
+                      if (datum) onSegmentClick(datum, bucketKey);
                     }}
                   />
                 ),

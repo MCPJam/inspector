@@ -2,10 +2,10 @@ import { useMutation, useQuery } from "convex/react";
 import type {
   UsageFilterState,
   UsageFilterChip,
-} from "@/hooks/sandbox-usage-filters";
+} from "@/hooks/chatbox-usage-filters";
 import type { SharedChatThread } from "@/hooks/useSharedChatThreads";
 
-export type InsightsSourceType = "sandbox" | "serverShare";
+export type InsightsSourceType = "chatbox" | "serverShare";
 
 export type FeedbackBucketCount = {
   segment: string;
@@ -46,15 +46,6 @@ export type UsageBreakdown = {
   latestRun: ClusterRunState | null;
 };
 
-export type ThemeCluster = {
-  _id: string;
-  label: string;
-  summary: string;
-  keywords: string[];
-  memberCount: number;
-  createdAt: number;
-};
-
 /**
  * Serializes a UsageFilterState to the Convex argument shape. We strip the
  * optional `label` on chips because the server doesn't need it (it's only for
@@ -81,12 +72,12 @@ export function useUsageInsights({
   sourceId: string | null;
   filters: UsageFilterState;
 }) {
-  // v1 only wires sandbox sources. ServerShare will reuse this hook by
+  // v1 only wires chatbox sources. ServerShare will reuse this hook by
   // swapping the underlying queries once the backend parity lands.
-  const sandboxArgs =
-    sourceType === "sandbox" && sourceId
+  const chatboxArgs =
+    sourceType === "chatbox" && sourceId
       ? ({
-          sandboxId: sourceId,
+          chatboxId: sourceId,
           limit: 100,
           includeInternal: true,
           filters: toServerFilters(filters),
@@ -94,50 +85,36 @@ export function useUsageInsights({
       : "skip";
 
   const breakdownArgs =
-    sourceType === "sandbox" && sourceId
+    sourceType === "chatbox" && sourceId
       ? ({
-          sandboxId: sourceId,
+          chatboxId: sourceId,
           filters: toServerFilters(filters),
         } as any)
       : "skip";
 
-  const clustersArgs =
-    sourceType === "sandbox" && sourceId
-      ? ({ sandboxId: sourceId } as any)
-      : "skip";
-
   const threads = useQuery(
-    "chatSessions:listBySandbox" as any,
-    sandboxArgs,
+    "chatSessions:listByChatbox" as any,
+    chatboxArgs,
   ) as SharedChatThread[] | undefined;
 
+  // `getUsageBreakdown` already carries `themes` + `latestRun`, so we don't
+  // subscribe to `listClustersByChatbox` — UsageInsightsStrip and the rebuild
+  // button both read everything they need from `breakdown`.
   const breakdown = useQuery(
     "chatSessions:getUsageBreakdown" as any,
     breakdownArgs,
   ) as UsageBreakdown | null | undefined;
 
-  const clusters = useQuery(
-    "chatSessions:listClustersBySandbox" as any,
-    clustersArgs,
-  ) as
-    | {
-        clusters: ThemeCluster[];
-        latestRun: ClusterRunState | null;
-      }
-    | null
-    | undefined;
-
   const rebuild = useMutation(
-    "chatSessions:rebuildSandboxInsights" as any,
+    "chatSessions:rebuildChatboxInsights" as any,
   ) as unknown as (args: {
-    sandboxId: string;
+    chatboxId: string;
     force?: boolean;
   }) => Promise<{ runId: string; status: ClusterRunStatus; alreadyRunning: boolean }>;
 
   return {
     threads,
     breakdown,
-    clusters,
     rebuild,
   };
 }

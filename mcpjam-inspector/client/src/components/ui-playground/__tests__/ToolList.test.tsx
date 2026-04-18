@@ -22,7 +22,7 @@ vi.mock("../../ui/search-input", () => ({
   ),
 }));
 
-vi.mock("../../ui/tooltip", () => ({
+vi.mock("@mcpjam/design-system/tooltip", () => ({
   Tooltip: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   TooltipTrigger: ({ children }: { children: React.ReactNode }) => (
     <>{children}</>

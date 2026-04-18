@@ -1,7 +1,7 @@
 import { type ReactNode, useRef, useEffect, useCallback } from "react";
 import { ArrowLeft } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
+import { Button } from "@mcpjam/design-system/button";
+import { Badge } from "@mcpjam/design-system/badge";
 
 interface ArticleShellProps {
   title: string;

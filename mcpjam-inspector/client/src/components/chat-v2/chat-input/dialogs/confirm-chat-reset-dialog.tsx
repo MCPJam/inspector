@@ -8,9 +8,9 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Label } from "@/components/ui/label";
+} from "@mcpjam/design-system/alert-dialog";
+import { Checkbox } from "@mcpjam/design-system/checkbox";
+import { Label } from "@mcpjam/design-system/label";
 
 const SKIP_CHAT_RESET_CONFIRMATION_KEY = "skipChatResetConfirmation";
 

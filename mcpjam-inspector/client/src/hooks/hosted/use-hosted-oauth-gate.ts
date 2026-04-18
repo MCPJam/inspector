@@ -175,7 +175,7 @@ export interface UseHostedOAuthGateOptions {
   servers: HostedOAuthServerDescriptor[];
   workspaceId?: string | null;
   shareToken?: string;
-  sandboxToken?: string;
+  chatboxToken?: string;
   isAuthenticated?: boolean;
 }
 
@@ -196,7 +196,7 @@ export function useHostedOAuthGate({
   servers,
   workspaceId,
   shareToken,
-  sandboxToken,
+  chatboxToken,
   isAuthenticated = false,
 }: UseHostedOAuthGateOptions): UseHostedOAuthGateResult {
   const oauthServers = useMemo(
@@ -379,7 +379,7 @@ export function useHostedOAuthGate({
         serverUrl: server.serverUrl,
         accessScope: isAuthenticated ? "chat_v2" : undefined,
         shareToken,
-        sandboxToken,
+        chatboxToken,
         returnHash,
       });
       localStorage.setItem(pendingKey, "true");
@@ -434,7 +434,7 @@ export function useHostedOAuthGate({
         },
       }));
     },
-    [isAuthenticated, pendingKey, sandboxToken, shareToken, surface, workspaceId],
+    [isAuthenticated, pendingKey, chatboxToken, shareToken, surface, workspaceId],
   );
 
   const markOAuthRequired = useCallback(

@@ -291,13 +291,13 @@ describe("useChatSession hosted mode", () => {
     unmount();
   });
 
-  it("includes sandboxToken in the hosted transport body", async () => {
+  it("includes chatboxToken in the hosted transport body", async () => {
     const { result, unmount } = renderHook(() =>
       useChatSession({
         selectedServers: ["server-1"],
         hostedWorkspaceId: "workspace-1",
         hostedSelectedServerIds: ["server-id-1"],
-        hostedSandboxToken: "sandbox-token",
+        hostedChatboxToken: "chatbox-token",
       }),
     );
 
@@ -308,26 +308,26 @@ describe("useChatSession hosted mode", () => {
       chatSessionId: "chat-session-id",
       selectedServerIds: ["server-id-1"],
       selectedServerNames: ["server-1"],
-      sandboxToken: "sandbox-token",
+      chatboxToken: "chatbox-token",
       accessScope: "chat_v2",
     });
     unmount();
   });
 
-  it("includes sandbox surface in the hosted transport body", async () => {
+  it("includes chatbox surface in the hosted transport body", async () => {
     const { unmount } = renderHook(() =>
       useChatSession({
         selectedServers: ["server-1"],
         hostedWorkspaceId: "workspace-1",
         hostedSelectedServerIds: ["server-id-1"],
-        hostedSandboxToken: "sandbox-token",
-        hostedSandboxSurface: "preview",
+        hostedChatboxToken: "chatbox-token",
+        hostedChatboxSurface: "preview",
       }),
     );
 
     const body = lastTransportOptions.body();
     expect(body).toMatchObject({
-      sandboxToken: "sandbox-token",
+      chatboxToken: "chatbox-token",
       surface: "preview",
     });
     unmount();

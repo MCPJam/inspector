@@ -4,9 +4,9 @@
  * Dynamic form for tool parameters with support for various field types
  */
 
-import { Badge } from "../ui/badge";
-import { Input } from "../ui/input";
-import { Textarea } from "../ui/textarea";
+import { Badge } from "@mcpjam/design-system/badge";
+import { Input } from "@mcpjam/design-system/input";
+import { Textarea } from "@mcpjam/design-system/textarea";
 import type { FormField } from "@/lib/tool-form";
 
 interface ParametersFormProps {

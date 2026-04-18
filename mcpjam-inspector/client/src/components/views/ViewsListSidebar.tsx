@@ -1,5 +1,5 @@
 import { Trash2, Pencil, Copy } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Button } from "@mcpjam/design-system/button";
 import { cn } from "@/lib/utils";
 import { type AnyView } from "@/hooks/useViews";
 

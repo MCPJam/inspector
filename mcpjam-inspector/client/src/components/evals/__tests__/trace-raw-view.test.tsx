@@ -9,7 +9,7 @@ vi.mock("@/components/ui/json-editor", () => ({
   ),
 }));
 
-vi.mock("@/components/ui/select", () => {
+vi.mock("@mcpjam/design-system/select", () => {
   const SelectTrigger = ({
     children,
     ...props

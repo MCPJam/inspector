@@ -1,4 +1,4 @@
-import { Button } from "@/components/ui/button";
+import { Button } from "@mcpjam/design-system/button";
 import { ServerSelectionCard } from "../ServerSelectionCard";
 import type { ServerWithName } from "@/state/app-types";
 

@@ -4,7 +4,7 @@ import { ConvexError } from "convex/values";
 import { useAuth } from "@workos-inc/authkit-react";
 import { Loader2, Link2Off, ShieldX } from "lucide-react";
 import { toast } from "sonner";
-import { Button } from "@/components/ui/button";
+import { Button } from "@mcpjam/design-system/button";
 import { ChatTabV2 } from "@/components/ChatTabV2";
 import type { ServerWithName } from "@/hooks/use-app-state";
 import { useHostedApiContext } from "@/hooks/hosted/use-hosted-api-context";

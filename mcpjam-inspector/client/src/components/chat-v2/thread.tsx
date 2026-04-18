@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState, type RefObject } from "react";
 import { cn } from "@/lib/utils";
 import {
-  useSandboxHostStyle,
-  useSandboxHostTheme,
-} from "@/contexts/sandbox-host-style-context";
+  useChatboxHostStyle,
+  useChatboxHostTheme,
+} from "@/contexts/chatbox-host-style-context";
 import { UIMessage } from "@ai-sdk/react";
 import type { ContentBlock } from "@modelcontextprotocol/client";
 import type { TranscriptThreadProps } from "./thread/transcript-thread";
@@ -141,8 +141,8 @@ export function Thread({
     !fullscreenChatSendBlocked &&
     fullscreenChatInput.trim().length > 0;
 
-  const sandboxHostStyle = useSandboxHostStyle();
-  const sandboxHostTheme = useSandboxHostTheme();
+  const chatboxHostStyle = useChatboxHostStyle();
+  const chatboxHostTheme = useChatboxHostTheme();
   const resolvedLoadingIndicatorVariant = useResolvedLoadingIndicatorVariant(
     loadingIndicatorVariant,
     {
@@ -150,7 +150,7 @@ export function Thread({
     },
   );
   const isChatgptDark =
-    sandboxHostStyle === "chatgpt" && sandboxHostTheme === "dark";
+    chatboxHostStyle === "chatgpt" && chatboxHostTheme === "dark";
   const lastRenderableMessage = useMemo(
     () => getLastRenderableConversationMessage(messages),
     [messages],

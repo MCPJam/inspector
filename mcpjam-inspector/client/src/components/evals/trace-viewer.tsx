@@ -8,7 +8,7 @@ import {
 } from "react";
 import type { ContentBlock } from "@modelcontextprotocol/client";
 import { Loader2, Minus, Plus } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Button } from "@mcpjam/design-system/button";
 import type { ModelDefinition, ModelProvider } from "@/shared/types";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 import type { ToolServerMap } from "@/lib/apis/mcp-tools-api";

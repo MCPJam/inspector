@@ -1,5 +1,10 @@
-import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Bar, BarChart, CartesianGrid, Cell, XAxis, YAxis } from "recharts";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "@mcpjam/design-system/card";
 import {
   ChartContainer,
   ChartTooltip,
@@ -91,7 +96,17 @@ export function UsageBarCard({
                   if (datum) onBarClick(datum);
                 }}
                 className={cn(onBarClick && "cursor-pointer")}
-              />
+              >
+                {data.map((datum) => (
+                  <Cell
+                    key={datum.key}
+                    fill="var(--color-count)"
+                    opacity={datum.isSelected ? 1 : 0.6}
+                    stroke={datum.isSelected ? "var(--color-count)" : undefined}
+                    strokeWidth={datum.isSelected ? 2 : 0}
+                  />
+                ))}
+              </Bar>
             </BarChart>
           </ChartContainer>
         ) : (

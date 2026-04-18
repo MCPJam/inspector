@@ -54,7 +54,7 @@ vi.mock("@/components/ui/resizable", () => ({
   ResizableHandle: () => <div />,
 }));
 
-vi.mock("@/components/ui/dialog", () => ({
+vi.mock("@mcpjam/design-system/dialog", () => ({
   Dialog: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   DialogContent: ({
     children,

@@ -1,5 +1,10 @@
 import { Cell, Pie, PieChart } from "recharts";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "@mcpjam/design-system/card";
 import {
   ChartContainer,
   ChartTooltip,
@@ -61,7 +66,8 @@ function Donut({
           strokeWidth={2}
           onClick={(payload) => {
             if (!onClick) return;
-            const datum = (payload as any)?.payload?.payload as BarDatum | undefined;
+            // Recharts Pie `onClick` exposes the original datum at `.payload`.
+            const datum = (payload as any)?.payload as BarDatum | undefined;
             if (datum) onClick(datum);
           }}
           className={cn(onClick && "cursor-pointer")}

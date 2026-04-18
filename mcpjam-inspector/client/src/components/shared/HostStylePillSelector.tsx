@@ -1,10 +1,10 @@
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import type { SandboxHostStyle } from "@/lib/sandbox-host-style";
+import { ToggleGroup, ToggleGroupItem } from "@mcpjam/design-system/toggle-group";
+import type { ChatboxHostStyle } from "@/lib/chatbox-host-style";
 import { cn } from "@/lib/utils";
 
 interface HostStylePillSelectorProps {
-  value: SandboxHostStyle;
-  onValueChange: (hostStyle: SandboxHostStyle) => void;
+  value: ChatboxHostStyle;
+  onValueChange: (hostStyle: ChatboxHostStyle) => void;
   className?: string;
 }
 

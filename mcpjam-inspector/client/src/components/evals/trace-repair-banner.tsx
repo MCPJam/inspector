@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
+import { Button } from "@mcpjam/design-system/button";
+import { Badge } from "@mcpjam/design-system/badge";
 import { cn } from "@/lib/utils";
 import { Loader2, Sparkles, X } from "lucide-react";
 import {

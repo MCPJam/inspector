@@ -30,7 +30,7 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
+} from "@mcpjam/design-system/alert-dialog";
 import type { DialogElicitation } from "@/components/ToolsTab";
 import { ChatInput } from "@/components/chat-v2/chat-input";
 import { Thread } from "@/components/chat-v2/thread";
@@ -105,7 +105,7 @@ import {
   getChatComposerInteractivity,
   useChatStopControls,
 } from "@/hooks/use-chat-stop-controls";
-import type { SandboxHostStyle } from "@/lib/sandbox-host-style";
+import type { ChatboxHostStyle } from "@/lib/chatbox-host-style";
 
 interface ChatTabProps {
   connectedOrConnectingServerConfigs: Record<string, ServerWithName>;
@@ -126,8 +126,8 @@ interface ChatTabProps {
   hostedSelectedServerIdsOverride?: string[];
   hostedOAuthTokensOverride?: Record<string, string>;
   hostedShareToken?: string;
-  hostedSandboxToken?: string;
-  hostedSandboxSurface?: "preview" | "share_link";
+  hostedChatboxToken?: string;
+  hostedChatboxSurface?: "preview" | "share_link";
   initialModelId?: string;
   initialSystemPrompt?: string;
   initialTemperature?: number;
@@ -135,19 +135,19 @@ interface ChatTabProps {
   reasoningDisplayMode?: ReasoningDisplayMode;
   loadingIndicatorVariant?: LoadingIndicatorVariant;
   showHostStyleSelector?: boolean;
-  hostStyle?: SandboxHostStyle;
-  onHostStyleChange?: (hostStyle: SandboxHostStyle) => void;
+  hostStyle?: ChatboxHostStyle;
+  onHostStyleChange?: (hostStyle: ChatboxHostStyle) => void;
   onOAuthRequired?: (details?: HostedOAuthRequiredDetails) => void;
-  /** When true, blocks sending until sandbox onboarding/OAuth completes. */
-  sandboxComposerBlocked?: boolean;
-  sandboxComposerBlockedReason?: string;
+  /** When true, blocks sending until chatbox onboarding/OAuth completes. */
+  chatboxComposerBlocked?: boolean;
+  chatboxComposerBlockedReason?: string;
   /** Optional (off-by-default) servers the tester can attach from minimal chat. */
-  sandboxOptionalInventory?: Array<{
+  chatboxOptionalInventory?: Array<{
     serverId: string;
     serverName: string;
     useOAuth: boolean;
   }>;
-  onEnableSandboxOptionalServer?: (serverId: string) => void;
+  onEnableChatboxOptionalServer?: (serverId: string) => void;
   evalChatHandoff?: EvalChatHandoff | null;
   onEvalChatHandoffConsumed?: (id: string) => void;
 }
@@ -170,8 +170,8 @@ export function ChatTabV2({
   hostedSelectedServerIdsOverride,
   hostedOAuthTokensOverride,
   hostedShareToken,
-  hostedSandboxToken,
-  hostedSandboxSurface,
+  hostedChatboxToken,
+  hostedChatboxSurface,
   initialModelId,
   initialSystemPrompt,
   initialTemperature,
@@ -182,10 +182,10 @@ export function ChatTabV2({
   hostStyle,
   onHostStyleChange,
   onOAuthRequired,
-  sandboxComposerBlocked = false,
-  sandboxComposerBlockedReason,
-  sandboxOptionalInventory,
-  onEnableSandboxOptionalServer,
+  chatboxComposerBlocked = false,
+  chatboxComposerBlockedReason,
+  chatboxOptionalInventory,
+  onEnableChatboxOptionalServer,
   evalChatHandoff,
   onEvalChatHandoffConsumed,
 }: ChatTabProps) {
@@ -329,7 +329,7 @@ export function ChatTabV2({
     !isConvexAuthenticated &&
     !effectiveHostedWorkspaceId &&
     !hostedShareToken &&
-    !hostedSandboxToken;
+    !hostedChatboxToken;
 
   // Use shared chat session hook
   const {
@@ -384,8 +384,8 @@ export function ChatTabV2({
     hostedSelectedServerIds: effectiveHostedSelectedServerIds,
     hostedOAuthTokens: effectiveHostedOAuthTokens,
     hostedShareToken,
-    hostedSandboxToken,
-    hostedSandboxSurface,
+    hostedChatboxToken,
+    hostedChatboxSurface,
     initialModelId,
     initialSystemPrompt,
     initialTemperature,
@@ -414,7 +414,7 @@ export function ChatTabV2({
     HOSTED_MODE &&
     !minimalMode &&
     !hostedShareToken &&
-    !hostedSandboxToken &&
+    !hostedChatboxToken &&
     chatHistoryRailEnabled;
   const {
     session: reactiveHistorySession,
@@ -1066,8 +1066,8 @@ export function ChatTabV2({
     !minimalMode &&
     !initialModelId &&
     !hostedShareToken &&
-    !hostedSandboxToken &&
-    !hostedSandboxSurface &&
+    !hostedChatboxToken &&
+    !hostedChatboxSurface &&
     availableModels.length > 1;
   // When viewing a history session, fall back to single-model rendering so
   // the ChatTabV2 messages (which hold the hydrated transcript) are displayed.
@@ -1538,14 +1538,14 @@ export function ChatTabV2({
   const historyRailStreaming = isStreamingActive;
   const { composerDisabled, sendBlocked } = getChatComposerInteractivity({
     isStreamingActive,
-    composerDisabled: submitBlocked || sandboxComposerBlocked,
+    composerDisabled: submitBlocked || chatboxComposerBlocked,
   });
 
   let placeholder = minimalMode
     ? MINIMAL_CHAT_COMPOSER_PLACEHOLDER
     : DEFAULT_CHAT_COMPOSER_PLACEHOLDER;
-  if (sandboxComposerBlocked && sandboxComposerBlockedReason) {
-    placeholder = sandboxComposerBlockedReason;
+  if (chatboxComposerBlocked && chatboxComposerBlockedReason) {
+    placeholder = chatboxComposerBlockedReason;
   } else if (isAuthLoading) {
     placeholder = "Loading...";
   } else if (disableForAuthentication) {
@@ -1857,7 +1857,7 @@ export function ChatTabV2({
     temperature,
     onTemperatureChange: setTemperature,
     onResetChat: handleResetAllChats,
-    submitDisabled: submitBlocked || sandboxComposerBlocked,
+    submitDisabled: submitBlocked || chatboxComposerBlocked,
     tokenUsage,
     selectedServers: selectedConnectedServerNames,
     mcpToolsTokenCount,
@@ -1881,11 +1881,11 @@ export function ChatTabV2({
     onServerToggle,
     onReconnectServer,
     onAddServer,
-    sandboxAttachableServers:
-      sandboxOptionalInventory && sandboxOptionalInventory.length > 0
-        ? sandboxOptionalInventory
+    chatboxAttachableServers:
+      chatboxOptionalInventory && chatboxOptionalInventory.length > 0
+        ? chatboxOptionalInventory
         : undefined,
-    onAttachSandboxServer: onEnableSandboxOptionalServer,
+    onAttachChatboxServer: onEnableChatboxOptionalServer,
   };
 
   const showStarterPrompts =
@@ -2142,8 +2142,8 @@ export function ChatTabV2({
                           }
                           hostedOAuthTokens={effectiveHostedOAuthTokens}
                           hostedShareToken={hostedShareToken}
-                          hostedSandboxToken={hostedSandboxToken}
-                          hostedSandboxSurface={hostedSandboxSurface}
+                          hostedChatboxToken={hostedChatboxToken}
+                          hostedChatboxSurface={hostedChatboxSurface}
                           onOAuthRequired={onOAuthRequired}
                           onSummaryChange={handleMultiModelSummaryChange}
                           onHasMessagesChange={

@@ -1,9 +1,9 @@
-import { Badge } from "@/components/ui/badge";
+import { Badge } from "@mcpjam/design-system/badge";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from "@/components/ui/tooltip";
+} from "@mcpjam/design-system/tooltip";
 import { cn } from "@/lib/utils";
 import { Check, X, AlertTriangle, CheckCircle2, XCircle } from "lucide-react";
 import { EVAL_OUTCOME_STATUS_TEXT_CLASS } from "./constants";

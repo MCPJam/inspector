@@ -7,8 +7,8 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
-} from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
+} from "@mcpjam/design-system/card";
+import { Button } from "@mcpjam/design-system/button";
 
 const supportLinks = [
   {

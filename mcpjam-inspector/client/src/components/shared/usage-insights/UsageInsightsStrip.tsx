@@ -1,16 +1,16 @@
 import { useState } from "react";
 import { ChevronDown, ChevronRight, RefreshCw, X } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Button } from "@mcpjam/design-system/button";
 import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
-} from "@/components/ui/collapsible";
+} from "@mcpjam/design-system/collapsible";
 import {
   chipKey,
   type UsageFilterChip,
   type UsageFilterState,
-} from "@/hooks/sandbox-usage-filters";
+} from "@/hooks/chatbox-usage-filters";
 import type {
   ClusterRunState,
   UsageBreakdown,
@@ -219,12 +219,12 @@ export function UsageInsightsStrip({
             title="Users by feedback"
             description="Visitor segment × feedback"
             data={userSegment}
-            onSegmentClick={(datum) =>
+            onSegmentClick={(datum, bucket) =>
               onToggleChip({
                 kind: "dimension",
-                key: "visitorSegment",
-                value: datum.key,
-                label: `Segment · ${datum.label}`,
+                key: "feedbackBucket",
+                value: bucket,
+                label: `${datum.label} · ${bucket}`,
               })
             }
             emptyState="No visitor data yet"

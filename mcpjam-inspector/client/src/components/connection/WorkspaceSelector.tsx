@@ -1,14 +1,14 @@
 import { ChevronDown, Plus, Trash2 } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Button } from "@mcpjam/design-system/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+} from "@mcpjam/design-system/dropdown-menu";
 import { EditableText } from "@/components/ui/editable-text";
-import { Skeleton } from "@/components/ui/skeleton";
+import { Skeleton } from "@mcpjam/design-system/skeleton";
 import { cn } from "@/lib/utils";
 import { Workspace } from "@/state/app-types";
 
