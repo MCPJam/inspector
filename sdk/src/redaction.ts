@@ -2,10 +2,7 @@ export function redactSensitiveValue(value: unknown): unknown {
   return redactSensitiveValueAtPath(value, []);
 }
 
-function redactSensitiveValueAtPath(
-  value: unknown,
-  path: string[]
-): unknown {
+function redactSensitiveValueAtPath(value: unknown, path: string[]): unknown {
   if (Array.isArray(value)) {
     return value.map((entry) => redactSensitiveValueAtPath(entry, path));
   }
@@ -44,11 +41,7 @@ function redactSensitiveString(value: string): string {
     );
 }
 
-function shouldRedactKey(
-  key: string,
-  value: unknown,
-  path: string[]
-): boolean {
+function shouldRedactKey(key: string, value: unknown, path: string[]): boolean {
   const normalized = key.toLowerCase().replace(/[^a-z0-9]/gu, "");
 
   if (normalized === "code") {
@@ -62,9 +55,13 @@ function shouldRedactKey(
     normalized === "setcookie" ||
     normalized === "codeverifier" ||
     normalized === "accesstoken" ||
+    normalized.endsWith("accesstoken") ||
     normalized === "refreshtoken" ||
+    normalized.endsWith("refreshtoken") ||
     normalized === "clientsecret" ||
+    normalized.endsWith("clientsecret") ||
     normalized === "idtoken" ||
+    normalized.endsWith("idtoken") ||
     normalized === "apikey" ||
     normalized === "xapikey"
   );
@@ -74,7 +71,10 @@ function shouldRedactAuthorizationCodeValue(
   value: unknown,
   path: string[]
 ): boolean {
-  if (path[path.length - 1] === "error" || path[path.length - 1] === "snapshotError") {
+  if (
+    path[path.length - 1] === "error" ||
+    path[path.length - 1] === "snapshotError"
+  ) {
     return false;
   }
 
