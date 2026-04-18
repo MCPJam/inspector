@@ -199,7 +199,7 @@ const navigationSections: NavSection[] = [
         title: "Chatboxes",
         url: "#chatboxes",
         icon: Box,
-        featureFlag: "chatboxes-enabled",
+        featureFlag: "sandboxes-enabled",
       },
     ],
   },
@@ -546,7 +546,7 @@ export function MCPSidebar({
 }: MCPSidebarProps) {
   const posthog = usePostHog();
   const learningFlagEnabled = useFeatureFlagEnabled("mcpjam-learning");
-  const chatboxesEnabled = useFeatureFlagEnabled("chatboxes-enabled");
+  const sandboxesEnabled = useFeatureFlagEnabled("sandboxes-enabled");
   const clientConfigEnabled = useFeatureFlagEnabled("client-config-enabled");
   const registryEnabled = useFeatureFlagEnabled("registry-enabled");
   const evalsEnabled = useFeatureFlagEnabled("evals-enabled");
@@ -672,7 +672,7 @@ export function MCPSidebar({
   const featureFlags = useMemo(
     () => ({
       "mcpjam-learning": !!learningEnabled,
-      "chatboxes-enabled": !!chatboxesEnabled && isAuthenticated,
+      "sandboxes-enabled": !!sandboxesEnabled && isAuthenticated,
       "client-config-enabled": !!clientConfigEnabled && isAuthenticated,
       "registry-enabled": registryEnabled === true,
       "evals-enabled": !!evalsEnabled,
@@ -681,7 +681,7 @@ export function MCPSidebar({
     }),
     [
       learningEnabled,
-      chatboxesEnabled,
+      sandboxesEnabled,
       clientConfigEnabled,
       registryEnabled,
       evalsEnabled,
