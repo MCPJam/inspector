@@ -365,7 +365,7 @@ function createEmptyLiveTraceState(): LiveTraceAccumulatorState {
   };
 }
 
-export interface HydratedTurnTrace {
+interface HydratedTurnTrace {
   turnId: string;
   promptIndex: number;
   startedAt: number;
