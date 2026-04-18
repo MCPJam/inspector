@@ -51,8 +51,8 @@ interface MultiModelChatCardProps {
   hostedSelectedServerIds?: string[];
   hostedOAuthTokens?: Record<string, string>;
   hostedShareToken?: string;
-  hostedSandboxToken?: string;
-  hostedSandboxSurface?: "preview" | "share_link";
+  hostedChatboxToken?: string;
+  hostedChatboxSurface?: "preview" | "share_link";
   onSummaryChange: (summary: MultiModelCardSummary) => void;
   onHasMessagesChange?: (modelId: string, hasMessages: boolean) => void;
   onOAuthRequired?: (details?: HostedOAuthRequiredDetails) => void;
@@ -82,8 +82,8 @@ export function MultiModelChatCard({
   hostedSelectedServerIds,
   hostedOAuthTokens,
   hostedShareToken,
-  hostedSandboxToken,
-  hostedSandboxSurface,
+  hostedChatboxToken,
+  hostedChatboxSurface,
   onSummaryChange,
   onHasMessagesChange,
   onOAuthRequired,
@@ -137,8 +137,8 @@ export function MultiModelChatCard({
     hostedSelectedServerIds,
     hostedOAuthTokens,
     hostedShareToken,
-    hostedSandboxToken,
-    hostedSandboxSurface,
+    hostedChatboxToken,
+    hostedChatboxSurface,
     initialModelId: String(model.id),
     initialSystemPrompt,
     initialTemperature,

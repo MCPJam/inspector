@@ -76,7 +76,7 @@ function formatDeployments(
   if (plan === "enterprise") {
     return t("Custom", true);
   }
-  const value = entry.limits.maxSandboxesPerWorkspace;
+  const value = entry.limits.maxChatboxesPerWorkspace;
   if (value == null) {
     return t("Unlimited", plan === "team");
   }

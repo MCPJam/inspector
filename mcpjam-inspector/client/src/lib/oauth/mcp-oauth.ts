@@ -835,7 +835,7 @@ export async function completeHostedOAuthCallback(
         },
         ...(context.accessScope ? { accessScope: context.accessScope } : {}),
         ...(context.shareToken ? { shareToken: context.shareToken } : {}),
-        ...(context.sandboxToken ? { sandboxToken: context.sandboxToken } : {}),
+        ...(context.chatboxToken ? { chatboxToken: context.chatboxToken } : {}),
       }),
     });
 

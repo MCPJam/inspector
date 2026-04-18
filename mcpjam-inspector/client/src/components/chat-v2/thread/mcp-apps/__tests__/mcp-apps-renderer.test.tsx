@@ -191,7 +191,7 @@ vi.mock("../mcp-apps-modal", () => ({
 // ── Import component under test (after mocks) ─────────────────────────────
 import { MCPAppsRenderer } from "../mcp-apps-renderer";
 import { authFetch } from "@/lib/session-token";
-import { SandboxHostStyleProvider } from "@/contexts/sandbox-host-style-context";
+import { ChatboxHostStyleProvider } from "@/contexts/chatbox-host-style-context";
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 const baseProps = {
@@ -285,11 +285,11 @@ describe("MCPAppsRenderer tool input streaming", () => {
     expect(sandboxedIframePropsRef.current?.permissions).toBeUndefined();
   });
 
-  it("uses sandbox host style for SEP-1865 host context outside the playground", async () => {
+  it("uses chatbox host style for SEP-1865 host context outside the playground", async () => {
     render(
-      <SandboxHostStyleProvider value="chatgpt">
+      <ChatboxHostStyleProvider value="chatgpt">
         <MCPAppsRenderer {...baseProps} />
-      </SandboxHostStyleProvider>,
+      </ChatboxHostStyleProvider>,
     );
 
     await vi.waitFor(() => {

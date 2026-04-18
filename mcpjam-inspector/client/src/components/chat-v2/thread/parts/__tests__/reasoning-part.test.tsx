@@ -54,7 +54,7 @@ describe("ReasoningPart", () => {
   it("hides reasoning when display mode is hidden", () => {
     const { container } = render(
       <ReasoningPart
-        text="Not for public sandbox viewers"
+        text="Not for public chatbox viewers"
         displayMode="hidden"
       />,
     );

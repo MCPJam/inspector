@@ -7,7 +7,7 @@ describe("COMPARE_PLAN_MARKETING_SECTIONS", () => {
       "Organization & workspaces",
       "Standard features",
       "Evaluations",
-      "Sandboxes",
+      "Chatboxes",
       "LLM Usage",
       "Security & Compliance",
       "Platform & Infrastructure",

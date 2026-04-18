@@ -5,7 +5,7 @@ import {
   resolveLoadingIndicatorVariant,
 } from "../shared/loading-indicator-content";
 import { ClaudeLoadingIndicator } from "../shared/claude-loading-indicator";
-import { SandboxHostStyleProvider } from "@/contexts/sandbox-host-style-context";
+import { ChatboxHostStyleProvider } from "@/contexts/chatbox-host-style-context";
 
 const mockUseReducedMotion = vi.hoisted(() => vi.fn(() => false));
 
@@ -73,21 +73,21 @@ describe("LoadingIndicatorContent", () => {
     ).toHaveAttribute("hidden");
   });
 
-  it("defaults to the Claude mascot for Claude-style sandbox hosts", () => {
+  it("defaults to the Claude mascot for Claude-style chatbox hosts", () => {
     render(
-      <SandboxHostStyleProvider value="claude">
+      <ChatboxHostStyleProvider value="claude">
         <LoadingIndicatorContent />
-      </SandboxHostStyleProvider>,
+      </ChatboxHostStyleProvider>,
     );
 
     expect(screen.getByTestId("loading-indicator-claude")).toBeInTheDocument();
   });
 
-  it("defaults to the GPT pulse for ChatGPT-style sandbox hosts", () => {
+  it("defaults to the GPT pulse for ChatGPT-style chatbox hosts", () => {
     render(
-      <SandboxHostStyleProvider value="chatgpt">
+      <ChatboxHostStyleProvider value="chatgpt">
         <LoadingIndicatorContent />
-      </SandboxHostStyleProvider>,
+      </ChatboxHostStyleProvider>,
     );
 
     expect(screen.getByTestId("loading-indicator-dot")).toBeInTheDocument();
@@ -95,9 +95,9 @@ describe("LoadingIndicatorContent", () => {
 
   it('treats variant="default" as fallback so host-style mascots still render', () => {
     render(
-      <SandboxHostStyleProvider value="claude">
+      <ChatboxHostStyleProvider value="claude">
         <LoadingIndicatorContent variant="default" />
-      </SandboxHostStyleProvider>,
+      </ChatboxHostStyleProvider>,
     );
 
     expect(screen.getByTestId("loading-indicator-claude")).toBeInTheDocument();

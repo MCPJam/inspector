@@ -23,7 +23,7 @@ import type { EvalChatHandoff } from "./lib/eval-chat-handoff";
 import { EvalsTab } from "./components/EvalsTab";
 import { CiEvalsTab } from "./components/CiEvalsTab";
 import { ViewsTab } from "./components/ViewsTab";
-import { SandboxesTab } from "./components/SandboxesTab";
+import { ChatboxesTab } from "./components/ChatboxesTab";
 import { SettingsTab } from "./components/SettingsTab";
 import { WorkspaceSettingsTab } from "./components/WorkspaceSettingsTab";
 import { ClientConfigTab } from "./components/client-config/ClientConfigTab";
@@ -92,9 +92,9 @@ import {
   getSharedPathTokenFromLocation,
 } from "./components/hosted/SharedServerChatPage";
 import {
-  SandboxChatPage,
-  getSandboxPathTokenFromLocation,
-} from "./components/hosted/SandboxChatPage";
+  ChatboxChatPage,
+  getChatboxPathTokenFromLocation,
+} from "./components/hosted/ChatboxChatPage";
 import { useHostedApiContext } from "./hooks/hosted/use-hosted-api-context";
 import { HOSTED_MODE, NON_PROD_LOCKDOWN } from "./lib/config";
 import {
@@ -139,11 +139,11 @@ import {
   resolveHostedOAuthReturnHash,
 } from "./lib/hosted-oauth-callback";
 import {
-  clearSandboxSignInReturnPath,
-  readSandboxSession,
-  readSandboxSignInReturnPath,
-  writeSandboxSignInReturnPath,
-} from "./lib/sandbox-session";
+  clearChatboxSignInReturnPath,
+  readChatboxSession,
+  readChatboxSignInReturnPath,
+  writeChatboxSignInReturnPath,
+} from "./lib/chatbox-session";
 import {
   clearSharedSignInReturnPath,
   readSharedServerSession,
@@ -155,6 +155,7 @@ import {
 } from "./lib/shared-server-session";
 import {
   sanitizeHostedOAuthErrorMessage,
+  clearHostedOAuthResumeMarker,
   writeHostedOAuthResumeMarker,
 } from "./lib/hosted-oauth-resume";
 import {
@@ -165,6 +166,7 @@ import { getEffectiveWorkspaceClientCapabilities } from "./lib/client-config";
 import { buildEvalsHash } from "./lib/evals-router";
 import { withTestingSurface } from "./lib/testing-surface";
 import { useClientConfigStore } from "./stores/client-config-store";
+import { clearGuestSession } from "./lib/guest-session";
 
 function getHostedOAuthCallbackErrorMessage(): string {
   const params = new URLSearchParams(window.location.search);
@@ -184,6 +186,29 @@ function getHostedOAuthCallbackErrorMessage(): string {
 function replaceHash(hash: string) {
   window.history.replaceState({}, "", `/${hash}`);
   window.dispatchEvent(new HashChangeEvent("hashchange"));
+}
+
+function clearHostedCallbackRetryState() {
+  clearHostedOAuthPendingState();
+  clearHostedOAuthResumeMarker();
+  clearGuestSession();
+  localStorage.removeItem("mcp-oauth-pending");
+  localStorage.removeItem("mcp-oauth-return-hash");
+
+  for (const storage of [window.localStorage, window.sessionStorage]) {
+    const workosKeys: string[] = [];
+
+    for (let index = 0; index < storage.length; index += 1) {
+      const key = storage.key(index);
+      if (key && /workos/i.test(key)) {
+        workosKeys.push(key);
+      }
+    }
+
+    for (const key of workosKeys) {
+      storage.removeItem(key);
+    }
+  }
 }
 
 function BillingHandoffLoading({ overlay = false }: { overlay?: boolean }) {
@@ -313,13 +338,13 @@ export default function App() {
     return callbackContext != null && callbackContext.surface !== "workspace";
   });
   const [exitedSharedChat, setExitedSharedChat] = useState(false);
-  const [exitedSandboxChat, setExitedSandboxChat] = useState(false);
+  const [exitedChatboxChat, setExitedChatboxChat] = useState(false);
   const sharedPathToken = HOSTED_MODE ? getSharedPathTokenFromLocation() : null;
-  const sandboxPathToken = HOSTED_MODE
-    ? getSandboxPathTokenFromLocation()
+  const chatboxPathToken = HOSTED_MODE
+    ? getChatboxPathTokenFromLocation()
     : null;
   const sharedSession = HOSTED_MODE ? readSharedServerSession() : null;
-  const sandboxSession = HOSTED_MODE ? readSandboxSession() : null;
+  const chatboxSession = HOSTED_MODE ? readChatboxSession() : null;
   const currentHashSlug = window.location.hash
     .replace(/^#/, "")
     .replace(/^\/+/, "")
@@ -332,16 +357,16 @@ export default function App() {
     if (sharedPathToken) {
       return "shared" as const;
     }
-    if (sandboxPathToken) {
-      return "sandbox" as const;
+    if (chatboxPathToken) {
+      return "chatbox" as const;
     }
 
-    if (sharedSession && sandboxSession) {
+    if (sharedSession && chatboxSession) {
       if (currentHashSlug === slugify(sharedSession.payload.serverName)) {
         return "shared" as const;
       }
-      if (currentHashSlug === slugify(sandboxSession.payload.name)) {
-        return "sandbox" as const;
+      if (currentHashSlug === slugify(chatboxSession.payload.name)) {
+        return "chatbox" as const;
       }
       return null;
     }
@@ -349,22 +374,22 @@ export default function App() {
     if (sharedSession) {
       return "shared" as const;
     }
-    if (sandboxSession) {
-      return "sandbox" as const;
+    if (chatboxSession) {
+      return "chatbox" as const;
     }
 
     return null;
   }, [
     currentHashSlug,
-    sandboxPathToken,
-    sandboxSession,
+    chatboxPathToken,
+    chatboxSession,
     sharedPathToken,
     sharedSession,
   ]);
   const isSharedChatRoute =
     HOSTED_MODE && !exitedSharedChat && hostedRouteKind === "shared";
-  const isSandboxChatRoute =
-    HOSTED_MODE && !exitedSandboxChat && hostedRouteKind === "sandbox";
+  const isChatboxChatRoute =
+    HOSTED_MODE && !exitedChatboxChat && hostedRouteKind === "chatbox";
 
   useEffect(() => {
     setEvaluateRunsFlagsLoaded(posthog.featureFlags?.hasLoadedFlags === true);
@@ -373,7 +398,7 @@ export default function App() {
       setEvaluateRunsFlagsLoaded(posthog.featureFlags?.hasLoadedFlags === true);
     });
   }, [posthog]);
-  const isHostedChatRoute = isSharedChatRoute || isSandboxChatRoute;
+  const isHostedChatRoute = isSharedChatRoute || isChatboxChatRoute;
   const currentHash = window.location.hash || "#servers";
   const currentHashRoute = useMemo(
     () => resolveHostedNavigation(currentHash, HOSTED_MODE),
@@ -527,21 +552,38 @@ export default function App() {
       return;
     }
 
+    // `/callback` without auth params after auth settled is a dead-end state.
+    // Return to the shell so the user can start a fresh sign-in without
+    // discarding the intended post-login destination.
+    if (
+      !window.location.search &&
+      !isWorkOsLoading &&
+      !workOsUser &&
+      !isAuthLoading &&
+      !isAuthenticated
+    ) {
+      clearHostedCallbackRetryState();
+      window.history.replaceState({}, "", "/");
+      setCallbackCompleted(true);
+      setCallbackRecoveryExpired(false);
+      return;
+    }
+
     // Let AuthKit + Convex auth settle before leaving /callback.
     if (!isAuthLoading && isAuthenticated) {
-      const sandboxReturnPath = readSandboxSignInReturnPath();
+      const chatboxReturnPath = readChatboxSignInReturnPath();
       const sharedReturnPath = readSharedSignInReturnPath();
       const persistedCheckoutIntent = readPersistedCheckoutIntent();
       const billingReturnPath = persistedCheckoutIntent
         ? readBillingSignInReturnPath()
         : null;
-      clearSandboxSignInReturnPath();
+      clearChatboxSignInReturnPath();
       clearSharedSignInReturnPath();
       clearBillingSignInReturnPath();
       window.history.replaceState(
         {},
         "",
-        sandboxReturnPath ?? sharedReturnPath ?? billingReturnPath ?? "/",
+        chatboxReturnPath ?? sharedReturnPath ?? billingReturnPath ?? "/",
       );
       setCallbackCompleted(true);
       setCallbackRecoveryExpired(false);
@@ -553,7 +595,28 @@ export default function App() {
     }, 15000);
 
     return () => clearTimeout(timeout);
-  }, [isOAuthCallback, isAuthLoading, isAuthenticated]);
+  }, [
+    isOAuthCallback,
+    isAuthLoading,
+    isAuthenticated,
+    isWorkOsLoading,
+    workOsUser,
+  ]);
+
+  const handleRetryCallbackSignIn = useCallback(() => {
+    clearHostedCallbackRetryState();
+    window.history.replaceState({}, "", "/");
+    setCallbackCompleted(true);
+    setCallbackRecoveryExpired(false);
+    queueMicrotask(() => {
+      signIn();
+    });
+  }, [signIn]);
+
+  const handleReloadFromCallback = useCallback(() => {
+    clearHostedCallbackRetryState();
+    window.location.assign("/");
+  }, []);
 
   const {
     appState,
@@ -816,7 +879,7 @@ export default function App() {
   });
   const sidebarGateDenied = useMemo(() => {
     const denied: Partial<Record<BillingFeatureName, boolean>> = {};
-    for (const key of ["evals", "sandboxes", "cicd"] as const) {
+    for (const key of ["evals", "chatboxes", "cicd"] as const) {
       denied[key] = isGateAccessDenied(navPremiumness, key);
     }
     return denied;
@@ -971,8 +1034,8 @@ export default function App() {
         return;
       }
 
-      if (isSandboxChatRoute) {
-        const storedSession = readSandboxSession();
+      if (isChatboxChatRoute) {
+        const storedSession = readChatboxSession();
         if (storedSession) {
           const expectedHash = slugify(storedSession.payload.name);
           if (window.location.hash !== `#${expectedHash}`) {
@@ -1041,7 +1104,7 @@ export default function App() {
     },
     [
       effectiveOrganizations,
-      isSandboxChatRoute,
+      isChatboxChatRoute,
       isSharedChatRoute,
       setSelectedMultipleServersToAllServers,
     ],
@@ -1491,14 +1554,14 @@ export default function App() {
             <button
               type="button"
               className="rounded bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
-              onClick={() => signIn()}
+              onClick={handleRetryCallbackSignIn}
             >
               Try sign in again
             </button>
             <button
               type="button"
               className="rounded border px-4 py-2 text-sm font-medium"
-              onClick={() => window.location.reload()}
+              onClick={handleReloadFromCallback}
             >
               Reload
             </button>
@@ -1724,7 +1787,7 @@ export default function App() {
           {activeTab === "conformance" && (
             <ConformanceTab server={selectedServerEntry ?? null} />
           )}
-          {activeTab === "sandboxes" &&
+          {activeTab === "chatboxes" &&
             (billingUiEnabled &&
             activeTabBillingLocked &&
             activeTabBillingFeature ? (
@@ -1747,7 +1810,7 @@ export default function App() {
                 }}
               />
             ) : (
-              <SandboxesTab
+              <ChatboxesTab
                 workspaceId={billingWorkspaceId}
                 organizationId={activeWorkspaceBillingOrganizationId}
                 isBillingContextPending={isBillingContextPending}
@@ -1994,8 +2057,8 @@ export default function App() {
               if (sharedPathToken) {
                 writeSharedSignInReturnPath(window.location.pathname);
               }
-              if (sandboxPathToken) {
-                writeSandboxSignInReturnPath(window.location.pathname);
+              if (chatboxPathToken) {
+                writeChatboxSignInReturnPath(window.location.pathname);
               }
               signIn();
             }}
@@ -2008,10 +2071,10 @@ export default function App() {
                 pathToken={sharedPathToken}
                 onExitSharedChat={() => setExitedSharedChat(true)}
               />
-            ) : isSandboxChatRoute ? (
-              <SandboxChatPage
-                pathToken={sandboxPathToken}
-                onExitSandboxChat={() => setExitedSandboxChat(true)}
+            ) : isChatboxChatRoute ? (
+              <ChatboxChatPage
+                pathToken={chatboxPathToken}
+                onExitChatboxChat={() => setExitedChatboxChat(true)}
               />
             ) : (
               appContent

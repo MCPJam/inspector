@@ -71,7 +71,7 @@ function isHostedInsecureHttpServer(server: ServerWithName): boolean {
   }
 }
 
-// Temporary hide while sandbox sharing replaces server sharing in the main UI.
+// Temporary hide while chatbox sharing replaces server sharing in the main UI.
 const SERVER_SHARE_UI_ENABLED = false;
 const SERVER_CARD_CONTEXT_MENU_EXEMPT_SELECTOR =
   "[data-server-card-context-menu-exempt]";
