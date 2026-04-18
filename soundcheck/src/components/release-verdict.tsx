@@ -19,23 +19,28 @@ import {
 } from "@/lib/github";
 import { fetchPendingChangesets } from "@/lib/changesets";
 import { shortSha } from "@/lib/format";
+import { Card, CardContent } from "@mcpjam/design-system/card";
 import { Verdict } from "@/components/ui";
 
 const INSPECTOR = { owner: "MCPJam", repo: "inspector" };
 
 export function ReleaseVerdictSkeleton() {
   return (
-    <div className="panel p-6 md:p-8">
-      <div className="text-[10px] font-medium uppercase tracking-[0.18em] text-ink-500">
-        Release verdict
-      </div>
-      <div className="mt-2 flex items-baseline gap-3">
-        <span className="display-hero text-2xl md:text-3xl text-ink-400">
-          Reading…
-        </span>
-        <span className="text-sm text-ink-500">Checking main &amp; staging</span>
-      </div>
-    </div>
+    <Card className="py-5">
+      <CardContent className="px-5 md:px-6">
+        <div className="text-[10px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
+          Release verdict
+        </div>
+        <div className="mt-2 flex items-baseline gap-3">
+          <span className="text-2xl md:text-3xl font-semibold text-muted-foreground">
+            Reading…
+          </span>
+          <span className="text-sm text-muted-foreground">
+            Checking main &amp; staging
+          </span>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 

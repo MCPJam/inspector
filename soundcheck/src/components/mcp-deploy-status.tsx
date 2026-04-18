@@ -61,12 +61,12 @@ export function McpDeployStatusSkeleton() {
   return (
     <Tile title="MCP" eyebrow="Computing drift">
       <div className="flex items-end gap-4">
-        <span className="display-hero text-6xl text-ink-700 animate-pulse">
+        <span className="text-6xl font-semibold text-muted-foreground/40 animate-pulse">
           …
         </span>
         <div className="pb-2">
-          <div className="h-3 w-32 rounded bg-ink-800 animate-pulse" />
-          <div className="mt-2 h-2.5 w-24 rounded bg-ink-800/60 animate-pulse" />
+          <div className="h-3 w-32 rounded bg-muted animate-pulse" />
+          <div className="mt-2 h-2.5 w-24 rounded bg-muted/60 animate-pulse" />
         </div>
       </div>
     </Tile>
@@ -89,7 +89,7 @@ export async function McpDeployStatus() {
   } catch (err) {
     return (
       <Tile title="MCP" accent="failure">
-        <p className="text-sm text-signal-stop">
+        <p className="text-sm text-destructive">
           Failed to read MCP state: {(err as Error).message}
         </p>
       </Tile>
@@ -99,9 +99,9 @@ export async function McpDeployStatus() {
   if (!liveRun) {
     return (
       <Tile title="MCP" accent="warning">
-        <p className="text-sm text-ink-400">
+        <p className="text-sm text-muted-foreground">
           No successful{" "}
-          <code className="font-mono text-ink-200">deploy-mcp-staging.yml</code>{" "}
+          <code className="font-mono text-foreground">deploy-mcp-staging.yml</code>{" "}
           run on record.
         </p>
       </Tile>
@@ -145,7 +145,7 @@ export async function McpDeployStatus() {
   } catch (err) {
     return (
       <Tile title="MCP" accent="failure" action={runAction}>
-        <p className="text-sm text-signal-stop">
+        <p className="text-sm text-destructive">
           Failed to compare commits: {(err as Error).message}
         </p>
       </Tile>
@@ -208,7 +208,7 @@ export async function McpDeployStatus() {
         label={diff.aheadBy === 1 ? "commit ahead" : "commits ahead"}
         sublabel={
           <>
-            Most won&rsquo;t touch <code className="font-mono text-ink-200">mcp/</code>{" "}
+            Most won&rsquo;t touch <code className="font-mono text-foreground">mcp/</code>{" "}
             · next deploy fires when one does · last deployed{" "}
             {formatRelativeTime(deployedAt(liveRun))}
           </>
@@ -216,20 +216,20 @@ export async function McpDeployStatus() {
         href={compareUrl}
       />
 
-      <div className="my-5 hairline" />
+      <div className="my-5 border-t border-border" />
 
       <ul className="space-y-2">
         {preview.map((c) => (
           <li key={c.sha} className="flex gap-3 text-xs leading-relaxed">
             <Sha href={c.url} sha={shortSha(c.sha)} />
             <div className="min-w-0 flex-1">
-              <span className="text-ink-100">{truncate(c.message, 84)}</span>
-              <span className="ml-2 text-ink-500">— {c.author}</span>
+              <span className="text-foreground">{truncate(c.message, 84)}</span>
+              <span className="ml-2 text-muted-foreground">— {c.author}</span>
             </div>
           </li>
         ))}
         {hidden > 0 && (
-          <li className="pt-1 text-[11px] italic text-ink-500">
+          <li className="pt-1 text-[11px] italic text-muted-foreground">
             + {hidden} earlier commit{hidden === 1 ? "" : "s"}
           </li>
         )}
