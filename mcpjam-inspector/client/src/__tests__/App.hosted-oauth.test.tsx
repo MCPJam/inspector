@@ -12,6 +12,7 @@ import {
   clearHostedOAuthPendingState,
   writeHostedOAuthPendingMarker,
 } from "../lib/hosted-oauth-callback";
+import { writeHostedOAuthResumeMarker } from "../lib/hosted-oauth-resume";
 import {
   readBillingSignInReturnPath,
   readPersistedCheckoutIntent,
@@ -20,6 +21,7 @@ import {
 } from "../lib/billing-deep-link";
 import {
   clearChatboxSession,
+  readChatboxSignInReturnPath,
   writeChatboxSignInReturnPath,
   writeChatboxSession,
 } from "../lib/chatbox-session";
@@ -478,6 +480,102 @@ describe("App hosted OAuth callback handling", () => {
     await waitFor(() => {
       expect(mockCompleteHostedOAuthCallback).not.toHaveBeenCalled();
     });
+  });
+
+  it("escapes a stale queryless callback page back to the root shell", async () => {
+    clearHostedOAuthPendingState();
+    clearChatboxSession();
+    localStorage.removeItem("mcp-oauth-pending");
+    localStorage.removeItem("mcp-serverUrl-asana");
+    window.history.replaceState({}, "", "/callback");
+    writeChatboxSignInReturnPath("/#asaan");
+    mockConvexAuthState.isAuthenticated = false;
+    mockConvexAuthState.isLoading = false;
+    mockWorkOsAuthState.user = null;
+    mockWorkOsAuthState.isLoading = false;
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(window.location.pathname).toBe("/");
+    });
+
+    expect(
+      screen.queryByTestId("callback-auth-timeout"),
+    ).not.toBeInTheDocument();
+    expect(mockWorkOsAuthState.signIn).not.toHaveBeenCalled();
+    expect(readChatboxSignInReturnPath()).toBe("/#asaan");
+  });
+
+  it("clears stale client auth state before retrying a timed-out callback", async () => {
+    vi.useFakeTimers();
+
+    try {
+      clearHostedOAuthPendingState();
+      clearChatboxSession();
+      localStorage.removeItem("mcp-oauth-pending");
+      localStorage.removeItem("mcp-serverUrl-asana");
+      window.history.replaceState({}, "", "/callback?code=oauth-code");
+      mockConvexAuthState.isAuthenticated = false;
+      mockConvexAuthState.isLoading = false;
+      mockWorkOsAuthState.user = null;
+      mockWorkOsAuthState.isLoading = false;
+
+      localStorage.setItem("mcp-oauth-pending", "asana");
+      localStorage.setItem("mcp-oauth-return-hash", "#asaan");
+      localStorage.setItem("workos.test", "stale-local");
+      sessionStorage.setItem("workos.session", "stale-session");
+      localStorage.setItem(
+        "mcpjam_guest_session_v1",
+        JSON.stringify({
+          guestId: "guest_123",
+          token: "guest-token",
+          expiresAt: Date.now() + 60_000,
+        }),
+      );
+      writeHostedOAuthPendingMarker({
+        surface: "workspace",
+        workspaceId: "ws_1",
+        serverId: "srv_asana",
+        serverName: "asana",
+        serverUrl: "https://mcp.asana.com/sse",
+        accessScope: "workspace_member",
+        returnHash: "#servers",
+      });
+      writeHostedOAuthResumeMarker({
+        surface: "workspace",
+        serverName: "asana",
+        serverUrl: "https://mcp.asana.com/sse",
+        errorMessage: "stale",
+      });
+
+      render(<App />);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(15_000);
+      });
+
+      expect(screen.getByTestId("callback-auth-timeout")).toBeInTheDocument();
+
+      fireEvent.click(
+        screen.getByRole("button", { name: "Try sign in again" }),
+      );
+
+      await waitFor(() => {
+        expect(mockWorkOsAuthState.signIn).toHaveBeenCalledTimes(1);
+      });
+
+      expect(window.location.pathname).toBe("/");
+      expect(localStorage.getItem("mcp-oauth-pending")).toBeNull();
+      expect(localStorage.getItem("mcp-oauth-return-hash")).toBeNull();
+      expect(localStorage.getItem("mcp-hosted-oauth-pending")).toBeNull();
+      expect(localStorage.getItem("mcp-hosted-oauth-resume")).toBeNull();
+      expect(localStorage.getItem("mcpjam_guest_session_v1")).toBeNull();
+      expect(localStorage.getItem("workos.test")).toBeNull();
+      expect(sessionStorage.getItem("workos.session")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("skips billing queries while a persisted org id is still being validated", () => {

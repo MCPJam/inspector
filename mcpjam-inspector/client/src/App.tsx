@@ -155,6 +155,7 @@ import {
 } from "./lib/shared-server-session";
 import {
   sanitizeHostedOAuthErrorMessage,
+  clearHostedOAuthResumeMarker,
   writeHostedOAuthResumeMarker,
 } from "./lib/hosted-oauth-resume";
 import {
@@ -165,6 +166,7 @@ import { getEffectiveWorkspaceClientCapabilities } from "./lib/client-config";
 import { buildEvalsHash } from "./lib/evals-router";
 import { withTestingSurface } from "./lib/testing-surface";
 import { useClientConfigStore } from "./stores/client-config-store";
+import { clearGuestSession } from "./lib/guest-session";
 
 function getHostedOAuthCallbackErrorMessage(): string {
   const params = new URLSearchParams(window.location.search);
@@ -184,6 +186,29 @@ function getHostedOAuthCallbackErrorMessage(): string {
 function replaceHash(hash: string) {
   window.history.replaceState({}, "", `/${hash}`);
   window.dispatchEvent(new HashChangeEvent("hashchange"));
+}
+
+function clearHostedCallbackRetryState() {
+  clearHostedOAuthPendingState();
+  clearHostedOAuthResumeMarker();
+  clearGuestSession();
+  localStorage.removeItem("mcp-oauth-pending");
+  localStorage.removeItem("mcp-oauth-return-hash");
+
+  for (const storage of [window.localStorage, window.sessionStorage]) {
+    const workosKeys: string[] = [];
+
+    for (let index = 0; index < storage.length; index += 1) {
+      const key = storage.key(index);
+      if (key && /workos/i.test(key)) {
+        workosKeys.push(key);
+      }
+    }
+
+    for (const key of workosKeys) {
+      storage.removeItem(key);
+    }
+  }
 }
 
 function BillingHandoffLoading({ overlay = false }: { overlay?: boolean }) {
@@ -527,6 +552,23 @@ export default function App() {
       return;
     }
 
+    // `/callback` without auth params after auth settled is a dead-end state.
+    // Return to the shell so the user can start a fresh sign-in without
+    // discarding the intended post-login destination.
+    if (
+      !window.location.search &&
+      !isWorkOsLoading &&
+      !workOsUser &&
+      !isAuthLoading &&
+      !isAuthenticated
+    ) {
+      clearHostedCallbackRetryState();
+      window.history.replaceState({}, "", "/");
+      setCallbackCompleted(true);
+      setCallbackRecoveryExpired(false);
+      return;
+    }
+
     // Let AuthKit + Convex auth settle before leaving /callback.
     if (!isAuthLoading && isAuthenticated) {
       const chatboxReturnPath = readChatboxSignInReturnPath();
@@ -553,7 +595,28 @@ export default function App() {
     }, 15000);
 
     return () => clearTimeout(timeout);
-  }, [isOAuthCallback, isAuthLoading, isAuthenticated]);
+  }, [
+    isOAuthCallback,
+    isAuthLoading,
+    isAuthenticated,
+    isWorkOsLoading,
+    workOsUser,
+  ]);
+
+  const handleRetryCallbackSignIn = useCallback(() => {
+    clearHostedCallbackRetryState();
+    window.history.replaceState({}, "", "/");
+    setCallbackCompleted(true);
+    setCallbackRecoveryExpired(false);
+    queueMicrotask(() => {
+      signIn();
+    });
+  }, [signIn]);
+
+  const handleReloadFromCallback = useCallback(() => {
+    clearHostedCallbackRetryState();
+    window.location.assign("/");
+  }, []);
 
   const {
     appState,
@@ -1491,14 +1554,14 @@ export default function App() {
             <button
               type="button"
               className="rounded bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
-              onClick={() => signIn()}
+              onClick={handleRetryCallbackSignIn}
             >
               Try sign in again
             </button>
             <button
               type="button"
               className="rounded border px-4 py-2 text-sm font-medium"
-              onClick={() => window.location.reload()}
+              onClick={handleReloadFromCallback}
             >
               Reload
             </button>
