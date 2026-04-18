@@ -3,8 +3,8 @@
  */
 
 import { Settings2 } from "lucide-react";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { Input } from "@mcpjam/design-system/input";
+import { Label } from "@mcpjam/design-system/label";
 import {
   PRESET_DEVICE_CONFIGS,
   LOCALE_OPTIONS,

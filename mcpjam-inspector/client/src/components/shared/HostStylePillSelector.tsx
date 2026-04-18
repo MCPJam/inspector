@@ -1,4 +1,4 @@
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { ToggleGroup, ToggleGroupItem } from "@mcpjam/design-system/toggle-group";
 import type { ChatboxHostStyle } from "@/lib/chatbox-host-style";
 import { cn } from "@/lib/utils";
 

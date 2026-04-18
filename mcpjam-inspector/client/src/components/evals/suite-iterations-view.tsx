@@ -28,7 +28,7 @@ import {
   useAiProviderKeys,
   type ProviderTokens,
 } from "@/hooks/use-ai-provider-keys";
-import { Button } from "@/components/ui/button";
+import { Button } from "@mcpjam/design-system/button";
 import { Loader2, Trash2 } from "lucide-react";
 import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
 import {

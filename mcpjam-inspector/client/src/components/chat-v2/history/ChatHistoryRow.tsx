@@ -6,14 +6,14 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { Input } from "@/components/ui/input";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+} from "@mcpjam/design-system/dropdown-menu";
+import { Input } from "@mcpjam/design-system/input";
+import { Avatar, AvatarFallback, AvatarImage } from "@mcpjam/design-system/avatar";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from "@/components/ui/tooltip";
+} from "@mcpjam/design-system/tooltip";
 import type { ChatHistorySession } from "@/lib/apis/web/chat-history-api";
 import { getModelById } from "@/shared/types";
 import { getInitials } from "@/lib/utils";

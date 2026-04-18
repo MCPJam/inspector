@@ -1,16 +1,16 @@
 import React, { useState } from "react";
-import { Button } from "./ui/button";
-import { Input } from "./ui/input";
-import { Label } from "./ui/label";
-import { Textarea } from "./ui/textarea";
-import { Badge } from "./ui/badge";
+import { Button } from "@mcpjam/design-system/button";
+import { Input } from "@mcpjam/design-system/input";
+import { Label } from "@mcpjam/design-system/label";
+import { Textarea } from "@mcpjam/design-system/textarea";
+import { Badge } from "@mcpjam/design-system/badge";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "./ui/select";
+} from "@mcpjam/design-system/select";
 import {
   Dialog,
   DialogContent,
@@ -18,7 +18,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "./ui/dialog";
+} from "@mcpjam/design-system/dialog";
 import { MessageSquare, X, Check, RefreshCw } from "lucide-react";
 import { DialogElicitation } from "./ToolsTab";
 

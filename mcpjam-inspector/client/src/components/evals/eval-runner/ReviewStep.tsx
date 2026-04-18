@@ -1,10 +1,10 @@
 import { ShieldX } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
-import { Badge } from "@/components/ui/badge";
-import { Separator } from "@/components/ui/separator";
+import { Button } from "@mcpjam/design-system/button";
+import { Input } from "@mcpjam/design-system/input";
+import { Label } from "@mcpjam/design-system/label";
+import { Textarea } from "@mcpjam/design-system/textarea";
+import { Badge } from "@mcpjam/design-system/badge";
+import { Separator } from "@mcpjam/design-system/separator";
 import { PassCriteriaSelector } from "../pass-criteria-selector";
 import { cn } from "@/lib/utils";
 import type { ModelDefinition } from "@/shared/types";

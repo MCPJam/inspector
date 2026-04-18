@@ -78,7 +78,7 @@ vi.mock("@/lib/oauth/mcp-oauth", () => ({
   getStoredTokens: vi.fn(() => null),
 }));
 
-vi.mock("@/components/ui/sheet", () => ({
+vi.mock("@mcpjam/design-system/sheet", () => ({
   Sheet: ({ open, children }: { open: boolean; children: ReactNode }) =>
     open ? <div>{children}</div> : null,
   SheetContent: ({ children }: { children: ReactNode }) => (

@@ -52,7 +52,7 @@ vi.mock("@/hooks/useRegistryServers", async (importOriginal) => {
 });
 
 // Mock dropdown menu to simplify testing
-vi.mock("../ui/dropdown-menu", () => ({
+vi.mock("@mcpjam/design-system/dropdown-menu", () => ({
   DropdownMenu: ({ children }: { children: React.ReactNode }) => (
     <div data-testid="dropdown-menu">{children}</div>
   ),

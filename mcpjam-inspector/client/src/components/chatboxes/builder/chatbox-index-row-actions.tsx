@@ -6,14 +6,14 @@ import {
   Pencil,
   Trash2,
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Button } from "@mcpjam/design-system/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+} from "@mcpjam/design-system/dropdown-menu";
 import type { ChatboxListItem } from "@/hooks/useChatboxes";
 
 /** Row/card overflow menu. Copy hosted link / open hosted need link token on list items — future list API. */

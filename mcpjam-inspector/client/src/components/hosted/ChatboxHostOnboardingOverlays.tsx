@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { Loader2 } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Label } from "@/components/ui/label";
 import { getChatboxOAuthRowCopy } from "@/components/hosted/chatbox-oauth-copy";
+import { Button } from "@mcpjam/design-system/button";
+import { Checkbox } from "@mcpjam/design-system/checkbox";
+import { Label } from "@mcpjam/design-system/label";
 import type { HostedOAuthServerDescriptor } from "@/hooks/hosted/use-hosted-oauth-gate";
 import type { HostedOAuthState } from "@/lib/hosted-oauth-resume";
 

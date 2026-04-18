@@ -1,12 +1,12 @@
 import { Copy } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Button } from "@mcpjam/design-system/button";
 import {
   Dialog,
   DialogContent,
   DialogDescription,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
+} from "@mcpjam/design-system/dialog";
 import { HOSTED_MODE } from "@/lib/config";
 import { copyToClipboard } from "@/lib/clipboard";
 

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { AlertTriangle, CheckCircle2, Copy } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Badge } from "@mcpjam/design-system/badge";
+import { Button } from "@mcpjam/design-system/button";
 import { ScrollableJsonView } from "@/components/ui/json-editor";
 import type { XAADecodedJwt } from "@/lib/xaa/types";
 import type { NegativeTestMode } from "@/shared/xaa.js";

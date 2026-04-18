@@ -7,11 +7,11 @@ import {
   DialogDescription,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+} from "@mcpjam/design-system/dialog";
+import { Button } from "@mcpjam/design-system/button";
+import { Input } from "@mcpjam/design-system/input";
+import { Avatar, AvatarFallback, AvatarImage } from "@mcpjam/design-system/avatar";
+import { Alert, AlertDescription, AlertTitle } from "@mcpjam/design-system/alert";
 import { getInitials } from "@/lib/utils";
 import { ChevronDown, Clock, CreditCard, Globe, Lock } from "lucide-react";
 import { toast } from "sonner";
@@ -23,7 +23,7 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+} from "@mcpjam/design-system/dropdown-menu";
 import {
   type WorkspaceMember,
   type WorkspaceRole,

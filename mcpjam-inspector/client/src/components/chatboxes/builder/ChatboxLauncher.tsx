@@ -5,7 +5,7 @@ import {
   CommandInput,
   CommandItem,
   CommandList,
-} from "@/components/ui/command";
+} from "@mcpjam/design-system/command";
 import { Building2, Globe, Search, Wand2 } from "lucide-react";
 import { CHATBOX_STARTERS } from "./drafts";
 import type { ChatboxStarterDefinition } from "./types";

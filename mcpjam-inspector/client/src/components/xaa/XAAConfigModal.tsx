@@ -1,20 +1,20 @@
 import { useEffect, useState } from "react";
 import { ChevronDown } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Button } from "@mcpjam/design-system/button";
 import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
-} from "@/components/ui/collapsible";
+} from "@mcpjam/design-system/collapsible";
 import {
   Dialog,
   DialogContent,
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+} from "@mcpjam/design-system/dialog";
+import { Input } from "@mcpjam/design-system/input";
+import { Label } from "@mcpjam/design-system/label";
 import { cn } from "@/lib/utils";
 import type { XAADebugProfile } from "@/lib/xaa/profile";
 

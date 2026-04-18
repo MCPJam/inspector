@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Button } from "@mcpjam/design-system/button";
 import {
   Dialog,
   DialogContent,
@@ -8,9 +8,9 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+} from "@mcpjam/design-system/dialog";
+import { Input } from "@mcpjam/design-system/input";
+import { Label } from "@mcpjam/design-system/label";
 import { cn } from "@/lib/utils";
 
 /** Exact text the user must type (after trim) to enable permanent delete. */

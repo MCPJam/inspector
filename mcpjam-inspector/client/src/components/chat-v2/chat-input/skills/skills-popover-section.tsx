@@ -2,7 +2,7 @@ import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from "@/components/ui/tooltip";
+} from "@mcpjam/design-system/tooltip";
 import { cn } from "@/lib/chat-utils";
 import { SquareSlash, Loader2 } from "lucide-react";
 import { useEffect, useState, useCallback } from "react";

@@ -1,9 +1,9 @@
 import { useMemo } from "react";
 import { toast } from "sonner";
 import { AlertTriangle, RefreshCcw, Save } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
+import { Button } from "@mcpjam/design-system/button";
+import { Card } from "@mcpjam/design-system/card";
+import { Badge } from "@mcpjam/design-system/badge";
 import { JsonEditor } from "@/components/ui/json-editor";
 import type { Workspace } from "@/state/app-types";
 import {

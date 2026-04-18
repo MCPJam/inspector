@@ -1,4 +1,4 @@
-import { Badge } from "@/components/ui/badge";
+import { Badge } from "@mcpjam/design-system/badge";
 import { Code2 } from "lucide-react";
 
 interface ToolCall {

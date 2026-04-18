@@ -9,7 +9,7 @@ import type { FormEvent, KeyboardEvent } from "react";
 import { usePostHog } from "posthog-js/react";
 import { cn } from "@/lib/chat-utils";
 import { standardEventProps } from "@/lib/PosthogUtils";
-import { Button } from "@/components/ui/button";
+import { Button } from "@mcpjam/design-system/button";
 import { TextareaAutosize } from "@/components/ui/textarea-autosize";
 import { PromptsPopover } from "@/components/chat-v2/chat-input/prompts/mcp-prompts-popover";
 import {
@@ -21,7 +21,7 @@ import {
   Settings2,
   Loader2,
 } from "lucide-react";
-import { Switch } from "@/components/ui/switch";
+import { Switch } from "@mcpjam/design-system/switch";
 import { FileAttachmentCard } from "@/components/chat-v2/chat-input/attachments/file-attachment-card";
 import {
   type FileAttachment,
@@ -34,7 +34,7 @@ import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from "@/components/ui/tooltip";
+} from "@mcpjam/design-system/tooltip";
 import { ModelSelector } from "@/components/chat-v2/chat-input/model-selector";
 import { ModelDefinition, ServerFormData } from "@/shared/types";
 import { AddServerModal } from "@/components/connection/AddServerModal";
@@ -68,7 +68,7 @@ import {
   Popover,
   PopoverContent,
   PopoverTrigger,
-} from "@/components/ui/popover";
+} from "@mcpjam/design-system/popover";
 import { HostStylePillSelector } from "@/components/shared/HostStylePillSelector";
 import type { ChatboxHostStyle } from "@/lib/chatbox-host-style";
 

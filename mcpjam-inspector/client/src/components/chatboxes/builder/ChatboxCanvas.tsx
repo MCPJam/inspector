@@ -24,18 +24,18 @@ import {
 } from "@xyflow/react";
 import { Bot, CircleHelp, Network, Plus, Server } from "lucide-react";
 import "@xyflow/react/dist/style.css";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Badge } from "@mcpjam/design-system/badge";
+import { Button } from "@mcpjam/design-system/button";
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
-} from "@/components/ui/popover";
+} from "@mcpjam/design-system/popover";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from "@/components/ui/tooltip";
+} from "@mcpjam/design-system/tooltip";
 import type { RemoteServer } from "@/hooks/useWorkspaces";
 import { WorkspaceServerPickerList } from "@/components/chatboxes/builder/setup-checklist-panel";
 import { MCPIcon } from "@/components/ui/mcp-icon";

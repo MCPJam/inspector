@@ -1,7 +1,7 @@
 import { formatDistanceToNow } from "date-fns";
 import { AlertTriangle, MessageSquare } from "lucide-react";
 import { useMemo } from "react";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { ScrollArea } from "@mcpjam/design-system/scroll-area";
 import {
   compareThreadsForUsageList,
   threadMatchesUsageFilter,

@@ -7,10 +7,10 @@ import {
   DialogDescription,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Button } from "@/components/ui/button";
+} from "@mcpjam/design-system/dialog";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@mcpjam/design-system/tabs";
+import { Alert, AlertDescription, AlertTitle } from "@mcpjam/design-system/alert";
+import { Button } from "@mcpjam/design-system/button";
 import type { EvalSuite } from "./types";
 import { CopyableCodeBlock } from "./copyable-code-block";
 import type { EvalExportCaseInput } from "@/lib/evals/eval-export";

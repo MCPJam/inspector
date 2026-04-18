@@ -8,15 +8,15 @@ import {
   Copy,
 } from "lucide-react";
 import { JsonEditor } from "@/components/ui/json-editor";
-import { Input } from "@/components/ui/input";
-import { Button } from "@/components/ui/button";
+import { Input } from "@mcpjam/design-system/input";
+import { Button } from "@mcpjam/design-system/button";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
+} from "@mcpjam/design-system/select";
 import {
   useTrafficLogStore,
   subscribeToRpcStream,
@@ -34,12 +34,12 @@ import {
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+} from "@mcpjam/design-system/dropdown-menu";
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
-} from "@/components/ui/popover";
+} from "@mcpjam/design-system/popover";
 import { Filter, Settings2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 

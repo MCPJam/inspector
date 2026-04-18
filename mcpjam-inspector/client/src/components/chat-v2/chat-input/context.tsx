@@ -1,13 +1,13 @@
 "use client";
 
-import { Button } from "@/components/ui/button";
+import { Button } from "@mcpjam/design-system/button";
 import {
   HoverCard,
   HoverCardContent,
   HoverCardTrigger,
-} from "@/components/ui/hover-card";
-import { Progress } from "@/components/ui/progress";
-import { Separator } from "@/components/ui/separator";
+} from "@mcpjam/design-system/hover-card";
+import { Progress } from "@mcpjam/design-system/progress";
+import { Separator } from "@mcpjam/design-system/separator";
 import { cn } from "@/lib/utils";
 import type { LanguageModelUsage } from "ai";
 import { type ComponentProps, createContext, useContext } from "react";
