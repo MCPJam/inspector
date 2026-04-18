@@ -63,7 +63,7 @@ vi.mock("@/components/ui/sidebar", () => ({
 }));
 
 // Render dropdown menu items directly so we can test clicks
-vi.mock("@/components/ui/dropdown-menu", () => ({
+vi.mock("@mcpjam/design-system/dropdown-menu", () => ({
   DropdownMenu: ({ children }: any) => <div>{children}</div>,
   DropdownMenuTrigger: ({ children }: any) => <div>{children}</div>,
   DropdownMenuContent: ({ children }: any) => <div>{children}</div>,
@@ -76,7 +76,7 @@ vi.mock("@/components/ui/dropdown-menu", () => ({
   DropdownMenuSeparator: () => <hr />,
 }));
 
-vi.mock("@/components/ui/avatar", () => ({
+vi.mock("@mcpjam/design-system/avatar", () => ({
   Avatar: ({ children }: any) => <div>{children}</div>,
   AvatarImage: () => null,
   AvatarFallback: ({ children }: any) => <span>{children}</span>,

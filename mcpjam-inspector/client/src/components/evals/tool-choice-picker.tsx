@@ -1,14 +1,14 @@
 import { useEffect, useMemo, useState, type ChangeEvent } from "react";
 import { Check, ChevronsUpDown, Wrench } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
+import { Button } from "@mcpjam/design-system/button";
+import { Input } from "@mcpjam/design-system/input";
+import { Badge } from "@mcpjam/design-system/badge";
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
-} from "@/components/ui/popover";
-import { ScrollArea } from "@/components/ui/scroll-area";
+} from "@mcpjam/design-system/popover";
+import { ScrollArea } from "@mcpjam/design-system/scroll-area";
 import { SchemaViewer } from "@/components/ui/schema-viewer";
 import { cn } from "@/lib/utils";
 import {

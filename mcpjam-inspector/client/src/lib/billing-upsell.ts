@@ -4,7 +4,7 @@ import type {
 } from "@/hooks/useOrganizationBilling";
 import { formatPlanName } from "@/lib/billing-entitlements";
 
-type BillingUpsellIntent = "members" | "sandboxes";
+type BillingUpsellIntent = "members" | "chatboxes";
 
 function formatCurrencyAmount(amount: number, currency: string): string {
   return new Intl.NumberFormat(undefined, {
@@ -27,14 +27,14 @@ function formatLimitLabel(
   return `${value} ${value === 1 ? singular : plural}`;
 }
 
-function formatSandboxesPerWorkspaceLabel(
+function formatChatboxesPerWorkspaceLabel(
   value: number | null | undefined,
 ): string {
   if (value == null) {
-    return "unlimited sandboxes per workspace";
+    return "unlimited chatboxes per workspace";
   }
 
-  return `${value} ${value === 1 ? "sandbox" : "sandboxes"} per workspace`;
+  return `${value} ${value === 1 ? "chatbox" : "chatboxes"} per workspace`;
 }
 
 function formatPlanTeaserPrice(
@@ -90,8 +90,8 @@ export function getBillingUpsellTeaser(params: {
           "workspace",
           "workspaces",
         )}`
-      : `${formatPlanName(upgradePlan)} includes ${formatSandboxesPerWorkspaceLabel(
-          entry.limits.maxSandboxesPerWorkspace,
+      : `${formatPlanName(upgradePlan)} includes ${formatChatboxesPerWorkspaceLabel(
+          entry.limits.maxChatboxesPerWorkspace,
         )} and ${formatLimitLabel(
           entry.limits.maxMembers,
           "member",

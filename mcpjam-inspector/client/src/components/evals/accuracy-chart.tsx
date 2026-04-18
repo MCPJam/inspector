@@ -4,7 +4,7 @@ import {
   ChartTooltipContent,
 } from "@/components/ui/chart";
 import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from "recharts";
-import { Skeleton } from "@/components/ui/skeleton";
+import { Skeleton } from "@mcpjam/design-system/skeleton";
 
 interface AccuracyChartData {
   runId?: string;

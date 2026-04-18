@@ -9,23 +9,23 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
+} from "@mcpjam/design-system/select";
 import {
   Card,
   CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
-} from "@/components/ui/card";
-import { Label } from "@/components/ui/label";
-import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
+} from "@mcpjam/design-system/card";
+import { Label } from "@mcpjam/design-system/label";
+import { Alert, AlertDescription } from "@mcpjam/design-system/alert";
+import { Badge } from "@mcpjam/design-system/badge";
 import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
-} from "@/components/ui/collapsible";
-import { Button } from "@/components/ui/button";
+} from "@mcpjam/design-system/collapsible";
+import { Button } from "@mcpjam/design-system/button";
 import { useState } from "react";
 import {
   PROTOCOL_VERSION_INFO,

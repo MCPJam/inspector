@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { Code2, X, ChevronDown, ChevronRight, Loader2 } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Label } from "@/components/ui/label";
+import { Button } from "@mcpjam/design-system/button";
+import { Label } from "@mcpjam/design-system/label";
 import { cn } from "@/lib/utils";
 import { computeIterationResult } from "./pass-criteria";
 import { evalStatusLeftBorderClasses, pickLatestCompletedRun } from "./helpers";

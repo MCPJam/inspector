@@ -205,9 +205,9 @@ describe("useServerState hosted OAuth callback guards", () => {
     });
   });
 
-  it("defers hosted sandbox OAuth callbacks to App.tsx", async () => {
+  it("defers hosted chatbox OAuth callbacks to App.tsx", async () => {
     writeHostedOAuthPendingMarker({
-      surface: "sandbox",
+      surface: "chatbox",
       serverName: "asana",
       serverUrl: "https://mcp.asana.com/sse",
       returnHash: "#asaan",

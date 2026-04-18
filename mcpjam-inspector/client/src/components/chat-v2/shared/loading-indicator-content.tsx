@@ -1,12 +1,12 @@
-import { useSandboxHostStyle } from "@/contexts/sandbox-host-style-context";
-import type { SandboxHostStyle } from "@/lib/sandbox-host-style";
+import { useChatboxHostStyle } from "@/contexts/chatbox-host-style-context";
+import type { ChatboxHostStyle } from "@/lib/chatbox-host-style";
 import { cn } from "@/lib/utils";
 import { ClaudeLoadingIndicator } from "./claude-loading-indicator";
 
 export type LoadingIndicatorVariant = "default" | "chatgpt-dot" | "claude-mark";
 
 export function getLoadingIndicatorVariantForHostStyle(
-  hostStyle: SandboxHostStyle | null | undefined,
+  hostStyle: ChatboxHostStyle | null | undefined,
 ): LoadingIndicatorVariant {
   if (hostStyle === "chatgpt") {
     return "chatgpt-dot";
@@ -25,7 +25,7 @@ export function resolveLoadingIndicatorVariant({
   modelProvider,
 }: {
   variant?: LoadingIndicatorVariant;
-  hostStyle?: SandboxHostStyle | null;
+  hostStyle?: ChatboxHostStyle | null;
   modelProvider?: string | null;
 }): LoadingIndicatorVariant {
   if (variant !== undefined && variant !== "default") {
@@ -53,11 +53,11 @@ export function useResolvedLoadingIndicatorVariant(
   variant?: LoadingIndicatorVariant,
   options?: { modelProvider?: string | null },
 ): LoadingIndicatorVariant {
-  const sandboxHostStyle = useSandboxHostStyle();
+  const chatboxHostStyle = useChatboxHostStyle();
 
   return resolveLoadingIndicatorVariant({
     variant,
-    hostStyle: sandboxHostStyle,
+    hostStyle: chatboxHostStyle,
     modelProvider: options?.modelProvider,
   });
 }

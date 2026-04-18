@@ -89,9 +89,17 @@ describe("hosted-navigation", () => {
     expect(suiteResolved.isBlocked).toBe(false);
   });
 
-  it("treats sandboxes as a normal hosted app tab", () => {
-    const resolved = resolveHostedNavigation("#sandboxes", true);
-    expect(resolved.normalizedTab).toBe("sandboxes");
+  it("treats chatboxes as a normal hosted app tab", () => {
+    const resolved = resolveHostedNavigation("#chatboxes", true);
+    expect(resolved.normalizedTab).toBe("chatboxes");
+    expect(resolved.isBlocked).toBe(false);
+    expect(resolved.shouldSelectAllServers).toBe(false);
+    expect(resolved.shouldClearChatMessages).toBe(true);
+  });
+
+  it("treats conformance as a normal hosted app tab", () => {
+    const resolved = resolveHostedNavigation("#conformance", true);
+    expect(resolved.normalizedTab).toBe("conformance");
     expect(resolved.isBlocked).toBe(false);
     expect(resolved.shouldSelectAllServers).toBe(false);
     expect(resolved.shouldClearChatMessages).toBe(true);

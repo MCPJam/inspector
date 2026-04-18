@@ -2,24 +2,24 @@ import {
   Popover,
   PopoverContent,
   PopoverAnchor,
-} from "@/components/ui/popover";
+} from "@mcpjam/design-system/popover";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from "@/components/ui/tooltip";
+} from "@mcpjam/design-system/tooltip";
 import { cn } from "@/lib/chat-utils";
 import { MessageSquareCode, ListChecks, Loader2 } from "lucide-react";
 
 import { useEffect, useMemo, useState, FormEvent, useCallback } from "react";
-import { Button } from "@/components/ui/button";
+import { Button } from "@mcpjam/design-system/button";
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
+} from "@mcpjam/design-system/dialog";
+import { Input } from "@mcpjam/design-system/input";
 import type { MCPPrompt, MCPPromptArgument } from "@/shared/types";
 import {
   listPromptsForServers,

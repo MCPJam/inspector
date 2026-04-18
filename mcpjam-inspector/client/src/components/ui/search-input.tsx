@@ -1,5 +1,5 @@
 import * as React from "react";
-import { Input } from "@/components/ui/input";
+import { Input } from "@mcpjam/design-system/input";
 import { Search, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 

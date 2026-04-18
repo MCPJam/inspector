@@ -5,6 +5,10 @@ const rootDir = path.resolve(__dirname, "..");
 const workspaceNodeModulesDir = path.resolve(rootDir, "../node_modules");
 // The linked local SDK package can advertise ./browser before dist/browser.* exists.
 const sdkBrowserEntry = path.resolve(rootDir, "../sdk/src/browser.ts");
+const sdkSkillReferenceEntry = path.resolve(
+  rootDir,
+  "../sdk/src/skill-reference.ts",
+);
 const mcpSdkClientAuthEntry = path.resolve(
   workspaceNodeModulesDir,
   "@modelcontextprotocol/sdk/dist/esm/client/auth.js",
@@ -15,6 +19,24 @@ const mcpSdkSharedAuthEntry = path.resolve(
 );
 
 export default defineConfig({
+  define: {
+    __MCPJAM_SDK_VERSION__: JSON.stringify("test"),
+  },
+  plugins: [
+    {
+      name: "raw-markdown-for-sdk-tests",
+      transform(source, id) {
+        if (!id.endsWith(".md")) {
+          return null;
+        }
+
+        return {
+          code: `export default ${JSON.stringify(source)};`,
+          map: null,
+        };
+      },
+    },
+  ],
   test: {
     globals: true,
     environment: "jsdom",
@@ -31,13 +53,23 @@ export default defineConfig({
     },
   },
   resolve: {
-    alias: {
-      "@repo/assets": path.resolve(__dirname, "src/assets"),
-      "@/shared": path.resolve(__dirname, "../shared"),
-      "@": path.resolve(__dirname, "./src"),
-      "@mcpjam/sdk/browser": sdkBrowserEntry,
-      "@modelcontextprotocol/sdk/client/auth.js": mcpSdkClientAuthEntry,
-      "@modelcontextprotocol/sdk/shared/auth.js": mcpSdkSharedAuthEntry,
-    },
+    alias: [
+      {
+        find: "@mcpjam/sdk/skill-reference",
+        replacement: sdkSkillReferenceEntry,
+      },
+      { find: "@mcpjam/sdk/browser", replacement: sdkBrowserEntry },
+      {
+        find: "@modelcontextprotocol/sdk/client/auth.js",
+        replacement: mcpSdkClientAuthEntry,
+      },
+      {
+        find: "@modelcontextprotocol/sdk/shared/auth.js",
+        replacement: mcpSdkSharedAuthEntry,
+      },
+      { find: "@repo/assets", replacement: path.resolve(__dirname, "src/assets") },
+      { find: "@/shared", replacement: path.resolve(__dirname, "../shared") },
+      { find: "@", replacement: path.resolve(__dirname, "./src") },
+    ],
   },
 });

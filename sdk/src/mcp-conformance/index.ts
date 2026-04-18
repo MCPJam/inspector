@@ -16,3 +16,12 @@ export {
   MCP_CHECK_CATEGORIES,
   MCP_CHECK_IDS,
 } from "./types.js";
+
+export {
+  canRunConformance,
+  isHttpServerConfig,
+} from "./transport-support.js";
+export type {
+  ConformanceSuiteId,
+  ConformanceSupport,
+} from "./transport-support.js";

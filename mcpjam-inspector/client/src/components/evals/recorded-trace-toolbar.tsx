@@ -1,13 +1,13 @@
 import type { ReactNode } from "react";
 import { Expand, ListFilter, Shrink } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Button } from "@mcpjam/design-system/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+} from "@mcpjam/design-system/dropdown-menu";
 import { cn } from "@/lib/utils";
 
 export const TRACE_TIMELINE_FILTERS = ["all", "llm", "tool", "error"] as const;

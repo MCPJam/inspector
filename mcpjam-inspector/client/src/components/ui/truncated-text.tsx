@@ -4,7 +4,7 @@ import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
-} from "@/components/ui/dialog";
+} from "@mcpjam/design-system/dialog";
 import { truncateText } from "@/lib/chat-utils";
 
 interface TruncatedTextProps {

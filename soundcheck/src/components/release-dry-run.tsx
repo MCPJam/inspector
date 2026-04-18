@@ -23,7 +23,7 @@ const INSPECTOR = { owner: "MCPJam", repo: "inspector" };
 export function ReleaseDryRunSkeleton() {
   return (
     <Tile title="Release dry-run" eyebrow="Computing plan">
-      <p className="text-sm text-ink-400">
+      <p className="text-sm text-muted-foreground">
         Computing projected versions…
       </p>
     </Tile>
@@ -37,7 +37,7 @@ export async function ReleaseDryRun() {
   } catch (err) {
     return (
       <Tile title="Release dry-run" accent="failure">
-        <p className="text-sm text-signal-stop">
+        <p className="text-sm text-destructive">
           Failed to read main: {(err as Error).message}
         </p>
       </Tile>
@@ -53,7 +53,7 @@ export async function ReleaseDryRun() {
   } catch (err) {
     return (
       <Tile title="Release dry-run" accent="failure">
-        <p className="text-sm text-signal-stop">
+        <p className="text-sm text-destructive">
           Failed to read release inputs: {(err as Error).message}
         </p>
       </Tile>
@@ -74,9 +74,9 @@ export async function ReleaseDryRun() {
         accent="warning"
         action={titleAction}
       >
-        <p className="text-sm leading-relaxed text-ink-400">
+        <p className="text-sm leading-relaxed text-muted-foreground">
           No pending changesets.{" "}
-          <code className="font-mono text-ink-200">npx changeset status</code>{" "}
+          <code className="font-mono text-foreground">npx changeset status</code>{" "}
           would report zero releases, and the Release workflow would fail
           preflight.
         </p>
@@ -104,25 +104,25 @@ export async function ReleaseDryRun() {
           ))}
         </ul>
 
-        <div className="hairline" />
+        <div className="border-t border-border" />
 
-        <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-ink-400">
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-muted-foreground">
           <span>
-            <span className="text-ink-500">Tag</span>:{" "}
+            <span className="text-muted-foreground">Tag</span>:{" "}
             {plan.releaseTag ? (
-              <span className="font-mono text-ink-100">{plan.releaseTag}</span>
+              <span className="font-mono text-foreground">{plan.releaseTag}</span>
             ) : (
-              <span className="text-ink-500">none (no inspector bump)</span>
+              <span className="text-muted-foreground">none (no inspector bump)</span>
             )}
           </span>
           <span>
-            <span className="text-ink-500">Desktop artifacts</span>:{" "}
-            <span className="text-ink-100">
+            <span className="text-muted-foreground">Desktop artifacts</span>:{" "}
+            <span className="text-foreground">
               {plan.buildDesktopArtifacts ? "mac + windows" : "no"}
             </span>
           </span>
           <span className="flex items-center gap-1.5">
-            <span className="text-ink-500">Valid scopes</span>:
+            <span className="text-muted-foreground">Valid scopes</span>:
             {plan.validScopes.length === 0 ? (
               <Badge tone="failure">none</Badge>
             ) : (
@@ -155,27 +155,27 @@ function PackageRow({
   return (
     <li className="space-y-1.5">
       <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
-        <span className="font-mono text-sm text-ink-100">{pkg.name}</span>
-        <span className="font-mono text-xs text-ink-500 tabular-nums">
+        <span className="font-mono text-sm text-foreground">{pkg.name}</span>
+        <span className="font-mono text-xs text-muted-foreground tabular-nums">
           {pkg.currentVersion}
         </span>
-        <span className="text-xs text-ink-600">→</span>
-        <span className="font-mono text-xs font-semibold text-signal-go tabular-nums">
+        <span className="text-xs text-muted-foreground">→</span>
+        <span className="font-mono text-xs font-semibold text-success tabular-nums">
           {pkg.newVersion}
         </span>
         <Badge tone={bumpTone}>{pkg.bumpType}</Badge>
       </div>
-      <ul className="space-y-1 border-l border-ink-800 pl-3">
+      <ul className="space-y-1 border-l border-border pl-3">
         {pkg.changesets.map((csName) => {
           const note = notesByChangeset[csName]?.trim() ?? "";
           const firstLine = note.split(/\r?\n/)[0] || "(no description)";
           return (
             <li
               key={csName}
-              className="flex gap-2 text-xs leading-relaxed text-ink-400"
+              className="flex gap-2 text-xs leading-relaxed text-muted-foreground"
             >
-              <span className="font-mono text-ink-500">{csName}</span>
-              <span className="text-ink-300">— {firstLine}</span>
+              <span className="font-mono text-muted-foreground">{csName}</span>
+              <span className="text-muted-foreground">— {firstLine}</span>
             </li>
           );
         })}

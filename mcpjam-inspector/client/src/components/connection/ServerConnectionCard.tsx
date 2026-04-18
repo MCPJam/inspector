@@ -5,16 +5,16 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import { toast } from "sonner";
-import { Card } from "../ui/card";
-import { Button } from "../ui/button";
-import { Separator } from "../ui/separator";
-import { Switch } from "../ui/switch";
+import { Card } from "@mcpjam/design-system/card";
+import { Button } from "@mcpjam/design-system/button";
+import { Separator } from "@mcpjam/design-system/separator";
+import { Switch } from "@mcpjam/design-system/switch";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from "../ui/dropdown-menu";
+} from "@mcpjam/design-system/dropdown-menu";
 import {
   MoreVertical,
   Link2Off,
@@ -71,7 +71,7 @@ function isHostedInsecureHttpServer(server: ServerWithName): boolean {
   }
 }
 
-// Temporary hide while sandbox sharing replaces server sharing in the main UI.
+// Temporary hide while chatbox sharing replaces server sharing in the main UI.
 const SERVER_SHARE_UI_ENABLED = false;
 const SERVER_CARD_CONTEXT_MENU_EXEMPT_SELECTOR =
   "[data-server-card-context-menu-exempt]";

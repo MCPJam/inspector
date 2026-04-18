@@ -1,0 +1,43 @@
+{
+  "name": "@mcpjam/design-system",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Shared MCPJam design system: tokens + primitive components.",
+  "exports": {
+    "./tokens.css": "./src/tokens.css",
+    "./tokens": "./src/tokens.ts",
+    "./cn": "./src/cn.ts",
+    "./*": "./src/components/*.tsx"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "peerDependencies": {
+    "next-themes": "^0.4.6",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-hook-form": "^7.60.0",
+    "sonner": "^2.0.6"
+  },
+  "peerDependenciesMeta": {
+    "next-themes": {
+      "optional": true
+    },
+    "react-hook-form": {
+      "optional": true
+    },
+    "sonner": {
+      "optional": true
+    }
+  },
+  "dependencies": {
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "cmdk": "^1.1.1",
+    "lucide-react": "^0.525.0",
+    "radix-ui": "^1.4.2",
+    "tailwind-merge": "^3.3.1"
+  }
+}

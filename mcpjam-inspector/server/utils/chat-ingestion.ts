@@ -32,11 +32,11 @@ interface PersistChatSessionOptions {
   modelSource: "mcpjam" | "byok";
   authHeader?: string;
   workspaceId?: string;
-  sourceType?: "serverShare" | "sandbox" | "direct";
+  sourceType?: "serverShare" | "chatbox" | "direct";
   directVisibility?: "private" | "workspace";
   surface?: "preview" | "share_link";
   shareToken?: string;
-  sandboxToken?: string;
+  chatboxToken?: string;
   serverId?: string;
   visitorDisplayName?: string;
   sessionMessages?: unknown[];
@@ -121,7 +121,7 @@ export async function persistChatSessionToConvex(
           : {}),
         ...(options.surface ? { surface: options.surface } : {}),
         ...(options.shareToken ? { shareToken: options.shareToken } : {}),
-        ...(options.sandboxToken ? { sandboxToken: options.sandboxToken } : {}),
+        ...(options.chatboxToken ? { chatboxToken: options.chatboxToken } : {}),
         ...(options.serverId ? { serverId: options.serverId } : {}),
         ...(options.visitorDisplayName
           ? { visitorDisplayName: options.visitorDisplayName }

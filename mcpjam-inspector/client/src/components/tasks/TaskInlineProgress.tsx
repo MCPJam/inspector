@@ -1,4 +1,4 @@
-import { Progress } from "@/components/ui/progress";
+import { Progress } from "@mcpjam/design-system/progress";
 import { ProgressIndeterminate } from "@/components/ui/progress-indeterminate";
 import { formatElapsedTime } from "@/lib/task-utils";
 import { useTaskProgress } from "@/hooks/use-task-progress";

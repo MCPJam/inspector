@@ -67,17 +67,17 @@ vi.mock("../ChatHistoryRow", () => ({
   },
 }));
 
-vi.mock("@/components/ui/button", () => ({
+vi.mock("@mcpjam/design-system/button", () => ({
   Button: ({ children, ...props }: ButtonHTMLAttributes<HTMLButtonElement>) => (
     <button {...props}>{children}</button>
   ),
 }));
 
-vi.mock("@/components/ui/scroll-area", () => ({
+vi.mock("@mcpjam/design-system/scroll-area", () => ({
   ScrollArea: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }));
 
-vi.mock("@/components/ui/tooltip", () => ({
+vi.mock("@mcpjam/design-system/tooltip", () => ({
   Tooltip: ({ children }: { children: ReactNode }) => <>{children}</>,
   TooltipTrigger: ({ children }: { children: ReactNode }) => <>{children}</>,
   TooltipContent: () => null,

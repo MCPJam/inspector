@@ -3,8 +3,8 @@ import {
   Popover,
   PopoverContent,
   PopoverTrigger,
-} from "@/components/ui/popover";
-import { Button } from "@/components/ui/button";
+} from "@mcpjam/design-system/popover";
+import { Button } from "@mcpjam/design-system/button";
 import {
   X,
   Rocket,

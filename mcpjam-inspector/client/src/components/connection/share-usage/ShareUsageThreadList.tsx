@@ -1,23 +1,23 @@
 import { formatDistanceToNow } from "date-fns";
 import { AlertTriangle, MessageSquare } from "lucide-react";
 import { useMemo } from "react";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { ScrollArea } from "@mcpjam/design-system/scroll-area";
 import {
   compareThreadsForUsageList,
   threadMatchesUsageFilter,
   type UsageSessionFilter,
-} from "@/hooks/sandbox-usage-filters";
+} from "@/hooks/chatbox-usage-filters";
 import {
   useSharedChatThreadList,
   type SharedChatThread,
 } from "@/hooks/useSharedChatThreads";
 
 interface ShareUsageThreadListProps {
-  sourceType: "sandbox" | "serverShare";
+  sourceType: "chatbox" | "serverShare";
   sourceId: string;
   selectedThreadId: string | null;
   onSelectThread: (threadId: string) => void;
-  /** When set, filters and sorts threads for sandbox usage triage. */
+  /** When set, filters and sorts threads for chatbox usage triage. */
   usageFilter?: UsageSessionFilter;
 }
 

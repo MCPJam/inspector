@@ -12,7 +12,7 @@ import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from "@/components/ui/tooltip";
+} from "@mcpjam/design-system/tooltip";
 import { cn } from "@/lib/utils";
 import { learnMoreContent } from "@/lib/learn-more-content";
 import { LearnMoreHoverCard } from "@/components/learn-more/LearnMoreHoverCard";

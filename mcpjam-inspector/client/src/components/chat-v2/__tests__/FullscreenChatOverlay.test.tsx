@@ -4,9 +4,9 @@ import type { ReactElement } from "react";
 import type { UIMessage } from "@ai-sdk/react";
 
 import {
-  SandboxHostStyleProvider,
-  SandboxHostThemeProvider,
-} from "@/contexts/sandbox-host-style-context";
+  ChatboxHostStyleProvider,
+  ChatboxHostThemeProvider,
+} from "@/contexts/chatbox-host-style-context";
 import { FullscreenChatOverlay } from "../fullscreen-chat-overlay";
 
 vi.mock("../shared/loading-indicator-content", () => ({
@@ -51,9 +51,9 @@ describe("FullscreenChatOverlay", () => {
     ui: ReactElement,
   ) =>
     render(
-      <SandboxHostStyleProvider value={hostStyle}>
-        <SandboxHostThemeProvider value={theme}>{ui}</SandboxHostThemeProvider>
-      </SandboxHostStyleProvider>,
+      <ChatboxHostStyleProvider value={hostStyle}>
+        <ChatboxHostThemeProvider value={theme}>{ui}</ChatboxHostThemeProvider>
+      </ChatboxHostStyleProvider>,
     );
 
   it("shows a standalone Claude placeholder row before the first assistant token appears", () => {
@@ -212,7 +212,7 @@ describe("FullscreenChatOverlay", () => {
     );
 
     expect(screen.getByTestId("fullscreen-composer")).toHaveClass(
-      "sandbox-host-composer",
+      "chatbox-host-composer",
     );
     expect(screen.getByTestId("fullscreen-composer")).toHaveStyle(
       "background-color: rgba(249, 247, 243, 1)",
@@ -232,7 +232,7 @@ describe("FullscreenChatOverlay", () => {
     );
 
     expect(screen.getByTestId("fullscreen-composer")).toHaveClass(
-      "sandbox-host-composer",
+      "chatbox-host-composer",
     );
     expect(screen.getByTestId("fullscreen-composer")).toHaveStyle(
       "background-color: rgba(38, 38, 36, 1)",
@@ -252,7 +252,7 @@ describe("FullscreenChatOverlay", () => {
     );
 
     expect(screen.getByTestId("fullscreen-composer")).toHaveClass(
-      "sandbox-host-composer",
+      "chatbox-host-composer",
     );
     expect(screen.getByTestId("fullscreen-composer")).toHaveStyle(
       "background-color: rgba(255, 255, 255, 1)",
@@ -272,7 +272,7 @@ describe("FullscreenChatOverlay", () => {
     );
 
     expect(screen.getByTestId("fullscreen-composer")).toHaveClass(
-      "sandbox-host-composer",
+      "chatbox-host-composer",
     );
     expect(screen.getByTestId("fullscreen-composer")).toHaveStyle(
       "background-color: rgba(33, 33, 33, 1)",

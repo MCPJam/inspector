@@ -1,9 +1,9 @@
 import type { ModelDefinition } from "@/shared/types";
 import {
-  getSandboxHostLabel,
-  getSandboxHostLogo,
-  type SandboxHostStyle,
-} from "@/lib/sandbox-host-style";
+  getChatboxHostLabel,
+  getChatboxHostLogo,
+  type ChatboxHostStyle,
+} from "@/lib/chatbox-host-style";
 import { getProviderLogoFromModel } from "@/components/chat-v2/shared/chat-helpers";
 
 type ThemeMode = "light" | "dark" | "system";
@@ -11,7 +11,7 @@ type ThemeMode = "light" | "dark" | "system";
 interface AssistantAvatarOptions {
   model: ModelDefinition;
   themeMode: ThemeMode;
-  sandboxHostStyle: SandboxHostStyle | null;
+  chatboxHostStyle: ChatboxHostStyle | null;
 }
 
 export interface AssistantAvatarDescriptor {
@@ -26,14 +26,14 @@ const DEFAULT_AVATAR_CLASSES = "border-border/40 bg-muted/40";
 export function getAssistantAvatarDescriptor({
   model,
   themeMode,
-  sandboxHostStyle,
+  chatboxHostStyle,
 }: AssistantAvatarOptions): AssistantAvatarDescriptor {
-  if (sandboxHostStyle !== null) {
-    const hostLabel = getSandboxHostLabel(sandboxHostStyle);
+  if (chatboxHostStyle !== null) {
+    const hostLabel = getChatboxHostLabel(chatboxHostStyle);
     return {
-      logoSrc: getSandboxHostLogo(sandboxHostStyle),
+      logoSrc: getChatboxHostLogo(chatboxHostStyle),
       logoAlt: `${hostLabel} logo`,
-      avatarClasses: `sandbox-host-assistant-avatar ${DEFAULT_AVATAR_CLASSES}`,
+      avatarClasses: `chatbox-host-assistant-avatar ${DEFAULT_AVATAR_CLASSES}`,
       ariaLabel: `${hostLabel} assistant`,
     };
   }

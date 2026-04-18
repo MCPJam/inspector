@@ -28,6 +28,7 @@ import {
 import { RunRelease } from "@/components/run-release";
 import { ReleaseVerdict, ReleaseVerdictSkeleton } from "@/components/release-verdict";
 import { Section } from "@/components/ui";
+import { Card, CardContent } from "@mcpjam/design-system/card";
 
 export const dynamic = "force-dynamic";
 
@@ -37,13 +38,18 @@ export default async function Home() {
   if (isLockdownEnabled() && !isAllowedEmployeeEmail(user.email)) {
     return (
       <main className="mx-auto max-w-xl px-6 py-24">
-        <div className="panel panel-accent-stop p-8">
-          <h1 className="display-hero text-3xl text-ink-100">Not authorized.</h1>
-          <p className="mt-3 text-sm text-ink-400">
-            Soundcheck is restricted to MCPJam employees. If you think this is
-            a mistake, reach out in <span className="font-mono text-ink-200">#ops</span>.
-          </p>
-        </div>
+        <Card className="border-l-4 border-l-destructive py-6">
+          <CardContent>
+            <h1 className="text-3xl font-semibold text-foreground">
+              Not authorized.
+            </h1>
+            <p className="mt-3 text-sm text-muted-foreground">
+              Soundcheck is restricted to MCPJam employees. If you think this is
+              a mistake, reach out in{" "}
+              <span className="font-mono text-foreground">#ops</span>.
+            </p>
+          </CardContent>
+        </Card>
       </main>
     );
   }
@@ -53,21 +59,21 @@ export default async function Home() {
       {/* Wordmark + meta */}
       <header className="mb-12 flex flex-col gap-6 md:flex-row md:items-end md:justify-between">
         <div>
-          <div className="text-[10px] font-medium uppercase tracking-[0.22em] text-ink-500">
+          <div className="text-[10px] font-medium uppercase tracking-[0.22em] text-muted-foreground">
             MCPJam · internal ops
           </div>
-          <h1 className="display-hero mt-3 text-6xl md:text-7xl text-ink-50">
-            Soundcheck<span className="text-signal-wait">.</span>
+          <h1 className="mt-3 text-5xl md:text-6xl font-semibold tracking-tight text-foreground">
+            Soundcheck<span className="text-primary">.</span>
           </h1>
-          <p className="mt-3 max-w-xl text-sm leading-relaxed text-ink-400">
+          <p className="mt-3 max-w-xl text-sm leading-relaxed text-muted-foreground">
             One control plane for the release pipeline. Everything below
             answers a question you&rsquo;d otherwise go hunting for across
             GitHub, Railway, Convex, Cloudflare, and npm.
           </p>
         </div>
-        <div className="text-xs text-ink-500">
+        <div className="text-xs text-muted-foreground">
           <div>Signed in as</div>
-          <div className="mt-0.5 font-mono text-ink-200">{user.email}</div>
+          <div className="mt-0.5 font-mono text-foreground">{user.email}</div>
         </div>
       </header>
 
@@ -153,7 +159,7 @@ export default async function Home() {
         </Suspense>
       </Section>
 
-      <footer className="mt-20 border-t border-ink-800/60 pt-6 text-[11px] text-ink-500 md:flex md:items-center md:justify-between">
+      <footer className="mt-20 border-t border-border pt-6 text-[11px] text-muted-foreground md:flex md:items-center md:justify-between">
         <div>
           <span className="font-mono">@mcpjam/soundcheck</span> — private
           workspace · deploys independently · never published.
@@ -163,16 +169,16 @@ export default async function Home() {
             href="https://github.com/MCPJam/inspector/tree/main/soundcheck"
             target="_blank"
             rel="noreferrer"
-            className="hover:text-ink-200"
+            className="hover:text-foreground"
           >
             source ↗
           </a>
-          <span className="mx-2 text-ink-700">·</span>
+          <span className="mx-2 text-muted-foreground/50">·</span>
           <a
             href="https://github.com/MCPJam/inspector/actions/workflows/release.yml"
             target="_blank"
             rel="noreferrer"
-            className="hover:text-ink-200"
+            className="hover:text-foreground"
           >
             release.yml ↗
           </a>

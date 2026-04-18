@@ -37,10 +37,10 @@ function categoryLabel(cat: Category, count: number): string {
 }
 
 const CATEGORY_COLOR: Record<Category, string> = {
-  feat: "text-signal-go",
-  fix: "text-signal-wait",
-  chore: "text-ink-300",
-  other: "text-ink-400"
+  feat: "text-success",
+  fix: "text-warning",
+  chore: "text-foreground",
+  other: "text-muted-foreground"
 };
 
 function driftTone(aheadBy: number, promotedIso: string): StatusTone {
@@ -72,7 +72,7 @@ export async function DeployDiff({
   } catch (err) {
     return (
       <Tile title={title} accent="failure">
-        <p className="text-sm text-signal-stop">
+        <p className="text-sm text-destructive">
           Failed to read deployments: {(err as Error).message}
         </p>
       </Tile>
@@ -82,9 +82,9 @@ export async function DeployDiff({
   if (!production) {
     return (
       <Tile title={title} accent="warning">
-        <p className="text-sm text-ink-400">
+        <p className="text-sm text-muted-foreground">
           No successful production deployment recorded for{" "}
-          <code className="font-mono text-ink-200">
+          <code className="font-mono text-foreground">
             {productionEnvironment}
           </code>
           .
@@ -95,9 +95,9 @@ export async function DeployDiff({
   if (!staging) {
     return (
       <Tile title={title} accent="warning">
-        <p className="text-sm text-ink-400">
+        <p className="text-sm text-muted-foreground">
           No successful staging deployment recorded for{" "}
-          <code className="font-mono text-ink-200">{stagingEnvironment}</code>.
+          <code className="font-mono text-foreground">{stagingEnvironment}</code>.
         </p>
       </Tile>
     );
@@ -132,7 +132,7 @@ export async function DeployDiff({
   } catch (err) {
     return (
       <Tile title={title} accent="failure">
-        <p className="text-sm text-signal-stop">
+        <p className="text-sm text-destructive">
           Failed to compare commits: {(err as Error).message}
         </p>
       </Tile>
@@ -175,7 +175,7 @@ export async function DeployDiff({
           counts[cat] > 0 ? (
             <span key={cat} className={CATEGORY_COLOR[cat]}>
               <span className="tabular-nums">{counts[cat]}</span>
-              <span className="ml-1 text-ink-500">
+              <span className="ml-1 text-muted-foreground">
                 {categoryLabel(cat, counts[cat])}
               </span>
             </span>
@@ -183,7 +183,7 @@ export async function DeployDiff({
         )}
       </div>
 
-      <div className="my-5 hairline" />
+      <div className="my-5 border-t border-border" />
 
       {/* Commit feed */}
       <ul className="space-y-2">
@@ -191,13 +191,13 @@ export async function DeployDiff({
           <li key={c.sha} className="group flex gap-3 text-xs leading-relaxed">
             <Sha href={c.url} sha={shortSha(c.sha)} />
             <div className="min-w-0 flex-1">
-              <span className="text-ink-100">{truncate(c.message, 84)}</span>
-              <span className="ml-2 text-ink-500">— {c.author}</span>
+              <span className="text-foreground">{truncate(c.message, 84)}</span>
+              <span className="ml-2 text-muted-foreground">— {c.author}</span>
             </div>
           </li>
         ))}
         {hidden > 0 && (
-          <li className="pt-1 text-[11px] italic text-ink-500">
+          <li className="pt-1 text-[11px] italic text-muted-foreground">
             + {hidden} earlier commit{hidden === 1 ? "" : "s"}
           </li>
         )}
@@ -210,12 +210,12 @@ export function DeployDiffSkeleton({ title }: { title: string }) {
   return (
     <Tile title={title} eyebrow="Computing diff">
       <div className="flex items-end gap-4">
-        <span className="display-hero text-6xl text-ink-700 animate-pulse">
+        <span className="text-6xl font-semibold text-muted-foreground/40 animate-pulse">
           …
         </span>
         <div className="pb-2">
-          <div className="h-3 w-32 rounded bg-ink-800 animate-pulse" />
-          <div className="mt-2 h-2.5 w-24 rounded bg-ink-800/60 animate-pulse" />
+          <div className="h-3 w-32 rounded bg-muted animate-pulse" />
+          <div className="mt-2 h-2.5 w-24 rounded bg-muted/60 animate-pulse" />
         </div>
       </div>
     </Tile>

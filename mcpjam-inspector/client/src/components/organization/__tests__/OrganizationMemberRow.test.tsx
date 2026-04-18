@@ -2,7 +2,7 @@ import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { OrganizationMemberRow } from "../OrganizationMemberRow";
 
-vi.mock("@/components/ui/avatar", () => ({
+vi.mock("@mcpjam/design-system/avatar", () => ({
   Avatar: ({ children }: { children: React.ReactNode }) => (
     <div>{children}</div>
   ),

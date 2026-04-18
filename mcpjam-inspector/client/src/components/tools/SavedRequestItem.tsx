@@ -1,4 +1,4 @@
-import { Button } from "../ui/button";
+import { Button } from "@mcpjam/design-system/button";
 import { Edit2, Copy, Trash2 } from "lucide-react";
 import type { SavedRequest } from "@/lib/types/request-types";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";

@@ -1,22 +1,22 @@
 import { createStore } from "zustand/vanilla";
 
-import type { SandboxHostStyle } from "@/lib/sandbox-host-style";
+import type { ChatboxHostStyle } from "@/lib/chatbox-host-style";
 import type { ThemeMode, ThemePreset } from "@/types/preferences/theme";
 
 export type PreferencesState = {
   themeMode: ThemeMode;
   themePreset: ThemePreset;
-  hostStyle: SandboxHostStyle;
+  hostStyle: ChatboxHostStyle;
   setThemeMode: (mode: ThemeMode) => void;
   setThemePreset: (preset: ThemePreset) => void;
-  setHostStyle: (hostStyle: SandboxHostStyle) => void;
+  setHostStyle: (hostStyle: ChatboxHostStyle) => void;
 };
 
 export const THEME_MODE_KEY = "themeMode";
 export const THEME_PRESET_KEY = "themePreset";
 export const HOST_STYLE_KEY = "mcpjam-ui-playground-host-style";
 
-function getStoredHostStyle(): SandboxHostStyle {
+function getStoredHostStyle(): ChatboxHostStyle {
   if (typeof window === "undefined") return "claude";
 
   try {

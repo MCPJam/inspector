@@ -3,9 +3,9 @@ import { MessageCircle } from "lucide-react";
 import { ModelDefinition } from "@/shared/types";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import {
-  useSandboxHostStyle,
-  useSandboxHostTheme,
-} from "@/contexts/sandbox-host-style-context";
+  useChatboxHostStyle,
+  useChatboxHostTheme,
+} from "@/contexts/chatbox-host-style-context";
 import {
   LoadingIndicatorContent,
   type LoadingIndicatorVariant,
@@ -20,14 +20,14 @@ export function ThinkingIndicator({
   resolvedVariant: LoadingIndicatorVariant;
 }) {
   const themeMode = usePreferencesStore((s) => s.themeMode);
-  const sandboxHostStyle = useSandboxHostStyle();
-  const sandboxHostTheme = useSandboxHostTheme();
+  const chatboxHostStyle = useChatboxHostStyle();
+  const chatboxHostTheme = useChatboxHostTheme();
   const assistantAvatar = getAssistantAvatarDescriptor({
     model,
-    themeMode: sandboxHostTheme ?? themeMode,
-    sandboxHostStyle,
+    themeMode: chatboxHostTheme ?? themeMode,
+    chatboxHostStyle,
   });
-  const shouldRenderAssistantAvatar = sandboxHostStyle === null;
+  const shouldRenderAssistantAvatar = chatboxHostStyle === null;
 
   return (
     <article

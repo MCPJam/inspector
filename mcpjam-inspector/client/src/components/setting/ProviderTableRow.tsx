@@ -1,12 +1,12 @@
 import { Ellipsis } from "lucide-react";
-import { Button } from "../ui/button";
-import { Card } from "../ui/card";
+import { Button } from "@mcpjam/design-system/button";
+import { Card } from "@mcpjam/design-system/card";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from "../ui/dropdown-menu";
+} from "@mcpjam/design-system/dropdown-menu";
 import { cn } from "@/lib/utils";
 
 interface ProviderConfig {

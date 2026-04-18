@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useMemo } from "react";
-import { Button } from "@/components/ui/button";
+import { Button } from "@mcpjam/design-system/button";
 import { AlertCircle, RefreshCw, Shield } from "lucide-react";
 import { EmptyState } from "./ui/empty-state";
 import {
@@ -7,7 +7,7 @@ import {
   DEFAULT_AUTH_SETTINGS,
   StatusMessage,
 } from "@/shared/types.js";
-import { Card, CardContent } from "./ui/card";
+import { Card, CardContent } from "@mcpjam/design-system/card";
 import {
   initiateOAuth,
   refreshOAuthTokens,

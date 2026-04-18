@@ -22,7 +22,7 @@ import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
-} from "@/components/ui/collapsible";
+} from "@mcpjam/design-system/collapsible";
 import { cn } from "@/lib/utils";
 import { AccuracyChart } from "./accuracy-chart";
 import type { TagGroupAggregate, EvalSuiteOverviewEntry } from "./types";

@@ -131,8 +131,8 @@ export function formatBillingFeatureName(feature: BillingFeatureName): string {
       return "Generate Evals";
     case "cicd":
       return "Evals CI/CD";
-    case "sandboxes":
-      return "Sandboxes";
+    case "chatboxes":
+      return "Chatboxes";
     case "auditLog":
       return "Audit Log";
     case "customDomains":
@@ -149,7 +149,7 @@ export function formatBillingFeatureName(feature: BillingFeatureName): string {
 export function formatPremiumnessGateKey(gateKey: PremiumnessGateKey): string {
   switch (gateKey) {
     case "evals":
-    case "sandboxes":
+    case "chatboxes":
     case "cicd":
     case "auditLog":
       return formatBillingFeatureName(gateKey as BillingFeatureName);
@@ -159,8 +159,8 @@ export function formatPremiumnessGateKey(gateKey: PremiumnessGateKey): string {
       return "Workspaces";
     case "maxServersPerWorkspace":
       return "Servers per workspace";
-    case "maxSandboxesPerWorkspace":
-      return "Sandboxes per workspace";
+    case "maxChatboxesPerWorkspace":
+      return "Chatboxes per workspace";
     case "maxEvalRunsPerMonth":
       return "Eval runs per month";
     default:
@@ -275,10 +275,10 @@ export function formatBillingLimitReachedMessage(
       ? `This organization has reached its monthly eval run limit (${allowedValue}). Upgrade to continue.`
       : `This organization has reached its monthly eval run limit (${allowedValue}). Ask an organization owner to upgrade.`;
   }
-  if (limitName === "maxSandboxesPerWorkspace") {
+  if (limitName === "maxChatboxesPerWorkspace") {
     return canManageBilling
-      ? `This workspace has reached its sandbox limit (${allowedValue}). Upgrade to continue.`
-      : `This workspace has reached its sandbox limit (${allowedValue}). Ask an organization owner to upgrade.`;
+      ? `This workspace has reached its chatbox limit (${allowedValue}). Upgrade to continue.`
+      : `This workspace has reached its chatbox limit (${allowedValue}). Ask an organization owner to upgrade.`;
   }
   if (limitName === "maxMembers") {
     return canManageBilling

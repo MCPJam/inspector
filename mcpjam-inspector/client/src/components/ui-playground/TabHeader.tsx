@@ -15,14 +15,14 @@ import {
   MoreHorizontal,
   Check,
 } from "lucide-react";
-import { Button } from "../ui/button";
+import { Button } from "@mcpjam/design-system/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "../ui/dropdown-menu";
+} from "@mcpjam/design-system/dropdown-menu";
 import { cn } from "@/lib/utils";
 
 interface TabHeaderProps {

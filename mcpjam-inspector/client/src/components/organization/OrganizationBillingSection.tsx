@@ -1,9 +1,9 @@
 import { Fragment, useEffect, useRef, useState } from "react";
 import { Check, CheckCircle2, CreditCard, Info, Loader2 } from "lucide-react";
 import { toast } from "sonner";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardTitle } from "@/components/ui/card";
+import { Badge } from "@mcpjam/design-system/badge";
+import { Button } from "@mcpjam/design-system/button";
+import { Card, CardContent, CardTitle } from "@mcpjam/design-system/card";
 import {
   Dialog,
   DialogContent,
@@ -11,7 +11,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
+} from "@mcpjam/design-system/dialog";
 import {
   Table,
   TableBody,
@@ -19,12 +19,12 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table";
+} from "@mcpjam/design-system/table";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from "@/components/ui/tooltip";
+} from "@mcpjam/design-system/tooltip";
 import type {
   BillingInterval,
   OrganizationBillingStatus,
@@ -262,10 +262,10 @@ const COMPARE_PLAN_ROW_LABEL_TOOLTIPS: Record<
       "Traces for evaluations: configured user prompts, tool execution, agent reasoning, errors, and latency breakdown for playground and CI/CD runs.",
     contentClassName: "max-w-[26rem]",
   },
-  "Sandbox traces": {
-    ariaLabel: "What are sandbox traces?",
+  "Chatbox traces": {
+    ariaLabel: "What are chatbox traces?",
     content:
-      "Traces for sandboxes: testing user prompts, tool execution, agent reasoning, errors, and latency breakdown while running and sharing MCP experiences.",
+      "Traces for chatboxes: testing user prompts, tool execution, agent reasoning, errors, and latency breakdown while running and sharing MCP experiences.",
     contentClassName: "max-w-[26rem]",
   },
   Uptime: {
@@ -286,16 +286,16 @@ const COMPARE_PLAN_ROW_LABEL_TOOLTIPS: Record<
       "Export triage and evaluation insights for analysis outside MCPJam.",
     contentClassName: "max-w-[22rem]",
   },
-  "Sandbox Insights Data Export": {
-    ariaLabel: "About sandbox insights data export",
+  "Chatbox Insights Data Export": {
+    ariaLabel: "About chatbox insights data export",
     content:
-      "Export sandbox user feedback and usage insights for analysis outside MCPJam.",
+      "Export chatbox user feedback and usage insights for analysis outside MCPJam.",
     contentClassName: "max-w-[22rem]",
   },
   Branding: {
     ariaLabel: "About branding",
     content:
-      "Custom branding (e.g. logo and colors) on shared sandbox experiences.",
+      "Custom branding (e.g. logo and colors) on shared chatbox experiences.",
     contentClassName: "max-w-[18rem]",
   },
   Workspaces: {
