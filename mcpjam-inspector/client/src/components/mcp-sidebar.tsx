@@ -196,8 +196,8 @@ const navigationSections: NavSection[] = [
         icon: MessageCircle,
       },
       {
-        title: "Sandboxes",
-        url: "#sandboxes",
+        title: "Chatboxes",
+        url: "#chatboxes",
         icon: Box,
         featureFlag: "sandboxes-enabled",
       },

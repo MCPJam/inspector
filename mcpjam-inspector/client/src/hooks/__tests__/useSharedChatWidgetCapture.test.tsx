@@ -360,12 +360,12 @@ describe("useSharedChatWidgetCapture", () => {
     }
   });
 
-  it("uploads sandbox widget snapshots with the originating server id", async () => {
+  it("uploads chatbox widget snapshots with the originating server id", async () => {
     const { unmount } = renderHook(() =>
       useSharedChatWidgetCapture({
         enabled: true,
         chatSessionId: "chat-session-2",
-        hostedSandboxToken: "sandbox-token",
+        hostedChatboxToken: "chatbox-token",
         messages: [
           {
             id: "assistant-1",
@@ -374,7 +374,7 @@ describe("useSharedChatWidgetCapture", () => {
               {
                 type: "tool-search",
                 toolCallId: "call-2",
-                input: { q: "sandbox" },
+                input: { q: "chatbox" },
                 output: {
                   result: "ok",
                   _meta: {
@@ -404,7 +404,7 @@ describe("useSharedChatWidgetCapture", () => {
                 theme: "dark",
                 displayMode: "inline",
               },
-              widgetHtml: "<div>Sandbox widget</div>",
+              widgetHtml: "<div>Chatbox widget</div>",
               updatedAt: Date.now(),
             },
           ],
@@ -419,7 +419,7 @@ describe("useSharedChatWidgetCapture", () => {
     await flushMicrotasks();
 
     expect(mockCreateWidgetSnapshot).toHaveBeenCalledWith({
-      sandboxToken: "sandbox-token",
+      chatboxToken: "chatbox-token",
       chatSessionId: "chat-session-2",
       serverId: "srv_123",
       toolCallId: "call-2",

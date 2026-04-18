@@ -30,7 +30,7 @@ function t(text: string, emphasize?: boolean): ComparePlanCell {
   return { kind: "text", text, emphasize };
 }
 
-/** Section order: organization & workspaces, standard features, evaluations, sandboxes, LLM usage, security, platform, support. */
+/** Section order: organization & workspaces, standard features, evaluations, chatboxes, LLM usage, security, platform, support. */
 export const COMPARE_PLAN_MARKETING_SECTIONS: ComparePlanSection[] = [
   {
     title: "Organization & workspaces",
@@ -161,11 +161,11 @@ export const COMPARE_PLAN_MARKETING_SECTIONS: ComparePlanSection[] = [
     ],
   },
   {
-    title: "Sandboxes",
+    title: "Chatboxes",
     rows: [
       {
         label: "Traces",
-        tooltipKey: "Sandbox traces",
+        tooltipKey: "Chatbox traces",
         free: c,
         starter: c,
         team: c,
@@ -194,7 +194,7 @@ export const COMPARE_PLAN_MARKETING_SECTIONS: ComparePlanSection[] = [
       },
       {
         label: "Insights Data Export",
-        tooltipKey: "Sandbox Insights Data Export",
+        tooltipKey: "Chatbox Insights Data Export",
         free: x,
         starter: x,
         team: c,

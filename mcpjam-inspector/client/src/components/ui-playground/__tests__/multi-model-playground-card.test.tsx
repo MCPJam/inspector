@@ -90,11 +90,11 @@ vi.mock("@/components/chat-v2/model-compare-card-header", () => ({
   },
 }));
 
-vi.mock("@/contexts/sandbox-host-style-context", () => ({
-  SandboxHostStyleProvider: ({ children }: { children: React.ReactNode }) => (
+vi.mock("@/contexts/chatbox-host-style-context", () => ({
+  ChatboxHostStyleProvider: ({ children }: { children: React.ReactNode }) => (
     <>{children}</>
   ),
-  SandboxHostThemeProvider: ({ children }: { children: React.ReactNode }) => (
+  ChatboxHostThemeProvider: ({ children }: { children: React.ReactNode }) => (
     <>{children}</>
   ),
 }));
@@ -331,7 +331,7 @@ describe("MultiModelPlaygroundCard", () => {
         />,
       );
 
-      const shell = container.querySelector(".sandbox-host-shell");
+      const shell = container.querySelector(".chatbox-host-shell");
       expect(shell).not.toBeNull();
       expect(shell!.className).not.toContain("min-h-[");
     });
@@ -367,7 +367,7 @@ describe("MultiModelPlaygroundCard", () => {
         />,
       );
 
-      const shell = container.querySelector(".sandbox-host-shell");
+      const shell = container.querySelector(".chatbox-host-shell");
       expect(shell).not.toBeNull();
       expect(shell!.className).toContain("min-h-[34rem]");
     });

@@ -104,19 +104,19 @@ export interface UseChatSessionOptions {
   hostedOAuthTokens?: Record<string, string>;
   /** Optional server-share token for hosted shared chat sessions */
   hostedShareToken?: string;
-  /** Optional sandbox token for hosted sandbox chat sessions */
-  hostedSandboxToken?: string;
-  /** Surface classification for hosted sandbox chat sessions */
-  hostedSandboxSurface?: "preview" | "share_link";
+  /** Optional chatbox token for hosted chatbox chat sessions */
+  hostedChatboxToken?: string;
+  /** Surface classification for hosted chatbox chat sessions */
+  hostedChatboxSurface?: "preview" | "share_link";
   /** Minimal UI mode for shared chat (hides diagnostics surfaces only) */
   minimalMode?: boolean;
-  /** Fixed initial model for hosted sandbox sessions */
+  /** Fixed initial model for hosted chatbox sessions */
   initialModelId?: string;
   /** Initial system prompt (defaults to DEFAULT_SYSTEM_PROMPT) */
   initialSystemPrompt?: string;
   /** Initial temperature (defaults to 0.7) */
   initialTemperature?: number;
-  /** Initial tool approval mode for hosted sandbox sessions */
+  /** Initial tool approval mode for hosted chatbox sessions */
   initialRequireToolApproval?: boolean;
   /** Callback when chat is reset */
   onReset?: (reason?: ChatSessionResetReason) => void;
@@ -711,8 +711,8 @@ export function useChatSession({
   hostedSelectedServerIds = [],
   hostedOAuthTokens,
   hostedShareToken,
-  hostedSandboxToken,
-  hostedSandboxSurface,
+  hostedChatboxToken,
+  hostedChatboxSurface,
   minimalMode: _minimalMode = false,
   initialModelId,
   initialSystemPrompt = DEFAULT_SYSTEM_PROMPT,
@@ -793,7 +793,7 @@ export function useChatSession({
     !isAuthenticated &&
     !isAuthLoading &&
     !!hostedWorkspaceId &&
-    !!(hostedShareToken || hostedSandboxToken);
+    !!(hostedShareToken || hostedChatboxToken);
   const guestMode = directGuestMode || sharedGuestMode;
   const skipNextForkDetectionRef = useRef(false);
   const pendingSessionHydrationRef = useRef<PendingSessionHydration | null>(
@@ -1021,7 +1021,7 @@ export function useChatSession({
           directVisibility,
         };
       }
-      const isHostedDirectChat = !hostedShareToken && !hostedSandboxToken;
+      const isHostedDirectChat = !hostedShareToken && !hostedChatboxToken;
       return {
         workspaceId: hostedWorkspaceId,
         chatSessionId,
@@ -1030,9 +1030,9 @@ export function useChatSession({
         accessScope: "chat_v2" as const,
         ...(isHostedDirectChat ? { directVisibility } : {}),
         ...(hostedShareToken ? { shareToken: hostedShareToken } : {}),
-        ...(hostedSandboxToken ? { sandboxToken: hostedSandboxToken } : {}),
-        ...(hostedSandboxToken && hostedSandboxSurface
-          ? { surface: hostedSandboxSurface }
+        ...(hostedChatboxToken ? { chatboxToken: hostedChatboxToken } : {}),
+        ...(hostedChatboxToken && hostedChatboxSurface
+          ? { surface: hostedChatboxSurface }
           : {}),
         ...(hostedOAuthTokens && Object.keys(hostedOAuthTokens).length > 0
           ? { oauthTokens: hostedOAuthTokens }
@@ -1083,8 +1083,8 @@ export function useChatSession({
     hostedSelectedServerIds,
     hostedOAuthTokens,
     hostedShareToken,
-    hostedSandboxToken,
-    hostedSandboxSurface,
+    hostedChatboxToken,
+    hostedChatboxSurface,
     hostedChatFetch,
     // requireToolApproval read from ref at request time
   ]);
@@ -1244,7 +1244,7 @@ export function useChatSession({
     directGuestMode,
     chatSessionId,
     hostedShareToken,
-    hostedSandboxToken,
+    hostedChatboxToken,
     persistedSnapshotToolCallIds,
     messages,
   });
@@ -1509,7 +1509,7 @@ export function useChatSession({
         active &&
         !isAuthenticated &&
         HOSTED_MODE &&
-        (!hostedWorkspaceId || !!hostedShareToken || !!hostedSandboxToken)
+        (!hostedWorkspaceId || !!hostedShareToken || !!hostedChatboxToken)
       ) {
         const guestToken = await getGuestBearerToken();
         if (!active) return;
@@ -1542,7 +1542,7 @@ export function useChatSession({
   }, [
     getAccessToken,
     hostedShareToken,
-    hostedSandboxToken,
+    hostedChatboxToken,
     hostedWorkspaceId,
     isAuthenticated,
     clearPendingSessionHydration,
@@ -1629,7 +1629,7 @@ export function useChatSession({
       } catch (error) {
         if (
           !(
-            (hostedShareToken || hostedSandboxToken) &&
+            (hostedShareToken || hostedChatboxToken) &&
             isAuthDeniedError(error)
           )
         ) {
@@ -1651,7 +1651,7 @@ export function useChatSession({
     selectedServersSignature,
     selectedModel,
     hostedShareToken,
-    hostedSandboxToken,
+    hostedChatboxToken,
   ]);
 
   // System prompt token count
@@ -1673,7 +1673,7 @@ export function useChatSession({
       } catch (error) {
         if (
           !(
-            (hostedShareToken || hostedSandboxToken) &&
+            (hostedShareToken || hostedChatboxToken) &&
             isAuthDeniedError(error)
           )
         ) {
@@ -1689,7 +1689,7 @@ export function useChatSession({
     };
 
     fetchSystemPromptTokenCount();
-  }, [systemPrompt, selectedModel, hostedShareToken, hostedSandboxToken]);
+  }, [systemPrompt, selectedModel, hostedShareToken, hostedChatboxToken]);
 
   const previousSelectedServersRef = useRef<string[]>(selectedServers);
   useEffect(() => {
