@@ -112,13 +112,29 @@ export function threadMatchesChip(
   }
 }
 
+function chipGroupKey(chip: UsageFilterChip): string {
+  return chip.kind === "cluster" ? "cluster" : chip.key;
+}
+
 export function threadMatchesFilterState(
   thread: SharedChatThread,
   filter: UsageFilterState,
 ): boolean {
   if (!threadMatchesUsageFilter(thread, filter.preset)) return false;
+  // Chips are AND'd across dimensions but OR'd within the same dimension.
+  // A thread can only belong to one cluster / one country / etc., so
+  // stacking two chips for the same dimension should widen rather than
+  // produce an impossible match.
+  const groups = new Map<string, UsageFilterChip[]>();
   for (const chip of filter.chips) {
-    if (!threadMatchesChip(thread, chip)) return false;
+    const key = chipGroupKey(chip);
+    const bucket = groups.get(key) ?? [];
+    bucket.push(chip);
+    groups.set(key, bucket);
+  }
+  for (const bucket of groups.values()) {
+    const matchesAny = bucket.some((chip) => threadMatchesChip(thread, chip));
+    if (!matchesAny) return false;
   }
   return true;
 }
