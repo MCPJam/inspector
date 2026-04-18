@@ -1,12 +1,23 @@
 "use client";
 
 /**
- * Run Release tile — form + confirmation modal.
+ * Run Release tile — the single dispatch form for every production deploy
+ * Soundcheck can trigger:
  *
- * The three inputs map 1:1 to release.yml's workflow_dispatch inputs. The
- * confirmation modal quotes them back verbatim because "the one path to
- * production" is load-bearing; we want a deliberate extra click before any
- * prod-facing outcome.
+ *   - release.yml (scope + promote_production + deploy_backend_prod)
+ *   - deploy-mcp-prod.yml (deploy_mcp_production)
+ *
+ * MCP lives here rather than in its own tile because it's another flavor
+ * of "promote something to production" — the operator's mental model is
+ * one control plane, not two. The server route decides which workflow(s)
+ * to dispatch based on the selection.
+ *
+ * The scope radio has four options. `none` exists so MCP can be promoted
+ * without running release.yml at all; the other three map 1:1 to
+ * release.yml's scope input.
+ *
+ * The confirmation modal quotes the final inputs back verbatim because
+ * production-touching dispatches deserve a deliberate extra click.
  *
  * The client never sees `GITHUB_DISPATCH_PAT`. The server route
  * /api/release/dispatch holds the write token; this component only POSTs
@@ -32,12 +43,13 @@ import { Checkbox } from "@mcpjam/design-system/checkbox";
 import { Label } from "@mcpjam/design-system/label";
 import { Badge, Tile } from "@/components/ui";
 
-type Scope = "packages-only" | "inspector-only" | "full";
+type Scope = "none" | "packages-only" | "inspector-only" | "full";
 
 const SCOPE_HINT: Record<Scope, string> = {
   "full": "publish whatever changesets are pending",
   "packages-only": "publish sdk/cli only (no inspector)",
-  "inspector-only": "publish inspector only (no sdk/cli)"
+  "inspector-only": "publish inspector only (no sdk/cli)",
+  "none": "skip npm publish (use for MCP-only promotions)"
 };
 
 export function RunRelease() {
@@ -45,6 +57,7 @@ export function RunRelease() {
   const [scope, setScope] = useState<Scope>("full");
   const [deployBackend, setDeployBackend] = useState(false);
   const [promoteProd, setPromoteProd] = useState(false);
+  const [deployMcp, setDeployMcp] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [feedback, setFeedback] = useState<
     | { kind: "idle" }
@@ -53,7 +66,9 @@ export function RunRelease() {
   >({ kind: "idle" });
   const [isPending, startTransition] = useTransition();
 
-  const impactsProd = deployBackend || promoteProd;
+  const runsRelease = scope !== "none";
+  const impactsProd = deployBackend || promoteProd || deployMcp;
+  const hasAnyTarget = runsRelease || deployMcp;
 
   // Reset gated flags when scope changes so a stale `true` can't slip into
   // the confirmation modal or the dispatch payload. The checkbox disabling
@@ -61,10 +76,7 @@ export function RunRelease() {
   function changeScope(next: Scope) {
     setScope(next);
     if (next !== "full") setDeployBackend(false);
-    if (next === "packages-only") setPromoteProd(false);
-    // Any edit to the form is implicitly "I'm preparing the next dispatch" —
-    // clear stale success/error feedback from an earlier run so the chip
-    // next to the button always reflects the current form state.
+    if (next === "packages-only" || next === "none") setPromoteProd(false);
     setFeedback({ kind: "idle" });
   }
 
@@ -74,6 +86,10 @@ export function RunRelease() {
   }
   function changePromoteProd(v: boolean) {
     setPromoteProd(v);
+    setFeedback({ kind: "idle" });
+  }
+  function changeDeployMcp(v: boolean) {
+    setDeployMcp(v);
     setFeedback({ kind: "idle" });
   }
 
@@ -92,7 +108,8 @@ export function RunRelease() {
           body: JSON.stringify({
             scope,
             deploy_backend_prod: deployBackend,
-            promote_production: promoteProd
+            promote_production: promoteProd,
+            deploy_mcp_production: deployMcp
           })
         });
         const json = (await res.json()) as { error?: string; message?: string };
@@ -108,7 +125,7 @@ export function RunRelease() {
           kind: "ok",
           message:
             json.message ??
-            "release.yml dispatched. The progress tile should pick it up shortly."
+            "Dispatched. The progress tile should pick it up shortly."
         });
         setConfirming(false);
         // Give GitHub a beat to record the new run, then refresh so the
@@ -124,6 +141,12 @@ export function RunRelease() {
     });
   }
 
+  const buttonLabel = runsRelease
+    ? "Run release →"
+    : deployMcp
+      ? "Deploy MCP →"
+      : "Run release →";
+
   return (
     <Tile
       title="Run release"
@@ -132,10 +155,11 @@ export function RunRelease() {
     >
       <p className="mb-5 text-xs leading-relaxed text-muted-foreground">
         Dispatches{" "}
-        <span className="font-mono text-foreground">release.yml</span> on{" "}
-        <span className="font-mono text-foreground">main</span>. Confirmation
-        required; the server re-checks your email before touching the write
-        token.
+        <span className="font-mono text-foreground">release.yml</span> and/or{" "}
+        <span className="font-mono text-foreground">deploy-mcp-prod.yml</span>{" "}
+        on <span className="font-mono text-foreground">main</span>.
+        Confirmation required; the server re-checks your email before
+        touching the write token.
       </p>
 
       <div className="space-y-5">
@@ -148,7 +172,9 @@ export function RunRelease() {
             onValueChange={(v) => changeScope(v as Scope)}
             className="gap-2"
           >
-            {(["full", "packages-only", "inspector-only"] as const).map((s) => (
+            {(
+              ["full", "packages-only", "inspector-only", "none"] as const
+            ).map((s) => (
               <Label
                 key={s}
                 htmlFor={`scope-${s}`}
@@ -187,8 +213,16 @@ export function RunRelease() {
               name="promote_production"
               checked={promoteProd}
               onChange={changePromoteProd}
-              disabled={scope === "packages-only"}
+              disabled={scope === "packages-only" || scope === "none"}
               description="Deploy inspector to Railway prod after publish."
+            />
+            <FlagRow
+              id="deploy-mcp"
+              name="deploy_mcp_production"
+              checked={deployMcp}
+              onChange={changeDeployMcp}
+              disabled={false}
+              description="Deploy MCP worker to mcp.mcpjam.com (independent of release scope)."
             />
           </div>
         </fieldset>
@@ -200,14 +234,21 @@ export function RunRelease() {
           </div>
         ) : null}
 
+        {!hasAnyTarget ? (
+          <div className="rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+            Pick a scope or check <span className="font-mono">deploy_mcp_production</span>{" "}
+            to enable dispatch.
+          </div>
+        ) : null}
+
         <div className="flex flex-wrap items-center gap-3 pt-1">
           <Button
             type="button"
             onClick={() => setConfirming(true)}
-            disabled={isPending}
+            disabled={isPending || !hasAnyTarget}
             variant={impactsProd ? "destructive" : "default"}
           >
-            Run release →
+            {buttonLabel}
           </Button>
           {feedback.kind === "ok" ? (
             <>
@@ -231,6 +272,7 @@ export function RunRelease() {
         scope={scope}
         deployBackend={deployBackend}
         promoteProd={promoteProd}
+        deployMcp={deployMcp}
       />
     </Tile>
   );
@@ -283,7 +325,8 @@ function ConfirmModal({
   busy,
   scope,
   deployBackend,
-  promoteProd
+  promoteProd,
+  deployMcp
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
@@ -292,8 +335,15 @@ function ConfirmModal({
   scope: Scope;
   deployBackend: boolean;
   promoteProd: boolean;
+  deployMcp: boolean;
 }) {
-  const impactsProd = deployBackend || promoteProd;
+  const impactsProd = deployBackend || promoteProd || deployMcp;
+  const runsRelease = scope !== "none";
+  const dispatchedWorkflows = [
+    runsRelease ? "release.yml" : null,
+    deployMcp ? "deploy-mcp-prod.yml" : null
+  ].filter(Boolean) as string[];
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent showCloseButton={!busy} className="sm:max-w-md">
@@ -302,8 +352,11 @@ function ConfirmModal({
             Final confirmation
           </div>
           <DialogTitle className="text-xl">
-            Dispatch{" "}
-            <span className="font-mono text-[0.85em]">release.yml</span>?
+            {dispatchedWorkflows.length === 2
+              ? "Dispatch release.yml + deploy-mcp-prod.yml?"
+              : runsRelease
+                ? "Dispatch release.yml?"
+                : "Dispatch deploy-mcp-prod.yml?"}
           </DialogTitle>
           <DialogDescription>
             Fires on <span className="font-mono text-foreground">main</span>{" "}
@@ -344,12 +397,27 @@ function ConfirmModal({
               {String(promoteProd)}
             </dd>
           </div>
+          <div className="flex gap-3">
+            <dt className="w-44 font-mono text-xs text-muted-foreground">
+              deploy_mcp_production
+            </dt>
+            <dd
+              className={
+                "font-mono text-xs " +
+                (deployMcp ? "text-warning" : "text-muted-foreground")
+              }
+            >
+              {String(deployMcp)}
+            </dd>
+          </div>
         </dl>
 
         {impactsProd ? (
           <p className="rounded-lg border border-warning/40 bg-warning/10 px-3 py-2.5 text-xs leading-relaxed text-warning">
-            This is the one path to production. Release.yml will refuse to run
-            unless deploy-staging.yml is green for the current main SHA.
+            This is the one path to production. Release.yml refuses unless
+            deploy-staging.yml is green for the current main SHA;
+            deploy-mcp-prod.yml refuses unless deploy-mcp-staging.yml is green
+            for the current MCP build inputs.
           </p>
         ) : null}
 
@@ -368,7 +436,13 @@ function ConfirmModal({
             onClick={onConfirm}
             disabled={busy}
           >
-            {busy ? "Dispatching…" : "Dispatch release →"}
+            {busy
+              ? "Dispatching…"
+              : dispatchedWorkflows.length === 2
+                ? "Dispatch both →"
+                : runsRelease
+                  ? "Dispatch release →"
+                  : "Deploy MCP →"}
           </Button>
         </DialogFooter>
       </DialogContent>
