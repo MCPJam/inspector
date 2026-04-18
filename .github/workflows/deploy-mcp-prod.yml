@@ -1,0 +1,151 @@
+name: Deploy MCP Production
+
+# Manual promotion of the MCP Cloudflare Worker from staging
+# (mcp-staging.mcpjam.com) to production (mcp.mcpjam.com). Intentionally
+# workflow_dispatch-only — there's no auto-deploy-on-merge for prod,
+# matching release.yml's philosophy that production is a deliberate last
+# step, not a side effect of merging.
+#
+# Invocation paths:
+#   1. Soundcheck's "Deploy MCP production" tile (POST /api/mcp/dispatch).
+#   2. GitHub Actions UI → "Deploy MCP Production" → Run workflow.
+#
+# Reviewer gating lives on the `mcp-production` GitHub Environment in repo
+# Settings → Environments, not in this file. Keeping the gate in the
+# environment config means it applies uniformly to both invocation paths.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+  deployments: write
+
+# Never cancel an in-flight production deploy just because a second
+# dispatch arrived. Mid-deploy cancellation can leave the worker in a
+# partially-provisioned state (cert attached, bindings not). Queue instead.
+concurrency:
+  group: mcp-production
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: "24.14.0"
+  # Hardcoded for the same reason deploy-mcp-staging.yml hardcodes its
+  # URL: cloudflare/wrangler-action@v3 returns a malformed
+  # `deployment-url` output for custom-domain deploys (wrangler-action#396).
+  PRODUCTION_URL: "https://mcp.mcpjam.com"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: mcp-production
+      url: ${{ vars.MCP_WORKER_PRODUCTION_URL || 'https://mcp.mcpjam.com' }}
+
+    steps:
+      - name: Enforce main branch
+        run: |
+          if [ "${GITHUB_REF_NAME}" != "main" ]; then
+            echo "deploy-mcp-prod.yml must run from main" >&2
+            exit 1
+          fi
+
+      - name: Require Cloudflare credentials
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          if [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "Missing GitHub Actions secret: CLOUDFLARE_ACCOUNT_ID" >&2
+            exit 1
+          fi
+          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            echo "Missing GitHub Actions secret: CLOUDFLARE_API_TOKEN" >&2
+            exit 1
+          fi
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Mirrors the staging gate in release.yml: refuse to promote a SHA
+      # that hasn't been verified on staging. Prevents "click prod button,
+      # realize staging was red" accidents.
+      - name: Require green staging deploy for candidate SHA
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const workflowId = "deploy-mcp-staging.yml";
+            const { owner, repo } = context.repo;
+            const headSha = context.sha;
+            const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
+              owner,
+              repo,
+              workflow_id: workflowId,
+              branch: "main",
+              status: "completed",
+              per_page: 100,
+            });
+
+            const match = runs.find(
+              (run) => run.head_sha === headSha && run.conclusion === "success"
+            );
+
+            if (!match) {
+              core.setFailed(
+                `No successful ${workflowId} run found for ${headSha}. ` +
+                `Wait for the staging deploy to land on this SHA before promoting to production.`
+              );
+              return;
+            }
+
+            core.info(`Found successful staging deploy run ${match.id} for ${headSha}.`);
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install workspace dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Typecheck MCP worker
+        run: npm run typecheck -w @mcpjam/mcp
+
+      - name: Deploy production worker
+        id: deploy
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          gitHubToken: ${{ secrets.GITHUB_TOKEN }}
+          workingDirectory: "mcp"
+          command: deploy --env production
+
+      - name: Smoke test landing page
+        run: |
+          # First deploy onto a new custom domain takes up to ~60s for
+          # Cloudflare to provision the edge cert and propagate the
+          # hostname. Budget 20 × 3s = ~60s of retries to cover it. Later
+          # deploys onto the existing hostname land near-instant but the
+          # retry loop is cheap.
+          for attempt in $(seq 1 20); do
+            if curl --fail --silent --show-error "$PRODUCTION_URL" | grep -q "MCPJam MCP"; then
+              echo "Smoke OK on attempt $attempt"
+              exit 0
+            fi
+            echo "Attempt $attempt returned non-200 or mismatched content; retrying in 3s…"
+            sleep 3
+          done
+          echo "Production URL never resolved correctly." >&2
+          exit 1
+
+      - name: Summarize production deployment
+        run: |
+          echo "## ✅ MCP production deployed" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Worker: \`mcpjam-mcp-production\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- URL: \`$PRODUCTION_URL\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- MCP endpoint: \`$PRODUCTION_URL/mcp\`" >> "$GITHUB_STEP_SUMMARY"
