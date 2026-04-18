@@ -123,8 +123,8 @@ interface TestTemplateEditorProps {
   openCompareIterationId?: string | null;
   /**
    * When true, reads/writes go through the guest evals store instead of Convex.
-   * The run/compare surfaces are disabled for guests in v1 — iteration state is
-   * still sourced from the local store so previously-run results remain visible.
+   * Guest runs and compare flows execute inline and persist iteration state in
+   * the local guest store.
    */
   isDirectGuest?: boolean;
 }

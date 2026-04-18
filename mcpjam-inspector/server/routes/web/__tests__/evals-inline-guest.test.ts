@@ -126,4 +126,35 @@ describe("web eval guest inline stream route", () => {
       }),
     );
   });
+
+  it("disconnects the temporary manager when inline stream setup fails before streaming starts", async () => {
+    const { app } = createWebTestApp();
+    const { token } = issueGuestToken();
+    streamInlineEvalTestCaseWithManagerMock.mockRejectedValueOnce(
+      new Error("stream setup failed"),
+    );
+
+    const response = await postJson(
+      app,
+      "/api/web/evals/stream-test-case-inline",
+      {
+        serverIds: ["__guest__"],
+        serverUrl: "https://guest.example.com/mcp",
+        model: "gpt-4",
+        provider: "openai",
+        test: {
+          title: "Guest compare",
+          query: "hello",
+        },
+      },
+      token,
+    );
+
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toMatchObject({
+      code: "INTERNAL_ERROR",
+      message: "stream setup failed",
+    });
+    expect(disconnectAllServersMock).toHaveBeenCalledTimes(1);
+  });
 });

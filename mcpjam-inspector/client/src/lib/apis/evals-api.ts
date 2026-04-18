@@ -302,6 +302,14 @@ function buildGuestEvalServerFragment(
   return serverPayload;
 }
 
+async function requireGuestSessionToken(): Promise<string> {
+  const guestToken = await getGuestBearerToken();
+  if (!guestToken) {
+    throw new Error("Could not obtain a guest session. Try refreshing the page.");
+  }
+  return guestToken;
+}
+
 /**
  * Guest-mode variant of `generateEvalTests`. In hosted mode, sends the direct
  * serverUrl body shape that `withEphemeralConnection`'s guest path recognizes.
@@ -323,12 +331,7 @@ export async function generateEvalTestsGuest({
     return postEvalRequest(EVALS_API_ENDPOINTS.hosted.generateTests, body);
   }
 
-  const guestToken = await getGuestBearerToken();
-  if (!guestToken) {
-    throw new Error(
-      "Could not obtain a guest session. Try refreshing the page.",
-    );
-  }
+  const guestToken = await requireGuestSessionToken();
   const body: JsonRecord = {
     serverIds: [serverNameOrId],
     convexAuthToken: guestToken,
@@ -383,7 +386,7 @@ export async function runInlineEvalTestCaseGuest(
 
   // Local mode: attach guest JWT so Convex-routed LLM calls (MCPJam models)
   // are authorized; direct provider calls via AI SDK ignore this token.
-  const guestToken = await getGuestBearerToken();
+  const guestToken = await requireGuestSessionToken();
   const body: JsonRecord = {
     serverIds: [request.serverNameOrId],
     model: request.model,
@@ -577,7 +580,7 @@ export async function streamInlineEvalTestCaseGuest(
     );
   }
 
-  const guestToken = await getGuestBearerToken();
+  const guestToken = await requireGuestSessionToken();
   const payload: JsonRecord = {
     serverIds: [request.serverNameOrId],
     model: request.model,

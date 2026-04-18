@@ -785,6 +785,8 @@ export async function streamInlineEvalTestCaseWithManager(
   )) as Record<string, any>;
   const recorder = createEphemeralRunRecorder();
   const encoder = new TextEncoder();
+  const abortController = new AbortController();
+  let cancelled = false;
 
   const sseEncode = (event: EvalStreamEvent): Uint8Array =>
     encoder.encode(`data: ${JSON.stringify(event)}\n\n`);
@@ -802,6 +804,7 @@ export async function streamInlineEvalTestCaseWithManager(
           convexClient,
           suiteId: recorder.suiteId,
           runId: null,
+          abortSignal: abortController.signal,
           compareRunId,
           persist: false,
           emit: (event: EvalStreamEvent) => {
@@ -812,6 +815,10 @@ export async function streamInlineEvalTestCaseWithManager(
             }
           },
         });
+
+        if (cancelled || abortController.signal.aborted) {
+          return;
+        }
 
         const expectedIterationId = outcomes[0]?.iterationId;
         const iteration =
@@ -829,6 +836,10 @@ export async function streamInlineEvalTestCaseWithManager(
           );
         }
 
+        if (cancelled || abortController.signal.aborted) {
+          return;
+        }
+
         controller.enqueue(
           sseEncode({
             type: "complete",
@@ -837,6 +848,13 @@ export async function streamInlineEvalTestCaseWithManager(
           }),
         );
       } catch (error) {
+        if (
+          cancelled ||
+          abortController.signal.aborted ||
+          (error instanceof Error && error.name === "AbortError")
+        ) {
+          return;
+        }
         const message = error instanceof Error ? error.message : String(error);
         controller.enqueue(
           sseEncode({
@@ -856,6 +874,10 @@ export async function streamInlineEvalTestCaseWithManager(
         }
         options.onStreamComplete?.();
       }
+    },
+    cancel() {
+      cancelled = true;
+      abortController.abort();
     },
   });
 }

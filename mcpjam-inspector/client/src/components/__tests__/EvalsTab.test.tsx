@@ -353,4 +353,31 @@ describe("EvalsTab route guard", () => {
       );
     });
   });
+
+  it("does not create a guest suite when selectedServer is \"none\"", async () => {
+    mocks.useEvalQueries.mockReturnValue({
+      suiteOverview: [],
+      suiteDetails: undefined,
+      suiteRuns: undefined,
+      selectedSuiteEntry: null,
+      selectedSuite: null,
+      sortedIterations: [],
+      runsForSelectedSuite: [],
+      activeIterations: [],
+      sortedSuites: [],
+      isOverviewLoading: false,
+      isSuiteDetailsLoading: false,
+      isSuiteRunsLoading: false,
+      enableOverviewQuery: true,
+      enableSuiteDetailsQuery: false,
+    });
+
+    mocks.isDirectGuest = true;
+
+    render(<EvalsTab selectedServer="none" workspaceId="ws-1" />);
+
+    await waitFor(() => {
+      expect(mocks.ensureGuestSuite).not.toHaveBeenCalled();
+    });
+  });
 });

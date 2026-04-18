@@ -207,7 +207,7 @@ export function EvalsTab({
   );
 
   useEffect(() => {
-    if (!selectedServer) {
+    if (!selectedServer || selectedServer === "none") {
       return;
     }
     if (!isDirectGuest) {

@@ -214,6 +214,8 @@ evals.post("/stream-test-case", async (c) => {
 evals.post("/stream-test-case-inline", async (c) => {
   const bearerToken = assertBearerToken(c);
   const rawBody = await readJsonBody<Record<string, unknown>>(c);
+  let manager: MCPClientManager | null = null;
+  let stream: ReadableStream<Uint8Array> | null = null;
 
   try {
     const guestId = c.get("guestId") as string | undefined;
@@ -252,7 +254,7 @@ evals.post("/stream-test-case-inline", async (c) => {
       headers["Authorization"] = `Bearer ${rawBody.oauthAccessToken}`;
     }
 
-    const manager = new MCPClientManager(
+    manager = new MCPClientManager(
       {
         __guest__: {
           url: guestInput.serverUrl,
@@ -267,12 +269,13 @@ evals.post("/stream-test-case-inline", async (c) => {
       },
     );
 
-    const stream = await streamInlineEvalTestCaseWithManager(
-      manager,
+    const activeManager = manager;
+    stream = await streamInlineEvalTestCaseWithManager(
+      activeManager,
       body,
       {
         convexAuthToken: bearerToken,
-        onStreamComplete: () => manager.disconnectAllServers(),
+        onStreamComplete: () => activeManager.disconnectAllServers(),
       },
     );
 
@@ -284,6 +287,9 @@ evals.post("/stream-test-case-inline", async (c) => {
       },
     });
   } catch (error) {
+    if (manager && !stream) {
+      await manager.disconnectAllServers().catch(() => undefined);
+    }
     const routeError = mapRuntimeError(error);
     return webError(
       c,
