@@ -155,7 +155,10 @@ export async function POST(request: Request) {
   // Recorded *before* dispatch so we still have an audit trail if the
   // server crashes mid-flight. A second entry after dispatch carries the
   // actual outcome — anything reasoning about what *landed* should read
-  // the "outcome" event, not this one.
+  // the "outcome" event, not this one. `dispatch_id` ties the two
+  // entries together; without it, concurrent dispatches from the same
+  // user/scope are ambiguous in the log stream.
+  const dispatchId = crypto.randomUUID();
   const attemptedWorkflows = [
     runsRelease ? "release.yml" : null,
     runsMcp ? "deploy-mcp-prod.yml" : null
@@ -163,6 +166,7 @@ export async function POST(request: Request) {
   console.info(
     JSON.stringify({
       event: "soundcheck.release.dispatch.attempt",
+      dispatch_id: dispatchId,
       email: user.email,
       scope: parsed.scope,
       deploy_backend_prod: parsed.deploy_backend_prod,
@@ -235,12 +239,18 @@ export async function POST(request: Request) {
   // ── 6. Audit log (outcome) ──────────────────────────────────────────
   // Use a distinct event key so log queries looking for *what actually
   // landed* don't collide with the intent entry above. Anyone reasoning
-  // about ground truth reads this one.
+  // about ground truth reads this one — so it carries the full set of
+  // inputs (not just scope) to stay self-contained without having to
+  // join against the attempt entry.
   console.info(
     JSON.stringify({
       event: "soundcheck.release.dispatch.outcome",
+      dispatch_id: dispatchId,
       email: user.email,
       scope: parsed.scope,
+      deploy_backend_prod: parsed.deploy_backend_prod,
+      promote_production: parsed.promote_production,
+      deploy_mcp_production: parsed.deploy_mcp_production,
       workflows_attempted: attemptedWorkflows,
       workflows_succeeded: succeeded.map((r) => r.workflow),
       workflows_failed: failed.map((r) => r.workflow)
