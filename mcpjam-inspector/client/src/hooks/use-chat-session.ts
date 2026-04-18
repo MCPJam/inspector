@@ -314,6 +314,16 @@ interface LiveTraceTurnState {
   actualToolCalls: LiveChatTraceToolCall[];
   /** From `turn_start.startedAtMs` — anchors wall-clock times in TraceTimeline. */
   startedAtMs?: number;
+  /**
+   * Wall-clock end time, only populated when the turn was rehydrated from a
+   * persisted trace. Enables a duration fallback in `buildLiveTraceEnvelope`
+   * when the spans blob fails to load or is genuinely empty.
+   */
+  endedAtMs?: number;
+  /** Persisted finish reason (rehydration only). */
+  finishReason?: string;
+  /** Persisted model id (rehydration only). */
+  modelId?: string;
 }
 
 interface LiveTraceAccumulatorState {
@@ -449,6 +459,9 @@ function buildLiveTraceStateFromTurnTraces(
       usage: trace.usage,
       actualToolCalls: [],
       startedAtMs: trace.startedAt,
+      endedAtMs: trace.endedAt,
+      finishReason: trace.finishReason,
+      modelId: trace.modelId,
     };
   }
 
@@ -695,7 +708,19 @@ function buildLiveTraceEnvelope(
       traceStartedAtMs = turn.startedAtMs;
     }
 
-    const durationMs = getTraceSpansDurationMs(turn.spans);
+    const spansDurationMs = getTraceSpansDurationMs(turn.spans);
+    // Fallback to wall-clock (endedAt - startedAt) when spans are empty —
+    // happens if we rehydrated a persisted turn whose spans blob failed to
+    // load or was never written, so the turn still gets a non-zero row in
+    // the timeline instead of collapsing to a zero-duration sliver.
+    const wallClockDurationMs =
+      typeof turn.startedAtMs === "number" &&
+      typeof turn.endedAtMs === "number" &&
+      turn.endedAtMs > turn.startedAtMs
+        ? turn.endedAtMs - turn.startedAtMs
+        : 0;
+    const durationMs =
+      spansDurationMs > 0 ? spansDurationMs : wallClockDurationMs;
     if (turn.spans.length > 0) {
       spans.push(...rebaseTraceSpans(turn.spans, nextOffsetMs));
     }
@@ -1379,7 +1404,11 @@ export function useChatSession({
   const hasLiveTimelineContent =
     livePreviewSpanCount > 0 || (liveTraceEnvelope?.spans?.length ?? 0) > 0;
 
-  useEffect(() => {
+  // useLayoutEffect (not useEffect) so the trace state is swapped out
+  // before the browser paints the new chatSessionId render, preventing a
+  // flash of the previous session's live-trace envelope on session switch
+  // or fork.
+  useLayoutEffect(() => {
     const hydratedState = pendingLiveTraceStateRef.current;
     pendingLiveTraceStateRef.current = null;
     setLiveTraceState(hydratedState ?? createEmptyLiveTraceState());
