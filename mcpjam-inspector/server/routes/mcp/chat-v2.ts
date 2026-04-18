@@ -17,7 +17,10 @@ import type { ModelProvider } from "@/shared/types";
 import { getProductionGuestAuthHeader } from "../../utils/guest-auth.js";
 import { logger } from "../../utils/logger";
 import { handleMCPJamFreeChatModel } from "../../utils/mcpjam-stream-handler";
-import { persistChatSessionToConvex } from "../../utils/chat-ingestion.js";
+import {
+  persistChatSessionToConvex,
+  type PersistedTurnTrace,
+} from "../../utils/chat-ingestion.js";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import { prepareChatV2 } from "../../utils/chat-v2-orchestration";
 import { appendDedupedModelMessages } from "@/shared/eval-trace";
@@ -45,7 +48,6 @@ import {
   mergeLiveChatTraceUsage,
   type LiveChatTraceUsage,
 } from "@/shared/live-chat-trace";
-import type { EvalTraceSpan } from "@/shared/eval-trace";
 
 function formatStreamError(error: unknown, provider?: ModelProvider): string {
   if (!(error instanceof Error)) {
@@ -172,16 +174,7 @@ function streamDirectChatWithLiveTrace(options: {
     toolResults: unknown[];
     usage?: LiveChatTraceUsage;
     finishReason?: string;
-    turnTrace: {
-      turnId: string;
-      promptIndex: number;
-      startedAt: number;
-      endedAt: number;
-      spans: EvalTraceSpan[];
-      usage?: LiveChatTraceUsage;
-      finishReason?: string;
-      modelId: string;
-    };
+    turnTrace: PersistedTurnTrace;
   }) => Promise<void> | void;
 }): Response {
   const {

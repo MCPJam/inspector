@@ -46,6 +46,7 @@ import {
   mergeLiveChatTraceUsage,
   type LiveChatTraceUsage,
 } from "@/shared/live-chat-trace";
+import type { PersistedTurnTrace } from "./chat-ingestion";
 import {
   pushAiSdkTrailingErrorSpan,
   pushBackendStepLlmFailureSpans,
@@ -81,16 +82,7 @@ export interface MCPJamHandlerOptions {
   requireToolApproval?: boolean;
   onConversationComplete?: (
     fullHistory: ModelMessage[],
-    turnTrace: {
-      turnId: string;
-      promptIndex: number;
-      startedAt: number;
-      endedAt: number;
-      spans: EvalTraceSpan[];
-      usage?: LiveChatTraceUsage;
-      finishReason?: string;
-      modelId: string;
-    },
+    turnTrace: PersistedTurnTrace,
   ) => Promise<void> | void;
   onStreamComplete?: () => Promise<void> | void;
   onStreamWriterReady?: (writer: {

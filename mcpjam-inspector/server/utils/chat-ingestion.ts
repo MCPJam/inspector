@@ -1,5 +1,6 @@
 import { logger } from "./logger";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
+import type { LiveChatTraceUsage } from "@/shared/live-chat-trace";
 
 const DEFAULT_INGEST_TIMEOUT_MS = 5_000;
 const MAX_RESPONSE_PREVIEW_CHARS = 200;
@@ -11,19 +12,21 @@ interface ResumeConfig {
   selectedServers?: string[];
 }
 
+/**
+ * Shape of a single completed chat turn's trace as it flows from the stream
+ * producers (`streamDirectChatWithLiveTrace`, `handleMCPJamFreeChatModel`)
+ * through `persistChatSessionToConvex` to the Convex `/ingest-chat` handler.
+ * Kept in one place so the producer callbacks and the wire body can't drift.
+ */
 export interface PersistedTurnTrace {
   turnId: string;
   promptIndex: number;
   startedAt: number;
   endedAt: number;
   spans: EvalTraceSpan[];
-  usage?: {
-    inputTokens?: number;
-    outputTokens?: number;
-    totalTokens?: number;
-  };
+  usage?: LiveChatTraceUsage;
   finishReason?: string;
-  modelId?: string;
+  modelId: string;
 }
 
 interface PersistChatSessionOptions {
