@@ -51,10 +51,6 @@ function inferNeedsReviewHeuristic(thread: SharedChatThread): boolean {
   return false;
 }
 
-function threadLanguage(thread: SharedChatThread): string | undefined {
-  return thread.language;
-}
-
 function threadFeedbackBucket(thread: SharedChatThread): string {
   const r = thread.feedbackRating;
   if (r == null) return "none";
@@ -102,7 +98,7 @@ export function threadMatchesChip(
     case "visitorSegment":
       return thread.visitorSegment === chip.value;
     case "language":
-      return threadLanguage(thread) === chip.value;
+      return thread.language === chip.value;
     case "modelId":
       return thread.modelId === chip.value;
     case "feedbackBucket":
