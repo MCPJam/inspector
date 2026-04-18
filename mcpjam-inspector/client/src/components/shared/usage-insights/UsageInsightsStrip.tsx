@@ -103,9 +103,11 @@ export function UsageInsightsStrip({
   const hasThemes = themes.length > 0;
   const totalSessions = breakdown?.totalSessions ?? 0;
 
-  const selectedClusterId = filter.chips.find(
-    (c) => c.kind === "cluster",
-  )?.clusterId;
+  // toggleChip allows stacking multiple cluster chips, so collect every
+  // selected cluster id; using a single find() highlighted only the first.
+  const selectedClusterIds = new Set(
+    filter.chips.flatMap((c) => (c.kind === "cluster" ? [c.clusterId] : [])),
+  );
 
   return (
     <Collapsible open={open} onOpenChange={setOpen} className="border-b">
@@ -182,7 +184,7 @@ export function UsageInsightsStrip({
             }
             data={themes.map((t) => ({
               ...t,
-              isSelected: t.key === selectedClusterId,
+              isSelected: selectedClusterIds.has(t.key),
             }))}
             onBarClick={(datum) => {
               onToggleChip({
@@ -219,12 +221,16 @@ export function UsageInsightsStrip({
             title="Users by feedback"
             description="Visitor segment × feedback"
             data={userSegment}
-            onSegmentClick={(datum, bucket) =>
+            onSegmentClick={(_datum, bucket) =>
+              // Filter by the feedback bucket only — the visitor-segment axis
+              // is still visible in the chart itself. Labelling with the
+              // segment would lie about what the chip actually matches
+              // (matchesChip only checks feedbackBucket).
               onToggleChip({
                 kind: "dimension",
                 key: "feedbackBucket",
                 value: bucket,
-                label: `${datum.label} · ${bucket}`,
+                label: `Feedback · ${bucket}`,
               })
             }
             emptyState="No visitor data yet"

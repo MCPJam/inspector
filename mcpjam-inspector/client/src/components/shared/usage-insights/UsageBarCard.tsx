@@ -97,15 +97,21 @@ export function UsageBarCard({
                 }}
                 className={cn(onBarClick && "cursor-pointer")}
               >
-                {data.map((datum) => (
-                  <Cell
-                    key={datum.key}
-                    fill="var(--color-count)"
-                    opacity={datum.isSelected ? 1 : 0.6}
-                    stroke={datum.isSelected ? "var(--color-count)" : undefined}
-                    strokeWidth={datum.isSelected ? 2 : 0}
-                  />
-                ))}
+                {data.map((datum) => {
+                  // When nothing is selected, render every bar at full opacity.
+                  // Only dim unselected bars when the chart actually has an
+                  // active selection.
+                  const hasSelection = data.some((d) => d.isSelected);
+                  return (
+                    <Cell
+                      key={datum.key}
+                      fill="var(--color-count)"
+                      opacity={!hasSelection || datum.isSelected ? 1 : 0.5}
+                      stroke={datum.isSelected ? "var(--color-count)" : undefined}
+                      strokeWidth={datum.isSelected ? 2 : 0}
+                    />
+                  );
+                })}
               </Bar>
             </BarChart>
           </ChartContainer>

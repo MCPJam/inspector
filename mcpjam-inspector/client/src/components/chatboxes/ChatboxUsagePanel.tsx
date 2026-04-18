@@ -71,7 +71,11 @@ export function ChatboxUsagePanel({ chatbox }: ChatboxUsagePanelProps) {
   }, [chatbox.chatboxId]);
 
   useEffect(() => {
-    if (!sortedThreads || sortedThreads.length === 0) {
+    // Don't treat loading (undefined) as empty — that would collapse the
+    // detail pane on every refetch and then re-snap to sortedThreads[0]
+    // when data arrived.
+    if (sortedThreads === undefined) return;
+    if (sortedThreads.length === 0) {
       setSelectedThreadId(null);
       return;
     }
