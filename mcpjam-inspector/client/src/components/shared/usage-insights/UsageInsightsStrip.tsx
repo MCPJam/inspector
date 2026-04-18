@@ -108,6 +108,17 @@ export function UsageInsightsStrip({
   const selectedClusterIds = new Set(
     filter.chips.flatMap((c) => (c.kind === "cluster" ? [c.clusterId] : [])),
   );
+  // Mirror the pattern for every dimension chip so all bar-card datums get
+  // consistent visual selection feedback.
+  const selectedDimensionValues = new Map<string, Set<string>>();
+  for (const chip of filter.chips) {
+    if (chip.kind !== "dimension") continue;
+    const set = selectedDimensionValues.get(chip.key) ?? new Set<string>();
+    set.add(chip.value);
+    selectedDimensionValues.set(chip.key, set);
+  }
+  const isDimSelected = (key: string, value: string): boolean =>
+    selectedDimensionValues.get(key)?.has(value) ?? false;
 
   return (
     <Collapsible open={open} onOpenChange={setOpen} className="border-b">
@@ -205,7 +216,10 @@ export function UsageInsightsStrip({
           <UsageBarCard
             title="Geography"
             description="By country (from request headers)"
-            data={geography}
+            data={geography.map((g) => ({
+              ...g,
+              isSelected: isDimSelected("geoCountry", g.key),
+            }))}
             onBarClick={(datum) => {
               onToggleChip({
                 kind: "dimension",

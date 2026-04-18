@@ -46,6 +46,9 @@ export function UsageBarCard({
   orientation = "vertical",
 }: UsageBarCardProps) {
   const hasData = data.length > 0;
+  // hasSelection is a property of the whole dataset, not each datum — compute
+  // once per render instead of O(n) on every map iteration.
+  const hasSelection = data.some((d) => d.isSelected);
 
   return (
     <Card className="h-full">
@@ -97,21 +100,17 @@ export function UsageBarCard({
                 }}
                 className={cn(onBarClick && "cursor-pointer")}
               >
-                {data.map((datum) => {
+                {data.map((datum) => (
                   // When nothing is selected, render every bar at full opacity.
-                  // Only dim unselected bars when the chart actually has an
-                  // active selection.
-                  const hasSelection = data.some((d) => d.isSelected);
-                  return (
-                    <Cell
-                      key={datum.key}
-                      fill="var(--color-count)"
-                      opacity={!hasSelection || datum.isSelected ? 1 : 0.5}
-                      stroke={datum.isSelected ? "var(--color-count)" : undefined}
-                      strokeWidth={datum.isSelected ? 2 : 0}
-                    />
-                  );
-                })}
+                  // Only dim unselected bars when the chart has an active selection.
+                  <Cell
+                    key={datum.key}
+                    fill="var(--color-count)"
+                    opacity={!hasSelection || datum.isSelected ? 1 : 0.5}
+                    stroke={datum.isSelected ? "var(--color-count)" : undefined}
+                    strokeWidth={datum.isSelected ? 2 : 0}
+                  />
+                ))}
               </Bar>
             </BarChart>
           </ChartContainer>
