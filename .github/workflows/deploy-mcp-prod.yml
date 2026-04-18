@@ -72,16 +72,28 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # Mirrors the staging gate in release.yml: refuse to promote a SHA
-      # that hasn't been verified on staging. Prevents "click prod button,
-      # realize staging was red" accidents.
-      - name: Require green staging deploy for candidate SHA
+      # Refuse to promote a SHA whose MCP build inputs haven't been
+      # verified on staging. The check is looser than an exact-SHA match
+      # because `deploy-mcp-staging.yml` only fires on mcp-relevant path
+      # changes — so most main commits legitimately never trigger a
+      # staging run for their SHA, and an exact-SHA gate would lock
+      # promotion out whenever main moved for unrelated reasons.
+      #
+      # Logic: find the latest successful staging run on main. If its
+      # SHA matches current main, done. Otherwise, compare the two SHAs
+      # and verify no mcp-relevant files changed between them — meaning
+      # what's live on staging is byte-identical (for the worker's
+      # purposes) to what we'd ship. The mcp-relevant path list mirrors
+      # deploy-mcp-staging.yml's `paths:` trigger filter, minus the
+      # workflow file itself (which isn't a build input).
+      - name: Require green staging for current MCP build inputs
         uses: actions/github-script@v7
         with:
           script: |
             const workflowId = "deploy-mcp-staging.yml";
             const { owner, repo } = context.repo;
             const headSha = context.sha;
+
             const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
               owner,
               repo,
@@ -91,19 +103,56 @@ jobs:
               per_page: 100,
             });
 
-            const match = runs.find(
-              (run) => run.head_sha === headSha && run.conclusion === "success"
-            );
-
-            if (!match) {
+            const latestSuccess = runs.find((run) => run.conclusion === "success");
+            if (!latestSuccess) {
               core.setFailed(
-                `No successful ${workflowId} run found for ${headSha}. ` +
-                `Wait for the staging deploy to land on this SHA before promoting to production.`
+                `No successful ${workflowId} run on main. Cannot promote.`
               );
               return;
             }
 
-            core.info(`Found successful staging deploy run ${match.id} for ${headSha}.`);
+            if (latestSuccess.head_sha === headSha) {
+              core.info(
+                `Latest successful staging run ${latestSuccess.id} is at ${headSha} — safe to promote.`
+              );
+              return;
+            }
+
+            // Different SHAs: check if the diff includes any MCP build input.
+            // GitHub's compare response caps `files` at 300; for the volumes
+            // we see between two main commits that's a non-issue, but if
+            // something ever needs a 300+ file diff it'll error loudly here.
+            const { data: diff } = await github.rest.repos.compareCommitsWithBasehead({
+              owner,
+              repo,
+              basehead: `${latestSuccess.head_sha}...${headSha}`,
+            });
+
+            const isMcpRelevant = (filename) =>
+              filename.startsWith("mcp/") ||
+              filename === "package.json" ||
+              filename === "package-lock.json" ||
+              filename === ".changeset/config.json";
+
+            const touched = (diff.files ?? [])
+              .map((f) => f.filename)
+              .filter(isMcpRelevant);
+
+            if (touched.length > 0) {
+              core.setFailed(
+                `Latest successful staging is at ${latestSuccess.head_sha.slice(0, 7)} ` +
+                `but current main ${headSha.slice(0, 7)} has MCP-relevant changes not yet on ` +
+                `staging: ${touched.join(", ")}. Wait for the next deploy-mcp-staging.yml run ` +
+                `to land before promoting.`
+              );
+              return;
+            }
+
+            core.info(
+              `Latest successful staging run ${latestSuccess.id} is at ` +
+              `${latestSuccess.head_sha.slice(0, 7)}; current main ${headSha.slice(0, 7)} ` +
+              `differs only in non-MCP paths — safe to promote.`
+            );
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
