@@ -253,9 +253,15 @@ export function UsageInsightsStrip({
           <UsageDonutPairCard
             title="Device & language"
             leftLabel="Device"
-            leftData={devices}
+            leftData={devices.map((d) => ({
+              ...d,
+              isSelected: isDimSelected("deviceKind", d.key),
+            }))}
             rightLabel="Language"
-            rightData={languages}
+            rightData={languages.map((l) => ({
+              ...l,
+              isSelected: isDimSelected("language", l.key),
+            }))}
             onLeftSliceClick={(datum) =>
               onToggleChip({
                 kind: "dimension",

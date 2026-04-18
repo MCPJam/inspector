@@ -44,6 +44,10 @@ function Donut({
   onClick?: (datum: BarDatum) => void;
 }) {
   const hasData = data.length > 0 && data.some((d) => d.count > 0);
+  // Same "only dim when something is selected" semantics as UsageBarCard so
+  // donuts stay at full opacity with nothing active and visually highlight
+  // the selected slice(s) otherwise.
+  const hasSelection = data.some((d) => d.isSelected);
 
   if (!hasData) {
     return (
@@ -76,7 +80,11 @@ function Donut({
             <Cell
               key={entry.key}
               fill={PALETTE[index % PALETTE.length]}
-              stroke="var(--background)"
+              stroke={
+                entry.isSelected ? "var(--foreground)" : "var(--background)"
+              }
+              strokeWidth={entry.isSelected ? 3 : 2}
+              opacity={!hasSelection || entry.isSelected ? 1 : 0.5}
             />
           ))}
         </Pie>

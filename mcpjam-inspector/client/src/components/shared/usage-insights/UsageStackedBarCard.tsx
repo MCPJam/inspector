@@ -12,7 +12,9 @@ import {
   type ChartConfig,
 } from "@/components/ui/chart";
 
-export type FeedbackBucketKey = "positive" | "neutral" | "negative" | "none";
+// Local helper — every consumer goes through the `onSegmentClick` prop
+// signature, so nothing outside this file imports the union directly.
+type FeedbackBucketKey = "positive" | "neutral" | "negative" | "none";
 
 export type StackedDatum = {
   key: string;
