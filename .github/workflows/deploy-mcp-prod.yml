@@ -31,10 +31,13 @@ concurrency:
 
 env:
   NODE_VERSION: "24.14.0"
-  # Hardcoded for the same reason deploy-mcp-staging.yml hardcodes its
-  # URL: cloudflare/wrangler-action@v3 returns a malformed
+  # Resolved once here so the environment URL, smoke test, and job
+  # summary all point at the same target. Falls back to the known
+  # production hostname when the override var is unset — hardcoded in
+  # the fallback for the same reason deploy-mcp-staging.yml hardcodes
+  # its URL: cloudflare/wrangler-action@v3 returns a malformed
   # `deployment-url` output for custom-domain deploys (wrangler-action#396).
-  PRODUCTION_URL: "https://mcp.mcpjam.com"
+  PRODUCTION_URL: ${{ vars.MCP_WORKER_PRODUCTION_URL || 'https://mcp.mcpjam.com' }}
 
 jobs:
   deploy:
@@ -42,7 +45,7 @@ jobs:
     timeout-minutes: 30
     environment:
       name: mcp-production
-      url: ${{ vars.MCP_WORKER_PRODUCTION_URL || 'https://mcp.mcpjam.com' }}
+      url: ${{ env.PRODUCTION_URL }}
 
     steps:
       - name: Enforce main branch

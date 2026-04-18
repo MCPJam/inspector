@@ -88,7 +88,7 @@ export default async function Home() {
       <Section
         numeral="I"
         title="Deploy diff"
-        description="What's live where. Inspector + Backend compare production vs. staging; MCP has no prod yet, so it compares staging vs. main. The big number on each tile is the headline answer — use it to decide whether to cut a release today."
+        description="What's live where. Inspector + Backend compare production vs. staging; MCP compares its live staging SHA vs. main because the staging worker is the promotion candidate for mcp.mcpjam.com. The big number on each tile is the headline answer — use it to decide whether to cut a release (section III) or promote MCP (section VI) today."
       >
         <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
           <Suspense fallback={<DeployDiffSkeleton title="Inspector" />}>

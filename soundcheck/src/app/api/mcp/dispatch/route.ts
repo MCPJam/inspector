@@ -33,7 +33,30 @@ import { dispatchWorkflow } from "@/lib/github";
 
 export const dynamic = "force-dynamic";
 
-export async function POST() {
+/**
+ * Sentinel the in-app form sends. Required before auth. Catches a CSRF
+ * vector where a logged-in employee visits a malicious site that POSTs
+ * to this route — WorkOS AuthKit cookies with SameSite=None (used for
+ * cross-subdomain flows) would otherwise be attached to the request and
+ * pass `withAuth`. A plain HTML form can't set custom request headers,
+ * and a cross-origin `fetch` sending custom headers triggers a CORS
+ * preflight against this origin (which would fail), so requiring the
+ * header effectively restricts callers to same-origin JS.
+ */
+const EXPECTED_DISPATCH_HEADER = "x-soundcheck-action";
+const EXPECTED_DISPATCH_VALUE = "mcp-prod-dispatch";
+
+export async function POST(request: Request) {
+  // ── 0. Same-origin guard (cheap defense-in-depth) ───────────────────
+  if (
+    request.headers.get(EXPECTED_DISPATCH_HEADER) !== EXPECTED_DISPATCH_VALUE
+  ) {
+    return NextResponse.json(
+      { error: "Invalid dispatch request" },
+      { status: 403 }
+    );
+  }
+
   // ── 1. Enforce employee-only — unconditionally ──────────────────────
   // Same posture as /api/release/dispatch: this hands out a write-scoped
   // PAT to dispatch a production deploy. MCPJAM_NONPROD_LOCKDOWN being

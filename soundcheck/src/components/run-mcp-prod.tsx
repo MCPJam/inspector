@@ -47,7 +47,12 @@ export function RunMcpProd() {
       try {
         const res = await fetch("/api/mcp/dispatch", {
           method: "POST",
-          headers: { "Content-Type": "application/json" }
+          headers: {
+            "Content-Type": "application/json",
+            // Same-origin sentinel — the route rejects POSTs missing this
+            // header to close a CSRF vector. See route.ts for rationale.
+            "x-soundcheck-action": "mcp-prod-dispatch"
+          }
         });
         const json = (await res.json()) as {
           error?: string;
