@@ -68,6 +68,12 @@ export function ChatboxUsagePanel({ chatbox }: ChatboxUsagePanelProps) {
   useEffect(() => {
     setSelection({ chatboxId: chatbox.chatboxId, threadId: null });
     setFilter(EMPTY_USAGE_FILTER);
+    // Reset rebuild state too — an in-flight rebuild belongs to the previous
+    // chatbox and shouldn't keep this one's button disabled. The old promise
+    // still resolves; its result just gets ignored because it points at a
+    // stale chatbox id.
+    rebuildInFlightRef.current = false;
+    setRebuildBusy(false);
   }, [chatbox.chatboxId]);
 
   useEffect(() => {
