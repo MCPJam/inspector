@@ -88,10 +88,11 @@ jobs:
         run: |
           # First deploy onto a new custom domain can take up to ~60s for
           # Cloudflare to provision the edge cert and propagate the
-          # hostname. Budget 20 × 3s = ~60s of retries (plus curl
-          # latency) so the cold-start case actually covers the window.
+          # hostname. Each probe is bounded (--connect-timeout 3
+          # --max-time 6) so one hung TCP/TLS handshake can't blow past
+          # the retry budget and hold the mcp-staging concurrency slot.
           for attempt in $(seq 1 20); do
-            if curl --fail --silent --show-error "$STAGING_URL" | grep -q "MCPJam MCP"; then
+            if curl --fail --silent --show-error --connect-timeout 3 --max-time 6 "$STAGING_URL" | grep -q "MCPJam MCP"; then
               echo "Smoke OK on attempt $attempt"
               exit 0
             fi

@@ -25,6 +25,17 @@ import { dispatchWorkflow } from "@/lib/github";
 
 export const dynamic = "force-dynamic";
 
+/**
+ * Same-origin sentinel. A plain HTML form (the classic CSRF vector)
+ * can't set custom request headers, and a cross-origin `fetch` with a
+ * custom header triggers a CORS preflight against this origin — which
+ * this route doesn't respond to, so the browser blocks the request.
+ * WorkOS AuthKit cookies with SameSite=None would otherwise attach to
+ * cross-site POSTs, so `withAuth` alone isn't sufficient.
+ */
+const EXPECTED_DISPATCH_HEADER = "x-soundcheck-action";
+const EXPECTED_DISPATCH_VALUE = "release-dispatch";
+
 type Scope = "packages-only" | "inspector-only" | "full";
 
 interface DispatchBody {
@@ -55,6 +66,16 @@ function parseBody(raw: unknown): DispatchBody | null {
 }
 
 export async function POST(request: Request) {
+  // ── 0. Same-origin guard (cheap defense-in-depth) ───────────────────
+  if (
+    request.headers.get(EXPECTED_DISPATCH_HEADER) !== EXPECTED_DISPATCH_VALUE
+  ) {
+    return NextResponse.json(
+      { error: "Invalid dispatch request" },
+      { status: 403 }
+    );
+  }
+
   // ── 1. Enforce employee-only — unconditionally ──────────────────────
   // Unlike the read tiles (which follow the MCPJAM_NONPROD_LOCKDOWN flag),
   // this route hands out the write-scoped PAT and dispatches production.

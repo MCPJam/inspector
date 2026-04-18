@@ -26,6 +26,7 @@ import {
   McpDeployStatusSkeleton
 } from "@/components/mcp-deploy-status";
 import { RunRelease } from "@/components/run-release";
+import { RunMcpProd } from "@/components/run-mcp-prod";
 import { ReleaseVerdict, ReleaseVerdictSkeleton } from "@/components/release-verdict";
 import { Section } from "@/components/ui";
 import { Card, CardContent } from "@mcpjam/design-system/card";
@@ -87,7 +88,7 @@ export default async function Home() {
       <Section
         numeral="I"
         title="Deploy diff"
-        description="What's live where. Inspector + Backend compare production vs. staging; MCP has no prod yet, so it compares staging vs. main. The big number on each tile is the headline answer — use it to decide whether to cut a release today."
+        description="What's live where. Inspector + Backend compare production vs. staging; MCP compares its live staging SHA vs. main because the staging worker is the promotion candidate for mcp.mcpjam.com. The big number on each tile is the headline answer — use it to decide whether to cut a release (section III) or promote MCP (section VI) today."
       >
         <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
           <Suspense fallback={<DeployDiffSkeleton title="Inspector" />}>
@@ -157,6 +158,16 @@ export default async function Home() {
         <Suspense fallback={<DeployFailuresSkeleton />}>
           <DeployFailures />
         </Suspense>
+      </Section>
+
+      <Section
+        numeral="VI"
+        title="MCP production"
+        description="The Cloudflare Worker behind mcp.mcpjam.com is on its own pipeline — not part of release.yml. Promote staging → production once the MCP tile in section I shows 0 drift."
+      >
+        <div className="grid gap-5 md:grid-cols-2">
+          <RunMcpProd />
+        </div>
       </Section>
 
       <footer className="mt-20 border-t border-border pt-6 text-[11px] text-muted-foreground md:flex md:items-center md:justify-between">

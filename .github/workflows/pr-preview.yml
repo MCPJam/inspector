@@ -32,6 +32,7 @@ on:
       - "mcp/**"
       - ".github/workflows/pr-mcp-preview.yml"
       - ".github/workflows/deploy-mcp-staging.yml"
+      - ".github/workflows/deploy-mcp-prod.yml"
   repository_dispatch:
     types:
       - backend_preview_ready
