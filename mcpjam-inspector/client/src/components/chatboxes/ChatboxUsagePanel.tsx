@@ -45,6 +45,12 @@ export function ChatboxUsagePanel({ chatbox }: ChatboxUsagePanelProps) {
   // Synchronous latch so double-clicks can't queue two concurrent rebuilds
   // before React commits `rebuildBusy`.
   const rebuildInFlightRef = useRef(false);
+  // Mirror of the current chatbox id so the rebuild `finally` block can
+  // tell whether its owning chatbox is still selected before clearing
+  // the latch — prevents a stale A-rebuild from unlocking B's in-flight
+  // rebuild if the user swaps chatboxes mid-request.
+  const chatboxIdRef = useRef(chatbox.chatboxId);
+  chatboxIdRef.current = chatbox.chatboxId;
 
   const selectedThreadId =
     selection.chatboxId === chatbox.chatboxId ? selection.threadId : null;
@@ -110,10 +116,17 @@ export function ChatboxUsagePanel({ chatbox }: ChatboxUsagePanelProps) {
 
   const handleRebuild = useCallback(async () => {
     if (rebuildInFlightRef.current) return;
+    // Stamp this invocation with the current chatbox id. If the user
+    // switches chatboxes before the promise settles, the chatbox-change
+    // effect clears the latch; this `finally` must only clear it when the
+    // request we're awaiting is still the active one — otherwise a stale
+    // A-chatbox rebuild's `finally` would clobber B-chatbox's in-flight
+    // latch and let a user double-trigger.
+    const rebuildingChatboxId = chatbox.chatboxId;
     rebuildInFlightRef.current = true;
     setRebuildBusy(true);
     try {
-      const result = await rebuild({ chatboxId: chatbox.chatboxId });
+      const result = await rebuild({ chatboxId: rebuildingChatboxId });
       if (result.alreadyRunning) {
         toast.info("A rebuild is already running");
       } else {
@@ -126,8 +139,10 @@ export function ChatboxUsagePanel({ chatbox }: ChatboxUsagePanelProps) {
           : "Rebuild failed. Try again in a few minutes.",
       );
     } finally {
-      rebuildInFlightRef.current = false;
-      setRebuildBusy(false);
+      if (chatboxIdRef.current === rebuildingChatboxId) {
+        rebuildInFlightRef.current = false;
+        setRebuildBusy(false);
+      }
     }
   }, [rebuild, chatbox.chatboxId]);
 
