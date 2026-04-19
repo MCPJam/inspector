@@ -21,7 +21,9 @@ function nestedUpstreamStatus(entry: XAAHttpHistoryEntry): number | undefined {
  *
  * For `jwt_bearer_request`, the `/proxy/token` endpoint always returns HTTP 200
  * and wraps the upstream authorization-server response in `{status, body}`, so
- * we also inspect the nested upstream status to detect failure.
+ * we also inspect the nested upstream status to detect failure. We scope that
+ * inspection to `jwt_bearer_request` because other steps could coincidentally
+ * return a body with a `status` field that doesn't mean HTTP status.
  */
 export function latestErroredHttpEntry(
   httpEntries: readonly XAAHttpHistoryEntry[],
@@ -33,9 +35,11 @@ export function latestErroredHttpEntry(
   if (last.response.status < 200 || last.response.status >= 300) {
     return last;
   }
-  const nested = nestedUpstreamStatus(last);
-  if (nested !== undefined && (nested < 200 || nested >= 300)) {
-    return last;
+  if (last.step === "jwt_bearer_request") {
+    const nested = nestedUpstreamStatus(last);
+    if (nested !== undefined && (nested < 200 || nested >= 300)) {
+      return last;
+    }
   }
   return undefined;
 }
@@ -112,9 +116,23 @@ export function getXAAErrorGuidance(
   const upstreamError = upstreamOAuthError(httpEntry);
 
   const responseStatus = httpEntry?.response?.status;
-  const hasFailedResponse =
+  const upstreamStatus =
+    step === "jwt_bearer_request" && httpEntry
+      ? nestedUpstreamStatus(httpEntry)
+      : undefined;
+  const hasFailedOuterResponse =
     typeof responseStatus === "number" &&
     (responseStatus < 200 || responseStatus >= 300);
+  const hasFailedUpstreamResponse =
+    typeof upstreamStatus === "number" &&
+    (upstreamStatus < 200 || upstreamStatus >= 300);
+  const hasFailedResponse =
+    hasFailedOuterResponse || hasFailedUpstreamResponse;
+  const failedStatus = hasFailedUpstreamResponse
+    ? upstreamStatus
+    : hasFailedOuterResponse
+      ? responseStatus
+      : undefined;
 
   if (
     !stateError &&
@@ -267,8 +285,8 @@ export function getXAAErrorGuidance(
       title: "Request failed",
       explanation:
         httpEntry?.error?.message ||
-        (responseStatus
-          ? `The request returned ${responseStatus}. Expand the HTTP entry below for details.`
+        (typeof failedStatus === "number"
+          ? `The request returned ${failedStatus}. Expand the HTTP entry below for details.`
           : "The request did not complete. Check network connectivity and CORS settings."),
       actions: [],
       severity: "warning",

@@ -135,6 +135,37 @@ describe("getXAAErrorGuidance", () => {
       );
     });
 
+    it("produces a guidance card for a proxy-wrapped upstream failure even without an OAuth error field", () => {
+      // Outer 200, nested 500, empty body. Previously latestErroredHttpEntry
+      // flagged it, but getXAAErrorGuidance only looked at the outer status
+      // and returned null — so the user saw nothing.
+      const guidance = getXAAErrorGuidance({
+        step: "jwt_bearer_request",
+        httpEntry: proxyResponse(500, {}),
+      });
+      expect(guidance?.title).toBe(
+        "JWT bearer request failed at the authorization server",
+      );
+    });
+
+    it("does not treat a non-jwt_bearer step with a status-shaped body as a proxy wrapper", () => {
+      // Another step's body might coincidentally have a `status` field.
+      // We should not interpret that as a failed upstream proxy call.
+      const guidance = getXAAErrorGuidance({
+        step: "user_authentication",
+        httpEntry: httpEntry({
+          step: "user_authentication",
+          response: {
+            status: 200,
+            statusText: "OK",
+            headers: {},
+            body: { status: 500, user: "alice" },
+          },
+        }),
+      });
+      expect(guidance).toBeNull();
+    });
+
     it("extracts the OAuth error code even when error_description is also present", () => {
       // When the AS returns both `error` and `error_description`, the state
       // machine's extractErrorMessage prefers the description, so stateError
@@ -331,5 +362,22 @@ describe("latestErroredHttpEntry", () => {
       },
     };
     expect(latestErroredHttpEntry([proxyWrappedSuccess])).toBeUndefined();
+  });
+
+  it("only inspects nested upstream status for jwt_bearer_request entries", () => {
+    // Another step's body might coincidentally have a numeric `status` field
+    // that doesn't represent HTTP — we shouldn't misread that as a failure.
+    const nonBearerEntry: XAAHttpHistoryEntry = {
+      step: "user_authentication",
+      timestamp: 0,
+      request: { method: "POST", url: "/authenticate", headers: {} },
+      response: {
+        status: 200,
+        statusText: "OK",
+        headers: {},
+        body: { status: 500, user: "alice" },
+      },
+    };
+    expect(latestErroredHttpEntry([nonBearerEntry])).toBeUndefined();
   });
 });
