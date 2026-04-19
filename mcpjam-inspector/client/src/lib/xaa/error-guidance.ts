@@ -1,9 +1,27 @@
 import type { XAAFlowStep, XAAHttpHistoryEntry } from "./types";
 
+function nestedUpstreamStatus(entry: XAAHttpHistoryEntry): number | undefined {
+  const body = entry.response?.body;
+  if (
+    body &&
+    typeof body === "object" &&
+    !Array.isArray(body) &&
+    "status" in (body as Record<string, unknown>)
+  ) {
+    const nested = (body as Record<string, unknown>).status;
+    if (typeof nested === "number") return nested;
+  }
+  return undefined;
+}
+
 /**
  * Returns the last HTTP entry for a step only if that final entry represents a
  * failure. If the step retried and a later attempt succeeded, returns undefined
  * — we don't want to show error guidance for a step whose outcome was success.
+ *
+ * For `jwt_bearer_request`, the `/proxy/token` endpoint always returns HTTP 200
+ * and wraps the upstream authorization-server response in `{status, body}`, so
+ * we also inspect the nested upstream status to detect failure.
  */
 export function latestErroredHttpEntry(
   httpEntries: readonly XAAHttpHistoryEntry[],
@@ -11,10 +29,12 @@ export function latestErroredHttpEntry(
   if (httpEntries.length === 0) return undefined;
   const last = httpEntries[httpEntries.length - 1];
   if (last.error) return last;
-  if (
-    last.response &&
-    (last.response.status < 200 || last.response.status >= 300)
-  ) {
+  if (!last.response) return undefined;
+  if (last.response.status < 200 || last.response.status >= 300) {
+    return last;
+  }
+  const nested = nestedUpstreamStatus(last);
+  if (nested !== undefined && (nested < 200 || nested >= 300)) {
     return last;
   }
   return undefined;

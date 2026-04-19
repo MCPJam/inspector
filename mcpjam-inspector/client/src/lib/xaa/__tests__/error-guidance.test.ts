@@ -17,13 +17,17 @@ function httpEntry(
   };
 }
 
-function proxyResponse(status: number, upstreamBody: unknown) {
+// The `/proxy/token` endpoint always returns HTTP 200 and wraps the upstream
+// authorization-server response as { status, body }. Tests for jwt_bearer_request
+// must preserve this shape; otherwise the outer-status path masks bugs where
+// we fail to inspect the nested status.
+function proxyResponse(upstreamStatus: number, upstreamBody: unknown) {
   return httpEntry({
     response: {
-      status,
-      statusText: "",
+      status: 200,
+      statusText: "OK",
       headers: {},
-      body: { status, body: upstreamBody },
+      body: { status: upstreamStatus, body: upstreamBody },
     },
   });
 }
@@ -130,6 +134,23 @@ describe("getXAAErrorGuidance", () => {
         "Authorization server rejected the `resource` claim",
       );
     });
+
+    it("extracts the OAuth error code even when error_description is also present", () => {
+      // When the AS returns both `error` and `error_description`, the state
+      // machine's extractErrorMessage prefers the description, so stateError
+      // won't contain the raw code. We must still surface specific guidance
+      // by reading the `error` field out of the proxy-wrapped body.
+      const guidance = getXAAErrorGuidance({
+        step: "jwt_bearer_request",
+        stateError:
+          "Grant type is not supported for this client Does the authorization server trust the synthetic issuer JWKS and support `urn:ietf:params:oauth:grant-type:jwt-bearer`?",
+        httpEntry: proxyResponse(400, {
+          error: "unsupported_grant_type",
+          error_description: "Grant type is not supported for this client",
+        }),
+      });
+      expect(guidance?.title).toContain("doesn't support the jwt-bearer grant");
+    });
   });
 
   describe("discovery steps", () => {
@@ -214,5 +235,49 @@ describe("latestErroredHttpEntry", () => {
     expect(latestErroredHttpEntry([okEntry, networkErrorEntry])).toBe(
       networkErrorEntry,
     );
+  });
+
+  it("detects upstream failure in a proxy-wrapped 200 response (jwt_bearer_request)", () => {
+    // /proxy/token returns outer HTTP 200 but nests the upstream AS status.
+    // We must inspect that nested status, otherwise the wrapped failure is
+    // invisible to error-guidance.
+    const proxyWrappedFailure: XAAHttpHistoryEntry = {
+      step: "jwt_bearer_request",
+      timestamp: 0,
+      request: { method: "POST", url: "/proxy/token", headers: {} },
+      response: {
+        status: 200,
+        statusText: "OK",
+        headers: {},
+        body: {
+          status: 400,
+          body: {
+            error: "unsupported_grant_type",
+            error_description: "Grant type not allowed.",
+          },
+        },
+      },
+    };
+    expect(latestErroredHttpEntry([proxyWrappedFailure])).toBe(
+      proxyWrappedFailure,
+    );
+  });
+
+  it("ignores a proxy-wrapped 200 response when the nested upstream status is a success", () => {
+    const proxyWrappedSuccess: XAAHttpHistoryEntry = {
+      step: "jwt_bearer_request",
+      timestamp: 0,
+      request: { method: "POST", url: "/proxy/token", headers: {} },
+      response: {
+        status: 200,
+        statusText: "OK",
+        headers: {},
+        body: {
+          status: 200,
+          body: { access_token: "abc", token_type: "Bearer" },
+        },
+      },
+    };
+    expect(latestErroredHttpEntry([proxyWrappedSuccess])).toBeUndefined();
   });
 });
