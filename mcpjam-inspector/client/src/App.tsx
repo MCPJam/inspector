@@ -1631,7 +1631,6 @@ export default function App() {
         hidden={appBuilderOnboarding}
         onNavigate={handleNavigate}
         activeTab={activeTab}
-        servers={workspaceServers}
         workspaces={workspaces}
         activeWorkspaceId={activeWorkspaceId}
         onSwitchWorkspace={handleSidebarSwitchWorkspace}
