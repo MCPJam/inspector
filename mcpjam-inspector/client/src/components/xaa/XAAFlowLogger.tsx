@@ -79,6 +79,9 @@ function CompatibilityBanner({
   report: XAACompatibilityReport;
 }) {
   const [expanded, setExpanded] = useState(report.overall !== "pass");
+  useEffect(() => {
+    setExpanded(report.overall !== "pass");
+  }, [report.overall]);
 
   const tone =
     report.overall === "pass"
