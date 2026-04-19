@@ -3,11 +3,10 @@
  * needs: environment deployments, commit comparisons, workflow runs,
  * repo contents, and release dispatch.
  *
- * Auth: `GITHUB_PAT` must be a fine-grained token with read-only access to
- * `contents`, `deployments`, `metadata`, and `actions` on the inspector and
- * backend repos. The separate `GITHUB_DISPATCH_PAT` (only read by
- * `dispatchWorkflow`) holds the `actions:write` scope used to trigger the
- * Release workflow; keeping the two split limits the blast radius of a leak.
+ * Auth: `GITHUB_PAT` must be a fine-grained token scoped to the inspector
+ * and backend repos with `contents:read`, `deployments:read`, `metadata:read`,
+ * and `actions:read/write` — the write scope is what lets `dispatchWorkflow`
+ * fire `release.yml` and `deploy-mcp-prod.yml` from the dispatch route.
  */
 
 const GITHUB_API = "https://api.github.com";
@@ -544,11 +543,9 @@ export async function getJobAnnotations(
 /**
  * Dispatches a workflow via `POST /actions/workflows/{file}/dispatches`.
  *
- * Takes an explicit `token` instead of falling back to `GITHUB_PAT`. The
- * write PAT is read from `GITHUB_DISPATCH_PAT` by the caller (the
- * `/api/release/dispatch` route) and passed through here. Keeping the write
- * token out of the module-level env read means no accidental use of a
- * write-scoped token by one of the read helpers above.
+ * Takes an explicit `token` so the caller decides which env var sources it.
+ * Today the `/api/release/dispatch` route reads `GITHUB_PAT` — the same
+ * token used for reads, which carries `actions:read/write`.
  */
 export async function dispatchWorkflow(
   owner: string,

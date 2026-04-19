@@ -19,9 +19,8 @@
  * The confirmation modal quotes the final inputs back verbatim because
  * production-touching dispatches deserve a deliberate extra click.
  *
- * The client never sees `GITHUB_DISPATCH_PAT`. The server route
- * /api/release/dispatch holds the write token; this component only POSTs
- * JSON to it.
+ * The client never sees the GitHub PAT. The server route
+ * /api/release/dispatch holds it; this component only POSTs JSON to it.
  */
 
 import { useState, useTransition } from "react";

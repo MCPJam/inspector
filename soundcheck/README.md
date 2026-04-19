@@ -64,7 +64,7 @@ Read by the Soundcheck app at request time to populate tiles.
 | `RAILWAY_API_TOKEN` | Read Railway envs + deployments for dashboard tiles | 90 days |
 | `CONVEX_DEPLOY_KEY_STAGING` | Read backend-staging state | 90 days |
 | `CONVEX_DEPLOY_KEY_PROD` | Read backend-prod state | 90 days |
-| `GITHUB_PAT` | GitHub REST + Compare + Actions (fine-grained, read-only, scoped to both repos) | 90 days |
+| `GITHUB_PAT` | GitHub REST + Compare + Actions, plus `workflow_dispatch` for `release.yml` / `deploy-mcp-prod.yml` (fine-grained, scoped to both repos, `actions:read/write` + `contents:read` + `deployments:read` + `metadata:read`) | 90 days |
 | `WORKOS_API_KEY`, `WORKOS_CLIENT_ID`, `WORKOS_COOKIE_PASSWORD` | Auth | per existing WorkOS policy |
 | `MCPJAM_NONPROD_LOCKDOWN=true` | Employee gate on | n/a |
 | `MCPJAM_EMPLOYEE_EMAIL_DOMAINS=mcpjam.com` | Allowed email domains | n/a |
