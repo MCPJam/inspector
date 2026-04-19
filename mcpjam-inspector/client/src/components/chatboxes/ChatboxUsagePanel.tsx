@@ -104,7 +104,7 @@ export function ChatboxUsagePanel({ chatbox }: ChatboxUsagePanelProps) {
         threadId: sortedThreads[0]?._id ?? null,
       };
     });
-  }, [sortedThreads, chatbox.chatboxId, setSelectedThreadId]);
+  }, [sortedThreads, chatbox.chatboxId]);
 
   const handleToggleChip = useCallback(
     (chip: UsageFilterChip) => setFilter((prev) => toggleChip(prev, chip)),
