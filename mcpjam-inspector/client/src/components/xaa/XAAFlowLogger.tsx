@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   AlertCircle,
+  AlertTriangle,
   CheckCircle2,
   ChevronDown,
   ChevronRight,
@@ -9,6 +10,8 @@ import {
   Loader2,
   Pencil,
   RotateCcw,
+  ShieldAlert,
+  ShieldCheck,
 } from "lucide-react";
 import { Alert, AlertDescription } from "@mcpjam/design-system/alert";
 import { Badge } from "@mcpjam/design-system/badge";
@@ -32,7 +35,17 @@ import {
 import type {
   XAAFlowState,
   XAAFlowStep,
+  XAAHttpHistoryEntry,
 } from "@/lib/xaa/types";
+import {
+  getXAAErrorGuidance,
+  type XAAErrorAction,
+  type XAAErrorGuidance,
+} from "@/lib/xaa/error-guidance";
+import type {
+  XAACheckStatus,
+  XAACompatibilityReport,
+} from "@/lib/xaa/capability-preflight";
 import {
   NEGATIVE_TEST_MODES,
   NEGATIVE_TEST_MODE_DETAILS,
@@ -61,6 +74,185 @@ interface XAAFlowLoggerProps {
     scope?: string;
     negativeTestMode: XAAFlowState["negativeTestMode"];
   };
+}
+
+function CompatibilityBanner({
+  report,
+}: {
+  report: XAACompatibilityReport;
+}) {
+  const [expanded, setExpanded] = useState(report.overall !== "pass");
+
+  const tone =
+    report.overall === "pass"
+      ? {
+          Icon: ShieldCheck,
+          iconClass: "text-green-600 dark:text-green-400",
+          borderClass: "border-green-500/40",
+          bgClass: "bg-green-500/5",
+          title: "Authorization server looks XAA-ready",
+        }
+      : report.overall === "warn"
+        ? {
+            Icon: AlertTriangle,
+            iconClass: "text-amber-500",
+            borderClass: "border-amber-500/40",
+            bgClass: "bg-amber-500/5",
+            title: "Authorization server capabilities are ambiguous",
+          }
+        : {
+            Icon: ShieldAlert,
+            iconClass: "text-red-500",
+            borderClass: "border-red-500/40",
+            bgClass: "bg-red-500/5",
+            title: "Authorization server isn't XAA-ready",
+          };
+
+  const checkStatusClass = (status: XAACheckStatus) =>
+    status === "pass"
+      ? "text-green-600 dark:text-green-400"
+      : status === "fail"
+        ? "text-red-500"
+        : "text-amber-500";
+
+  const checkStatusSymbol = (status: XAACheckStatus) =>
+    status === "pass" ? "✓" : status === "fail" ? "✗" : "?";
+
+  return (
+    <div
+      className={cn(
+        "rounded-md border px-3 py-2.5 text-xs",
+        tone.borderClass,
+        tone.bgClass,
+      )}
+    >
+      <button
+        type="button"
+        onClick={() => setExpanded((prev) => !prev)}
+        className="flex w-full items-start gap-2 text-left"
+      >
+        <tone.Icon className={cn("h-4 w-4 mt-0.5 shrink-0", tone.iconClass)} />
+        <div className="flex-1 min-w-0 space-y-1">
+          <div className="font-medium text-foreground">{tone.title}</div>
+          {report.vendorHint && (
+            <div className="text-muted-foreground">
+              {report.vendorHint.note}
+            </div>
+          )}
+        </div>
+        {expanded ? (
+          <ChevronDown className="h-3.5 w-3.5 mt-1 text-muted-foreground shrink-0" />
+        ) : (
+          <ChevronRight className="h-3.5 w-3.5 mt-1 text-muted-foreground shrink-0" />
+        )}
+      </button>
+      {expanded && (
+        <ul className="mt-2 space-y-1 border-t border-border/50 pt-2">
+          {report.checks.map((check) => (
+            <li key={check.id} className="flex items-start gap-2">
+              <span
+                className={cn(
+                  "font-mono shrink-0 w-3",
+                  checkStatusClass(check.status),
+                )}
+                aria-hidden
+              >
+                {checkStatusSymbol(check.status)}
+              </span>
+              <div className="min-w-0 flex-1">
+                <span className="font-medium text-foreground">
+                  {check.label}
+                </span>
+                <span className="text-muted-foreground"> — {check.detail}</span>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function GuidanceCallout({
+  guidance,
+  onConfigure,
+  onShowBootstrap,
+  onReset,
+}: {
+  guidance: XAAErrorGuidance;
+  onConfigure?: () => void;
+  onShowBootstrap?: () => void;
+  onReset?: () => void;
+}) {
+  const toneClass =
+    guidance.severity === "error"
+      ? "border-red-500/40 bg-red-500/5"
+      : "border-amber-500/40 bg-amber-500/5";
+  const iconClass =
+    guidance.severity === "error" ? "text-red-500" : "text-amber-500";
+
+  const handleAction = (action: XAAErrorAction) => {
+    if (action.intent === "configure") onConfigure?.();
+    else if (action.intent === "bootstrap") onShowBootstrap?.();
+    else if (action.intent === "reset") onReset?.();
+    else if (action.intent === "link" && action.href) {
+      window.open(action.href, "_blank", "noopener,noreferrer");
+    }
+  };
+
+  const actionDisabled = (action: XAAErrorAction) => {
+    if (action.intent === "configure") return !onConfigure;
+    if (action.intent === "bootstrap") return !onShowBootstrap;
+    if (action.intent === "reset") return !onReset;
+    if (action.intent === "link") return !action.href;
+    return true;
+  };
+
+  return (
+    <div className={cn("rounded-md border px-3 py-2.5 space-y-2", toneClass)}>
+      <div className="flex items-start gap-2">
+        <AlertCircle className={cn("h-4 w-4 mt-0.5 shrink-0", iconClass)} />
+        <div className="flex-1 min-w-0 space-y-1">
+          <div className="text-xs font-semibold text-foreground">
+            {guidance.title}
+          </div>
+          <div className="text-xs text-muted-foreground">
+            {guidance.explanation}
+          </div>
+        </div>
+      </div>
+      {guidance.actions.length > 0 && (
+        <div className="flex flex-wrap gap-2 pl-6">
+          {guidance.actions.map((action) => (
+            <Button
+              key={`${action.intent}-${action.label}`}
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-7 text-xs"
+              onClick={() => handleAction(action)}
+              disabled={actionDisabled(action)}
+            >
+              {action.label}
+            </Button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function latestErroredHttpEntry(
+  httpEntries: XAAHttpHistoryEntry[],
+): XAAHttpHistoryEntry | undefined {
+  for (let i = httpEntries.length - 1; i >= 0; i -= 1) {
+    const entry = httpEntries[i];
+    if (entry.error) return entry;
+    if (entry.response && (entry.response.status < 200 || entry.response.status >= 300)) {
+      return entry;
+    }
+  }
+  return undefined;
 }
 
 export function XAAFlowLogger({
@@ -264,14 +456,35 @@ export function XAAFlowLogger({
       </div>
 
       <div className="flex-1 overflow-auto bg-muted/30 p-4 space-y-4">
-        {flowState.error && (
-          <Alert variant="destructive" className="py-2">
-            <AlertCircle className="h-4 w-4" />
-            <AlertDescription className="text-xs">
-              {flowState.error}
-            </AlertDescription>
-          </Alert>
+        {hasProfile && flowState.compatibilityReport && (
+          <CompatibilityBanner report={flowState.compatibilityReport} />
         )}
+
+        {flowState.error &&
+          (() => {
+            const guidance = getXAAErrorGuidance({
+              step: flowState.currentStep,
+              stateError: flowState.error,
+            });
+            if (guidance) {
+              return (
+                <GuidanceCallout
+                  guidance={guidance}
+                  onConfigure={actions.onConfigure}
+                  onShowBootstrap={actions.onShowBootstrap}
+                  onReset={actions.onReset}
+                />
+              );
+            }
+            return (
+              <Alert variant="destructive" className="py-2">
+                <AlertCircle className="h-4 w-4" />
+                <AlertDescription className="text-xs">
+                  {flowState.error}
+                </AlertDescription>
+              </Alert>
+            );
+          })()}
 
         {flowState.idJag && flowState.idJagDecoded && (
           <IdJagInspector
@@ -376,6 +589,33 @@ export function XAAFlowLogger({
                         ))}
                       </div>
                     ) : null}
+
+                    {(() => {
+                      const erroredEntry = latestErroredHttpEntry(
+                        group.httpEntries,
+                      );
+                      if (!erroredEntry) return null;
+                      const guidance = getXAAErrorGuidance({
+                        step: group.step,
+                        httpEntry: erroredEntry,
+                      });
+                      if (!guidance) return null;
+                      if (
+                        group.step === flowState.currentStep &&
+                        flowState.error
+                      ) {
+                        // Already rendered as the top-level current-step callout.
+                        return null;
+                      }
+                      return (
+                        <GuidanceCallout
+                          guidance={guidance}
+                          onConfigure={actions.onConfigure}
+                          onShowBootstrap={actions.onShowBootstrap}
+                          onReset={actions.onReset}
+                        />
+                      );
+                    })()}
 
                     {group.infoEntries.map((entry) => (
                       <InfoLogEntry

@@ -16,6 +16,7 @@ import type {
   XAAStateMachine,
 } from "./types";
 import { createInitialXAAFlowState } from "./types";
+import { analyzeAsCompatibility } from "./capability-preflight";
 
 interface AddInfoLogOptions {
   level?: InfoLogLevel;
@@ -636,11 +637,16 @@ export function createXAAStateMachine(
         const resolvedIssuer =
           typeof metadata.issuer === "string" ? metadata.issuer : issuer;
 
+        const compatibilityReport = analyzeAsCompatibility(
+          metadata as XAAFlowState["authzMetadata"],
+        );
+
         machine.updateState({
           currentStep: "received_authz_metadata",
           authzMetadata: metadata as XAAFlowState["authzMetadata"],
           authzServerIssuer: resolvedIssuer,
           tokenEndpoint: metadata.token_endpoint,
+          compatibilityReport: compatibilityReport ?? undefined,
           error: undefined,
         });
 
@@ -652,6 +658,12 @@ export function createXAAStateMachine(
             issuer: resolvedIssuer,
             token_endpoint: metadata.token_endpoint,
             grant_types_supported: metadata.grant_types_supported,
+            compatibility: compatibilityReport
+              ? {
+                  overall: compatibilityReport.overall,
+                  vendor: compatibilityReport.vendor,
+                }
+              : undefined,
           },
         );
 
