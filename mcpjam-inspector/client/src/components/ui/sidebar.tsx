@@ -5,23 +5,23 @@ import { PanelLeftIcon } from "lucide-react";
 
 import { useIsMobile } from "@/hooks/use-mobile";
 import { cn } from "@/lib/utils";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Separator } from "@/components/ui/separator";
+import { Button } from "@mcpjam/design-system/button";
+import { Input } from "@mcpjam/design-system/input";
+import { Separator } from "@mcpjam/design-system/separator";
 import {
   Sheet,
   SheetContent,
   SheetDescription,
   SheetHeader,
   SheetTitle,
-} from "@/components/ui/sheet";
-import { Skeleton } from "@/components/ui/skeleton";
+} from "@mcpjam/design-system/sheet";
+import { Skeleton } from "@mcpjam/design-system/skeleton";
 import {
   Tooltip,
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
-} from "@/components/ui/tooltip";
+} from "@mcpjam/design-system/tooltip";
 
 const SIDEBAR_COOKIE_NAME = "sidebar_state";
 const SIDEBAR_COOKIE_MAX_AGE = 60 * 60 * 24 * 7;
@@ -71,11 +71,18 @@ function SidebarProvider({
   // We use openProp and setOpenProp for control from outside the component.
   const [_open, _setOpen] = React.useState(defaultOpen);
   const open = openProp ?? _open;
+  const openRef = React.useRef(open);
+  const setOpenPropRef = React.useRef(setOpenProp);
+  openRef.current = open;
+  setOpenPropRef.current = setOpenProp;
+
   const setOpen = React.useCallback(
     (value: boolean | ((value: boolean) => boolean)) => {
-      if (setOpenProp) {
-        const openState = typeof value === "function" ? value(open) : value;
-        setOpenProp(openState);
+      const controlledSetOpen = setOpenPropRef.current;
+      if (controlledSetOpen) {
+        const openState =
+          typeof value === "function" ? value(openRef.current) : value;
+        controlledSetOpen(openState);
         return;
       }
 
@@ -83,7 +90,7 @@ function SidebarProvider({
         return typeof value === "function" ? value(prev) : value;
       });
     },
-    [setOpenProp, open],
+    [],
   );
 
   // Persist effective open state (matches prior behavior; avoids side effects inside _setOpen updaters).
@@ -144,7 +151,7 @@ function SidebarProvider({
             } as React.CSSProperties
           }
           className={cn(
-            "group/sidebar-wrapper has-data-[variant=inset]:bg-sidebar flex h-svh min-h-svh w-full",
+            "group/sidebar-wrapper has-data-[variant=inset]:bg-sidebar flex h-svh min-h-svh w-full overflow-hidden",
             className,
           )}
           {...props}
@@ -314,7 +321,7 @@ function SidebarInset({ className, ...props }: React.ComponentProps<"main">) {
     <main
       data-slot="sidebar-inset"
       className={cn(
-        "bg-background relative flex w-full flex-1 min-h-0 flex-col overflow-hidden",
+        "bg-background relative flex h-full w-full flex-1 min-h-0 flex-col overflow-hidden",
         "md:peer-data-[variant=inset]:m-2 md:peer-data-[variant=inset]:ml-0 md:peer-data-[variant=inset]:rounded-xl md:peer-data-[variant=inset]:shadow-sm md:peer-data-[variant=inset]:peer-data-[state=collapsed]:ml-2",
         className,
       )}

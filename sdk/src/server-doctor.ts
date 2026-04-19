@@ -12,71 +12,38 @@ import type {
   RetryPolicy,
   RpcLogger,
 } from "./mcp-client-manager/index.js";
-import type { ProbeMcpServerResult } from "./server-probe.js";
+import {
+  applyConnectedServerDoctorState,
+  buildConnectedServerDoctorState,
+  buildDoctorProbeConfig,
+  createServerDoctorResult,
+  deriveDoctorStatus,
+  describeCount,
+  errorCheck,
+  hasConnectionCredentials,
+  normalizeServerDoctorError,
+  okCheck,
+  skippedCheck,
+  summarizeProbeCheck,
+} from "./server-doctor-core.js";
+import type {
+  ConnectedServerDoctorState,
+  DoctorPromptsCollectionResult,
+  DoctorResourceTemplatesCollectionResult,
+  DoctorResourcesCollectionResult,
+  DoctorToolsCollectionResult,
+  ServerDoctorResult,
+} from "./server-doctor-core.js";
 
-export interface ServerDoctorError {
-  code: string;
-  message: string;
-  details?: unknown;
-}
-
-export interface ServerDoctorCheck {
-  status: "ok" | "error" | "skipped";
-  detail: string;
-}
-
-export interface ServerDoctorConnection {
-  status: "connected" | "error" | "skipped";
-  detail: string;
-}
-
-export interface ServerDoctorChecks {
-  probe: ServerDoctorCheck;
-  connection: ServerDoctorCheck;
-  initialization: ServerDoctorCheck;
-  capabilities: ServerDoctorCheck;
-  tools: ServerDoctorCheck;
-  resources: ServerDoctorCheck;
-  resourceTemplates: ServerDoctorCheck;
-  prompts: ServerDoctorCheck;
-}
-
-export interface ServerDoctorResult<TTarget = unknown> {
-  target: TTarget;
-  generatedAt: string;
-  status: "ready" | "oauth_required" | "partial" | "error";
-  probe: ProbeMcpServerResult | null;
-  connection: ServerDoctorConnection;
-  initInfo: unknown | null;
-  capabilities: unknown | null;
-  tools: unknown[];
-  toolsMetadata: Record<string, unknown>;
-  resources: unknown[];
-  resourceTemplates: unknown[];
-  prompts: unknown[];
-  checks: ServerDoctorChecks;
-  error: ServerDoctorError | null;
-}
-
-export interface ConnectedServerDoctorState {
-  initInfo: unknown | null;
-  capabilities: unknown | null;
-  tools: unknown[];
-  toolsMetadata: Record<string, unknown>;
-  resources: unknown[];
-  resourceTemplates: unknown[];
-  prompts: unknown[];
-  checks: Pick<
-    ServerDoctorChecks,
-    | "initialization"
-    | "capabilities"
-    | "tools"
-    | "resources"
-    | "resourceTemplates"
-    | "prompts"
-  >;
-  errors: ServerDoctorError[];
-}
+export { normalizeServerDoctorError } from "./server-doctor-core.js";
+export type {
+  ConnectedServerDoctorState,
+  ServerDoctorCheck,
+  ServerDoctorChecks,
+  ServerDoctorConnection,
+  ServerDoctorError,
+  ServerDoctorResult,
+} from "./server-doctor-core.js";
 
 export interface RunServerDoctorInput<TTarget = unknown> {
   config: MCPServerConfig;
@@ -116,36 +83,12 @@ export async function runServerDoctor<TTarget = unknown>(
         serverId: "__cli__",
         clientName: "mcpjam",
       }));
-  const generatedAt = new Date().toISOString();
-
-  const result: ServerDoctorResult<TTarget> = {
-    target: input.target,
-    generatedAt,
-    status: "ready",
-    probe: null,
-    connection: {
-      status: "skipped",
-      detail: "Connection step did not run.",
-    },
-    initInfo: null,
-    capabilities: null,
-    tools: [],
-    toolsMetadata: {},
-    resources: [],
-    resourceTemplates: [],
-    prompts: [],
-    checks: {
-      probe: skippedCheck("HTTP probe not applicable for stdio targets."),
-      connection: skippedCheck("Connection step did not run."),
-      initialization: skippedCheck("Initialization info was not collected."),
-      capabilities: skippedCheck("Capabilities were not collected."),
-      tools: skippedCheck("Tools were not collected."),
-      resources: skippedCheck("Resources were not collected."),
-      resourceTemplates: skippedCheck("Resource templates were not collected."),
-      prompts: skippedCheck("Prompts were not collected."),
-    },
-    error: null,
-  };
+  const result = createServerDoctorResult(input.target, {
+    probeDetail:
+      "url" in input.config
+        ? "HTTP probe did not run."
+        : "HTTP probe not applicable for stdio targets.",
+  });
 
   if ("url" in input.config) {
     const probeUrl = input.config.url;
@@ -154,23 +97,17 @@ export async function runServerDoctor<TTarget = unknown>(
     }
 
     try {
-      result.probe = await probeServer({
-        url: probeUrl,
-        headers: extractHeaders(input.config.requestInit?.headers),
-        ...(resolveProbeAccessToken(input.config)
-          ? { accessToken: resolveProbeAccessToken(input.config) }
-          : {}),
-        ...(resolveDoctorClientCapabilities(input.config)
-          ? {
-              clientCapabilities: resolveDoctorClientCapabilities(input.config),
-            }
-          : {}),
-        timeoutMs: input.timeout,
-        retryPolicy: input.retryPolicy,
-      });
+      result.probe = await probeServer(
+        buildDoctorProbeConfig(input.config, {
+          timeout: input.timeout,
+          retryPolicy: input.retryPolicy,
+        })
+      );
       result.checks.probe = summarizeProbeCheck(
         result.probe,
-        hasConnectionCredentials(input.config)
+        hasConnectionCredentials(input.config, {
+          includeAuthProvider: false,
+        })
       );
     } catch (error) {
       const structured = normalizeServerDoctorError(error);
@@ -217,28 +154,7 @@ export async function runServerDoctor<TTarget = unknown>(
       }
     );
 
-    result.connection = {
-      status: "connected",
-      detail: "Connected and initialized successfully.",
-    };
-    result.checks.connection = okCheck(result.connection.detail);
-    result.initInfo = collected.initInfo;
-    result.capabilities = collected.capabilities;
-    result.tools = collected.tools;
-    result.toolsMetadata = collected.toolsMetadata;
-    result.resources = collected.resources;
-    result.resourceTemplates = collected.resourceTemplates;
-    result.prompts = collected.prompts;
-    result.checks.initialization = collected.checks.initialization;
-    result.checks.capabilities = collected.checks.capabilities;
-    result.checks.tools = collected.checks.tools;
-    result.checks.resources = collected.checks.resources;
-    result.checks.resourceTemplates = collected.checks.resourceTemplates;
-    result.checks.prompts = collected.checks.prompts;
-
-    if (collected.errors.length > 0) {
-      result.error = collected.errors[0] ?? result.error;
-    }
+    applyConnectedServerDoctorState(result, collected);
   } catch (error) {
     const structured = normalizeServerDoctorError(error);
     result.connection = {
@@ -261,7 +177,6 @@ export async function collectConnectedServerDoctorState(
   manager: MCPClientManager,
   serverId: string
 ): Promise<ConnectedServerDoctorState> {
-  const errors: ServerDoctorError[] = [];
   const initInfo = manager.getInitializationInfo(serverId) ?? null;
   const capabilities = manager.getServerCapabilities(serverId) ?? null;
 
@@ -273,90 +188,20 @@ export async function collectConnectedServerDoctorState(
       collectResourceTemplates(manager, serverId),
     ]);
 
-  for (const error of [
-    toolsResult.error,
-    resourcesResult.error,
-    promptsResult.error,
-    resourceTemplatesResult.error,
-  ]) {
-    if (error) {
-      errors.push(error);
-    }
-  }
-
-  return {
+  return buildConnectedServerDoctorState({
     initInfo,
     capabilities,
-    tools: toolsResult.tools,
-    toolsMetadata: toolsResult.toolsMetadata,
-    resources: resourcesResult.resources,
-    resourceTemplates: resourceTemplatesResult.resourceTemplates,
-    prompts: promptsResult.prompts,
-    checks: {
-      initialization: initInfo
-        ? okCheck("Initialization info captured.")
-        : errorCheck(
-            "Server connected but did not return initialization info."
-          ),
-      capabilities: capabilities
-        ? okCheck("Server capabilities captured.")
-        : errorCheck("Server connected but did not advertise capabilities."),
-      tools: toolsResult.check,
-      resources: resourcesResult.check,
-      resourceTemplates: resourceTemplatesResult.check,
-      prompts: promptsResult.check,
-    },
-    errors,
-  };
-}
-
-export function normalizeServerDoctorError(error: unknown): ServerDoctorError {
-  if (isServerDoctorError(error)) {
-    return error;
-  }
-
-  const message =
-    error instanceof Error
-      ? error.message
-      : typeof error === "string"
-        ? error
-        : "Unknown error";
-  const lower = message.toLowerCase();
-
-  if (lower.includes("timed out") || lower.includes("timeout")) {
-    return { code: "TIMEOUT", message };
-  }
-
-  if (
-    lower.includes("connect") ||
-    lower.includes("connection") ||
-    lower.includes("refused") ||
-    lower.includes("econn")
-  ) {
-    return { code: "SERVER_UNREACHABLE", message };
-  }
-
-  return { code: "INTERNAL_ERROR", message };
-}
-
-function isServerDoctorError(error: unknown): error is ServerDoctorError {
-  return (
-    !!error &&
-    typeof error === "object" &&
-    typeof (error as { code?: unknown }).code === "string" &&
-    typeof (error as { message?: unknown }).message === "string"
-  );
+    toolsResult,
+    resourcesResult,
+    promptsResult,
+    resourceTemplatesResult,
+  });
 }
 
 async function collectTools(
   manager: MCPClientManager,
   serverId: string
-): Promise<{
-  tools: unknown[];
-  toolsMetadata: Record<string, unknown>;
-  check: ServerDoctorCheck;
-  error?: ServerDoctorError;
-}> {
+): Promise<DoctorToolsCollectionResult> {
   try {
     const result = await listAllTools(manager, { serverId });
     const tools =
@@ -383,11 +228,7 @@ async function collectTools(
 async function collectResources(
   manager: MCPClientManager,
   serverId: string
-): Promise<{
-  resources: unknown[];
-  check: ServerDoctorCheck;
-  error?: ServerDoctorError;
-}> {
+): Promise<DoctorResourcesCollectionResult> {
   try {
     const result = await listAllResources(manager, { serverId });
     const resources = result.resources ?? [];
@@ -408,11 +249,7 @@ async function collectResources(
 async function collectPrompts(
   manager: MCPClientManager,
   serverId: string
-): Promise<{
-  prompts: unknown[];
-  check: ServerDoctorCheck;
-  error?: ServerDoctorError;
-}> {
+): Promise<DoctorPromptsCollectionResult> {
   try {
     const result = await listAllPrompts(manager, { serverId });
     const prompts = result.prompts ?? [];
@@ -433,11 +270,7 @@ async function collectPrompts(
 async function collectResourceTemplates(
   manager: MCPClientManager,
   serverId: string
-): Promise<{
-  resourceTemplates: unknown[];
-  check: ServerDoctorCheck;
-  error?: ServerDoctorError;
-}> {
+): Promise<DoctorResourceTemplatesCollectionResult> {
   try {
     const result = await listAllResourceTemplates(manager, { serverId });
     const resourceTemplates = result.resourceTemplates ?? [];
@@ -461,128 +294,4 @@ async function collectResourceTemplates(
       error: structured,
     };
   }
-}
-
-function resolveProbeAccessToken(config: MCPServerConfig): string | undefined {
-  if (!("url" in config)) {
-    return undefined;
-  }
-
-  const explicitToken = config.accessToken?.trim();
-  if (explicitToken) {
-    return explicitToken;
-  }
-
-  const headers = extractHeaders(config.requestInit?.headers);
-  const authorizationHeader = headers.Authorization ?? headers.authorization;
-  if (!authorizationHeader) {
-    return undefined;
-  }
-
-  const match = authorizationHeader.match(/^Bearer\s+(.+)$/i);
-  return match?.[1]?.trim() || undefined;
-}
-
-function resolveDoctorClientCapabilities(
-  config: MCPServerConfig
-): Record<string, unknown> | undefined {
-  return config.clientCapabilities ?? config.capabilities;
-}
-
-function extractHeaders(
-  headers: HeadersInit | undefined
-): Record<string, string> {
-  if (!headers) {
-    return {};
-  }
-
-  if (headers instanceof Headers) {
-    const normalized: Record<string, string> = {};
-    headers.forEach((value, key) => {
-      normalized[key] = value;
-    });
-    return normalized;
-  }
-
-  if (Array.isArray(headers)) {
-    return Object.fromEntries(
-      headers.map(([key, value]) => [key, String(value)])
-    );
-  }
-
-  return Object.fromEntries(
-    Object.entries(headers).map(([key, value]) => [key, String(value)])
-  );
-}
-
-function summarizeProbeCheck(
-  probe: ProbeMcpServerResult,
-  hasCredentials: boolean
-): ServerDoctorCheck {
-  switch (probe.status) {
-    case "ready":
-      return okCheck(
-        `HTTP initialize probe succeeded via ${
-          probe.transport.selected ?? "unknown transport"
-        }.`
-      );
-    case "oauth_required":
-      return hasCredentials
-        ? okCheck(
-            "Unauthenticated probe requires OAuth; continuing with provided credentials."
-          )
-        : errorCheck("Server requires OAuth before it can be connected.");
-    case "reachable":
-      return errorCheck(
-        "HTTP endpoint was reachable, but the initialize probe did not complete successfully."
-      );
-    case "error":
-      return errorCheck(probe.error ?? "HTTP probe failed.");
-    default: {
-      const exhaustive: never = probe.status;
-      return errorCheck(String(exhaustive));
-    }
-  }
-}
-
-function deriveDoctorStatus<TTarget>(
-  result: ServerDoctorResult<TTarget>
-): ServerDoctorResult<TTarget>["status"] {
-  if (
-    result.probe?.status === "oauth_required" &&
-    result.connection.status === "skipped"
-  ) {
-    return "oauth_required";
-  }
-
-  if (result.connection.status === "error") {
-    return "error";
-  }
-
-  return Object.values(result.checks).some((check) => check.status === "error")
-    ? "partial"
-    : "ready";
-}
-
-function hasConnectionCredentials(config: MCPServerConfig): boolean {
-  return (
-    "url" in config &&
-    Boolean(resolveProbeAccessToken(config) || config.refreshToken)
-  );
-}
-
-function okCheck(detail: string): ServerDoctorCheck {
-  return { status: "ok", detail };
-}
-
-function errorCheck(detail: string): ServerDoctorCheck {
-  return { status: "error", detail };
-}
-
-function skippedCheck(detail: string): ServerDoctorCheck {
-  return { status: "skipped", detail };
-}
-
-function describeCount(count: number, label: string): string {
-  return `${count} ${label}${count === 1 ? "" : "s"} discovered.`;
 }

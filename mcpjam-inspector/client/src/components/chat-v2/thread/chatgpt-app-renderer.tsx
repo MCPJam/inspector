@@ -17,7 +17,7 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
+} from "@mcpjam/design-system/dialog";
 import { X, Loader2, ChevronLeft, ChevronRight } from "lucide-react";
 import { useTrafficLogStore, extractMethod } from "@/stores/traffic-log-store";
 import { useWidgetDebugStore } from "@/stores/widget-debug-store";
@@ -1605,6 +1605,10 @@ export function ChatGPTAppRenderer({
       if (isMobilePlaygroundMode) {
         // Mobile PiP acts like fullscreen: contained within device frame
         return "absolute inset-0 z-10 w-full h-full bg-background flex flex-col";
+      }
+      if (isPlaygroundActive) {
+        // Desktop/tablet playground PiP should stay anchored to the playground shell.
+        return "absolute top-4 left-1/2 z-40 w-full max-w-4xl -translate-x-1/2 space-y-2 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80 shadow-xl border border-border/60 rounded-xl p-3";
       }
       // Desktop/tablet PiP: floating at top
       return "fixed top-4 inset-x-0 z-40 w-full max-w-4xl mx-auto space-y-2 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80 shadow-xl border border-border/60 rounded-xl p-3";

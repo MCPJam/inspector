@@ -196,7 +196,7 @@ describe("MCPClientManager", () => {
         command: "npx",
         args: ["-y", "@modelcontextprotocol/server-everything"],
       });
-    });
+    }, 60000);
 
     afterAll(async () => {
       await manager.disconnectAllServers();
@@ -346,7 +346,7 @@ describe("MCPClientManager", () => {
           timeout: 200,
         })
       ).rejects.toThrow(
-        /Failed to connect to MCP server "silent-timeout" via stdio: MCP error -32001: Request timed out/
+        /Failed to connect to MCP server "silent-timeout" via stdio: Request timed out/
       );
     }, 10000);
 
@@ -1334,7 +1334,7 @@ describe("MCPClientManager", () => {
       });
 
       expect(fakeClient.callTool).toHaveBeenCalledTimes(1);
-      expect(fakeClient.callTool.mock.calls[0]?.[2]).toMatchObject({
+      expect(fakeClient.callTool.mock.calls[0]?.[1]).toMatchObject({
         timeout: 500,
         task: { ttl: 60 },
       });
@@ -1390,7 +1390,7 @@ describe("MCPClientManager", () => {
 
       expect((stdioResult as any).content[0].text).toBe("Echo: from stdio");
       expect((httpResult as any).content[0].text).toBe("Echo: from http");
-    }, 30000);
+    }, 60000);
 
     it("should get tools from all servers", async () => {
       await Promise.all([

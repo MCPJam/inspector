@@ -4,7 +4,7 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
+} from "@mcpjam/design-system/dialog";
 import {
   SandboxedIframe,
   SandboxedIframeHandle,
@@ -17,7 +17,7 @@ import {
   type McpUiResourceCsp,
   type McpUiResourcePermissions,
 } from "@modelcontextprotocol/ext-apps/app-bridge";
-import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import type { CallToolResult } from "@modelcontextprotocol/client";
 import type { CspMode } from "@/stores/ui-playground-store";
 import { LoggingTransport } from "./mcp-apps-logging-transport";
 import { fetchMcpAppsWidgetContent } from "./fetch-widget-content";

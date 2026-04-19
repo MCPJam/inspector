@@ -1,8 +1,35 @@
 import { defineConfig } from "vitest/config";
+import path from "path";
 import tsconfigPaths from "vite-tsconfig-paths";
 
+const rootDir = path.resolve(__dirname, "..");
+const sdkIndexEntry = path.resolve(rootDir, "../sdk/src/index.ts");
+const sdkOperationsEntry = path.resolve(rootDir, "../sdk/src/operations.ts");
+const sdkSkillReferenceEntry = path.resolve(
+  rootDir,
+  "../sdk/src/skill-reference.ts",
+);
+
 export default defineConfig({
-  plugins: [tsconfigPaths()],
+  define: {
+    __MCPJAM_SDK_VERSION__: JSON.stringify("test"),
+  },
+  plugins: [
+    tsconfigPaths(),
+    {
+      name: "raw-markdown-for-sdk-tests",
+      transform(source, id) {
+        if (!id.endsWith(".md")) {
+          return null;
+        }
+
+        return {
+          code: `export default ${JSON.stringify(source)};`,
+          map: null,
+        };
+      },
+    },
+  ],
   test: {
     globals: true,
     environment: "node",
@@ -27,5 +54,15 @@ export default defineConfig({
       ],
       exclude: ["**/__tests__/**", "**/*.test.ts"],
     },
+  },
+  resolve: {
+    alias: [
+      {
+        find: "@mcpjam/sdk/skill-reference",
+        replacement: sdkSkillReferenceEntry,
+      },
+      { find: "@mcpjam/sdk/operations", replacement: sdkOperationsEntry },
+      { find: "@mcpjam/sdk", replacement: sdkIndexEntry },
+    ],
   },
 });

@@ -11,7 +11,7 @@ import type { UIMessage } from "ai";
 import { ScrollToBottomButton } from "@/components/chat-v2/shared/scroll-to-bottom-button";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
-import type { ContentBlock } from "@modelcontextprotocol/sdk/types.js";
+import type { ContentBlock } from "@modelcontextprotocol/client";
 import { toast } from "sonner";
 import { ModelDefinition } from "@/shared/types";
 import { LoggerView } from "./logger-view";
@@ -30,7 +30,7 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
+} from "@mcpjam/design-system/alert-dialog";
 import type { DialogElicitation } from "@/components/ToolsTab";
 import { ChatInput } from "@/components/chat-v2/chat-input";
 import { Thread } from "@/components/chat-v2/thread";
@@ -79,6 +79,7 @@ import {
   getChatHistoryDetail,
   type ChatHistoryDetailSession,
   type ChatHistorySession,
+  type ChatHistoryTurnTrace,
   type ChatHistoryWidgetSnapshot,
 } from "@/lib/apis/web/chat-history-api";
 import { useWorkspaceServers } from "@/hooks/useViews";
@@ -105,7 +106,7 @@ import {
   getChatComposerInteractivity,
   useChatStopControls,
 } from "@/hooks/use-chat-stop-controls";
-import type { SandboxHostStyle } from "@/lib/sandbox-host-style";
+import type { ChatboxHostStyle } from "@/lib/chatbox-host-style";
 
 interface ChatTabProps {
   connectedOrConnectingServerConfigs: Record<string, ServerWithName>;
@@ -126,8 +127,8 @@ interface ChatTabProps {
   hostedSelectedServerIdsOverride?: string[];
   hostedOAuthTokensOverride?: Record<string, string>;
   hostedShareToken?: string;
-  hostedSandboxToken?: string;
-  hostedSandboxSurface?: "preview" | "share_link";
+  hostedChatboxToken?: string;
+  hostedChatboxSurface?: "preview" | "share_link";
   initialModelId?: string;
   initialSystemPrompt?: string;
   initialTemperature?: number;
@@ -135,19 +136,19 @@ interface ChatTabProps {
   reasoningDisplayMode?: ReasoningDisplayMode;
   loadingIndicatorVariant?: LoadingIndicatorVariant;
   showHostStyleSelector?: boolean;
-  hostStyle?: SandboxHostStyle;
-  onHostStyleChange?: (hostStyle: SandboxHostStyle) => void;
+  hostStyle?: ChatboxHostStyle;
+  onHostStyleChange?: (hostStyle: ChatboxHostStyle) => void;
   onOAuthRequired?: (details?: HostedOAuthRequiredDetails) => void;
-  /** When true, blocks sending until sandbox onboarding/OAuth completes. */
-  sandboxComposerBlocked?: boolean;
-  sandboxComposerBlockedReason?: string;
+  /** When true, blocks sending until chatbox onboarding/OAuth completes. */
+  chatboxComposerBlocked?: boolean;
+  chatboxComposerBlockedReason?: string;
   /** Optional (off-by-default) servers the tester can attach from minimal chat. */
-  sandboxOptionalInventory?: Array<{
+  chatboxOptionalInventory?: Array<{
     serverId: string;
     serverName: string;
     useOAuth: boolean;
   }>;
-  onEnableSandboxOptionalServer?: (serverId: string) => void;
+  onEnableChatboxOptionalServer?: (serverId: string) => void;
   evalChatHandoff?: EvalChatHandoff | null;
   onEvalChatHandoffConsumed?: (id: string) => void;
 }
@@ -170,8 +171,8 @@ export function ChatTabV2({
   hostedSelectedServerIdsOverride,
   hostedOAuthTokensOverride,
   hostedShareToken,
-  hostedSandboxToken,
-  hostedSandboxSurface,
+  hostedChatboxToken,
+  hostedChatboxSurface,
   initialModelId,
   initialSystemPrompt,
   initialTemperature,
@@ -182,10 +183,10 @@ export function ChatTabV2({
   hostStyle,
   onHostStyleChange,
   onOAuthRequired,
-  sandboxComposerBlocked = false,
-  sandboxComposerBlockedReason,
-  sandboxOptionalInventory,
-  onEnableSandboxOptionalServer,
+  chatboxComposerBlocked = false,
+  chatboxComposerBlockedReason,
+  chatboxOptionalInventory,
+  onEnableChatboxOptionalServer,
   evalChatHandoff,
   onEvalChatHandoffConsumed,
 }: ChatTabProps) {
@@ -220,7 +221,7 @@ export function ChatTabV2({
     [],
   );
   const [elicitationLoading, setElicitationLoading] = useState(false);
-  const [isWidgetFullscreen, setIsWidgetFullscreen] = useState(false);
+  const [, setIsWidgetFullscreen] = useState(false);
   const [broadcastRequest, setBroadcastRequest] =
     useState<BroadcastChatTurnRequest | null>(null);
   const [stopBroadcastRequestId, setStopBroadcastRequestId] = useState(0);
@@ -245,6 +246,9 @@ export function ChatTabV2({
   const prevCompareModelIdsRef = useRef<Set<string>>(new Set());
   const multiAddColumnSeqRef = useRef(0);
   const [activeHistorySessionId, setActiveHistorySessionId] = useState<
+    string | null
+  >(null);
+  const [loadingHistorySessionId, setLoadingHistorySessionId] = useState<
     string | null
   >(null);
   const [pendingDirectVisibility, setPendingDirectVisibility] = useState<
@@ -274,6 +278,14 @@ export function ChatTabV2({
     reactiveHistoryLoadRequestIdRef.current += 1;
     lastAppliedReactiveVersionRef.current = null;
   }, []);
+
+  const cancelPendingHistorySelection = useCallback(() => {
+    historySelectionRequestIdRef.current += 1;
+    pendingHistoryServerSyncRef.current = null;
+    setLoadingHistorySessionId(null);
+    invalidatePendingReactiveHistoryLoad();
+    setActiveHistorySessionId(null);
+  }, [invalidatePendingReactiveHistoryLoad]);
 
   // Filter to only connected servers
   const selectedConnectedServerNames = useMemo(
@@ -318,7 +330,7 @@ export function ChatTabV2({
     !isConvexAuthenticated &&
     !effectiveHostedWorkspaceId &&
     !hostedShareToken &&
-    !hostedSandboxToken;
+    !hostedChatboxToken;
 
   // Use shared chat session hook
   const {
@@ -373,8 +385,8 @@ export function ChatTabV2({
     hostedSelectedServerIds: effectiveHostedSelectedServerIds,
     hostedOAuthTokens: effectiveHostedOAuthTokens,
     hostedShareToken,
-    hostedSandboxToken,
-    hostedSandboxSurface,
+    hostedChatboxToken,
+    hostedChatboxSurface,
     initialModelId,
     initialSystemPrompt,
     initialTemperature,
@@ -394,8 +406,7 @@ export function ChatTabV2({
       setSkillResults([]);
       revokeFileAttachmentUrls(fileAttachments);
       setFileAttachments([]);
-      invalidatePendingReactiveHistoryLoad();
-      setActiveHistorySessionId(null);
+      cancelPendingHistorySelection();
     },
   });
 
@@ -404,7 +415,7 @@ export function ChatTabV2({
     HOSTED_MODE &&
     !minimalMode &&
     !hostedShareToken &&
-    !hostedSandboxToken &&
+    !hostedChatboxToken &&
     chatHistoryRailEnabled;
   const {
     session: reactiveHistorySession,
@@ -511,8 +522,7 @@ export function ChatTabV2({
   const detachHistorySession = useCallback(
     (toastMessage: string) => {
       resumedThreadSendBaselineRef.current = null;
-      invalidatePendingReactiveHistoryLoad();
-      setActiveHistorySessionId(null);
+      cancelPendingHistorySelection();
       setPendingDirectVisibility("private");
       syncResumedVersion(null);
       if (hasConversationMessages) {
@@ -528,7 +538,7 @@ export function ChatTabV2({
       restoredToolRenderOverrides,
       startChatWithMessages,
       syncResumedVersion,
-      invalidatePendingReactiveHistoryLoad,
+      cancelPendingHistorySelection,
     ],
   );
 
@@ -547,6 +557,7 @@ export function ChatTabV2({
       options?: {
         shouldRestoreComposerState?: () => boolean;
         shouldApply?: () => boolean;
+        turnTraces?: ChatHistoryTurnTrace[];
       },
     ) => {
       await loadChatSession(
@@ -556,6 +567,7 @@ export function ChatTabV2({
           resumeConfig: detail.resumeConfig,
           version: detail.version,
           widgetSnapshots,
+          turnTraces: options?.turnTraces,
         },
         {
           shouldRestoreResumeConfig: options?.shouldRestoreComposerState,
@@ -695,7 +707,6 @@ export function ChatTabV2({
     }
 
     if (reactiveHistorySession === null) {
-      historySelectionRequestIdRef.current += 1;
       detachHistorySession(
         "This chat is no longer available. Continuing locally in a new thread.",
       );
@@ -727,6 +738,10 @@ export function ChatTabV2({
         shouldApply: () =>
           reactiveHistoryLoadRequestIdRef.current === requestId &&
           activeHistorySessionIdRef.current === reactiveHistorySession._id,
+        // Intentionally omit turnTraces here: loadChatSession treats
+        // `undefined` as "preserve existing trace state", so the live
+        // trace viewer is not wiped by reactive session refreshes. Traces
+        // are seeded once via the REST detail path on thread selection.
       },
     ).catch((error) => {
       console.error("[ChatTabV2] Failed to apply reactive chat history", error);
@@ -758,7 +773,6 @@ export function ChatTabV2({
     }
 
     if (activeHistorySessionId) {
-      historySelectionRequestIdRef.current += 1;
       detachHistorySession(
         "This chat is no longer available. Your draft stayed local, and the next send will start a new thread.",
       );
@@ -786,6 +800,7 @@ export function ChatTabV2({
       historySelectionRequestIdRef.current = selectionRequestId;
       pendingHistoryServerSyncRef.current = null;
       setActiveHistorySessionId(session._id);
+      setLoadingHistorySessionId(session._id);
 
       try {
         const detail = await getChatHistoryDetail({
@@ -816,7 +831,9 @@ export function ChatTabV2({
           detail.session.resumeConfig?.selectedServers,
         );
 
-        await loadHistorySession(detail.session, detail.widgetSnapshots);
+        await loadHistorySession(detail.session, detail.widgetSnapshots, {
+          turnTraces: detail.turnTraces,
+        });
 
         if (
           historySelectionRequestIdRef.current !== selectionRequestId ||
@@ -836,6 +853,10 @@ export function ChatTabV2({
         }
         console.error("[ChatTabV2] Failed to load chat session", err);
         toast.error("Failed to load chat history.");
+      } finally {
+        if (historySelectionRequestIdRef.current === selectionRequestId) {
+          setLoadingHistorySessionId(null);
+        }
       }
     },
     [
@@ -864,22 +885,19 @@ export function ChatTabV2({
         clearComposerDraft();
       }
       resumedThreadSendBaselineRef.current = null;
-      historySelectionRequestIdRef.current += 1;
-      invalidatePendingReactiveHistoryLoad();
-      setActiveHistorySessionId(null);
-      pendingHistoryServerSyncRef.current = null;
+      cancelPendingHistorySelection();
       syncResumedVersion(null);
       baseResetChat();
       setPendingDirectVisibility(options?.shared ? "workspace" : "private");
     },
     [
       baseResetChat,
+      cancelPendingHistorySelection,
       clearComposerDraft,
       ensureDiscardDraftConfirmed,
       hasUnsavedDraft,
       isStreaming,
       syncResumedVersion,
-      invalidatePendingReactiveHistoryLoad,
     ],
   );
 
@@ -889,20 +907,17 @@ export function ChatTabV2({
       if (hasUnsavedDraft) {
         clearComposerDraft();
       }
-      historySelectionRequestIdRef.current += 1;
-      invalidatePendingReactiveHistoryLoad();
-      setActiveHistorySessionId(null);
-      pendingHistoryServerSyncRef.current = null;
+      cancelPendingHistorySelection();
       syncResumedVersion(null);
       baseResetChat();
       setPendingDirectVisibility("private");
     },
     [
       baseResetChat,
+      cancelPendingHistorySelection,
       clearComposerDraft,
       hasUnsavedDraft,
       syncResumedVersion,
-      invalidatePendingReactiveHistoryLoad,
     ],
   );
 
@@ -925,7 +940,6 @@ export function ChatTabV2({
         try {
           const detail = await refreshCurrentHistorySession();
           if (!detail) {
-            historySelectionRequestIdRef.current += 1;
             detachHistorySession(
               "This chat is no longer shared with you. Continuing locally in a new thread.",
             );
@@ -1061,8 +1075,8 @@ export function ChatTabV2({
     !minimalMode &&
     !initialModelId &&
     !hostedShareToken &&
-    !hostedSandboxToken &&
-    !hostedSandboxSurface &&
+    !hostedChatboxToken &&
+    !hostedChatboxSurface &&
     availableModels.length > 1;
   // When viewing a history session, fall back to single-model rendering so
   // the ChatTabV2 messages (which hold the hydrated transcript) are displayed.
@@ -1533,14 +1547,14 @@ export function ChatTabV2({
   const historyRailStreaming = isStreamingActive;
   const { composerDisabled, sendBlocked } = getChatComposerInteractivity({
     isStreamingActive,
-    composerDisabled: submitBlocked || sandboxComposerBlocked,
+    composerDisabled: submitBlocked || chatboxComposerBlocked,
   });
 
   let placeholder = minimalMode
     ? MINIMAL_CHAT_COMPOSER_PLACEHOLDER
     : DEFAULT_CHAT_COMPOSER_PLACEHOLDER;
-  if (sandboxComposerBlocked && sandboxComposerBlockedReason) {
-    placeholder = sandboxComposerBlockedReason;
+  if (chatboxComposerBlocked && chatboxComposerBlockedReason) {
+    placeholder = chatboxComposerBlockedReason;
   } else if (isAuthLoading) {
     placeholder = "Loading...";
   } else if (disableForAuthentication) {
@@ -1852,7 +1866,7 @@ export function ChatTabV2({
     temperature,
     onTemperatureChange: setTemperature,
     onResetChat: handleResetAllChats,
-    submitDisabled: submitBlocked || sandboxComposerBlocked,
+    submitDisabled: submitBlocked || chatboxComposerBlocked,
     tokenUsage,
     selectedServers: selectedConnectedServerNames,
     mcpToolsTokenCount,
@@ -1876,11 +1890,11 @@ export function ChatTabV2({
     onServerToggle,
     onReconnectServer,
     onAddServer,
-    sandboxAttachableServers:
-      sandboxOptionalInventory && sandboxOptionalInventory.length > 0
-        ? sandboxOptionalInventory
+    chatboxAttachableServers:
+      chatboxOptionalInventory && chatboxOptionalInventory.length > 0
+        ? chatboxOptionalInventory
         : undefined,
-    onAttachSandboxServer: onEnableSandboxOptionalServer,
+    onAttachChatboxServer: onEnableChatboxOptionalServer,
   };
 
   const showStarterPrompts =
@@ -1907,6 +1921,7 @@ export function ChatTabV2({
             >
               <ChatHistoryRail
                 activeSessionId={activeHistorySessionId}
+                hostStyle={hostStyle}
                 isAuthenticated={isConvexAuthenticated}
                 isStreaming={historyRailStreaming}
                 workspaceId={effectiveHostedWorkspaceId}
@@ -1943,14 +1958,18 @@ export function ChatTabV2({
                   : 100
           }
           minSize={40}
-          className="min-w-0"
+          className="min-h-0 min-w-0 overflow-hidden"
         >
-          <div
-            className="flex flex-col bg-background h-full min-h-0 overflow-hidden"
-            style={{
-              transform: isWidgetFullscreen ? "none" : "translateZ(0)",
-            }}
-          >
+          <div className="relative flex flex-col bg-background h-full min-h-0 overflow-hidden">
+            {loadingHistorySessionId && (
+              <div
+                className="absolute inset-0 z-30 flex items-center justify-center bg-background/70 backdrop-blur-sm"
+                role="status"
+                aria-label="Loading chat"
+              >
+                <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-primary" />
+              </div>
+            )}
             {isMultiModelLayoutMode ? (
               <div className="flex flex-1 min-h-0 flex-col overflow-hidden">
                 {showTopTraceViewTabs ? (
@@ -2105,7 +2124,7 @@ export function ChatTabV2({
                         resolvedSelectedModels.length === 2 &&
                           "grid-cols-1 xl:grid-cols-2",
                         resolvedSelectedModels.length >= 3 &&
-                          "grid-cols-1 xl:grid-cols-2 2xl:grid-cols-3",
+                          "grid-cols-1 xl:grid-cols-3",
                       )}
                     >
                       {resolvedSelectedModels.map((model) => (
@@ -2132,8 +2151,8 @@ export function ChatTabV2({
                           }
                           hostedOAuthTokens={effectiveHostedOAuthTokens}
                           hostedShareToken={hostedShareToken}
-                          hostedSandboxToken={hostedSandboxToken}
-                          hostedSandboxSurface={hostedSandboxSurface}
+                          hostedChatboxToken={hostedChatboxToken}
+                          hostedChatboxSurface={hostedChatboxSurface}
                           onOAuthRequired={onOAuthRequired}
                           onSummaryChange={handleMultiModelSummaryChange}
                           onHasMessagesChange={
@@ -2215,6 +2234,7 @@ export function ChatTabV2({
                                       setTraceViewMode("chat");
                                       setRevealedInChat(true);
                                     }}
+                                    onFullscreenChange={setIsWidgetFullscreen}
                                     rawGrowWithContent
                                     rawRequestPayloadHistory={{
                                       entries: requestPayloadHistory,
@@ -2252,6 +2272,7 @@ export function ChatTabV2({
                                   setTraceViewMode("chat");
                                   setRevealedInChat(true);
                                 }}
+                                onFullscreenChange={setIsWidgetFullscreen}
                                 rawRequestPayloadHistory={{
                                   entries: requestPayloadHistory,
                                   hasUiMessages: !isThreadEmpty,
@@ -2360,36 +2381,55 @@ export function ChatTabV2({
                   !showLiveTraceDiagnostics &&
                   !revealedInChat &&
                   (minimalMode ? (
-                    <div className="flex-1 flex flex-col min-h-0">
-                      <div className="flex-1 flex flex-col items-center justify-center px-4">
-                        {isAuthLoading ? (
-                          <div className="text-center space-y-4">
-                            <div className="mx-auto h-8 w-8 animate-spin rounded-full border-b-2 border-primary" />
-                            <p className="text-sm text-muted-foreground">
-                              Loading...
-                            </p>
+                    <div
+                      className="flex flex-1 min-h-0 flex-col overflow-hidden"
+                      data-empty-layout="minimal"
+                      data-testid="chat-empty-state-shell"
+                    >
+                      <div
+                        className="flex min-h-0 flex-1 flex-col overflow-hidden"
+                        data-testid="chat-empty-state-body"
+                      >
+                        <div
+                          className="flex min-h-0 flex-1 flex-col overflow-hidden"
+                          data-testid="chat-empty-state-content"
+                        >
+                          <div className="flex flex-1 flex-col items-center justify-center px-4">
+                            {isAuthLoading ? (
+                              <div className="text-center space-y-4">
+                                <div className="mx-auto h-8 w-8 animate-spin rounded-full border-b-2 border-primary" />
+                                <p className="text-sm text-muted-foreground">
+                                  Loading...
+                                </p>
+                              </div>
+                            ) : showDisabledCallout ? (
+                              <MCPJamFreeModelsPrompt onSignUp={handleSignUp} />
+                            ) : null}
                           </div>
-                        ) : showDisabledCallout ? (
-                          <MCPJamFreeModelsPrompt onSignUp={handleSignUp} />
-                        ) : null}
+
+                          {showStarterPrompts && (
+                            <div className="flex flex-wrap justify-center gap-2 px-4 pb-4">
+                              {STARTER_PROMPTS.map((prompt) => (
+                                <button
+                                  key={prompt.text}
+                                  type="button"
+                                  onClick={() =>
+                                    handleStarterPrompt(prompt.text)
+                                  }
+                                  className="rounded-full border border-border/40 bg-transparent px-3 py-1.5 text-xs text-muted-foreground transition hover:border-foreground/40 hover:bg-accent cursor-pointer font-light"
+                                >
+                                  {prompt.label}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
                       </div>
 
-                      {showStarterPrompts && (
-                        <div className="flex flex-wrap justify-center gap-2 px-4 pb-4">
-                          {STARTER_PROMPTS.map((prompt) => (
-                            <button
-                              key={prompt.text}
-                              type="button"
-                              onClick={() => handleStarterPrompt(prompt.text)}
-                              className="rounded-full border border-border/40 bg-transparent px-3 py-1.5 text-xs text-muted-foreground transition hover:border-foreground/40 hover:bg-accent cursor-pointer font-light"
-                            >
-                              {prompt.label}
-                            </button>
-                          ))}
-                        </div>
-                      )}
-
-                      <div className="bg-background/80 backdrop-blur-sm border-t border-border flex-shrink-0">
+                      <div
+                        className="bg-background/80 backdrop-blur-sm border-t border-border flex-shrink-0"
+                        data-testid="chat-empty-state-footer"
+                      >
                         {!isAuthLoading && (
                           <div className="max-w-4xl mx-auto p-4">
                             <ChatInput
@@ -2404,50 +2444,59 @@ export function ChatTabV2({
                       </div>
                     </div>
                   ) : (
-                    <div className="flex-1 flex items-center justify-center overflow-y-auto px-4">
-                      <div className="w-full max-w-3xl space-y-6 py-8">
-                        {isAuthLoading ? (
-                          <div className="text-center space-y-4">
-                            <div className="mx-auto h-8 w-8 animate-spin rounded-full border-b-2 border-primary" />
-                            <p className="text-sm text-muted-foreground">
-                              Loading...
-                            </p>
-                          </div>
-                        ) : showDisabledCallout ? (
-                          <div className="space-y-4">
-                            <MCPJamFreeModelsPrompt onSignUp={handleSignUp} />
-                          </div>
-                        ) : null}
-
-                        <div className="space-y-4">
-                          {showStarterPrompts && (
-                            <div className="text-center">
-                              <p className="text-sm text-muted-foreground mb-3">
-                                Try one of these to get started
+                    <div
+                      className="flex flex-1 min-h-0 overflow-hidden"
+                      data-empty-layout="standard"
+                      data-testid="chat-empty-state-shell"
+                    >
+                      <div
+                        className="flex h-full min-h-0 flex-1 items-center justify-center px-4"
+                        data-testid="chat-empty-state-body"
+                      >
+                        <div className="min-h-0 max-h-full w-full max-w-3xl shrink space-y-6 overflow-y-auto overscroll-contain py-8">
+                          {isAuthLoading ? (
+                            <div className="text-center space-y-4">
+                              <div className="mx-auto h-8 w-8 animate-spin rounded-full border-b-2 border-primary" />
+                              <p className="text-sm text-muted-foreground">
+                                Loading...
                               </p>
-                              <div className="flex flex-wrap justify-center gap-2">
-                                {STARTER_PROMPTS.map((prompt) => (
-                                  <button
-                                    key={prompt.text}
-                                    type="button"
-                                    onClick={() =>
-                                      handleStarterPrompt(prompt.text)
-                                    }
-                                    className="rounded-full border border-border bg-background px-4 py-2 text-sm text-foreground transition hover:border-foreground hover:bg-accent cursor-pointer font-light"
-                                  >
-                                    {prompt.label}
-                                  </button>
-                                ))}
-                              </div>
                             </div>
-                          )}
+                          ) : showDisabledCallout ? (
+                            <div className="space-y-4">
+                              <MCPJamFreeModelsPrompt onSignUp={handleSignUp} />
+                            </div>
+                          ) : null}
 
-                          {!isAuthLoading && (
-                            <ChatInput
-                              {...sharedChatInputProps}
-                              hasMessages={false}
-                            />
-                          )}
+                          <div className="space-y-4">
+                            {showStarterPrompts && (
+                              <div className="text-center">
+                                <p className="text-sm text-muted-foreground mb-3">
+                                  Try one of these to get started
+                                </p>
+                                <div className="flex flex-wrap justify-center gap-2">
+                                  {STARTER_PROMPTS.map((prompt) => (
+                                    <button
+                                      key={prompt.text}
+                                      type="button"
+                                      onClick={() =>
+                                        handleStarterPrompt(prompt.text)
+                                      }
+                                      className="rounded-full border border-border bg-background px-4 py-2 text-sm text-foreground transition hover:border-foreground hover:bg-accent cursor-pointer font-light"
+                                    >
+                                      {prompt.label}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+
+                            {!isAuthLoading && (
+                              <ChatInput
+                                {...sharedChatInputProps}
+                                hasMessages={false}
+                              />
+                            )}
+                          </div>
                         </div>
                       </div>
                     </div>

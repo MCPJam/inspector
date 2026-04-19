@@ -68,6 +68,21 @@ describe("createPlaygroundSuiteNavigation", () => {
       '{"type":"suite-overview","suiteId":"suite-1","view":"runs"}',
     );
   });
+
+  it("toTestEdit emits compare links for results routes", () => {
+    const nav = createPlaygroundSuiteNavigation();
+    nav.toTestEdit("suite-1", "case-1", {
+      openCompare: true,
+      iteration: "iter-1",
+    });
+    expect(evalsRouter.buildEvalsHash).toHaveBeenCalledWith({
+      type: "test-edit",
+      suiteId: "suite-1",
+      testId: "case-1",
+      openCompare: true,
+      iteration: "iter-1",
+    });
+  });
 });
 
 describe("navigatePlaygroundEvalsRoute", () => {

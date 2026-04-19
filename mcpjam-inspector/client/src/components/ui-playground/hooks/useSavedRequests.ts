@@ -7,7 +7,7 @@
  */
 
 import { useState, useEffect, useCallback, useMemo } from "react";
-import type { Tool } from "@modelcontextprotocol/sdk/types.js";
+import type { Tool } from "@modelcontextprotocol/client";
 import type { SavedRequest } from "@/lib/types/request-types";
 import type { FormField } from "@/lib/tool-form";
 import {

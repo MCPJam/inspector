@@ -1,16 +1,17 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useFeatureFlagEnabled, usePostHog } from "posthog-js/react";
 import { detectPlatform, detectEnvironment } from "@/lib/PosthogUtils";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+} from "@mcpjam/design-system/dialog";
+import { Button } from "@mcpjam/design-system/button";
+import { Input } from "@mcpjam/design-system/input";
+import { Avatar, AvatarFallback, AvatarImage } from "@mcpjam/design-system/avatar";
+import { Alert, AlertDescription, AlertTitle } from "@mcpjam/design-system/alert";
 import { getInitials } from "@/lib/utils";
 import { ChevronDown, Clock, CreditCard, Globe, Lock } from "lucide-react";
 import { toast } from "sonner";
@@ -22,7 +23,7 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+} from "@mcpjam/design-system/dropdown-menu";
 import {
   type WorkspaceMember,
   type WorkspaceRole,
@@ -39,7 +40,8 @@ import {
   getBillingUpsellCtaLabel,
   getBillingUpsellTeaser,
 } from "@/lib/billing-upsell";
-import type { WorkspaceVisibility } from "@/state/app-types";
+import { resolveWorkspaceIcon } from "@/components/workspace/WorkspaceEmojiPicker";
+import type { Workspace, WorkspaceVisibility } from "@/state/app-types";
 import type { User } from "@workos-inc/authkit-js";
 
 interface ShareWorkspaceDialogProps {
@@ -52,8 +54,15 @@ interface ShareWorkspaceDialogProps {
   visibility?: WorkspaceVisibility;
   organizationName?: string;
   currentUser: User;
-  onWorkspaceShared?: (sharedWorkspaceId: string) => void;
+  onWorkspaceShared?: (
+    sharedWorkspaceId: string,
+    sourceWorkspaceId?: string,
+  ) => void;
+  availableWorkspaces?: Record<string, Workspace>;
+  activeWorkspaceId?: string;
 }
+
+const INVITE_EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 function buildInviteToastMessage(
   result: { kind: string },
@@ -87,6 +96,35 @@ function workspaceRoleDescription(role: WorkspaceRole): string {
     : "Can edit servers";
 }
 
+function sortWorkspaces(workspaces: Record<string, Workspace>): Workspace[] {
+  return Object.values(workspaces).sort((a, b) => {
+    if (a.isDefault) return -1;
+    if (b.isDefault) return 1;
+    return a.name.localeCompare(b.name);
+  });
+}
+
+function WorkspacePickerBadge({
+  icon,
+  workspaceName,
+}: {
+  icon?: string;
+  workspaceName: string;
+}) {
+  const IconComponent = icon ? resolveWorkspaceIcon(icon) : null;
+  const fallback = workspaceName.charAt(0).toUpperCase() || "W";
+
+  return (
+    <div className="flex size-6 shrink-0 items-center justify-center rounded bg-primary/10 text-xs font-semibold text-primary">
+      {IconComponent ? (
+        <IconComponent className="h-3.5 w-3.5" strokeWidth={1.5} />
+      ) : (
+        fallback
+      )}
+    </div>
+  );
+}
+
 export function ShareWorkspaceDialog({
   isOpen,
   onClose,
@@ -98,6 +136,8 @@ export function ShareWorkspaceDialog({
   organizationName,
   currentUser,
   onWorkspaceShared,
+  availableWorkspaces,
+  activeWorkspaceId,
 }: ShareWorkspaceDialogProps) {
   const posthog = usePostHog();
   const [email, setEmail] = useState("");
@@ -109,6 +149,67 @@ export function ShareWorkspaceDialog({
   const { isAuthenticated } = useConvexAuth();
   const { profilePictureUrl } = useProfilePicture();
   const [inviteRole, setInviteRole] = useState<WorkspaceRole>("editor");
+  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<
+    string | null
+  >(activeWorkspaceId ?? null);
+  const previousIsOpenRef = useRef(isOpen);
+  const sortedAvailableWorkspaces = useMemo(
+    () => (availableWorkspaces ? sortWorkspaces(availableWorkspaces) : []),
+    [availableWorkspaces],
+  );
+  const resolvedSelectedWorkspaceId = useMemo(() => {
+    if (!availableWorkspaces) {
+      return activeWorkspaceId ?? null;
+    }
+
+    if (selectedWorkspaceId && availableWorkspaces[selectedWorkspaceId]) {
+      return selectedWorkspaceId;
+    }
+
+    if (activeWorkspaceId && availableWorkspaces[activeWorkspaceId]) {
+      return activeWorkspaceId;
+    }
+
+    return sortedAvailableWorkspaces[0]?.id ?? null;
+  }, [
+    activeWorkspaceId,
+    availableWorkspaces,
+    selectedWorkspaceId,
+    sortedAvailableWorkspaces,
+  ]);
+  const selectedWorkspaceRecord =
+    availableWorkspaces && resolvedSelectedWorkspaceId
+      ? availableWorkspaces[resolvedSelectedWorkspaceId]
+      : null;
+  const selectedWorkspace = useMemo(
+    () => ({
+      localWorkspaceId:
+        selectedWorkspaceRecord?.id ?? activeWorkspaceId ?? undefined,
+      name: selectedWorkspaceRecord?.name ?? workspaceName,
+      servers: selectedWorkspaceRecord?.servers ?? workspaceServers,
+      sharedWorkspaceId: selectedWorkspaceRecord
+        ? selectedWorkspaceRecord.sharedWorkspaceId ?? null
+        : sharedWorkspaceId ?? null,
+      organizationId: selectedWorkspaceRecord?.organizationId ?? organizationId,
+      visibility: selectedWorkspaceRecord?.visibility ?? visibility,
+      icon: selectedWorkspaceRecord?.icon,
+    }),
+    [
+      activeWorkspaceId,
+      organizationId,
+      selectedWorkspaceRecord,
+      sharedWorkspaceId,
+      visibility,
+      workspaceName,
+      workspaceServers,
+    ],
+  );
+  const normalizedEmail = email.trim().toLowerCase();
+  const emailValidationError =
+    normalizedEmail && !INVITE_EMAIL_PATTERN.test(normalizedEmail)
+      ? "Enter a valid email address."
+      : null;
+  const showWorkspacePicker = sortedAvailableWorkspaces.length > 1;
 
   const {
     createWorkspace,
@@ -125,7 +226,7 @@ export function ShareWorkspaceDialog({
     canManageMembers: membersCanManage,
   } = useWorkspaceMembers({
     isAuthenticated,
-    workspaceId: sharedWorkspaceId || null,
+    workspaceId: selectedWorkspace.sharedWorkspaceId || null,
   });
 
   // Billing gate for member invites
@@ -137,10 +238,10 @@ export function ShareWorkspaceDialog({
     planCatalog,
     isLoadingBilling,
     isLoadingOrganizationPremiumness,
-  } = useOrganizationBilling(organizationId ?? null);
+  } = useOrganizationBilling(selectedWorkspace.organizationId ?? null);
   const memberInviteGate = resolveBillingGateState({
     billingUiEnabled,
-    organizationId: organizationId ?? null,
+    organizationId: selectedWorkspace.organizationId ?? null,
     billingStatus,
     premiumness: organizationPremiumness,
     gate: BILLING_GATES.memberInvites,
@@ -158,18 +259,42 @@ export function ShareWorkspaceDialog({
   );
 
   useEffect(() => {
-    setCurrentVisibility(visibility ?? "public");
-  }, [visibility]);
+    const wasOpen = previousIsOpenRef.current;
+    previousIsOpenRef.current = isOpen;
 
-  const isPublicWorkspace = currentVisibility === "public";
+    if (!isOpen || wasOpen) {
+      return;
+    }
 
-  const canManageMembers = !sharedWorkspaceId ? true : membersCanManage;
+    if (availableWorkspaces) {
+      if (activeWorkspaceId && availableWorkspaces[activeWorkspaceId]) {
+        setSelectedWorkspaceId(activeWorkspaceId);
+      } else {
+        setSelectedWorkspaceId(sortedAvailableWorkspaces[0]?.id ?? null);
+      }
+    } else {
+      setSelectedWorkspaceId(activeWorkspaceId ?? null);
+    }
+  }, [
+    activeWorkspaceId,
+    availableWorkspaces,
+    isOpen,
+    sortedAvailableWorkspaces,
+  ]);
+
+  useEffect(() => {
+    setCurrentVisibility(selectedWorkspace.visibility ?? "public");
+  }, [selectedWorkspace.visibility]);
+
+  const canManageMembers = !selectedWorkspace.sharedWorkspaceId
+    ? true
+    : membersCanManage;
 
   useEffect(() => {
     if (isOpen) {
       posthog.capture("share_dialog_opened", {
-        workspace_name: workspaceName,
-        is_already_shared: !!sharedWorkspaceId,
+        workspace_name: selectedWorkspace.name,
+        is_already_shared: !!selectedWorkspace.sharedWorkspaceId,
         member_count: activeMembers.length + pendingMembers.length,
         workspace_visibility: currentVisibility,
         platform: detectPlatform(),
@@ -184,19 +309,19 @@ export function ShareWorkspaceDialog({
     const prev = currentVisibility;
     setCurrentVisibility(newVisibility as WorkspaceVisibility);
 
-    if (!sharedWorkspaceId) return;
+    if (!selectedWorkspace.sharedWorkspaceId) return;
 
     setIsUpdatingVisibility(true);
     try {
       await updateWorkspace({
-        workspaceId: sharedWorkspaceId,
+        workspaceId: selectedWorkspace.sharedWorkspaceId,
         visibility: newVisibility,
       });
       toast.success(
         `Workspace visibility changed to ${newVisibility === "public" ? "organization" : "private"}`,
       );
       posthog.capture("workspace_visibility_changed", {
-        workspace_name: workspaceName,
+        workspace_name: selectedWorkspace.name,
         new_visibility: newVisibility,
         platform: detectPlatform(),
         environment: detectEnvironment(),
@@ -210,7 +335,7 @@ export function ShareWorkspaceDialog({
   };
 
   const handleInvite = async () => {
-    if (!email.trim() || !canManageMembers) return;
+    if (!normalizedEmail || emailValidationError || !canManageMembers) return;
     if (memberInviteGate.isLoading) return;
     if (memberInviteGate.isDenied) {
       toast.error(
@@ -222,32 +347,42 @@ export function ShareWorkspaceDialog({
 
     setIsInviting(true);
     try {
-      let currentWorkspaceId = sharedWorkspaceId;
+      let currentWorkspaceId = selectedWorkspace.sharedWorkspaceId;
 
       if (!currentWorkspaceId) {
-        const serializedServers = serializeServersForSharing(workspaceServers);
+        const serializedServers = serializeServersForSharing(
+          selectedWorkspace.servers,
+        );
         currentWorkspaceId = await createWorkspace({
-          name: workspaceName,
+          organizationId: selectedWorkspace.organizationId,
+          name: selectedWorkspace.name,
           servers: serializedServers,
           visibility: currentVisibility,
         });
 
         if (currentWorkspaceId) {
-          onWorkspaceShared?.(currentWorkspaceId);
+          if (selectedWorkspace.localWorkspaceId) {
+            onWorkspaceShared?.(
+              currentWorkspaceId,
+              selectedWorkspace.localWorkspaceId,
+            );
+          } else {
+            onWorkspaceShared?.(currentWorkspaceId);
+          }
         }
       }
 
       const result = await inviteWorkspaceMember({
         workspaceId: currentWorkspaceId!,
-        email: email.trim(),
+        email: normalizedEmail,
         role: inviteRole,
       });
 
-      toast.success(buildInviteToastMessage(result, email.trim()));
+      toast.success(buildInviteToastMessage(result, normalizedEmail));
       setEmail("");
       posthog.capture("workspace_invite_sent", {
-        workspace_name: workspaceName,
-        is_new_share: !sharedWorkspaceId,
+        workspace_name: selectedWorkspace.name,
+        is_new_share: !selectedWorkspace.sharedWorkspaceId,
         invite_kind: result.kind,
         workspace_visibility: currentVisibility,
         platform: detectPlatform(),
@@ -264,17 +399,17 @@ export function ShareWorkspaceDialog({
     member: WorkspaceMember,
     newRole: WorkspaceRole,
   ) => {
-    if (!sharedWorkspaceId) return;
+    if (!selectedWorkspace.sharedWorkspaceId) return;
     try {
       if (member.isPending) {
         await updateWorkspaceInviteRole({
-          workspaceId: sharedWorkspaceId,
+          workspaceId: selectedWorkspace.sharedWorkspaceId,
           email: member.email,
           role: newRole,
         });
       } else {
         await updateWorkspaceMemberRole({
-          workspaceId: sharedWorkspaceId,
+          workspaceId: selectedWorkspace.sharedWorkspaceId,
           userId: member.userId!,
           role: newRole,
         });
@@ -288,11 +423,11 @@ export function ShareWorkspaceDialog({
   };
 
   const handleRemoveMember = async (memberEmail: string) => {
-    if (!sharedWorkspaceId) return;
+    if (!selectedWorkspace.sharedWorkspaceId) return;
 
     try {
       const result = await removeWorkspaceMember({
-        workspaceId: sharedWorkspaceId,
+        workspaceId: selectedWorkspace.sharedWorkspaceId,
         email: memberEmail,
       });
 
@@ -307,7 +442,7 @@ export function ShareWorkspaceDialog({
           : "Workspace access removed",
       );
       posthog.capture("workspace_member_removed", {
-        workspace_name: workspaceName,
+        workspace_name: selectedWorkspace.name,
         removed_kind: result.removed,
         workspace_visibility: currentVisibility,
         platform: detectPlatform(),
@@ -327,11 +462,62 @@ export function ShareWorkspaceDialog({
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="sm:max-w-[520px]">
         <DialogHeader>
-          <DialogTitle>Share "{workspaceName}" Workspace</DialogTitle>
+          <DialogTitle>Share "{selectedWorkspace.name}" Workspace</DialogTitle>
+          <DialogDescription className="sr-only">
+            Invite people and manage access for the selected workspace.
+          </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-6">
-          {sharedWorkspaceId && !canManageMembers && (
+          {showWorkspacePicker && (
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Workspace</label>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    type="button"
+                    aria-label="Select workspace"
+                    className="flex w-full items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-sm transition-colors hover:bg-accent hover:text-accent-foreground"
+                  >
+                    <WorkspacePickerBadge
+                      icon={selectedWorkspace.icon}
+                      workspaceName={selectedWorkspace.name}
+                    />
+                    <span className="flex-1 text-left">
+                      {selectedWorkspace.name}
+                    </span>
+                    <ChevronDown className="size-4 shrink-0 text-muted-foreground" />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent
+                  align="start"
+                  className="w-[--radix-dropdown-menu-trigger-width]"
+                >
+                  <DropdownMenuRadioGroup
+                    value={resolvedSelectedWorkspaceId ?? ""}
+                    onValueChange={setSelectedWorkspaceId}
+                  >
+                    {sortedAvailableWorkspaces.map((workspace) => (
+                      <DropdownMenuRadioItem
+                        key={workspace.id}
+                        value={workspace.id}
+                      >
+                        <div className="flex items-center gap-2">
+                          <WorkspacePickerBadge
+                            icon={workspace.icon}
+                            workspaceName={workspace.name}
+                          />
+                          <span>{workspace.name}</span>
+                        </div>
+                      </DropdownMenuRadioItem>
+                    ))}
+                  </DropdownMenuRadioGroup>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          )}
+
+          {selectedWorkspace.sharedWorkspaceId && !canManageMembers && (
             <p className="text-sm text-muted-foreground">
               Only workspace admins can invite people.
             </p>
@@ -343,10 +529,12 @@ export function ShareWorkspaceDialog({
               <div className="flex gap-2">
                 <div className="flex flex-1 items-center rounded-md border border-input focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2">
                   <Input
+                    type="email"
                     placeholder="Add people, emails..."
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     onKeyDown={(e) => e.key === "Enter" && void handleInvite()}
+                    aria-invalid={emailValidationError ? true : undefined}
                     className="flex-1 border-0 focus-visible:ring-0 focus-visible:ring-offset-0"
                   />
                   <DropdownMenu>
@@ -388,7 +576,8 @@ export function ShareWorkspaceDialog({
                 <Button
                   onClick={() => void handleInvite()}
                   disabled={
-                    !email.trim() ||
+                    !normalizedEmail ||
+                    !!emailValidationError ||
                     isInviting ||
                     memberInviteGate.isLoading ||
                     memberInviteGate.isDenied
@@ -397,6 +586,12 @@ export function ShareWorkspaceDialog({
                   {isInviting ? "..." : "Invite"}
                 </Button>
               </div>
+
+              {emailValidationError ? (
+                <p className="text-sm text-destructive">
+                  {emailValidationError}
+                </p>
+              ) : null}
 
               {memberInviteGate.isDenied && (
                 <Alert
@@ -418,8 +613,8 @@ export function ShareWorkspaceDialog({
                         size="sm"
                         className="mt-1"
                         onClick={() => {
-                          if (organizationId) {
-                            window.location.hash = `organizations/${organizationId}/billing`;
+                          if (selectedWorkspace.organizationId) {
+                            window.location.hash = `organizations/${selectedWorkspace.organizationId}/billing`;
                           }
                         }}
                       >
@@ -521,7 +716,7 @@ export function ShareWorkspaceDialog({
           <div className="space-y-2">
             <label className="text-sm font-medium">Has access</label>
             <div className="space-y-1 max-h-[300px] overflow-y-auto">
-              {!sharedWorkspaceId && (
+              {!selectedWorkspace.sharedWorkspaceId && (
                 <div className="flex items-center gap-3 p-2 rounded-md">
                   <Avatar className="size-9">
                     <AvatarImage src={profilePictureUrl} alt={displayName} />

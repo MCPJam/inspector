@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Braces, Loader2 } from "lucide-react";
 import { StickToBottom } from "use-stick-to-bottom";
 import { ScrollToBottomButton } from "@/components/chat-v2/shared/scroll-to-bottom-button";
-import type { ContentBlock } from "@modelcontextprotocol/sdk/types.js";
+import type { ContentBlock } from "@modelcontextprotocol/client";
 import type { UIMessage } from "ai";
 import { cn } from "@/lib/utils";
 import type { ModelDefinition } from "@/shared/types";
@@ -28,13 +28,13 @@ import {
   type PreludeTraceExecution,
 } from "@/components/ui-playground/live-trace-prelude";
 import {
-  SandboxHostStyleProvider,
-  SandboxHostThemeProvider,
-} from "@/contexts/sandbox-host-style-context";
+  ChatboxHostStyleProvider,
+  ChatboxHostThemeProvider,
+} from "@/contexts/chatbox-host-style-context";
 import { CHATGPT_CHAT_BACKGROUND } from "@/config/chatgpt-host-context";
 import { CLAUDE_DESKTOP_CHAT_BACKGROUND } from "@/config/claude-desktop-host-context";
 import type { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
-import type { SandboxHostStyle } from "@/lib/sandbox-host-style";
+import type { ChatboxHostStyle } from "@/lib/chatbox-host-style";
 import type { DeviceType, DisplayMode } from "@/stores/ui-playground-store";
 import type { BroadcastChatTurnRequest } from "@/components/chat-v2/multi-model-chat-card";
 
@@ -95,7 +95,7 @@ interface MultiModelPlaygroundCardProps {
   hostedOAuthTokens?: Record<string, string>;
   displayMode: DisplayMode;
   onDisplayModeChange: (mode: DisplayMode) => void;
-  hostStyle: SandboxHostStyle;
+  hostStyle: ChatboxHostStyle;
   effectiveThreadTheme: ThreadThemeMode;
   deviceType: DeviceType;
   selectedProtocol: UIType | null;
@@ -164,7 +164,7 @@ export function MultiModelPlaygroundCard({
   const [traceViewMode, setTraceViewMode] =
     useState<PlaygroundTraceViewMode>("chat");
   const [revealedInChat, setRevealedInChat] = useState(false);
-  const [isWidgetFullscreen, setIsWidgetFullscreen] = useState(false);
+  const [, setIsWidgetFullscreen] = useState(false);
   const [preludeTraceExecutions, setPreludeTraceExecutions] = useState<
     PreludeTraceExecution[]
   >([]);
@@ -325,7 +325,7 @@ export function MultiModelPlaygroundCard({
   const shellHeightClass =
     isMobileFullTakeover || isTabletFullscreenTakeover
       ? "min-h-[34rem]"
-      : "min-h-[32rem]";
+      : "";
 
   useEffect(() => {
     onSummaryChangeRef.current = onSummaryChange;
@@ -554,7 +554,10 @@ export function MultiModelPlaygroundCard({
   );
 
   return (
-    <div className="flex h-full min-h-[34rem] min-w-0 flex-col overflow-hidden rounded-2xl border border-border/60 bg-card/40">
+    <div
+      data-testid="multi-model-playground-card-root"
+      className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl border border-border/60 bg-card/40"
+    >
       <ModelCompareCardHeader
         model={model}
         summary={summary}
@@ -565,12 +568,7 @@ export function MultiModelPlaygroundCard({
         showComparisonChrome={showComparisonChrome}
       />
 
-      <div
-        className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
-        style={{
-          transform: isWidgetFullscreen ? "none" : "translateZ(0)",
-        }}
-      >
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         {errorMessage ? (
           <div className="px-3 pt-3">
             <ErrorBox
@@ -615,6 +613,7 @@ export function MultiModelPlaygroundCard({
                   fullscreenChatPlaceholder="Message…"
                   fullscreenChatSendBlocked={fullscreenChatSendBlocked}
                   onFullscreenChatStop={stop}
+                  onFullscreenChange={setIsWidgetFullscreen}
                   onToolApprovalResponse={addToolApprovalResponse}
                   rawRequestPayloadHistory={{
                     entries: requestPayloadHistory,
@@ -641,6 +640,9 @@ export function MultiModelPlaygroundCard({
                   hideToolbar
                   fillContent
                   onRevealNavigateToChat={navigateTraceRevealToChat}
+                  displayMode={displayMode}
+                  onDisplayModeChange={onDisplayModeChange}
+                  onFullscreenChange={setIsWidgetFullscreen}
                   rawRequestPayloadHistory={{
                     entries: requestPayloadHistory,
                     hasUiMessages: !isThreadEmpty,
@@ -650,11 +652,11 @@ export function MultiModelPlaygroundCard({
             </div>
           </div>
         ) : (
-          <SandboxHostStyleProvider value={hostStyle}>
-            <SandboxHostThemeProvider value={effectiveThreadTheme}>
+          <ChatboxHostStyleProvider value={hostStyle}>
+            <ChatboxHostThemeProvider value={effectiveThreadTheme}>
               <div
                 className={cn(
-                  "sandbox-host-shell app-theme-scope relative m-3 flex min-h-0 flex-1 flex-col overflow-hidden rounded-[1.25rem] border border-border/50",
+                  "chatbox-host-shell app-theme-scope relative m-3 flex min-h-0 flex-1 flex-col overflow-hidden rounded-[1.25rem] border border-border/50",
                   shellHeightClass,
                   effectiveThreadTheme === "dark" && "dark",
                 )}
@@ -714,8 +716,8 @@ export function MultiModelPlaygroundCard({
                   </StickToBottom>
                 )}
               </div>
-            </SandboxHostThemeProvider>
-          </SandboxHostStyleProvider>
+            </ChatboxHostThemeProvider>
+          </ChatboxHostStyleProvider>
         )}
       </div>
     </div>

@@ -7,11 +7,11 @@
  */
 
 import {
-  OAuthMetadata,
-  OAuthClientInformation,
-  OAuthClientInformationFull,
-} from "@modelcontextprotocol/sdk/shared/auth.js";
-import { registerClient } from "@modelcontextprotocol/sdk/client/auth.js";
+  registerClient,
+  type OAuthClientInformation,
+  type OAuthClientInformationFull,
+  type OAuthMetadata,
+} from "@mcpjam/sdk/browser";
 import { MCPJAM_CLIENT_ID, getRedirectUri } from "./constants";
 import type { DebugMCPOAuthClientProvider } from "./debug-oauth-provider";
 

@@ -87,9 +87,15 @@ export type AppAction =
       name: string;
       config: MCPServerConfig;
       tokens?: OauthTokens;
+      useOAuth?: boolean;
     }
   | { type: "CONNECT_FAILURE"; name: string; error: string }
-  | { type: "RECONNECT_REQUEST"; name: string; config: MCPServerConfig }
+  | {
+      type: "RECONNECT_REQUEST";
+      name: string;
+      config: MCPServerConfig;
+      select?: boolean;
+    }
   | { type: "DISCONNECT"; name: string; error?: string }
   | { type: "REMOVE_SERVER"; name: string }
   | { type: "SYNC_AGENT_STATUS"; servers: AgentServerInfo[] }

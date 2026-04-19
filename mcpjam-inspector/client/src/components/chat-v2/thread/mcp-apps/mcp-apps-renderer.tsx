@@ -46,7 +46,7 @@ import {
 import type {
   CallToolResult,
   ContentBlock,
-} from "@modelcontextprotocol/sdk/types.js";
+} from "@modelcontextprotocol/client";
 import {
   getClaudeDesktopStyleVariables,
   CLAUDE_DESKTOP_FONT_CSS,
@@ -69,7 +69,7 @@ import { fetchMcpAppsWidgetContent } from "./fetch-widget-content";
 import type { CheckoutSession } from "@/shared/acp-types";
 import { listResources, readResource } from "@/lib/apis/mcp-resources-api";
 import { listPrompts } from "@/lib/apis/mcp-prompts-api";
-import { useSandboxHostStyle } from "@/contexts/sandbox-host-style-context";
+import { useChatboxHostStyle } from "@/contexts/chatbox-host-style-context";
 import { useClientConfigStore } from "@/stores/client-config-store";
 import {
   clampDisplayModeToAvailableModes,
@@ -179,7 +179,7 @@ export function MCPAppsRenderer({
   const sandboxRef = useRef<SandboxedIframeHandle>(null);
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const sharedHostStyle = usePreferencesStore((s) => s.hostStyle);
-  const sandboxHostStyle = useSandboxHostStyle();
+  const chatboxHostStyle = useChatboxHostStyle();
   const draftHostContext = useClientConfigStore(
     (s) => s.draftConfig?.hostContext,
   );
@@ -685,7 +685,7 @@ export function MCPAppsRenderer({
   // These are sent via hostContext.styles.variables - the SDK should pass them through
   const effectiveHostStyle = isPlaygroundActive
     ? sharedHostStyle
-    : (sandboxHostStyle ?? "claude");
+    : (chatboxHostStyle ?? "claude");
   const useChatGPTStyle = effectiveHostStyle === "chatgpt";
   themeModeRef.current = resolvedTheme;
   const styleVariables = useMemo(
@@ -1272,6 +1272,13 @@ export function MCPAppsRenderer({
     if (isPip) {
       if (isMobilePlaygroundMode) {
         return "absolute inset-0 z-10 w-full h-full bg-background flex flex-col";
+      }
+      if (isPlaygroundActive) {
+        return [
+          "absolute top-4 left-1/2 -translate-x-1/2 z-40 w-full min-w-[300px] max-w-[min(90vw,1200px)] space-y-2",
+          "bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80",
+          "shadow-xl border border-border/60 rounded-xl p-3",
+        ].join(" ");
       }
       return [
         "fixed top-4 left-1/2 -translate-x-1/2 z-40 w-full min-w-[300px] max-w-[min(90vw,1200px)] space-y-2",

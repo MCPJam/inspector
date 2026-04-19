@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Users } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Button } from "@mcpjam/design-system/button";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
 import { ShareWorkspaceDialog } from "./ShareWorkspaceDialog";
@@ -10,7 +10,7 @@ import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from "@/components/ui/tooltip";
+} from "@mcpjam/design-system/tooltip";
 import type { WorkspaceVisibility } from "@/state/app-types";
 
 interface WorkspaceShareButtonProps {
@@ -20,7 +20,10 @@ interface WorkspaceShareButtonProps {
   organizationId?: string;
   visibility?: WorkspaceVisibility;
   organizationName?: string;
-  onWorkspaceShared?: (sharedWorkspaceId: string) => void;
+  onWorkspaceShared?: (
+    sharedWorkspaceId: string,
+    sourceWorkspaceId?: string,
+  ) => void;
 }
 
 export function WorkspaceShareButton({

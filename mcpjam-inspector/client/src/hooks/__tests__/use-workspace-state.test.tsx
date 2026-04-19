@@ -1222,6 +1222,161 @@ describe("useWorkspaceState automatic workspace creation", () => {
     expect(logger.error).toHaveBeenCalledTimes(2);
   });
 
+  it("keeps the active workspace unchanged when sharing a different local workspace", async () => {
+    const appState = createAppState({
+      "workspace-a": createLocalWorkspace("workspace-a", {
+        name: "Workspace A",
+        organizationId: "org-owner",
+      }),
+      "workspace-b": createLocalWorkspace("workspace-b", {
+        name: "Workspace B",
+        organizationId: "org-owner",
+      }),
+    });
+    const { result, dispatch, logger } = renderUseWorkspaceState({
+      appState,
+      activeOrganizationId: "org-owner",
+    });
+
+    await act(async () => {
+      result.current.handleWorkspaceShared("convex-workspace-b", "workspace-b");
+    });
+
+    expect(localStorage.getItem("convex-active-workspace-id")).toBeNull();
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "UPDATE_WORKSPACE",
+      workspaceId: "workspace-b",
+      updates: { sharedWorkspaceId: "convex-workspace-b" },
+    });
+    expect(logger.info).toHaveBeenCalledWith("Workspace shared", {
+      convexWorkspaceId: "convex-workspace-b",
+      sourceWorkspaceId: "workspace-b",
+      switchedActiveWorkspace: false,
+    });
+  });
+
+  it("keeps a non-shared active local workspace selected after remote workspaces return", async () => {
+    vi.useFakeTimers();
+    workspaceQueryState.allWorkspaces = undefined;
+    workspaceQueryState.workspaces = undefined;
+
+    const appState = {
+      ...createAppState({
+        "workspace-a": createLocalWorkspace("workspace-a", {
+          name: "Workspace A",
+          organizationId: "org-owner",
+        }),
+        "workspace-b": createLocalWorkspace("workspace-b", {
+          name: "Workspace B",
+          organizationId: "org-owner",
+          sharedWorkspaceId: "convex-workspace-b",
+        }),
+      }),
+      activeWorkspaceId: "workspace-a",
+    };
+
+    const { result, rerender } = renderUseWorkspaceState({
+      appState,
+      activeOrganizationId: "org-owner",
+    });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10_000);
+    });
+
+    expect(result.current.useLocalFallback).toBe(true);
+
+    workspaceQueryState.allWorkspaces = [
+      {
+        _id: "convex-workspace-b",
+        name: "Workspace B",
+        servers: {},
+        ownerId: "user-1",
+        organizationId: "org-owner",
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ];
+    workspaceQueryState.workspaces = [...workspaceQueryState.allWorkspaces];
+
+    await act(async () => {
+      rerender({
+        organizationId: "org-owner",
+        hasOrganizationsOverride: true,
+        isLoadingOrganizationsOverride: false,
+        routeOrganizationIdOverride: undefined,
+        validOrganizationIdsOverride: ["org-owner"],
+      });
+    });
+
+    expect(result.current.useLocalFallback).toBe(false);
+    expect(result.current.effectiveActiveWorkspaceId).toBe("workspace-a");
+    expect(result.current.effectiveWorkspaces["workspace-a"]).toBeDefined();
+    expect(result.current.effectiveWorkspaces["convex-workspace-b"]).toBeDefined();
+    expect(result.current.effectiveWorkspaces["workspace-b"]).toBeUndefined();
+  });
+
+  it("uses the active workspace as the source when legacy share callers omit it", async () => {
+    vi.useFakeTimers();
+    workspaceQueryState.allWorkspaces = undefined;
+    workspaceQueryState.workspaces = undefined;
+
+    const appState = {
+      ...createAppState({
+        "workspace-a": createLocalWorkspace("workspace-a", {
+          name: "Workspace A",
+          organizationId: "org-owner",
+          sharedWorkspaceId: "convex-workspace-a",
+        }),
+      }),
+      activeWorkspaceId: "workspace-a",
+    };
+
+    const { result, rerender, dispatch } = renderUseWorkspaceState({
+      appState,
+      activeOrganizationId: "org-owner",
+    });
+
+    await act(async () => {
+      result.current.handleWorkspaceShared("convex-workspace-a");
+      await vi.advanceTimersByTimeAsync(10_000);
+    });
+
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "UPDATE_WORKSPACE",
+      workspaceId: "workspace-a",
+      updates: { sharedWorkspaceId: "convex-workspace-a" },
+    });
+
+    workspaceQueryState.allWorkspaces = [
+      {
+        _id: "convex-workspace-a",
+        name: "Workspace A",
+        servers: {},
+        ownerId: "user-1",
+        organizationId: "org-owner",
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ];
+    workspaceQueryState.workspaces = [...workspaceQueryState.allWorkspaces];
+
+    await act(async () => {
+      rerender({
+        organizationId: "org-owner",
+        hasOrganizationsOverride: true,
+        isLoadingOrganizationsOverride: false,
+        routeOrganizationIdOverride: undefined,
+        validOrganizationIdsOverride: ["org-owner"],
+      });
+    });
+
+    expect(result.current.useLocalFallback).toBe(false);
+    expect(result.current.effectiveActiveWorkspaceId).toBe("convex-workspace-a");
+    expect(result.current.effectiveWorkspaces["workspace-a"]).toBeUndefined();
+    expect(result.current.effectiveWorkspaces["convex-workspace-a"]).toBeDefined();
+  });
+
   it("rejects authenticated client-config saves when the hook unmounts mid-sync", async () => {
     const savedConfig: WorkspaceClientConfig = {
       version: 1,

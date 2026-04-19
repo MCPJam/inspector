@@ -88,7 +88,7 @@ describe("resolveBillingGateState", () => {
         decisionRequired: false,
         gates: [
           {
-            gateKey: "sandboxes",
+            gateKey: "chatboxes",
             kind: "feature",
             scope: "organization",
             canAccess: false,
@@ -98,7 +98,7 @@ describe("resolveBillingGateState", () => {
           },
         ],
       },
-      gate: BILLING_GATES.sandboxes,
+      gate: BILLING_GATES.chatboxes,
     });
 
     expect(gate.isDenied).toBe(true);
@@ -176,7 +176,7 @@ describe("resolveBillingGateState", () => {
         decisionRequired: false,
         gates: [
           {
-            gateKey: "sandboxes",
+            gateKey: "chatboxes",
             kind: "feature",
             scope: "organization",
             canAccess: false,
@@ -186,7 +186,7 @@ describe("resolveBillingGateState", () => {
           },
         ],
       },
-      gate: BILLING_GATES.sandboxes,
+      gate: BILLING_GATES.chatboxes,
     });
 
     expect(gate.isDenied).toBe(false);

@@ -25,14 +25,14 @@ function refineHostedTokens<T extends z.ZodRawShape>(schema: z.ZodObject<T>) {
   return schema.superRefine((value, ctx) => {
     const hostedValue = value as {
       shareToken?: string;
-      sandboxToken?: string;
+      chatboxToken?: string;
     };
 
-    if (hostedValue.shareToken && hostedValue.sandboxToken) {
+    if (hostedValue.shareToken && hostedValue.chatboxToken) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        path: ["sandboxToken"],
-        message: "shareToken and sandboxToken cannot both be provided",
+        path: ["chatboxToken"],
+        message: "shareToken and chatboxToken cannot both be provided",
       });
     }
   });
@@ -49,7 +49,7 @@ export const workspaceServerSchema = refineHostedTokens(
     oauthAccessToken: z.string().optional(),
     accessScope: z.enum(["workspace_member", "chat_v2"]).optional(),
     shareToken: z.string().min(1).optional(),
-    sandboxToken: z.string().min(1).optional(),
+    chatboxToken: z.string().min(1).optional(),
   }),
 );
 
@@ -85,7 +85,7 @@ export const promptsListMultiSchema = refineHostedTokens(
     oauthTokens: z.record(z.string(), z.string()).optional(),
     accessScope: z.enum(["workspace_member", "chat_v2"]).optional(),
     shareToken: z.string().min(1).optional(),
-    sandboxToken: z.string().min(1).optional(),
+    chatboxToken: z.string().min(1).optional(),
   }),
 );
 
@@ -108,7 +108,7 @@ export const hostedChatSchema = refineHostedTokens(
       oauthTokens: z.record(z.string(), z.string()).optional(),
       accessScope: z.enum(["workspace_member", "chat_v2"]).optional(),
       shareToken: z.string().min(1).optional(),
-      sandboxToken: z.string().min(1).optional(),
+      chatboxToken: z.string().min(1).optional(),
     })
     .passthrough(),
 );
@@ -134,6 +134,7 @@ export type ConvexAuthorizeResponse = {
   authorized: boolean;
   role: "owner" | "admin" | "member";
   accessLevel: "workspace_member" | "shared_chat";
+  oauthAccessToken?: string | null;
   permissions: {
     chatOnly: boolean;
   };
@@ -152,7 +153,7 @@ export async function authorizeServer(
   options?: {
     accessScope?: "workspace_member" | "chat_v2";
     shareToken?: string;
-    sandboxToken?: string;
+    chatboxToken?: string;
   },
 ): Promise<ConvexAuthorizeResponse> {
   const convexUrl = process.env.CONVEX_HTTP_URL;
@@ -166,11 +167,11 @@ export async function authorizeServer(
 
   let response: Response;
   try {
-    if (options?.shareToken && options?.sandboxToken) {
+    if (options?.shareToken && options?.chatboxToken) {
       throw new WebRouteError(
         400,
         ErrorCode.VALIDATION_ERROR,
-        "shareToken and sandboxToken cannot both be provided",
+        "shareToken and chatboxToken cannot both be provided",
       );
     }
 
@@ -185,8 +186,8 @@ export async function authorizeServer(
         serverId,
         ...(options?.accessScope ? { accessScope: options.accessScope } : {}),
         ...(options?.shareToken ? { shareToken: options.shareToken } : {}),
-        ...(options?.sandboxToken
-          ? { sandboxToken: options.sandboxToken }
+        ...(options?.chatboxToken
+          ? { chatboxToken: options.chatboxToken }
           : {}),
       }),
     });
@@ -282,7 +283,7 @@ export async function createAuthorizedManager(
   options?: {
     accessScope?: "workspace_member" | "chat_v2";
     shareToken?: string;
-    sandboxToken?: string;
+    chatboxToken?: string;
     rpcLogger?: RpcLogger;
   },
 ): Promise<AuthorizedManagerResult> {
@@ -293,9 +294,9 @@ export async function createAuthorizedManager(
       const auth = await authorizeServer(bearerToken, workspaceId, serverId, {
         accessScope: options?.accessScope,
         shareToken: options?.shareToken,
-        sandboxToken: options?.sandboxToken,
+        chatboxToken: options?.chatboxToken,
       });
-      const oauthToken = oauthTokens?.[serverId];
+      const oauthToken = auth.oauthAccessToken ?? oauthTokens?.[serverId];
 
       if (auth.serverConfig.useOAuth) {
         if (auth.serverConfig.url) {
@@ -539,9 +540,9 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
         typeof raw.shareToken === "string" && raw.shareToken.trim()
           ? raw.shareToken
           : undefined;
-      const sandboxToken =
-        typeof raw.sandboxToken === "string" && raw.sandboxToken.trim()
-          ? raw.sandboxToken
+      const chatboxToken =
+        typeof raw.chatboxToken === "string" && raw.chatboxToken.trim()
+          ? raw.chatboxToken
           : undefined;
 
       result = await withManager(
@@ -556,7 +557,7 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
           {
             accessScope,
             shareToken,
-            sandboxToken,
+            chatboxToken,
             rpcLogger: rpcCollector?.rpcLogger,
           },
         ),

@@ -22,7 +22,7 @@ import {
 } from "react";
 import { Braces, Loader2, Trash2 } from "lucide-react";
 import { useAuth } from "@workos-inc/authkit-react";
-import type { ContentBlock } from "@modelcontextprotocol/sdk/types.js";
+import type { ContentBlock } from "@modelcontextprotocol/client";
 import type { UIMessage } from "ai";
 import { ModelDefinition } from "@/shared/types";
 import { cn } from "@/lib/utils";
@@ -44,12 +44,12 @@ import {
   type ChatSessionResetReason,
   useChatSession,
 } from "@/hooks/use-chat-session";
-import { Button } from "@/components/ui/button";
+import { Button } from "@mcpjam/design-system/button";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from "@/components/ui/tooltip";
+} from "@mcpjam/design-system/tooltip";
 import { createDeterministicToolMessages } from "./playground-helpers";
 import type { MCPPromptResult } from "@/components/chat-v2/chat-input/prompts/mcp-prompts-popover";
 import type { SkillResult } from "@/components/chat-v2/chat-input/skills/skill-types";
@@ -86,9 +86,9 @@ import { useClientConfigStore } from "@/stores/client-config-store";
 import { extractEffectiveHostDisplayMode } from "@/lib/client-config";
 import { PostConnectGuide } from "@/components/app-builder/PostConnectGuide";
 import {
-  SandboxHostStyleProvider,
-  SandboxHostThemeProvider,
-} from "@/contexts/sandbox-host-style-context";
+  ChatboxHostStyleProvider,
+  ChatboxHostThemeProvider,
+} from "@/contexts/chatbox-host-style-context";
 import { useComposerOnboarding } from "@/hooks/use-composer-onboarding";
 import { useDebouncedXRayPayload } from "@/hooks/use-debounced-x-ray-payload";
 import { useModelSelectorLayoutLock } from "@/hooks/use-model-selector-layout-lock";
@@ -1165,15 +1165,20 @@ export function PlaygroundMain({
     if (!showFullscreenChatOverlay) setIsFullscreenChatOpen(false);
   }, [showFullscreenChatOverlay]);
 
+  const showSingleModelEmptyStateComposer =
+    !isAuthLoading &&
+    !shouldShowUpsell &&
+    (showPostConnectGuide || !showFullscreenChatOverlay);
+
   // Thread content - single ChatInput that persists across empty/non-empty states
   const threadContent = (
     <div className="relative flex flex-col flex-1 min-h-0">
       {isThreadEmpty ? (
         // Empty state — centered (welcome + composer, or post-connect guide)
         <div
+          data-testid="playground-empty-state-shell"
           className={cn(
-            "flex-1 flex overflow-y-auto overflow-x-hidden px-4 min-h-0",
-            "items-center justify-center",
+            "flex flex-1 min-h-0 overflow-hidden",
             hostStyle === "chatgpt"
               ? effectiveThreadTheme === "dark"
                 ? "bg-[#212121] text-neutral-50"
@@ -1184,72 +1189,31 @@ export function PlaygroundMain({
           )}
         >
           <div
-            className={cn(
-              "mx-auto w-full max-w-4xl text-center",
-              !showPostConnectGuide && "py-8",
-            )}
+            className="flex h-full min-h-0 flex-1 items-center justify-center overflow-hidden px-4"
+            data-testid="playground-empty-state-body"
           >
-            {isAuthLoading ? (
-              <div className="space-y-4">
-                <div className="mx-auto h-8 w-8 animate-spin rounded-full border-b-2 border-primary" />
-                <p className="text-sm text-muted-foreground">Loading...</p>
-              </div>
-            ) : shouldShowUpsell ? (
-              <MCPJamFreeModelsPrompt onSignUp={handleSignUp} />
-            ) : showPostConnectGuide ? (
-              <>
-                <PostConnectGuide />
-                <ChatInput {...sharedChatInputProps} hasMessages={false} />
-              </>
-            ) : (
-              <div className="flex w-full flex-col items-center gap-8 [-webkit-user-drag:none]">
-                <div className="text-center max-w-md">
-                  <img
-                    src={
-                      effectiveThreadTheme === "dark"
-                        ? "/mcp_jam_dark.png"
-                        : "/mcp_jam_light.png"
-                    }
-                    alt="MCPJam"
-                    draggable={false}
-                    className="h-10 w-auto mx-auto mb-4"
-                  />
-                  <div className="space-y-3">
-                    <h3
-                      className={cn(
-                        "text-lg font-semibold",
-                        hostStyle === "chatgpt"
-                          ? effectiveThreadTheme === "dark"
-                            ? "text-white"
-                            : "text-neutral-950"
-                          : effectiveThreadTheme === "dark"
-                            ? "text-[#F1F0ED]"
-                            : "text-[rgba(61,57,41,1)]",
-                      )}
-                    >
-                      This is your playground for MCP.
-                    </h3>
-                    <p
-                      className={cn(
-                        "text-base leading-7",
-                        hostStyle === "chatgpt"
-                          ? effectiveThreadTheme === "dark"
-                            ? "text-neutral-400"
-                            : "text-neutral-600"
-                          : effectiveThreadTheme === "dark"
-                            ? "text-[#F1F0ED]/80"
-                            : "text-[rgba(61,57,41,0.72)]",
-                      )}
-                    >
-                      Test prompts, inspect tools, and debug AI-powered apps.
-                      Type a message here, or run a tool on the left.
-                    </p>
+            <div
+              className={cn(
+                "w-full max-w-4xl shrink-0",
+                !showPostConnectGuide && "py-8",
+              )}
+            >
+              <div
+                className={cn("w-full", !showPostConnectGuide && "text-center")}
+              >
+                {isAuthLoading ? (
+                  <div className="space-y-4 text-center">
+                    <div className="mx-auto h-8 w-8 animate-spin rounded-full border-b-2 border-primary" />
+                    <p className="text-sm text-muted-foreground">Loading...</p>
                   </div>
-                </div>
-                {!isWidgetFullTakeover && !showFullscreenChatOverlay && (
-                  <div className="w-full shrink-0">
+                ) : shouldShowUpsell ? (
+                  <div className="text-center">
+                    <MCPJamFreeModelsPrompt onSignUp={handleSignUp} />
+                  </div>
+                ) : showPostConnectGuide ? (
+                  <div className="space-y-6">
                     {errorMessage && (
-                      <div className="pb-3">
+                      <div className="w-full">
                         <ErrorBox
                           message={errorMessage.message}
                           errorDetails={errorMessage.details}
@@ -1263,17 +1227,88 @@ export function PlaygroundMain({
                         />
                       </div>
                     )}
-                    <ChatInput {...sharedChatInputProps} hasMessages={false} />
-                    {composer.sendNuxCtaVisible && (
-                      <HandDrawnSendHint
-                        hostStyle={hostStyle}
-                        theme={effectiveThreadTheme}
+                    <PostConnectGuide />
+                  </div>
+                ) : (
+                  <div className="flex w-full flex-col items-center gap-8 [-webkit-user-drag:none]">
+                    <div className="text-center max-w-md">
+                      <img
+                        src={
+                          effectiveThreadTheme === "dark"
+                            ? "/mcp_jam_dark.png"
+                            : "/mcp_jam_light.png"
+                        }
+                        alt="MCPJam"
+                        draggable={false}
+                        className="h-10 w-auto mx-auto mb-4"
                       />
+                      <div className="space-y-3">
+                        <h3
+                          className={cn(
+                            "text-lg font-semibold",
+                            hostStyle === "chatgpt"
+                              ? effectiveThreadTheme === "dark"
+                                ? "text-white"
+                                : "text-neutral-950"
+                              : effectiveThreadTheme === "dark"
+                                ? "text-[#F1F0ED]"
+                                : "text-[rgba(61,57,41,1)]",
+                          )}
+                        >
+                          This is your playground for MCP.
+                        </h3>
+                        <p
+                          className={cn(
+                            "text-base leading-7",
+                            hostStyle === "chatgpt"
+                              ? effectiveThreadTheme === "dark"
+                                ? "text-neutral-400"
+                                : "text-neutral-600"
+                              : effectiveThreadTheme === "dark"
+                                ? "text-[#F1F0ED]/80"
+                                : "text-[rgba(61,57,41,0.72)]",
+                          )}
+                        >
+                          Test prompts, inspect tools, and debug AI-powered
+                          apps. Type a message here, or run a tool on the left.
+                        </p>
+                      </div>
+                    </div>
+                    {errorMessage && (
+                      <div className="w-full">
+                        <ErrorBox
+                          message={errorMessage.message}
+                          errorDetails={errorMessage.details}
+                          code={errorMessage.code}
+                          statusCode={errorMessage.statusCode}
+                          isRetryable={errorMessage.isRetryable}
+                          isMCPJamPlatformError={
+                            errorMessage.isMCPJamPlatformError
+                          }
+                          onResetChat={resetChat}
+                        />
+                      </div>
                     )}
                   </div>
                 )}
               </div>
-            )}
+              {showSingleModelEmptyStateComposer && (
+                <div
+                  className={cn(
+                    "w-full shrink-0",
+                    showPostConnectGuide ? "pt-6" : "pt-8",
+                  )}
+                >
+                  <ChatInput {...sharedChatInputProps} hasMessages={false} />
+                  {!showPostConnectGuide && composer.sendNuxCtaVisible && (
+                    <HandDrawnSendHint
+                      hostStyle={hostStyle}
+                      theme={effectiveThreadTheme}
+                    />
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         </div>
       ) : (
@@ -1536,7 +1571,7 @@ export function PlaygroundMain({
                     resolvedSelectedModels.length === 2 &&
                       "grid-cols-1 xl:grid-cols-2",
                     resolvedSelectedModels.length >= 3 &&
-                      "grid-cols-1 xl:grid-cols-2 2xl:grid-cols-3",
+                      "grid-cols-1 xl:grid-cols-3",
                   )}
                 >
                   {resolvedSelectedModels.map((model) => (
@@ -1600,8 +1635,8 @@ export function PlaygroundMain({
         ) : (
           <>
             {showLiveTraceDiagnostics && (
-              <SandboxHostStyleProvider value={hostStyle}>
-                <SandboxHostThemeProvider value={effectiveThreadTheme}>
+              <ChatboxHostStyleProvider value={hostStyle}>
+                <ChatboxHostThemeProvider value={effectiveThreadTheme}>
                   <div
                     className={cn(
                       "flex h-full min-h-0 flex-col overflow-hidden",
@@ -1632,6 +1667,10 @@ export function PlaygroundMain({
                                   onRevealNavigateToChat={() =>
                                     setTraceViewMode("chat")
                                   }
+                                  sendFollowUpMessage={handleSendFollowUp}
+                                  displayMode={displayMode}
+                                  onDisplayModeChange={handleDisplayModeChange}
+                                  onFullscreenChange={setIsWidgetFullscreen}
                                   rawGrowWithContent
                                   rawRequestPayloadHistory={{
                                     entries: requestPayloadHistory,
@@ -1661,6 +1700,10 @@ export function PlaygroundMain({
                               onRevealNavigateToChat={() =>
                                 setTraceViewMode("chat")
                               }
+                              sendFollowUpMessage={handleSendFollowUp}
+                              displayMode={displayMode}
+                              onDisplayModeChange={handleDisplayModeChange}
+                              onFullscreenChange={setIsWidgetFullscreen}
                               rawRequestPayloadHistory={{
                                 entries: requestPayloadHistory,
                                 hasUiMessages: !isThreadEmpty,
@@ -1694,8 +1737,8 @@ export function PlaygroundMain({
                       </div>
                     </div>
                   </div>
-                </SandboxHostThemeProvider>
-              </SandboxHostStyleProvider>
+                </ChatboxHostThemeProvider>
+              </ChatboxHostStyleProvider>
             )}
 
             {/* Device frame container */}
@@ -1703,11 +1746,11 @@ export function PlaygroundMain({
               className="flex h-full items-center justify-center min-h-0 overflow-auto"
               style={showLiveTraceDiagnostics ? { display: "none" } : undefined}
             >
-              <SandboxHostStyleProvider value={hostStyle}>
-                <SandboxHostThemeProvider value={effectiveThreadTheme}>
+              <ChatboxHostStyleProvider value={hostStyle}>
+                <ChatboxHostThemeProvider value={effectiveThreadTheme}>
                   <div
                     className={cn(
-                      "sandbox-host-shell app-theme-scope relative flex flex-col overflow-hidden",
+                      "chatbox-host-shell app-theme-scope relative flex flex-col overflow-hidden",
                       effectiveThreadTheme === "dark" && "dark",
                     )}
                     data-testid="playground-thread-shell"
@@ -1723,7 +1766,6 @@ export function PlaygroundMain({
                           ? "100%"
                           : deviceConfig.height,
                       maxHeight: "100%",
-                      transform: isWidgetFullscreen ? "none" : "translateZ(0)",
                       backgroundColor: showPostConnectGuide
                         ? undefined
                         : hostBackgroundColor,
@@ -1733,8 +1775,8 @@ export function PlaygroundMain({
                       {threadContent}
                     </div>
                   </div>
-                </SandboxHostThemeProvider>
-              </SandboxHostStyleProvider>
+                </ChatboxHostThemeProvider>
+              </ChatboxHostStyleProvider>
             </div>
           </>
         )}

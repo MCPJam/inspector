@@ -21,6 +21,7 @@ vi.mock("framer-motion", async (importOriginal) => {
 const mockThread = vi.fn();
 const mockFullscreenChatOverlay = vi.fn();
 const mockMultiModelPlaygroundCard = vi.fn();
+const mockTraceViewer = vi.fn();
 
 // Mock lucide-react icons
 vi.mock("lucide-react", () => ({
@@ -54,7 +55,7 @@ vi.mock("lucide-react", () => ({
 }));
 
 // Mock UI components
-vi.mock("@/components/ui/button", () => ({
+vi.mock("@mcpjam/design-system/button", () => ({
   Button: ({ children, onClick, className, ...props }: any) => (
     <button onClick={onClick} className={className} {...props}>
       {children}
@@ -62,7 +63,7 @@ vi.mock("@/components/ui/button", () => ({
   ),
 }));
 
-vi.mock("@/components/ui/tooltip", () => ({
+vi.mock("@mcpjam/design-system/tooltip", () => ({
   Tooltip: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   TooltipContent: ({ children }: { children: React.ReactNode }) => (
     <div className="tooltip-content">{children}</div>
@@ -76,7 +77,7 @@ vi.mock("@/components/ui/tooltip", () => ({
   }) => <>{children}</>,
 }));
 
-vi.mock("@/components/ui/popover", () => ({
+vi.mock("@mcpjam/design-system/popover", () => ({
   Popover: ({
     children,
     open: _open,
@@ -96,11 +97,11 @@ vi.mock("@/components/ui/popover", () => ({
   }) => <>{children}</>,
 }));
 
-vi.mock("@/components/ui/input", () => ({
+vi.mock("@mcpjam/design-system/input", () => ({
   Input: (props: any) => <input {...props} />,
 }));
 
-vi.mock("@/components/ui/label", () => ({
+vi.mock("@mcpjam/design-system/label", () => ({
   Label: ({ children, ...props }: any) => <label {...props}>{children}</label>,
 }));
 
@@ -305,19 +306,21 @@ vi.mock("@/components/chat-v2/error", () => ({
 }));
 
 vi.mock("@/components/evals/trace-viewer", () => ({
-  TraceViewer: ({
-    forcedViewMode,
-    trace,
-  }: {
+  TraceViewer: (props: {
     forcedViewMode?: "chat" | "timeline" | "raw";
     trace?: unknown;
-  }) => (
-    <div
-      data-testid="trace-viewer"
-      data-mode={forcedViewMode ?? "timeline"}
-      data-trace={JSON.stringify(trace ?? null)}
-    />
-  ),
+    displayMode?: "inline" | "pip" | "fullscreen";
+    onDisplayModeChange?: (mode: "inline" | "pip" | "fullscreen") => void;
+  }) => {
+    mockTraceViewer(props);
+    return (
+      <div
+        data-testid="trace-viewer"
+        data-mode={props.forcedViewMode ?? "timeline"}
+        data-trace={JSON.stringify(props.trace ?? null)}
+      />
+    );
+  },
 }));
 
 vi.mock("@/components/evals/trace-view-mode-tabs", () => {
@@ -602,6 +605,15 @@ describe("PlaygroundMain", () => {
       render(<PlaygroundMain {...defaultProps} />);
 
       expect(screen.getByTestId("chat-input")).toBeInTheDocument();
+    });
+
+    it("renders the empty-state composer in mobile fullscreen takeover mode", () => {
+      render(<PlaygroundMain {...defaultProps} displayMode="fullscreen" />);
+
+      expect(screen.getByTestId("chat-input")).toBeInTheDocument();
+      expect(
+        screen.queryByTestId("fullscreen-overlay"),
+      ).not.toBeInTheDocument();
     });
 
     it("renders device controls", () => {
@@ -973,6 +985,25 @@ describe("PlaygroundMain", () => {
       expect(screen.getByTestId("thread")).toBeInTheDocument();
     });
 
+    it("passes controlled display mode props into live trace viewers", () => {
+      mockUseChatSession.messages = [
+        { id: "1", role: "user", parts: [{ type: "text", text: "Hello" }] },
+      ];
+      mockUseChatSession.traceViewsSupported = true;
+      mockUseChatSession.hasTraceSnapshot = true;
+      mockUseChatSession.hasLiveTimelineContent = true;
+      mockUseChatSession.liveTraceEnvelope = sampleLiveTraceEnvelope;
+
+      render(<PlaygroundMain {...defaultProps} enableTraceViews={true} />);
+
+      fireEvent.click(screen.getByRole("button", { name: "Trace" }));
+
+      expect(mockTraceViewer).toHaveBeenCalled();
+      const props = mockTraceViewer.mock.calls.at(-1)?.[0];
+      expect(props.displayMode).toBe("inline");
+      expect(props.onDisplayModeChange).toEqual(expect.any(Function));
+    });
+
     it("prefers the streamed live trace over the prelude trace once a snapshot exists", async () => {
       const pendingExecution = {
         toolName: "create_view",
@@ -1051,8 +1082,17 @@ describe("PlaygroundMain", () => {
           name: "Claude Sonnet 4.5",
           provider: "anthropic",
         },
+        {
+          id: "gemini-2.5-pro",
+          name: "Gemini 2.5 Pro",
+          provider: "google",
+        },
       ];
-      mockUseChatSession.selectedModelIds = ["gpt-4", "claude-sonnet-4-5"];
+      mockUseChatSession.selectedModelIds = [
+        "gpt-4",
+        "claude-sonnet-4-5",
+        "gemini-2.5-pro",
+      ];
       mockUseChatSession.multiModelEnabled = true;
       mockUseChatSession.traceViewsSupported = true;
 
@@ -1068,13 +1108,15 @@ describe("PlaygroundMain", () => {
         screen.getByText("Try one of these to get started"),
       ).toBeInTheDocument();
       expect(screen.getAllByTestId("multi-model-playground-card")).toHaveLength(
-        2,
+        3,
       );
       expect(
         screen.getByTestId("playground-multi-model-compare-section"),
       ).toHaveClass("hidden");
       const grid = screen.getByTestId("playground-multi-model-grid");
       expect(grid.className.includes("hidden")).toBe(false);
+      expect(grid).toHaveClass("xl:grid-cols-3");
+      expect(grid).not.toHaveClass("2xl:grid-cols-3");
       expect(screen.getByTestId("trace-view-tabs")).toBeInTheDocument();
       expect(screen.getAllByTestId("chat-input")).not.toHaveLength(0);
       expect(

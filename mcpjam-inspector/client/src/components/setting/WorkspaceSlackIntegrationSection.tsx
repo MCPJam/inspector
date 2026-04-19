@@ -2,9 +2,9 @@ import { useState } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
 import { toast } from "sonner";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { Badge } from "@mcpjam/design-system/badge";
+import { Button } from "@mcpjam/design-system/button";
+import { Input } from "@mcpjam/design-system/input";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -14,7 +14,7 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
+} from "@mcpjam/design-system/alert-dialog";
 import { useWorkspaceSlackIntegration } from "@/hooks/useWorkspaceSlackIntegration";
 
 interface WorkspaceSlackIntegrationSectionProps {
@@ -186,19 +186,6 @@ export function WorkspaceSlackIntegrationSection({
               <Badge variant={isConnected ? "secondary" : "outline"}>
                 {isConnected ? "Connected" : "Not connected"}
               </Badge>
-              {status?.lastTestStatus ? (
-                <Badge
-                  variant={
-                    status.lastTestStatus === "success"
-                      ? "secondary"
-                      : "destructive"
-                  }
-                >
-                  {status.lastTestStatus === "success"
-                    ? "Last test passed"
-                    : "Last test failed"}
-                </Badge>
-              ) : null}
             </div>
             <p className="text-sm text-muted-foreground">
               Send workspace notifications to a Slack channel with an incoming

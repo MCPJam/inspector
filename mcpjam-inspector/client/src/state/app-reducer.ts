@@ -60,6 +60,9 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         retryCount: 0,
         enabled: true,
       };
+      const shouldUseOAuth =
+        action.useOAuth ??
+        (baseServer.useOAuth === true || action.tokens != null);
       const nextServer = setStatus(baseServer, "connected", {
         config: action.config,
         lastConnectionTime: new Date(),
@@ -67,8 +70,9 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         lastError: undefined,
         oauthTokens: action.tokens,
         enabled: true,
-        // Track whether this server uses OAuth based on whether tokens were provided
-        useOAuth: action.tokens != null,
+        // Hosted workspace OAuth can succeed without browser-side tokens.
+        // Preserve explicit auth mode when the dispatch provides it.
+        useOAuth: shouldUseOAuth,
       });
       return {
         ...state,
@@ -130,6 +134,10 @@ export function appReducer(state: AppState, action: AppAction): AppState {
           ...state.servers,
           [action.name]: nextServer,
         },
+        // When the user explicitly reconnects a server, make it the selected
+        // one so downstream tabs (App Builder, Tools, etc.) follow the user's
+        // most recent intent instead of a stale prior selection.
+        selectedServer: action.select ? action.name : state.selectedServer,
       };
     }
 

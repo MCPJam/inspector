@@ -43,6 +43,7 @@ const UNPROTECTED_PREFIXES = [
   "/api/apps/chatgpt-apps/", // ChatGPT widgets - loaded in sandboxed iframes, can't send headers
   "/api/mcp/adapter-http/", // HTTP adapter for tunneled MCP clients - auth via URL secrecy
   "/api/mcp/manager-http/", // HTTP manager for tunneled MCP clients - auth via URL secrecy
+  "/api/mcp/xaa/.well-known/", // Public XAA issuer discovery + JWKS for external authorization servers
 ];
 
 /**

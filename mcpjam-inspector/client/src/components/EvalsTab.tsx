@@ -22,7 +22,7 @@ import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
 import type { EvalCase } from "./evals/types";
 import { EXPLORE_SUITE_TAG, isExploreSuite } from "./evals/constants";
-import { shouldAutoOpenPlaygroundCasesView } from "./evals/playground-route-preferences";
+import { getPlaygroundCasesRedirect } from "./evals/playground-route-preferences";
 
 interface EvalsTabProps {
   selectedServer?: string;
@@ -137,6 +137,23 @@ export function EvalsTab({
   }, [selectedSuite, suiteDetails, activeIterations]);
   const exploreSuite = selectedSuite;
   const exploreCases = suiteDetails?.testCases ?? EMPTY_CASES;
+  const exploreCaseIdsSignature = useMemo(
+    () => exploreCases.map((testCase) => testCase._id).join("\u0000"),
+    [exploreCases],
+  );
+  const exploreRunIdsSignature = useMemo(
+    () => runsForSelectedSuite.map((run) => run._id).join("\u0000"),
+    [runsForSelectedSuite],
+  );
+  const iterationRunIdsSignature = useMemo(
+    () =>
+      sortedIterations
+        .flatMap((iteration) =>
+          iteration.suiteRunId ? [iteration.suiteRunId] : [],
+        )
+        .join("\u0000"),
+    [sortedIterations],
+  );
 
   useEffect(() => {
     if (
@@ -237,29 +254,37 @@ export function EvalsTab({
 
   useEffect(() => {
     if (!exploreSuite) return;
-    if (
-      !shouldAutoOpenPlaygroundCasesView({
-        route,
-        exploreSuiteId: exploreSuite._id,
-        isSuiteDetailsLoading: queries.isSuiteDetailsLoading,
-        runsCount: runsForSelectedSuite.length,
-      })
-    ) {
+    const testCaseIds = exploreCaseIdsSignature
+      ? exploreCaseIdsSignature.split("\u0000")
+      : [];
+    const runIds = exploreRunIdsSignature
+      ? exploreRunIdsSignature.split("\u0000")
+      : [];
+    const iterationRunIds = iterationRunIdsSignature
+      ? iterationRunIdsSignature.split("\u0000")
+      : [];
+    const redirectRoute = getPlaygroundCasesRedirect({
+      route,
+      exploreSuiteId: exploreSuite._id,
+      isSuiteDetailsLoading: queries.isSuiteDetailsLoading,
+      isSuiteRunsLoading: queries.isSuiteRunsLoading,
+      runsCount: runsForSelectedSuite.length,
+      testCaseIds,
+      runIds,
+      iterationRunIds,
+    });
+    if (!redirectRoute) {
       return;
     }
 
-    navigatePlaygroundEvalsRoute(
-      {
-        type: "suite-overview",
-        suiteId: exploreSuite._id,
-        view: "test-cases",
-      },
-      { replace: route.type !== "test-detail" && route.type !== "test-edit" },
-    );
+    navigatePlaygroundEvalsRoute(redirectRoute, { replace: true });
   }, [
-    exploreCases.length,
+    exploreCaseIdsSignature,
     exploreSuite,
+    exploreRunIdsSignature,
+    iterationRunIdsSignature,
     queries.isSuiteDetailsLoading,
+    queries.isSuiteRunsLoading,
     route,
     runsForSelectedSuite.length,
   ]);

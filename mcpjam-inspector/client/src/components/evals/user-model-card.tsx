@@ -1,7 +1,7 @@
 import { Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { ModelDefinition } from "@/shared/types";
-import { Badge } from "@/components/ui/badge";
+import { Badge } from "@mcpjam/design-system/badge";
 import { getProviderLogo, getProviderColor } from "@/lib/provider-logos";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 

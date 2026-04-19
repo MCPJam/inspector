@@ -28,20 +28,20 @@ import {
   type ToolState,
   isDynamicTool,
 } from "../thread-helpers";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Badge } from "@mcpjam/design-system/badge";
+import { Button } from "@mcpjam/design-system/button";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from "@/components/ui/tooltip";
+} from "@mcpjam/design-system/tooltip";
 import { CspDebugPanel } from "../csp-debug-panel";
 import { JsonEditor } from "@/components/ui/json-editor";
 import { cn } from "@/lib/chat-utils";
 import { TextPart } from "./text-part";
 import { useClientConfigStore } from "@/stores/client-config-store";
 import { extractHostDisplayModes } from "@/lib/client-config";
-import { useSandboxHostTheme } from "@/contexts/sandbox-host-style-context";
+import { useChatboxHostTheme } from "@/contexts/chatbox-host-style-context";
 
 type ApprovalVisualState = "pending" | "approved" | "denied";
 type TraceDisplayMode = "markdown" | "json-markdown";
@@ -122,8 +122,8 @@ export function ToolPart({
   const toolState = getToolStateMeta(state);
   const StatusIcon = toolState?.Icon;
   const themeMode = usePreferencesStore((s) => s.themeMode);
-  const sandboxHostTheme = useSandboxHostTheme();
-  const resolvedThemeMode = sandboxHostTheme ?? themeMode;
+  const chatboxHostTheme = useChatboxHostTheme();
+  const resolvedThemeMode = chatboxHostTheme ?? themeMode;
   const mcpIconClassName =
     resolvedThemeMode === "dark" ? "h-3 w-3 filter invert" : "h-3 w-3";
   const pendingApprovalClasses =

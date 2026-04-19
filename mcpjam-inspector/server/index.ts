@@ -97,6 +97,7 @@ import {
   ALLOWED_HOSTS,
 } from "./config";
 import "./types/hono"; // Type extensions
+import { initXAAIdpKeyPair } from "./services/xaa-idp-keypair";
 
 // Utility function to extract MCP server config from environment variables
 function getMCPConfigFromEnv() {
@@ -187,6 +188,7 @@ warnOnConvexDevMisconfiguration(loadedEnv);
 
 // Generate session token for API authentication
 generateSessionToken();
+initXAAIdpKeyPair();
 
 startGuestAuthProvisioningInBackground();
 const app = new Hono().onError((err, c) => {
@@ -238,15 +240,27 @@ app.use("*", securityHeadersMiddleware);
 // 2. Origin validation (blocks CSRF/DNS rebinding)
 app.use("*", originValidationMiddleware);
 
-// 3. Hosted mode partition blocks legacy API families.
+// 3. Hosted mode partition blocks legacy API families (health endpoints exempt).
 if (HOSTED_MODE) {
   app.use("/api/session-token", (c) =>
     strictModeResponse(c, "/api/session-token"),
   );
-  app.use("/api/mcp", (c) => strictModeResponse(c, "/api/mcp/*"));
-  app.use("/api/mcp/*", (c) => strictModeResponse(c, "/api/mcp/*"));
-  app.use("/api/apps", (c) => strictModeResponse(c, "/api/apps/*"));
-  app.use("/api/apps/*", (c) => strictModeResponse(c, "/api/apps/*"));
+  app.use("/api/mcp", (c, next) => {
+    if (c.req.path === "/api/mcp/health") return next();
+    return strictModeResponse(c, "/api/mcp/*");
+  });
+  app.use("/api/mcp/*", (c, next) => {
+    if (c.req.path === "/api/mcp/health") return next();
+    return strictModeResponse(c, "/api/mcp/*");
+  });
+  app.use("/api/apps", (c, next) => {
+    if (c.req.path === "/api/apps/health") return next();
+    return strictModeResponse(c, "/api/apps/*");
+  });
+  app.use("/api/apps/*", (c, next) => {
+    if (c.req.path === "/api/apps/health") return next();
+    return strictModeResponse(c, "/api/apps/*");
+  });
 }
 
 // 4. Session authentication (blocks unauthorized API requests)
@@ -293,6 +307,22 @@ app.use(
 if (!HOSTED_MODE) {
   app.route("/api/apps", appsRoutes);
   app.route("/api/mcp", mcpRoutes);
+} else {
+  // Health endpoints always available, even when legacy API families are disabled.
+  app.get("/api/mcp/health", (c) =>
+    c.json({
+      service: "MCP API",
+      status: "ready",
+      timestamp: new Date().toISOString(),
+    }),
+  );
+  app.get("/api/apps/health", (c) =>
+    c.json({
+      service: "Apps API",
+      status: "ready",
+      timestamp: new Date().toISOString(),
+    }),
+  );
 }
 app.route("/api/web", webRoutes);
 

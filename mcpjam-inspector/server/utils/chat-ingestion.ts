@@ -1,7 +1,48 @@
 import { logger } from "./logger";
+import type { EvalTraceSpan } from "@/shared/eval-trace";
+import type { LiveChatTraceUsage } from "@/shared/live-chat-trace";
 
 const DEFAULT_INGEST_TIMEOUT_MS = 5_000;
 const MAX_RESPONSE_PREVIEW_CHARS = 200;
+
+/**
+ * Headers worth forwarding from the browser request to the Convex ingestion
+ * endpoint so that usage-insights enrichment (device, language, geo) works.
+ */
+const ENRICHMENT_HEADERS_TO_FORWARD = [
+  "user-agent",
+  "accept-language",
+  // Geo headers injected by CDN/edge providers
+  "cf-ipcountry",
+  "x-vercel-ip-country",
+  "x-vercel-ip-country-region",
+  "x-vercel-ip-city",
+  "x-geo-country",
+  "x-geo-region",
+  "x-geo-city",
+  // Client IP headers for visitor hashing
+  "x-forwarded-for",
+  "x-real-ip",
+  "cf-connecting-ip",
+] as const;
+
+/**
+ * Pick enrichment-relevant headers from an incoming request so they can be
+ * forwarded to the Convex `/ingest-chat` endpoint.
+ */
+export function pickEnrichmentHeaders(
+  reqHeaders: { get(name: string): string | null | undefined } | Headers,
+): Record<string, string> {
+  const result: Record<string, string> = {};
+  for (const name of ENRICHMENT_HEADERS_TO_FORWARD) {
+    const value =
+      typeof reqHeaders.get === "function" ? reqHeaders.get(name) : undefined;
+    if (value) {
+      result[name] = value;
+    }
+  }
+  return result;
+}
 
 interface ResumeConfig {
   systemPrompt?: string;
@@ -10,17 +51,34 @@ interface ResumeConfig {
   selectedServers?: string[];
 }
 
+/**
+ * Shape of a single completed chat turn's trace as it flows from the stream
+ * producers (`streamDirectChatWithLiveTrace`, `handleMCPJamFreeChatModel`)
+ * through `persistChatSessionToConvex` to the Convex `/ingest-chat` handler.
+ * Kept in one place so the producer callbacks and the wire body can't drift.
+ */
+export interface PersistedTurnTrace {
+  turnId: string;
+  promptIndex: number;
+  startedAt: number;
+  endedAt: number;
+  spans: EvalTraceSpan[];
+  usage?: LiveChatTraceUsage;
+  finishReason?: string;
+  modelId: string;
+}
+
 interface PersistChatSessionOptions {
   chatSessionId: string;
   modelId: string;
   modelSource: "mcpjam" | "byok";
   authHeader?: string;
   workspaceId?: string;
-  sourceType?: "serverShare" | "sandbox" | "direct";
+  sourceType?: "serverShare" | "chatbox" | "direct";
   directVisibility?: "private" | "workspace";
   surface?: "preview" | "share_link";
   shareToken?: string;
-  sandboxToken?: string;
+  chatboxToken?: string;
   serverId?: string;
   visitorDisplayName?: string;
   sessionMessages?: unknown[];
@@ -37,6 +95,9 @@ interface PersistChatSessionOptions {
   timeoutMs?: number;
   resumeConfig?: ResumeConfig;
   expectedVersion?: number;
+  turnTrace?: PersistedTurnTrace;
+  /** Headers from the original browser request to forward for usage enrichment (user-agent, accept-language, geo headers). */
+  forwardHeaders?: Record<string, string>;
 }
 
 function isAbortError(error: unknown): boolean {
@@ -91,6 +152,7 @@ export async function persistChatSessionToConvex(
       headers: {
         "content-type": "application/json",
         authorization: options.authHeader,
+        ...options.forwardHeaders,
       },
       signal: controller.signal,
       body: JSON.stringify({
@@ -104,7 +166,7 @@ export async function persistChatSessionToConvex(
           : {}),
         ...(options.surface ? { surface: options.surface } : {}),
         ...(options.shareToken ? { shareToken: options.shareToken } : {}),
-        ...(options.sandboxToken ? { sandboxToken: options.sandboxToken } : {}),
+        ...(options.chatboxToken ? { chatboxToken: options.chatboxToken } : {}),
         ...(options.serverId ? { serverId: options.serverId } : {}),
         ...(options.visitorDisplayName
           ? { visitorDisplayName: options.visitorDisplayName }
@@ -132,6 +194,7 @@ export async function persistChatSessionToConvex(
         ...(options.expectedVersion !== undefined
           ? { expectedVersion: options.expectedVersion }
           : {}),
+        ...(options.turnTrace ? { turnTrace: options.turnTrace } : {}),
       }),
     });
 

@@ -5,17 +5,17 @@ import {
   OAuthProxyError,
 } from "../src/oauth-proxy.js";
 
-jest.mock("node:dns/promises", () => ({
+vi.mock("node:dns/promises", () => ({
   __esModule: true,
   default: {
-    resolve4: jest.fn().mockResolvedValue([]),
-    resolve6: jest.fn().mockResolvedValue([]),
+    resolve4: vi.fn().mockResolvedValue([]),
+    resolve6: vi.fn().mockResolvedValue([]),
   },
 }));
 
 describe("oauth-proxy helpers", () => {
   beforeEach(() => {
-    global.fetch = jest.fn() as unknown as typeof fetch;
+    global.fetch = vi.fn() as unknown as typeof fetch;
   });
 
   it("blocks private hosts when httpsOnly is enabled", async () => {
@@ -35,8 +35,8 @@ describe("oauth-proxy helpers", () => {
   });
 
   it("preserves the original hostname when fetching a validated URL", async () => {
-    jest.mocked(dns.resolve4).mockResolvedValueOnce(["93.184.216.34"]);
-    jest.mocked(dns.resolve6).mockResolvedValueOnce([]);
+    vi.mocked(dns.resolve4).mockResolvedValueOnce(["93.184.216.34"]);
+    vi.mocked(dns.resolve6).mockResolvedValueOnce([]);
 
     (global.fetch as jest.Mock).mockResolvedValueOnce(
       new Response(JSON.stringify({ ok: true }), {

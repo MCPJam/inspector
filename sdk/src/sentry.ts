@@ -1,10 +1,14 @@
 import { createHash } from "node:crypto";
-import packageJson from "../package.json";
 import { EvalReportingError } from "./errors.js";
+
+// Injected at build time by tsup (see sdk/tsup.config.ts). Declared here so
+// TypeScript recognizes the identifier; esbuild replaces it with a string
+// literal, so the version survives re-bundling by SDK consumers.
+declare const __MCPJAM_SDK_VERSION__: string;
 
 const SDK_SENTRY_DSN =
   "https://490f3f2a8a287f8a9f86eea23c16c01e@o4510109778378752.ingest.us.sentry.io/4511018761125888";
-const SDK_VERSION = packageJson.version;
+const SDK_VERSION = __MCPJAM_SDK_VERSION__;
 const SDK_RELEASE = `@mcpjam/sdk@${SDK_VERSION}`;
 const API_KEY_HASH_LENGTH = 16;
 const CAPTURED_ERROR_SYMBOL = Symbol.for("@mcpjam/sdk/captured-eval-error");

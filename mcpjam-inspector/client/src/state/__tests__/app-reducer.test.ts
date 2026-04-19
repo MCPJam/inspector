@@ -153,6 +153,47 @@ describe("appReducer", () => {
     });
   });
 
+  describe("RECONNECT_REQUEST", () => {
+    it("selects the reconnected server when select is true", () => {
+      const existingServer = createServer("server-b", {
+        connectionStatus: "disconnected",
+      });
+      const state = createInitialState({
+        selectedServer: "server-a",
+        servers: { "server-b": existingServer },
+      });
+
+      const result = appReducer(state, {
+        type: "RECONNECT_REQUEST",
+        name: "server-b",
+        config: existingServer.config,
+        select: true,
+      });
+
+      expect(result.selectedServer).toBe("server-b");
+      expect(result.servers["server-b"].connectionStatus).toBe("connecting");
+    });
+
+    it("does not change selection when select is omitted (backwards compatible)", () => {
+      const existingServer = createServer("server-b", {
+        connectionStatus: "disconnected",
+      });
+      const state = createInitialState({
+        selectedServer: "server-a",
+        servers: { "server-b": existingServer },
+      });
+
+      const result = appReducer(state, {
+        type: "RECONNECT_REQUEST",
+        name: "server-b",
+        config: existingServer.config,
+      });
+
+      expect(result.selectedServer).toBe("server-a");
+      expect(result.servers["server-b"].connectionStatus).toBe("connecting");
+    });
+  });
+
   describe("CONNECT_SUCCESS", () => {
     it("updates server to connected state", () => {
       const server = createServer("test", { connectionStatus: "connecting" });
@@ -211,6 +252,63 @@ describe("appReducer", () => {
 
       expect(result.servers["oauth-server"].oauthTokens).toEqual(tokens);
       expect(result.servers["oauth-server"].useOAuth).toBe(true);
+    });
+
+    it("preserves OAuth mode when hosted auth succeeds without browser tokens", () => {
+      const server = createServer("oauth-server", {
+        connectionStatus: "connecting",
+        useOAuth: true,
+      });
+      const workspace: Workspace = {
+        id: "workspace-1",
+        name: "Test",
+        servers: { "oauth-server": server },
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+      const state = createInitialState({
+        servers: { "oauth-server": server },
+        workspaces: { "workspace-1": workspace },
+        activeWorkspaceId: "workspace-1",
+      });
+
+      const result = appReducer(state, {
+        type: "CONNECT_SUCCESS",
+        name: "oauth-server",
+        config: server.config,
+      });
+
+      expect(result.servers["oauth-server"].useOAuth).toBe(true);
+      expect(result.servers["oauth-server"].oauthTokens).toBeUndefined();
+    });
+
+    it("allows explicit non-OAuth success to clear stale OAuth mode", () => {
+      const server = createServer("oauth-server", {
+        connectionStatus: "connecting",
+        useOAuth: true,
+      });
+      const workspace: Workspace = {
+        id: "workspace-1",
+        name: "Test",
+        servers: { "oauth-server": server },
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+      const state = createInitialState({
+        servers: { "oauth-server": server },
+        workspaces: { "workspace-1": workspace },
+        activeWorkspaceId: "workspace-1",
+      });
+
+      const result = appReducer(state, {
+        type: "CONNECT_SUCCESS",
+        name: "oauth-server",
+        config: server.config,
+        useOAuth: false,
+      });
+
+      expect(result.servers["oauth-server"].useOAuth).toBe(false);
+      expect(result.servers["oauth-server"].oauthTokens).toBeUndefined();
     });
 
     it("creates server if it does not exist (Convex-synced servers)", () => {

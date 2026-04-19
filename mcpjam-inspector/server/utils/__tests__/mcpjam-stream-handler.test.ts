@@ -160,7 +160,17 @@ describe("mcpjam-stream-handler", () => {
         ],
       },
     ]);
-    expect(onConversationComplete).toHaveBeenCalledWith(messages);
+    expect(onConversationComplete).toHaveBeenCalledWith(
+      messages,
+      expect.objectContaining({
+        turnId: expect.any(String),
+        promptIndex: expect.any(Number),
+        startedAt: expect.any(Number),
+        endedAt: expect.any(Number),
+        spans: expect.any(Array),
+        modelId: expect.any(String),
+      }),
+    );
   });
 
   it("removes stale disconnected tool history before sending the next turn to Convex", async () => {

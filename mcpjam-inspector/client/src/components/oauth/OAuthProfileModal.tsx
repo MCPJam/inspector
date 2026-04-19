@@ -1,22 +1,22 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
+import { Button } from "@mcpjam/design-system/button";
+import { Input } from "@mcpjam/design-system/input";
+import { Textarea } from "@mcpjam/design-system/textarea";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
+} from "@mcpjam/design-system/select";
 import {
   Dialog,
   DialogContent,
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
-import { Label } from "@/components/ui/label";
+} from "@mcpjam/design-system/dialog";
+import { Label } from "@mcpjam/design-system/label";
 import {
   getDefaultRegistrationStrategy,
   getSupportedRegistrationStrategies,
@@ -34,7 +34,7 @@ import {
   AccordionContent,
   AccordionItem,
   AccordionTrigger,
-} from "@/components/ui/accordion";
+} from "@mcpjam/design-system/accordion";
 
 interface OAuthProfileModalProps {
   open: boolean;
@@ -271,7 +271,7 @@ export function OAuthProfileModal({
               required
             />
           </div>
-          <div className="space-y-6 max-h-[65vh] overflow-y-auto pr-1 pb-4">
+          <div className="space-y-6 max-h-[65vh] overflow-y-auto px-1 pb-4">
             <div className="space-y-4">
               <div className="space-y-2">
                 <Label

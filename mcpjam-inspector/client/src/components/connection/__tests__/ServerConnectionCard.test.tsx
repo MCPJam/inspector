@@ -328,22 +328,25 @@ describe("ServerConnectionCard", () => {
       });
       render(<ServerConnectionCard server={server} {...defaultProps} />);
 
-      // Find the copy button (it's inside the command display area)
-      const copyButtons = screen.getAllByRole("button");
-      const copyButton = copyButtons.find(
-        (btn) =>
-          btn.querySelector("svg")?.classList.contains("lucide-copy") ||
-          btn.className.includes("absolute"),
+      fireEvent.click(
+        screen.getByRole("button", { name: "Copy server command" }),
       );
 
-      if (copyButton) {
-        fireEvent.click(copyButton);
-        await waitFor(() => {
-          expect(mockClipboard.writeText).toHaveBeenCalledWith(
-            "node server.js",
-          );
-        });
-      }
+      await waitFor(() => {
+        expect(mockClipboard.writeText).toHaveBeenCalledWith("node server.js");
+      });
+    });
+
+    it("does not open the actions menu when right-clicking the copy button", () => {
+      render(
+        <ServerConnectionCard server={createServer()} {...defaultProps} />,
+      );
+
+      fireEvent.contextMenu(
+        screen.getByRole("button", { name: "Copy server command" }),
+      );
+
+      expect(screen.queryByText("Configure")).not.toBeInTheDocument();
     });
   });
 

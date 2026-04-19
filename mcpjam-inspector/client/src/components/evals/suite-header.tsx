@@ -1,10 +1,10 @@
 import { useState, useCallback, useEffect, useMemo } from "react";
-import { Button } from "@/components/ui/button";
+import { Button } from "@mcpjam/design-system/button";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from "@/components/ui/tooltip";
+} from "@mcpjam/design-system/tooltip";
 import {
   Code2,
   GitBranch,
@@ -376,7 +376,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
         {onOpenExportSuite ? (
           <Button size="sm" variant="outline" onClick={onOpenExportSuite}>
             <Code2 className="mr-2 h-4 w-4" />
-            Export
+            Setup SDK
           </Button>
         ) : null}
 

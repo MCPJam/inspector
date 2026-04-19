@@ -1,7 +1,9 @@
-const mockReportEvalResultsSafely = jest.fn();
+const reportEvalResultsMocks = vi.hoisted(() => ({
+  reportEvalResultsSafely: vi.fn(),
+}));
 
-jest.mock("../src/report-eval-results.js", () => ({
-  reportEvalResultsSafely: mockReportEvalResultsSafely,
+vi.mock("../src/report-eval-results.js", () => ({
+  reportEvalResultsSafely: reportEvalResultsMocks.reportEvalResultsSafely,
 }));
 
 import { EvalSuite } from "../src/EvalSuite";
@@ -42,20 +44,20 @@ function createReplayAwareAgent() {
   ];
 
   return {
-    prompt: jest.fn().mockResolvedValue(createPromptResult()),
+    prompt: vi.fn().mockResolvedValue(createPromptResult()),
     withOptions() {
       return this;
     },
-    getPromptHistory: jest.fn().mockReturnValue([]),
-    resetPromptHistory: jest.fn(),
-    getServerReplayConfigs: jest.fn().mockReturnValue(replayConfigs),
+    getPromptHistory: vi.fn().mockReturnValue([]),
+    resetPromptHistory: vi.fn(),
+    getServerReplayConfigs: vi.fn().mockReturnValue(replayConfigs),
   };
 }
 
 describe("server replay config auto-save wiring", () => {
   beforeEach(() => {
-    mockReportEvalResultsSafely.mockReset();
-    mockReportEvalResultsSafely.mockResolvedValue(null);
+    reportEvalResultsMocks.reportEvalResultsSafely.mockReset();
+    reportEvalResultsMocks.reportEvalResultsSafely.mockResolvedValue(null);
   });
 
   it("exposes replay configs from TestAgent when a client manager is attached", () => {
@@ -71,7 +73,7 @@ describe("server replay config auto-save wiring", () => {
       model: "openai/gpt-4o",
       apiKey: "test-api-key",
       mcpClientManager: {
-        getServerReplayConfigs: jest.fn().mockReturnValue(replayConfigs),
+        getServerReplayConfigs: vi.fn().mockReturnValue(replayConfigs),
       } as any,
     });
 
@@ -96,7 +98,7 @@ describe("server replay config auto-save wiring", () => {
       },
     });
 
-    expect(mockReportEvalResultsSafely).toHaveBeenCalledWith(
+    expect(reportEvalResultsMocks.reportEvalResultsSafely).toHaveBeenCalledWith(
       expect.objectContaining({
         serverReplayConfigs: [
           {
@@ -130,8 +132,10 @@ describe("server replay config auto-save wiring", () => {
       },
     });
 
-    expect(mockReportEvalResultsSafely).toHaveBeenCalledTimes(1);
-    expect(mockReportEvalResultsSafely).toHaveBeenCalledWith(
+    expect(
+      reportEvalResultsMocks.reportEvalResultsSafely
+    ).toHaveBeenCalledTimes(1);
+    expect(reportEvalResultsMocks.reportEvalResultsSafely).toHaveBeenCalledWith(
       expect.objectContaining({
         serverReplayConfigs: [
           {
@@ -161,7 +165,7 @@ describe("server replay config auto-save wiring", () => {
       },
     });
 
-    expect(mockReportEvalResultsSafely).toHaveBeenCalledWith(
+    expect(reportEvalResultsMocks.reportEvalResultsSafely).toHaveBeenCalledWith(
       expect.objectContaining({
         serverReplayConfigs: [
           {

@@ -5,14 +5,14 @@ import {
   type RunServerDoctorInput,
   type ServerDoctorResult,
 } from "@mcpjam/sdk";
-import { getCliRpcLogEvents, type CliRpcLogCollector } from "./rpc-logs";
-import { redactSensitiveValue } from "./redaction";
-import { operationalError } from "./output";
+import { getCliRpcLogEvents, type CliRpcLogCollector } from "./rpc-logs.js";
+import { redactSensitiveValue } from "./redaction.js";
+import { operationalError } from "./output.js";
 import {
   normalizeCliError,
   toStructuredError,
   type OutputFormat,
-} from "./output";
+} from "./output.js";
 
 type StructuredCommandError = ReturnType<typeof toStructuredError>["error"];
 

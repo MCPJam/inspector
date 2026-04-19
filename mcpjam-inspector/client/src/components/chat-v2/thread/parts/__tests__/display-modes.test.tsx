@@ -62,7 +62,7 @@ vi.mock("@/lib/mcp-ui/mcp-apps-utils", () => ({
   UIType: { MCP_APPS: "mcp-apps", OPENAI_SDK: "openai-apps" },
 }));
 
-vi.mock("@/components/ui/badge", () => ({
+vi.mock("@mcpjam/design-system/badge", () => ({
   Badge: ({ children, ...props }: any) => <span {...props}>{children}</span>,
 }));
 

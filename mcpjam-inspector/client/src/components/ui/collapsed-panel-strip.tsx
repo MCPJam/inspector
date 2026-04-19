@@ -1,11 +1,11 @@
 import { PanelRightOpen, PanelLeftOpen } from "lucide-react";
-import { Button } from "./button";
+import { Button } from "@mcpjam/design-system/button";
 import {
   Tooltip,
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
-} from "./tooltip";
+} from "@mcpjam/design-system/tooltip";
 
 interface CollapsedPanelStripProps {
   onOpen: () => void;

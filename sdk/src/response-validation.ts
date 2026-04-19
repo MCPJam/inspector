@@ -1,7 +1,4 @@
-import {
-  CallToolResultSchema,
-  ContentBlockSchema,
-} from "@modelcontextprotocol/sdk/types.js";
+import { z } from "zod";
 import { redactSensitiveValue } from "./redaction.js";
 import type {
   StructuredCaseResult,
@@ -11,6 +8,64 @@ import { summarizeStructuredCases } from "./structured-reporting.js";
 
 const MAX_TEXT_PREVIEW_CHARS = 160;
 const MAX_REPORTED_CONTENT_ITEMS = 10;
+
+const MetaObjectSchema = z.record(z.string(), z.unknown());
+
+const EmbeddedResourceSchema = z.union([
+  z.object({
+    uri: z.string(),
+    mimeType: z.string().optional(),
+    text: z.string(),
+    _meta: MetaObjectSchema.optional(),
+  }),
+  z.object({
+    uri: z.string(),
+    mimeType: z.string().optional(),
+    blob: z.string(),
+    _meta: MetaObjectSchema.optional(),
+  }),
+  z.object({
+    uri: z.string(),
+    mimeType: z.string().optional(),
+    _meta: MetaObjectSchema,
+  }),
+]);
+
+const ContentBlockSchema = z.union([
+  z.object({
+    type: z.literal("text"),
+    text: z.string(),
+  }),
+  z.object({
+    type: z.literal("image"),
+    data: z.string(),
+    mimeType: z.string(),
+  }),
+  z.object({
+    type: z.literal("audio"),
+    data: z.string(),
+    mimeType: z.string(),
+  }),
+  z.object({
+    type: z.literal("resource"),
+    resource: EmbeddedResourceSchema,
+  }),
+  z.object({
+    type: z.literal("resource_link"),
+    uri: z.string(),
+    name: z.string(),
+    title: z.string().optional(),
+    mimeType: z.string().optional(),
+    description: z.string().optional(),
+  }),
+]);
+
+const CallToolResultSchema = z.object({
+  content: z.array(ContentBlockSchema).optional(),
+  structuredContent: z.unknown().optional(),
+  _meta: MetaObjectSchema.optional(),
+  isError: z.boolean().optional(),
+});
 
 export interface ToolCallEnvelopeValidationDetails {
   topLevelType: string;

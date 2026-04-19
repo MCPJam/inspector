@@ -3,7 +3,7 @@ import test from "node:test";
 import {
   detectOutputFormatFromArgv,
   resolveOutputFormat,
-} from "../src/lib/output";
+} from "../src/lib/output.js";
 
 test("resolveOutputFormat defaults to human on TTY and json otherwise", () => {
   assert.equal(resolveOutputFormat(undefined, true), "human");

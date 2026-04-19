@@ -2,13 +2,13 @@
  * Transport utilities for MCPClientManager
  */
 
-import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
-import type { TransportSendOptions } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type {
+  Transport,
+  TransportSendOptions,
   JSONRPCMessage,
   MessageExtraInfo,
-} from "@modelcontextprotocol/sdk/types.js";
-import type { StreamableHTTPClientTransportOptions } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+  StreamableHTTPClientTransportOptions,
+} from "@modelcontextprotocol/client";
 import type { RpcLogger } from "./types.js";
 
 /**

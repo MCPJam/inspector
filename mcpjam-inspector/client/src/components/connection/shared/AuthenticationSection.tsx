@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Input } from "@/components/ui/input";
+import { Input } from "@mcpjam/design-system/input";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import {
   Select,
@@ -7,7 +7,7 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
+} from "@mcpjam/design-system/select";
 
 interface AuthenticationSectionProps {
   authType: "oauth" | "bearer" | "none";

@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 import type { EvalSuite, EvalSuiteOverviewEntry } from "./types";
 import { cn } from "@/lib/utils";
-import { Input } from "@/components/ui/input";
+import { Input } from "@mcpjam/design-system/input";
 
 interface SuitesOverviewProps {
   overview: EvalSuiteOverviewEntry[];

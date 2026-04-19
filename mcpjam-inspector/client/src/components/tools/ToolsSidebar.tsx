@@ -1,16 +1,16 @@
-import type { Tool } from "@modelcontextprotocol/sdk/types.js";
+import type { Tool } from "@modelcontextprotocol/client";
 import { RefreshCw, Play, Clock, PanelLeftClose, Save } from "lucide-react";
 import {
   Accordion,
   AccordionItem,
   AccordionTrigger,
   AccordionContent,
-} from "../ui/accordion";
+} from "@mcpjam/design-system/accordion";
 import { type RefObject, useMemo, useState, useEffect } from "react";
-import { Button } from "../ui/button";
-import { ScrollArea } from "../ui/scroll-area";
+import { Button } from "@mcpjam/design-system/button";
+import { ScrollArea } from "@mcpjam/design-system/scroll-area";
 import { SearchInput } from "../ui/search-input";
-import { Input } from "../ui/input";
+import { Input } from "@mcpjam/design-system/input";
 import { ToolItem } from "./ToolItem";
 import { SavedRequestItem } from "./SavedRequestItem";
 import type { SavedRequest } from "@/lib/types/request-types";

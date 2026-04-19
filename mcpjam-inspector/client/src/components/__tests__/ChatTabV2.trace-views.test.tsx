@@ -354,6 +354,20 @@ describe("ChatTabV2 trace views", () => {
     expect(screen.getByTestId("trace-view-tabs")).toBeInTheDocument();
   });
 
+  it("lets the standard empty-state content scroll within the centered shell on short viewports", () => {
+    mockUseChatSession.messages = [];
+
+    render(<ChatTabV2 {...defaultProps} />);
+
+    const body = screen.getByTestId("chat-empty-state-body");
+    const content = body.firstElementChild;
+
+    expect(body).not.toHaveClass("overflow-hidden");
+    expect(content).toBeInstanceOf(HTMLElement);
+    expect(content).toHaveClass("overflow-y-auto", "overscroll-contain");
+    expect(content).not.toHaveClass("shrink-0");
+  });
+
   it("shows the sample raw JSON empty state on an empty thread when Raw is selected", () => {
     mockUseChatSession.messages = [];
     mockUseChatSession.traceViewsSupported = true;
@@ -618,10 +632,16 @@ describe("ChatTabV2 trace views", () => {
         name: "Claude Sonnet 4.5",
         provider: "anthropic",
       },
+      {
+        id: "google/gemini-2.5-pro",
+        name: "Gemini 2.5 Pro",
+        provider: "google",
+      },
     ];
     mockUseChatSession.selectedModelIds = [
       "openai/gpt-5-mini",
       "anthropic/claude-sonnet-4-5",
+      "google/gemini-2.5-pro",
     ];
     mockUseChatSession.multiModelEnabled = true;
     mockUseChatSession.traceViewsSupported = true;
@@ -634,7 +654,14 @@ describe("ChatTabV2 trace views", () => {
       />,
     );
 
-    expect(screen.getAllByTestId("multi-model-card")).toHaveLength(2);
+    const cards = screen.getAllByTestId("multi-model-card");
+    expect(cards).toHaveLength(3);
+    const grid = cards[0]?.parentElement;
+    if (!grid) {
+      throw new Error("Expected multi-model cards to be rendered in a grid");
+    }
+    expect(grid).toHaveClass("xl:grid-cols-3");
+    expect(grid).not.toHaveClass("2xl:grid-cols-3");
     expect(screen.getByTestId("trace-view-tabs")).toBeInTheDocument();
   });
 

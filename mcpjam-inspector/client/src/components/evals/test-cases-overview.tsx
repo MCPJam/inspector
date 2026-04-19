@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useConvex, useQuery } from "convex/react";
 import posthog from "posthog-js";
-import { CircleAlert, Loader2, Play, Trash2 } from "lucide-react";
+import { CircleAlert, Loader2, Play, Puzzle, Trash2 } from "lucide-react";
 import { toast } from "sonner";
-import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
+import { Button } from "@mcpjam/design-system/button";
+import { Checkbox } from "@mcpjam/design-system/checkbox";
+import { EmptyState } from "@/components/ui/empty-state";
 import {
   Dialog,
   DialogContent,
@@ -12,12 +13,12 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
+} from "@mcpjam/design-system/dialog";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from "@/components/ui/tooltip";
+} from "@mcpjam/design-system/tooltip";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { computeIterationResult } from "./pass-criteria";
@@ -292,12 +293,26 @@ export function TestCasesOverview({
 
   const batchDelete = Boolean(onDeleteTestCasesBatch);
   const showRunColumn = Boolean(onRunTestCase);
+  const suiteServers = suite.environment?.servers ?? [];
+  const missingSuiteServers =
+    connectedServerNames == null
+      ? []
+      : suiteServers.filter((serverName) => !connectedServerNames.has(serverName));
+  const showPersistentBatchHeader =
+    batchDelete && hideViewModeSelect && testCaseStats.length > 0;
+  const showDisconnectedPlaygroundEmptyState =
+    hideViewModeSelect &&
+    testCaseStats.length === 0 &&
+    missingSuiteServers.length > 0;
+  const disconnectedPlaygroundServerName =
+    missingSuiteServers[0] ?? suiteServers[0] ?? "your server";
 
   return (
     <>
       {/* Cases List */}
       <div className="rounded-xl border bg-card text-card-foreground flex flex-col max-h-[600px]">
-        {batchDelete && selectedCaseIds.size > 0 ? (
+        {batchDelete &&
+        (showPersistentBatchHeader || selectedCaseIds.size > 0) ? (
           <div className="border-b px-4 py-2 shrink-0 bg-muted/50 flex items-center justify-between">
             <div className="flex items-center gap-3 min-w-0">
               <Checkbox
@@ -306,17 +321,19 @@ export function TestCasesOverview({
                 aria-label="Select all cases"
                 disabled={testCaseStats.length === 0}
               />
-              <span className="text-xs font-medium truncate">
-                {selectedCaseIds.size}{" "}
-                {selectedCaseIds.size === 1 ? "case" : "cases"} selected
-              </span>
+              <span className="text-xs font-medium truncate">Select all</span>
             </div>
             <div className="flex items-center gap-2 shrink-0">
+              {selectedCaseIds.size > 0 && (
+                <span className="text-xs text-muted-foreground">
+                  {selectedCaseIds.size} selected
+                </span>
+              )}
               <Button
                 variant="outline"
                 size="sm"
                 onClick={() => setSelectedCaseIds(new Set())}
-                disabled={isBatchDeleting}
+                disabled={isBatchDeleting || selectedCaseIds.size === 0}
               >
                 Cancel
               </Button>
@@ -324,13 +341,13 @@ export function TestCasesOverview({
                 variant="destructive"
                 size="sm"
                 onClick={() => setShowBatchDeleteModal(true)}
-                disabled={isBatchDeleting}
+                disabled={isBatchDeleting || selectedCaseIds.size === 0}
               >
                 Delete
               </Button>
             </div>
           </div>
-        ) : (
+        ) : !showDisconnectedPlaygroundEmptyState ? (
           <div className="border-b px-4 py-2 shrink-0 flex items-center justify-between">
             <div>
               <p className="text-xs text-muted-foreground">{clickHint}</p>
@@ -350,7 +367,7 @@ export function TestCasesOverview({
               ) : null}
             </div>
           </div>
-        )}
+        ) : null}
 
         {/* Column Headers */}
         {testCaseStats.length > 0 && (
@@ -369,12 +386,20 @@ export function TestCasesOverview({
 
         <div className="divide-y overflow-y-auto">
           {testCaseStats.length === 0 ? (
-            <div className="px-4 py-12 text-center text-sm text-muted-foreground">
-              No cases found.
-            </div>
+            showDisconnectedPlaygroundEmptyState ? (
+              <EmptyState
+                icon={Puzzle}
+                title={`Start ${disconnectedPlaygroundServerName} to generate tests`}
+                description="Playground can automatically generate test cases once a server is connected."
+                className="h-auto min-h-[240px]"
+              />
+            ) : (
+              <div className="px-4 py-12 text-center text-sm text-muted-foreground">
+                No cases found.
+              </div>
+            )
           ) : (
             testCaseStats.map(({ testCase, lastRunIteration }) => {
-              const suiteServers = suite.environment?.servers ?? [];
               const missingServers =
                 connectedServerNames == null
                   ? []
@@ -557,6 +582,10 @@ export function TestCasesOverview({
                     key={testCase._id}
                     data-testid={`test-case-row-${testCase._id}`}
                     className="flex items-center gap-2 w-full px-4 py-2.5 transition-colors hover:bg-muted/50"
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      toggleCaseSelection(testCase._id);
+                    }}
                   >
                     <div className="flex justify-center w-7 shrink-0">
                       <Checkbox

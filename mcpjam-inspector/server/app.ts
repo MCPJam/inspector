@@ -37,6 +37,7 @@ import { loadInspectorEnv, warnOnConvexDevMisconfiguration } from "./env.js";
 import { startGuestAuthProvisioningInBackground } from "./utils/convex-guest-auth-sync.js";
 import { fetchRemoteGuestJwks } from "./utils/guest-session-source.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "./utils/mcp-retry-policy.js";
+import { initXAAIdpKeyPair } from "./services/xaa-idp-keypair.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -54,6 +55,7 @@ export function createHonoApp() {
 
   // Generate session token for API authentication
   generateSessionToken();
+  initXAAIdpKeyPair();
 
   startGuestAuthProvisioningInBackground();
 
@@ -123,15 +125,27 @@ export function createHonoApp() {
   // 2. Origin validation (blocks CSRF/DNS rebinding)
   app.use("*", originValidationMiddleware);
 
-  // 3. Hosted mode partition blocks legacy API families.
+  // 3. Hosted mode partition blocks legacy API families (health endpoints exempt).
   if (HOSTED_MODE) {
     app.use("/api/session-token", (c) =>
       strictModeResponse(c, "/api/session-token"),
     );
-    app.use("/api/mcp", (c) => strictModeResponse(c, "/api/mcp/*"));
-    app.use("/api/mcp/*", (c) => strictModeResponse(c, "/api/mcp/*"));
-    app.use("/api/apps", (c) => strictModeResponse(c, "/api/apps/*"));
-    app.use("/api/apps/*", (c) => strictModeResponse(c, "/api/apps/*"));
+    app.use("/api/mcp", (c, next) => {
+      if (c.req.path === "/api/mcp/health") return next();
+      return strictModeResponse(c, "/api/mcp/*");
+    });
+    app.use("/api/mcp/*", (c, next) => {
+      if (c.req.path === "/api/mcp/health") return next();
+      return strictModeResponse(c, "/api/mcp/*");
+    });
+    app.use("/api/apps", (c, next) => {
+      if (c.req.path === "/api/apps/health") return next();
+      return strictModeResponse(c, "/api/apps/*");
+    });
+    app.use("/api/apps/*", (c, next) => {
+      if (c.req.path === "/api/apps/health") return next();
+      return strictModeResponse(c, "/api/apps/*");
+    });
   }
 
   // 4. Session authentication (blocks unauthorized API requests)
@@ -180,6 +194,22 @@ export function createHonoApp() {
   if (!HOSTED_MODE) {
     app.route("/api/apps", appsRoutes);
     app.route("/api/mcp", mcpRoutes);
+  } else {
+    // Health endpoints always available, even when legacy API families are disabled.
+    app.get("/api/mcp/health", (c) =>
+      c.json({
+        service: "MCP API",
+        status: "ready",
+        timestamp: new Date().toISOString(),
+      }),
+    );
+    app.get("/api/apps/health", (c) =>
+      c.json({
+        service: "Apps API",
+        status: "ready",
+        timestamp: new Date().toISOString(),
+      }),
+    );
   }
   app.route("/api/web", webRoutes);
 

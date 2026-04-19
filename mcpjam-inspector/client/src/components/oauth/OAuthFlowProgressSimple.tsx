@@ -1,8 +1,8 @@
 import { OAuthFlowState, OAuthStep } from "@/lib/types/oauth-flow-types";
 import { CheckCircle2, Circle, ExternalLink } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { OAuthClientInformation } from "@modelcontextprotocol/sdk/shared/auth.js";
-import { Button } from "@/components/ui/button";
+import { useEffect, useState, useMemo, useRef } from "react";
+import type { OAuthClientInformation } from "@mcpjam/sdk/browser";
+import { Button } from "@mcpjam/design-system/button";
 import { DebugMCPOAuthClientProvider } from "@/lib/oauth/debug-oauth-provider";
 import { OAuthAuthorizationModal } from "@/components/oauth/OAuthAuthorizationModal";
 

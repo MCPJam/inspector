@@ -22,7 +22,7 @@ const {
   mockSelectResourceURL: vi.fn(),
 }));
 
-vi.mock("@modelcontextprotocol/sdk/client/auth.js", () => ({
+vi.mock("@mcpjam/sdk/browser", () => ({
   auth: mockSdkAuth,
   discoverAuthorizationServerMetadata: mockDiscoverAuthorizationServerMetadata,
   discoverOAuthServerInfo: mockDiscoverOAuthServerInfo,

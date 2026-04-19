@@ -4,8 +4,8 @@ import {
   type ConformanceResult,
   type OAuthConformanceSuiteResult,
 } from "@mcpjam/sdk";
-import { singleResultToJUnitXml, suiteResultToJUnitXml } from "./junit-xml";
-import { usageError, type OutputFormat } from "./output";
+import { singleResultToJUnitXml, suiteResultToJUnitXml } from "./junit-xml.js";
+import { usageError, type OutputFormat } from "./output.js";
 
 export type OAuthOutputFormat = OutputFormat | "junit-xml";
 

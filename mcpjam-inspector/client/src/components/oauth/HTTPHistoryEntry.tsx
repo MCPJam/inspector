@@ -11,8 +11,8 @@ import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
-} from "@/components/ui/collapsible";
-import type { LogErrorDetails, OAuthFlowStep } from "@mcpjam/sdk/browser";
+} from "@mcpjam/design-system/collapsible";
+import type { LogErrorDetails } from "@mcpjam/sdk/browser";
 
 interface HTTPHistoryEntryProps {
   method: string;
@@ -25,7 +25,7 @@ interface HTTPHistoryEntryProps {
   responseHeaders?: Record<string, string>;
   responseBody?: any;
   error?: LogErrorDetails;
-  step?: OAuthFlowStep;
+  step?: string;
   defaultOpen?: boolean;
 }
 

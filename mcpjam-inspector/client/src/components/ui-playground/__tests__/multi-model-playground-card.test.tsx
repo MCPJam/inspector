@@ -90,11 +90,11 @@ vi.mock("@/components/chat-v2/model-compare-card-header", () => ({
   },
 }));
 
-vi.mock("@/contexts/sandbox-host-style-context", () => ({
-  SandboxHostStyleProvider: ({ children }: { children: React.ReactNode }) => (
+vi.mock("@/contexts/chatbox-host-style-context", () => ({
+  ChatboxHostStyleProvider: ({ children }: { children: React.ReactNode }) => (
     <>{children}</>
   ),
-  SandboxHostThemeProvider: ({ children }: { children: React.ReactNode }) => (
+  ChatboxHostThemeProvider: ({ children }: { children: React.ReactNode }) => (
     <>{children}</>
   ),
 }));
@@ -264,6 +264,112 @@ describe("MultiModelPlaygroundCard", () => {
 
     await waitFor(() => {
       expect(mockUseChatSession.stop).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("height layout", () => {
+    beforeEach(() => {
+      mockUseChatSession.messages = [];
+      mockUseChatSession.isStreaming = false;
+    });
+
+    it("card root has no forced min-height so it can shrink inside a short grid row", () => {
+      render(
+        <MultiModelPlaygroundCard
+          model={model}
+          comparisonSummaries={[]}
+          selectedServers={[]}
+          broadcastRequest={null}
+          deterministicExecutionRequest={null}
+          stopRequestId={0}
+          initialSystemPrompt=""
+          initialTemperature={0.7}
+          initialRequireToolApproval={false}
+          displayMode="inline"
+          onDisplayModeChange={vi.fn()}
+          hostStyle="chatgpt"
+          effectiveThreadTheme="light"
+          deviceType="desktop"
+          selectedProtocol={null}
+          onSummaryChange={vi.fn()}
+        />,
+      );
+
+      const root = screen.getByTestId("multi-model-playground-card-root");
+      expect(root.className).not.toMatch(/min-h-\[\d+rem\]/);
+      expect(root.className).toContain("min-h-0");
+    });
+
+    it("shell drops its min-height in default desktop inline compare", () => {
+      mockUseChatSession.messages = [
+        { id: "m-1", role: "user", parts: [{ type: "text", text: "hi" }] },
+        {
+          id: "m-2",
+          role: "assistant",
+          parts: [{ type: "text", text: "hello" }],
+        },
+      ] as (typeof mockUseChatSession)["messages"];
+
+      const { container } = render(
+        <MultiModelPlaygroundCard
+          model={model}
+          comparisonSummaries={[]}
+          selectedServers={[]}
+          broadcastRequest={null}
+          deterministicExecutionRequest={null}
+          stopRequestId={0}
+          initialSystemPrompt=""
+          initialTemperature={0.7}
+          initialRequireToolApproval={false}
+          displayMode="inline"
+          onDisplayModeChange={vi.fn()}
+          hostStyle="chatgpt"
+          effectiveThreadTheme="light"
+          deviceType="desktop"
+          selectedProtocol={null}
+          onSummaryChange={vi.fn()}
+        />,
+      );
+
+      const shell = container.querySelector(".chatbox-host-shell");
+      expect(shell).not.toBeNull();
+      expect(shell!.className).not.toContain("min-h-[");
+    });
+
+    it("shell keeps its 34rem floor when rendering a mobile fullscreen device frame", () => {
+      mockUseChatSession.messages = [
+        { id: "m-1", role: "user", parts: [{ type: "text", text: "hi" }] },
+        {
+          id: "m-2",
+          role: "assistant",
+          parts: [{ type: "text", text: "hello" }],
+        },
+      ] as (typeof mockUseChatSession)["messages"];
+
+      const { container } = render(
+        <MultiModelPlaygroundCard
+          model={model}
+          comparisonSummaries={[]}
+          selectedServers={[]}
+          broadcastRequest={null}
+          deterministicExecutionRequest={null}
+          stopRequestId={0}
+          initialSystemPrompt=""
+          initialTemperature={0.7}
+          initialRequireToolApproval={false}
+          displayMode="fullscreen"
+          onDisplayModeChange={vi.fn()}
+          hostStyle="chatgpt"
+          effectiveThreadTheme="light"
+          deviceType="mobile"
+          selectedProtocol={null}
+          onSummaryChange={vi.fn()}
+        />,
+      );
+
+      const shell = container.querySelector(".chatbox-host-shell");
+      expect(shell).not.toBeNull();
+      expect(shell!.className).toContain("min-h-[34rem]");
     });
   });
 });

@@ -3,8 +3,8 @@ import test from "node:test";
 import {
   buildChatGptWidgetContent,
   buildMcpWidgetContent,
-} from "../src/lib/apps";
-import { CliError } from "../src/lib/output";
+} from "../src/lib/apps.js";
+import { CliError } from "../src/lib/output.js";
 
 function createMockManager(contents: unknown[]) {
   return {

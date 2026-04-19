@@ -13,7 +13,7 @@ import {
   useState,
   useLayoutEffect,
 } from "react";
-import type { Tool } from "@modelcontextprotocol/sdk/types.js";
+import type { Tool } from "@modelcontextprotocol/client";
 import { Wrench } from "lucide-react";
 import {
   ResizablePanel,
@@ -57,11 +57,26 @@ interface AppBuilderTabProps {
   servers?: Record<string, ServerWithName>;
   isAuthenticated?: boolean;
   isAuthLoading?: boolean;
+  /**
+   * True while the currently selected server exists in runtime state but has
+   * not yet appeared in the persisted workspace servers (Convex round-trip
+   * pending). Used to show a loading skeleton instead of the "No Server
+   * Selected" empty state during the sync window.
+   */
+  isServerSyncing?: boolean;
   onConnect?: (formData: ServerFormData) => void;
   onOnboardingChange?: (isOnboarding: boolean) => void;
   playgroundServerSelectorProps?: PlaygroundServerSelectorProps;
   enableMultiModelChat?: boolean;
 }
+
+/**
+ * Match the sync echo timeout used elsewhere (see
+ * `use-workspace-state.ts`'s CLIENT_CONFIG_SYNC_ECHO_TIMEOUT_MS). If the
+ * Convex round-trip doesn't land within this window, fall through to an
+ * explanatory empty state rather than spinning forever.
+ */
+const SERVER_SYNC_TIMEOUT_MS = 10000;
 
 const APP_BUILDER_FIRST_RUN_PROMPT = "Draw me an MCP architecture diagram";
 
@@ -73,6 +88,7 @@ export function AppBuilderTab({
   servers = {},
   isAuthenticated = false,
   isAuthLoading = false,
+  isServerSyncing = false,
   onConnect,
   onOnboardingChange,
   playgroundServerSelectorProps,
@@ -127,6 +143,9 @@ export function AppBuilderTab({
   useLayoutEffect(() => {
     onOnboardingChange?.(false);
     setMcpSidebarOpen(true);
+  }, [onOnboardingChange, setMcpSidebarOpen]);
+
+  useLayoutEffect(() => {
     // NUX: collapse tools sidebar for the whole first-run connect + guided flow. While the server is
     // still connecting, `isGuidedPostConnect` is false (no connected server yet); include phase so we
     // don't flash the sidebar open until connect completes.
@@ -138,18 +157,19 @@ export function AppBuilderTab({
     } else {
       setSidebarVisible(true);
     }
+  }, [
+    onboarding.phase,
+    onboarding.isGuidedPostConnect,
+    setSidebarVisible,
+  ]);
+
+  useLayoutEffect(() => {
     return () => {
       onOnboardingChange?.(false);
       setSidebarVisible(true);
       setMcpSidebarOpen(true);
     };
-  }, [
-    onboarding.phase,
-    onboarding.isGuidedPostConnect,
-    onOnboardingChange,
-    setMcpSidebarOpen,
-    setSidebarVisible,
-  ]);
+  }, [onOnboardingChange, setMcpSidebarOpen, setSidebarVisible]);
 
   // Log when App Builder tab is viewed
   useEffect(() => {
@@ -274,6 +294,20 @@ export function AppBuilderTab({
     ? PANEL_SIZES.CENTER.DEFAULT_WITH_PANELS
     : PANEL_SIZES.CENTER.DEFAULT_WITHOUT_PANELS;
 
+  // Track whether the in-flight server sync has exceeded the timeout. Resets
+  // whenever the selected server changes or syncing stops, so a successful
+  // echo never leaves a stale "taking longer" banner behind.
+  const [syncTimedOut, setSyncTimedOut] = useState(false);
+  useEffect(() => {
+    setSyncTimedOut(false);
+    if (!isServerSyncing) return;
+    const id = setTimeout(
+      () => setSyncTimedOut(true),
+      SERVER_SYNC_TIMEOUT_MS,
+    );
+    return () => clearTimeout(id);
+  }, [serverName, isServerSyncing]);
+
   if (onboarding.isResolvingRemoteCompletion) {
     return (
       <div className="h-full flex flex-col overflow-hidden relative">
@@ -287,6 +321,29 @@ export function AppBuilderTab({
       <div className="h-full flex flex-col overflow-hidden relative">
         <AppBuilderSkeleton />
       </div>
+    );
+  }
+
+  // Server is in runtime state but not yet reflected in the persisted
+  // workspace (Convex round-trip pending). Show a skeleton instead of the
+  // misleading "No Server Selected" empty state during the sync window.
+  if (!serverConfig && isServerSyncing && !syncTimedOut) {
+    return (
+      <div className="h-full flex flex-col overflow-hidden relative">
+        <AppBuilderSkeleton />
+      </div>
+    );
+  }
+
+  // Sync is taking unusually long — surface an explanation so the user
+  // isn't staring at an infinite spinner.
+  if (!serverConfig && isServerSyncing && syncTimedOut) {
+    return (
+      <EmptyState
+        icon={Wrench}
+        title="Still syncing…"
+        description="This is taking longer than expected. Try reloading the page."
+      />
     );
   }
 
@@ -373,6 +430,7 @@ export function AppBuilderTab({
           order={2}
           defaultSize={centerPanelDefaultSize}
           minSize={PANEL_SIZES.CENTER.MIN}
+          className="min-h-0 min-w-0 overflow-hidden"
         >
           <PlaygroundMain
             serverName={serverName || ""}

@@ -1,5 +1,5 @@
 import * as React from "react";
-import { useState, useEffect, useMemo } from "react";
+import { useState, useMemo } from "react";
 import {
   Hammer,
   MessageCircle,
@@ -18,6 +18,8 @@ import {
   LayoutGrid,
   GitBranch,
   Puzzle,
+  UserPlus,
+  ShieldCheck,
 } from "lucide-react";
 import { usePostHog, useFeatureFlagEnabled } from "posthog-js/react";
 import { standardEventProps } from "@/lib/PosthogUtils";
@@ -41,27 +43,20 @@ import {
 } from "@/components/ui/sidebar";
 import { cn } from "@/lib/utils";
 import { useConvexAuth } from "convex/react";
+import { useAuth } from "@workos-inc/authkit-react";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { MCPIcon } from "@/components/ui/mcp-icon";
 import { SidebarUser } from "@/components/sidebar/sidebar-user";
 import { SidebarWorkspaceSelector } from "@/components/sidebar/sidebar-workspace-selector";
+import { ShareWorkspaceDialog } from "@/components/workspace/ShareWorkspaceDialog";
 import { useUpdateNotification } from "@/hooks/useUpdateNotification";
-import { Button } from "@/components/ui/button";
+import { Button } from "@mcpjam/design-system/button";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from "@/components/ui/tooltip";
+} from "@mcpjam/design-system/tooltip";
 import { HOSTED_MODE } from "@/lib/config";
-import {
-  listTools,
-  type ListToolsResultWithMetadata,
-} from "@/lib/apis/mcp-tools-api";
-import {
-  isMCPApp,
-  isOpenAIApp,
-  isOpenAIAppAndMCPApp,
-} from "@/lib/mcp-ui/mcp-apps-utils";
 import {
   isHostedSidebarTabAllowed,
   normalizeHostedHashTab,
@@ -73,7 +68,6 @@ import { HOSTED_LOCAL_ONLY_TOOLTIP } from "@/lib/hosted-ui";
 import { useLearnMore } from "@/hooks/use-learn-more";
 import { LearnMoreExpandedPanel } from "@/components/learn-more/LearnMoreExpandedPanel";
 import type { BillingFeatureName } from "@/hooks/useOrganizationBilling";
-import type { ServerWithName } from "@/hooks/use-app-state";
 import type { Workspace } from "@/state/app-types";
 import type { OrganizationRouteSection } from "@/lib/hosted-navigation";
 
@@ -159,17 +153,6 @@ export function applyBillingGateNavState(
   }));
 }
 
-export function shouldPrefetchSidebarTools(options: {
-  hostedMode: boolean;
-  isAuthenticated: boolean;
-}): boolean {
-  const { hostedMode, isAuthenticated } = options;
-  // Hosted guests can briefly hydrate stale "connected" local servers before
-  // runtime status sync clears them, which causes speculative tools/list calls
-  // against guest server configs. Only signed-in hosted users should prefetch.
-  return !hostedMode || isAuthenticated;
-}
-
 // Define sections with their respective items
 const navigationSections: NavSection[] = [
   {
@@ -192,8 +175,8 @@ const navigationSections: NavSection[] = [
         icon: MessageCircle,
       },
       {
-        title: "Sandboxes",
-        url: "#sandboxes",
+        title: "Chatboxes",
+        url: "#chatboxes",
         icon: Box,
         featureFlag: "sandboxes-enabled",
       },
@@ -211,12 +194,6 @@ const navigationSections: NavSection[] = [
         title: "Views",
         url: "#views",
         icon: Layers,
-      },
-      {
-        title: "Client Config",
-        url: "#client-config",
-        icon: Settings,
-        featureFlag: "client-config-enabled",
       },
       {
         title: "Evaluate",
@@ -243,9 +220,24 @@ const navigationSections: NavSection[] = [
         featureFlag: "mcpjam-learning",
       },
       {
+        title: "Conformance",
+        url: "#conformance",
+        icon: FlaskConical,
+        // MCPJam-internal flag: rollout is restricted to the MCPJam team in
+        // PostHog. Keep the `mcpjam-` prefix so it's obvious at a glance that
+        // this is an internal-only flag (same convention as `mcpjam-learning`).
+        featureFlag: "mcpjam-conformance",
+      },
+      {
         title: "OAuth Debugger",
         url: "#oauth-flow",
         icon: Workflow,
+      },
+      {
+        title: "XAA Debugger",
+        url: "#xaa-flow",
+        icon: ShieldCheck,
+        featureFlag: "xaa",
       },
       // {
       //   title: "Tracing",
@@ -334,8 +326,6 @@ const hostedNavigationSections =
 interface MCPSidebarProps extends React.ComponentProps<typeof Sidebar> {
   onNavigate?: (section: string) => void;
   activeTab?: string;
-  /** Servers to check for app capabilities */
-  servers?: Record<string, ServerWithName>;
   /** Workspace state for the sidebar workspace picker */
   workspaces: Record<string, Workspace>;
   activeWorkspaceId: string;
@@ -344,9 +334,14 @@ interface MCPSidebarProps extends React.ComponentProps<typeof Sidebar> {
   onDeleteWorkspace: (workspaceId: string) => void;
   isLoadingWorkspaces?: boolean;
   activeOrganizationId?: string;
+  activeOrganizationName?: string;
   onSwitchOrganization?: (
     organizationId: string,
     section?: OrganizationRouteSection,
+  ) => void;
+  onWorkspaceShared?: (
+    sharedWorkspaceId: string,
+    sourceWorkspaceId?: string,
   ) => void;
   billingGateDenied?: Partial<Record<BillingFeatureName, boolean>>;
   billingGateEnforcementActive?: boolean;
@@ -354,8 +349,6 @@ interface MCPSidebarProps extends React.ComponentProps<typeof Sidebar> {
   isCreateWorkspaceDisabled?: boolean;
   createWorkspaceDisabledReason?: string;
 }
-
-const APP_BUILDER_VISITED_KEY = "mcp-app-builder-visited";
 
 function navigateToEvalsExploreList() {
   window.location.hash = withTestingSurface(buildEvalsHash({ type: "list" }));
@@ -502,7 +495,6 @@ export function SidebarEvalsNavGroup({
 export function MCPSidebar({
   onNavigate,
   activeTab,
-  servers = {},
   workspaces,
   activeWorkspaceId,
   onSwitchWorkspace,
@@ -510,7 +502,9 @@ export function MCPSidebar({
   onDeleteWorkspace,
   isLoadingWorkspaces,
   activeOrganizationId,
+  activeOrganizationName,
   onSwitchOrganization,
+  onWorkspaceShared,
   billingGateDenied = {},
   billingGateEnforcementActive = false,
   billingUiEnabled = false,
@@ -521,88 +515,38 @@ export function MCPSidebar({
   const posthog = usePostHog();
   const learningFlagEnabled = useFeatureFlagEnabled("mcpjam-learning");
   const sandboxesEnabled = useFeatureFlagEnabled("sandboxes-enabled");
-  const clientConfigEnabled = useFeatureFlagEnabled("client-config-enabled");
   const registryEnabled = useFeatureFlagEnabled("registry-enabled");
   const evalsEnabled = useFeatureFlagEnabled("evals-enabled");
   const evaluateRunsEnabled = useFeatureFlagEnabled("evaluate-runs");
+  const xaaEnabled = useFeatureFlagEnabled("xaa");
   const learnMoreEnabled = useFeatureFlagEnabled("learn-more-enabled");
+  const conformanceEnabled = useFeatureFlagEnabled("mcpjam-conformance");
   const { isAuthenticated } = useConvexAuth();
+  const { user } = useAuth();
   const learningEnabled = !!learningFlagEnabled && isAuthenticated;
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const { updateReady, restartAndInstall } = useUpdateNotification();
-  const [toolsDataMap, setToolsDataMap] = useState<
-    Record<string, ListToolsResultWithMetadata | null>
-  >({});
-  const [hasVisitedAppBuilder, setHasVisitedAppBuilder] = useState(() => {
-    return localStorage.getItem(APP_BUILDER_VISITED_KEY) === "true";
-  });
+  const [showInviteDialog, setShowInviteDialog] = useState(false);
   const learnMore = useLearnMore();
   const { state, isMobile } = useSidebar();
+  const activeWorkspace = workspaces[activeWorkspaceId];
+  const inviteableWorkspaces = useMemo(() => {
+    if (!activeWorkspace?.organizationId) {
+      return workspaces;
+    }
 
-  // Get list of connected server names
-  const connectedServerNames = useMemo(() => {
-    return Object.entries(servers)
-      .filter(([, server]) => server.connectionStatus === "connected")
-      .map(([name]) => name);
-  }, [servers]);
-
-  // Fetch tools data for connected servers
-  useEffect(() => {
-    const fetchToolsData = async () => {
-      if (
-        !shouldPrefetchSidebarTools({
-          hostedMode: HOSTED_MODE,
-          isAuthenticated,
-        }) ||
-        connectedServerNames.length === 0
-      ) {
-        setToolsDataMap({});
-        return;
-      }
-
-      const newToolsDataMap: Record<
-        string,
-        ListToolsResultWithMetadata | null
-      > = {};
-
-      await Promise.all(
-        connectedServerNames.map(async (serverName) => {
-          try {
-            const result = await listTools({ serverId: serverName });
-            newToolsDataMap[serverName] = result;
-          } catch {
-            newToolsDataMap[serverName] = null;
-          }
-        }),
-      );
-
-      setToolsDataMap(newToolsDataMap);
-    };
-
-    fetchToolsData();
-  }, [connectedServerNames.join(","), isAuthenticated]);
-
-  // Check if any connected server is an app
-  const hasAppServer = useMemo(() => {
-    return Object.values(toolsDataMap).some(
-      (toolsData) =>
-        isMCPApp(toolsData) ||
-        isOpenAIApp(toolsData) ||
-        isOpenAIAppAndMCPApp(toolsData),
+    return Object.fromEntries(
+      Object.entries(workspaces).filter(
+        ([, workspace]) =>
+          workspace.organizationId === activeWorkspace.organizationId,
+      ),
     );
-  }, [toolsDataMap]);
-
-  const showAppBuilderBubble =
-    hasAppServer && activeTab !== "app-builder" && !hasVisitedAppBuilder;
+  }, [activeWorkspace?.organizationId, workspaces]);
+  const shouldShowInviteCta = isAuthenticated && !!user && !!activeWorkspace;
 
   const handleNavClick = (url: string) => {
     if (onNavigate && url.startsWith("#")) {
       const section = url.slice(1);
-      // Mark App Builder as visited when clicked (always, not just when bubble is visible)
-      if (section === "app-builder" && showAppBuilderBubble) {
-        localStorage.setItem(APP_BUILDER_VISITED_KEY, "true");
-        setHasVisitedAppBuilder(true);
-      }
       posthog.capture("sidebar_nav_clicked", {
         ...standardEventProps("mcp_sidebar"),
         section,
@@ -612,33 +556,22 @@ export function MCPSidebar({
       window.open(url, "_blank");
     }
   };
-
-  const dismissAppBuilderBubble = () => {
-    localStorage.setItem(APP_BUILDER_VISITED_KEY, "true");
-    setHasVisitedAppBuilder(true);
-  };
-
-  const appBuilderBubble = showAppBuilderBubble
-    ? {
-        message: "Build your UI app with App Builder.",
-        subMessage: "Get started",
-        onDismiss: dismissAppBuilderBubble,
-      }
-    : null;
   const featureFlags = useMemo(
     () => ({
       "mcpjam-learning": !!learningEnabled,
       "sandboxes-enabled": !!sandboxesEnabled && isAuthenticated,
-      "client-config-enabled": !!clientConfigEnabled && isAuthenticated,
       "registry-enabled": registryEnabled === true,
       "evals-enabled": !!evalsEnabled,
+      "mcpjam-conformance": conformanceEnabled === true,
+      xaa: xaaEnabled === true,
     }),
     [
       learningEnabled,
       sandboxesEnabled,
-      clientConfigEnabled,
       registryEnabled,
       evalsEnabled,
+      conformanceEnabled,
+      xaaEnabled,
       isAuthenticated,
     ],
   );
@@ -755,9 +688,6 @@ export function MCPSidebar({
                     isActive: item.url === `#${activeTab}`,
                   }))}
                   onItemClick={handleNavClick}
-                  appBuilderBubble={
-                    section.id === "mcp-apps" ? appBuilderBubble : null
-                  }
                   learnMore={
                     learnMoreEnabled
                       ? {
@@ -785,12 +715,43 @@ export function MCPSidebar({
           })}
         </SidebarContent>
         <SidebarFooter>
+          {shouldShowInviteCta ? (
+            <SidebarMenu>
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  tooltip="Invite team members"
+                  onClick={() => setShowInviteDialog(true)}
+                >
+                  <UserPlus className="h-4 w-4" />
+                  <span className="group-data-[collapsible=icon]:hidden">
+                    Invite team members
+                  </span>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            </SidebarMenu>
+          ) : null}
           <SidebarUser
             activeOrganizationId={activeOrganizationId}
             onSwitchOrganization={onSwitchOrganization}
           />
         </SidebarFooter>
       </Sidebar>
+      {shouldShowInviteCta && user && activeWorkspace ? (
+        <ShareWorkspaceDialog
+          isOpen={showInviteDialog}
+          onClose={() => setShowInviteDialog(false)}
+          workspaceName={activeWorkspace.name}
+          workspaceServers={activeWorkspace.servers}
+          sharedWorkspaceId={activeWorkspace.sharedWorkspaceId}
+          organizationId={activeWorkspace.organizationId}
+          visibility={activeWorkspace.visibility}
+          organizationName={activeOrganizationName}
+          currentUser={user}
+          onWorkspaceShared={onWorkspaceShared}
+          availableWorkspaces={inviteableWorkspaces}
+          activeWorkspaceId={activeWorkspaceId}
+        />
+      ) : null}
       {learnMoreEnabled && (
         <LearnMoreExpandedPanel
           tabId={learnMore.expandedTabId}

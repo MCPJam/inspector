@@ -6,9 +6,9 @@ import {
   useEffect,
   type ReactNode,
 } from "react";
-import type { ContentBlock } from "@modelcontextprotocol/sdk/types.js";
+import type { ContentBlock } from "@modelcontextprotocol/client";
 import { Loader2, Minus, Plus } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Button } from "@mcpjam/design-system/button";
 import type { ModelDefinition, ModelProvider } from "@/shared/types";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 import type { ToolServerMap } from "@/lib/apis/mcp-tools-api";
@@ -100,6 +100,8 @@ interface TraceViewerProps {
   fullscreenChatDisabled?: boolean;
   fullscreenChatSendBlocked?: boolean;
   onFullscreenChatStop?: () => void;
+  /** Forwarded to `Thread` so ancestors can drop GPU transforms that trap `position: fixed` widgets. */
+  onFullscreenChange?: (isFullscreen: boolean) => void;
   /**
    * When set (live chat), Raw tab shows the resolved model request payload
    * (`system`, `tools`, `messages`) instead of the diagnostic trace blob.
@@ -184,9 +186,13 @@ export function TraceViewer({
   fullscreenChatDisabled = false,
   fullscreenChatSendBlocked,
   onFullscreenChatStop,
+  onFullscreenChange,
   rawRequestPayloadHistory = null,
   rawGrowWithContent = false,
 }: TraceViewerProps) {
+  // Only live chat shells should opt into the interactive widget path.
+  const threadInteractive = interactive || sendFollowUpMessage !== NOOP;
+
   const [viewMode, setViewMode] = useState<
     "timeline" | "chat" | "raw" | "tools"
   >("timeline");
@@ -592,6 +598,7 @@ export function TraceViewer({
                 fullscreenChatDisabled={fullscreenChatDisabled}
                 fullscreenChatSendBlocked={fullscreenChatSendBlocked}
                 onFullscreenChatStop={onFullscreenChatStop}
+                onFullscreenChange={onFullscreenChange}
                 selectedProtocolOverrideIfBothExists={
                   selectedProtocolOverrideIfBothExists
                 }
@@ -599,7 +606,7 @@ export function TraceViewer({
                 toolRenderOverrides={adaptedTrace.toolRenderOverrides}
                 showSaveViewButton={false}
                 minimalMode={true}
-                interactive={interactive}
+                interactive={threadInteractive}
                 reasoningDisplayMode="collapsed"
                 focusMessageId={transcriptNavigation.focusMessageId}
                 highlightedMessageIds={

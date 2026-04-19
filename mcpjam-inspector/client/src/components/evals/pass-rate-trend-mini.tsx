@@ -3,7 +3,7 @@ import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from "@/components/ui/tooltip";
+} from "@mcpjam/design-system/tooltip";
 import { formatSuitePassRateTrendForDisplay } from "./helpers";
 
 export function PassRateTrendMini({

@@ -1,7 +1,7 @@
 import { isUIResource } from "@mcp-ui/client";
 import type { ListToolsResultWithMetadata } from "@/lib/apis/mcp-tools-api";
 import { getToolUiResourceUri } from "@modelcontextprotocol/ext-apps/app-bridge";
-import { Tool } from "@modelcontextprotocol/sdk/types.js";
+import type { Tool } from "@modelcontextprotocol/client";
 
 export enum UIType {
   MCP_APPS = "mcp-apps",

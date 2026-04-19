@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { StickToBottom } from "use-stick-to-bottom";
 import { ScrollToBottomButton } from "@/components/chat-v2/shared/scroll-to-bottom-button";
-import type { ContentBlock } from "@modelcontextprotocol/sdk/types.js";
+import type { ContentBlock } from "@modelcontextprotocol/client";
 import type { UIMessage } from "ai";
 import type { HostedOAuthRequiredDetails } from "@/lib/hosted-oauth-required";
 import { Thread } from "@/components/chat-v2/thread";
@@ -51,8 +51,8 @@ interface MultiModelChatCardProps {
   hostedSelectedServerIds?: string[];
   hostedOAuthTokens?: Record<string, string>;
   hostedShareToken?: string;
-  hostedSandboxToken?: string;
-  hostedSandboxSurface?: "preview" | "share_link";
+  hostedChatboxToken?: string;
+  hostedChatboxSurface?: "preview" | "share_link";
   onSummaryChange: (summary: MultiModelCardSummary) => void;
   onHasMessagesChange?: (modelId: string, hasMessages: boolean) => void;
   onOAuthRequired?: (details?: HostedOAuthRequiredDetails) => void;
@@ -82,8 +82,8 @@ export function MultiModelChatCard({
   hostedSelectedServerIds,
   hostedOAuthTokens,
   hostedShareToken,
-  hostedSandboxToken,
-  hostedSandboxSurface,
+  hostedChatboxToken,
+  hostedChatboxSurface,
   onSummaryChange,
   onHasMessagesChange,
   onOAuthRequired,
@@ -105,7 +105,7 @@ export function MultiModelChatCard({
       };
     }[]
   >([]);
-  const [isWidgetFullscreen, setIsWidgetFullscreen] = useState(false);
+  const [, setIsWidgetFullscreen] = useState(false);
   const [traceViewMode, setTraceViewMode] = useState<ChatTraceViewMode>("chat");
   const [revealedInChat, setRevealedInChat] = useState(false);
   const lastBroadcastRequestIdRef = useRef<number | null>(null);
@@ -137,8 +137,8 @@ export function MultiModelChatCard({
     hostedSelectedServerIds,
     hostedOAuthTokens,
     hostedShareToken,
-    hostedSandboxToken,
-    hostedSandboxSurface,
+    hostedChatboxToken,
+    hostedChatboxSurface,
     initialModelId: String(model.id),
     initialSystemPrompt,
     initialTemperature,
@@ -495,7 +495,10 @@ export function MultiModelChatCard({
   }, [error, onOAuthRequired]);
 
   return (
-    <div className="flex h-full min-h-[28rem] min-w-0 flex-col overflow-hidden rounded-2xl border border-border/60 bg-card/40">
+    <div
+      data-testid="multi-model-chat-card-root"
+      className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl border border-border/60 bg-card/40"
+    >
       <ModelCompareCardHeader
         model={model}
         summary={summary}
@@ -506,12 +509,7 @@ export function MultiModelChatCard({
         showComparisonChrome={showComparisonChrome}
       />
 
-      <div
-        className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
-        style={{
-          transform: isWidgetFullscreen ? "none" : "translateZ(0)",
-        }}
-      >
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         {errorMessage ? (
           <div className="px-3 pt-3">
             <ErrorBox
@@ -547,6 +545,7 @@ export function MultiModelChatCard({
                     hideToolbar
                     fillContent
                     onRevealNavigateToChat={navigateTraceRevealToChat}
+                    onFullscreenChange={setIsWidgetFullscreen}
                     rawGrowWithContent
                     rawRequestPayloadHistory={{
                       entries: requestPayloadHistory,
@@ -576,6 +575,7 @@ export function MultiModelChatCard({
                   fullscreenChatPlaceholder={placeholder}
                   fullscreenChatSendBlocked={fullscreenChatSendBlocked}
                   onFullscreenChatStop={stop}
+                  onFullscreenChange={setIsWidgetFullscreen}
                   onToolApprovalResponse={addToolApprovalResponse}
                   rawRequestPayloadHistory={{
                     entries: requestPayloadHistory,
@@ -606,6 +606,7 @@ export function MultiModelChatCard({
                     hideToolbar
                     fillContent
                     onRevealNavigateToChat={navigateTraceRevealToChat}
+                    onFullscreenChange={setIsWidgetFullscreen}
                     rawRequestPayloadHistory={{
                       entries: requestPayloadHistory,
                       hasUiMessages: !isThreadEmpty,

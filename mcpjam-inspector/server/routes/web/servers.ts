@@ -60,7 +60,7 @@ servers.post("/check-oauth", async (c) =>
       {
         accessScope: body.accessScope,
         shareToken: body.shareToken,
-        sandboxToken: body.sandboxToken,
+        chatboxToken: body.chatboxToken,
       },
     );
     return {
@@ -180,14 +180,14 @@ async function runHostedDoctor(
     {
       accessScope: body.accessScope,
       shareToken: body.shareToken,
-      sandboxToken: body.sandboxToken,
+      chatboxToken: body.chatboxToken,
     },
   );
 
   const config = toHttpConfig(
     auth,
     timeoutMs,
-    body.oauthAccessToken,
+    auth.oauthAccessToken ?? body.oauthAccessToken,
     body.clientCapabilities,
   );
 

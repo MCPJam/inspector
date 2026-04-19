@@ -1,24 +1,37 @@
 import { formatDistanceToNow } from "date-fns";
-import { AlertTriangle, MessageSquare } from "lucide-react";
+import { AlertTriangle, MessageSquare, Sparkles } from "lucide-react";
 import { useMemo } from "react";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { ScrollArea } from "@mcpjam/design-system/scroll-area";
 import {
   compareThreadsForUsageList,
+  threadMatchesFilterState,
   threadMatchesUsageFilter,
+  type UsageFilterState,
   type UsageSessionFilter,
-} from "@/hooks/sandbox-usage-filters";
+} from "@/hooks/chatbox-usage-filters";
 import {
   useSharedChatThreadList,
   type SharedChatThread,
 } from "@/hooks/useSharedChatThreads";
 
 interface ShareUsageThreadListProps {
-  sourceType: "sandbox" | "serverShare";
-  sourceId: string;
+  /** Optional: when `threads` is provided (chatbox Usage panel) these are unused. */
+  sourceType?: "chatbox" | "serverShare";
+  sourceId?: string;
   selectedThreadId: string | null;
   onSelectThread: (threadId: string) => void;
-  /** When set, filters and sorts threads for sandbox usage triage. */
+  /** Legacy preset-only filter, for non-chatbox callers (ShareUsageDialog). */
   usageFilter?: UsageSessionFilter;
+  /**
+   * Preferred: pre-filtered, pre-sorted threads from the panel. When provided,
+   * this list is rendered verbatim and the legacy hook call is skipped.
+   */
+  threads?: SharedChatThread[] | undefined;
+  /**
+   * Richer filter state used by the chatbox Usage panel for empty-state copy
+   * and, on the legacy internal-fetch path, to apply chip filters as well.
+   */
+  filterState?: UsageFilterState;
 }
 
 export function ShareUsageThreadList({
@@ -27,20 +40,26 @@ export function ShareUsageThreadList({
   selectedThreadId,
   onSelectThread,
   usageFilter = "all",
+  threads: providedThreads,
+  filterState,
 }: ShareUsageThreadListProps) {
-  const { threads: rawThreads } = useSharedChatThreadList({
-    sourceType,
-    sourceId,
-  });
+  const legacyThreads = useSharedChatThreadList(
+    providedThreads === undefined && sourceType && sourceId
+      ? { sourceType, sourceId }
+      : { sourceType: sourceType ?? "chatbox", sourceId: null },
+  );
 
   const threads = useMemo(() => {
-    if (rawThreads === undefined) return undefined;
-    const filtered =
-      usageFilter === "all"
-        ? rawThreads
-        : rawThreads.filter((t) => threadMatchesUsageFilter(t, usageFilter));
+    if (providedThreads !== undefined) return providedThreads;
+    const raw = legacyThreads.threads;
+    if (raw === undefined) return undefined;
+    const filtered = filterState
+      ? raw.filter((t) => threadMatchesFilterState(t, filterState))
+      : usageFilter === "all"
+        ? raw
+        : raw.filter((t) => threadMatchesUsageFilter(t, usageFilter));
     return [...filtered].sort(compareThreadsForUsageList);
-  }, [rawThreads, usageFilter]);
+  }, [providedThreads, legacyThreads.threads, filterState, usageFilter]);
 
   if (threads === undefined) {
     return (
@@ -56,21 +75,27 @@ export function ShareUsageThreadList({
     );
   }
 
+  const activePreset = filterState?.preset ?? usageFilter;
+  const hasActiveChips = (filterState?.chips.length ?? 0) > 0;
+
   if (threads.length === 0) {
+    const emptyMessage =
+      activePreset !== "all" || hasActiveChips
+        ? "No sessions match the current filters"
+        : "No conversations yet";
+    const emptyHint =
+      activePreset !== "all" || hasActiveChips
+        ? "Try removing a filter or clearing the chart chips"
+        : "Visitor conversations will appear here";
+
     return (
       <div className="flex h-full items-center justify-center p-6">
         <div className="text-center">
           <MessageSquare className="mx-auto mb-2 h-8 w-8 text-muted-foreground/50" />
           <p className="text-sm font-medium text-muted-foreground">
-            {usageFilter === "all"
-              ? "No conversations yet"
-              : "No sessions match this filter"}
+            {emptyMessage}
           </p>
-          <p className="mt-1 text-xs text-muted-foreground/70">
-            {usageFilter === "all"
-              ? "Visitor conversations will appear here"
-              : "Try another filter or check back later"}
-          </p>
+          <p className="mt-1 text-xs text-muted-foreground/70">{emptyHint}</p>
         </div>
       </div>
     );
@@ -140,6 +165,17 @@ function ThreadCard({
           <span className="inline-flex items-center gap-0.5 text-[10px] font-medium text-amber-800 dark:text-amber-300">
             <AlertTriangle className="size-3" />
             Needs review
+          </span>
+        ) : null}
+        {thread.themeClusterLabel ? (
+          <span className="inline-flex max-w-[120px] items-center gap-0.5 truncate rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
+            <Sparkles className="size-2.5 shrink-0" />
+            <span className="truncate">{thread.themeClusterLabel}</span>
+          </span>
+        ) : null}
+        {thread.geoCountry ? (
+          <span className="rounded-full bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
+            {thread.geoCountry}
           </span>
         ) : null}
       </div>

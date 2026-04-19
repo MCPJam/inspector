@@ -4,12 +4,12 @@ import {
   HoverCard,
   HoverCardContent,
   HoverCardTrigger,
-} from "@/components/ui/hover-card";
+} from "@mcpjam/design-system/hover-card";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from "@/components/ui/tooltip";
+} from "@mcpjam/design-system/tooltip";
 import { learnMoreContent } from "@/lib/learn-more-content";
 
 const blobCache: Record<string, string> = {};

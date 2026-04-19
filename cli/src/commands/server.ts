@@ -14,14 +14,14 @@ import {
   buildCommandArtifactError,
   writeCommandDebugArtifact,
   writeDebugArtifact,
-} from "../lib/debug-artifact";
-import { withEphemeralManager } from "../lib/ephemeral";
-import { attachCliRpcLogs, createCliRpcLogCollector } from "../lib/rpc-logs";
-import { withRpcLogsIfRequested } from "../lib/rpc-helpers";
+} from "../lib/debug-artifact.js";
+import { withEphemeralManager } from "../lib/ephemeral.js";
+import { attachCliRpcLogs, createCliRpcLogCollector } from "../lib/rpc-logs.js";
+import { withRpcLogsIfRequested } from "../lib/rpc-helpers.js";
 import {
   formatServerDoctorHuman,
   summarizeServerDoctorTarget,
-} from "../lib/server-doctor";
+} from "../lib/server-doctor.js";
 import {
   addRetryOptions,
   addSharedServerOptions,
@@ -32,18 +32,18 @@ import {
   parseServerConfig,
   parsePositiveInteger,
   resolveHttpAccessToken,
-} from "../lib/server-config";
+} from "../lib/server-config.js";
 import {
   parseReporterFormat,
   writeJsonArtifact,
   writeReporterResult,
-} from "../lib/reporting";
+} from "../lib/reporting.js";
 import {
   operationalError,
   setProcessExitCode,
   usageError,
   writeResult,
-} from "../lib/output";
+} from "../lib/output.js";
 
 export function registerServerCommands(program: Command): void {
   const server = program

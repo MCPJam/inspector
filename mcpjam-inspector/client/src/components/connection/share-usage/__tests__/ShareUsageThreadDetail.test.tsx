@@ -7,7 +7,7 @@ const { mockMessageView, mockAdaptTraceToUiMessages, mockThreadState } =
     mockMessageView: vi.fn(),
     mockAdaptTraceToUiMessages: vi.fn(),
     mockThreadState: {
-      sourceType: "sandbox",
+      sourceType: "chatbox",
     },
   }));
 
@@ -25,6 +25,9 @@ vi.mock("@/hooks/useSharedChatThreads", () => ({
   }),
   useSharedChatWidgetSnapshots: () => ({
     snapshots: [],
+  }),
+  useSharedChatTurnTraces: () => ({
+    traces: [],
   }),
 }));
 
@@ -46,7 +49,7 @@ describe("ShareUsageThreadDetail", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    mockThreadState.sourceType = "sandbox";
+    mockThreadState.sourceType = "chatbox";
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => [{ role: "assistant", content: [] }],
@@ -98,7 +101,7 @@ describe("ShareUsageThreadDetail", () => {
     });
   });
 
-  it("keeps sandbox threads in chat mode without a toggle", async () => {
+  it("keeps chatbox threads in chat mode without a toggle", async () => {
     render(<ShareUsageThreadDetail threadId="thread-1" />);
 
     await waitFor(() => {

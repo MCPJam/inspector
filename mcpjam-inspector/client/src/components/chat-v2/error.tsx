@@ -4,13 +4,13 @@ import {
   ChevronRight,
   RefreshCw,
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Button } from "@mcpjam/design-system/button";
 import { useState } from "react";
 import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
-} from "@/components/ui/collapsible";
+} from "@mcpjam/design-system/collapsible";
 import { JsonEditor } from "@/components/ui/json-editor";
 import { cn } from "@/lib/utils";
 

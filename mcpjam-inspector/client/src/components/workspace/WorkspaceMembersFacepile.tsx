@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@mcpjam/design-system/avatar";
 import { getInitials } from "@/lib/utils";
 import { Users } from "lucide-react";
 import { ShareWorkspaceDialog } from "./ShareWorkspaceDialog";
@@ -19,7 +19,10 @@ interface WorkspaceMembersFacepileProps {
   organizationId?: string;
   visibility?: WorkspaceVisibility;
   organizationName?: string;
-  onWorkspaceShared?: (sharedWorkspaceId: string) => void;
+  onWorkspaceShared?: (
+    sharedWorkspaceId: string,
+    sourceWorkspaceId?: string,
+  ) => void;
 }
 
 export function WorkspaceMembersFacepile({

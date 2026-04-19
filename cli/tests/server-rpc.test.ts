@@ -1,15 +1,15 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
-import { startMockHttpServer } from "../../sdk/tests/mock-servers";
+import { startMockHttpServer } from "../../sdk/tests/mock-servers/index.js";
 
-const TEST_DIR = path.dirname(fileURLToPath(import.meta.url));
-const CLI_DIR = path.resolve(TEST_DIR, "..");
-const TSX_CLI_PATH = path.join(CLI_DIR, "node_modules", "tsx", "dist", "cli.mjs");
+const CLI_DIR = process.cwd();
+const requireFromCli = createRequire(path.join(CLI_DIR, "package.json"));
+const TSX_CLI_PATH = requireFromCli.resolve("tsx/cli");
 const CLI_ENTRY_PATH = path.join(CLI_DIR, "src", "index.ts");
 
 async function runCli(args: string[]): Promise<{

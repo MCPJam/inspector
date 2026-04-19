@@ -2,18 +2,27 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { formatDistanceToNow } from "date-fns";
 import { Copy, Loader2, MessageSquare } from "lucide-react";
 import { toast } from "sonner";
-import { Button } from "@/components/ui/button";
+import { Button } from "@mcpjam/design-system/button";
 import { copyToClipboard } from "@/lib/clipboard";
 import type { ModelDefinition, ModelProvider } from "@/shared/types";
+import type { EvalTraceSpan } from "@/shared/eval-trace";
 import { TranscriptThread } from "@/components/chat-v2/thread/transcript-thread";
 import {
   adaptTraceToUiMessages,
   snapshotsToTraceWidgetSnapshots,
+  type TraceEnvelope,
   type TraceWidgetSnapshot,
 } from "@/components/evals/trace-viewer-adapter";
+import { TraceViewer } from "@/components/evals/trace-viewer";
+import {
+  ChatTraceViewModeHeaderBar,
+  type TraceViewMode,
+} from "@/components/evals/trace-view-mode-tabs";
 import {
   useSharedChatThread,
   useSharedChatWidgetSnapshots,
+  useSharedChatTurnTraces,
+  type SharedChatTurnTrace,
 } from "@/hooks/useSharedChatThreads";
 
 const NOOP = (..._args: unknown[]) => {};
@@ -22,14 +31,39 @@ interface ShareUsageThreadDetailProps {
   threadId: string;
 }
 
+/**
+ * Fetch span blobs from turn trace URLs and flatten into a single span array.
+ */
+async function hydrateSpans(
+  traces: SharedChatTurnTrace[],
+): Promise<EvalTraceSpan[]> {
+  const results = await Promise.all(
+    traces.map(async (trace) => {
+      if (!trace.spansBlobUrl) return [];
+      try {
+        const response = await fetch(trace.spansBlobUrl);
+        if (!response.ok) return [];
+        const parsed = await response.json();
+        return Array.isArray(parsed) ? (parsed as EvalTraceSpan[]) : [];
+      } catch {
+        return [];
+      }
+    }),
+  );
+  return results.flat();
+}
+
 export function ShareUsageThreadDetail({
   threadId,
 }: ShareUsageThreadDetailProps) {
   const { thread } = useSharedChatThread({ threadId });
   const { snapshots } = useSharedChatWidgetSnapshots({ threadId });
+  const { traces: turnTraces } = useSharedChatTurnTraces({ threadId });
   const [messages, setMessages] = useState<unknown[] | null>(null);
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<TraceViewMode>("chat");
+  const [hydratedSpans, setHydratedSpans] = useState<EvalTraceSpan[]>([]);
 
   // Fetch messages from blob URL
   useEffect(() => {
@@ -76,19 +110,45 @@ export function ShareUsageThreadDetail({
     };
   }, [thread?.messagesBlobUrl]);
 
+  // Hydrate span blobs when turn traces arrive
+  useEffect(() => {
+    if (!turnTraces || turnTraces.length === 0) {
+      setHydratedSpans([]);
+      return;
+    }
+
+    let isActive = true;
+    void hydrateSpans(turnTraces).then((spans) => {
+      if (isActive) setHydratedSpans(spans);
+    });
+    return () => {
+      isActive = false;
+    };
+  }, [turnTraces]);
+
   // Transform snapshots to TraceWidgetSnapshot format
   const widgetSnapshots: TraceWidgetSnapshot[] = useMemo(() => {
     if (!snapshots || !thread) return [];
     return snapshotsToTraceWidgetSnapshots(snapshots);
   }, [snapshots, thread]);
 
-  // Adapt trace to UI messages
+  // Build a TraceEnvelope for the TraceViewer (timeline + raw)
+  const traceEnvelope: TraceEnvelope | null = useMemo(() => {
+    if (!messages) return null;
+    return {
+      messages: messages as any,
+      widgetSnapshots,
+      spans: hydratedSpans,
+    };
+  }, [messages, widgetSnapshots, hydratedSpans]);
+
+  // Adapt trace to UI messages for the chat view
   const adaptedTrace = useMemo(() => {
     if (!messages) return null;
     return adaptTraceToUiMessages({
       trace: { messages: messages as any, widgetSnapshots },
       toolResultDisplay:
-        thread?.sourceType === "sandbox" ? "attached-to-tool" : "sibling-text",
+        thread?.sourceType === "chatbox" ? "attached-to-tool" : "sibling-text",
     });
   }, [messages, thread?.sourceType, widgetSnapshots]);
 
@@ -100,6 +160,17 @@ export function ShareUsageThreadDetail({
     }),
     [thread?.modelId],
   );
+
+  // Compute trace timing from turn traces
+  const traceStartedAtMs = useMemo(() => {
+    if (!turnTraces || turnTraces.length === 0) return null;
+    return Math.min(...turnTraces.map((t: SharedChatTurnTrace) => t.startedAt));
+  }, [turnTraces]);
+
+  const traceEndedAtMs = useMemo(() => {
+    if (!turnTraces || turnTraces.length === 0) return null;
+    return Math.max(...turnTraces.map((t: SharedChatTurnTrace) => t.endedAt));
+  }, [turnTraces]);
 
   const handleCopySessionRef = useCallback(async () => {
     if (!thread) return;
@@ -155,8 +226,8 @@ export function ShareUsageThreadDetail({
         ? `${Math.round(duration / 1000)}s`
         : `${Math.round(duration / 60000)}m`
       : null;
-  const isSandboxThread = thread.sourceType === "sandbox";
-  const reasoningDisplayMode = isSandboxThread ? "collapsible" : "collapsed";
+  const isChatboxThread = thread.sourceType === "chatbox";
+  const reasoningDisplayMode = isChatboxThread ? "collapsible" : "collapsed";
 
   const hasFeedback =
     thread.feedbackRating != null ||
@@ -224,27 +295,46 @@ export function ShareUsageThreadDetail({
         </div>
       </div>
 
-      {/* Messages */}
+      {/* Trace / Chat / Raw tabs */}
+      <ChatTraceViewModeHeaderBar
+        mode={viewMode}
+        onModeChange={setViewMode}
+      />
+
+      {/* Content area */}
       <div className="flex-1 min-h-0 overflow-y-auto">
-        <TranscriptThread
-          messages={adaptedTrace.messages}
-          model={resolvedModel}
-          sendFollowUpMessage={NOOP}
-          toolsMetadata={{}}
-          toolServerMap={{}}
-          pipWidgetId={null}
-          fullscreenWidgetId={null}
-          onRequestPip={NOOP}
-          onExitPip={NOOP}
-          onRequestFullscreen={NOOP}
-          onExitFullscreen={NOOP}
-          toolRenderOverrides={adaptedTrace.toolRenderOverrides}
-          showSaveViewButton={false}
-          minimalMode={!isSandboxThread}
-          interactive={false}
-          reasoningDisplayMode={reasoningDisplayMode}
-          contentClassName="max-w-4xl space-y-8 px-4 py-4"
-        />
+        {viewMode === "chat" ? (
+          <TranscriptThread
+            messages={adaptedTrace.messages}
+            model={resolvedModel}
+            sendFollowUpMessage={NOOP}
+            toolsMetadata={{}}
+            toolServerMap={{}}
+            pipWidgetId={null}
+            fullscreenWidgetId={null}
+            onRequestPip={NOOP}
+            onExitPip={NOOP}
+            onRequestFullscreen={NOOP}
+            onExitFullscreen={NOOP}
+            toolRenderOverrides={adaptedTrace.toolRenderOverrides}
+            showSaveViewButton={false}
+            minimalMode={!isChatboxThread}
+            interactive={false}
+            reasoningDisplayMode={reasoningDisplayMode}
+            contentClassName="max-w-4xl space-y-8 px-4 py-4"
+          />
+        ) : (
+          <TraceViewer
+            trace={traceEnvelope}
+            model={resolvedModel}
+            forcedViewMode={viewMode === "raw" ? "raw" : "timeline"}
+            hideToolbar
+            fillContent
+            traceStartedAtMs={traceStartedAtMs}
+            traceEndedAtMs={traceEndedAtMs}
+            interactive={false}
+          />
+        )}
       </div>
     </div>
   );

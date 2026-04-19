@@ -20,7 +20,7 @@ vi.mock("@/components/ui/sidebar", () => ({
   },
 }));
 
-vi.mock("@/components/ui/tooltip", () => ({
+vi.mock("@mcpjam/design-system/tooltip", () => ({
   Tooltip: ({ children }: any) => <div>{children}</div>,
   TooltipTrigger: ({ children }: any) => <>{children}</>,
   TooltipContent: ({ children }: any) => <div>{children}</div>,
@@ -149,8 +149,8 @@ describe("NavMain", () => {
       <NavMain
         items={[
           {
-            title: "Sandboxes",
-            url: "#sandboxes",
+            title: "Chatboxes",
+            url: "#chatboxes",
             icon: FakeIcon,
           },
         ]}
@@ -158,7 +158,7 @@ describe("NavMain", () => {
     );
 
     expect(
-      screen.getByRole("button", { name: "Sandboxes" }),
+      screen.getByRole("button", { name: "Chatboxes" }),
     ).toBeInTheDocument();
     expect(screen.queryByText("Plan upgrade required")).not.toBeInTheDocument();
   });
@@ -206,5 +206,32 @@ describe("NavMain", () => {
       "data-tooltip",
     );
     expect(screen.getByTestId("learn-more-servers")).toBeInTheDocument();
+  });
+
+  it("renders App Builder without the removed guide bubble UI", () => {
+    render(
+      <NavMain
+        items={[{ title: "App Builder", url: "#app-builder", icon: FakeIcon }]}
+      />,
+    );
+
+    expect(
+      screen.getByRole("button", { name: "App Builder" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("Build your UI app with App Builder."),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Dismiss")).not.toBeInTheDocument();
+  });
+
+  it("uses the standard Learn More hover card for App Builder", () => {
+    render(
+      <NavMain
+        items={[{ title: "App Builder", url: "#app-builder", icon: FakeIcon }]}
+        learnMore={{ onExpand: vi.fn() }}
+      />,
+    );
+
+    expect(screen.getByTestId("learn-more-app-builder")).toBeInTheDocument();
   });
 });

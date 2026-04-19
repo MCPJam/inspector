@@ -6,18 +6,20 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { Input } from "@/components/ui/input";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+} from "@mcpjam/design-system/dropdown-menu";
+import { Input } from "@mcpjam/design-system/input";
+import { Avatar, AvatarFallback, AvatarImage } from "@mcpjam/design-system/avatar";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from "@/components/ui/tooltip";
+} from "@mcpjam/design-system/tooltip";
 import type { ChatHistorySession } from "@/lib/apis/web/chat-history-api";
 import { getModelById } from "@/shared/types";
 import { getInitials } from "@/lib/utils";
 import type { WorkspaceThreadOwnerAvatar } from "./workspace-thread-owner-avatar";
+import type { ChatboxHostStyle } from "@/lib/chatbox-host-style";
+import { CHAT_HISTORY_STRONG_BG_CLASS } from "./chat-history-theme";
 
 function formatChatHistoryModelLabel(
   session: ChatHistorySession,
@@ -54,6 +56,8 @@ interface ChatHistoryRowProps {
   isActive: boolean;
   isAuthenticated: boolean;
   isStreaming: boolean;
+  /** Which host aesthetic governs the active-row highlight (defaults to "claude"). */
+  hostStyle?: ChatboxHostStyle;
   onSelect: (session: ChatHistorySession) => void;
   onActionComplete?: (event: {
     action:
@@ -84,6 +88,7 @@ export function ChatHistoryRow({
   isActive,
   isAuthenticated,
   isStreaming,
+  hostStyle = "claude",
   onSelect,
   onActionComplete,
   workspaceThreadOwner,
@@ -214,7 +219,7 @@ export function ChatHistoryRow({
   const rowMain = (
     <div
       className={`group relative flex min-w-0 w-full max-w-full items-center gap-1.5 overflow-hidden rounded-md py-1.5 pl-0 pr-2 text-xs cursor-pointer transition-colors has-[[data-slot=dropdown-menu-trigger][data-state=open]]:[&_.chat-history-time]:opacity-0 has-[[data-slot=dropdown-menu-trigger]:focus-visible]:[&_.chat-history-time]:opacity-0 ${
-        isActive ? "bg-accent text-accent-foreground" : "hover:bg-accent/50"
+        isActive ? CHAT_HISTORY_STRONG_BG_CLASS[hostStyle] : "hover:bg-accent/50"
       } ${isStreaming ? "opacity-50 cursor-not-allowed" : ""}`}
       onClick={handleClick}
     >

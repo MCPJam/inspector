@@ -1,16 +1,18 @@
 import type { ReactNode } from "react";
-import { Loader2 } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { AlertTriangle, Loader2 } from "lucide-react";
+import { Button } from "@mcpjam/design-system/button";
 
 export type HostedShellGateState =
   | "ready"
   | "auth-loading"
   | "workspace-loading"
-  | "logged-out";
+  | "logged-out"
+  | "restricted";
 
 interface HostedShellGateProps {
   state: HostedShellGateState;
   onSignIn?: () => void;
+  onSignOut?: () => void;
   children: ReactNode;
 }
 
@@ -21,12 +23,16 @@ function getGateCopy(state: HostedShellGateState): string {
   if (state === "workspace-loading") {
     return "Preparing workspace...";
   }
+  if (state === "restricted") {
+    return "This environment is limited to MCPJam employees.";
+  }
   return "Sign in to MCPJam to continue";
 }
 
 export function HostedShellGate({
   state,
   onSignIn,
+  onSignOut,
   children,
 }: HostedShellGateProps) {
   const isBlocked = state !== "ready" && state !== "auth-loading";
@@ -55,6 +61,8 @@ export function HostedShellGate({
                 alt="MCPJam"
                 className="mb-4 h-12 w-auto"
               />
+            ) : state === "restricted" ? (
+              <AlertTriangle className="mb-4 h-5 w-5 text-amber-600" />
             ) : (
               <Loader2 className="mb-4 h-5 w-5 animate-spin text-muted-foreground" />
             )}
@@ -69,6 +77,17 @@ export function HostedShellGate({
                 Sign in
               </Button>
             )}
+            {state === "restricted" && onSignOut ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="mt-4"
+                onClick={() => onSignOut()}
+              >
+                Use another account
+              </Button>
+            ) : null}
           </div>
         </div>
       )}

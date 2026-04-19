@@ -8,8 +8,8 @@ import {
   parseRetryPolicy,
   parseServerConfig,
   resolveAliasedStringOption,
-} from "../src/lib/server-config";
-import { CliError } from "../src/lib/output";
+} from "../src/lib/server-config.js";
+import { CliError } from "../src/lib/output.js";
 
 test("parseServerConfig builds an HTTP config with access token and headers", () => {
   const config = parseServerConfig({

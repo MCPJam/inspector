@@ -4,7 +4,7 @@ import type { ReactElement } from "react";
 import { MessageView } from "../thread/message-view";
 import type { UIMessage } from "@ai-sdk/react";
 import type { ModelDefinition } from "@/shared/types";
-import { SandboxHostStyleProvider } from "@/contexts/sandbox-host-style-context";
+import { ChatboxHostStyleProvider } from "@/contexts/chatbox-host-style-context";
 import { PreferencesStoreProvider } from "@/stores/preferences/preferences-provider";
 
 // Mock PartSwitch
@@ -156,16 +156,16 @@ describe("MessageView", () => {
       expect(screen.getByLabelText("GPT-4 assistant")).toBeInTheDocument();
     });
 
-    it("hides the leading assistant avatar in sandbox host-style contexts", () => {
+    it("hides the leading assistant avatar in chatbox host-style contexts", () => {
       const message = createMessage({
         role: "assistant",
         parts: [{ type: "text", text: "Hello" }],
       });
 
       renderMessageView(
-        <SandboxHostStyleProvider value="claude">
+        <ChatboxHostStyleProvider value="claude">
           <MessageView {...defaultProps} message={message} />
-        </SandboxHostStyleProvider>,
+        </ChatboxHostStyleProvider>,
       );
 
       expect(screen.queryByRole("img")).not.toBeInTheDocument();

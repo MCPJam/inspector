@@ -1,10 +1,10 @@
 import {
-  OAuthMetadata,
-  OAuthClientInformationFull,
-  OAuthClientInformation,
-  OAuthTokens,
-  OAuthProtectedResourceMetadata,
-} from "@modelcontextprotocol/sdk/shared/auth.js";
+  type OAuthClientInformation,
+  type OAuthClientInformationFull,
+  type OAuthMetadata,
+  type OAuthProtectedResourceMetadata,
+  type OAuthTokens,
+} from "@mcpjam/sdk/browser";
 
 // OAuth protocol versions
 export type OAuthProtocolVersion = "2025-06-18" | "2025-11-25";

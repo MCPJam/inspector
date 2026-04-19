@@ -4,9 +4,9 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
-import { Badge } from "@/components/ui/badge";
-import { Separator } from "@/components/ui/separator";
+} from "@mcpjam/design-system/dialog";
+import { Badge } from "@mcpjam/design-system/badge";
+import { Separator } from "@mcpjam/design-system/separator";
 import type { OpenRouterModel } from "@/types/model-metadata";
 import { getProviderLogo } from "@/lib/provider-logos";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";

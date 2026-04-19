@@ -1,10 +1,10 @@
-import { OAuthClientProvider } from "@modelcontextprotocol/sdk/client/auth.js";
 import {
-  OAuthClientInformation,
-  OAuthTokens,
-  OAuthClientMetadata,
-  OAuthMetadata,
-} from "@modelcontextprotocol/sdk/shared/auth.js";
+  type OAuthClientInformation,
+  type OAuthClientMetadata,
+  type OAuthClientProvider,
+  type OAuthMetadata,
+  type OAuthTokens,
+} from "@mcpjam/sdk/browser";
 
 /**
  * Debug OAuth provider that uses sessionStorage and debug redirect URLs

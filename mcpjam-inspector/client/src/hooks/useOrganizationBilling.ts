@@ -6,7 +6,7 @@ export type BillingInterval = "monthly" | "annual";
 export type BillingModel = "free" | "flat" | "per_seat" | "contact";
 export type BillingFeatureName =
   | "evals"
-  | "sandboxes"
+  | "chatboxes"
   | "cicd"
   | "customDomains"
   | "auditLog"
@@ -16,19 +16,19 @@ export type BillingLimitName =
   | "maxMembers"
   | "maxWorkspaces"
   | "maxServersPerWorkspace"
-  | "maxSandboxesPerWorkspace"
+  | "maxChatboxesPerWorkspace"
   | "maxEvalRunsPerMonth";
 
 /** Mirrors backend premiumness gate keys exactly. */
 export type PremiumnessGateKey =
-  | "sandboxes"
+  | "chatboxes"
   | "evals"
   | "cicd"
   | "auditLog"
   | "maxMembers"
   | "maxWorkspaces"
   | "maxServersPerWorkspace"
-  | "maxSandboxesPerWorkspace"
+  | "maxChatboxesPerWorkspace"
   | "maxEvalRunsPerMonth";
 
 export type BillingEnforcementState =

@@ -35,7 +35,7 @@ describe("evals-router test-edit compare query", () => {
     });
   });
 
-  it("builds test edit with openCompare", () => {
+  it("builds test edit with compare=1", () => {
     const hash = buildEvalsHash({
       type: "test-edit",
       suiteId: "s_abc",
@@ -57,7 +57,7 @@ describe("evals-router test-edit compare query", () => {
     });
   });
 
-  it("builds test edit with openCompare and iteration", () => {
+  it("builds test edit with compare=1 and iteration", () => {
     const hash = buildEvalsHash({
       type: "test-edit",
       suiteId: "s_abc",
@@ -70,7 +70,7 @@ describe("evals-router test-edit compare query", () => {
     );
   });
 
-  it("navigates to test edit with openCompare", () => {
+  it("navigates to test edit with compare=1", () => {
     navigateToEvalsRoute({
       type: "test-edit",
       suiteId: "s_abc",

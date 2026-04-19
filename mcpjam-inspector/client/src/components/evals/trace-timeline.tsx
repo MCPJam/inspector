@@ -27,20 +27,20 @@ import {
 } from "lucide-react";
 import type { EvalTraceSpan, EvalTraceSpanCategory } from "@/shared/eval-trace";
 import { MemoizedMarkdown } from "@/components/chat-v2/thread/memomized-markdown";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Badge } from "@mcpjam/design-system/badge";
+import { Button } from "@mcpjam/design-system/button";
 import {
   HoverCard,
   HoverCardContent,
   HoverCardTrigger,
-} from "@/components/ui/hover-card";
-import { JsonEditor } from "@/components/ui/json-editor";
+} from "@mcpjam/design-system/hover-card";
+import { ScrollableJsonView } from "@/components/ui/json-editor";
 import {
   ResizableHandle,
   ResizablePanel,
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { ScrollArea } from "@mcpjam/design-system/scroll-area";
 import { extractTextFromToolResult } from "@/components/chat-v2/shared/tool-result-text";
 import { cn } from "@/lib/utils";
 import {
@@ -1307,10 +1307,8 @@ function StringPayloadFormatToggles({
 
 function PayloadPreview({
   value,
-  height = "180px",
 }: {
   value: unknown;
-  height?: string;
 }) {
   const [format, setFormat] = useState<PayloadVisualFormat>("plain");
 
@@ -1352,9 +1350,10 @@ function PayloadPreview({
   }
 
   return (
-    <div className="overflow-hidden rounded-md border border-border/60 bg-background">
-      <JsonEditor height={height} viewOnly value={value} />
-    </div>
+    <ScrollableJsonView
+      value={value}
+      containerClassName="max-h-56 rounded-md border border-border/60 bg-background"
+    />
   );
 }
 
@@ -1592,7 +1591,7 @@ function TimelineDetailPane({
             <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
               Input
             </div>
-            <PayloadPreview value={tabInputValue ?? undefined} height="220px" />
+            <PayloadPreview value={tabInputValue ?? undefined} />
           </div>
           <div
             className={cn(
@@ -1605,10 +1604,7 @@ function TimelineDetailPane({
             <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
               Output
             </div>
-            <PayloadPreview
-              value={tabOutputValue ?? undefined}
-              height="220px"
-            />
+            <PayloadPreview value={tabOutputValue ?? undefined} />
             {toolErrorExcerpt ? (
               <pre className="max-h-40 overflow-auto rounded-md border border-red-500/20 bg-red-500/5 p-3 text-xs whitespace-pre-wrap break-words text-red-900 dark:text-red-100">
                 {toolErrorExcerpt}

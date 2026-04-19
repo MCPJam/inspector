@@ -10,7 +10,6 @@ import {
 import "@xyflow/react/dist/style.css";
 import { ActorNode } from "./ActorNode";
 import { CustomActionEdge } from "./CustomActionEdge";
-import type { OAuthFlowStep } from "@mcpjam/sdk/browser";
 
 const nodeTypes = {
   actor: ActorNode,
@@ -23,8 +22,8 @@ const edgeTypes = {
 interface DiagramLayoutProps {
   nodes: Node[];
   edges: Edge[];
-  currentStep: OAuthFlowStep;
-  focusedStep?: OAuthFlowStep | null;
+  currentStep: string;
+  focusedStep?: string | null;
 }
 
 export const DiagramLayout = ({

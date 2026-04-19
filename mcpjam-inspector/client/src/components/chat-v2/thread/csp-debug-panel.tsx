@@ -14,12 +14,12 @@ import {
   Lightbulb,
   ChevronRight,
 } from "lucide-react";
-import { Label } from "@/components/ui/label";
-import { Badge } from "@/components/ui/badge";
+import { Label } from "@mcpjam/design-system/label";
+import { Badge } from "@mcpjam/design-system/badge";
 import type { CspMode } from "@/stores/ui-playground-store";
 import type { CspViolation } from "@/stores/widget-debug-store";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
-import { useSandboxHostTheme } from "@/contexts/sandbox-host-style-context";
+import { useChatboxHostTheme } from "@/contexts/chatbox-host-style-context";
 
 interface CspDebugPanelProps {
   cspInfo?: {
@@ -189,8 +189,8 @@ function generateCodeSnippet(
 
 export function CspDebugPanel({ cspInfo, protocol }: CspDebugPanelProps) {
   const themeMode = usePreferencesStore((s) => s.themeMode);
-  const sandboxHostTheme = useSandboxHostTheme();
-  const resolvedThemeMode = sandboxHostTheme ?? themeMode;
+  const chatboxHostTheme = useChatboxHostTheme();
+  const resolvedThemeMode = chatboxHostTheme ?? themeMode;
   const currentMode = cspInfo?.mode ?? "permissive";
   const violations = cspInfo?.violations ?? [];
   const hasViolations = violations.length > 0;

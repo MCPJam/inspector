@@ -1,4 +1,4 @@
-import { Badge } from "@/components/ui/badge";
+import { Badge } from "@mcpjam/design-system/badge";
 import { cn } from "@/lib/utils";
 import type { WorkspaceVisibility } from "@/state/app-types";
 import { Globe, Lock } from "lucide-react";

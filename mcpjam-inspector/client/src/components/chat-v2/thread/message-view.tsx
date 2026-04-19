@@ -1,7 +1,7 @@
 import { memo } from "react";
 import { UIMessage } from "@ai-sdk/react";
 import { MessageCircle } from "lucide-react";
-import type { ContentBlock } from "@modelcontextprotocol/sdk/types.js";
+import type { ContentBlock } from "@modelcontextprotocol/client";
 
 import { UserMessageBubble } from "./user-message-bubble";
 import { PartSwitch } from "./part-switch";
@@ -9,9 +9,9 @@ import { ModelDefinition } from "@/shared/types";
 import { type DisplayMode } from "@/stores/ui-playground-store";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import {
-  useSandboxHostStyle,
-  useSandboxHostTheme,
-} from "@/contexts/sandbox-host-style-context";
+  useChatboxHostStyle,
+  useChatboxHostTheme,
+} from "@/contexts/chatbox-host-style-context";
 import { groupAssistantPartsIntoSteps } from "./thread-helpers";
 import { ToolServerMap } from "@/lib/apis/mcp-tools-api";
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
@@ -121,14 +121,14 @@ function MessageViewImpl({
   claudeFooterMode = "none",
 }: MessageViewProps) {
   const themeMode = usePreferencesStore((s) => s.themeMode);
-  const sandboxHostStyle = useSandboxHostStyle();
-  const sandboxHostTheme = useSandboxHostTheme();
+  const chatboxHostStyle = useChatboxHostStyle();
+  const chatboxHostTheme = useChatboxHostTheme();
   const assistantAvatar = getAssistantAvatarDescriptor({
     model,
-    themeMode: sandboxHostTheme ?? themeMode,
-    sandboxHostStyle,
+    themeMode: chatboxHostTheme ?? themeMode,
+    chatboxHostStyle,
   });
-  const shouldRenderAssistantAvatar = sandboxHostStyle === null;
+  const shouldRenderAssistantAvatar = chatboxHostStyle === null;
   // Hide widget state messages (these are internal and sent to the model)
   if (message.id?.startsWith("widget-state-")) return null;
   // Hide model context messages (these are internal and sent to the model)

@@ -6,9 +6,9 @@
  */
 
 import {
-  useSandboxHostStyle,
-  useSandboxHostTheme,
-} from "@/contexts/sandbox-host-style-context";
+  useChatboxHostStyle,
+  useChatboxHostTheme,
+} from "@/contexts/chatbox-host-style-context";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { cn } from "@/lib/utils";
 
@@ -21,23 +21,23 @@ export function UserMessageBubble({
   children,
   className = "",
 }: UserMessageBubbleProps) {
-  const sandboxHostStyle = useSandboxHostStyle();
-  const sandboxHostTheme = useSandboxHostTheme();
+  const chatboxHostStyle = useChatboxHostStyle();
+  const chatboxHostTheme = useChatboxHostTheme();
   const globalThemeMode = usePreferencesStore((s) => s.themeMode);
-  const resolvedThemeMode = sandboxHostTheme ?? globalThemeMode;
-  const isDarkSandboxTheme = resolvedThemeMode === "dark";
+  const resolvedThemeMode = chatboxHostTheme ?? globalThemeMode;
+  const isDarkChatboxTheme = resolvedThemeMode === "dark";
   const bubbleClasses =
-    sandboxHostStyle === "chatgpt"
+    chatboxHostStyle === "chatgpt"
       ? cn(
-          "sandbox-host-user-bubble rounded-[1.5rem] border-transparent shadow-none",
-          isDarkSandboxTheme
+          "chatbox-host-user-bubble rounded-[1.5rem] border-transparent shadow-none",
+          isDarkChatboxTheme
             ? "bg-[#303030] text-[#DFDFDF]"
             : "bg-[#f4f4f4] text-[#1f1f1f]",
         )
-      : sandboxHostStyle === "claude"
+      : chatboxHostStyle === "claude"
         ? cn(
-            "sandbox-host-user-bubble rounded-xl shadow-none",
-            isDarkSandboxTheme
+            "chatbox-host-user-bubble rounded-xl shadow-none",
+            isDarkChatboxTheme
               ? "border-[#4c473f] bg-[#141413] text-[#F1F0ED]"
               : "border-[#d9d1c5] bg-[#f5f0e8] text-[#2d2926]",
           )

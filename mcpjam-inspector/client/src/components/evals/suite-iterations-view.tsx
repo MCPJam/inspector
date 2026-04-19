@@ -28,7 +28,7 @@ import {
   useAiProviderKeys,
   type ProviderTokens,
 } from "@/hooks/use-ai-provider-keys";
-import { Button } from "@/components/ui/button";
+import { Button } from "@mcpjam/design-system/button";
 import { Loader2, Trash2 } from "lucide-react";
 import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
 import {
@@ -376,16 +376,6 @@ export function SuiteIterationsView({
     });
   }, []);
 
-  const handleClearOpenCompareRoute = useCallback(() => {
-    if (route.type !== "test-edit") {
-      return;
-    }
-    navigation.toTestEdit(suite._id, route.testId, {
-      replace: true,
-      ...(route.iteration ? { iteration: route.iteration } : {}),
-    });
-  }, [navigation, route, suite._id]);
-
   const { hasToken } = useAiProviderKeys();
   const missingReplayProviderKeys = useMemo(() => {
     if (!cases || cases.length === 0) return [];
@@ -501,7 +491,6 @@ export function SuiteIterationsView({
                       ? (route.iteration ?? null)
                       : null
                   }
-                  onClearOpenCompareRoute={handleClearOpenCompareRoute}
                   onBackToList={() =>
                     navigation.toSuiteOverview(suite._id, "test-cases")
                   }

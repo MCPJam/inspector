@@ -4,10 +4,9 @@
 
 import type { JSONSchema7, JSONSchema7Definition } from "json-schema";
 import {
-  CallToolResult,
-  CallToolResultSchema,
-  ListToolsResult,
-} from "@modelcontextprotocol/sdk/types.js";
+  type CallToolResult,
+  type ListToolsResult,
+} from "@modelcontextprotocol/client";
 import {
   dynamicTool,
   jsonSchema,
@@ -16,6 +15,7 @@ import {
   type ToolCallOptions,
   type ToolSet,
 } from "ai";
+import { assertCallToolResult } from "./result-guards.js";
 
 /**
  * Normalizes a schema to a valid JSON Schema object.
@@ -224,7 +224,7 @@ export async function convertMCPToolsToVercelTools(
     const execute = async (args: unknown, options?: ToolCallOptions) => {
       options?.abortSignal?.throwIfAborted();
       const result = await callTool({ name, args, options });
-      return CallToolResultSchema.parse(result);
+      return assertCallToolResult(result, `Tool "${name}" result`);
     };
 
     // For MCP app tools, strip _meta and structuredContent before sending to the LLM.
