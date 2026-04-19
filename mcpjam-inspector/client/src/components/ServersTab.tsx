@@ -13,10 +13,19 @@ import {
   ChevronRight,
   MonitorSmartphone,
   MessageSquareText,
+  Settings,
 } from "lucide-react";
 import { ServerWithName, type ServerUpdateResult } from "@/hooks/use-app-state";
 import { ServerConnectionCard } from "./connection/ServerConnectionCard";
 import { AddServerModal } from "./connection/AddServerModal";
+import { ClientConfigTab } from "./client-config/ClientConfigTab";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogTitle,
+} from "@mcpjam/design-system/dialog";
+import type { WorkspaceClientConfig } from "@/lib/client-config";
 import {
   ServerDetailModal,
   type ServerDetailTab,
@@ -25,7 +34,7 @@ import {
 import { JsonImportModal } from "./connection/JsonImportModal";
 import { ServerFormData } from "@/shared/types.js";
 import { MCPIcon } from "./ui/mcp-icon";
-import { usePostHog } from "posthog-js/react";
+import { usePostHog, useFeatureFlagEnabled } from "posthog-js/react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -406,6 +415,10 @@ interface ServersTabProps {
   onLeaveWorkspace?: () => void;
   isRegistryEnabled?: boolean;
   onNavigateToRegistry?: () => void;
+  onSaveClientConfig?: (
+    workspaceId: string,
+    clientConfig: WorkspaceClientConfig | undefined,
+  ) => Promise<void>;
 }
 
 export function ServersTab({
@@ -423,8 +436,10 @@ export function ServersTab({
   onWorkspaceShared,
   isRegistryEnabled = false,
   onNavigateToRegistry,
+  onSaveClientConfig,
 }: ServersTabProps) {
   const posthog = usePostHog();
+  const clientConfigEnabled = useFeatureFlagEnabled("client-config-enabled");
   const { isAuthenticated } = useConvexAuth();
   const [pendingQuickConnect, setPendingQuickConnect] =
     useState<PendingQuickConnectState | null>(() => readPendingQuickConnect());
@@ -464,6 +479,7 @@ export function ServersTab({
   const [isAddingServer, setIsAddingServer] = useState(false);
   const [isImportingJson, setIsImportingJson] = useState(false);
   const [isActionMenuOpen, setIsActionMenuOpen] = useState(false);
+  const [isClientConfigOpen, setIsClientConfigOpen] = useState(false);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [detailModalState, setDetailModalState] = useState<{
     isOpen: boolean;
@@ -844,8 +860,28 @@ export function ServersTab({
     setIsActionMenuOpen(false);
   };
 
+  const handleOpenClientConfig = () => {
+    posthog.capture("client_config_button_clicked", {
+      location: "servers_tab",
+      platform: detectPlatform(),
+      environment: detectEnvironment(),
+    });
+    setIsClientConfigOpen(true);
+  };
+
   const renderServerActionsMenu = () => (
     <>
+      {clientConfigEnabled === true && onSaveClientConfig ? (
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={handleOpenClientConfig}
+          className="cursor-pointer"
+        >
+          <Settings className="h-4 w-4 mr-2" />
+          Client Config
+        </Button>
+      ) : null}
       <HoverCard
         open={isActionMenuOpen}
         onOpenChange={setIsActionMenuOpen}
@@ -1245,6 +1281,28 @@ export function ServersTab({
         onClose={() => setIsImportingJson(false)}
         onImport={handleJsonImport}
       />
+
+      {/* Client Config Dialog */}
+      {clientConfigEnabled === true && onSaveClientConfig ? (
+        <Dialog
+          open={isClientConfigOpen}
+          onOpenChange={setIsClientConfigOpen}
+        >
+          <DialogContent className="max-w-6xl w-[95vw] h-[85vh] p-0 overflow-hidden flex flex-col gap-0 sm:max-w-6xl">
+            <DialogTitle className="sr-only">Client Config</DialogTitle>
+            <DialogDescription className="sr-only">
+              Edit workspace client capabilities and host context.
+            </DialogDescription>
+            <div className="min-h-0 flex-1 overflow-hidden">
+              <ClientConfigTab
+                activeWorkspaceId={activeWorkspaceId}
+                workspace={selectedWorkspace}
+                onSaveClientConfig={onSaveClientConfig}
+              />
+            </div>
+          </DialogContent>
+        </Dialog>
+      ) : null}
 
       {detailModalServer && (
         <ServerDetailModal

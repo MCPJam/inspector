@@ -26,7 +26,6 @@ import { ViewsTab } from "./components/ViewsTab";
 import { ChatboxesTab } from "./components/ChatboxesTab";
 import { SettingsTab } from "./components/SettingsTab";
 import { WorkspaceSettingsTab } from "./components/WorkspaceSettingsTab";
-import { ClientConfigTab } from "./components/client-config/ClientConfigTab";
 import { WorkspaceClientConfigSync } from "./components/client-config/WorkspaceClientConfigSync";
 import { TracingTab } from "./components/TracingTab";
 import { AuthTab } from "./components/AuthTab";
@@ -315,7 +314,6 @@ export default function App() {
     "billing-entitlements-ui",
   );
   const learningEnabled = useFeatureFlagEnabled("mcpjam-learning");
-  const clientConfigEnabled = useFeatureFlagEnabled("client-config-enabled");
   const registryEnabled = useFeatureFlagEnabled("registry-enabled");
   const conformanceEnabled = useFeatureFlagEnabled("mcpjam-conformance");
   const playgroundEnabled = useFeatureFlagEnabled("playground-enabled");
@@ -1314,10 +1312,7 @@ export default function App() {
       (learningEnabled !== true || !isAuthenticated)
     ) {
       applyNavigation("servers", { updateHash: true });
-    } else if (
-      activeTab === "client-config" &&
-      (clientConfigEnabled !== true || !isAuthenticated)
-    ) {
+    } else if (activeTab === "client-config") {
       applyNavigation("servers", { updateHash: true });
     } else if (activeTab === "conformance" && conformanceEnabled !== true) {
       applyNavigation("servers", { updateHash: true });
@@ -1326,7 +1321,6 @@ export default function App() {
     }
   }, [
     conformanceEnabled,
-    clientConfigEnabled,
     registryEnabled,
     learningEnabled,
     evaluateRunsFlagsLoaded,
@@ -1688,6 +1682,7 @@ export default function App() {
                   ? () => handleNavigate("registry")
                   : undefined
               }
+              onSaveClientConfig={handleUpdateClientConfig}
             />
           )}
           {activeTab === "registry" && registryEnabled === true && (
@@ -1928,13 +1923,6 @@ export default function App() {
               onOnboardingChange={setAppBuilderOnboarding}
               playgroundServerSelectorProps={playgroundServerSelectorProps}
               enableMultiModelChat
-            />
-          )}
-          {activeTab === "client-config" && (
-            <ClientConfigTab
-              activeWorkspaceId={activeWorkspaceId}
-              workspace={activeWorkspace}
-              onSaveClientConfig={handleUpdateClientConfig}
             />
           )}
           {activeTab === "workspace-settings" && (

@@ -217,12 +217,6 @@ const navigationSections: NavSection[] = [
         icon: Layers,
       },
       {
-        title: "Client Config",
-        url: "#client-config",
-        icon: Settings,
-        featureFlag: "client-config-enabled",
-      },
-      {
         title: "Evaluate",
         url: "#evals",
         icon: FlaskConical,
@@ -547,7 +541,6 @@ export function MCPSidebar({
   const posthog = usePostHog();
   const learningFlagEnabled = useFeatureFlagEnabled("mcpjam-learning");
   const sandboxesEnabled = useFeatureFlagEnabled("sandboxes-enabled");
-  const clientConfigEnabled = useFeatureFlagEnabled("client-config-enabled");
   const registryEnabled = useFeatureFlagEnabled("registry-enabled");
   const evalsEnabled = useFeatureFlagEnabled("evals-enabled");
   const evaluateRunsEnabled = useFeatureFlagEnabled("evaluate-runs");
@@ -673,7 +666,6 @@ export function MCPSidebar({
     () => ({
       "mcpjam-learning": !!learningEnabled,
       "sandboxes-enabled": !!sandboxesEnabled && isAuthenticated,
-      "client-config-enabled": !!clientConfigEnabled && isAuthenticated,
       "registry-enabled": registryEnabled === true,
       "evals-enabled": !!evalsEnabled,
       "mcpjam-conformance": conformanceEnabled === true,
@@ -682,7 +674,6 @@ export function MCPSidebar({
     [
       learningEnabled,
       sandboxesEnabled,
-      clientConfigEnabled,
       registryEnabled,
       evalsEnabled,
       conformanceEnabled,
