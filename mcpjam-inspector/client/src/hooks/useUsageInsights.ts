@@ -80,7 +80,6 @@ export function useUsageInsights({
           chatboxId: sourceId,
           limit: 100,
           includeInternal: true,
-          filters: toServerFilters(filters),
         } as any)
       : "skip";
 
