@@ -144,12 +144,25 @@ jobs:
           set -euo pipefail
           BACKEND_OWNER="${BACKEND_REPO%%/*}"
           ENCODED_HEAD=$(jq -rn --arg s "${BACKEND_OWNER}:${PR_BRANCH}" '$s|@uri')
-          RESP=$(curl -sS \
+          RESP_FILE=$(mktemp)
+          HTTP_CODE=$(curl -sS -o "$RESP_FILE" -w "%{http_code}" \
             -H "Authorization: Bearer ${TOKEN}" \
             -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "https://api.github.com/repos/${BACKEND_REPO}/pulls?state=open&head=${ENCODED_HEAD}&per_page=1")
-          BE_PR_NUMBER=$(echo "$RESP" | jq -r '.[0].number // empty')
+          # Treat any non-200 or non-array body as "no matching backend PR"
+          # and fall through to the legacy dispatch path. Don't hard-fail:
+          # the dispatch token may lack `pulls:read` on this repo, in which
+          # case we still want the preview to deploy (just without reuse).
+          if [ "$HTTP_CODE" != "200" ]; then
+            BODY=$(head -c 300 "$RESP_FILE" 2>/dev/null || true)
+            echo "::warning::Backend PR lookup returned HTTP $HTTP_CODE (${BODY}); skipping reuse."
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            rm -f "$RESP_FILE"
+            exit 0
+          fi
+          BE_PR_NUMBER=$(jq -r 'if type == "array" and length > 0 then (.[0].number // empty) else empty end' < "$RESP_FILE" 2>/dev/null || echo "")
+          rm -f "$RESP_FILE"
           if [[ "$BE_PR_NUMBER" =~ ^[0-9]+$ ]]; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
             echo "number=$BE_PR_NUMBER" >> "$GITHUB_OUTPUT"
