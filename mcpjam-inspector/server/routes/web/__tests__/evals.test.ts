@@ -1,9 +1,16 @@
 import { Hono } from "hono";
+import { mkdtempSync, rmSync } from "fs";
+import os from "os";
+import path from "path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { bearerAuthMiddleware } from "../../../middleware/bearer-auth.js";
 import { guestRateLimitMiddleware } from "../../../middleware/guest-rate-limit.js";
 import evalsRoutes from "../evals.js";
 import { mapRuntimeError, webError } from "../errors.js";
+import {
+  initGuestTokenSecret,
+  issueGuestToken,
+} from "../../../services/guest-token.js";
 
 const {
   runEvalsWithManagerMock,
@@ -11,6 +18,7 @@ const {
   streamEvalTestCaseWithManagerMock,
   generateEvalTestsWithManagerMock,
   generateNegativeEvalTestsWithManagerMock,
+  managerConfigsMock,
   disconnectAllServersMock,
 } = vi.hoisted(() => ({
   runEvalsWithManagerMock: vi.fn(),
@@ -18,6 +26,7 @@ const {
   streamEvalTestCaseWithManagerMock: vi.fn(),
   generateEvalTestsWithManagerMock: vi.fn(),
   generateNegativeEvalTestsWithManagerMock: vi.fn(),
+  managerConfigsMock: vi.fn(),
   disconnectAllServersMock: vi.fn().mockResolvedValue(undefined),
 }));
 
@@ -26,11 +35,28 @@ vi.mock("@mcpjam/sdk", async () => {
     await vi.importActual<typeof import("@mcpjam/sdk")>("@mcpjam/sdk");
   return {
     ...actual,
-    MCPClientManager: vi.fn().mockImplementation(() => ({
-      disconnectAllServers: disconnectAllServersMock,
-    })),
+    MCPClientManager: vi.fn().mockImplementation((configs: unknown) => {
+      managerConfigsMock(configs);
+      return {
+        disconnectAllServers: disconnectAllServersMock,
+      };
+    }),
   };
 });
+
+vi.mock("../../../utils/oauth-proxy.js", () => ({
+  OAuthProxyError: class OAuthProxyError extends Error {
+    constructor(
+      public readonly status: number,
+      message: string,
+    ) {
+      super(message);
+    }
+  },
+  validateUrl: vi.fn().mockResolvedValue({
+    url: new URL("https://guest.example.com/mcp"),
+  }),
+}));
 
 vi.mock("../../shared/evals.js", async () => {
   const actual = await vi.importActual<typeof import("../../shared/evals.js")>(
@@ -176,13 +202,30 @@ async function expectJson<T = unknown>(
 }
 
 function stubAuthorizeResponse(options?: { useOAuth?: boolean }) {
+  const serverConfig = {
+    transportType: "http" as const,
+    url: "https://server.example.com/mcp",
+    headers: {},
+    useOAuth: options?.useOAuth ?? false,
+  };
+
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      if (String(input).endsWith("/web/authorize-batch")) {
-        const payload = JSON.parse(String(init?.body ?? "{}"));
-        const serverIds = Array.isArray(payload?.serverIds)
-          ? (payload.serverIds as string[])
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+
+      if (url.endsWith("/web/authorize-batch")) {
+        const rawBody =
+          typeof init?.body === "string"
+            ? (JSON.parse(init.body) as { serverIds?: string[] })
+            : null;
+        const serverIds = Array.isArray(rawBody?.serverIds)
+          ? rawBody.serverIds
           : [];
         return new Response(
           JSON.stringify({
@@ -194,12 +237,7 @@ function stubAuthorizeResponse(options?: { useOAuth?: boolean }) {
                   role: "member",
                   accessLevel: "workspace_member",
                   permissions: { chatOnly: false },
-                  serverConfig: {
-                    transportType: "http",
-                    url: `https://${serverId}.example.com/mcp`,
-                    headers: {},
-                    useOAuth: options?.useOAuth ?? false,
-                  },
+                  serverConfig,
                 },
               ]),
             ),
@@ -211,22 +249,48 @@ function stubAuthorizeResponse(options?: { useOAuth?: boolean }) {
         );
       }
 
-      throw new Error(`Unexpected fetch: ${String(input)}`);
+      return new Response(
+        JSON.stringify({
+          authorized: true,
+          role: "member",
+          accessLevel: "workspace_member",
+          permissions: { chatOnly: false },
+          serverConfig,
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      );
     }),
   );
 }
 
 describe("web routes — evals", () => {
   const originalConvexHttpUrl = process.env.CONVEX_HTTP_URL;
+  const originalGuestJwtKeyDir = process.env.GUEST_JWT_KEY_DIR;
+  let testGuestKeyDir: string | null = null;
 
   beforeEach(() => {
     vi.clearAllMocks();
+    testGuestKeyDir = mkdtempSync(path.join(os.tmpdir(), "evals-guest-test-"));
+    process.env.GUEST_JWT_KEY_DIR = testGuestKeyDir;
+    initGuestTokenSecret();
     process.env.CONVEX_HTTP_URL = "https://example.convex.site";
     stubAuthorizeResponse();
   });
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    if (testGuestKeyDir) {
+      rmSync(testGuestKeyDir, { recursive: true, force: true });
+      testGuestKeyDir = null;
+    }
+    if (originalGuestJwtKeyDir === undefined) {
+      delete process.env.GUEST_JWT_KEY_DIR;
+    } else {
+      process.env.GUEST_JWT_KEY_DIR = originalGuestJwtKeyDir;
+    }
     if (originalConvexHttpUrl === undefined) {
       delete process.env.CONVEX_HTTP_URL;
     } else {
@@ -350,5 +414,165 @@ describe("web routes — evals", () => {
         convexAuthToken: token,
       }),
     );
+  });
+
+  it("runs direct guest quick evals with the synthetic guest server", async () => {
+    runEvalTestCaseWithManagerMock.mockResolvedValueOnce({
+      success: true,
+      iteration: { _id: "guest-iter-1" },
+    });
+    const { app } = createEvalsTestApp();
+    const { token } = issueGuestToken();
+
+    const response = await postJson(
+      app,
+      "/api/web/evals/run-test-case",
+      {
+        serverUrl: "https://guest.example.com/mcp",
+        serverName: "Guest Server",
+        serverHeaders: { "X-Guest": "yes" },
+        oauthAccessToken: "fresh-oauth-token",
+        testCaseId: "guest-case-1",
+        model: "openai/gpt-5-mini",
+        provider: "openai",
+      },
+      token,
+    );
+
+    const { status, data } = await expectJson(response);
+
+    expect(status).toBe(200);
+    expect(data).toEqual({
+      success: true,
+      iteration: { _id: "guest-iter-1" },
+    });
+    expect(runEvalTestCaseWithManagerMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        workspaceId: "__guest__",
+        serverIds: ["__guest__"],
+        testCaseId: "guest-case-1",
+        convexAuthToken: token,
+      }),
+    );
+    expect(managerConfigsMock).toHaveBeenCalledWith({
+      __guest__: expect.objectContaining({
+        url: "https://guest.example.com/mcp",
+        requestInit: {
+          headers: {
+            "X-Guest": "yes",
+            Authorization: "Bearer fresh-oauth-token",
+          },
+        },
+      }),
+    });
+  });
+
+  it("generates direct guest eval tests with the synthetic guest server", async () => {
+    generateEvalTestsWithManagerMock.mockResolvedValueOnce({
+      success: true,
+      tests: [{ title: "Generated guest test" }],
+    });
+    const { app } = createEvalsTestApp();
+    const { token } = issueGuestToken();
+
+    const response = await postJson(
+      app,
+      "/api/web/evals/generate-tests",
+      {
+        serverUrl: "https://guest.example.com/mcp",
+        serverName: "Guest Server",
+      },
+      token,
+    );
+
+    const { status, data } = await expectJson(response);
+
+    expect(status).toBe(200);
+    expect(data).toEqual({
+      success: true,
+      tests: [{ title: "Generated guest test" }],
+    });
+    expect(generateEvalTestsWithManagerMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        workspaceId: "__guest__",
+        serverIds: ["__guest__"],
+        convexAuthToken: token,
+      }),
+    );
+  });
+
+  it("streams direct guest compare quick runs with the synthetic guest server", async () => {
+    const encoder = new TextEncoder();
+    streamEvalTestCaseWithManagerMock.mockResolvedValueOnce(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(encoder.encode('data: {"type":"complete"}\n\n'));
+          controller.close();
+        },
+      }),
+    );
+    const { app } = createEvalsTestApp();
+    const { token } = issueGuestToken();
+
+    const response = await postJson(
+      app,
+      "/api/web/evals/stream-test-case",
+      {
+        serverUrl: "https://guest.example.com/mcp",
+        serverName: "Guest Server",
+        testCaseId: "guest-case-1",
+        model: "openai/gpt-5-mini",
+        provider: "openai",
+        compareRunId: "cmp_guest",
+      },
+      token,
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("text/event-stream");
+    await expect(response.text()).resolves.toContain('"type":"complete"');
+    expect(streamEvalTestCaseWithManagerMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        workspaceId: "__guest__",
+        serverIds: ["__guest__"],
+        testCaseId: "guest-case-1",
+        compareRunId: "cmp_guest",
+        convexAuthToken: token,
+      }),
+      expect.objectContaining({
+        onStreamComplete: expect.any(Function),
+      }),
+    );
+  });
+
+  it("rejects direct guest full suite eval runs", async () => {
+    const { app } = createEvalsTestApp();
+    const { token } = issueGuestToken();
+
+    const response = await postJson(
+      app,
+      "/api/web/evals/run",
+      {
+        serverUrl: "https://guest.example.com/mcp",
+        serverName: "Guest Server",
+        suiteName: "Guest Suite",
+        tests: [],
+      },
+      token,
+    );
+    const { status, data } = await expectJson<{
+      code: string;
+      message: string;
+    }>(response);
+
+    expect(status).toBe(403);
+    expect(data).toEqual({
+      code: "FEATURE_NOT_SUPPORTED",
+      message: "Not available for guests yet. Sign in to use this.",
+    });
+    expect(runEvalsWithManagerMock).not.toHaveBeenCalled();
   });
 });
