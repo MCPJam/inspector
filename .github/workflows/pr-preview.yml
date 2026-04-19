@@ -128,6 +128,35 @@ jobs:
             *) echo "::error::Unexpected HTTP $HTTP_CODE checking ${BACKEND_REPO}/${PR_BRANCH}"; exit 1 ;;
           esac
 
+      # Look up an open backend PR on this branch so we can reuse the
+      # Convex preview it already manages instead of dispatching a
+      # second `convex deploy --preview-create` against the same preview.
+      # Two concurrent deploys race on env vars + the smoke test and the
+      # loser previously dispatched `backend_preview_failed`, which wired
+      # this Railway env to staging Convex (the crash the author hits).
+      - name: Look up matching backend PR
+        id: backend_pr
+        if: steps.backend_branch.outputs.exists == 'true'
+        env:
+          TOKEN: ${{ secrets.BACKEND_PREVIEW_DISPATCH_TOKEN }}
+          PR_BRANCH: ${{ steps.meta.outputs.branch }}
+        run: |
+          set -euo pipefail
+          BACKEND_OWNER="${BACKEND_REPO%%/*}"
+          ENCODED_HEAD=$(jq -rn --arg s "${BACKEND_OWNER}:${PR_BRANCH}" '$s|@uri')
+          RESP=$(curl -sS \
+            -H "Authorization: Bearer ${TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${BACKEND_REPO}/pulls?state=open&head=${ENCODED_HEAD}&per_page=1")
+          BE_PR_NUMBER=$(echo "$RESP" | jq -r '.[0].number // empty')
+          if [[ "$BE_PR_NUMBER" =~ ^[0-9]+$ ]]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "number=$BE_PR_NUMBER" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Create or refresh Railway preview environment
         run: |
           .github/scripts/railway-retry.sh railway link \
@@ -160,6 +189,65 @@ jobs:
             WEB_ALLOWED_ORIGINS="https://*.up.railway.app,$STAGING_APP_URL" \
             VITE_CONVEX_URL="$STAGING_VITE_CONVEX_URL" \
             CONVEX_HTTP_URL="$STAGING_CONVEX_HTTP_URL"
+
+      # If a backend PR on the same branch has already deployed a Convex
+      # preview, point this Railway env at it *before* `railway up`.
+      # `VITE_CONVEX_URL` is inlined at build time, so overwriting it after
+      # deploy would leave staging URLs baked into the bundle. When reuse
+      # succeeds the later "Dispatch backend preview request" step is
+      # skipped, so we don't re-run `convex deploy --preview-create`
+      # against a preview the backend-PR flow already owns.
+      - name: Reuse existing backend preview Convex URLs
+        id: reuse_backend
+        if: steps.backend_pr.outputs.exists == 'true'
+        run: |
+          set -uo pipefail
+          BE_ENV="${RAILWAY_BACKEND_PR_ENV_PREFIX}${{ steps.backend_pr.outputs.number }}"
+          # Don't go through railway-retry.sh: if the env doesn't exist yet
+          # (backend PR opened seconds ago) we want to fall through fast,
+          # not burn 150s on retries.
+          if ! railway link \
+            --project "$RAILWAY_PROJECT_ID" \
+            --environment "$BE_ENV" \
+            --service "$RAILWAY_INSPECTOR_SERVICE" \
+            --json >/dev/null 2>&1; then
+            echo "::notice::Backend Railway env $BE_ENV not found yet; falling through to dispatch."
+            echo "reused=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          VITE_URL=$(railway run \
+            --project "$RAILWAY_PROJECT_ID" \
+            --environment "$BE_ENV" \
+            --service "$RAILWAY_INSPECTOR_SERVICE" \
+            printenv VITE_CONVEX_URL 2>/dev/null | tail -n 1 | tr -d '\r' || echo "")
+          HTTP_URL=$(railway run \
+            --project "$RAILWAY_PROJECT_ID" \
+            --environment "$BE_ENV" \
+            --service "$RAILWAY_INSPECTOR_SERVICE" \
+            printenv CONVEX_HTTP_URL 2>/dev/null | tail -n 1 | tr -d '\r' || echo "")
+          # Only reuse real Convex preview URLs. If the backend Railway env
+          # is still on its staging-duplicated defaults (sync-backend-preview
+          # hasn't run yet), skip reuse so we don't mask a real race.
+          if [ -z "$VITE_URL" ] || [ -z "$HTTP_URL" ] \
+            || [ "$VITE_URL" = "$STAGING_VITE_CONVEX_URL" ] \
+            || [ "$HTTP_URL" = "$STAGING_CONVEX_HTTP_URL" ]; then
+            echo "::notice::Backend env $BE_ENV has no preview Convex URLs yet; falling through to dispatch."
+            echo "reused=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          .github/scripts/railway-retry.sh railway link \
+            --project "$RAILWAY_PROJECT_ID" \
+            --environment "${{ steps.meta.outputs.environment }}" \
+            --service "$RAILWAY_INSPECTOR_SERVICE" \
+            --json >/dev/null
+          .github/scripts/railway-retry.sh railway variable set \
+            -e "${{ steps.meta.outputs.environment }}" \
+            -s "$RAILWAY_INSPECTOR_SERVICE" \
+            VITE_CONVEX_URL="$VITE_URL" \
+            CONVEX_HTTP_URL="$HTTP_URL"
+          echo "reused=true" >> "$GITHUB_OUTPUT"
+          echo "vite_convex_url=$VITE_URL" >> "$GITHUB_OUTPUT"
+          echo "convex_http_url=$HTTP_URL" >> "$GITHUB_OUTPUT"
 
       - name: Deploy preview to Railway
         run: |
@@ -210,21 +298,26 @@ jobs:
             --api-key "$STAGING_WORKOS_API_KEY" \
             --json || true
 
-      # Initial health check: the preview is currently wired to staging
-      # Convex. If staging itself is broken (e.g., a rename shipped to main
-      # without `convex deploy` against staging), fail loudly now so the
-      # author isn't debugging a 404 from the "staging fallback" case later.
-      - name: Verify initial preview can reach Convex (staging)
+      # Initial health check: runs against whichever Convex deployment the
+      # preview is currently wired to — the backend PR's preview when we
+      # reused it, otherwise staging. Fails loudly so the author isn't
+      # debugging a 404 from the "staging fallback" / "backend preview not
+      # live yet" case later.
+      - name: Verify initial preview can reach Convex
         id: initial_health
         if: steps.preview_domain.outputs.url != ''
         continue-on-error: true
         env:
-          CONVEX_HTTP: ${{ env.STAGING_CONVEX_HTTP_URL }}
+          CONVEX_HTTP: ${{ steps.reuse_backend.outputs.convex_http_url || env.STAGING_CONVEX_HTTP_URL }}
         run: |
           .github/scripts/convex-health-check.sh "$CONVEX_HTTP" "chatboxes:listChatboxes"
 
+      # Skip the dispatch when we successfully reused an existing backend
+      # PR's Convex preview — otherwise we'd redundantly re-run
+      # `convex deploy --preview-create` on a preview the backend-PR flow
+      # already owns, which is the original race this fix is closing.
       - name: Dispatch backend preview request
-        if: steps.backend_branch.outputs.exists == 'true' && steps.preview_domain.outputs.url != ''
+        if: steps.backend_branch.outputs.exists == 'true' && steps.preview_domain.outputs.url != '' && steps.reuse_backend.outputs.reused != 'true'
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.BACKEND_PREVIEW_DISPATCH_TOKEN }}
@@ -252,7 +345,9 @@ jobs:
         uses: actions/github-script@v7
         env:
           PREVIEW_URL: ${{ steps.preview_domain.outputs.url }}
-          BACKEND_MODE: ${{ steps.backend_branch.outputs.exists == 'true' && 'preview requested' || 'staging fallback' }}
+          BACKEND_MODE: >-
+            ${{ steps.reuse_backend.outputs.reused == 'true' && format('shared with {0}#{1}', env.BACKEND_REPO, steps.backend_pr.outputs.number)
+                || (steps.backend_branch.outputs.exists == 'true' && 'preview requested' || 'staging fallback') }}
           HEALTH_OUTCOME: ${{ steps.initial_health.outcome }}
           PREVIEW_DEPLOYED_SHA: ${{ steps.preview_commit.outputs.deployed_sha }}
           PREVIEW_HEAD_SHA: ${{ steps.preview_commit.outputs.head_sha }}
