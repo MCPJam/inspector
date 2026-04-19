@@ -228,6 +228,16 @@ export interface UseChatSessionReturn {
         prefersBorder: boolean;
         widgetHtmlUrl?: string | null;
       }>;
+      turnTraces?: Array<{
+        turnId: string;
+        promptIndex: number;
+        startedAt: number;
+        endedAt: number;
+        finishReason?: string;
+        usage?: LiveChatTraceUsage;
+        spansBlobUrl?: string | null;
+        modelId?: string;
+      }>;
     },
     options?: {
       shouldRestoreResumeConfig?: () => boolean;
@@ -304,6 +314,16 @@ interface LiveTraceTurnState {
   actualToolCalls: LiveChatTraceToolCall[];
   /** From `turn_start.startedAtMs` — anchors wall-clock times in TraceTimeline. */
   startedAtMs?: number;
+  /**
+   * Wall-clock end time, only populated when the turn was rehydrated from a
+   * persisted trace. Enables a duration fallback in `buildLiveTraceEnvelope`
+   * when the spans blob fails to load or is genuinely empty.
+   */
+  endedAtMs?: number;
+  /** Persisted finish reason (rehydration only). */
+  finishReason?: string;
+  /** Persisted model id (rehydration only). */
+  modelId?: string;
 }
 
 interface LiveTraceAccumulatorState {
@@ -326,6 +346,7 @@ interface PendingSessionHydration {
     import("@/components/chat-v2/thread/tool-render-overrides").ToolRenderOverride
   >;
   persistedSnapshotToolCallIds?: string[];
+  turnTraces?: HydratedTurnTrace[];
   resolve?: () => void;
 }
 
@@ -341,6 +362,118 @@ function createEmptyLiveTraceState(): LiveTraceAccumulatorState {
     activeTurnId: null,
     activeTurnHasSnapshot: false,
     anySnapshotSeen: false,
+  };
+}
+
+export interface HydratedTurnTrace {
+  turnId: string;
+  promptIndex: number;
+  startedAt: number;
+  endedAt: number;
+  finishReason?: string;
+  usage?: LiveChatTraceUsage;
+  spans: EvalTraceSpan[];
+  modelId?: string;
+}
+
+async function resolveHydratedTurnTraces(
+  raw:
+    | Array<{
+        turnId: string;
+        promptIndex: number;
+        startedAt: number;
+        endedAt: number;
+        finishReason?: string;
+        usage?: LiveChatTraceUsage;
+        spansBlobUrl?: string | null;
+        modelId?: string;
+      }>
+    | undefined,
+): Promise<HydratedTurnTrace[] | undefined> {
+  // Preserve the `undefined` sentinel so `queueSessionHydration` can tell
+  // "caller didn't provide traces — leave existing state alone" apart from
+  // "caller gave an explicit empty list — zero persisted traces".
+  if (raw === undefined) {
+    return undefined;
+  }
+  if (raw.length === 0) {
+    return [];
+  }
+  const results = await Promise.all(
+    raw.map(async (trace) => {
+      let spans: EvalTraceSpan[] = [];
+      if (trace.spansBlobUrl) {
+        try {
+          const response = await fetch(trace.spansBlobUrl);
+          if (response.ok) {
+            const parsed = (await response.json()) as unknown;
+            if (Array.isArray(parsed)) {
+              spans = parsed as EvalTraceSpan[];
+            }
+          }
+        } catch (err) {
+          // Span blob fetch failures are non-fatal; the turn survives
+          // without span timing data. Warn so a misconfiguration
+          // (bad CORS, expired URL, missing blob) surfaces in the
+          // console rather than silently blanking latency/token
+          // numbers in the trace viewer.
+          console.warn(
+            `[useChatSession] Failed to fetch spans for turn ${trace.turnId}:`,
+            err,
+          );
+        }
+      }
+      return {
+        turnId: trace.turnId,
+        promptIndex: trace.promptIndex,
+        startedAt: trace.startedAt,
+        endedAt: trace.endedAt,
+        finishReason: trace.finishReason,
+        usage: trace.usage,
+        spans,
+        modelId: trace.modelId,
+      };
+    }),
+  );
+  return results;
+}
+
+function buildLiveTraceStateFromTurnTraces(
+  traces: HydratedTurnTrace[],
+): LiveTraceAccumulatorState {
+  if (traces.length === 0) {
+    return createEmptyLiveTraceState();
+  }
+
+  const ordered = [...traces].sort(
+    (left, right) => left.promptIndex - right.promptIndex,
+  );
+  const turnOrder: string[] = [];
+  const turns: Record<string, LiveTraceTurnState> = {};
+  for (const trace of ordered) {
+    turnOrder.push(trace.turnId);
+    turns[trace.turnId] = {
+      turnId: trace.turnId,
+      promptIndex: trace.promptIndex,
+      spans: trace.spans,
+      usage: trace.usage,
+      actualToolCalls: [],
+      startedAtMs: trace.startedAt,
+      endedAtMs: trace.endedAt,
+      finishReason: trace.finishReason,
+      modelId: trace.modelId,
+    };
+  }
+
+  return {
+    turnOrder,
+    turns,
+    messages: [],
+    events: [],
+    requestPayloadHistory: [],
+    activeTurnId: null,
+    activeTurnHasSnapshot: false,
+    anySnapshotSeen: true,
   };
 }
 
@@ -575,7 +708,19 @@ function buildLiveTraceEnvelope(
       traceStartedAtMs = turn.startedAtMs;
     }
 
-    const durationMs = getTraceSpansDurationMs(turn.spans);
+    const spansDurationMs = getTraceSpansDurationMs(turn.spans);
+    // Fallback to wall-clock (endedAt - startedAt) when spans are empty —
+    // happens if we rehydrated a persisted turn whose spans blob failed to
+    // load or was never written, so the turn still gets a non-zero row in
+    // the timeline instead of collapsing to a zero-duration sliver.
+    const wallClockDurationMs =
+      typeof turn.startedAtMs === "number" &&
+      typeof turn.endedAtMs === "number" &&
+      turn.endedAtMs > turn.startedAtMs
+        ? turn.endedAtMs - turn.startedAtMs
+        : 0;
+    const durationMs =
+      spansDurationMs > 0 ? spansDurationMs : wallClockDurationMs;
     if (turn.spans.length > 0) {
       spans.push(...rebaseTraceSpans(turn.spans, nextOffsetMs));
     }
@@ -799,6 +944,9 @@ export function useChatSession({
   const pendingSessionHydrationRef = useRef<PendingSessionHydration | null>(
     null,
   );
+  const pendingLiveTraceStateRef = useRef<LiveTraceAccumulatorState | null>(
+    null,
+  );
   const selectedServersSignature = useMemo(
     () => selectedServers.join("\u0000"),
     [selectedServers],
@@ -846,6 +994,10 @@ export function useChatSession({
     [],
   );
   const clearPendingSessionHydration = useCallback(() => {
+    // Drop any queued trace state so a subsequent resetChat / fork does not
+    // re-apply stale hydrated spans to the fresh session when the reset
+    // effect reads pendingLiveTraceStateRef.
+    pendingLiveTraceStateRef.current = null;
     const pendingHydration = pendingSessionHydrationRef.current;
     if (!pendingHydration) {
       return;
@@ -1125,6 +1277,18 @@ export function useChatSession({
     (hydration: PendingSessionHydration) => {
       clearPendingSessionHydration();
 
+      // `undefined` means the caller doesn't have authoritative trace data
+      // yet (e.g. the Convex query is still loading, or the paired backend
+      // function is not deployed). In that case we preserve whatever live
+      // trace state already exists rather than wiping it. An empty array
+      // means "definitively zero persisted traces" and does empty the state.
+      const hydratedTraceState =
+        hydration.turnTraces !== undefined
+          ? hydration.turnTraces.length > 0
+            ? buildLiveTraceStateFromTurnTraces(hydration.turnTraces)
+            : createEmptyLiveTraceState()
+          : null;
+
       // If the chatSessionId is already the target value, setChatSessionId
       // would be a no-op and the useLayoutEffect that processes the pending
       // hydration would never fire.  Apply the hydration directly instead.
@@ -1135,9 +1299,14 @@ export function useChatSession({
         setPersistedSnapshotToolCallIds(
           hydration.persistedSnapshotToolCallIds ?? [],
         );
+        if (hydratedTraceState !== null) {
+          setLiveTraceState(hydratedTraceState);
+        }
         setHydrationTick((t) => t + 1);
         return Promise.resolve();
       }
+
+      pendingLiveTraceStateRef.current = hydratedTraceState;
 
       return new Promise<void>((resolve) => {
         pendingSessionHydrationRef.current = {
@@ -1235,8 +1404,14 @@ export function useChatSession({
   const hasLiveTimelineContent =
     livePreviewSpanCount > 0 || (liveTraceEnvelope?.spans?.length ?? 0) > 0;
 
-  useEffect(() => {
-    setLiveTraceState(createEmptyLiveTraceState());
+  // useLayoutEffect (not useEffect) so the trace state is swapped out
+  // before the browser paints the new chatSessionId render, preventing a
+  // flash of the previous session's live-trace envelope on session switch
+  // or fork.
+  useLayoutEffect(() => {
+    const hydratedState = pendingLiveTraceStateRef.current;
+    pendingLiveTraceStateRef.current = null;
+    setLiveTraceState(hydratedState ?? createEmptyLiveTraceState());
   }, [chatSessionId]);
 
   useSharedChatWidgetCapture({
@@ -1398,6 +1573,16 @@ export function useChatSession({
           prefersBorder: boolean;
           widgetHtmlUrl?: string | null;
         }>;
+        turnTraces?: Array<{
+          turnId: string;
+          promptIndex: number;
+          startedAt: number;
+          endedAt: number;
+          finishReason?: string;
+          usage?: LiveChatTraceUsage;
+          spansBlobUrl?: string | null;
+          modelId?: string;
+        }>;
       },
       options?: {
         shouldRestoreResumeConfig?: () => boolean;
@@ -1428,6 +1613,10 @@ export function useChatSession({
         overrides = buildToolRenderOverridesFromSnapshots(traceSnapshots);
       }
 
+      const hydratedTurnTraces = await resolveHydratedTurnTraces(
+        session.turnTraces,
+      );
+
       if (options?.shouldApply && !options.shouldApply()) {
         return;
       }
@@ -1455,6 +1644,7 @@ export function useChatSession({
         resumedVersion: session.version,
         toolRenderOverrides: overrides,
         persistedSnapshotToolCallIds,
+        turnTraces: hydratedTurnTraces,
       });
       onResetRef.current?.("hydrate");
     },

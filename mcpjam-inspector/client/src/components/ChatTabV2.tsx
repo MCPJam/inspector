@@ -79,6 +79,7 @@ import {
   getChatHistoryDetail,
   type ChatHistoryDetailSession,
   type ChatHistorySession,
+  type ChatHistoryTurnTrace,
   type ChatHistoryWidgetSnapshot,
 } from "@/lib/apis/web/chat-history-api";
 import { useWorkspaceServers } from "@/hooks/useViews";
@@ -556,6 +557,7 @@ export function ChatTabV2({
       options?: {
         shouldRestoreComposerState?: () => boolean;
         shouldApply?: () => boolean;
+        turnTraces?: ChatHistoryTurnTrace[];
       },
     ) => {
       await loadChatSession(
@@ -565,6 +567,7 @@ export function ChatTabV2({
           resumeConfig: detail.resumeConfig,
           version: detail.version,
           widgetSnapshots,
+          turnTraces: options?.turnTraces,
         },
         {
           shouldRestoreResumeConfig: options?.shouldRestoreComposerState,
@@ -735,6 +738,10 @@ export function ChatTabV2({
         shouldApply: () =>
           reactiveHistoryLoadRequestIdRef.current === requestId &&
           activeHistorySessionIdRef.current === reactiveHistorySession._id,
+        // Intentionally omit turnTraces here: loadChatSession treats
+        // `undefined` as "preserve existing trace state", so the live
+        // trace viewer is not wiped by reactive session refreshes. Traces
+        // are seeded once via the REST detail path on thread selection.
       },
     ).catch((error) => {
       console.error("[ChatTabV2] Failed to apply reactive chat history", error);
@@ -824,7 +831,9 @@ export function ChatTabV2({
           detail.session.resumeConfig?.selectedServers,
         );
 
-        await loadHistorySession(detail.session, detail.widgetSnapshots);
+        await loadHistorySession(detail.session, detail.widgetSnapshots, {
+          turnTraces: detail.turnTraces,
+        });
 
         if (
           historySelectionRequestIdRef.current !== selectionRequestId ||

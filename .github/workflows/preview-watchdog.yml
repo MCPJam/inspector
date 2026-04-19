@@ -1,0 +1,99 @@
+name: Preview watchdog
+
+# Catches PR previews whose "Backend target: preview requested" comment is
+# stuck because a `backend_preview_ready` or `backend_preview_failed`
+# dispatch was lost (token expired, GitHub API blip, job crashed, etc.).
+# Today this leaves the author staring at a stale "preview requested"
+# message with no recourse. Watchdog runs every 15 minutes and nudges
+# anything older than 20 minutes with a follow-up comment and link to
+# re-run the upsert-preview workflow.
+#
+# Strictly additive — doesn't modify existing preview comments, only adds
+# a sibling `mcpjam-preview-watchdog` comment. Posts once per stuck PR and
+# keeps the comment updated, so it won't spam the PR thread.
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  scan-stuck-previews:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const previewMarker = "<!-- mcpjam-preview -->";
+            const watchdogMarker = "<!-- mcpjam-preview-watchdog -->";
+            const stuckAfterMs = 20 * 60 * 1000;
+
+            const prs = await github.paginate(github.rest.pulls.list, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              per_page: 100,
+            });
+
+            for (const pr of prs) {
+              const comments = await github.paginate(github.rest.issues.listComments, {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pr.number,
+                per_page: 100,
+              });
+
+              const previewComment = comments.find((c) =>
+                c.body?.includes(previewMarker),
+              );
+              if (!previewComment) continue;
+
+              // Only nudge when the current state is "preview requested"
+              // — that's the specific stuck-waiting state we can resolve.
+              if (!previewComment.body?.includes("Backend target: preview requested")) {
+                continue;
+              }
+
+              const updatedAt = new Date(previewComment.updated_at).getTime();
+              if (Date.now() - updatedAt < stuckAfterMs) continue;
+
+              const ageMinutes = Math.round(
+                (Date.now() - updatedAt) / 60000,
+              );
+              const runsUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/workflows/pr-preview.yml?query=branch%3A${encodeURIComponent(pr.head.ref)}`;
+              const body = [
+                watchdogMarker,
+                "### Preview watchdog",
+                `The "preview requested" state has been stuck for ~${ageMinutes} minutes.`,
+                "The backend callback probably dropped (token expired, dispatch failed, or the backend job crashed).",
+                "",
+                `Recover: re-run the [\`upsert-preview\` workflow](${runsUrl}) for this PR, or push an empty commit.`,
+                "",
+                "_Watchdog runs every 15 minutes; this comment updates in place when conditions change._",
+              ].join("\n");
+
+              const existing = comments.find((c) =>
+                c.body?.includes(watchdogMarker),
+              );
+              if (existing) {
+                if (existing.body === body) continue;
+                await github.rest.issues.updateComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  comment_id: existing.id,
+                  body,
+                });
+                continue;
+              }
+
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pr.number,
+                body,
+              });
+            }
