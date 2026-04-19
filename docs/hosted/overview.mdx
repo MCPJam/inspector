@@ -44,6 +44,45 @@ Try it yourself with the [Excalidraw MCP server](https://app.mcpjam.com/shared/e
 3. Choose your authentication method (None, Bearer Token, or OAuth 2.0)
 4. Start inspecting tools, resources, and prompts
 
+## MCPJam MCP server
+
+MCPJam provides a hosted MCP server at `https://mcp.mcpjam.com/mcp` (production) and `https://mcp-staging.mcpjam.com/mcp` (staging). Connect to it from any MCP client to access your MCPJam workspaces, organizations, and run diagnostics on your servers.
+
+### Authentication
+
+The server uses OAuth 2.0 with WorkOS AuthKit. When you connect from an MCP client, it will automatically discover the authorization server and guide you through the OAuth flow using your MCPJam account.
+
+### Available tools
+
+- **`whoami`** — Returns your authenticated MCPJam user record
+- **`getWorkspaces`** — Lists your workspaces, optionally filtered by organization
+- **`getOrg`** — Returns details for a specific organization you belong to
+- **`doctor`** — Runs diagnostics on MCP servers in a workspace
+
+Use `getWorkspaces` and `getOrg` to discover the IDs needed for `doctor`.
+
+### Example usage
+
+```bash
+# Connect from any MCP client
+# The client will auto-discover OAuth and prompt you to sign in
+
+# List all your workspaces
+getWorkspaces {}
+
+# List workspaces in a specific organization
+getWorkspaces { "organizationId": "org_123" }
+
+# Get organization details
+getOrg { "organizationId": "org_123" }
+
+# Run diagnostics on servers in a workspace
+doctor {
+  "organizationId": "org_123",
+  "workspaceId": "ws_456"
+}
+```
+
 ## What's different
 
 The following features are not available in the hosted app. They are available when running MCPJam locally via [npx, Docker, or the desktop app](/installation).
