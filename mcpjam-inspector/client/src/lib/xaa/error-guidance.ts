@@ -15,33 +15,38 @@ function nestedUpstreamStatus(entry: XAAHttpHistoryEntry): number | undefined {
 }
 
 /**
+ * Returns true when the entry represents a failed attempt by the same rules
+ * the state machine uses, including the `/proxy/token` wrapper shape used by
+ * `jwt_bearer_request`:
+ *
+ *   - transport-level error          → failed
+ *   - outer HTTP status is non-2xx   → failed
+ *   - jwt_bearer proxy wrapper with  → failed  (matches state machine's
+ *     missing / non-numeric / non-2xx  `if (!upstreamStatus || upstreamStatus
+ *     nested status                    < 200 || upstreamStatus >= 300)`)
+ */
+function isEffectivelyFailed(entry: XAAHttpHistoryEntry): boolean {
+  if (entry.error) return true;
+  if (!entry.response) return false;
+  if (entry.response.status < 200 || entry.response.status >= 300) return true;
+  if (entry.step === "jwt_bearer_request") {
+    const nested = nestedUpstreamStatus(entry);
+    if (nested === undefined || nested < 200 || nested >= 300) return true;
+  }
+  return false;
+}
+
+/**
  * Returns the last HTTP entry for a step only if that final entry represents a
  * failure. If the step retried and a later attempt succeeded, returns undefined
  * — we don't want to show error guidance for a step whose outcome was success.
- *
- * For `jwt_bearer_request`, the `/proxy/token` endpoint always returns HTTP 200
- * and wraps the upstream authorization-server response in `{status, body}`, so
- * we also inspect the nested upstream status to detect failure. We scope that
- * inspection to `jwt_bearer_request` because other steps could coincidentally
- * return a body with a `status` field that doesn't mean HTTP status.
  */
 export function latestErroredHttpEntry(
   httpEntries: readonly XAAHttpHistoryEntry[],
 ): XAAHttpHistoryEntry | undefined {
   if (httpEntries.length === 0) return undefined;
   const last = httpEntries[httpEntries.length - 1];
-  if (last.error) return last;
-  if (!last.response) return undefined;
-  if (last.response.status < 200 || last.response.status >= 300) {
-    return last;
-  }
-  if (last.step === "jwt_bearer_request") {
-    const nested = nestedUpstreamStatus(last);
-    if (nested !== undefined && (nested < 200 || nested >= 300)) {
-      return last;
-    }
-  }
-  return undefined;
+  return isEffectivelyFailed(last) ? last : undefined;
 }
 
 export type XAAErrorActionIntent =
@@ -120,26 +125,22 @@ export function getXAAErrorGuidance(
     step === "jwt_bearer_request" && httpEntry
       ? nestedUpstreamStatus(httpEntry)
       : undefined;
-  const hasFailedOuterResponse =
-    typeof responseStatus === "number" &&
-    (responseStatus < 200 || responseStatus >= 300);
-  const hasFailedUpstreamResponse =
+  const hasFailedResponse = httpEntry
+    ? isEffectivelyFailed(httpEntry)
+    : false;
+  // The numeric status to show in fallback messages. Prefer upstream (from the
+  // proxy wrapper) over outer; leave undefined when the failure mode is a
+  // malformed proxy wrapper without a numeric nested status.
+  const failedStatus =
     typeof upstreamStatus === "number" &&
-    (upstreamStatus < 200 || upstreamStatus >= 300);
-  const hasFailedResponse =
-    hasFailedOuterResponse || hasFailedUpstreamResponse;
-  const failedStatus = hasFailedUpstreamResponse
-    ? upstreamStatus
-    : hasFailedOuterResponse
-      ? responseStatus
-      : undefined;
+    (upstreamStatus < 200 || upstreamStatus >= 300)
+      ? upstreamStatus
+      : typeof responseStatus === "number" &&
+          (responseStatus < 200 || responseStatus >= 300)
+        ? responseStatus
+        : undefined;
 
-  if (
-    !stateError &&
-    !upstreamError &&
-    !httpEntry?.error &&
-    !hasFailedResponse
-  ) {
+  if (!stateError && !upstreamError && !hasFailedResponse) {
     return null;
   }
 

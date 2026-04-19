@@ -177,6 +177,30 @@ describe("getXAAErrorGuidance", () => {
       expect(guidance).toBeNull();
     });
 
+    it("treats a malformed proxy wrapper (outer 200, missing nested status) as a failure", () => {
+      // State machine's requestAccessToken does:
+      //   if (!upstreamStatus || upstreamStatus < 200 || upstreamStatus >= 300)
+      // so a response lacking a numeric nested status is a failure. Previously
+      // latestErroredHttpEntry / getXAAErrorGuidance didn't detect this and
+      // the user saw a raw error alert instead of a structured card.
+      const guidance = getXAAErrorGuidance({
+        step: "jwt_bearer_request",
+        stateError: "Authorization server returned an unknown status.",
+        httpEntry: httpEntry({
+          step: "jwt_bearer_request",
+          response: {
+            status: 200,
+            statusText: "OK",
+            headers: {},
+            body: { body: { something: "else" } },
+          },
+        }),
+      });
+      expect(guidance?.title).toBe(
+        "JWT bearer request failed at the authorization server",
+      );
+    });
+
     it("produces a guidance card for a proxy-wrapped upstream failure even without an OAuth error field", () => {
       // Outer 200, nested 500, empty body. Previously latestErroredHttpEntry
       // flagged it, but getXAAErrorGuidance only looked at the outer status
@@ -404,6 +428,21 @@ describe("latestErroredHttpEntry", () => {
       },
     };
     expect(latestErroredHttpEntry([proxyWrappedSuccess])).toBeUndefined();
+  });
+
+  it("flags a jwt_bearer proxy response without a numeric nested status (malformed wrapper)", () => {
+    const malformed: XAAHttpHistoryEntry = {
+      step: "jwt_bearer_request",
+      timestamp: 0,
+      request: { method: "POST", url: "/proxy/token", headers: {} },
+      response: {
+        status: 200,
+        statusText: "OK",
+        headers: {},
+        body: { body: { something: "else" } },
+      },
+    };
+    expect(latestErroredHttpEntry([malformed])).toBe(malformed);
   });
 
   it("only inspects nested upstream status for jwt_bearer_request entries", () => {
