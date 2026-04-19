@@ -194,6 +194,58 @@ describe("getXAAErrorGuidance", () => {
       });
       expect(guidance?.title).toContain("rejected the access token");
     });
+
+    it("surfaces a catch-all card for non-401/403 failures (e.g. 500)", () => {
+      const guidance = getXAAErrorGuidance({
+        step: "authenticated_mcp_request",
+        httpEntry: httpEntry({
+          step: "authenticated_mcp_request",
+          response: {
+            status: 500,
+            statusText: "Internal Server Error",
+            headers: {},
+            body: {},
+          },
+        }),
+      });
+      expect(guidance?.title).toBe("MCP server request failed");
+      expect(guidance?.explanation).toContain("500");
+      expect(guidance?.severity).toBe("error");
+    });
+
+    it("surfaces a network-error variant of the catch-all", () => {
+      const guidance = getXAAErrorGuidance({
+        step: "authenticated_mcp_request",
+        httpEntry: httpEntry({
+          step: "authenticated_mcp_request",
+          error: { message: "fetch failed" },
+        }),
+      });
+      expect(guidance?.title).toBe("MCP server request failed");
+      expect(guidance?.explanation).toContain("network error");
+    });
+  });
+
+  describe("generic HTTP failure fallback", () => {
+    it("surfaces a warning card for a non-2xx response even when no step-specific case matches", () => {
+      // user_authentication 500 isn't specifically handled; the generic
+      // fallback should still produce a callout so the user isn't left
+      // staring at silence.
+      const guidance = getXAAErrorGuidance({
+        step: "user_authentication",
+        httpEntry: httpEntry({
+          step: "user_authentication",
+          response: {
+            status: 500,
+            statusText: "Internal Server Error",
+            headers: {},
+            body: {},
+          },
+        }),
+      });
+      expect(guidance?.title).toBe("Request failed");
+      expect(guidance?.explanation).toContain("500");
+    });
   });
 });
 

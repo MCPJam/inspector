@@ -247,15 +247,29 @@ export function getXAAErrorGuidance(
         severity: "error",
       };
     }
+    if (hasFailedResponse || httpEntry?.error) {
+      return {
+        title: "MCP server request failed",
+        explanation: `The authenticated MCP call ${
+          status ? `returned ${status}` : "failed with a network error"
+        }. Expand the HTTP entry below for the raw response, then check the MCP server logs for why it rejected the request.`,
+        actions: [],
+        severity: "error",
+      };
+    }
   }
 
-  // Generic http failure fallback
-  if (httpEntry?.error) {
+  // Generic HTTP failure fallback — catches any step that hit a non-2xx
+  // response without a more specific case above, so users don't see a blank
+  // response to a known failure.
+  if (hasFailedResponse || httpEntry?.error) {
     return {
       title: "Request failed",
       explanation:
-        httpEntry.error.message ||
-        "The request did not complete. Check network connectivity and CORS settings.",
+        httpEntry?.error?.message ||
+        (responseStatus
+          ? `The request returned ${responseStatus}. Expand the HTTP entry below for details.`
+          : "The request did not complete. Check network connectivity and CORS settings."),
       actions: [],
       severity: "warning",
     };
