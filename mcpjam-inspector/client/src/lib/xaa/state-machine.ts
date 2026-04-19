@@ -637,9 +637,13 @@ export function createXAAStateMachine(
         const resolvedIssuer =
           typeof metadata.issuer === "string" ? metadata.issuer : issuer;
 
-        const compatibilityReport = analyzeAsCompatibility(
-          metadata as XAAFlowState["authzMetadata"],
-        );
+        // Use the resolved issuer — not raw metadata.issuer which may be
+        // absent from the AS response — so vendor detection always has a
+        // hostname to match against.
+        const compatibilityReport = analyzeAsCompatibility({
+          ...(metadata as XAAFlowState["authzMetadata"]),
+          issuer: resolvedIssuer,
+        });
 
         machine.updateState({
           currentStep: "received_authz_metadata",

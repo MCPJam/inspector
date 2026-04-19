@@ -104,4 +104,18 @@ describe("analyzeAsCompatibility", () => {
     const tokenCheck = report?.checks.find((c) => c.id === "token_endpoint");
     expect(tokenCheck?.status).toBe("fail");
   });
+
+  it("relies entirely on the provided issuer for vendor detection", () => {
+    // Regression: the state machine must pass its resolvedIssuer (not raw
+    // metadata.issuer, which may be absent) into this function, otherwise
+    // vendor hints are silently lost and WorkOS-known-unsupported would
+    // quietly show as warn instead of fail.
+    const report = analyzeAsCompatibility({
+      issuer: "https://dynamic-echo-14-staging.authkit.app",
+      token_endpoint: "https://dynamic-echo-14-staging.authkit.app/oauth2/token",
+    });
+    expect(report?.vendor).toBe("workos");
+    expect(report?.vendorHint?.verdict).toBe("unsupported");
+    expect(report?.overall).toBe("fail");
+  });
 });
