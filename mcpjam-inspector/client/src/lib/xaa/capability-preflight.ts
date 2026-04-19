@@ -101,8 +101,11 @@ export function analyzeAsCompatibility(
 ): XAACompatibilityReport | null {
   if (!authzMetadata) return null;
 
-  const grantTypes = Array.isArray(authzMetadata.grant_types_supported)
-    ? authzMetadata.grant_types_supported
+  const grantTypesAdvertised = Array.isArray(
+    authzMetadata.grant_types_supported,
+  );
+  const grantTypes = grantTypesAdvertised
+    ? (authzMetadata.grant_types_supported as string[])
     : [];
   const advertisesJwtBearer = grantTypes.includes(JWT_BEARER_GRANT);
 
@@ -113,7 +116,7 @@ export function analyzeAsCompatibility(
         status: "pass",
         detail: `Advertised in grant_types_supported.`,
       }
-    : grantTypes.length === 0
+    : !grantTypesAdvertised
       ? {
           id: "jwt_bearer_grant",
           label: "JWT-bearer grant (RFC 7523)",
@@ -125,7 +128,10 @@ export function analyzeAsCompatibility(
           id: "jwt_bearer_grant",
           label: "JWT-bearer grant (RFC 7523)",
           status: "fail",
-          detail: `grant_types_supported does not include ${JWT_BEARER_GRANT}. The authorization server will reject the ID-JAG exchange at step 11.`,
+          detail:
+            grantTypes.length === 0
+              ? "grant_types_supported is an empty array; the authorization server declares no supported grant types."
+              : `grant_types_supported does not include ${JWT_BEARER_GRANT}. The authorization server will reject the ID-JAG exchange at step 11.`,
         };
 
   const hasTokenEndpoint = Boolean(authzMetadata.token_endpoint);

@@ -105,6 +105,20 @@ describe("analyzeAsCompatibility", () => {
     expect(tokenCheck?.status).toBe("fail");
   });
 
+  it("treats an explicitly empty grant_types_supported as fail, not unknown", () => {
+    // An AS that returns an empty array has made a positive declaration
+    // (it supports no grants), which is different from omitting the field.
+    const report = analyzeAsCompatibility({
+      issuer: "https://dev-123.okta.com",
+      token_endpoint: "https://dev-123.okta.com/oauth2/v1/token",
+      grant_types_supported: [],
+    });
+    expect(report?.overall).toBe("fail");
+    const jwtCheck = report?.checks.find((c) => c.id === "jwt_bearer_grant");
+    expect(jwtCheck?.status).toBe("fail");
+    expect(jwtCheck?.detail).toContain("empty array");
+  });
+
   it("relies entirely on the provided issuer for vendor detection", () => {
     // Regression: the state machine must pass its resolvedIssuer (not raw
     // metadata.issuer, which may be absent) into this function, otherwise
