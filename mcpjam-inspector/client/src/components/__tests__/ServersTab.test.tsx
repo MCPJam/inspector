@@ -122,6 +122,7 @@ function createDualTypeCatalogCard(): EnrichedRegistryCatalogCard {
 let mockIsAuthenticated = false;
 let mockCatalogCards: EnrichedRegistryCatalogCard[] = [];
 let mockRegistryLoading = false;
+let mockClientConfigFlagEnabled: boolean | undefined = false;
 const mockConnectRegistry = vi.fn();
 const mockUseRegistryServers = vi.fn();
 const mockUseWorkspaceBillingGate = vi.fn();
@@ -130,7 +131,20 @@ vi.mock("posthog-js/react", () => ({
   usePostHog: () => ({
     capture: vi.fn(),
   }),
-  useFeatureFlagEnabled: () => false,
+  useFeatureFlagEnabled: (flag: string) =>
+    flag === "client-config-enabled" ? mockClientConfigFlagEnabled : false,
+}));
+
+vi.mock("../client-config/ClientConfigTab", () => ({
+  ClientConfigTab: ({
+    activeWorkspaceId,
+  }: {
+    activeWorkspaceId: string;
+  }) => (
+    <div data-testid="client-config-tab-stub">
+      ClientConfigTab:{activeWorkspaceId}
+    </div>
+  ),
 }));
 
 vi.mock("@/lib/billing-gates", async (importOriginal) => {
@@ -420,6 +434,7 @@ describe("ServersTab shared detail modal", () => {
     onLeaveWorkspace: vi.fn(),
     isRegistryEnabled: true,
     onNavigateToRegistry: vi.fn(),
+    onSaveClientConfig: vi.fn().mockResolvedValue(undefined),
   };
 
   beforeEach(() => {
@@ -428,6 +443,7 @@ describe("ServersTab shared detail modal", () => {
     mockIsAuthenticated = false;
     mockCatalogCards = [];
     mockRegistryLoading = false;
+    mockClientConfigFlagEnabled = false;
     mockUseWorkspaceBillingGate.mockImplementation(
       ({
         organizationId,
@@ -1176,6 +1192,44 @@ describe("ServersTab shared detail modal", () => {
 
     expect(
       screen.queryByTestId("servers-quick-connect-section"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("hides the Client Config button when the flag is disabled", () => {
+    mockClientConfigFlagEnabled = false;
+
+    render(<ServersTab {...defaultProps} />);
+
+    expect(
+      screen.queryByRole("button", { name: /client config/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows the Client Config button and opens the dialog when the flag is enabled", () => {
+    mockClientConfigFlagEnabled = true;
+
+    render(<ServersTab {...defaultProps} />);
+
+    const button = screen.getByRole("button", { name: /client config/i });
+    expect(button).toBeInTheDocument();
+    expect(
+      screen.queryByTestId("client-config-tab-stub"),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(button);
+
+    expect(screen.getByTestId("client-config-tab-stub")).toHaveTextContent(
+      "ClientConfigTab:workspace-1",
+    );
+  });
+
+  it("hides the Client Config button when no save handler is provided", () => {
+    mockClientConfigFlagEnabled = true;
+
+    render(<ServersTab {...defaultProps} onSaveClientConfig={undefined} />);
+
+    expect(
+      screen.queryByRole("button", { name: /client config/i }),
     ).not.toBeInTheDocument();
   });
 
