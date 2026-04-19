@@ -103,3 +103,32 @@ export function useSharedChatWidgetSnapshots({
 
   return { snapshots };
 }
+
+export interface SharedChatTurnTrace {
+  turnId: string;
+  promptIndex: number;
+  startedAt: number;
+  endedAt: number;
+  finishReason?: string;
+  usage?: {
+    inputTokens?: number;
+    outputTokens?: number;
+    totalTokens?: number;
+  };
+  spanCount: number;
+  modelId?: string;
+  spansBlobUrl?: string | null;
+}
+
+export function useSharedChatTurnTraces({
+  threadId,
+}: {
+  threadId: string | null;
+}) {
+  const traces = useQuery(
+    "chatSessions:getSessionTurnTraces" as any,
+    threadId ? ({ sessionId: threadId } as any) : "skip",
+  ) as SharedChatTurnTrace[] | undefined;
+
+  return { traces };
+}

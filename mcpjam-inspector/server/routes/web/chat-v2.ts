@@ -12,7 +12,10 @@ import {
 import { WEB_STREAM_TIMEOUT_MS } from "../../config.js";
 import { prepareChatV2 } from "../../utils/chat-v2-orchestration.js";
 import { validateUrl, OAuthProxyError } from "../../utils/oauth-proxy.js";
-import { persistChatSessionToConvex } from "../../utils/chat-ingestion.js";
+import {
+  persistChatSessionToConvex,
+  pickEnrichmentHeaders,
+} from "../../utils/chat-ingestion.js";
 import {
   hostedChatSchema,
   guestServerInputSchema,
@@ -230,6 +233,7 @@ chatV2.post("/", async (c) => {
                     selectedServers: hasServer ? ["__guest__"] : [],
                   },
                   turnTrace,
+                  forwardHeaders: pickEnrichmentHeaders(c.req.raw.headers),
                 });
               }
             : undefined,
@@ -385,6 +389,7 @@ chatV2.post("/", async (c) => {
                     }
                   : {}),
                 turnTrace,
+                forwardHeaders: pickEnrichmentHeaders(c.req.raw.headers),
               });
             }
           : undefined,

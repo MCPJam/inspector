@@ -5,6 +5,45 @@ import type { LiveChatTraceUsage } from "@/shared/live-chat-trace";
 const DEFAULT_INGEST_TIMEOUT_MS = 5_000;
 const MAX_RESPONSE_PREVIEW_CHARS = 200;
 
+/**
+ * Headers worth forwarding from the browser request to the Convex ingestion
+ * endpoint so that usage-insights enrichment (device, language, geo) works.
+ */
+const ENRICHMENT_HEADERS_TO_FORWARD = [
+  "user-agent",
+  "accept-language",
+  // Geo headers injected by CDN/edge providers
+  "cf-ipcountry",
+  "x-vercel-ip-country",
+  "x-vercel-ip-country-region",
+  "x-vercel-ip-city",
+  "x-geo-country",
+  "x-geo-region",
+  "x-geo-city",
+  // Client IP headers for visitor hashing
+  "x-forwarded-for",
+  "x-real-ip",
+  "cf-connecting-ip",
+] as const;
+
+/**
+ * Pick enrichment-relevant headers from an incoming request so they can be
+ * forwarded to the Convex `/ingest-chat` endpoint.
+ */
+export function pickEnrichmentHeaders(
+  reqHeaders: { get(name: string): string | null | undefined } | Headers,
+): Record<string, string> {
+  const result: Record<string, string> = {};
+  for (const name of ENRICHMENT_HEADERS_TO_FORWARD) {
+    const value =
+      typeof reqHeaders.get === "function" ? reqHeaders.get(name) : undefined;
+    if (value) {
+      result[name] = value;
+    }
+  }
+  return result;
+}
+
 interface ResumeConfig {
   systemPrompt?: string;
   temperature?: number;
@@ -57,6 +96,8 @@ interface PersistChatSessionOptions {
   resumeConfig?: ResumeConfig;
   expectedVersion?: number;
   turnTrace?: PersistedTurnTrace;
+  /** Headers from the original browser request to forward for usage enrichment (user-agent, accept-language, geo headers). */
+  forwardHeaders?: Record<string, string>;
 }
 
 function isAbortError(error: unknown): boolean {
@@ -111,6 +152,7 @@ export async function persistChatSessionToConvex(
       headers: {
         "content-type": "application/json",
         authorization: options.authHeader,
+        ...options.forwardHeaders,
       },
       signal: controller.signal,
       body: JSON.stringify({
