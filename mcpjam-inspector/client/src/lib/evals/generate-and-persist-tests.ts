@@ -170,7 +170,7 @@ export async function generateAndPersistEvalTests(
   }
 
   const result = await generateEvalTests({
-    workspaceId,
+    workspaceId: isDirectGuest ? null : workspaceId,
     serverIds,
     convexAuthToken: accessToken,
   });

@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
-import { getGuestBearerToken } from "@/lib/guest-session";
+import { forceRefreshGuestSession, getGuestBearerToken } from "@/lib/guest-session";
 
 type GuestCapableConvexClient = {
   setAuth: (
@@ -27,7 +27,9 @@ export function GuestConvexAuthBridge({
       return;
     }
 
-    client.setAuth(async () => await getGuestBearerToken());
+    client.setAuth(({ forceRefreshToken }) =>
+      forceRefreshToken ? forceRefreshGuestSession() : getGuestBearerToken()
+    );
   }, [client, isLoading, user]);
 
   return null;
