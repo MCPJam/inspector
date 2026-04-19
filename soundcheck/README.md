@@ -65,6 +65,7 @@ Read by the Soundcheck app at request time to populate tiles.
 | `CONVEX_DEPLOY_KEY_STAGING` | Read backend-staging state | 90 days |
 | `CONVEX_DEPLOY_KEY_PROD` | Read backend-prod state | 90 days |
 | `GITHUB_PAT` | GitHub REST + Compare + Actions (fine-grained, read-only, scoped to both repos) | 90 days |
+| `GITHUB_DISPATCH_PAT` | `workflow_dispatch` for `release.yml` + `deploy-mcp-prod.yml` (fine-grained, **Actions: Read and write** on `MCPJam/inspector`) | 90 days |
 | `WORKOS_API_KEY`, `WORKOS_CLIENT_ID`, `WORKOS_COOKIE_PASSWORD` | Auth | per existing WorkOS policy |
 | `MCPJAM_NONPROD_LOCKDOWN=true` | Employee gate on | n/a |
 | `MCPJAM_EMPLOYEE_EMAIL_DOMAINS=mcpjam.com` | Allowed email domains | n/a |
