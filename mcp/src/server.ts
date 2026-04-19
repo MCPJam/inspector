@@ -2,6 +2,8 @@ import { McpAgent } from "agents/mcp";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { JWTPayload } from "jose";
 import { registerDoctorTool } from "./tools/doctor.js";
+import { registerGetOrgTool } from "./tools/getOrg.js";
+import { registerGetWorkspacesTool } from "./tools/getWorkspaces.js";
 import { registerWhoamiTool } from "./tools/whoami.js";
 
 interface McpProps extends Record<string, unknown> {
@@ -26,5 +28,7 @@ export class McpJamMcpServer extends McpAgent<Env, unknown, McpProps> {
   async init(): Promise<void> {
     registerWhoamiTool(this.server, this);
     registerDoctorTool(this.server, this);
+    registerGetWorkspacesTool(this.server, this);
+    registerGetOrgTool(this.server, this);
   }
 }
