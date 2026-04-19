@@ -17,7 +17,7 @@ function renderWithProviders(
       hostStyle={hostStyle}
     >
       {ui}
-    </PreferencesStoreProvider>,
+    </PreferencesStoreProvider>
   );
 }
 
@@ -34,6 +34,9 @@ const useQueryMock = vi.hoisted(() => vi.fn());
 const updateTestCaseMutationMock = vi.hoisted(() => vi.fn());
 const streamEvalTestCaseMock = vi.hoisted(() => vi.fn());
 const mockTraceViewer = vi.hoisted(() => vi.fn());
+const getGuestBearerTokenMock = vi.hoisted(() =>
+  vi.fn().mockResolvedValue("guest-token")
+);
 const useAuthMock = vi.hoisted(() => ({
   getAccessToken: vi.fn().mockResolvedValue("token"),
 }));
@@ -65,9 +68,13 @@ vi.mock("@/state/app-state-context", () => ({
   }),
 }));
 
-vi.mock("@/hooks/useViews", () => ({
-  useWorkspaceServers: () => workspaceServersMock,
-}));
+vi.mock("@/hooks/useViews", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/hooks/useViews")>();
+  return {
+    ...actual,
+    useWorkspaceServers: () => workspaceServersMock,
+  };
+});
 
 vi.mock("@/stores/client-config-store", () => ({
   useClientConfigStore: (selector: (state: any) => unknown) =>
@@ -133,6 +140,10 @@ vi.mock("@/lib/PosthogUtils", () => ({
   standardEventProps: () => ({}),
 }));
 
+vi.mock("@/lib/guest-session", () => ({
+  getGuestBearerToken: () => getGuestBearerTokenMock(),
+}));
+
 vi.mock("@/lib/apis/evals-api", () => ({
   listEvalTools: vi.fn().mockResolvedValue([]),
   runEvalTestCase: vi.fn(),
@@ -140,7 +151,7 @@ vi.mock("@/lib/apis/evals-api", () => ({
 }));
 
 vi.mock("convex/react", () => ({
-  useMutation: (_name: unknown) => useMutationMock(),
+  useMutation: (name: unknown) => useMutationMock(name),
   useQuery: (name: unknown, args: unknown) => useQueryMock(name, args),
   useAction: () => vi.fn(),
   useConvexAuth: () => useConvexAuthMock,
@@ -210,7 +221,7 @@ describe("TestTemplateEditor run view from route", () => {
         (_value, index) => ({
           toolName: `tool-${index + 1}`,
           arguments: { index: index + 1 },
-        }),
+        })
       ),
       tokensUsed: params.tokensUsed,
       metadata: params.compareRunId
@@ -261,7 +272,13 @@ describe("TestTemplateEditor run view from route", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockTraceViewer.mockReset();
-    useMutationMock.mockReturnValue(updateTestCaseMutationMock);
+    useMutationMock.mockImplementation((name: string) => {
+      if (name === "testSuites:updateTestCase") {
+        return updateTestCaseMutationMock;
+      }
+      return vi.fn();
+    });
+    getGuestBearerTokenMock.mockResolvedValue("guest-token");
     useQueryMock.mockImplementation((name: string, args: unknown) => {
       if (name === "testSuites:listTestCases") {
         return [caseDoc];
@@ -297,7 +314,7 @@ describe("TestTemplateEditor run view from route", () => {
           type: "complete";
           iterationId: string;
           iteration: EvalIteration;
-        }) => void,
+        }) => void
       ) => {
         const iterationId = `iter-${request.provider}-${request.model}`;
         onEvent({
@@ -320,7 +337,7 @@ describe("TestTemplateEditor run view from route", () => {
             },
           },
         });
-      },
+      }
     );
   });
 
@@ -339,7 +356,7 @@ describe("TestTemplateEditor run view from route", () => {
           } as any,
         ]}
         openCompareFromRoute
-      />,
+      />
     );
 
     await waitFor(() => {
@@ -351,7 +368,7 @@ describe("TestTemplateEditor run view from route", () => {
       limit: 200,
     });
     expect(
-      screen.getByRole("button", { name: /retry all/i }),
+      screen.getByRole("button", { name: /retry all/i })
     ).toBeInTheDocument();
   });
 
@@ -408,7 +425,7 @@ describe("TestTemplateEditor run view from route", () => {
           } as any,
         ]}
         openCompareFromRoute
-      />,
+      />
     );
 
     expect(screen.getByText("Loading results...")).toBeInTheDocument();
@@ -431,12 +448,12 @@ describe("TestTemplateEditor run view from route", () => {
           ]}
           openCompareFromRoute
         />
-      </PreferencesStoreProvider>,
+      </PreferencesStoreProvider>
     );
 
     await waitFor(() => {
       expect(
-        screen.getByRole("button", { name: /retry all/i }),
+        screen.getByRole("button", { name: /retry all/i })
       ).toBeInTheDocument();
     });
   });
@@ -498,12 +515,12 @@ describe("TestTemplateEditor run view from route", () => {
         ]}
         openCompareFromRoute
         openCompareIterationId={clickedIteration._id}
-      />,
+      />
     );
 
     await waitFor(() => {
       expect(screen.getByTestId("eval-trace-surface")).toHaveTextContent(
-        clickedIteration._id,
+        clickedIteration._id
       );
     });
   });
@@ -523,7 +540,7 @@ describe("TestTemplateEditor run view from route", () => {
           } as any,
         ]}
         onExportDraft={vi.fn()}
-      />,
+      />
     );
 
     await waitFor(() => {
@@ -566,7 +583,7 @@ describe("TestTemplateEditor run view from route", () => {
             label: "Gemini 2.5 Pro",
           } as any,
         ]}
-      />,
+      />
     );
 
     await waitFor(() => {
@@ -574,11 +591,11 @@ describe("TestTemplateEditor run view from route", () => {
     });
 
     await user.click(
-      screen.getByRole("button", { name: /add model to compare/i }),
+      screen.getByRole("button", { name: /add model to compare/i })
     );
     await user.click(screen.getByText("Claude 4.5 Sonnet"));
     await user.click(
-      screen.getByRole("button", { name: /add model to compare/i }),
+      screen.getByRole("button", { name: /add model to compare/i })
     );
     await user.click(screen.getByText("Gemini 2.5 Pro"));
 
@@ -597,7 +614,7 @@ describe("TestTemplateEditor run view from route", () => {
     });
 
     const initialCompareRunIds = streamEvalTestCaseMock.mock.calls.map(
-      ([request]) => (request as { compareRunId?: string }).compareRunId,
+      ([request]) => (request as { compareRunId?: string }).compareRunId
     );
     expect(new Set(initialCompareRunIds).size).toBe(1);
     expect(initialCompareRunIds[0]).toMatch(/^cmp_/);
@@ -1220,7 +1237,7 @@ describe("TestTemplateEditor run view from route", () => {
           type: "complete";
           iterationId: string;
           iteration: EvalIteration;
-        }) => void,
+        }) => void
       ) => {
         const complete = (params: {
           id: string;
@@ -1268,7 +1285,7 @@ describe("TestTemplateEditor run view from route", () => {
           tokensUsed: 333,
           toolCallCount: 3,
         });
-      },
+      }
     );
 
     renderWithProviders(
@@ -1300,7 +1317,7 @@ describe("TestTemplateEditor run view from route", () => {
             label: "Gemini 2.5 Pro",
           } as any,
         ]}
-      />,
+      />
     );
 
     await waitFor(() => {
@@ -1308,11 +1325,11 @@ describe("TestTemplateEditor run view from route", () => {
     });
 
     await user.click(
-      screen.getByRole("button", { name: /add model to compare/i }),
+      screen.getByRole("button", { name: /add model to compare/i })
     );
     await user.click(screen.getByText("Claude 4.5 Sonnet"));
     await user.click(
-      screen.getByRole("button", { name: /add model to compare/i }),
+      screen.getByRole("button", { name: /add model to compare/i })
     );
     await user.click(screen.getByText("Gemini 2.5 Pro"));
 
@@ -1349,7 +1366,7 @@ describe("TestTemplateEditor run view from route", () => {
           type: "complete";
           iterationId: string;
           iteration: EvalIteration;
-        }) => void,
+        }) => void
       ) => {
         const complete = (params: {
           id: string;
@@ -1397,7 +1414,7 @@ describe("TestTemplateEditor run view from route", () => {
           tokensUsed: 333,
           toolCallCount: 3,
         });
-      },
+      }
     );
 
     renderWithProviders(
@@ -1429,7 +1446,7 @@ describe("TestTemplateEditor run view from route", () => {
             label: "Gemini 2.5 Pro",
           } as any,
         ]}
-      />,
+      />
     );
 
     await waitFor(() => {
@@ -1437,11 +1454,11 @@ describe("TestTemplateEditor run view from route", () => {
     });
 
     await user.click(
-      screen.getByRole("button", { name: /add model to compare/i }),
+      screen.getByRole("button", { name: /add model to compare/i })
     );
     await user.click(screen.getByText("Claude 4.5 Sonnet"));
     await user.click(
-      screen.getByRole("button", { name: /add model to compare/i }),
+      screen.getByRole("button", { name: /add model to compare/i })
     );
     await user.click(screen.getByText("Gemini 2.5 Pro"));
 
@@ -1460,7 +1477,7 @@ describe("TestTemplateEditor run view from route", () => {
     await waitFor(() => {
       expect(getMetricRunningSpinnerCount(compareCard)).toBe(0);
       expect(
-        within(compareCard).queryByLabelText("Running"),
+        within(compareCard).queryByLabelText("Running")
       ).not.toBeInTheDocument();
       expect(within(compareCard).getByLabelText("Passed")).toBeInTheDocument();
     });
@@ -1481,7 +1498,7 @@ describe("TestTemplateEditor run view from route", () => {
           type: "complete";
           iterationId: string;
           iteration: EvalIteration;
-        }) => void,
+        }) => void
       ) => {
         const complete = (params: {
           id: string;
@@ -1529,7 +1546,7 @@ describe("TestTemplateEditor run view from route", () => {
           tokensUsed: 333,
           toolCallCount: 3,
         });
-      },
+      }
     );
 
     renderWithProviders(
@@ -1561,7 +1578,7 @@ describe("TestTemplateEditor run view from route", () => {
             label: "Gemini 2.5 Pro",
           } as any,
         ]}
-      />,
+      />
     );
 
     await waitFor(() => {
@@ -1569,11 +1586,11 @@ describe("TestTemplateEditor run view from route", () => {
     });
 
     await user.click(
-      screen.getByRole("button", { name: /add model to compare/i }),
+      screen.getByRole("button", { name: /add model to compare/i })
     );
     await user.click(screen.getByText("Claude 4.5 Sonnet"));
     await user.click(
-      screen.getByRole("button", { name: /add model to compare/i }),
+      screen.getByRole("button", { name: /add model to compare/i })
     );
     await user.click(screen.getByText("Gemini 2.5 Pro"));
 
@@ -1617,7 +1634,7 @@ describe("TestTemplateEditor run view from route", () => {
           type: "complete";
           iterationId: string;
           iteration: EvalIteration;
-        }) => void,
+        }) => void
       ) => {
         const complete = (params: {
           id: string;
@@ -1667,7 +1684,7 @@ describe("TestTemplateEditor run view from route", () => {
           toolCallCount: 1,
           result: "failed",
         });
-      },
+      }
     );
 
     renderWithProviders(
@@ -1699,7 +1716,7 @@ describe("TestTemplateEditor run view from route", () => {
             label: "Gemini 2.5 Pro",
           } as any,
         ]}
-      />,
+      />
     );
 
     await waitFor(() => {
@@ -1707,11 +1724,11 @@ describe("TestTemplateEditor run view from route", () => {
     });
 
     await user.click(
-      screen.getByRole("button", { name: /add model to compare/i }),
+      screen.getByRole("button", { name: /add model to compare/i })
     );
     await user.click(screen.getByText("Claude 4.5 Sonnet"));
     await user.click(
-      screen.getByRole("button", { name: /add model to compare/i }),
+      screen.getByRole("button", { name: /add model to compare/i })
     );
     await user.click(screen.getByText("Gemini 2.5 Pro"));
 
@@ -1729,7 +1746,7 @@ describe("TestTemplateEditor run view from route", () => {
       expect(openAiScope.getByText("1.1s")).toHaveClass("text-emerald-700");
       expect(openAiScope.getByText("100")).toHaveClass("text-emerald-700");
       expect(openAiScope.getByText("2 tool calls")).toHaveClass(
-        "text-emerald-700",
+        "text-emerald-700"
       );
     });
 

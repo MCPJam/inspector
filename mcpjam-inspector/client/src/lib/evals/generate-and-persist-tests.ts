@@ -3,6 +3,7 @@ import {
   generateEvalTests,
   type GeneratedEvalTestCase,
 } from "@/lib/apis/evals-api";
+import { getGuestBearerToken } from "@/lib/guest-session";
 import type { PromptTurn } from "@/shared/prompt-turns";
 
 export type CreateEvalTestCaseInput = {
@@ -102,6 +103,15 @@ export type GenerateAndPersistEvalTestsOptions = {
   createTestCase: (input: CreateEvalTestCaseInput) => Promise<unknown>;
   /** When true, skips API call and creation if the suite already has test cases. */
   skipIfExistingCases?: boolean;
+  /**
+   * When true, guests are running generation and should use the guest bearer
+   * token instead of a WorkOS token.
+   */
+  isDirectGuest?: boolean;
+  /** Override case listing; used when the caller already has the suite's cases. */
+  listExistingCases?: () =>
+    | Array<Record<string, unknown>>
+    | Promise<Array<Record<string, unknown>>>;
 };
 
 export type GenerateAndPersistEvalTestsResult = {
@@ -121,16 +131,23 @@ export async function generateAndPersistEvalTests(
     serverIds,
     createTestCase,
     skipIfExistingCases = false,
+    isDirectGuest = false,
+    listExistingCases,
   } = options;
 
-  const existingTestCases = await convex.query(
-    "testSuites:listTestCases" as any,
-    { suiteId },
-  );
-
-  const existingList = Array.isArray(existingTestCases)
-    ? (existingTestCases as Array<Record<string, unknown>>)
-    : [];
+  let existingList: Array<Record<string, unknown>> = [];
+  if (listExistingCases) {
+    const listed = await listExistingCases();
+    existingList = Array.isArray(listed) ? listed : [];
+  } else {
+    const existingTestCases = await convex.query(
+      "testSuites:listTestCases" as any,
+      { suiteId },
+    );
+    existingList = Array.isArray(existingTestCases)
+      ? (existingTestCases as Array<Record<string, unknown>>)
+      : [];
+  }
 
   if (skipIfExistingCases && existingList.length > 0) {
     return {
@@ -145,7 +162,9 @@ export async function generateAndPersistEvalTests(
     modelsToUse = defaultEvalModels();
   }
 
-  const accessToken = await getAccessToken();
+  const accessToken = isDirectGuest
+    ? await getGuestBearerToken()
+    : await getAccessToken();
   if (!accessToken) {
     throw new Error("Not authenticated");
   }
