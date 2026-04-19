@@ -1,12 +1,12 @@
 import { Bell, Building2, FolderKanban, Inbox } from "lucide-react";
 import { useConvexAuth } from "convex/react";
-import { Button } from "@/components/ui/button";
+import { Button } from "@mcpjam/design-system/button";
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
-} from "@/components/ui/popover";
-import { ScrollArea } from "@/components/ui/scroll-area";
+} from "@mcpjam/design-system/popover";
+import { ScrollArea } from "@mcpjam/design-system/scroll-area";
 import {
   useNotifications,
   useNotificationMutations,

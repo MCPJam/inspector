@@ -1,22 +1,23 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Archive, Folder, FolderOpen, Loader2, Plus } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Button } from "@mcpjam/design-system/button";
 import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
-} from "@/components/ui/collapsible";
-import { ScrollArea } from "@/components/ui/scroll-area";
+} from "@mcpjam/design-system/collapsible";
+import { ScrollArea } from "@mcpjam/design-system/scroll-area";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from "@/components/ui/tooltip";
+} from "@mcpjam/design-system/tooltip";
 import { cn } from "@/lib/utils";
 import { ChatHistoryRow } from "./ChatHistoryRow";
 import { useChatHistory } from "./use-chat-history";
 import type { ChatHistorySession } from "@/lib/apis/web/chat-history-api";
 import { useWorkspaceMembers } from "@/hooks/useWorkspaces";
+import type { ChatboxHostStyle } from "@/lib/chatbox-host-style";
 import {
   buildWorkspaceOwnerProfileByUserId,
   resolveWorkspaceThreadOwnerAvatar,
@@ -29,6 +30,8 @@ type ArchiveSectionScope = "personal" | "workspace";
 
 interface ChatHistoryRailProps {
   activeSessionId?: string | null;
+  /** Which host aesthetic to mimic for strong-highlight tokens (falls back to "claude"). */
+  hostStyle?: ChatboxHostStyle;
   isAuthenticated: boolean;
   isStreaming: boolean;
   workspaceId?: string | null;
@@ -190,6 +193,7 @@ function ThreadSection({
 
 export function ChatHistoryRail({
   activeSessionId,
+  hostStyle = "claude",
   isAuthenticated,
   isStreaming,
   workspaceId,
@@ -288,7 +292,21 @@ export function ChatHistoryRail({
 
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-col border-r">
-      <ScrollArea className="min-h-0 min-w-0 flex-1">
+      <ScrollArea
+        className={cn(
+          "min-h-0 min-w-0 flex-1",
+          // Scrollbar: scoped polish — narrower, softer thumb, subtle hover expand.
+          "[&_[data-slot=scroll-area-scrollbar]]:z-20",
+          "[&_[data-slot=scroll-area-scrollbar]]:w-1.5",
+          "[&_[data-slot=scroll-area-scrollbar]]:transition-[width,background-color]",
+          "[&_[data-slot=scroll-area-scrollbar]]:duration-150",
+          "hover:[&_[data-slot=scroll-area-scrollbar]]:w-2",
+          "[&_[data-slot=scroll-area-thumb]]:bg-muted-foreground/30",
+          "[&_[data-slot=scroll-area-thumb]]:transition-colors",
+          "[&_[data-slot=scroll-area-thumb]]:duration-150",
+          "hover:[&_[data-slot=scroll-area-thumb]]:bg-muted-foreground/60",
+        )}
+      >
         <div className="min-w-0 px-1 py-1">
           {loading && personal.length === 0 && workspace.length === 0 && (
             <div className="flex items-center justify-center py-8">
@@ -342,6 +360,7 @@ export function ChatHistoryRail({
                       isActive={session._id === activeSessionId}
                       isAuthenticated={isAuthenticated}
                       isStreaming={isStreaming}
+                      hostStyle={hostStyle}
                       onSelect={onSelectThread}
                       onActionComplete={onSessionAction}
                       actions={actions}
@@ -375,6 +394,7 @@ export function ChatHistoryRail({
                       isActive={session._id === activeSessionId}
                       isAuthenticated={isAuthenticated}
                       isStreaming={isStreaming}
+                      hostStyle={hostStyle}
                       onSelect={onSelectThread}
                       onActionComplete={onSessionAction}
                       workspaceThreadOwner={resolveWorkspaceThreadOwnerAvatar(

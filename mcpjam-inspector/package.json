@@ -100,6 +100,7 @@
     "@ai-sdk/react": "^3.0.156",
     "@ai-sdk/xai": "^3.0.46",
     "@axiomhq/js": "^1.4.0",
+    "@cfworker/json-schema": "^4.1.1",
     "@convex-dev/auth": "^0.0.88",
     "@convex-dev/workos": "^0.0.1",
     "@dagrejs/dagre": "^3.0.0",
@@ -109,9 +110,9 @@
     "@hono/node-server": "^1.13.7",
     "@hookform/resolvers": "^3.10.0",
     "@mcp-ui/client": "^5.9.0",
-    "@mcpjam/sdk": "^0.10.0",
+    "@mcpjam/sdk": "^1.0.0",
+    "@modelcontextprotocol/client": "^2.0.0-alpha.2",
     "@modelcontextprotocol/ext-apps": "^1.0.1",
-    "@modelcontextprotocol/sdk": "^1.26.0",
     "@ngrok/ngrok": "^1.6.0",
     "@openrouter/ai-sdk-provider": "^2.0.2",
     "@sentry/electron": "^5.10.0",
@@ -167,6 +168,7 @@
     "zustand": "^5.0.6"
   },
   "devDependencies": {
+    "@mcpjam/design-system": "*",
     "@electron-forge/cli": "^7.11.1",
     "@electron-forge/maker-deb": "^7.11.1",
     "@electron-forge/maker-dmg": "^7.11.1",

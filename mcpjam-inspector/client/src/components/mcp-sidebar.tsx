@@ -19,6 +19,7 @@ import {
   GitBranch,
   Puzzle,
   UserPlus,
+  ShieldCheck,
 } from "lucide-react";
 import { usePostHog, useFeatureFlagEnabled } from "posthog-js/react";
 import { standardEventProps } from "@/lib/PosthogUtils";
@@ -49,12 +50,12 @@ import { SidebarUser } from "@/components/sidebar/sidebar-user";
 import { SidebarWorkspaceSelector } from "@/components/sidebar/sidebar-workspace-selector";
 import { ShareWorkspaceDialog } from "@/components/workspace/ShareWorkspaceDialog";
 import { useUpdateNotification } from "@/hooks/useUpdateNotification";
-import { Button } from "@/components/ui/button";
+import { Button } from "@mcpjam/design-system/button";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from "@/components/ui/tooltip";
+} from "@mcpjam/design-system/tooltip";
 import { HOSTED_MODE } from "@/lib/config";
 import {
   listTools,
@@ -195,8 +196,8 @@ const navigationSections: NavSection[] = [
         icon: MessageCircle,
       },
       {
-        title: "Sandboxes",
-        url: "#sandboxes",
+        title: "Chatboxes",
+        url: "#chatboxes",
         icon: Box,
         featureFlag: "sandboxes-enabled",
       },
@@ -246,9 +247,24 @@ const navigationSections: NavSection[] = [
         featureFlag: "mcpjam-learning",
       },
       {
+        title: "Conformance",
+        url: "#conformance",
+        icon: FlaskConical,
+        // MCPJam-internal flag: rollout is restricted to the MCPJam team in
+        // PostHog. Keep the `mcpjam-` prefix so it's obvious at a glance that
+        // this is an internal-only flag (same convention as `mcpjam-learning`).
+        featureFlag: "mcpjam-conformance",
+      },
+      {
         title: "OAuth Debugger",
         url: "#oauth-flow",
         icon: Workflow,
+      },
+      {
+        title: "XAA Debugger",
+        url: "#xaa-flow",
+        icon: ShieldCheck,
+        featureFlag: "xaa",
       },
       // {
       //   title: "Tracing",
@@ -535,7 +551,9 @@ export function MCPSidebar({
   const registryEnabled = useFeatureFlagEnabled("registry-enabled");
   const evalsEnabled = useFeatureFlagEnabled("evals-enabled");
   const evaluateRunsEnabled = useFeatureFlagEnabled("evaluate-runs");
+  const xaaEnabled = useFeatureFlagEnabled("xaa");
   const learnMoreEnabled = useFeatureFlagEnabled("learn-more-enabled");
+  const conformanceEnabled = useFeatureFlagEnabled("mcpjam-conformance");
   const { isAuthenticated } = useConvexAuth();
   const { user } = useAuth();
   const learningEnabled = !!learningFlagEnabled && isAuthenticated;
@@ -658,6 +676,8 @@ export function MCPSidebar({
       "client-config-enabled": !!clientConfigEnabled && isAuthenticated,
       "registry-enabled": registryEnabled === true,
       "evals-enabled": !!evalsEnabled,
+      "mcpjam-conformance": conformanceEnabled === true,
+      xaa: xaaEnabled === true,
     }),
     [
       learningEnabled,
@@ -665,6 +685,8 @@ export function MCPSidebar({
       clientConfigEnabled,
       registryEnabled,
       evalsEnabled,
+      conformanceEnabled,
+      xaaEnabled,
       isAuthenticated,
     ],
   );

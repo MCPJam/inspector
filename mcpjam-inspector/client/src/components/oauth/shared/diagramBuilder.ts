@@ -1,5 +1,4 @@
 import type { Node, Edge } from "@xyflow/react";
-import type { OAuthFlowStep } from "@mcpjam/sdk/browser";
 import {
   ACTORS,
   ACTOR_X_POSITIONS,
@@ -9,18 +8,26 @@ import {
 import { getActionStatus } from "./utils";
 import type { Action, ActorNodeData } from "./types";
 
+export interface DiagramActorConfig {
+  actors: Record<string, { label: string; color: string }>;
+  actorXPositions: Record<string, number>;
+}
+
 export function buildNodesAndEdges(
   actions: Action[],
-  currentStep: OAuthFlowStep,
+  currentStep: string,
+  config: DiagramActorConfig = {
+    actors: ACTORS,
+    actorXPositions: ACTOR_X_POSITIONS,
+  },
 ): { nodes: Node[]; edges: Edge[] } {
   const totalActions = actions.length;
   const totalSegmentHeight = totalActions * ACTION_SPACING + 100;
+  const actorIds = Object.keys(config.actors);
 
-  // Create segments for each actor
-  const browserSegments: ActorNodeData["segments"] = [];
-  const clientSegments: ActorNodeData["segments"] = [];
-  const mcpServerSegments: ActorNodeData["segments"] = [];
-  const authServerSegments: ActorNodeData["segments"] = [];
+  const actorSegments = Object.fromEntries(
+    actorIds.map((actorId) => [actorId, [] as ActorNodeData["segments"]]),
+  ) as Record<string, ActorNodeData["segments"]>;
 
   let currentY = 0;
 
@@ -30,25 +37,12 @@ export function buildNodesAndEdges(
     // Add line segments before the action
     if (currentY < actionY) {
       const lineHeight = actionY - currentY;
-      browserSegments.push({
-        id: `browser-line-${index}`,
-        type: "line",
-        height: lineHeight,
-      });
-      clientSegments.push({
-        id: `client-line-${index}`,
-        type: "line",
-        height: lineHeight,
-      });
-      mcpServerSegments.push({
-        id: `mcp-line-${index}`,
-        type: "line",
-        height: lineHeight,
-      });
-      authServerSegments.push({
-        id: `auth-line-${index}`,
-        type: "line",
-        height: lineHeight,
+      actorIds.forEach((actorId) => {
+        actorSegments[actorId].push({
+          id: `${actorId}-line-${index}`,
+          type: "line",
+          height: lineHeight,
+        });
       });
       currentY = actionY;
     }
@@ -74,10 +68,9 @@ export function buildNodesAndEdges(
       }
     };
 
-    addSegmentForActor("browser", browserSegments);
-    addSegmentForActor("client", clientSegments);
-    addSegmentForActor("mcpServer", mcpServerSegments);
-    addSegmentForActor("authServer", authServerSegments);
+    actorIds.forEach((actorId) => {
+      addSegmentForActor(actorId, actorSegments[actorId]);
+    });
 
     currentY += SEGMENT_HEIGHT;
   });
@@ -85,79 +78,27 @@ export function buildNodesAndEdges(
   // Add final line segments
   const remainingHeight = totalSegmentHeight - currentY;
   if (remainingHeight > 0) {
-    browserSegments.push({
-      id: "browser-line-end",
-      type: "line",
-      height: remainingHeight,
-    });
-    clientSegments.push({
-      id: "client-line-end",
-      type: "line",
-      height: remainingHeight,
-    });
-    mcpServerSegments.push({
-      id: "mcp-line-end",
-      type: "line",
-      height: remainingHeight,
-    });
-    authServerSegments.push({
-      id: "auth-line-end",
-      type: "line",
-      height: remainingHeight,
+    actorIds.forEach((actorId) => {
+      actorSegments[actorId].push({
+        id: `${actorId}-line-end`,
+        type: "line",
+        height: remainingHeight,
+      });
     });
   }
 
-  // Create actor nodes
-  const nodes: Node[] = [
-    {
-      id: "actor-browser",
-      type: "actor",
-      position: { x: ACTOR_X_POSITIONS.browser, y: 0 },
-      data: {
-        label: ACTORS.browser.label,
-        color: ACTORS.browser.color,
-        totalHeight: totalSegmentHeight,
-        segments: browserSegments,
-      },
-      draggable: false,
+  const nodes: Node[] = actorIds.map((actorId) => ({
+    id: `actor-${actorId}`,
+    type: "actor",
+    position: { x: config.actorXPositions[actorId] ?? 0, y: 0 },
+    data: {
+      label: config.actors[actorId]?.label ?? actorId,
+      color: config.actors[actorId]?.color ?? "#94a3b8",
+      totalHeight: totalSegmentHeight,
+      segments: actorSegments[actorId],
     },
-    {
-      id: "actor-client",
-      type: "actor",
-      position: { x: ACTOR_X_POSITIONS.client, y: 0 },
-      data: {
-        label: ACTORS.client.label,
-        color: ACTORS.client.color,
-        totalHeight: totalSegmentHeight,
-        segments: clientSegments,
-      },
-      draggable: false,
-    },
-    {
-      id: "actor-mcpServer",
-      type: "actor",
-      position: { x: ACTOR_X_POSITIONS.mcpServer, y: 0 },
-      data: {
-        label: ACTORS.mcpServer.label,
-        color: ACTORS.mcpServer.color,
-        totalHeight: totalSegmentHeight,
-        segments: mcpServerSegments,
-      },
-      draggable: false,
-    },
-    {
-      id: "actor-authServer",
-      type: "actor",
-      position: { x: ACTOR_X_POSITIONS.authServer, y: 0 },
-      data: {
-        label: ACTORS.authServer.label,
-        color: ACTORS.authServer.color,
-        totalHeight: totalSegmentHeight,
-        segments: authServerSegments,
-      },
-      draggable: false,
-    },
-  ];
+    draggable: false,
+  }));
 
   // Create action edges
   const edges: Edge[] = actions.map((action) => {
@@ -172,10 +113,8 @@ export function buildNodesAndEdges(
         ? "#3b82f6"
         : "#d1d5db";
 
-    const sourceX =
-      ACTOR_X_POSITIONS[action.from as keyof typeof ACTOR_X_POSITIONS];
-    const targetX =
-      ACTOR_X_POSITIONS[action.to as keyof typeof ACTOR_X_POSITIONS];
+    const sourceX = config.actorXPositions[action.from] ?? 0;
+    const targetX = config.actorXPositions[action.to] ?? 0;
     const isLeftToRight = sourceX < targetX;
 
     return {

@@ -46,6 +46,7 @@ import {
   mergeLiveChatTraceUsage,
   type LiveChatTraceUsage,
 } from "@/shared/live-chat-trace";
+import type { PersistedTurnTrace } from "./chat-ingestion";
 import {
   pushAiSdkTrailingErrorSpan,
   pushBackendStepLlmFailureSpans,
@@ -81,6 +82,7 @@ export interface MCPJamHandlerOptions {
   requireToolApproval?: boolean;
   onConversationComplete?: (
     fullHistory: ModelMessage[],
+    turnTrace: PersistedTurnTrace,
   ) => Promise<void> | void;
   onStreamComplete?: () => Promise<void> | void;
   onStreamWriterReady?: (writer: {
@@ -1373,7 +1375,16 @@ export async function handleMCPJamFreeChatModel(
       try {
         if (runSucceeded) {
           try {
-            await onConversationComplete?.([...messageHistory]);
+            await onConversationComplete?.([...messageHistory], {
+              turnId: traceTurn.turnId,
+              promptIndex: traceTurn.promptIndex,
+              startedAt: traceTurn.turnStartedAt,
+              endedAt: Date.now(),
+              spans: [...traceTurn.turnSpans],
+              usage: traceTurn.turnUsage,
+              finishReason: steps >= MAX_STEPS ? "length" : "stop",
+              modelId,
+            });
           } catch (persistenceError) {
             logger.error(
               "[mcpjam-stream-handler] Error while persisting conversation",

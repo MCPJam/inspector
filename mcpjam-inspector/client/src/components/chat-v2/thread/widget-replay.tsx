@@ -1,4 +1,4 @@
-import type { ContentBlock } from "@modelcontextprotocol/sdk/types.js";
+import type { ContentBlock } from "@modelcontextprotocol/client";
 import { ChatGPTAppRenderer } from "./chatgpt-app-renderer";
 import { MCPAppsRenderer } from "./mcp-apps/mcp-apps-renderer";
 import type { ToolState } from "./mcp-apps/useToolInputStreaming";
@@ -13,8 +13,8 @@ import {
   readToolResultMeta,
   readToolResultServerId,
 } from "@/lib/tool-result-utils";
-import { useSandboxHostStyle } from "@/contexts/sandbox-host-style-context";
-import { getSandboxProtocolOverride } from "@/lib/sandbox-host-style";
+import { useChatboxHostStyle } from "@/contexts/chatbox-host-style-context";
+import { getChatboxProtocolOverride } from "@/lib/chatbox-host-style";
 import type { DisplayMode } from "@/stores/ui-playground-store";
 
 export interface WidgetReplayProps {
@@ -83,10 +83,10 @@ export function WidgetReplay({
   selectedProtocolOverrideIfBothExists,
   minimalMode = false,
 }: WidgetReplayProps) {
-  const sandboxHostStyle = useSandboxHostStyle();
+  const chatboxHostStyle = useChatboxHostStyle();
   const protocolOverride =
     selectedProtocolOverrideIfBothExists ??
-    getSandboxProtocolOverride(sandboxHostStyle) ??
+    getChatboxProtocolOverride(chatboxHostStyle) ??
     UIType.OPENAI_SDK;
   const effectiveToolMeta =
     renderOverride?.toolMetadata ??

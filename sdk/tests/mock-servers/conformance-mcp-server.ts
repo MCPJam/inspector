@@ -4,13 +4,13 @@ import type { AddressInfo } from "node:net";
 import {
   McpServer,
   ResourceTemplate,
-} from "@modelcontextprotocol/sdk/server/mcp.js";
+} from "@modelcontextprotocol/server";
 import {
-  StreamableHTTPServerTransport,
+  NodeStreamableHTTPServerTransport,
   type EventId,
   type EventStore,
   type StreamId,
-} from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+} from "@modelcontextprotocol/node";
 import { z } from "zod";
 
 const TEST_IMAGE_BASE64 =
@@ -137,7 +137,9 @@ function createEventStore() {
 
 function createMcpServer(
   options: ConformanceServerOptions,
-  transportLookup: (sessionId: string) => StreamableHTTPServerTransport | undefined,
+  transportLookup: (
+    sessionId: string,
+  ) => NodeStreamableHTTPServerTransport | undefined,
 ) {
   const omittedTools = new Set(options.omitTools ?? []);
   const omittedPrompts = new Set(options.omitPrompts ?? []);
@@ -184,7 +186,7 @@ function createMcpServer(
         )
           ? undefined
           : "Returns a simple text response for conformance testing.",
-        inputSchema: {},
+        inputSchema: z.object({}),
       },
       async () => ({
         content: [
@@ -207,6 +209,7 @@ function createMcpServer(
         )
           ? undefined
           : "Returns image content for conformance testing.",
+        inputSchema: z.object({}),
       },
       async () => ({
         content: [
@@ -230,6 +233,7 @@ function createMcpServer(
         )
           ? undefined
           : "Returns embedded resource content for conformance testing.",
+        inputSchema: z.object({}),
       },
       async () => ({
         content: [
@@ -256,6 +260,7 @@ function createMcpServer(
         )
           ? undefined
           : "Returns text, image, and resource content together.",
+        inputSchema: z.object({}),
       },
       async () => ({
         content: [
@@ -291,7 +296,7 @@ function createMcpServer(
         )
           ? undefined
           : "Emits logging notifications during execution.",
-        inputSchema: {},
+        inputSchema: z.object({}),
       },
       async (_args, { sendNotification }) => {
         await sendNotification({
@@ -340,7 +345,7 @@ function createMcpServer(
         )
           ? undefined
           : "Emits progress notifications during execution.",
-        inputSchema: {},
+        inputSchema: z.object({}),
       },
       async (_args, { sendNotification, _meta }) => {
         const progressToken = _meta?.progressToken ?? 0;
@@ -383,6 +388,7 @@ function createMcpServer(
         )
           ? undefined
           : "Returns a tool error for conformance testing.",
+        inputSchema: z.object({}),
       },
       async () => {
         throw new Error("This tool intentionally returns an error for testing");
@@ -400,7 +406,7 @@ function createMcpServer(
         )
           ? undefined
           : "Closes the SSE stream and relies on reconnection to resume.",
-        inputSchema: {},
+        inputSchema: z.object({}),
       },
       async (_args, { sessionId, requestId }) => {
         const transport = sessionId ? transportLookup(sessionId) : undefined;
@@ -455,7 +461,7 @@ function createMcpServer(
         )
           ? undefined
           : "Returns dashboard data and advertises an MCP Apps HTML resource.",
-        inputSchema: {},
+        inputSchema: z.object({}),
         _meta: {
           ui: {
             resourceUri: CONFORMANCE_UI_RESOURCE_URI,
@@ -634,10 +640,10 @@ function createMcpServer(
         )
           ? undefined
           : "A prompt that substitutes provided arguments.",
-        argsSchema: {
+        argsSchema: z.object({
           arg1: z.string().describe("First test argument"),
           arg2: z.string().describe("Second test argument"),
-        },
+        }),
       },
       async (args) => ({
         messages: [
@@ -664,9 +670,9 @@ function createMcpServer(
         )
           ? undefined
           : "A prompt that includes resource content.",
-        argsSchema: {
+        argsSchema: z.object({
           resourceUri: z.string().describe("Resource URI"),
-        },
+        }),
       },
       async (args) => ({
         messages: [
@@ -728,7 +734,7 @@ function createMcpServer(
   }
 
   server.server.setRequestHandler(
-    z.object({ method: z.literal("resources/subscribe") }).passthrough(),
+    "resources/subscribe",
     async (request: any) => {
       resourceSubscriptions.add(request.params.uri);
       await sendLog("info", `Subscribed to resource: ${request.params.uri}`);
@@ -737,7 +743,7 @@ function createMcpServer(
   );
 
   server.server.setRequestHandler(
-    z.object({ method: z.literal("resources/unsubscribe") }).passthrough(),
+    "resources/unsubscribe",
     async (request: any) => {
       resourceSubscriptions.delete(request.params.uri);
       await sendLog("info", `Unsubscribed from resource: ${request.params.uri}`);
@@ -747,7 +753,7 @@ function createMcpServer(
 
   if (!options.omitLogging) {
     server.server.setRequestHandler(
-      z.object({ method: z.literal("logging/setLevel") }).passthrough(),
+      "logging/setLevel",
       async (request: any) => {
         await sendLog("info", `Log level set to: ${request.params.level}`);
         return {};
@@ -757,7 +763,7 @@ function createMcpServer(
 
   if (!options.omitCompletion) {
     server.server.setRequestHandler(
-      z.object({ method: z.literal("completion/complete") }).passthrough(),
+      "completion/complete",
       async () => ({
         completion: {
           values: ["paris", "park", "party"],
@@ -774,7 +780,7 @@ function createMcpServer(
 export async function startConformanceMockServer(
   options: ConformanceServerOptions = {},
 ): Promise<{ server: http.Server; url: string; stop: () => Promise<void> }> {
-  const transports = new Map<string, StreamableHTTPServerTransport>();
+  const transports = new Map<string, NodeStreamableHTTPServerTransport>();
   const servers = new Map<string, McpServer>();
 
   const httpServer = http.createServer(async (req, res) => {
@@ -805,7 +811,7 @@ export async function startConformanceMockServer(
 
         if (options.statelessTransport) {
           const server = createMcpServer(options, () => undefined);
-          const transport = new StreamableHTTPServerTransport({
+          const transport = new NodeStreamableHTTPServerTransport({
             sessionIdGenerator: undefined,
           });
 
@@ -829,12 +835,12 @@ export async function startConformanceMockServer(
         }
 
         if (!sessionId && isInitializeRequest(body)) {
-          let transport!: StreamableHTTPServerTransport;
+          let transport!: NodeStreamableHTTPServerTransport;
           const server = createMcpServer(options, (lookupSessionId) =>
             transports.get(lookupSessionId),
           );
 
-          transport = new StreamableHTTPServerTransport({
+          transport = new NodeStreamableHTTPServerTransport({
             sessionIdGenerator: () => randomUUID(),
             eventStore: createEventStore(),
             retryInterval: 5000,

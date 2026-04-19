@@ -1,9 +1,9 @@
-import { Badge } from "@/components/ui/badge";
+import { Badge } from "@mcpjam/design-system/badge";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from "@/components/ui/tooltip";
+} from "@mcpjam/design-system/tooltip";
 import type { EvalSuiteRun } from "./types";
 import { GitBranch, GitCommit, Link as LinkIcon } from "lucide-react";
 

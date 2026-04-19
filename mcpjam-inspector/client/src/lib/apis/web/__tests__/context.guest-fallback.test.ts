@@ -81,23 +81,23 @@ describe("getHostedAuthorizationHeader guest fallback", () => {
     expect(getAccessToken).not.toHaveBeenCalled();
   });
 
-  it("prefers guest token for sandbox guests without calling WorkOS", async () => {
+  it("prefers guest token for chatbox guests without calling WorkOS", async () => {
     const getAccessToken = vi
       .fn()
       .mockResolvedValue("workos-token-should-skip");
     setHostedApiContext({
-      workspaceId: "ws-sandbox",
+      workspaceId: "ws-chatbox",
       isAuthenticated: false,
       serverIdsByName: { bench: "srv-1" },
       getAccessToken,
-      sandboxToken: "sandbox_tok_123",
+      chatboxToken: "chatbox_tok_123",
     });
 
-    vi.mocked(getGuestBearerToken).mockResolvedValue("guest-sandbox");
+    vi.mocked(getGuestBearerToken).mockResolvedValue("guest-chatbox");
 
     const result = await getHostedAuthorizationHeader();
 
-    expect(result).toBe("Bearer guest-sandbox");
+    expect(result).toBe("Bearer guest-chatbox");
     expect(getAccessToken).not.toHaveBeenCalled();
   });
 
@@ -259,21 +259,21 @@ describe("isGuestMode and buildHostedServerRequest consistency", () => {
     });
   });
 
-  it("buildHostedServerRequest uses workspace path for sandbox guests", () => {
+  it("buildHostedServerRequest uses workspace path for chatbox guests", () => {
     setHostedApiContext({
-      workspaceId: "ws-sandbox",
+      workspaceId: "ws-chatbox",
       isAuthenticated: false,
-      sandboxToken: "sandbox_tok_123",
+      chatboxToken: "chatbox_tok_123",
       serverIdsByName: { "my-server": "srv-1" },
     });
 
     const result = buildHostedServerRequest("my-server");
 
     expect(result).toMatchObject({
-      workspaceId: "ws-sandbox",
+      workspaceId: "ws-chatbox",
       serverId: "srv-1",
       serverName: "my-server",
-      sandboxToken: "sandbox_tok_123",
+      chatboxToken: "chatbox_tok_123",
     });
   });
 

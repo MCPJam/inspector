@@ -1,4 +1,6 @@
 import { logger } from "./logger";
+import type { EvalTraceSpan } from "@/shared/eval-trace";
+import type { LiveChatTraceUsage } from "@/shared/live-chat-trace";
 
 const DEFAULT_INGEST_TIMEOUT_MS = 5_000;
 const MAX_RESPONSE_PREVIEW_CHARS = 200;
@@ -10,17 +12,34 @@ interface ResumeConfig {
   selectedServers?: string[];
 }
 
+/**
+ * Shape of a single completed chat turn's trace as it flows from the stream
+ * producers (`streamDirectChatWithLiveTrace`, `handleMCPJamFreeChatModel`)
+ * through `persistChatSessionToConvex` to the Convex `/ingest-chat` handler.
+ * Kept in one place so the producer callbacks and the wire body can't drift.
+ */
+export interface PersistedTurnTrace {
+  turnId: string;
+  promptIndex: number;
+  startedAt: number;
+  endedAt: number;
+  spans: EvalTraceSpan[];
+  usage?: LiveChatTraceUsage;
+  finishReason?: string;
+  modelId: string;
+}
+
 interface PersistChatSessionOptions {
   chatSessionId: string;
   modelId: string;
   modelSource: "mcpjam" | "byok";
   authHeader?: string;
   workspaceId?: string;
-  sourceType?: "serverShare" | "sandbox" | "direct";
+  sourceType?: "serverShare" | "chatbox" | "direct";
   directVisibility?: "private" | "workspace";
   surface?: "preview" | "share_link";
   shareToken?: string;
-  sandboxToken?: string;
+  chatboxToken?: string;
   serverId?: string;
   visitorDisplayName?: string;
   sessionMessages?: unknown[];
@@ -37,6 +56,7 @@ interface PersistChatSessionOptions {
   timeoutMs?: number;
   resumeConfig?: ResumeConfig;
   expectedVersion?: number;
+  turnTrace?: PersistedTurnTrace;
 }
 
 function isAbortError(error: unknown): boolean {
@@ -104,7 +124,7 @@ export async function persistChatSessionToConvex(
           : {}),
         ...(options.surface ? { surface: options.surface } : {}),
         ...(options.shareToken ? { shareToken: options.shareToken } : {}),
-        ...(options.sandboxToken ? { sandboxToken: options.sandboxToken } : {}),
+        ...(options.chatboxToken ? { chatboxToken: options.chatboxToken } : {}),
         ...(options.serverId ? { serverId: options.serverId } : {}),
         ...(options.visitorDisplayName
           ? { visitorDisplayName: options.visitorDisplayName }
@@ -132,6 +152,7 @@ export async function persistChatSessionToConvex(
         ...(options.expectedVersion !== undefined
           ? { expectedVersion: options.expectedVersion }
           : {}),
+        ...(options.turnTrace ? { turnTrace: options.turnTrace } : {}),
       }),
     });
 

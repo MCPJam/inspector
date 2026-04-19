@@ -8,7 +8,7 @@ import {
   remoteStackDefinition,
   remoteTextDefinition,
 } from "@mcp-ui/client";
-import { EmbeddedResource } from "@modelcontextprotocol/sdk/types.js";
+import type { EmbeddedResource } from "@modelcontextprotocol/client";
 
 import { McpResource } from "../thread-helpers";
 

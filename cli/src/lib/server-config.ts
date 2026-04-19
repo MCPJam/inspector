@@ -1,9 +1,10 @@
-import {
-  type MCPServerConfig,
-  type RetryPolicy,
-} from "@mcpjam/sdk";
+import { type MCPServerConfig, type RetryPolicy } from "@mcpjam/sdk";
 import { Command } from "commander";
-import { resolveOutputFormat, type OutputFormat, usageError } from "./output";
+import {
+  resolveOutputFormat,
+  type OutputFormat,
+  usageError,
+} from "./output.js";
 
 export interface GlobalOptions {
   format: OutputFormat;

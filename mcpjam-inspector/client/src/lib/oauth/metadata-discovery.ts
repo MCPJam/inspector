@@ -3,7 +3,7 @@
  * Supports both OAuth 2.0 (RFC8414) and OpenID Connect Discovery 1.0
  */
 
-import { OAuthMetadata } from "@modelcontextprotocol/sdk/shared/auth.js";
+import type { OAuthMetadata } from "@mcpjam/sdk/browser";
 
 export type DiscoveryType = "oauth2" | "oidc";
 

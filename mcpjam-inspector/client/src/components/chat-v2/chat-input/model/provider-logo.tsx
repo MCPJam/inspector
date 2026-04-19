@@ -3,7 +3,7 @@ import { getProviderLogoFromProvider } from "../../shared/chat-helpers";
 import { cn } from "@/lib/chat-utils";
 import { getProviderColorForTheme } from "../../shared/chat-helpers";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
-import { useSandboxHostTheme } from "@/contexts/sandbox-host-style-context";
+import { useChatboxHostTheme } from "@/contexts/chatbox-host-style-context";
 
 interface ProviderLogoProps {
   provider: string;
@@ -18,8 +18,8 @@ export function ProviderLogo({
   className,
 }: ProviderLogoProps) {
   const themeMode = usePreferencesStore((s) => s.themeMode);
-  const sandboxHostTheme = useSandboxHostTheme();
-  const resolvedThemeMode = sandboxHostTheme ?? themeMode;
+  const chatboxHostTheme = useChatboxHostTheme();
+  const resolvedThemeMode = chatboxHostTheme ?? themeMode;
   const logoSrc = getProviderLogoFromProvider(provider, resolvedThemeMode);
 
   if (!logoSrc) {

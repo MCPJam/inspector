@@ -349,11 +349,19 @@ export {
   OAuthConformanceSuite,
   formatOAuthConformanceHuman,
   formatOAuthConformanceSuiteHuman,
+  createRemoteBrowserAuthorizationController,
+  normalizeCustomHeaders,
+  oauthConformanceProfileSchema,
 } from "./oauth-conformance/index.js";
 export type {
   ConformanceResult as OAuthConformanceResult,
   ConformanceStepId as OAuthConformanceStepId,
   OAuthConformanceCheckId,
+  OAuthConformanceProfile,
+  RemoteBrowserAuthorizationCode,
+  RemoteBrowserAuthorizationController,
+  RemoteBrowserAuthorizationControllerOptions,
+  RemoteBrowserAuthorizationInput,
   StepResult as OAuthConformanceStepResult,
   VerificationResult as OAuthVerificationResult,
 } from "./oauth-conformance/index.js";
@@ -376,6 +384,12 @@ export type {
 export {
   MCP_CHECK_CATEGORIES,
   MCP_CHECK_IDS,
+  canRunConformance,
+  isHttpServerConfig,
+} from "./mcp-conformance/index.js";
+export type {
+  ConformanceSuiteId,
+  ConformanceSupport,
 } from "./mcp-conformance/index.js";
 
 // MCP Apps conformance

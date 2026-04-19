@@ -1,8 +1,8 @@
 import { ExternalLink, X } from "lucide-react";
 import { useState, useEffect } from "react";
-import { Button } from "../ui/button";
-import { Input } from "../ui/input";
-import { Badge } from "../ui/badge";
+import { Button } from "@mcpjam/design-system/button";
+import { Input } from "@mcpjam/design-system/input";
+import { Badge } from "@mcpjam/design-system/badge";
 import { ComboboxMultiSelect } from "../ui/combobox-multi-select";
 import {
   Dialog,
@@ -11,7 +11,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "../ui/dialog";
+} from "@mcpjam/design-system/dialog";
 import { useOpenRouterModels } from "@/hooks/use-openrouter-models";
 
 interface OpenRouterConfigDialogProps {

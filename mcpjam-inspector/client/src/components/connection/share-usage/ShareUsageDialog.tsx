@@ -5,8 +5,8 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
+} from "@mcpjam/design-system/dialog";
+import { Button } from "@mcpjam/design-system/button";
 import {
   ResizablePanelGroup,
   ResizablePanel,

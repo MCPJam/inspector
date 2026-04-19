@@ -93,14 +93,14 @@ function getConvexDeploymentSlug(url: string | undefined): string | null {
 }
 
 async function checkBootstrapRoute(convexHttpUrl: string): Promise<void> {
-  const response = await fetch(`${convexHttpUrl}/sandbox/bootstrap`, {
+  const response = await fetch(`${convexHttpUrl}/chatbox/bootstrap`, {
     method: "OPTIONS",
     signal: AbortSignal.timeout(2_000),
   });
 
   if (response.status === 404) {
     appLogger.warn(
-      `[boot] CONVEX_HTTP_URL does not expose /sandbox/bootstrap. cwd=${process.cwd()} CONVEX_HTTP_URL=${convexHttpUrl}`,
+      `[boot] CONVEX_HTTP_URL does not expose /chatbox/bootstrap. cwd=${process.cwd()} CONVEX_HTTP_URL=${convexHttpUrl}`,
     );
   }
 }
@@ -140,7 +140,7 @@ export function warnOnConvexDevMisconfiguration(env: LoadedInspectorEnv): void {
 
   void checkBootstrapRoute(convexHttpUrl).catch((error) => {
     appLogger.warn(
-      `[boot] Failed to verify /sandbox/bootstrap on CONVEX_HTTP_URL. cwd=${env.cwd} CONVEX_HTTP_URL=${convexHttpUrl} error=${error instanceof Error ? error.message : String(error)}`,
+      `[boot] Failed to verify /chatbox/bootstrap on CONVEX_HTTP_URL. cwd=${env.cwd} CONVEX_HTTP_URL=${convexHttpUrl} error=${error instanceof Error ? error.message : String(error)}`,
     );
   });
 }

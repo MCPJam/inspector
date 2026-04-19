@@ -1,13 +1,13 @@
 import { useQuery } from "convex/react";
 
-export type SharedChatSourceType = "serverShare" | "sandbox";
+export type SharedChatSourceType = "serverShare" | "chatbox";
 
 export interface SharedChatThread {
   _id: string;
   sourceType: SharedChatSourceType;
   surface?: "preview" | "share_link";
   shareId?: string;
-  sandboxId?: string;
+  chatboxId?: string;
   chatSessionId: string;
   serverId?: string;
   userId?: string;
@@ -18,12 +18,26 @@ export interface SharedChatThread {
   startedAt: number;
   lastActivityAt: number;
   messagesBlobUrl?: string;
-  /** Set when sandbox feedback was recorded for this session. */
+  /** Set when chatbox feedback was recorded for this session. */
   feedbackRating?: number | null;
   feedbackComment?: string | null;
+  feedbackCount?: number;
   toolCallCount?: number;
   /** OAuth or permission flow interrupted the session. */
   authInterrupted?: boolean;
+  // Sandbox usage-insights fields (populated only for sandbox sessions).
+  themeClusterId?: string;
+  themeClusterLabel?: string;
+  themeKeywords?: string[];
+  geoCountry?: string;
+  geoRegion?: string;
+  geoCity?: string;
+  deviceKind?: "desktop" | "mobile" | "tablet" | "bot";
+  userAgentFamily?: string;
+  authType?: "signedIn" | "guest";
+  visitorRecency?: "new" | "returning";
+  visitorSegment?: string;
+  language?: string;
 }
 
 export interface SharedChatWidgetSnapshot {
@@ -49,13 +63,13 @@ export function useSharedChatThreadList({
   sourceId: string | null;
 }) {
   const queryName =
-    sourceType === "sandbox"
-      ? "chatSessions:listBySandbox"
+    sourceType === "chatbox"
+      ? "chatSessions:listByChatbox"
       : "chatSessions:listByShare";
   const queryArgs =
-    sourceType === "sandbox"
+    sourceType === "chatbox"
       ? sourceId
-        ? ({ sandboxId: sourceId, limit: 50, includeInternal: true } as any)
+        ? ({ chatboxId: sourceId, limit: 50, includeInternal: true } as any)
         : "skip"
       : sourceId
         ? ({ shareId: sourceId, limit: 50 } as any)

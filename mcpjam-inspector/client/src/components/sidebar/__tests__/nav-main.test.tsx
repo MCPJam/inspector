@@ -20,7 +20,7 @@ vi.mock("@/components/ui/sidebar", () => ({
   },
 }));
 
-vi.mock("@/components/ui/tooltip", () => ({
+vi.mock("@mcpjam/design-system/tooltip", () => ({
   Tooltip: ({ children }: any) => <div>{children}</div>,
   TooltipTrigger: ({ children }: any) => <>{children}</>,
   TooltipContent: ({ children }: any) => <div>{children}</div>,
@@ -149,8 +149,8 @@ describe("NavMain", () => {
       <NavMain
         items={[
           {
-            title: "Sandboxes",
-            url: "#sandboxes",
+            title: "Chatboxes",
+            url: "#chatboxes",
             icon: FakeIcon,
           },
         ]}
@@ -158,7 +158,7 @@ describe("NavMain", () => {
     );
 
     expect(
-      screen.getByRole("button", { name: "Sandboxes" }),
+      screen.getByRole("button", { name: "Chatboxes" }),
     ).toBeInTheDocument();
     expect(screen.queryByText("Plan upgrade required")).not.toBeInTheDocument();
   });

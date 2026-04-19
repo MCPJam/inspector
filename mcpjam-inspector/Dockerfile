@@ -11,6 +11,7 @@ FROM base AS deps
 COPY package.json package-lock.json ./
 COPY sdk/package.json ./sdk/package.json
 COPY cli/package.json ./cli/package.json
+COPY design-system/package.json ./design-system/package.json
 COPY mcpjam-inspector/package.json ./mcpjam-inspector/package.json
 
 RUN npm ci --legacy-peer-deps
@@ -51,6 +52,7 @@ RUN npm run bundle:chatgpt -w @mcpjam/inspector && \
     npm run bundle:sandbox-proxies -w @mcpjam/inspector && \
     npm run build:server -w @mcpjam/inspector
 
+COPY design-system ./design-system
 COPY mcpjam-inspector/client ./mcpjam-inspector/client
 COPY mcpjam-inspector/.env.production ./mcpjam-inspector/
 RUN if [ -n "$VITE_MCPJAM_HOSTED_MODE" ]; then export VITE_MCPJAM_HOSTED_MODE; fi; \

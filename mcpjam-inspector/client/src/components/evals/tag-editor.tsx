@@ -1,6 +1,6 @@
 import { useState, useCallback } from "react";
-import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
+import { Badge } from "@mcpjam/design-system/badge";
+import { Input } from "@mcpjam/design-system/input";
 import { X, Plus, Tag } from "lucide-react";
 
 interface TagBadgesProps {

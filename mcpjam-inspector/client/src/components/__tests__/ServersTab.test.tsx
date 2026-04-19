@@ -325,7 +325,7 @@ vi.mock("../ui/collapsed-panel-strip", () => ({
   CollapsedPanelStrip: () => null,
 }));
 
-vi.mock("../ui/skeleton", () => ({
+vi.mock("@mcpjam/design-system/skeleton", () => ({
   Skeleton: () => <div>Skeleton</div>,
 }));
 

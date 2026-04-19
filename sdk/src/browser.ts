@@ -44,6 +44,29 @@ export type {
 } from "./types.js";
 
 export {
+  auth,
+  discoverAuthorizationServerMetadata,
+  discoverOAuthMetadata,
+  discoverOAuthProtectedResourceMetadata,
+  discoverOAuthServerInfo,
+  exchangeAuthorization,
+  fetchToken,
+  registerClient,
+  selectResourceURL,
+  startAuthorization,
+} from "./oauth/browser-auth.js";
+export type {
+  OAuthClientInformation,
+  OAuthClientInformationFull,
+  OAuthClientMetadata,
+  OAuthClientProvider,
+  OAuthDiscoveryState,
+  OAuthMetadata,
+  OAuthProtectedResourceMetadata,
+  OAuthTokens,
+} from "@modelcontextprotocol/client";
+
+export {
   DEFAULT_MCPJAM_CLIENT_ID_METADATA_URL,
   MCPJAM_CLIENT_URI,
   MCPJAM_LOGO_URI,
@@ -76,3 +99,14 @@ export type {
   RegistrationStrategy2025_06_18,
   RegistrationStrategy2025_11_25,
 } from "./oauth/state-machines/types.js";
+
+// MCP conformance transport support — pure predicate, safe for the browser.
+// UIs use this to decide which suites can run against a given server config.
+export {
+  canRunConformance,
+  isHttpServerConfig,
+} from "./mcp-conformance/transport-support.js";
+export type {
+  ConformanceSuiteId,
+  ConformanceSupport,
+} from "./mcp-conformance/transport-support.js";

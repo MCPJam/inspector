@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { StickToBottom } from "use-stick-to-bottom";
 import { ScrollToBottomButton } from "@/components/chat-v2/shared/scroll-to-bottom-button";
-import type { ContentBlock } from "@modelcontextprotocol/sdk/types.js";
+import type { ContentBlock } from "@modelcontextprotocol/client";
 import type { UIMessage } from "ai";
 import type { HostedOAuthRequiredDetails } from "@/lib/hosted-oauth-required";
 import { Thread } from "@/components/chat-v2/thread";
@@ -51,8 +51,8 @@ interface MultiModelChatCardProps {
   hostedSelectedServerIds?: string[];
   hostedOAuthTokens?: Record<string, string>;
   hostedShareToken?: string;
-  hostedSandboxToken?: string;
-  hostedSandboxSurface?: "preview" | "share_link";
+  hostedChatboxToken?: string;
+  hostedChatboxSurface?: "preview" | "share_link";
   onSummaryChange: (summary: MultiModelCardSummary) => void;
   onHasMessagesChange?: (modelId: string, hasMessages: boolean) => void;
   onOAuthRequired?: (details?: HostedOAuthRequiredDetails) => void;
@@ -82,8 +82,8 @@ export function MultiModelChatCard({
   hostedSelectedServerIds,
   hostedOAuthTokens,
   hostedShareToken,
-  hostedSandboxToken,
-  hostedSandboxSurface,
+  hostedChatboxToken,
+  hostedChatboxSurface,
   onSummaryChange,
   onHasMessagesChange,
   onOAuthRequired,
@@ -137,8 +137,8 @@ export function MultiModelChatCard({
     hostedSelectedServerIds,
     hostedOAuthTokens,
     hostedShareToken,
-    hostedSandboxToken,
-    hostedSandboxSurface,
+    hostedChatboxToken,
+    hostedChatboxSurface,
     initialModelId: String(model.id),
     initialSystemPrompt,
     initialTemperature,

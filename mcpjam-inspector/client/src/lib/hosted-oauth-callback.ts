@@ -1,8 +1,8 @@
 import type { HostedOAuthSurface } from "@/lib/hosted-oauth-resume";
 import {
-  readSandboxSession,
-  SANDBOX_OAUTH_PENDING_KEY,
-} from "@/lib/sandbox-session";
+  readChatboxSession,
+  CHATBOX_OAUTH_PENDING_KEY,
+} from "@/lib/chatbox-session";
 import {
   readSharedServerSession,
   SHARED_OAUTH_PENDING_KEY,
@@ -17,7 +17,7 @@ export interface HostedOAuthPendingMarker {
   serverUrl: string | null;
   accessScope?: "workspace_member" | "chat_v2";
   shareToken?: string | null;
-  sandboxToken?: string | null;
+  chatboxToken?: string | null;
   returnHash: string | null;
   startedAt: number;
 }
@@ -77,7 +77,7 @@ export function writeHostedOAuthPendingMarker(
         serverUrl: marker.serverUrl ?? null,
         accessScope: marker.accessScope ?? null,
         shareToken: marker.shareToken ?? null,
-        sandboxToken: marker.sandboxToken ?? null,
+        chatboxToken: marker.chatboxToken ?? null,
         returnHash: normalizeHostedOAuthReturnHash(marker.returnHash),
         startedAt: Date.now(),
       }),
@@ -96,7 +96,7 @@ export function readHostedOAuthPendingMarker(): HostedOAuthPendingMarker | null 
     if (
       !parsed ||
       typeof parsed !== "object" ||
-      (parsed.surface !== "sandbox" &&
+      (parsed.surface !== "chatbox" &&
         parsed.surface !== "shared" &&
         parsed.surface !== "workspace") ||
       typeof parsed.serverName !== "string" ||
@@ -125,8 +125,8 @@ export function readHostedOAuthPendingMarker(): HostedOAuthPendingMarker | null 
           : undefined,
       shareToken:
         typeof parsed.shareToken === "string" ? parsed.shareToken : null,
-      sandboxToken:
-        typeof parsed.sandboxToken === "string" ? parsed.sandboxToken : null,
+      chatboxToken:
+        typeof parsed.chatboxToken === "string" ? parsed.chatboxToken : null,
       returnHash: normalizeHostedOAuthReturnHash(parsed.returnHash),
       startedAt: parsed.startedAt,
     };
@@ -142,7 +142,7 @@ export function clearHostedOAuthPendingMarker(): void {
 
 export function clearHostedOAuthLegacyPendingKeys(): void {
   localStorage.removeItem(SHARED_OAUTH_PENDING_KEY);
-  localStorage.removeItem(SANDBOX_OAUTH_PENDING_KEY);
+  localStorage.removeItem(CHATBOX_OAUTH_PENDING_KEY);
 }
 
 export function clearHostedOAuthPendingState(): void {
@@ -154,22 +154,22 @@ function inferHostedOAuthSurfaceFromSessions(
   serverName: string,
   serverUrl: string | null,
 ): HostedOAuthSurface | null {
-  const hasSandboxLegacyPending = !!localStorage.getItem(
-    SANDBOX_OAUTH_PENDING_KEY,
+  const hasChatboxLegacyPending = !!localStorage.getItem(
+    CHATBOX_OAUTH_PENDING_KEY,
   );
   const hasSharedLegacyPending = !!localStorage.getItem(
     SHARED_OAUTH_PENDING_KEY,
   );
 
-  if (hasSandboxLegacyPending !== hasSharedLegacyPending) {
-    return hasSandboxLegacyPending ? "sandbox" : "shared";
+  if (hasChatboxLegacyPending !== hasSharedLegacyPending) {
+    return hasChatboxLegacyPending ? "chatbox" : "shared";
   }
 
-  const sandboxSession = readSandboxSession();
+  const chatboxSession = readChatboxSession();
   const sharedSession = readSharedServerSession();
 
-  const sandboxMatch =
-    sandboxSession?.payload.servers.some((server) =>
+  const chatboxMatch =
+    chatboxSession?.payload.servers.some((server) =>
       matchesHostedOAuthServerIdentity(
         {
           serverName: server.serverName,
@@ -189,17 +189,17 @@ function inferHostedOAuthSurfaceFromSessions(
         )
       : false;
 
-  if (sandboxMatch && !sharedMatch) {
-    return "sandbox";
+  if (chatboxMatch && !sharedMatch) {
+    return "chatbox";
   }
-  if (sharedMatch && !sandboxMatch) {
+  if (sharedMatch && !chatboxMatch) {
     return "shared";
   }
 
-  if (sandboxSession && !sharedSession) {
-    return "sandbox";
+  if (chatboxSession && !sharedSession) {
+    return "chatbox";
   }
-  if (sharedSession && !sandboxSession) {
+  if (sharedSession && !chatboxSession) {
     return "shared";
   }
 
@@ -240,7 +240,7 @@ export function getHostedOAuthCallbackContext(): HostedOAuthCallbackContext | nu
     serverUrl,
     accessScope: undefined,
     shareToken: null,
-    sandboxToken: null,
+    chatboxToken: null,
     returnHash: normalizeHostedOAuthReturnHash(
       localStorage.getItem("mcp-oauth-return-hash"),
     ),
@@ -255,11 +255,11 @@ export function resolveHostedOAuthReturnHash(
     return context.returnHash;
   }
 
-  if (context.surface === "sandbox") {
-    const sandboxSession = readSandboxSession();
-    return sandboxSession
-      ? `#${slugify(sandboxSession.payload.name)}`
-      : "#sandbox";
+  if (context.surface === "chatbox") {
+    const chatboxSession = readChatboxSession();
+    return chatboxSession
+      ? `#${slugify(chatboxSession.payload.name)}`
+      : "#chatbox";
   }
 
   if (context.surface === "workspace") {

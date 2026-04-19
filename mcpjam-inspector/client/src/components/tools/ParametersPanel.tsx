@@ -1,17 +1,17 @@
-import { Button } from "../ui/button";
-import { ScrollArea } from "../ui/scroll-area";
+import { Button } from "@mcpjam/design-system/button";
+import { ScrollArea } from "@mcpjam/design-system/scroll-area";
 import { RefreshCw, Play, Save as SaveIcon, Clock } from "lucide-react";
 import { TruncatedText } from "../ui/truncated-text";
 import { ResizablePanel } from "../ui/resizable";
-import { Input } from "../ui/input";
-import { Textarea } from "../ui/textarea";
+import { Input } from "@mcpjam/design-system/input";
+import { Textarea } from "@mcpjam/design-system/textarea";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "../ui/select";
+} from "@mcpjam/design-system/select";
 import { usePostHog } from "posthog-js/react";
 import type { FormField } from "@/lib/tool-form";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";

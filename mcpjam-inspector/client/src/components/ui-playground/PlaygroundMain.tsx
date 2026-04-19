@@ -22,7 +22,7 @@ import {
 } from "react";
 import { Braces, Loader2, Trash2 } from "lucide-react";
 import { useAuth } from "@workos-inc/authkit-react";
-import type { ContentBlock } from "@modelcontextprotocol/sdk/types.js";
+import type { ContentBlock } from "@modelcontextprotocol/client";
 import type { UIMessage } from "ai";
 import { ModelDefinition } from "@/shared/types";
 import { cn } from "@/lib/utils";
@@ -44,12 +44,12 @@ import {
   type ChatSessionResetReason,
   useChatSession,
 } from "@/hooks/use-chat-session";
-import { Button } from "@/components/ui/button";
+import { Button } from "@mcpjam/design-system/button";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from "@/components/ui/tooltip";
+} from "@mcpjam/design-system/tooltip";
 import { createDeterministicToolMessages } from "./playground-helpers";
 import type { MCPPromptResult } from "@/components/chat-v2/chat-input/prompts/mcp-prompts-popover";
 import type { SkillResult } from "@/components/chat-v2/chat-input/skills/skill-types";
@@ -86,9 +86,9 @@ import { useClientConfigStore } from "@/stores/client-config-store";
 import { extractEffectiveHostDisplayMode } from "@/lib/client-config";
 import { PostConnectGuide } from "@/components/app-builder/PostConnectGuide";
 import {
-  SandboxHostStyleProvider,
-  SandboxHostThemeProvider,
-} from "@/contexts/sandbox-host-style-context";
+  ChatboxHostStyleProvider,
+  ChatboxHostThemeProvider,
+} from "@/contexts/chatbox-host-style-context";
 import { useComposerOnboarding } from "@/hooks/use-composer-onboarding";
 import { useDebouncedXRayPayload } from "@/hooks/use-debounced-x-ray-payload";
 import { useModelSelectorLayoutLock } from "@/hooks/use-model-selector-layout-lock";
@@ -1635,8 +1635,8 @@ export function PlaygroundMain({
         ) : (
           <>
             {showLiveTraceDiagnostics && (
-              <SandboxHostStyleProvider value={hostStyle}>
-                <SandboxHostThemeProvider value={effectiveThreadTheme}>
+              <ChatboxHostStyleProvider value={hostStyle}>
+                <ChatboxHostThemeProvider value={effectiveThreadTheme}>
                   <div
                     className={cn(
                       "flex h-full min-h-0 flex-col overflow-hidden",
@@ -1737,8 +1737,8 @@ export function PlaygroundMain({
                       </div>
                     </div>
                   </div>
-                </SandboxHostThemeProvider>
-              </SandboxHostStyleProvider>
+                </ChatboxHostThemeProvider>
+              </ChatboxHostStyleProvider>
             )}
 
             {/* Device frame container */}
@@ -1746,11 +1746,11 @@ export function PlaygroundMain({
               className="flex h-full items-center justify-center min-h-0 overflow-auto"
               style={showLiveTraceDiagnostics ? { display: "none" } : undefined}
             >
-              <SandboxHostStyleProvider value={hostStyle}>
-                <SandboxHostThemeProvider value={effectiveThreadTheme}>
+              <ChatboxHostStyleProvider value={hostStyle}>
+                <ChatboxHostThemeProvider value={effectiveThreadTheme}>
                   <div
                     className={cn(
-                      "sandbox-host-shell app-theme-scope relative flex flex-col overflow-hidden",
+                      "chatbox-host-shell app-theme-scope relative flex flex-col overflow-hidden",
                       effectiveThreadTheme === "dark" && "dark",
                     )}
                     data-testid="playground-thread-shell"
@@ -1775,8 +1775,8 @@ export function PlaygroundMain({
                       {threadContent}
                     </div>
                   </div>
-                </SandboxHostThemeProvider>
-              </SandboxHostStyleProvider>
+                </ChatboxHostThemeProvider>
+              </ChatboxHostStyleProvider>
             </div>
           </>
         )}

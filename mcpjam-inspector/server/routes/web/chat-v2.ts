@@ -212,7 +212,7 @@ chatV2.post("/", async (c) => {
           selectedServers,
           requireToolApproval,
           onConversationComplete: directChatSessionId
-            ? async (fullHistory) => {
+            ? async (fullHistory, turnTrace) => {
                 await persistChatSessionToConvex({
                   chatSessionId: directChatSessionId,
                   modelId: String(modelDefinition.id),
@@ -229,6 +229,7 @@ chatV2.post("/", async (c) => {
                     requireToolApproval,
                     selectedServers: hasServer ? ["__guest__"] : [],
                   },
+                  turnTrace,
                 });
               }
             : undefined,
@@ -248,7 +249,7 @@ chatV2.post("/", async (c) => {
       workspaceId: string;
       selectedServerIds: string[];
       shareToken?: string;
-      sandboxToken?: string;
+      chatboxToken?: string;
       accessScope?: "workspace_member" | "chat_v2";
       surface?: "preview" | "share_link";
     };
@@ -261,7 +262,7 @@ chatV2.post("/", async (c) => {
       requireToolApproval,
       selectedServerIds,
       shareToken,
-      sandboxToken,
+      chatboxToken,
       surface,
     } = body;
 
@@ -292,7 +293,7 @@ chatV2.post("/", async (c) => {
       {
         accessScope: "chat_v2",
         shareToken,
-        sandboxToken,
+        chatboxToken,
         rpcLogger: rpcCollector.rpcLogger,
       },
     );
@@ -350,8 +351,8 @@ chatV2.post("/", async (c) => {
         selectedServers: selectedServerIds,
         requireToolApproval,
         onConversationComplete: hostedChatSessionId
-          ? async (fullHistory) => {
-              const isDirectChat = !shareToken && !sandboxToken;
+          ? async (fullHistory, turnTrace) => {
+              const isDirectChat = !shareToken && !chatboxToken;
               await persistChatSessionToConvex({
                 chatSessionId: hostedChatSessionId,
                 modelId: String(modelDefinition.id),
@@ -359,12 +360,12 @@ chatV2.post("/", async (c) => {
                 workspaceId: hostedBody.workspaceId,
                 sourceType: shareToken
                   ? "serverShare"
-                  : sandboxToken
-                    ? "sandbox"
+                  : chatboxToken
+                    ? "chatbox"
                     : "direct",
-                ...(sandboxToken && surface ? { surface } : {}),
+                ...(chatboxToken && surface ? { surface } : {}),
                 shareToken,
-                sandboxToken,
+                chatboxToken,
                 ...(shareToken && selectedServerIds[0]
                   ? { serverId: selectedServerIds[0] }
                   : {}),
@@ -383,6 +384,7 @@ chatV2.post("/", async (c) => {
                       },
                     }
                   : {}),
+                turnTrace,
               });
             }
           : undefined,

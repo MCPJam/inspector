@@ -16,10 +16,10 @@ import {
   BaseEdge,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { Button } from "./ui/button";
-import { Badge } from "./ui/badge";
-import { Input } from "./ui/input";
-import { Label } from "./ui/label";
+import { Button } from "@mcpjam/design-system/button";
+import { Badge } from "@mcpjam/design-system/badge";
+import { Input } from "@mcpjam/design-system/input";
+import { Label } from "@mcpjam/design-system/label";
 import { OAuthFlowState, OAuthStep } from "@/lib/types/oauth-flow-types";
 import { cn } from "@/lib/utils";
 

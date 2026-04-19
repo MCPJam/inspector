@@ -10,12 +10,12 @@ import {
   Minimize2,
   Check,
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Button } from "@mcpjam/design-system/button";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from "@/components/ui/tooltip";
+} from "@mcpjam/design-system/tooltip";
 import { cn } from "@/lib/utils";
 import type { JsonEditorMode } from "./types";
 import { SegmentedControl } from "./segmented-control";

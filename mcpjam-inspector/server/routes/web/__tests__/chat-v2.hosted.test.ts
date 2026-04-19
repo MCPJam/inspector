@@ -81,9 +81,17 @@ describe("web routes — chat-v2 hosted mode", () => {
     emitConstructorRpcLogMock.mockReset();
 
     handleMCPJamFreeChatModelMock.mockImplementation(async (options: any) => {
-      await options.onConversationComplete?.([
-        { role: "user", content: "preview request" },
-      ]);
+      await options.onConversationComplete?.(
+        [{ role: "user", content: "preview request" }],
+        {
+          turnId: "trace_turn_test",
+          promptIndex: 0,
+          startedAt: 1,
+          endedAt: 2,
+          spans: [],
+          modelId: "test-model",
+        },
+      );
       options.onStreamComplete?.();
       return new Response("ok", { status: 200 });
     });
@@ -123,7 +131,7 @@ describe("web routes — chat-v2 hosted mode", () => {
     }
   });
 
-  it("persists sandbox preview chats with internal surface", async () => {
+  it("persists chatbox preview chats with internal surface", async () => {
     const { app, token } = createWebTestApp();
 
     const response = await postJson(
@@ -132,7 +140,7 @@ describe("web routes — chat-v2 hosted mode", () => {
       {
         workspaceId: "workspace-1",
         selectedServerIds: ["server-1"],
-        sandboxToken: "sandbox-token",
+        chatboxToken: "chatbox-token",
         surface: "preview",
         chatSessionId: "chat-session-1",
         messages: [{ role: "user", content: "preview request" }],
@@ -156,8 +164,8 @@ describe("web routes — chat-v2 hosted mode", () => {
       expect.objectContaining({
         chatSessionId: "chat-session-1",
         workspaceId: "workspace-1",
-        sourceType: "sandbox",
-        sandboxToken: "sandbox-token",
+        sourceType: "chatbox",
+        chatboxToken: "chatbox-token",
         surface: "preview",
         modelId: "openai/gpt-5-mini",
         modelSource: "mcpjam",

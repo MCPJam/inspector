@@ -7,6 +7,32 @@ on:
       - synchronize
       - reopened
       - closed
+    # MCP-only PRs have their own preview pipeline (pr-mcp-preview.yml) that
+    # deploys a dedicated per-PR worker. Skip the full Railway inspector
+    # preview when a PR's diff is confined to MCP-only concerns: the `mcp/`
+    # package itself, its PR-preview workflow, and its staging-deploy
+    # workflow. GitHub still fires this workflow for any PR whose diff
+    # touches at least one non-ignored path, so mixed PRs still get the
+    # inspector preview.
+    #
+    # Known rare edge case: if a PR opens with mixed MCP + non-MCP changes
+    # (Railway preview env created), then is force-pushed to remove all
+    # non-MCP changes before close, GitHub evaluates paths-ignore against
+    # the final PR diff and skips the `closed` event too — orphaning the
+    # Railway env. Manual cleanup via the Railway dashboard is the current
+    # answer; a follow-up can split `destroy-preview` into its own
+    # always-on-close workflow if this becomes real.
+    #
+    # If `upsert-preview` is ever added as a required status check in
+    # branch protection, MCP-only PRs will show it perpetually "Pending"
+    # and be blocked from merging — GitHub's path filter skips the workflow
+    # entirely rather than marking it green. Fix at that time by relaxing
+    # the rule or adding a companion always-succeeds job.
+    paths-ignore:
+      - "mcp/**"
+      - ".github/workflows/pr-mcp-preview.yml"
+      - ".github/workflows/deploy-mcp-staging.yml"
+      - ".github/workflows/deploy-mcp-prod.yml"
   repository_dispatch:
     types:
       - backend_preview_ready
@@ -29,6 +55,12 @@ jobs:
       github.event_name == 'pull_request' &&
       github.event.action != 'closed' &&
       github.event.pull_request.head.repo.full_name == github.repository
+    # Newer pushes cancel older upsert/sync runs for the same PR. Prevents
+    # the "commit A's sync clobbers commit B's env vars" race the audit
+    # caught. Shared with sync-backend-preview + destroy-preview below.
+    concurrency:
+      group: preview-pr-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
     runs-on: ubuntu-latest
     environment:
       name: preview-pr-${{ github.event.pull_request.number }}
@@ -48,6 +80,12 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Resolve deployed commit metadata
+        id: preview_commit
+        run: |
+          echo "deployed_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "head_sha=${{ github.event.pull_request.head.sha }}" >> "$GITHUB_OUTPUT"
+
       - name: Install preview tooling
         run: npm install -g @railway/cli workos
 
@@ -63,32 +101,52 @@ jobs:
           TOKEN: ${{ secrets.BACKEND_PREVIEW_DISPATCH_TOKEN }}
           PR_BRANCH: ${{ steps.meta.outputs.branch }}
         run: |
-          BACKEND_BRANCH=$(git ls-remote --heads "https://x-access-token:${TOKEN}@github.com/${BACKEND_REPO}.git" "$PR_BRANCH" || true)
-          if [ -n "$BACKEND_BRANCH" ]; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          # GitHub returns 404 for both "branch missing" and "token can't see
+          # this repo" on private repos. Preflight a repo-level GET so only a
+          # real access failure hard-fails; after that, a 404 on the branch
+          # path unambiguously means the branch doesn't exist.
+          ACCESS_CODE=$(curl -sS -o /dev/null -w "%{http_code}" \
+            -H "Authorization: Bearer ${TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${BACKEND_REPO}")
+          if [ "$ACCESS_CODE" != "200" ]; then
+            echo "::error::BACKEND_PREVIEW_DISPATCH_TOKEN cannot access ${BACKEND_REPO} (HTTP $ACCESS_CODE)"
+            exit 1
           fi
+          # URL-encode slashes in the branch name for the path parameter.
+          ENCODED_BRANCH=$(jq -rn --arg s "$PR_BRANCH" '$s|@uri')
+          HTTP_CODE=$(curl -sS -o /dev/null -w "%{http_code}" \
+            -H "Authorization: Bearer ${TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${BACKEND_REPO}/branches/${ENCODED_BRANCH}")
+          case "$HTTP_CODE" in
+            200) echo "exists=true" >> "$GITHUB_OUTPUT" ;;
+            404) echo "exists=false" >> "$GITHUB_OUTPUT" ;;
+            *) echo "::error::Unexpected HTTP $HTTP_CODE checking ${BACKEND_REPO}/${PR_BRANCH}"; exit 1 ;;
+          esac
 
       - name: Create or refresh Railway preview environment
         run: |
-          railway link \
+          .github/scripts/railway-retry.sh railway link \
             --project "$RAILWAY_PROJECT_ID" \
             --environment "$RAILWAY_STAGING_ENVIRONMENT" \
             --json >/dev/null
-          railway environment new "${{ steps.meta.outputs.environment }}" \
+          .github/scripts/railway-retry.sh railway environment new "${{ steps.meta.outputs.environment }}" \
             --duplicate "$RAILWAY_STAGING_ENVIRONMENT" \
             --json >/dev/null || true
 
       - name: Configure staging-safe preview defaults
         run: |
-          railway link \
+          .github/scripts/railway-retry.sh railway link \
             --project "$RAILWAY_PROJECT_ID" \
             --environment "${{ steps.meta.outputs.environment }}" \
             --service "$RAILWAY_INSPECTOR_SERVICE" \
             --json >/dev/null
 
-          railway variable set \
+          .github/scripts/railway-retry.sh railway variable set \
             -e "${{ steps.meta.outputs.environment }}" \
             -s "$RAILWAY_INSPECTOR_SERVICE" \
             MCPJAM_NONPROD_LOCKDOWN=true \
@@ -105,7 +163,7 @@ jobs:
 
       - name: Deploy preview to Railway
         run: |
-          railway up \
+          .github/scripts/railway-retry.sh railway up \
             --ci \
             --project "$RAILWAY_PROJECT_ID" \
             --environment "${{ steps.meta.outputs.environment }}" \
@@ -115,7 +173,7 @@ jobs:
         id: preview_domain
         continue-on-error: true
         run: |
-          DOMAIN=$(railway run \
+          DOMAIN=$(.github/scripts/railway-retry.sh railway run \
             --project "$RAILWAY_PROJECT_ID" \
             --environment "${{ steps.meta.outputs.environment }}" \
             --service "$RAILWAY_INSPECTOR_SERVICE" \
@@ -127,13 +185,13 @@ jobs:
       - name: Configure preview origin allowlists
         if: steps.preview_domain.outputs.url != ''
         run: |
-          railway link \
+          .github/scripts/railway-retry.sh railway link \
             --project "$RAILWAY_PROJECT_ID" \
             --environment "${{ steps.meta.outputs.environment }}" \
             --service "$RAILWAY_INSPECTOR_SERVICE" \
             --json >/dev/null
 
-          railway variable set \
+          .github/scripts/railway-retry.sh railway variable set \
             -e "${{ steps.meta.outputs.environment }}" \
             -s "$RAILWAY_INSPECTOR_SERVICE" \
             MCPJAM_ALLOWED_HOSTS="staging.mcpjam.com,*.up.railway.app" \
@@ -152,6 +210,19 @@ jobs:
             --api-key "$STAGING_WORKOS_API_KEY" \
             --json || true
 
+      # Initial health check: the preview is currently wired to staging
+      # Convex. If staging itself is broken (e.g., a rename shipped to main
+      # without `convex deploy` against staging), fail loudly now so the
+      # author isn't debugging a 404 from the "staging fallback" case later.
+      - name: Verify initial preview can reach Convex (staging)
+        id: initial_health
+        if: steps.preview_domain.outputs.url != ''
+        continue-on-error: true
+        env:
+          CONVEX_HTTP: ${{ env.STAGING_CONVEX_HTTP_URL }}
+        run: |
+          .github/scripts/convex-health-check.sh "$CONVEX_HTTP" "chatboxes:listChatboxes"
+
       - name: Dispatch backend preview request
         if: steps.backend_branch.outputs.exists == 'true' && steps.preview_domain.outputs.url != ''
         uses: actions/github-script@v7
@@ -165,6 +236,8 @@ jobs:
               event_type: "inspector_preview_requested",
               client_payload: {
                 branch: "${{ steps.meta.outputs.branch }}",
+                inspector_sha: "${{ steps.preview_commit.outputs.deployed_sha }}",
+                inspector_head_sha: "${{ steps.preview_commit.outputs.head_sha }}",
                 inspector_repo: context.repo.owner + "/" + context.repo.repo,
                 inspector_pr_number: context.payload.pull_request.number,
                 inspector_environment: "${{ steps.meta.outputs.environment }}",
@@ -173,25 +246,51 @@ jobs:
             });
 
       - name: Upsert preview comment
+        # always() so the comment reflects truth even when an earlier step
+        # (Railway config, origin allowlists, health check) failed.
+        if: always()
         uses: actions/github-script@v7
         env:
           PREVIEW_URL: ${{ steps.preview_domain.outputs.url }}
           BACKEND_MODE: ${{ steps.backend_branch.outputs.exists == 'true' && 'preview requested' || 'staging fallback' }}
+          HEALTH_OUTCOME: ${{ steps.initial_health.outcome }}
+          PREVIEW_DEPLOYED_SHA: ${{ steps.preview_commit.outputs.deployed_sha }}
+          PREVIEW_HEAD_SHA: ${{ steps.preview_commit.outputs.head_sha }}
         with:
           script: |
             const marker = process.env.PREVIEW_COMMENT_MARKER;
             const previewUrl = process.env.PREVIEW_URL;
             const backendMode = process.env.BACKEND_MODE;
+            const healthOutcome = process.env.HEALTH_OUTCOME || "skipped";
+            const deployedSha = process.env.PREVIEW_DEPLOYED_SHA;
+            const headSha = process.env.PREVIEW_HEAD_SHA;
             const issue_number = context.payload.pull_request.number;
+            const commitLink = (sha) =>
+              sha
+                ? `[${sha.slice(0, 7)}](https://github.com/${context.repo.owner}/${context.repo.repo}/commit/${sha})`
+                : null;
+            const healthLine =
+              healthOutcome === "success"
+                ? "Health: ✅ Convex reachable"
+                : healthOutcome === "failure"
+                  ? "Health: ❌ Convex unreachable — see upsert-preview job logs (staging may need `convex deploy`)"
+                  : null;
             const bodyLines = [
               marker,
               "### Internal preview",
               previewUrl
                 ? `Preview URL: ${previewUrl}`
                 : "Preview URL will appear in Railway after the deploy finishes.",
+              deployedSha
+                ? `Deployed commit: ${commitLink(deployedSha)}`
+                : null,
+              headSha && headSha !== deployedSha
+                ? `PR head commit: ${commitLink(headSha)}`
+                : null,
               `Backend target: ${backendMode}.`,
+              healthLine,
               "Access is employee-only in non-production environments.",
-            ];
+            ].filter(Boolean);
             const body = bodyLines.join("\n");
 
             const comments = await github.paginate(github.rest.issues.listComments, {
@@ -221,6 +320,9 @@ jobs:
 
   upsert-backend-pr-preview:
     if: github.event_name == 'repository_dispatch' && github.event.action == 'backend_pr_preview_requested'
+    concurrency:
+      group: preview-pr-be-${{ github.event.client_payload.backend_pr_number }}
+      cancel-in-progress: true
     runs-on: ubuntu-latest
     environment:
       name: preview-pr-be-${{ github.event.client_payload.backend_pr_number }}
@@ -240,7 +342,13 @@ jobs:
       - name: Checkout default branch
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.client_payload.inspector_git_ref || 'main' }}
+          ref: ${{ github.event.client_payload.inspector_sha || github.event.client_payload.inspector_git_ref || github.event.client_payload.branch || 'main' }}
+
+      - name: Resolve deployed commit metadata
+        id: preview_commit
+        run: |
+          echo "deployed_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "head_sha=${{ github.event.client_payload.inspector_head_sha || '' }}" >> "$GITHUB_OUTPUT"
 
       - name: Install preview tooling
         run: npm install -g @railway/cli workos
@@ -259,23 +367,23 @@ jobs:
 
       - name: Create or refresh Railway preview environment
         run: |
-          railway link \
+          .github/scripts/railway-retry.sh railway link \
             --project "$RAILWAY_PROJECT_ID" \
             --environment "$RAILWAY_STAGING_ENVIRONMENT" \
             --json >/dev/null
-          railway environment new "${{ steps.meta.outputs.environment }}" \
+          .github/scripts/railway-retry.sh railway environment new "${{ steps.meta.outputs.environment }}" \
             --duplicate "$RAILWAY_STAGING_ENVIRONMENT" \
             --json >/dev/null || true
 
       - name: Configure staging-safe preview defaults
         run: |
-          railway link \
+          .github/scripts/railway-retry.sh railway link \
             --project "$RAILWAY_PROJECT_ID" \
             --environment "${{ steps.meta.outputs.environment }}" \
             --service "$RAILWAY_INSPECTOR_SERVICE" \
             --json >/dev/null
 
-          railway variable set \
+          .github/scripts/railway-retry.sh railway variable set \
             -e "${{ steps.meta.outputs.environment }}" \
             -s "$RAILWAY_INSPECTOR_SERVICE" \
             MCPJAM_NONPROD_LOCKDOWN=true \
@@ -292,7 +400,7 @@ jobs:
 
       - name: Deploy preview to Railway
         run: |
-          railway up \
+          .github/scripts/railway-retry.sh railway up \
             --ci \
             --project "$RAILWAY_PROJECT_ID" \
             --environment "${{ steps.meta.outputs.environment }}" \
@@ -302,7 +410,7 @@ jobs:
         id: preview_domain
         continue-on-error: true
         run: |
-          DOMAIN=$(railway run \
+          DOMAIN=$(.github/scripts/railway-retry.sh railway run \
             --project "$RAILWAY_PROJECT_ID" \
             --environment "${{ steps.meta.outputs.environment }}" \
             --service "$RAILWAY_INSPECTOR_SERVICE" \
@@ -314,13 +422,13 @@ jobs:
       - name: Configure preview origin allowlists
         if: steps.preview_domain.outputs.url != ''
         run: |
-          railway link \
+          .github/scripts/railway-retry.sh railway link \
             --project "$RAILWAY_PROJECT_ID" \
             --environment "${{ steps.meta.outputs.environment }}" \
             --service "$RAILWAY_INSPECTOR_SERVICE" \
             --json >/dev/null
 
-          railway variable set \
+          .github/scripts/railway-retry.sh railway variable set \
             -e "${{ steps.meta.outputs.environment }}" \
             -s "$RAILWAY_INSPECTOR_SERVICE" \
             MCPJAM_ALLOWED_HOSTS="staging.mcpjam.com,*.up.railway.app" \
@@ -363,6 +471,8 @@ jobs:
               event_type: "inspector_preview_requested",
               client_payload: {
                 branch: "${{ steps.meta.outputs.branch }}",
+                inspector_sha: "${{ steps.preview_commit.outputs.deployed_sha }}",
+                inspector_head_sha: "${{ steps.preview_commit.outputs.head_sha || steps.preview_commit.outputs.deployed_sha }}",
                 inspector_repo: context.repo.owner + "/" + context.repo.repo,
                 inspector_pr_number: "0",
                 inspector_environment: "${{ steps.meta.outputs.environment }}",
@@ -379,11 +489,15 @@ jobs:
           PREVIEW_URL: ${{ steps.preview_domain.outputs.url }}
           BACKEND_REPO_FULL: ${{ github.event.client_payload.backend_repo }}
           BACKEND_PR_NUMBER: ${{ github.event.client_payload.backend_pr_number }}
+          PREVIEW_DEPLOYED_SHA: ${{ steps.preview_commit.outputs.deployed_sha }}
+          PREVIEW_HEAD_SHA: ${{ steps.preview_commit.outputs.head_sha || steps.preview_commit.outputs.deployed_sha }}
         with:
           github-token: ${{ secrets.BACKEND_PREVIEW_DISPATCH_TOKEN }}
           script: |
             const marker = process.env.PREVIEW_COMMENT_MARKER;
             const previewUrl = process.env.PREVIEW_URL;
+            const deployedSha = process.env.PREVIEW_DEPLOYED_SHA;
+            const headSha = process.env.PREVIEW_HEAD_SHA;
             if (process.env.BACKEND_REPO_FULL !== process.env.BACKEND_REPO) {
               core.setFailed(
                 `backend_repo '${process.env.BACKEND_REPO_FULL}' does not match allowed repo '${process.env.BACKEND_REPO}'`
@@ -402,9 +516,15 @@ jobs:
               previewUrl
                 ? `Preview URL: ${previewUrl}`
                 : "Preview URL will appear in Railway after the deploy finishes.",
+              deployedSha
+                ? `Deployed commit: [${deployedSha.slice(0, 7)}](https://github.com/${context.repo.owner}/${context.repo.repo}/commit/${deployedSha})`
+                : null,
+              headSha && headSha !== deployedSha
+                ? `PR head commit: [${headSha.slice(0, 7)}](https://github.com/${context.repo.owner}/${context.repo.repo}/commit/${headSha})`
+                : null,
               "Backend target: Convex preview requested (falls back to staging if deploy fails).",
               "Access is employee-only in non-production environments.",
-            ];
+            ].filter(Boolean);
             const body = bodyLines.join("\n");
             const comments = await github.paginate(github.rest.issues.listComments, {
               owner,
@@ -434,6 +554,11 @@ jobs:
       github.event_name == 'pull_request' &&
       github.event.action == 'closed' &&
       github.event.pull_request.head.repo.full_name == github.repository
+    # Same group as upsert so closing a PR cancels any in-flight upsert
+    # for that PR; destroy runs last.
+    concurrency:
+      group: preview-pr-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
     runs-on: ubuntu-latest
     env:
       BACKEND_REPO: ${{ vars.MCPJAM_BACKEND_REPO || 'MCPJam/mcpjam-backend' }}
@@ -441,16 +566,19 @@ jobs:
       RAILWAY_PROJECT_ID: ${{ vars.RAILWAY_PROJECT_ID }}
       RAILWAY_STAGING_ENVIRONMENT: ${{ vars.RAILWAY_STAGING_ENVIRONMENT }}
     steps:
+      # Checkout is required so `.github/scripts/railway-retry.sh` is on disk.
+      - uses: actions/checkout@v4
+
       - name: Install Railway CLI
         run: npm install -g @railway/cli
 
       - name: Delete Railway preview environment
         run: |
-          railway link \
+          .github/scripts/railway-retry.sh railway link \
             --project "$RAILWAY_PROJECT_ID" \
             --environment "$RAILWAY_STAGING_ENVIRONMENT" \
             --json >/dev/null
-          railway environment delete "${RAILWAY_ENV_PREFIX}${{ github.event.pull_request.number }}" \
+          .github/scripts/railway-retry.sh railway environment delete "${RAILWAY_ENV_PREFIX}${{ github.event.pull_request.number }}" \
             --yes || true
 
       - name: Dispatch backend preview cleanup
@@ -471,12 +599,18 @@ jobs:
 
   destroy-backend-pr-preview:
     if: github.event_name == 'repository_dispatch' && github.event.action == 'backend_pr_inspector_cleanup'
+    concurrency:
+      group: preview-pr-be-${{ github.event.client_payload.backend_pr_number }}
+      cancel-in-progress: true
     runs-on: ubuntu-latest
     env:
       RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
       RAILWAY_PROJECT_ID: ${{ vars.RAILWAY_PROJECT_ID }}
       RAILWAY_STAGING_ENVIRONMENT: ${{ vars.RAILWAY_STAGING_ENVIRONMENT }}
     steps:
+      # Checkout is required so `.github/scripts/railway-retry.sh` is on disk.
+      - uses: actions/checkout@v4
+
       - name: Install Railway CLI
         run: npm install -g @railway/cli
 
@@ -488,17 +622,22 @@ jobs:
             echo "::error::backend_pr_number is missing or non-numeric: '$BACKEND_PR_NUMBER'"
             exit 1
           fi
-          railway link \
+          .github/scripts/railway-retry.sh railway link \
             --project "$RAILWAY_PROJECT_ID" \
             --environment "$RAILWAY_STAGING_ENVIRONMENT" \
             --json >/dev/null
-          railway environment delete "${RAILWAY_BACKEND_PR_ENV_PREFIX}${BACKEND_PR_NUMBER}" \
+          .github/scripts/railway-retry.sh railway environment delete "${RAILWAY_BACKEND_PR_ENV_PREFIX}${BACKEND_PR_NUMBER}" \
             --yes || true
 
   sync-backend-preview:
     if: >
       github.event_name == 'repository_dispatch' &&
       (github.event.action == 'backend_preview_ready' || github.event.action == 'backend_preview_failed')
+    # Share the upsert group so a newer inspector push pre-empts a stale
+    # sync from an earlier commit's backend callback.
+    concurrency:
+      group: preview-pr-${{ github.event.client_payload.inspector_pr_number }}
+      cancel-in-progress: true
     runs-on: ubuntu-latest
     env:
       RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
@@ -512,6 +651,14 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.client_payload.inspector_sha || github.event.client_payload.inspector_git_ref || github.event.client_payload.branch || 'main' }}
+
+      - name: Resolve deployed commit metadata
+        id: preview_commit
+        run: |
+          echo "deployed_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "head_sha=${{ github.event.client_payload.inspector_head_sha || '' }}" >> "$GITHUB_OUTPUT"
 
       - name: Install preview tooling
         run: npm install -g @railway/cli workos
@@ -531,13 +678,13 @@ jobs:
 
       - name: Update preview environment variables
         run: |
-          railway link \
+          .github/scripts/railway-retry.sh railway link \
             --project "$RAILWAY_PROJECT_ID" \
             --environment "${{ github.event.client_payload.inspector_environment }}" \
             --service "$RAILWAY_INSPECTOR_SERVICE" \
             --json >/dev/null
 
-          railway variable set \
+          .github/scripts/railway-retry.sh railway variable set \
             -e "${{ github.event.client_payload.inspector_environment }}" \
             -s "$RAILWAY_INSPECTOR_SERVICE" \
             MCPJAM_NONPROD_LOCKDOWN=true \
@@ -552,7 +699,7 @@ jobs:
 
       - name: Redeploy preview after backend update
         run: |
-          railway up \
+          .github/scripts/railway-retry.sh railway up \
             --ci \
             --project "$RAILWAY_PROJECT_ID" \
             --environment "${{ github.event.client_payload.inspector_environment }}" \
@@ -562,7 +709,7 @@ jobs:
         id: preview_domain
         continue-on-error: true
         run: |
-          DOMAIN=$(railway run \
+          DOMAIN=$(.github/scripts/railway-retry.sh railway run \
             --project "$RAILWAY_PROJECT_ID" \
             --environment "${{ github.event.client_payload.inspector_environment }}" \
             --service "$RAILWAY_INSPECTOR_SERVICE" \
@@ -574,13 +721,13 @@ jobs:
       - name: Refresh preview origin allowlists
         if: steps.preview_domain.outputs.url != ''
         run: |
-          railway link \
+          .github/scripts/railway-retry.sh railway link \
             --project "$RAILWAY_PROJECT_ID" \
             --environment "${{ github.event.client_payload.inspector_environment }}" \
             --service "$RAILWAY_INSPECTOR_SERVICE" \
             --json >/dev/null
 
-          railway variable set \
+          .github/scripts/railway-retry.sh railway variable set \
             -e "${{ github.event.client_payload.inspector_environment }}" \
             -s "$RAILWAY_INSPECTOR_SERVICE" \
             MCPJAM_ALLOWED_HOSTS="staging.mcpjam.com,*.up.railway.app" \
@@ -599,17 +746,38 @@ jobs:
             --api-key "$STAGING_WORKOS_API_KEY" \
             --json || true
 
+      # End-to-end health check: whatever Convex URL the inspector is now
+      # wired to (preview or staging fallback) must actually have the public
+      # functions the inspector calls. Fails loudly if it doesn't so the
+      # final PR comment can reflect the truth.
+      - name: Verify preview can reach Convex
+        id: final_health
+        if: steps.preview_domain.outputs.url != ''
+        continue-on-error: true
+        env:
+          CONVEX_HTTP: ${{ steps.backend_target.outputs.convex_http_url }}
+        run: |
+          .github/scripts/convex-health-check.sh "$CONVEX_HTTP" "chatboxes:listChatboxes"
+
       - name: Update preview comment
+        # always() so a failed Railway/WorkOS/health step doesn't leave the
+        # comment lying about the previous state.
+        if: always()
         uses: actions/github-script@v7
         env:
           PREVIEW_URL: ${{ steps.preview_domain.outputs.url }}
           BACKEND_MODE: ${{ steps.backend_target.outputs.backend_mode }}
+          HEALTH_OUTCOME: ${{ steps.final_health.outcome }}
+          PREVIEW_DEPLOYED_SHA: ${{ steps.preview_commit.outputs.deployed_sha }}
+          PREVIEW_HEAD_SHA: ${{ steps.preview_commit.outputs.head_sha }}
           CROSS_REPO_TOKEN: ${{ secrets.BACKEND_PREVIEW_DISPATCH_TOKEN }}
           BACKEND_REPO: ${{ vars.MCPJAM_BACKEND_REPO || 'MCPJam/mcpjam-backend' }}
         with:
           github-token: ${{ (github.event.client_payload.comment_issue_owner || '') != '' && secrets.BACKEND_PREVIEW_DISPATCH_TOKEN || github.token }}
           script: |
             const marker = process.env.PREVIEW_COMMENT_MARKER;
+            const deployedSha = process.env.PREVIEW_DEPLOYED_SHA;
+            const headSha = process.env.PREVIEW_HEAD_SHA;
             const p = context.payload.client_payload;
             const issueOwner = p.comment_issue_owner;
             const issueRepo = p.comment_issue_repo;
@@ -618,6 +786,10 @@ jobs:
               : Number(p.inspector_pr_number);
             const owner = issueOwner || context.repo.owner;
             const repo = issueRepo || context.repo.repo;
+            const commitLink = (sha) =>
+              sha
+                ? `[${sha.slice(0, 7)}](https://github.com/${context.repo.owner}/${context.repo.repo}/commit/${sha})`
+                : null;
 
             // Fail explicitly if cross-repo commenting was requested but token is missing
             if (issueOwner && !process.env.CROSS_REPO_TOKEN) {
@@ -645,15 +817,29 @@ jobs:
               );
               return;
             }
+            const healthOutcome = process.env.HEALTH_OUTCOME || "skipped";
+            const healthLine =
+              healthOutcome === "success"
+                ? "Health: ✅ Convex reachable"
+                : healthOutcome === "failure"
+                  ? "Health: ❌ Convex unreachable — see job logs (staging may need `convex deploy`)"
+                  : null;
             const bodyLines = [
               marker,
               "### Internal preview",
               process.env.PREVIEW_URL
                 ? `Preview URL: ${process.env.PREVIEW_URL}`
                 : "Preview URL will appear in Railway after the deploy finishes.",
+              deployedSha
+                ? `Deployed commit: ${commitLink(deployedSha)}`
+                : null,
+              headSha && headSha !== deployedSha
+                ? `PR head commit: ${commitLink(headSha)}`
+                : null,
               `Backend target: ${process.env.BACKEND_MODE}.`,
+              healthLine,
               "Access is employee-only in non-production environments.",
-            ];
+            ].filter(Boolean);
             const body = bodyLines.join("\n");
 
             const comments = await github.paginate(github.rest.issues.listComments, {

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildConfig } from "../src/commands/conformance";
-import { CliError } from "../src/lib/output";
+import { buildConfig } from "../src/commands/conformance.js";
+import { CliError } from "../src/lib/output.js";
 
 test("buildConfig rejects non-http URLs", () => {
   assert.throws(

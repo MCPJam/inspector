@@ -4,7 +4,7 @@ import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from "@/components/ui/tooltip";
+} from "@mcpjam/design-system/tooltip";
 import type { CursorPosition } from "./types";
 
 interface JsonEditorStatusBarProps {

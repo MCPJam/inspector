@@ -1,6 +1,6 @@
 import { ExternalLink } from "lucide-react";
-import { Button } from "../ui/button";
-import { Input } from "../ui/input";
+import { Button } from "@mcpjam/design-system/button";
+import { Input } from "@mcpjam/design-system/input";
 import {
   Dialog,
   DialogContent,
@@ -8,7 +8,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "../ui/dialog";
+} from "@mcpjam/design-system/dialog";
 
 interface AzureOpenAIConfigDialogProps {
   open: boolean;

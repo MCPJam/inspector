@@ -6,9 +6,9 @@
  */
 
 import { useState, useCallback } from "react";
-import { Dialog, DialogContent } from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
+import { Dialog, DialogContent } from "@mcpjam/design-system/dialog";
+import { Button } from "@mcpjam/design-system/button";
+import { Badge } from "@mcpjam/design-system/badge";
 import { cn } from "@/lib/utils";
 import { formatMinorAmount } from "@/lib/currency";
 import { Loader2, ShoppingCart, AlertTriangle, X } from "lucide-react";

@@ -54,6 +54,28 @@ describe("filterByFeatureFlags", () => {
     expect(titles).toEqual(["Always Visible"]);
   });
 
+  it("hides XAA Debugger when the xaa flag is off", () => {
+    const result = filterByFeatureFlags(
+      [
+        {
+          id: "others",
+          items: [
+            { title: "OAuth Debugger", url: "#oauth-flow", icon: FakeIcon },
+            {
+              title: "XAA Debugger",
+              url: "#xaa-flow",
+              icon: FakeIcon,
+              featureFlag: "xaa",
+            },
+          ],
+        },
+      ],
+      { xaa: false },
+    );
+
+    expect(result[0].items.map((i) => i.title)).toEqual(["OAuth Debugger"]);
+  });
+
   it("keeps Testing visible when unrelated flags are on", () => {
     const result = filterByFeatureFlags(makeSections(), {
       "registry-enabled": true,
@@ -131,6 +153,64 @@ describe("filterByFeatureFlags", () => {
       ),
     ).toEqual(["Playground", "Runs"]);
   });
+
+  it("hides Conformance when the feature flag is off", () => {
+    const result = filterByFeatureFlags(
+      [
+        {
+          id: "others",
+          items: [
+            {
+              title: "Conformance",
+              url: "#conformance",
+              icon: FakeIcon,
+              featureFlag: "mcpjam-conformance",
+            },
+            {
+              title: "OAuth Debugger",
+              url: "#oauth-flow",
+              icon: FakeIcon,
+            },
+          ],
+        },
+      ],
+      { "mcpjam-conformance": false },
+    );
+
+    expect(result[0].items.map((item) => item.title)).toEqual([
+      "OAuth Debugger",
+    ]);
+  });
+
+  it("keeps Chatboxes behind the existing sandboxes flag", () => {
+    const sections = [
+      {
+        id: "connection",
+        items: [
+          {
+            title: "Chatboxes",
+            url: "#chatboxes",
+            icon: FakeIcon,
+            featureFlag: "sandboxes-enabled",
+          },
+        ],
+      },
+    ];
+
+    expect(
+      filterByFeatureFlags(sections, { "sandboxes-enabled": true })[0].items,
+    ).toEqual([
+      {
+        title: "Chatboxes",
+        url: "#chatboxes",
+        icon: FakeIcon,
+        featureFlag: "sandboxes-enabled",
+      },
+    ]);
+    expect(
+      filterByFeatureFlags(sections, { "sandboxes-enabled": false }),
+    ).toHaveLength(0);
+  });
 });
 
 describe("applyBillingGateNavState", () => {
@@ -207,7 +287,14 @@ describe("getHostedNavigationSections", () => {
             icon: FakeIcon,
             billingFeature: "evals",
           },
+          {
+            title: "Conformance",
+            url: "#conformance",
+            icon: FakeIcon,
+            featureFlag: "mcpjam-conformance",
+          },
           { title: "OAuth Debugger", url: "#oauth-flow", icon: FakeIcon },
+          { title: "XAA Debugger", url: "#xaa-flow", icon: FakeIcon },
         ],
       },
     ]);
@@ -228,8 +315,19 @@ describe("getHostedNavigationSections", () => {
         billingFeature: "evals",
       },
       {
+        title: "Conformance",
+        url: "#conformance",
+        icon: FakeIcon,
+        featureFlag: "mcpjam-conformance",
+      },
+      {
         title: "OAuth Debugger",
         url: "#oauth-flow",
+        icon: FakeIcon,
+      },
+      {
+        title: "XAA Debugger",
+        url: "#xaa-flow",
         icon: FakeIcon,
       },
     ]);

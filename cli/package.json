@@ -1,7 +1,8 @@
 {
   "name": "@mcpjam/cli",
-  "version": "2.1.0",
+  "version": "3.0.0",
   "description": "Test, debug, and validate MCP servers — health checks, OAuth conformance, tool-surface diffing, and structured triage from the terminal or CI",
+  "type": "module",
   "main": "dist/index.js",
   "files": [
     "dist"
@@ -15,7 +16,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@mcpjam/sdk": "^0.10.0",
+    "@mcpjam/sdk": "^1.0.0",
     "commander": "^12.1.0"
   },
   "devDependencies": {
@@ -36,6 +37,6 @@
     "ci"
   ],
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=20.0.0"
   }
 }

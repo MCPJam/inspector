@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@mcpjam/design-system/avatar";
 import { getInitials } from "@/lib/utils";
 import { Users } from "lucide-react";
 import { ShareWorkspaceDialog } from "./ShareWorkspaceDialog";

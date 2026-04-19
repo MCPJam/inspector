@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, useCallback, useRef } from "react";
-import { Button } from "./ui/button";
-import { Badge } from "./ui/badge";
-import { ScrollArea } from "./ui/scroll-area";
+import { Button } from "@mcpjam/design-system/button";
+import { Badge } from "@mcpjam/design-system/badge";
+import { ScrollArea } from "@mcpjam/design-system/scroll-area";
 import { ThreePanelLayout } from "./ui/three-panel-layout";
 import {
   ListTodo,
@@ -35,10 +35,10 @@ import {
   getDismissedTaskIds,
   dismissTasksForServer,
 } from "@/lib/task-tracker";
-import { Switch } from "./ui/switch";
-import { Input } from "./ui/input";
-import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
-import { Progress } from "./ui/progress";
+import { Switch } from "@mcpjam/design-system/switch";
+import { Input } from "@mcpjam/design-system/input";
+import { Tooltip, TooltipTrigger, TooltipContent } from "@mcpjam/design-system/tooltip";
+import { Progress } from "@mcpjam/design-system/progress";
 import { TaskInlineProgress } from "./tasks/TaskInlineProgress";
 import { STATUS_CONFIG, formatRelativeTime } from "@/lib/task-utils";
 import { useTaskElicitation } from "@/hooks/use-task-elicitation";

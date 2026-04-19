@@ -13,9 +13,9 @@ import {
   AccordionItem,
   AccordionTrigger,
   AccordionContent,
-} from "../ui/accordion";
-import type { Tool } from "@modelcontextprotocol/sdk/types.js";
-import { ScrollArea } from "../ui/scroll-area";
+} from "@mcpjam/design-system/accordion";
+import type { Tool } from "@modelcontextprotocol/client";
+import { ScrollArea } from "@mcpjam/design-system/scroll-area";
 import { SearchInput } from "../ui/search-input";
 import { SavedRequestItem } from "../tools/SavedRequestItem";
 import type { FormField } from "@/lib/tool-form";

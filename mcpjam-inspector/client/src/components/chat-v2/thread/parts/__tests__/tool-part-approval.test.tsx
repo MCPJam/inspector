@@ -47,13 +47,13 @@ vi.mock("@/lib/mcp-ui/mcp-apps-utils", () => ({
   UIType: { MCP_APPS: "mcp-apps", OPENAI_SDK: "openai-apps" },
 }));
 
-vi.mock("@/components/ui/tooltip", () => ({
+vi.mock("@mcpjam/design-system/tooltip", () => ({
   Tooltip: ({ children }: any) => <>{children}</>,
   TooltipTrigger: ({ children }: any) => <>{children}</>,
   TooltipContent: ({ children }: any) => <span>{children}</span>,
 }));
 
-vi.mock("@/components/ui/badge", () => ({
+vi.mock("@mcpjam/design-system/badge", () => ({
   Badge: ({ children, ...props }: any) => <span {...props}>{children}</span>,
 }));
 

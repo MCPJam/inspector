@@ -7,7 +7,7 @@
  */
 
 import { create } from "zustand";
-import type { Tool } from "@modelcontextprotocol/sdk/types.js";
+import type { Tool } from "@modelcontextprotocol/client";
 import type { FormField } from "@/lib/tool-form";
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 

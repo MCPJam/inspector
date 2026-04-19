@@ -5,7 +5,7 @@ import {
   renderStructuredRunJUnitXml,
   type StructuredRunReport,
 } from "@mcpjam/sdk";
-import { operationalError, usageError, writeResult } from "./output";
+import { operationalError, usageError, writeResult } from "./output.js";
 
 export type ReporterFormat = "json-summary" | "junit-xml";
 

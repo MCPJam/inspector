@@ -4,7 +4,7 @@ import type { NodeStatus } from "./types";
 // Helper to determine status based on current step and actual action order
 export const getActionStatus = (
   actionStep: OAuthFlowStep | string,
-  currentStep: OAuthFlowStep,
+  currentStep: string,
   actionsInFlow: Array<{ id: string }>,
 ): NodeStatus => {
   // Find indices in the actual flow (not a hardcoded order)

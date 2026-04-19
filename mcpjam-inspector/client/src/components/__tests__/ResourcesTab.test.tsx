@@ -35,7 +35,7 @@ vi.mock("../logger-view", () => ({
 }));
 
 // Mock ScrollArea
-vi.mock("../ui/scroll-area", () => ({
+vi.mock("@mcpjam/design-system/scroll-area", () => ({
   ScrollArea: ({ children }: { children: React.ReactNode }) => (
     <div data-testid="scroll-area">{children}</div>
   ),

@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect } from "react";
-import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
+import { Button } from "@mcpjam/design-system/button";
+import { Card } from "@mcpjam/design-system/card";
+import { Badge } from "@mcpjam/design-system/badge";
 import { Plus, X } from "lucide-react";
 import {
   DropdownMenu,
@@ -11,7 +11,7 @@ import {
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+} from "@mcpjam/design-system/dropdown-menu";
 import type { EvalSuite, EvalSuiteConfigTest } from "./types";
 import type { ModelDefinition } from "@/shared/types";
 import { isMCPJamProvidedModel } from "@/shared/types";

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { formatDistanceToNow } from "date-fns";
 import { Copy, Loader2, MessageSquare } from "lucide-react";
 import { toast } from "sonner";
-import { Button } from "@/components/ui/button";
+import { Button } from "@mcpjam/design-system/button";
 import { copyToClipboard } from "@/lib/clipboard";
 import type { ModelDefinition, ModelProvider } from "@/shared/types";
 import { TranscriptThread } from "@/components/chat-v2/thread/transcript-thread";
@@ -88,7 +88,7 @@ export function ShareUsageThreadDetail({
     return adaptTraceToUiMessages({
       trace: { messages: messages as any, widgetSnapshots },
       toolResultDisplay:
-        thread?.sourceType === "sandbox" ? "attached-to-tool" : "sibling-text",
+        thread?.sourceType === "chatbox" ? "attached-to-tool" : "sibling-text",
     });
   }, [messages, thread?.sourceType, widgetSnapshots]);
 
@@ -155,8 +155,8 @@ export function ShareUsageThreadDetail({
         ? `${Math.round(duration / 1000)}s`
         : `${Math.round(duration / 60000)}m`
       : null;
-  const isSandboxThread = thread.sourceType === "sandbox";
-  const reasoningDisplayMode = isSandboxThread ? "collapsible" : "collapsed";
+  const isChatboxThread = thread.sourceType === "chatbox";
+  const reasoningDisplayMode = isChatboxThread ? "collapsible" : "collapsed";
 
   const hasFeedback =
     thread.feedbackRating != null ||
@@ -240,7 +240,7 @@ export function ShareUsageThreadDetail({
           onExitFullscreen={NOOP}
           toolRenderOverrides={adaptedTrace.toolRenderOverrides}
           showSaveViewButton={false}
-          minimalMode={!isSandboxThread}
+          minimalMode={!isChatboxThread}
           interactive={false}
           reasoningDisplayMode={reasoningDisplayMode}
           contentClassName="max-w-4xl space-y-8 px-4 py-4"

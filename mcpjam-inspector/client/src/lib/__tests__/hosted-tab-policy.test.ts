@@ -27,12 +27,12 @@ describe("hosted-tab-policy", () => {
     expect(isHostedSidebarTabAllowed("ci-evals")).toBe(true);
   });
 
-  it("keeps sandboxes visible in hosted navigation", () => {
-    expect(HOSTED_SIDEBAR_ALLOWED_TABS).toContain("sandboxes");
-    expect(HOSTED_HASH_ALLOWED_TABS).toContain("sandboxes");
-    expect(isHostedSidebarTabAllowed("sandboxes")).toBe(true);
-    expect(isHostedHashTabAllowed("sandboxes")).toBe(true);
-    expect(isHostedHashTabBlocked("sandboxes")).toBe(false);
+  it("keeps chatboxes visible in hosted navigation", () => {
+    expect(HOSTED_SIDEBAR_ALLOWED_TABS).toContain("chatboxes");
+    expect(HOSTED_HASH_ALLOWED_TABS).toContain("chatboxes");
+    expect(isHostedSidebarTabAllowed("chatboxes")).toBe(true);
+    expect(isHostedHashTabAllowed("chatboxes")).toBe(true);
+    expect(isHostedHashTabBlocked("chatboxes")).toBe(false);
   });
 
   it("allows profile and organizations hashes in hosted mode", () => {
@@ -65,6 +65,22 @@ describe("hosted-tab-policy", () => {
     expect(isHostedSidebarTabAllowed("oauth-flow")).toBe(true);
     expect(isHostedHashTabAllowed("oauth-flow")).toBe(true);
     expect(isHostedHashTabBlocked("oauth-flow")).toBe(false);
+  });
+
+  it("allows conformance in hosted sidebar", () => {
+    expect(HOSTED_SIDEBAR_ALLOWED_TABS).toContain("conformance");
+    expect(HOSTED_HASH_ALLOWED_TABS).toContain("conformance");
+    expect(isHostedSidebarTabAllowed("conformance")).toBe(true);
+    expect(isHostedHashTabAllowed("conformance")).toBe(true);
+    expect(isHostedHashTabBlocked("conformance")).toBe(false);
+  });
+
+  it("allows xaa-flow in hosted sidebar", () => {
+    expect(HOSTED_SIDEBAR_ALLOWED_TABS).toContain("xaa-flow");
+    expect(HOSTED_HASH_ALLOWED_TABS).toContain("xaa-flow");
+    expect(isHostedSidebarTabAllowed("xaa-flow")).toBe(true);
+    expect(isHostedHashTabAllowed("xaa-flow")).toBe(true);
+    expect(isHostedHashTabBlocked("xaa-flow")).toBe(false);
   });
 
   it("allows learning in hosted navigation", () => {

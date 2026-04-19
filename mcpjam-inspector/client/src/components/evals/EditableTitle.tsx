@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Button } from "@/components/ui/button";
+import { Button } from "@mcpjam/design-system/button";
 import { cn } from "@/lib/utils";
 
 interface EditableTitleProps {

@@ -8,6 +8,7 @@ import "@testing-library/jest-dom/vitest";
 
 // Cleanup after each test to prevent state leakage
 afterEach(() => {
+  vi.useRealTimers();
   cleanup();
   vi.clearAllMocks();
 });

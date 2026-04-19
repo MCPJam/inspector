@@ -5,18 +5,18 @@ import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
-} from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
-import { Slider } from "@/components/ui/slider";
+} from "@mcpjam/design-system/dialog";
+import { Button } from "@mcpjam/design-system/button";
+import { Textarea } from "@mcpjam/design-system/textarea";
+import { Slider } from "@mcpjam/design-system/slider";
 import { AlertTriangle, Settings2 } from "lucide-react";
 import { toast } from "sonner";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Alert, AlertDescription, AlertTitle } from "@mcpjam/design-system/alert";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from "@/components/ui/tooltip";
+} from "@mcpjam/design-system/tooltip";
 import { ModelDefinition, isGPT5Model } from "@/shared/types";
 
 interface SystemPromptSelectorProps {

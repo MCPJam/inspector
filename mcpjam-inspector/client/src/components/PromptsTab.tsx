@@ -1,16 +1,16 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Button } from "./ui/button";
-import { Input } from "./ui/input";
-import { Textarea } from "./ui/textarea";
-import { Badge } from "./ui/badge";
-import { ScrollArea } from "./ui/scroll-area";
+import { Button } from "@mcpjam/design-system/button";
+import { Input } from "@mcpjam/design-system/input";
+import { Textarea } from "@mcpjam/design-system/textarea";
+import { Badge } from "@mcpjam/design-system/badge";
+import { ScrollArea } from "@mcpjam/design-system/scroll-area";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "./ui/select";
+} from "@mcpjam/design-system/select";
 import {
   MessageSquare,
   Play,
