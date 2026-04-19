@@ -44,5 +44,3 @@ Install our GitHub app from your [dashboard](https://dashboard.mintlify.com/sett
 - [Mintlify documentation](https://mintlify.com/docs)
 - [Mintlify community](https://mintlify.com/community)
 
-<!-- Test PR to reproduce dual-deploy race on shared Convex preview branch. -->
-

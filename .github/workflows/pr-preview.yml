@@ -238,13 +238,30 @@ jobs:
             --environment "$BE_ENV" \
             --service "$RAILWAY_INSPECTOR_SERVICE" \
             printenv CONVEX_HTTP_URL 2>/dev/null | tail -n 1 | tr -d '\r' || echo "")
-          # Only reuse real Convex preview URLs. If the backend Railway env
-          # is still on its staging-duplicated defaults (sync-backend-preview
-          # hasn't run yet), skip reuse so we don't mask a real race.
+          # Strip trailing slashes so a `https://x.convex.cloud/` value in
+          # one env doesn't compare-unequal to `https://x.convex.cloud` in
+          # the other and let staging URLs sneak through the equality check.
+          normalize_url() { printf '%s' "$1" | sed 's#/*$##'; }
+          VITE_URL=$(normalize_url "$VITE_URL")
+          HTTP_URL=$(normalize_url "$HTTP_URL")
+          STAGING_VITE_NORM=$(normalize_url "$STAGING_VITE_CONVEX_URL")
+          STAGING_HTTP_NORM=$(normalize_url "$STAGING_CONVEX_HTTP_URL")
+          # Only reuse real Convex URLs. Three skip cases, all "fall through
+          # to dispatch": empty, equal-to-staging (sync-backend-preview hasn't
+          # populated yet), or doesn't look like a Convex URL at all (someone
+          # mis-set the var manually). The shape `*.convex.cloud` /
+          # `*.convex.site` is the only authoritative test we have here —
+          # production and preview deployments share the domain, but the
+          # Railway env scoping (only reading from `pr-be-<N>`) plus the
+          # MCPJAM_NONPROD_LOCKDOWN guard on every preview deployment make
+          # the prod-leak path infeasible without an attacker also writing
+          # to a backend-PR Railway env.
           if [ -z "$VITE_URL" ] || [ -z "$HTTP_URL" ] \
-            || [ "$VITE_URL" = "$STAGING_VITE_CONVEX_URL" ] \
-            || [ "$HTTP_URL" = "$STAGING_CONVEX_HTTP_URL" ]; then
-            echo "::notice::Backend env $BE_ENV has no preview Convex URLs yet; falling through to dispatch."
+            || [ "$VITE_URL" = "$STAGING_VITE_NORM" ] \
+            || [ "$HTTP_URL" = "$STAGING_HTTP_NORM" ] \
+            || ! [[ "$VITE_URL" =~ ^https://[A-Za-z0-9.-]+\.convex\.(cloud|site)$ ]] \
+            || ! [[ "$HTTP_URL" =~ ^https://[A-Za-z0-9.-]+\.convex\.(cloud|site)$ ]]; then
+            echo "::notice::Backend env $BE_ENV has no usable preview Convex URLs (vite=$VITE_URL http=$HTTP_URL); falling through to dispatch."
             echo "reused=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
