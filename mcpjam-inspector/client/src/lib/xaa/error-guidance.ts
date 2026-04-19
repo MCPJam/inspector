@@ -1,5 +1,25 @@
 import type { XAAFlowStep, XAAHttpHistoryEntry } from "./types";
 
+/**
+ * Returns the last HTTP entry for a step only if that final entry represents a
+ * failure. If the step retried and a later attempt succeeded, returns undefined
+ * — we don't want to show error guidance for a step whose outcome was success.
+ */
+export function latestErroredHttpEntry(
+  httpEntries: readonly XAAHttpHistoryEntry[],
+): XAAHttpHistoryEntry | undefined {
+  if (httpEntries.length === 0) return undefined;
+  const last = httpEntries[httpEntries.length - 1];
+  if (last.error) return last;
+  if (
+    last.response &&
+    (last.response.status < 200 || last.response.status >= 300)
+  ) {
+    return last;
+  }
+  return undefined;
+}
+
 export type XAAErrorActionIntent =
   | "configure"
   | "bootstrap"
@@ -176,8 +196,7 @@ export function getXAAErrorGuidance(
     }
     if (
       upstreamError === "invalid_target" ||
-      messageIncludes(stateError, "invalid_target") ||
-      messageIncludes(stateError, "resource")
+      messageIncludes(stateError, "invalid_target")
     ) {
       return {
         title: "Authorization server rejected the `resource` claim",

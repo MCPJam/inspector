@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getXAAErrorGuidance } from "../error-guidance";
+import { getXAAErrorGuidance, latestErroredHttpEntry } from "../error-guidance";
 import type { XAAHttpHistoryEntry } from "../types";
 
 function httpEntry(
@@ -109,6 +109,27 @@ describe("getXAAErrorGuidance", () => {
       });
       expect(guidance?.title).toContain("doesn't support the jwt-bearer grant");
     });
+
+    it("does not misclassify unrelated errors that mention 'resource' as invalid_target", () => {
+      const guidance = getXAAErrorGuidance({
+        step: "jwt_bearer_request",
+        stateError: "Failed to allocate resource pool",
+      });
+      expect(guidance?.title).not.toContain("resource");
+      expect(guidance?.title).toBe(
+        "JWT bearer request failed at the authorization server",
+      );
+    });
+
+    it("matches invalid_target via explicit upstream error code", () => {
+      const guidance = getXAAErrorGuidance({
+        step: "jwt_bearer_request",
+        httpEntry: proxyResponse(400, { error: "invalid_target" }),
+      });
+      expect(guidance?.title).toBe(
+        "Authorization server rejected the `resource` claim",
+      );
+    });
   });
 
   describe("discovery steps", () => {
@@ -140,5 +161,58 @@ describe("getXAAErrorGuidance", () => {
       });
       expect(guidance?.title).toContain("rejected the access token");
     });
+
+    it("flags 401 responses even when a stateError is also set (bug #3 regression)", () => {
+      const guidance = getXAAErrorGuidance({
+        step: "authenticated_mcp_request",
+        stateError: "Authenticated MCP request failed with 401",
+        httpEntry: httpEntry({
+          step: "authenticated_mcp_request",
+          response: { status: 401, statusText: "", headers: {}, body: {} },
+        }),
+      });
+      expect(guidance?.title).toContain("rejected the access token");
+    });
+  });
+});
+
+describe("latestErroredHttpEntry", () => {
+  const okEntry: XAAHttpHistoryEntry = {
+    step: "discover_authz_metadata",
+    timestamp: 1,
+    request: { method: "GET", url: "/a", headers: {} },
+    response: { status: 200, statusText: "OK", headers: {}, body: {} },
+  };
+  const notFoundEntry: XAAHttpHistoryEntry = {
+    step: "discover_authz_metadata",
+    timestamp: 0,
+    request: { method: "GET", url: "/b", headers: {} },
+    response: { status: 404, statusText: "Not Found", headers: {}, body: {} },
+  };
+  const networkErrorEntry: XAAHttpHistoryEntry = {
+    step: "jwt_bearer_request",
+    timestamp: 0,
+    request: { method: "POST", url: "/proxy/token", headers: {} },
+    error: { message: "network error" },
+  };
+
+  it("returns undefined for an empty list", () => {
+    expect(latestErroredHttpEntry([])).toBeUndefined();
+  });
+
+  it("returns undefined when the final entry succeeded even if earlier ones failed (bug #2 regression)", () => {
+    expect(latestErroredHttpEntry([notFoundEntry, okEntry])).toBeUndefined();
+  });
+
+  it("returns the final entry when it represents a failure", () => {
+    expect(latestErroredHttpEntry([okEntry, notFoundEntry])).toBe(
+      notFoundEntry,
+    );
+  });
+
+  it("returns the final entry when it is a network error", () => {
+    expect(latestErroredHttpEntry([okEntry, networkErrorEntry])).toBe(
+      networkErrorEntry,
+    );
   });
 });

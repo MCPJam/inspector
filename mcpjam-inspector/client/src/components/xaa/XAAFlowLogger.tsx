@@ -32,13 +32,10 @@ import {
   getXAAStepIndex,
   XAA_STEP_ORDER,
 } from "@/lib/xaa/step-metadata";
-import type {
-  XAAFlowState,
-  XAAFlowStep,
-  XAAHttpHistoryEntry,
-} from "@/lib/xaa/types";
+import type { XAAFlowState, XAAFlowStep } from "@/lib/xaa/types";
 import {
   getXAAErrorGuidance,
+  latestErroredHttpEntry,
   type XAAErrorAction,
   type XAAErrorGuidance,
 } from "@/lib/xaa/error-guidance";
@@ -242,18 +239,6 @@ function GuidanceCallout({
   );
 }
 
-function latestErroredHttpEntry(
-  httpEntries: XAAHttpHistoryEntry[],
-): XAAHttpHistoryEntry | undefined {
-  for (let i = httpEntries.length - 1; i >= 0; i -= 1) {
-    const entry = httpEntries[i];
-    if (entry.error) return entry;
-    if (entry.response && (entry.response.status < 200 || entry.response.status >= 300)) {
-      return entry;
-    }
-  }
-  return undefined;
-}
 
 export function XAAFlowLogger({
   flowState,
@@ -460,22 +445,30 @@ export function XAAFlowLogger({
           <CompatibilityBanner report={flowState.compatibilityReport} />
         )}
 
-        {flowState.error &&
-          (() => {
-            const guidance = getXAAErrorGuidance({
-              step: flowState.currentStep,
-              stateError: flowState.error,
-            });
-            if (guidance) {
-              return (
-                <GuidanceCallout
-                  guidance={guidance}
-                  onConfigure={actions.onConfigure}
-                  onShowBootstrap={actions.onShowBootstrap}
-                  onReset={actions.onReset}
-                />
-              );
-            }
+        {(() => {
+          const currentStepHttpEntries = (flowState.httpHistory || []).filter(
+            (entry) => entry.step === flowState.currentStep,
+          );
+          const currentStepErroredEntry = latestErroredHttpEntry(
+            currentStepHttpEntries,
+          );
+          if (!flowState.error && !currentStepErroredEntry) return null;
+          const guidance = getXAAErrorGuidance({
+            step: flowState.currentStep,
+            stateError: flowState.error,
+            httpEntry: currentStepErroredEntry,
+          });
+          if (guidance) {
+            return (
+              <GuidanceCallout
+                guidance={guidance}
+                onConfigure={actions.onConfigure}
+                onShowBootstrap={actions.onShowBootstrap}
+                onReset={actions.onReset}
+              />
+            );
+          }
+          if (flowState.error) {
             return (
               <Alert variant="destructive" className="py-2">
                 <AlertCircle className="h-4 w-4" />
@@ -484,7 +477,9 @@ export function XAAFlowLogger({
                 </AlertDescription>
               </Alert>
             );
-          })()}
+          }
+          return null;
+        })()}
 
         {flowState.idJag && flowState.idJagDecoded && (
           <IdJagInspector
@@ -591,6 +586,10 @@ export function XAAFlowLogger({
                     ) : null}
 
                     {(() => {
+                      if (group.step === flowState.currentStep) {
+                        // Top-level callout covers the current step.
+                        return null;
+                      }
                       const erroredEntry = latestErroredHttpEntry(
                         group.httpEntries,
                       );
@@ -600,13 +599,6 @@ export function XAAFlowLogger({
                         httpEntry: erroredEntry,
                       });
                       if (!guidance) return null;
-                      if (
-                        group.step === flowState.currentStep &&
-                        flowState.error
-                      ) {
-                        // Already rendered as the top-level current-step callout.
-                        return null;
-                      }
                       return (
                         <GuidanceCallout
                           guidance={guidance}
