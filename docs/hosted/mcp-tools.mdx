@@ -1,0 +1,118 @@
+---
+title: "MCP Tools"
+description: "Built-in MCP tools available on the hosted MCPJam server"
+icon: "wrench"
+---
+
+The hosted MCPJam MCP server at `mcp.mcpjam.com` provides built-in MCP tools that you can call from any MCP client. These tools help you diagnose servers, verify authentication, and inspect workspace configurations.
+
+## Available tools
+
+### `whoami`
+
+Returns your authenticated MCPJam user record from Convex. Use this to verify that your AuthKit bearer token is working correctly.
+
+**Parameters:** None
+
+**Example response:**
+```json
+{
+  "id": "user_abc123",
+  "user": {
+    "name": "Jane Developer",
+    "email": "jane@example.com"
+  }
+}
+```
+
+### `doctor`
+
+Runs MCPJam's hosted doctor against every supported HTTP MCP server in a workspace. This tool performs comprehensive diagnostics including connectivity checks, capability discovery, and resource enumeration.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `organizationId` | string | Yes | The organization ID containing the workspace |
+| `workspaceId` | string | Yes | The workspace ID to diagnose |
+| `serverIds` | string[] | No | Specific server IDs to diagnose (defaults to all servers) |
+| `timeoutMs` | number | No | Timeout in milliseconds (max 120000, default 30000) |
+
+**Limitations:**
+
+- **HTTPS only** — The hosted doctor only supports HTTPS HTTP servers. HTTP and stdio servers are skipped.
+- **OAuth handling** — If a server requires OAuth and you haven't provided credentials, the doctor will report `oauth_required` status.
+
+**Example request:**
+```json
+{
+  "organizationId": "org_abc123",
+  "workspaceId": "ws_xyz789",
+  "serverIds": ["srv_001", "srv_002"],
+  "timeoutMs": 45000
+}
+```
+
+**Example response:**
+```json
+{
+  "organizationId": "org_abc123",
+  "workspaceId": "ws_xyz789",
+  "generatedAt": "2026-04-19T02:05:28.500Z",
+  "summary": {
+    "ready": 2,
+    "partial": 0,
+    "oauth_required": 0,
+    "error": 0,
+    "skipped": 1
+  },
+  "servers": [
+    {
+      "id": "srv_001",
+      "name": "Production API",
+      "transportType": "http",
+      "status": "ready",
+      "doctor": {
+        "target": {
+          "id": "srv_001",
+          "name": "Production API",
+          "url": "https://api.example.com/mcp"
+        },
+        "status": "ready",
+        "checks": {
+          "probe": { "status": "ok", "detail": "HTTP initialize probe succeeded via streamable-http." },
+          "connection": { "status": "ok", "detail": "Connected and initialized successfully." },
+          "tools": { "status": "ok", "detail": "5 tools discovered." },
+          "resources": { "status": "ok", "detail": "3 resources discovered." }
+        }
+      }
+    },
+    {
+      "id": "srv_002",
+      "name": "Local Dev Server",
+      "transportType": "http",
+      "status": "skipped",
+      "skippedReason": "hosted MCPJam MCP only supports HTTPS HTTP servers; run doctor locally via @mcpjam/cli-preview"
+    }
+  ]
+}
+```
+
+**Status values:**
+
+- `ready` — Server is fully functional
+- `partial` — Server connected but some checks failed
+- `oauth_required` — Server requires OAuth authentication
+- `error` — Connection or initialization failed
+- `skipped` — Server type not supported by hosted doctor
+
+## Connecting to the hosted MCP server
+
+To use these tools, connect your MCP client to `mcp.mcpjam.com` with your MCPJam authentication token.
+
+See the [hosted app documentation](/hosted/overview) for more details on authentication and server configuration.
+
+## Related
+
+- [Server inspection CLI](/cli/server-inspection) — Run doctor locally with full stdio and HTTP support
+- [Workspaces](/inspector/workspaces) — Organize and share MCP servers in workspaces
