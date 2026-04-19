@@ -265,6 +265,15 @@ jobs:
             echo "reused=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
+          # The step opened with `set -uo pipefail` (no -e) so the early
+          # `railway link` probe could soft-fail and let us fall through.
+          # From here on all calls are mutating and must hard-fail: if the
+          # link or variable-set fails, the inspector env still holds the
+          # staging Convex URLs from "Configure staging-safe preview
+          # defaults" but `reused=true` would be written, the dispatch would
+          # be skipped, and `railway up` would bake staging into the bundle.
+          # That's the exact crash this PR is fixing.
+          set -e
           .github/scripts/railway-retry.sh railway link \
             --project "$RAILWAY_PROJECT_ID" \
             --environment "${{ steps.meta.outputs.environment }}" \
