@@ -198,7 +198,6 @@ export function getXAAErrorGuidance(
     // rejected anything — the state machine set an error before contact.
     if (
       messageIncludes(stateError, "missing an ID-JAG") ||
-      messageIncludes(stateError, "missing an id-jag") ||
       messageIncludes(stateError, "token endpoint")
     ) {
       return {
