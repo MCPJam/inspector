@@ -185,13 +185,30 @@ export function getXAAErrorGuidance(
   }
 
   if (step === "discover_authz_metadata") {
-    return {
-      title: "Authorization server discovery failed",
-      explanation:
-        "Neither `/.well-known/oauth-authorization-server` nor `/.well-known/openid-configuration` returned a valid response at the configured issuer. Check the issuer URL for typos, or set the token endpoint manually.",
-      actions: [CONFIGURE],
-      severity: "error",
-    };
+    // Pre-validation: the state machine short-circuits here when the issuer
+    // is missing, without making any request. Don't claim "discovery failed"
+    // — no discovery was attempted.
+    if (
+      !httpEntry &&
+      messageIncludes(stateError, "authorization server issuer is missing")
+    ) {
+      return {
+        title: "Authorization server issuer not configured",
+        explanation:
+          "No authorization-server issuer is set, and the MCP server's RFC 9728 metadata didn't supply one. Configure it manually in Configure Target, or fix the MCP server so it lists `authorization_servers`.",
+        actions: [CONFIGURE],
+        severity: "error",
+      };
+    }
+    if (httpEntry || hasFailedResponse) {
+      return {
+        title: "Authorization server discovery failed",
+        explanation:
+          "Neither `/.well-known/oauth-authorization-server` nor `/.well-known/openid-configuration` returned a valid response at the configured issuer. Check the issuer URL for typos, or set the token endpoint manually.",
+        actions: [CONFIGURE],
+        severity: "error",
+      };
+    }
   }
 
   if (step === "jwt_bearer_request") {

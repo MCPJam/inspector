@@ -259,12 +259,36 @@ describe("getXAAErrorGuidance", () => {
       expect(guidance?.title).toContain("RFC 9728 metadata");
     });
 
-    it("explains authorization server discovery failure", () => {
+    it("explains authorization server discovery failure when a request was actually attempted", () => {
       const guidance = getXAAErrorGuidance({
         step: "discover_authz_metadata",
         stateError: "Authorization server metadata discovery failed.",
+        httpEntry: httpEntry({
+          step: "discover_authz_metadata",
+          response: {
+            status: 404,
+            statusText: "Not Found",
+            headers: {},
+            body: {},
+          },
+        }),
       });
       expect(guidance?.title).toBe("Authorization server discovery failed");
+    });
+
+    it("routes the 'issuer is missing' pre-validation error to a specific Configure card, not 'discovery failed'", () => {
+      // The state machine short-circuits before any request when no issuer
+      // is configured. Showing "Neither well-known returned a valid
+      // response at the configured issuer" would be factually wrong.
+      const guidance = getXAAErrorGuidance({
+        step: "discover_authz_metadata",
+        stateError:
+          "Authorization Server issuer is missing. Configure it manually or retry resource metadata discovery.",
+      });
+      expect(guidance?.title).toBe(
+        "Authorization server issuer not configured",
+      );
+      expect(guidance?.actions.map((a) => a.intent)).toContain("configure");
     });
   });
 
