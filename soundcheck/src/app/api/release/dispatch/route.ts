@@ -12,9 +12,9 @@
  * write-scoped PAT.
  *
  * Write auth:
- *   - Reads `GITHUB_DISPATCH_PAT` (separate from the read-only `GITHUB_PAT`).
- *   - Fine-grained, scoped to `MCPJam/inspector` with `actions:write`. The
- *     same token covers both workflows — no separate MCP token needed.
+ *   - Reads `GITHUB_PAT` (same fine-grained token used for reads).
+ *   - Scoped to `MCPJam/inspector` with `actions:read/write`. The same
+ *     token covers both workflows — no separate MCP token needed.
  *
  * Audit:
  *   - Logs the signed-in email + dispatched inputs + which workflows fired
@@ -139,13 +139,13 @@ export async function POST(request: Request) {
     );
   }
 
-  // ── 3. Require the write PAT to be configured ───────────────────────
-  const writeToken = process.env.GITHUB_DISPATCH_PAT;
+  // ── 3. Require the PAT to be configured ─────────────────────────────
+  const writeToken = process.env.GITHUB_PAT;
   if (!writeToken) {
     return NextResponse.json(
       {
         error:
-          "GITHUB_DISPATCH_PAT not configured on the server. Set a fine-grained PAT with actions:write on MCPJam/inspector."
+          "GITHUB_PAT not configured on the server. Set a fine-grained PAT with actions:read/write on MCPJam/inspector."
       },
       { status: 500 }
     );
