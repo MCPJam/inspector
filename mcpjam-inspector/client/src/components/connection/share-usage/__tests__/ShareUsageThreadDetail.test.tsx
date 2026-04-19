@@ -26,6 +26,9 @@ vi.mock("@/hooks/useSharedChatThreads", () => ({
   useSharedChatWidgetSnapshots: () => ({
     snapshots: [],
   }),
+  useSharedChatTurnTraces: () => ({
+    traces: [],
+  }),
 }));
 
 vi.mock("@/components/evals/trace-viewer-adapter", () => ({
