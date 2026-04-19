@@ -18,8 +18,6 @@ import { isMethodUnavailableError } from "./mcp-client-manager/error-utils.js";
 import {
   buildRequestInit,
   createDefaultRpcLogger,
-  getExistingAuthorization,
-  normalizeHeaders,
   wrapTransportForLogging,
 } from "./mcp-client-manager/transport-utils.js";
 import { probeMcpServer } from "./server-probe.js";
@@ -34,12 +32,28 @@ import {
   retryWithPolicy,
   type RetryPolicy,
 } from "./retry.js";
-import type { ProbeMcpServerResult } from "./server-probe.js";
+import {
+  applyConnectedServerDoctorState,
+  buildConnectedServerDoctorState,
+  buildDoctorProbeConfig,
+  createServerDoctorResult,
+  deriveDoctorStatus,
+  describeCount,
+  errorCheck,
+  hasConnectionCredentials,
+  normalizeServerDoctorError,
+  okCheck,
+  skippedCheck,
+  summarizeProbeCheck,
+} from "./server-doctor-core.js";
 import type {
-  ServerDoctorCheck,
-  ServerDoctorError,
+  ConnectedServerDoctorState,
+  DoctorPromptsCollectionResult,
+  DoctorResourceTemplatesCollectionResult,
+  DoctorResourcesCollectionResult,
+  DoctorToolsCollectionResult,
   ServerDoctorResult,
-} from "./server-doctor.js";
+} from "./server-doctor-core.js";
 
 const MAX_PAGINATION_PAGES = 1000;
 
@@ -58,25 +72,7 @@ interface BrowserDoctorClient {
   listTools: Client["listTools"];
 }
 
-export interface ConnectedHttpServerDoctorState {
-  initInfo: unknown | null;
-  capabilities: unknown | null;
-  tools: unknown[];
-  toolsMetadata: Record<string, unknown>;
-  resources: unknown[];
-  resourceTemplates: unknown[];
-  prompts: unknown[];
-  checks: Pick<
-    ServerDoctorResult["checks"],
-    | "initialization"
-    | "capabilities"
-    | "prompts"
-    | "resourceTemplates"
-    | "resources"
-    | "tools"
-  >;
-  errors: ServerDoctorError[];
-}
+export type ConnectedHttpServerDoctorState = ConnectedServerDoctorState;
 
 export interface RunHttpServerDoctorInput<TTarget = unknown> {
   config: HttpServerConfig;
@@ -104,52 +100,15 @@ export async function runHttpServerDoctor<TTarget = unknown>(
 ): Promise<ServerDoctorResult<TTarget>> {
   const probeServer = dependencies.probeServer ?? probeMcpServer;
   const connectClient = dependencies.connectClient ?? connectHttpDoctorClient;
-  const generatedAt = new Date().toISOString();
-
-  const result: ServerDoctorResult<TTarget> = {
-    target: input.target,
-    generatedAt,
-    status: "ready",
-    probe: null,
-    connection: {
-      status: "skipped",
-      detail: "Connection step did not run.",
-    },
-    initInfo: null,
-    capabilities: null,
-    tools: [],
-    toolsMetadata: {},
-    resources: [],
-    resourceTemplates: [],
-    prompts: [],
-    checks: {
-      probe: skippedCheck("HTTP probe did not run."),
-      connection: skippedCheck("Connection step did not run."),
-      initialization: skippedCheck("Initialization info was not collected."),
-      capabilities: skippedCheck("Capabilities were not collected."),
-      tools: skippedCheck("Tools were not collected."),
-      resources: skippedCheck("Resources were not collected."),
-      resourceTemplates: skippedCheck("Resource templates were not collected."),
-      prompts: skippedCheck("Prompts were not collected."),
-    },
-    error: null,
-  };
+  const result = createServerDoctorResult(input.target);
 
   try {
-    result.probe = await probeServer({
-      url: input.config.url,
-      headers: normalizeHeaders(input.config.requestInit?.headers),
-      ...(resolveProbeAccessToken(input.config)
-        ? { accessToken: resolveProbeAccessToken(input.config) }
-        : {}),
-      ...(resolveDoctorClientCapabilities(input.config)
-        ? {
-            clientCapabilities: resolveDoctorClientCapabilities(input.config),
-          }
-        : {}),
-      timeoutMs: input.timeout,
-      retryPolicy: input.retryPolicy,
-    });
+    result.probe = await probeServer(
+      buildDoctorProbeConfig(input.config, {
+        timeout: input.timeout,
+        retryPolicy: input.retryPolicy,
+      })
+    );
     result.checks.probe = summarizeProbeCheck(
       result.probe,
       hasConnectionCredentials(input.config)
@@ -204,28 +163,7 @@ export async function runHttpServerDoctor<TTarget = unknown>(
       }
     );
 
-    result.connection = {
-      status: "connected",
-      detail: "Connected and initialized successfully.",
-    };
-    result.checks.connection = okCheck(result.connection.detail);
-    result.initInfo = collected.initInfo;
-    result.capabilities = collected.capabilities;
-    result.tools = collected.tools;
-    result.toolsMetadata = collected.toolsMetadata;
-    result.resources = collected.resources;
-    result.resourceTemplates = collected.resourceTemplates;
-    result.prompts = collected.prompts;
-    result.checks.initialization = collected.checks.initialization;
-    result.checks.capabilities = collected.checks.capabilities;
-    result.checks.tools = collected.checks.tools;
-    result.checks.resources = collected.checks.resources;
-    result.checks.resourceTemplates = collected.checks.resourceTemplates;
-    result.checks.prompts = collected.checks.prompts;
-
-    if (collected.errors.length > 0) {
-      result.error = collected.errors[0] ?? result.error;
-    }
+    applyConnectedServerDoctorState(result, collected);
   } catch (error) {
     const structured = normalizeServerDoctorError(error);
     result.connection = {
@@ -255,7 +193,6 @@ export async function collectConnectedHttpServerDoctorState(
     retryPolicy?: RetryPolicy;
   }
 ): Promise<ConnectedHttpServerDoctorState> {
-  const errors: ServerDoctorError[] = [];
   const initInfo = client.getInitializationInfo() ?? null;
   const capabilities = client.getServerCapabilities() ?? null;
 
@@ -267,52 +204,20 @@ export async function collectConnectedHttpServerDoctorState(
       collectResourceTemplates(client, options),
     ]);
 
-  for (const error of [
-    toolsResult.error,
-    resourcesResult.error,
-    promptsResult.error,
-    resourceTemplatesResult.error,
-  ]) {
-    if (error) {
-      errors.push(error);
-    }
-  }
-
-  return {
+  return buildConnectedServerDoctorState({
     initInfo,
     capabilities,
-    tools: toolsResult.tools,
-    toolsMetadata: toolsResult.toolsMetadata,
-    resources: resourcesResult.resources,
-    resourceTemplates: resourceTemplatesResult.resourceTemplates,
-    prompts: promptsResult.prompts,
-    checks: {
-      initialization: initInfo
-        ? okCheck("Initialization info captured.")
-        : errorCheck(
-            "Server connected but did not return initialization info."
-          ),
-      capabilities: capabilities
-        ? okCheck("Server capabilities captured.")
-        : errorCheck("Server connected but did not advertise capabilities."),
-      tools: toolsResult.check,
-      resources: resourcesResult.check,
-      resourceTemplates: resourceTemplatesResult.check,
-      prompts: promptsResult.check,
-    },
-    errors,
-  };
+    toolsResult,
+    resourcesResult,
+    promptsResult,
+    resourceTemplatesResult,
+  });
 }
 
 async function collectTools(
   client: BrowserDoctorClient,
   options: { timeout: number; retryPolicy?: RetryPolicy }
-): Promise<{
-  tools: unknown[];
-  toolsMetadata: Record<string, unknown>;
-  check: ServerDoctorCheck;
-  error?: ServerDoctorError;
-}> {
+): Promise<DoctorToolsCollectionResult> {
   try {
     const tools = await drainPaginatedList<
       Awaited<ReturnType<BrowserDoctorClient["listTools"]>>["tools"][number],
@@ -367,11 +272,7 @@ async function collectTools(
 async function collectResources(
   client: BrowserDoctorClient,
   options: { timeout: number; retryPolicy?: RetryPolicy }
-): Promise<{
-  resources: unknown[];
-  check: ServerDoctorCheck;
-  error?: ServerDoctorError;
-}> {
+): Promise<DoctorResourcesCollectionResult> {
   try {
     const resources = await drainPaginatedList<
       Awaited<
@@ -417,11 +318,7 @@ async function collectPrompts(
   client: BrowserDoctorClient,
   capabilities: unknown,
   options: { timeout: number; retryPolicy?: RetryPolicy }
-): Promise<{
-  prompts: unknown[];
-  check: ServerDoctorCheck;
-  error?: ServerDoctorError;
-}> {
+): Promise<DoctorPromptsCollectionResult> {
   try {
     const promptCapabilities =
       capabilities &&
@@ -477,11 +374,7 @@ async function collectPrompts(
 async function collectResourceTemplates(
   client: BrowserDoctorClient,
   options: { timeout: number; retryPolicy?: RetryPolicy }
-): Promise<{
-  resourceTemplates: unknown[];
-  check: ServerDoctorCheck;
-  error?: ServerDoctorError;
-}> {
+): Promise<DoctorResourceTemplatesCollectionResult> {
   try {
     let unsupported = false;
     const resourceTemplates = await drainPaginatedList<
@@ -499,7 +392,7 @@ async function collectResourceTemplates(
         ).catch((error) => {
           if (
             isMethodUnavailableError(error, "resources/templates") ||
-            formatErrorMessage(error)
+            (error instanceof Error ? error.message : String(error))
               .toLowerCase()
               .includes("resources/templates")
           ) {
@@ -733,123 +626,4 @@ function withRetry<T>(
     operation: () => operation(),
     shouldRetryError: (error) => isRetryableTransientError(error),
   });
-}
-
-function resolveProbeAccessToken(config: HttpServerConfig): string | undefined {
-  const explicitToken = config.accessToken?.trim();
-  if (explicitToken) {
-    return explicitToken;
-  }
-
-  const headers = normalizeHeaders(config.requestInit?.headers);
-  const authorizationHeader = getExistingAuthorization(headers);
-  if (!authorizationHeader) {
-    return undefined;
-  }
-
-  const match = authorizationHeader.match(/^Bearer\s+(.+)$/i);
-  return match?.[1]?.trim() || undefined;
-}
-
-function resolveDoctorClientCapabilities(
-  config: HttpServerConfig
-): Record<string, unknown> | undefined {
-  return config.clientCapabilities ?? config.capabilities;
-}
-
-function hasConnectionCredentials(config: HttpServerConfig): boolean {
-  return Boolean(
-    resolveProbeAccessToken(config) ||
-      config.authProvider ||
-      config.refreshToken
-  );
-}
-
-function summarizeProbeCheck(
-  probe: ProbeMcpServerResult,
-  hasCredentials: boolean
-): ServerDoctorCheck {
-  switch (probe.status) {
-    case "ready":
-      return okCheck(
-        `HTTP initialize probe succeeded via ${
-          probe.transport.selected ?? "unknown transport"
-        }.`
-      );
-    case "oauth_required":
-      return hasCredentials
-        ? okCheck(
-            "Unauthenticated probe requires OAuth; continuing with provided credentials."
-          )
-        : errorCheck("Server requires OAuth before it can be connected.");
-    case "reachable":
-      return errorCheck(
-        "HTTP endpoint was reachable, but the initialize probe did not complete successfully."
-      );
-    case "error":
-      return errorCheck(probe.error ?? "HTTP probe failed.");
-    default: {
-      const exhaustive: never = probe.status;
-      return errorCheck(String(exhaustive));
-    }
-  }
-}
-
-function deriveDoctorStatus<TTarget>(
-  result: ServerDoctorResult<TTarget>
-): ServerDoctorResult<TTarget>["status"] {
-  if (
-    result.probe?.status === "oauth_required" &&
-    result.connection.status === "skipped"
-  ) {
-    return "oauth_required";
-  }
-
-  if (result.connection.status === "error") {
-    return "error";
-  }
-
-  return Object.values(result.checks).some((check) => check.status === "error")
-    ? "partial"
-    : "ready";
-}
-
-function normalizeServerDoctorError(error: unknown): ServerDoctorError {
-  const message = formatErrorMessage(error);
-  const lower = message.toLowerCase();
-
-  if (lower.includes("timed out") || lower.includes("timeout")) {
-    return { code: "TIMEOUT", message };
-  }
-
-  if (
-    lower.includes("connect") ||
-    lower.includes("connection") ||
-    lower.includes("refused") ||
-    lower.includes("econn")
-  ) {
-    return { code: "SERVER_UNREACHABLE", message };
-  }
-
-  return { code: "INTERNAL_ERROR", message };
-}
-
-function okCheck(detail: string): ServerDoctorCheck {
-  return { status: "ok", detail };
-}
-
-function errorCheck(detail: string): ServerDoctorCheck {
-  return { status: "error", detail };
-}
-
-function skippedCheck(detail: string): ServerDoctorCheck {
-  return { status: "skipped", detail };
-}
-
-function describeCount(count: number, label: string): string {
-  return `${count} ${label}${count === 1 ? "" : "s"} discovered.`;
-}
-
-function formatErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
