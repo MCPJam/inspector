@@ -53,7 +53,7 @@ export function detectVendor(issuer: string | undefined): XAAVendor {
   ) {
     return "okta";
   }
-  if (host.endsWith(".auth0.com") || host.endsWith(".eu.auth0.com")) {
+  if (host.endsWith(".auth0.com")) {
     return "auth0";
   }
   if (host.endsWith(".workos.com") || host.endsWith(".authkit.app")) {
