@@ -12,6 +12,7 @@ export default defineConfig({
   entry: [
     "src/index.ts",
     "src/browser.ts",
+    "src/worker.ts",
     "src/operations.ts",
     "src/skill-reference.ts",
   ],

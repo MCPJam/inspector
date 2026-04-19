@@ -17,6 +17,11 @@
       "import": "./dist/browser.js",
       "default": "./dist/browser.js"
     },
+    "./worker": {
+      "types": "./dist/worker.d.ts",
+      "import": "./dist/worker.js",
+      "default": "./dist/worker.js"
+    },
     "./operations": {
       "types": "./dist/operations.d.ts",
       "import": "./dist/operations.js",
@@ -41,7 +46,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "test:packaging": "npm run build && node --input-type=module -e \"await import('@mcpjam/sdk'); await import('@mcpjam/sdk/browser');\"",
+    "test:packaging": "npm run build && node --input-type=module -e \"await import('@mcpjam/sdk'); await import('@mcpjam/sdk/browser'); await import('@mcpjam/sdk/worker');\"",
     "lint": "eslint src tests",
     "lint:fix": "eslint src tests --fix",
     "format": "prettier --write \"src/**/*.ts\" \"tests/**/*.ts\"",

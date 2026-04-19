@@ -632,10 +632,16 @@ describe("ChatTabV2 trace views", () => {
         name: "Claude Sonnet 4.5",
         provider: "anthropic",
       },
+      {
+        id: "google/gemini-2.5-pro",
+        name: "Gemini 2.5 Pro",
+        provider: "google",
+      },
     ];
     mockUseChatSession.selectedModelIds = [
       "openai/gpt-5-mini",
       "anthropic/claude-sonnet-4-5",
+      "google/gemini-2.5-pro",
     ];
     mockUseChatSession.multiModelEnabled = true;
     mockUseChatSession.traceViewsSupported = true;
@@ -648,7 +654,14 @@ describe("ChatTabV2 trace views", () => {
       />,
     );
 
-    expect(screen.getAllByTestId("multi-model-card")).toHaveLength(2);
+    const cards = screen.getAllByTestId("multi-model-card");
+    expect(cards).toHaveLength(3);
+    const grid = cards[0]?.parentElement;
+    if (!grid) {
+      throw new Error("Expected multi-model cards to be rendered in a grid");
+    }
+    expect(grid).toHaveClass("xl:grid-cols-3");
+    expect(grid).not.toHaveClass("2xl:grid-cols-3");
     expect(screen.getByTestId("trace-view-tabs")).toBeInTheDocument();
   });
 
