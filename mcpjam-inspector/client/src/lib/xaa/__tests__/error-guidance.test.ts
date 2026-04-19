@@ -298,6 +298,28 @@ describe("getXAAErrorGuidance", () => {
       expect(guidance?.title).toBe("Authorization server discovery failed");
     });
 
+    it("does not show 'discovery failed' for a successful 2xx response paired with a parse stateError", () => {
+      // E.g. the AS returned 200 but the metadata parsed ok then failed a
+      // post-parse check ("did not include a token_endpoint"). The HTTP
+      // request itself succeeded, so the "Neither well-known returned a
+      // valid response" message would be misleading — let the raw Alert
+      // show the specific post-parse error instead.
+      const guidance = getXAAErrorGuidance({
+        step: "discover_authz_metadata",
+        stateError: "Authorization metadata did not include a token_endpoint.",
+        httpEntry: httpEntry({
+          step: "discover_authz_metadata",
+          response: {
+            status: 200,
+            statusText: "OK",
+            headers: {},
+            body: { issuer: "https://as.example.com" },
+          },
+        }),
+      });
+      expect(guidance).toBeNull();
+    });
+
     it("routes the 'issuer is missing' pre-validation error to a specific Configure card, not 'discovery failed'", () => {
       // The state machine short-circuits before any request when no issuer
       // is configured. Showing "Neither well-known returned a valid

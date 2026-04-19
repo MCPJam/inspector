@@ -212,7 +212,7 @@ export function getXAAErrorGuidance(
         severity: "error",
       };
     }
-    if (httpEntry || hasFailedResponse) {
+    if (hasFailedResponse) {
       return {
         title: "Authorization server discovery failed",
         explanation:
