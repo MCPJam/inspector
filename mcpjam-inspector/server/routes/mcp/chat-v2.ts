@@ -19,6 +19,7 @@ import { logger } from "../../utils/logger";
 import { handleMCPJamFreeChatModel } from "../../utils/mcpjam-stream-handler";
 import {
   persistChatSessionToConvex,
+  pickEnrichmentHeaders,
   type PersistedTurnTrace,
 } from "../../utils/chat-ingestion.js";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
@@ -577,6 +578,7 @@ chatV2.post("/", async (c) => {
                 },
                 expectedVersion: body.expectedVersion,
                 turnTrace,
+                forwardHeaders: pickEnrichmentHeaders(c.req.raw.headers),
               });
             }
           : undefined,
@@ -649,6 +651,7 @@ chatV2.post("/", async (c) => {
               },
               expectedVersion: body.expectedVersion,
               turnTrace,
+              forwardHeaders: pickEnrichmentHeaders(c.req.raw.headers),
             });
           }
         : undefined,
