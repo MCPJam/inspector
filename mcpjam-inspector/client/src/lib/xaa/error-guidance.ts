@@ -118,7 +118,14 @@ export function getXAAErrorGuidance(
   input: XAAErrorGuidanceInput,
 ): XAAErrorGuidance | null {
   const { step, stateError, httpEntry } = input;
-  const upstreamError = upstreamOAuthError(httpEntry);
+  // Only the /proxy/token call for jwt_bearer_request has the
+  // `{status, body}` wrapper shape we unwrap to extract an OAuth `error`
+  // code. Scoping avoids false signals when another step's body
+  // coincidentally contains a nested `body.error` field.
+  const upstreamError =
+    step === "jwt_bearer_request"
+      ? upstreamOAuthError(httpEntry)
+      : undefined;
 
   const responseStatus = httpEntry?.response?.status;
   const upstreamStatus =
@@ -175,13 +182,18 @@ export function getXAAErrorGuidance(
   }
 
   if (step === "discover_resource_metadata") {
-    return {
-      title: "MCP server did not return RFC 9728 metadata",
-      explanation:
-        "The debugger fetched `/.well-known/oauth-protected-resource` but didn't get a usable response. For XAA to work, the MCP server must publish its `resource` identifier and `authorization_servers` list at this well-known URL. You can also configure the authorization-server issuer manually as a fallback.",
-      actions: [CONFIGURE],
-      severity: "error",
-    };
+    // Only fire when there's an actual failure signal — the function's
+    // contract is "returns guidance for a failure", and a caller that
+    // passed a successful entry shouldn't get a card back.
+    if (stateError || hasFailedResponse) {
+      return {
+        title: "MCP server did not return RFC 9728 metadata",
+        explanation:
+          "The debugger fetched `/.well-known/oauth-protected-resource` but didn't get a usable response. For XAA to work, the MCP server must publish its `resource` identifier and `authorization_servers` list at this well-known URL. You can also configure the authorization-server issuer manually as a fallback.",
+        actions: [CONFIGURE],
+        severity: "error",
+      };
+    }
   }
 
   if (step === "discover_authz_metadata") {

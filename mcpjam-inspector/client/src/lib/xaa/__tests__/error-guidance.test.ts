@@ -250,6 +250,28 @@ describe("getXAAErrorGuidance", () => {
     });
   });
 
+  describe("defensive scoping", () => {
+    it("does not produce a card when a non-jwt_bearer entry coincidentally has a nested body.error field", () => {
+      // A discover_resource_metadata 200 response whose body happens to be
+      // shaped like { body: { error: "..." } }. Previously the extractor
+      // unwrapped body.body regardless of step and surfaced the nested
+      // error, which could drive false "RFC 9728 metadata" guidance.
+      const guidance = getXAAErrorGuidance({
+        step: "discover_resource_metadata",
+        httpEntry: httpEntry({
+          step: "discover_resource_metadata",
+          response: {
+            status: 200,
+            statusText: "OK",
+            headers: {},
+            body: { body: { error: "spooky" } },
+          },
+        }),
+      });
+      expect(guidance).toBeNull();
+    });
+  });
+
   describe("discovery steps", () => {
     it("explains missing RFC 9728 metadata", () => {
       const guidance = getXAAErrorGuidance({
