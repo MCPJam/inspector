@@ -2,6 +2,7 @@ import { ConvexHttpClient } from "convex/browser";
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { McpJamMcpServer } from "../server.js";
+import { toolError } from "./shared.js";
 
 export function registerWhoamiTool(
   server: McpServer,
@@ -37,11 +38,4 @@ export function registerWhoamiTool(
       };
     }
   );
-}
-
-function toolError(message: string) {
-  return {
-    isError: true,
-    content: [{ type: "text" as const, text: message }],
-  };
 }

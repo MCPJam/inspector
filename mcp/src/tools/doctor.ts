@@ -8,6 +8,7 @@ import {
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { McpJamMcpServer } from "../server.js";
+import { toolError } from "./shared.js";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_TIMEOUT_MS = 120_000;
@@ -422,9 +423,3 @@ function parseErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function toolError(message: string) {
-  return {
-    isError: true,
-    content: [{ type: "text" as const, text: message }],
-  };
-}
