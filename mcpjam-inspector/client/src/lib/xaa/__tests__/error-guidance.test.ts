@@ -115,11 +115,14 @@ describe("getXAAErrorGuidance", () => {
     });
 
     it("does not misclassify unrelated errors that mention 'resource' as invalid_target", () => {
+      // With an httpEntry present, we fall through to the generic AS-failure
+      // card — but we must not pick the invalid_target branch just because
+      // the state error string contains the word "resource".
       const guidance = getXAAErrorGuidance({
         step: "jwt_bearer_request",
         stateError: "Failed to allocate resource pool",
+        httpEntry: proxyResponse(500, {}),
       });
-      expect(guidance?.title).not.toContain("resource");
       expect(guidance?.title).toBe(
         "JWT bearer request failed at the authorization server",
       );
@@ -133,6 +136,31 @@ describe("getXAAErrorGuidance", () => {
       expect(guidance?.title).toBe(
         "Authorization server rejected the `resource` claim",
       );
+    });
+
+    it("handles pre-request validation errors (no httpEntry) as a Reset prompt, not an AS failure", () => {
+      // When the state machine short-circuits because idJag or tokenEndpoint
+      // is missing, no HTTP request was made. Showing "JWT bearer request
+      // failed at the authorization server" with a Register-issuer action
+      // would be factually wrong (and hide the real validation message).
+      const guidance = getXAAErrorGuidance({
+        step: "jwt_bearer_request",
+        stateError:
+          "The flow is missing an ID-JAG or token endpoint. Finish discovery and token exchange first.",
+      });
+      expect(guidance?.title).toBe("ID-JAG or token endpoint missing");
+      expect(guidance?.actions.map((a) => a.intent)).toContain("reset");
+    });
+
+    it("does not produce a generic jwt_bearer card when there is no HTTP attempt at all", () => {
+      // Defensive: any bare stateError for this step without an httpEntry or
+      // failed response should fall through so the raw alert shows the real
+      // message, rather than the misleading AS-side fallback card.
+      const guidance = getXAAErrorGuidance({
+        step: "jwt_bearer_request",
+        stateError: "Something else went wrong before we called the AS.",
+      });
+      expect(guidance).toBeNull();
     });
 
     it("produces a guidance card for a proxy-wrapped upstream failure even without an OAuth error field", () => {

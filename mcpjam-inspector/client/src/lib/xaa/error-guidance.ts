@@ -194,6 +194,21 @@ export function getXAAErrorGuidance(
   }
 
   if (step === "jwt_bearer_request") {
+    // Pre-request validation: no HTTP call was made. Don't claim the AS
+    // rejected anything — the state machine set an error before contact.
+    if (
+      messageIncludes(stateError, "missing an ID-JAG") ||
+      messageIncludes(stateError, "missing an id-jag") ||
+      messageIncludes(stateError, "token endpoint")
+    ) {
+      return {
+        title: "ID-JAG or token endpoint missing",
+        explanation:
+          "Token exchange or authorization-server discovery hasn't completed yet, so there's nothing to send. Reset the flow and run it from the start.",
+        actions: [RESET_FLOW],
+        severity: "error",
+      };
+    }
     if (
       upstreamError === "unsupported_grant_type" ||
       messageIncludes(stateError, "unsupported_grant_type")
@@ -244,14 +259,19 @@ export function getXAAErrorGuidance(
         severity: "error",
       };
     }
-    // Generic jwt_bearer fallback
-    return {
-      title: "JWT bearer request failed at the authorization server",
-      explanation:
-        "The AS returned a non-success response. Expand the HTTP entry below for the raw body, then check: (1) AS supports the jwt-bearer grant, (2) AS trusts MCPJam's JWKS, (3) `client_id` is registered, (4) `resource` is recognized.",
-      actions: [REGISTER_ISSUER],
-      severity: "error",
-    };
+    // Generic jwt_bearer fallback — only claim an AS-side failure if we
+    // actually made the request. Pre-condition validation errors have no
+    // httpEntry and should fall through to the raw error alert so the user
+    // sees the real message instead of a misleading AS-failure card.
+    if (hasFailedResponse || upstreamError || httpEntry?.error) {
+      return {
+        title: "JWT bearer request failed at the authorization server",
+        explanation:
+          "The AS returned a non-success response. Expand the HTTP entry below for the raw body, then check: (1) AS supports the jwt-bearer grant, (2) AS trusts MCPJam's JWKS, (3) `client_id` is registered, (4) `resource` is recognized.",
+        actions: [REGISTER_ISSUER],
+        severity: "error",
+      };
+    }
   }
 
   if (step === "authenticated_mcp_request") {
