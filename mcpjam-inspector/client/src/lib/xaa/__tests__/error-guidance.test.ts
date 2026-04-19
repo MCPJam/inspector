@@ -138,6 +138,20 @@ describe("getXAAErrorGuidance", () => {
       );
     });
 
+    it("does not hijack AS errors whose description coincidentally contains 'token endpoint'", () => {
+      // Defensive: an AS error_description like "The token endpoint is not
+      // authorized for this grant type" used to match the pre-validation
+      // check and show the misleading "ID-JAG or token endpoint missing"
+      // card instead of the correct AS-specific guidance.
+      const guidance = getXAAErrorGuidance({
+        step: "jwt_bearer_request",
+        stateError:
+          "The token endpoint is not authorized for this grant type Does the authorization server trust the synthetic issuer JWKS and support `urn:ietf:params:oauth:grant-type:jwt-bearer`?",
+        httpEntry: proxyResponse(400, { error: "unsupported_grant_type" }),
+      });
+      expect(guidance?.title).toContain("doesn't support the jwt-bearer grant");
+    });
+
     it("handles pre-request validation errors (no httpEntry) as a Reset prompt, not an AS failure", () => {
       // When the state machine short-circuits because idJag or tokenEndpoint
       // is missing, no HTTP request was made. Showing "JWT bearer request

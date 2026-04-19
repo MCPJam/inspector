@@ -196,9 +196,12 @@ export function getXAAErrorGuidance(
   if (step === "jwt_bearer_request") {
     // Pre-request validation: no HTTP call was made. Don't claim the AS
     // rejected anything — the state machine set an error before contact.
+    // Guard on !httpEntry (pre-validation never has one) AND match the full
+    // state-machine phrase so an AS error_description that happens to
+    // contain "token endpoint" doesn't hijack this branch.
     if (
-      messageIncludes(stateError, "missing an ID-JAG") ||
-      messageIncludes(stateError, "token endpoint")
+      !httpEntry &&
+      messageIncludes(stateError, "missing an ID-JAG or token endpoint")
     ) {
       return {
         title: "ID-JAG or token endpoint missing",
