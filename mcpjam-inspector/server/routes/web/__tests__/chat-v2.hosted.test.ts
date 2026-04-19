@@ -48,6 +48,7 @@ vi.mock("../../../utils/mcpjam-stream-handler.js", () => ({
 
 vi.mock("../../../utils/chat-ingestion.js", () => ({
   persistChatSessionToConvex: persistChatSessionToConvexMock,
+  pickEnrichmentHeaders: () => ({}),
 }));
 
 vi.mock("../apps.js", () => ({
