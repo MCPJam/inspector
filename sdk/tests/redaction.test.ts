@@ -68,4 +68,24 @@ describe("redactSensitiveValue", () => {
       note: "Authorization: [REDACTED]",
     });
   });
+
+  it("preserves boolean token summary fields while redacting actual token strings", () => {
+    expect(
+      redactSensitiveValue({
+        target: {
+          hasAccessToken: false,
+          hasRefreshToken: true,
+          hasClientSecret: false,
+        },
+        oauthAccessToken: "oauth-token",
+      })
+    ).toEqual({
+      target: {
+        hasAccessToken: false,
+        hasRefreshToken: true,
+        hasClientSecret: false,
+      },
+      oauthAccessToken: "[REDACTED]",
+    });
+  });
 });

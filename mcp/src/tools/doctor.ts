@@ -4,7 +4,7 @@ import {
   runHttpServerDoctor,
   type HttpServerConfig,
   type ServerDoctorResult,
-} from "@mcpjam/sdk/browser";
+} from "@mcpjam/sdk/worker";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { McpJamMcpServer } from "../server.js";

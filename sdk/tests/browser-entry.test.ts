@@ -39,7 +39,6 @@ describe("browser entrypoint", () => {
   it("exports browser-safe capability helpers without MCPClientManager", () => {
     expect(browser.MCP_UI_EXTENSION_ID).toBe("io.modelcontextprotocol/ui");
     expect(browser.MCP_UI_RESOURCE_MIME_TYPE).toBe("text/html;profile=mcp-app");
-    expect(typeof browser.runHttpServerDoctor).toBe("function");
     expect(typeof browser.redactSensitiveValue).toBe("function");
     expect(browser.getDefaultClientCapabilities()).toEqual({
       extensions: {
@@ -50,6 +49,9 @@ describe("browser entrypoint", () => {
     });
     expect(
       (browser as Record<string, unknown>).MCPClientManager
+    ).toBeUndefined();
+    expect(
+      (browser as Record<string, unknown>).runHttpServerDoctor
     ).toBeUndefined();
   });
 

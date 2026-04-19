@@ -12,7 +12,6 @@ export {
   mergeClientCapabilities,
 } from "./mcp-client-manager/capabilities.js";
 export { redactSensitiveValue } from "./redaction.js";
-export { runHttpServerDoctor } from "./http-server-doctor.js";
 
 export type {
   BaseServerConfig,
@@ -38,11 +37,6 @@ export type {
   MCPTaskStatus,
   MCPListTasksResult,
 } from "./mcp-client-manager/types.js";
-export type {
-  ConnectedHttpServerDoctorState,
-  HttpServerDoctorDependencies,
-  RunHttpServerDoctorInput,
-} from "./http-server-doctor.js";
 export type {
   ConnectedServerDoctorState,
   RunServerDoctorInput,

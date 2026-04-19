@@ -48,23 +48,33 @@ function shouldRedactKey(key: string, value: unknown, path: string[]): boolean {
     return shouldRedactAuthorizationCodeValue(value, path);
   }
 
-  return (
+  if (
     normalized === "authorization" ||
     normalized === "proxyauthorization" ||
     normalized === "cookie" ||
-    normalized === "setcookie" ||
-    normalized === "codeverifier" ||
-    normalized === "accesstoken" ||
-    normalized.endsWith("accesstoken") ||
-    normalized === "refreshtoken" ||
-    normalized.endsWith("refreshtoken") ||
-    normalized === "clientsecret" ||
-    normalized.endsWith("clientsecret") ||
-    normalized === "idtoken" ||
-    normalized.endsWith("idtoken") ||
+    normalized === "setcookie"
+  ) {
+    return true;
+  }
+
+  return (
+    ((normalized === "codeverifier" ||
+      normalized === "accesstoken" ||
+      normalized.endsWith("accesstoken") ||
+      normalized === "refreshtoken" ||
+      normalized.endsWith("refreshtoken") ||
+      normalized === "clientsecret" ||
+      normalized.endsWith("clientsecret") ||
+      normalized === "idtoken" ||
+      normalized.endsWith("idtoken")) &&
+      shouldRedactSecretValue(value)) ||
     normalized === "apikey" ||
     normalized === "xapikey"
   );
+}
+
+function shouldRedactSecretValue(value: unknown): boolean {
+  return typeof value === "string" && value.length > 0;
 }
 
 function shouldRedactAuthorizationCodeValue(
