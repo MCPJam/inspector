@@ -27,6 +27,7 @@ import {
   getStoredTokens,
   clearOAuthData,
   initiateOAuth,
+  isElectronMcpCallbackState,
 } from "@/lib/oauth/mcp-oauth";
 import {
   clearHostedOAuthPendingState,
@@ -132,10 +133,6 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => {
     window.setTimeout(resolve, ms);
   });
-}
-
-function isElectronMcpCallbackState(state: string | null | undefined): boolean {
-  return Boolean(state?.startsWith("electron_mcp:"));
 }
 
 function restorePathAfterOAuthCallback(
