@@ -7,18 +7,37 @@ Sentry.init({
   ipcMode: Sentry.IPCMode.Both, // Enables communication with renderer process
 });
 
-import { app, BrowserWindow, shell, Menu } from "electron";
+import { app, autoUpdater, BrowserWindow, shell, Menu } from "electron";
 import { serve } from "@hono/node-server";
 import path from "path";
 import { createHonoApp } from "../server/app.js";
 import log from "electron-log";
 import { updateElectronApp } from "update-electron-app";
+import type { UpdateState } from "../shared/update-state.js";
 import { registerListeners } from "./ipc/listeners-register.js";
-import { setupAutoUpdaterEvents } from "./ipc/update/update-listeners.js";
+import { UpdateController } from "./ipc/update/update-controller.js";
+import {
+  registerUpdateListeners,
+  UPDATE_STATE_CHANGED_CHANNEL,
+} from "./ipc/update/update-listeners.js";
 
 // Configure logging
 log.transports.file.level = "info";
 log.transports.console.level = "debug";
+
+let mainWindow: BrowserWindow | null = null;
+let server: any = null;
+let serverPort: number = 0;
+const isDev = !app.isPackaged;
+
+const updateController = new UpdateController({
+  updater: autoUpdater,
+  logger: log,
+  onStateChange: (state) => {
+    sendUpdateStateToRenderer(state);
+  },
+});
+updateController.start();
 
 // Enable auto-updater (with custom notification handling)
 updateElectronApp({
@@ -35,12 +54,6 @@ if (process.platform === "win32") {
 if (!app.isDefaultProtocolClient("mcpjam")) {
   app.setAsDefaultProtocolClient("mcpjam");
 }
-
-let mainWindow: BrowserWindow | null = null;
-let server: any = null;
-let serverPort: number = 0;
-
-const isDev = process.env.NODE_ENV === "development";
 
 async function startHonoServer(): Promise<number> {
   try {
@@ -95,6 +108,15 @@ function createMainWindow(serverUrl: string): BrowserWindow {
   if (isDev) {
     window.webContents.openDevTools();
   }
+
+  window.webContents.on("did-finish-load", () => {
+    if (!window.isDestroyed()) {
+      window.webContents.send(
+        UPDATE_STATE_CHANGED_CHANNEL,
+        updateController.getState(),
+      );
+    }
+  });
 
   // Show window when ready
   window.once("ready-to-show", () => {
@@ -210,9 +232,7 @@ app.whenReady().then(async () => {
 
     // Register IPC listeners
     registerListeners(mainWindow);
-
-    // Setup auto-updater events to notify renderer when update is ready
-    setupAutoUpdaterEvents(mainWindow);
+    registerUpdateListeners(() => mainWindow, updateController);
 
     log.info("MCPJam Electron app ready");
   } catch (error) {
@@ -252,6 +272,14 @@ app.on("activate", async () => {
     }
   }
 });
+
+function sendUpdateStateToRenderer(state: UpdateState): void {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return;
+  }
+
+  mainWindow.webContents.send(UPDATE_STATE_CHANGED_CHANNEL, state);
+}
 
 // Handle OAuth callback URLs
 app.on("open-url", (event, url) => {

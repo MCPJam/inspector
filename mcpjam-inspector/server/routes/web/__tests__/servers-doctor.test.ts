@@ -31,7 +31,7 @@ vi.mock("../../../utils/oauth-proxy.js", () => ({
   }),
 }));
 
-vi.mock("../../apps/SandboxProxyHtml.bundled.js", () => ({
+vi.mock("../../apps/SandboxProxyHtml.bundled", () => ({
   CHATGPT_APPS_SANDBOX_PROXY_HTML: "<html></html>",
   MCP_APPS_SANDBOX_PROXY_HTML: "<html></html>",
 }));

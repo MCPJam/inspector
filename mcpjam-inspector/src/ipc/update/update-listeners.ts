@@ -1,68 +1,60 @@
-import { ipcMain, BrowserWindow, autoUpdater } from "electron";
+import { ipcMain, BrowserWindow } from "electron";
 import log from "electron-log";
+import {
+  IDLE_UPDATE_STATE,
+  type UpdateState,
+} from "../../../shared/update-state.js";
+import type { UpdateController } from "./update-controller.js";
 
 const isDev = process.env.NODE_ENV === "development";
+export const GET_UPDATE_STATE_CHANNEL = "app:update:get-state";
+export const REQUEST_UPDATE_INSTALL_CHANNEL = "app:request-update-install";
+export const UPDATE_STATE_CHANGED_CHANNEL = "update-state-changed";
 
-export function registerUpdateListeners(mainWindow: BrowserWindow): void {
-  // Handle restart request from renderer
-  ipcMain.on("app:restart-for-update", (event) => {
-    if (event.sender.id !== mainWindow.webContents.id) {
+export function registerUpdateListeners(
+  getMainWindow: () => BrowserWindow | null,
+  updateController: UpdateController,
+): void {
+  ipcMain.handle(GET_UPDATE_STATE_CHANNEL, (event): UpdateState => {
+    if (!isTrustedSender(event.sender.id, getMainWindow())) {
       log.warn(
-        `Ignoring restart-for-update from untrusted sender (id: ${event.sender.id})`,
+        `Ignoring get-state request from untrusted sender (id: ${event.sender.id})`,
+      );
+      return { ...IDLE_UPDATE_STATE };
+    }
+
+    return updateController.getState();
+  });
+
+  ipcMain.on(REQUEST_UPDATE_INSTALL_CHANNEL, (event) => {
+    if (!isTrustedSender(event.sender.id, getMainWindow())) {
+      log.warn(
+        `Ignoring request-update-install from untrusted sender (id: ${event.sender.id})`,
       );
       return;
     }
-    log.info("Restarting app to install update...");
-    autoUpdater.quitAndInstall();
+
+    updateController.requestInstall();
   });
 
-  // Dev only: simulate update for testing UI
   if (isDev) {
     ipcMain.on("app:simulate-update", (event) => {
-      if (event.sender.id !== mainWindow.webContents.id) {
+      if (!isTrustedSender(event.sender.id, getMainWindow())) {
         log.warn(
           `Ignoring simulate-update from untrusted sender (id: ${event.sender.id})`,
         );
         return;
       }
-      log.info("Simulating update available (dev mode)");
-      if (mainWindow && mainWindow.webContents) {
-        mainWindow.webContents.send("update-ready", {
-          version: "99.0.0",
-          releaseNotes: "Simulated update for testing",
-        });
-      }
+
+      log.info("Simulating update ready (dev mode)");
+      updateController.simulateReady();
     });
   }
 }
 
-export function setupAutoUpdaterEvents(mainWindow: BrowserWindow): void {
-  // Listen for update-downloaded event from autoUpdater
-  autoUpdater.on("update-downloaded", (event, releaseNotes, releaseName) => {
-    log.info(`Update downloaded: ${releaseName}`);
-
-    // Notify renderer that update is ready
-    if (mainWindow && mainWindow.webContents) {
-      mainWindow.webContents.send("update-ready", {
-        version: releaseName || "new version",
-        releaseNotes: releaseNotes || "",
-      });
-    }
-  });
-
-  autoUpdater.on("checking-for-update", () => {
-    log.info("Checking for updates...");
-  });
-
-  autoUpdater.on("update-available", () => {
-    log.info("Update available, downloading...");
-  });
-
-  autoUpdater.on("update-not-available", () => {
-    log.info("No updates available");
-  });
-
-  autoUpdater.on("error", (error) => {
-    log.error("Auto-updater error:", error);
-  });
+function isTrustedSender(
+  senderId: number,
+  mainWindow: BrowserWindow | null,
+): boolean {
+  return senderId === mainWindow?.webContents.id;
 }
