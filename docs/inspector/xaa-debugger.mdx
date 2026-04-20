@@ -1,0 +1,85 @@
+---
+title: "XAA Debugger"
+description: "Debug Cross-App Access flows with authorization server compatibility checks and actionable error guidance"
+icon: "shield-check"
+---
+
+The XAA (Cross-App Access) Debugger helps you test and debug MCP server implementations that use the jwt-bearer grant type (RFC 7523) for federated authorization. The debugger validates authorization server compatibility, surfaces configuration issues before they cause failures, and provides actionable guidance when errors occur.
+
+## Key Features
+
+The XAA Debugger provides comprehensive tooling for testing Cross-App Access implementations:
+
+- **Authorization Server Preflight** - Automatic compatibility checks after discovery that verify jwt-bearer grant support and detect known authorization server vendors (Okta, Auth0, Keycloak, WorkOS, Stytch)
+- **Actionable Error Guidance** - Plain-English explanations and action buttons for common failure modes instead of raw error messages
+- **Visual Sequence Diagram** - Four-actor swimlanes showing Agent, IdP, MCP Server, and Authorization Server interactions
+- **Network Inspection** - View all HTTP requests and responses including the `/proxy/token` wrapper for authorization server calls
+- **Vendor-Specific Hints** - Configuration guidance tailored to your authorization server (native support, requires config, or unsupported with workarounds)
+
+## Getting Started
+
+To begin debugging XAA flows:
+
+1. **Navigate to the XAA Debugger** - Click the XAA Flow tab in MCPJam Inspector
+2. **Configure Target** - Provide your MCP server URL and authorization server details
+3. **Run Mock Authentication** - Complete the synthetic identity provider flow to obtain an ID token
+4. **Review Compatibility** - After authorization server discovery, check the green/amber/red banner for capability warnings
+5. **Exchange Tokens** - The debugger will attempt the ID-JAG (Identity JSON Assertion Grant) exchange and surface any configuration issues
+
+The debugger guides you through each step of the XAA flow with real-time feedback and vendor-specific recommendations.
+
+## Authorization Server Compatibility
+
+After step 4 (authorization server discovery), the debugger displays a compatibility banner:
+
+- **Green (Pass)** - Authorization server advertises `urn:ietf:params:oauth:grant-type:jwt-bearer` and has a token endpoint. The flow should succeed if issuer trust is configured.
+- **Amber (Warn)** - The authorization server didn't advertise `grant_types_supported` in its metadata. Support can't be verified without attempting the token exchange.
+- **Red (Fail)** - The authorization server doesn't advertise jwt-bearer grant support, or is a known-unsupported vendor. The flow will fail at step 11.
+
+### Vendor Detection
+
+The debugger recognizes common authorization server vendors and provides tailored guidance:
+
+- **Okta** - Native jwt-bearer support. Register MCPJam as a trusted identity issuer using the JWKS URL from the Register Issuer dialog.
+- **Auth0** - Supports jwt-bearer with configuration. Set up a trusted issuer pointing at MCPJam's JWKS and map subjects to Auth0 users.
+- **Keycloak** - Supports Token Exchange. Configure a brokered IdP that trusts MCPJam's JWKS.
+- **WorkOS / Stytch** - Currently unsupported. Workaround: run a bridge service that verifies the ID-JAG against MCPJam's JWKS and mints access tokens via the vendor's admin API.
+
+## Error Guidance
+
+When the flow encounters an error, the debugger surfaces a guidance callout with:
+
+- **Title** - A user-friendly summary of what went wrong
+- **Explanation** - Plain-English description of the root cause
+- **Actions** - Buttons to fix the issue (Configure Target, Register Issuer, Reset Flow)
+
+### Common Error Scenarios
+
+**Client ID Required**
+- The ID-JAG needs a `client_id` claim. Configure it in the target settings and register the client at your authorization server.
+
+**Authorization Server Doesn't Support jwt-bearer Grant**
+- The AS returned `unsupported_grant_type`. Most authorization servers don't support RFC 7523 yet. Check vendor-specific guidance or run a bridge service.
+
+**Authorization Server Rejected the ID-JAG**
+- The AS returned `invalid_grant`. Common causes: MCPJam isn't registered as a trusted issuer, the `aud` claim doesn't match the AS issuer, or the `resource` claim isn't recognized.
+
+**MCP Server Rejected the Access Token**
+- The AS issued a token but the MCP server returned 401. The `resource` or `aud` claim on the access token likely doesn't match the MCP server's canonical resource URL.
+
+## Sequence Diagram
+
+The XAA flow sequence diagram shows four actors:
+
+- **Agent** - The MCP client initiating the flow
+- **IdP** - MCPJam's synthetic identity provider (for testing)
+- **MCP Server** - Your MCP server that requires XAA authorization
+- **Authorization Server** - The OAuth 2.0 authorization server that issues access tokens
+
+Each step in the flow is synchronized with the diagram, making it easy to understand where failures occur in the multi-party handshake.
+
+## Next Steps
+
+- Review the [MCP OAuth specification](https://modelcontextprotocol.io/specification/draft/basic/authorization) for XAA requirements
+- Check your authorization server's documentation for jwt-bearer grant configuration
+- Use the Register Issuer dialog to get the JWKS URL for configuring issuer trust
