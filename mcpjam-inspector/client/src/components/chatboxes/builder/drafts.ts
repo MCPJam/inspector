@@ -27,16 +27,9 @@ const WELCOME_BODY_INTERNAL_QA = [
 ].join("\n");
 
 const WELCOME_BODY_ICP_DEMO = [
-  "Welcome",
+  "Welcome — thanks for trying this out.",
   "",
-  "This opens with a signed-in link. It is for a quick, safe look at a hosted assistant experience.",
-  "",
-  "Privacy:",
-  "• Do not enter passwords, secrets, or highly sensitive personal data.",
-  "• We may ask for brief feedback after some interactions.",
-  "• Only share what you are comfortable providing in a demo.",
-  "",
-  "Thank you for trying it out.",
+  "This is a preview of our assistant. Ask it a question or give it a task to try it out.",
 ].join("\n");
 
 /** Prefer a stable default; the first MCPJam model in SUPPORTED_MODELS is often gpt-oss-120b. */

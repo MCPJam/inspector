@@ -2,20 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { getChatboxOAuthRowCopy } from "@/components/hosted/chatbox-oauth-copy";
 import { Button } from "@mcpjam/design-system/button";
-import { Checkbox } from "@mcpjam/design-system/checkbox";
-import { Label } from "@mcpjam/design-system/label";
 import type { HostedOAuthServerDescriptor } from "@/hooks/hosted/use-hosted-oauth-gate";
 import type { HostedOAuthState } from "@/lib/hosted-oauth-resume";
-
-const DEFAULT_WELCOME_BODY =
-  "You're entering a chatbox test environment. Continue to connect required servers and start testing.";
-
-/** Shown under host-authored copy; not a substitute for legal terms your org publishes elsewhere. */
-const TEST_ENV_DATA_NOTICE =
-  "This is a test environment, not production. Your messages and tool activity may be logged or reviewed to fix bugs and improve the product. You may see occasional feedback prompts. Do not enter passwords, secrets, or sensitive personal data.";
-
-const CONSENT_CHECKBOX_LABEL =
-  "I understand the above and I consent to optional feedback prompts and to use of my interaction data from this test session as described.";
 
 const FINISHING_TIMEOUT_MS = 10_000;
 
@@ -40,7 +28,6 @@ export function ChatboxHostOnboardingOverlays({
   isFinishingOAuth: boolean;
 }) {
   const [finishingTimedOut, setFinishingTimedOut] = useState(false);
-  const [testConsentChecked, setTestConsentChecked] = useState(false);
 
   /** When still "finishing", any change to which servers or statuses are in-flight restarts the slow-timeout timer. */
   const finishingOAuthSignature = useMemo(() => {
@@ -50,12 +37,6 @@ export function ChatboxHostOnboardingOverlays({
       .sort()
       .join("|");
   }, [isFinishingOAuth, pendingOAuthServers]);
-
-  useEffect(() => {
-    if (showWelcome) {
-      setTestConsentChecked(false);
-    }
-  }, [showWelcome]);
 
   useEffect(() => {
     if (!isFinishingOAuth) {
@@ -70,9 +51,8 @@ export function ChatboxHostOnboardingOverlays({
     return () => window.clearTimeout(timer);
   }, [isFinishingOAuth, finishingOAuthSignature]);
 
-  const welcomeText = welcomeBody?.trim()
-    ? welcomeBody.trim()
-    : DEFAULT_WELCOME_BODY;
+  const welcomeText = welcomeBody?.trim() ?? "";
+  const shouldRenderWelcome = showWelcome && welcomeText.length > 0;
 
   const showFinishingLayer = showAuthPanel && isFinishingOAuth;
   const showAuthListLayer = showAuthPanel && !isFinishingOAuth;
@@ -87,46 +67,23 @@ export function ChatboxHostOnboardingOverlays({
 
   return (
     <>
-      {showWelcome ? (
+      {shouldRenderWelcome ? (
         <div
-          className="pointer-events-auto absolute inset-0 z-30 flex items-center justify-center bg-background/20 p-4 dark:bg-background/30"
+          className="pointer-events-auto absolute inset-0 z-30 flex cursor-pointer items-center justify-center bg-background/20 p-4 dark:bg-background/30"
           role="dialog"
           aria-modal="true"
-          aria-labelledby="chatbox-welcome-title"
+          aria-label="Welcome"
+          onClick={onGetStarted}
         >
-          <div className="w-full max-w-lg rounded-2xl border border-border/80 bg-card/95 p-6 shadow-2xl ring-1 ring-black/5 backdrop-blur-sm dark:ring-white/10">
-            <h2
-              id="chatbox-welcome-title"
-              className="text-center text-base font-semibold text-foreground"
-            >
-              Welcome
-            </h2>
-            <p className="mt-3 whitespace-pre-wrap text-center text-sm text-muted-foreground">
+          <div
+            className="w-full max-w-lg cursor-auto rounded-2xl border border-border/80 bg-card/95 p-6 shadow-2xl ring-1 ring-black/5 backdrop-blur-sm dark:ring-white/10"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <p className="whitespace-pre-wrap text-center text-sm text-muted-foreground">
               {welcomeText}
             </p>
-            <p className="mt-4 text-left text-xs leading-relaxed text-muted-foreground">
-              {TEST_ENV_DATA_NOTICE}
-            </p>
-            <div className="mt-4 flex gap-3 rounded-xl border border-border/60 bg-muted/30 p-3">
-              <Checkbox
-                id="chatbox-test-consent"
-                checked={testConsentChecked}
-                onCheckedChange={(v) => setTestConsentChecked(v === true)}
-                className="mt-0.5"
-              />
-              <Label
-                htmlFor="chatbox-test-consent"
-                className="cursor-pointer text-left text-xs font-normal leading-snug text-foreground"
-              >
-                {CONSENT_CHECKBOX_LABEL}
-              </Label>
-            </div>
             <div className="mt-6 flex justify-center">
-              <Button
-                type="button"
-                disabled={!testConsentChecked}
-                onClick={onGetStarted}
-              >
+              <Button type="button" onClick={onGetStarted}>
                 Get Started
               </Button>
             </div>

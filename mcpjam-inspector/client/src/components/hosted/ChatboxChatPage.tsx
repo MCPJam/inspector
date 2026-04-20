@@ -623,12 +623,16 @@ export function ChatboxChatPage({
   const shellStyle = getChatboxShellStyle(hostStyle, themeMode);
   const displayError = getChatboxDisplayError(routeError);
   const oauthPending = pendingOAuthServers.length > 0;
+  const welcomeAvailable =
+    (session?.payload.welcomeDialog?.enabled ?? true) &&
+    !!session?.payload.welcomeDialog?.body?.trim();
   const introGate = useChatboxHostIntroGate({
     chatboxId: session?.payload.chatboxId ?? "",
     servers: sessionServersRequired,
     oauthPending,
     hasBusyOAuth,
     pendingOAuthServers,
+    welcomeAvailable,
   });
   const isFinishingOAuth =
     pendingOAuthServers.length > 0 &&
@@ -708,11 +712,7 @@ export function ChatboxChatPage({
         <ChatboxHostOnboardingOverlays
           showWelcome={introGate.showWelcome}
           onGetStarted={introGate.dismissIntro}
-          welcomeBody={
-            (session.payload.welcomeDialog?.enabled ?? true)
-              ? session.payload.welcomeDialog?.body
-              : undefined
-          }
+          welcomeBody={session.payload.welcomeDialog?.body}
           showAuthPanel={introGate.showAuthPanel}
           pendingOAuthServers={pendingOAuthServers}
           authorizeServer={authorizeServer}
