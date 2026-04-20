@@ -31,6 +31,7 @@
           "inspector/app-builder",
           "inspector/chat",
           "inspector/guided-oauth",
+          "inspector/xaa-debugger",
           "inspector/tools-prompts-resources",
           "inspector/test-cases",
           "inspector/workspaces",
