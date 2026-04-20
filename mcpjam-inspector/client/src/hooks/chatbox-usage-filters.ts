@@ -7,7 +7,6 @@ export type UsageFilterPreset =
   | "no_feedback";
 
 export type UsageDimensionKey =
-  | "geoCountry"
   | "deviceKind"
   | "visitorSegment"
   | "language"
@@ -91,8 +90,6 @@ export function threadMatchesChip(
     return thread.themeClusterId === chip.clusterId;
   }
   switch (chip.key) {
-    case "geoCountry":
-      return thread.geoCountry === chip.value;
     case "deviceKind":
       return thread.deviceKind === chip.value;
     case "visitorSegment":

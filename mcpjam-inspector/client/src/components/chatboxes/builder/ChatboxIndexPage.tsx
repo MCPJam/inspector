@@ -23,17 +23,14 @@ import {
   TooltipTrigger,
 } from "@mcpjam/design-system/tooltip";
 import type { ChatboxListItem } from "@/hooks/useChatboxes";
-import {
-  getChatboxHostLogo,
-  getChatboxHostStyleShortLabel,
-} from "@/lib/chatbox-host-style";
+import { getChatboxHostStyleShortLabel } from "@/lib/chatbox-host-style";
 import { ChatboxDeleteConfirmDialog } from "@/components/chatboxes/ChatboxDeleteConfirmDialog";
 import { ChatboxIndexRowActionsMenu } from "./chatbox-index-row-actions";
 import { CHATBOX_BLANK_STARTER, CHATBOX_TEMPLATE_STARTERS } from "./drafts";
 import type { ChatboxStarterDefinition } from "./types";
 
 export type ChatboxOpenOptions = {
-  initialViewMode?: "setup" | "preview" | "usage";
+  initialViewMode?: "setup" | "preview" | "usage" | "insights";
 };
 
 // ---------------------------------------------------------------------------
@@ -59,9 +56,6 @@ function ChatboxSummaryCard({
   isDeleting: boolean;
   isDuplicating: boolean;
 }) {
-  const modeLabel =
-    chatbox.mode === "invited_only" ? "Invited only" : "Anyone with link";
-
   const serverList =
     chatbox.serverNames.length > 0
       ? chatbox.serverNames.join(" · ")
@@ -82,26 +76,6 @@ function ChatboxSummaryCard({
           isDeleting={isDeleting}
           isDuplicating={isDuplicating}
         />
-      </div>
-
-      <div className="flex flex-wrap items-center gap-1.5">
-        <Badge
-          variant="secondary"
-          className="gap-1.5 border-0 bg-muted/50 px-2 py-0 text-xs font-normal text-muted-foreground"
-        >
-          <img
-            src={getChatboxHostLogo(chatbox.hostStyle)}
-            alt=""
-            className="size-3"
-          />
-          {getChatboxHostStyleShortLabel(chatbox.hostStyle)}
-        </Badge>
-        <Badge
-          variant="secondary"
-          className="border-0 bg-muted/50 px-2 py-0 text-xs font-normal text-muted-foreground"
-        >
-          {modeLabel}
-        </Badge>
       </div>
 
       <p className="truncate text-sm text-muted-foreground">{serverList}</p>

@@ -59,8 +59,6 @@ export interface ChatboxBuilderNodeData extends Record<string, unknown> {
   kind: ChatboxBuilderNodeKind;
   title: string;
   subtitle?: string;
-  /** Small label above the title (e.g. Isolated Environment on the host chat card). */
-  eyebrow?: string;
   /** Extra line under subtitle (e.g. model name on the host card). */
   detailLine?: string;
   chips: ChatboxBuilderChip[];

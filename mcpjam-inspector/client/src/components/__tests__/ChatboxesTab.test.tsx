@@ -214,7 +214,7 @@ vi.mock("../chatboxes/builder/ChatboxBuilderView", () => ({
         <h2>Builder view</h2>
         <p>Chatbox: {props.chatboxId ?? "new"}</p>
         <p>Draft: {props.draft?.name ?? "none"}</p>
-        <p>Workspace: {props.workspaceName ?? "unknown"}</p>
+        <p>Workspace: {props.workspaceId ?? "unknown"}</p>
         <p>View mode: {props.initialViewMode ?? "none"}</p>
         <button type="button" onClick={props.onBack}>
           Back to index
@@ -309,7 +309,7 @@ describe("ChatboxesTab", () => {
 
     expect(await screen.findByText("Builder view")).toBeInTheDocument();
     expect(screen.getByText("Chatbox: sbx-2")).toBeInTheDocument();
-    expect(screen.getByText("Workspace: Workspace One")).toBeInTheDocument();
+    expect(screen.getByText("Workspace: ws-1")).toBeInTheDocument();
   });
 
   it("opens the starter launcher from the new chatbox action", async () => {

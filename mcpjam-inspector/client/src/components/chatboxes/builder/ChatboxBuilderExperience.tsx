@@ -56,14 +56,14 @@ export default function ChatboxBuilderExperience({
     workspaceId,
   });
   const workspaceName =
-    workspaces.find((workspace) => workspace._id === workspaceId)?.name ?? null;
+    workspaces.find((w) => w._id === workspaceId)?.name ?? null;
 
   const [selectedChatboxId, setSelectedChatboxId] = useState<string | null>(
     null,
   );
   const [draft, setDraft] = useState<ChatboxDraftConfig | null>(null);
   const [restoredViewMode, setRestoredViewMode] = useState<
-    "setup" | "preview" | "usage" | undefined
+    "setup" | "preview" | "usage" | "insights" | undefined
   >();
   const [starterLauncherOpen, setStarterLauncherOpen] = useState(false);
   const [deletingChatboxId, setDeletingChatboxId] = useState<string | null>(
@@ -98,9 +98,11 @@ export default function ChatboxBuilderExperience({
       if (vm === "builder") {
         setRestoredViewMode("setup");
       } else if (vm === "insights") {
-        setRestoredViewMode("usage");
+        setRestoredViewMode("insights");
       } else {
-        setRestoredViewMode(vm as "setup" | "preview" | "usage" | undefined);
+        setRestoredViewMode(
+          vm as "setup" | "preview" | "usage" | "insights" | undefined,
+        );
       }
     });
   }, [isCreateChatboxDisabled, isCreateChatboxLoading, workspaceId]);
