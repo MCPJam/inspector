@@ -719,12 +719,16 @@ export function ChatboxBuilderView({
     pendingOAuthServers.every(({ state }) => isHostedOAuthBusy(state.status));
 
   const oauthPending = pendingOAuthServers.length > 0;
+  const welcomeAvailable =
+    draftChatboxConfig.welcomeDialog.enabled &&
+    !!draftChatboxConfig.welcomeDialog.body?.trim();
   const introGate = useChatboxHostIntroGate({
     chatboxId: introChatboxId,
     servers: requiredPreviewServers,
     oauthPending,
     hasBusyOAuth,
     pendingOAuthServers,
+    welcomeAvailable,
   });
 
   const handlePreviewOAuthRequired = useCallback(
@@ -1182,11 +1186,7 @@ export function ChatboxBuilderView({
                               <ChatboxHostOnboardingOverlays
                                 showWelcome={introGate.showWelcome}
                                 onGetStarted={introGate.dismissIntro}
-                                welcomeBody={
-                                  draftChatboxConfig.welcomeDialog.enabled
-                                    ? draftChatboxConfig.welcomeDialog.body
-                                    : undefined
-                                }
+                                welcomeBody={draftChatboxConfig.welcomeDialog.body}
                                 showAuthPanel={introGate.showAuthPanel}
                                 pendingOAuthServers={pendingOAuthServers}
                                 authorizeServer={authorizeServer}

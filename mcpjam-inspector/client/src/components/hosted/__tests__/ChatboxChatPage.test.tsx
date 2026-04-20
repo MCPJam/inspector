@@ -642,4 +642,158 @@ describe("ChatboxChatPage", () => {
     ).not.toBeInTheDocument();
     expect(screen.queryByText("linear")).not.toBeInTheDocument();
   });
+
+  describe("welcome dialog", () => {
+    function nonOAuthServer() {
+      return {
+        serverId: "srv_tool",
+        serverName: "tool",
+        useOAuth: false,
+        serverUrl: "https://mcp.example.com/sse",
+        clientId: null,
+        oauthScopes: null,
+      };
+    }
+
+    it("shows welcome dialog when welcomeDialog is enabled and has content", async () => {
+      writeChatboxSession({
+        token: "chatbox-token",
+        payload: {
+          workspaceId: "ws_1",
+          chatboxId: "sbx_welcome",
+          name: "Welcome Chatbox",
+          description: "",
+          hostStyle: "claude",
+          mode: "any_signed_in_with_link",
+          allowGuestAccess: false,
+          viewerIsWorkspaceMember: true,
+          systemPrompt: "You are helpful.",
+          modelId: "openai/gpt-5-mini",
+          temperature: 0.7,
+          requireToolApproval: false,
+          servers: [nonOAuthServer()],
+          welcomeDialog: {
+            enabled: true,
+            body: "Welcome — thanks for trying this out.",
+          },
+        },
+      });
+
+      render(<ChatboxChatPage />);
+
+      expect(
+        await screen.findByText("Welcome — thanks for trying this out."),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Get Started" }),
+      ).toBeInTheDocument();
+      // Composer is blocked while the welcome is open
+      expect(mockChatTabV2).toHaveBeenCalledWith(
+        expect.objectContaining({ chatboxComposerBlocked: true }),
+      );
+    });
+
+    it("dismisses welcome and shows chat when Get Started is clicked", async () => {
+      writeChatboxSession({
+        token: "chatbox-token",
+        payload: {
+          workspaceId: "ws_1",
+          chatboxId: "sbx_dismiss",
+          name: "Welcome Chatbox",
+          description: "",
+          hostStyle: "claude",
+          mode: "any_signed_in_with_link",
+          allowGuestAccess: false,
+          viewerIsWorkspaceMember: true,
+          systemPrompt: "You are helpful.",
+          modelId: "openai/gpt-5-mini",
+          temperature: 0.7,
+          requireToolApproval: false,
+          servers: [nonOAuthServer()],
+          welcomeDialog: {
+            enabled: true,
+            body: "Welcome — thanks for trying this out.",
+          },
+        },
+      });
+
+      render(<ChatboxChatPage />);
+
+      await userEvent.click(
+        await screen.findByRole("button", { name: "Get Started" }),
+      );
+
+      expect(
+        screen.queryByText("Welcome — thanks for trying this out."),
+      ).not.toBeInTheDocument();
+      expect(await screen.findByTestId("chatbox-chat-tab")).toBeInTheDocument();
+    });
+
+    it("skips welcome and goes straight to chat when welcomeDialog.enabled is false", async () => {
+      writeChatboxSession({
+        token: "chatbox-token",
+        payload: {
+          workspaceId: "ws_1",
+          chatboxId: "sbx_disabled",
+          name: "No Welcome Chatbox",
+          description: "",
+          hostStyle: "claude",
+          mode: "any_signed_in_with_link",
+          allowGuestAccess: false,
+          viewerIsWorkspaceMember: true,
+          systemPrompt: "You are helpful.",
+          modelId: "openai/gpt-5-mini",
+          temperature: 0.7,
+          requireToolApproval: false,
+          servers: [nonOAuthServer()],
+          welcomeDialog: {
+            enabled: false,
+            body: "This should not appear.",
+          },
+        },
+      });
+
+      render(<ChatboxChatPage />);
+
+      expect(await screen.findByTestId("chatbox-chat-tab")).toBeInTheDocument();
+      expect(
+        screen.queryByText("This should not appear."),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: "Get Started" }),
+      ).not.toBeInTheDocument();
+    });
+
+    it("skips welcome and goes straight to chat when welcomeDialog body is empty", async () => {
+      writeChatboxSession({
+        token: "chatbox-token",
+        payload: {
+          workspaceId: "ws_1",
+          chatboxId: "sbx_emptybody",
+          name: "Empty Body Chatbox",
+          description: "",
+          hostStyle: "claude",
+          mode: "any_signed_in_with_link",
+          allowGuestAccess: false,
+          viewerIsWorkspaceMember: true,
+          systemPrompt: "You are helpful.",
+          modelId: "openai/gpt-5-mini",
+          temperature: 0.7,
+          requireToolApproval: false,
+          servers: [nonOAuthServer()],
+          welcomeDialog: {
+            enabled: true,
+            body: "",
+          },
+        },
+      });
+
+      render(<ChatboxChatPage />);
+
+      expect(await screen.findByTestId("chatbox-chat-tab")).toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: "Get Started" }),
+      ).not.toBeInTheDocument();
+    });
+  });
 });

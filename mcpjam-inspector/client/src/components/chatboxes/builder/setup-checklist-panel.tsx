@@ -984,8 +984,8 @@ export function SetupChecklistPanel({
                     <div>
                       <p className="text-sm font-medium">Shown on first open</p>
                       <p className="text-xs text-muted-foreground">
-                        Host-authored intro shown when a tester opens the
-                        chatbox.
+                        A short intro shown the first time someone opens your
+                        chatbox link.
                       </p>
                     </div>
                     <Switch
@@ -1017,11 +1017,12 @@ export function SetupChecklistPanel({
                             },
                           }))
                         }
-                        placeholder="What testers should know before they start…"
+                        placeholder="What your audience should know before they start…"
                       />
                       <p className="text-xs text-muted-foreground">
-                        Trust and disclosure copy is added automatically in the
-                        hosted experience.
+                        {chatboxDraft.welcomeDialog.body.trim()
+                          ? "Shown once, the first time someone opens your chatbox link."
+                          : "Leave blank to skip — no welcome will be shown."}
                       </p>
                     </div>
                   ) : null}

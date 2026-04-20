@@ -441,12 +441,16 @@ export function ChatboxEditor({
     pendingOAuthServers.every(({ state }) => isHostedOAuthBusy(state.status));
 
   const oauthPending = pendingOAuthServers.length > 0;
+  const welcomeAvailable =
+    (chatbox?.welcomeDialog?.enabled ?? true) &&
+    !!chatbox?.welcomeDialog?.body?.trim();
   const introGate = useChatboxHostIntroGate({
     chatboxId: chatbox?.chatboxId ?? "",
     servers: requiredPreviewServers,
     oauthPending,
     hasBusyOAuth,
     pendingOAuthServers,
+    welcomeAvailable,
   });
 
   const hasUnsavedChanges = useMemo(() => {
@@ -1199,11 +1203,7 @@ export function ChatboxEditor({
                 <ChatboxHostOnboardingOverlays
                   showWelcome={introGate.showWelcome}
                   onGetStarted={introGate.dismissIntro}
-                  welcomeBody={
-                    (chatbox.welcomeDialog?.enabled ?? true)
-                      ? chatbox.welcomeDialog?.body
-                      : undefined
-                  }
+                  welcomeBody={chatbox.welcomeDialog?.body}
                   showAuthPanel={introGate.showAuthPanel}
                   pendingOAuthServers={pendingOAuthServers}
                   authorizeServer={authorizeServer}

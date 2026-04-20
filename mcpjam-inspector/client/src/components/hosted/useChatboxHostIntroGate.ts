@@ -17,12 +17,20 @@ export interface UseChatboxHostIntroGateArgs {
   hasBusyOAuth: boolean;
   /** Pending rows from useHostedOAuthGate (for needs_auth-only welcome). */
   pendingOAuthServers: PendingOAuthEntry[];
+  /**
+   * Whether the creator has host-authored welcome content to show. When false,
+   * the welcome overlay is skipped and the gate falls through to either the
+   * auth panel (OAuth pending) or the chat composer.
+   */
+  welcomeAvailable: boolean;
 }
 
 /**
  * Welcome overlay: first-time non-OAuth chatboxes, or OAuth chatboxes that still
  * need consent. When OAuth is already satisfied on load, we persist dismissal
  * so runtime OAuth errors from chat show the auth overlay instead of welcome.
+ * Also silent-skipped entirely when the creator has no host-authored content
+ * (`welcomeAvailable = false`).
  */
 export function useChatboxHostIntroGate({
   chatboxId,
@@ -30,6 +38,7 @@ export function useChatboxHostIntroGate({
   oauthPending,
   hasBusyOAuth,
   pendingOAuthServers,
+  welcomeAvailable,
 }: UseChatboxHostIntroGateArgs) {
   const storageKey = chatboxIntroDismissedStorageKey(chatboxId);
 
@@ -38,7 +47,7 @@ export function useChatboxHostIntroGate({
     [servers],
   );
 
-  const nonOAuthFirstVisit = servers.length > 0 && oauthServerCount === 0;
+  const nonOAuthFirstVisit = oauthServerCount === 0;
 
   const [introDismissed, setIntroDismissed] = useState(() => {
     try {
@@ -59,7 +68,6 @@ export function useChatboxHostIntroGate({
   useEffect(() => {
     if (oauthPending) return;
     if (nonOAuthFirstVisit) return;
-    if (servers.length === 0) return;
     try {
       if (sessionStorage.getItem(storageKey) === "1") return;
       sessionStorage.setItem(storageKey, "1");
@@ -74,6 +82,7 @@ export function useChatboxHostIntroGate({
     pendingOAuthServers.every(({ state }) => state.status === "needs_auth");
 
   const showWelcome =
+    welcomeAvailable &&
     !introDismissed &&
     !hasBusyOAuth &&
     (nonOAuthFirstVisit || (oauthServerCount > 0 && onlyNeedsAuthIdle));
