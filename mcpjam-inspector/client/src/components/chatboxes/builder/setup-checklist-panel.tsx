@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, Globe, Loader2, Lock, Plus } from "lucide-react";
+import { Check, ChevronDown, Loader2, Plus } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@mcpjam/design-system/badge";
 import { Button } from "@mcpjam/design-system/button";
@@ -12,14 +12,6 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@mcpjam/design-system/collapsible";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@mcpjam/design-system/dialog";
 import {
   Popover,
   PopoverContent,
@@ -36,11 +28,15 @@ import {
 import { Separator } from "@mcpjam/design-system/separator";
 import { Slider } from "@mcpjam/design-system/slider";
 import { Switch } from "@mcpjam/design-system/switch";
-import { ToggleGroup, ToggleGroupItem } from "@mcpjam/design-system/toggle-group";
 import { Textarea } from "@mcpjam/design-system/textarea";
 import { ScrollArea } from "@mcpjam/design-system/scroll-area";
 import { ChatboxShareSection } from "@/components/chatboxes/ChatboxShareSection";
-import type { ChatboxSettings, ChatboxMode } from "@/hooks/useChatboxes";
+import type { ChatboxSettings } from "@/hooks/useChatboxes";
+import {
+  chatboxAccessPresetFromSettings,
+  settingsFromChatboxAccessPreset,
+  type ChatboxAccessPreset,
+} from "@/lib/chatbox-access-presets";
 import type { RemoteServer } from "@/hooks/useWorkspaces";
 import {
   getChatboxHostLogo,
@@ -50,7 +46,6 @@ import {
 import { isMCPJamProvidedModel, SUPPORTED_MODELS } from "@/shared/types";
 import { cn } from "@/lib/utils";
 import type { ChatboxDraftConfig } from "./types";
-import { countRequiredServers } from "./chatbox-server-optional";
 
 export type SetupSectionId =
   | "basics"
@@ -67,16 +62,17 @@ type SectionStatusKind =
   | "default_on"
   | "collapsed";
 
+const sectionStatusMetaClassName =
+  "inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground";
+
 function SectionStatusBadge({ kind }: { kind: SectionStatusKind }) {
   switch (kind) {
     case "complete":
       return (
-        <Badge
-          variant="outline"
-          className="border-emerald-600/55 bg-emerald-500/[0.14] px-3 py-0.5 text-emerald-900 dark:border-emerald-400/45 dark:bg-emerald-950/50 dark:text-emerald-200"
-        >
-          Complete
-        </Badge>
+        <span className={sectionStatusMetaClassName}>
+          <Check className="size-3.5 shrink-0" strokeWidth={2.25} aria-hidden />
+          Done
+        </span>
       );
     case "attention":
       return (
@@ -88,23 +84,11 @@ function SectionStatusBadge({ kind }: { kind: SectionStatusKind }) {
         </Badge>
       );
     case "optional":
-      return (
-        <Badge variant="secondary" className="font-normal">
-          Optional
-        </Badge>
-      );
+      return <span className={sectionStatusMetaClassName}>Optional</span>;
     case "default_on":
-      return (
-        <Badge variant="secondary" className="font-normal">
-          Default on
-        </Badge>
-      );
+      return <span className={sectionStatusMetaClassName}>Default on</span>;
     case "collapsed":
-      return (
-        <Badge variant="secondary" className="font-normal">
-          Collapsed
-        </Badge>
-      );
+      return <span className={sectionStatusMetaClassName}>Collapsed</span>;
     default:
       return null;
   }
@@ -230,23 +214,18 @@ export function WorkspaceServerPickerList({
 export function ServerSelectionEditor({
   workspaceServers,
   selectedServerIds,
-  optionalServerIds,
   onToggleSelection,
-  onOptionalChange,
   onOpenAdd,
 }: {
   workspaceServers: RemoteServer[];
   selectedServerIds: string[];
-  optionalServerIds: string[];
   onToggleSelection: (serverId: string, checked: boolean) => void;
-  onOptionalChange: (serverId: string, optional: boolean) => void;
   onOpenAdd: () => void;
 }) {
   const availableServers = workspaceServers.filter(
     (server) => server.transportType === "http",
   );
   const selectedServerSet = new Set(selectedServerIds);
-  const optionalServerSet = new Set(optionalServerIds);
   const selectedServers = availableServers.filter((server) =>
     selectedServerSet.has(server._id),
   );
@@ -260,13 +239,7 @@ export function ServerSelectionEditor({
 
   return (
     <div className="space-y-3">
-      <div>
-        <h3 className="text-sm font-semibold">MCP servers</h3>
-        <p className="mt-1 text-xs text-muted-foreground">
-          Pick HTTPS servers from the workspace, then set whether each connects
-          at start or only when the tester adds it from chat.
-        </p>
-      </div>
+      <h3 className="text-sm font-semibold">MCP servers</h3>
 
       <div className="flex min-w-0 gap-2">
         <Popover>
@@ -320,101 +293,29 @@ export function ServerSelectionEditor({
 
       {selectedServers.length > 0 ? (
         <div className="space-y-3">
-          {selectedServers.map((server) => {
-            const isOptional = optionalServerSet.has(server._id);
-            const requiredCount = countRequiredServers(
-              selectedServerIds,
-              optionalServerIds,
-            );
-            const cannotMarkOptional = !isOptional && requiredCount === 1;
-
-            return (
-              <Card
-                key={server._id}
-                className="gap-3 rounded-2xl p-3 py-4 shadow-sm"
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="font-medium leading-tight">{server.name}</p>
-                    <p className="mt-0.5 font-mono text-xs leading-snug text-muted-foreground">
-                      {server.url ?? "Workspace server"}
-                    </p>
-                    <div className="mt-2 flex flex-wrap gap-1.5">
-                      <Badge
-                        variant="outline"
-                        className="text-[11px] font-normal"
-                      >
-                        {server.useOAuth ? "OAuth" : "Direct"}
-                      </Badge>
-                      <Badge
-                        variant={
-                          isInsecureUrl(server.url) ? "secondary" : "outline"
-                        }
-                        className="text-[11px] font-normal"
-                      >
-                        {isInsecureUrl(server.url) ? "Requires HTTPS" : "HTTPS"}
-                      </Badge>
-                    </div>
-                  </div>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="shrink-0 text-destructive hover:text-destructive"
-                    onClick={() => onToggleSelection(server._id, false)}
-                  >
-                    Remove
-                  </Button>
-                </div>
-                <div className="space-y-1.5">
-                  <p
-                    className="text-xs font-medium leading-snug text-muted-foreground"
-                    id={`server-startup-${server._id}`}
-                  >
-                    Require server to connect at start or allow tester to add
-                    later
+          {selectedServers.map((server) => (
+            <Card
+              key={server._id}
+              className="gap-3 rounded-2xl p-3 py-4 shadow-sm"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="font-medium leading-tight">{server.name}</p>
+                  <p className="mt-0.5 font-mono text-xs leading-snug text-muted-foreground">
+                    {server.url ?? "Workspace server"}
                   </p>
-                  <ToggleGroup
-                    type="single"
-                    variant="outline"
-                    size="sm"
-                    className="w-full sm:w-auto"
-                    value={isOptional ? "optional" : "required"}
-                    onValueChange={(value) => {
-                      if (value === "optional") {
-                        if (cannotMarkOptional) {
-                          toast.message(
-                            "Add another server before marking this one optional. At least one server must connect when the chatbox opens.",
-                          );
-                          return;
-                        }
-                        onOptionalChange(server._id, true);
-                        return;
-                      }
-                      if (value === "required") {
-                        onOptionalChange(server._id, false);
-                      }
-                    }}
-                    aria-labelledby={`server-startup-${server._id}`}
-                  >
-                    <ToggleGroupItem
-                      value="required"
-                      className="flex-1 px-3 text-xs"
-                      aria-label="Required: connect at start"
-                    >
-                      Required
-                    </ToggleGroupItem>
-                    <ToggleGroupItem
-                      value="optional"
-                      className="flex-1 px-3 text-xs"
-                      aria-label="Optional: tester adds later from chat"
-                    >
-                      Optional
-                    </ToggleGroupItem>
-                  </ToggleGroup>
                 </div>
-              </Card>
-            );
-          })}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="shrink-0 text-destructive hover:text-destructive"
+                  onClick={() => onToggleSelection(server._id, false)}
+                >
+                  Remove
+                </Button>
+              </div>
+            </Card>
+          ))}
         </div>
       ) : null}
     </div>
@@ -467,17 +368,16 @@ export function SetupChecklistPanel({
   chatboxDraft,
   savedChatbox,
   workspaceServers,
-  workspaceName,
   focusedSection,
   /** True when creating a chatbox that has never been saved (no chatbox id yet). */
   isUnsavedNewDraft,
   onDraftChange,
   onOpenAddServer,
   onToggleServer,
-  onServerOptionalChange,
   onCloseMobile,
-  /** When the chatbox is saved, invite someone by email from the Access dialog (invite-only mode). */
+  /** When the chatbox is saved, invite by email from the Access section (invite-only draft). */
   inviteChatboxMember,
+  workspaceName,
 }: {
   chatboxDraft: ChatboxDraftConfig;
   savedChatbox: ChatboxSettings | null;
@@ -490,7 +390,6 @@ export function SetupChecklistPanel({
   ) => void;
   onOpenAddServer: () => void;
   onToggleServer: (serverId: string, checked: boolean) => void;
-  onServerOptionalChange: (serverId: string, optional: boolean) => void;
   onCloseMobile?: () => void;
   inviteChatboxMember?: (email: string) => Promise<void>;
 }) {
@@ -506,7 +405,6 @@ export function SetupChecklistPanel({
   const [openMap, setOpenMap] = useState<
     Partial<Record<SetupSectionId, boolean>>
   >({});
-  const [accessDialogOpen, setAccessDialogOpen] = useState(false);
   const [accessInviteEmail, setAccessInviteEmail] = useState("");
   const [accessInviteBusy, setAccessInviteBusy] = useState(false);
   const didAutoExpandRef = useRef(false);
@@ -608,26 +506,6 @@ export function SetupChecklistPanel({
                       }
                     />
                   </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="setup-chatbox-description">
-                      Description
-                    </Label>
-                    <Textarea
-                      id="setup-chatbox-description"
-                      rows={2}
-                      value={chatboxDraft.description}
-                      onChange={(event) =>
-                        onDraftChange((draft) => ({
-                          ...draft,
-                          description: event.target.value,
-                        }))
-                      }
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      Optional — helpful for collaborators, not required for
-                      first save.
-                    </p>
-                  </div>
 
                   <Separator />
 
@@ -724,9 +602,7 @@ export function SetupChecklistPanel({
                   <ServerSelectionEditor
                     workspaceServers={workspaceServers}
                     selectedServerIds={chatboxDraft.selectedServerIds}
-                    optionalServerIds={chatboxDraft.optionalServerIds}
                     onToggleSelection={onToggleServer}
-                    onOptionalChange={onServerOptionalChange}
                     onOpenAdd={onOpenAddServer}
                   />
                 </div>
@@ -751,90 +627,55 @@ export function SetupChecklistPanel({
               />
               <CollapsibleContent className="pt-3 pb-1">
                 <div className="space-y-4 rounded-xl border border-border/50 bg-card/40 p-4">
-                  <div className="flex flex-col gap-3 rounded-2xl border border-border/70 bg-card/60 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
-                    <div className="flex min-w-0 items-start gap-3">
-                      <div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-muted">
-                        {chatboxDraft.mode === "any_signed_in_with_link" ? (
-                          <Globe className="size-4 text-muted-foreground" />
-                        ) : (
-                          <Lock className="size-4 text-muted-foreground" />
-                        )}
-                      </div>
-                      <div className="min-w-0">
-                        <p className="text-sm font-medium">
-                          {chatboxDraft.mode === "any_signed_in_with_link"
-                            ? "Anyone with the link"
-                            : "Invited users only"}
-                        </p>
-                        <p className="mt-0.5 text-xs text-muted-foreground">
-                          {chatboxDraft.mode === "any_signed_in_with_link"
-                            ? "Any signed-in user with the link can open this chatbox."
-                            : "Only people you invite can access this chatbox."}{" "}
-                          Guest access{" "}
-                          {chatboxDraft.allowGuestAccess ? "on" : "off"}.
-                        </p>
-                      </div>
-                    </div>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="shrink-0 self-start sm:self-center"
-                      onClick={() => setAccessDialogOpen(true)}
-                    >
-                      Configure access
-                    </Button>
-                  </div>
-
-                  <Dialog
-                    open={accessDialogOpen}
-                    onOpenChange={setAccessDialogOpen}
-                  >
-                    <DialogContent className="sm:max-w-md">
-                      <DialogHeader>
-                        <DialogTitle>Access settings</DialogTitle>
-                        <DialogDescription>
-                          Choose who can open this chatbox and whether guests
-                          can use it without a full account.
-                        </DialogDescription>
-                      </DialogHeader>
+                  {savedChatbox ? (
+                    <ChatboxShareSection
+                      chatbox={savedChatbox}
+                      workspaceName={workspaceName}
+                    />
+                  ) : (
+                    <>
                       <div className="space-y-6">
                         <RadioGroup
-                          value={chatboxDraft.mode}
+                          value={chatboxAccessPresetFromSettings(
+                            chatboxDraft.mode,
+                            chatboxDraft.allowGuestAccess,
+                          )}
                           onValueChange={(value) =>
                             onDraftChange((draft) => ({
                               ...draft,
-                              mode: value as ChatboxMode,
+                              ...settingsFromChatboxAccessPreset(
+                                value as ChatboxAccessPreset,
+                              ),
                             }))
                           }
                           className="grid gap-2"
                         >
                           <label
-                            htmlFor="access-mode-link"
+                            htmlFor="access-preset-workspace"
                             className="flex cursor-pointer items-start gap-3 rounded-xl border border-border/70 bg-card/50 p-3 has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring/50"
                           >
                             <RadioGroupItem
-                              value="any_signed_in_with_link"
-                              id="access-mode-link"
+                              value="workspace"
+                              id="access-preset-workspace"
                               className="mt-0.5"
                             />
                             <span className="min-w-0">
                               <span className="block text-sm font-medium">
-                                Anyone with the link
+                                {workspaceName?.trim() || "Workspace"}
                               </span>
                               <span className="mt-0.5 block text-xs text-muted-foreground">
-                                Any signed-in user with the link can open this
-                                chatbox.
+                                Signed-in members of this workspace can open the
+                                chatbox with the link. Guests cannot.
                               </span>
                             </span>
                           </label>
                           <label
-                            htmlFor="access-mode-invite"
+                            htmlFor="access-preset-invited"
                             className="flex cursor-pointer items-start gap-3 rounded-xl border border-border/70 bg-card/50 p-3 has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring/50"
                           >
                             <RadioGroupItem
                               value="invited_only"
-                              id="access-mode-invite"
+                              id="access-preset-invited"
                               className="mt-0.5"
                             />
                             <span className="min-w-0">
@@ -843,8 +684,26 @@ export function SetupChecklistPanel({
                               </span>
                               <span className="mt-0.5 block text-xs text-muted-foreground">
                                 Only people you invite by email can open this
-                                chatbox. Workspace membership does not grant
-                                access by itself.
+                                chatbox.
+                              </span>
+                            </span>
+                          </label>
+                          <label
+                            htmlFor="access-preset-link-guests"
+                            className="flex cursor-pointer items-start gap-3 rounded-xl border border-border/70 bg-card/50 p-3 has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring/50"
+                          >
+                            <RadioGroupItem
+                              value="link_guests"
+                              id="access-preset-link-guests"
+                              className="mt-0.5"
+                            />
+                            <span className="min-w-0">
+                              <span className="block text-sm font-medium">
+                                Anyone with the link (guests included)
+                              </span>
+                              <span className="mt-0.5 block text-xs text-muted-foreground">
+                                Anyone with the link can open the chatbox,
+                                including guests without an account.
                               </span>
                             </span>
                           </label>
@@ -855,7 +714,8 @@ export function SetupChecklistPanel({
                             <p className="text-xs text-muted-foreground">
                               Invite-only is email-based. Workspace membership
                               does not auto-include everyone—you invite each
-                              address (or use Share below for the full list).
+                              address (or use the section below once the chatbox
+                              is saved).
                             </p>
                             <div className="space-y-2">
                               <p className="text-sm font-semibold text-foreground">
@@ -905,58 +765,18 @@ export function SetupChecklistPanel({
                               </div>
                               {!inviteChatboxMember ? (
                                 <p className="text-xs text-muted-foreground">
-                                  Save the chatbox to invite people by email and
-                                  manage the share link.
+                                  Save the chatbox to invite people by email.
                                 </p>
                               ) : null}
                             </div>
                           </div>
                         ) : null}
-
-                        <div className="flex items-start justify-between gap-4 rounded-xl border border-border/70 bg-card/50 px-4 py-3">
-                          <div className="min-w-0">
-                            <p className="text-sm font-medium">
-                              Allow guest access
-                            </p>
-                            <p className="mt-0.5 text-xs text-muted-foreground">
-                              When the link mode allows it, guests can open
-                              without a full account.
-                            </p>
-                          </div>
-                          <Switch
-                            className="shrink-0"
-                            checked={chatboxDraft.allowGuestAccess}
-                            onCheckedChange={(checked) =>
-                              onDraftChange((draft) => ({
-                                ...draft,
-                                allowGuestAccess: checked,
-                              }))
-                            }
-                          />
-                        </div>
                       </div>
-                      <DialogFooter>
-                        <Button
-                          type="button"
-                          onClick={() => setAccessDialogOpen(false)}
-                        >
-                          Done
-                        </Button>
-                      </DialogFooter>
-                    </DialogContent>
-                  </Dialog>
-
-                  {savedChatbox ? (
-                    <ChatboxShareSection
-                      chatbox={savedChatbox}
-                      workspaceName={workspaceName}
-                      appearance="builder"
-                    />
-                  ) : (
-                    <p className="text-sm text-muted-foreground">
-                      Save the chatbox to manage invitations, rotate the share
-                      link, and copy the public URL.
-                    </p>
+                      <p className="text-sm text-muted-foreground">
+                        Save the chatbox to manage invitations and access
+                        settings for the hosted link.
+                      </p>
+                    </>
                   )}
                 </div>
               </CollapsibleContent>
@@ -984,8 +804,8 @@ export function SetupChecklistPanel({
                     <div>
                       <p className="text-sm font-medium">Shown on first open</p>
                       <p className="text-xs text-muted-foreground">
-                        Host-authored intro shown when a tester opens the
-                        chatbox.
+                        A short intro shown the first time someone opens your
+                        chatbox link.
                       </p>
                     </div>
                     <Switch
@@ -1017,11 +837,12 @@ export function SetupChecklistPanel({
                             },
                           }))
                         }
-                        placeholder="What testers should know before they start…"
+                        placeholder="What your audience should know before they start…"
                       />
                       <p className="text-xs text-muted-foreground">
-                        Trust and disclosure copy is added automatically in the
-                        hosted experience.
+                        {chatboxDraft.welcomeDialog.body.trim()
+                          ? "Shown once, the first time someone opens your chatbox link."
+                          : "Leave blank to skip — no welcome will be shown."}
                       </p>
                     </div>
                   ) : null}

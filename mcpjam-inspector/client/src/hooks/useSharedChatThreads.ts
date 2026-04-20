@@ -29,9 +29,6 @@ export interface SharedChatThread {
   themeClusterId?: string;
   themeClusterLabel?: string;
   themeKeywords?: string[];
-  geoCountry?: string;
-  geoRegion?: string;
-  geoCity?: string;
   deviceKind?: "desktop" | "mobile" | "tablet" | "bot";
   userAgentFamily?: string;
   authType?: "signedIn" | "guest";
