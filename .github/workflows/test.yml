@@ -28,4 +28,9 @@ jobs:
         run: npm ci --legacy-peer-deps
 
       - name: Run SDK → CLI → Inspector verification
+        # Node 24 auto-scales heap to ~half system RAM (~4 GB on ubuntu-latest).
+        # The vitest workspace (server + client + shared) runs concurrently and
+        # exceeds that cap. 6 GB gives headroom without exhausting the runner.
+        env:
+          NODE_OPTIONS: "--max-old-space-size=6144"
         run: npm run test:ordered
