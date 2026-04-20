@@ -174,6 +174,37 @@ describe("web routes — chat-v2 hosted mode", () => {
     );
   });
 
+  it("passes shared chatbox link context into the hosted model handler", async () => {
+    const { app, token } = createWebTestApp();
+
+    const response = await postJson(
+      app,
+      "/api/web/chat-v2",
+      {
+        workspaceId: "workspace-1",
+        selectedServerIds: ["server-1"],
+        chatboxToken: "chatbox-shared-token",
+        surface: "share_link",
+        chatSessionId: "chat-session-shared",
+        messages: [{ role: "user", content: "hello from guest" }],
+        model: {
+          id: "anthropic/claude-opus-4.6",
+          provider: "anthropic",
+          name: "Claude Opus 4.6",
+        },
+      },
+      token,
+    );
+
+    expect(response.status).toBe(200);
+    expect(handleMCPJamFreeChatModelMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        chatboxToken: "chatbox-shared-token",
+        workspaceId: "workspace-1",
+      }),
+    );
+  });
+
   it("forwards directVisibility for hosted direct chats", async () => {
     const { app, token } = createWebTestApp();
 
