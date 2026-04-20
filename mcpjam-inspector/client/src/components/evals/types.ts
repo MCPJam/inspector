@@ -1,7 +1,7 @@
 import type { PromptTurn } from "@/shared/prompt-turns";
 import type { EvalTraceBlobV1 } from "@/shared/eval-trace";
 import type { EvalStreamToolCall } from "@/shared/eval-stream-events";
-import type { TraceMessage } from "./trace-viewer-adapter";
+import type { TraceEnvelope, TraceMessage } from "./trace-viewer-adapter";
 
 export type EvalSuiteConfigTest = {
   title: string;
@@ -153,6 +153,8 @@ export type CompareRunRecord = {
     argumentMismatchCount: number | null;
     mismatchCount: number | null;
   };
+  /** Immediate chat preview shown before the first live stream event arrives. */
+  previewTrace?: TraceEnvelope | null;
   /** Stable step-complete trace snapshots populated during streaming. */
   streamingTrace?: EvalTraceBlobV1;
   /** In-flight messages collected after the last authoritative snapshot. */

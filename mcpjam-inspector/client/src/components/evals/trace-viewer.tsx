@@ -8,7 +8,9 @@ import {
 } from "react";
 import type { ContentBlock } from "@modelcontextprotocol/client";
 import { Loader2, Minus, Plus } from "lucide-react";
+import { StickToBottom } from "use-stick-to-bottom";
 import { Button } from "@mcpjam/design-system/button";
+import { ScrollToBottomButton } from "@/components/chat-v2/shared/scroll-to-bottom-button";
 import type { ModelDefinition, ModelProvider } from "@/shared/types";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 import type { ToolServerMap } from "@/lib/apis/mcp-tools-api";
@@ -51,6 +53,7 @@ export type TraceViewerEvalToolCall = {
 interface TraceViewerProps {
   trace: TraceEnvelope | TraceMessage | TraceMessage[] | null;
   model?: ModelDefinition;
+  isLoading?: boolean;
   toolsMetadata?: Record<string, Record<string, any>>;
   toolServerMap?: ToolServerMap;
   connectedServerIds?: string[];
@@ -158,6 +161,7 @@ function getRecordedSpans(
 export function TraceViewer({
   trace,
   model,
+  isLoading = false,
   toolsMetadata = {},
   toolServerMap = {},
   connectedServerIds = [],
@@ -575,55 +579,66 @@ export function TraceViewer({
           ) : (
             <div
               className={cn(
-                "min-w-0 rounded-md border border-border/30 bg-background/50",
+                "min-w-0 rounded-md border border-border/30 bg-background/50 flex flex-col",
                 fillContent
-                  ? "min-h-0 flex-1 overflow-auto"
-                  : "min-h-0 max-h-[min(70vh,36rem)] overflow-auto",
+                  ? "min-h-0 flex-1 overflow-hidden"
+                  : "min-h-0 max-h-[min(70vh,36rem)] overflow-hidden",
               )}
               data-testid="trace-viewer-chat"
             >
-              <Thread
-                messages={adaptedTrace.messages}
-                sendFollowUpMessage={sendFollowUpMessage}
-                model={resolvedModel}
-                isLoading={false}
-                toolsMetadata={toolsMetadata}
-                toolServerMap={toolServerMap}
-                onWidgetStateChange={onWidgetStateChange}
-                onModelContextUpdate={onModelContextUpdate}
-                displayMode={displayMode}
-                onDisplayModeChange={onDisplayModeChange}
-                enableFullscreenChatOverlay={enableFullscreenChatOverlay}
-                fullscreenChatPlaceholder={fullscreenChatPlaceholder}
-                fullscreenChatDisabled={fullscreenChatDisabled}
-                fullscreenChatSendBlocked={fullscreenChatSendBlocked}
-                onFullscreenChatStop={onFullscreenChatStop}
-                onFullscreenChange={onFullscreenChange}
-                selectedProtocolOverrideIfBothExists={
-                  selectedProtocolOverrideIfBothExists
-                }
-                onToolApprovalResponse={onToolApprovalResponse}
-                toolRenderOverrides={adaptedTrace.toolRenderOverrides}
-                showSaveViewButton={false}
-                minimalMode={true}
-                interactive={threadInteractive}
-                reasoningDisplayMode="collapsed"
-                focusMessageId={transcriptNavigation.focusMessageId}
-                highlightedMessageIds={
-                  transcriptNavigation.highlightedMessageIds
-                }
-                navigationKey={transcriptNavigation.navigationKey}
-                contentClassName="min-w-0 mx-auto w-full max-w-4xl space-y-8 px-4 pt-2"
-                getMessageWrapperProps={({ message }) => {
-                  const sourceRange =
-                    adaptedTrace.uiMessageSourceRanges[message.id];
-                  return {
-                    "data-source-range": sourceRange
-                      ? `${sourceRange.startIndex}-${sourceRange.endIndex}`
-                      : undefined,
-                  };
-                }}
-              />
+              <StickToBottom
+                className="relative flex min-h-0 flex-1 flex-col"
+                resize="smooth"
+                initial="smooth"
+              >
+                <div className="relative flex-1 min-h-0">
+                  <StickToBottom.Content className="flex flex-col min-h-0">
+                    <Thread
+                      messages={adaptedTrace.messages}
+                      sendFollowUpMessage={sendFollowUpMessage}
+                      model={resolvedModel}
+                      isLoading={isLoading}
+                      toolsMetadata={toolsMetadata}
+                      toolServerMap={toolServerMap}
+                      onWidgetStateChange={onWidgetStateChange}
+                      onModelContextUpdate={onModelContextUpdate}
+                      displayMode={displayMode}
+                      onDisplayModeChange={onDisplayModeChange}
+                      enableFullscreenChatOverlay={enableFullscreenChatOverlay}
+                      fullscreenChatPlaceholder={fullscreenChatPlaceholder}
+                      fullscreenChatDisabled={fullscreenChatDisabled}
+                      fullscreenChatSendBlocked={fullscreenChatSendBlocked}
+                      onFullscreenChatStop={onFullscreenChatStop}
+                      onFullscreenChange={onFullscreenChange}
+                      selectedProtocolOverrideIfBothExists={
+                        selectedProtocolOverrideIfBothExists
+                      }
+                      onToolApprovalResponse={onToolApprovalResponse}
+                      toolRenderOverrides={adaptedTrace.toolRenderOverrides}
+                      showSaveViewButton={false}
+                      minimalMode={true}
+                      interactive={threadInteractive}
+                      reasoningDisplayMode="collapsed"
+                      focusMessageId={transcriptNavigation.focusMessageId}
+                      highlightedMessageIds={
+                        transcriptNavigation.highlightedMessageIds
+                      }
+                      navigationKey={transcriptNavigation.navigationKey}
+                      contentClassName="min-w-0 mx-auto w-full max-w-4xl space-y-8 px-4 pt-2"
+                      getMessageWrapperProps={({ message }) => {
+                        const sourceRange =
+                          adaptedTrace.uiMessageSourceRanges[message.id];
+                        return {
+                          "data-source-range": sourceRange
+                            ? `${sourceRange.startIndex}-${sourceRange.endIndex}`
+                            : undefined,
+                        };
+                      }}
+                    />
+                  </StickToBottom.Content>
+                  <ScrollToBottomButton />
+                </div>
+              </StickToBottom>
             </div>
           ))}
 
