@@ -37,17 +37,6 @@ function renderThemes(breakdown: UsageBreakdown | null | undefined): BarDatum[] 
   }));
 }
 
-function renderGeography(
-  breakdown: UsageBreakdown | null | undefined,
-): BarDatum[] {
-  if (!breakdown) return [];
-  return breakdown.geography.map((g) => ({
-    key: g.key,
-    label: g.label,
-    count: g.count,
-  }));
-}
-
 function renderUserSegment(
   breakdown: UsageBreakdown | null | undefined,
 ): StackedDatum[] {
@@ -95,7 +84,6 @@ export function UsageInsightsStrip({
 
   const latestRun = breakdown?.latestRun ?? null;
   const themes = renderThemes(breakdown);
-  const geography = renderGeography(breakdown);
   const userSegment = renderUserSegment(breakdown);
   const devices: BarDatum[] = breakdown?.deviceBreakdown ?? [];
   const languages: BarDatum[] = breakdown?.languageBreakdown ?? [];
@@ -211,24 +199,6 @@ export function UsageInsightsStrip({
                   ? "Clustering in progress…"
                   : "Click rebuild to generate themes"
             }
-          />
-
-          <UsageBarCard
-            title="Geography"
-            description="By country (from request headers)"
-            data={geography.map((g) => ({
-              ...g,
-              isSelected: isDimSelected("geoCountry", g.key),
-            }))}
-            onBarClick={(datum) => {
-              onToggleChip({
-                kind: "dimension",
-                key: "geoCountry",
-                value: datum.key,
-                label: `Country · ${datum.label}`,
-              });
-            }}
-            emptyState="No geography data captured"
           />
 
           <UsageStackedBarCard

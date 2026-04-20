@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { toast } from "sonner";
 import {
   ArrowLeft,
@@ -11,7 +18,6 @@ import {
 import { ReactFlowProvider } from "@xyflow/react";
 import { useConvexAuth } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
-import { Badge } from "@mcpjam/design-system/badge";
 import { Card } from "@mcpjam/design-system/card";
 import {
   ResizableHandle,
@@ -82,7 +88,7 @@ interface ChatboxBuilderViewProps {
   workspaceServers: RemoteServer[];
   chatboxId?: string | null;
   draft: ChatboxDraftConfig | null;
-  initialViewMode?: "setup" | "preview" | "usage";
+  initialViewMode?: "setup" | "preview" | "usage" | "insights";
   onBack: () => void;
   onSavedDraft: (chatbox: ChatboxSettings) => void;
 }
@@ -92,15 +98,21 @@ const DESKTOP_SETUP_RAIL_DEFAULT_PERCENT = 60;
 const DESKTOP_SETUP_RAIL_MIN_PERCENT = 40;
 const DESKTOP_SETUP_RAIL_MAX_PERCENT = 70;
 
-type ViewMode = "setup" | "preview" | "usage";
+type ViewMode = "setup" | "preview" | "usage" | "insights";
 
 function normalizeInitialViewMode(
   mode: string | undefined,
 ): ViewMode | undefined {
   if (!mode) return undefined;
-  if (mode === "setup" || mode === "preview" || mode === "usage") return mode;
+  if (
+    mode === "setup" ||
+    mode === "preview" ||
+    mode === "usage" ||
+    mode === "insights"
+  ) {
+    return mode;
+  }
   if (mode === "builder") return "setup";
-  if (mode === "insights") return "usage";
   return undefined;
 }
 
@@ -111,10 +123,65 @@ function getSetupSectionForNode(nodeId: string | null): SetupSectionId {
   return "basics";
 }
 
+function ChatboxPreviewActionButtons({
+  variant,
+  hasSavedChatbox,
+  onCopyLink,
+  onOpenFullPreview,
+  onReloadPreview,
+}: {
+  variant: "sidebar" | "mobileHeader";
+  hasSavedChatbox: boolean;
+  onCopyLink: () => void;
+  onOpenFullPreview: () => void;
+  onReloadPreview: () => void;
+}) {
+  const showCopyLink = hasSavedChatbox;
+  const isSidebar = variant === "sidebar";
+  const buttonClass = isSidebar ? "w-full justify-start rounded-xl" : "rounded-xl";
+
+  return (
+    <div
+      className={
+        isSidebar
+          ? "flex flex-col gap-2"
+          : "flex w-full flex-wrap items-center justify-end gap-2"
+      }
+    >
+      {showCopyLink ? (
+        <Button
+          variant="outline"
+          className={buttonClass}
+          onClick={onCopyLink}
+        >
+          <Link2 className="mr-1.5 size-4 shrink-0" />
+          Copy link
+        </Button>
+      ) : null}
+      <Button
+        variant="outline"
+        className={buttonClass}
+        onClick={onOpenFullPreview}
+        disabled={!hasSavedChatbox}
+      >
+        <ExternalLink className="mr-1.5 size-4 shrink-0" />
+        Open full preview
+      </Button>
+      <Button
+        variant="outline"
+        className={buttonClass}
+        onClick={onReloadPreview}
+        disabled={!hasSavedChatbox}
+      >
+        <RefreshCw className="mr-1.5 size-4 shrink-0" />
+        Reload preview
+      </Button>
+    </div>
+  );
+}
+
 function ChatboxBuilderChrome({
   title,
-  subtitle,
-  headerMode,
   isDirty,
   isSaving,
   hasSavedChatbox,
@@ -122,15 +189,10 @@ function ChatboxBuilderChrome({
   viewMode,
   onBack,
   onSave,
-  onCopyLink,
-  onOpenFullPreview,
-  onReloadPreview,
-  onEditSetup,
+  mobilePreviewActions,
   onModeChange,
 }: {
   title: string;
-  subtitle?: string;
-  headerMode: "setup" | "preview" | "usage";
   isDirty: boolean;
   isSaving: boolean;
   hasSavedChatbox: boolean;
@@ -139,20 +201,18 @@ function ChatboxBuilderChrome({
   viewMode: ViewMode;
   onBack: () => void;
   onSave: () => void;
-  onCopyLink: () => void;
-  onOpenFullPreview: () => void;
-  onReloadPreview: () => void;
-  onEditSetup: () => void;
+  /** Preview-only actions shown under `md` when the config sidebar is hidden. */
+  mobilePreviewActions?: ReactNode;
   onModeChange: (mode: ViewMode) => void;
 }) {
   const saveDisabled =
     isSaving || (!isDirty && hasSavedChatbox) || setupHasBlockingSections;
-  const showCopyLink = hasSavedChatbox;
+  const saveLabel = hasSavedChatbox && isDirty ? "Save changes" : "Save";
 
   return (
-    <div className="shrink-0 border-b border-border/70">
-      <div className="flex flex-wrap items-center justify-between gap-4 px-6 py-4">
-        <div className="flex min-w-0 items-center gap-3">
+    <div className="shrink-0 border-b border-border/70 px-6 py-3">
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] md:items-center md:gap-x-4 md:gap-y-0">
+        <div className="order-1 flex min-w-0 items-center gap-3">
           <Button
             type="button"
             variant="ghost"
@@ -165,65 +225,50 @@ function ChatboxBuilderChrome({
             <ArrowLeft className="size-4" aria-hidden />
           </Button>
           <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <h2 className="truncate text-xl font-semibold">{title}</h2>
-              {isDirty && hasSavedChatbox ? (
-                <Badge
-                  variant="outline"
-                  className="border-amber-500/50 bg-amber-500/10 text-amber-800 dark:text-amber-300"
-                >
-                  Unsaved
-                </Badge>
-              ) : null}
-            </div>
-            {subtitle ? (
-              <p className="mt-0.5 truncate text-sm text-muted-foreground">
-                {subtitle}
-              </p>
-            ) : null}
+            <h2 className="truncate text-xl font-semibold">{title}</h2>
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center justify-end gap-2">
-          {showCopyLink ? (
-            <Button
-              variant="outline"
-              className="rounded-xl"
-              onClick={onCopyLink}
-            >
-              <Link2 className="mr-1.5 size-4" />
-              Copy link
-            </Button>
-          ) : null}
-          {headerMode === "preview" && (
-            <>
-              <Button
-                variant="outline"
-                className="rounded-xl"
-                onClick={onOpenFullPreview}
-                disabled={!hasSavedChatbox}
+        <nav
+          className="order-3 flex w-full justify-center gap-1 overflow-x-auto [-webkit-overflow-scrolling:touch] md:order-2 md:w-auto md:max-w-full md:py-0"
+          aria-label="Chatbox modes"
+        >
+          {(
+            [
+              ["setup", "Setup"],
+              ["preview", "Preview"],
+              ["usage", "Sessions"],
+              ["insights", "Insights"],
+            ] as const
+          ).map(([mode, label]) => {
+            const active = viewMode === mode;
+            const disabled =
+              mode === "preview" && !hasSavedChatbox
+                ? true
+                : (mode === "usage" || mode === "insights") && !hasSavedChatbox;
+            return (
+              <button
+                key={mode}
+                type="button"
+                disabled={disabled}
+                onClick={() => onModeChange(mode)}
+                className={`relative min-h-10 shrink-0 px-4 py-2 text-sm font-medium transition-colors sm:min-h-11 sm:px-5 sm:text-base md:min-h-10 md:px-4 lg:px-6 ${
+                  active
+                    ? "text-foreground"
+                    : "text-muted-foreground hover:text-foreground"
+                } ${disabled ? "cursor-not-allowed opacity-40" : ""}`}
               >
-                <ExternalLink className="mr-1.5 size-4" />
-                Open full preview
-              </Button>
-              <Button
-                variant="outline"
-                className="rounded-xl"
-                onClick={onReloadPreview}
-                disabled={!hasSavedChatbox}
-              >
-                <RefreshCw className="mr-1.5 size-4" />
-                Reload preview
-              </Button>
-              <Button
-                variant="outline"
-                className="rounded-xl"
-                onClick={onEditSetup}
-              >
-                Edit setup
-              </Button>
-            </>
-          )}
+                {label}
+                {active ? (
+                  <span className="absolute inset-x-3 bottom-0 h-0.5 rounded-full bg-primary sm:inset-x-4 md:inset-x-3 lg:inset-x-6" />
+                ) : null}
+              </button>
+            );
+          })}
+        </nav>
+
+        <div className="order-2 flex flex-wrap items-center justify-end gap-2 md:order-3">
+          {mobilePreviewActions}
           <Button
             onClick={onSave}
             disabled={saveDisabled}
@@ -240,48 +285,9 @@ function ChatboxBuilderChrome({
             ) : (
               <Save className="mr-1.5 size-4" />
             )}
-            Save
+            {saveLabel}
           </Button>
         </div>
-      </div>
-
-      <div className="border-t border-border/60 px-6">
-        <nav
-          className="flex w-full justify-center gap-1 overflow-x-auto py-1"
-          aria-label="Chatbox modes"
-        >
-          {(
-            [
-              ["setup", "Setup"],
-              ["preview", "Preview"],
-              ["usage", "Usage"],
-            ] as const
-          ).map(([mode, label]) => {
-            const active = viewMode === mode;
-            const disabled =
-              mode === "preview" && !hasSavedChatbox
-                ? true
-                : mode === "usage" && !hasSavedChatbox;
-            return (
-              <button
-                key={mode}
-                type="button"
-                disabled={disabled}
-                onClick={() => onModeChange(mode)}
-                className={`relative min-h-12 shrink-0 px-6 py-3 text-base font-medium transition-colors ${
-                  active
-                    ? "text-foreground"
-                    : "text-muted-foreground hover:text-foreground"
-                } ${disabled ? "cursor-not-allowed opacity-40" : ""}`}
-              >
-                {label}
-                {active ? (
-                  <span className="absolute inset-x-6 bottom-0 h-0.5 rounded-full bg-primary" />
-                ) : null}
-              </button>
-            );
-          })}
-        </nav>
       </div>
     </div>
   );
@@ -894,31 +900,6 @@ export function ChatboxBuilderView({
     [createServer, workspaceId],
   );
 
-  const handleServerOptionalChange = useCallback(
-    (serverId: string, optional: boolean) => {
-      setDraftChatboxConfig((current) => {
-        const requiredIds = current.selectedServerIds.filter(
-          (id) => !current.optionalServerIds.includes(id),
-        );
-        if (
-          optional &&
-          requiredIds.length === 1 &&
-          requiredIds[0] === serverId
-        ) {
-          toast.error(
-            "Add another required server or mark another as required first.",
-          );
-          return current;
-        }
-        const nextOptional = optional
-          ? [...new Set([...current.optionalServerIds, serverId])]
-          : current.optionalServerIds.filter((id) => id !== serverId);
-        return { ...current, optionalServerIds: nextOptional };
-      });
-    },
-    [],
-  );
-
   const handleToggleServer = useCallback(
     (serverId: string, checked: boolean) => {
       setDraftChatboxConfig((current) => {
@@ -1000,7 +981,6 @@ export function ChatboxBuilderView({
       setIsAddServerOpen(true);
     },
     onToggleServer: handleToggleServer,
-    onServerOptionalChange: handleServerOptionalChange,
     inviteChatboxMember: chatboxId
       ? async (email: string) => {
           await upsertChatboxMember({
@@ -1033,18 +1013,6 @@ export function ChatboxBuilderView({
     <div className="flex h-full min-h-0 flex-col">
       <ChatboxBuilderChrome
         title={viewModel.title}
-        subtitle={
-          viewMode === "usage"
-            ? (chatbox?.description ?? undefined)
-            : viewModel.description || undefined
-        }
-        headerMode={
-          viewMode === "usage"
-            ? "usage"
-            : viewMode === "preview"
-              ? "preview"
-              : "setup"
-        }
         isDirty={isDirty}
         isSaving={isSaving}
         hasSavedChatbox={hasSavedChatbox}
@@ -1052,25 +1020,37 @@ export function ChatboxBuilderView({
         viewMode={viewMode}
         onBack={onBack}
         onSave={() => void saveChatbox()}
-        onCopyLink={() => void handleCopyLink()}
-        onOpenFullPreview={handleOpenFullPreview}
-        onReloadPreview={reloadPreview}
-        onEditSetup={() => setViewMode("setup")}
+        mobilePreviewActions={
+          viewMode === "preview" ? (
+            <div className="contents md:hidden">
+              <ChatboxPreviewActionButtons
+                variant="mobileHeader"
+                hasSavedChatbox={hasSavedChatbox}
+                onCopyLink={() => void handleCopyLink()}
+                onOpenFullPreview={handleOpenFullPreview}
+                onReloadPreview={reloadPreview}
+              />
+            </div>
+          ) : null
+        }
         onModeChange={(mode) => {
           if (mode === "preview" && !chatbox?.link?.token) {
             toast.error("Save the chatbox first to preview");
             return;
           }
-          if (mode === "usage" && !chatbox) {
+          if ((mode === "usage" || mode === "insights") && !chatbox) {
             return;
           }
           setViewMode(mode);
         }}
       />
 
-      {viewMode === "usage" && chatbox ? (
+      {(viewMode === "usage" || viewMode === "insights") && chatbox ? (
         <div className="min-h-0 flex-1">
-          <ChatboxUsagePanel chatbox={chatbox} />
+          <ChatboxUsagePanel
+            chatbox={chatbox}
+            section={viewMode === "insights" ? "insights" : "sessions"}
+          />
         </div>
       ) : (
         <div className="relative min-h-0 flex-1 p-4">
@@ -1207,7 +1187,7 @@ export function ChatboxBuilderView({
                           )}
                         </div>
                       </div>
-                      <div className="hidden w-full shrink-0 flex-col gap-4 rounded-[28px] border border-border/70 bg-card/50 p-4 md:flex md:w-[300px] lg:w-[320px]">
+                      <div className="hidden h-full min-h-0 w-full shrink-0 flex-col gap-4 rounded-[28px] border border-border/70 bg-card/50 p-4 md:flex md:w-[300px] lg:w-[320px]">
                         <div>
                           <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                             Chatbox config
@@ -1247,28 +1227,17 @@ export function ChatboxBuilderView({
                             </div>
                           </dl>
                         </div>
-                        <div className="border-t border-border/60 pt-4">
-                          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                            Current test status
-                          </p>
-                          <dl className="mt-3 space-y-2 text-sm">
-                            <div className="flex justify-between gap-2">
-                              <dt className="text-muted-foreground">State</dt>
-                              <dd>
-                                {pendingOAuthServers.length > 0
-                                  ? "Auth required"
-                                  : chatbox?.link?.token
-                                    ? "Ready to test"
-                                    : "Unavailable"}
-                              </dd>
-                            </div>
-                            <div className="flex justify-between gap-2">
-                              <dt className="text-muted-foreground">
-                                Tool calls (this run)
-                              </dt>
-                              <dd className="font-mono">—</dd>
-                            </div>
-                          </dl>
+                        <div
+                          className="mt-auto border-t border-border/60 pt-4"
+                          data-testid="chatbox-builder-preview-rail-actions"
+                        >
+                          <ChatboxPreviewActionButtons
+                            variant="sidebar"
+                            hasSavedChatbox={hasSavedChatbox}
+                            onCopyLink={() => void handleCopyLink()}
+                            onOpenFullPreview={handleOpenFullPreview}
+                            onReloadPreview={reloadPreview}
+                          />
                         </div>
                       </div>
                     </div>
@@ -1280,6 +1249,7 @@ export function ChatboxBuilderView({
                             viewModel={viewModel}
                             selectedNodeId={selectedNodeId}
                             canvasViewportRefitNonce={canvasViewportRefitNonce}
+                            builderModelId={draftChatboxConfig.modelId}
                             canvasServerPicker={{
                               workspaceServers,
                               selectedServerIds:

@@ -10,6 +10,7 @@ import {
   Lock,
   Save,
   Trash2,
+  Users,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -18,6 +19,11 @@ import {
   type ServerFormData,
 } from "@/shared/types";
 import type { ChatboxMode, ChatboxSettings } from "@/hooks/useChatboxes";
+import {
+  chatboxAccessPresetFromSettings,
+  settingsFromChatboxAccessPreset,
+  type ChatboxAccessPreset,
+} from "@/lib/chatbox-access-presets";
 import { useChatboxMutations } from "@/hooks/useChatboxes";
 import { useServerMutations } from "@/hooks/useWorkspaces";
 import { AddServerModal } from "@/components/connection/AddServerModal";
@@ -107,6 +113,7 @@ function isInsecureUrl(url: string | undefined): boolean {
 interface ChatboxEditorProps {
   chatbox?: ChatboxSettings | null;
   workspaceId: string;
+  workspaceName?: string | null;
   workspaceServers: WorkspaceServerOption[];
   onBack: () => void;
   onSaved?: (chatbox: ChatboxSettings) => void;
@@ -130,6 +137,7 @@ function createPlaygroundId(): string {
 export function ChatboxEditor({
   chatbox,
   workspaceId,
+  workspaceName,
   workspaceServers,
   onBack,
   onSaved,
@@ -298,6 +306,18 @@ export function ChatboxEditor({
     () => workspaceServers.filter((s) => s.transportType === "http"),
     [workspaceServers],
   );
+
+  const workspaceAccessLabel = workspaceName?.trim() || "Workspace";
+  const accessPreset = useMemo(
+    () => chatboxAccessPresetFromSettings(mode, allowGuestAccess),
+    [mode, allowGuestAccess],
+  );
+
+  const applyCreateAccessPreset = (preset: ChatboxAccessPreset) => {
+    const next = settingsFromChatboxAccessPreset(preset);
+    setMode(next.mode);
+    setAllowGuestAccess(next.allowGuestAccess);
+  };
 
   const previewToken = chatbox?.link?.token?.trim() || null;
   const canPreview = Boolean(previewToken);
@@ -484,23 +504,6 @@ export function ChatboxEditor({
     optionalServerIds,
     chatbox,
   ]);
-
-  const handleServerOptionalChange = (serverId: string, optional: boolean) => {
-    const requiredIds = selectedServerIds.filter(
-      (id) => !optionalServerIds.includes(id),
-    );
-    if (optional && requiredIds.length === 1 && requiredIds[0] === serverId) {
-      toast.error(
-        "Add another required server or mark another as required first.",
-      );
-      return;
-    }
-    setOptionalServerIds((current) =>
-      optional
-        ? [...new Set([...current, serverId])]
-        : current.filter((id) => id !== serverId),
-    );
-  };
 
   const handleToggleServer = (serverId: string, checked: boolean) => {
     setSelectedServerIds((current) => {
@@ -897,9 +900,7 @@ export function ChatboxEditor({
             <ServerSelectionEditor
               workspaceServers={workspaceServers as RemoteServer[]}
               selectedServerIds={selectedServerIds}
-              optionalServerIds={optionalServerIds}
               onToggleSelection={handleToggleServer}
-              onOptionalChange={handleServerOptionalChange}
               onOpenAdd={() => setIsAddServerOpen(true)}
             />
           </div>
@@ -972,18 +973,6 @@ export function ChatboxEditor({
                       onCheckedChange={setRequireToolApproval}
                     />
                   </div>
-                  <div className="flex items-center justify-between gap-3 rounded-md px-1 py-1.5">
-                    <div>
-                      <p className="text-sm">Allow guest access</p>
-                      <p className="text-[10px] text-muted-foreground">
-                        Unauthenticated visitors can use the chatbox link.
-                      </p>
-                    </div>
-                    <Switch
-                      checked={allowGuestAccess}
-                      onCheckedChange={setAllowGuestAccess}
-                    />
-                  </div>
                 </div>
               </div>
             </CollapsibleContent>
@@ -997,7 +986,11 @@ export function ChatboxEditor({
             <Label className="text-xs font-medium text-muted-foreground">
               Sharing
             </Label>
-            <ChatboxShareSection chatbox={chatbox} onUpdated={onSaved} />
+            <ChatboxShareSection
+              chatbox={chatbox}
+              workspaceName={workspaceName}
+              onUpdated={onSaved}
+            />
           </div>
         )}
 
@@ -1008,7 +1001,9 @@ export function ChatboxEditor({
             <p className="text-sm font-medium">General access</p>
             <div className="mt-2 flex items-start gap-3">
               <div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-muted">
-                {mode === "any_signed_in_with_link" ? (
+                {accessPreset === "workspace" ? (
+                  <Users className="size-4 text-muted-foreground" />
+                ) : accessPreset === "link_guests" ? (
                   <Globe className="size-4 text-muted-foreground" />
                 ) : (
                   <Lock className="size-4 text-muted-foreground" />
@@ -1021,39 +1016,70 @@ export function ChatboxEditor({
                       type="button"
                       className="flex items-center gap-1 rounded-md px-1 py-0.5 text-sm font-medium hover:bg-muted/50 transition-colors"
                     >
-                      {mode === "any_signed_in_with_link"
-                        ? "Anyone with the link"
-                        : "Invited users only"}
+                      {accessPreset === "workspace"
+                        ? workspaceAccessLabel
+                        : accessPreset === "link_guests"
+                          ? "Anyone with the link (guests included)"
+                          : "Invited users only"}
                       <ChevronDown className="size-3.5 text-muted-foreground" />
                     </button>
                   </PopoverTrigger>
-                  <PopoverContent className="w-56 p-1" align="start">
+                  <PopoverContent className="w-72 p-1" align="start">
                     <button
                       type="button"
-                      className="flex w-full items-center justify-between rounded-md px-2 py-1.5 text-sm hover:bg-muted/50"
-                      onClick={() => setMode("any_signed_in_with_link")}
+                      className="flex w-full flex-col items-start gap-0.5 rounded-md px-2 py-2 text-left text-sm hover:bg-muted/50"
+                      onClick={() => applyCreateAccessPreset("workspace")}
                     >
-                      <span>Anyone with the link</span>
-                      {mode === "any_signed_in_with_link" && (
-                        <Check className="size-3.5 text-muted-foreground" />
-                      )}
+                      <span className="flex w-full items-center justify-between gap-2 font-medium">
+                        {workspaceAccessLabel}
+                        {accessPreset === "workspace" ? (
+                          <Check className="size-3.5 shrink-0 text-muted-foreground" />
+                        ) : null}
+                      </span>
+                      <span className="text-xs text-muted-foreground">
+                        Signed-in workspace members can use the link. Guests
+                        cannot.
+                      </span>
                     </button>
                     <button
                       type="button"
-                      className="flex w-full items-center justify-between rounded-md px-2 py-1.5 text-sm hover:bg-muted/50"
-                      onClick={() => setMode("invited_only")}
+                      className="flex w-full flex-col items-start gap-0.5 rounded-md px-2 py-2 text-left text-sm hover:bg-muted/50"
+                      onClick={() => applyCreateAccessPreset("invited_only")}
                     >
-                      <span>Invited users only</span>
-                      {mode === "invited_only" && (
-                        <Check className="size-3.5 text-muted-foreground" />
-                      )}
+                      <span className="flex w-full items-center justify-between gap-2 font-medium">
+                        Invited users only
+                        {accessPreset === "invited_only" ? (
+                          <Check className="size-3.5 shrink-0 text-muted-foreground" />
+                        ) : null}
+                      </span>
+                      <span className="text-xs text-muted-foreground">
+                        Only people you invite by email can open this chatbox.
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      className="flex w-full flex-col items-start gap-0.5 rounded-md px-2 py-2 text-left text-sm hover:bg-muted/50"
+                      onClick={() => applyCreateAccessPreset("link_guests")}
+                    >
+                      <span className="flex w-full items-center justify-between gap-2 font-medium">
+                        Anyone with the link (guests included)
+                        {accessPreset === "link_guests" ? (
+                          <Check className="size-3.5 shrink-0 text-muted-foreground" />
+                        ) : null}
+                      </span>
+                      <span className="text-xs text-muted-foreground">
+                        Anyone with the link, including guests without an
+                        account.
+                      </span>
                     </button>
                   </PopoverContent>
                 </Popover>
                 <p className="mt-0.5 px-1 text-xs text-muted-foreground">
-                  {mode === "any_signed_in_with_link"
-                    ? "Any signed-in user with the link can open this chatbox."
-                    : "Only people you've invited can access this chatbox."}
+                  {accessPreset === "workspace"
+                    ? "Signed-in members of this workspace can open the chatbox with the link."
+                    : accessPreset === "link_guests"
+                      ? "Anyone with the link can open this chatbox, including guests."
+                      : "Only people you invite by email can open this chatbox."}
                 </p>
               </div>
             </div>

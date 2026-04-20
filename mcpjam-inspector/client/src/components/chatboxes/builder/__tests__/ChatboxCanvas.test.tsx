@@ -175,13 +175,10 @@ describe("ChatboxCanvas", () => {
       </ReactFlowProvider>,
     );
 
-    const hostTitle = screen.getByText("Chat Interface");
-    expect(hostTitle).toHaveAttribute("title", "Chat Interface");
-
-    const nameSubtitle = screen.getByText(
+    const hostName = screen.getByText(
       "My very long chatbox name that might truncate in the UI",
     );
-    expect(nameSubtitle).toHaveAttribute(
+    expect(hostName).toHaveAttribute(
       "title",
       "My very long chatbox name that might truncate in the UI",
     );

@@ -69,7 +69,6 @@ function resolveHostState(
   return {
     kind: "host",
     title: "Chat Interface",
-    eyebrow: "Isolated Environment",
     subtitle: source?.name?.trim() || "Untitled chatbox",
     detailLine: `Model · ${modelName}`,
     hostStyle,
@@ -93,13 +92,7 @@ function resolveServerState(
     context.workspaceServers.find((item) => item._id === serverId) ?? null;
   const insecure = server?.url?.startsWith("http://") ?? false;
 
-  const chips: ChatboxBuilderNodeData["chips"] = [
-    chip(server?.useOAuth ? "OAuth" : "Direct"),
-    chip(
-      insecure ? "Requires HTTPS" : "HTTPS",
-      insecure ? "warning" : "success",
-    ),
-  ];
+  const chips: ChatboxBuilderNodeData["chips"] = [];
   if (optionalIds.includes(serverId)) {
     chips.push(chip("Optional", "info"));
   }
