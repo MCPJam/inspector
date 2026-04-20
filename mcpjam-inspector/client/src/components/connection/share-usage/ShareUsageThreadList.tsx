@@ -173,11 +173,6 @@ function ThreadCard({
             <span className="truncate">{thread.themeClusterLabel}</span>
           </span>
         ) : null}
-        {thread.geoCountry ? (
-          <span className="rounded-full bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
-            {thread.geoCountry}
-          </span>
-        ) : null}
       </div>
       {thread.firstMessagePreview ? (
         <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">

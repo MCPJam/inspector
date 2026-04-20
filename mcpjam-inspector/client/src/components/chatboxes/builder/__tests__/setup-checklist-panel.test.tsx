@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import {
   computeSectionStatuses,
@@ -33,6 +33,61 @@ describe("SetupChecklistPanel", () => {
     expect(screen.getByRole("button", { name: /Basics/i })).toBeInTheDocument();
   });
 
+  it("shows a subdued checkmark label with Done for complete sections (not a colored pill)", () => {
+    render(
+      <SetupChecklistPanel
+        chatboxDraft={baseDraft}
+        savedChatbox={null}
+        workspaceServers={[]}
+        focusedSection={null}
+        isUnsavedNewDraft
+        onDraftChange={() => {}}
+        onOpenAddServer={() => {}}
+        onToggleServer={() => {}}
+      />,
+    );
+
+    const basicsRow = screen.getByRole("button", { name: /Basics/i });
+    expect(within(basicsRow).getByText("Done")).toBeInTheDocument();
+    expect(
+      within(basicsRow).queryByText("Complete", { exact: true }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("uses the same muted inline template for Optional, Default on, and Collapsed (no secondary badges)", () => {
+    render(
+      <SetupChecklistPanel
+        chatboxDraft={{
+          ...baseDraft,
+          welcomeDialog: { ...baseDraft.welcomeDialog, enabled: false },
+        }}
+        savedChatbox={null}
+        workspaceServers={[]}
+        focusedSection={null}
+        isUnsavedNewDraft
+        onDraftChange={() => {}}
+        onOpenAddServer={() => {}}
+        onToggleServer={() => {}}
+      />,
+    );
+
+    const welcomeRow = screen.getByRole("button", {
+      name: /Welcome Dialog Optional/i,
+    });
+    expect(within(welcomeRow).getByText("Optional")).toBeInTheDocument();
+    expect(welcomeRow.querySelector('[data-slot="badge"]')).toBeNull();
+
+    const feedbackRow = screen.getByRole("button", { name: /Feedback Default on/i });
+    expect(within(feedbackRow).getByText("Default on")).toBeInTheDocument();
+    expect(feedbackRow.querySelector('[data-slot="badge"]')).toBeNull();
+
+    const advancedRow = screen.getByRole("button", {
+      name: /Advanced Collapsed/i,
+    });
+    expect(within(advancedRow).getByText("Collapsed")).toBeInTheDocument();
+    expect(advancedRow.querySelector('[data-slot="badge"]')).toBeNull();
+  });
+
   it("renders mobile Done header when onCloseMobile is provided", () => {
     render(
       <SetupChecklistPanel
@@ -52,31 +107,13 @@ describe("SetupChecklistPanel", () => {
     expect(screen.getByRole("button", { name: "Done" })).toBeInTheDocument();
   });
 
-  it("uses a compact description field (2 rows)", () => {
+  it("shows draft access controls inline in Access (no General access heading)", () => {
     render(
       <SetupChecklistPanel
         chatboxDraft={baseDraft}
         savedChatbox={null}
         workspaceServers={[]}
-        focusedSection={null}
-        isUnsavedNewDraft
-        onDraftChange={() => {}}
-        onOpenAddServer={() => {}}
-        onToggleServer={() => {}}
-      />,
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: /Basics/i }));
-    const description = screen.getByLabelText(/Description/i);
-    expect(description).toHaveAttribute("rows", "2");
-  });
-
-  it("opens consolidated access settings in a dialog (no General access heading)", () => {
-    render(
-      <SetupChecklistPanel
-        chatboxDraft={baseDraft}
-        savedChatbox={null}
-        workspaceServers={[]}
+        workspaceName="Acme"
         focusedSection={null}
         isUnsavedNewDraft
         onDraftChange={() => {}}
@@ -87,18 +124,15 @@ describe("SetupChecklistPanel", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /Access/i }));
     expect(screen.queryByText("General access")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /Configure access/i }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getByText("Acme")).toBeInTheDocument();
+    expect(screen.getByText("Invited users only")).toBeInTheDocument();
     expect(
-      screen.getByRole("heading", { name: "Access settings" }),
+      screen.getByText("Anyone with the link (guests included)"),
     ).toBeInTheDocument();
-    const dialog = screen.getByRole("dialog");
-    expect(
-      within(dialog).getByText("Anyone with the link"),
-    ).toBeInTheDocument();
-    expect(within(dialog).getByText("Allow guest access")).toBeInTheDocument();
   });
 
-  it("shows invite-only save prompt in access dialog when chatbox is unsaved", () => {
+  it("shows invite-only save prompt in Access when chatbox is unsaved", () => {
     const internalDraft = CHATBOX_STARTERS.find(
       (s) => s.id === "internal-qa",
     )!.createDraft("openai/gpt-5-mini");
@@ -116,7 +150,6 @@ describe("SetupChecklistPanel", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: /Access/i }));
-    fireEvent.click(screen.getByRole("button", { name: /Configure access/i }));
     expect(
       screen.getByText(/Save the chatbox to invite people by email/i),
     ).toBeInTheDocument();
@@ -144,7 +177,6 @@ describe("SetupChecklistPanel", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: /Access/i }));
-    fireEvent.click(screen.getByRole("button", { name: /Configure access/i }));
     expect(screen.getByText("Invite people")).toBeInTheDocument();
     expect(
       screen.getByPlaceholderText(/colleague@company.com/i),
@@ -173,34 +205,19 @@ describe("ServerSelectionEditor", () => {
     useOAuth: false,
   };
 
-  it("uses a Required / Optional toggle for connect at start vs add later", () => {
-    const onOptionalChange = vi.fn();
+  it("lists selected servers with remove actions", () => {
     render(
       <ServerSelectionEditor
         workspaceServers={[httpServer, httpServerB]}
         selectedServerIds={[httpServer._id, httpServerB._id]}
-        optionalServerIds={[]}
         onToggleSelection={() => {}}
-        onOptionalChange={onOptionalChange}
         onOpenAdd={() => {}}
       />,
     );
 
-    expect(
-      screen.getAllByText(
-        "Require server to connect at start or allow tester to add later",
-      ),
-    ).toHaveLength(2);
-    const requiredButtons = screen.getAllByRole("radio", {
-      name: /Required: connect at start/i,
-    });
-    expect(requiredButtons[0]).toHaveAttribute("data-state", "on");
-    fireEvent.click(
-      screen.getAllByRole("radio", {
-        name: /Optional: tester adds later from chat/i,
-      })[0]!,
-    );
-    expect(onOptionalChange).toHaveBeenCalledWith(httpServer._id, true);
+    expect(screen.getByText("Linear MCP")).toBeInTheDocument();
+    expect(screen.getByText("Other MCP")).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Remove" })).toHaveLength(2);
   });
 });
 

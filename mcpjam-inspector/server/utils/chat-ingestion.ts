@@ -7,19 +7,11 @@ const MAX_RESPONSE_PREVIEW_CHARS = 200;
 
 /**
  * Headers worth forwarding from the browser request to the Convex ingestion
- * endpoint so that usage-insights enrichment (device, language, geo) works.
+ * endpoint so that usage-insights enrichment (device, language) works.
  */
 const ENRICHMENT_HEADERS_TO_FORWARD = [
   "user-agent",
   "accept-language",
-  // Geo headers injected by CDN/edge providers
-  "cf-ipcountry",
-  "x-vercel-ip-country",
-  "x-vercel-ip-country-region",
-  "x-vercel-ip-city",
-  "x-geo-country",
-  "x-geo-region",
-  "x-geo-city",
   // Client IP headers for visitor hashing
   "x-forwarded-for",
   "x-real-ip",

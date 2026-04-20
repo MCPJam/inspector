@@ -301,28 +301,31 @@ export function ShareUsageThreadDetail({
         onModeChange={setViewMode}
       />
 
-      {/* Content area */}
-      <div className="flex-1 min-h-0 overflow-y-auto">
+      {/* Content area: must be a flex column so TraceViewer (fillContent) is a flex item; otherwise
+          nested flex-1 / min-h-0 inside TraceTimeline collapses and the timeline paints empty. */}
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         {viewMode === "chat" ? (
-          <TranscriptThread
-            messages={adaptedTrace.messages}
-            model={resolvedModel}
-            sendFollowUpMessage={NOOP}
-            toolsMetadata={{}}
-            toolServerMap={{}}
-            pipWidgetId={null}
-            fullscreenWidgetId={null}
-            onRequestPip={NOOP}
-            onExitPip={NOOP}
-            onRequestFullscreen={NOOP}
-            onExitFullscreen={NOOP}
-            toolRenderOverrides={adaptedTrace.toolRenderOverrides}
-            showSaveViewButton={false}
-            minimalMode={!isChatboxThread}
-            interactive={false}
-            reasoningDisplayMode={reasoningDisplayMode}
-            contentClassName="max-w-4xl space-y-8 px-4 py-4"
-          />
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            <TranscriptThread
+              messages={adaptedTrace.messages}
+              model={resolvedModel}
+              sendFollowUpMessage={NOOP}
+              toolsMetadata={{}}
+              toolServerMap={{}}
+              pipWidgetId={null}
+              fullscreenWidgetId={null}
+              onRequestPip={NOOP}
+              onExitPip={NOOP}
+              onRequestFullscreen={NOOP}
+              onExitFullscreen={NOOP}
+              toolRenderOverrides={adaptedTrace.toolRenderOverrides}
+              showSaveViewButton={false}
+              minimalMode={!isChatboxThread}
+              interactive={false}
+              reasoningDisplayMode={reasoningDisplayMode}
+              contentClassName="max-w-4xl space-y-8 px-4 py-4"
+            />
+          </div>
         ) : (
           <TraceViewer
             trace={traceEnvelope}

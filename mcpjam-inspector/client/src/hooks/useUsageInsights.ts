@@ -37,7 +37,6 @@ export type ClusterRunState = {
 
 export type UsageBreakdown = {
   themes: Array<{ clusterId: string; label: string; count: number }>;
-  geography: BreakdownBucket[];
   userBreakdown: FeedbackBucketCount[];
   deviceBreakdown: BreakdownBucket[];
   languageBreakdown: BreakdownBucket[];
