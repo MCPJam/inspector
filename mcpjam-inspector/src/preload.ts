@@ -1,10 +1,9 @@
 import { contextBridge, ipcRenderer } from "electron";
+import type { UpdateState } from "../shared/update-state.js";
 
-// Update info type
-interface UpdateInfo {
-  version: string;
-  releaseNotes?: string;
-}
+const GET_UPDATE_STATE_CHANNEL = "app:update:get-state";
+const REQUEST_UPDATE_INSTALL_CHANNEL = "app:request-update-install";
+const UPDATE_STATE_CHANGED_CHANNEL = "update-state-changed";
 
 // Define the API interface
 interface ElectronAPI {
@@ -44,9 +43,9 @@ interface ElectronAPI {
 
   // Update operations
   update: {
-    onUpdateReady: (callback: (info: UpdateInfo) => void) => void;
-    removeUpdateReadyListener: () => void;
-    restartAndInstall: () => void;
+    getState: () => Promise<UpdateState>;
+    onStateChanged: (callback: (state: UpdateState) => void) => () => void;
+    requestInstall: () => void;
     simulateUpdate?: () => void; // Dev only - for testing
   };
 }
@@ -87,14 +86,20 @@ const electronAPI: ElectronAPI = {
   },
 
   update: {
-    onUpdateReady: (callback: (info: UpdateInfo) => void) => {
-      ipcRenderer.on("update-ready", (_, info: UpdateInfo) => callback(info));
+    getState: () => ipcRenderer.invoke(GET_UPDATE_STATE_CHANNEL),
+    onStateChanged: (callback: (state: UpdateState) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, state: UpdateState) => {
+        callback(state);
+      };
+
+      ipcRenderer.on(UPDATE_STATE_CHANGED_CHANNEL, listener);
+
+      return () => {
+        ipcRenderer.removeListener(UPDATE_STATE_CHANGED_CHANNEL, listener);
+      };
     },
-    removeUpdateReadyListener: () => {
-      ipcRenderer.removeAllListeners("update-ready");
-    },
-    restartAndInstall: () => {
-      ipcRenderer.send("app:restart-for-update");
+    requestInstall: () => {
+      ipcRenderer.send(REQUEST_UPDATE_INSTALL_CHANNEL);
     },
     ...(process.env.NODE_ENV === "development"
       ? {

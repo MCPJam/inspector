@@ -20,6 +20,7 @@ import {
   Puzzle,
   UserPlus,
   ShieldCheck,
+  Upload,
 } from "lucide-react";
 import { usePostHog, useFeatureFlagEnabled } from "posthog-js/react";
 import { standardEventProps } from "@/lib/PosthogUtils";
@@ -525,7 +526,11 @@ export function MCPSidebar({
   const { user } = useAuth();
   const learningEnabled = !!learningFlagEnabled && isAuthenticated;
   const themeMode = usePreferencesStore((s) => s.themeMode);
-  const { updateReady, restartAndInstall } = useUpdateNotification();
+  const {
+    showUpdateButton,
+    updateButtonLabel,
+    requestInstall,
+  } = useUpdateNotification();
   const [showInviteDialog, setShowInviteDialog] = useState(false);
   const learnMore = useLearnMore();
   const { state, isMobile } = useSidebar();
@@ -649,14 +654,18 @@ export function MCPSidebar({
               />
             )}
           </div>
-          {updateReady && (
-            <div className="px-2 pb-2">
+          {showUpdateButton && updateButtonLabel && (
+            <div className="px-2 pb-2 group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:flex group-data-[collapsible=icon]:justify-center">
               <Button
                 size="sm"
-                onClick={restartAndInstall}
-                className="w-full bg-primary hover:bg-primary/90 text-primary-foreground h-7 text-xs font-medium rounded-md"
+                onClick={requestInstall}
+                title={state === "collapsed" ? updateButtonLabel : undefined}
+                className="h-7 w-full gap-1.5 overflow-hidden rounded-md bg-primary text-xs font-medium text-primary-foreground hover:bg-primary/90 group-data-[collapsible=icon]:size-8 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:rounded-md group-data-[collapsible=icon]:px-0"
               >
-                Update & Restart
+                <Upload className="size-3.5 shrink-0" />
+                <span className="truncate group-data-[collapsible=icon]:hidden">
+                  {updateButtonLabel}
+                </span>
               </Button>
             </div>
           )}

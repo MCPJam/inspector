@@ -1,7 +1,4 @@
-export interface UpdateInfo {
-  version: string;
-  releaseNotes?: string;
-}
+import type { UpdateState } from "@/shared/update-state";
 
 export interface ElectronAPI {
   // App metadata
@@ -40,9 +37,9 @@ export interface ElectronAPI {
 
   // Update operations
   update: {
-    onUpdateReady: (callback: (info: UpdateInfo) => void) => void;
-    removeUpdateReadyListener: () => void;
-    restartAndInstall: () => void;
+    getState: () => Promise<UpdateState>;
+    onStateChanged: (callback: (state: UpdateState) => void) => () => void;
+    requestInstall: () => void;
     simulateUpdate?: () => void;
   };
 }

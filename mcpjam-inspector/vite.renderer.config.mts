@@ -31,7 +31,7 @@ export default defineConfig(({ mode }) => {
     },
     server: {
       fs: {
-        allow: [resolve(__dirname, "./client/src/assets")],
+        allow: [resolve(__dirname, "./client")],
       },
       proxy: {
         "/api": {

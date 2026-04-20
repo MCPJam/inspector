@@ -9,7 +9,7 @@ import { CORS_ORIGINS } from "../../config.js";
 import {
   CHATGPT_APPS_SANDBOX_PROXY_HTML,
   MCP_APPS_SANDBOX_PROXY_HTML,
-} from "../apps/SandboxProxyHtml.bundled.js";
+} from "../apps/SandboxProxyHtml.bundled";
 import {
   injectOpenAICompat,
   injectScripts,

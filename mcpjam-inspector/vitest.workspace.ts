@@ -2,6 +2,13 @@ import { defineWorkspace } from "vitest/config";
 
 export default defineWorkspace([
   {
+    extends: "./vitest.desktop.config.ts",
+    test: {
+      name: "desktop",
+      root: ".",
+    },
+  },
+  {
     extends: "./server/vitest.config.ts",
     test: {
       name: "server",

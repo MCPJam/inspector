@@ -1,63 +1,77 @@
-import { useEffect, useState, useCallback } from "react";
-
-interface UpdateInfo {
-  version: string;
-  releaseNotes?: string;
-}
-
-const STORAGE_KEY = "mcpjam-pending-update";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
+import {
+  IDLE_UPDATE_STATE,
+  type UpdateState,
+} from "@/shared/update-state";
 
 export function useUpdateNotification() {
-  const [updateReady, setUpdateReady] = useState<UpdateInfo | null>(() => {
-    // Check localStorage on initial load
-    if (typeof window !== "undefined") {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved) {
-        try {
-          return JSON.parse(saved);
-        } catch {
-          return null;
-        }
-      }
-    }
-    return null;
+  const [updateState, setUpdateState] = useState<UpdateState>({
+    ...IDLE_UPDATE_STATE,
   });
+  const previousPhaseRef = useRef<UpdateState["phase"]>(IDLE_UPDATE_STATE.phase);
 
   useEffect(() => {
-    // Only set up if running in Electron
     if (!window.isElectron || !window.electronAPI?.update) {
       return;
     }
 
-    const handleUpdateReady = (info: UpdateInfo) => {
-      console.log("Update ready:", info);
-      setUpdateReady(info);
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(info));
+    let isMounted = true;
+    let receivedStatePush = false;
+
+    const handleStateChanged = (nextState: UpdateState) => {
+      receivedStatePush = true;
+
+      if (isMounted) {
+        setUpdateState(nextState);
+      }
     };
 
-    window.electronAPI.update.onUpdateReady(handleUpdateReady);
+    const unsubscribe = window.electronAPI.update.onStateChanged(handleStateChanged);
+
+    void window.electronAPI.update
+      .getState()
+      .then((nextState) => {
+        if (!receivedStatePush && isMounted) {
+          setUpdateState(nextState);
+        }
+      })
+      .catch(() => undefined);
 
     return () => {
-      window.electronAPI?.update?.removeUpdateReadyListener();
+      isMounted = false;
+      unsubscribe();
     };
   }, []);
 
-  const restartAndInstall = useCallback(() => {
-    if (window.electronAPI?.update) {
-      localStorage.removeItem(STORAGE_KEY);
-      window.electronAPI.update.restartAndInstall();
+  useEffect(() => {
+    if (
+      updateState.phase === "error" &&
+      previousPhaseRef.current !== "error"
+    ) {
+      toast.error(updateState.errorMessage ?? "Update failed. Please try again.");
     }
+
+    previousPhaseRef.current = updateState.phase;
+  }, [updateState.errorMessage, updateState.phase]);
+
+  const requestInstall = useCallback(() => {
+    window.electronAPI?.update?.requestInstall();
   }, []);
 
   const simulateUpdate = useCallback(() => {
-    if (window.electronAPI?.update) {
-      window.electronAPI.update.simulateUpdate?.();
-    }
+    window.electronAPI?.update?.simulateUpdate?.();
   }, []);
 
   return {
-    updateReady,
-    restartAndInstall,
+    updateState,
+    showUpdateButton: updateState.phase !== "idle",
+    updateButtonLabel: getUpdateButtonLabel(updateState),
+    requestInstall,
     simulateUpdate,
   };
+}
+
+function getUpdateButtonLabel(updateState: UpdateState): string | null {
+  return updateState.phase === "idle" ? null : "Update";
 }
