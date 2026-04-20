@@ -374,4 +374,47 @@ describe("useAppState active organization recovery", () => {
       expect(result.current.isSelectedServerSyncing).toBe(false);
     });
   });
+
+  it.each(["chatbox", "shared"] as const)(
+    "does not patch dashboard server state for hosted %s OAuth callbacks",
+    async (surface) => {
+      loadAppStateMock.mockReturnValue(
+        createLoadedAppState({
+          name: "demo-server",
+          connectionStatus: "disconnected",
+        }),
+      );
+      localStorage.setItem(
+        "mcp-hosted-oauth-pending",
+        JSON.stringify({
+          surface,
+          serverName: "demo-server",
+          serverUrl: "https://example.com/mcp",
+          returnHash: "#demo",
+          startedAt: Date.now(),
+        }),
+      );
+      localStorage.setItem("mcp-oauth-pending", "demo-server");
+      window.history.replaceState({}, "", "/oauth/callback?code=test-code");
+
+      renderHook(() =>
+        useAppState({
+          currentUserId: "user-1",
+          routeOrganizationId: undefined,
+          hasOrganizations: false,
+          isLoadingOrganizations: false,
+          validOrganizations: [],
+        }),
+      );
+
+      await waitFor(() => {
+        const lastWorkspaceArgs =
+          useWorkspaceStateMock.mock.calls.at(-1)?.[0];
+        expect(
+          lastWorkspaceArgs?.appState.servers["demo-server"]
+            ?.connectionStatus,
+        ).toBe("disconnected");
+      });
+    },
+  );
 });

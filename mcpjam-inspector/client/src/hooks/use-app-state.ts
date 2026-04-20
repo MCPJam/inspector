@@ -2,7 +2,11 @@ import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useConvexAuth } from "convex/react";
 import { useLogger } from "./use-logger";
-import { initialAppState, type ServerWithName } from "@/state/app-types";
+import {
+  initialAppState,
+  type AppState,
+  type ServerWithName,
+} from "@/state/app-types";
 import { appReducer } from "@/state/app-reducer";
 import { loadAppState, saveAppState } from "@/state/storage";
 import { useWorkspaceState } from "./use-workspace-state";
@@ -12,6 +16,7 @@ import {
   readStoredActiveOrganizationId,
   writeStoredActiveOrganizationId,
 } from "@/lib/active-organization-storage";
+import { HOSTED_OAUTH_PENDING_STORAGE_KEY } from "@/lib/hosted-oauth-callback";
 
 export type { ServerWithName } from "@/state/app-types";
 export type { ServerUpdateResult } from "./use-server-state";
@@ -37,6 +42,77 @@ function createDefaultWorkspace() {
     createdAt: new Date(),
     updatedAt: new Date(),
   };
+}
+
+// Resolves the server name for a pending OAuth callback by checking the
+// hosted OAuth marker first (preferred), then the legacy localStorage key.
+function resolvePendingOAuthServerName(): string | null {
+  if (typeof window === "undefined") return null;
+  if (!new URLSearchParams(window.location.search).has("code")) return null;
+
+  try {
+    const raw = localStorage.getItem(HOSTED_OAUTH_PENDING_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as {
+        serverName?: unknown;
+        surface?: unknown;
+      } | null;
+      if (parsed?.surface === "chatbox" || parsed?.surface === "shared") {
+        return null;
+      }
+      if (
+        parsed?.surface === "workspace" &&
+        typeof parsed.serverName === "string" &&
+        parsed.serverName
+      ) {
+        return parsed.serverName;
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return localStorage.getItem("mcp-oauth-pending");
+}
+
+// Patches the loaded state so a pending OAuth server starts as "connecting"
+// rather than "disconnected", preventing a flash on the first rendered frame.
+function patchStateForPendingOAuth(
+  state: AppState,
+  serverName: string,
+): AppState {
+  const existing = state.servers[serverName];
+  if (existing) {
+    return {
+      ...state,
+      servers: {
+        ...state.servers,
+        [serverName]: { ...existing, connectionStatus: "connecting" },
+      },
+    };
+  }
+  // Server not yet in local state (e.g. hosted mode) — seed a minimal entry.
+  const storedUrl = localStorage.getItem(`mcp-serverUrl-${serverName}`);
+  if (!storedUrl) return state;
+  try {
+    new URL(storedUrl);
+    return {
+      ...state,
+      servers: {
+        ...state.servers,
+        [serverName]: {
+          name: serverName,
+          config: { url: storedUrl } as ServerWithName["config"],
+          lastConnectionTime: new Date(),
+          connectionStatus: "connecting",
+          retryCount: 0,
+          enabled: true,
+          useOAuth: true,
+        } as ServerWithName,
+      },
+    };
+  } catch {
+    return state;
+  }
 }
 
 export function buildDisconnectedRuntimeServers(
@@ -213,7 +289,11 @@ export function useAppState({
   useEffect(() => {
     try {
       const loaded = loadAppState();
-      dispatch({ type: "HYDRATE_STATE", payload: loaded });
+      const pendingOAuthServerName = resolvePendingOAuthServerName();
+      const hydratedState = pendingOAuthServerName
+        ? patchStateForPendingOAuth(loaded, pendingOAuthServerName)
+        : loaded;
+      dispatch({ type: "HYDRATE_STATE", payload: hydratedState });
     } catch (error) {
       logger.error("Failed to load saved state", {
         error: error instanceof Error ? error.message : "Unknown error",
