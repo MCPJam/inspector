@@ -21,6 +21,14 @@ import { HOSTED_OAUTH_PENDING_STORAGE_KEY } from "@/lib/hosted-oauth-callback";
 export type { ServerWithName } from "@/state/app-types";
 export type { ServerUpdateResult } from "./use-server-state";
 
+export interface PendingDashboardOAuthState {
+  serverName: string;
+  serverUrl: string | null;
+  startedAt: number;
+}
+
+const PENDING_DASHBOARD_OAUTH_UI_TIMEOUT_MS = 30 * 1000;
+
 interface ActiveOrganizationSelection {
   organizationId?: string;
   userId: string | null;
@@ -44,9 +52,9 @@ function createDefaultWorkspace() {
   };
 }
 
-// Resolves the server name for a pending OAuth callback by checking the
-// hosted OAuth marker first (preferred), then the legacy localStorage key.
-function resolvePendingOAuthServerName(): string | null {
+// Resolves dashboard/server-list OAuth callbacks only. Hosted chatbox/shared
+// callbacks are handled by App.tsx and must not affect server-card state.
+function readPendingDashboardOAuth(): PendingDashboardOAuthState | null {
   if (typeof window === "undefined") return null;
   if (!new URLSearchParams(window.location.search).has("code")) return null;
 
@@ -55,6 +63,8 @@ function resolvePendingOAuthServerName(): string | null {
     if (raw) {
       const parsed = JSON.parse(raw) as {
         serverName?: unknown;
+        serverUrl?: unknown;
+        startedAt?: unknown;
         surface?: unknown;
       } | null;
       if (parsed?.surface === "chatbox" || parsed?.surface === "shared") {
@@ -65,54 +75,48 @@ function resolvePendingOAuthServerName(): string | null {
         typeof parsed.serverName === "string" &&
         parsed.serverName
       ) {
-        return parsed.serverName;
+        return {
+          serverName: parsed.serverName,
+          serverUrl:
+            typeof parsed.serverUrl === "string" ? parsed.serverUrl : null,
+          startedAt:
+            typeof parsed.startedAt === "number" ? parsed.startedAt : Date.now(),
+        };
       }
     }
   } catch {
     // ignore
   }
-  return localStorage.getItem("mcp-oauth-pending");
+  const serverName = localStorage.getItem("mcp-oauth-pending");
+  if (!serverName) return null;
+  return {
+    serverName,
+    serverUrl: localStorage.getItem(`mcp-serverUrl-${serverName}`),
+    startedAt: Date.now(),
+  };
 }
 
-// Patches the loaded state so a pending OAuth server starts as "connecting"
-// rather than "disconnected", preventing a flash on the first rendered frame.
+// Patches only existing server state. Missing servers are represented by
+// pendingDashboardOAuth UI state instead of fake temporary server objects.
 function patchStateForPendingOAuth(
   state: AppState,
-  serverName: string,
+  pendingOAuth: PendingDashboardOAuthState,
 ): AppState {
-  const existing = state.servers[serverName];
-  if (existing) {
-    return {
-      ...state,
-      servers: {
-        ...state.servers,
-        [serverName]: { ...existing, connectionStatus: "connecting" },
-      },
-    };
-  }
-  // Server not yet in local state (e.g. hosted mode) — seed a minimal entry.
-  const storedUrl = localStorage.getItem(`mcp-serverUrl-${serverName}`);
-  if (!storedUrl) return state;
-  try {
-    new URL(storedUrl);
-    return {
-      ...state,
-      servers: {
-        ...state.servers,
-        [serverName]: {
-          name: serverName,
-          config: { url: storedUrl } as ServerWithName["config"],
-          lastConnectionTime: new Date(),
-          connectionStatus: "connecting",
-          retryCount: 0,
-          enabled: true,
-          useOAuth: true,
-        } as ServerWithName,
-      },
-    };
-  } catch {
+  const existing = state.servers[pendingOAuth.serverName];
+  if (!existing) {
     return state;
   }
+
+  return {
+    ...state,
+    servers: {
+      ...state.servers,
+      [pendingOAuth.serverName]: {
+        ...existing,
+        connectionStatus: "connecting",
+      },
+    },
+  };
 }
 
 export function buildDisconnectedRuntimeServers(
@@ -145,6 +149,9 @@ export function useAppState({
   const logger = useLogger("Connections");
   const [appState, dispatch] = useReducer(appReducer, initialAppState);
   const [isLoading, setIsLoading] = useState(true);
+  const [pendingDashboardOAuth, setPendingDashboardOAuth] =
+    useState<PendingDashboardOAuthState | null>(null);
+  const hasHydratedAppStateRef = useRef(false);
 
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
 
@@ -287,11 +294,23 @@ export function useAppState({
   ]);
 
   useEffect(() => {
+    if (hasHydratedAppStateRef.current) return;
+    hasHydratedAppStateRef.current = true;
+
     try {
       const loaded = loadAppState();
-      const pendingOAuthServerName = resolvePendingOAuthServerName();
-      const hydratedState = pendingOAuthServerName
-        ? patchStateForPendingOAuth(loaded, pendingOAuthServerName)
+      const pendingOAuth = readPendingDashboardOAuth();
+      setPendingDashboardOAuth((current) => {
+        if (
+          current?.serverName === pendingOAuth?.serverName &&
+          current?.serverUrl === pendingOAuth?.serverUrl
+        ) {
+          return current;
+        }
+        return pendingOAuth;
+      });
+      const hydratedState = pendingOAuth
+        ? patchStateForPendingOAuth(loaded, pendingOAuth)
         : loaded;
       dispatch({ type: "HYDRATE_STATE", payload: hydratedState });
     } catch (error) {
@@ -306,6 +325,38 @@ export function useAppState({
   useEffect(() => {
     if (!isLoading) saveAppState(appState);
   }, [appState, isLoading]);
+
+  useEffect(() => {
+    if (!pendingDashboardOAuth) return;
+    const pendingServer = appState.servers[pendingDashboardOAuth.serverName];
+    if (
+      pendingServer?.connectionStatus === "connected" ||
+      pendingServer?.connectionStatus === "failed"
+    ) {
+      setPendingDashboardOAuth(null);
+    }
+  }, [appState.servers, pendingDashboardOAuth]);
+
+  useEffect(() => {
+    if (!pendingDashboardOAuth) return;
+
+    const elapsedMs = Date.now() - pendingDashboardOAuth.startedAt;
+    if (elapsedMs >= PENDING_DASHBOARD_OAUTH_UI_TIMEOUT_MS) {
+      setPendingDashboardOAuth(null);
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setPendingDashboardOAuth((current) =>
+        current?.serverName === pendingDashboardOAuth.serverName &&
+        current.startedAt === pendingDashboardOAuth.startedAt
+          ? null
+          : current,
+      );
+    }, PENDING_DASHBOARD_OAUTH_UI_TIMEOUT_MS - elapsedMs);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [pendingDashboardOAuth]);
 
   const workspaceState = useWorkspaceState({
     appState,
@@ -498,6 +549,7 @@ export function useAppState({
     setActiveOrganizationId,
     clearConvexActiveWorkspaceSelection,
     clearLocalFallbackWorkspaceSelection,
+    pendingDashboardOAuth,
 
     workspaceServers: serverState.workspaceServers,
     connectedOrConnectingServerConfigs:

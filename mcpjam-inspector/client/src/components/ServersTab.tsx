@@ -15,7 +15,11 @@ import {
   MessageSquareText,
   Settings,
 } from "lucide-react";
-import { ServerWithName, type ServerUpdateResult } from "@/hooks/use-app-state";
+import type {
+  PendingDashboardOAuthState,
+  ServerUpdateResult,
+  ServerWithName,
+} from "@/hooks/use-app-state";
 import { ServerConnectionCard } from "./connection/ServerConnectionCard";
 import { AddServerModal } from "./connection/AddServerModal";
 import { ClientConfigTab } from "./client-config/ClientConfigTab";
@@ -389,8 +393,36 @@ function SortableServerCard({
   );
 }
 
+function PendingDashboardOAuthCard({
+  pendingOAuth,
+}: {
+  pendingOAuth: PendingDashboardOAuthState;
+}) {
+  return (
+    <Card className="border-blue-500/30 bg-blue-500/5 p-5">
+      <div className="flex items-start gap-3">
+        <Loader2 className="mt-0.5 h-5 w-5 animate-spin text-blue-500" />
+        <div className="min-w-0">
+          <p className="text-sm font-semibold">
+            {`Connecting ${pendingOAuth.serverName}...`}
+          </p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Finishing OAuth sign-in. This can take a few seconds.
+          </p>
+          {pendingOAuth.serverUrl ? (
+            <p className="mt-2 truncate font-mono text-xs text-muted-foreground/80">
+              {pendingOAuth.serverUrl}
+            </p>
+          ) : null}
+        </div>
+      </div>
+    </Card>
+  );
+}
+
 interface ServersTabProps {
   workspaceServers: Record<string, ServerWithName>;
+  pendingDashboardOAuth?: PendingDashboardOAuthState | null;
   onConnect: (formData: ServerFormData) => void;
   onDisconnect: (serverName: string) => void;
   onReconnect: (
@@ -423,6 +455,7 @@ interface ServersTabProps {
 
 export function ServersTab({
   workspaceServers,
+  pendingDashboardOAuth,
   onConnect,
   onDisconnect,
   onReconnect,
@@ -644,7 +677,17 @@ export function ServersTab({
   }, [pendingQuickConnect, workspaceServers]);
 
   const connectedCount = Object.keys(workspaceServers).length;
-  const hasAnyServers = connectedCount > 0;
+  const pendingDashboardOAuthServer = pendingDashboardOAuth
+    ? workspaceServers[pendingDashboardOAuth.serverName]
+    : null;
+  const isPendingDashboardOAuthVisible =
+    !!pendingDashboardOAuth &&
+    pendingDashboardOAuthServer?.connectionStatus !== "connected" &&
+    pendingDashboardOAuthServer?.connectionStatus !== "failed";
+  const shouldRenderPendingDashboardOAuthCard =
+    isPendingDashboardOAuthVisible && !pendingDashboardOAuthServer;
+  const hasAnyServers =
+    connectedCount > 0 || shouldRenderPendingDashboardOAuthCard;
   const pendingQuickConnectServer =
     pendingQuickConnect?.sourceTab === "servers"
       ? workspaceServers[pendingQuickConnect.serverName]
@@ -693,6 +736,26 @@ export function ServersTab({
       setQuickConnectMiniCardsExpanded(true);
     }
   }, [totalServerCards]);
+
+  const getDisplayServer = useCallback(
+    (server: ServerWithName): ServerWithName => {
+      if (
+        !isPendingDashboardOAuthVisible ||
+        pendingDashboardOAuth?.serverName !== server.name ||
+        server.connectionStatus === "connected" ||
+        server.connectionStatus === "failed"
+      ) {
+        return server;
+      }
+
+      return {
+        ...server,
+        connectionStatus: "connecting",
+        enabled: true,
+      };
+    },
+    [isPendingDashboardOAuthVisible, pendingDashboardOAuth?.serverName],
+  );
 
   const shouldShowQuickConnect =
     isRegistryEnabled &&
@@ -1097,15 +1160,22 @@ export function ServersTab({
               strategy={rectSortingStrategy}
             >
               <div className="grid grid-cols-1 lg:grid-cols-1 xl:grid-cols-2 gap-6">
+                {shouldRenderPendingDashboardOAuthCard &&
+                pendingDashboardOAuth ? (
+                  <PendingDashboardOAuthCard
+                    pendingOAuth={pendingDashboardOAuth}
+                  />
+                ) : null}
                 {orderedServerNames.map((name) => {
                   const server = workspaceServers[name];
                   if (!server) return null;
+                  const displayServer = getDisplayServer(server);
                   return (
                     <SortableServerCard
                       key={name}
                       id={name}
                       dndDisabled={false}
-                      server={server}
+                      server={displayServer}
                       needsReconnect={reconnectWarningByServerName[name]}
                       onDisconnect={(serverName) => {
                         clearPendingQuickConnectIfMatches(serverName);
@@ -1128,7 +1198,7 @@ export function ServersTab({
               {activeServer ? (
                 <div style={{ opacity: 0.85 }}>
                   <ServerConnectionCard
-                    server={activeServer}
+                    server={getDisplayServer(activeServer)}
                     needsReconnect={
                       reconnectWarningByServerName[activeServer.name]
                     }

@@ -832,30 +832,6 @@ export function useServerState({
             config: earlyServer.config,
             select: true,
           });
-        } else {
-          const earlyUrl =
-            hostedOAuthCallbackContext?.serverUrl ??
-            localStorage.getItem(`mcp-serverUrl-${earlyPendingName}`);
-          if (earlyUrl) {
-            try {
-              new URL(earlyUrl);
-              dispatch({
-                type: "UPSERT_SERVER",
-                name: earlyPendingName,
-                server: {
-                  name: earlyPendingName,
-                  config: { url: earlyUrl } as MCPServerConfig,
-                  lastConnectionTime: new Date(),
-                  connectionStatus: "connecting",
-                  retryCount: 0,
-                  enabled: true,
-                  useOAuth: true,
-                } as ServerWithName,
-              });
-            } catch {
-              // ignore invalid URL
-            }
-          }
         }
       }
 

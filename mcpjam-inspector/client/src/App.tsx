@@ -650,6 +650,7 @@ export default function App() {
     setActiveOrganizationId,
     clearConvexActiveWorkspaceSelection,
     clearLocalFallbackWorkspaceSelection,
+    pendingDashboardOAuth,
     isCloudSyncActive,
   } = useAppState({
     currentUserId: workOsUser?.id ?? null,
@@ -1671,6 +1672,7 @@ export default function App() {
               workspaces={workspaces}
               activeWorkspaceId={activeWorkspaceId}
               organizationId={activeWorkspaceBillingOrganizationId}
+              pendingDashboardOAuth={pendingDashboardOAuth}
               isBillingContextPending={isBillingContextPending}
               isLoadingWorkspaces={isLoadingRemoteWorkspaces}
               onWorkspaceShared={handleWorkspaceShared}
