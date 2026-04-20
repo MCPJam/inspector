@@ -30,6 +30,8 @@ interface StoredOAuthDiscoveryState {
   discoveryState: OAuthDiscoveryState;
 }
 
+const ELECTRON_MCP_CALLBACK_STATE_PREFIX = "electron_mcp:";
+
 interface StoredOAuthClientInformation {
   client_id?: string;
   client_secret?: string;
@@ -439,6 +441,20 @@ export interface OAuthResult {
   error?: string;
 }
 
+export function buildMCPOAuthState(): string {
+  const state = generateRandomString(32);
+  if (window.isElectron) {
+    return `${ELECTRON_MCP_CALLBACK_STATE_PREFIX}${state}`;
+  }
+  return state;
+}
+
+export function isElectronMcpCallbackState(
+  state: string | null | undefined,
+): boolean {
+  return Boolean(state && state.startsWith(ELECTRON_MCP_CALLBACK_STATE_PREFIX));
+}
+
 interface HostedOAuthCompletionResponse {
   success: boolean;
   expiresAt?: number | null;
@@ -469,7 +485,7 @@ export class MCPOAuthProvider implements OAuthClientProvider {
   }
 
   state(): string {
-    return generateRandomString(32);
+    return buildMCPOAuthState();
   }
 
   get redirectUrl(): string {
@@ -581,7 +597,24 @@ export class MCPOAuthProvider implements OAuthClientProvider {
     if (window.location.hash) {
       localStorage.setItem("mcp-oauth-return-hash", window.location.hash);
     }
-    window.location.href = authorizationUrl.toString();
+
+    if (window.isElectron && window.electronAPI?.app?.openExternal) {
+      try {
+        await window.electronAPI.app.openExternal(authorizationUrl.toString());
+        return;
+      } catch (error) {
+        console.error(
+          "Failed to open system browser for MCP OAuth, falling back to in-app navigation:",
+          error,
+        );
+      }
+    }
+
+    this.navigateToUrl(authorizationUrl.toString());
+  }
+
+  navigateToUrl(url: string) {
+    window.location.assign(url);
   }
 
   async saveCodeVerifier(codeVerifier: string) {

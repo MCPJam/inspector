@@ -27,6 +27,7 @@ import {
   getStoredTokens,
   clearOAuthData,
   initiateOAuth,
+  isElectronMcpCallbackState,
 } from "@/lib/oauth/mcp-oauth";
 import {
   clearHostedOAuthPendingState,
@@ -99,6 +100,41 @@ function saveOAuthConfigToLocalStorage(formData: ServerFormData): void {
   }
 }
 
+export function buildElectronMcpCallbackUrl(): string | null {
+  if (window.isElectron || window.location.pathname !== "/oauth/callback") {
+    return null;
+  }
+
+  const params = new URLSearchParams(window.location.search);
+  if (!params.get("code") && !params.get("error")) {
+    return null;
+  }
+
+  // Electron-started MCP OAuth explicitly tags the state parameter so the
+  // browser callback can hand control back to the desktop app without relying
+  // on browser-local storage heuristics.
+  if (!isElectronMcpCallbackState(params.get("state"))) {
+    return null;
+  }
+
+  const callbackUrl = new URL("mcpjam://oauth/callback");
+  callbackUrl.searchParams.set("flow", "mcp");
+
+  for (const [key, value] of params.entries()) {
+    callbackUrl.searchParams.append(key, value);
+  }
+
+  return callbackUrl.toString();
+}
+
+const OAUTH_CONNECTION_RETRY_DELAY_MS = 1500;
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
+}
+
 function restorePathAfterOAuthCallback(
   currentPathname: string,
   savedHash: string,
@@ -125,6 +161,29 @@ function requiresFreshOAuthAuthorization(error: unknown): boolean {
     normalized.includes("requires oauth authentication") ||
     (normalized.includes("authentication failed") &&
       normalized.includes("invalid_token"))
+  );
+}
+
+export function shouldRetryOAuthConnectionFailure(
+  errorMessage?: string,
+): boolean {
+  if (!errorMessage) {
+    return false;
+  }
+
+  const normalized = errorMessage.toLowerCase();
+  if (
+    normalized.includes("authentication failed") ||
+    normalized.includes("invalid_client") ||
+    normalized.includes("unauthorized_client")
+  ) {
+    return false;
+  }
+
+  return (
+    normalized.includes("request timed out") ||
+    normalized.includes("streamable http error") ||
+    normalized.includes("sse error: sse error: non-200 status code (404)")
   );
 }
 
@@ -615,6 +674,43 @@ export function useServerState({
     [dispatch, fetchAndStoreInitInfo],
   );
 
+  const testConnectionAfterOAuth = useCallback(
+    async (serverConfig: HttpServerConfig, serverName: string) => {
+      try {
+        const firstResult = await testConnection(serverConfig, serverName);
+        if (
+          firstResult.success ||
+          !shouldRetryOAuthConnectionFailure(firstResult.error)
+        ) {
+          return firstResult;
+        }
+
+        logger.warn(
+          "Retrying OAuth connection after transient transport error",
+          {
+            serverName,
+            error: firstResult.error,
+          },
+        );
+      } catch (error) {
+        const errorMessage =
+          error instanceof Error ? error.message : "Unknown connection error";
+        if (!shouldRetryOAuthConnectionFailure(errorMessage)) {
+          throw error;
+        }
+
+        logger.warn("Retrying OAuth connection after transport exception", {
+          serverName,
+          error: errorMessage,
+        });
+      }
+
+      await delay(OAUTH_CONNECTION_RETRY_DELAY_MS);
+      return testConnection(serverConfig, serverName);
+    },
+    [logger],
+  );
+
   const resolveOAuthInitiationInputs = useCallback(
     async (
       formData: ServerFormData,
@@ -693,7 +789,7 @@ export function useServerState({
           });
 
           try {
-            const connectionResult = await guardedTestConnection(
+            const connectionResult = await testConnectionAfterOAuth(
               withWorkspaceClientCapabilities(result.serverConfig),
               serverName,
             );
@@ -776,6 +872,7 @@ export function useServerState({
       isAuthenticated,
       logger,
       storeInitInfo,
+      testConnectionAfterOAuth,
       guardedTestConnection,
       withWorkspaceClientCapabilities,
     ],
@@ -801,9 +898,13 @@ export function useServerState({
     const code = urlParams.get("code");
     const error = urlParams.get("error");
     const errorDescription = urlParams.get("error_description");
+    const electronCallbackUrl = buildElectronMcpCallbackUrl();
     const hostedOAuthCallbackContext = HOSTED_MODE
       ? getHostedOAuthCallbackContext()
       : null;
+    if (electronCallbackUrl) {
+      return;
+    }
     const isHostedWorkspaceCallback =
       hostedOAuthCallbackContext?.surface === "workspace";
     if (code) {

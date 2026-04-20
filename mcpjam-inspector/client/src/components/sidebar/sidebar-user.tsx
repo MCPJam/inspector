@@ -83,12 +83,7 @@ export function SidebarUser({
   };
 
   const handleSignOut = () => {
-    const isElectron = (window as any).isElectron;
-    const returnTo =
-      isElectron && import.meta.env.DEV
-        ? "http://localhost:8080/callback"
-        : window.location.origin;
-    signOut({ returnTo });
+    signOut({ returnTo: window.location.origin });
   };
 
   const avatarUrl = profilePictureUrl;
