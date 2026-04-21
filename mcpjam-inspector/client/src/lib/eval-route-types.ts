@@ -1,3 +1,5 @@
+export type SuiteOverviewView = "runs" | "test-cases" | "executions";
+
 /**
  * Unified eval hash routes for Playground (`#/evals`) and CI/CD (`#/ci-evals`).
  * CI-only shapes (`commit-detail`, `fromCommit`) are omitted from Playground URLs at runtime.
@@ -9,7 +11,7 @@ export type EvalRoute =
   | {
       type: "suite-overview";
       suiteId: string;
-      view?: "runs" | "test-cases";
+      view?: SuiteOverviewView;
       /** CI: commit sidebar when drilling from Group by commit */
       fromCommit?: string;
     }

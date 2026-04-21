@@ -2,7 +2,7 @@ import { beforeEach, describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { SuiteIterationsView } from "../suite-iterations-view";
-import type { EvalSuite } from "../types";
+import type { EvalIteration, EvalSuite } from "../types";
 
 const mocks = vi.hoisted(() => ({
   useMutation: vi.fn(() => vi.fn()),
@@ -28,9 +28,11 @@ vi.mock("../use-suite-data", () => ({
 }));
 
 vi.mock("../suite-header", () => ({
-  SuiteHeader: (props: unknown) => {
+  SuiteHeader: (props: any) => {
     mocks.suiteHeader(props);
-    return <div data-testid="suite-header" />;
+    return (
+      <div data-testid="suite-header">{props.overviewModeSelector}</div>
+    );
   },
 }));
 
@@ -99,6 +101,23 @@ const baseSuite: EvalSuite = {
   updatedAt: 1,
   source: "ui",
 };
+
+function baseIteration(overrides: Partial<EvalIteration>): EvalIteration {
+  return {
+    _id: "iter-1",
+    testCaseId: "case-1",
+    createdBy: "u",
+    createdAt: 1,
+    startedAt: 1,
+    iterationNumber: 1,
+    updatedAt: 1,
+    status: "completed",
+    result: "passed",
+    actualToolCalls: [],
+    tokensUsed: 0,
+    ...overrides,
+  } as EvalIteration;
+}
 
 describe("SuiteIterationsView caseListInSidebar", () => {
   beforeEach(() => {
@@ -331,6 +350,166 @@ describe("SuiteIterationsView caseListInSidebar", () => {
       openCompare: true,
       iteration: "iter-1",
     });
+  });
+
+  it("shows the Playground Test cases / Executions selector", async () => {
+    const user = userEvent.setup();
+    const navigation = {
+      ...noopNav,
+      toSuiteOverview: vi.fn(),
+    };
+
+    render(
+      <SuiteIterationsView
+        suite={baseSuite}
+        cases={[]}
+        iterations={[]}
+        allIterations={[]}
+        runs={[]}
+        runsLoading={false}
+        aggregate={null}
+        onRerun={vi.fn()}
+        onCancelRun={vi.fn()}
+        onDelete={vi.fn()}
+        onDeleteRun={vi.fn()}
+        onDirectDeleteRun={vi.fn().mockResolvedValue(undefined)}
+        connectedServerNames={new Set()}
+        canDeleteSuite={false}
+        rerunningSuiteId={null}
+        cancellingRunId={null}
+        deletingSuiteId={null}
+        deletingRunId={null}
+        availableModels={[]}
+        route={{
+          type: "suite-overview",
+          suiteId: "suite-1",
+          view: "test-cases",
+        }}
+        navigation={navigation}
+        hideRunActions
+      />,
+    );
+
+    expect(
+      screen.getByRole("button", { name: "Test cases" }),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Executions" }));
+
+    expect(navigation.toSuiteOverview).toHaveBeenCalledWith(
+      "suite-1",
+      "executions",
+    );
+  });
+
+  it("opens execution rows in compare when they have a test case id", async () => {
+    const user = userEvent.setup();
+    const navigation = {
+      ...noopNav,
+      toTestEdit: vi.fn(),
+    };
+
+    render(
+      <SuiteIterationsView
+        suite={baseSuite}
+        cases={[
+          {
+            _id: "case-1",
+            testSuiteId: "suite-1",
+            createdBy: "u",
+            title: "Case 1",
+            query: "Prompt",
+            models: [],
+            runs: 1,
+            expectedToolCalls: [],
+          },
+        ]}
+        iterations={[]}
+        allIterations={[baseIteration({ _id: "iter-compare" })]}
+        runs={[]}
+        runsLoading={false}
+        aggregate={null}
+        onRerun={vi.fn()}
+        onCancelRun={vi.fn()}
+        onDelete={vi.fn()}
+        onDeleteRun={vi.fn()}
+        onDirectDeleteRun={vi.fn().mockResolvedValue(undefined)}
+        connectedServerNames={new Set()}
+        canDeleteSuite={false}
+        rerunningSuiteId={null}
+        cancellingRunId={null}
+        deletingSuiteId={null}
+        deletingRunId={null}
+        availableModels={[]}
+        route={{
+          type: "suite-overview",
+          suiteId: "suite-1",
+          view: "executions",
+        }}
+        navigation={navigation}
+        hideRunActions
+      />,
+    );
+
+    await user.click(screen.getByTestId("suite-execution-row-iter-compare"));
+
+    expect(navigation.toTestEdit).toHaveBeenCalledWith("suite-1", "case-1", {
+      openCompare: true,
+      iteration: "iter-compare",
+    });
+  });
+
+  it("falls back to run detail for execution rows without a test case id", async () => {
+    const user = userEvent.setup();
+    const navigation = {
+      ...noopNav,
+      toRunDetail: vi.fn(),
+    };
+
+    render(
+      <SuiteIterationsView
+        suite={baseSuite}
+        cases={[]}
+        iterations={[]}
+        allIterations={[
+          baseIteration({
+            _id: "iter-run",
+            testCaseId: undefined,
+            suiteRunId: "run-1",
+            testCaseSnapshot: { title: "Snapshot case" } as any,
+          }),
+        ]}
+        runs={[]}
+        runsLoading={false}
+        aggregate={null}
+        onRerun={vi.fn()}
+        onCancelRun={vi.fn()}
+        onDelete={vi.fn()}
+        onDeleteRun={vi.fn()}
+        onDirectDeleteRun={vi.fn().mockResolvedValue(undefined)}
+        connectedServerNames={new Set()}
+        canDeleteSuite={false}
+        rerunningSuiteId={null}
+        cancellingRunId={null}
+        deletingSuiteId={null}
+        deletingRunId={null}
+        availableModels={[]}
+        route={{
+          type: "suite-overview",
+          suiteId: "suite-1",
+          view: "executions",
+        }}
+        navigation={navigation}
+        hideRunActions
+      />,
+    );
+
+    await user.click(screen.getByTestId("suite-execution-row-iter-run"));
+
+    expect(navigation.toRunDetail).toHaveBeenCalledWith(
+      "suite-1",
+      "run-1",
+      "iter-run",
+    );
   });
 
   it("passes canDeleteSuite through to RunOverview in read-only overview (runs view)", () => {

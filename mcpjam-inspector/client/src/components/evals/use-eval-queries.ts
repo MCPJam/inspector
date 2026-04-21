@@ -5,6 +5,7 @@ import type {
   SuiteDetailsQueryResponse,
   EvalSuiteRun,
 } from "./types";
+import { getIterationRecencyTimestamp } from "./helpers";
 
 /**
  * Hook for fetching eval data (overview, suite details, and runs)
@@ -75,7 +76,8 @@ export function useEvalQueries({
   const sortedIterations = useMemo(() => {
     if (!suiteDetails) return [];
     return [...suiteDetails.iterations].sort(
-      (a, b) => (b.startedAt || b.createdAt) - (a.startedAt || a.createdAt),
+      (a, b) =>
+        getIterationRecencyTimestamp(b) - getIterationRecencyTimestamp(a),
     );
   }, [suiteDetails]);
 

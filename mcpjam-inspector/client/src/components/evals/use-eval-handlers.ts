@@ -14,6 +14,7 @@ import {
   navigateToCiEvalsRoute,
   type CiEvalsRoute,
 } from "@/lib/ci-evals-router";
+import type { SuiteOverviewView } from "@/lib/eval-route-types";
 import type {
   EvalCase,
   EvalSuite,
@@ -120,7 +121,7 @@ export function useEvalHandlers({
         | {
             type: "suite-overview";
             suiteId: string;
-            view?: "runs" | "test-cases";
+            view?: SuiteOverviewView;
           },
     ) => {
       if (evalsNavigationContext === "ci-evals") {
