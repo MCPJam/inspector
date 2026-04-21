@@ -87,10 +87,14 @@ export function ModelCompareCardHeader({
 
   const displayName = modelLabelProp ?? model?.name ?? "";
 
-  const isErroredSummary = summary?.status === "error";
+  const isNonComparableSummary =
+    summary?.status === "error" || summary?.status === "cancelled";
   const comparableSummaries = allSummaries.filter(
     (item) =>
-      item.status !== "error" && item.durationMs != null && item.durationMs > 0,
+      item.status !== "error" &&
+      item.status !== "cancelled" &&
+      item.durationMs != null &&
+      item.durationMs > 0,
   );
   const durationValues = comparableSummaries
     .map((item) => item.durationMs ?? 0)
@@ -121,17 +125,17 @@ export function ModelCompareCardHeader({
 
   const isFastest =
     canHighlightWinner &&
-    !isErroredSummary &&
+    !isNonComparableSummary &&
     currentDuration > 0 &&
     currentDuration === minDuration;
   const isFewestTokens =
     canHighlightWinner &&
-    !isErroredSummary &&
+    !isNonComparableSummary &&
     currentTokens > 0 &&
     currentTokens === minTokens;
   const isFewestTools =
     canHighlightWinner &&
-    !isErroredSummary &&
+    !isNonComparableSummary &&
     currentToolCount > 0 &&
     currentToolCount === minToolCount;
   const isRunningSummary = summary?.status === "running";

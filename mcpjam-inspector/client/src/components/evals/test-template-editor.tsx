@@ -1461,6 +1461,24 @@ export function TestTemplateEditor({
               let resolved!: CompareRunRecord;
               setCompareRunRecords((previous) => {
                 const existing = previous[modelValue];
+                // Guard against a stale abort overwriting a newer retry: if
+                // the request generation for this model no longer matches
+                // the one that started this attempt, another run has
+                // superseded us and we must not persist a "cancelled" record
+                // over the newer run's state.
+                if (
+                  compareRequestGenByModelRef.current[modelValue] !== myGen
+                ) {
+                  resolved =
+                    existing ??
+                    buildCompareRunRecord({
+                      modelValue,
+                      modelLabel,
+                      iteration: null,
+                      completedAt: Date.now(),
+                    });
+                  return previous;
+                }
                 const base = buildCompareRunRecord({
                   modelValue,
                   modelLabel,
@@ -2324,6 +2342,7 @@ export function TestTemplateEditor({
                         testCase={currentTestCase}
                         serverNames={connectedServerList}
                         workspaceId={workspaceId}
+                        onContinueInChat={onContinueInChat}
                         onStreamingTraceLoaded={() =>
                           clearCompareStreamingState(record.modelValue)
                         }
