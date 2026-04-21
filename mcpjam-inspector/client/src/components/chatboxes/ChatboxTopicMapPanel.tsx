@@ -168,9 +168,17 @@ interface ChatboxTopicMapPanelProps {
   rebuildBusy?: boolean;
 }
 
-function rebuildButtonLabel(run: ClusterRunState | null): string {
+function rebuildButtonLabel(
+  run: ClusterRunState | null,
+  unmappedCount?: number,
+): string {
   if (!run) return "Rebuild clusters";
-  if (run.isStale) return "Rebuild clusters";
+  if (run.isStale) {
+    if (unmappedCount && unmappedCount > 0) {
+      return `Rebuild clusters \u00b7 ${unmappedCount.toLocaleString()} session${unmappedCount === 1 ? "" : "s"} not shown`;
+    }
+    return "Rebuild clusters \u00b7 new sessions available";
+  }
   switch (run.status) {
     case "queued":
       return "Queued…";
@@ -179,6 +187,9 @@ function rebuildButtonLabel(run: ClusterRunState | null): string {
     case "failed":
       return "Retry rebuild clusters";
     default:
+      if (unmappedCount && unmappedCount > 0) {
+        return `Rebuild clusters \u00b7 ${unmappedCount.toLocaleString()} session${unmappedCount === 1 ? "" : "s"} not shown`;
+      }
       return "Rebuild clusters";
   }
 }
@@ -1257,9 +1268,25 @@ export function ChatboxTopicMapPanel({
               <TooltipTrigger asChild>
                 <Button
                   type="button"
-                  variant="outline"
+                  variant={
+                    latestRun?.isStale ||
+                    (snapshot.stats.unmappedSessionCount > 0 &&
+                      latestRun?.status === "done")
+                      ? "default"
+                      : "outline"
+                  }
                   size="icon"
-                  aria-label={rebuildButtonLabel(latestRun)}
+                  className={cn(
+                    "relative",
+                    (latestRun?.isStale ||
+                      (snapshot.stats.unmappedSessionCount > 0 &&
+                        latestRun?.status === "done")) &&
+                      "bg-warning text-warning-foreground hover:bg-warning/90",
+                  )}
+                  aria-label={rebuildButtonLabel(
+                    latestRun,
+                    snapshot.stats.unmappedSessionCount,
+                  )}
                   disabled={rebuildDisabled(latestRun) || rebuildBusy}
                   onClick={onRebuild}
                 >
@@ -1271,10 +1298,21 @@ export function ChatboxTopicMapPanel({
                         : "",
                     )}
                   />
+                  {(latestRun?.isStale ||
+                    (snapshot.stats.unmappedSessionCount > 0 &&
+                      latestRun?.status === "done")) && (
+                    <span className="absolute -right-1 -top-1 flex h-2.5 w-2.5">
+                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-warning opacity-75" />
+                      <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-warning ring-2 ring-background" />
+                    </span>
+                  )}
                 </Button>
               </TooltipTrigger>
               <TooltipContent side="top" sideOffset={6}>
-                {rebuildButtonLabel(latestRun)}
+                {rebuildButtonLabel(
+                  latestRun,
+                  snapshot.stats.unmappedSessionCount,
+                )}
               </TooltipContent>
             </Tooltip>
           </div>
