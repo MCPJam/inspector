@@ -112,7 +112,7 @@ describe("TestCasesOverview", () => {
     const row = await screen.findByTestId("test-case-row-case-1");
 
     await waitFor(() => {
-      expect(within(row).getByLabelText("Passed")).toBeInTheDocument();
+      expect(within(row).getByText("Passed")).toBeInTheDocument();
     });
 
     expect(within(row).queryByText(/^1$/)).not.toBeInTheDocument();
@@ -168,10 +168,10 @@ describe("TestCasesOverview", () => {
     const row = await screen.findByTestId("test-case-row-case-1");
 
     await waitFor(() => {
-      expect(within(row).getByLabelText("Failed")).toBeInTheDocument();
+      expect(within(row).getByText("Failed")).toBeInTheDocument();
     });
     expect(within(row).getByLabelText("Last run failed")).toBeInTheDocument();
-    expect(within(row).queryByLabelText("Passed")).not.toBeInTheDocument();
+    expect(within(row).queryByText("Passed")).not.toBeInTheDocument();
   });
 
   it("does not show the failure indicator when the latest iteration passed", async () => {
@@ -220,7 +220,7 @@ describe("TestCasesOverview", () => {
     const row = await screen.findByTestId("test-case-row-case-1");
 
     await waitFor(() => {
-      expect(within(row).getByLabelText("Passed")).toBeInTheDocument();
+      expect(within(row).getByText("Passed")).toBeInTheDocument();
     });
     expect(
       within(row).queryByLabelText("Last run failed"),
@@ -276,7 +276,7 @@ describe("TestCasesOverview", () => {
       />,
     );
 
-    await user.click(screen.getByLabelText("Passed"));
+    await user.click(screen.getByText("Passed"));
 
     expect(onTestCaseClick).toHaveBeenCalledTimes(1);
     expect(onTestCaseClick).toHaveBeenCalledWith("case-1");

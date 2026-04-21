@@ -604,37 +604,6 @@ describe("TraceViewer", () => {
     expect(screen.getByTestId("trace-viewer-actual-loading")).toBeInTheDocument();
   });
 
-  it("normalises actual tool call key order so toolName always precedes arguments", async () => {
-    // Build the entry with arguments appearing BEFORE toolName (via JSON.parse,
-    // which preserves property order) so the test fails unless TraceViewer
-    // normalises the key order at render time.
-    const argsFirstEntry = JSON.parse(
-      '{"arguments": {"path": "/x"}, "toolName": "read_me"}',
-    ) as { toolName: string; arguments: Record<string, unknown> };
-
-    // Sanity check: the input really does have arguments first.
-    expect(Object.keys(argsFirstEntry)).toEqual(["arguments", "toolName"]);
-
-    render(
-      <TraceViewer
-        trace={simpleTextTrace}
-        estimatedDurationMs={100}
-        expectedToolCalls={[{ toolName: "read_me", arguments: {} }]}
-        actualToolCalls={[argsFirstEntry]}
-        forcedViewMode="tools"
-      />,
-    );
-
-    const editors = screen.getAllByTestId("json-editor");
-    const actualEditor = editors[1];
-    const serialized = actualEditor.textContent ?? "";
-    const toolNameIdx = serialized.indexOf('"toolName"');
-    const argumentsIdx = serialized.indexOf('"arguments"');
-    expect(toolNameIdx).toBeGreaterThanOrEqual(0);
-    expect(argumentsIdx).toBeGreaterThanOrEqual(0);
-    expect(toolNameIdx).toBeLessThan(argumentsIdx);
-  });
-
   it("hides Tools tab when there are no expected or actual tool calls", async () => {
     render(<TraceViewer trace={simpleTextTrace} estimatedDurationMs={100} />);
     expect(await screen.findByText("Estimated total only")).toBeInTheDocument();

@@ -1467,6 +1467,7 @@ export function PlaygroundMain({
           {showTraceViewTabs ? (
             <ChatTraceViewModeHeaderBar
               mode={activeTraceViewMode}
+              activeVariant="sidebar"
               onModeChange={(mode) => {
                 if (mode === "tools") {
                   return;
