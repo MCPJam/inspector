@@ -6,6 +6,24 @@ import {
 } from "../evals-router";
 
 describe("evals-router test-edit compare query", () => {
+  it("parses suite overview with executions view", () => {
+    window.location.hash = "#/evals/suite/s_123?view=executions";
+    expect(parseEvalsRoute()).toEqual({
+      type: "suite-overview",
+      suiteId: "s_123",
+      view: "executions",
+    });
+  });
+
+  it("builds suite overview with executions view", () => {
+    const hash = buildEvalsHash({
+      type: "suite-overview",
+      suiteId: "s_abc",
+      view: "executions",
+    });
+    expect(hash).toBe("#/evals/suite/s_abc?view=executions");
+  });
+
   it("parses test edit with compare=1", () => {
     window.location.hash = "#/evals/suite/s_123/test/t_789/edit?compare=1";
     expect(parseEvalsRoute()).toEqual({

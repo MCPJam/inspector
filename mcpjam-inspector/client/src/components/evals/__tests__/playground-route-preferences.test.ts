@@ -5,7 +5,6 @@ const defaultParams = {
   exploreSuiteId: "suite-1",
   isSuiteDetailsLoading: false,
   isSuiteRunsLoading: false,
-  runsCount: 1,
   testCaseIds: ["case-1"],
   runIds: ["run-1"],
   iterationRunIds: ["run-1"],
@@ -155,7 +154,6 @@ describe("getPlaygroundCasesRedirect", () => {
     expect(
       getPlaygroundCasesRedirect({
         ...defaultParams,
-        runsCount: 0,
         route: {
           type: "suite-overview",
           suiteId: "suite-1",
@@ -182,7 +180,20 @@ describe("getPlaygroundCasesRedirect", () => {
     ).toBeNull();
   });
 
-  it("does not redirect the runs overview when suite runs exist", () => {
+  it("does not override the executions view once it is already selected", () => {
+    expect(
+      getPlaygroundCasesRedirect({
+        ...defaultParams,
+        route: {
+          type: "suite-overview",
+          suiteId: "suite-1",
+          view: "executions",
+        },
+      }),
+    ).toBeNull();
+  });
+
+  it("redirects the runs overview to cases in Playground", () => {
     expect(
       getPlaygroundCasesRedirect({
         ...defaultParams,
@@ -192,6 +203,10 @@ describe("getPlaygroundCasesRedirect", () => {
           view: "runs",
         },
       }),
-    ).toBeNull();
+    ).toEqual({
+      type: "suite-overview",
+      suiteId: "suite-1",
+      view: "test-cases",
+    });
   });
 });

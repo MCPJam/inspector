@@ -22,12 +22,8 @@ import {
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { computeIterationResult } from "./pass-criteria";
-import { formatRelativeTime } from "./helpers";
+import { formatRelativeTime, getIterationRecencyTimestamp } from "./helpers";
 import type { EvalCase, EvalIteration } from "./types";
-
-function iterationRecencyTs(iter: EvalIteration): number {
-  return iter.updatedAt ?? iter.startedAt ?? iter.createdAt ?? 0;
-}
 
 interface TestCasesOverviewProps {
   suite: {
@@ -279,7 +275,8 @@ export function TestCasesOverview({
       for (const iter of caseIterations) {
         if (
           !lastRunIteration ||
-          iterationRecencyTs(iter) >= iterationRecencyTs(lastRunIteration)
+          getIterationRecencyTimestamp(iter) >=
+            getIterationRecencyTimestamp(lastRunIteration)
         ) {
           lastRunIteration = iter;
         }
