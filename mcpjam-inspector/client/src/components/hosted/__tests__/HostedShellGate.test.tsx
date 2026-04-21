@@ -41,6 +41,21 @@ describe("HostedShellGate", () => {
     expect(screen.getByText("Preparing workspace...")).toBeInTheDocument();
   });
 
+  it("shows custom workspace loading copy", () => {
+    render(
+      <HostedShellGate
+        state="workspace-loading"
+        loadingMessage="Finishing OAuth sign-in for demo-server..."
+      >
+        <div>App Content</div>
+      </HostedShellGate>,
+    );
+
+    expect(
+      screen.getByText("Finishing OAuth sign-in for demo-server..."),
+    ).toBeInTheDocument();
+  });
+
   it("shows sign in call-to-action when logged out", () => {
     const onSignIn = vi.fn();
 

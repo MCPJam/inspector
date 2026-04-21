@@ -520,25 +520,6 @@ describe("ServersTab shared detail modal", () => {
     expect(screen.queryByText("Add Your First Server")).not.toBeInTheDocument();
   });
 
-  it("shows a dashboard OAuth spinner card when the pending server is not loaded yet", () => {
-    render(
-      <ServersTab
-        {...defaultProps}
-        workspaceServers={{}}
-        workspaces={{ "workspace-1": createWorkspace({}) }}
-        pendingDashboardOAuth={{
-          serverName: "demo-server",
-          serverUrl: "https://example.com/mcp",
-          startedAt: Date.now(),
-        }}
-      />,
-    );
-
-    expect(screen.getByText("Connecting demo-server...")).toBeInTheDocument();
-    expect(screen.getByText("https://example.com/mcp")).toBeInTheDocument();
-    expect(screen.queryByText("Add Your First Server")).not.toBeInTheDocument();
-  });
-
   it("shows an existing pending dashboard OAuth server as connecting", () => {
     const pendingServer = createServer({
       name: "demo-server",

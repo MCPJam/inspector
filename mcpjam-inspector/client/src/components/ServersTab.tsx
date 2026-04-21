@@ -393,33 +393,6 @@ function SortableServerCard({
   );
 }
 
-function PendingDashboardOAuthCard({
-  pendingOAuth,
-}: {
-  pendingOAuth: PendingDashboardOAuthState;
-}) {
-  return (
-    <Card className="border-blue-500/30 bg-blue-500/5 p-5">
-      <div className="flex items-start gap-3">
-        <Loader2 className="mt-0.5 h-5 w-5 animate-spin text-blue-500" />
-        <div className="min-w-0">
-          <p className="text-sm font-semibold">
-            {`Connecting ${pendingOAuth.serverName}...`}
-          </p>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Finishing OAuth sign-in. This can take a few seconds.
-          </p>
-          {pendingOAuth.serverUrl ? (
-            <p className="mt-2 truncate font-mono text-xs text-muted-foreground/80">
-              {pendingOAuth.serverUrl}
-            </p>
-          ) : null}
-        </div>
-      </div>
-    </Card>
-  );
-}
-
 interface ServersTabProps {
   workspaceServers: Record<string, ServerWithName>;
   pendingDashboardOAuth?: PendingDashboardOAuthState | null;
@@ -684,10 +657,7 @@ export function ServersTab({
     !!pendingDashboardOAuth &&
     pendingDashboardOAuthServer?.connectionStatus !== "connected" &&
     pendingDashboardOAuthServer?.connectionStatus !== "failed";
-  const shouldRenderPendingDashboardOAuthCard =
-    isPendingDashboardOAuthVisible && !pendingDashboardOAuthServer;
-  const hasAnyServers =
-    connectedCount > 0 || shouldRenderPendingDashboardOAuthCard;
+  const hasAnyServers = connectedCount > 0;
   const pendingQuickConnectServer =
     pendingQuickConnect?.sourceTab === "servers"
       ? workspaceServers[pendingQuickConnect.serverName]
@@ -1160,12 +1130,6 @@ export function ServersTab({
               strategy={rectSortingStrategy}
             >
               <div className="grid grid-cols-1 lg:grid-cols-1 xl:grid-cols-2 gap-6">
-                {shouldRenderPendingDashboardOAuthCard &&
-                pendingDashboardOAuth ? (
-                  <PendingDashboardOAuthCard
-                    pendingOAuth={pendingDashboardOAuth}
-                  />
-                ) : null}
                 {orderedServerNames.map((name) => {
                   const server = workspaceServers[name];
                   if (!server) return null;

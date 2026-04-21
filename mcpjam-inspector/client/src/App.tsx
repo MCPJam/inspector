@@ -685,6 +685,23 @@ export default function App() {
     workOsUserEmail: workOsUser?.email ?? null,
     isLoadingRemoteWorkspaces: false,
   });
+  const baseHostedShellGateState = isHostedChatRoute
+    ? hostedChatShellGateState
+    : hostedShellGateState;
+  const pendingDashboardOAuthServer = pendingDashboardOAuth
+    ? workspaceServers[pendingDashboardOAuth.serverName]
+    : null;
+  const shouldShowPendingDashboardOAuthGate =
+    !!pendingDashboardOAuth &&
+    !pendingDashboardOAuthServer &&
+    baseHostedShellGateState !== "logged-out" &&
+    baseHostedShellGateState !== "restricted";
+  const effectiveHostedShellGateState = shouldShowPendingDashboardOAuthGate
+    ? "workspace-loading"
+    : baseHostedShellGateState;
+  const pendingDashboardOAuthMessage = pendingDashboardOAuth
+    ? `Finishing OAuth sign-in for ${pendingDashboardOAuth.serverName}...`
+    : undefined;
   const isOnboardingDecisionReady = hostedShellGateState === "ready";
   const isHostedDefaultRoute = currentHashRoute.normalizedTab === "servers";
   const shouldHoldHostedDefaultRouteForAuth =
@@ -2037,10 +2054,11 @@ export default function App() {
           inert={shouldShowBillingHandoffOverlay || undefined}
         >
           <HostedShellGate
-            state={
-              isHostedChatRoute
-                ? hostedChatShellGateState
-                : hostedShellGateState
+            state={effectiveHostedShellGateState}
+            loadingMessage={
+              shouldShowPendingDashboardOAuthGate
+                ? pendingDashboardOAuthMessage
+                : undefined
             }
             onSignIn={() => {
               if (sharedPathToken) {
