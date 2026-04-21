@@ -1246,12 +1246,14 @@ export function TestTemplateEditor({
 
     compareHandlesInFlightRef.current += 1;
     setIsRunningCompare(true);
+    const defaultRunColumnTab: RunColumnTab =
+      (savePayload.expectedToolCalls?.length ?? 0) > 0 ? "tools" : "chat";
     setRunColumnTabByModel((previous) => ({
       ...previous,
       ...Object.fromEntries(
         runModelValues.map((modelValue) => [
           modelValue,
-          "chat" as RunColumnTab,
+          defaultRunColumnTab,
         ]),
       ),
     }));
@@ -2610,6 +2612,7 @@ function RunColumn({
           traceBlob={persistedTraceBlob}
           traceBlobLoading={persistedTraceLoading}
           traceBlobError={persistedTraceError}
+          isLoading={isRunningRecord}
           toolsMetadata={toolsMetadata}
           toolServerMap={toolServerMap}
           connectedServerIds={connectedServerIds}
@@ -2643,7 +2646,7 @@ function RunColumn({
         <TraceViewer
           trace={streamingTraceEnvelope}
           forcedViewMode={traceMode}
-          isLoading={traceMode === "chat" && isRunningRecord}
+          isLoading={isRunningRecord}
           expectedToolCalls={expectedToolCalls}
           actualToolCalls={actualToolCalls}
           toolsMetadata={toolsMetadata}

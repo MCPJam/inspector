@@ -882,6 +882,10 @@ describe("TestTemplateEditor run view from route", () => {
 
     const card = getCompareCard("GPT-4");
 
+    // Default tab is Results when the case has expected tools — host-style pill is Chat-only.
+    expect(card.querySelector("[data-selected-host-style]")).toBeNull();
+
+    await user.click(within(card).getByRole("button", { name: /^Chat$/i }));
     expect(card.querySelector('[data-selected-host-style="claude"]')).not.toBe(
       null,
     );

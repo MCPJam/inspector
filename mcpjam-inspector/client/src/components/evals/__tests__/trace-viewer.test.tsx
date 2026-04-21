@@ -589,6 +589,21 @@ describe("TraceViewer", () => {
     expect(screen.getByText("Actual")).toBeInTheDocument();
   });
 
+  it("shows a loading spinner next to Actual in tools compare view when isLoading", () => {
+    render(
+      <TraceViewer
+        trace={simpleTextTrace}
+        estimatedDurationMs={100}
+        expectedToolCalls={[{ toolName: "a", arguments: {} }]}
+        actualToolCalls={[]}
+        forcedViewMode="tools"
+        isLoading
+      />,
+    );
+    expect(screen.getByTestId("trace-viewer-tools-compare")).toBeInTheDocument();
+    expect(screen.getByTestId("trace-viewer-actual-loading")).toBeInTheDocument();
+  });
+
   it("hides Tools tab when there are no expected or actual tool calls", async () => {
     render(<TraceViewer trace={simpleTextTrace} estimatedDurationMs={100} />);
     expect(await screen.findByText("Estimated total only")).toBeInTheDocument();
