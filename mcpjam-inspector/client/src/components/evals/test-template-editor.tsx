@@ -1247,8 +1247,9 @@ export function TestTemplateEditor({
 
     compareHandlesInFlightRef.current += 1;
     setIsRunningCompare(true);
+    const previewExpectedToolCalls = flattenAssertedExpectedToolCalls(savePayload);
     const defaultRunColumnTab: RunColumnTab =
-      flattenAssertedExpectedToolCalls(savePayload).length > 0 ? "tools" : "chat";
+      previewExpectedToolCalls.length > 0 ? "tools" : "chat";
     setRunColumnTabByModel((previous) => ({
       ...previous,
       ...Object.fromEntries(
@@ -1287,6 +1288,7 @@ export function TestTemplateEditor({
           completedAt: null,
           error: null,
           previewTrace: comparePreviewTrace,
+          previewExpectedToolCalls,
         };
       }
       for (const { modelValue, modelLabel, error } of preparationFailures) {
@@ -2383,10 +2385,15 @@ function RunColumn({
         record.completedAt ??
         record.modelValue,
     });
-  const expectedToolCalls = resolveIterationDisplayExpectedToolCalls(
-    record.iteration?.testCaseSnapshot,
-    testCase,
-  );
+  // Prefer the iteration snapshot (authoritative) once available; otherwise
+  // fall back to previewExpectedToolCalls captured from the in-memory form at
+  // run-start so unsaved edits are reflected in showToolsTab / the pre-stream
+  // Results preview before the persisted testCase is updated.
+  const expectedToolCalls = record.iteration?.testCaseSnapshot
+    ? resolveIterationDisplayExpectedToolCalls(record.iteration.testCaseSnapshot, null)
+    : record.previewExpectedToolCalls != null
+      ? record.previewExpectedToolCalls
+      : resolveIterationDisplayExpectedToolCalls(null, testCase);
   const actualToolCalls =
     record.iteration?.actualToolCalls ?? record.streamingActualToolCalls ?? [];
   const showToolsTab =

@@ -254,6 +254,7 @@ describe("TestTemplateEditor run view from route", () => {
       trace?: { messages?: Array<{ content?: unknown }> } | null;
       forcedViewMode?: string;
       isLoading?: boolean;
+      expectedToolCalls?: Array<{ toolName: string; arguments: Record<string, unknown> }>;
     };
   }
 
@@ -969,13 +970,15 @@ describe("TestTemplateEditor run view from route", () => {
       expect(streamEvalTestCaseMock).toHaveBeenCalledTimes(1);
     });
 
-    const card = getCompareCard("GPT-4");
-
-    // Default tab must be Results even when expected tools live only on turn 2+.
-    expect(card.querySelector("[data-selected-host-style]")).toBeNull();
-    expect(
-      within(card).getByRole("button", { name: /^Results$/i }),
-    ).toBeInTheDocument();
+    // The pre-stream preview TraceViewer must be rendered in tools mode with
+    // the expected tool call flattened from turn 2.
+    await waitFor(() => {
+      const props = getLatestTraceViewerProps();
+      expect(props.forcedViewMode).toBe("tools");
+      expect(props.expectedToolCalls).toEqual([
+        { toolName: "some_tool", arguments: {} },
+      ]);
+    });
   });
 
   it("shows the host-style pill only while the chat tab is active", async () => {

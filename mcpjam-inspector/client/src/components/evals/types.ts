@@ -1,4 +1,4 @@
-import type { PromptTurn } from "@/shared/prompt-turns";
+import type { PromptTurn, PromptTurnToolCall } from "@/shared/prompt-turns";
 import type { EvalTraceBlobV1 } from "@/shared/eval-trace";
 import type { EvalStreamToolCall } from "@/shared/eval-stream-events";
 import type { TraceEnvelope, TraceMessage } from "./trace-viewer-adapter";
@@ -155,6 +155,13 @@ export type CompareRunRecord = {
   };
   /** Immediate chat preview shown before the first live stream event arrives. */
   previewTrace?: TraceEnvelope | null;
+  /**
+   * Expected tool calls captured from the in-memory form at run-start time.
+   * Preferred over the persisted testCase snapshot until an iteration snapshot
+   * arrives, so unsaved edits (e.g. adding tools before saving) are reflected
+   * immediately in showToolsTab and the pre-stream Results preview.
+   */
+  previewExpectedToolCalls?: PromptTurnToolCall[] | null;
   /** Stable step-complete trace snapshots populated during streaming. */
   streamingTrace?: EvalTraceBlobV1;
   /** In-flight messages collected after the last authoritative snapshot. */
