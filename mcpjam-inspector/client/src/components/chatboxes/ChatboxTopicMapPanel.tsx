@@ -1247,7 +1247,7 @@ export function ChatboxTopicMapPanel({
         </div>
 
         <div className="pointer-events-none absolute bottom-4 left-4 z-10 flex flex-wrap items-center gap-2">
-          <div className="pointer-events-auto flex flex-wrap items-center gap-2 rounded-lg border border-border bg-background/80 p-1.5 shadow-sm backdrop-blur">
+          <div className="pointer-events-auto flex flex-col items-center gap-2 rounded-lg border border-border bg-background/80 p-1.5 shadow-sm backdrop-blur">
             <Tooltip delayDuration={200}>
               <TooltipTrigger asChild>
                 <Button
