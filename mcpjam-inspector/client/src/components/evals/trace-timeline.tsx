@@ -1728,6 +1728,7 @@ export function TraceTimeline({
   const [hoverPos, setHoverPos] = useState<{
     anchorX: number;
     anchorY: number;
+    anchorBottom: number;
   } | null>(null);
   const regionRef = useRef<HTMLDivElement>(null);
   const hoveredRowElRef = useRef<HTMLDivElement | null>(null);
@@ -1946,6 +1947,9 @@ export function TraceTimeline({
   const hoveredRow = hoveredRowKey
     ? rows.find((row) => row.key === hoveredRowKey)
     : undefined;
+  const hoveredRowIndex = hoveredRowKey
+    ? rows.findIndex((row) => row.key === hoveredRowKey)
+    : -1;
 
   useEffect(() => {
     if (hoveredRowKey && !rows.some((row) => row.key === hoveredRowKey)) {
@@ -1963,6 +1967,7 @@ export function TraceTimeline({
     return {
       anchorX: rect.left + rect.width / 2,
       anchorY: rect.top,
+      anchorBottom: rect.bottom,
     };
   }, []);
 
@@ -2570,6 +2575,7 @@ export function TraceTimeline({
         <HoveredRowInspector
           hoverPos={hoverPos}
           info={hoveredRowInfo}
+          placement={hoveredRowIndex === 0 ? "bottom" : "top"}
           reduceMotion={shouldReduceMotion ?? false}
           rowKey={hoveredRow.key}
         />
@@ -2594,24 +2600,30 @@ type HoveredRowInfo = {
 function HoveredRowInspector({
   hoverPos,
   info,
+  placement,
   reduceMotion,
   rowKey,
 }: {
-  hoverPos: { anchorX: number; anchorY: number };
+  hoverPos: { anchorX: number; anchorY: number; anchorBottom: number };
   info: HoveredRowInfo;
+  placement: "top" | "bottom";
   reduceMotion: boolean;
   rowKey: string;
 }) {
   if (typeof document === "undefined") return null;
   const CARD_WIDTH_PX = 304;
   const EDGE_PADDING = 12;
+  const GAP_PX = 8;
   const halfWidth = CARD_WIDTH_PX / 2;
   const viewportWidth =
     typeof window !== "undefined"
       ? window.innerWidth
       : hoverPos.anchorX + halfWidth + EDGE_PADDING;
   const minCenter = EDGE_PADDING + halfWidth;
-  const maxCenter = Math.max(minCenter, viewportWidth - halfWidth - EDGE_PADDING);
+  const maxCenter = Math.max(
+    minCenter,
+    viewportWidth - halfWidth - EDGE_PADDING,
+  );
   const clampedCenter = Math.min(
     Math.max(hoverPos.anchorX, minCenter),
     maxCenter,
@@ -2619,9 +2631,13 @@ function HoveredRowInspector({
 
   const wrapperStyle: React.CSSProperties = {
     position: "fixed",
-    top: hoverPos.anchorY - 8,
+    top:
+      placement === "top"
+        ? hoverPos.anchorY - GAP_PX
+        : hoverPos.anchorBottom + GAP_PX,
     left: clampedCenter,
-    transform: "translate(-50%, -100%)",
+    transform:
+      placement === "top" ? "translate(-50%, -100%)" : "translateX(-50%)",
     zIndex: 9999,
   };
 
@@ -2629,6 +2645,7 @@ function HoveredRowInspector({
     <div className="pointer-events-none" style={wrapperStyle}>
       <motion.div
         key={rowKey}
+        data-placement={placement}
         data-testid="trace-row-hover-content"
         initial={
           reduceMotion ? false : { opacity: 0, y: 6, filter: "blur(2px)" }

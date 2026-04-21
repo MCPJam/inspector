@@ -874,6 +874,7 @@ describe("TraceTimeline detail pane", () => {
 
     const hoverContent = await screen.findByTestId("trace-row-hover-content");
     expect(hoverContent).toBeTruthy();
+    expect(hoverContent).toHaveAttribute("data-placement", "bottom");
 
     const hoverCard = await screen.findByTestId("trace-row-hover-card");
     expect(within(hoverCard).getByText("Time")).toBeTruthy();
@@ -966,6 +967,9 @@ describe("TraceTimeline detail pane", () => {
     expect(toolRow).toBeTruthy();
 
     await user.hover(toolRow!);
+
+    const hoverContent = await screen.findByTestId("trace-row-hover-content");
+    expect(hoverContent).toHaveAttribute("data-placement", "top");
 
     const hoverCard = await screen.findByTestId("trace-row-hover-card");
     expect(
