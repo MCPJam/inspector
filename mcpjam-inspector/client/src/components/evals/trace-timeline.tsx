@@ -1730,7 +1730,6 @@ export function TraceTimeline({
     anchorY: number;
     anchorBottom: number;
   } | null>(null);
-  const regionRef = useRef<HTMLDivElement>(null);
   const hoveredRowElRef = useRef<HTMLDivElement | null>(null);
   const posthog = usePostHog();
 
@@ -2193,7 +2192,6 @@ export function TraceTimeline({
               )}
             >
               <div
-                ref={regionRef}
                 tabIndex={0}
                 role="region"
                 aria-label="Trace timeline. Use arrow keys to change selection, Enter to expand."

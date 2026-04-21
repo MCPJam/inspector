@@ -873,7 +873,6 @@ describe("TraceTimeline detail pane", () => {
     await user.hover(promptRow!);
 
     const hoverContent = await screen.findByTestId("trace-row-hover-content");
-    expect(hoverContent).toBeTruthy();
     expect(hoverContent).toHaveAttribute("data-placement", "bottom");
 
     const hoverCard = await screen.findByTestId("trace-row-hover-card");
