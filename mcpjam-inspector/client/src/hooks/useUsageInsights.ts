@@ -32,6 +32,12 @@ export type ClusterRunState = {
   clusterCount: number;
   errorMessage: string | null;
   model?: string | null;
+  topicMapVersion?: number | null;
+  edgeCount?: number;
+  sampleNodeCount?: number;
+  unmappedSessionCount?: number;
+  isSampled?: boolean;
+  topicMapReady?: boolean;
   isStale: boolean;
 };
 
@@ -66,15 +72,17 @@ export function useUsageInsights({
   sourceType,
   sourceId,
   filters,
+  enabled = true,
 }: {
   sourceType: InsightsSourceType;
   sourceId: string | null;
   filters: UsageFilterState;
+  enabled?: boolean;
 }) {
   // v1 only wires chatbox sources. ServerShare will reuse this hook by
   // swapping the underlying queries once the backend parity lands.
   const chatboxArgs =
-    sourceType === "chatbox" && sourceId
+    enabled && sourceType === "chatbox" && sourceId
       ? ({
           chatboxId: sourceId,
           limit: 100,
@@ -83,7 +91,7 @@ export function useUsageInsights({
       : "skip";
 
   const breakdownArgs =
-    sourceType === "chatbox" && sourceId
+    enabled && sourceType === "chatbox" && sourceId
       ? ({
           chatboxId: sourceId,
           filters: toServerFilters(filters),

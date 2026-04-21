@@ -151,6 +151,7 @@
     "radix-ui": "^1.4.2",
     "react": "19.1.0",
     "react-dom": "19.1.0",
+    "react-force-graph-2d": "^1.29.1",
     "react-hook-form": "^7.60.0",
     "react-markdown": "^10.1.0",
     "react-resizable-panels": "^3.0.3",
@@ -168,7 +169,6 @@
     "zustand": "^5.0.6"
   },
   "devDependencies": {
-    "@mcpjam/design-system": "*",
     "@electron-forge/cli": "^7.11.1",
     "@electron-forge/maker-deb": "^7.11.1",
     "@electron-forge/maker-dmg": "^7.11.1",
@@ -180,6 +180,7 @@
     "@electron-forge/publisher-github": "^7.11.1",
     "@electron/fuses": "^2.0.0",
     "@eslint/eslintrc": "^3",
+    "@mcpjam/design-system": "*",
     "@playwright/test": "^1.54.2",
     "@tailwindcss/postcss": "^4.1.11",
     "@tailwindcss/vite": "^4.1.13",
