@@ -50,7 +50,7 @@ export const workspaceServerSchema = refineHostedTokens(
     accessScope: z.enum(["workspace_member", "chat_v2"]).optional(),
     shareToken: z.string().min(1).optional(),
     chatboxToken: z.string().min(1).optional(),
-  }),
+  })
 );
 
 export const toolsListSchema = workspaceServerSchema.extend({
@@ -86,7 +86,7 @@ export const promptsListMultiSchema = refineHostedTokens(
     accessScope: z.enum(["workspace_member", "chat_v2"]).optional(),
     shareToken: z.string().min(1).optional(),
     chatboxToken: z.string().min(1).optional(),
-  }),
+  })
 );
 
 export const promptsGetSchema = workspaceServerSchema.extend({
@@ -110,7 +110,7 @@ export const hostedChatSchema = refineHostedTokens(
       shareToken: z.string().min(1).optional(),
       chatboxToken: z.string().min(1).optional(),
     })
-    .passthrough(),
+    .passthrough()
 );
 
 // ── Guest Schema ─────────────────────────────────────────────────────
@@ -146,6 +146,36 @@ export type ConvexAuthorizeResponse = {
   };
 };
 
+type AuthorizedServerConfigHolder = {
+  serverConfig: ConvexAuthorizeResponse["serverConfig"];
+};
+
+export type ConvexBatchAuthorizeFailure = {
+  ok: false;
+  status: number;
+  code: string;
+  message: string;
+};
+
+export type ConvexBatchAuthorizeSuccess = {
+  ok: true;
+  role: "owner" | "admin" | "member";
+  accessLevel: "workspace_member" | "shared_chat";
+  oauthAccessToken?: string | null;
+  permissions: {
+    chatOnly: boolean;
+  };
+  serverConfig: ConvexAuthorizeResponse["serverConfig"];
+};
+
+export type ConvexBatchAuthorizeResult =
+  | ConvexBatchAuthorizeFailure
+  | ConvexBatchAuthorizeSuccess;
+
+export type ConvexBatchAuthorizeResponse = {
+  results: Record<string, ConvexBatchAuthorizeResult>;
+};
+
 export async function authorizeServer(
   bearerToken: string,
   workspaceId: string,
@@ -154,14 +184,14 @@ export async function authorizeServer(
     accessScope?: "workspace_member" | "chat_v2";
     shareToken?: string;
     chatboxToken?: string;
-  },
+  }
 ): Promise<ConvexAuthorizeResponse> {
   const convexUrl = process.env.CONVEX_HTTP_URL;
   if (!convexUrl) {
     throw new WebRouteError(
       500,
       ErrorCode.INTERNAL_ERROR,
-      "Server missing CONVEX_HTTP_URL configuration",
+      "Server missing CONVEX_HTTP_URL configuration"
     );
   }
 
@@ -171,7 +201,7 @@ export async function authorizeServer(
       throw new WebRouteError(
         400,
         ErrorCode.VALIDATION_ERROR,
-        "shareToken and chatboxToken cannot both be provided",
+        "shareToken and chatboxToken cannot both be provided"
       );
     }
 
@@ -195,7 +225,7 @@ export async function authorizeServer(
     throw new WebRouteError(
       502,
       ErrorCode.SERVER_UNREACHABLE,
-      `Failed to reach authorization service: ${parseErrorMessage(error)}`,
+      `Failed to reach authorization service: ${parseErrorMessage(error)}`
     );
   }
 
@@ -220,24 +250,105 @@ export async function authorizeServer(
     throw new WebRouteError(
       403,
       ErrorCode.FORBIDDEN,
-      "Authorization denied for server",
+      "Authorization denied for server"
     );
   }
 
   return body as ConvexAuthorizeResponse;
 }
 
+export async function authorizeBatch(
+  bearerToken: string,
+  workspaceId: string,
+  serverIds: string[],
+  options?: {
+    accessScope?: "workspace_member" | "chat_v2";
+    shareToken?: string;
+    chatboxToken?: string;
+  }
+): Promise<ConvexBatchAuthorizeResponse> {
+  const convexUrl = process.env.CONVEX_HTTP_URL;
+  if (!convexUrl) {
+    throw new WebRouteError(
+      500,
+      ErrorCode.INTERNAL_ERROR,
+      "Server missing CONVEX_HTTP_URL configuration"
+    );
+  }
+
+  let response: Response;
+  try {
+    if (options?.shareToken && options?.chatboxToken) {
+      throw new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        "shareToken and chatboxToken cannot both be provided"
+      );
+    }
+
+    response = await fetch(`${convexUrl}/web/authorize-batch`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${bearerToken}`,
+      },
+      body: JSON.stringify({
+        workspaceId,
+        serverIds,
+        ...(options?.accessScope ? { accessScope: options.accessScope } : {}),
+        ...(options?.shareToken ? { shareToken: options.shareToken } : {}),
+        ...(options?.chatboxToken
+          ? { chatboxToken: options.chatboxToken }
+          : {}),
+      }),
+    });
+  } catch (error) {
+    throw new WebRouteError(
+      502,
+      ErrorCode.SERVER_UNREACHABLE,
+      `Failed to reach authorization service: ${parseErrorMessage(error)}`
+    );
+  }
+
+  let body: any = null;
+  try {
+    body = await response.json();
+  } catch {
+    // ignored
+  }
+
+  if (!response.ok) {
+    const code =
+      typeof body?.code === "string" ? body.code : ErrorCode.INTERNAL_ERROR;
+    const message =
+      typeof body?.message === "string"
+        ? body.message
+        : `Authorization failed (${response.status})`;
+    throw new WebRouteError(response.status, code as ErrorCode, message);
+  }
+
+  if (!body?.results || typeof body.results !== "object") {
+    throw new WebRouteError(
+      500,
+      ErrorCode.INTERNAL_ERROR,
+      "Authorization response is missing batch results"
+    );
+  }
+
+  return body as ConvexBatchAuthorizeResponse;
+}
+
 export function toHttpConfig(
-  authResponse: ConvexAuthorizeResponse,
+  authResponse: AuthorizedServerConfigHolder,
   timeoutMs: number,
   oauthAccessToken?: string,
-  clientCapabilities?: Record<string, unknown>,
+  clientCapabilities?: Record<string, unknown>
 ): HttpServerConfig {
   if (authResponse.serverConfig.transportType !== "http") {
     throw new WebRouteError(
       400,
       ErrorCode.FEATURE_NOT_SUPPORTED,
-      "Only HTTP transport is supported in hosted mode",
+      "Only HTTP transport is supported in hosted mode"
     );
   }
 
@@ -245,7 +356,7 @@ export function toHttpConfig(
     throw new WebRouteError(
       500,
       ErrorCode.INTERNAL_ERROR,
-      "Authorized server is missing URL",
+      "Authorized server is missing URL"
     );
   }
 
@@ -285,43 +396,78 @@ export async function createAuthorizedManager(
     shareToken?: string;
     chatboxToken?: string;
     rpcLogger?: RpcLogger;
-  },
+  }
 ): Promise<AuthorizedManagerResult> {
   const uniqueServerIds = Array.from(new Set(serverIds));
+  if (uniqueServerIds.length === 0) {
+    return {
+      manager: new MCPClientManager(
+        {},
+        {
+          defaultTimeout: timeoutMs,
+          rpcLogger: options?.rpcLogger,
+          retryPolicy: INSPECTOR_MCP_RETRY_POLICY,
+        }
+      ),
+      oauthServerUrls: {},
+    };
+  }
+
   const oauthServerUrls: Record<string, string> = {};
-  const configEntries = await Promise.all(
-    uniqueServerIds.map(async (serverId) => {
-      const auth = await authorizeServer(bearerToken, workspaceId, serverId, {
-        accessScope: options?.accessScope,
-        shareToken: options?.shareToken,
-        chatboxToken: options?.chatboxToken,
-      });
-      const oauthToken = auth.oauthAccessToken ?? oauthTokens?.[serverId];
-
-      if (auth.serverConfig.useOAuth) {
-        if (auth.serverConfig.url) {
-          oauthServerUrls[serverId] = auth.serverConfig.url;
-        }
-        if (!oauthToken) {
-          throw new WebRouteError(
-            401,
-            ErrorCode.UNAUTHORIZED,
-            `Server "${serverId}" requires OAuth authentication. Please complete the OAuth flow first.`,
-            {
-              oauthRequired: true,
-              serverId,
-              serverUrl: auth.serverConfig.url,
-            },
-          );
-        }
-      }
-
-      return [
-        serverId,
-        toHttpConfig(auth, timeoutMs, oauthToken, clientCapabilities),
-      ] as const;
-    }),
+  const batch = await authorizeBatch(
+    bearerToken,
+    workspaceId,
+    uniqueServerIds,
+    {
+      accessScope: options?.accessScope,
+      shareToken: options?.shareToken,
+      chatboxToken: options?.chatboxToken,
+    }
   );
+
+  const configEntries = uniqueServerIds.map((serverId) => {
+    const auth = batch.results[serverId];
+    if (!auth) {
+      throw new WebRouteError(
+        500,
+        ErrorCode.INTERNAL_ERROR,
+        `Authorization response is missing result for server "${serverId}"`
+      );
+    }
+
+    if (!auth.ok) {
+      throw new WebRouteError(
+        auth.status,
+        auth.code as ErrorCode,
+        auth.message
+      );
+    }
+
+    const oauthToken = auth.oauthAccessToken ?? oauthTokens?.[serverId];
+
+    if (auth.serverConfig.useOAuth) {
+      if (auth.serverConfig.url) {
+        oauthServerUrls[serverId] = auth.serverConfig.url;
+      }
+      if (!oauthToken) {
+        throw new WebRouteError(
+          401,
+          ErrorCode.UNAUTHORIZED,
+          `Server "${serverId}" requires OAuth authentication. Please complete the OAuth flow first.`,
+          {
+            oauthRequired: true,
+            serverId,
+            serverUrl: auth.serverConfig.url,
+          }
+        );
+      }
+    }
+
+    return [
+      serverId,
+      toHttpConfig(auth, timeoutMs, oauthToken, clientCapabilities),
+    ] as const;
+  });
 
   const manager = new MCPClientManager(Object.fromEntries(configEntries), {
     defaultTimeout: timeoutMs,
@@ -333,7 +479,7 @@ export async function createAuthorizedManager(
 
 export async function withManager<T>(
   managerPromise: Promise<MCPClientManager> | Promise<AuthorizedManagerResult>,
-  fn: (manager: MCPClientManager) => Promise<T>,
+  fn: (manager: MCPClientManager) => Promise<T>
 ): Promise<T> {
   const result = await managerPromise;
   const manager =
@@ -348,7 +494,7 @@ export async function withManager<T>(
 export async function handleRoute<T>(
   c: any,
   handler: () => Promise<T>,
-  successStatus = 200,
+  successStatus = 200
 ) {
   try {
     const result = await handler();
@@ -360,7 +506,7 @@ export async function handleRoute<T>(
       routeError.status,
       routeError.code,
       routeError.message,
-      routeError.details,
+      routeError.details
     );
   }
 }
@@ -388,7 +534,7 @@ function resolveConnectionParams(body: Record<string, unknown>): {
     serverIds: [body.serverId as string],
     oauthTokens: buildSingleServerOAuthTokens(
       body.serverId as string,
-      body.oauthAccessToken as string | undefined,
+      body.oauthAccessToken as string | undefined
     ),
   };
 }
@@ -423,9 +569,9 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
   schema: S,
   fn: (
     manager: InstanceType<typeof MCPClientManager>,
-    body: z.infer<S>,
+    body: z.infer<S>
   ) => Promise<T>,
-  options?: { timeoutMs?: number; rpcLogs?: boolean },
+  options?: { timeoutMs?: number; rpcLogs?: boolean }
 ) {
   let rpcCollector: ReturnType<typeof createHostedRpcLogCollector> | undefined;
 
@@ -452,7 +598,7 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
         throw new WebRouteError(
           401,
           ErrorCode.UNAUTHORIZED,
-          "Valid guest token required. Please refresh the page to obtain a new session.",
+          "Valid guest token required. Please refresh the page to obtain a new session."
         );
       }
 
@@ -467,7 +613,7 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
           throw new WebRouteError(
             err.status,
             ErrorCode.VALIDATION_ERROR,
-            err.message,
+            err.message
           );
         }
         throw err;
@@ -515,7 +661,7 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
           defaultTimeout: timeoutMs,
           rpcLogger: rpcCollector?.rpcLogger,
           retryPolicy: INSPECTOR_MCP_RETRY_POLICY,
-        },
+        }
       );
 
       try {
@@ -559,9 +705,9 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
             shareToken,
             chatboxToken,
             rpcLogger: rpcCollector?.rpcLogger,
-          },
+          }
         ),
-        (manager) => fn(manager, body as z.infer<S>),
+        (manager) => fn(manager, body as z.infer<S>)
       );
     }
 
@@ -574,7 +720,7 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
       routeError.code,
       routeError.message,
       routeError.details,
-      rpcCollector?.buildEnvelope(),
+      rpcCollector?.buildEnvelope()
     );
   }
 }
