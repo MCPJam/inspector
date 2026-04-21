@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildComparePreviewTrace,
   buildHistoricalCompareRunRecords,
   buildCompareRunRecord,
   mergeAdvancedConfigWithOverride,
@@ -121,6 +122,37 @@ describe("compare-playground-helpers", () => {
     expect(record.status).toBe("cancelled");
     expect(record.result).toBe("cancelled");
     expect(record.metrics.durationMs).toBe(4000);
+  });
+
+  it("builds a one-message preview trace from the first non-empty prompt turn", () => {
+    expect(
+      buildComparePreviewTrace([
+        {
+          id: "turn-1",
+          prompt: "   ",
+          expectedToolCalls: [],
+        },
+        {
+          id: "turn-2",
+          prompt: "Tell me a joke",
+          expectedToolCalls: [],
+        },
+      ]),
+    ).toEqual({
+      messages: [{ role: "user", content: "Tell me a joke" }],
+    });
+  });
+
+  it("returns no preview trace when every prompt turn is empty", () => {
+    expect(
+      buildComparePreviewTrace([
+        {
+          id: "turn-1",
+          prompt: " ",
+          expectedToolCalls: [],
+        },
+      ]),
+    ).toBeNull();
   });
 
   it("computes mismatch counts for a compare run record", () => {

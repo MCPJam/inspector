@@ -14,7 +14,6 @@ import {
   Code2,
   Loader2,
   MoreHorizontal,
-  MoreVertical,
   Play,
   Plus,
   RotateCw,
@@ -68,7 +67,12 @@ import { normalizeToolChoice } from "@/shared/tool-choice";
 import { cn } from "@/lib/utils";
 import { computeIterationResult } from "./pass-criteria";
 import {
+  ChatboxHostStyleProvider,
+  ChatboxHostThemeProvider,
+} from "@/contexts/chatbox-host-style-context";
+import {
   buildHistoricalCompareRunRecords,
+  buildComparePreviewTrace,
   buildCompareRunRecord,
   createCompareSessionId,
   mergeAdvancedConfigWithOverride,
@@ -95,7 +99,13 @@ import {
 import { TraceViewer } from "./trace-viewer";
 import { useEvalTraceToolContext } from "./use-eval-trace-tool-context";
 import { useEvalTraceBlob } from "./use-eval-trace-blob";
-import { adaptTraceToUiMessages } from "./trace-viewer-adapter";
+import {
+  adaptTraceToUiMessages,
+  type TraceEnvelope,
+} from "./trace-viewer-adapter";
+import { getChatboxShellStyle } from "@/lib/chatbox-host-style";
+import { HostStylePillSelector } from "@/components/shared/HostStylePillSelector";
+import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 
 interface TestTemplate {
   title: string;
@@ -153,6 +163,10 @@ function deriveIsNegativeTestFromPromptTurns(
   promptTurns: PromptTurn[],
 ): boolean {
   return promptTurns.every((turn) => turn.expectedToolCalls.length === 0);
+}
+
+function compactModelLabel(name: string): string {
+  return name.replace(/\s*\(Free\)\s*$/i, "").trim() || name;
 }
 
 const validatePromptTurns = (promptTurns: PromptTurn[]): boolean => {
@@ -1114,6 +1128,9 @@ export function TestTemplateEditor({
     }
 
     const savePayload = buildSavePayload(editForm);
+    const comparePreviewTrace = buildComparePreviewTrace(
+      resolvePromptTurns(savePayload),
+    );
     compareRunUserStoppedRef.current = false;
     const reusableCompareRunId =
       options?.sessionMode === "reuse"
@@ -1266,6 +1283,7 @@ export function TestTemplateEditor({
           startedAt,
           completedAt: null,
           error: null,
+          previewTrace: comparePreviewTrace,
         };
       }
       for (const { modelValue, modelLabel, error } of preparationFailures) {
@@ -1902,7 +1920,7 @@ export function TestTemplateEditor({
                   ) : null}
 
                   <div className="flex min-w-0 flex-1 items-center gap-2">
-                    <div className="flex min-w-0 flex-1 items-center gap-2.5 overflow-x-auto py-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                    <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto py-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                       {selectedModelValues.length === 0 ? (
                         modelOptions.length === 0 ? (
                           <span className="text-[13px] text-muted-foreground">
@@ -1916,21 +1934,10 @@ export function TestTemplateEditor({
                             <DropdownMenuTrigger asChild>
                               <button
                                 type="button"
-                                className="inline-flex h-8 min-w-[12.5rem] max-w-full items-center gap-2 rounded-lg border border-[#E5E7EB] bg-white px-3 text-left text-[13px] font-medium text-foreground shadow-none hover:bg-[#fafafa] dark:border-border dark:bg-background dark:hover:bg-muted/40"
+                                className="inline-flex h-8 max-w-[180px] shrink-0 items-center gap-2 rounded-full border border-border/60 bg-white px-2.5 text-left text-xs font-medium text-foreground shadow-none transition-colors hover:bg-muted/80 dark:bg-background dark:hover:bg-muted/40"
                               >
                                 <Plus className="h-3.5 w-3.5 shrink-0" />
-                                <span>Add Model</span>
-                                <span className="ml-auto flex shrink-0 items-center gap-1 pl-1">
-                                  <span className="flex h-5 min-w-[1.35rem] items-center justify-center rounded border border-[#e8e8e8] bg-[#f4f4f5] px-1 font-sans text-[10px] font-semibold leading-none text-foreground dark:border-border dark:bg-muted">
-                                    {typeof navigator !== "undefined" &&
-                                    navigator.platform.includes("Mac")
-                                      ? "⌘"
-                                      : "Ctrl"}
-                                  </span>
-                                  <span className="flex h-5 min-w-[1.35rem] items-center justify-center rounded border border-[#e8e8e8] bg-[#f4f4f5] px-1 font-sans text-[10px] font-semibold leading-none text-foreground dark:border-border dark:bg-muted">
-                                    K
-                                  </span>
-                                </span>
+                                <span className="truncate">Add model</span>
                               </button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent
@@ -1963,30 +1970,34 @@ export function TestTemplateEditor({
                               <div
                                 key={modelValue}
                                 className={cn(
-                                  "flex h-8 shrink-0 items-center gap-0.5 rounded-lg border px-1.5",
+                                  "flex h-8 max-w-[180px] shrink-0 items-center gap-1 rounded-full border px-2",
                                   index === 0
-                                    ? "border-[#e8c7b8] bg-[#fff8f5] dark:border-orange-200/35 dark:bg-orange-500/8"
-                                    : "border-[#e0e0e0] bg-[#f5f5f5] dark:border-border dark:bg-muted/45",
+                                    ? "border-primary/25 bg-primary/5 text-foreground"
+                                    : "border-border/50 bg-muted/30 text-muted-foreground",
                                 )}
                               >
-                                <div className="flex h-5 w-5 shrink-0 items-center justify-center overflow-hidden rounded-full border border-[#ebebeb] bg-white shadow-[0_1px_2px_rgba(0,0,0,0.04)] dark:border-border dark:bg-background">
-                                  <div className="flex scale-[1.2] items-center justify-center">
-                                    <ProviderLogo
-                                      provider={option?.provider ?? "custom"}
-                                    />
-                                  </div>
-                                </div>
-                                <span className="max-w-[9.5rem] truncate text-[13px] font-medium text-foreground">
-                                  {label}
+                                <ProviderLogo
+                                  provider={option?.provider ?? "custom"}
+                                  className="size-3.5 shrink-0"
+                                />
+                                <span
+                                  className={cn(
+                                    "min-w-0 flex-1 truncate text-xs font-medium",
+                                    index === 0
+                                      ? "text-foreground"
+                                      : "text-muted-foreground",
+                                  )}
+                                >
+                                  {compactModelLabel(label)}
                                 </span>
                                 <DropdownMenu>
                                   <DropdownMenuTrigger asChild>
                                     <button
                                       type="button"
-                                      className="rounded p-0.5 text-[#9e9e9e] hover:bg-black/[0.04] hover:text-foreground dark:hover:bg-white/10"
+                                      className="shrink-0 rounded-full p-0.5 text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
                                       aria-label={`Model options (${label})`}
                                     >
-                                      <MoreVertical className="h-3.5 w-3.5" />
+                                      <MoreHorizontal className="h-3.5 w-3.5" />
                                     </button>
                                   </DropdownMenuTrigger>
                                   <DropdownMenuContent
@@ -2041,7 +2052,7 @@ export function TestTemplateEditor({
                                 </DropdownMenu>
                                 <button
                                   type="button"
-                                  className="rounded p-0.5 text-[#9e9e9e] hover:bg-black/[0.04] hover:text-foreground dark:hover:bg-white/10"
+                                  className="shrink-0 rounded-full p-0.5 text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
                                   aria-label={`Remove ${label}`}
                                   onClick={() => handleRemoveModel(modelValue)}
                                 >
@@ -2056,7 +2067,7 @@ export function TestTemplateEditor({
                               <DropdownMenuTrigger asChild>
                                 <button
                                   type="button"
-                                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded border border-[#e0e0e0] bg-white text-foreground hover:bg-[#fafafa] dark:border-border dark:bg-background dark:hover:bg-muted/50"
+                                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border/60 bg-white text-foreground transition-colors hover:bg-muted/80 dark:bg-background dark:hover:bg-muted/50"
                                   aria-label="Add model to compare"
                                 >
                                   <Plus className="h-3.5 w-3.5" />
@@ -2356,6 +2367,9 @@ function RunColumn({
   onTabChange: (tab: RunColumnTab) => void;
   onRetry: () => void;
 }) {
+  const themeMode = usePreferencesStore((state) => state.themeMode);
+  const hostStyle = usePreferencesStore((state) => state.hostStyle);
+  const setHostStyle = usePreferencesStore((state) => state.setHostStyle);
   const { toolsMetadata, toolServerMap, connectedServerIds } =
     useEvalTraceToolContext({
       serverNames,
@@ -2484,11 +2498,16 @@ function RunColumn({
     toolsMetadata,
   ]);
   const hasStreamingTrace = streamingTraceEnvelope != null;
+  const previewTrace = record.previewTrace ?? null;
+  const activeLiveChatTrace: TraceEnvelope | null =
+    (hasStreamingTrace ? streamingTraceEnvelope : previewTrace) ?? null;
   const isWaitingForFirstTimelineSnapshot =
     traceMode === "timeline" &&
     record.iteration == null &&
     record.streamingTrace == null &&
     hasStreamingTrace;
+  const shouldRenderChatShell = effectiveActiveTab === "chat";
+  const shellStyle = getChatboxShellStyle(hostStyle, themeMode);
 
   const displayTokens =
     record.streamingMetrics?.tokensUsed ?? record.metrics.tokensUsed;
@@ -2557,6 +2576,146 @@ function RunColumn({
     maxTokens > 0
       ? Math.min(100, Math.max(4, (displayTokens / maxTokens) * 100))
       : 0;
+  const renderedRunContent = record.iteration ? (
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+      {traceMode === "chat" ? (
+        <CompareRunChatSurface
+          iteration={record.iteration}
+          traceModel={{
+            id: record.model,
+            name: record.modelLabel,
+            provider: record.provider as any,
+          }}
+          isLoading={isRunningRecord}
+          emptyMessage={`No ${activeTab} data is available for this run.`}
+          fallbackTrace={streamingTraceEnvelope}
+          onTraceLoaded={onStreamingTraceLoaded}
+          toolsMetadata={toolsMetadata}
+          toolServerMap={toolServerMap}
+          connectedServerIds={connectedServerIds}
+          traceBlob={persistedTraceBlob}
+          traceBlobLoading={persistedTraceLoading}
+          traceBlobError={persistedTraceError}
+        />
+      ) : (
+        <EvalTraceSurface
+          iteration={record.iteration}
+          testCase={testCase}
+          mode={traceMode}
+          emptyMessage={`No ${activeTab} data is available for this run.`}
+          fallbackTrace={streamingTraceEnvelope}
+          fallbackActualToolCalls={actualToolCalls}
+          onTraceLoaded={onStreamingTraceLoaded}
+          onNavigateToChat={() => onTabChange("chat")}
+          traceBlob={persistedTraceBlob}
+          traceBlobLoading={persistedTraceLoading}
+          traceBlobError={persistedTraceError}
+          toolsMetadata={toolsMetadata}
+          toolServerMap={toolServerMap}
+          connectedServerIds={connectedServerIds}
+        />
+      )}
+    </div>
+  ) : hasStreamingTrace ? (
+    isWaitingForFirstTimelineSnapshot ? (
+      <div className="flex min-h-0 flex-1 items-center justify-center rounded-xl border border-border/50 bg-muted/10 px-6 py-10 text-center">
+        <div className="max-w-sm">
+          <div className="text-sm font-medium">
+            Timeline appears after the first step completes
+          </div>
+          <p className="mt-2 text-sm text-muted-foreground">
+            Chat and raw output are already streaming for the current in-flight
+            step.
+          </p>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="mt-3"
+            onClick={() => onTabChange("chat")}
+          >
+            Switch to Chat
+          </Button>
+        </div>
+      </div>
+    ) : (
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <TraceViewer
+          trace={streamingTraceEnvelope}
+          forcedViewMode={traceMode}
+          isLoading={traceMode === "chat" && isRunningRecord}
+          expectedToolCalls={expectedToolCalls}
+          actualToolCalls={actualToolCalls}
+          toolsMetadata={toolsMetadata}
+          toolServerMap={toolServerMap}
+          connectedServerIds={connectedServerIds}
+          hideToolbar
+          fillContent
+        />
+      </div>
+    )
+  ) : record.status === "running" && !record.iteration ? (
+    traceMode === "chat" && activeLiveChatTrace ? (
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <TraceViewer
+          trace={activeLiveChatTrace}
+          model={{
+            id: record.model,
+            name: record.modelLabel,
+            provider: record.provider as any,
+          }}
+          forcedViewMode="chat"
+          isLoading={true}
+          toolsMetadata={toolsMetadata}
+          toolServerMap={toolServerMap}
+          connectedServerIds={connectedServerIds}
+          hideToolbar
+          fillContent
+        />
+      </div>
+    ) : (
+      <div className="flex min-h-0 flex-1 items-center justify-center rounded-xl border border-border/50 bg-muted/10">
+        <div className="flex items-center gap-3 text-sm text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          <span>
+            {record.isRetrying ? "Retrying" : "Running"} {record.modelLabel}…
+          </span>
+        </div>
+      </div>
+    )
+  ) : record.status === "cancelled" && !record.iteration ? (
+    <div className="flex min-h-0 flex-1 items-center justify-center rounded-xl border border-amber-500/25 bg-amber-500/5 px-6 py-10">
+      <div className="max-w-sm text-center">
+        <div className="text-sm font-medium text-amber-800 dark:text-amber-200">
+          {record.modelLabel} stopped
+        </div>
+        <p className="mt-2 text-sm text-muted-foreground">
+          This run was stopped before it finished. Partial trace and metrics
+          may still be visible in the tabs above.
+        </p>
+      </div>
+    </div>
+  ) : record.status === "failed" && !record.iteration ? (
+    <div className="flex min-h-0 flex-1 items-center justify-center rounded-xl border border-destructive/30 bg-destructive/5 px-6 py-10">
+      <div className="max-w-sm text-center">
+        <div className="text-sm font-medium text-destructive">
+          {record.modelLabel} failed
+        </div>
+        <p className="mt-2 text-sm text-muted-foreground">
+          {record.error || "No run data is available for this model."}
+        </p>
+      </div>
+    </div>
+  ) : (
+    <div className="flex min-h-0 flex-1 items-center justify-center rounded-xl border border-dashed border-border/60 bg-muted/10 px-6 py-10 text-center">
+      <div>
+        <div className="text-sm font-medium">No run yet</div>
+        <p className="mt-2 text-sm text-muted-foreground">
+          Run compare to load this model’s chat, trace, and tool details.
+        </p>
+      </div>
+    </div>
+  );
 
   return (
     <div className="flex h-auto min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl border border-border/60 bg-card/40 lg:h-full">
@@ -2753,124 +2912,37 @@ function RunColumn({
       </div>
 
       <div className="flex min-w-0 max-lg:min-h-[min(52vh,26rem)] flex-1 flex-col overflow-hidden p-3 lg:min-h-0">
-        {record.iteration ? (
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-            {traceMode === "chat" ? (
-              <CompareRunChatSurface
-                iteration={record.iteration}
-                traceModel={{
-                  id: record.model,
-                  name: record.modelLabel,
-                  provider: record.provider as any,
-                }}
-                emptyMessage={`No ${activeTab} data is available for this run.`}
-                fallbackTrace={streamingTraceEnvelope}
-                onTraceLoaded={onStreamingTraceLoaded}
-                toolsMetadata={toolsMetadata}
-                toolServerMap={toolServerMap}
-                connectedServerIds={connectedServerIds}
-                traceBlob={persistedTraceBlob}
-                traceBlobLoading={persistedTraceLoading}
-                traceBlobError={persistedTraceError}
-              />
-            ) : (
-              <EvalTraceSurface
-                iteration={record.iteration}
-                testCase={testCase}
-                mode={traceMode}
-                emptyMessage={`No ${activeTab} data is available for this run.`}
-                fallbackTrace={streamingTraceEnvelope}
-                fallbackActualToolCalls={actualToolCalls}
-                onTraceLoaded={onStreamingTraceLoaded}
-                onNavigateToChat={() => onTabChange("chat")}
-                traceBlob={persistedTraceBlob}
-                traceBlobLoading={persistedTraceLoading}
-                traceBlobError={persistedTraceError}
-                toolsMetadata={toolsMetadata}
-                toolServerMap={toolServerMap}
-                connectedServerIds={connectedServerIds}
-              />
-            )}
-          </div>
-        ) : hasStreamingTrace ? (
-          isWaitingForFirstTimelineSnapshot ? (
-            <div className="flex min-h-0 flex-1 items-center justify-center rounded-xl border border-border/50 bg-muted/10 px-6 py-10 text-center">
-              <div className="max-w-sm">
-                <div className="text-sm font-medium">
-                  Timeline appears after the first step completes
+        {shouldRenderChatShell ? (
+          <ChatboxHostStyleProvider value={hostStyle}>
+            <ChatboxHostThemeProvider value={themeMode}>
+              <div
+                className={cn(
+                  "chatbox-host-shell app-theme-scope flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-border/50",
+                  themeMode === "dark" && "dark",
+                )}
+                data-host-style={hostStyle}
+                style={shellStyle}
+              >
+                <div className="shrink-0 px-3 pt-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="shrink-0 text-[9px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
+                      Host Styles
+                    </p>
+                    <HostStylePillSelector
+                      className="w-[164px] shrink-0"
+                      value={hostStyle}
+                      onValueChange={setHostStyle}
+                    />
+                  </div>
                 </div>
-                <p className="mt-2 text-sm text-muted-foreground">
-                  Chat and raw output are already streaming for the current
-                  in-flight step.
-                </p>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  className="mt-3"
-                  onClick={() => onTabChange("chat")}
-                >
-                  Switch to Chat
-                </Button>
+                <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden p-3 pt-2">
+                  {renderedRunContent}
+                </div>
               </div>
-            </div>
-          ) : (
-            <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-              <TraceViewer
-                trace={streamingTraceEnvelope}
-                forcedViewMode={traceMode}
-                expectedToolCalls={expectedToolCalls}
-                actualToolCalls={actualToolCalls}
-                toolsMetadata={toolsMetadata}
-                toolServerMap={toolServerMap}
-                connectedServerIds={connectedServerIds}
-                hideToolbar
-                fillContent
-              />
-            </div>
-          )
-        ) : record.status === "running" && !record.iteration ? (
-          <div className="flex min-h-0 flex-1 items-center justify-center rounded-xl border border-border/50 bg-muted/10">
-            <div className="flex items-center gap-3 text-sm text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              <span>
-                {record.isRetrying ? "Retrying" : "Running"} {record.modelLabel}
-                …
-              </span>
-            </div>
-          </div>
-        ) : record.status === "cancelled" && !record.iteration ? (
-          <div className="flex min-h-0 flex-1 items-center justify-center rounded-xl border border-amber-500/25 bg-amber-500/5 px-6 py-10">
-            <div className="max-w-sm text-center">
-              <div className="text-sm font-medium text-amber-800 dark:text-amber-200">
-                {record.modelLabel} stopped
-              </div>
-              <p className="mt-2 text-sm text-muted-foreground">
-                This run was stopped before it finished. Partial trace and
-                metrics may still be visible in the tabs above.
-              </p>
-            </div>
-          </div>
-        ) : record.status === "failed" && !record.iteration ? (
-          <div className="flex min-h-0 flex-1 items-center justify-center rounded-xl border border-destructive/30 bg-destructive/5 px-6 py-10">
-            <div className="max-w-sm text-center">
-              <div className="text-sm font-medium text-destructive">
-                {record.modelLabel} failed
-              </div>
-              <p className="mt-2 text-sm text-muted-foreground">
-                {record.error || "No run data is available for this model."}
-              </p>
-            </div>
-          </div>
+            </ChatboxHostThemeProvider>
+          </ChatboxHostStyleProvider>
         ) : (
-          <div className="flex min-h-0 flex-1 items-center justify-center rounded-xl border border-dashed border-border/60 bg-muted/10 px-6 py-10 text-center">
-            <div>
-              <div className="text-sm font-medium">No run yet</div>
-              <p className="mt-2 text-sm text-muted-foreground">
-                Run compare to load this model’s chat, trace, and tool details.
-              </p>
-            </div>
-          </div>
+          renderedRunContent
         )}
       </div>
     </div>
