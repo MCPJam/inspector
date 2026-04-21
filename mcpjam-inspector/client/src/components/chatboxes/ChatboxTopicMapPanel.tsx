@@ -19,6 +19,11 @@ import {
 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { ScrollArea } from "@mcpjam/design-system/scroll-area";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@mcpjam/design-system/tooltip";
 import { SearchInput } from "@/components/ui/search-input";
 import {
   type UsageFilterChip,
@@ -112,6 +117,7 @@ type GraphNode = {
   sessionId: string;
   clusterId?: string;
   clusterLabel?: string;
+  semanticTitle?: string;
   semanticPreview: string;
   messageCount: number;
   startedAt: number;
@@ -163,17 +169,17 @@ interface ChatboxTopicMapPanelProps {
 }
 
 function rebuildButtonLabel(run: ClusterRunState | null): string {
-  if (!run) return "Rebuild topic map";
-  if (run.isStale) return "Rebuild topic map";
+  if (!run) return "Rebuild clusters";
+  if (run.isStale) return "Rebuild clusters";
   switch (run.status) {
     case "queued":
       return "Queued…";
     case "running":
       return "Refreshing…";
     case "failed":
-      return "Retry rebuild";
+      return "Retry rebuild clusters";
     default:
-      return "Rebuild topic map";
+      return "Rebuild clusters";
   }
 }
 
@@ -231,6 +237,7 @@ function matchesSearch(
   node: {
     sessionId: string;
     clusterLabel?: string;
+    semanticTitle?: string;
     semanticPreview: string;
     modelId?: string;
   },
@@ -239,6 +246,7 @@ function matchesSearch(
   const haystack = [
     node.sessionId,
     node.clusterLabel ?? "",
+    node.semanticTitle ?? "",
     node.semanticPreview,
     node.modelId ?? "",
   ]
@@ -356,6 +364,162 @@ function trimPreview(text: string) {
   return `${text.slice(0, 83).trimEnd()}…`;
 }
 
+/**
+ * Stopwords removed when deriving a single-word topic label from a session's
+ * `semanticPreview`. Covers standard English function words plus the generic
+ * chat-context terms that almost every session summary opens with
+ * (e.g. "The user wants to...", "User asked about...").
+ */
+const TOPIC_LABEL_STOPWORDS: ReadonlySet<string> = new Set([
+  "a",
+  "an",
+  "the",
+  "and",
+  "or",
+  "but",
+  "so",
+  "if",
+  "nor",
+  "yet",
+  "of",
+  "to",
+  "for",
+  "in",
+  "on",
+  "at",
+  "with",
+  "by",
+  "from",
+  "about",
+  "into",
+  "onto",
+  "over",
+  "under",
+  "between",
+  "through",
+  "during",
+  "as",
+  "is",
+  "are",
+  "was",
+  "were",
+  "be",
+  "been",
+  "being",
+  "am",
+  "have",
+  "has",
+  "had",
+  "do",
+  "does",
+  "did",
+  "will",
+  "would",
+  "should",
+  "can",
+  "could",
+  "may",
+  "might",
+  "must",
+  "i",
+  "you",
+  "he",
+  "she",
+  "it",
+  "we",
+  "they",
+  "me",
+  "him",
+  "her",
+  "us",
+  "them",
+  "my",
+  "your",
+  "his",
+  "its",
+  "our",
+  "their",
+  "this",
+  "that",
+  "these",
+  "those",
+  "user",
+  "users",
+  "assistant",
+  "chat",
+  "session",
+  "please",
+  "wants",
+  "want",
+  "wanted",
+  "needs",
+  "need",
+  "needed",
+  "asks",
+  "ask",
+  "asked",
+  "asking",
+  "requests",
+  "request",
+  "requested",
+  "requesting",
+  "seeks",
+  "seek",
+  "seeking",
+  "discusses",
+  "discussing",
+  "helps",
+  "help",
+  "helping",
+  "tries",
+  "trying",
+  "attempts",
+  "attempting",
+  "uses",
+  "use",
+  "using",
+]);
+
+function stripWordPunctuation(word: string): string {
+  return word.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "");
+}
+
+/**
+ * First topical word in a session's `semanticPreview`, skipping stopwords and
+ * generic chat framing ("the user asked...", "user wants..."). Falls back to
+ * the first raw token, then the session id, so callers always get something
+ * printable for the hover chip / selected bubble title.
+ */
+export function topicLabelFromPreview(preview: string): string {
+  const trimmed = preview.trim();
+  if (!trimmed) return "";
+  const tokens = trimmed.split(/\s+/).map(stripWordPunctuation).filter(Boolean);
+  for (const token of tokens) {
+    if (!TOPIC_LABEL_STOPWORDS.has(token.toLowerCase())) {
+      return token;
+    }
+  }
+  return tokens[0] ?? "";
+}
+
+/**
+ * Short per-node label shown on hover and as the title of the click bubble.
+ * Derived from the session's own summary so sibling nodes inside the same
+ * cluster surface their distinct topics (e.g. "dog" vs "cat") instead of
+ * collapsing to the shared cluster keyword.
+ */
+export function topicMapNodeHoverLabel(node: {
+  semanticTitle?: string;
+  semanticPreview: string;
+  sessionId: string;
+}): string {
+  const fromTitle = node.semanticTitle?.trim();
+  if (fromTitle) return fromTitle;
+  const fromPreview = topicLabelFromPreview(node.semanticPreview);
+  if (fromPreview) return fromPreview;
+  return node.sessionId;
+}
+
 export function ChatboxTopicMapPanel({
   chatboxId,
   filter,
@@ -374,6 +538,7 @@ export function ChatboxTopicMapPanel({
   const deferredSearch = useDeferredValue(searchQuery.trim().toLowerCase());
   const graphRef = useRef<GraphHandle | null>(null);
   const autoFitKeyRef = useRef<string | null>(null);
+  const topicMapSelectionRunIdRef = useRef<string | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const topicMapPalette = useTopicMapCanvasPalette(panelRef);
   const canvasPalette = useMemo(
@@ -414,6 +579,7 @@ export function ChatboxTopicMapPanel({
         sessionId: node.sessionId,
         clusterId: node.clusterId,
         clusterLabel: node.clusterLabel,
+        semanticTitle: node.semanticTitle,
         semanticPreview: node.semanticPreview,
         messageCount: node.messageCount,
         startedAt: node.startedAt,
@@ -476,6 +642,7 @@ export function ChatboxTopicMapPanel({
           matchesSearch(deferredSearch, {
             sessionId: node.sessionId,
             clusterLabel: node.clusterLabel,
+            semanticTitle: node.semanticTitle,
             semanticPreview: node.semanticPreview,
             modelId: node.modelId,
           }),
@@ -520,13 +687,20 @@ export function ChatboxTopicMapPanel({
 
   useEffect(() => {
     if (!snapshot) {
+      topicMapSelectionRunIdRef.current = null;
       setSelectedNodeId(null);
       return;
     }
-    if (
-      selectedNodeId &&
-      snapshot.nodes.some((node) => node.sessionId === selectedNodeId)
-    ) {
+    const runId = snapshot.runId;
+    if (topicMapSelectionRunIdRef.current !== runId) {
+      topicMapSelectionRunIdRef.current = runId;
+      setSelectedNodeId(snapshot.nodes[0]?.sessionId ?? null);
+      return;
+    }
+    if (!selectedNodeId) {
+      return;
+    }
+    if (snapshot.nodes.some((node) => node.sessionId === selectedNodeId)) {
       return;
     }
     setSelectedNodeId(snapshot.nodes[0]?.sessionId ?? null);
@@ -625,7 +799,12 @@ export function ChatboxTopicMapPanel({
       const isHovered = node.id === hoveredNodeId;
       const isSearchMatch = searchMatchIds?.has(node.id) ?? false;
       const dimmed = isNodeDimmed(node);
-      const label = node.clusterLabel ?? node.sessionId;
+      // Title for both the hover chip and the selected bubble comes from the
+      // session's own summary so the bubble on click reads like
+      // "dog" + "The user requested a drawing of a dog..." rather than
+      // echoing the cluster label (which is already visible in the sidebar).
+      const hoverWord = topicMapNodeHoverLabel(node);
+      const fullLabel = hoverWord || node.sessionId;
 
       ctx.save();
       ctx.globalAlpha = dimmed ? 0.16 : 1;
@@ -681,30 +860,18 @@ export function ChatboxTopicMapPanel({
       ctx.strokeStyle = isSelected ? canvasPalette.foreground : canvasPalette.border;
       ctx.stroke();
 
-      if (isSelected || isHovered) {
-        const titleFontSize = (isSelected ? 13 : 11.5) / globalScale;
-        const previewFontSize = 10 / globalScale;
-        const titleY = node.y - node.radius - 15 / globalScale;
-        const paddingX = 10 / globalScale;
-        const paddingY = 8 / globalScale;
-        const preview = isSelected ? trimPreview(node.semanticPreview) : null;
+      if (isHovered && !isSelected && hoverWord) {
+        const titleFontSize = 11 / globalScale;
+        const paddingX = 9 / globalScale;
+        const paddingY = 7 / globalScale;
+        const gap = 10 / globalScale;
 
-        ctx.font = `${isSelected ? 600 : 500} ${titleFontSize}px ui-sans-serif, system-ui, sans-serif`;
-        const titleWidth = ctx.measureText(label).width;
-        let bubbleWidth = titleWidth + paddingX * 2;
-        let bubbleHeight = titleFontSize + paddingY * 2;
-
-        if (preview) {
-          ctx.font = `400 ${previewFontSize}px ui-sans-serif, system-ui, sans-serif`;
-          bubbleWidth = Math.max(
-            bubbleWidth,
-            ctx.measureText(preview).width + paddingX * 2,
-          );
-          bubbleHeight += previewFontSize + 6 / globalScale;
-        }
-
-        const bubbleX = node.x + 12 / globalScale;
-        const bubbleY = titleY - bubbleHeight / 2;
+        ctx.font = `600 ${titleFontSize}px ui-sans-serif, system-ui, sans-serif`;
+        const titleWidth = ctx.measureText(hoverWord).width;
+        const bubbleWidth = titleWidth + paddingX * 2;
+        const bubbleHeight = titleFontSize + paddingY * 2;
+        const bubbleX = node.x - bubbleWidth / 2;
+        const bubbleY = node.y - node.radius - gap - bubbleHeight;
 
         ctx.save();
         ctx.globalAlpha = dimmed ? 0.55 : 0.98;
@@ -714,7 +881,7 @@ export function ChatboxTopicMapPanel({
           bubbleY,
           bubbleWidth,
           bubbleHeight,
-          12 / globalScale,
+          10 / globalScale,
         );
         ctx.fillStyle = canvasPalette.card;
         ctx.globalAlpha = dimmed ? 0.45 : 0.96;
@@ -724,19 +891,72 @@ export function ChatboxTopicMapPanel({
         ctx.stroke();
         ctx.globalAlpha = 1;
 
-        ctx.font = `${isSelected ? 600 : 500} ${titleFontSize}px ui-sans-serif, system-ui, sans-serif`;
+        ctx.font = `600 ${titleFontSize}px ui-sans-serif, system-ui, sans-serif`;
         ctx.fillStyle = canvasPalette.foreground;
-        ctx.fillText(label, bubbleX + paddingX, bubbleY + paddingY + titleFontSize * 0.82);
+        ctx.fillText(
+          hoverWord,
+          bubbleX + paddingX,
+          bubbleY + paddingY + titleFontSize * 0.82,
+        );
+        ctx.restore();
+      }
 
-        if (preview) {
-          ctx.font = `400 ${previewFontSize}px ui-sans-serif, system-ui, sans-serif`;
-          ctx.fillStyle = canvasPalette.mutedForeground;
-          ctx.fillText(
-            preview,
-            bubbleX + paddingX,
-            bubbleY + bubbleHeight - paddingY,
-          );
-        }
+      if (isSelected) {
+        const titleFontSize = 13 / globalScale;
+        const previewFontSize = 10 / globalScale;
+        const paddingX = 10 / globalScale;
+        const paddingY = 8 / globalScale;
+        const gap = 12 / globalScale;
+        const preview = trimPreview(node.semanticPreview);
+
+        ctx.font = `600 ${titleFontSize}px ui-sans-serif, system-ui, sans-serif`;
+        const titleWidth = ctx.measureText(fullLabel).width;
+        let bubbleWidth = titleWidth + paddingX * 2;
+        let bubbleHeight = titleFontSize + paddingY * 2;
+
+        ctx.font = `400 ${previewFontSize}px ui-sans-serif, system-ui, sans-serif`;
+        bubbleWidth = Math.max(
+          bubbleWidth,
+          ctx.measureText(preview).width + paddingX * 2,
+        );
+        bubbleHeight += previewFontSize + 6 / globalScale;
+
+        const bubbleX = node.x - bubbleWidth / 2;
+        const bubbleY = node.y + node.radius + gap;
+
+        ctx.save();
+        ctx.globalAlpha = dimmed ? 0.55 : 0.98;
+        drawRoundedRect(
+          ctx,
+          bubbleX,
+          bubbleY,
+          bubbleWidth,
+          bubbleHeight,
+          14 / globalScale,
+        );
+        ctx.fillStyle = canvasPalette.card;
+        ctx.globalAlpha = dimmed ? 0.45 : 0.96;
+        ctx.strokeStyle = canvasPalette.border;
+        ctx.lineWidth = 1 / globalScale;
+        ctx.fill();
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+
+        ctx.font = `600 ${titleFontSize}px ui-sans-serif, system-ui, sans-serif`;
+        ctx.fillStyle = canvasPalette.foreground;
+        ctx.fillText(
+          fullLabel,
+          bubbleX + paddingX,
+          bubbleY + paddingY + titleFontSize * 0.82,
+        );
+
+        ctx.font = `400 ${previewFontSize}px ui-sans-serif, system-ui, sans-serif`;
+        ctx.fillStyle = canvasPalette.mutedForeground;
+        ctx.fillText(
+          preview,
+          bubbleX + paddingX,
+          bubbleY + bubbleHeight - paddingY,
+        );
         ctx.restore();
       }
 
@@ -841,8 +1061,9 @@ export function ChatboxTopicMapPanel({
         }
       >();
 
+      // Cluster halos are always rendered regardless of hover/selection/search
+      // dimming so operators can see the full cluster landscape at all times.
       for (const node of graphData.nodes) {
-        if (isNodeDimmed(node)) continue;
         const clusterKey = node.clusterId ?? `unclustered:${node.id}`;
         const existing = clusters.get(clusterKey);
         if (existing) {
@@ -911,7 +1132,7 @@ export function ChatboxTopicMapPanel({
         ctx.restore();
       }
     },
-    [graphData, isNodeDimmed],
+    [graphData],
   );
 
   if (
@@ -1014,7 +1235,55 @@ export function ChatboxTopicMapPanel({
           </div>
         </div>
 
-        <div className="h-full min-h-0 w-full">
+        <div className="pointer-events-none absolute bottom-4 left-4 z-10 flex flex-wrap items-center gap-2">
+          <div className="pointer-events-auto flex flex-wrap items-center gap-2 rounded-lg border border-border bg-background/80 p-1.5 shadow-sm backdrop-blur">
+            <Tooltip delayDuration={200}>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  aria-label="Fit view"
+                  onClick={() => fitGraph()}
+                >
+                  <LocateFixed className="h-3.5 w-3.5" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="top" sideOffset={6}>
+                Fit view
+              </TooltipContent>
+            </Tooltip>
+            <Tooltip delayDuration={200}>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  aria-label={rebuildButtonLabel(latestRun)}
+                  disabled={rebuildDisabled(latestRun) || rebuildBusy}
+                  onClick={onRebuild}
+                >
+                  <RefreshCw
+                    className={cn(
+                      "h-3.5 w-3.5",
+                      latestRun?.status === "running" && !latestRun.isStale
+                        ? "animate-spin"
+                        : "",
+                    )}
+                  />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="top" sideOffset={6}>
+                {rebuildButtonLabel(latestRun)}
+              </TooltipContent>
+            </Tooltip>
+          </div>
+        </div>
+
+        <div
+          className="h-full min-h-0 w-full"
+          data-selected-session={selectedNodeId ?? ""}
+        >
           <ForceGraph2D
             ref={graphRef as never}
             graphData={graphData ?? { nodes: [], links: [] }}
@@ -1023,10 +1292,7 @@ export function ChatboxTopicMapPanel({
             backgroundColor="rgba(0,0,0,0)"
             nodeCanvasObjectMode={() => "replace"}
             nodeCanvasObject={drawNode}
-            nodeLabel={(node) => {
-              const graphNode = node as GraphNode;
-              return `${graphNode.clusterLabel ?? graphNode.sessionId}\n${graphNode.semanticPreview}`;
-            }}
+            nodeLabel={() => ""}
             linkColor={linkColor}
             linkWidth={linkWidth}
             linkCurvature={(link) => {
@@ -1056,6 +1322,7 @@ export function ChatboxTopicMapPanel({
             }}
             onBackgroundClick={() => {
               setHoveredNodeId(null);
+              setSelectedNodeId(null);
             }}
             onRenderFramePre={(ctx) => {
               drawClusterFields(ctx);
@@ -1083,36 +1350,9 @@ export function ChatboxTopicMapPanel({
             onValueChange={(value) => startTransition(() => setSearchQuery(value))}
             placeholder="Search nodes..."
           />
-          <div className="flex flex-wrap items-center gap-2">
-            <Button type="button" variant="outline" onClick={() => fitGraph()}>
-              <LocateFixed className="mr-2 h-3.5 w-3.5" />
-              Fit view
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              disabled={rebuildDisabled(latestRun) || rebuildBusy}
-              onClick={onRebuild}
-            >
-              <RefreshCw
-                className={cn(
-                  "mr-2 h-3.5 w-3.5",
-                  latestRun?.status === "running" && !latestRun.isStale
-                    ? "animate-spin"
-                    : "",
-                )}
-              />
-              {rebuildButtonLabel(latestRun)}
-            </Button>
-          </div>
         </div>
 
         <div className="flex min-h-0 flex-1 flex-col">
-          <div className="flex h-9 shrink-0 items-center border-b border-border bg-muted/20 px-4">
-            <span className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
-              Clusters
-            </span>
-          </div>
           <ScrollArea className="min-h-0 flex-1">
             <div className="space-y-3 p-4">
               {communities.map((community) => {
@@ -1122,16 +1362,8 @@ export function ChatboxTopicMapPanel({
                   clusterColorIndex.get(community.clusterId) ?? 0,
                 );
                 return (
-                  <button
+                  <div
                     key={community.clusterId}
-                    type="button"
-                    onClick={() =>
-                      onToggleChip({
-                        kind: "cluster",
-                        clusterId: community.clusterId,
-                        label: community.label,
-                      })
-                    }
                     className={cn(
                       "w-full rounded-lg border px-3 py-3 text-left transition",
                       isActive
@@ -1139,38 +1371,50 @@ export function ChatboxTopicMapPanel({
                         : "border-border bg-card hover:bg-muted/50",
                     )}
                   >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span
-                            className="h-2.5 w-2.5 rounded-full"
-                            style={{ backgroundColor: swatch }}
-                          />
+                    <button
+                      type="button"
+                      className="w-full text-left"
+                      onClick={() =>
+                        onToggleChip({
+                          kind: "cluster",
+                          clusterId: community.clusterId,
+                          label: community.label,
+                        })
+                      }
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span
+                              className="h-2.5 w-2.5 rounded-full"
+                              style={{ backgroundColor: swatch }}
+                            />
                           <p className="truncate text-sm font-semibold text-foreground">
                             {community.label}
                           </p>
+                          </div>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            {community.summary}
+                          </p>
                         </div>
-                        <p className="mt-1 text-xs text-muted-foreground">
-                          {community.summary}
-                        </p>
+                        <span className="rounded-full bg-secondary px-2 py-1 text-[11px] text-secondary-foreground">
+                          {community.memberCount}
+                        </span>
                       </div>
-                      <span className="rounded-full bg-secondary px-2 py-1 text-[11px] text-secondary-foreground">
-                        {community.memberCount}
-                      </span>
-                    </div>
+                    </button>
                     {community.keywords.length > 0 ? (
                       <div className="mt-3 flex flex-wrap gap-1.5">
                         {community.keywords.map((keyword) => (
                           <span
                             key={keyword}
-                            className="rounded-full border border-border px-2 py-0.5 text-[11px] text-muted-foreground"
+                            className="rounded-full border border-border bg-background px-2 py-0.5 text-[11px] text-muted-foreground"
                           >
                             {keyword}
                           </span>
                         ))}
                       </div>
                     ) : null}
-                  </button>
+                  </div>
                 );
               })}
             </div>

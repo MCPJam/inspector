@@ -2,7 +2,10 @@ import React from "react";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { ChatboxTopicMapPanel } from "../ChatboxTopicMapPanel";
+import {
+  ChatboxTopicMapPanel,
+  topicMapNodeHoverLabel,
+} from "../ChatboxTopicMapPanel";
 import type { UsageFilterState } from "@/hooks/chatbox-usage-filters";
 
 const { mockUseChatboxTopicMap } = vi.hoisted(() => ({
@@ -16,6 +19,7 @@ vi.mock("react-force-graph-2d", async () => {
       props: {
         graphData?: { nodes?: Array<{ id: string }> };
         onNodeClick?: (node: { id: string }) => void;
+        onBackgroundClick?: () => void;
       },
       ref,
     ) {
@@ -24,6 +28,13 @@ vi.mock("react-force-graph-2d", async () => {
       }));
       return (
         <div data-testid="force-graph">
+          <button
+            type="button"
+            data-testid="force-graph-background"
+            onClick={() => props.onBackgroundClick?.()}
+          >
+            Graph background
+          </button>
           {(props.graphData?.nodes ?? []).map((node) => (
             <button
               key={node.id}
@@ -87,6 +98,7 @@ const SNAPSHOT = {
       degree: 1,
       clusterId: "cluster-a",
       clusterLabel: "Password resets",
+      semanticTitle: "Password reset",
       semanticPreview: "User needs to reset a forgotten password.",
       messageCount: 6,
       startedAt: Date.UTC(2026, 2, 20),
@@ -100,6 +112,7 @@ const SNAPSHOT = {
       degree: 1,
       clusterId: "cluster-b",
       clusterLabel: "Billing issues",
+      semanticTitle: "Refund request",
       semanticPreview: "Refund request after duplicate charge.",
       messageCount: 4,
       startedAt: Date.UTC(2026, 2, 22),
@@ -176,6 +189,63 @@ beforeEach(() => {
   mockUseChatboxTopicMap.mockReturnValue(createDefaultChatboxTopicMapHookValue());
 });
 
+describe("topicMapNodeHoverLabel", () => {
+  it("prefers the cached semantic title when it exists", () => {
+    expect(
+      topicMapNodeHoverLabel({
+        semanticTitle: "Password reset",
+        semanticPreview: "User needs to reset a forgotten password.",
+        sessionId: "session-a",
+      }),
+    ).toBe("Password reset");
+  });
+
+  it("extracts the first topical word from the session summary, skipping articles and generic chat framing", () => {
+    expect(
+      topicMapNodeHoverLabel({
+        semanticPreview:
+          "The user requested a drawing of a dog, prompting the assistant to utilize a drawing tool.",
+        sessionId: "session-a",
+      }),
+    ).toBe("drawing");
+  });
+
+  it("strips surrounding punctuation from the chosen word", () => {
+    expect(
+      topicMapNodeHoverLabel({
+        semanticPreview: "User needs: billing help, urgently.",
+        sessionId: "session-a",
+      }),
+    ).toBe("billing");
+  });
+
+  it("prefers sibling-distinctive topics over shared cluster framing", () => {
+    // Two sessions in the same "Drawing requests" cluster should now surface
+    // their own subjects (dog vs cat) instead of both collapsing to the
+    // shared cluster keyword.
+    const dogNode = {
+      semanticPreview: "User asked for a drawing of a dog in watercolor.",
+      sessionId: "session-dog",
+    };
+    const catNode = {
+      semanticPreview: "User requested a pencil sketch of a cat on a couch.",
+      sessionId: "session-cat",
+    };
+    expect(topicMapNodeHoverLabel(dogNode)).not.toBe(
+      topicMapNodeHoverLabel(catNode),
+    );
+  });
+
+  it("falls back to the session id when the preview has no printable content", () => {
+    expect(
+      topicMapNodeHoverLabel({
+        semanticPreview: "   ",
+        sessionId: "sess-xyz",
+      }),
+    ).toBe("sess-xyz");
+  });
+});
+
 describe("ChatboxTopicMapPanel", () => {
   it("subscribes to ResizeObserver only after the graph pane mounts (post-loading)", () => {
     const observed: Element[] = [];
@@ -227,7 +297,6 @@ describe("ChatboxTopicMapPanel", () => {
 
     expect(screen.queryByText("Historical Topic Map")).not.toBeInTheDocument();
     expect(screen.queryByText("2 mapped sessions")).not.toBeInTheDocument();
-    expect(screen.getByText("Clusters")).toBeInTheDocument();
     expect(screen.getByText("Password resets")).toBeInTheDocument();
     expect(
       screen.getByText("Reset and account recovery questions."),
@@ -236,7 +305,7 @@ describe("ChatboxTopicMapPanel", () => {
     expect(screen.getByText("Invoice and refund help.")).toBeInTheDocument();
   });
 
-  it("renders Fit view and rebuild controls in the right panel", () => {
+  it("renders Fit view and rebuild controls overlayed on the canvas", () => {
     render(
       <ChatboxTopicMapPanel
         chatboxId="chatbox-1"
@@ -248,7 +317,7 @@ describe("ChatboxTopicMapPanel", () => {
     );
 
     const fitView = screen.getByRole("button", { name: /fit view/i });
-    const rebuild = screen.getByRole("button", { name: /rebuild topic map/i });
+    const rebuild = screen.getByRole("button", { name: /rebuild clusters/i });
     expect(fitView.compareDocumentPosition(rebuild)).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING,
     );
@@ -305,7 +374,6 @@ describe("ChatboxTopicMapPanel", () => {
       />,
     );
 
-    expect(screen.getByText("Clusters")).toBeInTheDocument();
     await user.click(
       screen.getByRole("button", { name: /Billing issues Invoice and refund help/i }),
     );
@@ -315,6 +383,24 @@ describe("ChatboxTopicMapPanel", () => {
       clusterId: "cluster-b",
       label: "Billing issues",
     });
+  });
+
+  it("renders cluster keywords as static chips without a popover", () => {
+    render(
+      <ChatboxTopicMapPanel
+        chatboxId="chatbox-1"
+        filter={EMPTY_FILTER}
+        onToggleChip={vi.fn()}
+        onClearChip={vi.fn()}
+        onRebuild={vi.fn()}
+      />,
+    );
+
+    const keywordChip = screen.getByText("password");
+    expect(keywordChip.tagName).toBe("SPAN");
+    expect(
+      screen.queryByRole("button", { name: "password" }),
+    ).not.toBeInTheDocument();
   });
 
   it("highlights active cluster selection in the list", () => {
@@ -334,6 +420,29 @@ describe("ChatboxTopicMapPanel", () => {
     const clusterButton = screen.getByRole("button", {
       name: /Password resets Reset and account recovery questions/i,
     });
-    expect(clusterButton).toHaveClass("border-primary/40");
+    expect(clusterButton.parentElement).toHaveClass("border-primary/40");
+  });
+
+  it("clears node selection when the graph background is clicked", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <ChatboxTopicMapPanel
+        chatboxId="chatbox-1"
+        filter={EMPTY_FILTER}
+        onToggleChip={vi.fn()}
+        onClearChip={vi.fn()}
+        onRebuild={vi.fn()}
+      />,
+    );
+
+    const graphHost = screen.getByTestId("force-graph").parentElement;
+    expect(graphHost).toHaveAttribute("data-selected-session", "session-a");
+
+    await user.click(screen.getByRole("button", { name: /graph node session-b/i }));
+    expect(graphHost).toHaveAttribute("data-selected-session", "session-b");
+
+    await user.click(screen.getByTestId("force-graph-background"));
+    expect(graphHost).toHaveAttribute("data-selected-session", "");
   });
 });

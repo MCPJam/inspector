@@ -51,6 +51,7 @@ export type TopicMapSnapshot = {
     degree: number;
     clusterId?: string;
     clusterLabel?: string;
+    semanticTitle?: string;
     semanticPreview: string;
     messageCount: number;
     startedAt: number;

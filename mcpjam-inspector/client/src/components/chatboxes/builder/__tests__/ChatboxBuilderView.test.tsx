@@ -218,7 +218,7 @@ describe("ChatboxBuilderView", () => {
     expect(screen.getByRole("button", { name: /^Save$/i })).not.toBeDisabled();
   });
 
-  it("disables Preview, Sessions, and Insights until the chatbox is saved", () => {
+  it("disables Preview, Sessions, and Clusters until the chatbox is saved", () => {
     const draft = CHATBOX_STARTERS.find((s) => s.id === "blank")!.createDraft(
       "openai/gpt-5-mini",
     );
@@ -234,7 +234,7 @@ describe("ChatboxBuilderView", () => {
 
     expect(screen.getByRole("button", { name: "Preview" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Sessions" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Insights" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Clusters" })).toBeDisabled();
   });
 
   it("passes sessions section to the usage panel for usage view mode", () => {

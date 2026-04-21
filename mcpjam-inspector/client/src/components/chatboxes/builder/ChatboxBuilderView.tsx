@@ -238,7 +238,7 @@ function ChatboxBuilderChrome({
               ["setup", "Setup"],
               ["preview", "Preview"],
               ["usage", "Sessions"],
-              ["insights", "Insights"],
+              ["insights", "Clusters"],
             ] as const
           ).map(([mode, label]) => {
             const active = viewMode === mode;
