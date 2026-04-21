@@ -1,8 +1,10 @@
+import type { RefObject } from "react";
 import {
   startTransition,
   useCallback,
   useDeferredValue,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -50,6 +52,66 @@ const GRAPH_SPREAD = 1400;
 const DEFAULT_GRAPH_WIDTH = 1200;
 const DEFAULT_GRAPH_HEIGHT = 840;
 const GRAPH_PADDING = 96;
+
+/** Dark `.app-theme-scope` fallbacks from `index.css` until the panel ref resolves tokens for canvas. */
+const DEFAULT_CANVAS_PALETTE = {
+  background: "oklch(0.2679 0.0036 106.6427)",
+  foreground: "oklch(0.8074 0.0142 93.0137)",
+  mutedForeground: "oklch(0.7713 0.0169 99.0657)",
+  border: "oklch(0.3618 0.0101 106.8928)",
+  card: "oklch(0.2679 0.0036 106.6427)",
+  primary: "oklch(0.6724 0.1308 38.7559)",
+} as const;
+
+type TopicMapCanvasPalette = {
+  background: string;
+  foreground: string;
+  mutedForeground: string;
+  border: string;
+  card: string;
+  primary: string;
+};
+
+function useTopicMapCanvasPalette(containerRef: RefObject<HTMLElement | null>) {
+  const [palette, setPalette] = useState<TopicMapCanvasPalette | null>(null);
+
+  const refresh = useCallback(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const cs = getComputedStyle(el);
+    setPalette({
+      background: cs.getPropertyValue("--background").trim(),
+      foreground: cs.getPropertyValue("--foreground").trim(),
+      mutedForeground: cs.getPropertyValue("--muted-foreground").trim(),
+      border: cs.getPropertyValue("--border").trim(),
+      card: cs.getPropertyValue("--card").trim(),
+      primary: cs.getPropertyValue("--primary").trim(),
+    });
+  }, [containerRef]);
+
+  useLayoutEffect(() => {
+    refresh();
+    const el = containerRef.current;
+    if (!el || typeof MutationObserver === "undefined") return;
+    const observer = new MutationObserver(() => {
+      refresh();
+    });
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["class", "style"],
+    });
+    const scope = el.closest(".app-theme-scope");
+    if (scope) {
+      observer.observe(scope, {
+        attributes: true,
+        attributeFilter: ["class", "style"],
+      });
+    }
+    return () => observer.disconnect();
+  }, [containerRef, refresh]);
+
+  return palette;
+}
 
 type SidebarTab = "info" | "filters" | "communities";
 
@@ -130,12 +192,12 @@ function rebuildDisabled(run: ClusterRunState | null): boolean {
 }
 
 function formatRunTone(run: ClusterRunState | null): string {
-  if (!run) return "bg-white/10 text-slate-200";
-  if (run.status === "failed") return "bg-rose-500/15 text-rose-200";
+  if (!run) return "bg-muted text-muted-foreground";
+  if (run.status === "failed") return "bg-destructive/15 text-destructive";
   if (run.status === "running" || run.status === "queued") {
-    return "bg-amber-400/15 text-amber-100";
+    return "bg-pending/15 text-pending-foreground";
   }
-  return "bg-emerald-400/15 text-emerald-100";
+  return "bg-success/15 text-success";
 }
 
 function colorForCluster(clusterId: string | undefined, fallbackIndex?: number) {
@@ -164,6 +226,12 @@ function hexToRgba(hex: string, alpha: number) {
   const green = Number.parseInt(value.slice(2, 4), 16);
   const blue = Number.parseInt(value.slice(4, 6), 16);
   return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
+}
+
+/** Theme-aware translucent stroke for canvas (oklch-safe in modern browsers). */
+function faintLine(color: string, amountPercent: number) {
+  const base = color.trim() || DEFAULT_CANVAS_PALETTE.border;
+  return `color-mix(in oklch, ${base} ${amountPercent}%, transparent)`;
 }
 
 function matchesSearch(
@@ -275,6 +343,12 @@ export function ChatboxTopicMapPanel({
   const deferredSearch = useDeferredValue(searchQuery.trim().toLowerCase());
   const graphRef = useRef<GraphHandle | null>(null);
   const autoFitKeyRef = useRef<string | null>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const topicMapPalette = useTopicMapCanvasPalette(panelRef);
+  const canvasPalette = useMemo(
+    () => topicMapPalette ?? DEFAULT_CANVAS_PALETTE,
+    [topicMapPalette],
+  );
   const { ref: graphContainerRef, size } = useElementSize<HTMLDivElement>();
 
   const activeClusterIds = useMemo(
@@ -603,20 +677,20 @@ export function ChatboxTopicMapPanel({
       if (deferredSearch && isSearchMatch) {
         ctx.beginPath();
         ctx.strokeStyle = isSelected
-          ? "rgba(255,255,255,0.92)"
-          : "rgba(255,255,255,0.55)";
+          ? canvasPalette.foreground
+          : canvasPalette.mutedForeground;
         ctx.lineWidth = 1.4 / globalScale;
         ctx.arc(node.x, node.y, node.radius + 4.2, 0, 2 * Math.PI);
         ctx.stroke();
       }
 
       ctx.beginPath();
-      ctx.fillStyle = dimmed ? "rgba(122,138,164,0.26)" : node.color;
+      ctx.fillStyle = dimmed ? canvasPalette.mutedForeground : node.color;
       ctx.arc(node.x, node.y, node.radius, 0, 2 * Math.PI);
       ctx.fill();
 
       ctx.lineWidth = (isSelected ? 2.4 : isHovered ? 1.4 : 0.9) / globalScale;
-      ctx.strokeStyle = isSelected ? "#ffffff" : "rgba(6,10,24,0.75)";
+      ctx.strokeStyle = isSelected ? canvasPalette.foreground : canvasPalette.border;
       ctx.stroke();
 
       if (isSelected || isHovered) {
@@ -654,21 +728,21 @@ export function ChatboxTopicMapPanel({
           bubbleHeight,
           12 / globalScale,
         );
-        ctx.fillStyle = "rgba(8,12,26,0.92)";
-        ctx.strokeStyle = isSelected
-          ? "rgba(255,255,255,0.28)"
-          : "rgba(148,163,184,0.18)";
+        ctx.fillStyle = canvasPalette.card;
+        ctx.globalAlpha = dimmed ? 0.45 : 0.96;
+        ctx.strokeStyle = canvasPalette.border;
         ctx.lineWidth = 1 / globalScale;
         ctx.fill();
         ctx.stroke();
+        ctx.globalAlpha = 1;
 
         ctx.font = `${isSelected ? 600 : 500} ${titleFontSize}px ui-sans-serif, system-ui, sans-serif`;
-        ctx.fillStyle = "rgba(248,250,252,0.96)";
+        ctx.fillStyle = canvasPalette.foreground;
         ctx.fillText(label, bubbleX + paddingX, bubbleY + paddingY + titleFontSize * 0.82);
 
         if (preview) {
           ctx.font = `400 ${previewFontSize}px ui-sans-serif, system-ui, sans-serif`;
-          ctx.fillStyle = "rgba(203,213,225,0.82)";
+          ctx.fillStyle = canvasPalette.mutedForeground;
           ctx.fillText(
             preview,
             bubbleX + paddingX,
@@ -681,6 +755,10 @@ export function ChatboxTopicMapPanel({
       ctx.restore();
     },
     [
+      canvasPalette.border,
+      canvasPalette.card,
+      canvasPalette.foreground,
+      canvasPalette.mutedForeground,
       deferredSearch,
       hoveredNodeId,
       isNodeDimmed,
@@ -693,7 +771,9 @@ export function ChatboxTopicMapPanel({
     (link: GraphLink) => {
       const sourceId = getLinkEndpointId(link.source);
       const targetId = getLinkEndpointId(link.target);
-      if (!sourceId || !targetId) return "rgba(148,163,184,0.14)";
+      if (!sourceId || !targetId) {
+        return faintLine(canvasPalette.mutedForeground, 14);
+      }
       const sourceNode = nodeById.get(sourceId);
       const targetNode = nodeById.get(targetId);
       const dimmed =
@@ -708,9 +788,9 @@ export function ChatboxTopicMapPanel({
         hoveredNodeId != null &&
         (sourceId === hoveredNodeId || targetId === hoveredNodeId);
 
-      if (touchesSelection) return "rgba(255,255,255,0.42)";
+      if (touchesSelection) return faintLine(canvasPalette.foreground, 42);
       if (touchesHover && sourceNode) return hexToRgba(sourceNode.color, 0.34);
-      if (dimmed) return "rgba(148,163,184,0.06)";
+      if (dimmed) return faintLine(canvasPalette.mutedForeground, 6);
       if (
         sourceNode &&
         targetNode &&
@@ -719,9 +799,17 @@ export function ChatboxTopicMapPanel({
       ) {
         return hexToRgba(sourceNode.color, 0.22);
       }
-      return "rgba(148,163,184,0.14)";
+      return faintLine(canvasPalette.border, 28);
     },
-    [hoveredNodeId, isNodeDimmed, nodeById, selectedNodeId],
+    [
+      canvasPalette.border,
+      canvasPalette.foreground,
+      canvasPalette.mutedForeground,
+      hoveredNodeId,
+      isNodeDimmed,
+      nodeById,
+      selectedNodeId,
+    ],
   );
 
   const linkWidth = useCallback(
@@ -838,17 +926,6 @@ export function ChatboxTopicMapPanel({
     [graphData, isNodeDimmed],
   );
 
-  const runCopy =
-    latestRun?.status === "running"
-      ? "Updating historical topic map"
-      : latestRun?.status === "queued"
-        ? "Queued for rebuild"
-        : latestRun?.status === "failed"
-          ? "Last rebuild failed"
-          : snapshot
-            ? `${snapshot.stats.mappedSessionCount.toLocaleString()} mapped sessions`
-            : "No topic map yet";
-
   if (
     !snapshot &&
     (isLoading ||
@@ -856,12 +933,12 @@ export function ChatboxTopicMapPanel({
       latestRun?.status === "queued")
   ) {
     return (
-      <div className="flex h-full min-h-0 items-center justify-center bg-[#070917] text-slate-100">
+      <div className="flex h-full min-h-0 items-center justify-center bg-background text-foreground">
         <div className="flex max-w-sm flex-col items-center gap-3 text-center">
-          <LoaderCircle className="h-8 w-8 animate-spin text-cyan-200" />
+          <LoaderCircle className="h-8 w-8 animate-spin text-primary" />
           <div>
             <p className="text-sm font-medium">Building the historical topic map</p>
-            <p className="mt-1 text-xs text-slate-300/70">
+            <p className="mt-1 text-xs text-muted-foreground">
               Sessions are being summarized, clustered, and laid out for the graph.
             </p>
           </div>
@@ -872,12 +949,12 @@ export function ChatboxTopicMapPanel({
 
   if (!snapshot) {
     return (
-      <div className="flex h-full min-h-0 items-center justify-center bg-[#070917] text-slate-100">
+      <div className="flex h-full min-h-0 items-center justify-center bg-background text-foreground">
         <div className="flex max-w-md flex-col items-center gap-3 text-center">
           {latestRun?.status === "failed" ? (
-            <AlertTriangle className="h-8 w-8 text-rose-300" />
+            <AlertTriangle className="h-8 w-8 text-destructive" />
           ) : (
-            <Network className="h-8 w-8 text-slate-400" />
+            <Network className="h-8 w-8 text-muted-foreground" />
           )}
           <div>
             <p className="text-sm font-medium">
@@ -885,7 +962,7 @@ export function ChatboxTopicMapPanel({
                 ? "Topic map rebuild failed"
                 : "No topic map snapshot yet"}
             </p>
-            <p className="mt-1 text-xs text-slate-300/70">
+            <p className="mt-1 text-xs text-muted-foreground">
               {snapshotError ??
                 latestRun?.errorMessage ??
                 "Run a rebuild to summarize and cluster historical sessions."}
@@ -894,7 +971,6 @@ export function ChatboxTopicMapPanel({
           <Button
             type="button"
             variant="outline"
-            className="border-white/15 bg-white/5 text-slate-100 hover:bg-white/10"
             disabled={rebuildDisabled(latestRun) || rebuildBusy}
             onClick={onRebuild}
           >
@@ -907,36 +983,40 @@ export function ChatboxTopicMapPanel({
   }
 
   return (
-    <div className="flex h-full min-h-0 overflow-hidden bg-[#060914] text-slate-100">
+    <div
+      ref={panelRef}
+      className="flex h-full min-h-0 overflow-hidden bg-background text-foreground"
+    >
       <div className="relative min-w-0 flex-1 overflow-hidden">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(32,201,151,0.14),_transparent_24%),radial-gradient(circle_at_bottom_right,_rgba(96,165,250,0.16),_transparent_32%),linear-gradient(180deg,_rgba(10,13,27,0.96),_rgba(4,8,21,1))]" />
+        <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-primary/8 via-transparent to-muted/50" />
         <div
-          className="absolute inset-0 opacity-35"
-          style={{
-            backgroundImage:
-              "linear-gradient(rgba(148,163,184,0.05) 1px, transparent 1px), linear-gradient(90deg, rgba(148,163,184,0.05) 1px, transparent 1px)",
-            backgroundSize: "40px 40px",
-            maskImage:
-              "radial-gradient(circle at 50% 45%, rgba(0,0,0,0.95), rgba(0,0,0,0.18) 78%, transparent 100%)",
-          }}
+          className="pointer-events-none absolute inset-0 text-border/40 [background-image:linear-gradient(to_right,currentColor_1px,transparent_1px),linear-gradient(to_bottom,currentColor_1px,transparent_1px)] [background-size:40px_40px] opacity-60 [mask-image:radial-gradient(circle_at_50%_45%,black,transparent_100%)]"
         />
 
         <div className="absolute left-4 right-4 top-4 z-10 flex flex-wrap items-start justify-between gap-3">
           <div className="space-y-2">
             <div className="flex flex-wrap items-center gap-2">
-              <span className="rounded-full border border-white/8 bg-white/6 px-2.5 py-1 text-[11px] font-medium uppercase tracking-[0.22em] text-slate-200/80">
+              <span className="rounded-full border border-border bg-muted/40 px-2.5 py-1 text-[11px] font-medium uppercase tracking-[0.22em] text-muted-foreground">
                 Historical Topic Map
               </span>
-              <span
-                className={cn(
-                  "rounded-full px-2.5 py-1 text-[11px] font-medium",
-                  formatRunTone(latestRun),
-                )}
-              >
-                {runCopy}
-              </span>
+              {latestRun?.status === "running" ||
+              latestRun?.status === "queued" ||
+              latestRun?.status === "failed" ? (
+                <span
+                  className={cn(
+                    "rounded-full px-2.5 py-1 text-[11px] font-medium",
+                    formatRunTone(latestRun),
+                  )}
+                >
+                  {latestRun?.status === "running"
+                    ? "Updating historical topic map"
+                    : latestRun?.status === "queued"
+                      ? "Queued for rebuild"
+                      : "Last rebuild failed"}
+                </span>
+              ) : null}
             </div>
-            <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-300/75">
+            <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
               <span>{snapshot.stats.nodeCount.toLocaleString()} visible nodes</span>
               <span>•</span>
               <span>{snapshot.stats.edgeCount.toLocaleString()} edges</span>
@@ -951,11 +1031,11 @@ export function ChatboxTopicMapPanel({
                 </>
               ) : null}
             </div>
-            <p className="text-[11px] text-slate-400/80">
+            <p className="text-[11px] text-muted-foreground">
               Drag the canvas to pan, scroll to zoom, click a node to inspect.
             </p>
             {snapshot.isSampled ? (
-              <div className="max-w-xl rounded-2xl border border-amber-300/20 bg-amber-300/10 px-3 py-2 text-[11px] text-amber-100/90">
+              <div className="max-w-xl rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-[11px] text-warning-foreground">
                 Showing a stable 10,000-session sample of{" "}
                 {snapshot.stats.mappedSessionCount.toLocaleString()} mapped
                 sessions for this chatbox.
@@ -964,19 +1044,13 @@ export function ChatboxTopicMapPanel({
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              className="border-white/12 bg-white/[0.04] text-slate-100 hover:bg-white/[0.08]"
-              onClick={() => fitGraph()}
-            >
+            <Button type="button" variant="outline" onClick={() => fitGraph()}>
               <LocateFixed className="mr-2 h-3.5 w-3.5" />
               Fit view
             </Button>
             <Button
               type="button"
               variant="outline"
-              className="border-white/12 bg-white/[0.04] text-slate-100 hover:bg-white/[0.08]"
               disabled={rebuildDisabled(latestRun) || rebuildBusy}
               onClick={onRebuild}
             >
@@ -1046,8 +1120,8 @@ export function ChatboxTopicMapPanel({
                 size.height * 0.48,
                 size.height * 0.58,
               );
-              gradient.addColorStop(0, "rgba(255,255,255,0.02)");
-              gradient.addColorStop(1, "rgba(255,255,255,0)");
+              gradient.addColorStop(0, faintLine(canvasPalette.foreground, 3));
+              gradient.addColorStop(1, "transparent");
               ctx.fillStyle = gradient;
               ctx.fillRect(0, 0, size.width, size.height);
             }}
@@ -1055,13 +1129,12 @@ export function ChatboxTopicMapPanel({
         </div>
       </div>
 
-      <aside className="flex w-[372px] shrink-0 flex-col border-l border-white/10 bg-[#0b1020]/96 backdrop-blur-xl">
-        <div className="border-b border-white/10 p-4">
+      <aside className="flex w-[372px] shrink-0 flex-col border-l border-border bg-muted/30">
+        <div className="border-b border-border bg-muted/20 p-4">
           <SearchInput
             value={searchQuery}
             onValueChange={(value) => startTransition(() => setSearchQuery(value))}
             placeholder="Search nodes..."
-            className="text-slate-100"
           />
         </div>
 
@@ -1070,22 +1143,22 @@ export function ChatboxTopicMapPanel({
           onValueChange={(value) => setActiveTab(value as SidebarTab)}
           className="flex min-h-0 flex-1 flex-col"
         >
-          <TabsList className="grid grid-cols-3 rounded-none border-b border-white/10 bg-transparent p-0">
+          <TabsList className="grid grid-cols-3 rounded-none border-b border-border bg-muted/20 p-0">
             <TabsTrigger
               value="info"
-              className="rounded-none border-r border-white/10 data-[state=active]:bg-white/8"
+              className="rounded-none border-r border-border data-[state=active]:bg-muted data-[state=active]:text-foreground"
             >
               Info
             </TabsTrigger>
             <TabsTrigger
               value="filters"
-              className="rounded-none border-r border-white/10 data-[state=active]:bg-white/8"
+              className="rounded-none border-r border-border data-[state=active]:bg-muted data-[state=active]:text-foreground"
             >
               Filters
             </TabsTrigger>
             <TabsTrigger
               value="communities"
-              className="rounded-none data-[state=active]:bg-white/8"
+              className="rounded-none data-[state=active]:bg-muted data-[state=active]:text-foreground"
             >
               Communities
             </TabsTrigger>
@@ -1097,43 +1170,43 @@ export function ChatboxTopicMapPanel({
                 {selectedNode ? (
                   <>
                     <section className="space-y-3">
-                      <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-[0.18em] text-slate-300/70">
+                      <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
                         <Info className="h-3.5 w-3.5" />
                         Node Info
                       </div>
-                      <div className="rounded-3xl border border-white/10 bg-white/[0.045] p-4 shadow-[0_20px_60px_rgba(4,8,21,0.35)]">
-                        <p className="break-all text-sm font-semibold text-slate-50">
+                      <div className="rounded-lg border border-border bg-card p-4 shadow-sm">
+                        <p className="break-all text-sm font-semibold text-foreground">
                           {selectedNode.id}
                         </p>
-                        <dl className="mt-3 space-y-2 text-xs text-slate-300/80">
+                        <dl className="mt-3 space-y-2 text-xs text-muted-foreground">
                           <div className="flex items-start justify-between gap-3">
                             <dt>Community</dt>
-                            <dd className="text-right text-slate-100">
+                            <dd className="text-right text-foreground">
                               {selectedNode.clusterLabel ?? "Unclustered"}
                             </dd>
                           </div>
                           <div className="flex items-start justify-between gap-3">
                             <dt>Started</dt>
-                            <dd className="text-right text-slate-100">
+                            <dd className="text-right text-foreground">
                               {format(new Date(selectedNode.startedAt), "yyyy-MM-dd")}
                             </dd>
                           </div>
                           <div className="flex items-start justify-between gap-3">
                             <dt>Messages</dt>
-                            <dd className="text-right text-slate-100">
+                            <dd className="text-right text-foreground">
                               {selectedNode.messageCount}
                             </dd>
                           </div>
                           <div className="flex items-start justify-between gap-3">
                             <dt>Degree</dt>
-                            <dd className="text-right text-slate-100">
+                            <dd className="text-right text-foreground">
                               {selectedNode.degree}
                             </dd>
                           </div>
                           {selectedNode.modelId ? (
                             <div className="flex items-start justify-between gap-3">
                               <dt>Model</dt>
-                              <dd className="max-w-[180px] text-right font-mono text-slate-100">
+                              <dd className="max-w-[180px] text-right font-mono text-foreground">
                                 {selectedNode.modelId}
                               </dd>
                             </div>
@@ -1143,17 +1216,17 @@ export function ChatboxTopicMapPanel({
                     </section>
 
                     <section className="space-y-3">
-                      <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-[0.18em] text-slate-300/70">
+                      <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
                         <Sparkles className="h-3.5 w-3.5" />
                         Semantic Preview
                       </div>
-                      <div className="rounded-3xl border border-white/10 bg-white/[0.045] p-4 text-sm leading-6 text-slate-100/90 shadow-[0_20px_60px_rgba(4,8,21,0.35)]">
+                      <div className="rounded-lg border border-border bg-card p-4 text-sm leading-6 text-foreground shadow-sm">
                         {selectedNode.semanticPreview}
                       </div>
                     </section>
 
                     <section className="space-y-3">
-                      <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-[0.18em] text-slate-300/70">
+                      <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
                         <Network className="h-3.5 w-3.5" />
                         Neighbors ({selectedNeighbors.length})
                       </div>
@@ -1164,27 +1237,27 @@ export function ChatboxTopicMapPanel({
                               key={neighbor.id}
                               type="button"
                               onClick={() => focusNode(neighbor.id, 2.25)}
-                              className="w-full rounded-3xl border border-white/10 bg-white/[0.045] px-3 py-3 text-left transition hover:bg-white/[0.08]"
+                              className="w-full rounded-lg border border-border bg-card px-3 py-3 text-left transition hover:bg-muted/50"
                             >
                               <div className="flex items-center gap-2">
                                 <span
                                   className="h-2.5 w-1 rounded-full"
                                   style={{ backgroundColor: neighbor.color }}
                                 />
-                                <span className="truncate text-xs font-medium text-slate-100">
+                                <span className="truncate text-xs font-medium text-foreground">
                                   {neighbor.clusterLabel ?? "Unclustered"}
                                 </span>
-                                <span className="ml-auto text-[11px] text-slate-300/70">
+                                <span className="ml-auto text-[11px] text-muted-foreground">
                                   {(neighbor.score * 100).toFixed(0)}%
                                 </span>
                               </div>
-                              <p className="mt-1 line-clamp-2 text-xs text-slate-300/80">
+                              <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
                                 {neighbor.semanticPreview}
                               </p>
                             </button>
                           ))
                         ) : (
-                          <div className="rounded-3xl border border-dashed border-white/10 bg-white/[0.03] px-3 py-4 text-xs text-slate-300/70">
+                          <div className="rounded-lg border border-dashed border-border bg-muted/20 px-3 py-4 text-xs text-muted-foreground">
                             No reciprocal neighbors survived the graph pruning for
                             this node.
                           </div>
@@ -1193,7 +1266,7 @@ export function ChatboxTopicMapPanel({
                     </section>
                   </>
                 ) : (
-                  <div className="rounded-3xl border border-dashed border-white/10 bg-white/[0.03] p-4 text-sm text-slate-300/70">
+                  <div className="rounded-lg border border-dashed border-border bg-muted/20 p-4 text-sm text-muted-foreground">
                     Select a node to inspect its summary, community, and nearest
                     neighbors.
                   </div>
@@ -1206,7 +1279,7 @@ export function ChatboxTopicMapPanel({
             <ScrollArea className="h-full">
               <div className="space-y-5 p-4">
                 <section className="space-y-3">
-                  <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-[0.18em] text-slate-300/70">
+                  <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
                     <Filter className="h-3.5 w-3.5" />
                     Active Community Filters
                   </div>
@@ -1217,14 +1290,14 @@ export function ChatboxTopicMapPanel({
                           key={chipKey(chip)}
                           type="button"
                           onClick={() => onClearChip(chipKey(chip))}
-                          className="rounded-full border border-white/10 bg-white/[0.06] px-3 py-1 text-xs text-slate-100 transition hover:bg-white/[0.1]"
+                          className="rounded-full border border-border bg-muted/50 px-3 py-1 text-xs text-foreground transition hover:bg-muted"
                         >
                           {chip.label ?? chip.clusterId}
                         </button>
                       ))}
                     </div>
                   ) : (
-                    <div className="rounded-3xl border border-dashed border-white/10 bg-white/[0.03] px-3 py-4 text-xs text-slate-300/70">
+                    <div className="rounded-lg border border-dashed border-border bg-muted/20 px-3 py-4 text-xs text-muted-foreground">
                       No community filters are active. Pick a community from the
                       Communities tab to isolate it in the graph.
                     </div>
@@ -1232,7 +1305,7 @@ export function ChatboxTopicMapPanel({
                 </section>
 
                 <section className="space-y-3">
-                  <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-[0.18em] text-slate-300/70">
+                  <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
                     <Sparkles className="h-3.5 w-3.5" />
                     Search Results
                   </div>
@@ -1244,31 +1317,31 @@ export function ChatboxTopicMapPanel({
                             key={node.id}
                             type="button"
                             onClick={() => focusNode(node.id, 2.2)}
-                            className="w-full rounded-3xl border border-white/10 bg-white/[0.045] px-3 py-3 text-left transition hover:bg-white/[0.08]"
+                            className="w-full rounded-lg border border-border bg-card px-3 py-3 text-left transition hover:bg-muted/50"
                           >
                             <div className="flex items-center justify-between gap-3">
-                              <span className="truncate text-xs font-medium text-slate-100">
+                              <span className="truncate text-xs font-medium text-foreground">
                                 {node.clusterLabel ?? "Unclustered"}
                               </span>
-                              <span className="text-[11px] text-slate-300/70">
+                              <span className="text-[11px] text-muted-foreground">
                                 {formatDistanceToNow(new Date(node.lastActivityAt), {
                                   addSuffix: true,
                                 })}
                               </span>
                             </div>
-                            <p className="mt-1 line-clamp-2 text-xs text-slate-300/80">
+                            <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
                               {node.semanticPreview}
                             </p>
                           </button>
                         ))}
                       </div>
                     ) : (
-                      <div className="rounded-3xl border border-dashed border-white/10 bg-white/[0.03] px-3 py-4 text-xs text-slate-300/70">
+                      <div className="rounded-lg border border-dashed border-border bg-muted/20 px-3 py-4 text-xs text-muted-foreground">
                         No nodes matched “{deferredSearch}”.
                       </div>
                     )
                   ) : (
-                    <div className="rounded-3xl border border-dashed border-white/10 bg-white/[0.03] px-3 py-4 text-xs text-slate-300/70">
+                    <div className="rounded-lg border border-dashed border-border bg-muted/20 px-3 py-4 text-xs text-muted-foreground">
                       Search by community label, semantic preview, session ID, or
                       model.
                     </div>
@@ -1299,10 +1372,10 @@ export function ChatboxTopicMapPanel({
                         })
                       }
                       className={cn(
-                        "w-full rounded-3xl border px-3 py-3 text-left transition",
+                        "w-full rounded-lg border px-3 py-3 text-left transition",
                         isActive
-                          ? "border-cyan-300/40 bg-cyan-300/10"
-                          : "border-white/10 bg-white/[0.045] hover:bg-white/[0.08]",
+                          ? "border-primary/40 bg-primary/10"
+                          : "border-border bg-card hover:bg-muted/50",
                       )}
                     >
                       <div className="flex items-start justify-between gap-3">
@@ -1312,15 +1385,15 @@ export function ChatboxTopicMapPanel({
                               className="h-2.5 w-2.5 rounded-full"
                               style={{ backgroundColor: swatch }}
                             />
-                            <p className="truncate text-sm font-semibold text-slate-50">
+                            <p className="truncate text-sm font-semibold text-foreground">
                               {community.label}
                             </p>
                           </div>
-                          <p className="mt-1 text-xs text-slate-300/75">
+                          <p className="mt-1 text-xs text-muted-foreground">
                             {community.summary}
                           </p>
                         </div>
-                        <span className="rounded-full bg-white/8 px-2 py-1 text-[11px] text-slate-100">
+                        <span className="rounded-full bg-secondary px-2 py-1 text-[11px] text-secondary-foreground">
                           {community.memberCount}
                         </span>
                       </div>
@@ -1329,7 +1402,7 @@ export function ChatboxTopicMapPanel({
                           {community.keywords.map((keyword) => (
                             <span
                               key={keyword}
-                              className="rounded-full border border-white/10 px-2 py-0.5 text-[11px] text-slate-300/80"
+                              className="rounded-full border border-border px-2 py-0.5 text-[11px] text-muted-foreground"
                             >
                               {keyword}
                             </span>

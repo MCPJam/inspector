@@ -116,12 +116,11 @@ const SNAPSHOT = {
   ],
 };
 
-beforeEach(() => {
-  mockUseChatboxTopicMap.mockReset();
-  mockUseChatboxTopicMap.mockReturnValue({
+function createDefaultChatboxTopicMapHookValue() {
+  return {
     latestRun: {
       _id: "run-1",
-      status: "done",
+      status: "done" as const,
       startedAt: Date.now() - 10_000,
       finishedAt: Date.now() - 5_000,
       sessionCount: 2,
@@ -169,7 +168,12 @@ beforeEach(() => {
     snapshotError: null,
     isLoading: false,
     metadata: null,
-  });
+  };
+}
+
+beforeEach(() => {
+  mockUseChatboxTopicMap.mockReset();
+  mockUseChatboxTopicMap.mockReturnValue(createDefaultChatboxTopicMapHookValue());
 });
 
 describe("ChatboxTopicMapPanel", () => {
@@ -185,12 +189,50 @@ describe("ChatboxTopicMapPanel", () => {
     );
 
     expect(screen.getByText("Historical Topic Map")).toBeInTheDocument();
+    expect(screen.queryByText("2 mapped sessions")).not.toBeInTheDocument();
     expect(screen.getByText("session-a")).toBeInTheDocument();
     expect(screen.getByText("Password resets")).toBeInTheDocument();
     expect(
       screen.getByText("User needs to reset a forgotten password."),
     ).toBeInTheDocument();
     expect(screen.getByText(/1 unmapped/i)).toBeInTheDocument();
+  });
+
+  it("shows rebuild status in the header while a run is active", () => {
+    mockUseChatboxTopicMap.mockReturnValue({
+      ...createDefaultChatboxTopicMapHookValue(),
+      latestRun: {
+        _id: "run-2",
+        status: "running" as const,
+        startedAt: Date.now(),
+        finishedAt: null,
+        sessionCount: null,
+        clusterCount: null,
+        errorMessage: null,
+        model: "openai/gpt-4o-mini",
+        topicMapVersion: 1,
+        edgeCount: null,
+        sampleNodeCount: null,
+        unmappedSessionCount: null,
+        isSampled: false,
+        topicMapReady: false,
+        isStale: false,
+      },
+    });
+
+    render(
+      <ChatboxTopicMapPanel
+        chatboxId="chatbox-1"
+        filter={EMPTY_FILTER}
+        onToggleChip={vi.fn()}
+        onClearChip={vi.fn()}
+        onRebuild={vi.fn()}
+      />,
+    );
+
+    expect(
+      screen.getByText("Updating historical topic map"),
+    ).toBeInTheDocument();
   });
 
   it("lets operators toggle a community chip from the sidebar", async () => {
