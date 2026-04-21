@@ -2659,7 +2659,7 @@ function RunColumn({
       </div>
     )
   ) : record.status === "running" && !record.iteration ? (
-    traceMode === "chat" && activeLiveChatTrace ? (
+    (traceMode === "chat" || traceMode === "tools") && activeLiveChatTrace ? (
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <TraceViewer
           trace={activeLiveChatTrace}
@@ -2668,8 +2668,10 @@ function RunColumn({
             name: record.modelLabel,
             provider: record.provider as any,
           }}
-          forcedViewMode="chat"
+          forcedViewMode={traceMode === "tools" ? "tools" : "chat"}
           isLoading={true}
+          expectedToolCalls={expectedToolCalls}
+          actualToolCalls={actualToolCalls}
           toolsMetadata={toolsMetadata}
           toolServerMap={toolServerMap}
           connectedServerIds={connectedServerIds}
