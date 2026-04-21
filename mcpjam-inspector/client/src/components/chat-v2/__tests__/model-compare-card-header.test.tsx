@@ -421,7 +421,7 @@ describe("ModelCompareCardHeader", () => {
     expect(screen.getByText("gpt-4o")).toBeInTheDocument();
   });
 
-  it("shows Pass pill instead of status dot when result is passed", () => {
+  it("shows Passed pill instead of status dot when result is passed", () => {
     render(
       <ModelCompareCardHeader
         model={model}
@@ -440,7 +440,7 @@ describe("ModelCompareCardHeader", () => {
     expect(screen.queryByLabelText("Ready")).not.toBeInTheDocument();
   });
 
-  it("shows Fail pill instead of status dot when result is failed", () => {
+  it("shows Failed pill instead of status dot when result is failed", () => {
     render(
       <ModelCompareCardHeader
         model={model}

@@ -451,9 +451,21 @@ export function TestCasesOverview({
                   Passed
                 </span>
               );
+              const failBadge = (
+                <span
+                  className="inline-flex shrink-0 items-center rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider bg-rose-500/15 text-rose-700 dark:bg-rose-400/20 dark:text-rose-300"
+                  aria-label="Failed"
+                >
+                  Failed
+                </span>
+              );
               const lastRunSummary = lastRunIteration ? (
                 <>
-                  {lastRunResult === "passed" ? passBadge : lastRunLabel}
+                  {lastRunResult === "passed"
+                    ? passBadge
+                    : lastRunResult === "failed"
+                      ? failBadge
+                      : lastRunLabel}
                   {lastRunTimestamp ? (
                     <span className="font-normal">
                       {" "}

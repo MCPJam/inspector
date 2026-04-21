@@ -168,7 +168,7 @@ describe("TestCasesOverview", () => {
     const row = await screen.findByTestId("test-case-row-case-1");
 
     await waitFor(() => {
-      expect(within(row).getByText("Failed")).toBeInTheDocument();
+      expect(within(row).getByLabelText("Failed")).toBeInTheDocument();
     });
     expect(within(row).getByLabelText("Last run failed")).toBeInTheDocument();
     expect(within(row).queryByLabelText("Passed")).not.toBeInTheDocument();
