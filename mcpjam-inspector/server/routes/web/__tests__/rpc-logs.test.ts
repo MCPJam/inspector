@@ -2,8 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 
 vi.mock("@mcpjam/sdk", async () => {
-  const actual =
-    await vi.importActual<typeof import("@mcpjam/sdk")>("@mcpjam/sdk");
+  const actual = await vi.importActual<typeof import("@mcpjam/sdk")>(
+    "@mcpjam/sdk"
+  );
 
   class MockMCPClientManager {
     private readonly rpcLogger?: (event: {
@@ -20,7 +21,7 @@ vi.mock("@mcpjam/sdk", async () => {
           message: unknown;
           serverId: string;
         }) => void;
-      },
+      }
     ) {
       this.rpcLogger = options?.rpcLogger;
     }
@@ -100,8 +101,8 @@ function createRpcLogsTestApp(): Hono {
       c,
       toolsListSchema,
       (manager, body) => listTools(manager, body),
-      { rpcLogs: false },
-    ),
+      { rpcLogs: false }
+    )
   );
   return app;
 }
@@ -112,25 +113,36 @@ describe("web hosted rpc logs", () => {
 
   beforeEach(() => {
     process.env.CONVEX_HTTP_URL = "https://convex.example.com";
-    global.fetch = vi.fn(async (input) => {
-      if (String(input).endsWith("/web/authorize")) {
+    global.fetch = vi.fn(async (input, init) => {
+      if (String(input).endsWith("/web/authorize-batch")) {
+        const payload = JSON.parse(String(init?.body ?? "{}"));
+        const serverIds = Array.isArray(payload?.serverIds)
+          ? payload.serverIds
+          : [];
         return new Response(
           JSON.stringify({
-            authorized: true,
-            role: "member",
-            accessLevel: "workspace_member",
-            permissions: { chatOnly: false },
-            serverConfig: {
-              transportType: "http",
-              url: "https://server.example.com/mcp",
-              headers: {},
-              useOAuth: false,
-            },
+            results: Object.fromEntries(
+              serverIds.map((serverId: string) => [
+                serverId,
+                {
+                  ok: true,
+                  role: "member",
+                  accessLevel: "workspace_member",
+                  permissions: { chatOnly: false },
+                  serverConfig: {
+                    transportType: "http",
+                    url: "https://server.example.com/mcp",
+                    headers: {},
+                    useOAuth: false,
+                  },
+                },
+              ])
+            ),
           }),
           {
             status: 200,
             headers: { "Content-Type": "application/json" },
-          },
+          }
         );
       }
 
@@ -158,7 +170,7 @@ describe("web hosted rpc logs", () => {
         serverId: "srv-1",
         serverName: "Notion",
       },
-      "test-token",
+      "test-token"
     );
 
     const { status, data } = await expectJson<{
@@ -184,7 +196,7 @@ describe("web hosted rpc logs", () => {
           serverName: "Notion",
           direction: "receive",
         }),
-      ]),
+      ])
     );
   });
 
@@ -199,7 +211,7 @@ describe("web hosted rpc logs", () => {
         serverIds: ["srv-1", "srv-2"],
         serverNames: ["Notion", "GitHub"],
       },
-      "test-token",
+      "test-token"
     );
 
     const { status, data } = await expectJson<{
@@ -222,7 +234,7 @@ describe("web hosted rpc logs", () => {
           serverId: "srv-2",
           serverName: "GitHub",
         }),
-      ]),
+      ])
     );
   });
 
@@ -245,7 +257,7 @@ describe("web hosted rpc logs", () => {
           serverId: "__guest__",
           serverName: "Excalidraw (App)",
         }),
-      ]),
+      ])
     );
   });
 
@@ -263,8 +275,8 @@ describe("web hosted rpc logs", () => {
           serverId: "srv-1",
           serverName: "Notion",
         },
-        "test-token",
-      ),
+        "test-token"
+      )
     );
     const second = await expectJson<{
       _rpcLogs: Array<{ serverName: string }>;
@@ -277,17 +289,17 @@ describe("web hosted rpc logs", () => {
           serverId: "srv-2",
           serverName: "GitHub",
         },
-        "test-token",
-      ),
+        "test-token"
+      )
     );
 
     expect(first.data._rpcLogs).toHaveLength(2);
     expect(second.data._rpcLogs).toHaveLength(2);
     expect(
-      first.data._rpcLogs.every((log) => log.serverName === "Notion"),
+      first.data._rpcLogs.every((log) => log.serverName === "Notion")
     ).toBe(true);
     expect(
-      second.data._rpcLogs.every((log) => log.serverName === "GitHub"),
+      second.data._rpcLogs.every((log) => log.serverName === "GitHub")
     ).toBe(true);
   });
 
@@ -302,7 +314,7 @@ describe("web hosted rpc logs", () => {
         serverId: "srv-1",
         serverName: "Notion",
       },
-      "test-token",
+      "test-token"
     );
 
     const { status, data } = await expectJson<{
