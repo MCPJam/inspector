@@ -18,13 +18,13 @@ describe("TraceViewModeTabs", () => {
     );
   });
 
-  it("matches the same active styling when activeVariant is sidebar", () => {
+  it("matches the same active styling in fullWidth layout", () => {
     render(
       <TraceViewModeTabs
         mode="chat"
         onModeChange={vi.fn()}
         showToolsTab={false}
-        activeVariant="sidebar"
+        layout="fullWidth"
       />,
     );
 

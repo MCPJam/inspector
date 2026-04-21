@@ -343,7 +343,6 @@ export function ModelCompareCardHeader({
       {showTraceTabs && !tabsInline ? (
         <ChatTraceViewModeHeaderBar
           mode={mode}
-          activeVariant="sidebar"
           onModeChange={onModeChange}
           className={!showComparisonChrome ? className : undefined}
         />

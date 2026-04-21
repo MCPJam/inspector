@@ -14,7 +14,6 @@ export function TraceViewModeTabs({
   onModeChange,
   showToolsTab,
   layout = "default",
-  activeVariant: _activeVariant = "default",
   className,
 }: {
   mode: TraceViewMode;
@@ -22,8 +21,6 @@ export function TraceViewModeTabs({
   showToolsTab: boolean;
   /** `fullWidth`: equal-width segments across the container (e.g. chat trace header). */
   layout?: "default" | "fullWidth";
-  /** Retained for compatibility; active tab always uses sidebar-accent styling. */
-  activeVariant?: "default" | "sidebar";
   className?: string;
 }) {
   const fullWidth = layout === "fullWidth";
@@ -104,12 +101,10 @@ export function TraceViewModeTabs({
 export function ChatTraceViewModeHeaderBar({
   mode,
   onModeChange,
-  activeVariant = "default",
   className,
 }: {
   mode: TraceViewMode;
   onModeChange: (mode: TraceViewMode) => void;
-  activeVariant?: "default" | "sidebar";
   className?: string;
 }) {
   return (
@@ -125,7 +120,6 @@ export function ChatTraceViewModeHeaderBar({
           mode={mode}
           onModeChange={onModeChange}
           showToolsTab={false}
-          activeVariant={activeVariant}
         />
       </div>
     </div>
