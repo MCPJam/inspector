@@ -691,6 +691,11 @@ export function TraceViewer({
               ) : (
                 <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-md border border-border/30 bg-background/50">
                   <JsonEditor
+                    // Reconstruct each entry as a new object so JSON.stringify
+                    // always serialises toolName before arguments, matching the
+                    // key order of expectedToolCalls. The server stores objects
+                    // in alphabetical key order (arguments < toolName), so the
+                    // normalisation must happen here at the display boundary.
                     value={actualToolCalls.map(({ toolName, arguments: args }) => ({
                       toolName,
                       arguments: args,
