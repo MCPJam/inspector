@@ -44,7 +44,10 @@ import {
 import { TestCasePromptFlow } from "./test-case-prompt-flow";
 import { CompareRunChatSurface } from "./compare-run-chat-surface";
 import { EvalTraceSurface } from "./eval-trace-surface";
-import { TraceViewModeTabs } from "./trace-view-mode-tabs";
+import {
+  ModelCompareCardHeader,
+  type MultiModelCardSummary,
+} from "@/components/chat-v2/model-compare-card-header";
 import { useAiProviderKeys } from "@/hooks/use-ai-provider-keys";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import type { ModelDefinition } from "@/shared/types";
@@ -1458,6 +1461,22 @@ export function TestTemplateEditor({
               let resolved!: CompareRunRecord;
               setCompareRunRecords((previous) => {
                 const existing = previous[modelValue];
+                // A retry starts a newer request for this model and aborts the
+                // old controller. If that old abort rejects later, it must not
+                // overwrite the newer running/completed row as cancelled.
+                if (
+                  compareRequestGenByModelRef.current[modelValue] !== myGen
+                ) {
+                  resolved =
+                    existing ??
+                    buildCompareRunRecord({
+                      modelValue,
+                      modelLabel,
+                      iteration: null,
+                      completedAt: Date.now(),
+                    });
+                  return previous;
+                }
                 const base = buildCompareRunRecord({
                   modelValue,
                   modelLabel,
@@ -2402,35 +2421,6 @@ function RunColumn({
   const effectiveActiveTab: RunColumnTab =
     activeTab === "tools" && !showToolsTab ? "timeline" : activeTab;
 
-  /** Status marker: pastel fills aligned with metric bar accent colors. */
-  const statusIndicatorClass =
-    record.status === "running"
-      ? "size-3 bg-amber-500/45 dark:bg-amber-400/40 animate-pulse motion-reduce:animate-none"
-      : record.status === "cancelled" || record.result === "cancelled"
-        ? "size-3 bg-amber-500/45 dark:bg-amber-400/40"
-        : record.status === "failed" || record.result === "failed"
-          ? "size-3 bg-rose-500/45 dark:bg-rose-400/40"
-          : record.result === "passed"
-            ? "size-3 bg-emerald-500/45 dark:bg-emerald-400/40"
-            : "size-3 bg-primary/22 dark:bg-primary/20";
-  const statusLabel =
-    record.status === "running"
-      ? record.isRetrying
-        ? "Retrying"
-        : "Running"
-      : record.status === "cancelled" || record.result === "cancelled"
-        ? "Stopped"
-        : record.status === "failed"
-          ? "Failed"
-          : record.result === "passed"
-            ? "Passed"
-            : record.result === "failed"
-              ? "Failed"
-              : "Ready";
-  const durationLabel =
-    record.metrics.durationMs != null
-      ? `${Math.round(record.metrics.durationMs / 100) / 10}s`
-      : "—";
   const traceMode =
     effectiveActiveTab === "chat"
       ? "chat"
@@ -2523,69 +2513,53 @@ function RunColumn({
     record.streamingMetrics?.tokensUsed ?? record.metrics.tokensUsed;
   const toolCount =
     record.streamingMetrics?.toolCallCount ?? record.metrics.toolCallCount;
-  const toolCallLabel =
-    toolCount === 1 ? "1 tool call" : `${toolCount} tool calls`;
-  const isFailedCompareRecord =
-    record.status === "failed" || record.result === "failed";
   const isRunningRecord = record.status === "running";
 
-  // Compute relative metrics across all completed records for comparison bars
-  const comparableRecords = allRecords.filter(
-    (r) =>
-      r.status !== "failed" &&
-      r.result !== "failed" &&
-      r.metrics.durationMs != null &&
-      r.metrics.durationMs > 0 &&
-      (r.status === "completed" || r.iteration != null),
-  );
-  const allDurations = comparableRecords
-    .map((r) => r.metrics.durationMs!)
-    .filter(Boolean);
-  const allTokens = comparableRecords
-    .map((r) => r.metrics.tokensUsed)
-    .filter((t) => t > 0);
-  const allToolCounts = comparableRecords
-    .map((r) => r.metrics.toolCallCount)
-    .filter((t) => t > 0);
+  const toSummaryStatus = (
+    r: CompareRunRecord,
+  ): MultiModelCardSummary["status"] => {
+    if (r.status === "running") return "running";
+    if (r.status === "cancelled" || r.result === "cancelled") return "cancelled";
+    if (r.status === "failed" || r.result === "failed") return "error";
+    if (r.iteration != null || r.status === "completed") return "ready";
+    return "idle";
+  };
 
-  const maxDuration = allDurations.length > 0 ? Math.max(...allDurations) : 0;
-  const minDuration = allDurations.length > 0 ? Math.min(...allDurations) : 0;
-  const maxTokens = allTokens.length > 0 ? Math.max(...allTokens) : 0;
-  const minTokens = allTokens.length > 0 ? Math.min(...allTokens) : 0;
-  const minToolCount =
-    allToolCounts.length > 0 ? Math.min(...allToolCounts) : 0;
+  const runColumnSummary: MultiModelCardSummary = {
+    modelId: record.modelValue,
+    durationMs: record.metrics.durationMs,
+    tokens: displayTokens,
+    toolCount,
+    status: toSummaryStatus(record),
+    hasMessages:
+      record.iteration != null ||
+      record.streamingTrace != null ||
+      (record.streamingDraftMessages?.length ?? 0) > 0,
+  };
 
-  const currentDuration = record.metrics.durationMs ?? 0;
-  const hasComparison = comparableRecords.length > 1;
-  const hasAnyRunningRecord = allRecords.some(
-    (item) => item.status === "running",
-  );
-  const canHighlightWinner = hasComparison && !hasAnyRunningRecord;
+  const allRunSummaries: MultiModelCardSummary[] = allRecords.map((r) => {
+    const rTokens = r.streamingMetrics?.tokensUsed ?? r.metrics.tokensUsed;
+    const rToolCount =
+      r.streamingMetrics?.toolCallCount ?? r.metrics.toolCallCount;
+    return {
+      modelId: r.modelValue,
+      durationMs: r.metrics.durationMs,
+      tokens: rTokens,
+      toolCount: rToolCount,
+      status: toSummaryStatus(r),
+      hasMessages:
+        r.iteration != null ||
+        r.streamingTrace != null ||
+        (r.streamingDraftMessages?.length ?? 0) > 0,
+    };
+  });
 
-  const isFastest =
-    canHighlightWinner &&
-    !isFailedCompareRecord &&
-    currentDuration === minDuration &&
-    currentDuration > 0;
-  const isFewestTokens =
-    canHighlightWinner &&
-    !isFailedCompareRecord &&
-    displayTokens === minTokens &&
-    displayTokens > 0;
-  const isFewestTools =
-    canHighlightWinner &&
-    !isFailedCompareRecord &&
-    toolCount === minToolCount &&
-    toolCount > 0;
-
-  const durationBarPct =
-    maxDuration > 0
-      ? Math.min(100, Math.max(4, (currentDuration / maxDuration) * 100))
-      : 0;
-  const tokensBarPct =
-    maxTokens > 0
-      ? Math.min(100, Math.max(4, (displayTokens / maxTokens) * 100))
-      : 0;
+  const runColumnResult: "passed" | "failed" | null =
+    record.result === "passed"
+      ? "passed"
+      : record.result === "failed" || record.status === "failed"
+        ? "failed"
+        : null;
   const renderedRunContent = record.iteration ? (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       {traceMode === "chat" ? (
@@ -2732,147 +2706,20 @@ function RunColumn({
 
   return (
     <div className="flex h-auto min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl border border-border/60 bg-card/40 lg:h-full">
-      <div className="shrink-0 border-b px-3 py-2">
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex min-w-0 items-center gap-1.5">
-            <div className="truncate text-sm font-semibold leading-tight">
-              {record.modelLabel}
-            </div>
-            {record.result === "passed" ? (
-              <span className="inline-flex shrink-0 items-center rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider bg-emerald-500/15 text-emerald-700 dark:bg-emerald-400/20 dark:text-emerald-300" aria-label={statusLabel}>
-                Pass
-              </span>
-            ) : record.result === "failed" || record.status === "failed" ? (
-              <span className="inline-flex shrink-0 items-center rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider bg-rose-500/15 text-rose-700 dark:bg-rose-400/20 dark:text-rose-300" aria-label={statusLabel}>
-                Fail
-              </span>
-            ) : null}
-          </div>
-          {record.result !== "passed" &&
-          record.result !== "failed" &&
-          record.status !== "failed" ? (
-            <span
-              role="img"
-              className={cn(
-                "inline-flex shrink-0 rounded-full",
-                statusIndicatorClass,
-              )}
-              aria-label={statusLabel}
-              title={statusLabel}
-            />
-          ) : null}
-        </div>
-
-        {/* Metric comparison bars */}
-        <div className="mt-2 space-y-1.5">
-          {/* Latency */}
-          <div className="flex items-center gap-2">
-            <span className="flex w-[52px] shrink-0 items-center gap-1 text-[10px] text-muted-foreground">
-              <span>Latency</span>
-              {isRunningRecord ? (
-                <Loader2
-                  data-testid="metric-running-spinner"
-                  className="h-3 w-3 shrink-0 animate-spin"
-                  aria-hidden
-                />
-              ) : null}
-            </span>
-            <div className="relative flex min-w-0 flex-1 items-center">
-              <div className="h-[14px] w-full rounded-sm bg-muted/40 overflow-hidden">
-                {currentDuration > 0 && (
-                  <div
-                    className={cn(
-                      "h-full rounded-sm transition-all duration-300",
-                      isFastest
-                        ? "bg-emerald-500/25 dark:bg-emerald-400/20"
-                        : "bg-primary/10",
-                    )}
-                    style={{
-                      width: `${hasComparison ? durationBarPct : 100}%`,
-                    }}
-                  />
-                )}
-              </div>
-              <span
-                className={cn(
-                  "absolute inset-0 flex items-center px-1.5 text-[10px] font-medium tabular-nums",
-                  isFastest
-                    ? "text-emerald-700 dark:text-emerald-400"
-                    : "text-foreground",
-                )}
-              >
-                {durationLabel}
-              </span>
-            </div>
-          </div>
-
-          {/* Tokens */}
-          <div className="flex items-center gap-2">
-            <span className="flex w-[52px] shrink-0 items-center gap-1 text-[10px] text-muted-foreground">
-              <span>Tokens</span>
-              {isRunningRecord ? (
-                <Loader2
-                  data-testid="metric-running-spinner"
-                  className="h-3 w-3 shrink-0 animate-spin"
-                  aria-hidden
-                />
-              ) : null}
-            </span>
-            <div className="relative flex min-w-0 flex-1 items-center">
-              <div className="h-[14px] w-full rounded-sm bg-muted/40 overflow-hidden">
-                {displayTokens > 0 && (
-                  <div
-                    className={cn(
-                      "h-full rounded-sm transition-all duration-300",
-                      isFewestTokens
-                        ? "bg-emerald-500/25 dark:bg-emerald-400/20"
-                        : "bg-primary/10",
-                    )}
-                    style={{ width: `${hasComparison ? tokensBarPct : 100}%` }}
-                  />
-                )}
-              </div>
-              <span
-                className={cn(
-                  "absolute inset-0 flex items-center px-1.5 text-[10px] font-medium tabular-nums",
-                  isFewestTokens
-                    ? "text-emerald-700 dark:text-emerald-400"
-                    : "text-foreground",
-                )}
-              >
-                {displayTokens.toLocaleString()}
-              </span>
-            </div>
-          </div>
-
-          {/* Tool Calls */}
-          <div className="flex items-center gap-2">
-            <span className="w-[52px] shrink-0 text-[10px] text-muted-foreground">
-              Tools
-            </span>
-            <span
-              className={cn(
-                "text-[10px] font-medium tabular-nums px-1.5",
-                isFewestTools
-                  ? "text-emerald-700 dark:text-emerald-400"
-                  : "text-foreground",
-              )}
-            >
-              {toolCallLabel}
-            </span>
-          </div>
-        </div>
-
-        <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2">
-          <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-            <TraceViewModeTabs
-              mode={effectiveActiveTab}
-              onModeChange={onTabChange}
-              showToolsTab={showToolsTab}
-              className="[&_button]:px-1.5 [&_button]:py-0.5 [&_button]:text-[11px] [&_svg]:h-3 [&_svg]:w-3"
-            />
-          </div>
-          <div className="flex items-center gap-1">
+      <ModelCompareCardHeader
+        modelLabel={record.modelLabel}
+        summary={runColumnSummary}
+        allSummaries={allRunSummaries}
+        mode={effectiveActiveTab}
+        onModeChange={onTabChange}
+        showTraceTabs
+        showComparisonChrome
+        compactCompareHeader={false}
+        result={runColumnResult}
+        showToolsTab={showToolsTab}
+        tabsInline
+        actionsSlot={
+          <>
             {onContinueInChat ? (
               <Button
                 type="button"
@@ -2911,18 +2758,19 @@ function RunColumn({
               />
               Retry
             </Button>
-          </div>
-        </div>
-
-        {record.metrics.mismatchCount != null &&
-        record.metrics.mismatchCount > 0 ? (
-          <div className="mt-1.5 text-[10px] leading-snug text-muted-foreground">
-            {record.metrics.mismatchCount} mismatch
-            {record.metrics.mismatchCount === 1 ? "" : "es"} across expected
-            tool calls.
-          </div>
-        ) : null}
-      </div>
+          </>
+        }
+        footerNote={
+          record.metrics.mismatchCount != null &&
+          record.metrics.mismatchCount > 0 ? (
+            <>
+              {record.metrics.mismatchCount} mismatch
+              {record.metrics.mismatchCount === 1 ? "" : "es"} across expected
+              tool calls.
+            </>
+          ) : null
+        }
+      />
 
       <div className="flex min-w-0 max-lg:min-h-[min(52vh,26rem)] flex-1 flex-col overflow-hidden p-3 lg:min-h-0">
         {shouldRenderChatShell ? (
