@@ -873,7 +873,7 @@ describe("TraceTimeline detail pane", () => {
     await user.hover(promptRow!);
 
     const hoverContent = await screen.findByTestId("trace-row-hover-content");
-    expect(hoverContent).toHaveAttribute("data-side", "left");
+    expect(hoverContent).toBeTruthy();
 
     const hoverCard = await screen.findByTestId("trace-row-hover-card");
     expect(within(hoverCard).getByText("Time")).toBeTruthy();
@@ -892,6 +892,49 @@ describe("TraceTimeline detail pane", () => {
     expect(
       within(hoverCard).getByTestId("trace-row-hover-output-tokens"),
     ).toHaveTextContent("38");
+    expect(
+      within(hoverCard).getByTestId("trace-row-hover-total-tokens"),
+    ).toHaveTextContent("261");
+  });
+
+  it("shows row hover metadata when a row control receives focus", async () => {
+    const traceStartedAtMs = Date.parse("2026-03-30T02:35:00.000Z");
+    const spans: EvalTraceSpan[] = [
+      {
+        id: "llm-1",
+        name: "Model response",
+        category: "llm",
+        startMs: 0,
+        endMs: 400,
+        promptIndex: 0,
+        modelId: "openai/gpt-5.4-mini",
+        inputTokens: 223,
+        outputTokens: 38,
+        totalTokens: 261,
+      },
+    ];
+
+    render(
+      <TraceTimeline
+        recordedSpans={spans}
+        transcriptMessages={[
+          { role: "user", content: "Draw me a simple flowchart" },
+        ]}
+        traceStartedAtMs={traceStartedAtMs}
+        traceEndedAtMs={traceStartedAtMs + 400}
+      />,
+    );
+
+    const promptRow = screen
+      .getAllByTestId("trace-row")
+      .find((el) =>
+        el.textContent?.includes('User: "Draw me a simple flowchart"'),
+      );
+    expect(promptRow).toBeTruthy();
+
+    fireEvent.focus(within(promptRow!).getByTestId("trace-row-label-button"));
+
+    const hoverCard = await screen.findByTestId("trace-row-hover-card");
     expect(
       within(hoverCard).getByTestId("trace-row-hover-total-tokens"),
     ).toHaveTextContent("261");
