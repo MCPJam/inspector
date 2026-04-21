@@ -20,7 +20,7 @@ import {
 import { Button } from "@mcpjam/design-system/button";
 import { ShareUsageThreadList } from "@/components/connection/share-usage/ShareUsageThreadList";
 import { ShareUsageThreadDetail } from "@/components/connection/share-usage/ShareUsageThreadDetail";
-import { UsageInsightsStrip } from "@/components/shared/usage-insights/UsageInsightsStrip";
+import { ChatboxTopicMapPanel } from "@/components/chatboxes/ChatboxTopicMapPanel";
 
 export type ChatboxUsagePanelSection = "sessions" | "insights";
 
@@ -67,10 +67,11 @@ export function ChatboxUsagePanel({
     [chatbox.chatboxId],
   );
 
-  const { threads, breakdown, rebuild } = useUsageInsights({
+  const { threads, rebuild } = useUsageInsights({
     sourceType: "chatbox",
     sourceId: chatbox.chatboxId,
     filters: filter,
+    enabled: section === "sessions",
   });
 
   const sortedThreads = useMemo(() => {
@@ -156,9 +157,9 @@ export function ChatboxUsagePanel({
 
   if (section === "insights") {
     return (
-      <div className="flex h-full min-h-0 flex-col overflow-auto">
-        <UsageInsightsStrip
-          breakdown={breakdown}
+      <div className="flex h-full min-h-0 flex-col overflow-hidden">
+        <ChatboxTopicMapPanel
+          chatboxId={chatbox.chatboxId}
           filter={filter}
           onToggleChip={handleToggleChip}
           onClearChip={handleClearChip}
