@@ -1,14 +1,21 @@
 import type { ReactElement } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { PreferencesStoreProvider } from "@/stores/preferences/preferences-provider";
 import { TestTemplateEditor } from "../test-template-editor";
 import type { EvalIteration } from "../types";
 
-function renderWithProviders(ui: ReactElement) {
+function renderWithProviders(
+  ui: ReactElement,
+  { hostStyle = "claude" as const } = {},
+) {
   return render(
-    <PreferencesStoreProvider themeMode="light" themePreset="default">
+    <PreferencesStoreProvider
+      themeMode="light"
+      themePreset="default"
+      hostStyle={hostStyle}
+    >
       {ui}
     </PreferencesStoreProvider>,
   );
@@ -26,6 +33,7 @@ const useMutationMock = vi.hoisted(() => vi.fn(() => vi.fn()));
 const useQueryMock = vi.hoisted(() => vi.fn());
 const updateTestCaseMutationMock = vi.hoisted(() => vi.fn());
 const streamEvalTestCaseMock = vi.hoisted(() => vi.fn());
+const mockTraceViewer = vi.hoisted(() => vi.fn());
 const useAuthMock = vi.hoisted(() => ({
   getAccessToken: vi.fn().mockResolvedValue("token"),
 }));
@@ -81,6 +89,28 @@ vi.mock("../eval-trace-surface", () => ({
   ),
 }));
 
+vi.mock("../trace-viewer", () => ({
+  TraceViewer: (props: {
+    trace?: { messages?: Array<{ content?: unknown }> } | null;
+    forcedViewMode?: string;
+    isLoading?: boolean;
+  }) => {
+    mockTraceViewer(props);
+    const firstMessage = props.trace?.messages?.[0]?.content;
+    return (
+      <div
+        data-testid="mock-trace-viewer"
+        data-view-mode={props.forcedViewMode ?? "timeline"}
+        data-is-loading={String(Boolean(props.isLoading))}
+        data-message-count={String(props.trace?.messages?.length ?? 0)}
+        data-first-message={
+          typeof firstMessage === "string" ? firstMessage : "non-string"
+        }
+      />
+    );
+  },
+}));
+
 vi.mock("@/hooks/use-ai-provider-keys", () => ({
   useAiProviderKeys: () => ({
     getToken: vi.fn().mockResolvedValue("key"),
@@ -98,6 +128,7 @@ vi.mock("posthog-js", () => ({
 vi.mock("@/lib/PosthogUtils", () => ({
   detectEnvironment: () => "test",
   detectPlatform: () => "web",
+  standardEventProps: () => ({}),
 }));
 
 vi.mock("@/lib/apis/evals-api", () => ({
@@ -214,8 +245,19 @@ describe("TestTemplateEditor run view from route", () => {
       .length;
   }
 
+  function getLatestTraceViewerProps() {
+    const lastCall = mockTraceViewer.mock.calls.at(-1)?.[0];
+    expect(lastCall).toBeDefined();
+    return lastCall as {
+      trace?: { messages?: Array<{ content?: unknown }> } | null;
+      forcedViewMode?: string;
+      isLoading?: boolean;
+    };
+  }
+
   beforeEach(() => {
     vi.clearAllMocks();
+    mockTraceViewer.mockReset();
     useMutationMock.mockReturnValue(updateTestCaseMutationMock);
     useQueryMock.mockImplementation((name: string, args: unknown) => {
       if (name === "testSuites:listTestCases") {
@@ -573,6 +615,290 @@ describe("TestTemplateEditor run view from route", () => {
     expect(retryRequest.provider).toBe("openai");
     expect(retryRequest.model).toBe("gpt-4");
     expect(updateTestCaseMutationMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders an immediate chat preview instead of the generic spinner before the first stream event", async () => {
+    const user = userEvent.setup();
+
+    streamEvalTestCaseMock.mockImplementation(
+      async () => new Promise<void>(() => {}),
+    );
+
+    renderWithProviders(
+      <TestTemplateEditor
+        suiteId="suite-1"
+        selectedTestCaseId="case-1"
+        connectedServerNames={new Set(["srv"])}
+        workspaceId={null}
+        availableModels={[
+          {
+            provider: "openai",
+            id: "gpt-4",
+            model: "gpt-4",
+            name: "GPT-4",
+            label: "GPT-4",
+          } as any,
+        ]}
+      />,
+      { hostStyle: "claude" },
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /run$/i })).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: /run$/i }));
+
+    await waitFor(() => {
+      expect(streamEvalTestCaseMock).toHaveBeenCalledTimes(1);
+      expect(screen.getByTestId("mock-trace-viewer")).toBeInTheDocument();
+    });
+
+    expect(screen.getByTestId("mock-trace-viewer")).toHaveAttribute(
+      "data-view-mode",
+      "chat",
+    );
+    expect(screen.getByTestId("mock-trace-viewer")).toHaveAttribute(
+      "data-is-loading",
+      "true",
+    );
+    expect(screen.getByTestId("mock-trace-viewer")).toHaveAttribute(
+      "data-message-count",
+      "1",
+    );
+    expect(screen.getByTestId("mock-trace-viewer")).toHaveAttribute(
+      "data-first-message",
+      "Q",
+    );
+    expect(screen.queryByText("Running GPT-4…")).not.toBeInTheDocument();
+  });
+
+  it("replaces the initial preview with streamed chat messages as soon as live trace data exists", async () => {
+    const user = userEvent.setup();
+    let emitEvent:
+      | ((
+          event:
+            | { type: "turn_start"; turnIndex: number; prompt: string }
+            | { type: "text_delta"; content: string },
+        ) => void)
+      | null = null;
+
+    streamEvalTestCaseMock.mockImplementation(
+      async (
+        _request: unknown,
+        onEvent: (
+          event:
+            | { type: "turn_start"; turnIndex: number; prompt: string }
+            | { type: "text_delta"; content: string },
+        ) => void,
+      ) => {
+        emitEvent = onEvent;
+        return new Promise<void>(() => {});
+      },
+    );
+
+    renderWithProviders(
+      <TestTemplateEditor
+        suiteId="suite-1"
+        selectedTestCaseId="case-1"
+        connectedServerNames={new Set(["srv"])}
+        workspaceId={null}
+        availableModels={[
+          {
+            provider: "openai",
+            id: "gpt-4",
+            model: "gpt-4",
+            name: "GPT-4",
+            label: "GPT-4",
+          } as any,
+        ]}
+      />,
+      { hostStyle: "claude" },
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /run$/i })).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: /run$/i }));
+
+    await waitFor(() => {
+      expect(streamEvalTestCaseMock).toHaveBeenCalledTimes(1);
+      expect(getLatestTraceViewerProps().trace?.messages?.[0]?.content).toBe(
+        "Q",
+      );
+    });
+
+    act(() => {
+      emitEvent?.({
+        type: "turn_start",
+        turnIndex: 0,
+        prompt: "Streamed prompt",
+      });
+    });
+
+    await waitFor(() => {
+      const props = getLatestTraceViewerProps();
+      expect(props.isLoading).toBe(true);
+      expect(props.trace?.messages).toHaveLength(1);
+      expect(props.trace?.messages?.[0]?.content).toBe("Streamed prompt");
+    });
+  });
+
+  it("keeps the host-style pill shared across compare columns", async () => {
+    const user = userEvent.setup();
+
+    streamEvalTestCaseMock.mockImplementation(
+      async () => new Promise<void>(() => {}),
+    );
+
+    const view = renderWithProviders(
+      <TestTemplateEditor
+        suiteId="suite-1"
+        selectedTestCaseId="case-1"
+        connectedServerNames={new Set(["srv"])}
+        workspaceId={null}
+        availableModels={[
+          {
+            provider: "openai",
+            id: "gpt-4",
+            model: "gpt-4",
+            name: "GPT-4",
+            label: "GPT-4",
+          } as any,
+          {
+            provider: "anthropic",
+            id: "claude-4.5-sonnet",
+            model: "claude-4.5-sonnet",
+            name: "Claude 4.5 Sonnet",
+            label: "Claude 4.5 Sonnet",
+          } as any,
+        ]}
+      />,
+      { hostStyle: "claude" },
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /run$/i })).toBeInTheDocument();
+    });
+
+    await user.click(
+      screen.getByRole("button", { name: /add model to compare/i }),
+    );
+    await user.click(screen.getByText("Claude 4.5 Sonnet"));
+    await user.click(screen.getByRole("button", { name: /run compare/i }));
+
+    await waitFor(() => {
+      expect(streamEvalTestCaseMock).toHaveBeenCalledTimes(2);
+    });
+
+    expect(
+      view.container.querySelectorAll('[data-selected-host-style="claude"]'),
+    ).toHaveLength(2);
+
+    await user.click(
+      within(getCompareCard("GPT-4")).getByRole("radio", {
+        name: "ChatGPT",
+      }),
+    );
+
+    await waitFor(() => {
+      expect(
+        view.container.querySelectorAll(
+          '[data-selected-host-style="chatgpt"]',
+        ),
+      ).toHaveLength(2);
+    });
+  });
+
+  it("shows the host-style pill only while the chat tab is active", async () => {
+    const user = userEvent.setup();
+    const caseWithExpectedToolCalls = {
+      ...caseDoc,
+      isNegativeTest: false,
+      expectedToolCalls: [
+        {
+          toolName: "create_view",
+          arguments: { shape: "box" },
+        },
+      ],
+    };
+
+    useQueryMock.mockImplementation((name: string, args: unknown) => {
+      if (name === "testSuites:listTestCases") {
+        return [caseWithExpectedToolCalls];
+      }
+      if (name === "testSuites:getTestSuite") {
+        return {
+          _id: "suite-1",
+          environment: { servers: ["srv"] },
+        };
+      }
+      if (name === "testSuites:listTestIterations" && args !== "skip") {
+        return [baseIteration];
+      }
+      if (
+        name === "testSuites:getTestIteration" &&
+        typeof args === "object" &&
+        args !== null &&
+        (args as { iterationId?: string }).iterationId === baseIteration._id
+      ) {
+        return baseIteration;
+      }
+      return undefined;
+    });
+    streamEvalTestCaseMock.mockImplementation(
+      async () => new Promise<void>(() => {}),
+    );
+
+    renderWithProviders(
+      <TestTemplateEditor
+        suiteId="suite-1"
+        selectedTestCaseId="case-1"
+        connectedServerNames={new Set(["srv"])}
+        workspaceId={null}
+        availableModels={[
+          {
+            provider: "openai",
+            id: "gpt-4",
+            model: "gpt-4",
+            name: "GPT-4",
+            label: "GPT-4",
+          } as any,
+        ]}
+      />,
+      { hostStyle: "claude" },
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /run$/i })).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: /run$/i }));
+
+    await waitFor(() => {
+      expect(streamEvalTestCaseMock).toHaveBeenCalledTimes(1);
+    });
+
+    const card = getCompareCard("GPT-4");
+
+    expect(card.querySelector('[data-selected-host-style="claude"]')).not.toBe(
+      null,
+    );
+
+    await user.click(within(card).getByRole("button", { name: /^Trace$/i }));
+    expect(card.querySelector("[data-selected-host-style]")).toBeNull();
+
+    await user.click(within(card).getByRole("button", { name: /^Chat$/i }));
+    expect(card.querySelector('[data-selected-host-style="claude"]')).not.toBe(
+      null,
+    );
+
+    await user.click(within(card).getByRole("button", { name: /^Raw$/i }));
+    expect(card.querySelector("[data-selected-host-style]")).toBeNull();
+
+    await user.click(within(card).getByRole("button", { name: /^Results$/i }));
+    expect(card.querySelector("[data-selected-host-style]")).toBeNull();
   });
 
   it("renders running spinners in the eval compare metric bars", async () => {

@@ -21,10 +21,50 @@ vi.mock("@/components/ui/resizable", () => ({
   ResizableHandle: () => <div data-testid="resizable-handle" />,
 }));
 
-const { mockMessageView, mockJsonEditor } = vi.hoisted(() => ({
+const {
+  mockMessageView,
+  mockJsonEditor,
+  mockScrollToBottom,
+  mockStickToBottomContext,
+} = vi.hoisted(() => ({
   mockMessageView: vi.fn(),
   mockJsonEditor: vi.fn(),
+  mockScrollToBottom: vi.fn(),
+  mockStickToBottomContext: { isAtBottom: true },
 }));
+
+vi.mock("use-stick-to-bottom", () => {
+  const StickToBottomComponent = ({
+    children,
+    className,
+  }: {
+    children: ReactNode;
+    className?: string;
+  }) => (
+    <div data-testid="stick-to-bottom" className={className}>
+      {children}
+    </div>
+  );
+  StickToBottomComponent.Content = ({
+    children,
+    className,
+  }: {
+    children: ReactNode;
+    className?: string;
+  }) => (
+    <div data-testid="stick-to-bottom-content" className={className}>
+      {children}
+    </div>
+  );
+
+  return {
+    StickToBottom: StickToBottomComponent,
+    useStickToBottomContext: () => ({
+      isAtBottom: mockStickToBottomContext.isAtBottom,
+      scrollToBottom: mockScrollToBottom,
+    }),
+  };
+});
 
 vi.mock("@/stores/preferences/preferences-provider", () => ({
   usePreferencesStore: (selector: (state: { themeMode: string }) => unknown) =>
@@ -98,6 +138,10 @@ const simpleTextTrace = {
       content: [{ type: "text", text: "Hi there!" }],
     },
   ],
+};
+
+const userOnlyTrace = {
+  messages: [{ role: "user", content: "Hello" }],
 };
 
 const reasoningTrace = {
@@ -443,6 +487,7 @@ function renderInScrollHost(ui: ReactNode) {
 describe("TraceViewer", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockStickToBottomContext.isAtBottom = true;
   });
 
   afterEach(() => {
@@ -478,6 +523,28 @@ describe("TraceViewer", () => {
     expect(screen.getByTestId("json-editor")).toBeInTheDocument();
     fireEvent.click(screen.getByTitle("Trace"));
     expect(await screen.findByText("Estimated total only")).toBeInTheDocument();
+  });
+
+  it("uses the shared stick-to-bottom shell in chat mode", () => {
+    render(<TraceViewer trace={simpleTextTrace} forcedViewMode="chat" />);
+
+    expect(screen.getByTestId("trace-viewer-chat")).toBeInTheDocument();
+    expect(screen.getByTestId("stick-to-bottom")).toBeInTheDocument();
+    expect(screen.getByTestId("stick-to-bottom-content")).toBeInTheDocument();
+  });
+
+  it("shows the shared scroll-to-bottom button when chat is off bottom", () => {
+    mockStickToBottomContext.isAtBottom = false;
+
+    render(<TraceViewer trace={simpleTextTrace} forcedViewMode="chat" />);
+
+    fireEvent.click(
+      within(screen.getByTestId("stick-to-bottom")).getByRole("button"),
+    );
+
+    expect(mockScrollToBottom).toHaveBeenCalledWith({
+      animation: "smooth",
+    });
   });
 
   it("leaves Raw on Escape", async () => {
@@ -1091,6 +1158,68 @@ describe("TraceViewer", () => {
         }),
       }),
     );
+  });
+
+  it("shows the GPT loading indicator when an OpenAI trace is still loading", () => {
+    render(
+      <TraceViewer
+        trace={userOnlyTrace}
+        model={{
+          id: "openai/gpt-4o",
+          name: "GPT-4o",
+          provider: "openai",
+        }}
+        isLoading
+      />,
+    );
+    openChatTab();
+
+    expect(screen.getByTestId("loading-indicator-dot")).toBeInTheDocument();
+    expect(
+      screen.queryByTestId("loading-indicator-claude"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows the Claude loading indicator when an Anthropic trace is still loading", () => {
+    render(
+      <TraceViewer
+        trace={userOnlyTrace}
+        model={{
+          id: "anthropic/claude-sonnet-4.5",
+          name: "Claude Sonnet 4.5",
+          provider: "anthropic",
+        }}
+        isLoading
+      />,
+    );
+    openChatTab();
+
+    expect(screen.getByTestId("loading-indicator-claude")).toBeInTheDocument();
+    expect(
+      screen.queryByTestId("loading-indicator-dot"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("hides loading indicators when the trace is not loading", () => {
+    render(
+      <TraceViewer
+        trace={userOnlyTrace}
+        model={{
+          id: "openai/gpt-4o",
+          name: "GPT-4o",
+          provider: "openai",
+        }}
+        isLoading={false}
+      />,
+    );
+    openChatTab();
+
+    expect(
+      screen.queryByTestId("loading-indicator-dot"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("loading-indicator-claude"),
+    ).not.toBeInTheDocument();
   });
 
   // --- Widget fallback ---
