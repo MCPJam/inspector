@@ -1050,7 +1050,7 @@ export function ChatboxBuilderView({
       />
 
       {(viewMode === "usage" || viewMode === "insights") && chatbox ? (
-        <div className="min-h-0 flex-1">
+        <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
           <ChatboxUsagePanel
             chatbox={chatbox}
             section={viewMode === "insights" ? "insights" : "sessions"}

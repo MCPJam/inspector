@@ -10,23 +10,17 @@ import {
   useState,
 } from "react";
 import ForceGraph2D from "react-force-graph-2d";
-import { format, formatDistanceToNow } from "date-fns";
 import {
   AlertTriangle,
-  Filter,
-  Info,
   LoaderCircle,
   LocateFixed,
   Network,
   RefreshCw,
-  Sparkles,
 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { ScrollArea } from "@mcpjam/design-system/scroll-area";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@mcpjam/design-system/tabs";
 import { SearchInput } from "@/components/ui/search-input";
 import {
-  chipKey,
   type UsageFilterChip,
   type UsageFilterState,
 } from "@/hooks/chatbox-usage-filters";
@@ -112,8 +106,6 @@ function useTopicMapCanvasPalette(containerRef: RefObject<HTMLElement | null>) {
 
   return palette;
 }
-
-type SidebarTab = "info" | "filters" | "communities";
 
 type GraphNode = {
   id: string;
@@ -278,39 +270,79 @@ function drawRoundedRect(
   ctx.closePath();
 }
 
-function useElementSize<T extends HTMLElement>() {
+function useElementSize<T extends HTMLElement>(observeKey: unknown) {
   const ref = useRef<T | null>(null);
   const [size, setSize] = useState({
     width: DEFAULT_GRAPH_WIDTH,
     height: DEFAULT_GRAPH_HEIGHT,
   });
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const element = ref.current;
     if (!element) return;
 
-    const update = (rect?: DOMRectReadOnly) => {
+    const readSize = () => {
+      const rect = element.getBoundingClientRect();
+      const w = element.clientWidth || rect.width;
+      const h = element.clientHeight || rect.height;
       const width = Math.max(
         360,
-        Math.round(rect?.width ?? element.clientWidth ?? DEFAULT_GRAPH_WIDTH),
+        Math.round(w > 0 ? w : DEFAULT_GRAPH_WIDTH),
       );
       const height = Math.max(
         420,
-        Math.round(rect?.height ?? element.clientHeight ?? DEFAULT_GRAPH_HEIGHT),
+        Math.round(h > 0 ? h : DEFAULT_GRAPH_HEIGHT),
       );
+      return { width, height };
+    };
+
+    const update = () => {
+      const next = readSize();
       setSize((current) =>
-        current.width === width && current.height === height
+        current.width === next.width && current.height === next.height
           ? current
-          : { width, height },
+          : next,
       );
     };
 
     update();
-    if (typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver((entries) => update(entries[0]?.contentRect));
+
+    let raf1 = 0;
+    let raf2 = 0;
+    const schedulePostLayoutMeasure = () => {
+      cancelAnimationFrame(raf1);
+      cancelAnimationFrame(raf2);
+      raf1 = requestAnimationFrame(() => {
+        update();
+        raf2 = requestAnimationFrame(update);
+      });
+    };
+    schedulePostLayoutMeasure();
+
+    const onWindowResize = () => {
+      update();
+    };
+    window.addEventListener("resize", onWindowResize);
+
+    if (typeof ResizeObserver === "undefined") {
+      return () => {
+        cancelAnimationFrame(raf1);
+        cancelAnimationFrame(raf2);
+        window.removeEventListener("resize", onWindowResize);
+      };
+    }
+
+    const observer = new ResizeObserver(() => {
+      update();
+    });
     observer.observe(element);
-    return () => observer.disconnect();
-  }, []);
+    return () => {
+      cancelAnimationFrame(raf1);
+      cancelAnimationFrame(raf2);
+      window.removeEventListener("resize", onWindowResize);
+      observer.disconnect();
+    };
+  }, [observeKey]);
 
   return { ref, size };
 }
@@ -328,7 +360,7 @@ export function ChatboxTopicMapPanel({
   chatboxId,
   filter,
   onToggleChip,
-  onClearChip,
+  onClearChip: _onClearChip,
   onRebuild,
   rebuildBusy,
 }: ChatboxTopicMapPanelProps) {
@@ -336,7 +368,6 @@ export function ChatboxTopicMapPanel({
     chatboxId,
     enabled: true,
   });
-  const [activeTab, setActiveTab] = useState<SidebarTab>("info");
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
@@ -349,7 +380,8 @@ export function ChatboxTopicMapPanel({
     () => topicMapPalette ?? DEFAULT_CANVAS_PALETTE,
     [topicMapPalette],
   );
-  const { ref: graphContainerRef, size } = useElementSize<HTMLDivElement>();
+  const graphLayoutKey = snapshot?.runId ?? null;
+  const { ref: graphAreaRef, size } = useElementSize<HTMLDivElement>(graphLayoutKey);
 
   const activeClusterIds = useMemo(
     () =>
@@ -478,55 +510,12 @@ export function ChatboxTopicMapPanel({
     [activeClusterIds, focusedNeighborhood, searchMatchIds],
   );
 
-  const searchMatches = useMemo(() => {
-    if (!graphData || !searchMatchIds) return [];
-    return graphData.nodes
-      .filter((node) => searchMatchIds.has(node.id))
-      .slice(0, 12);
-  }, [graphData, searchMatchIds]);
-
-  const selectedNode = selectedNodeId ? nodeById.get(selectedNodeId) ?? null : null;
-
-  const selectedNeighbors = useMemo(() => {
-    if (!selectedNodeId || !graphData) return [];
-    return graphData.links
-      .filter((edge) => {
-        const sourceId = getLinkEndpointId(edge.source);
-        const targetId = getLinkEndpointId(edge.target);
-        return sourceId === selectedNodeId || targetId === selectedNodeId;
-      })
-      .sort((left, right) => right.score - left.score)
-      .map((edge) => {
-        const sourceId = getLinkEndpointId(edge.source);
-        const targetId = getLinkEndpointId(edge.target);
-        const neighborId =
-          sourceId === selectedNodeId ? targetId : sourceId;
-        if (!neighborId) return null;
-        const node = nodeById.get(neighborId);
-        return node
-          ? {
-              id: neighborId,
-              score: edge.score,
-              clusterLabel: node.clusterLabel,
-              semanticPreview: node.semanticPreview,
-              color: node.color,
-            }
-          : null;
-      })
-      .filter((entry): entry is NonNullable<typeof entry> => entry !== null);
-  }, [graphData, nodeById, selectedNodeId]);
-
   const communities = useMemo(
     () =>
       [...(snapshot?.clusters ?? [])].sort(
         (left, right) => right.memberCount - left.memberCount,
       ),
     [snapshot?.clusters],
-  );
-
-  const activeClusterChips = filter.chips.filter(
-    (chip): chip is Extract<UsageFilterChip, { kind: "cluster" }> =>
-      chip.kind === "cluster",
   );
 
   useEffect(() => {
@@ -609,7 +598,6 @@ export function ChatboxTopicMapPanel({
       const node = nodeById.get(nodeId);
       if (!node) return;
       setSelectedNodeId(nodeId);
-      setActiveTab("info");
       graphRef.current?.centerAt?.(node.x, node.y, 560);
       graphRef.current?.zoom?.(zoomLevel, 560);
     },
@@ -987,21 +975,21 @@ export function ChatboxTopicMapPanel({
       ref={panelRef}
       className="flex h-full min-h-0 overflow-hidden bg-background text-foreground"
     >
-      <div className="relative min-w-0 flex-1 overflow-hidden">
+      <div
+        ref={graphAreaRef}
+        className="relative min-h-0 min-w-0 flex-1 overflow-hidden"
+      >
         <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-primary/8 via-transparent to-muted/50" />
         <div
           className="pointer-events-none absolute inset-0 text-border/40 [background-image:linear-gradient(to_right,currentColor_1px,transparent_1px),linear-gradient(to_bottom,currentColor_1px,transparent_1px)] [background-size:40px_40px] opacity-60 [mask-image:radial-gradient(circle_at_50%_45%,black,transparent_100%)]"
         />
 
-        <div className="absolute left-4 right-4 top-4 z-10 flex flex-wrap items-start justify-between gap-3">
+        <div className="absolute left-4 right-4 top-4 z-10 flex flex-wrap items-start gap-3">
           <div className="space-y-2">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="rounded-full border border-border bg-muted/40 px-2.5 py-1 text-[11px] font-medium uppercase tracking-[0.22em] text-muted-foreground">
-                Historical Topic Map
-              </span>
-              {latestRun?.status === "running" ||
-              latestRun?.status === "queued" ||
-              latestRun?.status === "failed" ? (
+            {latestRun?.status === "running" ||
+            latestRun?.status === "queued" ||
+            latestRun?.status === "failed" ? (
+              <div className="flex flex-wrap items-center gap-2">
                 <span
                   className={cn(
                     "rounded-full px-2.5 py-1 text-[11px] font-medium",
@@ -1014,26 +1002,8 @@ export function ChatboxTopicMapPanel({
                       ? "Queued for rebuild"
                       : "Last rebuild failed"}
                 </span>
-              ) : null}
-            </div>
-            <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
-              <span>{snapshot.stats.nodeCount.toLocaleString()} visible nodes</span>
-              <span>•</span>
-              <span>{snapshot.stats.edgeCount.toLocaleString()} edges</span>
-              <span>•</span>
-              <span>{snapshot.stats.clusterCount} communities</span>
-              {snapshot.stats.unmappedSessionCount > 0 ? (
-                <>
-                  <span>•</span>
-                  <span>
-                    {snapshot.stats.unmappedSessionCount.toLocaleString()} unmapped
-                  </span>
-                </>
-              ) : null}
-            </div>
-            <p className="text-[11px] text-muted-foreground">
-              Drag the canvas to pan, scroll to zoom, click a node to inspect.
-            </p>
+              </div>
+            ) : null}
             {snapshot.isSampled ? (
               <div className="max-w-xl rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-[11px] text-warning-foreground">
                 Showing a stable 10,000-session sample of{" "}
@@ -1042,32 +1012,9 @@ export function ChatboxTopicMapPanel({
               </div>
             ) : null}
           </div>
-
-          <div className="flex flex-wrap items-center gap-2">
-            <Button type="button" variant="outline" onClick={() => fitGraph()}>
-              <LocateFixed className="mr-2 h-3.5 w-3.5" />
-              Fit view
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              disabled={rebuildDisabled(latestRun) || rebuildBusy}
-              onClick={onRebuild}
-            >
-              <RefreshCw
-                className={cn(
-                  "mr-2 h-3.5 w-3.5",
-                  latestRun?.status === "running" && !latestRun.isStale
-                    ? "animate-spin"
-                    : "",
-                )}
-              />
-              {rebuildButtonLabel(latestRun)}
-            </Button>
-          </div>
         </div>
 
-        <div ref={graphContainerRef} className="h-full w-full pt-20">
+        <div className="h-full min-h-0 w-full">
           <ForceGraph2D
             ref={graphRef as never}
             graphData={graphData ?? { nodes: [], links: [] }}
@@ -1130,292 +1077,105 @@ export function ChatboxTopicMapPanel({
       </div>
 
       <aside className="flex w-[372px] shrink-0 flex-col border-l border-border bg-muted/30">
-        <div className="border-b border-border bg-muted/20 p-4">
+        <div className="space-y-3 border-b border-border bg-muted/20 p-4">
           <SearchInput
             value={searchQuery}
             onValueChange={(value) => startTransition(() => setSearchQuery(value))}
             placeholder="Search nodes..."
           />
+          <div className="flex flex-wrap items-center gap-2">
+            <Button type="button" variant="outline" onClick={() => fitGraph()}>
+              <LocateFixed className="mr-2 h-3.5 w-3.5" />
+              Fit view
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={rebuildDisabled(latestRun) || rebuildBusy}
+              onClick={onRebuild}
+            >
+              <RefreshCw
+                className={cn(
+                  "mr-2 h-3.5 w-3.5",
+                  latestRun?.status === "running" && !latestRun.isStale
+                    ? "animate-spin"
+                    : "",
+                )}
+              />
+              {rebuildButtonLabel(latestRun)}
+            </Button>
+          </div>
         </div>
 
-        <Tabs
-          value={activeTab}
-          onValueChange={(value) => setActiveTab(value as SidebarTab)}
-          className="flex min-h-0 flex-1 flex-col"
-        >
-          <TabsList className="grid grid-cols-3 rounded-none border-b border-border bg-muted/20 p-0">
-            <TabsTrigger
-              value="info"
-              className="rounded-none border-r border-border data-[state=active]:bg-muted data-[state=active]:text-foreground"
-            >
-              Info
-            </TabsTrigger>
-            <TabsTrigger
-              value="filters"
-              className="rounded-none border-r border-border data-[state=active]:bg-muted data-[state=active]:text-foreground"
-            >
-              Filters
-            </TabsTrigger>
-            <TabsTrigger
-              value="communities"
-              className="rounded-none data-[state=active]:bg-muted data-[state=active]:text-foreground"
-            >
-              Communities
-            </TabsTrigger>
-          </TabsList>
-
-          <TabsContent value="info" className="min-h-0 flex-1 data-[state=inactive]:hidden">
-            <ScrollArea className="h-full">
-              <div className="space-y-5 p-4">
-                {selectedNode ? (
-                  <>
-                    <section className="space-y-3">
-                      <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
-                        <Info className="h-3.5 w-3.5" />
-                        Node Info
-                      </div>
-                      <div className="rounded-lg border border-border bg-card p-4 shadow-sm">
-                        <p className="break-all text-sm font-semibold text-foreground">
-                          {selectedNode.id}
-                        </p>
-                        <dl className="mt-3 space-y-2 text-xs text-muted-foreground">
-                          <div className="flex items-start justify-between gap-3">
-                            <dt>Community</dt>
-                            <dd className="text-right text-foreground">
-                              {selectedNode.clusterLabel ?? "Unclustered"}
-                            </dd>
-                          </div>
-                          <div className="flex items-start justify-between gap-3">
-                            <dt>Started</dt>
-                            <dd className="text-right text-foreground">
-                              {format(new Date(selectedNode.startedAt), "yyyy-MM-dd")}
-                            </dd>
-                          </div>
-                          <div className="flex items-start justify-between gap-3">
-                            <dt>Messages</dt>
-                            <dd className="text-right text-foreground">
-                              {selectedNode.messageCount}
-                            </dd>
-                          </div>
-                          <div className="flex items-start justify-between gap-3">
-                            <dt>Degree</dt>
-                            <dd className="text-right text-foreground">
-                              {selectedNode.degree}
-                            </dd>
-                          </div>
-                          {selectedNode.modelId ? (
-                            <div className="flex items-start justify-between gap-3">
-                              <dt>Model</dt>
-                              <dd className="max-w-[180px] text-right font-mono text-foreground">
-                                {selectedNode.modelId}
-                              </dd>
-                            </div>
-                          ) : null}
-                        </dl>
-                      </div>
-                    </section>
-
-                    <section className="space-y-3">
-                      <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
-                        <Sparkles className="h-3.5 w-3.5" />
-                        Semantic Preview
-                      </div>
-                      <div className="rounded-lg border border-border bg-card p-4 text-sm leading-6 text-foreground shadow-sm">
-                        {selectedNode.semanticPreview}
-                      </div>
-                    </section>
-
-                    <section className="space-y-3">
-                      <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
-                        <Network className="h-3.5 w-3.5" />
-                        Neighbors ({selectedNeighbors.length})
-                      </div>
-                      <div className="space-y-2">
-                        {selectedNeighbors.length > 0 ? (
-                          selectedNeighbors.map((neighbor) => (
-                            <button
-                              key={neighbor.id}
-                              type="button"
-                              onClick={() => focusNode(neighbor.id, 2.25)}
-                              className="w-full rounded-lg border border-border bg-card px-3 py-3 text-left transition hover:bg-muted/50"
-                            >
-                              <div className="flex items-center gap-2">
-                                <span
-                                  className="h-2.5 w-1 rounded-full"
-                                  style={{ backgroundColor: neighbor.color }}
-                                />
-                                <span className="truncate text-xs font-medium text-foreground">
-                                  {neighbor.clusterLabel ?? "Unclustered"}
-                                </span>
-                                <span className="ml-auto text-[11px] text-muted-foreground">
-                                  {(neighbor.score * 100).toFixed(0)}%
-                                </span>
-                              </div>
-                              <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
-                                {neighbor.semanticPreview}
-                              </p>
-                            </button>
-                          ))
-                        ) : (
-                          <div className="rounded-lg border border-dashed border-border bg-muted/20 px-3 py-4 text-xs text-muted-foreground">
-                            No reciprocal neighbors survived the graph pruning for
-                            this node.
-                          </div>
-                        )}
-                      </div>
-                    </section>
-                  </>
-                ) : (
-                  <div className="rounded-lg border border-dashed border-border bg-muted/20 p-4 text-sm text-muted-foreground">
-                    Select a node to inspect its summary, community, and nearest
-                    neighbors.
-                  </div>
-                )}
-              </div>
-            </ScrollArea>
-          </TabsContent>
-
-          <TabsContent value="filters" className="min-h-0 flex-1 data-[state=inactive]:hidden">
-            <ScrollArea className="h-full">
-              <div className="space-y-5 p-4">
-                <section className="space-y-3">
-                  <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
-                    <Filter className="h-3.5 w-3.5" />
-                    Active Community Filters
-                  </div>
-                  {activeClusterChips.length > 0 ? (
-                    <div className="flex flex-wrap gap-2">
-                      {activeClusterChips.map((chip) => (
-                        <button
-                          key={chipKey(chip)}
-                          type="button"
-                          onClick={() => onClearChip(chipKey(chip))}
-                          className="rounded-full border border-border bg-muted/50 px-3 py-1 text-xs text-foreground transition hover:bg-muted"
-                        >
-                          {chip.label ?? chip.clusterId}
-                        </button>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="rounded-lg border border-dashed border-border bg-muted/20 px-3 py-4 text-xs text-muted-foreground">
-                      No community filters are active. Pick a community from the
-                      Communities tab to isolate it in the graph.
-                    </div>
-                  )}
-                </section>
-
-                <section className="space-y-3">
-                  <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
-                    <Sparkles className="h-3.5 w-3.5" />
-                    Search Results
-                  </div>
-                  {deferredSearch ? (
-                    searchMatches.length > 0 ? (
-                      <div className="space-y-2">
-                        {searchMatches.map((node) => (
-                          <button
-                            key={node.id}
-                            type="button"
-                            onClick={() => focusNode(node.id, 2.2)}
-                            className="w-full rounded-lg border border-border bg-card px-3 py-3 text-left transition hover:bg-muted/50"
-                          >
-                            <div className="flex items-center justify-between gap-3">
-                              <span className="truncate text-xs font-medium text-foreground">
-                                {node.clusterLabel ?? "Unclustered"}
-                              </span>
-                              <span className="text-[11px] text-muted-foreground">
-                                {formatDistanceToNow(new Date(node.lastActivityAt), {
-                                  addSuffix: true,
-                                })}
-                              </span>
-                            </div>
-                            <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
-                              {node.semanticPreview}
-                            </p>
-                          </button>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="rounded-lg border border-dashed border-border bg-muted/20 px-3 py-4 text-xs text-muted-foreground">
-                        No nodes matched “{deferredSearch}”.
-                      </div>
-                    )
-                  ) : (
-                    <div className="rounded-lg border border-dashed border-border bg-muted/20 px-3 py-4 text-xs text-muted-foreground">
-                      Search by community label, semantic preview, session ID, or
-                      model.
-                    </div>
-                  )}
-                </section>
-              </div>
-            </ScrollArea>
-          </TabsContent>
-
-          <TabsContent value="communities" className="min-h-0 flex-1 data-[state=inactive]:hidden">
-            <ScrollArea className="h-full">
-              <div className="space-y-3 p-4">
-                {communities.map((community) => {
-                  const isActive = activeClusterIds.has(community.clusterId);
-                  const swatch = colorForCluster(
-                    community.clusterId,
-                    clusterColorIndex.get(community.clusterId) ?? 0,
-                  );
-                  return (
-                    <button
-                      key={community.clusterId}
-                      type="button"
-                      onClick={() =>
-                        onToggleChip({
-                          kind: "cluster",
-                          clusterId: community.clusterId,
-                          label: community.label,
-                        })
-                      }
-                      className={cn(
-                        "w-full rounded-lg border px-3 py-3 text-left transition",
-                        isActive
-                          ? "border-primary/40 bg-primary/10"
-                          : "border-border bg-card hover:bg-muted/50",
-                      )}
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-2">
-                            <span
-                              className="h-2.5 w-2.5 rounded-full"
-                              style={{ backgroundColor: swatch }}
-                            />
-                            <p className="truncate text-sm font-semibold text-foreground">
-                              {community.label}
-                            </p>
-                          </div>
-                          <p className="mt-1 text-xs text-muted-foreground">
-                            {community.summary}
+        <div className="flex min-h-0 flex-1 flex-col">
+          <div className="flex h-9 shrink-0 items-center border-b border-border bg-muted/20 px-4">
+            <span className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
+              Clusters
+            </span>
+          </div>
+          <ScrollArea className="min-h-0 flex-1">
+            <div className="space-y-3 p-4">
+              {communities.map((community) => {
+                const isActive = activeClusterIds.has(community.clusterId);
+                const swatch = colorForCluster(
+                  community.clusterId,
+                  clusterColorIndex.get(community.clusterId) ?? 0,
+                );
+                return (
+                  <button
+                    key={community.clusterId}
+                    type="button"
+                    onClick={() =>
+                      onToggleChip({
+                        kind: "cluster",
+                        clusterId: community.clusterId,
+                        label: community.label,
+                      })
+                    }
+                    className={cn(
+                      "w-full rounded-lg border px-3 py-3 text-left transition",
+                      isActive
+                        ? "border-primary/40 bg-primary/10"
+                        : "border-border bg-card hover:bg-muted/50",
+                    )}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span
+                            className="h-2.5 w-2.5 rounded-full"
+                            style={{ backgroundColor: swatch }}
+                          />
+                          <p className="truncate text-sm font-semibold text-foreground">
+                            {community.label}
                           </p>
                         </div>
-                        <span className="rounded-full bg-secondary px-2 py-1 text-[11px] text-secondary-foreground">
-                          {community.memberCount}
-                        </span>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          {community.summary}
+                        </p>
                       </div>
-                      {community.keywords.length > 0 ? (
-                        <div className="mt-3 flex flex-wrap gap-1.5">
-                          {community.keywords.map((keyword) => (
-                            <span
-                              key={keyword}
-                              className="rounded-full border border-border px-2 py-0.5 text-[11px] text-muted-foreground"
-                            >
-                              {keyword}
-                            </span>
-                          ))}
-                        </div>
-                      ) : null}
-                    </button>
-                  );
-                })}
-              </div>
-            </ScrollArea>
-          </TabsContent>
-        </Tabs>
+                      <span className="rounded-full bg-secondary px-2 py-1 text-[11px] text-secondary-foreground">
+                        {community.memberCount}
+                      </span>
+                    </div>
+                    {community.keywords.length > 0 ? (
+                      <div className="mt-3 flex flex-wrap gap-1.5">
+                        {community.keywords.map((keyword) => (
+                          <span
+                            key={keyword}
+                            className="rounded-full border border-border px-2 py-0.5 text-[11px] text-muted-foreground"
+                          >
+                            {keyword}
+                          </span>
+                        ))}
+                      </div>
+                    ) : null}
+                  </button>
+                );
+              })}
+            </div>
+          </ScrollArea>
+        </div>
       </aside>
     </div>
   );

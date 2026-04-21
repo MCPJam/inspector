@@ -1,5 +1,5 @@
 import React from "react";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ChatboxTopicMapPanel } from "../ChatboxTopicMapPanel";
@@ -177,7 +177,44 @@ beforeEach(() => {
 });
 
 describe("ChatboxTopicMapPanel", () => {
-  it("renders the selected node info and semantic preview", () => {
+  it("subscribes to ResizeObserver only after the graph pane mounts (post-loading)", () => {
+    const observed: Element[] = [];
+    const originalResizeObserver = globalThis.ResizeObserver;
+    globalThis.ResizeObserver = class ResizeObserverMock {
+      constructor(_cb: ResizeObserverCallback) {}
+      observe(target: Element) {
+        observed.push(target);
+      }
+      disconnect() {}
+    } as unknown as typeof ResizeObserver;
+
+    try {
+      mockUseChatboxTopicMap.mockReturnValue({
+        ...createDefaultChatboxTopicMapHookValue(),
+        snapshot: null,
+        isLoading: true,
+      });
+
+      const panelProps = {
+        chatboxId: "chatbox-1",
+        filter: EMPTY_FILTER,
+        onToggleChip: vi.fn(),
+        onClearChip: vi.fn(),
+        onRebuild: vi.fn(),
+      };
+
+      const { rerender } = render(<ChatboxTopicMapPanel {...panelProps} />);
+      expect(observed).toHaveLength(0);
+
+      mockUseChatboxTopicMap.mockReturnValue(createDefaultChatboxTopicMapHookValue());
+      rerender(<ChatboxTopicMapPanel {...panelProps} />);
+      expect(observed.length).toBeGreaterThan(0);
+    } finally {
+      globalThis.ResizeObserver = originalResizeObserver;
+    }
+  });
+
+  it("renders cluster list with summaries in the sidebar", () => {
     render(
       <ChatboxTopicMapPanel
         chatboxId="chatbox-1"
@@ -188,14 +225,33 @@ describe("ChatboxTopicMapPanel", () => {
       />,
     );
 
-    expect(screen.getByText("Historical Topic Map")).toBeInTheDocument();
+    expect(screen.queryByText("Historical Topic Map")).not.toBeInTheDocument();
     expect(screen.queryByText("2 mapped sessions")).not.toBeInTheDocument();
-    expect(screen.getByText("session-a")).toBeInTheDocument();
+    expect(screen.getByText("Clusters")).toBeInTheDocument();
     expect(screen.getByText("Password resets")).toBeInTheDocument();
     expect(
-      screen.getByText("User needs to reset a forgotten password."),
+      screen.getByText("Reset and account recovery questions."),
     ).toBeInTheDocument();
-    expect(screen.getByText(/1 unmapped/i)).toBeInTheDocument();
+    expect(screen.getByText("Billing issues")).toBeInTheDocument();
+    expect(screen.getByText("Invoice and refund help.")).toBeInTheDocument();
+  });
+
+  it("renders Fit view and rebuild controls in the right panel", () => {
+    render(
+      <ChatboxTopicMapPanel
+        chatboxId="chatbox-1"
+        filter={EMPTY_FILTER}
+        onToggleChip={vi.fn()}
+        onClearChip={vi.fn()}
+        onRebuild={vi.fn()}
+      />,
+    );
+
+    const fitView = screen.getByRole("button", { name: /fit view/i });
+    const rebuild = screen.getByRole("button", { name: /rebuild topic map/i });
+    expect(fitView.compareDocumentPosition(rebuild)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
   });
 
   it("shows rebuild status in the header while a run is active", () => {
@@ -249,7 +305,7 @@ describe("ChatboxTopicMapPanel", () => {
       />,
     );
 
-    await user.click(screen.getByRole("tab", { name: "Communities" }));
+    expect(screen.getByText("Clusters")).toBeInTheDocument();
     await user.click(
       screen.getByRole("button", { name: /Billing issues Invoice and refund help/i }),
     );
@@ -261,10 +317,7 @@ describe("ChatboxTopicMapPanel", () => {
     });
   });
 
-  it("shows active cluster filters and search matches in the filters tab", async () => {
-    const user = userEvent.setup();
-    const onClearChip = vi.fn();
-
+  it("highlights active cluster selection in the list", () => {
     render(
       <ChatboxTopicMapPanel
         chatboxId="chatbox-1"
@@ -273,20 +326,14 @@ describe("ChatboxTopicMapPanel", () => {
           chips: [{ kind: "cluster", clusterId: "cluster-a", label: "Password resets" }],
         }}
         onToggleChip={vi.fn()}
-        onClearChip={onClearChip}
+        onClearChip={vi.fn()}
         onRebuild={vi.fn()}
       />,
     );
 
-    await user.type(screen.getByRole("searchbox", { name: "Search nodes..." }), "refund");
-    await user.click(screen.getByRole("tab", { name: "Filters" }));
-
-    expect(screen.getByRole("button", { name: "Password resets" })).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Password resets" }));
-    expect(onClearChip).toHaveBeenCalledWith("cluster:cluster-a");
-
-    await waitFor(() => {
-      expect(screen.getByText("Refund request after duplicate charge.")).toBeInTheDocument();
+    const clusterButton = screen.getByRole("button", {
+      name: /Password resets Reset and account recovery questions/i,
     });
+    expect(clusterButton).toHaveClass("border-primary/40");
   });
 });
