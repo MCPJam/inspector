@@ -811,6 +811,92 @@ describe("TestTemplateEditor run view from route", () => {
     });
   });
 
+  it("defaults to Results tab when expected tool calls are on a non-first prompt turn (multi-turn case)", async () => {
+    const user = userEvent.setup();
+    // Multi-turn case: turn 1 has no expected tool calls, turn 2 has one.
+    const multiTurnCase = {
+      ...caseDoc,
+      isNegativeTest: false,
+      expectedToolCalls: [],
+      promptTurns: [
+        {
+          id: "turn-1",
+          prompt: "First prompt",
+          expectedToolCalls: [],
+        },
+        {
+          id: "turn-2",
+          prompt: "Second prompt",
+          expectedToolCalls: [{ toolName: "some_tool", arguments: {} }],
+        },
+      ],
+    };
+
+    useQueryMock.mockImplementation((name: string, args: unknown) => {
+      if (name === "testSuites:listTestCases") {
+        return [multiTurnCase];
+      }
+      if (name === "testSuites:getTestSuite") {
+        return {
+          _id: "suite-1",
+          environment: { servers: ["srv"] },
+        };
+      }
+      if (name === "testSuites:listTestIterations" && args !== "skip") {
+        return [baseIteration];
+      }
+      if (
+        name === "testSuites:getTestIteration" &&
+        typeof args === "object" &&
+        args !== null &&
+        (args as { iterationId?: string }).iterationId === baseIteration._id
+      ) {
+        return baseIteration;
+      }
+      return undefined;
+    });
+    streamEvalTestCaseMock.mockImplementation(
+      async () => new Promise<void>(() => {}),
+    );
+
+    renderWithProviders(
+      <TestTemplateEditor
+        suiteId="suite-1"
+        selectedTestCaseId="case-1"
+        connectedServerNames={new Set(["srv"])}
+        workspaceId={null}
+        availableModels={[
+          {
+            provider: "openai",
+            id: "gpt-4",
+            model: "gpt-4",
+            name: "GPT-4",
+            label: "GPT-4",
+          } as any,
+        ]}
+      />,
+      { hostStyle: "claude" },
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /run$/i })).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: /run$/i }));
+
+    await waitFor(() => {
+      expect(streamEvalTestCaseMock).toHaveBeenCalledTimes(1);
+    });
+
+    const card = getCompareCard("GPT-4");
+
+    // Default tab must be Results even when expected tools live only on turn 2+.
+    expect(card.querySelector("[data-selected-host-style]")).toBeNull();
+    expect(
+      within(card).getByRole("button", { name: /^Results$/i }),
+    ).toBeInTheDocument();
+  });
+
   it("shows the host-style pill only while the chat tab is active", async () => {
     const user = userEvent.setup();
     const caseWithExpectedToolCalls = {

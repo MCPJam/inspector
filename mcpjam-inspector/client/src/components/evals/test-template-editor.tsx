@@ -58,6 +58,7 @@ import {
 } from "./single-test-case-runner";
 import {
   deriveLegacyPromptFields,
+  flattenAssertedExpectedToolCalls,
   resolveIterationDisplayExpectedToolCalls,
   resolvePromptTurns,
   stripPromptTurnsFromAdvancedConfig,
@@ -1247,7 +1248,7 @@ export function TestTemplateEditor({
     compareHandlesInFlightRef.current += 1;
     setIsRunningCompare(true);
     const defaultRunColumnTab: RunColumnTab =
-      (savePayload.expectedToolCalls?.length ?? 0) > 0 ? "tools" : "chat";
+      flattenAssertedExpectedToolCalls(savePayload).length > 0 ? "tools" : "chat";
     setRunColumnTabByModel((previous) => ({
       ...previous,
       ...Object.fromEntries(
