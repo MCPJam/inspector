@@ -94,6 +94,7 @@ vi.mock("../trace-viewer", () => ({
     trace?: { messages?: Array<{ content?: unknown }> } | null;
     forcedViewMode?: string;
     isLoading?: boolean;
+    expectedToolCalls?: Array<{ toolName: string }>;
   }) => {
     mockTraceViewer(props);
     const firstMessage = props.trace?.messages?.[0]?.content;
@@ -106,6 +107,7 @@ vi.mock("../trace-viewer", () => ({
         data-first-message={
           typeof firstMessage === "string" ? firstMessage : "non-string"
         }
+        data-expected-tool-count={String(props.expectedToolCalls?.length ?? 0)}
       />
     );
   },
@@ -252,6 +254,7 @@ describe("TestTemplateEditor run view from route", () => {
       trace?: { messages?: Array<{ content?: unknown }> } | null;
       forcedViewMode?: string;
       isLoading?: boolean;
+      expectedToolCalls?: Array<{ toolName: string; arguments: Record<string, unknown> }>;
     };
   }
 
@@ -673,6 +676,85 @@ describe("TestTemplateEditor run view from route", () => {
     expect(screen.queryByText("Running GPT-4…")).not.toBeInTheDocument();
   });
 
+  it("renders a tools preview (not generic spinner) before the first stream event when the case has expected tool calls", async () => {
+    const user = userEvent.setup();
+    const caseWithTools = {
+      ...caseDoc,
+      isNegativeTest: false,
+      expectedToolCalls: [{ toolName: "create_view", arguments: {} }],
+    };
+
+    useQueryMock.mockImplementation((name: string, args: unknown) => {
+      if (name === "testSuites:listTestCases") return [caseWithTools];
+      if (name === "testSuites:getTestSuite") {
+        return { _id: "suite-1", environment: { servers: ["srv"] } };
+      }
+      if (name === "testSuites:listTestIterations" && args !== "skip") {
+        return [baseIteration];
+      }
+      if (
+        name === "testSuites:getTestIteration" &&
+        typeof args === "object" &&
+        args !== null &&
+        (args as { iterationId?: string }).iterationId === baseIteration._id
+      ) {
+        return baseIteration;
+      }
+      return undefined;
+    });
+
+    // Stream never resolves — keeps the run in "running, no iteration" state.
+    streamEvalTestCaseMock.mockImplementation(
+      async () => new Promise<void>(() => {}),
+    );
+
+    renderWithProviders(
+      <TestTemplateEditor
+        suiteId="suite-1"
+        selectedTestCaseId="case-1"
+        connectedServerNames={new Set(["srv"])}
+        workspaceId={null}
+        availableModels={[
+          {
+            provider: "openai",
+            id: "gpt-4",
+            model: "gpt-4",
+            name: "GPT-4",
+            label: "GPT-4",
+          } as any,
+        ]}
+      />,
+      { hostStyle: "claude" },
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /run$/i })).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: /run$/i }));
+
+    await waitFor(() => {
+      expect(streamEvalTestCaseMock).toHaveBeenCalledTimes(1);
+      expect(screen.getByTestId("mock-trace-viewer")).toBeInTheDocument();
+    });
+
+    // Must show tools view (not chat) and pass expected tool calls through.
+    expect(screen.getByTestId("mock-trace-viewer")).toHaveAttribute(
+      "data-view-mode",
+      "tools",
+    );
+    expect(screen.getByTestId("mock-trace-viewer")).toHaveAttribute(
+      "data-is-loading",
+      "true",
+    );
+    expect(screen.getByTestId("mock-trace-viewer")).toHaveAttribute(
+      "data-expected-tool-count",
+      "1",
+    );
+    // Generic spinner must not appear.
+    expect(screen.queryByText(/Running GPT-4/)).not.toBeInTheDocument();
+  });
+
   it("replaces the initial preview with streamed chat messages as soon as live trace data exists", async () => {
     const user = userEvent.setup();
     let emitEvent:
@@ -811,6 +893,94 @@ describe("TestTemplateEditor run view from route", () => {
     });
   });
 
+  it("defaults to Results tab when expected tool calls are on a non-first prompt turn (multi-turn case)", async () => {
+    const user = userEvent.setup();
+    // Multi-turn case: turn 1 has no expected tool calls, turn 2 has one.
+    const multiTurnCase = {
+      ...caseDoc,
+      isNegativeTest: false,
+      expectedToolCalls: [],
+      promptTurns: [
+        {
+          id: "turn-1",
+          prompt: "First prompt",
+          expectedToolCalls: [],
+        },
+        {
+          id: "turn-2",
+          prompt: "Second prompt",
+          expectedToolCalls: [{ toolName: "some_tool", arguments: {} }],
+        },
+      ],
+    };
+
+    useQueryMock.mockImplementation((name: string, args: unknown) => {
+      if (name === "testSuites:listTestCases") {
+        return [multiTurnCase];
+      }
+      if (name === "testSuites:getTestSuite") {
+        return {
+          _id: "suite-1",
+          environment: { servers: ["srv"] },
+        };
+      }
+      if (name === "testSuites:listTestIterations" && args !== "skip") {
+        return [baseIteration];
+      }
+      if (
+        name === "testSuites:getTestIteration" &&
+        typeof args === "object" &&
+        args !== null &&
+        (args as { iterationId?: string }).iterationId === baseIteration._id
+      ) {
+        return baseIteration;
+      }
+      return undefined;
+    });
+    streamEvalTestCaseMock.mockImplementation(
+      async () => new Promise<void>(() => {}),
+    );
+
+    renderWithProviders(
+      <TestTemplateEditor
+        suiteId="suite-1"
+        selectedTestCaseId="case-1"
+        connectedServerNames={new Set(["srv"])}
+        workspaceId={null}
+        availableModels={[
+          {
+            provider: "openai",
+            id: "gpt-4",
+            model: "gpt-4",
+            name: "GPT-4",
+            label: "GPT-4",
+          } as any,
+        ]}
+      />,
+      { hostStyle: "claude" },
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /run$/i })).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: /run$/i }));
+
+    await waitFor(() => {
+      expect(streamEvalTestCaseMock).toHaveBeenCalledTimes(1);
+    });
+
+    // The pre-stream preview TraceViewer must be rendered in tools mode with
+    // the expected tool call flattened from turn 2.
+    await waitFor(() => {
+      const props = getLatestTraceViewerProps();
+      expect(props.forcedViewMode).toBe("tools");
+      expect(props.expectedToolCalls).toEqual([
+        { toolName: "some_tool", arguments: {} },
+      ]);
+    });
+  });
+
   it("shows the host-style pill only while the chat tab is active", async () => {
     const user = userEvent.setup();
     const caseWithExpectedToolCalls = {
@@ -882,6 +1052,10 @@ describe("TestTemplateEditor run view from route", () => {
 
     const card = getCompareCard("GPT-4");
 
+    // Default tab is Results when the case has expected tools — host-style pill is Chat-only.
+    expect(card.querySelector("[data-selected-host-style]")).toBeNull();
+
+    await user.click(within(card).getByRole("button", { name: /^Chat$/i }));
     expect(card.querySelector('[data-selected-host-style="claude"]')).not.toBe(
       null,
     );

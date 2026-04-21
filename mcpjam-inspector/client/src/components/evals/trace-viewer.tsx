@@ -53,6 +53,10 @@ export type TraceViewerEvalToolCall = {
 interface TraceViewerProps {
   trace: TraceEnvelope | TraceMessage | TraceMessage[] | null;
   model?: ModelDefinition;
+  /**
+   * Chat: forwarded to the transcript `Thread`. Tools (Results): shows a spinner
+   * beside "Actual" while the run is still in progress.
+   */
   isLoading?: boolean;
   toolsMetadata?: Record<string, Record<string, any>>;
   toolServerMap?: ToolServerMap;
@@ -670,8 +674,15 @@ export function TraceViewer({
               )}
             </div>
             <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2 rounded-md border border-border/40 bg-muted/10 p-3">
-              <div className="shrink-0 text-xs font-medium text-muted-foreground uppercase">
+              <div className="flex shrink-0 items-center gap-1.5 text-xs font-medium text-muted-foreground uppercase">
                 Actual
+                {isLoading ? (
+                  <Loader2
+                    className="h-3 w-3 shrink-0 animate-spin"
+                    aria-hidden
+                    data-testid="trace-viewer-actual-loading"
+                  />
+                ) : null}
               </div>
               {actualToolCalls.length === 0 ? (
                 <div className="text-xs text-muted-foreground italic">

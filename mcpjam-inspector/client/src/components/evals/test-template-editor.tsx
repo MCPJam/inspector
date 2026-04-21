@@ -58,6 +58,7 @@ import {
 } from "./single-test-case-runner";
 import {
   deriveLegacyPromptFields,
+  flattenAssertedExpectedToolCalls,
   resolveIterationDisplayExpectedToolCalls,
   resolvePromptTurns,
   stripPromptTurnsFromAdvancedConfig,
@@ -1246,12 +1247,15 @@ export function TestTemplateEditor({
 
     compareHandlesInFlightRef.current += 1;
     setIsRunningCompare(true);
+    const previewExpectedToolCalls = flattenAssertedExpectedToolCalls(savePayload);
+    const defaultRunColumnTab: RunColumnTab =
+      previewExpectedToolCalls.length > 0 ? "tools" : "chat";
     setRunColumnTabByModel((previous) => ({
       ...previous,
       ...Object.fromEntries(
         runModelValues.map((modelValue) => [
           modelValue,
-          "chat" as RunColumnTab,
+          defaultRunColumnTab,
         ]),
       ),
     }));
@@ -1284,6 +1288,7 @@ export function TestTemplateEditor({
           completedAt: null,
           error: null,
           previewTrace: comparePreviewTrace,
+          previewExpectedToolCalls,
         };
       }
       for (const { modelValue, modelLabel, error } of preparationFailures) {
@@ -2380,10 +2385,15 @@ function RunColumn({
         record.completedAt ??
         record.modelValue,
     });
-  const expectedToolCalls = resolveIterationDisplayExpectedToolCalls(
-    record.iteration?.testCaseSnapshot,
-    testCase,
-  );
+  // Prefer the iteration snapshot (authoritative) once available; otherwise
+  // fall back to previewExpectedToolCalls captured from the in-memory form at
+  // run-start so unsaved edits are reflected in showToolsTab / the pre-stream
+  // Results preview before the persisted testCase is updated.
+  const expectedToolCalls = record.iteration?.testCaseSnapshot
+    ? resolveIterationDisplayExpectedToolCalls(record.iteration.testCaseSnapshot, null)
+    : record.previewExpectedToolCalls != null
+      ? record.previewExpectedToolCalls
+      : resolveIterationDisplayExpectedToolCalls(null, testCase);
   const actualToolCalls =
     record.iteration?.actualToolCalls ?? record.streamingActualToolCalls ?? [];
   const showToolsTab =
@@ -2610,6 +2620,7 @@ function RunColumn({
           traceBlob={persistedTraceBlob}
           traceBlobLoading={persistedTraceLoading}
           traceBlobError={persistedTraceError}
+          isLoading={isRunningRecord}
           toolsMetadata={toolsMetadata}
           toolServerMap={toolServerMap}
           connectedServerIds={connectedServerIds}
@@ -2643,7 +2654,7 @@ function RunColumn({
         <TraceViewer
           trace={streamingTraceEnvelope}
           forcedViewMode={traceMode}
-          isLoading={traceMode === "chat" && isRunningRecord}
+          isLoading={isRunningRecord}
           expectedToolCalls={expectedToolCalls}
           actualToolCalls={actualToolCalls}
           toolsMetadata={toolsMetadata}
@@ -2655,7 +2666,7 @@ function RunColumn({
       </div>
     )
   ) : record.status === "running" && !record.iteration ? (
-    traceMode === "chat" && activeLiveChatTrace ? (
+    (traceMode === "chat" || traceMode === "tools") && activeLiveChatTrace ? (
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <TraceViewer
           trace={activeLiveChatTrace}
@@ -2664,8 +2675,10 @@ function RunColumn({
             name: record.modelLabel,
             provider: record.provider as any,
           }}
-          forcedViewMode="chat"
+          forcedViewMode={traceMode === "tools" ? "tools" : "chat"}
           isLoading={true}
+          expectedToolCalls={expectedToolCalls}
+          actualToolCalls={actualToolCalls}
           toolsMetadata={toolsMetadata}
           toolServerMap={toolServerMap}
           connectedServerIds={connectedServerIds}

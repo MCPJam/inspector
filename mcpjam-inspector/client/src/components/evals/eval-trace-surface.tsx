@@ -31,6 +31,8 @@ interface EvalTraceSurfaceProps {
   traceBlob?: TraceEnvelope | null;
   traceBlobLoading?: boolean;
   traceBlobError?: string | null;
+  /** Run in progress; shows beside "Actual" in Results (tools) mode, same signal as metric spinners. */
+  isLoading?: boolean;
   toolsMetadata: Record<string, Record<string, unknown>>;
   toolServerMap: ToolServerMap;
   connectedServerIds: string[];
@@ -78,6 +80,7 @@ export function EvalTraceSurface({
   traceBlob,
   traceBlobLoading,
   traceBlobError,
+  isLoading = false,
   toolsMetadata,
   toolServerMap,
   connectedServerIds,
@@ -188,6 +191,7 @@ export function EvalTraceSurface({
         <TraceViewer
           trace={activeTrace}
           model={traceModel}
+          isLoading={isLoading}
           toolsMetadata={toolsMetadata}
           toolServerMap={toolServerMap}
           connectedServerIds={connectedServerIds}
