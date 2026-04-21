@@ -691,7 +691,10 @@ export function TraceViewer({
               ) : (
                 <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-md border border-border/30 bg-background/50">
                   <JsonEditor
-                    value={actualToolCalls}
+                    value={actualToolCalls.map(({ toolName, arguments: args }) => ({
+                      toolName,
+                      arguments: args,
+                    }))}
                     viewOnly
                     collapsible
                     defaultExpandDepth={2}

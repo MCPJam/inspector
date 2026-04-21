@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { TraceViewModeTabs } from "../trace-view-mode-tabs";
 
 describe("TraceViewModeTabs", () => {
-  it("keeps the default active styling when no variant is requested", () => {
+  it("uses sidebar-accent active styling for the selected tab (default)", () => {
     render(
       <TraceViewModeTabs
         mode="chat"
@@ -13,12 +13,12 @@ describe("TraceViewModeTabs", () => {
     );
 
     expect(screen.getByRole("button", { name: "Chat" })).toHaveClass(
-      "bg-primary/10",
-      "text-foreground",
+      "bg-sidebar-accent",
+      "text-sidebar-accent-foreground",
     );
   });
 
-  it("can opt into the sidebar active styling when explicitly requested", () => {
+  it("matches the same active styling when activeVariant is sidebar", () => {
     render(
       <TraceViewModeTabs
         mode="chat"

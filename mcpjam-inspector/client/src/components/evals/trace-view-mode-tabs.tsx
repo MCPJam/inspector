@@ -14,7 +14,7 @@ export function TraceViewModeTabs({
   onModeChange,
   showToolsTab,
   layout = "default",
-  activeVariant = "default",
+  activeVariant: _activeVariant = "default",
   className,
 }: {
   mode: TraceViewMode;
@@ -22,6 +22,7 @@ export function TraceViewModeTabs({
   showToolsTab: boolean;
   /** `fullWidth`: equal-width segments across the container (e.g. chat trace header). */
   layout?: "default" | "fullWidth";
+  /** Retained for compatibility; active tab always uses sidebar-accent styling. */
   activeVariant?: "default" | "sidebar";
   className?: string;
 }) {
@@ -41,9 +42,7 @@ export function TraceViewModeTabs({
       "inline-flex min-w-0 items-center gap-1.5 rounded px-2 py-1 text-xs transition-colors",
       fullWidth && "min-h-8 flex-1 basis-0 justify-center",
       active
-        ? activeVariant === "sidebar"
-          ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
-          : "bg-primary/10 font-medium text-foreground"
+        ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
         : "text-muted-foreground hover:text-foreground",
     );
 
