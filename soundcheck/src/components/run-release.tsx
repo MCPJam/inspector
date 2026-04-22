@@ -146,11 +146,14 @@ export function RunRelease() {
     });
   }
 
-  const buttonLabel = runsRelease
-    ? "Run release →"
-    : deployMcp
-      ? "Deploy MCP →"
-      : "Run release →";
+  const buttonLabel =
+    runsRelease && deployMcp
+      ? "Run release + MCP →"
+      : runsRelease
+        ? "Run release →"
+        : deployMcp
+          ? "Deploy MCP →"
+          : "Run release →";
 
   return (
     <Tile

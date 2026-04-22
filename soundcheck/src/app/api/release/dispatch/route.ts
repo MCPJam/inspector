@@ -269,9 +269,19 @@ export async function POST(request: Request) {
 
   const successLabel = succeeded.map((r) => r.workflow).join(" + ");
   const failedLabel = failed.map((r) => r.workflow).join(", ");
+  // The Release Progress tile in section IV exclusively watches
+  // release.yml runs. When we dispatched *only* deploy-mcp-prod.yml,
+  // pointing the operator at that tile is a false promise — send them
+  // to GitHub Actions instead.
+  const releaseDispatched = succeeded.some(
+    (r) => r.workflow === "release.yml"
+  );
+  const watchHint = releaseDispatched
+    ? "The progress tile will pick it up within ~10s."
+    : "Watch the run in GitHub Actions — the progress tile only tracks release.yml.";
   const message = failed.length
     ? `${successLabel} dispatched. ${failedLabel} failed — check Soundcheck server logs.`
-    : `${successLabel} dispatched. The progress tile will pick it up within ~10s.`;
+    : `${successLabel} dispatched. ${watchHint}`;
 
   return NextResponse.json({
     ok: true,
