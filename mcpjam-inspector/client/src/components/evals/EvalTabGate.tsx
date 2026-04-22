@@ -10,6 +10,7 @@ export function EvalTabGate({
   isAuthenticated,
   user,
   workspaceId,
+  isDirectGuest = false,
   children,
 }: {
   variant: EvalTabGateVariant;
@@ -17,6 +18,12 @@ export function EvalTabGate({
   isAuthenticated: boolean;
   user: unknown;
   workspaceId: string | null | undefined;
+  /**
+   * True when the caller has classified this session as a hosted direct guest
+   * (no workspace, no share/sandbox token). Direct guests bypass the sign-in
+   * wall for the Playground variant only.
+   */
+  isDirectGuest?: boolean;
   children: ReactNode;
 }) {
   const Icon = variant === "playground" ? FlaskConical : GitBranch;
@@ -37,6 +44,10 @@ export function EvalTabGate({
   }
 
   if (variant === "playground") {
+    if (isDirectGuest) {
+      return <>{children}</>;
+    }
+
     if (!isAuthenticated || !user) {
       return (
         <div className="p-6">

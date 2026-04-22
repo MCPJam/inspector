@@ -3,7 +3,9 @@ import { isHostedMode, runByMode } from "@/lib/apis/mode-client";
 import { getSessionToken } from "@/lib/session-token";
 import {
   buildHostedEvalServerBatchRequest,
+  buildHostedServerRequest,
   buildHostedServerBatchRequest,
+  isGuestMode,
 } from "@/lib/apis/web/context";
 import { listHostedTools } from "@/lib/apis/web/tools-api";
 import { authFetch } from "@/lib/session-token";
@@ -34,6 +36,8 @@ export const EVALS_API_ENDPOINTS = {
 } as const;
 
 type JsonRecord = Record<string, unknown>;
+const GUEST_UNSUPPORTED_MESSAGE =
+  "Not available for guests yet. Sign in to use this.";
 
 type EvalRequestWithServers = {
   workspaceId?: string | null;
@@ -155,6 +159,30 @@ function mergeHostedServerBatch<
   };
 }
 
+function mergeHostedEvalServerRequest<
+  T extends EvalRequestWithServers & { convexAuthToken?: string | null },
+>(request: T): JsonRecord {
+  if (!isGuestMode()) {
+    return mergeHostedServerBatch(request) as JsonRecord;
+  }
+
+  const {
+    convexAuthToken: _convexAuthToken,
+    serverIds,
+    workspaceId: _workspaceId,
+    ...requestWithoutHostedAuth
+  } = request;
+
+  if (serverIds.length !== 1) {
+    throw new Error("Guest eval playground supports one server at a time");
+  }
+
+  return {
+    ...requestWithoutHostedAuth,
+    ...buildHostedServerRequest(serverIds[0]!),
+  };
+}
+
 async function postEvalRequest<TResponse>(
   path: string,
   payload: JsonRecord,
@@ -227,11 +255,16 @@ export async function runEvals(request: RunEvalsRequest): Promise<any> {
   return runByMode({
     local: () =>
       postEvalRequest(EVALS_API_ENDPOINTS.local.run, request as JsonRecord),
-    hosted: () =>
-      postEvalRequest(EVALS_API_ENDPOINTS.hosted.run, {
+    hosted: () => {
+      if (isGuestMode()) {
+        throw new Error(GUEST_UNSUPPORTED_MESSAGE);
+      }
+
+      return postEvalRequest(EVALS_API_ENDPOINTS.hosted.run, {
         ...mergeHostedServerBatch(request),
         storageServerIds: request.storageServerIds ?? request.serverIds,
-      } as JsonRecord),
+      } as JsonRecord);
+    },
   });
 }
 
@@ -247,7 +280,7 @@ export async function runEvalTestCase(
     hosted: () =>
       postEvalRequest(
         EVALS_API_ENDPOINTS.hosted.runTestCase,
-        mergeHostedServerBatch(request) as JsonRecord,
+        mergeHostedEvalServerRequest(request),
       ),
   });
 }
@@ -264,7 +297,7 @@ export async function generateEvalTests(
     hosted: () =>
       postEvalRequest(
         EVALS_API_ENDPOINTS.hosted.generateTests,
-        mergeHostedServerBatch(request) as JsonRecord,
+        mergeHostedEvalServerRequest(request),
       ),
   });
 }
@@ -281,7 +314,7 @@ export async function generateNegativeEvalTests(
     hosted: () =>
       postEvalRequest(
         EVALS_API_ENDPOINTS.hosted.generateNegativeTests,
-        mergeHostedServerBatch(request) as JsonRecord,
+        mergeHostedEvalServerRequest(request),
       ),
   });
 }
@@ -342,7 +375,7 @@ export async function streamEvalTestCase(
     : EVALS_API_ENDPOINTS.local.streamTestCase;
 
   const payload = isHostedMode()
-    ? (mergeHostedServerBatch(request) as JsonRecord)
+    ? mergeHostedEvalServerRequest(request)
     : (request as JsonRecord);
 
   const response = await authFetch(endpoint, {

@@ -5,8 +5,10 @@ import { executeSuiteReplayFromRun } from "../../services/evals/replay-suite-run
 import { runTraceRepairJob } from "../../services/evals/trace-repair-runner.js";
 import { logger } from "../../utils/logger.js";
 import {
+  createGuestEphemeralManager,
   createAuthorizedManager,
   handleRoute,
+  isGuestServerRequestBody,
   parseWithSchema,
   readJsonBody,
   withEphemeralConnection,
@@ -25,6 +27,8 @@ import {
 } from "../shared/evals.js";
 
 const evals = new Hono();
+const GUEST_UNSUPPORTED_MESSAGE =
+  "Not available for guests yet. Sign in to use this.";
 
 const hostedBatchSchema = z.object({
   workspaceId: z.string().min(1),
@@ -99,7 +103,10 @@ evals.post("/run", async (c) =>
         ...body,
         convexAuthToken: assertBearerToken(c),
       }),
-    { rpcLogs: false },
+    {
+      rpcLogs: false,
+      guestUnsupportedMessage: GUEST_UNSUPPORTED_MESSAGE,
+    },
   ),
 );
 
@@ -119,13 +126,52 @@ evals.post("/run-test-case", async (c) =>
 evals.post("/stream-test-case", async (c) => {
   const bearerToken = assertBearerToken(c);
   const rawBody = await readJsonBody<Record<string, unknown>>(c);
+  const WEB_CALL_TIMEOUT_MS = 60_000;
+
+  if (isGuestServerRequestBody(rawBody)) {
+    const { manager, augmentedBody } = await createGuestEphemeralManager(
+      c,
+      rawBody,
+      { timeoutMs: WEB_CALL_TIMEOUT_MS },
+    );
+
+    try {
+      const body = parseWithSchema(
+        hostedRunTestCaseSchema,
+        augmentedBody,
+      ) as z.infer<typeof hostedRunTestCaseSchema>;
+      const stream = await streamEvalTestCaseWithManager(
+        manager,
+        {
+          ...(body as z.infer<typeof hostedRunTestCaseSchema> & {
+            serverIds: string[];
+          }),
+          convexAuthToken: bearerToken,
+        },
+        {
+          onStreamComplete: () => manager.disconnectAllServers(),
+        },
+      );
+
+      return new Response(stream, {
+        headers: {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          Connection: "keep-alive",
+        },
+      });
+    } catch (error) {
+      await manager.disconnectAllServers();
+      throw error;
+    }
+  }
+
   const body = parseWithSchema(hostedRunTestCaseSchema, rawBody) as z.infer<
     typeof hostedRunTestCaseSchema
   >;
 
   const serverIds = body.serverIds;
   const oauthTokens = body.oauthTokens;
-  const WEB_CALL_TIMEOUT_MS = 60_000;
 
   const { manager } = await createAuthorizedManager(
     bearerToken,

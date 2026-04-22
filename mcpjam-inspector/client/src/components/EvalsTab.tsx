@@ -1,11 +1,12 @@
 import { useMemo, useCallback, useEffect, useRef, useState } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth, useMutation } from "convex/react";
-import { FlaskConical, Loader2 } from "lucide-react";
+import { FlaskConical, Loader2, Puzzle } from "lucide-react";
 import { toast } from "sonner";
 import { EmptyState } from "@/components/ui/empty-state";
 import { useEvalsRoute } from "@/lib/evals-router";
 import { useEvalTabContext } from "@/hooks/use-eval-tab-context";
+import { useIsDirectGuest } from "@/hooks/use-is-direct-guest";
 import { aggregateSuite } from "./evals/helpers";
 import { EvalTabGate } from "./evals/EvalTabGate";
 import {
@@ -35,6 +36,23 @@ const EMPTY_CASES: EvalCase[] = [];
 /** Module-level guard so fast tab-switches (unmount/remount) don't duplicate suite creation. */
 const globalInitializedExplore = new Set<string>();
 
+function getExploreInitializationKey({
+  serverName,
+  isDirectGuest,
+  workspaceId,
+}: {
+  serverName: string;
+  isDirectGuest: boolean;
+  workspaceId?: string | null;
+}): string {
+  const scope = isDirectGuest
+    ? "guest"
+    : workspaceId
+    ? `workspace:${workspaceId}`
+    : "anonymous";
+  return `${scope}::${serverName}`;
+}
+
 export function EvalsTab({
   selectedServer,
   workspaceId,
@@ -44,6 +62,7 @@ export function EvalsTab({
   const { user } = useAuth();
   const route = useEvalsRoute();
   const appState = useSharedAppState();
+  const isDirectGuest = useIsDirectGuest({ workspaceId });
   const {
     connectedServerNames,
     userMap,
@@ -53,9 +72,10 @@ export function EvalsTab({
   } = useEvalTabContext({
     isAuthenticated,
     workspaceId: workspaceId ?? null,
+    isDirectGuest,
   });
   const updateSuiteMutation = useMutation("testSuites:updateTestSuite" as any);
-  const mutations = useEvalMutations();
+  const mutations = useEvalMutations({ isDirectGuest });
 
   const [isPreparingExplore, setIsPreparingExplore] = useState(false);
 
@@ -70,6 +90,17 @@ export function EvalsTab({
 
   const hasPlaygroundServerTab =
     Boolean(selectedServer) && selectedServer !== "none";
+  const exploreInitializationKey = useMemo(
+    () =>
+      selectedServer
+        ? getExploreInitializationKey({
+            serverName: selectedServer,
+            isDirectGuest,
+            workspaceId,
+          })
+        : null,
+    [selectedServer, isDirectGuest, workspaceId]
+  );
 
   const overviewQueries = useEvalQueries({
     isAuthenticated: isAuthenticated && Boolean(workspaceId),
@@ -78,14 +109,15 @@ export function EvalsTab({
     deletingSuiteId: null,
     workspaceId: workspaceId ?? null,
     organizationId: null,
+    isDirectGuest,
   });
 
   const manualSuiteEntries = useMemo(
     () =>
       overviewQueries.sortedSuites.filter(
-        (entry) => entry.suite.source !== "sdk",
+        (entry) => entry.suite.source !== "sdk"
       ),
-    [overviewQueries.sortedSuites],
+    [overviewQueries.sortedSuites]
   );
 
   const exploreSuiteEntry = useMemo(() => {
@@ -94,7 +126,7 @@ export function EvalsTab({
       manualSuiteEntries.find(
         (entry) =>
           isExploreSuite(entry.suite) &&
-          entry.suite.environment?.servers?.[0] === selectedServer,
+          entry.suite.environment?.servers?.[0] === selectedServer
       ) ?? null
     );
   }, [manualSuiteEntries, selectedServer, hasPlaygroundServerTab]);
@@ -110,15 +142,32 @@ export function EvalsTab({
     selectedTestId,
     workspaceId: workspaceId ?? null,
     connectedServerNames,
+    isDirectGuest,
   });
+  const {
+    deletingSuiteId,
+    rerunningSuiteId,
+    cancellingRunId,
+    deletingRunId,
+    isGeneratingTests,
+    handleCreateTestCase,
+    handleGenerateTests,
+    handleRerun,
+    handleCancelRun,
+    handleDelete,
+    handleDeleteRun,
+    directDeleteRun,
+    directDeleteTestCase,
+  } = handlers;
 
   const queries = useEvalQueries({
     isAuthenticated: isAuthenticated && Boolean(workspaceId),
     user: workspaceId ? user : null,
     selectedSuiteId,
-    deletingSuiteId: handlers.deletingSuiteId,
+    deletingSuiteId,
     workspaceId: workspaceId ?? null,
     organizationId: null,
+    isDirectGuest,
   });
 
   const selectedSuite = queries.selectedSuite;
@@ -132,59 +181,67 @@ export function EvalsTab({
     return aggregateSuite(
       selectedSuite,
       suiteDetails.testCases,
-      activeIterations,
+      activeIterations
     );
   }, [selectedSuite, suiteDetails, activeIterations]);
   const exploreSuite = selectedSuite;
   const exploreCases = suiteDetails?.testCases ?? EMPTY_CASES;
   const exploreCaseIdsSignature = useMemo(
     () => exploreCases.map((testCase) => testCase._id).join("\u0000"),
-    [exploreCases],
+    [exploreCases]
   );
   const exploreRunIdsSignature = useMemo(
     () => runsForSelectedSuite.map((run) => run._id).join("\u0000"),
-    [runsForSelectedSuite],
+    [runsForSelectedSuite]
   );
   const iterationRunIdsSignature = useMemo(
     () =>
       sortedIterations
         .flatMap((iteration) =>
-          iteration.suiteRunId ? [iteration.suiteRunId] : [],
+          iteration.suiteRunId ? [iteration.suiteRunId] : []
         )
         .join("\u0000"),
-    [sortedIterations],
+    [sortedIterations]
   );
 
   useEffect(() => {
-    if (
-      !selectedServer ||
-      !isServerConnected ||
-      !workspaceId ||
-      !isAuthenticated
-    ) {
+    if (!selectedServer || selectedServer === "none") {
       return;
+    }
+    if (!isDirectGuest) {
+      // Signed-in path still waits for a live connection before calling the
+      // create mutation (and the auto-generate that follows).
+      if (!isServerConnected) {
+        return;
+      }
+      if (!workspaceId || !isAuthenticated) {
+        return;
+      }
     }
     // Wait until the overview query has loaded before deciding to create.
     // Otherwise we might not find the existing suite and create a duplicate.
     if (overviewQueries.isOverviewLoading) {
       return;
     }
-    if (exploreSuiteEntry) {
+    if (selectedSuiteId) {
       return;
     }
-    if (globalInitializedExplore.has(selectedServer)) {
+    if (!exploreInitializationKey) {
+      return;
+    }
+    if (globalInitializedExplore.has(exploreInitializationKey)) {
       return;
     }
 
-    globalInitializedExplore.add(selectedServer);
+    globalInitializedExplore.add(exploreInitializationKey);
     setIsPreparingExplore(true);
 
     void (async () => {
       try {
         const createdSuite = await mutations.createTestSuiteMutation({
-          workspaceId,
+          ...(isDirectGuest ? {} : { workspaceId }),
           name: selectedServer,
-          description: `Explore cases for ${selectedServer}`,
+          description: `Test cases for ${selectedServer}`,
           environment: { servers: [selectedServer] },
         });
 
@@ -194,16 +251,20 @@ export function EvalsTab({
             tags: [EXPLORE_SUITE_TAG],
           });
 
-          // Auto-generate test cases for the newly created suite
-          handlers.handleGenerateTests(createdSuite._id, [selectedServer]);
+          if (!isDirectGuest) {
+            // Signed-in workspaces auto-generate starter cases.
+            // Direct guests keep the lighter PR 1848 behavior and opt in
+            // manually so we do not hit the generation endpoint on load.
+            handleGenerateTests(createdSuite._id, [selectedServer]);
+          }
         }
       } catch (error) {
-        globalInitializedExplore.delete(selectedServer);
+        globalInitializedExplore.delete(exploreInitializationKey);
         toast.error(
           getBillingErrorMessage(
             error,
-            "Failed to create the Explore workspace",
-          ),
+            "Failed to create the Playground workspace"
+          )
         );
       } finally {
         setIsPreparingExplore(false);
@@ -211,49 +272,55 @@ export function EvalsTab({
     })();
   }, [
     isAuthenticated,
-    exploreSuiteEntry,
-    handlers,
+    handleGenerateTests,
     isServerConnected,
     mutations.createTestSuiteMutation,
     overviewQueries.isOverviewLoading,
     selectedServer,
+    selectedSuiteId,
+    exploreInitializationKey,
     updateSuiteMutation,
     workspaceId,
+    isDirectGuest,
   ]);
 
   // Auto-generate when an explore suite exists but has no cases (e.g. previous generation failed)
   const hasAutoGeneratedRef = useRef(new Set<string>());
   useEffect(() => {
     if (
-      !exploreSuite ||
+      !selectedSuiteId ||
       !selectedServer ||
       !isServerConnected ||
-      handlers.isGeneratingTests
+      isGeneratingTests
     ) {
       return;
     }
+    // Guests opt into generation manually; don't auto-run on empty suites.
+    if (isDirectGuest) return;
     if (queries.isSuiteDetailsLoading) return;
     if (exploreCases.length > 0) return;
-    if (hasAutoGeneratedRef.current.has(exploreSuite._id)) return;
+    if (hasAutoGeneratedRef.current.has(selectedSuiteId)) return;
 
-    hasAutoGeneratedRef.current.add(exploreSuite._id);
-    handlers.handleGenerateTests(exploreSuite._id, [selectedServer]);
+    hasAutoGeneratedRef.current.add(selectedSuiteId);
+    handleGenerateTests(selectedSuiteId, [selectedServer]);
   }, [
-    exploreSuite,
     exploreCases.length,
+    handleGenerateTests,
+    isGeneratingTests,
     selectedServer,
+    selectedSuiteId,
     isServerConnected,
-    handlers,
     queries.isSuiteDetailsLoading,
+    isDirectGuest,
   ]);
 
   const playgroundNavigation = useMemo(
     () => createPlaygroundSuiteNavigation(),
-    [],
+    []
   );
 
   useEffect(() => {
-    if (!exploreSuite) return;
+    if (!selectedSuiteId) return;
     const testCaseIds = exploreCaseIdsSignature
       ? exploreCaseIdsSignature.split("\u0000")
       : [];
@@ -265,7 +332,7 @@ export function EvalsTab({
       : [];
     const redirectRoute = getPlaygroundCasesRedirect({
       route,
-      exploreSuiteId: exploreSuite._id,
+      exploreSuiteId: selectedSuiteId,
       isSuiteDetailsLoading: queries.isSuiteDetailsLoading,
       isSuiteRunsLoading: queries.isSuiteRunsLoading,
       testCaseIds,
@@ -279,35 +346,35 @@ export function EvalsTab({
     navigatePlaygroundEvalsRoute(redirectRoute, { replace: true });
   }, [
     exploreCaseIdsSignature,
-    exploreSuite,
     exploreRunIdsSignature,
     iterationRunIdsSignature,
     queries.isSuiteDetailsLoading,
     queries.isSuiteRunsLoading,
     route,
+    selectedSuiteId,
   ]);
 
   const handleGenerateMore = useCallback(async () => {
-    if (!exploreSuite || !selectedServer) return;
-    await handlers.handleGenerateTests(exploreSuite._id, [selectedServer]);
-  }, [exploreSuite, handlers, selectedServer]);
+    if (!selectedSuiteId || !selectedServer) return;
+    await handleGenerateTests(selectedSuiteId, [selectedServer]);
+  }, [handleGenerateTests, selectedServer, selectedSuiteId]);
 
   const handleDeleteTestCasesBatch = useCallback(
     async (testCaseIds: string[]) => {
       const settledDeletes = await Promise.allSettled(
         testCaseIds.map(async (id) => {
-          await handlers.directDeleteTestCase(id);
+          await directDeleteTestCase(id);
           return id;
-        }),
+        })
       );
       const deletedIds = new Set(
         settledDeletes.flatMap((result) =>
-          result.status === "fulfilled" ? [result.value] : [],
-        ),
+          result.status === "fulfilled" ? [result.value] : []
+        )
       );
       const failedDeletes = settledDeletes.filter(
         (result): result is PromiseRejectedResult =>
-          result.status === "rejected",
+          result.status === "rejected"
       );
 
       if (failedDeletes.length > 0) {
@@ -315,30 +382,30 @@ export function EvalsTab({
         toast.error(
           `Failed to delete ${failedDeletes.length} test case${
             failedDeletes.length === 1 ? "" : "s"
-          }.`,
+          }.`
         );
       }
 
-      if (exploreSuite && selectedTestId && deletedIds.has(selectedTestId)) {
+      if (selectedSuiteId && selectedTestId && deletedIds.has(selectedTestId)) {
         navigatePlaygroundEvalsRoute(
           {
             type: "suite-overview",
-            suiteId: exploreSuite._id,
+            suiteId: selectedSuiteId,
             view: "test-cases",
           },
-          { replace: true },
+          { replace: true }
         );
       }
     },
-    [exploreSuite, handlers, selectedTestId],
+    [directDeleteTestCase, selectedSuiteId, selectedTestId]
   );
 
   const showExploreLoading =
     isPreparingExplore ||
     (selectedServer &&
-      isServerConnected &&
       !exploreSuite &&
-      queries.isOverviewLoading);
+      queries.isOverviewLoading &&
+      (isDirectGuest || isServerConnected));
 
   const renderExploreMainPanel = () => {
     if (!exploreSuite) return null;
@@ -357,6 +424,7 @@ export function EvalsTab({
     return (
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-4 pb-6 pt-4 sm:px-6">
         <SuiteIterationsView
+          isDirectGuest={isDirectGuest}
           suite={exploreSuite}
           cases={exploreCases}
           iterations={activeIterations}
@@ -370,23 +438,21 @@ export function EvalsTab({
               openCompare: true,
             })
           }
-          onCreateTestCase={async () =>
-            handlers.handleCreateTestCase(exploreSuite._id)
-          }
+          onCreateTestCase={async () => handleCreateTestCase(exploreSuite._id)}
           onGenerateTestCases={() => void handleGenerateMore()}
           canGenerateTestCases={Boolean(selectedServer && isServerConnected)}
-          isGeneratingTestCases={handlers.isGeneratingTests}
-          onRerun={handlers.handleRerun}
-          onCancelRun={handlers.handleCancelRun}
-          onDelete={handlers.handleDelete}
-          onDeleteRun={handlers.handleDeleteRun}
-          onDirectDeleteRun={handlers.directDeleteRun}
+          isGeneratingTestCases={isGeneratingTests}
+          onRerun={handleRerun}
+          onCancelRun={handleCancelRun}
+          onDelete={handleDelete}
+          onDeleteRun={handleDeleteRun}
+          onDirectDeleteRun={directDeleteRun}
           connectedServerNames={connectedServerNames}
           canDeleteSuite={canDeleteSuite}
-          rerunningSuiteId={handlers.rerunningSuiteId}
-          cancellingRunId={handlers.cancellingRunId}
-          deletingSuiteId={handlers.deletingSuiteId}
-          deletingRunId={handlers.deletingRunId}
+          rerunningSuiteId={rerunningSuiteId}
+          cancellingRunId={cancellingRunId}
+          deletingSuiteId={deletingSuiteId}
+          deletingRunId={deletingRunId}
           availableModels={availableModels}
           route={route}
           userMap={userMap}
@@ -405,7 +471,7 @@ export function EvalsTab({
                       tc,
                       {
                         location: "test_cases_overview",
-                      },
+                      }
                     );
                     const firstIterationId =
                       data?.iteration?._id ??
@@ -418,7 +484,7 @@ export function EvalsTab({
                         {
                           openCompare: true,
                           iteration: firstIterationId,
-                        },
+                        }
                       );
                     }
                   })();
@@ -438,6 +504,7 @@ export function EvalsTab({
       isAuthenticated={isAuthenticated}
       user={user}
       workspaceId={workspaceId}
+      isDirectGuest={isDirectGuest}
     >
       <div className="h-full flex flex-col overflow-hidden">
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -445,8 +512,8 @@ export function EvalsTab({
             <div className="flex flex-1 items-center justify-center px-4 py-10 sm:px-6">
               <EmptyState
                 icon={FlaskConical}
-                title="Select a server to explore"
-                description="Pick a server from the header to view Explore cases. Connect it to run tests or generate new cases."
+                title="Select a server to start testing"
+                description="Pick a server from the header to open Playground. Connect it to run tests or generate new cases."
                 className="h-auto min-h-[240px]"
               />
             </div>
@@ -454,15 +521,15 @@ export function EvalsTab({
             <div className="flex min-h-[240px] flex-1 flex-col items-center justify-center px-4 sm:px-6">
               <Loader2 className="h-8 w-8 animate-spin text-primary" />
               <p className="mt-4 text-sm text-muted-foreground">
-                Preparing the Explore workspace for {selectedServer}...
+                Preparing Playground for {selectedServer}...
               </p>
             </div>
           ) : !exploreSuite ? (
             <div className="flex flex-1 items-center justify-center px-4 py-10 sm:px-6">
               <EmptyState
-                icon={FlaskConical}
-                title="Explore is waiting on a connected server"
-                description="Reconnect the server or pick another one from the header to start generating cases."
+                icon={Puzzle}
+                title={`Start ${selectedServer} to generate tests`}
+                description="Playground can automatically generate test cases once a server is connected."
                 className="h-auto min-h-[240px]"
               />
             </div>
