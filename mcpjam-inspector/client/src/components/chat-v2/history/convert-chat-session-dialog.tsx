@@ -34,6 +34,7 @@ import {
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import { useWorkspaceServers } from "@/hooks/useViews";
 import { resolveRestorableServerNames } from "./session-restore";
+import { cn } from "@/lib/utils";
 
 type ConvertChatSessionDialogProps = {
   open: boolean;
@@ -296,17 +297,19 @@ export function ConvertChatSessionDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-2xl">
-        <DialogHeader>
-          <DialogTitle>Promote to test case</DialogTitle>
-          <DialogDescription className="sr-only">
-            Create a suite-backed test case from this chat session. The full
-            session is compiled into multi-turn prompt turns.
-          </DialogDescription>
-        </DialogHeader>
+      <DialogContent className="gap-0 sm:max-w-xl border-border/50 p-0 shadow-sm">
+        <div className="px-6 pt-6">
+          <DialogHeader className="space-y-1.5 pr-10">
+            <DialogTitle>Promote to test case</DialogTitle>
+            <DialogDescription className="text-sm text-muted-foreground">
+              Create a suite-backed test case from this chat session. The full
+              session is compiled into multi-turn prompt turns.
+            </DialogDescription>
+          </DialogHeader>
+        </div>
 
-        <div className="space-y-5">
-          <div className="grid gap-2">
+        <div className="space-y-6 px-6 py-5">
+          <div className="space-y-2">
             <Label htmlFor="chat-import-case-title">Case title</Label>
             <Input
               id="chat-import-case-title"
@@ -317,17 +320,15 @@ export function ConvertChatSessionDialog({
           </div>
 
           <div className="space-y-2">
-            <div>
-              <h3 className="text-sm font-medium text-foreground">
-                Session servers
-              </h3>
-              <p className="mt-1 text-xs text-muted-foreground">
-                Imported from the chat session&apos;s selected server set.
+            <div className="space-y-0.5">
+              <p className="text-sm font-medium text-foreground">Session servers</p>
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                From this chat session&apos;s selected server set.
               </p>
             </div>
             {detailLoading ? (
-              <div className="flex items-center gap-2 rounded-lg border px-3 py-3 text-sm text-muted-foreground">
-                <Loader2 className="h-4 w-4 animate-spin" />
+              <div className="flex min-h-10 items-center gap-2 text-sm text-muted-foreground">
+                <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
                 Loading chat session details…
               </div>
             ) : detailError ? (
@@ -346,7 +347,7 @@ export function ConvertChatSessionDialog({
                 </AlertDescription>
               </Alert>
             ) : (
-              <div className="flex flex-wrap gap-2 rounded-lg border bg-card/50 px-3 py-3">
+              <div className="flex min-h-10 flex-wrap content-center gap-1.5">
                 {workspaceServersLoading &&
                 rawSelectedServers.length > 0 &&
                 sessionServers.length === 0 ? (
@@ -358,7 +359,7 @@ export function ConvertChatSessionDialog({
                   sessionServers.map((serverName) => (
                     <span
                       key={serverName}
-                      className="rounded-full bg-muted px-2.5 py-1 text-xs font-medium text-foreground"
+                      className="inline-flex items-center rounded-md border border-border/50 bg-muted/50 px-2 py-0.5 text-xs font-medium text-foreground"
                     >
                       {serverName}
                     </span>
@@ -373,48 +374,60 @@ export function ConvertChatSessionDialog({
           </div>
 
           <div className="space-y-3">
-            <div>
-              <h3 className="text-sm font-medium text-foreground">
-                Destination suite
-              </h3>
-              <p className="mt-1 text-xs text-muted-foreground">
-                Import into an existing suite or create a new one.
+            <div className="space-y-0.5">
+              <p className="text-sm font-medium text-foreground">Destination suite</p>
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                Create a new suite or add the case to an existing one.
               </p>
             </div>
 
-            <div className="grid gap-2 sm:grid-cols-2">
+            <div
+              className="flex rounded-lg border border-border/50 bg-muted/30 p-1"
+              role="group"
+              aria-label="Destination suite"
+            >
               <Button
                 type="button"
-                variant={destinationMode === "new" ? "default" : "outline"}
+                variant="ghost"
+                className={cn(
+                  "h-8 flex-1 rounded-md text-sm font-medium shadow-none",
+                  destinationMode === "new"
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:bg-transparent hover:text-foreground",
+                )}
                 onClick={() => setDestinationMode("new")}
               >
                 Create new suite
               </Button>
               <Button
                 type="button"
-                variant={destinationMode === "existing" ? "default" : "outline"}
-                onClick={() => setDestinationMode("existing")}
+                variant="ghost"
                 disabled={availableSuites.length === 0}
+                className={cn(
+                  "h-8 flex-1 rounded-md text-sm font-medium shadow-none",
+                  destinationMode === "existing"
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:bg-transparent hover:text-foreground",
+                )}
+                onClick={() => setDestinationMode("existing")}
               >
                 Use existing suite
               </Button>
             </div>
 
             {destinationMode === "new" ? (
-              <div className="space-y-3 rounded-xl border bg-card/60 p-4">
-                <div className="grid gap-2">
-                  <Label htmlFor="chat-import-suite-name">Suite name</Label>
-                  <Input
-                    id="chat-import-suite-name"
-                    value={newSuiteName}
-                    onChange={(event) => setNewSuiteName(event.target.value)}
-                    placeholder="Imported suite"
-                  />
-                </div>
+              <div className="space-y-2">
+                <Label htmlFor="chat-import-suite-name">Suite name</Label>
+                <Input
+                  id="chat-import-suite-name"
+                  value={newSuiteName}
+                  onChange={(event) => setNewSuiteName(event.target.value)}
+                  placeholder="Imported suite"
+                />
               </div>
             ) : (
-              <div className="space-y-3 rounded-xl border bg-card/60 p-4">
-                <div className="grid gap-2">
+              <div className="space-y-3">
+                <div className="space-y-2">
                   <Label htmlFor="chat-import-existing-suite">Existing suite</Label>
                   <Select
                     value={selectedSuiteId}
@@ -463,7 +476,7 @@ export function ConvertChatSessionDialog({
           </div>
         </div>
 
-        <DialogFooter>
+        <DialogFooter className="border-t border-border/50 px-6 py-4">
           <Button
             type="button"
             variant="outline"
