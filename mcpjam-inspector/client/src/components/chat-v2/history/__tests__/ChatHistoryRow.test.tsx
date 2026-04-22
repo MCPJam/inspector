@@ -256,11 +256,13 @@ describe("ChatHistoryRow", () => {
     expect(screen.getByText("Archive")).toBeInTheDocument();
   });
 
-  it("shows Promote to test case when conversion is available", () => {
+  it("shows promote to test case control and calls onConvert when clicked", async () => {
     const onConvertToTestCase = vi.fn();
+    const user = userEvent.setup();
+    const session = sessionStub({ status: "active" });
     render(
       <ChatHistoryRow
-        session={sessionStub({ status: "active" })}
+        session={session}
         isActive={false}
         isAuthenticated
         isStreaming={false}
@@ -271,7 +273,15 @@ describe("ChatHistoryRow", () => {
       />,
     );
 
-    expect(screen.getByText("Promote to test case")).toBeInTheDocument();
+    const promote = screen.getByTestId("chat-history-promote-to-test-case");
+    expect(promote).toHaveAttribute("aria-label", "Promote to test case");
+    expect(
+      screen.queryByText("Promote to test case", { exact: true }),
+    ).not.toBeInTheDocument();
+
+    await user.click(promote);
+    expect(onConvertToTestCase).toHaveBeenCalledTimes(1);
+    expect(onConvertToTestCase).toHaveBeenCalledWith(session);
   });
 
   it("shows Unarchive when the session is archived", () => {

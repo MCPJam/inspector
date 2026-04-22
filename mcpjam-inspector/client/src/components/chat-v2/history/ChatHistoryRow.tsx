@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { Pin, MoreVertical, User } from "lucide-react";
+import { FlaskConical, Pin, MoreVertical, User } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -277,6 +277,28 @@ export function ChatHistoryRow({
       </div>
 
       <div className="flex shrink-0 items-center gap-1">
+        {canConvertToTestCase && onConvertToTestCase ? (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="inline-flex shrink-0">
+                <button
+                  type="button"
+                  data-testid="chat-history-promote-to-test-case"
+                  disabled={isStreaming}
+                  aria-label="Promote to test case"
+                  className="flex size-5 shrink-0 items-center justify-center rounded p-0.5 text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onConvertToTestCase(session);
+                  }}
+                >
+                  <FlaskConical className="h-3.5 w-3.5" aria-hidden />
+                </button>
+              </span>
+            </TooltipTrigger>
+            <TooltipContent side="right">Promote to test case</TooltipContent>
+          </Tooltip>
+        ) : null}
         <div className="relative flex h-4 w-8 shrink-0 items-center justify-end tabular-nums [@media(pointer:coarse)]:w-auto [@media(pointer:coarse)]:gap-1">
           <span className="chat-history-time pointer-events-none text-[10px] text-muted-foreground transition-opacity [@media(pointer:fine)]:absolute [@media(pointer:fine)]:inset-y-0 [@media(pointer:fine)]:right-0 [@media(pointer:fine)]:flex [@media(pointer:fine)]:items-center [@media(pointer:fine)]:justify-end [@media(pointer:fine)]:group-hover:opacity-0">
             {relativeTime}
@@ -311,16 +333,6 @@ export function ChatHistoryRow({
               {isAuthenticated && (
                 <>
                   <DropdownMenuSeparator />
-                  {canConvertToTestCase && onConvertToTestCase ? (
-                    <>
-                      <DropdownMenuItem
-                        onClick={() => onConvertToTestCase(session)}
-                      >
-                        Promote to test case
-                      </DropdownMenuItem>
-                      <DropdownMenuSeparator />
-                    </>
-                  ) : null}
                   <DropdownMenuItem
                     onClick={async () =>
                       session.directVisibility === "workspace"
