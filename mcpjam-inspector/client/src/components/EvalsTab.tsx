@@ -31,6 +31,9 @@ import { usePlaygroundWorkspaceExecutions } from "./evals/use-playground-workspa
 import type { EvalIteration } from "./evals/types";
 import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
 
+const FIRST_SUITE_EMPTY_DESCRIPTION =
+  "A suite groups eval cases with the MCP servers they use. Create one, then generate cases or import a chat transcript.";
+
 interface EvalsTabProps {
   workspaceId?: string | null;
   onContinueInChat?: (handoff: Omit<EvalChatHandoff, "id">) => void;
@@ -441,12 +444,13 @@ export function EvalsTab({ workspaceId, onContinueInChat }: EvalsTabProps) {
             <EmptyState
               icon={FlaskConical}
               title="Create your first suite"
-              description="Suites now own their server environment. Create one explicitly, then generate cases or import a chat transcript into it."
-              className="h-auto min-h-[240px]"
-            />
-            <Button type="button" onClick={handleOpenCreateSuite}>
-              Create suite
-            </Button>
+              description={FIRST_SUITE_EMPTY_DESCRIPTION}
+              className="h-auto"
+            >
+              <Button type="button" onClick={handleOpenCreateSuite}>
+                Create suite
+              </Button>
+            </EmptyState>
           </div>
         </div>
       );
@@ -569,12 +573,13 @@ export function EvalsTab({ workspaceId, onContinueInChat }: EvalsTabProps) {
             <EmptyState
               icon={FlaskConical}
               title="Create your first suite"
-              description="Suites now own their server environment. Create one explicitly, then generate cases or import a chat transcript into it."
-              className="h-auto min-h-[240px]"
-            />
-            <Button type="button" onClick={handleOpenCreateSuite}>
-              Create suite
-            </Button>
+              description={FIRST_SUITE_EMPTY_DESCRIPTION}
+              className="h-auto"
+            >
+              <Button type="button" onClick={handleOpenCreateSuite}>
+                Create suite
+              </Button>
+            </EmptyState>
           </div>
         </div>
       );
