@@ -25,7 +25,6 @@ import { toast } from "sonner";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import {
   listEvalTools,
-  runEvalTestCase,
   streamEvalTestCase,
 } from "@/lib/apis/evals-api";
 import { Button } from "@mcpjam/design-system/button";
@@ -321,6 +320,8 @@ export function TestTemplateEditor({
 }: TestTemplateEditorProps) {
   const { getAccessToken } = useAuth();
   const { getToken, hasToken } = useAiProviderKeys();
+  const hostStyle = usePreferencesStore((state) => state.hostStyle);
+  const setHostStyle = usePreferencesStore((state) => state.setHostStyle);
   const [editForm, setEditForm] = useState<TestTemplate | null>(null);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [editorMode, setEditorMode] = useState<EditorMode>(
@@ -762,20 +763,30 @@ export function TestTemplateEditor({
     }
   };
 
-  const persistSelectedCompareModels = async (modelValues: string[]) => {
-    if (!currentTestCase) {
-      return;
-    }
-
-    const nextModels = modelValues.map((modelValue) => {
+  const buildSelectedCompareModels = (
+    modelValues: string[],
+  ): Array<{ provider: string; model: string }> => {
+    return modelValues.map((modelValue) => {
       const { provider, model } = parseModelValue(modelValue);
       if (!provider || !model) {
         throw new Error(`Invalid model selection: ${modelValue}`);
       }
       return { provider, model };
     });
+  };
 
-    const currentModels = currentTestCase.models ?? [];
+  const persistCompareRunDraft = async (
+    savePayload: ReturnType<typeof buildSavePayload>,
+    modelValues: string[],
+  ) => {
+    if (!currentTestCase) {
+      return;
+    }
+
+    const nextModels = buildSelectedCompareModels(modelValues);
+
+    const currentModels: Array<{ provider: string; model: string }> =
+      currentTestCase.models ?? [];
     const modelsUnchanged =
       currentModels.length === nextModels.length &&
       currentModels.every(
@@ -784,13 +795,14 @@ export function TestTemplateEditor({
           model.model === nextModels[index]?.model,
       );
 
-    if (modelsUnchanged) {
+    if (!hasUnsavedChanges && modelsUnchanged) {
       return;
     }
 
     await updateTestCaseMutation({
       testCaseId: currentTestCase._id,
-      models: nextModels,
+      ...(hasUnsavedChanges ? savePayload : {}),
+      ...(modelsUnchanged ? {} : { models: nextModels }),
     });
   };
 
@@ -1145,13 +1157,13 @@ export function TestTemplateEditor({
 
     if (startsNewCompareSession) {
       try {
-        await persistSelectedCompareModels(selectedModelValues);
+        await persistCompareRunDraft(savePayload, selectedModelValues);
       } catch (error) {
-        console.error("Failed to save compare model selection:", error);
+        console.error("Failed to save test case before compare run:", error);
         toast.error(
           getBillingErrorMessage(
             error,
-            "Failed to save compare models before running",
+            "Failed to save test case before running",
           ),
         );
         return;
@@ -1927,6 +1939,7 @@ export function TestTemplateEditor({
 
             <div>
               <div
+                data-testid="test-template-model-bar"
                 className="rounded-xl bg-[#f8f5f1] py-2.5 dark:bg-muted/10"
                 title={
                   !latestAvailableIsSaved &&
@@ -2135,6 +2148,20 @@ export function TestTemplateEditor({
               </div>
             </div>
 
+            <div
+              data-testid="test-template-host-style-row"
+              className="flex items-center justify-start gap-2 px-1 pt-2"
+            >
+              <p className="shrink-0 text-[11px] font-medium text-muted-foreground">
+                Host style
+              </p>
+              <HostStylePillSelector
+                className="w-[164px] shrink-0"
+                value={hostStyle}
+                onValueChange={setHostStyle}
+              />
+            </div>
+
             <div className="space-y-4 pt-1">
               {editForm ? (
                 <TestCasePromptFlow
@@ -2340,6 +2367,7 @@ export function TestTemplateEditor({
                         testCase={currentTestCase}
                         serverNames={connectedServerList}
                         workspaceId={workspaceId}
+                        onContinueInChat={onContinueInChat}
                         onStreamingTraceLoaded={() =>
                           clearCompareStreamingState(record.modelValue)
                         }
@@ -2393,7 +2421,6 @@ function RunColumn({
 }) {
   const themeMode = usePreferencesStore((state) => state.themeMode);
   const hostStyle = usePreferencesStore((state) => state.hostStyle);
-  const setHostStyle = usePreferencesStore((state) => state.setHostStyle);
   const { toolsMetadata, toolServerMap, connectedServerIds } =
     useEvalTraceToolContext({
       serverNames,
@@ -2784,19 +2811,7 @@ function RunColumn({
                 data-host-style={hostStyle}
                 style={shellStyle}
               >
-                <div className="shrink-0 px-3 pt-3">
-                  <div className="flex items-center justify-between gap-2">
-                    <p className="shrink-0 text-[9px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
-                      Host Styles
-                    </p>
-                    <HostStylePillSelector
-                      className="w-[164px] shrink-0"
-                      value={hostStyle}
-                      onValueChange={setHostStyle}
-                    />
-                  </div>
-                </div>
-                <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden p-3 pt-2">
+                <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden p-3">
                   {renderedRunContent}
                 </div>
               </div>

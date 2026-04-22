@@ -709,3 +709,65 @@ describe("useServerState authenticated fallback persistence", () => {
     expect(toastSuccess).toHaveBeenCalledWith("Server configuration updated");
   });
 });
+
+describe("useServerState OAuth callback in-flight dispatch", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+    window.history.replaceState({}, "", "/");
+  });
+
+  it("dispatches CONNECT_REQUEST for the pending server before token exchange completes", async () => {
+    const { listServers } = await import("@/state/mcp-api");
+    vi.mocked(listServers).mockResolvedValue({ success: true, servers: [] } as any);
+
+    localStorage.setItem("mcp-oauth-pending", "demo-server");
+    localStorage.setItem("mcp-oauth-return-hash", "#demo-server");
+    localStorage.setItem("mcp-serverUrl-demo-server", "https://example.com/mcp");
+
+    // Slow token exchange — controllable promise so we can assert before it resolves
+    let resolveTokenExchange!: (value: unknown) => void;
+    handleOAuthCallbackMock.mockReturnValue(
+      new Promise((resolve) => {
+        resolveTokenExchange = resolve;
+      }),
+    );
+
+    window.history.replaceState({}, "", "/oauth/callback?code=test-code");
+
+    const dispatch = vi.fn();
+    renderUseServerState(dispatch);
+
+    // The early CONNECT_REQUEST must fire before the token exchange resolves
+    await waitFor(() => {
+      expect(dispatch).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "CONNECT_REQUEST",
+          name: "demo-server",
+        }),
+      );
+    });
+
+    // Token exchange hasn't finished yet — no CONNECT_SUCCESS dispatched
+    expect(
+      dispatch.mock.calls.some(([a]) => a.type === "CONNECT_SUCCESS"),
+    ).toBe(false);
+
+    // Now let the token exchange complete and verify the full happy path
+    resolveTokenExchange({
+      success: true,
+      serverName: "demo-server",
+      serverConfig: { type: "http", url: "https://example.com/mcp" },
+    });
+
+    await waitFor(() => {
+      expect(dispatch).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "CONNECT_SUCCESS",
+          name: "demo-server",
+          useOAuth: true,
+        }),
+      );
+    });
+  });
+});

@@ -229,7 +229,7 @@ describe("TestTemplateEditor run view from route", () => {
       .getByText(modelLabel, { selector: "div" })
       .closest(".rounded-2xl");
     expect(card).not.toBeNull();
-    return card!;
+    return card as HTMLElement;
   }
 
   function getMetricBar(card: HTMLElement, label: "Latency" | "Tokens") {
@@ -620,6 +620,87 @@ describe("TestTemplateEditor run view from route", () => {
     expect(updateTestCaseMutationMock).toHaveBeenCalledTimes(1);
   });
 
+  it("persists unsaved test case draft fields before starting a compare run", async () => {
+    const user = userEvent.setup();
+    const draftCase = {
+      ...caseDoc,
+      title: "Untitled test case",
+      query: "",
+      isNegativeTest: false,
+      promptTurns: undefined,
+      expectedToolCalls: [],
+      lastMessageRun: undefined,
+    };
+
+    useQueryMock.mockImplementation((name: string, args: unknown) => {
+      if (name === "testSuites:listTestCases") return [draftCase];
+      if (name === "testSuites:getTestSuite") {
+        return { _id: "suite-1", environment: { servers: ["srv"] } };
+      }
+      if (name === "testSuites:listTestIterations" && args !== "skip") {
+        return [];
+      }
+      return undefined;
+    });
+
+    renderWithProviders(
+      <TestTemplateEditor
+        suiteId="suite-1"
+        selectedTestCaseId="case-1"
+        connectedServerNames={new Set(["srv"])}
+        workspaceId={null}
+        availableModels={[
+          {
+            provider: "openai",
+            id: "gpt-4",
+            model: "gpt-4",
+            name: "GPT-4",
+            label: "GPT-4",
+          } as any,
+        ]}
+      />,
+    );
+
+    await user.type(
+      await screen.findByPlaceholderText("Enter the user prompt…"),
+      "Find the latest incidents",
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Untitled test case" }),
+    );
+    const titleInput = screen.getByDisplayValue("Untitled test case");
+    await user.clear(titleInput);
+    await user.type(titleInput, "Named draft case");
+    await user.keyboard("{Enter}");
+
+    await user.click(screen.getByRole("button", { name: /^run$/i }));
+
+    await waitFor(() => {
+      expect(streamEvalTestCaseMock).toHaveBeenCalledTimes(1);
+    });
+
+    expect(updateTestCaseMutationMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        testCaseId: "case-1",
+        title: "Named draft case",
+        query: "Find the latest incidents",
+        runs: 1,
+        expectedToolCalls: [],
+        isNegativeTest: true,
+        promptTurns: [
+          expect.objectContaining({
+            id: "turn-1",
+            prompt: "Find the latest incidents",
+            expectedToolCalls: [],
+          }),
+        ],
+      }),
+    );
+    expect(updateTestCaseMutationMock.mock.invocationCallOrder[0]).toBeLessThan(
+      streamEvalTestCaseMock.mock.invocationCallOrder[0],
+    );
+  });
+
   it("renders an immediate chat preview instead of the generic spinner before the first stream event", async () => {
     const user = userEvent.setup();
 
@@ -827,7 +908,48 @@ describe("TestTemplateEditor run view from route", () => {
     });
   });
 
-  it("keeps the host-style pill shared across compare columns", async () => {
+  it("renders the host-style control below models and before the scenario form", async () => {
+    renderWithProviders(
+      <TestTemplateEditor
+        suiteId="suite-1"
+        selectedTestCaseId="case-1"
+        connectedServerNames={new Set(["srv"])}
+        workspaceId={null}
+        availableModels={[
+          {
+            provider: "openai",
+            id: "gpt-4",
+            model: "gpt-4",
+            name: "GPT-4",
+            label: "GPT-4",
+          } as any,
+        ]}
+      />,
+      { hostStyle: "claude" },
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /run$/i })).toBeInTheDocument();
+    });
+
+    const modelBar = screen.getByTestId("test-template-model-bar");
+    const hostStyleRow = screen.getByTestId("test-template-host-style-row");
+    const scenarioHeading = screen.getByText("Test scenario");
+
+    expect(
+      modelBar.compareDocumentPosition(hostStyleRow) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).not.toBe(0);
+    expect(
+      hostStyleRow.compareDocumentPosition(scenarioHeading) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).not.toBe(0);
+    expect(
+      hostStyleRow.querySelector('[data-selected-host-style="claude"]'),
+    ).not.toBeNull();
+  });
+
+  it("updates the pre-run host-style control and carries it across compare columns", async () => {
     const user = userEvent.setup();
 
     streamEvalTestCaseMock.mockImplementation(
@@ -864,6 +986,20 @@ describe("TestTemplateEditor run view from route", () => {
       expect(screen.getByRole("button", { name: /run$/i })).toBeInTheDocument();
     });
 
+    const hostStyleRow = screen.getByTestId("test-template-host-style-row");
+
+    await user.click(
+      within(hostStyleRow).getByRole("radio", {
+        name: "ChatGPT",
+      }),
+    );
+
+    await waitFor(() => {
+      expect(
+        hostStyleRow.querySelector('[data-selected-host-style="chatgpt"]'),
+      ).not.toBeNull();
+    });
+
     await user.click(
       screen.getByRole("button", { name: /add model to compare/i }),
     );
@@ -874,21 +1010,9 @@ describe("TestTemplateEditor run view from route", () => {
       expect(streamEvalTestCaseMock).toHaveBeenCalledTimes(2);
     });
 
-    expect(
-      view.container.querySelectorAll('[data-selected-host-style="claude"]'),
-    ).toHaveLength(2);
-
-    await user.click(
-      within(getCompareCard("GPT-4")).getByRole("radio", {
-        name: "ChatGPT",
-      }),
-    );
-
     await waitFor(() => {
       expect(
-        view.container.querySelectorAll(
-          '[data-selected-host-style="chatgpt"]',
-        ),
+        view.container.querySelectorAll('[data-host-style="chatgpt"]'),
       ).toHaveLength(2);
     });
   });
@@ -981,7 +1105,7 @@ describe("TestTemplateEditor run view from route", () => {
     });
   });
 
-  it("shows the host-style pill only while the chat tab is active", async () => {
+  it("removes the pre-run host-style selector and only applies the host shell on Chat", async () => {
     const user = userEvent.setup();
     const caseWithExpectedToolCalls = {
       ...caseDoc,
@@ -1021,7 +1145,7 @@ describe("TestTemplateEditor run view from route", () => {
       async () => new Promise<void>(() => {}),
     );
 
-    renderWithProviders(
+    const view = renderWithProviders(
       <TestTemplateEditor
         suiteId="suite-1"
         selectedTestCaseId="case-1"
@@ -1044,35 +1168,41 @@ describe("TestTemplateEditor run view from route", () => {
       expect(screen.getByRole("button", { name: /run$/i })).toBeInTheDocument();
     });
 
+    expect(screen.getByTestId("test-template-host-style-row")).toBeInTheDocument();
+
     await user.click(screen.getByRole("button", { name: /run$/i }));
 
     await waitFor(() => {
       expect(streamEvalTestCaseMock).toHaveBeenCalledTimes(1);
     });
 
+    expect(
+      screen.queryByTestId("test-template-host-style-row"),
+    ).not.toBeInTheDocument();
+    expect(
+      view.container.querySelector("[data-selected-host-style]"),
+    ).toBeNull();
+
     const card = getCompareCard("GPT-4");
 
-    // Default tab is Results when the case has expected tools — host-style pill is Chat-only.
-    expect(card.querySelector("[data-selected-host-style]")).toBeNull();
+    // Default tab is Results when the case has expected tools, so the chat host shell
+    // should only appear after switching back to Chat.
+    expect(card.querySelector("[data-host-style]")).toBeNull();
 
     await user.click(within(card).getByRole("button", { name: /^Chat$/i }));
-    expect(card.querySelector('[data-selected-host-style="claude"]')).not.toBe(
-      null,
-    );
+    expect(card.querySelector('[data-host-style="claude"]')).not.toBeNull();
 
     await user.click(within(card).getByRole("button", { name: /^Trace$/i }));
-    expect(card.querySelector("[data-selected-host-style]")).toBeNull();
+    expect(card.querySelector("[data-host-style]")).toBeNull();
 
     await user.click(within(card).getByRole("button", { name: /^Chat$/i }));
-    expect(card.querySelector('[data-selected-host-style="claude"]')).not.toBe(
-      null,
-    );
+    expect(card.querySelector('[data-host-style="claude"]')).not.toBeNull();
 
     await user.click(within(card).getByRole("button", { name: /^Raw$/i }));
-    expect(card.querySelector("[data-selected-host-style]")).toBeNull();
+    expect(card.querySelector("[data-host-style]")).toBeNull();
 
     await user.click(within(card).getByRole("button", { name: /^Results$/i }));
-    expect(card.querySelector("[data-selected-host-style]")).toBeNull();
+    expect(card.querySelector("[data-host-style]")).toBeNull();
   });
 
   it("renders running spinners in the eval compare metric bars", async () => {
