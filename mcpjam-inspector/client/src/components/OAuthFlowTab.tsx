@@ -433,6 +433,42 @@ export const OAuthFlowTab = ({
       }
     };
 
+    const handleElectronOAuthCallback = (event: Event) => {
+      const callbackUrl = (event as CustomEvent<string>).detail;
+      if (!callbackUrl) {
+        return;
+      }
+
+      try {
+        const parsed = new URL(callbackUrl);
+        if (parsed.searchParams.get("flow") !== "debug") {
+          return;
+        }
+
+        const error = parsed.searchParams.get("error");
+        const errorDescription = parsed.searchParams.get("error_description");
+        if (error) {
+          if (exchangeTimeoutRef.current) {
+            clearTimeout(exchangeTimeoutRef.current);
+            exchangeTimeoutRef.current = null;
+          }
+
+          updateOAuthFlowState({
+            error: errorDescription ?? error,
+          });
+          return;
+        }
+
+        const code = parsed.searchParams.get("code");
+        const state = parsed.searchParams.get("state");
+        if (code) {
+          processOAuthCallback(code, state);
+        }
+      } catch (error) {
+        console.error("Failed to process Electron OAuth callback:", error);
+      }
+    };
+
     let channel: BroadcastChannel | null = null;
     try {
       channel = new BroadcastChannel("oauth_callback_channel");
@@ -446,8 +482,16 @@ export const OAuthFlowTab = ({
     }
 
     window.addEventListener("message", handleMessage);
+    window.addEventListener(
+      "electron-oauth-callback",
+      handleElectronOAuthCallback as EventListener,
+    );
     return () => {
       window.removeEventListener("message", handleMessage);
+      window.removeEventListener(
+        "electron-oauth-callback",
+        handleElectronOAuthCallback as EventListener,
+      );
       channel?.close();
     };
   }, [oauthStateMachine, updateOAuthFlowState]);
