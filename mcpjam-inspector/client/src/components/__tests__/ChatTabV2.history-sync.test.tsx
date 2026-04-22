@@ -6,6 +6,7 @@ import { ChatTabV2 } from "../ChatTabV2";
 const mockToastError = vi.hoisted(() => vi.fn());
 const mockGetChatHistoryDetail = vi.hoisted(() => vi.fn());
 const mockChatHistoryAction = vi.hoisted(() => vi.fn());
+const mockUseFeatureFlagEnabled = vi.hoisted(() => vi.fn(() => true));
 const mockReactiveHistoryState = vi.hoisted(() => ({
   session: undefined as any,
   widgetSnapshots: undefined as any,
@@ -84,7 +85,8 @@ vi.mock("posthog-js/react", () => ({
   usePostHog: () => ({
     capture: vi.fn(),
   }),
-  useFeatureFlagEnabled: () => true,
+  useFeatureFlagEnabled: (...args: unknown[]) =>
+    mockUseFeatureFlagEnabled(...args),
 }));
 
 vi.mock("sonner", () => ({
@@ -255,24 +257,29 @@ vi.mock("@/components/chat-v2/thread", () => ({
 vi.mock("@/components/chat-v2/history/ChatHistoryRail", () => ({
   ChatHistoryRail: ({
     activeSessionId,
+    sharedThreadsEnabled = true,
     onNewChat,
     onSelectThread,
   }: {
     activeSessionId?: string | null;
+    sharedThreadsEnabled?: boolean;
     onNewChat: (options?: { shared?: boolean }) => void;
     onSelectThread: (session: typeof mockHistorySession) => void;
   }) => (
     <div
       data-testid="history-rail"
       data-active-session-id={activeSessionId ?? "none"}
+      data-shared-threads-enabled={sharedThreadsEnabled ? "true" : "false"}
     >
       <button onClick={() => onSelectThread({ ...mockHistorySession })}>
         Select thread
       </button>
       <button onClick={() => onNewChat()}>New personal thread</button>
-      <button onClick={() => onNewChat({ shared: true })}>
-        New shared thread
-      </button>
+      {sharedThreadsEnabled ? (
+        <button onClick={() => onNewChat({ shared: true })}>
+          New shared thread
+        </button>
+      ) : null}
     </div>
   ),
 }));
@@ -415,6 +422,8 @@ describe("ChatTabV2 history sync", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.clearAllMocks();
+    mockUseFeatureFlagEnabled.mockReset();
+    mockUseFeatureFlagEnabled.mockReturnValue(true);
     vi.stubGlobal(
       "confirm",
       vi.fn(() => true),
@@ -676,6 +685,24 @@ describe("ChatTabV2 history sync", () => {
       "workspace",
     );
     expect(mockGetChatHistoryDetail).not.toHaveBeenCalled();
+  });
+
+  it("keeps the history rail visible while hiding shared-thread affordances when the flag is off", async () => {
+    mockUseFeatureFlagEnabled.mockImplementation((flag: string) =>
+      flag === "shared-threads-enabled" ? false : true,
+    );
+
+    render(<ChatTabV2 {...defaultProps} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Show threads" }));
+
+    expect(screen.getByTestId("history-rail")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "New personal thread" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "New shared thread" })).not.toBeInTheDocument();
+    expect(screen.getByTestId("history-rail")).toHaveAttribute(
+      "data-shared-threads-enabled",
+      "false",
+    );
   });
 
   it("preserves a local draft while applying a reactive history refresh", async () => {
