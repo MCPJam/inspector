@@ -1463,11 +1463,9 @@ export function TestTemplateEditor({
               let resolved!: CompareRunRecord;
               setCompareRunRecords((previous) => {
                 const existing = previous[modelValue];
-                // Guard against a stale abort overwriting a newer retry: if
-                // the request generation for this model no longer matches
-                // the one that started this attempt, another run has
-                // superseded us and we must not persist a "cancelled" record
-                // over the newer run's state.
+                // A retry starts a newer request for this model and aborts the
+                // old controller. If that old abort rejects later, it must not
+                // overwrite the newer running/completed row as cancelled.
                 if (
                   compareRequestGenByModelRef.current[modelValue] !== myGen
                 ) {

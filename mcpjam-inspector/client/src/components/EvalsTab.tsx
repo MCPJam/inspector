@@ -268,7 +268,6 @@ export function EvalsTab({
       exploreSuiteId: exploreSuite._id,
       isSuiteDetailsLoading: queries.isSuiteDetailsLoading,
       isSuiteRunsLoading: queries.isSuiteRunsLoading,
-      runsCount: runsForSelectedSuite.length,
       testCaseIds,
       runIds,
       iterationRunIds,
@@ -286,7 +285,6 @@ export function EvalsTab({
     queries.isSuiteDetailsLoading,
     queries.isSuiteRunsLoading,
     route,
-    runsForSelectedSuite.length,
   ]);
 
   const handleGenerateMore = useCallback(async () => {

@@ -31,6 +31,15 @@ describe("ci-evals-router", () => {
     });
   });
 
+  it("parses suite overview with executions view", () => {
+    window.location.hash = "#/ci-evals/suite/s_123?view=executions";
+    expect(parseCiEvalsRoute()).toEqual({
+      type: "suite-overview",
+      suiteId: "s_123",
+      view: "executions",
+    });
+  });
+
   it("parses suite overview defaulting to runs when view is omitted", () => {
     window.location.hash = "#/ci-evals/suite/s_123";
     expect(parseCiEvalsRoute()).toEqual({
@@ -142,6 +151,15 @@ describe("ci-evals-router", () => {
       view: "test-cases",
     });
     expect(window.location.hash).toBe("#/ci-evals/suite/s_abc?view=test-cases");
+  });
+
+  it("navigates to suite overview with executions view query", () => {
+    navigateToCiEvalsRoute({
+      type: "suite-overview",
+      suiteId: "s_abc",
+      view: "executions",
+    });
+    expect(window.location.hash).toBe("#/ci-evals/suite/s_abc?view=executions");
   });
 
   it("parses suite overview with fromCommit query", () => {
