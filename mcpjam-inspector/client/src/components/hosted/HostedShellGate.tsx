@@ -11,6 +11,7 @@ export type HostedShellGateState =
 
 interface HostedShellGateProps {
   state: HostedShellGateState;
+  loadingMessage?: string;
   onSignIn?: () => void;
   onSignOut?: () => void;
   children: ReactNode;
@@ -31,11 +32,16 @@ function getGateCopy(state: HostedShellGateState): string {
 
 export function HostedShellGate({
   state,
+  loadingMessage,
   onSignIn,
   onSignOut,
   children,
 }: HostedShellGateProps) {
   const isBlocked = state !== "ready" && state !== "auth-loading";
+  const copy =
+    loadingMessage && state === "workspace-loading"
+      ? loadingMessage
+      : getGateCopy(state);
 
   return (
     <div className="relative h-full min-h-0">
@@ -66,7 +72,7 @@ export function HostedShellGate({
             ) : (
               <Loader2 className="mb-4 h-5 w-5 animate-spin text-muted-foreground" />
             )}
-            <p className="text-sm text-foreground">{getGateCopy(state)}</p>
+            <p className="text-sm text-foreground">{copy}</p>
             {state === "logged-out" && (
               <Button
                 type="button"

@@ -15,7 +15,11 @@ import {
   MessageSquareText,
   Settings,
 } from "lucide-react";
-import { ServerWithName, type ServerUpdateResult } from "@/hooks/use-app-state";
+import type {
+  PendingDashboardOAuthState,
+  ServerUpdateResult,
+  ServerWithName,
+} from "@/hooks/use-app-state";
 import { ServerConnectionCard } from "./connection/ServerConnectionCard";
 import { AddServerModal } from "./connection/AddServerModal";
 import { ClientConfigTab } from "./client-config/ClientConfigTab";
@@ -391,6 +395,7 @@ function SortableServerCard({
 
 interface ServersTabProps {
   workspaceServers: Record<string, ServerWithName>;
+  pendingDashboardOAuth?: PendingDashboardOAuthState | null;
   onConnect: (formData: ServerFormData) => void;
   onDisconnect: (serverName: string) => void;
   onReconnect: (
@@ -423,6 +428,7 @@ interface ServersTabProps {
 
 export function ServersTab({
   workspaceServers,
+  pendingDashboardOAuth,
   onConnect,
   onDisconnect,
   onReconnect,
@@ -644,6 +650,13 @@ export function ServersTab({
   }, [pendingQuickConnect, workspaceServers]);
 
   const connectedCount = Object.keys(workspaceServers).length;
+  const pendingDashboardOAuthServer = pendingDashboardOAuth
+    ? workspaceServers[pendingDashboardOAuth.serverName]
+    : null;
+  const isPendingDashboardOAuthVisible =
+    !!pendingDashboardOAuth &&
+    pendingDashboardOAuthServer?.connectionStatus !== "connected" &&
+    pendingDashboardOAuthServer?.connectionStatus !== "failed";
   const hasAnyServers = connectedCount > 0;
   const pendingQuickConnectServer =
     pendingQuickConnect?.sourceTab === "servers"
@@ -693,6 +706,26 @@ export function ServersTab({
       setQuickConnectMiniCardsExpanded(true);
     }
   }, [totalServerCards]);
+
+  const getDisplayServer = useCallback(
+    (server: ServerWithName): ServerWithName => {
+      if (
+        !isPendingDashboardOAuthVisible ||
+        pendingDashboardOAuth?.serverName !== server.name ||
+        server.connectionStatus === "connected" ||
+        server.connectionStatus === "failed"
+      ) {
+        return server;
+      }
+
+      return {
+        ...server,
+        connectionStatus: "connecting",
+        enabled: true,
+      };
+    },
+    [isPendingDashboardOAuthVisible, pendingDashboardOAuth?.serverName],
+  );
 
   const shouldShowQuickConnect =
     isRegistryEnabled &&
@@ -1100,12 +1133,13 @@ export function ServersTab({
                 {orderedServerNames.map((name) => {
                   const server = workspaceServers[name];
                   if (!server) return null;
+                  const displayServer = getDisplayServer(server);
                   return (
                     <SortableServerCard
                       key={name}
                       id={name}
                       dndDisabled={false}
-                      server={server}
+                      server={displayServer}
                       needsReconnect={reconnectWarningByServerName[name]}
                       onDisconnect={(serverName) => {
                         clearPendingQuickConnectIfMatches(serverName);
@@ -1128,7 +1162,7 @@ export function ServersTab({
               {activeServer ? (
                 <div style={{ opacity: 0.85 }}>
                   <ServerConnectionCard
-                    server={activeServer}
+                    server={getDisplayServer(activeServer)}
                     needsReconnect={
                       reconnectWarningByServerName[activeServer.name]
                     }

@@ -815,6 +815,26 @@ export function useServerState({
       }
       oauthCallbackHandledRef.current = true;
 
+      // Dispatch "connecting" immediately so SYNC_AGENT_STATUS (which fires
+      // concurrently) cannot set the server back to "disconnected" while the
+      // token exchange is still in flight.
+      // Prefer the hostedOAuthCallbackContext server name (already validated),
+      // fall back to the legacy localStorage key.
+      const earlyPendingName =
+        hostedOAuthCallbackContext?.serverName ??
+        localStorage.getItem("mcp-oauth-pending");
+      if (earlyPendingName) {
+        const earlyServer = effectiveServers[earlyPendingName];
+        if (earlyServer) {
+          dispatch({
+            type: "CONNECT_REQUEST",
+            name: earlyPendingName,
+            config: earlyServer.config,
+            select: true,
+          });
+        }
+      }
+
       const savedHash = localStorage.getItem("mcp-oauth-return-hash") || "";
       window.history.replaceState(
         {},
