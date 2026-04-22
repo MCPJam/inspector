@@ -33,7 +33,7 @@ import {
 } from "@/components/evals/suite-environment-utils";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import { useWorkspaceServers } from "@/hooks/useViews";
-import { resolveRestorableServerNames } from "./session-restore";
+import { deriveSessionServerDisplay } from "./session-server-display";
 import { cn } from "@/lib/utils";
 
 type ConvertChatSessionDialogProps = {
@@ -96,18 +96,24 @@ export function ConvertChatSessionDialog({
   const [selectedSuiteId, setSelectedSuiteId] = useState<string>("");
   const [newSuiteName, setNewSuiteName] = useState("");
   const [rawSelectedServers, setRawSelectedServers] = useState<string[]>([]);
+  const [usedServerRefs, setUsedServerRefs] = useState<string[]>([]);
   const [updateSuiteEnvironment, setUpdateSuiteEnvironment] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const suiteDefaultsAppliedForSessionId = useRef<string | null>(null);
 
-  const sessionServers = useMemo(
+  const sessionServerDisplay = useMemo(
     () =>
-      resolveRestorableServerNames(
-        rawSelectedServers,
+      deriveSessionServerDisplay({
+        usedServerRefs,
+        selectedServers: rawSelectedServers,
         serversById,
         knownServerNames,
-      ),
-    [rawSelectedServers, serversById, knownServerNames],
+      }),
+    [knownServerNames, rawSelectedServers, serversById, usedServerRefs],
+  );
+  const sessionServerLabels = useMemo(
+    () => sessionServerDisplay.items.map((item) => item.label),
+    [sessionServerDisplay.items],
   );
 
   const availableSuites = useMemo(
@@ -122,22 +128,42 @@ export function ConvertChatSessionDialog({
       null,
     [availableSuites, selectedSuiteId],
   );
+  const selectedSuiteServerDisplay = useMemo(() => {
+    if (!selectedSuiteEntry) {
+      return null;
+    }
+
+    return deriveSessionServerDisplay({
+      usedServerRefs: normalizeServerNames(
+        selectedSuiteEntry.suite.environment?.servers,
+      ),
+      selectedServers: [],
+      serversById,
+      knownServerNames,
+    });
+  }, [knownServerNames, selectedSuiteEntry, serversById]);
 
   const missingServers = useMemo(() => {
     if (!selectedSuiteEntry) {
       return [];
     }
-    const suiteServers = normalizeServerNames(
-      selectedSuiteEntry.suite.environment?.servers,
+
+    const suiteServerLabels = new Set(
+      (selectedSuiteServerDisplay?.items ?? []).map((item) =>
+        item.label.toLowerCase(),
+      ),
     );
-    return sessionServers.filter(
-      (serverName) =>
-        !suiteServers.some(
-          (configuredServer) =>
-            configuredServer.toLowerCase() === serverName.toLowerCase(),
-        ),
-    );
-  }, [selectedSuiteEntry, sessionServers]);
+
+    return sessionServerDisplay.items
+      .filter((item) => !suiteServerLabels.has(item.label.toLowerCase()))
+      .map((item) => item.label);
+  }, [selectedSuiteEntry, selectedSuiteServerDisplay, sessionServerDisplay.items]);
+  const sessionServersDescription =
+    sessionServerDisplay.source === "used"
+      ? "Derived from stored tool activity in this chat session."
+      : sessionServerDisplay.source === "selected"
+        ? "Falls back to this chat session's stored server selection."
+        : "Uses stored session metadata when server activity is available.";
 
   useEffect(() => {
     if (!open || !session) {
@@ -173,7 +199,9 @@ export function ConvertChatSessionDialog({
         const selectedServers = normalizeServerNames(
           detail.session.resumeConfig?.selectedServers,
         );
+        const usedServerIds = normalizeServerNames(detail.session.usedServerIds);
         setRawSelectedServers(selectedServers);
+        setUsedServerRefs(usedServerIds);
       } catch (error) {
         if (cancelled) {
           return;
@@ -197,6 +225,7 @@ export function ConvertChatSessionDialog({
     if (!open) {
       setDetailError(null);
       setRawSelectedServers([]);
+      setUsedServerRefs([]);
       setUpdateSuiteEnvironment(false);
       setIsSubmitting(false);
     }
@@ -213,29 +242,20 @@ export function ConvertChatSessionDialog({
     if (detailLoading) {
       return;
     }
-    if (
-      rawSelectedServers.length > 0 &&
-      sessionServers.length === 0 &&
-      workspaceServersLoading
-    ) {
-      return;
-    }
     if (suiteDefaultsAppliedForSessionId.current === session._id) {
       return;
     }
 
     const title = getSessionTitle(session);
-    const forSuiteName =
-      sessionServers.length > 0 ? sessionServers : rawSelectedServers;
-    setNewSuiteName(buildServerBasedSuiteName(forSuiteName, `${title} suite`));
+    setNewSuiteName(
+      buildServerBasedSuiteName(sessionServerLabels, `${title} suite`),
+    );
     suiteDefaultsAppliedForSessionId.current = session._id;
   }, [
     open,
     session,
     detailLoading,
-    workspaceServersLoading,
-    sessionServers,
-    rawSelectedServers,
+    sessionServerLabels,
   ]);
 
   const canSubmit =
@@ -245,11 +265,6 @@ export function ConvertChatSessionDialog({
     !detailError &&
     caseTitle.trim().length > 0 &&
     !isSubmitting &&
-    !(
-      rawSelectedServers.length > 0 &&
-      sessionServers.length === 0 &&
-      workspaceServersLoading
-    ) &&
     (destinationMode === "new"
       ? newSuiteName.trim().length > 0
       : Boolean(selectedSuiteId) &&
@@ -323,7 +338,7 @@ export function ConvertChatSessionDialog({
             <div className="space-y-0.5">
               <p className="text-sm font-medium text-foreground">Session servers</p>
               <p className="text-xs text-muted-foreground leading-relaxed">
-                From this chat session&apos;s selected server set.
+                {sessionServersDescription}
               </p>
             </div>
             {detailLoading ? (
@@ -347,28 +362,35 @@ export function ConvertChatSessionDialog({
                 </AlertDescription>
               </Alert>
             ) : (
-              <div className="flex min-h-10 flex-wrap content-center gap-1.5">
-                {workspaceServersLoading &&
-                rawSelectedServers.length > 0 &&
-                sessionServers.length === 0 ? (
-                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    Resolving server names…
-                  </div>
-                ) : sessionServers.length > 0 ? (
-                  sessionServers.map((serverName) => (
-                    <span
-                      key={serverName}
-                      className="inline-flex items-center rounded-md border border-border/50 bg-muted/50 px-2 py-0.5 text-xs font-medium text-foreground"
-                    >
-                      {serverName}
+              <div className="space-y-2">
+                <div className="flex min-h-10 flex-wrap content-center gap-1.5">
+                  {sessionServerDisplay.items.length > 0 ? (
+                    sessionServerDisplay.items.map((server) => (
+                      <span
+                        key={`${server.raw}:${server.label}`}
+                        className={cn(
+                          "inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-medium",
+                          server.unresolved
+                            ? "border-dashed border-border/50 bg-transparent font-mono text-muted-foreground"
+                            : "border-border/50 bg-muted/50 text-foreground",
+                        )}
+                      >
+                        {server.label}
+                      </span>
+                    ))
+                  ) : (
+                    <span className="text-sm text-muted-foreground">
+                      No servers were recorded for this session.
                     </span>
-                  ))
-                ) : (
-                  <span className="text-sm text-muted-foreground">
-                    No servers were stored on this session.
-                  </span>
-                )}
+                  )}
+                </div>
+                {!workspaceServersLoading &&
+                sessionServerDisplay.unresolvedCount > 0 ? (
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    Some servers could not be resolved to current workspace
+                    names, so raw ids are shown.
+                  </p>
+                ) : null}
               </div>
             )}
           </div>

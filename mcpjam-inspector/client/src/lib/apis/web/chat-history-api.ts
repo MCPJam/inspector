@@ -41,6 +41,7 @@ export interface ResumeConfig {
 
 export interface ChatHistoryDetailSession extends ChatHistorySession {
   messagesBlobUrl: string | null;
+  usedServerIds?: string[];
   resumeConfig?: ResumeConfig;
 }
 
