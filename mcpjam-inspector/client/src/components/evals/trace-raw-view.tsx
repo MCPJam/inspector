@@ -1,11 +1,14 @@
 /**
  * Raw trace panel — single JsonEditor with bordered chrome around the tree.
  * When `requestPayloadHistory` is provided (live chat), Raw shows the resolved model request payload
- * (`system`, `tools`, `messages`). Otherwise shows the stored trace blob (evals / offline).
+ * (`system`, `tools`, `messages`). `messages` are merged with `trace.messages` from the live envelope
+ * when the snapshot (post-turn) is ahead of the last captured request, so the panel matches Chat/Trace
+ * as soon as the assistant finishes — not only after the next user message. Otherwise shows the stored
+ * trace blob (evals / offline).
  */
 
-import { useEffect, useMemo, useState } from "react";
 import { Copy, Loader2, ScanSearch } from "lucide-react";
+import type { ModelMessage } from "ai";
 import { toast } from "sonner";
 import { usePostHog } from "posthog-js/react";
 import { standardEventProps } from "@/lib/PosthogUtils";
@@ -16,19 +19,53 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@mcpjam/design-system/tooltip";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@mcpjam/design-system/select";
 import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
+import type { ResolvedModelRequestPayload } from "@/shared/model-request-payload";
 import type { TraceEnvelope, TraceMessage } from "./trace-viewer-adapter";
 
 export interface TraceRawRequestPayloadHistory {
   entries: LiveChatTraceRequestPayloadEntry[];
   hasUiMessages: boolean;
+}
+
+function getTraceEnvelopeMessages(
+  trace: TraceEnvelope | TraceMessage | TraceMessage[] | null,
+): ModelMessage[] | null {
+  if (!trace || Array.isArray(trace)) {
+    return null;
+  }
+  if (
+    typeof trace === "object" &&
+    "messages" in trace &&
+    Array.isArray((trace as { messages: unknown }).messages)
+  ) {
+    return (trace as { messages: ModelMessage[] }).messages;
+  }
+  return null;
+}
+
+/**
+ * Last `request_payload` reflects the outgoing API call (no assistant text for the current turn yet).
+ * `trace_snapshot` appends the assistant to the live envelope — merge so Raw stays in sync with Chat/Trace.
+ */
+function mergeLiveRequestPayloadWithTraceSnapshot(
+  payload: ResolvedModelRequestPayload,
+  trace: TraceEnvelope | TraceMessage | TraceMessage[] | null,
+): ResolvedModelRequestPayload {
+  const traceMessages = getTraceEnvelopeMessages(trace);
+  if (!traceMessages || traceMessages.length === 0) {
+    return payload;
+  }
+
+  if (traceMessages.length > payload.messages.length) {
+    return { ...payload, messages: traceMessages };
+  }
+  if (traceMessages.length < payload.messages.length) {
+    // New user turn: request line already has the new prompt; snapshot not updated yet.
+    return payload;
+  }
+
+  return { ...payload, messages: traceMessages };
 }
 
 /** Same centered spinner as the trace timeline `TraceViewer` Suspense fallback. */
@@ -69,27 +106,10 @@ export function TraceRawView({
   const requestPayloadEntries = requestPayloadHistory?.entries ?? [];
   const hasUiMessages = requestPayloadHistory?.hasUiMessages ?? false;
   const orderedEntries = requestPayloadEntries;
-  const entryKeysSignature = useMemo(
-    () =>
-      orderedEntries
-        .map((entry) => `${entry.turnId}:${entry.stepIndex}`)
-        .join("|"),
-    [orderedEntries],
-  );
   const latestEntry = orderedEntries.at(-1) ?? null;
-  const latestEntryKey = latestEntry
-    ? `${latestEntry.turnId}:${latestEntry.stepIndex}`
-    : null;
-  const [selectedEntryKey, setSelectedEntryKey] = useState<string | null>(
-    latestEntryKey,
-  );
-
-  useEffect(() => {
-    setSelectedEntryKey(latestEntryKey);
-  }, [entryKeysSignature, latestEntryKey]);
 
   if (requestPayloadHistory) {
-    if (!hasUiMessages || orderedEntries.length === 0 || !selectedEntryKey) {
+    if (!hasUiMessages || orderedEntries.length === 0 || !latestEntry) {
       return (
         <div
           className="flex min-h-0 flex-1 flex-col overflow-hidden w-full"
@@ -100,71 +120,9 @@ export function TraceRawView({
       );
     }
 
-    const selectedEntry =
-      orderedEntries.find(
-        (entry) => `${entry.turnId}:${entry.stepIndex}` === selectedEntryKey,
-      ) ?? latestEntry;
-
-    if (!selectedEntry) {
-      return (
-        <div
-          className="flex min-h-0 flex-1 flex-col overflow-hidden w-full"
-          data-testid="trace-raw-view"
-        >
-          <RawViewTraceStyleLoading />
-        </div>
-      );
-    }
-
-    const payloadToolbar = (
-      <div className="flex items-center justify-end gap-2 px-2 pb-2">
-        {orderedEntries.length > 1 ? (
-          <Select
-            value={selectedEntryKey}
-            onValueChange={(value) => setSelectedEntryKey(value)}
-          >
-            <SelectTrigger
-              className="h-8 w-[190px] text-xs"
-              aria-label="Select request payload"
-            >
-              <SelectValue placeholder="Latest request" />
-            </SelectTrigger>
-            <SelectContent align="end">
-              {orderedEntries.map((entry) => {
-                const entryKey = `${entry.turnId}:${entry.stepIndex}`;
-                const label = `Turn ${entry.promptIndex + 1} · Step ${
-                  entry.stepIndex + 1
-                }`;
-                return (
-                  <SelectItem
-                    key={entryKey}
-                    value={entryKey}
-                    className="text-xs"
-                  >
-                    {label}
-                  </SelectItem>
-                );
-              })}
-            </SelectContent>
-          </Select>
-        ) : null}
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() =>
-                copyToClipboard(selectedEntry.payload, "Request payload")
-              }
-              className="h-7 w-7"
-              aria-label="Copy request payload"
-            >
-              <Copy className="h-3.5 w-3.5" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>Copy request payload</TooltipContent>
-        </Tooltip>
-      </div>
+    const displayPayload = mergeLiveRequestPayloadWithTraceSnapshot(
+      latestEntry.payload,
+      trace,
     );
 
     if (growWithContent) {
@@ -173,11 +131,10 @@ export function TraceRawView({
           className="flex min-h-0 w-full min-w-0 flex-1 flex-col"
           data-testid="trace-raw-view"
         >
-          {payloadToolbar}
           <div className="min-h-0 flex-1">
             <JsonEditor
               height={jsonHeight}
-              value={selectedEntry.payload}
+              value={displayPayload}
               viewOnly
               collapsible
               collapseStringsAfterLength={100}
@@ -192,12 +149,11 @@ export function TraceRawView({
         className="flex min-h-0 flex-1 flex-col overflow-hidden w-full"
         data-testid="trace-raw-view"
       >
-        {payloadToolbar}
         <div className="flex-1 min-h-0 overflow-auto">
-          <div className="relative min-h-0 rounded-lg border border-border bg-muted/20">
+          <div className="min-h-0 rounded-lg border border-border bg-muted/20">
             <JsonEditor
               height={jsonHeight}
-              value={selectedEntry.payload}
+              value={displayPayload}
               viewOnly
               collapsible
               collapseStringsAfterLength={100}
