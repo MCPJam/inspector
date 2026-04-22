@@ -416,10 +416,7 @@ export function EvalsTab({
     if (!selectedSuite) return;
     const suiteServers = selectedSuite.environment?.servers ?? [];
     if (suiteServers.length === 0) return;
-    await handlers.handleGenerateTests(selectedSuite._id, suiteServers, {
-      suite: selectedSuite,
-      runNewCasesAfterGenerate: true,
-    });
+    await handlers.handleGenerateTests(selectedSuite._id, suiteServers);
   }, [handlers, selectedSuite]);
 
   const generateState = useMemo(() => {
@@ -440,7 +437,7 @@ export function EvalsTab({
         return {
           canGenerate: true,
           disabledReason:
-            "Connects the suite’s MCP servers if needed, then creates suggested cases and runs each new case.",
+            "Connects the suite’s MCP servers if needed, then creates suggested test cases.",
         };
       }
       return {
@@ -452,7 +449,7 @@ export function EvalsTab({
     return {
       canGenerate: true,
       disabledReason:
-        "Generate suggested cases from this suite’s servers; new cases run right after they are created.",
+        "Generate suggested cases from this suite’s servers. Open a case to run it when you are ready.",
     };
   }, [connectedServerNames, ensureServersReady, selectedSuite]);
 
@@ -632,6 +629,7 @@ export function EvalsTab({
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden px-6 pb-6 pt-6">
         <SuiteIterationsView
           isDirectGuest={isDirectGuest}
+          ensureServersReady={ensureServersReady}
           suite={selectedSuite}
           cases={suiteDetails?.testCases ?? []}
           iterations={activeIterations}

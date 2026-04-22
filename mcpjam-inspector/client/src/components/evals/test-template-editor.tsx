@@ -93,6 +93,13 @@ import type {
 } from "./types";
 import type { EvalExportDraftInput } from "@/lib/evals/eval-export";
 import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
+import type { EnsureServersReadyResult } from "@/hooks/use-app-state";
+import { formatMcpConnectServerPrompt } from "@/lib/mcp-server-display-name";
+import {
+  formatEnsureServersReadyError,
+  hasUnavailableServers,
+  normalizeSuiteServerRefs,
+} from "./use-eval-handlers";
 import { ProviderLogo } from "@/components/chat-v2/chat-input/model/provider-logo";
 import { getGuestBearerToken } from "@/lib/guest-session";
 import {
@@ -139,6 +146,15 @@ interface TestTemplateEditorProps {
    * suite/case/iteration state lives in Convex.
    */
   isDirectGuest?: boolean;
+  /** When set, Run will call this to connect suite MCP servers before starting (playground / desktop). */
+  ensureServersReady?: (
+    serverNames: string[],
+  ) => Promise<EnsureServersReadyResult>;
+  workspaceServers?: Array<{
+    _id: string;
+    name: string;
+    transportType?: "stdio" | "http";
+  }>;
 }
 
 const createEmptyPromptTurn = (index: number): PromptTurn => ({
@@ -322,6 +338,8 @@ export function TestTemplateEditor({
   openCompareFromRoute = false,
   openCompareIterationId = null,
   isDirectGuest = false,
+  ensureServersReady,
+  workspaceServers,
 }: TestTemplateEditorProps) {
   const { getAccessToken } = useAuth();
   const { getToken, hasToken } = useAiProviderKeys();
@@ -616,16 +634,24 @@ export function TestTemplateEditor({
     if (!canRun) {
       return "Configure suite servers before running.";
     }
-    if (missingServers.length > 0) {
-      return "Connect and run.";
+    if (!arePromptTurnsValid && editForm) {
+      return (
+        getPromptTurnBlockReason(editForm.promptTurns) ??
+        "Fix the test configuration before running."
+      );
     }
     if (isRunningCompare) {
       return null;
     }
-    if (!arePromptTurnsValid && editForm) {
-      return getPromptTurnBlockReason(editForm.promptTurns);
+    if (missingServers.length > 0) {
+      if (ensureServersReady != null) {
+        return "Click Run to connect required MCP servers and start.";
+      }
+      return "Connect MCP servers in the playground, then run.";
     }
-    return null;
+    // Defensive: every other disabled reason should be covered above; keep a
+    // string so the Run affordance is never disabled without an explanation.
+    return "Run is unavailable for this test right now.";
   }, [
     runPrimaryDisabled,
     selectedModelValues.length,
@@ -634,6 +660,7 @@ export function TestTemplateEditor({
     isRunningCompare,
     arePromptTurnsValid,
     editForm,
+    ensureServersReady,
   ]);
 
   const updatePromptTurn = (
@@ -1156,6 +1183,38 @@ export function TestTemplateEditor({
           "Fix the test configuration before running."
       );
       return;
+    }
+
+    const suiteServers = normalizeSuiteServerRefs(suite.environment?.servers);
+    if (suiteServers.length === 0) {
+      toast.error("No MCP servers are configured for this suite.");
+      return;
+    }
+    const disconnectedSuiteServers = suiteServers.filter(
+      (name) => !connectedServerNames.has(name),
+    );
+    if (disconnectedSuiteServers.length > 0) {
+      if (ensureServersReady != null) {
+        const readiness = await ensureServersReady(suiteServers);
+        if (hasUnavailableServers(readiness)) {
+          toast.error(
+            formatEnsureServersReadyError(
+              readiness,
+              "run this test case",
+              workspaceServers,
+            ),
+          );
+          return;
+        }
+      } else {
+        toast.error(
+          formatMcpConnectServerPrompt(disconnectedSuiteServers, {
+            remoteServers: workspaceServers,
+            kind: "test-case",
+          }),
+        );
+        return;
+      }
     }
 
     const savePayload = buildSavePayload(editForm);
@@ -1953,6 +2012,14 @@ export function TestTemplateEditor({
                 )}
               </div>
             </div>
+            {runPrimaryDisabled && !isRunningCompare && runDisabledTooltip ? (
+              <p
+                className="text-xs leading-snug text-muted-foreground sm:text-right"
+                data-testid="test-template-run-blocked-hint"
+              >
+                {runDisabledTooltip}
+              </p>
+            ) : null}
 
             <div>
               <div

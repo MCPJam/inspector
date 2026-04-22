@@ -64,7 +64,7 @@ function getConfiguredTestCaseModelValues(
   return Array.from(modelValues);
 }
 
-function hasUnavailableServers(result: EnsureServersReadyResult) {
+export function hasUnavailableServers(result: EnsureServersReadyResult) {
   return (
     result.missingServerNames.length > 0 ||
     result.failedServerNames.length > 0 ||
@@ -114,7 +114,7 @@ export function formatEnsureServersReadyError(
   return `Unable to prepare the required servers to ${actionLabel}.`;
 }
 
-function normalizeSuiteServerRefs(
+export function normalizeSuiteServerRefs(
   serverNamesOrIds: readonly string[] | undefined,
 ): string[] {
   const rawServerRefs = (serverNamesOrIds ?? []).flatMap((serverRef) =>

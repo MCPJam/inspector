@@ -37,6 +37,7 @@ import {
 import { Button } from "@mcpjam/design-system/button";
 import { Loader2, Trash2 } from "lucide-react";
 import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
+import type { EnsureServersReadyResult } from "@/hooks/use-app-state";
 import {
   normalizeDraftEvalCaseForExport,
   normalizeEvalCaseForExport,
@@ -112,6 +113,7 @@ export function SuiteIterationsView({
   workspaceServers,
   generateTestCasesDisabledReason,
   isDirectGuest = false,
+  ensureServersReady,
 }: {
   suite: EvalSuite;
   cases: EvalCase[];
@@ -179,6 +181,10 @@ export function SuiteIterationsView({
   }>;
   /** When true, this is rendering the direct-guest eval playground flow. */
   isDirectGuest?: boolean;
+  /** Playground: connect suite MCP servers before compare run (same as per-case run). */
+  ensureServersReady?: (
+    serverNames: string[],
+  ) => Promise<EnsureServersReadyResult>;
 }) {
   const appState = useSharedAppState();
   // Derive view state from route
@@ -523,6 +529,8 @@ export function SuiteIterationsView({
                   workspaceId={workspaceId}
                   availableModels={availableModels}
                   isDirectGuest={isDirectGuest}
+                  ensureServersReady={ensureServersReady}
+                  workspaceServers={workspaceServers}
                   onExportDraft={handleOpenDraftExport}
                   openCompareFromRoute={
                     route.type === "test-edit" && Boolean(route.openCompare)
