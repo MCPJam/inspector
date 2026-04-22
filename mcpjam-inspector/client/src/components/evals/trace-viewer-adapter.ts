@@ -294,6 +294,14 @@ function getToolInput(part: TraceContentPart): Record<string, unknown> {
 }
 
 function getToolResultPayload(part: TraceContentPart): unknown {
+  if (part.output !== undefined) {
+    const unwrappedOutput = unwrapTraceToolOutput(part.output);
+    return attachServerId(
+      unwrappedOutput,
+      typeof part.serverId === "string" ? part.serverId : undefined,
+    );
+  }
+
   if (part.result !== undefined) {
     return attachServerId(
       part.result,
@@ -301,11 +309,7 @@ function getToolResultPayload(part: TraceContentPart): unknown {
     );
   }
 
-  const unwrappedOutput = unwrapTraceToolOutput(part.output);
-  return attachServerId(
-    unwrappedOutput,
-    typeof part.serverId === "string" ? part.serverId : undefined,
-  );
+  return undefined;
 }
 
 function getToolResultDisplayValue(

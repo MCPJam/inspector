@@ -829,7 +829,12 @@ describe("mcpjam-stream-handler", () => {
           toolName: "read_docs",
           serverId: "docs-server",
           output: expect.objectContaining({
-            ok: true,
+            _meta: expect.objectContaining({
+              _serverId: "docs-server",
+            }),
+            value: expect.objectContaining({
+              ok: true,
+            }),
           }),
         }),
       ]),
