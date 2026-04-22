@@ -310,6 +310,11 @@ export function RunIterationsSidebar({
   onOpenRunInsights,
   runInsightsSelected = false,
   alwaysShowEditIterationRows = false,
+  /**
+   * When false, omit the “Overview” + pass rate row (main run detail already shows KPIs; list matches the suite “Cases” table + sort only).
+   * CI run-detail sidebar keeps the default true for navigation back to run-level insights.
+   */
+  showRunOverviewNav = true,
 }: {
   caseGroupsForSelectedRun: EvalIteration[];
   runDetailSortBy: "model" | "test" | "result";
@@ -325,6 +330,7 @@ export function RunIterationsSidebar({
   onOpenRunInsights?: () => void;
   runInsightsSelected?: boolean;
   alwaysShowEditIterationRows?: boolean;
+  showRunOverviewNav?: boolean;
 }) {
   const overviewStatsOverride = useMemo(() => {
     if (!runForOverview) return undefined;
@@ -357,72 +363,76 @@ export function RunIterationsSidebar({
     );
   }, [runForOverview, overviewStatsOverride]);
 
+  const sortHeaderControl = (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          type="button"
+          variant="outline"
+          size="icon"
+          className="h-7 w-7 shrink-0 border-border/50 bg-background text-muted-foreground hover:text-foreground"
+          aria-label={`Sort iterations: ${runDetailSortLabel(runDetailSortBy)}`}
+          title={`Sort iterations: ${runDetailSortLabel(runDetailSortBy)}`}
+        >
+          <ArrowUpDown className="size-3.5" aria-hidden />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="min-w-[8rem]">
+        <DropdownMenuRadioGroup
+          value={runDetailSortBy}
+          onValueChange={(value) =>
+            onSortChange(value as "model" | "test" | "result")
+          }
+        >
+          <DropdownMenuRadioItem value="model" className="text-xs">
+            {runDetailSortLabel("model")}
+          </DropdownMenuRadioItem>
+          <DropdownMenuRadioItem value="test" className="text-xs">
+            {runDetailSortLabel("test")}
+          </DropdownMenuRadioItem>
+          <DropdownMenuRadioItem value="result" className="text-xs">
+            {runDetailSortLabel("result")}
+          </DropdownMenuRadioItem>
+        </DropdownMenuRadioGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+
   return (
     <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
-      {runForOverview ? (
+      {(showRunOverviewNav && runForOverview) || runOverviewExtra ? (
         <div className="shrink-0 border-b bg-muted/25">
-          <RunInsightsSidebarSummary
-            onClick={onOpenRunInsights}
-            selected={runInsightsSelected}
-            trailing={overviewPassRateLabel}
-          />
+          {showRunOverviewNav && runForOverview ? (
+            <RunInsightsSidebarSummary
+              onClick={onOpenRunInsights}
+              selected={runInsightsSelected}
+              trailing={overviewPassRateLabel}
+            />
+          ) : null}
           {runOverviewExtra ? (
-            <div className="border-t px-4 pb-2 pt-2">{runOverviewExtra}</div>
+            <div
+              className={cn(
+                (showRunOverviewNav && runForOverview) && "border-t",
+                "px-4 pb-2 pt-2",
+              )}
+            >
+              {runOverviewExtra}
+            </div>
           ) : null}
         </div>
       ) : null}
-      {/*
-        Inset a rounded case list (same visual language as suite “Cases”, img2):
-        top toolbar = sort, then column headers, then rows on bg-background.
-      */}
-      <div className="box-border flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden p-1.5 pt-1.5 sm:p-2">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         <div
           className={cn(
             caseListCardClassName,
-            "min-h-0 min-w-0 flex-1 overflow-hidden shadow-sm",
+            "min-h-0 min-w-0 flex-1 overflow-hidden",
           )}
         >
-          <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border/50 bg-muted/30 px-3 py-2">
-            <div className="min-w-0 text-[11px] font-medium text-muted-foreground">
-              Sort: {runDetailSortLabel(runDetailSortBy)}
-            </div>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="icon"
-                  className="h-7 w-7 shrink-0 border-border/50 bg-background text-muted-foreground hover:text-foreground"
-                  aria-label={`Sort iterations: ${runDetailSortLabel(runDetailSortBy)}`}
-                  title={`Sort iterations: ${runDetailSortLabel(runDetailSortBy)}`}
-                >
-                  <ArrowUpDown className="size-3.5" aria-hidden />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="min-w-[8rem]">
-                <DropdownMenuRadioGroup
-                  value={runDetailSortBy}
-                  onValueChange={(value) =>
-                    onSortChange(value as "model" | "test" | "result")
-                  }
-                >
-                  <DropdownMenuRadioItem value="model" className="text-xs">
-                    {runDetailSortLabel("model")}
-                  </DropdownMenuRadioItem>
-                  <DropdownMenuRadioItem value="test" className="text-xs">
-                    {runDetailSortLabel("test")}
-                  </DropdownMenuRadioItem>
-                  <DropdownMenuRadioItem value="result" className="text-xs">
-                    {runDetailSortLabel("result")}
-                  </DropdownMenuRadioItem>
-                </DropdownMenuRadioGroup>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
           {caseGroupsForSelectedRun.length > 0 ? (
             <CaseListColumnHeaders
               firstColumnLabel="Case name"
               secondColumnLabel="Last run"
+              headerEnd={sortHeaderControl}
               trailingGutter={Boolean(onEditTestCase)}
             />
           ) : null}
@@ -667,26 +677,20 @@ export function RunDetailView({
 
       {/* Iteration list only (details open from row actions / navigation). List may live in a parent when omitIterationList. */}
       {!omitIterationList ? (
-        <div
-          className={cn(
-            "mt-4 flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden",
-            "min-h-[240px] rounded-xl border border-border/40 bg-card text-card-foreground",
-          )}
-        >
-          <div className="flex h-full min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden">
-            <RunIterationsSidebar
-              caseGroupsForSelectedRun={caseGroupsForSelectedRun}
-              runDetailSortBy={runDetailSortBy}
-              onSortChange={onSortChange}
-              selectedIterationId={selectedIterationId}
-              onSelectIteration={onSelectIteration}
-              runForOverview={selectedRunDetails}
-              onEditTestCase={handleEditTestCase}
-              onOpenRunInsights={onOpenRunInsights}
-              runInsightsSelected={runInsightsSelected}
-              alwaysShowEditIterationRows={alwaysShowEditIterationRows}
-            />
-          </div>
+        <div className="mt-4 flex min-h-[240px] min-w-0 flex-1 flex-col overflow-hidden">
+          <RunIterationsSidebar
+            caseGroupsForSelectedRun={caseGroupsForSelectedRun}
+            runDetailSortBy={runDetailSortBy}
+            onSortChange={onSortChange}
+            selectedIterationId={selectedIterationId}
+            onSelectIteration={onSelectIteration}
+            runForOverview={selectedRunDetails}
+            onEditTestCase={handleEditTestCase}
+            onOpenRunInsights={onOpenRunInsights}
+            runInsightsSelected={runInsightsSelected}
+            alwaysShowEditIterationRows={alwaysShowEditIterationRows}
+            showRunOverviewNav={false}
+          />
         </div>
       ) : null}
     </div>

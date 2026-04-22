@@ -321,6 +321,32 @@ describe("RunDetailView", () => {
     expect(screen.getByText("Last run")).toBeInTheDocument();
   });
 
+  it("keeps the main run list aligned with the suite cases table: no Overview row, sort in the header row", () => {
+    render(
+      <RunDetailView
+        selectedRunDetails={makeRun({
+          summary: { total: 7, passed: 6, failed: 1, passRate: 6 / 7 },
+        })}
+        caseGroupsForSelectedRun={[makeIteration()]}
+        source="ui"
+        selectedRunChartData={emptyChartData}
+        runDetailSortBy="test"
+        onSortChange={() => {}}
+        selectedIterationId={null}
+        onSelectIteration={() => {}}
+      />,
+    );
+
+    expect(
+      screen.queryByRole("button", {
+        name: /Overview — show in main panel/,
+      }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Sort iterations: Test" }),
+    ).toBeInTheDocument();
+  });
+
   it("exposes view-iteration aria-label on the full iteration row button", () => {
     render(
       <RunIterationsSidebar

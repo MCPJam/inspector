@@ -280,56 +280,68 @@ export function SuiteHeader(props: SuiteHeaderProps) {
 
   if (viewMode === "run-detail" && selectedRunDetails) {
     return (
-      <div className="mb-4 flex min-w-0 flex-col gap-3">
-        <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
-          <div className="flex min-w-0 flex-1 flex-col gap-1">
-            <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-              <h2 className="text-lg font-semibold tracking-tight">
-                Run {formatRunId(selectedRunDetails._id)}
-              </h2>
-              <PassCriteriaBadge
-                run={selectedRunDetails}
-                variant="compact"
-                metricLabel={suite.source === "sdk" ? "Pass Rate" : "Accuracy"}
-              />
-              {selectedRunDetails.replayedFromRunId ? (
-                <span
-                  className="text-xs text-muted-foreground"
-                  title={selectedRunDetails.replayedFromRunId}
-                >
-                  Replay of{" "}
-                  <span className="font-mono text-foreground/80">
-                    Run {formatRunId(selectedRunDetails.replayedFromRunId)}
-                  </span>
+      <div
+        className={cn(
+          "mb-4 flex min-w-0",
+          runDetailKpiStrip
+            ? "flex-nowrap items-center gap-3"
+            : "flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4",
+        )}
+      >
+        <div
+          className={cn(
+            "flex min-w-0 flex-col gap-1",
+            runDetailKpiStrip ? "shrink-0" : "flex-1",
+          )}
+        >
+          <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+            <h2 className="text-lg font-semibold tracking-tight">
+              Run {formatRunId(selectedRunDetails._id)}
+            </h2>
+            <PassCriteriaBadge
+              run={selectedRunDetails}
+              variant="compact"
+              metricLabel={suite.source === "sdk" ? "Pass Rate" : "Accuracy"}
+            />
+            {selectedRunDetails.replayedFromRunId ? (
+              <span
+                className="text-xs text-muted-foreground"
+                title={selectedRunDetails.replayedFromRunId}
+              >
+                Replay of{" "}
+                <span className="font-mono text-foreground/80">
+                  Run {formatRunId(selectedRunDetails.replayedFromRunId)}
                 </span>
-              ) : null}
-            </div>
-            {runDetailKpiStrip ? null : (
-              <RunHeaderCompactStats run={selectedRunDetails} />
-            )}
+              </span>
+            ) : null}
           </div>
-          {!hideRunActions ? (
-            <div className="shrink-0 sm:pt-0.5">
-              <RunDetailPlaygroundActions
-                suite={suite}
-                selectedRun={selectedRunDetails}
-                readOnlyConfig={readOnlyConfig}
-                onReplayRun={onReplayRun}
-                onRerun={onRerun}
-                onCancelRun={onCancelRun}
-                rerunningSuiteId={rerunningSuiteId}
-                replayingRunId={replayingRunId}
-                cancellingRunId={cancellingRunId}
-                hasServersConfigured={hasServersConfigured}
-                missingServers={missingServers}
-                showCloseButton
-                onBackToOverview={() => onViewModeChange("overview")}
-              />
-            </div>
-          ) : null}
+          {runDetailKpiStrip ? null : (
+            <RunHeaderCompactStats run={selectedRunDetails} />
+          )}
         </div>
         {runDetailKpiStrip ? (
-          <div className="min-w-0 w-full">{runDetailKpiStrip}</div>
+          <div className="min-w-0 flex-1 self-center">{runDetailKpiStrip}</div>
+        ) : null}
+        {!hideRunActions ? (
+          <div
+            className={cn("shrink-0", !runDetailKpiStrip && "sm:pt-0.5")}
+          >
+            <RunDetailPlaygroundActions
+              suite={suite}
+              selectedRun={selectedRunDetails}
+              readOnlyConfig={readOnlyConfig}
+              onReplayRun={onReplayRun}
+              onRerun={onRerun}
+              onCancelRun={onCancelRun}
+              rerunningSuiteId={rerunningSuiteId}
+              replayingRunId={replayingRunId}
+              cancellingRunId={cancellingRunId}
+              hasServersConfigured={hasServersConfigured}
+              missingServers={missingServers}
+              showCloseButton
+              onBackToOverview={() => onViewModeChange("overview")}
+            />
+          </div>
         ) : null}
       </div>
     );

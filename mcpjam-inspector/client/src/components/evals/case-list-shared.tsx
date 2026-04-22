@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 
 /** Outer shell for a scrollable “cases” table (matches {@link TestCasesOverview}). */
@@ -13,6 +14,8 @@ export function CaseListColumnHeaders({
   secondColumnLabel,
   leadingGutter = false,
   trailingGutter = false,
+  /** e.g. sort control for run iteration list — sits after the “Last run” label, before row action gutter. */
+  headerEnd = null,
   className,
 }: {
   firstColumnLabel: string;
@@ -21,6 +24,7 @@ export function CaseListColumnHeaders({
   leadingGutter?: boolean;
   /** Reserve space to align with a trailing icon control (e.g. Run or edit link). */
   trailingGutter?: boolean;
+  headerEnd?: ReactNode;
   className?: string;
 }) {
   return (
@@ -35,6 +39,9 @@ export function CaseListColumnHeaders({
       <div className="flex max-w-[min(100%,20rem)] min-w-0 flex-1 items-center justify-end gap-2">
         <span className="text-right">{secondColumnLabel}</span>
       </div>
+      {headerEnd ? (
+        <div className="flex shrink-0 items-center justify-end">{headerEnd}</div>
+      ) : null}
       {trailingGutter ? <div className="w-7 shrink-0" aria-hidden /> : null}
     </div>
   );

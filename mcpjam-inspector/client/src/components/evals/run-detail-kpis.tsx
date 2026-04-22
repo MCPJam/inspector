@@ -10,6 +10,8 @@ export type RunDetailKpiStat = {
   value: string;
   detail: string;
   valueClass?: string;
+  /** Extra classes for the compact strip cell (e.g. emphasize failures). */
+  stripCellClass?: string;
 };
 
 export function normalizeRunPassRatePercent(passRate: number): number {
@@ -94,6 +96,10 @@ export function computeRunDashboardKpis({
       valueClass:
         computedStats.failed > 0
           ? EVAL_OUTCOME_STATUS_TEXT_CLASS.failed
+          : undefined,
+      stripCellClass:
+        computedStats.failed > 0
+          ? "bg-destructive/[0.08] dark:bg-destructive/15"
           : undefined,
     },
     {
@@ -202,6 +208,7 @@ export function RunDetailKpiStrip({
             className={cn(
               "flex min-w-[5rem] flex-1 flex-col justify-center border-border/30 px-2.5 py-2.5 sm:min-w-0 sm:px-3 sm:py-2.5",
               index > 0 && "border-l",
+              stat.stripCellClass,
             )}
           >
             <div className="text-[10px] font-medium leading-none text-muted-foreground">

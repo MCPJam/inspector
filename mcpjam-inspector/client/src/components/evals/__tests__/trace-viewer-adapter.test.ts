@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import {
   adaptTraceToUiMessages,
+  buildToolRenderOverridesFromSnapshots,
   type TraceEnvelope,
   type TraceMessage,
   type TraceWidgetSnapshot,
@@ -630,6 +631,10 @@ describe("adaptTraceToUiMessages", () => {
       widgetSnapshots: [
         makeWidgetSnapshot({
           widgetHtmlUrl: "https://storage.example.com/widget.html",
+          toolOutput: {
+            content: [{ type: "text", text: "stored result" }],
+            structuredContent: { checkpointId: "checkpoint-1" },
+          },
         }),
       ],
     };
@@ -642,6 +647,24 @@ describe("adaptTraceToUiMessages", () => {
       "https://storage.example.com/widget.html",
     );
     expect(result.toolRenderOverrides["call-1"].isOffline).toBe(true);
+    expect(result.toolRenderOverrides["call-1"].toolOutput).toEqual({
+      content: [{ type: "text", text: "stored result" }],
+      structuredContent: { checkpointId: "checkpoint-1" },
+    });
+  });
+
+  it("does not invent empty tool output when snapshot output is absent", () => {
+    const overrides = buildToolRenderOverridesFromSnapshots([
+      makeWidgetSnapshot({
+        widgetHtmlUrl: "https://storage.example.com/widget.html",
+      }),
+    ]);
+
+    expect(overrides["call-1"]).toBeDefined();
+    expect(overrides["call-1"].cachedWidgetHtmlUrl).toBe(
+      "https://storage.example.com/widget.html",
+    );
+    expect(overrides["call-1"].toolOutput).toBeUndefined();
   });
 
   it("treats nested result.isError tool-results as output errors", () => {
@@ -910,5 +933,69 @@ describe("adaptTraceToUiMessages", () => {
         (item: any) => item?.resource?.uri === "ui://test/widget.html",
       ),
     ).toBe(true);
+  });
+
+  it("scrubs streamed widget resources when the server id exists but is not connected", () => {
+    const trace: TraceEnvelope = {
+      messages: [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call-disconnected-widget",
+              toolName: "create_view",
+              input: {},
+            },
+          ],
+        },
+        {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "call-disconnected-widget",
+              toolName: "create_view",
+              output: {
+                type: "json",
+                value: {
+                  _serverId: "server-1",
+                  _meta: {
+                    ui: { resourceUri: "ui://test/widget.html" },
+                  },
+                  content: [
+                    {
+                      type: "resource",
+                      resource: { uri: "ui://test/widget.html", text: "html" },
+                    },
+                  ],
+                },
+              },
+            },
+          ],
+        },
+      ],
+    };
+
+    const result = adaptTraceToUiMessages({
+      trace,
+      connectedServerIds: [],
+    });
+
+    expect(result.toolRenderOverrides["call-disconnected-widget"]).toBeDefined();
+    expect(
+      result.toolRenderOverrides["call-disconnected-widget"].toolMetadata,
+    ).toEqual({});
+
+    const toolPart = result.messages[0].parts.find(
+      (part) => part.type === "dynamic-tool",
+    ) as any;
+    const outputContent = toolPart.output?.content;
+    expect(Array.isArray(outputContent)).toBe(true);
+    expect(
+      outputContent?.some(
+        (item: any) => item?.resource?.uri === "ui://test/widget.html",
+      ),
+    ).toBe(false);
   });
 });

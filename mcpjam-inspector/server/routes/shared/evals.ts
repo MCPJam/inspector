@@ -807,6 +807,7 @@ export async function streamEvalTestCaseWithManager(
         const outcomes = await streamTestCase({
           test,
           tools,
+          mcpClientManager: clientManager,
           recorder: null,
           modelApiKeys: modelApiKeys ?? undefined,
           convexHttpUrl,

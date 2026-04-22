@@ -328,7 +328,7 @@ export function TestCasesOverview({
                 aria-label="Select all cases"
                 disabled={testCaseStats.length === 0}
               />
-              <span className="text-xs font-medium truncate">Select all</span>
+              <span className="text-xs font-medium truncate">Test Cases</span>
             </div>
             {selectedCaseIds.size > 0 ? (
               <div className="flex items-center gap-2 shrink-0">

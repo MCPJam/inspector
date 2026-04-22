@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const generateTextMock = vi.hoisted(() => vi.fn());
 const streamTextMock = vi.hoisted(() => vi.fn());
@@ -371,6 +371,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
         testCaseId: "case-1",
       },
       tools: {},
+      mcpClientManager: mcpClientManager as any,
       recorder: null,
       modelApiKeys: { openai: "sk-test" },
       convexClient: convexClient as any,
@@ -481,6 +482,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
           testCaseId: "case-1",
         },
         tools: {},
+        mcpClientManager: mcpClientManager as any,
         recorder: null,
         modelApiKeys: {},
         convexClient: convexClient as any,

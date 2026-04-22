@@ -44,13 +44,14 @@ export interface TraceWidgetSnapshot {
   toolName: string;
   protocol: "mcp-apps" | "openai-apps";
   serverId: string;
-  resourceUri: string;
+  resourceUri?: string;
   toolMetadata: Record<string, unknown>;
-  widgetCsp: Record<string, unknown> | null;
-  widgetPermissions: Record<string, unknown> | null;
-  widgetPermissive: boolean;
-  prefersBorder: boolean;
+  widgetCsp?: Record<string, unknown> | null;
+  widgetPermissions?: Record<string, unknown> | null;
+  widgetPermissive?: boolean;
+  prefersBorder?: boolean;
   widgetHtmlUrl?: string | null;
+  toolOutput?: unknown;
 }
 
 /**
@@ -69,6 +70,7 @@ export function snapshotsToTraceWidgetSnapshots(
     widgetPermissive: boolean;
     prefersBorder: boolean;
     widgetHtmlUrl?: string | null;
+    toolOutput?: unknown;
   }>,
 ): TraceWidgetSnapshot[] {
   return snapshots.map((snap) => {
@@ -86,13 +88,14 @@ export function snapshotsToTraceWidgetSnapshots(
       toolName: snap.toolName,
       protocol: snap.uiType,
       serverId: snap.serverId,
-      resourceUri: snap.resourceUri ?? "",
+      resourceUri: snap.resourceUri,
       toolMetadata,
       widgetCsp: snap.widgetCsp,
       widgetPermissions: snap.widgetPermissions,
       widgetPermissive: snap.widgetPermissive,
       prefersBorder: snap.prefersBorder,
       widgetHtmlUrl: snap.widgetHtmlUrl,
+      toolOutput: snap.toolOutput,
     };
   });
 }
@@ -111,7 +114,7 @@ export function buildToolRenderOverridesFromSnapshots(
       protocol: snap.protocol,
       toolCallId: snap.toolCallId,
       toolName: snap.toolName,
-      toolOutput: {},
+      toolOutput: snap.toolOutput,
       toolState: "output-available",
       serverId: snap.serverId,
       isOffline: !!snap.widgetHtmlUrl,
@@ -435,7 +438,8 @@ function shouldAttemptWidgetReplay(params: {
   return Boolean(
     effectiveServerId &&
     effectiveResourceUri &&
-    isWidgetUiType(effectiveUiType),
+    isWidgetUiType(effectiveUiType) &&
+    params.connectedServerIds.has(effectiveServerId),
   );
 }
 
@@ -444,12 +448,13 @@ function createReplayOverride(
   toolInput: Record<string, unknown>,
   toolOutput: unknown,
 ) {
+  const replayToolOutput = snapshot.toolOutput ?? toolOutput;
   return buildPersistedExecutionReplay({
     protocol: snapshot.protocol,
     toolCallId: snapshot.toolCallId,
     toolName: snapshot.toolName,
     toolInput,
-    toolOutput,
+    toolOutput: replayToolOutput,
     toolState: "output-available",
     toolMetadata: snapshot.toolMetadata,
     serverId: snapshot.serverId,
@@ -466,6 +471,7 @@ function createReplayOverride(
 function createLiveSnapshotOverride(snapshot: TraceWidgetSnapshot) {
   return {
     serverId: snapshot.serverId,
+    toolOutput: snapshot.toolOutput,
     resourceUri: snapshot.resourceUri,
     toolMetadata: snapshot.toolMetadata,
     widgetCsp: snapshot.widgetCsp as any,

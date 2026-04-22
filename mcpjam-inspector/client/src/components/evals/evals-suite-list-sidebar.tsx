@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import {
-  CircleAlert,
   ChevronRight,
+  CircleAlert,
   FlaskConical,
   Loader2,
   Play,
@@ -357,11 +357,13 @@ export function EvalsSuiteListSidebar({
                       ? suite.environment.servers.join(", ")
                       : "No servers configured";
                   const rowTitle = evalOverviewEntryOutcomeTitle(entry);
-                  const showLastRunFailed =
-                    entry.latestRun?.result === "failed" ||
-                    entry.latestRun?.status === "failed";
                   const isSelected = selectedSuiteId === suite._id;
                   const suiteTitle = suite.name || "Untitled suite";
+                  const latestRun = entry.latestRun;
+                  const showLastRunFailed =
+                    latestRun != null &&
+                    (latestRun.result === "failed" ||
+                      latestRun.status === "failed");
                   const runAllBlocked = Boolean(
                     rerunningSuiteId ||
                       replayingRunId != null ||
@@ -412,12 +414,6 @@ export function EvalsSuiteListSidebar({
                         </span>
                         <div className="flex shrink-0 items-center gap-2">
                           {suiteLastRunCell(entry)}
-                          {showLastRunFailed ? (
-                            <CircleAlert
-                              className="h-3.5 w-3.5 shrink-0 text-destructive"
-                              aria-label="Last run failed"
-                            />
-                          ) : null}
                           <ChevronRight
                             className="h-4 w-4 shrink-0 text-muted-foreground/45 transition group-hover/row:translate-x-0.5 group-hover/row:text-primary"
                             aria-hidden

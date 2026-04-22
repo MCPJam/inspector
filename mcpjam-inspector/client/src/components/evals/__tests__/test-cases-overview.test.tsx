@@ -451,7 +451,7 @@ describe("TestCasesOverview", () => {
       />,
     );
 
-    expect(screen.getByText("Select all")).toBeInTheDocument();
+    expect(screen.getByText("Test Cases")).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "Cancel" }),
     ).not.toBeInTheDocument();
@@ -464,7 +464,7 @@ describe("TestCasesOverview", () => {
       }),
     );
 
-    expect(screen.getByText("Select all")).toBeInTheDocument();
+    expect(screen.getByText("Test Cases")).toBeInTheDocument();
     expect(screen.getByText("1 selected")).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Cancel" }),

@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   getIterationResultDisplayLabel,
   getIterationResultBadgeClass,
+  suitePassCriteriaCompactBadgeClassNames,
 } from "../iteration-result-presentation";
 import type { EvalIteration } from "../types";
 
@@ -60,5 +61,23 @@ describe("getIterationResultBadgeClass", () => {
         }),
       ),
     ).toContain("rose");
+  });
+});
+
+describe("suitePassCriteriaCompactBadgeClassNames", () => {
+  it("uses high-contrast destructive styling for failed suite outcome", () => {
+    const classes = suitePassCriteriaCompactBadgeClassNames("failed");
+    expect(classes).toContain("text-destructive");
+    expect(classes).toContain("border-destructive");
+    expect(classes).toContain("text-[10px]");
+  });
+
+  it("uses emerald for passed and amber for passed_with_failures", () => {
+    expect(suitePassCriteriaCompactBadgeClassNames("passed")).toContain(
+      "emerald",
+    );
+    expect(
+      suitePassCriteriaCompactBadgeClassNames("passed_with_failures"),
+    ).toContain("amber");
   });
 });
