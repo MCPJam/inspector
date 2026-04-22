@@ -502,7 +502,7 @@ describe("ChatTabV2 history sync", () => {
       target: { value: "Unsaved draft" },
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "Show threads" }));
+    fireEvent.click(screen.getByRole("button", { name: "Show sessions" }));
     fireEvent.click(screen.getByRole("button", { name: "Select thread" }));
     await flushMicrotasks();
 
@@ -523,7 +523,7 @@ describe("ChatTabV2 history sync", () => {
       target: { value: "Unsaved draft" },
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "Show threads" }));
+    fireEvent.click(screen.getByRole("button", { name: "Show sessions" }));
     fireEvent.click(
       screen.getByRole("button", { name: "New personal thread" }),
     );
@@ -552,7 +552,7 @@ describe("ChatTabV2 history sync", () => {
 
     render(<ChatTabV2 {...defaultProps} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Show threads" }));
+    fireEvent.click(screen.getByRole("button", { name: "Show sessions" }));
     fireEvent.click(screen.getByRole("button", { name: "Select thread" }));
     await flushMicrotasks();
 
@@ -604,7 +604,7 @@ describe("ChatTabV2 history sync", () => {
 
     const view = render(<ChatTabV2 {...defaultProps} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Show threads" }));
+    fireEvent.click(screen.getByRole("button", { name: "Show sessions" }));
     fireEvent.click(screen.getByRole("button", { name: "Select thread" }));
 
     await flushMicrotasks();
@@ -676,7 +676,7 @@ describe("ChatTabV2 history sync", () => {
 
     const view = render(<ChatTabV2 {...defaultProps} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Show threads" }));
+    fireEvent.click(screen.getByRole("button", { name: "Show sessions" }));
     fireEvent.click(screen.getByRole("button", { name: "Select thread" }));
     await flushMicrotasks();
 
@@ -702,7 +702,7 @@ describe("ChatTabV2 history sync", () => {
   it("switches new shared threads to workspace visibility without persisting a draft", async () => {
     render(<ChatTabV2 {...defaultProps} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Show threads" }));
+    fireEvent.click(screen.getByRole("button", { name: "Show sessions" }));
     fireEvent.click(screen.getByRole("button", { name: "New shared thread" }));
     await flushMicrotasks();
 
@@ -719,7 +719,7 @@ describe("ChatTabV2 history sync", () => {
 
     render(<ChatTabV2 {...defaultProps} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Show threads" }));
+    fireEvent.click(screen.getByRole("button", { name: "Show sessions" }));
 
     expect(screen.getByTestId("history-rail")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "New personal thread" })).toBeInTheDocument();
@@ -747,7 +747,7 @@ describe("ChatTabV2 history sync", () => {
 
     const view = render(<ChatTabV2 {...defaultProps} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Show threads" }));
+    fireEvent.click(screen.getByRole("button", { name: "Show sessions" }));
     fireEvent.click(screen.getByRole("button", { name: "Select thread" }));
     await flushMicrotasks();
 

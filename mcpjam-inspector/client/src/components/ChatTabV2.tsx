@@ -1966,7 +1966,7 @@ export function ChatTabV2({
           <CollapsedPanelStrip
             side="left"
             onOpen={() => setIsHistorySidebarVisible(true)}
-            tooltipText="Show threads"
+            tooltipText="Show sessions"
           />
         ) : null}
         <ResizablePanel
