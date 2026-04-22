@@ -185,30 +185,34 @@ export const getCanonicalModelId = (
     return normalizedModelId;
   }
 
+  const normalizedProvider = provider?.trim().toLowerCase();
+
+  // When a provider is supplied, prefer hosted/prefixed matches first so
+  // bare ids (e.g. "gpt-4o-mini" — BYOK) don't shadow their hosted
+  // counterparts (e.g. "openai/gpt-4o-mini" — MCPJam-provided).
+  if (normalizedProvider) {
+    const providerScopedMatch = SUPPORTED_MODELS.find((model) => {
+      if (model.provider.toLowerCase() !== normalizedProvider) {
+        return false;
+      }
+
+      const supportedModelId = String(model.id);
+      return (
+        supportedModelId === normalizedModelId ||
+        supportedModelId.endsWith(`/${normalizedModelId}`)
+      );
+    });
+
+    if (providerScopedMatch) {
+      return String(providerScopedMatch.id);
+    }
+  }
+
   const exactMatch = SUPPORTED_MODELS.find(
     (model) => String(model.id) === normalizedModelId,
   );
   if (exactMatch) {
     return String(exactMatch.id);
-  }
-
-  const normalizedProvider = provider?.trim().toLowerCase();
-  if (!normalizedProvider) {
-    return normalizedModelId;
-  }
-
-  const providerScopedMatch = SUPPORTED_MODELS.find((model) => {
-    if (model.provider.toLowerCase() !== normalizedProvider) {
-      return false;
-    }
-
-    const supportedModelId = String(model.id);
-    return supportedModelId === normalizedModelId ||
-      supportedModelId.endsWith(`/${normalizedModelId}`);
-  });
-
-  if (providerScopedMatch) {
-    return String(providerScopedMatch.id);
   }
 
   return normalizedModelId;

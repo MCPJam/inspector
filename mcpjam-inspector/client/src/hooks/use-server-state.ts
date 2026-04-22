@@ -2060,53 +2060,81 @@ export function useServerState({
         return serverRef;
       };
 
-      const outcomes = await Promise.all(
-        uniqueServerNames.map(async (serverName) => {
-          const resolvedKey = resolveToWorkspaceServerKey(serverName);
-          const server = latestEffectiveServersRef.current[resolvedKey];
-          if (!server) {
-            return [
-              serverName,
-              {
-                status: "missing",
-                error: `Server ${serverName} not found`,
-              } satisfies EnsureServerConnectionResult,
-            ] as const;
-          }
+      // Multiple refs (e.g. hosted id and display name) can collapse to the
+      // same workspace server. Group by resolved key so we only kick off one
+      // reconnect per real server and avoid spurious "stale op" failures.
+      type RefGroup = { resolvedKey: string; refs: string[] };
+      const groupsByKey = new Map<string, RefGroup>();
+      const orderedKeys: string[] = [];
+      for (const serverName of uniqueServerNames) {
+        const resolvedKey = resolveToWorkspaceServerKey(serverName);
+        const existing = groupsByKey.get(resolvedKey);
+        if (existing) {
+          existing.refs.push(serverName);
+        } else {
+          groupsByKey.set(resolvedKey, { resolvedKey, refs: [serverName] });
+          orderedKeys.push(resolvedKey);
+        }
+      }
 
-          if (server.connectionStatus === "connected") {
-            return [
-              serverName,
-              { status: "connected" } satisfies EnsureServerConnectionResult,
-            ] as const;
-          }
+      const outcomesByKey = await Promise.all(
+        orderedKeys.map(
+          async (
+            resolvedKey,
+          ): Promise<readonly [string, EnsureServerConnectionResult]> => {
+            const server = latestEffectiveServersRef.current[resolvedKey];
+            if (!server) {
+              return [
+                resolvedKey,
+                {
+                  status: "missing",
+                  error: `Server ${resolvedKey} not found`,
+                },
+              ] as const;
+            }
 
-          if (server.connectionStatus === "connecting") {
-            return [
-              serverName,
-              await waitForServerReconnectOutcome(resolvedKey),
-            ] as const;
-          }
+            if (server.connectionStatus === "connected") {
+              return [resolvedKey, { status: "connected" }] as const;
+            }
 
-          if (server.connectionStatus === "oauth-flow") {
-            return [
-              serverName,
-              {
-                status: "reauth",
-                error: `Reauthenticate ${resolvedKey} to continue.`,
-              } satisfies EnsureServerConnectionResult,
-            ] as const;
-          }
+            if (server.connectionStatus === "connecting") {
+              return [
+                resolvedKey,
+                await waitForServerReconnectOutcome(resolvedKey),
+              ] as const;
+            }
 
-          return [
-            serverName,
-            await reconnectServerInternal(resolvedKey, {
-              select: false,
-              suppressErrors: true,
-            }),
-          ] as const;
-        }),
+            if (server.connectionStatus === "oauth-flow") {
+              return [
+                resolvedKey,
+                {
+                  status: "reauth",
+                  error: `Reauthenticate ${resolvedKey} to continue.`,
+                },
+              ] as const;
+            }
+
+            return [
+              resolvedKey,
+              await reconnectServerInternal(resolvedKey, {
+                select: false,
+                suppressErrors: true,
+              }),
+            ] as const;
+          },
+        ),
       );
+
+      const outcomeByKey = new Map(outcomesByKey);
+      const outcomes: ReadonlyArray<readonly [string, EnsureServerConnectionResult]> =
+        uniqueServerNames.map((serverName) => {
+          const resolvedKey = resolveToWorkspaceServerKey(serverName);
+          const outcome = outcomeByKey.get(resolvedKey) ?? {
+            status: "missing",
+            error: `Server ${serverName} not found`,
+          };
+          return [serverName, outcome] as const;
+        });
 
       const readyServerNames: string[] = [];
       const missingServerNames: string[] = [];

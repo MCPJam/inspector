@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvex, useConvexAuth } from "convex/react";
 import { FlaskConical, Loader2 } from "lucide-react";
@@ -39,6 +39,11 @@ import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 
 const FIRST_SUITE_EMPTY_DESCRIPTION =
   "A suite groups eval cases with the MCP servers they use. Create one, then generate cases or import a chat transcript.";
+
+// Module-scoped so an in-flight explore-suite create still blocks duplicate
+// creates if the EvalsTab unmounts and remounts before the create finishes.
+// Keyed by `${workspaceId}::${serverName}` so different workspaces don't share.
+const explorePrefetchInFlight = new Set<string>();
 
 interface EvalsTabProps {
   workspaceId?: string | null;
@@ -257,7 +262,9 @@ export function EvalsTab({
   // ---------------------------------------------------------------------------
   // Auto-create an explore suite for each connected server that doesn't have one
   // ---------------------------------------------------------------------------
-  const explorePrefetchInFlightRef = useRef(new Set<string>());
+  const createTestSuiteMutation = mutations.createTestSuiteMutation;
+  const updateTestSuiteMutation = mutations.updateTestSuiteMutation;
+  const createTestCaseMutation = mutations.createTestCaseMutation;
 
   useEffect(() => {
     if (
@@ -276,10 +283,13 @@ export function EvalsTab({
         .flatMap((entry) => entry.suite.environment?.servers ?? []),
     );
 
+    const inFlightKeyFor = (serverName: string) =>
+      `${workspaceId}::${serverName}`;
+
     const serversNeedingSuite = [...connectedServerNames].filter(
       (name) =>
         !serversWithExploreSuite.has(name) &&
-        !explorePrefetchInFlightRef.current.has(name),
+        !explorePrefetchInFlight.has(inFlightKeyFor(name)),
     );
 
     if (serversNeedingSuite.length === 0) {
@@ -287,11 +297,12 @@ export function EvalsTab({
     }
 
     for (const serverName of serversNeedingSuite) {
-      explorePrefetchInFlightRef.current.add(serverName);
+      const inFlightKey = inFlightKeyFor(serverName);
+      explorePrefetchInFlight.add(inFlightKey);
 
       void (async () => {
         try {
-          const createdSuite = await mutations.createTestSuiteMutation({
+          const createdSuite = await createTestSuiteMutation({
             workspaceId,
             name: serverName,
             description: `Explore cases for ${serverName}`,
@@ -300,7 +311,7 @@ export function EvalsTab({
 
           if (!createdSuite?._id) return;
 
-          await mutations.updateTestSuiteMutation({
+          await updateTestSuiteMutation({
             suiteId: createdSuite._id,
             tags: [EXPLORE_SUITE_TAG],
           });
@@ -311,7 +322,7 @@ export function EvalsTab({
             workspaceId,
             suiteId: createdSuite._id,
             serverIds: [serverName],
-            createTestCase: mutations.createTestCaseMutation,
+            createTestCase: createTestCaseMutation,
             skipIfExistingCases: true,
           });
 
@@ -321,7 +332,7 @@ export function EvalsTab({
               platform: detectPlatform(),
               environment: detectEnvironment(),
               workspace_id: workspaceId,
-              server_id: serverName,
+              server_name: serverName,
               suite_id: createdSuite._id,
               generated_count: outcome.createdCount,
             });
@@ -329,7 +340,7 @@ export function EvalsTab({
         } catch (error) {
           console.error("Explore suite auto-create failed:", error);
         } finally {
-          explorePrefetchInFlightRef.current.delete(serverName);
+          explorePrefetchInFlight.delete(inFlightKey);
         }
       })();
     }
@@ -341,7 +352,9 @@ export function EvalsTab({
     overviewQueries.isOverviewLoading,
     convex,
     getAccessToken,
-    mutations,
+    createTestSuiteMutation,
+    updateTestSuiteMutation,
+    createTestCaseMutation,
   ]);
 
   const handleOpenCreateSuite = useCallback(() => {

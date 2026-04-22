@@ -77,6 +77,9 @@ export function CreateSuiteDialog({
         description: description.trim() || undefined,
         selectedServers: normalizeServerNames(selectedServers),
       });
+    } catch {
+      // onSubmit surfaces its own error toast; keep the dialog open so the
+      // user can retry, but don't propagate as an unhandled rejection.
     } finally {
       setIsSaving(false);
     }

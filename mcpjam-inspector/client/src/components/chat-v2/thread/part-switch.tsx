@@ -240,8 +240,12 @@ export function PartSwitch({
       renderOverride?.serverId ??
       getToolServerId(toolInfo.toolName, toolServerMap) ??
       readToolResultServerId(toolInfo.rawOutput);
-    const resolvedToolOutput =
-      renderOverride?.toolOutput ?? toolInfo.output ?? toolInfo.rawOutput;
+    const hasRenderOverrideToolOutput =
+      renderOverride !== undefined &&
+      Object.prototype.hasOwnProperty.call(renderOverride, "toolOutput");
+    const resolvedToolOutput = hasRenderOverrideToolOutput
+      ? renderOverride.toolOutput
+      : (toolInfo.output ?? toolInfo.rawOutput);
 
     // Determine why save might be disabled
     const hasOutput =

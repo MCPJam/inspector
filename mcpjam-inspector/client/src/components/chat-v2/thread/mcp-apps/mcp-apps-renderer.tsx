@@ -596,6 +596,8 @@ export function MCPAppsRenderer({
     };
 
     fetchWidgetHtml();
+    // logWidgetDebug is intentionally omitted: it has stable identity (reads
+    // serverId/toolCallId via refs) and is declared after this effect.
   }, [
     toolState,
     toolCallId,
@@ -619,22 +621,27 @@ export function MCPAppsRenderer({
     },
     [addUiLog, minimalMode],
   );
+  const logUiEventRef = useRef(logUiEvent);
+  logUiEventRef.current = logUiEvent;
+  // Stable identity so this can be safely included in any effect deps without
+  // causing reruns. Reads serverId/toolCallId from refs that are kept current
+  // by the ref-sync effect below.
   const logWidgetDebug = useCallback(
     (
       direction: "host-to-ui" | "ui-to-host",
       method: string,
       details: Record<string, unknown>,
     ) => {
-      logUiEvent({
-        widgetId: toolCallId,
-        serverId,
+      logUiEventRef.current({
+        widgetId: toolCallIdRef.current,
+        serverId: serverIdRef.current,
         direction,
         protocol: "mcp-apps",
         method,
         message: details,
       });
     },
-    [logUiEvent, serverId, toolCallId],
+    [],
   );
 
   // Widget debug store

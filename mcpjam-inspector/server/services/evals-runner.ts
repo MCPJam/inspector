@@ -389,89 +389,101 @@ async function captureEvalTraceWidgetSnapshots(params: {
 
   const snapshots = await Promise.all(
     sources.map(async (source) => {
-      const toolMetadata =
-        params.mcpClientManager.getAllToolsMetadata(source.serverId)?.[
-          source.toolName
-        ];
-      if (!isRecord(toolMetadata) || !isMcpAppTool(toolMetadata)) {
-        return null;
-      }
-
-      const resourceUri = getToolUiResourceUri({
-        _meta: toolMetadata,
-      });
-      if (!resourceUri) {
-        return null;
-      }
-
-      const snapshot: EvalTraceWidgetSnapshot = {
-        toolCallId: source.toolCallId,
-        toolName: source.toolName,
-        protocol: "mcp-apps",
-        serverId: source.serverId,
-        resourceUri,
-        toolMetadata,
-        widgetCsp: null,
-        widgetPermissions: null,
-        widgetPermissive: true,
-        prefersBorder: true,
-      };
-
       try {
-        const resourceResult = await params.mcpClientManager.readResource(
-          source.serverId,
-          { uri: resourceUri },
-        );
-        const contents = Array.isArray((resourceResult as any)?.contents)
-          ? ((resourceResult as any).contents as unknown[])
-          : [];
-        const content = contents[0];
-        if (!isRecord(content)) {
-          return snapshot;
+        const toolMetadata =
+          params.mcpClientManager.getAllToolsMetadata(source.serverId)?.[
+            source.toolName
+          ];
+        if (!isRecord(toolMetadata) || !isMcpAppTool(toolMetadata)) {
+          return null;
         }
 
-        const uiMeta =
-          isRecord(content._meta) && isRecord(content._meta.ui)
-            ? (content._meta.ui as Record<string, unknown>)
-            : undefined;
-        snapshot.widgetCsp = normalizeWidgetCsp(uiMeta?.csp);
-        snapshot.widgetPermissions = normalizeWidgetPermissions(
-          uiMeta?.permissions,
-        );
-        snapshot.prefersBorder =
-          typeof uiMeta?.prefersBorder === "boolean"
-            ? uiMeta.prefersBorder
-            : true;
-
-        const html = extractHtmlFromResourceContent(content);
-        if (!html) {
-          return snapshot;
-        }
-
-        const widgetHtml = injectOpenAICompat(html, {
-          toolId: source.toolCallId,
-          toolName: source.toolName,
-          toolInput: source.toolInput,
-          toolOutput: source.toolOutput,
+        const resourceUri = getToolUiResourceUri({
+          _meta: toolMetadata,
         });
-        const widgetHtmlBlobId = await uploadEvalWidgetHtmlBlob(
-          params.convexClient,
-          widgetHtml,
-        );
-        if (widgetHtmlBlobId) {
-          snapshot.widgetHtmlBlobId = widgetHtmlBlobId;
+        if (!resourceUri) {
+          return null;
         }
+
+        const snapshot: EvalTraceWidgetSnapshot = {
+          toolCallId: source.toolCallId,
+          toolName: source.toolName,
+          protocol: "mcp-apps",
+          serverId: source.serverId,
+          resourceUri,
+          toolMetadata,
+          widgetCsp: null,
+          widgetPermissions: null,
+          widgetPermissive: true,
+          prefersBorder: true,
+        };
+
+        try {
+          const resourceResult = await params.mcpClientManager.readResource(
+            source.serverId,
+            { uri: resourceUri },
+          );
+          const contents = Array.isArray((resourceResult as any)?.contents)
+            ? ((resourceResult as any).contents as unknown[])
+            : [];
+          const content = contents[0];
+          if (!isRecord(content)) {
+            return snapshot;
+          }
+
+          const uiMeta =
+            isRecord(content._meta) && isRecord(content._meta.ui)
+              ? (content._meta.ui as Record<string, unknown>)
+              : undefined;
+          snapshot.widgetCsp = normalizeWidgetCsp(uiMeta?.csp);
+          snapshot.widgetPermissions = normalizeWidgetPermissions(
+            uiMeta?.permissions,
+          );
+          snapshot.prefersBorder =
+            typeof uiMeta?.prefersBorder === "boolean"
+              ? uiMeta.prefersBorder
+              : true;
+
+          const html = extractHtmlFromResourceContent(content);
+          if (!html) {
+            return snapshot;
+          }
+
+          const widgetHtml = injectOpenAICompat(html, {
+            toolId: source.toolCallId,
+            toolName: source.toolName,
+            toolInput: source.toolInput,
+            toolOutput: source.toolOutput,
+          });
+          const widgetHtmlBlobId = await uploadEvalWidgetHtmlBlob(
+            params.convexClient,
+            widgetHtml,
+          );
+          if (widgetHtmlBlobId) {
+            snapshot.widgetHtmlBlobId = widgetHtmlBlobId;
+          }
+        } catch (error) {
+          logger.warn("[evals] Failed to capture MCP App widget snapshot", {
+            toolCallId: source.toolCallId,
+            toolName: source.toolName,
+            serverId: source.serverId,
+            resourceUri,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+
+        return snapshot;
       } catch (error) {
-        logger.warn("[evals] Failed to capture MCP App widget snapshot", {
+        // Snapshot capture must stay best-effort: throwing here would fail the
+        // entire iteration finalization. Surface the error and skip.
+        logger.warn("[evals] Skipped widget snapshot due to unexpected error", {
           toolCallId: source.toolCallId,
           toolName: source.toolName,
           serverId: source.serverId,
-          resourceUri,
           error: error instanceof Error ? error.message : String(error),
         });
+        return null;
       }
-
-      return snapshot;
     }),
   );
 

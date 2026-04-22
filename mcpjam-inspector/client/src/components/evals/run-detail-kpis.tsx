@@ -1,6 +1,9 @@
 import { motion, useReducedMotion } from "framer-motion";
 import { cn } from "@/lib/utils";
-import { computeIterationPassed } from "./pass-criteria";
+import {
+  computeIterationPassed,
+  computeIterationResult,
+} from "./pass-criteria";
 import { formatDuration } from "./helpers";
 import { EVAL_OUTCOME_STATUS_TEXT_CLASS } from "./constants";
 import type { EvalIteration, EvalSuiteRun } from "./types";
@@ -39,14 +42,17 @@ export function computeRunDashboardKpis({
           passRate: 0,
         })
       : (() => {
+          // Count terminal results only — pending/running iterations should not
+          // be marked as failed and should not lower the in-progress accuracy.
           const passed = caseGroupsForSelectedRun.filter((i) =>
             computeIterationPassed(i),
           ).length;
           const failed = caseGroupsForSelectedRun.filter(
-            (i) => !computeIterationPassed(i),
+            (i) => computeIterationResult(i) === "failed",
           ).length;
           const total = caseGroupsForSelectedRun.length;
-          const passRate = total > 0 ? passed / total : 0;
+          const completed = passed + failed;
+          const passRate = completed > 0 ? passed / completed : 0;
           return { passed, failed, total, passRate };
         })();
 

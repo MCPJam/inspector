@@ -30,6 +30,13 @@ function compactModelLabel(name: string): string {
   return name.replace(/\s*\(Free\)\s*$/i, "").trim() || name;
 }
 
+function isSameSelectedModel(
+  row: Pick<SuiteOverviewModelRow, "provider" | "model">,
+  selected: Pick<ModelDefinition, "provider" | "id">,
+): boolean {
+  return row.provider === selected.provider && row.model === selected.id;
+}
+
 function deriveModelsFromCases(
   testCases: EvalCase[],
   availableModels: ModelDefinition[],
@@ -112,10 +119,16 @@ export function SuiteOverviewModelBar({
   const persist = useCallback(
     async (next: SuiteOverviewModelRow[]) => {
       if (!onUpdate) return;
+      const previous = models;
       setModels(next);
-      await onUpdate(next);
+      try {
+        await onUpdate(next);
+      } catch (error) {
+        setModels(previous);
+        console.error("Failed to update suite overview models", error);
+      }
     },
-    [onUpdate],
+    [models, onUpdate],
   );
 
   const handleAddModel = async (selected: ModelDefinition) => {
@@ -124,7 +137,7 @@ export function SuiteOverviewModelBar({
       setAddMenuOpen(false);
       return;
     }
-    if (models.some((m) => m.model === selected.id)) {
+    if (models.some((m) => isSameSelectedModel(m, selected))) {
       setAddMenuOpen(false);
       return;
     }
@@ -137,14 +150,18 @@ export function SuiteOverviewModelBar({
     setAddMenuOpen(false);
   };
 
-  const handleRemove = async (modelId: string) => {
+  const handleRemove = async (row: SuiteOverviewModelRow) => {
     if (readOnly || !onUpdate || models.length <= 1) return;
-    await persist(models.filter((m) => m.model !== modelId));
+    await persist(
+      models.filter(
+        (m) => m.provider !== row.provider || m.model !== row.model,
+      ),
+    );
   };
 
   const handleReplaceAt = async (index: number, selected: ModelDefinition) => {
     if (readOnly || !onUpdate) return;
-    if (models.some((m) => m.model === selected.id)) return;
+    if (models.some((m) => isSameSelectedModel(m, selected))) return;
     const next = models.map((m, i) =>
       i === index
         ? {
@@ -214,13 +231,13 @@ export function SuiteOverviewModelBar({
               >
                 {mcpjamModels.map((model) => (
                   <DropdownMenuItem
-                    key={model.id}
+                    key={`${model.provider}:${model.id}`}
                     className="flex cursor-pointer items-center gap-3 text-sm"
-                    disabled={models.some((m) => m.model === model.id)}
+                    disabled={models.some((m) => isSameSelectedModel(m, model))}
                     onSelect={() => void handleAddModel(model)}
                   >
                     <span className="font-medium">{model.name}</span>
-                    {models.some((m) => m.model === model.id) ? (
+                    {models.some((m) => isSameSelectedModel(m, model)) ? (
                       <Badge variant="secondary" className="text-xs">
                         Added
                       </Badge>
@@ -264,13 +281,13 @@ export function SuiteOverviewModelBar({
               >
                 {userModels.map((model) => (
                   <DropdownMenuItem
-                    key={model.id}
+                    key={`${model.provider}:${model.id}`}
                     className="flex cursor-pointer items-center gap-3 text-sm"
-                    disabled={models.some((m) => m.model === model.id)}
+                    disabled={models.some((m) => isSameSelectedModel(m, model))}
                     onSelect={() => void handleAddModel(model)}
                   >
                     <span className="font-medium">{model.name}</span>
-                    {models.some((m) => m.model === model.id) ? (
+                    {models.some((m) => isSameSelectedModel(m, model)) ? (
                       <Badge variant="secondary" className="text-xs">
                         Added
                       </Badge>
@@ -293,7 +310,7 @@ export function SuiteOverviewModelBar({
   const canAdd =
     editable &&
     models.length < MAX_SUITE_OVERVIEW_MODELS &&
-    availableModels.some((m) => !models.some((x) => x.model === m.id));
+    availableModels.some((m) => !models.some((x) => isSameSelectedModel(x, m)));
 
   return (
     <div
@@ -378,8 +395,10 @@ export function SuiteOverviewModelBar({
                           ) : (
                             availableModels.map((opt) => (
                               <DropdownMenuItem
-                                key={opt.id}
-                                disabled={models.some((m) => m.model === opt.id)}
+                                key={`${opt.provider}:${opt.id}`}
+                                disabled={models.some((m) =>
+                                  isSameSelectedModel(m, opt),
+                                )}
                                 onSelect={() =>
                                   void handleReplaceAt(index, opt)
                                 }
@@ -402,7 +421,7 @@ export function SuiteOverviewModelBar({
                           <DropdownMenuItem
                             className="text-destructive focus:text-destructive"
                             disabled={models.length <= 1}
-                            onSelect={() => void handleRemove(row.model)}
+                            onSelect={() => void handleRemove(row)}
                           >
                             Remove
                           </DropdownMenuItem>
@@ -413,7 +432,7 @@ export function SuiteOverviewModelBar({
                         className="shrink-0 rounded-full p-0.5 text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
                         aria-label={`Remove ${label}`}
                         disabled={models.length <= 1}
-                        onClick={() => void handleRemove(row.model)}
+                        onClick={() => void handleRemove(row)}
                       >
                         <X className="h-3.5 w-3.5" />
                       </button>
