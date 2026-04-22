@@ -1,10 +1,11 @@
 /**
  * Raw trace panel — single JsonEditor with bordered chrome around the tree.
  * When `requestPayloadHistory` is provided (live chat), Raw shows the resolved model request payload
- * (`system`, `tools`, `messages`). `messages` are merged with `trace.messages` from the live envelope
- * when the snapshot (post-turn) is ahead of the last captured request, so the panel matches Chat/Trace
- * as soon as the assistant finishes — not only after the next user message. Otherwise shows the stored
- * trace blob (evals / offline).
+ * (`system`, `tools`, `messages`) from the last `request_payload` event. `messages` are merged with
+ * `trace.messages` from the live envelope when the snapshot is ahead of the last captured request.
+ * If the chat shell passes this prop but `entries` is empty (e.g. a rehydrated stored session, which
+ * never replays `request_payload`), we fall back to the `trace` blob so Raw matches Trace/Chat instead
+ * of showing an endless spinner. Otherwise shows the stored trace blob (evals / offline).
  */
 
 import { Copy, Loader2, ScanSearch } from "lucide-react";
@@ -109,7 +110,56 @@ export function TraceRawView({
   const latestEntry = orderedEntries.at(-1) ?? null;
 
   if (requestPayloadHistory) {
-    if (!hasUiMessages || orderedEntries.length === 0 || !latestEntry) {
+    const hasLiveRequestLine =
+      hasUiMessages && orderedEntries.length > 0 && latestEntry != null;
+
+    if (hasLiveRequestLine && latestEntry) {
+      const displayPayload = mergeLiveRequestPayloadWithTraceSnapshot(
+        latestEntry.payload,
+        trace,
+      );
+
+      if (growWithContent) {
+        return (
+          <div
+            className="flex min-h-0 w-full min-w-0 flex-1 flex-col"
+            data-testid="trace-raw-view"
+          >
+            <div className="min-h-0 flex-1">
+              <JsonEditor
+                height={jsonHeight}
+                value={displayPayload}
+                viewOnly
+                collapsible
+                collapseStringsAfterLength={100}
+              />
+            </div>
+          </div>
+        );
+      }
+
+      return (
+        <div
+          className="flex min-h-0 flex-1 flex-col overflow-hidden w-full"
+          data-testid="trace-raw-view"
+        >
+          <div className="flex-1 min-h-0 overflow-auto">
+            <div className="min-h-0 rounded-lg border border-border bg-muted/20">
+              <JsonEditor
+                height={jsonHeight}
+                value={displayPayload}
+                viewOnly
+                collapsible
+                collapseStringsAfterLength={100}
+                className="min-h-0"
+              />
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    if (!hasUiMessages) {
       return (
         <div
           className="flex min-h-0 flex-1 flex-col overflow-hidden w-full"
@@ -120,49 +170,7 @@ export function TraceRawView({
       );
     }
 
-    const displayPayload = mergeLiveRequestPayloadWithTraceSnapshot(
-      latestEntry.payload,
-      trace,
-    );
-
-    if (growWithContent) {
-      return (
-        <div
-          className="flex min-h-0 w-full min-w-0 flex-1 flex-col"
-          data-testid="trace-raw-view"
-        >
-          <div className="min-h-0 flex-1">
-            <JsonEditor
-              height={jsonHeight}
-              value={displayPayload}
-              viewOnly
-              collapsible
-              collapseStringsAfterLength={100}
-            />
-          </div>
-        </div>
-      );
-    }
-
-    return (
-      <div
-        className="flex min-h-0 flex-1 flex-col overflow-hidden w-full"
-        data-testid="trace-raw-view"
-      >
-        <div className="flex-1 min-h-0 overflow-auto">
-          <div className="min-h-0 rounded-lg border border-border bg-muted/20">
-            <JsonEditor
-              height={jsonHeight}
-              value={displayPayload}
-              viewOnly
-              collapsible
-              collapseStringsAfterLength={100}
-              className="min-h-0"
-            />
-          </div>
-        </div>
-      </div>
-    );
+    // Rehydrated session: no `request_payload` replay, but we have thread messages — use `trace` below.
   }
 
   if (trace == null) {

@@ -129,4 +129,23 @@ describe("TraceRawView", () => {
       "Here is the reply to the follow up.",
     );
   });
+
+  it("falls back to the trace blob when request payload history is empty (e.g. rehydrated session)", () => {
+    const trace = {
+      traceVersion: 1 as const,
+      messages: [{ role: "user" as const, content: "stored" }],
+    };
+
+    renderWithProviders(
+      <TraceRawView
+        trace={trace}
+        requestPayloadHistory={{
+          entries: [],
+          hasUiMessages: true,
+        }}
+      />,
+    );
+
+    expect(screen.getByTestId("json-editor")).toHaveTextContent("stored");
+  });
 });
