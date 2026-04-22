@@ -410,12 +410,12 @@ describe("ChatHistoryRail", () => {
 
     expect(
       screen.getByRole("button", {
-        name: /archive all threads in my threads/i,
+        name: /archive all sessions in sessions/i,
       }),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("button", {
-        name: /archive all threads in shared threads/i,
+        name: /archive all sessions in shared sessions/i,
       }),
     ).toBeInTheDocument();
   });
@@ -435,14 +435,67 @@ describe("ChatHistoryRail", () => {
     );
 
     fireEvent.click(
-      screen.getByRole("button", { name: "New chat in My Threads" }),
+      screen.getByRole("button", { name: "New chat in Sessions" }),
     );
     fireEvent.click(
-      screen.getByRole("button", { name: "New chat in Shared Threads" }),
+      screen.getByRole("button", { name: "New chat in Shared Sessions" }),
     );
 
     expect(onNewChat).toHaveBeenNthCalledWith(1);
     expect(onNewChat).toHaveBeenNthCalledWith(2, { shared: true });
+  });
+
+  it("hides the shared sessions section when shared threads are disabled", () => {
+    useChatHistoryMock.mockImplementation(() => ({
+      personal: [sessionStub("p1")],
+      workspace: [sessionStub("w1", { directVisibility: "workspace" })],
+      loading: false,
+      error: null,
+      isReactive: false,
+      refetch: refetchMock,
+      actions: {
+        rename: vi.fn(),
+        archive: vi.fn(),
+        unarchive: vi.fn(),
+        share: vi.fn(),
+        unshare: vi.fn(),
+        pin: vi.fn(),
+        unpin: vi.fn(),
+        archiveManySessionIds: archiveManySessionIdsMock,
+        archiveAllActive: vi.fn(),
+      },
+    }));
+
+    render(
+      <ChatHistoryRail
+        activeSessionId={null}
+        isAuthenticated
+        isStreaming={false}
+        sharedThreadsEnabled={false}
+        workspaceId="workspace-1"
+        onSelectThread={vi.fn()}
+        onNewChat={vi.fn()}
+      />,
+    );
+
+    expect(
+      screen.getByRole("button", { name: "New chat in Sessions" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Sessions")).toBeInTheDocument();
+    expect(screen.queryByText("Shared Sessions")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", {
+        name: /archive all sessions in shared sessions/i,
+      }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "New chat in Shared Sessions" }),
+    ).not.toBeInTheDocument();
+    expect(
+      chatHistoryRowPropsSpy.mock.calls
+        .map((call) => call[0] as { session?: ChatHistorySession })
+        .some((props) => props.session?._id === "w1"),
+    ).toBe(false);
   });
 
   it("awaits async beforeResetChatAfterArchiveAll and skips archive-all when false", async () => {
@@ -482,7 +535,7 @@ describe("ChatHistoryRail", () => {
 
     fireEvent.click(
       screen.getByRole("button", {
-        name: /archive all threads in my threads/i,
+        name: /archive all sessions in sessions/i,
       }),
     );
 
@@ -527,7 +580,7 @@ describe("ChatHistoryRail", () => {
 
     fireEvent.click(
       screen.getByRole("button", {
-        name: /archive all threads in my threads/i,
+        name: /archive all sessions in sessions/i,
       }),
     );
 

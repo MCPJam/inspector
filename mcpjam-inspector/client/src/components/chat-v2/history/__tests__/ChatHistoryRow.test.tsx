@@ -271,6 +271,54 @@ describe("ChatHistoryRow", () => {
     expect(screen.getByText("Unarchive")).toBeInTheDocument();
   });
 
+  it("shows Share to workspace when shared threads are enabled", () => {
+    render(
+      <ChatHistoryRow
+        session={sessionStub({ directVisibility: "private" })}
+        isActive={false}
+        isAuthenticated
+        isStreaming={false}
+        sharedThreadsEnabled
+        onSelect={vi.fn()}
+        actions={actions}
+      />,
+    );
+
+    expect(screen.getByText("Share to workspace")).toBeInTheDocument();
+  });
+
+  it("hides Share to workspace when shared threads are disabled", () => {
+    render(
+      <ChatHistoryRow
+        session={sessionStub({ directVisibility: "private" })}
+        isActive={false}
+        isAuthenticated
+        isStreaming={false}
+        sharedThreadsEnabled={false}
+        onSelect={vi.fn()}
+        actions={actions}
+      />,
+    );
+
+    expect(screen.queryByText("Share to workspace")).not.toBeInTheDocument();
+  });
+
+  it("hides Unshare when shared threads are disabled", () => {
+    render(
+      <ChatHistoryRow
+        session={sessionStub({ directVisibility: "workspace" })}
+        isActive={false}
+        isAuthenticated
+        isStreaming={false}
+        sharedThreadsEnabled={false}
+        onSelect={vi.fn()}
+        actions={actions}
+      />,
+    );
+
+    expect(screen.queryByText("Unshare")).not.toBeInTheDocument();
+  });
+
   it("shows a pinned indicator when isPinned", () => {
     render(
       <ChatHistoryRow
