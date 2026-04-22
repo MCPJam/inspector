@@ -28,6 +28,9 @@ vi.mock("convex/react", () => ({
     isAuthenticated: true,
     isLoading: false,
   }),
+  useConvex: () => ({}),
+  useQuery: () => undefined,
+  useMutation: () => async () => undefined,
 }));
 
 vi.mock("@/state/app-state-context", () => ({
