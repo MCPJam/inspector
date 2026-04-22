@@ -252,6 +252,7 @@ chatV2.post("/", async (c) => {
     const body = rawBody as unknown as ChatV2Request & {
       workspaceId: string;
       selectedServerIds: string[];
+      selectedServerNames?: string[];
       shareToken?: string;
       chatboxToken?: string;
       accessScope?: "workspace_member" | "chat_v2";
@@ -265,6 +266,7 @@ chatV2.post("/", async (c) => {
       temperature,
       requireToolApproval,
       selectedServerIds,
+      selectedServerNames,
       shareToken,
       chatboxToken,
       surface,
@@ -299,6 +301,7 @@ chatV2.post("/", async (c) => {
         shareToken,
         chatboxToken,
         rpcLogger: rpcCollector.rpcLogger,
+        serverNames: selectedServerNames,
       },
     );
     oauthServerUrls = urls;
@@ -386,7 +389,11 @@ chatV2.post("/", async (c) => {
                         systemPrompt,
                         temperature,
                         requireToolApproval,
-                        selectedServers: selectedServerIds,
+                        selectedServers:
+                          Array.isArray(selectedServerNames) &&
+                          selectedServerNames.length === selectedServerIds.length
+                            ? selectedServerNames
+                            : selectedServerIds,
                       },
                     }
                   : {}),

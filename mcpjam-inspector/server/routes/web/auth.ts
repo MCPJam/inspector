@@ -128,6 +128,31 @@ export function buildSingleServerOAuthTokens(serverId: string, token?: string) {
   return token ? { [serverId]: token } : undefined;
 }
 
+function buildServerNamesById(
+  serverIds: string[],
+  serverNames?: readonly string[],
+): Record<string, string> | undefined {
+  if (!Array.isArray(serverNames) || serverNames.length === 0) {
+    return undefined;
+  }
+
+  const entries = serverIds.flatMap((serverId, index) => {
+    const serverName = serverNames[index];
+    if (typeof serverName !== "string") {
+      return [];
+    }
+
+    const trimmedServerName = serverName.trim();
+    if (!trimmedServerName) {
+      return [];
+    }
+
+    return [[serverId, trimmedServerName] as const];
+  });
+
+  return entries.length > 0 ? Object.fromEntries(entries) : undefined;
+}
+
 // ── Authorization ────────────────────────────────────────────────────
 
 export type ConvexAuthorizeResponse = {
@@ -396,8 +421,10 @@ export async function createAuthorizedManager(
     shareToken?: string;
     chatboxToken?: string;
     rpcLogger?: RpcLogger;
+    serverNames?: string[];
   }
 ): Promise<AuthorizedManagerResult> {
+  const serverNamesById = buildServerNamesById(serverIds, options?.serverNames);
   const uniqueServerIds = Array.from(new Set(serverIds));
   if (uniqueServerIds.length === 0) {
     return {
@@ -444,6 +471,7 @@ export async function createAuthorizedManager(
     }
 
     const oauthToken = auth.oauthAccessToken ?? oauthTokens?.[serverId];
+    const displayServerName = serverNamesById?.[serverId] ?? serverId;
 
     if (auth.serverConfig.useOAuth) {
       if (auth.serverConfig.url) {
@@ -453,10 +481,11 @@ export async function createAuthorizedManager(
         throw new WebRouteError(
           401,
           ErrorCode.UNAUTHORIZED,
-          `Server "${serverId}" requires OAuth authentication. Please complete the OAuth flow first.`,
+          `Server "${displayServerName}" requires OAuth authentication. Please complete the OAuth flow first.`,
           {
             oauthRequired: true,
             serverId,
+            serverName: serverNamesById?.[serverId] ?? null,
             serverUrl: auth.serverConfig.url,
           }
         );
@@ -517,17 +546,21 @@ export async function handleRoute<T>(
  * Resolve server IDs and OAuth tokens from parsed request body.
  *
  * Supports two shapes:
- *   - Single-server: { serverId, oauthAccessToken? }
- *   - Multi-server:  { serverIds, oauthTokens? }
+ *   - Single-server: { serverId, serverName?, oauthAccessToken? }
+ *   - Multi-server:  { serverIds, serverNames?, oauthTokens? }
  */
 function resolveConnectionParams(body: Record<string, unknown>): {
   serverIds: string[];
   oauthTokens: Record<string, string> | undefined;
+  serverNames: string[] | undefined;
 } {
   if (Array.isArray(body.serverIds)) {
     return {
       serverIds: body.serverIds as string[],
       oauthTokens: body.oauthTokens as Record<string, string> | undefined,
+      serverNames: Array.isArray(body.serverNames)
+        ? (body.serverNames as string[])
+        : undefined,
     };
   }
   return {
@@ -536,6 +569,10 @@ function resolveConnectionParams(body: Record<string, unknown>): {
       body.serverId as string,
       body.oauthAccessToken as string | undefined
     ),
+    serverNames:
+      typeof body.serverName === "string" && body.serverName.trim()
+        ? [body.serverName]
+        : undefined,
   };
 }
 
@@ -676,7 +713,8 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
       // Cast for internal plumbing — all web schemas include workspaceId + serverId(s).
       // The strongly-typed `body` is passed through to `fn` unchanged.
       const raw = body as Record<string, unknown>;
-      const { serverIds, oauthTokens } = resolveConnectionParams(raw);
+      const { serverIds, oauthTokens, serverNames } =
+        resolveConnectionParams(raw);
       const timeoutMs = options?.timeoutMs ?? WEB_CALL_TIMEOUT_MS;
       const accessScope =
         raw.accessScope === "workspace_member" || raw.accessScope === "chat_v2"
@@ -705,6 +743,7 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
             shareToken,
             chatboxToken,
             rpcLogger: rpcCollector?.rpcLogger,
+            serverNames,
           }
         ),
         (manager) => fn(manager, body as z.infer<S>)

@@ -225,6 +225,65 @@ function findHostedServerName(serverId: string): string | undefined {
   )?.[0];
 }
 
+/**
+ * Resolves a hosted server display name or Convex server document ID to a
+ * user-facing label when the server still exists in the current
+ * `serverIdsByName` mapping. Returns undefined when the ref cannot be resolved
+ * (for example, the server was removed from the workspace).
+ */
+export function tryGetHostedServerDisplayName(
+  serverNameOrId: string,
+): string | undefined {
+  if (!HOSTED_MODE) {
+    return undefined;
+  }
+
+  const trimmed = serverNameOrId.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+
+  if (hostedApiContext.serverIdsByName[trimmed] !== undefined) {
+    return trimmed;
+  }
+
+  return findHostedServerName(trimmed);
+}
+
+export function normalizeHostedServerNames(
+  serverNamesOrIds: string[],
+): string[] {
+  assertHostedMode();
+
+  const seen = new Set<string>();
+  const normalized: string[] = [];
+
+  for (const serverNameOrId of serverNamesOrIds) {
+    if (typeof serverNameOrId !== "string") {
+      continue;
+    }
+
+    const trimmed = serverNameOrId.trim();
+    if (!trimmed) {
+      continue;
+    }
+
+    const serverName =
+      hostedApiContext.serverIdsByName[trimmed] !== undefined
+        ? trimmed
+        : (findHostedServerName(trimmed) ?? trimmed);
+    const dedupeKey = serverName.toLowerCase();
+    if (seen.has(dedupeKey)) {
+      continue;
+    }
+
+    seen.add(dedupeKey);
+    normalized.push(serverName);
+  }
+
+  return normalized;
+}
+
 function resolveHostedServerEntries(
   serverNamesOrIds: string[],
 ): Array<{ serverId: string; serverName: string }> {

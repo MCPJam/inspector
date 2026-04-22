@@ -465,7 +465,10 @@ export function TestTemplateEditor({
     );
   }, [suite, connectedServerNames]);
 
-  const canRun = missingServers.length === 0;
+  const hasConfiguredSuiteServers = Boolean(
+    suite?.environment?.servers?.length,
+  );
+  const canRun = hasConfiguredSuiteServers;
 
   useEffect(() => {
     let cancelled = false;
@@ -599,9 +602,10 @@ export function TestTemplateEditor({
       return "Select at least one model to run.";
     }
     if (!canRun) {
-      return missingServers.length
-        ? `Connect to: ${missingServers.join(", ")}`
-        : "Connect to suite servers to run.";
+      return "Configure suite servers before running.";
+    }
+    if (missingServers.length > 0) {
+      return "Connect and run.";
     }
     if (isRunningCompare) {
       return null;
@@ -1706,9 +1710,9 @@ export function TestTemplateEditor({
   }
 
   return (
-    <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-background">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
       {editorMode === "config" ? (
-        <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="min-h-0 min-w-0 flex-1 basis-0 overflow-y-auto overscroll-y-contain">
           <div className="mx-auto flex w-full max-w-4xl flex-col gap-5 px-4 pt-6 pb-3 sm:px-6">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
               <div className="flex min-w-0 flex-1 flex-col gap-2">

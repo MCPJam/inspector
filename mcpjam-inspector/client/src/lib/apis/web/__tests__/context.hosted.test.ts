@@ -8,7 +8,9 @@ vi.mock("@/lib/config", () => ({
 import {
   setHostedApiContext,
   injectHostedServerMapping,
+  normalizeHostedServerNames,
   resolveHostedServerId,
+  tryGetHostedServerDisplayName,
 } from "../context";
 
 describe("injectHostedServerMapping", () => {
@@ -79,5 +81,38 @@ describe("injectHostedServerMapping", () => {
     expect(() => resolveHostedServerId("new-server")).toThrow(
       'Hosted server not found for "new-server"',
     );
+  });
+
+  it("normalizes hosted server ids back to stable server names", () => {
+    setHostedApiContext({
+      workspaceId: "workspace-1",
+      isAuthenticated: true,
+      serverIdsByName: {
+        "existing-server": "id-existing",
+        "new-server": "id-new",
+      },
+    });
+
+    expect(
+      normalizeHostedServerNames([
+        "existing-server",
+        "id-existing",
+        "id-new",
+        "unknown-id",
+      ]),
+    ).toEqual(["existing-server", "new-server", "unknown-id"]);
+  });
+
+  it("resolves a display name for both server name and server id", () => {
+    setHostedApiContext({
+      workspaceId: "workspace-1",
+      isAuthenticated: true,
+      serverIdsByName: {
+        "my-server": "doc-id-1",
+      },
+    });
+    expect(tryGetHostedServerDisplayName("my-server")).toBe("my-server");
+    expect(tryGetHostedServerDisplayName("doc-id-1")).toBe("my-server");
+    expect(tryGetHostedServerDisplayName("orphan-id")).toBeUndefined();
   });
 });

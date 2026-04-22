@@ -262,6 +262,7 @@ describe("web routes — chat-v2 hosted mode", () => {
       {
         workspaceId: "workspace-1",
         selectedServerIds: ["server-1"],
+        selectedServerNames: ["Asana"],
         chatSessionId: "chat-session-direct",
         directVisibility: "workspace",
         messages: [{ role: "user", content: "hello" }],
@@ -282,6 +283,81 @@ describe("web routes — chat-v2 hosted mode", () => {
         workspaceId: "workspace-1",
         sourceType: "direct",
         directVisibility: "workspace",
+        resumeConfig: expect.objectContaining({
+          selectedServers: ["Asana"],
+        }),
+      })
+    );
+  });
+
+  it("returns server names in hosted oauth-required chat errors", async () => {
+    const { app, token } = createWebTestApp();
+
+    global.fetch = vi.fn(async (input, init) => {
+      if (String(input).endsWith("/web/authorize-batch")) {
+        const payload = JSON.parse(String(init?.body ?? "{}"));
+        const serverIds = Array.isArray(payload?.serverIds)
+          ? payload.serverIds
+          : [];
+        return new Response(
+          JSON.stringify({
+            results: Object.fromEntries(
+              serverIds.map((serverId: string) => [
+                serverId,
+                {
+                  ok: true,
+                  role: "member",
+                  accessLevel: "shared_chat",
+                  permissions: { chatOnly: false },
+                  serverConfig: {
+                    transportType: "http",
+                    url: `https://${serverId}.example.com/mcp`,
+                    headers: {},
+                    useOAuth: true,
+                  },
+                },
+              ])
+            ),
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }
+        );
+      }
+
+      throw new Error(`Unexpected fetch: ${String(input)}`);
+    }) as typeof fetch;
+
+    const response = await postJson(
+      app,
+      "/api/web/chat-v2",
+      {
+        workspaceId: "workspace-1",
+        selectedServerIds: ["server-1"],
+        selectedServerNames: ["Asana"],
+        messages: [{ role: "user", content: "hello" }],
+        model: {
+          id: "openai/gpt-5-mini",
+          provider: "openai",
+          name: "GPT-5 Mini",
+        },
+      },
+      token
+    );
+
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual(
+      expect.objectContaining({
+        code: "UNAUTHORIZED",
+        message:
+          'Server "Asana" requires OAuth authentication. Please complete the OAuth flow first.',
+        details: expect.objectContaining({
+          oauthRequired: true,
+          serverId: "server-1",
+          serverName: "Asana",
+          serverUrl: "https://server-1.example.com/mcp",
+        }),
       })
     );
   });

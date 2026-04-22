@@ -56,11 +56,9 @@ export function getPlaygroundCasesRedirect(params: {
   }
 
   if (route.type === "suite-overview") {
-    if (route.view === "test-cases" || route.view === "executions") {
-      return null;
-    }
-
-    return fallbackRoute;
+    // All suite-overview views render the same unified dashboard; no need
+    // to rewrite between ?view=test-cases / ?view=executions / ?view=runs.
+    return null;
   }
 
   if (route.type === "test-detail" || route.type === "test-edit") {

@@ -400,6 +400,7 @@ export function TestCasesOverview({
             )
           ) : (
             testCaseStats.map(({ testCase, lastRunIteration }) => {
+              const hasConfiguredSuiteServers = suiteServers.length > 0;
               const missingServers =
                 connectedServerNames == null
                   ? []
@@ -415,11 +416,11 @@ export function TestCasesOverview({
                 blockTestCaseRuns ||
                 isAnotherCaseRunning ||
                 !hasModels ||
-                missingServers.length > 0 ||
+                !hasConfiguredSuiteServers ||
                 isThisCaseRunning;
               const disconnectedRunTooltip =
                 missingServers.length > 0
-                  ? `Connect: ${missingServers.join(", ")}`
+                  ? "Connect and run."
                   : null;
 
               const lastRunResult = lastRunIteration
@@ -578,7 +579,19 @@ export function TestCasesOverview({
 
               const runControl =
                 showRunColumn && onRunTestCase ? (
-                  disconnectedRunTooltip ? (
+                  !hasConfiguredSuiteServers ? (
+                    <Tooltip>
+                      <TooltipTrigger asChild>{runButton}</TooltipTrigger>
+                      <TooltipContent
+                        variant="muted"
+                        side="left"
+                        sideOffset={8}
+                        className="max-w-[16rem]"
+                      >
+                        Configure suite servers before running this case.
+                      </TooltipContent>
+                    </Tooltip>
+                  ) : disconnectedRunTooltip ? (
                     <Tooltip>
                       <TooltipTrigger asChild>{runButton}</TooltipTrigger>
                       <TooltipContent

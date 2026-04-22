@@ -60,6 +60,12 @@ interface SuiteHeaderProps {
   hideRunActions?: boolean;
   onSetupCi?: () => void;
   onOpenExportSuite?: () => void;
+  /**
+   * Playground: suite overview uses {@link SuiteDashboard} for both runs and cases, but the
+   * URL can still be `?view=runs`. When true, show manual case actions whenever we are in
+   * suite overview, not only when the legacy tab is `?view=test-cases`.
+   */
+  unifiedSuiteDashboard?: boolean;
   /** When the parent hides the cases sidebar (e.g. Explore run insights landing). */
   casesSidebarHidden?: boolean;
   onShowCasesSidebar?: () => void;
@@ -90,6 +96,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     hideRunActions = false,
     onSetupCi,
     onOpenExportSuite,
+    unifiedSuiteDashboard = false,
     casesSidebarHidden = false,
     onShowCasesSidebar,
     onGenerateTestCases,
@@ -99,6 +106,10 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     onCreateTestCase,
     runsViewMode = "runs",
   } = props;
+
+  const showTestCaseCtas =
+    runsViewMode === "test-cases" ||
+    (unifiedSuiteDashboard && viewMode === "overview");
 
   const [isEditingName, setIsEditingName] = useState(false);
   const [editedName, setEditedName] = useState(suite.name);
@@ -163,7 +174,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     latestRun: latestRunForMetadata,
   });
   const { hasServersConfigured, missingServers } = replayEligibility;
-  const canRerun = replayEligibility.canRunNow;
+  const canTriggerLiveRun = hasServersConfigured;
   const isRerunning = rerunningSuiteId === suite._id;
   const replayableLatestRun = replayEligibility.replayableLatestRun;
   const isReplayingLatestRun =
@@ -176,7 +187,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     const providers = new Set<string>();
     for (const tc of testCases) {
       for (const m of tc.models ?? []) {
-        if (!isMCPJamProvidedModel(m.model)) {
+        if (!isMCPJamProvidedModel(m.model, m.provider)) {
           providers.add(m.provider);
         }
       }
@@ -262,7 +273,6 @@ export function SuiteHeader(props: SuiteHeaderProps) {
             rerunningSuiteId={rerunningSuiteId}
             replayingRunId={replayingRunId}
             cancellingRunId={cancellingRunId}
-            canRerun={canRerun}
             hasServersConfigured={hasServersConfigured}
             missingServers={missingServers}
             showCloseButton
@@ -327,7 +337,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
             Setup CI
           </Button>
         )}
-        {runsViewMode === "test-cases" && onGenerateTestCases ? (
+        {showTestCaseCtas && onGenerateTestCases ? (
           <Tooltip>
             <TooltipTrigger asChild>
               <span className="inline-flex">
@@ -365,7 +375,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
             </TooltipContent>
           </Tooltip>
         ) : null}
-        {runsViewMode === "test-cases" && onCreateTestCase ? (
+        {showTestCaseCtas && onCreateTestCase ? (
           <Button
             type="button"
             size="sm"
@@ -401,7 +411,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
                       ? isReplayingLatestRun ||
                         !onReplayRun ||
                         missingReplayProviderKeys.length > 0
-                      : !canRerun || isRerunning
+                      : !canTriggerLiveRun || isRerunning
                   }
                   className="gap-2"
                 >
@@ -424,9 +434,9 @@ export function SuiteHeader(props: SuiteHeaderProps) {
                   ? `Add your ${missingReplayProviderKeys.join(", ")} API key${missingReplayProviderKeys.length > 1 ? "s" : ""} in Settings to replay`
                   : "Replay the latest CI run"
                 : !hasServersConfigured
-                  ? "No connected MCP servers are configured for this suite"
-                  : !canRerun
-                    ? `Connect the following servers: ${missingServers.join(", ")}`
+                  ? "No MCP servers are configured for this suite"
+                  : missingServers.length > 0
+                    ? "Connect and run."
                     : "Run all cases"}
             </TooltipContent>
           </Tooltip>

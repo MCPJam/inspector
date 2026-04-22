@@ -14,7 +14,10 @@ import {
 } from "@/lib/active-organization-storage";
 
 export type { ServerWithName } from "@/state/app-types";
-export type { ServerUpdateResult } from "./use-server-state";
+export type {
+  EnsureServersReadyResult,
+  ServerUpdateResult,
+} from "./use-server-state";
 
 interface ActiveOrganizationSelection {
   organizationId?: string;
@@ -440,6 +443,7 @@ export function useAppState({
     handleConnect: serverState.handleConnect,
     handleDisconnect: serverState.handleDisconnect,
     handleReconnect: serverState.handleReconnect,
+    ensureServersReady: serverState.ensureServersReady,
     handleUpdate: serverState.handleUpdate,
     handleRemoveServer: serverState.handleRemoveServer,
     setSelectedServer: serverState.setSelectedServer,

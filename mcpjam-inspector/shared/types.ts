@@ -176,12 +176,60 @@ const MCPJAM_GUEST_ALLOWED_MODEL_IDS: string[] =
     (modelId) => !gatedGuestModelIds.has(modelId),
   );
 
-export const isMCPJamProvidedModel = (modelId: string): boolean => {
-  return MCPJAM_PROVIDED_MODEL_IDS.includes(modelId);
+export const getCanonicalModelId = (
+  modelId: string,
+  provider?: string,
+): string => {
+  const normalizedModelId = modelId.trim();
+  if (!normalizedModelId) {
+    return normalizedModelId;
+  }
+
+  const exactMatch = SUPPORTED_MODELS.find(
+    (model) => String(model.id) === normalizedModelId,
+  );
+  if (exactMatch) {
+    return String(exactMatch.id);
+  }
+
+  const normalizedProvider = provider?.trim().toLowerCase();
+  if (!normalizedProvider) {
+    return normalizedModelId;
+  }
+
+  const providerScopedMatch = SUPPORTED_MODELS.find((model) => {
+    if (model.provider.toLowerCase() !== normalizedProvider) {
+      return false;
+    }
+
+    const supportedModelId = String(model.id);
+    return supportedModelId === normalizedModelId ||
+      supportedModelId.endsWith(`/${normalizedModelId}`);
+  });
+
+  if (providerScopedMatch) {
+    return String(providerScopedMatch.id);
+  }
+
+  return normalizedModelId;
 };
 
-export const isMCPJamGuestAllowedModel = (modelId: string): boolean => {
-  return MCPJAM_GUEST_ALLOWED_MODEL_IDS.includes(modelId);
+export const isMCPJamProvidedModel = (
+  modelId: string,
+  provider?: string,
+): boolean => {
+  return MCPJAM_PROVIDED_MODEL_IDS.includes(
+    getCanonicalModelId(modelId, provider),
+  );
+};
+
+export const isMCPJamGuestAllowedModel = (
+  modelId: string,
+  provider?: string,
+): boolean => {
+  return MCPJAM_GUEST_ALLOWED_MODEL_IDS.includes(
+    getCanonicalModelId(modelId, provider),
+  );
 };
 
 export const isGPT5Model = (modelId: string | Model): boolean => {

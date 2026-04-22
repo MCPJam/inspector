@@ -178,26 +178,39 @@ async function expectJson<T = unknown>(
 function stubAuthorizeResponse(options?: { useOAuth?: boolean }) {
   vi.stubGlobal(
     "fetch",
-    vi.fn().mockResolvedValue(
-      new Response(
+    vi.fn().mockImplementation(async (_input, init) => {
+      const rawBody =
+        typeof init?.body === "string" ? JSON.parse(init.body) : {};
+      const serverIds = Array.isArray(rawBody.serverIds)
+        ? rawBody.serverIds
+        : [];
+
+      return new Response(
         JSON.stringify({
-          authorized: true,
-          role: "member",
-          accessLevel: "workspace_member",
-          permissions: { chatOnly: false },
-          serverConfig: {
-            transportType: "http",
-            url: "https://server.example.com/mcp",
-            headers: {},
-            useOAuth: options?.useOAuth ?? false,
-          },
+          results: Object.fromEntries(
+            serverIds.map((serverId: string) => [
+              serverId,
+              {
+                ok: true,
+                role: "member",
+                accessLevel: "workspace_member",
+                permissions: { chatOnly: false },
+                serverConfig: {
+                  transportType: "http",
+                  url: "https://server.example.com/mcp",
+                  headers: {},
+                  useOAuth: options?.useOAuth ?? false,
+                },
+              },
+            ]),
+          ),
         }),
         {
           status: 200,
           headers: { "Content-Type": "application/json" },
         },
-      ),
-    ),
+      );
+    }),
   );
 }
 
@@ -289,6 +302,47 @@ describe("web routes — evals", () => {
       expect(disconnectAllServersMock).toHaveBeenCalledTimes(1);
     },
   );
+
+  it("passes hosted server names through to eval suite runs", async () => {
+    runEvalsWithManagerMock.mockResolvedValueOnce({
+      success: true,
+      suiteId: "suite-1",
+      runId: "run-1",
+    });
+
+    const { app, token } = createEvalsTestApp();
+    const response = await postJson(
+      app,
+      "/api/web/evals/run",
+      {
+        workspaceId: "workspace-1",
+        serverIds: ["srv-1"],
+        serverNames: ["server-1"],
+        suiteName: "Hosted Suite",
+        tests: [
+          {
+            title: "Test",
+            query: "Hello",
+            runs: 1,
+            model: "openai/gpt-5-mini",
+            provider: "openai",
+            expectedToolCalls: [],
+          },
+        ],
+      },
+      token,
+    );
+
+    expect(response.status).toBe(200);
+    expect(runEvalsWithManagerMock.mock.calls[0]?.[1]).toEqual(
+      expect.objectContaining({
+        workspaceId: "workspace-1",
+        serverIds: ["srv-1"],
+        serverNames: ["server-1"],
+        convexAuthToken: token,
+      }),
+    );
+  });
 
   it("streams hosted compare quick runs from /api/web/evals/stream-test-case", async () => {
     const encoder = new TextEncoder();

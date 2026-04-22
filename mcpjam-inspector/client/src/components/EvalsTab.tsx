@@ -30,6 +30,7 @@ import { SuiteExecutionsOverview } from "./evals/suite-executions-overview";
 import { usePlaygroundWorkspaceExecutions } from "./evals/use-playground-workspace-executions";
 import type { EvalIteration } from "./evals/types";
 import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
+import type { EnsureServersReadyResult } from "@/hooks/use-app-state";
 
 const FIRST_SUITE_EMPTY_DESCRIPTION =
   "A suite groups eval cases with the MCP servers they use. Create one, then generate cases or import a chat transcript.";
@@ -37,9 +38,16 @@ const FIRST_SUITE_EMPTY_DESCRIPTION =
 interface EvalsTabProps {
   workspaceId?: string | null;
   onContinueInChat?: (handoff: Omit<EvalChatHandoff, "id">) => void;
+  ensureServersReady?: (
+    serverNames: string[],
+  ) => Promise<EnsureServersReadyResult>;
 }
 
-export function EvalsTab({ workspaceId, onContinueInChat }: EvalsTabProps) {
+export function EvalsTab({
+  workspaceId,
+  onContinueInChat,
+  ensureServersReady,
+}: EvalsTabProps) {
   const { isAuthenticated, isLoading } = useConvexAuth();
   const { user } = useAuth();
   const route = useEvalsRoute();
@@ -150,7 +158,9 @@ export function EvalsTab({ workspaceId, onContinueInChat }: EvalsTabProps) {
     selectedTestId,
     workspaceId: workspaceId ?? null,
     connectedServerNames,
+    ensureServersReady,
     latestRunBySuiteId,
+    workspaceServers,
   });
 
   const queries = useEvalQueries({
@@ -426,7 +436,7 @@ export function EvalsTab({ workspaceId, onContinueInChat }: EvalsTabProps) {
   const renderSuitesBrowsePanel = () => {
     if (overviewQueries.isOverviewLoading) {
       return (
-        <div className="flex h-full items-center justify-center">
+        <div className="flex min-h-0 flex-1 items-center justify-center">
           <div className="text-center">
             <Loader2 className="mx-auto h-8 w-8 animate-spin text-primary" />
             <p className="mt-4 text-sm text-muted-foreground">
@@ -439,7 +449,7 @@ export function EvalsTab({ workspaceId, onContinueInChat }: EvalsTabProps) {
 
     if (visibleSuites.length === 0) {
       return (
-        <div className="flex h-full items-center justify-center px-6">
+        <div className="flex min-h-0 flex-1 items-center justify-center px-6">
           <div className="max-w-md text-center">
             <EmptyState
               icon={FlaskConical}
@@ -457,7 +467,7 @@ export function EvalsTab({ workspaceId, onContinueInChat }: EvalsTabProps) {
     }
 
     return (
-      <div className="flex h-full min-h-0 flex-col overflow-hidden px-6 pb-6 pt-4">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden px-6 pb-6 pt-4">
         <EvalsSuiteListSidebar
           suites={visibleSuites}
           selectedSuiteId={selectedSuiteId}
@@ -478,7 +488,7 @@ export function EvalsTab({ workspaceId, onContinueInChat }: EvalsTabProps) {
     }
 
     return (
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-6 pb-6 pt-6">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden px-6 pb-6 pt-6">
         <SuiteIterationsView
           suite={selectedSuite}
           cases={suiteDetails?.testCases ?? []}
@@ -555,7 +565,7 @@ export function EvalsTab({ workspaceId, onContinueInChat }: EvalsTabProps) {
   const renderExecutionsBrowsePanel = () => {
     if (overviewQueries.isOverviewLoading) {
       return (
-        <div className="flex h-full items-center justify-center">
+        <div className="flex min-h-0 flex-1 items-center justify-center">
           <div className="text-center">
             <Loader2 className="mx-auto h-8 w-8 animate-spin text-primary" />
             <p className="mt-4 text-sm text-muted-foreground">
@@ -568,7 +578,7 @@ export function EvalsTab({ workspaceId, onContinueInChat }: EvalsTabProps) {
 
     if (visibleSuites.length === 0) {
       return (
-        <div className="flex h-full items-center justify-center px-6">
+        <div className="flex min-h-0 flex-1 items-center justify-center px-6">
           <div className="max-w-md text-center">
             <EmptyState
               icon={FlaskConical}
@@ -591,7 +601,7 @@ export function EvalsTab({ workspaceId, onContinueInChat }: EvalsTabProps) {
         workspaceExecutions.status === "idle"
       ) {
         return (
-          <div className="flex h-full min-h-0 flex-col px-6 pb-6 pt-4">
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col px-6 pb-6 pt-4">
             <div className="flex flex-1 items-center justify-center">
               <div className="text-center">
                 <Loader2 className="mx-auto h-8 w-8 animate-spin text-primary" />
@@ -606,7 +616,7 @@ export function EvalsTab({ workspaceId, onContinueInChat }: EvalsTabProps) {
 
       if (workspaceExecutions.status === "error") {
         return (
-          <div className="flex h-full items-center justify-center px-6">
+          <div className="flex min-h-0 flex-1 items-center justify-center px-6">
             <p className="text-center text-sm text-muted-foreground">
               Could not load executions. Try again in a moment.
             </p>
@@ -615,7 +625,7 @@ export function EvalsTab({ workspaceId, onContinueInChat }: EvalsTabProps) {
       }
 
       return (
-        <div className="flex h-full min-h-0 flex-col overflow-hidden px-6 pb-6 pt-4">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden px-6 pb-6 pt-4">
           <SuiteExecutionsOverview
             cases={workspaceExecutions.cases}
             allIterations={workspaceExecutions.iterations}
@@ -629,7 +639,7 @@ export function EvalsTab({ workspaceId, onContinueInChat }: EvalsTabProps) {
 
     if (queries.isSuiteDetailsLoading) {
       return (
-        <div className="flex h-full items-center justify-center">
+        <div className="flex min-h-0 flex-1 items-center justify-center">
           <div className="text-center">
             <Loader2 className="mx-auto h-8 w-8 animate-spin text-primary" />
             <p className="mt-4 text-sm text-muted-foreground">
@@ -652,12 +662,12 @@ export function EvalsTab({ workspaceId, onContinueInChat }: EvalsTabProps) {
     }
 
     return (
-      <div className="flex h-full min-h-0 flex-col overflow-hidden">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         <PlaygroundSuitesExecutionsTabs
           value={workspaceBrowse}
           onChange={setWorkspaceBrowse}
         />
-        <div className="min-h-0 flex-1 overflow-hidden">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           {workspaceBrowse === "suites"
             ? renderSuitesBrowsePanel()
             : renderExecutionsBrowsePanel()}
@@ -683,7 +693,7 @@ export function EvalsTab({ workspaceId, onContinueInChat }: EvalsTabProps) {
           onSubmit={handleCreateSuite}
         />
 
-        <div className="flex h-full flex-col overflow-hidden">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           {renderPlaygroundBody()}
 
           <ConfirmationDialogs

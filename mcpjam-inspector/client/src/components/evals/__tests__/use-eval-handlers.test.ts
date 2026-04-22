@@ -278,8 +278,102 @@ describe("useEvalHandlers", () => {
       global.fetch = originalFetch;
     });
 
-    it("replays the latest run when live servers are missing and replay is available", async () => {
+    it("uses the live rerun path after auto-connect restores missing servers", async () => {
+      const ensureServersReady = vi.fn().mockResolvedValue({
+        readyServerNames: ["server-1"],
+        missingServerNames: [],
+        failedServerNames: [],
+        reauthServerNames: [],
+      });
+
+      const { result } = renderHook(() =>
+        useEvalHandlers({
+          ...defaultProps,
+          connectedServerNames: new Set(),
+          ensureServersReady,
+          latestRunBySuiteId: new Map<string, any>([
+            [
+              "suite-123",
+              {
+                _id: "run-source",
+                hasServerReplayConfig: true,
+                passCriteria: { minimumPassRate: 92 },
+              },
+            ],
+          ]),
+        }),
+      );
+
+      await act(async () => {
+        await result.current.handleRerun({
+          _id: "suite-123",
+          name: "Auto-connect Suite",
+          description: "Retries live execution after reconnect",
+          environment: { servers: ["server-1"] },
+        } as any);
+      });
+
+      expect(ensureServersReady).toHaveBeenCalledWith(["server-1"]);
+      expect(mockAuthFetch).toHaveBeenCalledWith(
+        "/api/mcp/evals/run",
+        expect.objectContaining({
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+    });
+
+    it("normalizes hosted suite server ids before auto-connect and rerun", async () => {
       mockIsHostedMode.mockReturnValue(true);
+      setHostedApiContext({
+        workspaceId: "workspace-1",
+        isAuthenticated: true,
+        serverIdsByName: { "server-1": "srv-1" },
+      });
+
+      const ensureServersReady = vi.fn().mockResolvedValue({
+        readyServerNames: ["server-1"],
+        missingServerNames: [],
+        failedServerNames: [],
+        reauthServerNames: [],
+      });
+
+      const { result } = renderHook(() =>
+        useEvalHandlers({
+          ...defaultProps,
+          connectedServerNames: new Set(),
+          ensureServersReady,
+        }),
+      );
+
+      await act(async () => {
+        await result.current.handleRerun({
+          _id: "suite-123",
+          name: "Hosted id-backed suite",
+          description: "Stored with workspace server ids",
+          environment: { servers: ["srv-1"] },
+        } as any);
+      });
+
+      expect(ensureServersReady).toHaveBeenCalledWith(["server-1"]);
+
+      const requestBody = JSON.parse(mockAuthFetch.mock.calls[0][1].body);
+      expect(requestBody).toMatchObject({
+        workspaceId: "workspace-1",
+        serverIds: ["srv-1"],
+        serverNames: ["server-1"],
+        storageServerIds: ["server-1"],
+      });
+    });
+
+    it("replays the latest run when auto-connect fails and replay is available", async () => {
+      mockIsHostedMode.mockReturnValue(true);
+      const ensureServersReady = vi.fn().mockResolvedValue({
+        readyServerNames: [],
+        missingServerNames: [],
+        failedServerNames: ["server-1"],
+        reauthServerNames: [],
+      });
 
       mockAuthFetch.mockResolvedValue(
         createFetchResponse({
@@ -293,6 +387,7 @@ describe("useEvalHandlers", () => {
         useEvalHandlers({
           ...defaultProps,
           connectedServerNames: new Set(),
+          ensureServersReady,
           latestRunBySuiteId: new Map<string, any>([
             [
               "suite-123",
@@ -318,6 +413,7 @@ describe("useEvalHandlers", () => {
         await result.current.handleRerun(mockSuite as any);
       });
 
+      expect(ensureServersReady).toHaveBeenCalledWith(["server-1"]);
       expect(mockAuthFetch).toHaveBeenCalledWith(
         "/api/web/evals/replay-run",
         expect.objectContaining({
@@ -500,7 +596,7 @@ describe("useEvalHandlers", () => {
           _id: "suite-clicked",
           name: "Clicked Suite",
           description: "Uses clicked latest run",
-          environment: { servers: ["server-1"] },
+          environment: { servers: [] },
         } as any);
       });
 
@@ -511,6 +607,95 @@ describe("useEvalHandlers", () => {
   });
 
   describe("handleRunTestCase", () => {
+    it("auto-connects suite servers before running a test case", async () => {
+      const ensureServersReady = vi.fn().mockResolvedValue({
+        readyServerNames: ["server-1"],
+        missingServerNames: [],
+        failedServerNames: [],
+        reauthServerNames: [],
+      });
+
+      const { result } = renderHook(() =>
+        useEvalHandlers({
+          ...defaultProps,
+          connectedServerNames: new Set(),
+          ensureServersReady,
+        }),
+      );
+
+      await act(async () => {
+        await result.current.handleRunTestCase(
+          {
+            _id: "suite-123",
+            name: "Test Suite",
+            description: "A test suite",
+            environment: { servers: ["server-1"] },
+          } as any,
+          {
+            _id: "case-123",
+            title: "Single-model case",
+            query: "Test query",
+            models: [{ provider: "openai", model: "gpt-4o" }],
+            expectedToolCalls: [],
+          } as any,
+        );
+      });
+
+      expect(ensureServersReady).toHaveBeenCalledWith(["server-1"]);
+      expect(mockAuthFetch).toHaveBeenCalledTimes(1);
+    });
+
+    it("normalizes hosted suite server ids before running a test case", async () => {
+      mockIsHostedMode.mockReturnValue(true);
+      setHostedApiContext({
+        workspaceId: "workspace-1",
+        isAuthenticated: true,
+        serverIdsByName: { "server-1": "srv-1" },
+      });
+
+      const ensureServersReady = vi.fn().mockResolvedValue({
+        readyServerNames: ["server-1"],
+        missingServerNames: [],
+        failedServerNames: [],
+        reauthServerNames: [],
+      });
+
+      const { result } = renderHook(() =>
+        useEvalHandlers({
+          ...defaultProps,
+          connectedServerNames: new Set(),
+          ensureServersReady,
+        }),
+      );
+
+      await act(async () => {
+        await result.current.handleRunTestCase(
+          {
+            _id: "suite-123",
+            name: "Hosted id-backed suite",
+            description: "A hosted suite with stored ids",
+            environment: { servers: ["srv-1"] },
+          } as any,
+          {
+            _id: "case-123",
+            title: "Single-model case",
+            query: "Test query",
+            models: [{ provider: "openai", model: "gpt-4o" }],
+            expectedToolCalls: [],
+          } as any,
+        );
+      });
+
+      expect(ensureServersReady).toHaveBeenCalledWith(["server-1"]);
+
+      const requestBody = JSON.parse(mockAuthFetch.mock.calls[0][1].body);
+      expect(requestBody).toMatchObject({
+        workspaceId: "workspace-1",
+        serverIds: ["srv-1"],
+        serverNames: ["server-1"],
+      });
+    });
+
     it("runs every configured model when no explicit model is selected", async () => {
       mockAuthFetch
         .mockResolvedValueOnce(

@@ -110,6 +110,7 @@ export function TestCaseListSidebar({
     [selectedTestId, testCases],
   );
   const suiteServers = suite?.environment?.servers ?? [];
+  const hasConfiguredSuiteServers = suiteServers.length > 0;
   const missingServers = suiteServers.filter(
     (serverName) => !connectedServerNames?.has(serverName),
   );
@@ -118,7 +119,7 @@ export function TestCaseListSidebar({
     Boolean(selectedTestCase?.models?.length) &&
     Boolean(suite) &&
     Boolean(onRunTestCase) &&
-    missingServers.length === 0;
+    hasConfiguredSuiteServers;
   const isRunningSelectedCase = runningTestCaseId === selectedTestCase?._id;
   const handleNavigateToOverview = () => {
     if (suiteId) {
@@ -206,8 +207,10 @@ export function TestCaseListSidebar({
                     ? "Select a case first"
                     : !selectedTestCase.models?.length
                       ? "Add a model first"
-                      : missingServers.length > 0
-                        ? `Connect the following servers: ${missingServers.join(", ")}`
+                      : !hasConfiguredSuiteServers
+                        ? "Configure suite servers first"
+                        : missingServers.length > 0
+                          ? "Connect and run."
                         : isRunningSelectedCase
                           ? "Running..."
                           : "Run selected case"}

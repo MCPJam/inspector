@@ -11,6 +11,7 @@ import { TestTemplateEditor } from "./test-template-editor";
 import { PassCriteriaSelector } from "./pass-criteria-selector";
 import { TestCasesOverview } from "./test-cases-overview";
 import { TestCaseDetailView } from "./test-case-detail-view";
+import { SuiteDashboard } from "./suite-dashboard";
 import { EvalExportModal } from "./eval-export-modal";
 import { SuiteEnvironmentEditor } from "./suite-environment-editor";
 import { useSuiteData, useRunDetailData } from "./use-suite-data";
@@ -391,7 +392,7 @@ export function SuiteIterationsView({
     const providers = new Set<string>();
     for (const tc of cases) {
       for (const m of tc.models ?? []) {
-        if (!isMCPJamProvidedModel(m.model)) {
+        if (!isMCPJamProvidedModel(m.model, m.provider)) {
           providers.add(m.provider);
         }
       }
@@ -434,7 +435,7 @@ export function SuiteIterationsView({
     !omitSuiteHeader || viewMode !== "run-detail" || isEditMode;
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       {/* Header */}
       {showSuiteHeader ? (
         <div className="shrink-0">
@@ -460,6 +461,7 @@ export function SuiteIterationsView({
             onOpenExportSuite={handleOpenSuiteExport}
             readOnlyConfig={readOnlyConfig}
             hideRunActions={hideRunActions}
+            unifiedSuiteDashboard={hideRunActions && !caseListInSidebar}
             casesSidebarHidden={casesSidebarHidden}
             onShowCasesSidebar={onShowCasesSidebar}
             onCreateTestCase={onCreateTestCase}
@@ -484,7 +486,7 @@ export function SuiteIterationsView({
                 transition={
                   shouldReduceMotion ? { duration: 0 } : { duration: 0.15 }
                 }
-                className="h-full min-h-0 min-w-0 overflow-hidden"
+                className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
               >
                 <TestTemplateEditor
                   suiteId={suite._id}
@@ -566,7 +568,54 @@ export function SuiteIterationsView({
                 );
               })()
             ) : viewMode === "overview" ? (
-              runsViewMode === "runs" ? (
+              hideRunActions && !caseListInSidebar ? (
+                <motion.div
+                  key={contentKey}
+                  initial={shouldReduceMotion ? false : { opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={shouldReduceMotion ? undefined : { opacity: 0 }}
+                  transition={
+                    shouldReduceMotion ? { duration: 0 } : { duration: 0.15 }
+                  }
+                  className="min-h-0 flex-1 overflow-y-auto p-0.5"
+                >
+                  <SuiteDashboard
+                    suite={suite}
+                    cases={cases}
+                    allIterations={allIterations}
+                    runs={runs}
+                    runsLoading={runsLoading}
+                    runTrendData={runTrendData}
+                    modelStats={modelStats}
+                    onTestCaseClick={(testCaseId) =>
+                      navigation.toTestEdit(suite._id, testCaseId)
+                    }
+                    onOpenLastRun={(testCaseId, iterationId) =>
+                      navigation.toTestEdit(suite._id, testCaseId, {
+                        openCompare: true,
+                        iteration: iterationId,
+                      })
+                    }
+                    onRunClick={handleRunClick}
+                    onRunTestCase={onRunTestCase}
+                    runningTestCaseId={runningTestCaseId}
+                    blockTestCaseRuns={Boolean(
+                      rerunningSuiteId || replayingRunId,
+                    )}
+                    connectedServerNames={connectedServerNames}
+                    onDeleteTestCasesBatch={onDeleteTestCasesBatch}
+                    testCasesClickHint="Click a case row to open the test case. Click the last-run summary to jump straight to compare results for that run."
+                    onReplayLatestRun={
+                      onReplayRun
+                        ? (run) => onReplayRun(suite, run)
+                        : undefined
+                    }
+                    isReplayingLatestRun={isReplayingLatestRun}
+                    missingReplayProviderKeys={missingReplayProviderKeys}
+                    userMap={userMap}
+                  />
+                </motion.div>
+              ) : runsViewMode === "runs" ? (
                 <motion.div
                   key={contentKey}
                   initial={shouldReduceMotion ? false : { opacity: 0 }}

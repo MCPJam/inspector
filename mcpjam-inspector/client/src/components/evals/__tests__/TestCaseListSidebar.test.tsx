@@ -106,7 +106,7 @@ describe("TestCaseListSidebar", () => {
     ).toBeNull();
   });
 
-  it("disables selected-case run when the suite server is disconnected", () => {
+  it("keeps selected-case run enabled when the suite server is disconnected", () => {
     renderWithProviders(
       <TestCaseListSidebar
         testCases={[baseCase]}
@@ -128,7 +128,7 @@ describe("TestCaseListSidebar", () => {
 
     expect(
       screen.getByRole("button", { name: "Run selected case" }),
-    ).toBeDisabled();
+    ).toBeEnabled();
   });
 
   it("still lists cases when the suite server is disconnected (noServerSelected false)", () => {

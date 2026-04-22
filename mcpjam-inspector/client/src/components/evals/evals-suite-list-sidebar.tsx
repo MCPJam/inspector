@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
-import { CircleAlert, FlaskConical, Play, Plus, Trash2 } from "lucide-react";
+import {
+  CircleAlert,
+  ChevronRight,
+  FlaskConical,
+  Play,
+  Plus,
+  Trash2,
+} from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { Checkbox } from "@mcpjam/design-system/checkbox";
 import {
@@ -61,7 +68,10 @@ function suiteLastRunCell(entry: EvalSuiteOverviewEntry) {
 
   if (!r) {
     return (
-      <span className="text-xs text-muted-foreground text-right tabular-nums">
+      <span
+        className="inline-flex items-center justify-end rounded-full border border-dashed border-muted-foreground/25 bg-muted/40 px-2 py-0.5 text-[11px] font-medium tabular-nums text-muted-foreground"
+        title="This suite has not been run yet"
+      >
         Never run
       </span>
     );
@@ -220,15 +230,20 @@ export function EvalsSuiteListSidebar({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="rounded-xl border bg-card text-card-foreground flex min-h-0 flex-1 flex-col overflow-hidden">
-        <div className="border-b px-4 py-2 shrink-0 flex items-center justify-between gap-3">
-          <p className="text-xs text-muted-foreground min-w-0">
-            Click a suite to open runs, test cases, and environment.
-          </p>
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-border/80 bg-card text-card-foreground shadow-sm ring-1 ring-black/5 dark:ring-white/10">
+        <div className="flex shrink-0 items-start justify-between gap-4 border-b border-border/60 bg-gradient-to-b from-muted/30 to-card px-4 py-3">
+          <div className="min-w-0 space-y-0.5">
+            <p className="text-xs font-medium text-foreground/90">
+              Browse and open suites
+            </p>
+            <p className="text-[11px] leading-snug text-muted-foreground">
+              Click a row to see runs, test cases, and environment.
+            </p>
+          </div>
           <Button
             type="button"
             size="sm"
-            className="h-8 shrink-0"
+            className="h-8 shrink-0 font-semibold shadow-sm"
             onClick={onCreateSuite}
           >
             <Plus className="h-3.5 w-3.5" />
@@ -237,28 +252,43 @@ export function EvalsSuiteListSidebar({
         </div>
 
         {isLoading ? (
-          <div className="px-4 py-12 text-center text-sm text-muted-foreground">
-            Loading suites...
+          <div className="flex flex-1 flex-col items-center justify-center gap-2 px-4 py-16 text-center">
+            <div
+              className="h-8 w-8 animate-pulse rounded-full bg-muted"
+              aria-hidden
+            />
+            <p className="text-sm font-medium text-muted-foreground">
+              Loading suites…
+            </p>
           </div>
         ) : suites.length === 0 ? (
-          <div className="flex flex-1 flex-col items-center justify-center gap-3 px-4 py-12 text-center">
-            <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-full bg-muted">
-              <FlaskConical className="h-5 w-5" />
+          <div className="flex flex-1 flex-col items-center justify-center gap-4 px-6 py-16 text-center">
+            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10 ring-1 ring-primary/20">
+              <FlaskConical className="h-7 w-7 text-primary" />
             </div>
-            <p className="text-sm text-muted-foreground">No suites yet.</p>
+            <div className="space-y-1">
+              <p className="text-sm font-semibold text-foreground">
+                No suites yet
+              </p>
+              <p className="max-w-xs text-xs text-muted-foreground">
+                Create a suite to group test cases, runs, and environment
+                config.
+              </p>
+            </div>
             <Button
               type="button"
-              variant="outline"
               size="sm"
+              className="font-semibold shadow-sm"
               onClick={onCreateSuite}
             >
+              <Plus className="h-3.5 w-3.5" />
               Create your first suite
             </Button>
           </div>
         ) : (
           <>
-            <div className="border-b px-4 py-2 shrink-0 flex items-center justify-between gap-3 bg-muted/50">
-              <div className="flex items-center gap-3 min-w-0">
+            <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border/50 bg-muted/20 px-4 py-2">
+              <div className="flex min-w-0 items-center gap-3">
                 <Checkbox
                   checked={
                     suites.length > 0 &&
@@ -268,13 +298,13 @@ export function EvalsSuiteListSidebar({
                   aria-label="Select all suites"
                   disabled={suites.length === 0 || selectionBlocked}
                 />
-                <span className="text-xs font-medium truncate">
+                <span className="truncate text-xs font-medium text-foreground/80">
                   Select all
                 </span>
               </div>
-              <div className="flex items-center gap-2 shrink-0">
+              <div className="flex shrink-0 items-center gap-2">
                 {selectedForBatch.size > 0 ? (
-                  <span className="text-xs text-muted-foreground">
+                  <span className="rounded-md bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
                     {selectedForBatch.size} selected
                   </span>
                 ) : null}
@@ -282,10 +312,9 @@ export function EvalsSuiteListSidebar({
                   type="button"
                   variant="outline"
                   size="sm"
+                  className="h-7 border-dashed"
                   onClick={() => setSelectedForBatch(new Set())}
-                  disabled={
-                    selectionBlocked || selectedForBatch.size === 0
-                  }
+                  disabled={selectionBlocked || selectedForBatch.size === 0}
                 >
                   Cancel
                 </Button>
@@ -294,6 +323,7 @@ export function EvalsSuiteListSidebar({
                     type="button"
                     variant="destructive"
                     size="sm"
+                    className="h-7 disabled:opacity-35"
                     onClick={() => setShowBatchDeleteModal(true)}
                     disabled={
                       selectionBlocked || selectedForBatch.size === 0
@@ -305,17 +335,17 @@ export function EvalsSuiteListSidebar({
               </div>
             </div>
 
-            <div className="flex w-full items-center gap-2 border-b bg-muted/30 px-4 py-1.5 text-xs font-medium text-muted-foreground">
+            <div className="flex w-full items-center gap-2 border-b border-border/40 bg-muted/25 px-4 py-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
               <div className="flex w-7 shrink-0 justify-center" aria-hidden />
               <div className="min-w-0 flex-1">Suite name</div>
-              <div className="flex max-w-[min(100%,20rem)] flex-1 min-w-0 items-center justify-end gap-2">
+              <div className="flex max-w-[min(100%,20rem)] min-w-0 flex-1 items-center justify-end gap-2">
                 <span className="text-right">Last run</span>
                 <span className="w-3.5 shrink-0" aria-hidden />
               </div>
-              <div className="w-7 shrink-0" aria-hidden />
+              <div className="h-4 w-7 shrink-0" aria-hidden />
             </div>
 
-            <div className="min-h-0 flex-1 divide-y overflow-y-auto">
+            <div className="min-h-0 flex-1 space-y-0.5 overflow-y-auto p-2">
               {suites.map((entry) => {
                 const suite = entry.suite;
                 const serverSummary =
@@ -334,11 +364,13 @@ export function EvalsSuiteListSidebar({
                     key={suite._id}
                     data-testid={`suite-row-${suite._id}`}
                     className={cn(
-                      "flex w-full items-center gap-2 px-4 py-2.5 transition-colors hover:bg-muted/50",
-                      isSelected && "bg-muted/60",
+                      "group/row flex w-full items-stretch gap-1 rounded-lg border border-l-4 px-1.5 py-0.5 transition-all",
+                      isSelected
+                        ? "border-primary/30 border-l-primary bg-primary/[0.07]"
+                        : "border-border/50 border-l-transparent bg-card hover:border-border hover:bg-muted/40 hover:shadow-sm",
                     )}
                   >
-                    <div className="flex w-7 shrink-0 justify-center">
+                    <div className="flex w-7 shrink-0 items-center justify-center">
                       <Checkbox
                         checked={selectedForBatch.has(suite._id)}
                         onCheckedChange={() => toggleSuiteSelected(suite._id)}
@@ -352,7 +384,7 @@ export function EvalsSuiteListSidebar({
                       tabIndex={0}
                       aria-label={`Select suite: ${suiteTitle}`}
                       title={`${rowTitle}\n${serverSummary}`}
-                      className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+                      className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md py-1.5 pl-0.5 pr-1 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
                       onClick={() => onSelectSuite(suite._id)}
                       onKeyDown={(e) => {
                         if (e.key === "Enter" || e.key === " ") {
@@ -361,10 +393,10 @@ export function EvalsSuiteListSidebar({
                         }
                       }}
                     >
-                      <span className="min-w-0 flex-1 truncate text-left text-xs font-medium">
+                      <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
                         {suiteTitle}
                       </span>
-                      <div className="flex max-w-[min(100%,20rem)] flex-1 min-w-0 items-center justify-end gap-2">
+                      <div className="flex max-w-[min(100%,20rem)] min-w-0 flex-1 items-center justify-end gap-2">
                         {suiteLastRunCell(entry)}
                         <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center">
                           {showLastRunFailed ? (
@@ -375,13 +407,17 @@ export function EvalsSuiteListSidebar({
                           ) : null}
                         </span>
                       </div>
+                      <ChevronRight
+                        className="h-4 w-4 shrink-0 text-muted-foreground/50 transition group-hover/row:translate-x-0.5 group-hover/row:text-primary"
+                        aria-hidden
+                      />
                     </div>
-                    <span className="inline-flex shrink-0">
+                    <span className="inline-flex shrink-0 items-center">
                       <Button
                         type="button"
-                        variant="ghost"
+                        variant="secondary"
                         size="sm"
-                        className="h-7 w-7 p-0"
+                        className="h-8 w-8 shrink-0 p-0 shadow-sm"
                         aria-label={`Open suite: ${suiteTitle}`}
                         onClick={(e) => {
                           e.preventDefault();

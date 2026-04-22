@@ -113,7 +113,7 @@ function resolveModelApiKeys(
   model: string,
   modelApiKeys: Record<string, string> | undefined,
 ): Record<string, string> | undefined {
-  if (isMCPJamProvidedModel(model)) {
+  if (isMCPJamProvidedModel(model, provider)) {
     return undefined;
   }
   const normalized = normalizeProviderKey(provider);

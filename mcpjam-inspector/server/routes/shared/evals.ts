@@ -77,6 +77,7 @@ export const RunEvalsRequestSchema = z.object({
   serverIds: z
     .array(z.string())
     .min(1, { message: "At least one server must be selected" }),
+  serverNames: z.array(z.string()).optional(),
   storageServerIds: z.array(z.string()).optional(),
   modelApiKeys: z.record(z.string(), z.string()).optional(),
   convexAuthToken: z.string(),
@@ -232,6 +233,34 @@ export function filterAndRemapReplayConfigs(
   });
 }
 
+function buildPersistedSuiteEnvironment(args: {
+  resolvedServerIds: string[];
+  persistedServerRefs: string[];
+  serverNames?: string[];
+}) {
+  const serverNames =
+    args.serverNames &&
+    args.serverNames.length > 0 &&
+    args.serverNames.length === args.resolvedServerIds.length
+      ? args.serverNames
+      : args.persistedServerRefs;
+
+  const serverBindings =
+    args.serverNames &&
+    args.serverNames.length > 0 &&
+    args.serverNames.length === args.resolvedServerIds.length
+      ? args.serverNames.map((serverName, index) => ({
+          serverName,
+          workspaceServerId: args.resolvedServerIds[index],
+        }))
+      : undefined;
+
+  return {
+    servers: serverNames,
+    ...(serverBindings ? { serverBindings } : {}),
+  };
+}
+
 export async function runEvalsWithManager(
   clientManager: MCPClientManager,
   request: RunEvalsRequest,
@@ -243,6 +272,7 @@ export async function runEvalsWithManager(
     suiteDescription,
     tests,
     serverIds,
+    serverNames,
     storageServerIds,
     modelApiKeys,
     convexAuthToken,
@@ -266,10 +296,15 @@ export async function runEvalsWithManager(
   }
 
   const resolvedServerIds = resolveServerIdsOrThrow(serverIds, clientManager);
-  const persistedServerIds =
+  const persistedServerRefs =
     storageServerIds && storageServerIds.length > 0
       ? storageServerIds
       : resolvedServerIds;
+  const persistedEnvironment = buildPersistedSuiteEnvironment({
+    resolvedServerIds,
+    persistedServerRefs,
+    serverNames,
+  });
   const { convexClient, convexHttpUrl } = createConvexClients(convexAuthToken);
   const { toolSnapshot, toolSnapshotDebug } =
     await captureToolSnapshotForEvalAuthoring(
@@ -326,7 +361,7 @@ export async function runEvalsWithManager(
       suiteId: resolvedSuiteId,
       name: suiteName,
       description: suiteDescription,
-      environment: { servers: persistedServerIds },
+      environment: persistedEnvironment,
     });
 
     const existingTestCases = await convexClient.query(
@@ -439,7 +474,7 @@ export async function runEvalsWithManager(
         workspaceId,
         name: suiteName!,
         description: suiteDescription,
-        environment: { servers: persistedServerIds },
+        environment: persistedEnvironment,
         defaultPassCriteria: passCriteria,
       },
     );
@@ -483,7 +518,7 @@ export async function runEvalsWithManager(
   const replayConfigsToStore = filterAndRemapReplayConfigs(
     clientManager.getServerReplayConfigs(),
     resolvedServerIds,
-    persistedServerIds,
+    persistedServerRefs,
   );
   if (replayConfigsToStore.length > 0) {
     try {

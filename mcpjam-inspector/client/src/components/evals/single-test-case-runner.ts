@@ -167,7 +167,7 @@ export async function prepareSingleTestCaseRun({
 
   const modelApiKeys: Record<string, string> = {};
 
-  if (!isMCPJamProvidedModel(model)) {
+  if (!isMCPJamProvidedModel(model, provider)) {
     const tokenKey = provider.toLowerCase() as keyof ProviderTokens;
     if (!hasToken(tokenKey)) {
       throw new Error(

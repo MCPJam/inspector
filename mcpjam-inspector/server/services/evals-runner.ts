@@ -17,6 +17,7 @@ import { finalizePassedForEval, type MCPClientManager } from "@mcpjam/sdk";
 import { createLlmModel } from "../utils/chat-helpers";
 import { logger } from "../utils/logger";
 import {
+  getCanonicalModelId,
   getModelById,
   isMCPJamProvidedModel,
   type ModelDefinition,
@@ -89,7 +90,13 @@ export type RunEvalSuiteOptions = {
   runId: string | null; // null for quick runs
   config: {
     tests: EvalTestCase[];
-    environment: { servers: string[] };
+    environment: {
+      servers: string[];
+      serverBindings?: Array<{
+        serverName: string;
+        workspaceServerId?: string;
+      }>;
+    };
   };
   modelApiKeys?: Record<string, string>;
   convexClient: ConvexHttpClient;
@@ -117,6 +124,96 @@ const MAX_STEPS = 20;
 type ToolSet = Record<string, any>;
 type ToolCall = { toolName: string; arguments: Record<string, any> };
 type TraceSnapshotKind = "step_finish" | "turn_finish" | "failure";
+
+function resolveConfiguredServerIds(args: {
+  environment: RunEvalSuiteOptions["config"]["environment"] | undefined;
+  mcpClientManager: MCPClientManager;
+}): string[] {
+  const configuredServerRefs = args.environment?.servers ?? [];
+  if (configuredServerRefs.length === 0) {
+    return [];
+  }
+
+  const availableServerIds = args.mcpClientManager.listServers();
+  if (availableServerIds.length === 0) {
+    return configuredServerRefs;
+  }
+
+  const availableServerIdsSet = new Set(availableServerIds);
+  const availableServerIdByLowercase = new Map(
+    availableServerIds.map((serverId) => [serverId.toLowerCase(), serverId]),
+  );
+  const workspaceServerIdByName = new Map<string, string>();
+  const serverNameByWorkspaceServerId = new Map<string, string>();
+
+  for (const binding of args.environment?.serverBindings ?? []) {
+    if (typeof binding.serverName !== "string") {
+      continue;
+    }
+    const serverName = binding.serverName.trim();
+    const workspaceServerId =
+      typeof binding.workspaceServerId === "string"
+        ? binding.workspaceServerId.trim()
+        : "";
+    if (!serverName || !workspaceServerId) {
+      continue;
+    }
+    workspaceServerIdByName.set(serverName.toLowerCase(), workspaceServerId);
+    serverNameByWorkspaceServerId.set(workspaceServerId.toLowerCase(), serverName);
+  }
+
+  const resolvedServerIds: string[] = [];
+  const seen = new Set<string>();
+
+  for (const serverRef of configuredServerRefs) {
+    if (typeof serverRef !== "string") {
+      continue;
+    }
+    const trimmedServerRef = serverRef.trim();
+    if (!trimmedServerRef) {
+      continue;
+    }
+
+    const normalizedServerId =
+      availableServerIdsSet.has(trimmedServerRef)
+        ? trimmedServerRef
+        : availableServerIdByLowercase.get(trimmedServerRef.toLowerCase()) ??
+          (() => {
+            const workspaceServerId = workspaceServerIdByName.get(
+              trimmedServerRef.toLowerCase(),
+            );
+            if (workspaceServerId) {
+              return (
+                (availableServerIdsSet.has(workspaceServerId)
+                  ? workspaceServerId
+                  : undefined) ??
+                availableServerIdByLowercase.get(workspaceServerId.toLowerCase())
+              );
+            }
+
+            const serverName = serverNameByWorkspaceServerId.get(
+              trimmedServerRef.toLowerCase(),
+            );
+            if (serverName) {
+              return (
+                (availableServerIdsSet.has(serverName) ? serverName : undefined) ??
+                availableServerIdByLowercase.get(serverName.toLowerCase())
+              );
+            }
+
+            return undefined;
+          })() ??
+          trimmedServerRef;
+
+    if (seen.has(normalizedServerId)) {
+      continue;
+    }
+    seen.add(normalizedServerId);
+    resolvedServerIds.push(normalizedServerId);
+  }
+
+  return resolvedServerIds;
+}
 
 type ResolvedEvalTestCase = {
   promptTurns: PromptTurn[];
@@ -480,6 +577,7 @@ type RunIterationAiSdkParams = RunIterationBaseParams & {
 type RunIterationBackendParams = RunIterationBaseParams & {
   convexHttpUrl: string;
   convexAuthToken: string;
+  modelId: string;
 };
 
 const buildModelDefinition = (test: EvalTestCase): ModelDefinition => {
@@ -930,6 +1028,7 @@ const runIterationViaBackend = async ({
   testCaseId,
   convexHttpUrl,
   convexAuthToken,
+  modelId,
   convexClient,
   runId,
   abortSignal,
@@ -1099,7 +1198,7 @@ const runIterationViaBackend = async ({
           body: JSON.stringify({
             mode: "step",
             messages: JSON.stringify(messageHistory),
-            model: String(test.model),
+            model: modelId,
             ...(systemPrompt ? { systemPrompt } : {}),
             ...(temperature == null ? {} : { temperature }),
             ...(toolChoice ? { toolChoice } : {}),
@@ -1149,7 +1248,7 @@ const runIterationViaBackend = async ({
             llmStartAbs,
             failAbs,
             {
-              modelId: test.model,
+              modelId,
             },
           );
           break;
@@ -1254,7 +1353,7 @@ const runIterationViaBackend = async ({
                 pushAggregateSpan: newToolMessages.length === 0,
               },
               {
-                modelId: test.model,
+                modelId,
                 inputTokens: json.usage?.promptTokens,
                 outputTokens: json.usage?.completionTokens,
                 totalTokens: json.usage?.totalTokens,
@@ -1282,7 +1381,7 @@ const runIterationViaBackend = async ({
               toolsStartAbs,
               failAbs,
               {
-                modelId: test.model,
+                modelId,
                 inputTokens: json.usage?.promptTokens,
                 outputTokens: json.usage?.completionTokens,
                 totalTokens: json.usage?.totalTokens,
@@ -1313,7 +1412,7 @@ const runIterationViaBackend = async ({
             { startAbs: llmStartAbs, endAbs: llmEndAbs },
             undefined,
             {
-              modelId: test.model,
+              modelId,
               inputTokens: json.usage?.promptTokens,
               outputTokens: json.usage?.completionTokens,
               totalTokens: json.usage?.totalTokens,
@@ -1372,7 +1471,7 @@ const runIterationViaBackend = async ({
           llmStartAbs,
           failAbs,
           {
-            modelId: test.model,
+            modelId,
           },
         );
         break;
@@ -1472,7 +1571,14 @@ const runTestCase = async (params: {
   } = params;
   const testCaseId = test.testCaseId || parentTestCaseId;
   const modelDefinition = buildModelDefinition(test);
-  const isJamModel = isMCPJamProvidedModel(String(modelDefinition.id));
+  const resolvedModelId = getCanonicalModelId(
+    String(modelDefinition.id),
+    modelDefinition.provider,
+  );
+  const isJamModel = isMCPJamProvidedModel(
+    resolvedModelId,
+    modelDefinition.provider,
+  );
 
   const outcomes: EvalIterationOutcome[] = [];
 
@@ -1487,6 +1593,7 @@ const runTestCase = async (params: {
         suiteId,
         convexHttpUrl,
         convexAuthToken,
+        modelId: resolvedModelId,
         convexClient,
         modelApiKeys,
         runId,
@@ -1531,7 +1638,10 @@ export const runEvalSuiteWithAiSdk = async ({
   compareRunId,
 }: RunEvalSuiteOptions): Promise<RunEvalSuiteWithAiSdkResult | undefined> => {
   const tests = config.tests ?? [];
-  const serverIds = config.environment?.servers ?? [];
+  const serverIds = resolveConfiguredServerIds({
+    environment: config.environment,
+    mcpClientManager,
+  });
 
   if (!tests.length) {
     throw new Error("No tests supplied for eval run");
@@ -2280,6 +2390,7 @@ const streamIterationViaBackend = async ({
   testCaseId,
   convexHttpUrl,
   convexAuthToken,
+  modelId,
   convexClient,
   runId,
   abortSignal,
@@ -2457,7 +2568,7 @@ const streamIterationViaBackend = async ({
           body: JSON.stringify({
             mode: "step",
             messages: JSON.stringify(messageHistory),
-            model: String(test.model),
+            model: modelId,
             ...(systemPrompt ? { systemPrompt } : {}),
             ...(temperature == null ? {} : { temperature }),
             ...(toolChoice ? { toolChoice } : {}),
@@ -2525,7 +2636,7 @@ const streamIterationViaBackend = async ({
             llmStartAbs,
             failAbs,
             {
-              modelId: test.model,
+              modelId,
             },
           );
           emit(
@@ -2706,7 +2817,7 @@ const streamIterationViaBackend = async ({
                 pushAggregateSpan: newToolMessages.length === 0,
               },
               {
-                modelId: test.model,
+                modelId,
                 inputTokens: json.usage?.promptTokens,
                 outputTokens: json.usage?.completionTokens,
                 totalTokens: json.usage?.totalTokens,
@@ -2734,7 +2845,7 @@ const streamIterationViaBackend = async ({
               toolsStartAbs,
               failAbs,
               {
-                modelId: test.model,
+                modelId,
                 inputTokens: json.usage?.promptTokens,
                 outputTokens: json.usage?.completionTokens,
                 totalTokens: json.usage?.totalTokens,
@@ -2783,7 +2894,7 @@ const streamIterationViaBackend = async ({
             { startAbs: llmStartAbs, endAbs: llmEndAbs },
             undefined,
             {
-              modelId: test.model,
+              modelId,
               inputTokens: json.usage?.promptTokens,
               outputTokens: json.usage?.completionTokens,
               totalTokens: json.usage?.totalTokens,
@@ -2866,7 +2977,7 @@ const streamIterationViaBackend = async ({
           llmStartAbs,
           failAbs,
           {
-            modelId: test.model,
+            modelId,
           },
         );
         emit(
@@ -3000,7 +3111,14 @@ export const streamTestCase = async (params: {
   } = params;
   const testCaseId = test.testCaseId || parentTestCaseId;
   const modelDefinition = buildModelDefinition(test);
-  const isJamModel = isMCPJamProvidedModel(String(modelDefinition.id));
+  const resolvedModelId = getCanonicalModelId(
+    String(modelDefinition.id),
+    modelDefinition.provider,
+  );
+  const isJamModel = isMCPJamProvidedModel(
+    resolvedModelId,
+    modelDefinition.provider,
+  );
 
   const outcomes: EvalIterationOutcome[] = [];
 
@@ -3015,6 +3133,7 @@ export const streamTestCase = async (params: {
         suiteId,
         convexHttpUrl,
         convexAuthToken,
+        modelId: resolvedModelId,
         convexClient,
         modelApiKeys,
         runId,

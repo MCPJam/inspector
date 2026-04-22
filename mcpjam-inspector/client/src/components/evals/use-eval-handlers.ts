@@ -31,12 +31,17 @@ import {
   runEvals,
   runEvalTestCase,
 } from "@/lib/apis/evals-api";
+import { isHostedMode } from "@/lib/apis/mode-client";
+import { normalizeHostedServerNames } from "@/lib/apis/web/context";
 import { generateAndPersistEvalTests } from "@/lib/evals/generate-and-persist-tests";
 import { collectUniqueModelsFromTestCases } from "@/lib/evals/collect-unique-suite-models";
 import {
   getDefaultTestCaseModelValue,
   prepareSingleTestCaseRun,
 } from "./single-test-case-runner";
+import type { EnsureServersReadyResult } from "@/hooks/use-app-state";
+import type { RemoteServer } from "@/hooks/useWorkspaces";
+import { formatMcpServerRefsForError } from "@/lib/mcp-server-display-name";
 
 function getConfiguredTestCaseModelValues(
   testCase: Pick<EvalCase, "models">,
@@ -54,6 +59,60 @@ function getConfiguredTestCaseModelValues(
   return Array.from(modelValues);
 }
 
+function hasUnavailableServers(result: EnsureServersReadyResult) {
+  return (
+    result.missingServerNames.length > 0 ||
+    result.failedServerNames.length > 0 ||
+    result.reauthServerNames.length > 0
+  );
+}
+
+function formatEnsureServersReadyError(
+  result: EnsureServersReadyResult,
+  actionLabel: string,
+  workspaceServers: RemoteServer[] | undefined,
+) {
+  if (result.missingServerNames.length > 0) {
+    const noun =
+      result.missingServerNames.length === 1 ? "server is" : "servers are";
+    return `Can't ${actionLabel}. The following ${noun} no longer available: ${formatMcpServerRefsForError(result.missingServerNames, { remoteServers: workspaceServers })}.`;
+  }
+
+  if (result.reauthServerNames.length > 0) {
+    return `Reauthenticate ${formatMcpServerRefsForError(result.reauthServerNames, { remoteServers: workspaceServers })} to ${actionLabel}.`;
+  }
+
+  if (result.failedServerNames.length > 0) {
+    return `Couldn't connect to ${formatMcpServerRefsForError(result.failedServerNames, { remoteServers: workspaceServers })} to ${actionLabel}.`;
+  }
+
+  return `Couldn't prepare the required servers to ${actionLabel}.`;
+}
+
+function normalizeSuiteServerRefs(
+  serverNamesOrIds: readonly string[] | undefined,
+): string[] {
+  const rawServerRefs = (serverNamesOrIds ?? []).flatMap((serverRef) =>
+    typeof serverRef === "string" && serverRef.trim().length > 0
+      ? [serverRef.trim()]
+      : [],
+  );
+
+  if (rawServerRefs.length === 0) {
+    return [];
+  }
+
+  if (isHostedMode()) {
+    try {
+      return normalizeHostedServerNames(rawServerRefs);
+    } catch {
+      // Fall back to the raw refs if hosted context has not initialized yet.
+    }
+  }
+
+  return Array.from(new Set(rawServerRefs));
+}
+
 interface UseEvalHandlersProps {
   mutations: ReturnType<typeof useEvalMutations>;
   selectedSuiteEntry: EvalSuiteOverviewEntry | null;
@@ -61,12 +120,17 @@ interface UseEvalHandlersProps {
   selectedTestId: string | null;
   workspaceId?: string | null;
   connectedServerNames?: Set<string>;
+  ensureServersReady?: (
+    serverNames: string[],
+  ) => Promise<EnsureServersReadyResult>;
   latestRunBySuiteId?: Map<string, EvalSuiteRun | null>;
   /**
    * When `ci-evals`, navigation after test-case mutations stays on CI evals
    * routes (`#/ci-evals/...`). Defaults to main evals (`#/evals/...`).
    */
   evalsNavigationContext?: "evals" | "ci-evals";
+  /** For user-facing server labels (names instead of raw Convex ids). */
+  workspaceServers?: RemoteServer[];
 }
 
 /**
@@ -79,8 +143,10 @@ export function useEvalHandlers({
   selectedTestId,
   workspaceId = null,
   connectedServerNames,
+  ensureServersReady,
   latestRunBySuiteId,
   evalsNavigationContext = "evals",
+  workspaceServers,
 }: UseEvalHandlersProps) {
   const convex = useConvex();
   const { getAccessToken } = useAuth();
@@ -182,7 +248,7 @@ export function useEvalHandlers({
             testCaseId: testCase._id,
           });
 
-          if (!isMCPJamProvidedModel(modelConfig.model)) {
+          if (!isMCPJamProvidedModel(modelConfig.model, modelConfig.provider)) {
             providersNeeded.add(modelConfig.provider);
           }
         }
@@ -209,7 +275,7 @@ export function useEvalHandlers({
       }
 
       return {
-        suiteServers: suite.environment?.servers || [],
+        suiteServers: normalizeSuiteServerRefs(suite.environment?.servers),
         testCases,
         tests,
         modelApiKeys,
@@ -328,33 +394,48 @@ export function useEvalHandlers({
     async (suite: EvalSuite) => {
       if (rerunningSuiteId) return;
 
+      const suiteServers = normalizeSuiteServerRefs(suite.environment?.servers);
       const latestRun =
         latestRunBySuiteId?.get(suite._id) ??
         (selectedSuiteEntry?.suite._id === suite._id
           ? selectedSuiteEntry.latestRun
           : null);
       const rerunEligibility = getSuiteReplayEligibility({
-        suiteServers: suite.environment?.servers,
+        suiteServers,
         connectedServerNames,
         latestRun,
       });
 
-      if (
-        rerunEligibility.canReplayFallback &&
-        rerunEligibility.replayableLatestRun?._id
-      ) {
-        await handleReplayRun(suite, rerunEligibility.replayableLatestRun);
+      if (suiteServers.length === 0) {
+        if (rerunEligibility.replayableLatestRun?._id) {
+          await handleReplayRun(suite, rerunEligibility.replayableLatestRun);
+          return;
+        }
+        toast.error("No MCP servers are configured for this suite.");
         return;
       }
 
-      if (!rerunEligibility.canRunLive) {
-        if (!rerunEligibility.hasServersConfigured) {
-          toast.error("No MCP servers are configured for this suite.");
-          return;
-        }
-        if (rerunEligibility.missingServers.length > 0) {
+      if (rerunEligibility.missingServers.length > 0) {
+        if (ensureServersReady != null) {
+          const readiness = await ensureServersReady(suiteServers);
+          if (!hasUnavailableServers(readiness)) {
+            // Continue with the live rerun now that the servers are ready.
+          } else if (rerunEligibility.replayableLatestRun?._id) {
+            await handleReplayRun(suite, rerunEligibility.replayableLatestRun);
+            return;
+          } else {
+            toast.error(
+              formatEnsureServersReadyError(
+                readiness,
+                "run this suite",
+                workspaceServers,
+              ),
+            );
+            return;
+          }
+        } else {
           toast.error(
-            `Connect ${rerunEligibility.missingServers.join(", ")} to run this suite.`,
+            `Connect ${formatMcpServerRefsForError(rerunEligibility.missingServers, { remoteServers: workspaceServers })} to run this suite.`,
           );
           return;
         }
@@ -435,8 +516,10 @@ export function useEvalHandlers({
       selectedSuiteEntry,
       latestRunBySuiteId,
       connectedServerNames,
+      ensureServersReady,
       getAccessToken,
       workspaceId,
+      workspaceServers,
       getSuiteExecutionContext,
       handleReplayRun,
     ],
@@ -465,6 +548,36 @@ export function useEvalHandlers({
 
       const isMultiModelRun =
         !options?.selectedModel && modelValuesToRun.length > 1;
+      const suiteServers = normalizeSuiteServerRefs(suite.environment?.servers);
+      const disconnectedSuiteServers = suiteServers.filter(
+        (serverName) => !connectedServerNames?.has(serverName),
+      );
+
+      if (suiteServers.length === 0) {
+        toast.error("No MCP servers are configured for this suite.");
+        return null;
+      }
+
+      if (disconnectedSuiteServers.length > 0) {
+        if (ensureServersReady != null) {
+          const readiness = await ensureServersReady(suiteServers);
+          if (hasUnavailableServers(readiness)) {
+            toast.error(
+              formatEnsureServersReadyError(
+                readiness,
+                "run this test case",
+                workspaceServers,
+              ),
+            );
+            return null;
+          }
+        } else {
+          toast.error(
+            `Connect ${formatMcpServerRefsForError(disconnectedSuiteServers, { remoteServers: workspaceServers })} to run this test case.`,
+          );
+          return null;
+        }
+      }
 
       setRunningTestCaseId(testCase._id);
 
@@ -473,7 +586,12 @@ export function useEvalHandlers({
           modelValuesToRun.map((selectedModel) =>
             prepareSingleTestCaseRun({
               workspaceId,
-              suite,
+              suite: {
+                environment: {
+                  ...suite.environment,
+                  servers: suiteServers,
+                },
+              },
               testCase,
               getAccessToken,
               getToken,
@@ -648,6 +766,9 @@ export function useEvalHandlers({
       getAccessToken,
       getToken,
       hasToken,
+      connectedServerNames,
+      ensureServersReady,
+      workspaceServers,
     ],
   );
 

@@ -205,4 +205,30 @@ describe("SuiteHeader", () => {
     expect(generateBtn).toBeDisabled();
     expect(generateBtn.querySelector(".animate-spin")).toBeInTheDocument();
   });
+
+  it("shows Generate and New case on unified suite dashboard when URL is still ?view=runs", () => {
+    const onCreate = vi.fn();
+    const onGenerate = vi.fn();
+
+    renderWithProviders(
+      <SuiteHeader
+        {...baseProps}
+        viewMode="overview"
+        selectedRunDetails={null}
+        runsViewMode="runs"
+        hideRunActions
+        unifiedSuiteDashboard
+        onCreateTestCase={onCreate}
+        onGenerateTestCases={onGenerate}
+        canGenerateTestCases
+      />,
+    );
+
+    expect(
+      screen.getByRole("button", { name: "New case" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /generate/i }),
+    ).toBeInTheDocument();
+  });
 });

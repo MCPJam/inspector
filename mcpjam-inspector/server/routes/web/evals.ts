@@ -29,6 +29,7 @@ const evals = new Hono();
 const hostedBatchSchema = z.object({
   workspaceId: z.string().min(1),
   serverIds: z.array(z.string().min(1)).min(1),
+  serverNames: z.array(z.string().min(1)).min(1).optional(),
   clientCapabilities: z.record(z.string(), z.unknown()).optional(),
   oauthTokens: z.record(z.string(), z.string()).optional(),
   accessScope: z.enum(["workspace_member", "chat_v2"]).optional(),
@@ -141,6 +142,7 @@ evals.post("/stream-test-case", async (c) => {
         | undefined,
       shareToken: body.shareToken as string | undefined,
       chatboxToken: body.chatboxToken as string | undefined,
+      serverNames: body.serverNames,
     },
   );
 

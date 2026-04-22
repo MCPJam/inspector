@@ -628,6 +628,7 @@ export default function App() {
     handleConnect,
     handleDisconnect,
     handleReconnect,
+    ensureServersReady,
     handleUpdate,
     handleRemoveServer,
     setSelectedServer,
@@ -1645,7 +1646,7 @@ export default function App() {
           hidden={appBuilderOnboarding}
           activeServerSelectorProps={activeServerSelectorProps}
         />
-        <div className="flex flex-1 min-h-0 flex-col overflow-hidden h-full">
+        <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           {showTrialDecisionNotice ? (
             <div className="border-b border-border/60 px-4 py-3">
               <Alert>
@@ -1732,6 +1733,7 @@ export default function App() {
             ) : (
               <EvalsTab
                 workspaceId={convexWorkspaceId}
+                ensureServersReady={ensureServersReady}
                 onContinueInChat={handleContinueEvalInChat}
               />
             ))}
@@ -1770,7 +1772,10 @@ export default function App() {
                   }}
                 />
               ) : (
-                <CiEvalsTab convexWorkspaceId={convexWorkspaceId} />
+                <CiEvalsTab
+                  convexWorkspaceId={convexWorkspaceId}
+                  ensureServersReady={ensureServersReady}
+                />
               )
             ) : null)}
           {activeTab === "views" && (
@@ -1917,6 +1922,7 @@ export default function App() {
               isAuthLoading={isAuthLoading}
               isServerSyncing={isSelectedServerSyncing}
               onConnect={handleConnect}
+              ensureServersReady={ensureServersReady}
               onOnboardingChange={setAppBuilderOnboarding}
               playgroundServerSelectorProps={playgroundServerSelectorProps}
               enableMultiModelChat

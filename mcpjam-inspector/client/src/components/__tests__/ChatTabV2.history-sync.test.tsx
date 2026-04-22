@@ -461,6 +461,31 @@ describe("ChatTabV2 history sync", () => {
     vi.useRealTimers();
   });
 
+  it("does not auto-reconnect workspace chat when oauth is required", async () => {
+    const onReconnectServer = vi.fn().mockResolvedValue(undefined);
+    mockUseChatSession.error = new Error(
+      JSON.stringify({
+        details: {
+          oauthRequired: true,
+          serverId: "server-1",
+          serverName: "server-1",
+          serverUrl: "https://server-1.example.com/mcp",
+        },
+      }),
+    );
+
+    render(
+      <ChatTabV2
+        {...defaultProps}
+        onReconnectServer={onReconnectServer}
+      />,
+    );
+
+    await flushMicrotasks();
+
+    expect(onReconnectServer).not.toHaveBeenCalled();
+  });
+
   it("asks before discarding a draft when switching threads", async () => {
     render(<ChatTabV2 {...defaultProps} />);
 
