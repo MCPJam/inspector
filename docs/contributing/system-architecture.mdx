@@ -696,6 +696,46 @@ flowchart TD
 | `PORT`                    | Server port                | User         | Optional (default: 6274) |
 | `DEBUG_MCP_SELECTION`     | Enable debug logs          | User         | Optional                 |
 
+### Hosted runtime config injection
+
+In hosted (web production) mode the server injects Convex URLs into the served `index.html` at request time so the client can connect to the correct Convex deployment without requiring a client rebuild.
+
+**How it works:**
+
+1. On startup the server reads `CONVEX_HTTP_URL` (the `*.convex.site` actions URL).
+2. `getInspectorClientRuntimeConfig()` (`server/env.ts`) derives both URLs:
+   - `convexUrl` — the `*.convex.cloud` backend URL (hostname suffix swapped from `.convex.site` → `.convex.cloud`)
+   - `convexSiteUrl` — the normalized `*.convex.site` origin
+3. `getInspectorClientRuntimeConfigScript()` serializes the config as a `<script>` tag that sets `window.__MCP_RUNTIME_CONFIG__`.
+4. When serving `index.html`, the server injects this script into `<head>` before returning the response (`server/app.ts`, `server/index.ts`).
+5. On the client, `getRuntimeConvexUrl()` / `getRuntimeConvexSiteUrl()` (`client/src/lib/runtime-config.ts`) read `window.__MCP_RUNTIME_CONFIG__` and return the injected values.
+6. The Convex client and `getConvexSiteUrl()` prefer runtime values over Vite build-time env vars (`VITE_CONVEX_URL`, `VITE_CONVEX_SITE_URL`). A console warning is emitted when the runtime URL overrides the baked value.
+
+```mermaid
+sequenceDiagram
+    participant Server as Hono Server
+    participant Env as server/env.ts
+    participant HTML as index.html
+    participant Client as React Client
+
+    Server->>Env: getInspectorClientRuntimeConfigScript()
+    Env->>Env: Read CONVEX_HTTP_URL
+    Env->>Env: Derive convexUrl + convexSiteUrl
+    Env-->>Server: <script>window.__MCP_RUNTIME_CONFIG__={...};</script>
+    Server->>HTML: Inject script into <head>
+    HTML-->>Client: Served with runtime config
+    Client->>Client: getRuntimeConvexUrl() reads window.__MCP_RUNTIME_CONFIG__
+    Client->>Client: Prefer runtime URL over VITE_CONVEX_URL
+```
+
+**Key files:**
+
+- `server/env.ts` — `getInspectorClientRuntimeConfig`, `getInspectorClientRuntimeConfigScript`
+- `server/app.ts` — injects the script when serving `index.html` (Hono path)
+- `server/index.ts` — injects the script when serving `index.html` (standalone path)
+- `client/src/lib/runtime-config.ts` — `getRuntimeConvexUrl`, `getRuntimeConvexSiteUrl`
+- `client/src/lib/convex-site-url.ts` — prefers runtime site URL over build-time env vars
+
 ## Build & Deployment
 
 ### Build Process Flow
