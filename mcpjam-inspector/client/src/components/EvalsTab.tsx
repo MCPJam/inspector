@@ -1,7 +1,7 @@
 import { useMemo, useCallback, useEffect, useRef, useState } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth, useMutation } from "convex/react";
-import { FlaskConical, Loader2 } from "lucide-react";
+import { FlaskConical, Loader2, Puzzle } from "lucide-react";
 import { toast } from "sonner";
 import { EmptyState } from "@/components/ui/empty-state";
 import { useEvalsRoute } from "@/lib/evals-router";
@@ -241,7 +241,7 @@ export function EvalsTab({
         const createdSuite = await mutations.createTestSuiteMutation({
           ...(isDirectGuest ? {} : { workspaceId }),
           name: selectedServer,
-          description: `Explore cases for ${selectedServer}`,
+          description: `Test cases for ${selectedServer}`,
           environment: { servers: [selectedServer] },
         });
 
@@ -263,7 +263,7 @@ export function EvalsTab({
         toast.error(
           getBillingErrorMessage(
             error,
-            "Failed to create the Explore workspace"
+            "Failed to create the Playground workspace"
           )
         );
       } finally {
@@ -512,8 +512,8 @@ export function EvalsTab({
             <div className="flex flex-1 items-center justify-center px-4 py-10 sm:px-6">
               <EmptyState
                 icon={FlaskConical}
-                title="Select a server to explore"
-                description="Pick a server from the header to view Explore cases. Connect it to run tests or generate new cases."
+                title="Select a server to start testing"
+                description="Pick a server from the header to open Playground. Connect it to run tests or generate new cases."
                 className="h-auto min-h-[240px]"
               />
             </div>
@@ -521,15 +521,15 @@ export function EvalsTab({
             <div className="flex min-h-[240px] flex-1 flex-col items-center justify-center px-4 sm:px-6">
               <Loader2 className="h-8 w-8 animate-spin text-primary" />
               <p className="mt-4 text-sm text-muted-foreground">
-                Preparing the Explore workspace for {selectedServer}...
+                Preparing Playground for {selectedServer}...
               </p>
             </div>
           ) : !exploreSuite ? (
             <div className="flex flex-1 items-center justify-center px-4 py-10 sm:px-6">
               <EmptyState
-                icon={FlaskConical}
-                title="Explore is waiting on a connected server"
-                description="Reconnect the server or pick another one from the header to start generating cases."
+                icon={Puzzle}
+                title={`Start ${selectedServer} to generate tests`}
+                description="Playground can automatically generate test cases once a server is connected."
                 className="h-auto min-h-[240px]"
               />
             </div>

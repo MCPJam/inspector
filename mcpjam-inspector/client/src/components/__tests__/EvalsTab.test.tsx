@@ -321,7 +321,7 @@ describe("EvalsTab route guard", () => {
     await waitFor(() => {
       expect(mocks.createTestSuiteMutation).toHaveBeenCalledWith({
         name: "server-a",
-        description: "Explore cases for server-a",
+        description: "Test cases for server-a",
         environment: { servers: ["server-a"] },
       });
       expect(mocks.updateSuiteMutation).toHaveBeenCalledWith({
@@ -337,7 +337,7 @@ describe("EvalsTab route guard", () => {
       expect(mocks.createTestSuiteMutation).toHaveBeenNthCalledWith(2, {
         workspaceId: "ws-1",
         name: "server-a",
-        description: "Explore cases for server-a",
+        description: "Test cases for server-a",
         environment: { servers: ["server-a"] },
       });
     });
