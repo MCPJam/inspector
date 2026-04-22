@@ -83,6 +83,9 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
   });
 
   async function runQuickTestCase(compareRunId?: string) {
+    // Use a BYOK-only model id so the runner takes the local generateText
+    // path (which the test mocks). gpt-5-mini has a hosted "openai/gpt-5-mini"
+    // counterpart and would otherwise route through the backend.
     await runEvalSuiteWithAiSdk({
       suiteId: "suite-1",
       runId: null,
@@ -92,7 +95,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
             title: "Case",
             query: "Hello",
             runs: 1,
-            model: "gpt-5-mini",
+            model: "gpt-4-turbo",
             provider: "openai",
             expectedToolCalls: [],
             promptTurns: [
@@ -364,7 +367,9 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
         title: "Case",
         query: "Hello",
         runs: 1,
-        model: "gpt-5-mini",
+        // BYOK-only id so the runner takes the local streamText path the
+        // test mocks instead of routing to the hosted backend.
+        model: "gpt-4-turbo",
         provider: "openai",
         expectedToolCalls: [],
         promptTurns: [{ id: "turn-1", prompt: "Hello", expectedToolCalls: [] }],

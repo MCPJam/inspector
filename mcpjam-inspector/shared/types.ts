@@ -191,17 +191,21 @@ export const getCanonicalModelId = (
   // bare ids (e.g. "gpt-4o-mini" — BYOK) don't shadow their hosted
   // counterparts (e.g. "openai/gpt-4o-mini" — MCPJam-provided).
   if (normalizedProvider) {
-    const providerScopedMatch = SUPPORTED_MODELS.find((model) => {
-      if (model.provider.toLowerCase() !== normalizedProvider) {
-        return false;
-      }
+    const providerModels = SUPPORTED_MODELS.filter(
+      (model) => model.provider.toLowerCase() === normalizedProvider,
+    );
 
-      const supportedModelId = String(model.id);
-      return (
-        supportedModelId === normalizedModelId ||
-        supportedModelId.endsWith(`/${normalizedModelId}`)
-      );
-    });
+    // If the caller didn't already pass a prefixed id, look for a prefixed
+    // (hosted) match first within this provider — bare ids must not win here.
+    const prefixedMatch = !normalizedModelId.includes("/")
+      ? providerModels.find((model) =>
+          String(model.id).endsWith(`/${normalizedModelId}`),
+        )
+      : undefined;
+
+    const providerScopedMatch =
+      prefixedMatch ??
+      providerModels.find((model) => String(model.id) === normalizedModelId);
 
     if (providerScopedMatch) {
       return String(providerScopedMatch.id);

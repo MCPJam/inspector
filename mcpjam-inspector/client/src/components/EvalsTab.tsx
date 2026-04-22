@@ -263,7 +263,6 @@ export function EvalsTab({
   // Auto-create an explore suite for each connected server that doesn't have one
   // ---------------------------------------------------------------------------
   const createTestSuiteMutation = mutations.createTestSuiteMutation;
-  const updateTestSuiteMutation = mutations.updateTestSuiteMutation;
   const createTestCaseMutation = mutations.createTestCaseMutation;
 
   useEffect(() => {
@@ -302,19 +301,18 @@ export function EvalsTab({
 
       void (async () => {
         try {
+          // Pass tags atomically in the initial create. A second mutation to
+          // tag would risk an orphan untagged suite if it failed, which would
+          // bypass `isExploreSuite` and let the next pass create a duplicate.
           const createdSuite = await createTestSuiteMutation({
             workspaceId,
             name: serverName,
             description: `Explore cases for ${serverName}`,
             environment: { servers: [serverName] },
+            tags: [EXPLORE_SUITE_TAG],
           });
 
           if (!createdSuite?._id) return;
-
-          await updateTestSuiteMutation({
-            suiteId: createdSuite._id,
-            tags: [EXPLORE_SUITE_TAG],
-          });
 
           const outcome = await generateAndPersistEvalTests({
             convex,
@@ -353,7 +351,6 @@ export function EvalsTab({
     convex,
     getAccessToken,
     createTestSuiteMutation,
-    updateTestSuiteMutation,
     createTestCaseMutation,
   ]);
 

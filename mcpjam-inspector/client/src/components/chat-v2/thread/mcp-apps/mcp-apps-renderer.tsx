@@ -488,6 +488,9 @@ export function MCPAppsRenderer({
             );
           }
           const html = await cachedResponse.text();
+          // Reset readiness so the previous bridge's transport doesn't
+          // get reused with the new HTML before its connect resolves.
+          setBridgeTransportReady(false);
           setWidgetHtml(html);
           setWidgetCsp(undefined);
           setWidgetPermissions(undefined);
@@ -547,6 +550,9 @@ export function MCPAppsRenderer({
           return;
         }
 
+        // Reset readiness so the previous bridge's transport doesn't get
+        // reused with the new HTML before its connect resolves.
+        setBridgeTransportReady(false);
         setWidgetHtml(html);
         setWidgetCsp(csp);
         setWidgetPermissions(permissions);
@@ -1022,10 +1028,10 @@ export function MCPAppsRenderer({
         }
 
         iframe.animate([from, to], { duration: 300, easing: "ease-out" });
-        logWidgetDebug("ui-to-host", "debug/size-changed", {
-          adjustedHeight,
-          displayMode: effectiveDisplayModeRef.current,
-        });
+        // size-changed fires on every resize/animation tick — chatty widgets
+        // can flood the traffic log. The corresponding ui/notifications/
+        // size-changed transport message is already suppressed above; rely on
+        // that for diagnostics rather than a host-side debug log here.
       };
 
       bridge.onrequestdisplaymode = async ({ mode }) => {
