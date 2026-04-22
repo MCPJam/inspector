@@ -75,7 +75,7 @@ describe("SuiteHeader", () => {
     mockIsHostedMode.mockReturnValue(false);
   });
 
-  it("shows compact run stats under the run title in run detail", () => {
+  it("shows compact run stats under the run title in run detail when no KPI strip", () => {
     renderWithProviders(
       <SuiteHeader
         {...baseProps}
@@ -86,6 +86,23 @@ describe("SuiteHeader", () => {
       />,
     );
     expect(screen.getByText(/1 passed · 1 failed · 50%/)).toBeInTheDocument();
+  });
+
+  it("hides compact run stats when the KPI strip is shown", () => {
+    renderWithProviders(
+      <SuiteHeader
+        {...baseProps}
+        selectedRunDetails={{
+          ...baseRun,
+          summary: { total: 2, passed: 1, failed: 1, passRate: 0.5 },
+        }}
+        runDetailKpiStrip={<div data-testid="run-kpi-strip">kpis</div>}
+      />,
+    );
+    expect(
+      screen.queryByText(/1 passed · 1 failed · 50%/),
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("run-kpi-strip")).toBeInTheDocument();
   });
 
   it("shows replay lineage under the run title when replayedFromRunId is set", () => {
@@ -140,6 +157,23 @@ describe("SuiteHeader", () => {
     expect(
       screen.getByRole("button", { name: "Replay latest run" }),
     ).toBeTruthy();
+  });
+
+  it("truncates a very long read-only suite name in overview and keeps full name in title", () => {
+    const longName = "excalidraw " + "x".repeat(200);
+    renderWithProviders(
+      <SuiteHeader
+        {...baseProps}
+        viewMode="overview"
+        selectedRunDetails={null}
+        suite={{ ...baseSuite, name: longName }}
+        readOnlyConfig
+      />,
+    );
+
+    const heading = screen.getByRole("heading", { level: 2, name: longName });
+    expect(heading).toHaveClass("truncate");
+    expect(heading).toHaveAttribute("title", longName);
   });
 
   it("hides overview run actions when run actions are suppressed", () => {

@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 
 const mocks = vi.hoisted(() => ({
   route: {
@@ -36,6 +37,7 @@ vi.mock("@/lib/evals/generate-and-persist-tests", () => ({
     skippedBecauseExistingCases: false,
     createdCount: 0,
     apiReturnedTests: 0,
+    createdTestCaseIds: [],
   }),
 }));
 
@@ -243,6 +245,19 @@ describe("EvalsTab", () => {
 
     expect(screen.getByTestId("suite-sidebar")).toBeInTheDocument();
     expect(screen.queryByTestId("suite-iterations-view")).toBeNull();
+  });
+
+  it("navigates to the eval list when the Suites tab is activated while a suite is open", async () => {
+    const user = userEvent.setup();
+    render(<EvalsTab workspaceId="ws-1" />);
+    expect(mocks.navigatePlaygroundEvalsRoute).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("tab", { name: "Suites" }));
+
+    expect(mocks.navigatePlaygroundEvalsRoute).toHaveBeenCalledWith(
+      { type: "list" },
+      { replace: true },
+    );
   });
 
   it("redirects invalid suite routes back to the eval list", async () => {

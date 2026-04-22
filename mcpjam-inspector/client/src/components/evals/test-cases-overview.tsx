@@ -20,10 +20,15 @@ import {
   TooltipTrigger,
 } from "@mcpjam/design-system/tooltip";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
+import { cn } from "@/lib/utils";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { computeIterationResult } from "./pass-criteria";
 import { formatRelativeTime } from "./helpers";
 import type { EvalCase, EvalIteration } from "./types";
+import {
+  caseListCardClassName,
+  CaseListColumnHeaders,
+} from "./case-list-shared";
 
 function iterationRecencyTs(iter: EvalIteration): number {
   return iter.updatedAt ?? iter.startedAt ?? iter.createdAt ?? 0;
@@ -310,7 +315,9 @@ export function TestCasesOverview({
   return (
     <>
       {/* Cases List */}
-      <div className="rounded-xl border bg-card text-card-foreground flex flex-col max-h-[600px]">
+      <div
+        className={cn(caseListCardClassName, "max-h-[600px]")}
+      >
         {batchDelete &&
         (showPersistentBatchHeader || selectedCaseIds.size > 0) ? (
           <div className="border-b px-4 py-2 shrink-0 bg-muted/50 flex items-center justify-between">
@@ -375,16 +382,12 @@ export function TestCasesOverview({
 
         {/* Column Headers */}
         {testCaseStats.length > 0 && (
-          <div className="flex items-center gap-3 w-full px-4 py-1.5 bg-muted/30 border-b text-xs font-medium text-muted-foreground">
-            {batchDelete ? <div className="w-7 shrink-0" aria-hidden /> : null}
-            <div className="flex-1 min-w-[120px]">Case name</div>
-            <div className="flex flex-1 min-w-0 justify-end items-center gap-2 max-w-[min(100%,20rem)]">
-              <span className="text-right">Last run</span>
-            </div>
-            {showRunColumn ? (
-              <div className="w-7 shrink-0" aria-hidden />
-            ) : null}
-          </div>
+          <CaseListColumnHeaders
+            firstColumnLabel="Case name"
+            secondColumnLabel="Last run"
+            leadingGutter={batchDelete}
+            trailingGutter={showRunColumn}
+          />
         )}
 
         <div className="divide-y overflow-y-auto">
@@ -515,7 +518,7 @@ export function TestCasesOverview({
 
               const caseAndLast = (
                 <>
-                  <span className="min-w-0 flex-1 truncate text-xs font-medium text-left">
+                  <span className="min-w-0 flex-1 truncate text-left text-xs font-semibold text-foreground">
                     {caseTitle}
                   </span>
                   {lastPart}

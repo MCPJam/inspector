@@ -9,33 +9,36 @@ import {
 } from "@mcpjam/design-system/dropdown-menu";
 import { motion, useReducedMotion, type Variants } from "framer-motion";
 import { cn } from "@/lib/utils";
-import { IterationDetails } from "./iteration-details";
 import {
-  evalStatusLeftBorderClasses,
-  formatDuration,
+  formatRelativeTime,
   formatRunId,
+  getIterationRecencyTimestamp,
 } from "./helpers";
-import { EVAL_OUTCOME_STATUS_TEXT_CLASS } from "./constants";
 import { RunMetricsBarCharts } from "./run-metrics-bar-charts";
 import {
   computeIterationResult,
   computeIterationPassed,
 } from "./pass-criteria";
+import {
+  getIterationResultDisplayLabel,
+  iterationResultBadgeClassNames,
+} from "./iteration-result-presentation";
 import { EvalIteration, EvalSuiteRun } from "./types";
 import { CiMetadataDisplay } from "./ci-metadata-display";
-import { RunInsightsPrimaryBlock } from "./run-insights-primary-block";
-import {
-  RunCaseInsightTraceCaption,
-  shouldOmitRunCaseInsightCaption,
-} from "./run-case-insight-block";
-import { findRunInsightForCase } from "./run-insight-helpers";
 import { useRunInsights } from "./use-run-insights";
 import { useServerQuality } from "./use-server-quality";
 import { InsightPrimaryBlock } from "./insight-primary-block";
 import { navigateToEvalsRoute } from "@/lib/evals-router";
-import { ArrowUpDown, ChevronRight, ExternalLink } from "lucide-react";
+import { ArrowUpDown, ExternalLink } from "lucide-react";
 import { getSidebarRunInsightsPassRateLabel } from "./run-header-compact-stats";
 import { RunInsightsSidebarSummary } from "./run-insights-sidebar";
+import { computeRunDashboardKpis } from "./run-detail-kpis";
+import { RunDetailInsightCollapsible } from "./run-detail-insight-collapsible";
+import {
+  caseListCardClassName,
+  caseListDataRowClassName,
+  CaseListColumnHeaders,
+} from "./case-list-shared";
 
 interface RunDetailViewProps {
   selectedRunDetails: EvalSuiteRun;
@@ -76,6 +79,11 @@ interface RunDetailViewProps {
   onEditTestCase?: (testCaseId: string) => void;
   /** When true, every iteration with testCaseId shows the external-edit icon. */
   alwaysShowEditIterationRows?: boolean;
+  /**
+   * `header` = KPI cards are rendered in {@link SuiteHeader} (playground run detail).
+   * `body` = KPI row stays in this view (CI / commit detail).
+   */
+  kpiPlacement?: "header" | "body";
 }
 
 function runDetailSortLabel(sortBy: "model" | "test" | "result"): string {
@@ -91,11 +99,38 @@ function runDetailSortLabel(sortBy: "model" | "test" | "result"): string {
   }
 }
 
-function normalizeRunPassRatePercent(passRate: number): number {
-  if (passRate > 0 && passRate <= 1) {
-    return Math.round(passRate * 100);
-  }
-  return Math.round(passRate);
+/** Result column matching {@link TestCasesOverview} “Last run” (badge + relative time). */
+function iterationSuiteStyleResultSummary(iteration: EvalIteration) {
+  const computedResult = computeIterationResult(iteration);
+  const resultLabel = getIterationResultDisplayLabel(iteration);
+  const ts = getIterationRecencyTimestamp(iteration);
+  const relative = ts > 0 ? formatRelativeTime(ts) : null;
+
+  const status =
+    computedResult === "passed" || computedResult === "failed" ? (
+      <span
+        className={iterationResultBadgeClassNames(iteration)}
+        aria-label={`Result: ${resultLabel}`}
+      >
+        {resultLabel}
+      </span>
+    ) : (
+      <span className="text-xs font-medium text-muted-foreground">
+        {resultLabel}
+      </span>
+    );
+
+  return (
+    <>
+      {status}
+      {relative ? (
+        <span className="font-normal text-xs text-muted-foreground tabular-nums">
+          {" "}
+          · {relative}
+        </span>
+      ) : null}
+    </>
+  );
 }
 
 function IterationListItem({
@@ -127,54 +162,46 @@ function IterationListItem({
   const editLabel = isFailed ? "Edit in Playground" : "Edit";
 
   const caseTitle = testInfo?.title || "Iteration";
+  const resultLabel = getIterationResultDisplayLabel(iteration);
   const iterationAriaLabel = testInfo?.isNegativeTest
     ? `Negative test (expects the tool not to be called): ${caseTitle}, ${modelName}. View iteration details.`
-    : `View iteration details: ${caseTitle}, ${modelName}`;
+    : `View iteration details: ${caseTitle}, ${resultLabel}, ${modelName}`;
+
+  const rowTitle =
+    testInfo?.isNegativeTest === true
+      ? "Negative test — expects the tool NOT to be called"
+      : modelName && modelName !== "—"
+        ? `${caseTitle} — ${modelName}`
+        : caseTitle;
 
   return (
     <div
-      className={cn(
-        "relative border-l-2",
-        evalStatusLeftBorderClasses(isPending ? "running" : computedResult),
-        isPending && "opacity-60",
-      )}
+      className={caseListDataRowClassName({
+        isSelected,
+        isDimmed: isPending,
+      })}
     >
-      <div
-        className={cn(
-          "flex w-full min-w-0 items-center gap-0.5",
-          isSelected
-            ? "bg-primary/10 border-r-2 border-r-primary"
-            : "hover:bg-muted/50",
-        )}
+      <button
+        type="button"
+        onClick={onSelect}
+        title={rowTitle}
+        aria-label={iterationAriaLabel}
+        className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 rounded-sm text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
       >
-        <button
-          type="button"
-          onClick={onSelect}
-          title={
-            testInfo?.isNegativeTest
-              ? "Negative test — expects the tool NOT to be called"
-              : undefined
-          }
-          aria-label={iterationAriaLabel}
-          className="flex min-w-0 flex-1 items-center gap-2 px-3 py-2.5 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 cursor-pointer"
-        >
-          <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-            <span className="text-xs font-medium leading-snug line-clamp-2">
-              {caseTitle}
-            </span>
-            <span className="truncate text-[10px] font-mono text-muted-foreground">
-              {modelName}
-            </span>
-          </span>
-          <ChevronRight
-            className="h-3.5 w-3.5 shrink-0 text-muted-foreground opacity-70"
-            aria-hidden
-          />
-        </button>
-        {showEditLink && iteration.testCaseId ? (
-          <button
+        <span className="min-w-0 flex-1 truncate text-left text-xs font-semibold text-foreground">
+          {caseTitle}
+        </span>
+        <div className="flex max-w-[min(100%,20rem)] min-w-0 flex-1 items-center justify-end gap-2 text-right text-xs tabular-nums">
+          {iterationSuiteStyleResultSummary(iteration)}
+        </div>
+      </button>
+      {showEditLink && iteration.testCaseId ? (
+        <span className="inline-flex shrink-0">
+          <Button
             type="button"
-            className="mr-1.5 shrink-0 rounded-md p-1.5 text-primary transition-colors hover:bg-muted/80 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+            variant="ghost"
+            size="sm"
+            className="h-7 w-7 p-0 text-primary"
             title={editLabel}
             aria-label={editLabel}
             onClick={(e) => {
@@ -182,10 +209,10 @@ function IterationListItem({
               onEditTestCase!(iteration.testCaseId!);
             }}
           >
-            <ExternalLink className="h-3.5 w-3.5 opacity-90" aria-hidden />
-          </button>
-        ) : null}
-      </div>
+            <ExternalLink className="h-3.5 w-3.5" aria-hidden />
+          </Button>
+        </span>
+      ) : null}
     </div>
   );
 }
@@ -230,21 +257,23 @@ function IterationListWithSections({
       initial={shouldReduceMotion ? false : "hidden"}
       animate="visible"
     >
-      {items.map((iteration, index) => (
-        <motion.div
-          key={iteration._id}
-          custom={index}
-          variants={shouldReduceMotion ? undefined : iterationItemVariants}
-        >
-          <IterationListItem
-            iteration={iteration}
-            isSelected={selectedIterationId === iteration._id}
-            onSelect={() => onSelectIteration(iteration._id)}
-            onEditTestCase={onEditTestCase}
-            alwaysShowEditIterationRows={alwaysShowEditIterationRows}
-          />
-        </motion.div>
-      ))}
+      <div className="divide-y divide-border/40">
+        {items.map((iteration, index) => (
+          <motion.div
+            key={iteration._id}
+            custom={index}
+            variants={shouldReduceMotion ? undefined : iterationItemVariants}
+          >
+            <IterationListItem
+              iteration={iteration}
+              isSelected={selectedIterationId === iteration._id}
+              onSelect={() => onSelectIteration(iteration._id)}
+              onEditTestCase={onEditTestCase}
+              alwaysShowEditIterationRows={alwaysShowEditIterationRows}
+            />
+          </motion.div>
+        ))}
+      </div>
     </motion.div>
   );
 
@@ -288,9 +317,9 @@ export function RunIterationsSidebar({
   selectedIterationId: string | null;
   onSelectIteration: (id: string) => void;
   onEditTestCase?: (testCaseId: string) => void;
-  /** When set, shows Run Insights summary above the iteration list (CI sidebar + inline run detail). */
+  /** When set, shows run overview row above the iteration list (CI sidebar + inline run detail). */
   runForOverview?: EvalSuiteRun | null;
-  /** Optional row below Run Insights (e.g. link to full runs table). */
+  /** Optional row below overview (e.g. link to full runs table). */
   runOverviewExtra?: ReactNode;
   /** Opens run-level insights in the main pane (no iteration). */
   onOpenRunInsights?: () => void;
@@ -342,57 +371,77 @@ export function RunIterationsSidebar({
           ) : null}
         </div>
       ) : null}
-      <div className="flex shrink-0 items-center justify-between border-b px-3 py-2">
-        <div className="text-xs font-semibold">Iterations</div>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
-              type="button"
-              variant="outline"
-              size="icon"
-              className="h-7 w-7 border-border/50 text-muted-foreground hover:text-foreground"
-              aria-label={`Sort iterations: ${runDetailSortLabel(runDetailSortBy)}`}
-              title={`Sort iterations: ${runDetailSortLabel(runDetailSortBy)}`}
-            >
-              <ArrowUpDown className="size-3.5" aria-hidden />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="min-w-[8rem]">
-            <DropdownMenuRadioGroup
-              value={runDetailSortBy}
-              onValueChange={(value) =>
-                onSortChange(value as "model" | "test" | "result")
-              }
-            >
-              <DropdownMenuRadioItem value="model" className="text-xs">
-                {runDetailSortLabel("model")}
-              </DropdownMenuRadioItem>
-              <DropdownMenuRadioItem value="test" className="text-xs">
-                {runDetailSortLabel("test")}
-              </DropdownMenuRadioItem>
-              <DropdownMenuRadioItem value="result" className="text-xs">
-                {runDetailSortLabel("result")}
-              </DropdownMenuRadioItem>
-            </DropdownMenuRadioGroup>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="divide-y">
-          {caseGroupsForSelectedRun.length === 0 ? (
-            <div className="px-3 py-8 text-center text-xs text-muted-foreground">
-              No iterations found.
-            </div>
-          ) : (
-            <IterationListWithSections
-              iterations={caseGroupsForSelectedRun}
-              sortBy={runDetailSortBy}
-              selectedIterationId={selectedIterationId}
-              onSelectIteration={onSelectIteration}
-              onEditTestCase={onEditTestCase}
-              alwaysShowEditIterationRows={alwaysShowEditIterationRows}
-            />
+      {/*
+        Inset a rounded case list (same visual language as suite “Cases”, img2):
+        top toolbar = sort, then column headers, then rows on bg-background.
+      */}
+      <div className="box-border flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden p-1.5 pt-1.5 sm:p-2">
+        <div
+          className={cn(
+            caseListCardClassName,
+            "min-h-0 min-w-0 flex-1 overflow-hidden shadow-sm",
           )}
+        >
+          <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border/50 bg-muted/30 px-3 py-2">
+            <div className="min-w-0 text-[11px] font-medium text-muted-foreground">
+              Sort: {runDetailSortLabel(runDetailSortBy)}
+            </div>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  className="h-7 w-7 shrink-0 border-border/50 bg-background text-muted-foreground hover:text-foreground"
+                  aria-label={`Sort iterations: ${runDetailSortLabel(runDetailSortBy)}`}
+                  title={`Sort iterations: ${runDetailSortLabel(runDetailSortBy)}`}
+                >
+                  <ArrowUpDown className="size-3.5" aria-hidden />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="min-w-[8rem]">
+                <DropdownMenuRadioGroup
+                  value={runDetailSortBy}
+                  onValueChange={(value) =>
+                    onSortChange(value as "model" | "test" | "result")
+                  }
+                >
+                  <DropdownMenuRadioItem value="model" className="text-xs">
+                    {runDetailSortLabel("model")}
+                  </DropdownMenuRadioItem>
+                  <DropdownMenuRadioItem value="test" className="text-xs">
+                    {runDetailSortLabel("test")}
+                  </DropdownMenuRadioItem>
+                  <DropdownMenuRadioItem value="result" className="text-xs">
+                    {runDetailSortLabel("result")}
+                  </DropdownMenuRadioItem>
+                </DropdownMenuRadioGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+          {caseGroupsForSelectedRun.length > 0 ? (
+            <CaseListColumnHeaders
+              firstColumnLabel="Case name"
+              secondColumnLabel="Last run"
+              trailingGutter={Boolean(onEditTestCase)}
+            />
+          ) : null}
+          <div className="min-h-0 flex-1 overflow-y-auto bg-background">
+            {caseGroupsForSelectedRun.length === 0 ? (
+              <div className="px-4 py-8 text-center text-sm text-muted-foreground">
+                No test cases in this run yet.
+              </div>
+            ) : (
+              <IterationListWithSections
+                iterations={caseGroupsForSelectedRun}
+                sortBy={runDetailSortBy}
+                selectedIterationId={selectedIterationId}
+                onSelectIteration={onSelectIteration}
+                onEditTestCase={onEditTestCase}
+                alwaysShowEditIterationRows={alwaysShowEditIterationRows}
+              />
+            )}
+          </div>
         </div>
       </div>
     </div>
@@ -416,6 +465,7 @@ export function RunDetailView({
   runInsightsSelected = false,
   onEditTestCase: onEditTestCaseProp,
   alwaysShowEditIterationRows = false,
+  kpiPlacement = "body",
 }: RunDetailViewProps) {
   const handleEditTestCase =
     onEditTestCaseProp ??
@@ -426,13 +476,10 @@ export function RunDetailView({
         testId: testCaseId,
       }));
   const {
-    summary: runInsightsSummary,
     pending: runInsightsPending,
     requested: runInsightsRequested,
     failedGeneration: runInsightsFailedGeneration,
     error: runInsightsError,
-    requestRunInsights,
-    unavailable: runInsightsUnavailable,
   } = useRunInsights(selectedRunDetails, { autoRequest: true });
 
   const {
@@ -445,262 +492,18 @@ export function RunDetailView({
     unavailable: serverQualityUnavailable,
   } = useServerQuality(selectedRunDetails, { autoRequest: true });
 
-  // Compute accurate pass/fail stats using the same logic as suite-header
-  const computedStats = useMemo(() => {
-    if (caseGroupsForSelectedRun.length === 0) {
-      return (
-        selectedRunDetails.summary ?? {
-          passed: 0,
-          failed: 0,
-          total: 0,
-          passRate: 0,
-        }
-      );
-    }
-    const passed = caseGroupsForSelectedRun.filter((i) =>
-      computeIterationPassed(i),
-    ).length;
-    const failed = caseGroupsForSelectedRun.filter(
-      (i) => !computeIterationPassed(i),
-    ).length;
-    const total = caseGroupsForSelectedRun.length;
-    const passRate = total > 0 ? passed / total : 0;
-    return { passed, failed, total, passRate };
-  }, [caseGroupsForSelectedRun, selectedRunDetails.summary]);
-
-  const isRunning = selectedRunDetails.status === "running";
-  const expected = selectedRunDetails.expectedIterations;
-
-  const metricLabel = source === "sdk" ? "Pass Rate" : "Accuracy";
   const shouldReduceMotion = useReducedMotion();
-  const passRatePercent =
-    computedStats.total > 0
-      ? normalizeRunPassRatePercent(computedStats.passRate)
-      : null;
-  const durationText =
-    selectedRunDetails.completedAt && selectedRunDetails.createdAt
-      ? formatDuration(
-          selectedRunDetails.completedAt - selectedRunDetails.createdAt,
-        )
-      : "—";
-  const totalDisplay =
-    expected && isRunning
-      ? `${computedStats.total.toLocaleString()} / ${expected.toLocaleString()}`
-      : computedStats.total.toLocaleString();
-  const runOutcomeSummary =
-    computedStats.total === 0
-      ? "No cases recorded yet."
-      : isRunning && expected
-        ? `${computedStats.total.toLocaleString()} of ${expected.toLocaleString()} cases completed`
-        : `${computedStats.passed.toLocaleString()} of ${computedStats.total.toLocaleString()} tests passed`;
-  const runDashboardKpis = [
-    {
-      label: metricLabel,
-      value: passRatePercent !== null ? `${passRatePercent}%` : "—",
-      detail: runOutcomeSummary,
-      valueClass: undefined as string | undefined,
-    },
-    {
-      label: "Passed",
-      value: computedStats.passed.toLocaleString(),
-      detail:
-        computedStats.passed > 0 ? "successful cases" : "no passing cases yet",
-      valueClass:
-        computedStats.passed > 0
-          ? EVAL_OUTCOME_STATUS_TEXT_CLASS.passed
-          : undefined,
-    },
-    {
-      label: "Failed",
-      value: computedStats.failed.toLocaleString(),
-      detail: computedStats.failed > 0 ? "needs review" : "nothing failed",
-      valueClass:
-        computedStats.failed > 0
-          ? EVAL_OUTCOME_STATUS_TEXT_CLASS.failed
-          : undefined,
-    },
-    {
-      label: "Total",
-      value: totalDisplay,
-      detail: expected && isRunning ? "completed / expected" : "cases in run",
-      valueClass: undefined,
-    },
-    {
-      label: "Duration",
-      value: durationText,
-      detail: durationText === "—" ? "available when complete" : "wall-clock",
-      valueClass: undefined,
-    },
-  ];
-
-  const selectedIteration = useMemo(
+  const runDashboardKpis = useMemo(
     () =>
-      selectedIterationId
-        ? (caseGroupsForSelectedRun.find(
-            (i) => i._id === selectedIterationId,
-          ) ?? null)
-        : null,
-    [selectedIterationId, caseGroupsForSelectedRun],
+      kpiPlacement === "body"
+        ? computeRunDashboardKpis({
+            selectedRunDetails,
+            caseGroupsForSelectedRun,
+            source,
+          })
+        : [],
+    [kpiPlacement, selectedRunDetails, caseGroupsForSelectedRun, source],
   );
-
-  const caseInsightForSelectedIteration = useMemo(() => {
-    if (!selectedIteration) {
-      return null;
-    }
-    return findRunInsightForCase(selectedRunDetails, {
-      caseKey: selectedIteration.testCaseSnapshot?.caseKey,
-      testCaseId: selectedIteration.testCaseId,
-    });
-  }, [selectedIteration, selectedRunDetails]);
-
-  const workflowInsightForSelectedIteration = useMemo(() => {
-    if (
-      !selectedIteration ||
-      !selectedRunDetails.serverQuality?.workflowInsights
-    ) {
-      return null;
-    }
-    const list = selectedRunDetails.serverQuality.workflowInsights;
-    const snap = selectedIteration.testCaseSnapshot;
-    // Match using the same key resolution as the backend context builder
-    const caseKey = snap?.caseKey;
-    if (caseKey) {
-      const match = list.find((w) => w.caseKey === caseKey);
-      if (match) return match;
-    }
-    const testCaseId = selectedIteration.testCaseId;
-    if (testCaseId) {
-      const src = source === "sdk" ? "sdk" : "ui";
-      const match = list.find((w) => w.caseKey === `${src}:${testCaseId}`);
-      if (match) return match;
-    }
-    // Fallback: match by title
-    const title = snap?.title;
-    if (title) {
-      const match = list.find(
-        (w) => w.caseKey === `title:${title}` || w.title === title,
-      );
-      if (match) return match;
-    }
-    return null;
-  }, [selectedIteration, selectedRunDetails, source]);
-
-  const toolInsightsForSelectedIteration = useMemo(() => {
-    if (!selectedIteration || !selectedRunDetails.serverQuality?.toolInsights) {
-      return [];
-    }
-    const calledTools = new Set(
-      (selectedIteration.actualToolCalls ?? []).map((c) => c.toolName),
-    );
-    return selectedRunDetails.serverQuality.toolInsights.filter((t) =>
-      calledTools.has(t.toolName),
-    );
-  }, [selectedIteration, selectedRunDetails]);
-
-  const selectedIterationCaseInsightSlot = useMemo(() => {
-    if (!selectedIteration) {
-      return null;
-    }
-
-    // Regression insight caption (existing)
-    const showRegression = !shouldOmitRunCaseInsightCaption({
-      runStatus: selectedRunDetails.status,
-      caseInsight: caseInsightForSelectedIteration,
-      pending: runInsightsPending,
-      requested: runInsightsRequested,
-      failedGeneration: runInsightsFailedGeneration,
-      error: runInsightsError,
-    });
-    const regressionCaption = showRegression ? (
-      <RunCaseInsightTraceCaption
-        runStatus={selectedRunDetails.status}
-        caseInsight={caseInsightForSelectedIteration}
-        pending={runInsightsPending}
-        requested={runInsightsRequested}
-        failedGeneration={runInsightsFailedGeneration}
-        error={runInsightsError}
-      />
-    ) : null;
-
-    // Server quality workflow caption
-    const wf = workflowInsightForSelectedIteration;
-    const problemTools = toolInsightsForSelectedIteration.filter(
-      (t) => t.rating !== "good",
-    );
-    const isCompleted = selectedRunDetails.status === "completed";
-
-    const workflowCaption =
-      wf && isCompleted ? (
-        <div className="text-xs leading-relaxed">
-          <div className="flex items-baseline gap-1.5">
-            <span
-              className={cn(
-                "font-medium",
-                wf.efficiency === "optimal" || wf.efficiency === "acceptable"
-                  ? "text-muted-foreground"
-                  : "text-orange-500",
-              )}
-            >
-              Workflow: {wf.efficiency}
-            </span>
-            {wf.toolCallCount > 0 && (
-              <span className="text-muted-foreground">
-                · {wf.toolCallCount} call{wf.toolCallCount !== 1 ? "s" : ""}
-                {wf.optimalCallCount != null &&
-                wf.optimalCallCount !== wf.toolCallCount
-                  ? ` (optimal: ~${wf.optimalCallCount})`
-                  : ""}
-              </span>
-            )}
-          </div>
-          {wf.issues.length > 0 && (
-            <p className="mt-0.5 text-foreground">{wf.issues[0]}</p>
-          )}
-          {wf.suggestions.length > 0 && (
-            <p className="mt-0.5 text-muted-foreground">{wf.suggestions[0]}</p>
-          )}
-          {problemTools.length > 0 && (
-            <div className="mt-1 space-y-0.5">
-              {problemTools.map((t) => (
-                <p key={t.toolName} className="text-muted-foreground">
-                  <span className="font-medium text-orange-500">
-                    {t.toolName}
-                  </span>
-                  {t.suggestions.length > 0 ? `: ${t.suggestions[0]}` : ""}
-                </p>
-              ))}
-            </div>
-          )}
-        </div>
-      ) : (serverQualityPending || serverQualityRequested) && isCompleted ? (
-        <span className="flex items-center gap-2 text-xs text-muted-foreground">
-          Analyzing workflow quality…
-        </span>
-      ) : null;
-
-    if (!regressionCaption && !workflowCaption) {
-      return null;
-    }
-
-    return (
-      <div className="space-y-2">
-        {regressionCaption}
-        {workflowCaption}
-      </div>
-    );
-  }, [
-    selectedIteration,
-    selectedRunDetails.status,
-    caseInsightForSelectedIteration,
-    runInsightsPending,
-    runInsightsRequested,
-    runInsightsFailedGeneration,
-    runInsightsError,
-    workflowInsightForSelectedIteration,
-    toolInsightsForSelectedIteration,
-    serverQualityPending,
-    serverQualityRequested,
-  ]);
 
   const hasTokenData = useMemo(
     () =>
@@ -714,85 +517,76 @@ export function RunDetailView({
   const hasSecondaryBreakdown =
     selectedRunChartData.modelData.length >= 2 || hasRunBarCharts;
 
-  const runInsightsNarrative =
-    selectedRunDetails.status === "completed" && !runInsightsUnavailable ? (
-      <RunInsightsPrimaryBlock
-        embedded
-        className={hasSecondaryBreakdown ? undefined : "border-b-0 pb-0"}
-        summary={runInsightsSummary}
-        pending={runInsightsPending}
-        requested={runInsightsRequested}
-        failedGeneration={runInsightsFailedGeneration}
-        error={runInsightsError}
-        onRetry={() => requestRunInsights(true)}
-      />
-    ) : null;
+  const embeddedInsightCardClass =
+    "rounded-none border-0 border-l-0 bg-transparent p-0 py-0 shadow-none ring-0";
 
   const serverQualityNarrative =
     selectedRunDetails.status === "completed" && !serverQualityUnavailable ? (
-      <InsightPrimaryBlock
-        embedded
-        title="Server quality"
-        summary={serverQualitySummary}
-        pending={serverQualityPending}
-        requested={serverQualityRequested}
-        failedGeneration={serverQualityFailedGeneration}
-        error={serverQualityError}
-        onRetry={() => requestServerQuality(true)}
-        pendingLabel="Analyzing server quality…"
-        requestingLabel="Requesting server quality analysis…"
-        emptyLabel="We will analyze your MCP server's tool quality and workflow efficiency here."
-      />
+      <RunDetailInsightCollapsible title="Server quality">
+        <InsightPrimaryBlock
+          embedded
+          title="Server quality"
+          className={embeddedInsightCardClass}
+          summary={serverQualitySummary}
+          pending={serverQualityPending}
+          requested={serverQualityRequested}
+          failedGeneration={serverQualityFailedGeneration}
+          error={serverQualityError}
+          onRetry={() => requestServerQuality(true)}
+          pendingLabel="Analyzing server quality…"
+          requestingLabel="Requesting server quality analysis…"
+          emptyLabel="We will analyze your MCP server's tool quality and workflow efficiency here."
+        />
+      </RunDetailInsightCollapsible>
     ) : null;
 
   const runInsightsBody = (
     <div className="space-y-6">
-      <div className="flex w-full min-w-0 flex-nowrap gap-3 sm:gap-4">
-        {runDashboardKpis.map((stat, index) => (
-          <motion.div
-            key={`${stat.label}-${index}`}
-            initial={shouldReduceMotion ? false : { opacity: 0, y: 8 }}
-            animate={shouldReduceMotion ? undefined : { opacity: 1, y: 0 }}
-            transition={
-              shouldReduceMotion
-                ? undefined
-                : {
-                    duration: 0.2,
-                    delay: 0.04 * index,
-                    ease: [0.16, 1, 0.3, 1],
-                  }
-            }
-            className="flex min-w-0 flex-1 basis-0 flex-col rounded-xl border border-border/30 bg-gradient-to-b from-background/80 to-background/50 p-3 sm:p-4"
-          >
-            <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/80">
-              {stat.label}
-            </div>
-            <div
-              className={cn(
-                "mt-2 text-2xl font-semibold leading-none tracking-tight tabular-nums sm:mt-3 sm:text-3xl md:text-4xl",
-                stat.valueClass,
-              )}
+      {kpiPlacement === "body" && runDashboardKpis.length > 0 ? (
+        <div className="flex w-full min-w-0 flex-nowrap gap-3 sm:gap-4">
+          {runDashboardKpis.map((stat, index) => (
+            <motion.div
+              key={`${stat.label}-${index}`}
+              initial={shouldReduceMotion ? false : { opacity: 0, y: 8 }}
+              animate={shouldReduceMotion ? undefined : { opacity: 1, y: 0 }}
+              transition={
+                shouldReduceMotion
+                  ? undefined
+                  : {
+                      duration: 0.2,
+                      delay: 0.04 * index,
+                      ease: [0.16, 1, 0.3, 1],
+                    }
+              }
+              className="flex min-w-0 flex-1 basis-0 flex-col rounded-lg border border-border/25 bg-muted/10 p-3 sm:p-4"
             >
-              {stat.value}
-            </div>
-            <div className="mt-1 line-clamp-2 text-[11px] text-muted-foreground/70">
-              {stat.detail}
-            </div>
-          </motion.div>
-        ))}
-      </div>
+              <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/80">
+                {stat.label}
+              </div>
+              <div
+                className={cn(
+                  "mt-2 text-2xl font-semibold leading-none tracking-tight tabular-nums sm:mt-3 sm:text-3xl md:text-4xl",
+                  stat.valueClass,
+                )}
+              >
+                {stat.value}
+              </div>
+              {stat.detail ? (
+                <div className="mt-1 line-clamp-2 text-[11px] text-muted-foreground/70">
+                  {stat.detail}
+                </div>
+              ) : null}
+            </motion.div>
+          ))}
+        </div>
+      ) : null}
 
-      {runInsightsNarrative}
       {serverQualityNarrative}
 
       {hasSecondaryBreakdown ? (
         <div className="space-y-3">
-          <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/80">
-            Breakdown
-          </div>
-
           {selectedRunChartData.modelData.length >= 2 ? (
-            <div className="flex flex-wrap items-center gap-2.5 rounded-xl border border-border/30 bg-background/60 px-3 py-3">
+            <div className="flex flex-wrap items-center gap-2.5 rounded-lg border border-border/25 bg-muted/10 px-3 py-3">
               {selectedRunChartData.modelData.map((model) => (
                 <div
                   key={model.model}
@@ -835,20 +629,11 @@ export function RunDetailView({
     </div>
   );
 
-  /** Sidebar layout: only grow the detail stack when an iteration is open (needs scroll). */
-  const detailPaneFillsRemainingSpace =
-    !omitIterationList || selectedIterationId !== null;
-
   return (
     <div
       className={cn(
-        "relative flex flex-col",
-        omitIterationList
-          ? cn(
-              "min-h-0 overflow-hidden px-3 py-3",
-              detailPaneFillsRemainingSpace && "flex-1",
-            )
-          : "p-4",
+        "relative flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden",
+        omitIterationList ? "px-3 py-3" : "p-4",
       )}
     >
       {/* Run Header */}
@@ -874,40 +659,21 @@ export function RunDetailView({
           </p>
         ) : null}
 
-        {/* Run-level metrics + narrative: only when no case is selected (dedicated ?insights=1 or choose a case). */}
-        {!selectedIterationId ? (
-          <div className="rounded-xl border border-border/40 bg-background/80 shadow-xs">
-            <div className="flex w-full flex-wrap items-center gap-2 border-b border-border/80 px-4 py-2.5">
-              <span className="text-xs font-semibold tracking-wide text-foreground">
-                Run insights
-              </span>
-            </div>
-            <div className="px-4 py-4">{runInsightsBody}</div>
-          </div>
-        ) : null}
+        {/* Run-level KPIs, narrative, and charts stay visible while drilling into an iteration (graphs no longer disappear). */}
+        <div className="shrink-0">
+          {runInsightsBody}
+        </div>
       </div>
 
-      {/* Iteration list + detail (list may live in a parent sidebar when omitIterationList). */}
-      <div
-        className={cn(
-          "flex gap-0 overflow-hidden",
-          omitIterationList
-            ? cn(
-                "mt-3 min-h-0 flex-col",
-                detailPaneFillsRemainingSpace && "flex-1",
-              )
-            : "mt-4",
-          !omitIterationList &&
-            "rounded-xl border bg-card text-card-foreground min-h-[400px] h-[calc(100vh-200px)] max-h-[calc(100vh-200px)]",
-        )}
-        style={
-          omitIterationList && detailPaneFillsRemainingSpace
-            ? { minHeight: 400 }
-            : undefined
-        }
-      >
-        {!omitIterationList ? (
-          <div className="flex w-[280px] shrink-0 flex-col border-r">
+      {/* Iteration list only (details open from row actions / navigation). List may live in a parent when omitIterationList. */}
+      {!omitIterationList ? (
+        <div
+          className={cn(
+            "mt-4 flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden",
+            "min-h-[240px] rounded-xl border border-border/40 bg-card text-card-foreground",
+          )}
+        >
+          <div className="flex h-full min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden">
             <RunIterationsSidebar
               caseGroupsForSelectedRun={caseGroupsForSelectedRun}
               runDetailSortBy={runDetailSortBy}
@@ -921,40 +687,8 @@ export function RunDetailView({
               alwaysShowEditIterationRows={alwaysShowEditIterationRows}
             />
           </div>
-        ) : null}
-
-        <div
-          className={cn(
-            "flex min-h-0 min-w-0 flex-col",
-            detailPaneFillsRemainingSpace ? "flex-1" : "shrink-0",
-          )}
-        >
-          {selectedIteration ? (
-            <div
-              key={selectedIterationId}
-              className={cn(
-                "flex min-h-0 flex-1 flex-col overflow-y-auto",
-                omitIterationList ? "space-y-3" : "space-y-4",
-                !omitIterationList && "px-4",
-              )}
-            >
-              <IterationDetails
-                iteration={selectedIteration}
-                testCase={null}
-                serverNames={serverNames}
-                layoutMode="full"
-                caseInsightSlot={selectedIterationCaseInsightSlot}
-              />
-            </div>
-          ) : (
-            <div className="flex min-h-[11rem] w-full shrink-0 items-center justify-center px-4 py-8 text-center text-sm text-muted-foreground">
-              {caseGroupsForSelectedRun.length === 0
-                ? "No iterations in this run yet."
-                : "Select an iteration to view details"}
-            </div>
-          )}
         </div>
-      </div>
+      ) : null}
     </div>
   );
 }

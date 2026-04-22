@@ -11,6 +11,15 @@ vi.mock("posthog-js/react", () => ({
   usePostHog: () => ({ capture: mockCapture }),
 }));
 
+/** Label button for a trace row (avoids colliding with expand chevron buttons on LLM rows). */
+function getTraceRowLabelButtonContaining(text: string) {
+  const row = screen.getAllByTestId("trace-row").find((el) =>
+    el.textContent?.includes(text),
+  );
+  expect(row).toBeTruthy();
+  return within(row!).getByTestId("trace-row-label-button");
+}
+
 vi.mock("@/components/ui/resizable", () => ({
   ResizablePanelGroup: ({ children }: { children: ReactNode }) => (
     <div data-testid="resizable-panel-group">{children}</div>
@@ -826,7 +835,7 @@ describe("TraceTimeline detail pane", () => {
       highlightSourceIndices: [1, 2],
     });
 
-    await user.click(screen.getByRole("button", { name: /Agent/i }));
+    await user.click(getTraceRowLabelButtonContaining("Summary ready"));
     await user.click(screen.getByRole("button", { name: "Reveal in Chat" }));
     expect(onRevealInTranscript).toHaveBeenLastCalledWith({
       focusSourceIndex: 1,
@@ -1165,7 +1174,7 @@ describe("TraceTimeline detail pane", () => {
       />,
     );
 
-    await user.click(screen.getByRole("button", { name: /Agent:/i }));
+    await user.click(getTraceRowLabelButtonContaining("Agent:"));
     const pane = screen.getByTestId("trace-detail-pane");
     const inputPreview = within(pane).getAllByTestId("json-editor")[0];
     const inputJson = inputPreview.textContent ?? "";
@@ -1201,7 +1210,7 @@ describe("TraceTimeline detail pane", () => {
       />,
     );
 
-    await user.click(screen.getByRole("button", { name: /Agent:/i }));
+    await user.click(getTraceRowLabelButtonContaining("Agent:"));
     const pane = screen.getByTestId("trace-detail-pane");
     const inputSection = within(pane)
       .getByText("Input")
@@ -1258,7 +1267,7 @@ describe("TraceTimeline detail pane", () => {
       />,
     );
 
-    await user.click(screen.getByRole("button", { name: /Agent:/i }));
+    await user.click(getTraceRowLabelButtonContaining("Agent:"));
     const pane = screen.getByTestId("trace-detail-pane");
     const inputPreview = within(pane).getAllByTestId("json-editor")[0];
     const inputJson = inputPreview.textContent ?? "";
@@ -1304,7 +1313,7 @@ describe("TraceTimeline detail pane", () => {
     );
 
     expect(
-      screen.getByRole("button", { name: /Agent · Calling read_me/i }),
+      getTraceRowLabelButtonContaining("Agent · Calling read_me"),
     ).toBeInTheDocument();
   });
 
@@ -1344,7 +1353,7 @@ describe("TraceTimeline detail pane", () => {
     );
 
     expect(
-      screen.getByRole("button", { name: /Agent: "I'll fetch that\."/i }),
+      getTraceRowLabelButtonContaining(`Agent: "I'll fetch that."`),
     ).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: /Calling read_me/i }),
@@ -1392,9 +1401,7 @@ describe("TraceTimeline detail pane", () => {
     );
 
     expect(
-      screen.getByRole("button", {
-        name: /Agent · Calling read_me, create_view/i,
-      }),
+      getTraceRowLabelButtonContaining("Agent · Calling read_me, create_view"),
     ).toBeInTheDocument();
   });
 

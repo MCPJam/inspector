@@ -1085,9 +1085,22 @@ describe("useEvalHandlers", () => {
     });
 
     it("passes serverIds and convexAuthToken in request body", async () => {
+      const ensureServersReady = vi.fn().mockResolvedValue({
+        readyServerNames: ["server-1", "server-2"],
+        missingServerNames: [],
+        failedServerNames: [],
+        reauthServerNames: [],
+      });
+
       mockAuthFetch.mockResolvedValue(createFetchResponse({ tests: [] }));
 
-      const { result } = renderHook(() => useEvalHandlers(defaultProps));
+      const { result } = renderHook(() =>
+        useEvalHandlers({
+          ...defaultProps,
+          connectedServerNames: new Set(["server-1"]),
+          ensureServersReady,
+        }),
+      );
 
       await act(async () => {
         await result.current.handleGenerateTests("suite-123", [
@@ -1181,6 +1194,91 @@ describe("useEvalHandlers", () => {
 
       // Verify no test cases were created on error
       expect(mockMutations.createTestCaseMutation).not.toHaveBeenCalled();
+    });
+
+    it("calls ensureServersReady before generating when suite servers are not yet connected", async () => {
+      const ensureServersReady = vi.fn().mockResolvedValue({
+        readyServerNames: ["server-1"],
+        missingServerNames: [],
+        failedServerNames: [],
+        reauthServerNames: [],
+      });
+
+      mockAuthFetch.mockResolvedValue(createFetchResponse({ tests: [] }));
+
+      const { result } = renderHook(() =>
+        useEvalHandlers({
+          ...defaultProps,
+          connectedServerNames: new Set(),
+          ensureServersReady,
+        }),
+      );
+
+      await act(async () => {
+        await result.current.handleGenerateTests("suite-123", ["server-1"]);
+      });
+
+      expect(ensureServersReady).toHaveBeenCalledWith(["server-1"]);
+      expect(mockAuthFetch).toHaveBeenCalled();
+    });
+
+    it("runs newly generated cases when runNewCasesAfterGenerate and suite are provided", async () => {
+      let listCall = 0;
+      mockConvexQuery.mockImplementation(async () => {
+        listCall += 1;
+        if (listCall === 1) {
+          return [];
+        }
+        return [
+          {
+            _id: "new-case-1",
+            title: "Generated",
+            query: "Q",
+            runs: 1,
+            models: [{ model: "gpt-4", provider: "openai" }],
+            expectedToolCalls: [],
+          },
+        ];
+      });
+
+      mockAuthFetch
+        .mockResolvedValueOnce(
+          createFetchResponse({
+            tests: [
+              {
+                title: "Generated",
+                query: "Q",
+                expectedToolCalls: [],
+              },
+            ],
+          }),
+        )
+        .mockResolvedValueOnce(
+          createFetchResponse({
+            success: true,
+            iteration: { _id: "iter-1" },
+          }),
+        );
+
+      mockMutations.createTestCaseMutation.mockResolvedValue("new-case-1");
+
+      const { result } = renderHook(() => useEvalHandlers(defaultProps));
+
+      await act(async () => {
+        await result.current.handleGenerateTests("suite-123", ["server-1"], {
+          runNewCasesAfterGenerate: true,
+          suite: {
+            _id: "suite-123",
+            name: "Suite",
+            description: "D",
+            environment: { servers: ["server-1"] },
+          } as any,
+        });
+      });
+
+      expect(mockAuthFetch).toHaveBeenCalledTimes(2);
+      const runBody = JSON.parse(mockAuthFetch.mock.calls[1]![1]!.body as string);
+      expect(runBody.testCaseId).toBe("new-case-1");
     });
   });
 

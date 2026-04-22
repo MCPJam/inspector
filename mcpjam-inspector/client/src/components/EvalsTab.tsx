@@ -376,7 +376,10 @@ export function EvalsTab({
 
   const handleWorkspaceBrowseChange = useCallback(
     (value: PlaygroundWorkspaceBrowse) => {
-      if (value === "executions" && selectedSuiteId) {
+      if (
+        selectedSuiteId &&
+        (value === "executions" || value === "suites")
+      ) {
         navigatePlaygroundEvalsRoute({ type: "list" }, { replace: true });
       }
       setWorkspaceBrowse(value);
@@ -393,7 +396,10 @@ export function EvalsTab({
     if (!selectedSuite) return;
     const suiteServers = selectedSuite.environment?.servers ?? [];
     if (suiteServers.length === 0) return;
-    await handlers.handleGenerateTests(selectedSuite._id, suiteServers);
+    await handlers.handleGenerateTests(selectedSuite._id, suiteServers, {
+      suite: selectedSuite,
+      runNewCasesAfterGenerate: true,
+    });
   }, [handlers, selectedSuite]);
 
   const generateState = useMemo(() => {
@@ -410,6 +416,13 @@ export function EvalsTab({
       (serverName) => !connectedServerNames.has(serverName),
     );
     if (missingServers.length > 0) {
+      if (ensureServersReady) {
+        return {
+          canGenerate: true,
+          disabledReason:
+            "Connects the suite’s MCP servers if needed, then creates suggested cases and runs each new case.",
+        };
+      }
       return {
         canGenerate: false,
         disabledReason: `Connect ${missingServers.join(", ")} to generate cases for this suite.`,
@@ -418,9 +431,10 @@ export function EvalsTab({
 
     return {
       canGenerate: true,
-      disabledReason: "Generate suggested cases from this suite's configured servers.",
+      disabledReason:
+        "Generate suggested cases from this suite’s servers; new cases run right after they are created.",
     };
-  }, [connectedServerNames, selectedSuite]);
+  }, [connectedServerNames, ensureServersReady, selectedSuite]);
 
   const handleDeleteTestCasesBatch = useCallback(
     async (testCaseIds: string[]) => {

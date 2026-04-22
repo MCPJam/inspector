@@ -2,7 +2,10 @@ import { useMemo } from "react";
 import { ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatTime, getIterationRecencyTimestamp } from "./helpers";
-import { computeIterationResult } from "./pass-criteria";
+import {
+  getIterationResultBadgeClass,
+  getIterationResultDisplayLabel,
+} from "./iteration-result-presentation";
 import type { EvalCase, EvalIteration } from "./types";
 
 function getExecutionCaseTitle(
@@ -16,28 +19,6 @@ function getExecutionCaseTitle(
     }
   }
   return iteration.testCaseSnapshot?.title || "Untitled test case";
-}
-
-function getResultLabel(iteration: EvalIteration) {
-  const result = computeIterationResult(iteration);
-  if (result === "pending") {
-    return iteration.status === "running" ? "Running" : "Pending";
-  }
-  return result.charAt(0).toUpperCase() + result.slice(1);
-}
-
-function getResultBadgeClass(iteration: EvalIteration) {
-  const result = computeIterationResult(iteration);
-  if (result === "passed") {
-    return "bg-emerald-500/15 text-emerald-700 dark:bg-emerald-400/20 dark:text-emerald-300";
-  }
-  if (result === "failed") {
-    return "bg-rose-500/15 text-rose-700 dark:bg-rose-400/20 dark:text-rose-300";
-  }
-  if (result === "cancelled") {
-    return "bg-muted text-muted-foreground";
-  }
-  return "bg-amber-500/15 text-amber-700 dark:bg-amber-400/20 dark:text-amber-300";
 }
 
 export function SuiteExecutionsOverview({
@@ -113,10 +94,10 @@ export function SuiteExecutionsOverview({
                   <span
                     className={cn(
                       "inline-flex shrink-0 items-center rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase",
-                      getResultBadgeClass(iteration),
+                      getIterationResultBadgeClass(iteration),
                     )}
                   >
-                    {getResultLabel(iteration)}
+                    {getIterationResultDisplayLabel(iteration)}
                   </span>
                 </div>
                 <div

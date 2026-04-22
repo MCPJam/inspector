@@ -6,6 +6,10 @@ import { SuiteHeader } from "./suite-header";
 import { SuiteHeroStats } from "./suite-hero-stats";
 import { RunOverview } from "./run-overview";
 import { RunDetailView } from "./run-detail-view";
+import {
+  computeRunDashboardKpis,
+  RunDetailKpiStrip,
+} from "./run-detail-kpis";
 import { SuiteTestsConfig } from "./suite-tests-config";
 import { TestTemplateEditor } from "./test-template-editor";
 import { PassCriteriaSelector } from "./pass-criteria-selector";
@@ -243,30 +247,30 @@ export function SuiteIterationsView({
   const selectedIterationId =
     route.type === "run-detail" ? (route.iteration ?? null) : null;
 
-  // Auto-select the first iteration when on run-detail with iterations but no ?iteration= param.
-  useEffect(() => {
-    if (route.type !== "run-detail" || caseGroupsForSelectedRun.length === 0) {
+  const handleSelectIteration = (iterationId: string) => {
+    if (route.type !== "run-detail") {
       return;
     }
-
-    if (route.insightsFocus && !route.iteration) {
-      return;
-    }
-
-    const iterationIds = new Set(caseGroupsForSelectedRun.map((i) => i._id));
-
-    if (!route.iteration || !iterationIds.has(route.iteration)) {
+    const iter = caseGroupsForSelectedRun.find((i) => i._id === iterationId);
+    if (readOnlyConfig) {
       navigation.toRunDetail(
         route.suiteId,
         route.runId,
-        caseGroupsForSelectedRun[0]._id,
+        iterationId,
       );
+      return;
     }
-  }, [route, caseGroupsForSelectedRun, navigation]);
-
-  const handleSelectIteration = (iterationId: string) => {
-    if (route.type === "run-detail") {
-      navigation.toRunDetail(route.suiteId, route.runId, iterationId);
+    if (iter?.testCaseId) {
+      navigation.toTestEdit(route.suiteId, iter.testCaseId, {
+        openCompare: true,
+        iteration: iterationId,
+      });
+    } else {
+      navigation.toRunDetail(
+        route.suiteId,
+        route.runId,
+        iterationId,
+      );
     }
   };
 
@@ -476,6 +480,20 @@ export function SuiteIterationsView({
             onSuiteModelsUpdate={
               readOnlyConfig ? undefined : handleUpdateTests
             }
+            runDetailKpiStrip={
+              showSuiteHeader &&
+              viewMode === "run-detail" &&
+              selectedRunDetails ? (
+                <RunDetailKpiStrip
+                  compact
+                  kpis={computeRunDashboardKpis({
+                    selectedRunDetails,
+                    caseGroupsForSelectedRun,
+                    source: suite.source as "ui" | "sdk" | undefined,
+                  })}
+                />
+              ) : undefined
+            }
           />
         </div>
       ) : null}
@@ -555,9 +573,7 @@ export function SuiteIterationsView({
                       onOpenExportCase={() =>
                         handleOpenTestCaseExport(selectedCase)
                       }
-                      serverNames={(suite.environment?.servers || []).filter(
-                        (name) => connectedServerNames.has(name),
-                      )}
+                      serverNames={suite.environment?.servers || []}
                       suiteName={suite.name}
                       onNavigateToSuite={() =>
                         navigation.toSuiteOverview(suite._id)
@@ -753,7 +769,7 @@ export function SuiteIterationsView({
                 transition={
                   shouldReduceMotion ? { duration: 0 } : { duration: 0.15 }
                 }
-                className="min-h-0 flex-1 overflow-y-auto"
+                className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
               >
                 <RunDetailView
                   selectedRunDetails={selectedRunDetails}
@@ -762,11 +778,14 @@ export function SuiteIterationsView({
                   selectedRunChartData={selectedRunChartData}
                   runDetailSortBy={effectiveRunDetailSortBy}
                   onSortChange={effectiveRunDetailSortChange}
-                  serverNames={(suite.environment?.servers || []).filter(
-                    (name) => connectedServerNames.has(name),
-                  )}
+                  serverNames={suite.environment?.servers || []}
                   selectedIterationId={selectedIterationId}
                   onSelectIteration={handleSelectIteration}
+                  kpiPlacement={
+                    showSuiteHeader && viewMode === "run-detail"
+                      ? "header"
+                      : "body"
+                  }
                   hideReplayLineage
                   omitIterationList={omitRunIterationList}
                   onOpenRunInsights={

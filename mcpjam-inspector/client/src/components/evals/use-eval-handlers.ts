@@ -137,6 +137,17 @@ function normalizeSuiteServerRefs(
   return Array.from(new Set(rawServerRefs));
 }
 
+/** Options for {@link useEvalHandlers} `handleGenerateTests` (playground: connect, generate, run). */
+export type HandleGenerateEvalTestsOptions = {
+  /** Required when `runNewCasesAfterGenerate` is true (same object passed to `handleRunTestCase`). */
+  suite?: EvalSuite;
+  /**
+   * When set with `suite`, after persisting new cases, runs them via the same path as
+   * the per-row run control (including `ensureServersReady` and model prep).
+   */
+  runNewCasesAfterGenerate?: boolean;
+};
+
 interface UseEvalHandlersProps {
   mutations: ReturnType<typeof useEvalMutations>;
   selectedSuiteEntry: EvalSuiteOverviewEntry | null;
@@ -556,7 +567,12 @@ export function useEvalHandlers({
     async (
       suite: EvalSuite,
       testCase: EvalCase,
-      options?: { location?: string; selectedModel?: string | null },
+      options?: {
+        location?: string;
+        selectedModel?: string | null;
+        /** When true, omits the usual per-run success toasts (errors still surface). */
+        suppressCompletionToasts?: boolean;
+      },
     ) => {
       if (runningTestCaseId || rerunningSuiteId || replayingRunId) {
         return null;
@@ -746,19 +762,28 @@ export function useEvalHandlers({
           ...failedRuns,
         ];
 
-        if (successfulRuns.length === totalModelsRequested) {
-          toast.success(
-            isMultiModelRun
-              ? `Test completed across ${totalModelsRequested} models!`
-              : "Test completed successfully!",
-          );
-        } else if (successfulRuns.length > 0) {
-          toast.error(
-            `${successfulRuns.length}/${totalModelsRequested} model${
-              totalModelsRequested === 1 ? "" : "s"
-            } completed successfully.`,
-          );
-        } else {
+        if (!options?.suppressCompletionToasts) {
+          if (successfulRuns.length === totalModelsRequested) {
+            toast.success(
+              isMultiModelRun
+                ? `Test completed across ${totalModelsRequested} models!`
+                : "Test completed successfully!",
+            );
+          } else if (successfulRuns.length > 0) {
+            toast.error(
+              `${successfulRuns.length}/${totalModelsRequested} model${
+                totalModelsRequested === 1 ? "" : "s"
+              } completed successfully.`,
+            );
+          } else {
+            toast.error(
+              getBillingErrorMessage(
+                totalFailedRuns[0]?.error,
+                "Failed to run test case",
+              ),
+            );
+          }
+        } else if (successfulRuns.length === 0) {
           toast.error(
             getBillingErrorMessage(
               totalFailedRuns[0]?.error,
@@ -1120,8 +1145,47 @@ export function useEvalHandlers({
 
   // Generate tests handler - calls API and creates test cases
   const handleGenerateTests = useCallback(
-    async (suiteId: string, serverIds: string[]) => {
+    async (
+      suiteId: string,
+      serverIds: string[],
+      postOptions?: HandleGenerateEvalTestsOptions,
+    ) => {
       if (isGeneratingTests) return;
+
+      const suiteServers = normalizeSuiteServerRefs(serverIds);
+      if (suiteServers.length === 0) {
+        toast.error(
+          "Add at least one server to this suite before generating cases.",
+        );
+        return;
+      }
+
+      const disconnected = suiteServers.filter(
+        (name) => !connectedServerNames?.has(name),
+      );
+      if (disconnected.length > 0) {
+        if (ensureServersReady != null) {
+          const readiness = await ensureServersReady(suiteServers);
+          if (hasUnavailableServers(readiness)) {
+            toast.error(
+              formatEnsureServersReadyError(
+                readiness,
+                "generate test cases",
+                workspaceServers,
+              ),
+            );
+            return;
+          }
+        } else {
+          toast.error(
+            formatMcpConnectServerPrompt(disconnected, {
+              remoteServers: workspaceServers,
+              kind: "suite",
+            }),
+          );
+          return;
+        }
+      }
 
       setIsGeneratingTests(true);
 
@@ -1141,18 +1205,63 @@ export function useEvalHandlers({
           return;
         }
 
-        if (outcome.createdCount > 0) {
-          toast.success(
-            `Generated ${outcome.createdCount} test case${outcome.createdCount > 1 ? "s" : ""}`,
-          );
+        const shouldAutoRun =
+          postOptions?.runNewCasesAfterGenerate === true &&
+          postOptions?.suite != null;
 
+        if (outcome.createdCount > 0) {
           posthog.capture("eval_tests_generated_from_sidebar", {
             location: "test_case_list_sidebar",
             platform: detectPlatform(),
             environment: detectEnvironment(),
             suite_id: suiteId,
             generated_count: outcome.createdCount,
+            auto_ran: Boolean(
+              shouldAutoRun && outcome.createdTestCaseIds.length > 0,
+            ),
           });
+        }
+
+        if (
+          shouldAutoRun &&
+          outcome.createdTestCaseIds.length > 0 &&
+          outcome.createdCount > 0
+        ) {
+          const suite = postOptions!.suite!;
+          const allCases = (await getTestCasesForRerun(
+            suiteId,
+          )) as EvalCase[];
+          const byId = new Map<string, EvalCase>(
+            allCases.map((c) => [c._id, c]),
+          );
+          const toRun: EvalCase[] = [];
+          for (const id of outcome.createdTestCaseIds) {
+            const c = byId.get(id);
+            if (c) {
+              toRun.push(c);
+            }
+          }
+          for (const testCase of toRun) {
+            await handleRunTestCase(suite, testCase, {
+              location: "post_generate_suggested_cases",
+              suppressCompletionToasts: true,
+            });
+          }
+          if (toRun.length === 0) {
+            toast.success(
+              `Generated ${outcome.createdCount} test case${outcome.createdCount > 1 ? "s" : ""}. Open the list to run them when they appear.`,
+            );
+          } else if (toRun.length === 1) {
+            toast.success("Generated 1 new case and ran it.");
+          } else {
+            toast.success(
+              `Generated and ran ${toRun.length} new test cases.`,
+            );
+          }
+        } else if (outcome.createdCount > 0) {
+          toast.success(
+            `Generated ${outcome.createdCount} test case${outcome.createdCount > 1 ? "s" : ""}`,
+          );
         }
       } catch (error) {
         console.error("Failed to generate tests:", error);
@@ -1169,6 +1278,11 @@ export function useEvalHandlers({
       convex,
       mutations.createTestCaseMutation,
       workspaceId,
+      connectedServerNames,
+      ensureServersReady,
+      workspaceServers,
+      getTestCasesForRerun,
+      handleRunTestCase,
     ],
   );
 

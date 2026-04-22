@@ -59,6 +59,12 @@ export interface SuiteOverviewModelBarProps {
   availableModels: ModelDefinition[];
   readOnly?: boolean;
   onUpdate?: (models: SuiteOverviewModelRow[]) => Promise<void>;
+  /** Merged with the outer bar container (e.g. tighter padding in {@link SuiteHeader}). */
+  className?: string;
+  /**
+   * `panel` = card surface (default). `inline` = no card chrome for embedding in a header row.
+   */
+  containerVariant?: "panel" | "inline";
 }
 
 export function SuiteOverviewModelBar({
@@ -66,6 +72,8 @@ export function SuiteOverviewModelBar({
   availableModels,
   readOnly = false,
   onUpdate,
+  className,
+  containerVariant = "panel",
 }: SuiteOverviewModelBarProps) {
   const initialModels = useMemo(
     () => deriveModelsFromCases(testCases, availableModels),
@@ -167,7 +175,7 @@ export function SuiteOverviewModelBar({
       <DropdownMenuTrigger asChild>
         <button
           type="button"
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border/60 bg-white text-foreground transition-colors hover:bg-muted/80 dark:bg-background dark:hover:bg-muted/50"
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border/60 bg-background text-foreground outline-none transition-colors hover:bg-muted/45 focus-visible:ring-2 focus-visible:ring-ring dark:bg-background"
           aria-label="Add model"
         >
           <Plus className="h-3.5 w-3.5" />
@@ -288,12 +296,35 @@ export function SuiteOverviewModelBar({
     availableModels.some((m) => !models.some((x) => x.model === m.id));
 
   return (
-    <div className="rounded-xl bg-[#f8f5f1] py-2.5 dark:bg-muted/10">
-      <div className="flex min-h-9 items-center gap-2 px-1 sm:px-2">
-        <div className="flex min-w-0 flex-1 items-center gap-2">
-          <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto py-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+    <div
+      className={cn(
+        containerVariant === "panel"
+          ? "rounded-lg bg-card py-2.5 text-card-foreground"
+          : "bg-transparent py-0 text-card-foreground",
+        className,
+      )}
+    >
+      <div
+        className={cn(
+          "flex min-h-9 items-center gap-2 px-1 sm:px-2",
+          containerVariant === "inline" &&
+            "w-full min-w-0 max-w-full overflow-hidden",
+        )}
+      >
+        <div
+          className={cn(
+            "flex min-w-0 items-center gap-2",
+            containerVariant === "panel" ? "flex-1" : "w-full flex-1",
+          )}
+        >
+          <div
+            className={cn(
+              "flex min-w-0 items-center gap-1.5 overflow-x-auto py-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
+              containerVariant === "panel" ? "flex-1" : "min-w-0 flex-1",
+            )}
+          >
             {models.length === 0 ? (
-              <span className="shrink-0 text-[13px] font-normal text-[#777777] dark:text-muted-foreground">
+              <span className="shrink-0 text-[13px] font-normal text-muted-foreground">
                 No models on cases yet
               </span>
             ) : null}
@@ -306,7 +337,7 @@ export function SuiteOverviewModelBar({
                   className={cn(
                     "flex h-8 max-w-[200px] shrink-0 items-center gap-1 rounded-full border px-2",
                     index === 0
-                      ? "border-primary/25 bg-primary/5 text-foreground"
+                      ? "border-border/60 bg-muted/40 text-foreground"
                       : "border-border/50 bg-muted/30 text-muted-foreground",
                   )}
                 >

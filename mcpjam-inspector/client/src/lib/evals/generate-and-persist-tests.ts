@@ -104,10 +104,27 @@ export type GenerateAndPersistEvalTestsOptions = {
   skipIfExistingCases?: boolean;
 };
 
+function getCreatedTestCaseId(created: unknown): string | null {
+  if (typeof created === "string" && created.length > 0) {
+    return created;
+  }
+  if (
+    created &&
+    typeof created === "object" &&
+    "_id" in created &&
+    typeof (created as { _id: unknown })._id === "string"
+  ) {
+    return (created as { _id: string })._id;
+  }
+  return null;
+}
+
 export type GenerateAndPersistEvalTestsResult = {
   skippedBecauseExistingCases: boolean;
   createdCount: number;
   apiReturnedTests: number;
+  /** Ids of persisted test cases, in API response order. */
+  createdTestCaseIds: string[];
 };
 
 export async function generateAndPersistEvalTests(
@@ -137,6 +154,7 @@ export async function generateAndPersistEvalTests(
       skippedBecauseExistingCases: true,
       createdCount: 0,
       apiReturnedTests: 0,
+      createdTestCaseIds: [],
     };
   }
 
@@ -162,13 +180,21 @@ export async function generateAndPersistEvalTests(
       skippedBecauseExistingCases: false,
       createdCount: 0,
       apiReturnedTests: 0,
+      createdTestCaseIds: [],
     };
   }
 
   let createdCount = 0;
+  const createdTestCaseIds: string[] = [];
   for (const test of tests) {
     try {
-      await createTestCase(toCreateTestCaseInput(suiteId, modelsToUse, test));
+      const created = await createTestCase(
+        toCreateTestCaseInput(suiteId, modelsToUse, test),
+      );
+      const id = getCreatedTestCaseId(created);
+      if (id) {
+        createdTestCaseIds.push(id);
+      }
       createdCount++;
     } catch (err) {
       console.error("Failed to create test case:", err);
@@ -179,5 +205,6 @@ export async function generateAndPersistEvalTests(
     skippedBecauseExistingCases: false,
     createdCount,
     apiReturnedTests: tests.length,
+    createdTestCaseIds,
   };
 }
