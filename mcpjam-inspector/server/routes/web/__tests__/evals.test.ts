@@ -178,26 +178,41 @@ async function expectJson<T = unknown>(
 function stubAuthorizeResponse(options?: { useOAuth?: boolean }) {
   vi.stubGlobal(
     "fetch",
-    vi.fn().mockResolvedValue(
-      new Response(
-        JSON.stringify({
-          authorized: true,
-          role: "member",
-          accessLevel: "workspace_member",
-          permissions: { chatOnly: false },
-          serverConfig: {
-            transportType: "http",
-            url: "https://server.example.com/mcp",
-            headers: {},
-            useOAuth: options?.useOAuth ?? false,
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith("/web/authorize-batch")) {
+        const payload = JSON.parse(String(init?.body ?? "{}"));
+        const serverIds = Array.isArray(payload?.serverIds)
+          ? (payload.serverIds as string[])
+          : [];
+        return new Response(
+          JSON.stringify({
+            results: Object.fromEntries(
+              serverIds.map((serverId) => [
+                serverId,
+                {
+                  ok: true,
+                  role: "member",
+                  accessLevel: "workspace_member",
+                  permissions: { chatOnly: false },
+                  serverConfig: {
+                    transportType: "http",
+                    url: `https://${serverId}.example.com/mcp`,
+                    headers: {},
+                    useOAuth: options?.useOAuth ?? false,
+                  },
+                },
+              ]),
+            ),
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
           },
-        }),
-        {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        },
-      ),
-    ),
+        );
+      }
+
+      throw new Error(`Unexpected fetch: ${String(input)}`);
+    }),
   );
 }
 

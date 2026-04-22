@@ -26,6 +26,7 @@ import {
 } from "@/hooks/useSharedChatThreads";
 
 const NOOP = (..._args: unknown[]) => {};
+const EMPTY_SPANS: EvalTraceSpan[] = [];
 
 interface ShareUsageThreadDetailProps {
   threadId: string;
@@ -113,7 +114,7 @@ export function ShareUsageThreadDetail({
   // Hydrate span blobs when turn traces arrive
   useEffect(() => {
     if (!turnTraces || turnTraces.length === 0) {
-      setHydratedSpans([]);
+      setHydratedSpans(EMPTY_SPANS);
       return;
     }
 
