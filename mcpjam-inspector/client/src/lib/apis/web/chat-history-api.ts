@@ -58,6 +58,7 @@ export interface ChatHistoryWidgetSnapshot {
   widgetPermissive: boolean;
   prefersBorder: boolean;
   widgetHtmlUrl?: string | null;
+  toolOutputUrl?: string | null;
 }
 
 export interface ChatHistoryTurnTrace {

@@ -360,6 +360,7 @@ export function MCPAppsRenderer({
   const [reinitCount, setReinitCount] = useState(0);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [widgetHtml, setWidgetHtml] = useState<string | null>(null);
+  const [bridgeTransportReady, setBridgeTransportReady] = useState(false);
   const isCachedReplay = !!cachedWidgetHtmlUrl;
   const [widgetCsp, setWidgetCsp] = useState<McpUiResourceCsp | undefined>(
     isCachedReplay ? undefined : (initialWidgetCsp ?? undefined),
@@ -389,6 +390,7 @@ export function MCPAppsRenderer({
   // Reset widget HTML when cachedWidgetHtmlUrl changes (e.g., different view selected)
   useEffect(() => {
     setWidgetHtml(null);
+    setBridgeTransportReady(false);
     setLoadedCspMode(null);
     setLoadError(null);
     setWidgetCsp(isCachedReplay ? undefined : (initialWidgetCsp ?? undefined));
@@ -454,6 +456,8 @@ export function MCPAppsRenderer({
     toolCallId,
     reinitCount,
   });
+  const hasWidgetHtml = widgetHtml !== null;
+  const widgetHtmlLength = widgetHtml?.length ?? 0;
 
   // Fetch widget HTML when tool is active (streaming, input ready, or output available) or CSP mode changes
   useEffect(() => {
@@ -467,6 +471,13 @@ export function MCPAppsRenderer({
 
     const fetchWidgetHtml = async () => {
       try {
+        logWidgetDebug("host-to-ui", "debug/widget-content-requested", {
+          cachedWidgetHtmlUrl: cachedWidgetHtmlUrl ?? null,
+          cspMode,
+          isOffline: !!isOffline,
+          resourceUri,
+          toolState: toolState ?? null,
+        });
         // Use cached widget HTML whenever available (faster and works offline)
         // This is for the Views tab offline rendering
         if (cachedWidgetHtmlUrl) {
@@ -484,15 +495,24 @@ export function MCPAppsRenderer({
           setPrefersBorder(initialPrefersBorder ?? true);
           setLoadedCspMode(cspMode);
           setWidgetHtmlStore(toolCallId, html);
+          logWidgetDebug("host-to-ui", "debug/widget-content-ready", {
+            cached: true,
+            cspMode,
+            htmlLength: html.length,
+            permissive: true,
+          });
           return;
         }
 
         // If server is offline and no cached HTML, show helpful error
         if (isOffline) {
-          setLoadError(
+          const errorMessage =
             "Server is offline and this view was saved without cached HTML. " +
-              "Connect the server and re-save the view to enable offline rendering.",
-          );
+            "Connect the server and re-save the view to enable offline rendering.";
+          setLoadError(errorMessage);
+          logWidgetDebug("host-to-ui", "debug/widget-content-error", {
+            error: errorMessage,
+          });
           return;
         }
 
@@ -516,10 +536,14 @@ export function MCPAppsRenderer({
         });
 
         if (!valid) {
-          setLoadError(
+          const errorMessage =
             warning ||
-              `Invalid mimetype - SEP-1865 requires "text/html;profile=mcp-app"`,
-          );
+            `Invalid mimetype - SEP-1865 requires "text/html;profile=mcp-app"`;
+          setLoadError(errorMessage);
+          logWidgetDebug("host-to-ui", "debug/widget-content-invalid-mimetype", {
+            cspMode,
+            error: errorMessage,
+          });
           return;
         }
 
@@ -552,10 +576,22 @@ export function MCPAppsRenderer({
               : null,
           });
         }
+        logWidgetDebug("host-to-ui", "debug/widget-content-ready", {
+          cached: false,
+          cspMode,
+          hasCsp: !!csp,
+          hasPermissions: !!permissions,
+          htmlLength: html.length,
+          permissive: permissive ?? false,
+          prefersBorder: prefersBorder ?? true,
+        });
       } catch (err) {
-        setLoadError(
-          err instanceof Error ? err.message : "Failed to prepare widget",
-        );
+        const errorMessage =
+          err instanceof Error ? err.message : "Failed to prepare widget";
+        setLoadError(errorMessage);
+        logWidgetDebug("host-to-ui", "debug/widget-content-error", {
+          error: errorMessage,
+        });
       }
     };
 
@@ -582,6 +618,23 @@ export function MCPAppsRenderer({
       addUiLog(payload);
     },
     [addUiLog, minimalMode],
+  );
+  const logWidgetDebug = useCallback(
+    (
+      direction: "host-to-ui" | "ui-to-host",
+      method: string,
+      details: Record<string, unknown>,
+    ) => {
+      logUiEvent({
+        widgetId: toolCallId,
+        serverId,
+        direction,
+        protocol: "mcp-apps",
+        method,
+        message: details,
+      });
+    },
+    [logUiEvent, serverId, toolCallId],
   );
 
   // Widget debug store
@@ -810,6 +863,12 @@ export function MCPAppsRenderer({
         setIsReady(true);
         isReadyRef.current = true;
         const appCaps = bridge.getAppCapabilities();
+        logWidgetDebug("ui-to-host", "debug/app-initialized", {
+          availableDisplayModes:
+            (appCaps?.availableDisplayModes as DisplayMode[] | undefined) ??
+            null,
+          wasReady,
+        });
         onAppSupportedDisplayModesChangeRef.current?.(
           appCaps?.availableDisplayModes as DisplayMode[] | undefined,
         );
@@ -956,6 +1015,10 @@ export function MCPAppsRenderer({
         }
 
         iframe.animate([from, to], { duration: 300, easing: "ease-out" });
+        logWidgetDebug("ui-to-host", "debug/size-changed", {
+          adjustedHeight,
+          displayMode: effectiveDisplayModeRef.current,
+        });
       };
 
       bridge.onrequestdisplaymode = async ({ mode }) => {
@@ -1005,16 +1068,30 @@ export function MCPAppsRenderer({
         return {};
       };
     },
-    [setIsReady, toolCallId, setWidgetModelContext],
+    [setIsReady, toolCallId, setWidgetModelContext, logWidgetDebug],
   );
 
   useEffect(() => {
     if (!widgetHtml) return;
     const iframe = sandboxRef.current?.getIframeElement();
-    if (!iframe?.contentWindow) return;
+    if (!iframe?.contentWindow) {
+      logWidgetDebug("host-to-ui", "debug/bridge-connect-skipped", {
+        reason: "missing-iframe-content-window",
+      });
+      return;
+    }
 
+    setBridgeTransportReady(false);
     setIsReady(false);
     isReadyRef.current = false;
+    logWidgetDebug("host-to-ui", "debug/bridge-connect-start", {
+      cspMode,
+      hasCsp: !!widgetCsp,
+      hasPermissions: !!widgetPermissions,
+      htmlLength: widgetHtml.length,
+      permissive: widgetPermissive,
+      toolState: toolState ?? null,
+    });
 
     const bridge = new AppBridge(
       null,
@@ -1072,15 +1149,30 @@ export function MCPAppsRenderer({
     );
 
     let isActive = true;
-    bridge.connect(transport).catch((error) => {
-      if (!isActive) return;
-      setLoadError(
-        error instanceof Error ? error.message : "Failed to connect MCP App",
-      );
-    });
+    bridge
+      .connect(transport)
+      .then(() => {
+        if (!isActive) return;
+        setBridgeTransportReady(true);
+        logWidgetDebug("host-to-ui", "debug/bridge-connect-ready", {
+          htmlLength: widgetHtml.length,
+        });
+      })
+      .catch((error) => {
+        if (!isActive) return;
+        const errorMessage =
+          error instanceof Error ? error.message : "Failed to connect MCP App";
+        setLoadError(errorMessage);
+        logWidgetDebug("host-to-ui", "debug/bridge-connect-error", {
+          error: errorMessage,
+        });
+      });
 
     return () => {
       isActive = false;
+      logWidgetDebug("host-to-ui", "debug/bridge-connect-cleanup", {
+        wasReady: isReadyRef.current,
+      });
       bridgeRef.current = null;
       if (isReadyRef.current) {
         bridge.teardownResource({}).catch(() => {});
@@ -1097,6 +1189,11 @@ export function MCPAppsRenderer({
     widgetHtml,
     registerBridgeHandlers,
     setWidgetModelContext,
+    cspMode,
+    widgetCsp,
+    widgetPermissions,
+    widgetPermissive,
+    logWidgetDebug,
   ]);
 
   useEffect(() => {
@@ -1206,6 +1303,47 @@ export function MCPAppsRenderer({
       }
     }
   };
+  const showWidget = isReady && canRenderStreamingInput;
+
+  useEffect(() => {
+    logWidgetDebug("host-to-ui", "debug/widget-visibility", {
+      bridgeTransportReady,
+      canRenderStreamingInput,
+      hasWidgetHtml,
+      isReady,
+      loadError,
+      showWidget,
+      toolState: toolState ?? null,
+      widgetHtmlLength,
+    });
+  }, [
+    bridgeTransportReady,
+    canRenderStreamingInput,
+    hasWidgetHtml,
+    isReady,
+    loadError,
+    showWidget,
+    toolState,
+    widgetHtmlLength,
+    logWidgetDebug,
+  ]);
+
+  useEffect(() => {
+    if (!bridgeTransportReady || !widgetHtml) return;
+    logWidgetDebug("host-to-ui", "debug/sandbox-html-ready", {
+      hasCsp: !!widgetCsp,
+      hasPermissions: !!widgetPermissions,
+      htmlLength: widgetHtml.length,
+      permissive: widgetPermissive,
+    });
+  }, [
+    bridgeTransportReady,
+    widgetHtml,
+    widgetCsp,
+    widgetPermissions,
+    widgetPermissive,
+    logWidgetDebug,
+  ]);
 
   const respondToCheckout = useCallback(
     (result: unknown, error?: string) => {
@@ -1290,10 +1428,6 @@ export function MCPAppsRenderer({
     return "mt-3 space-y-2 relative group";
   })();
 
-  // Keep streaming active in background, but delay visual reveal until the app
-  // signals layout (size-changed) or fallback timeout elapses.
-  const showWidget = isReady && canRenderStreamingInput;
-
   const iframeStyle: CSSProperties = {
     height: isFullscreen
       ? "100%"
@@ -1377,11 +1511,17 @@ export function MCPAppsRenderer({
       {/* Uses SandboxedIframe for DRY double-iframe architecture */}
       <SandboxedIframe
         ref={sandboxRef}
-        html={widgetHtml}
+        html={bridgeTransportReady ? widgetHtml : null}
         sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"
         csp={widgetCsp}
         permissions={widgetPermissions}
         permissive={widgetPermissive}
+        onProxyReady={() => {
+          logWidgetDebug("ui-to-host", "debug/sandbox-proxy-ready", {
+            bridgeTransportReady,
+            hasWidgetHtml,
+          });
+        }}
         onMessage={handleSandboxMessage}
         title={`MCP App: ${toolName}`}
         className={`bg-background overflow-hidden ${
