@@ -53,6 +53,7 @@ import { isHostedOAuthBusy } from "@/lib/hosted-oauth-resume";
 import { getStoredTokens } from "@/lib/oauth/mcp-oauth";
 import { ChatboxHostOnboardingOverlays } from "@/components/hosted/ChatboxHostOnboardingOverlays";
 import { useChatboxHostIntroGate } from "@/components/hosted/useChatboxHostIntroGate";
+import { ViewModeSelector } from "@/components/shared/view-mode-selector";
 import {
   CHATBOX_OAUTH_PENDING_KEY,
   buildPlaygroundChatboxLink,
@@ -229,43 +230,29 @@ function ChatboxBuilderChrome({
           </div>
         </div>
 
-        <nav
-          className="order-3 flex w-full justify-center gap-1 overflow-x-auto [-webkit-overflow-scrolling:touch] md:order-2 md:w-auto md:max-w-full md:py-0"
-          aria-label="Chatbox modes"
-        >
-          {(
-            [
-              ["setup", "Setup"],
-              ["preview", "Preview"],
-              ["usage", "Sessions"],
-              ["insights", "Insights"],
-            ] as const
-          ).map(([mode, label]) => {
-            const active = viewMode === mode;
-            const disabled =
-              mode === "preview" && !hasSavedChatbox
-                ? true
-                : (mode === "usage" || mode === "insights") && !hasSavedChatbox;
-            return (
-              <button
-                key={mode}
-                type="button"
-                disabled={disabled}
-                onClick={() => onModeChange(mode)}
-                className={`relative min-h-10 shrink-0 px-4 py-2 text-sm font-medium transition-colors sm:min-h-11 sm:px-5 sm:text-base md:min-h-10 md:px-4 lg:px-6 ${
-                  active
-                    ? "text-foreground"
-                    : "text-muted-foreground hover:text-foreground"
-                } ${disabled ? "cursor-not-allowed opacity-40" : ""}`}
-              >
-                {label}
-                {active ? (
-                  <span className="absolute inset-x-3 bottom-0 h-0.5 rounded-full bg-primary sm:inset-x-4 md:inset-x-3 lg:inset-x-6" />
-                ) : null}
-              </button>
-            );
-          })}
-        </nav>
+        <ViewModeSelector
+          value={viewMode}
+          ariaLabel="Chatbox modes"
+          onChange={onModeChange}
+          options={[
+            { value: "setup", label: "Setup" },
+            {
+              value: "preview",
+              label: "Preview",
+              disabled: !hasSavedChatbox,
+            },
+            {
+              value: "usage",
+              label: "Sessions",
+              disabled: !hasSavedChatbox,
+            },
+            {
+              value: "insights",
+              label: "Clusters",
+              disabled: !hasSavedChatbox,
+            },
+          ]}
+        />
 
         <div className="order-2 flex flex-wrap items-center justify-end gap-2 md:order-3">
           {mobilePreviewActions}
@@ -1050,7 +1037,7 @@ export function ChatboxBuilderView({
       />
 
       {(viewMode === "usage" || viewMode === "insights") && chatbox ? (
-        <div className="min-h-0 flex-1">
+        <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
           <ChatboxUsagePanel
             chatbox={chatbox}
             section={viewMode === "insights" ? "insights" : "sessions"}

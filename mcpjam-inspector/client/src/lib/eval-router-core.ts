@@ -111,7 +111,8 @@ export function createEvalRouter(prefix: EvalRouterPrefix) {
         return {
           type: "suite-overview",
           suiteId,
-          view: view === "test-cases" ? "test-cases" : "runs",
+          view:
+            view === "test-cases" || view === "executions" ? view : "runs",
           ...(fromCommit ? { fromCommit } : {}),
         };
       }

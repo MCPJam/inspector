@@ -11,6 +11,7 @@ import { TestTemplateEditor } from "./test-template-editor";
 import { PassCriteriaSelector } from "./pass-criteria-selector";
 import { TestCasesOverview } from "./test-cases-overview";
 import { TestCaseDetailView } from "./test-case-detail-view";
+import { SuiteExecutionsOverview } from "./suite-executions-overview";
 import { EvalExportModal } from "./eval-export-modal";
 import { useSuiteData, useRunDetailData } from "./use-suite-data";
 import type {
@@ -20,10 +21,11 @@ import type {
   EvalSuiteRun,
   SuiteAggregate,
 } from "./types";
-import type { EvalRoute } from "@/lib/eval-route-types";
+import type { EvalRoute, SuiteOverviewView } from "@/lib/eval-route-types";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import { useSharedAppState } from "@/state/app-state-context";
 import { isMCPJamProvidedModel } from "@/shared/types";
+import { ViewModeSelector } from "@/components/shared/view-mode-selector";
 import {
   useAiProviderKeys,
   type ProviderTokens,
@@ -40,7 +42,7 @@ import {
 } from "@/lib/evals/eval-export";
 
 export interface SuiteNavigation {
-  toSuiteOverview: (suiteId: string, view?: "runs" | "test-cases") => void;
+  toSuiteOverview: (suiteId: string, view?: SuiteOverviewView) => void;
   toRunDetail: (
     suiteId: string,
     runId: string,
@@ -181,10 +183,18 @@ export function SuiteIterationsView({
           : route.type === "test-edit"
             ? "test-detail"
             : "overview";
-  const runsViewMode =
-    route.type === "suite-overview" && route.view === "test-cases"
+  const rawSuiteOverviewView: SuiteOverviewView =
+    route.type === "suite-overview" ? (route.view ?? "runs") : "runs";
+  const suiteOverviewView: SuiteOverviewView =
+    hideRunActions && rawSuiteOverviewView === "runs"
       ? "test-cases"
-      : "runs";
+      : rawSuiteOverviewView;
+  const runsViewMode =
+    suiteOverviewView === "test-cases" ? "test-cases" : "runs";
+  const headerRunsViewMode =
+    suiteOverviewView === "runs" ? "runs" : "test-cases";
+  const playgroundOverviewView: "test-cases" | "executions" =
+    suiteOverviewView === "executions" ? "executions" : "test-cases";
 
   // Local state that's not in the URL
   const [runDetailSortBy, setRunDetailSortBy] = useState<
@@ -352,7 +362,10 @@ export function SuiteIterationsView({
   };
 
   const handleBackToOverview = () => {
-    navigation.toSuiteOverview(suite._id);
+    navigation.toSuiteOverview(
+      suite._id,
+      hideRunActions ? "test-cases" : undefined,
+    );
   };
 
   const handleOpenSuiteExport = useCallback(() => {
@@ -415,14 +428,28 @@ export function SuiteIterationsView({
       return `test-edit-${selectedTestId}`;
     if (viewMode === "test-detail" && selectedTestId)
       return `test-detail-${selectedTestId}`;
-    if (viewMode === "overview") return `overview-${runsViewMode}`;
+    if (viewMode === "overview") return `overview-${suiteOverviewView}`;
     if (viewMode === "run-detail" && selectedRunId)
       return `run-detail-${selectedRunId}`;
     return "empty";
-  }, [viewMode, selectedTestId, selectedRunId, runsViewMode]);
+  }, [viewMode, selectedTestId, selectedRunId, suiteOverviewView]);
 
   const showSuiteHeader =
     !omitSuiteHeader || viewMode !== "run-detail" || isEditMode;
+
+  const overviewModeSelector =
+    hideRunActions && viewMode === "overview" ? (
+      <ViewModeSelector
+        value={playgroundOverviewView}
+        ariaLabel="Suite detail views"
+        onChange={(value) => navigation.toSuiteOverview(suite._id, value)}
+        className="w-auto justify-start"
+        options={[
+          { value: "test-cases", label: "Test cases" },
+          { value: "executions", label: "Executions" },
+        ]}
+      />
+    ) : null;
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -442,7 +469,8 @@ export function SuiteIterationsView({
             rerunningSuiteId={rerunningSuiteId}
             replayingRunId={replayingRunId}
             cancellingRunId={cancellingRunId}
-            runsViewMode={runsViewMode}
+            runsViewMode={headerRunsViewMode}
+            overviewModeSelector={overviewModeSelector}
             runs={runs}
             allIterations={allIterations}
             aggregate={aggregate}
@@ -541,7 +569,10 @@ export function SuiteIterationsView({
                       )}
                       suiteName={suite.name}
                       onNavigateToSuite={() =>
-                        navigation.toSuiteOverview(suite._id)
+                        navigation.toSuiteOverview(
+                          suite._id,
+                          hideRunActions ? "test-cases" : undefined,
+                        )
                       }
                       onBack={() =>
                         navigation.toSuiteOverview(suite._id, "test-cases")
@@ -556,7 +587,39 @@ export function SuiteIterationsView({
                 );
               })()
             ) : viewMode === "overview" ? (
-              runsViewMode === "runs" ? (
+              suiteOverviewView === "executions" ? (
+                <motion.div
+                  key={contentKey}
+                  initial={shouldReduceMotion ? false : { opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={shouldReduceMotion ? undefined : { opacity: 0 }}
+                  transition={
+                    shouldReduceMotion ? { duration: 0 } : { duration: 0.15 }
+                  }
+                  className="min-h-0 flex-1 overflow-y-auto p-0.5"
+                >
+                  <SuiteExecutionsOverview
+                    cases={cases}
+                    allIterations={allIterations}
+                    onOpenIteration={(iteration) => {
+                      if (iteration.testCaseId) {
+                        navigation.toTestEdit(suite._id, iteration.testCaseId, {
+                          openCompare: true,
+                          iteration: iteration._id,
+                        });
+                        return;
+                      }
+                      if (iteration.suiteRunId) {
+                        navigation.toRunDetail(
+                          suite._id,
+                          iteration.suiteRunId,
+                          iteration._id,
+                        );
+                      }
+                    }}
+                  />
+                </motion.div>
+              ) : runsViewMode === "runs" ? (
                 <motion.div
                   key={contentKey}
                   initial={shouldReduceMotion ? false : { opacity: 0 }}

@@ -17,6 +17,12 @@ export function formatTime(ts?: number) {
   return ts ? new Date(ts).toLocaleString() : "—";
 }
 
+export function getIterationRecencyTimestamp(
+  iteration: Pick<EvalIteration, "updatedAt" | "startedAt" | "createdAt">,
+) {
+  return iteration.updatedAt ?? iteration.startedAt ?? iteration.createdAt ?? 0;
+}
+
 export function formatDuration(durationMs: number) {
   if (durationMs < 1000) {
     return `${durationMs}ms`;

@@ -351,6 +351,8 @@ chatV2.post("/", async (c) => {
         temperature: resolvedTemperature,
         tools: allTools as ToolSet,
         authHeader: c.req.header("authorization"),
+        chatboxToken,
+        workspaceId: hostedBody.workspaceId,
         mcpClientManager: manager,
         selectedServers: selectedServerIds,
         requireToolApproval,

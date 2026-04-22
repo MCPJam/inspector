@@ -1,5 +1,8 @@
 import { ToggleGroup, ToggleGroupItem } from "@mcpjam/design-system/toggle-group";
-import type { ChatboxHostStyle } from "@/lib/chatbox-host-style";
+import {
+  getChatboxHostLogo,
+  type ChatboxHostStyle,
+} from "@/lib/chatbox-host-style";
 import { cn } from "@/lib/utils";
 
 interface HostStylePillSelectorProps {
@@ -45,7 +48,15 @@ export function HostStylePillSelector({
           className="z-10 h-[22px] min-w-0 flex-1 rounded-full border-0 bg-transparent px-2 text-[10px] font-medium tracking-[-0.01em] text-muted-foreground/90 first:rounded-full last:rounded-full hover:bg-transparent hover:text-foreground data-[state=on]:bg-transparent data-[state=on]:font-semibold data-[state=on]:text-foreground data-[state=on]:shadow-none"
           aria-label="ChatGPT"
         >
-          ChatGPT
+          <span className="inline-flex items-center gap-1">
+            <img
+              src={getChatboxHostLogo("chatgpt")}
+              alt=""
+              aria-hidden="true"
+              className="h-3 w-3 shrink-0 object-contain"
+            />
+            <span>ChatGPT</span>
+          </span>
         </ToggleGroupItem>
         <ToggleGroupItem
           value="claude"
@@ -53,7 +64,15 @@ export function HostStylePillSelector({
           className="z-10 h-[22px] min-w-0 flex-1 rounded-full border-0 bg-transparent px-2 text-[10px] font-medium tracking-[-0.01em] text-muted-foreground/90 first:rounded-full last:rounded-full hover:bg-transparent hover:text-foreground data-[state=on]:bg-transparent data-[state=on]:font-semibold data-[state=on]:text-foreground data-[state=on]:shadow-none"
           aria-label="Claude"
         >
-          Claude
+          <span className="inline-flex items-center gap-1">
+            <img
+              src={getChatboxHostLogo("claude")}
+              alt=""
+              aria-hidden="true"
+              className="h-3 w-3 shrink-0 object-contain"
+            />
+            <span>Claude</span>
+          </span>
         </ToggleGroupItem>
       </ToggleGroup>
     </div>

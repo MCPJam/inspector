@@ -14,7 +14,6 @@ import {
   Code2,
   Loader2,
   MoreHorizontal,
-  MoreVertical,
   Play,
   Plus,
   RotateCw,
@@ -26,7 +25,6 @@ import { toast } from "sonner";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import {
   listEvalTools,
-  runEvalTestCase,
   streamEvalTestCase,
 } from "@/lib/apis/evals-api";
 import { Button } from "@mcpjam/design-system/button";
@@ -45,7 +43,10 @@ import {
 import { TestCasePromptFlow } from "./test-case-prompt-flow";
 import { CompareRunChatSurface } from "./compare-run-chat-surface";
 import { EvalTraceSurface } from "./eval-trace-surface";
-import { TraceViewModeTabs } from "./trace-view-mode-tabs";
+import {
+  ModelCompareCardHeader,
+  type MultiModelCardSummary,
+} from "@/components/chat-v2/model-compare-card-header";
 import { useAiProviderKeys } from "@/hooks/use-ai-provider-keys";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import type { ModelDefinition } from "@/shared/types";
@@ -59,6 +60,7 @@ import {
 } from "./single-test-case-runner";
 import {
   deriveLegacyPromptFields,
+  flattenAssertedExpectedToolCalls,
   resolveIterationDisplayExpectedToolCalls,
   resolvePromptTurns,
   stripPromptTurnsFromAdvancedConfig,
@@ -68,7 +70,12 @@ import { normalizeToolChoice } from "@/shared/tool-choice";
 import { cn } from "@/lib/utils";
 import { computeIterationResult } from "./pass-criteria";
 import {
+  ChatboxHostStyleProvider,
+  ChatboxHostThemeProvider,
+} from "@/contexts/chatbox-host-style-context";
+import {
   buildHistoricalCompareRunRecords,
+  buildComparePreviewTrace,
   buildCompareRunRecord,
   createCompareSessionId,
   mergeAdvancedConfigWithOverride,
@@ -95,7 +102,13 @@ import {
 import { TraceViewer } from "./trace-viewer";
 import { useEvalTraceToolContext } from "./use-eval-trace-tool-context";
 import { useEvalTraceBlob } from "./use-eval-trace-blob";
-import { adaptTraceToUiMessages } from "./trace-viewer-adapter";
+import {
+  adaptTraceToUiMessages,
+  type TraceEnvelope,
+} from "./trace-viewer-adapter";
+import { getChatboxShellStyle } from "@/lib/chatbox-host-style";
+import { HostStylePillSelector } from "@/components/shared/HostStylePillSelector";
+import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 
 interface TestTemplate {
   title: string;
@@ -153,6 +166,10 @@ function deriveIsNegativeTestFromPromptTurns(
   promptTurns: PromptTurn[],
 ): boolean {
   return promptTurns.every((turn) => turn.expectedToolCalls.length === 0);
+}
+
+function compactModelLabel(name: string): string {
+  return name.replace(/\s*\(Free\)\s*$/i, "").trim() || name;
 }
 
 const validatePromptTurns = (promptTurns: PromptTurn[]): boolean => {
@@ -303,6 +320,8 @@ export function TestTemplateEditor({
 }: TestTemplateEditorProps) {
   const { getAccessToken } = useAuth();
   const { getToken, hasToken } = useAiProviderKeys();
+  const hostStyle = usePreferencesStore((state) => state.hostStyle);
+  const setHostStyle = usePreferencesStore((state) => state.setHostStyle);
   const [editForm, setEditForm] = useState<TestTemplate | null>(null);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [editorMode, setEditorMode] = useState<EditorMode>(
@@ -744,20 +763,30 @@ export function TestTemplateEditor({
     }
   };
 
-  const persistSelectedCompareModels = async (modelValues: string[]) => {
-    if (!currentTestCase) {
-      return;
-    }
-
-    const nextModels = modelValues.map((modelValue) => {
+  const buildSelectedCompareModels = (
+    modelValues: string[],
+  ): Array<{ provider: string; model: string }> => {
+    return modelValues.map((modelValue) => {
       const { provider, model } = parseModelValue(modelValue);
       if (!provider || !model) {
         throw new Error(`Invalid model selection: ${modelValue}`);
       }
       return { provider, model };
     });
+  };
 
-    const currentModels = currentTestCase.models ?? [];
+  const persistCompareRunDraft = async (
+    savePayload: ReturnType<typeof buildSavePayload>,
+    modelValues: string[],
+  ) => {
+    if (!currentTestCase) {
+      return;
+    }
+
+    const nextModels = buildSelectedCompareModels(modelValues);
+
+    const currentModels: Array<{ provider: string; model: string }> =
+      currentTestCase.models ?? [];
     const modelsUnchanged =
       currentModels.length === nextModels.length &&
       currentModels.every(
@@ -766,13 +795,14 @@ export function TestTemplateEditor({
           model.model === nextModels[index]?.model,
       );
 
-    if (modelsUnchanged) {
+    if (!hasUnsavedChanges && modelsUnchanged) {
       return;
     }
 
     await updateTestCaseMutation({
       testCaseId: currentTestCase._id,
-      models: nextModels,
+      ...(hasUnsavedChanges ? savePayload : {}),
+      ...(modelsUnchanged ? {} : { models: nextModels }),
     });
   };
 
@@ -1114,6 +1144,9 @@ export function TestTemplateEditor({
     }
 
     const savePayload = buildSavePayload(editForm);
+    const comparePreviewTrace = buildComparePreviewTrace(
+      resolvePromptTurns(savePayload),
+    );
     compareRunUserStoppedRef.current = false;
     const reusableCompareRunId =
       options?.sessionMode === "reuse"
@@ -1124,13 +1157,13 @@ export function TestTemplateEditor({
 
     if (startsNewCompareSession) {
       try {
-        await persistSelectedCompareModels(selectedModelValues);
+        await persistCompareRunDraft(savePayload, selectedModelValues);
       } catch (error) {
-        console.error("Failed to save compare model selection:", error);
+        console.error("Failed to save test case before compare run:", error);
         toast.error(
           getBillingErrorMessage(
             error,
-            "Failed to save compare models before running",
+            "Failed to save test case before running",
           ),
         );
         return;
@@ -1229,12 +1262,15 @@ export function TestTemplateEditor({
 
     compareHandlesInFlightRef.current += 1;
     setIsRunningCompare(true);
+    const previewExpectedToolCalls = flattenAssertedExpectedToolCalls(savePayload);
+    const defaultRunColumnTab: RunColumnTab =
+      previewExpectedToolCalls.length > 0 ? "tools" : "chat";
     setRunColumnTabByModel((previous) => ({
       ...previous,
       ...Object.fromEntries(
         runModelValues.map((modelValue) => [
           modelValue,
-          "chat" as RunColumnTab,
+          defaultRunColumnTab,
         ]),
       ),
     }));
@@ -1266,6 +1302,8 @@ export function TestTemplateEditor({
           startedAt,
           completedAt: null,
           error: null,
+          previewTrace: comparePreviewTrace,
+          previewExpectedToolCalls,
         };
       }
       for (const { modelValue, modelLabel, error } of preparationFailures) {
@@ -1435,6 +1473,22 @@ export function TestTemplateEditor({
               let resolved!: CompareRunRecord;
               setCompareRunRecords((previous) => {
                 const existing = previous[modelValue];
+                // A retry starts a newer request for this model and aborts the
+                // old controller. If that old abort rejects later, it must not
+                // overwrite the newer running/completed row as cancelled.
+                if (
+                  compareRequestGenByModelRef.current[modelValue] !== myGen
+                ) {
+                  resolved =
+                    existing ??
+                    buildCompareRunRecord({
+                      modelValue,
+                      modelLabel,
+                      iteration: null,
+                      completedAt: Date.now(),
+                    });
+                  return previous;
+                }
                 const base = buildCompareRunRecord({
                   modelValue,
                   modelLabel,
@@ -1885,6 +1939,7 @@ export function TestTemplateEditor({
 
             <div>
               <div
+                data-testid="test-template-model-bar"
                 className="rounded-xl bg-[#f8f5f1] py-2.5 dark:bg-muted/10"
                 title={
                   !latestAvailableIsSaved &&
@@ -1902,7 +1957,7 @@ export function TestTemplateEditor({
                   ) : null}
 
                   <div className="flex min-w-0 flex-1 items-center gap-2">
-                    <div className="flex min-w-0 flex-1 items-center gap-2.5 overflow-x-auto py-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                    <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto py-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                       {selectedModelValues.length === 0 ? (
                         modelOptions.length === 0 ? (
                           <span className="text-[13px] text-muted-foreground">
@@ -1916,21 +1971,10 @@ export function TestTemplateEditor({
                             <DropdownMenuTrigger asChild>
                               <button
                                 type="button"
-                                className="inline-flex h-8 min-w-[12.5rem] max-w-full items-center gap-2 rounded-lg border border-[#E5E7EB] bg-white px-3 text-left text-[13px] font-medium text-foreground shadow-none hover:bg-[#fafafa] dark:border-border dark:bg-background dark:hover:bg-muted/40"
+                                className="inline-flex h-8 max-w-[180px] shrink-0 items-center gap-2 rounded-full border border-border/60 bg-white px-2.5 text-left text-xs font-medium text-foreground shadow-none transition-colors hover:bg-muted/80 dark:bg-background dark:hover:bg-muted/40"
                               >
                                 <Plus className="h-3.5 w-3.5 shrink-0" />
-                                <span>Add Model</span>
-                                <span className="ml-auto flex shrink-0 items-center gap-1 pl-1">
-                                  <span className="flex h-5 min-w-[1.35rem] items-center justify-center rounded border border-[#e8e8e8] bg-[#f4f4f5] px-1 font-sans text-[10px] font-semibold leading-none text-foreground dark:border-border dark:bg-muted">
-                                    {typeof navigator !== "undefined" &&
-                                    navigator.platform.includes("Mac")
-                                      ? "⌘"
-                                      : "Ctrl"}
-                                  </span>
-                                  <span className="flex h-5 min-w-[1.35rem] items-center justify-center rounded border border-[#e8e8e8] bg-[#f4f4f5] px-1 font-sans text-[10px] font-semibold leading-none text-foreground dark:border-border dark:bg-muted">
-                                    K
-                                  </span>
-                                </span>
+                                <span className="truncate">Add model</span>
                               </button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent
@@ -1963,30 +2007,34 @@ export function TestTemplateEditor({
                               <div
                                 key={modelValue}
                                 className={cn(
-                                  "flex h-8 shrink-0 items-center gap-0.5 rounded-lg border px-1.5",
+                                  "flex h-8 max-w-[180px] shrink-0 items-center gap-1 rounded-full border px-2",
                                   index === 0
-                                    ? "border-[#e8c7b8] bg-[#fff8f5] dark:border-orange-200/35 dark:bg-orange-500/8"
-                                    : "border-[#e0e0e0] bg-[#f5f5f5] dark:border-border dark:bg-muted/45",
+                                    ? "border-primary/25 bg-primary/5 text-foreground"
+                                    : "border-border/50 bg-muted/30 text-muted-foreground",
                                 )}
                               >
-                                <div className="flex h-5 w-5 shrink-0 items-center justify-center overflow-hidden rounded-full border border-[#ebebeb] bg-white shadow-[0_1px_2px_rgba(0,0,0,0.04)] dark:border-border dark:bg-background">
-                                  <div className="flex scale-[1.2] items-center justify-center">
-                                    <ProviderLogo
-                                      provider={option?.provider ?? "custom"}
-                                    />
-                                  </div>
-                                </div>
-                                <span className="max-w-[9.5rem] truncate text-[13px] font-medium text-foreground">
-                                  {label}
+                                <ProviderLogo
+                                  provider={option?.provider ?? "custom"}
+                                  className="size-3.5 shrink-0"
+                                />
+                                <span
+                                  className={cn(
+                                    "min-w-0 flex-1 truncate text-xs font-medium",
+                                    index === 0
+                                      ? "text-foreground"
+                                      : "text-muted-foreground",
+                                  )}
+                                >
+                                  {compactModelLabel(label)}
                                 </span>
                                 <DropdownMenu>
                                   <DropdownMenuTrigger asChild>
                                     <button
                                       type="button"
-                                      className="rounded p-0.5 text-[#9e9e9e] hover:bg-black/[0.04] hover:text-foreground dark:hover:bg-white/10"
+                                      className="shrink-0 rounded-full p-0.5 text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
                                       aria-label={`Model options (${label})`}
                                     >
-                                      <MoreVertical className="h-3.5 w-3.5" />
+                                      <MoreHorizontal className="h-3.5 w-3.5" />
                                     </button>
                                   </DropdownMenuTrigger>
                                   <DropdownMenuContent
@@ -2041,7 +2089,7 @@ export function TestTemplateEditor({
                                 </DropdownMenu>
                                 <button
                                   type="button"
-                                  className="rounded p-0.5 text-[#9e9e9e] hover:bg-black/[0.04] hover:text-foreground dark:hover:bg-white/10"
+                                  className="shrink-0 rounded-full p-0.5 text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
                                   aria-label={`Remove ${label}`}
                                   onClick={() => handleRemoveModel(modelValue)}
                                 >
@@ -2056,7 +2104,7 @@ export function TestTemplateEditor({
                               <DropdownMenuTrigger asChild>
                                 <button
                                   type="button"
-                                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded border border-[#e0e0e0] bg-white text-foreground hover:bg-[#fafafa] dark:border-border dark:bg-background dark:hover:bg-muted/50"
+                                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border/60 bg-white text-foreground transition-colors hover:bg-muted/80 dark:bg-background dark:hover:bg-muted/50"
                                   aria-label="Add model to compare"
                                 >
                                   <Plus className="h-3.5 w-3.5" />
@@ -2098,6 +2146,20 @@ export function TestTemplateEditor({
                   </div>
                 </div>
               </div>
+            </div>
+
+            <div
+              data-testid="test-template-host-style-row"
+              className="flex items-center justify-start gap-2 px-1 pt-2"
+            >
+              <p className="shrink-0 text-[11px] font-medium text-muted-foreground">
+                Host style
+              </p>
+              <HostStylePillSelector
+                className="w-[164px] shrink-0"
+                value={hostStyle}
+                onValueChange={setHostStyle}
+              />
             </div>
 
             <div className="space-y-4 pt-1">
@@ -2305,6 +2367,7 @@ export function TestTemplateEditor({
                         testCase={currentTestCase}
                         serverNames={connectedServerList}
                         workspaceId={workspaceId}
+                        onContinueInChat={onContinueInChat}
                         onStreamingTraceLoaded={() =>
                           clearCompareStreamingState(record.modelValue)
                         }
@@ -2356,6 +2419,8 @@ function RunColumn({
   onTabChange: (tab: RunColumnTab) => void;
   onRetry: () => void;
 }) {
+  const themeMode = usePreferencesStore((state) => state.themeMode);
+  const hostStyle = usePreferencesStore((state) => state.hostStyle);
   const { toolsMetadata, toolServerMap, connectedServerIds } =
     useEvalTraceToolContext({
       serverNames,
@@ -2366,10 +2431,15 @@ function RunColumn({
         record.completedAt ??
         record.modelValue,
     });
-  const expectedToolCalls = resolveIterationDisplayExpectedToolCalls(
-    record.iteration?.testCaseSnapshot,
-    testCase,
-  );
+  // Prefer the iteration snapshot (authoritative) once available; otherwise
+  // fall back to previewExpectedToolCalls captured from the in-memory form at
+  // run-start so unsaved edits are reflected in showToolsTab / the pre-stream
+  // Results preview before the persisted testCase is updated.
+  const expectedToolCalls = record.iteration?.testCaseSnapshot
+    ? resolveIterationDisplayExpectedToolCalls(record.iteration.testCaseSnapshot, null)
+    : record.previewExpectedToolCalls != null
+      ? record.previewExpectedToolCalls
+      : resolveIterationDisplayExpectedToolCalls(null, testCase);
   const actualToolCalls =
     record.iteration?.actualToolCalls ?? record.streamingActualToolCalls ?? [];
   const showToolsTab =
@@ -2378,35 +2448,6 @@ function RunColumn({
   const effectiveActiveTab: RunColumnTab =
     activeTab === "tools" && !showToolsTab ? "timeline" : activeTab;
 
-  /** Status marker: pastel fills aligned with metric bar accent colors. */
-  const statusIndicatorClass =
-    record.status === "running"
-      ? "size-3 bg-amber-500/45 dark:bg-amber-400/40 animate-pulse motion-reduce:animate-none"
-      : record.status === "cancelled" || record.result === "cancelled"
-        ? "size-3 bg-amber-500/45 dark:bg-amber-400/40"
-        : record.status === "failed" || record.result === "failed"
-          ? "size-3 bg-rose-500/45 dark:bg-rose-400/40"
-          : record.result === "passed"
-            ? "size-3 bg-emerald-500/45 dark:bg-emerald-400/40"
-            : "size-3 bg-primary/22 dark:bg-primary/20";
-  const statusLabel =
-    record.status === "running"
-      ? record.isRetrying
-        ? "Retrying"
-        : "Running"
-      : record.status === "cancelled" || record.result === "cancelled"
-        ? "Stopped"
-        : record.status === "failed"
-          ? "Failed"
-          : record.result === "passed"
-            ? "Passed"
-            : record.result === "failed"
-              ? "Failed"
-              : "Ready";
-  const durationLabel =
-    record.metrics.durationMs != null
-      ? `${Math.round(record.metrics.durationMs / 100) / 10}s`
-      : "—";
   const traceMode =
     effectiveActiveTab === "chat"
       ? "chat"
@@ -2484,223 +2525,228 @@ function RunColumn({
     toolsMetadata,
   ]);
   const hasStreamingTrace = streamingTraceEnvelope != null;
+  const previewTrace = record.previewTrace ?? null;
+  const activeLiveChatTrace: TraceEnvelope | null =
+    (hasStreamingTrace ? streamingTraceEnvelope : previewTrace) ?? null;
   const isWaitingForFirstTimelineSnapshot =
     traceMode === "timeline" &&
     record.iteration == null &&
     record.streamingTrace == null &&
     hasStreamingTrace;
+  const shouldRenderChatShell = effectiveActiveTab === "chat";
+  const shellStyle = getChatboxShellStyle(hostStyle, themeMode);
 
   const displayTokens =
     record.streamingMetrics?.tokensUsed ?? record.metrics.tokensUsed;
   const toolCount =
     record.streamingMetrics?.toolCallCount ?? record.metrics.toolCallCount;
-  const toolCallLabel =
-    toolCount === 1 ? "1 tool call" : `${toolCount} tool calls`;
-  const isFailedCompareRecord =
-    record.status === "failed" || record.result === "failed";
   const isRunningRecord = record.status === "running";
 
-  // Compute relative metrics across all completed records for comparison bars
-  const comparableRecords = allRecords.filter(
-    (r) =>
-      r.status !== "failed" &&
-      r.result !== "failed" &&
-      r.metrics.durationMs != null &&
-      r.metrics.durationMs > 0 &&
-      (r.status === "completed" || r.iteration != null),
+  const toSummaryStatus = (
+    r: CompareRunRecord,
+  ): MultiModelCardSummary["status"] => {
+    if (r.status === "running") return "running";
+    if (r.status === "cancelled" || r.result === "cancelled") return "cancelled";
+    if (r.status === "failed" || r.result === "failed") return "error";
+    if (r.iteration != null || r.status === "completed") return "ready";
+    return "idle";
+  };
+
+  const runColumnSummary: MultiModelCardSummary = {
+    modelId: record.modelValue,
+    durationMs: record.metrics.durationMs,
+    tokens: displayTokens,
+    toolCount,
+    status: toSummaryStatus(record),
+    hasMessages:
+      record.iteration != null ||
+      record.streamingTrace != null ||
+      (record.streamingDraftMessages?.length ?? 0) > 0,
+  };
+
+  const allRunSummaries: MultiModelCardSummary[] = allRecords.map((r) => {
+    const rTokens = r.streamingMetrics?.tokensUsed ?? r.metrics.tokensUsed;
+    const rToolCount =
+      r.streamingMetrics?.toolCallCount ?? r.metrics.toolCallCount;
+    return {
+      modelId: r.modelValue,
+      durationMs: r.metrics.durationMs,
+      tokens: rTokens,
+      toolCount: rToolCount,
+      status: toSummaryStatus(r),
+      hasMessages:
+        r.iteration != null ||
+        r.streamingTrace != null ||
+        (r.streamingDraftMessages?.length ?? 0) > 0,
+    };
+  });
+
+  const runColumnResult: "passed" | "failed" | null =
+    record.result === "passed"
+      ? "passed"
+      : record.result === "failed" || record.status === "failed"
+        ? "failed"
+        : null;
+  const renderedRunContent = record.iteration ? (
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+      {traceMode === "chat" ? (
+        <CompareRunChatSurface
+          iteration={record.iteration}
+          traceModel={{
+            id: record.model,
+            name: record.modelLabel,
+            provider: record.provider as any,
+          }}
+          isLoading={isRunningRecord}
+          emptyMessage={`No ${activeTab} data is available for this run.`}
+          fallbackTrace={streamingTraceEnvelope}
+          onTraceLoaded={onStreamingTraceLoaded}
+          toolsMetadata={toolsMetadata}
+          toolServerMap={toolServerMap}
+          connectedServerIds={connectedServerIds}
+          traceBlob={persistedTraceBlob}
+          traceBlobLoading={persistedTraceLoading}
+          traceBlobError={persistedTraceError}
+        />
+      ) : (
+        <EvalTraceSurface
+          iteration={record.iteration}
+          testCase={testCase}
+          mode={traceMode}
+          emptyMessage={`No ${activeTab} data is available for this run.`}
+          fallbackTrace={streamingTraceEnvelope}
+          fallbackActualToolCalls={actualToolCalls}
+          onTraceLoaded={onStreamingTraceLoaded}
+          onNavigateToChat={() => onTabChange("chat")}
+          traceBlob={persistedTraceBlob}
+          traceBlobLoading={persistedTraceLoading}
+          traceBlobError={persistedTraceError}
+          isLoading={isRunningRecord}
+          toolsMetadata={toolsMetadata}
+          toolServerMap={toolServerMap}
+          connectedServerIds={connectedServerIds}
+        />
+      )}
+    </div>
+  ) : hasStreamingTrace ? (
+    isWaitingForFirstTimelineSnapshot ? (
+      <div className="flex min-h-0 flex-1 items-center justify-center rounded-xl border border-border/50 bg-muted/10 px-6 py-10 text-center">
+        <div className="max-w-sm">
+          <div className="text-sm font-medium">
+            Timeline appears after the first step completes
+          </div>
+          <p className="mt-2 text-sm text-muted-foreground">
+            Chat and raw output are already streaming for the current in-flight
+            step.
+          </p>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="mt-3"
+            onClick={() => onTabChange("chat")}
+          >
+            Switch to Chat
+          </Button>
+        </div>
+      </div>
+    ) : (
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <TraceViewer
+          trace={streamingTraceEnvelope}
+          forcedViewMode={traceMode}
+          isLoading={isRunningRecord}
+          expectedToolCalls={expectedToolCalls}
+          actualToolCalls={actualToolCalls}
+          toolsMetadata={toolsMetadata}
+          toolServerMap={toolServerMap}
+          connectedServerIds={connectedServerIds}
+          hideToolbar
+          fillContent
+        />
+      </div>
+    )
+  ) : record.status === "running" && !record.iteration ? (
+    (traceMode === "chat" || traceMode === "tools") && activeLiveChatTrace ? (
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <TraceViewer
+          trace={activeLiveChatTrace}
+          model={{
+            id: record.model,
+            name: record.modelLabel,
+            provider: record.provider as any,
+          }}
+          forcedViewMode={traceMode === "tools" ? "tools" : "chat"}
+          isLoading={true}
+          expectedToolCalls={expectedToolCalls}
+          actualToolCalls={actualToolCalls}
+          toolsMetadata={toolsMetadata}
+          toolServerMap={toolServerMap}
+          connectedServerIds={connectedServerIds}
+          hideToolbar
+          fillContent
+        />
+      </div>
+    ) : (
+      <div className="flex min-h-0 flex-1 items-center justify-center rounded-xl border border-border/50 bg-muted/10">
+        <div className="flex items-center gap-3 text-sm text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          <span>
+            {record.isRetrying ? "Retrying" : "Running"} {record.modelLabel}…
+          </span>
+        </div>
+      </div>
+    )
+  ) : record.status === "cancelled" && !record.iteration ? (
+    <div className="flex min-h-0 flex-1 items-center justify-center rounded-xl border border-amber-500/25 bg-amber-500/5 px-6 py-10">
+      <div className="max-w-sm text-center">
+        <div className="text-sm font-medium text-amber-800 dark:text-amber-200">
+          {record.modelLabel} stopped
+        </div>
+        <p className="mt-2 text-sm text-muted-foreground">
+          This run was stopped before it finished. Partial trace and metrics
+          may still be visible in the tabs above.
+        </p>
+      </div>
+    </div>
+  ) : record.status === "failed" && !record.iteration ? (
+    <div className="flex min-h-0 flex-1 items-center justify-center rounded-xl border border-destructive/30 bg-destructive/5 px-6 py-10">
+      <div className="max-w-sm text-center">
+        <div className="text-sm font-medium text-destructive">
+          {record.modelLabel} failed
+        </div>
+        <p className="mt-2 text-sm text-muted-foreground">
+          {record.error || "No run data is available for this model."}
+        </p>
+      </div>
+    </div>
+  ) : (
+    <div className="flex min-h-0 flex-1 items-center justify-center rounded-xl border border-dashed border-border/60 bg-muted/10 px-6 py-10 text-center">
+      <div>
+        <div className="text-sm font-medium">No run yet</div>
+        <p className="mt-2 text-sm text-muted-foreground">
+          Run compare to load this model’s chat, trace, and tool details.
+        </p>
+      </div>
+    </div>
   );
-  const allDurations = comparableRecords
-    .map((r) => r.metrics.durationMs!)
-    .filter(Boolean);
-  const allTokens = comparableRecords
-    .map((r) => r.metrics.tokensUsed)
-    .filter((t) => t > 0);
-  const allToolCounts = comparableRecords
-    .map((r) => r.metrics.toolCallCount)
-    .filter((t) => t > 0);
-
-  const maxDuration = allDurations.length > 0 ? Math.max(...allDurations) : 0;
-  const minDuration = allDurations.length > 0 ? Math.min(...allDurations) : 0;
-  const maxTokens = allTokens.length > 0 ? Math.max(...allTokens) : 0;
-  const minTokens = allTokens.length > 0 ? Math.min(...allTokens) : 0;
-  const minToolCount =
-    allToolCounts.length > 0 ? Math.min(...allToolCounts) : 0;
-
-  const currentDuration = record.metrics.durationMs ?? 0;
-  const hasComparison = comparableRecords.length > 1;
-  const hasAnyRunningRecord = allRecords.some(
-    (item) => item.status === "running",
-  );
-  const canHighlightWinner = hasComparison && !hasAnyRunningRecord;
-
-  const isFastest =
-    canHighlightWinner &&
-    !isFailedCompareRecord &&
-    currentDuration === minDuration &&
-    currentDuration > 0;
-  const isFewestTokens =
-    canHighlightWinner &&
-    !isFailedCompareRecord &&
-    displayTokens === minTokens &&
-    displayTokens > 0;
-  const isFewestTools =
-    canHighlightWinner &&
-    !isFailedCompareRecord &&
-    toolCount === minToolCount &&
-    toolCount > 0;
-
-  const durationBarPct =
-    maxDuration > 0
-      ? Math.min(100, Math.max(4, (currentDuration / maxDuration) * 100))
-      : 0;
-  const tokensBarPct =
-    maxTokens > 0
-      ? Math.min(100, Math.max(4, (displayTokens / maxTokens) * 100))
-      : 0;
 
   return (
     <div className="flex h-auto min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl border border-border/60 bg-card/40 lg:h-full">
-      <div className="shrink-0 border-b px-3 py-2">
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex min-w-0 items-center gap-1.5">
-            <div className="truncate text-sm font-semibold leading-tight">
-              {record.modelLabel}
-            </div>
-            {record.result === "passed" ? (
-              <span className="inline-flex shrink-0 items-center rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider bg-emerald-500/15 text-emerald-700 dark:bg-emerald-400/20 dark:text-emerald-300" aria-label={statusLabel}>
-                Pass
-              </span>
-            ) : record.result === "failed" || record.status === "failed" ? (
-              <span className="inline-flex shrink-0 items-center rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider bg-rose-500/15 text-rose-700 dark:bg-rose-400/20 dark:text-rose-300" aria-label={statusLabel}>
-                Fail
-              </span>
-            ) : null}
-          </div>
-          {record.result !== "passed" &&
-          record.result !== "failed" &&
-          record.status !== "failed" ? (
-            <span
-              role="img"
-              className={cn(
-                "inline-flex shrink-0 rounded-full",
-                statusIndicatorClass,
-              )}
-              aria-label={statusLabel}
-              title={statusLabel}
-            />
-          ) : null}
-        </div>
-
-        {/* Metric comparison bars */}
-        <div className="mt-2 space-y-1.5">
-          {/* Latency */}
-          <div className="flex items-center gap-2">
-            <span className="flex w-[52px] shrink-0 items-center gap-1 text-[10px] text-muted-foreground">
-              <span>Latency</span>
-              {isRunningRecord ? (
-                <Loader2
-                  data-testid="metric-running-spinner"
-                  className="h-3 w-3 shrink-0 animate-spin"
-                  aria-hidden
-                />
-              ) : null}
-            </span>
-            <div className="relative flex min-w-0 flex-1 items-center">
-              <div className="h-[14px] w-full rounded-sm bg-muted/40 overflow-hidden">
-                {currentDuration > 0 && (
-                  <div
-                    className={cn(
-                      "h-full rounded-sm transition-all duration-300",
-                      isFastest
-                        ? "bg-emerald-500/25 dark:bg-emerald-400/20"
-                        : "bg-primary/10",
-                    )}
-                    style={{
-                      width: `${hasComparison ? durationBarPct : 100}%`,
-                    }}
-                  />
-                )}
-              </div>
-              <span
-                className={cn(
-                  "absolute inset-0 flex items-center px-1.5 text-[10px] font-medium tabular-nums",
-                  isFastest
-                    ? "text-emerald-700 dark:text-emerald-400"
-                    : "text-foreground",
-                )}
-              >
-                {durationLabel}
-              </span>
-            </div>
-          </div>
-
-          {/* Tokens */}
-          <div className="flex items-center gap-2">
-            <span className="flex w-[52px] shrink-0 items-center gap-1 text-[10px] text-muted-foreground">
-              <span>Tokens</span>
-              {isRunningRecord ? (
-                <Loader2
-                  data-testid="metric-running-spinner"
-                  className="h-3 w-3 shrink-0 animate-spin"
-                  aria-hidden
-                />
-              ) : null}
-            </span>
-            <div className="relative flex min-w-0 flex-1 items-center">
-              <div className="h-[14px] w-full rounded-sm bg-muted/40 overflow-hidden">
-                {displayTokens > 0 && (
-                  <div
-                    className={cn(
-                      "h-full rounded-sm transition-all duration-300",
-                      isFewestTokens
-                        ? "bg-emerald-500/25 dark:bg-emerald-400/20"
-                        : "bg-primary/10",
-                    )}
-                    style={{ width: `${hasComparison ? tokensBarPct : 100}%` }}
-                  />
-                )}
-              </div>
-              <span
-                className={cn(
-                  "absolute inset-0 flex items-center px-1.5 text-[10px] font-medium tabular-nums",
-                  isFewestTokens
-                    ? "text-emerald-700 dark:text-emerald-400"
-                    : "text-foreground",
-                )}
-              >
-                {displayTokens.toLocaleString()}
-              </span>
-            </div>
-          </div>
-
-          {/* Tool Calls */}
-          <div className="flex items-center gap-2">
-            <span className="w-[52px] shrink-0 text-[10px] text-muted-foreground">
-              Tools
-            </span>
-            <span
-              className={cn(
-                "text-[10px] font-medium tabular-nums px-1.5",
-                isFewestTools
-                  ? "text-emerald-700 dark:text-emerald-400"
-                  : "text-foreground",
-              )}
-            >
-              {toolCallLabel}
-            </span>
-          </div>
-        </div>
-
-        <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2">
-          <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-            <TraceViewModeTabs
-              mode={effectiveActiveTab}
-              onModeChange={onTabChange}
-              showToolsTab={showToolsTab}
-              className="[&_button]:px-1.5 [&_button]:py-0.5 [&_button]:text-[11px] [&_svg]:h-3 [&_svg]:w-3"
-            />
-          </div>
-          <div className="flex items-center gap-1">
+      <ModelCompareCardHeader
+        modelLabel={record.modelLabel}
+        summary={runColumnSummary}
+        allSummaries={allRunSummaries}
+        mode={effectiveActiveTab}
+        onModeChange={onTabChange}
+        showTraceTabs
+        showComparisonChrome
+        compactCompareHeader={false}
+        result={runColumnResult}
+        showToolsTab={showToolsTab}
+        tabsInline
+        actionsSlot={
+          <>
             {onContinueInChat ? (
               <Button
                 type="button"
@@ -2739,138 +2785,40 @@ function RunColumn({
               />
               Retry
             </Button>
-          </div>
-        </div>
-
-        {record.metrics.mismatchCount != null &&
-        record.metrics.mismatchCount > 0 ? (
-          <div className="mt-1.5 text-[10px] leading-snug text-muted-foreground">
-            {record.metrics.mismatchCount} mismatch
-            {record.metrics.mismatchCount === 1 ? "" : "es"} across expected
-            tool calls.
-          </div>
-        ) : null}
-      </div>
+          </>
+        }
+        footerNote={
+          record.metrics.mismatchCount != null &&
+          record.metrics.mismatchCount > 0 ? (
+            <>
+              {record.metrics.mismatchCount} mismatch
+              {record.metrics.mismatchCount === 1 ? "" : "es"} across expected
+              tool calls.
+            </>
+          ) : null
+        }
+      />
 
       <div className="flex min-w-0 max-lg:min-h-[min(52vh,26rem)] flex-1 flex-col overflow-hidden p-3 lg:min-h-0">
-        {record.iteration ? (
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-            {traceMode === "chat" ? (
-              <CompareRunChatSurface
-                iteration={record.iteration}
-                traceModel={{
-                  id: record.model,
-                  name: record.modelLabel,
-                  provider: record.provider as any,
-                }}
-                emptyMessage={`No ${activeTab} data is available for this run.`}
-                fallbackTrace={streamingTraceEnvelope}
-                onTraceLoaded={onStreamingTraceLoaded}
-                toolsMetadata={toolsMetadata}
-                toolServerMap={toolServerMap}
-                connectedServerIds={connectedServerIds}
-                traceBlob={persistedTraceBlob}
-                traceBlobLoading={persistedTraceLoading}
-                traceBlobError={persistedTraceError}
-              />
-            ) : (
-              <EvalTraceSurface
-                iteration={record.iteration}
-                testCase={testCase}
-                mode={traceMode}
-                emptyMessage={`No ${activeTab} data is available for this run.`}
-                fallbackTrace={streamingTraceEnvelope}
-                fallbackActualToolCalls={actualToolCalls}
-                onTraceLoaded={onStreamingTraceLoaded}
-                onNavigateToChat={() => onTabChange("chat")}
-                traceBlob={persistedTraceBlob}
-                traceBlobLoading={persistedTraceLoading}
-                traceBlobError={persistedTraceError}
-                toolsMetadata={toolsMetadata}
-                toolServerMap={toolServerMap}
-                connectedServerIds={connectedServerIds}
-              />
-            )}
-          </div>
-        ) : hasStreamingTrace ? (
-          isWaitingForFirstTimelineSnapshot ? (
-            <div className="flex min-h-0 flex-1 items-center justify-center rounded-xl border border-border/50 bg-muted/10 px-6 py-10 text-center">
-              <div className="max-w-sm">
-                <div className="text-sm font-medium">
-                  Timeline appears after the first step completes
+        {shouldRenderChatShell ? (
+          <ChatboxHostStyleProvider value={hostStyle}>
+            <ChatboxHostThemeProvider value={themeMode}>
+              <div
+                className={cn(
+                  "chatbox-host-shell app-theme-scope flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-border/50",
+                  themeMode === "dark" && "dark",
+                )}
+                data-host-style={hostStyle}
+                style={shellStyle}
+              >
+                <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden p-3">
+                  {renderedRunContent}
                 </div>
-                <p className="mt-2 text-sm text-muted-foreground">
-                  Chat and raw output are already streaming for the current
-                  in-flight step.
-                </p>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  className="mt-3"
-                  onClick={() => onTabChange("chat")}
-                >
-                  Switch to Chat
-                </Button>
               </div>
-            </div>
-          ) : (
-            <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-              <TraceViewer
-                trace={streamingTraceEnvelope}
-                forcedViewMode={traceMode}
-                expectedToolCalls={expectedToolCalls}
-                actualToolCalls={actualToolCalls}
-                toolsMetadata={toolsMetadata}
-                toolServerMap={toolServerMap}
-                connectedServerIds={connectedServerIds}
-                hideToolbar
-                fillContent
-              />
-            </div>
-          )
-        ) : record.status === "running" && !record.iteration ? (
-          <div className="flex min-h-0 flex-1 items-center justify-center rounded-xl border border-border/50 bg-muted/10">
-            <div className="flex items-center gap-3 text-sm text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              <span>
-                {record.isRetrying ? "Retrying" : "Running"} {record.modelLabel}
-                …
-              </span>
-            </div>
-          </div>
-        ) : record.status === "cancelled" && !record.iteration ? (
-          <div className="flex min-h-0 flex-1 items-center justify-center rounded-xl border border-amber-500/25 bg-amber-500/5 px-6 py-10">
-            <div className="max-w-sm text-center">
-              <div className="text-sm font-medium text-amber-800 dark:text-amber-200">
-                {record.modelLabel} stopped
-              </div>
-              <p className="mt-2 text-sm text-muted-foreground">
-                This run was stopped before it finished. Partial trace and
-                metrics may still be visible in the tabs above.
-              </p>
-            </div>
-          </div>
-        ) : record.status === "failed" && !record.iteration ? (
-          <div className="flex min-h-0 flex-1 items-center justify-center rounded-xl border border-destructive/30 bg-destructive/5 px-6 py-10">
-            <div className="max-w-sm text-center">
-              <div className="text-sm font-medium text-destructive">
-                {record.modelLabel} failed
-              </div>
-              <p className="mt-2 text-sm text-muted-foreground">
-                {record.error || "No run data is available for this model."}
-              </p>
-            </div>
-          </div>
+            </ChatboxHostThemeProvider>
+          </ChatboxHostStyleProvider>
         ) : (
-          <div className="flex min-h-0 flex-1 items-center justify-center rounded-xl border border-dashed border-border/60 bg-muted/10 px-6 py-10 text-center">
-            <div>
-              <div className="text-sm font-medium">No run yet</div>
-              <p className="mt-2 text-sm text-muted-foreground">
-                Run compare to load this model’s chat, trace, and tool details.
-              </p>
-            </div>
-          </div>
+          renderedRunContent
         )}
       </div>
     </div>

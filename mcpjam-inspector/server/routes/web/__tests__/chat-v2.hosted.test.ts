@@ -24,8 +24,9 @@ vi.mock("ai", async () => {
 });
 
 vi.mock("@mcpjam/sdk", async () => {
-  const actual =
-    await vi.importActual<typeof import("@mcpjam/sdk")>("@mcpjam/sdk");
+  const actual = await vi.importActual<typeof import("@mcpjam/sdk")>(
+    "@mcpjam/sdk"
+  );
   return {
     ...actual,
     isMCPAuthError: vi.fn().mockReturnValue(false),
@@ -56,8 +57,9 @@ vi.mock("../apps.js", () => ({
 }));
 
 vi.mock("@/shared/types", async () => {
-  const actual =
-    await vi.importActual<typeof import("@/shared/types")>("@/shared/types");
+  const actual = await vi.importActual<typeof import("@/shared/types")>(
+    "@/shared/types"
+  );
   return {
     ...actual,
     isMCPJamProvidedModel: vi.fn().mockReturnValue(true),
@@ -91,31 +93,42 @@ describe("web routes — chat-v2 hosted mode", () => {
           endedAt: 2,
           spans: [],
           modelId: "test-model",
-        },
+        }
       );
       options.onStreamComplete?.();
       return new Response("ok", { status: 200 });
     });
 
-    global.fetch = vi.fn(async (input) => {
-      if (String(input).endsWith("/web/authorize")) {
+    global.fetch = vi.fn(async (input, init) => {
+      if (String(input).endsWith("/web/authorize-batch")) {
+        const payload = JSON.parse(String(init?.body ?? "{}"));
+        const serverIds = Array.isArray(payload?.serverIds)
+          ? payload.serverIds
+          : [];
         return new Response(
           JSON.stringify({
-            authorized: true,
-            role: "member",
-            accessLevel: "shared_chat",
-            permissions: { chatOnly: false },
-            serverConfig: {
-              transportType: "http",
-              url: "https://server.example.com/mcp",
-              headers: {},
-              useOAuth: false,
-            },
+            results: Object.fromEntries(
+              serverIds.map((serverId: string) => [
+                serverId,
+                {
+                  ok: true,
+                  role: "member",
+                  accessLevel: "shared_chat",
+                  permissions: { chatOnly: false },
+                  serverConfig: {
+                    transportType: "http",
+                    url: `https://${serverId}.example.com/mcp`,
+                    headers: {},
+                    useOAuth: false,
+                  },
+                },
+              ])
+            ),
           }),
           {
             status: 200,
             headers: { "Content-Type": "application/json" },
-          },
+          }
         );
       }
 
@@ -151,7 +164,7 @@ describe("web routes — chat-v2 hosted mode", () => {
           name: "GPT-5 Mini",
         },
       },
-      token,
+      token
     );
 
     expect(response.status).toBe(200);
@@ -159,7 +172,7 @@ describe("web routes — chat-v2 hosted mode", () => {
     expect(prepareChatV2Mock).toHaveBeenCalledWith(
       expect.objectContaining({
         selectedServers: ["server-1"],
-      }),
+      })
     );
     expect(persistChatSessionToConvexMock).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -170,7 +183,73 @@ describe("web routes — chat-v2 hosted mode", () => {
         surface: "preview",
         modelId: "openai/gpt-5-mini",
         modelSource: "mcpjam",
-      }),
+      })
+    );
+  });
+
+  it("passes shared chatbox link context into the hosted model handler", async () => {
+    const { app, token } = createWebTestApp();
+
+    const response = await postJson(
+      app,
+      "/api/web/chat-v2",
+      {
+        workspaceId: "workspace-1",
+        selectedServerIds: ["server-1"],
+        chatboxToken: "chatbox-shared-token",
+        surface: "share_link",
+        chatSessionId: "chat-session-shared",
+        messages: [{ role: "user", content: "hello from guest" }],
+        model: {
+          id: "anthropic/claude-opus-4.6",
+          provider: "anthropic",
+          name: "Claude Opus 4.6",
+        },
+      },
+      token
+    );
+
+    expect(response.status).toBe(200);
+    expect(handleMCPJamFreeChatModelMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        chatboxToken: "chatbox-shared-token",
+        workspaceId: "workspace-1",
+      })
+    );
+  });
+
+  it("uses one authorize-batch request for multi-server hosted chat", async () => {
+    const { app, token } = createWebTestApp();
+
+    const response = await postJson(
+      app,
+      "/api/web/chat-v2",
+      {
+        workspaceId: "workspace-1",
+        selectedServerIds: ["server-1", "server-2", "server-1"],
+        chatSessionId: "chat-session-batch",
+        messages: [{ role: "user", content: "hello" }],
+        model: {
+          id: "openai/gpt-5-mini",
+          provider: "openai",
+          name: "GPT-5 Mini",
+        },
+      },
+      token
+    );
+
+    expect(response.status).toBe(200);
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    expect(global.fetch).toHaveBeenCalledWith(
+      "https://example.convex.site/web/authorize-batch",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          workspaceId: "workspace-1",
+          serverIds: ["server-1", "server-2"],
+          accessScope: "chat_v2",
+        }),
+      })
     );
   });
 
@@ -192,7 +271,7 @@ describe("web routes — chat-v2 hosted mode", () => {
           name: "GPT-5 Mini",
         },
       },
-      token,
+      token
     );
 
     expect(response.status).toBe(200);
@@ -203,7 +282,7 @@ describe("web routes — chat-v2 hosted mode", () => {
         workspaceId: "workspace-1",
         sourceType: "direct",
         directVisibility: "workspace",
-      }),
+      })
     );
   });
 
@@ -237,7 +316,7 @@ describe("web routes — chat-v2 hosted mode", () => {
           name: "GPT-5 Mini",
         },
       },
-      token,
+      token
     );
 
     expect(response.status).toBe(500);
@@ -252,7 +331,7 @@ describe("web routes — chat-v2 hosted mode", () => {
             direction: "send",
           }),
         ],
-      }),
+      })
     );
   });
 });

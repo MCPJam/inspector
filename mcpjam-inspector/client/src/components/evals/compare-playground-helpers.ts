@@ -4,6 +4,7 @@ import {
   type ModelProvider,
 } from "@/shared/types";
 import { matchToolCalls } from "@/shared/eval-matching";
+import type { PromptTurn } from "@/shared/prompt-turns";
 import { computeIterationResult } from "./pass-criteria";
 import type {
   CompareModelOverride,
@@ -11,6 +12,7 @@ import type {
   EvalCase,
   EvalIteration,
 } from "./types";
+import type { TraceEnvelope } from "./trace-viewer-adapter";
 
 const KNOWN_MODEL_PROVIDERS: ModelProvider[] = [
   "anthropic",
@@ -62,6 +64,25 @@ export function resolveModelOptionLabel(
   modelLabelByValue: Record<string, string>,
 ) {
   return modelLabelByValue[modelValue] ?? modelValue;
+}
+
+export function buildComparePreviewTrace(
+  promptTurns: PromptTurn[],
+): TraceEnvelope | null {
+  const firstPrompt = promptTurns.find((turn) => turn.prompt.trim().length > 0);
+
+  if (!firstPrompt) {
+    return null;
+  }
+
+  return {
+    messages: [
+      {
+        role: "user",
+        content: firstPrompt.prompt,
+      },
+    ],
+  };
 }
 
 const MISMATCH_METADATA_KEYS = [
