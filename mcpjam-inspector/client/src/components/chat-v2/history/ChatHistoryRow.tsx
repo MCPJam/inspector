@@ -70,6 +70,8 @@ interface ChatHistoryRowProps {
       | "unpin";
     session: ChatHistorySession;
   }) => void | Promise<void>;
+  canConvertToTestCase?: boolean;
+  onConvertToTestCase?: (session: ChatHistorySession) => void;
   /** Workspace list only: avatar for another member's shared thread. */
   workspaceThreadOwner?: WorkspaceThreadOwnerAvatar;
   actions: {
@@ -91,6 +93,8 @@ export function ChatHistoryRow({
   hostStyle = "claude",
   onSelect,
   onActionComplete,
+  canConvertToTestCase = false,
+  onConvertToTestCase,
   workspaceThreadOwner,
   actions,
 }: ChatHistoryRowProps) {
@@ -307,6 +311,16 @@ export function ChatHistoryRow({
               {isAuthenticated && (
                 <>
                   <DropdownMenuSeparator />
+                  {canConvertToTestCase && onConvertToTestCase ? (
+                    <>
+                      <DropdownMenuItem
+                        onClick={() => onConvertToTestCase(session)}
+                      >
+                        Convert to test case
+                      </DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                    </>
+                  ) : null}
                   <DropdownMenuItem
                     onClick={async () =>
                       session.directVisibility === "workspace"

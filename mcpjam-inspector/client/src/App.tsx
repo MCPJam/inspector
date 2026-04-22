@@ -1594,7 +1594,6 @@ export default function App() {
     activeTab === "oauth-flow" ||
     (activeTab === "xaa-flow" && xaaEnabled === true) ||
     activeTab === "chat" ||
-    activeTab === "evals" ||
     activeTab === "views";
 
   const activeServerSelectorProps: ActiveServerSelectorProps | undefined =
@@ -1732,7 +1731,6 @@ export default function App() {
               />
             ) : (
               <EvalsTab
-                selectedServer={appState.selectedServer}
                 workspaceId={convexWorkspaceId}
                 onContinueInChat={handleContinueEvalInChat}
               />

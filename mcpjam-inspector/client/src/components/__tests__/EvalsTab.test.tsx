@@ -1,21 +1,16 @@
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, waitFor } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 
 const mocks = vi.hoisted(() => ({
   route: {
-    current: {
-      type: "test-edit" as const,
-      suiteId: "suite-a",
-      testId: "case-a",
-      openCompare: true,
-      iteration: "iter-a",
-    },
+    current: { type: "suite-overview" as const, suiteId: "suite-a" },
   },
   useEvalQueries: vi.fn(),
   navigatePlaygroundEvalsRoute: vi.fn(),
   createTestSuiteMutation: vi.fn(),
-  updateSuiteMutation: vi.fn(),
+  suiteIterationsView: vi.fn(),
 }));
 
 vi.mock("@workos-inc/authkit-react", () => ({
@@ -29,7 +24,6 @@ vi.mock("convex/react", () => ({
     isAuthenticated: true,
     isLoading: false,
   }),
-  useMutation: () => mocks.updateSuiteMutation,
 }));
 
 vi.mock("@/hooks/use-eval-tab-context", () => ({
@@ -42,12 +36,12 @@ vi.mock("@/hooks/use-eval-tab-context", () => ({
   }),
 }));
 
-vi.mock("@/state/app-state-context", () => ({
-  useSharedAppState: () => ({
-    servers: {
-      "server-a": { connectionStatus: "connected" },
-      "server-b": { connectionStatus: "connected" },
-    },
+vi.mock("@/hooks/useViews", () => ({
+  useWorkspaceServers: () => ({
+    servers: [
+      { _id: "srv-a", name: "server-a", transportType: "http" },
+      { _id: "srv-b", name: "server-b", transportType: "stdio" },
+    ],
   }),
 }));
 
@@ -79,8 +73,28 @@ vi.mock("../evals/ConfirmationDialogs", () => ({
   ConfirmationDialogs: () => null,
 }));
 
+vi.mock("../evals/evals-suite-list-sidebar", () => ({
+  EvalsSuiteListSidebar: () => <div data-testid="suite-sidebar" />,
+}));
+
+vi.mock("../evals/use-playground-workspace-executions", () => ({
+  usePlaygroundWorkspaceExecutions: () => ({
+    status: "ready" as const,
+    cases: [],
+    iterations: [],
+    iterationToSuiteId: new Map<string, string>(),
+  }),
+}));
+
+vi.mock("../evals/create-suite-dialog", () => ({
+  CreateSuiteDialog: () => null,
+}));
+
 vi.mock("../evals/suite-iterations-view", () => ({
-  SuiteIterationsView: () => <div data-testid="suite-iterations-view" />,
+  SuiteIterationsView: (props: Record<string, unknown>) => {
+    mocks.suiteIterationsView(props);
+    return <div data-testid="suite-iterations-view" />;
+  },
 }));
 
 vi.mock("../evals/use-eval-mutations", () => ({
@@ -125,15 +139,15 @@ vi.mock("../evals/use-eval-queries", () => ({
 
 import { EvalsTab } from "../EvalsTab";
 
-function makeSuiteEntry(serverName: string, suiteId: string) {
+function makeSuiteEntry(serverNames: string[], suiteId: string) {
   return {
     suite: {
       _id: suiteId,
       createdBy: "user-1",
-      name: serverName,
+      name: `Suite ${suiteId}`,
       description: "",
       configRevision: "rev-1",
-      environment: { servers: [serverName] },
+      environment: { servers: serverNames },
       createdAt: 1,
       updatedAt: 1,
       source: "ui" as const,
@@ -146,142 +160,81 @@ function makeSuiteEntry(serverName: string, suiteId: string) {
   };
 }
 
-function makeSuiteQueries(serverName: string, suiteId: string, testId: string) {
-  const entry = makeSuiteEntry(serverName, suiteId);
+function makeQueryState(selectedSuiteId: string | null) {
+  const suiteA = makeSuiteEntry(["server-a"], "suite-a");
+  const suiteB = makeSuiteEntry(["server-b", "server-c"], "suite-b");
+  const sortedSuites = [suiteA, suiteB];
+  const selectedSuiteEntry =
+    sortedSuites.find((entry) => entry.suite._id === selectedSuiteId) ?? null;
+
   return {
-    suiteOverview: [makeSuiteEntry("server-a", "suite-a"), entry],
-    suiteDetails: {
-      testCases: [
-        {
-          _id: testId,
-          testSuiteId: suiteId,
-          createdBy: "user-1",
-          title: `${serverName} case`,
-          query: "Q",
-          models: [{ provider: "openai", model: "gpt-4" }],
-          runs: 1,
-          expectedToolCalls: [],
-        },
-      ],
-      iterations: [],
-    },
-    suiteRuns: [
-      {
-        _id: `${suiteId}-run-1`,
-        suiteId,
-        createdBy: "user-1",
-        runNumber: 1,
-        configRevision: "rev-1",
-        configSnapshot: {
-          tests: [],
-          environment: { servers: [serverName] },
-        },
-        status: "completed" as const,
-        result: "passed" as const,
-        summary: { total: 1, passed: 1, failed: 0, passRate: 1 },
-        createdAt: 1,
-        completedAt: 2,
-      },
-    ],
-    selectedSuiteEntry: entry,
-    selectedSuite: entry.suite,
+    suiteOverview: sortedSuites,
+    suiteDetails: selectedSuiteEntry
+      ? {
+          testCases: [],
+          iterations: [],
+        }
+      : undefined,
+    suiteRuns: selectedSuiteEntry ? [] : undefined,
+    selectedSuiteEntry,
+    selectedSuite: selectedSuiteEntry?.suite ?? null,
     sortedIterations: [],
-    runsForSelectedSuite: [
-      {
-        _id: `${suiteId}-run-1`,
-        suiteId,
-        createdBy: "user-1",
-        runNumber: 1,
-        configRevision: "rev-1",
-        configSnapshot: {
-          tests: [],
-          environment: { servers: [serverName] },
-        },
-        status: "completed" as const,
-        result: "passed" as const,
-        summary: { total: 1, passed: 1, failed: 0, passRate: 1 },
-        createdAt: 1,
-        completedAt: 2,
-      },
-    ],
+    runsForSelectedSuite: [],
     activeIterations: [],
-    sortedSuites: [makeSuiteEntry("server-a", "suite-a"), entry],
+    sortedSuites,
     isOverviewLoading: false,
     isSuiteDetailsLoading: false,
     isSuiteRunsLoading: false,
     enableOverviewQuery: true,
-    enableSuiteDetailsQuery: true,
+    enableSuiteDetailsQuery: Boolean(selectedSuiteId),
   };
 }
 
-describe("EvalsTab route guard", () => {
+describe("EvalsTab", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.route.current = {
-      type: "test-edit",
-      suiteId: "suite-a",
-      testId: "case-a",
-      openCompare: true,
-      iteration: "iter-a",
-    };
+    mocks.route.current = { type: "suite-overview", suiteId: "suite-a" };
     mocks.useEvalQueries.mockImplementation(
-      ({ selectedSuiteId }: { selectedSuiteId: string | null }) => {
-        const overview = {
-          suiteOverview: [
-            makeSuiteEntry("server-a", "suite-a"),
-            makeSuiteEntry("server-b", "suite-b"),
-          ],
-          suiteDetails: undefined,
-          suiteRuns: undefined,
-          selectedSuiteEntry: null,
-          selectedSuite: null,
-          sortedIterations: [],
-          runsForSelectedSuite: [],
-          activeIterations: [],
-          sortedSuites: [
-            makeSuiteEntry("server-a", "suite-a"),
-            makeSuiteEntry("server-b", "suite-b"),
-          ],
-          isOverviewLoading: false,
-          isSuiteDetailsLoading: false,
-          isSuiteRunsLoading: false,
-          enableOverviewQuery: true,
-          enableSuiteDetailsQuery: false,
-        };
-
-        if (!selectedSuiteId) {
-          return overview;
-        }
-
-        if (selectedSuiteId === "suite-a") {
-          return makeSuiteQueries("server-a", "suite-a", "case-a");
-        }
-
-        if (selectedSuiteId === "suite-b") {
-          return makeSuiteQueries("server-b", "suite-b", "case-b");
-        }
-
-        return overview;
-      },
+      ({ selectedSuiteId }: { selectedSuiteId: string | null }) =>
+        makeQueryState(selectedSuiteId),
     );
   });
 
-  it("redirects stale compare routes to the newly selected server's cases view", async () => {
-    const view = render(
-      <EvalsTab selectedServer="server-a" workspaceId="ws-1" />,
-    );
+  it("renders from suite-driven route state without depending on an active server", () => {
+    render(<EvalsTab workspaceId="ws-1" />);
 
     expect(mocks.navigatePlaygroundEvalsRoute).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole("tab", { name: "Executions" }),
+    ).toBeInTheDocument();
+    expect(mocks.suiteIterationsView).toHaveBeenCalled();
+    expect(mocks.suiteIterationsView.mock.calls.at(-1)?.[0]).toMatchObject({
+      suite: expect.objectContaining({ _id: "suite-a" }),
+      workspaceServers: expect.arrayContaining([
+        expect.objectContaining({ name: "server-a" }),
+        expect.objectContaining({ name: "server-b" }),
+      ]),
+    });
+  });
 
-    view.rerender(<EvalsTab selectedServer="server-b" workspaceId="ws-1" />);
+  it("shows the suite list on the Suites tab", async () => {
+    const user = userEvent.setup();
+    render(<EvalsTab workspaceId="ws-1" />);
+
+    expect(screen.getByTestId("suite-iterations-view")).toBeInTheDocument();
+    await user.click(screen.getByRole("tab", { name: "Suites" }));
+    expect(screen.getByTestId("suite-sidebar")).toBeInTheDocument();
+    expect(screen.queryByTestId("suite-iterations-view")).toBeNull();
+  });
+
+  it("redirects invalid suite routes back to the eval list", async () => {
+    mocks.route.current = { type: "suite-overview", suiteId: "missing-suite" };
+
+    render(<EvalsTab workspaceId="ws-1" />);
 
     await waitFor(() => {
       expect(mocks.navigatePlaygroundEvalsRoute).toHaveBeenCalledWith(
-        {
-          type: "suite-overview",
-          suiteId: "suite-b",
-          view: "test-cases",
-        },
+        { type: "list" },
         { replace: true },
       );
     });
