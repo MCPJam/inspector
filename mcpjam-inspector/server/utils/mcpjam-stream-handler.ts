@@ -594,7 +594,7 @@ function emitToolResults(
             typeof (part as any).serverId === "string"
               ? ((part as any).serverId as string)
               : undefined;
-          const rawOutput = (part as any).result ?? part.output;
+          const rawOutput = part.output ?? (part as any).result;
 
           let outputForUi = rawOutput;
           if (rawOutput && typeof rawOutput === "object") {

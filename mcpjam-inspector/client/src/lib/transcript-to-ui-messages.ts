@@ -157,13 +157,15 @@ function convertParts(content: unknown): UIMessage["parts"] {
       // at the top level (required for toolRenderOverrides lookup).
       // Use "output-available" state (not "result") — the rendering pipeline
       // (WidgetReplay) checks for this state to decide whether to render.
+      // Prefer the raw `output` payload when available because it preserves
+      // widget metadata like `_meta.ui.resourceUri` and `_serverId`.
       parts.push({
         type: "dynamic-tool",
         toolCallId: part.toolCallId ?? part.id ?? generateId(),
         toolName: part.toolName ?? "unknown",
         state: "output-available" as const,
         input: part.args ?? part.input ?? {},
-        output: part.result ?? {},
+        output: part.output ?? part.result ?? {},
       } as any);
     } else if (partType === "tool-result") {
       // Tool results are typically already captured via tool-call results

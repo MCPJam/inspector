@@ -653,6 +653,67 @@ describe("adaptTraceToUiMessages", () => {
     });
   });
 
+  it("preserves widget metadata from tool output when result is simplified", () => {
+    const trace: TraceEnvelope = {
+      messages: [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call-widget-live",
+              toolName: "create_view",
+              input: { title: "Dog" },
+            },
+          ],
+        },
+        {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "call-widget-live",
+              toolName: "create_view",
+              serverId: "server-1",
+              output: {
+                type: "json",
+                value: {
+                  _meta: {
+                    ui: { resourceUri: "ui://widget/create-view.html" },
+                  },
+                  structuredContent: {
+                    checkpointId: "checkpoint-1",
+                  },
+                },
+              },
+              result: {
+                structuredContent: {
+                  checkpointId: "checkpoint-1",
+                },
+              },
+            },
+          ],
+        },
+      ],
+    };
+
+    const result = adaptTraceToUiMessages({
+      trace,
+      connectedServerIds: ["server-1"],
+    });
+    const toolPart = result.messages[0].parts.find(
+      (part) => part.type === "dynamic-tool",
+    ) as any;
+
+    expect(toolPart.output._meta.ui.resourceUri).toBe(
+      "ui://widget/create-view.html",
+    );
+    expect(toolPart.output._serverId).toBe("server-1");
+    expect(toolPart.output.structuredContent).toEqual({
+      checkpointId: "checkpoint-1",
+    });
+  });
+
   it("does not invent empty tool output when snapshot output is absent", () => {
     const overrides = buildToolRenderOverridesFromSnapshots([
       makeWidgetSnapshot({

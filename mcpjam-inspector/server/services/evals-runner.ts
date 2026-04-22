@@ -158,10 +158,6 @@ function normalizeToolInput(input: unknown): Record<string, unknown> {
 }
 
 function unwrapToolResultPayload(part: Record<string, unknown>): unknown {
-  if (part.result !== undefined) {
-    return part.result;
-  }
-
   const output = part.output;
   if (
     isRecord(output) &&
@@ -171,7 +167,11 @@ function unwrapToolResultPayload(part: Record<string, unknown>): unknown {
     return output.value;
   }
 
-  return output;
+  if (output !== undefined) {
+    return output;
+  }
+
+  return part.result;
 }
 
 function readServerIdFromToolOutput(value: unknown): string | undefined {

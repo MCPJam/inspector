@@ -360,6 +360,7 @@ export function MCPAppsRenderer({
   const [reinitCount, setReinitCount] = useState(0);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [widgetHtml, setWidgetHtml] = useState<string | null>(null);
+  const [sandboxProxyReady, setSandboxProxyReady] = useState(false);
   const [bridgeTransportReady, setBridgeTransportReady] = useState(false);
   const isCachedReplay = !!cachedWidgetHtmlUrl;
   const [widgetCsp, setWidgetCsp] = useState<McpUiResourceCsp | undefined>(
@@ -1086,6 +1087,12 @@ export function MCPAppsRenderer({
 
   useEffect(() => {
     if (!widgetHtml) return;
+    if (!sandboxProxyReady) {
+      logWidgetDebug("host-to-ui", "debug/bridge-connect-skipped", {
+        reason: "sandbox-proxy-not-ready",
+      });
+      return;
+    }
     const iframe = sandboxRef.current?.getIframeElement();
     if (!iframe?.contentWindow) {
       logWidgetDebug("host-to-ui", "debug/bridge-connect-skipped", {
@@ -1200,6 +1207,7 @@ export function MCPAppsRenderer({
     serverId,
     toolCallId,
     widgetHtml,
+    sandboxProxyReady,
     registerBridgeHandlers,
     setWidgetModelContext,
     cspMode,
@@ -1530,6 +1538,7 @@ export function MCPAppsRenderer({
         permissions={widgetPermissions}
         permissive={widgetPermissive}
         onProxyReady={() => {
+          setSandboxProxyReady(true);
           logWidgetDebug("ui-to-host", "debug/sandbox-proxy-ready", {
             bridgeTransportReady,
             hasWidgetHtml,
