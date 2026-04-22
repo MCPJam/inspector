@@ -2536,6 +2536,8 @@ function RunColumn({
     toolServerMap,
     toolsMetadata,
   ]);
+  // Keep the handoff payload logic wired up while the action itself is hidden.
+  void continueInChatPayload;
   const hasStreamingTrace = streamingTraceEnvelope != null;
   const previewTrace = record.previewTrace ?? null;
   const activeLiveChatTrace: TraceEnvelope | null =
@@ -2758,21 +2760,7 @@ function RunColumn({
         tabsInline
         actionsSlot={
           <>
-            {onContinueInChat ? (
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                className="h-7 shrink-0 px-2 text-[11px]"
-                onClick={() =>
-                  continueInChatPayload &&
-                  onContinueInChat(continueInChatPayload)
-                }
-                disabled={!continueInChatPayload}
-              >
-                Continue in Chat
-              </Button>
-            ) : null}
+            {/* Continue in Chat is temporarily hidden while guest playground testing is in progress. */}
             <Button
               type="button"
               size="sm"
