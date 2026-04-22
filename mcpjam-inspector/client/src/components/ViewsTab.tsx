@@ -408,7 +408,10 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
           : undefined,
       widgetPermissions:
         selectedView.protocol === "mcp-apps"
-          ? selectedView.widgetPermissions
+          ? (selectedView.widgetPermissions as
+              | import("@modelcontextprotocol/ext-apps/app-bridge").McpUiResourcePermissions
+              | null
+              | undefined)
           : undefined,
       widgetPermissive:
         selectedView.protocol === "mcp-apps"
@@ -419,6 +422,7 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
 
     setPendingExecution({
       ...replay,
+      toolMeta: replay.toolMeta ?? undefined,
       replaceExisting: true,
     });
   }, [

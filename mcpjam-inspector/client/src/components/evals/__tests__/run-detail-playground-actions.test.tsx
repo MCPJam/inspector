@@ -49,7 +49,6 @@ describe("RunDetailPlaygroundActions", () => {
         rerunningSuiteId={null}
         replayingRunId={null}
         cancellingRunId={null}
-        canRerun={false}
         hasServersConfigured
         missingServers={[]}
       />,

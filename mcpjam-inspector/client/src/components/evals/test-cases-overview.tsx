@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useConvex, useQuery } from "convex/react";
 import posthog from "posthog-js";
-import { CircleAlert, Loader2, Play, Puzzle, Trash2 } from "lucide-react";
+import { Loader2, Play, Puzzle, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@mcpjam/design-system/button";
 import { Checkbox } from "@mcpjam/design-system/checkbox";
@@ -20,10 +20,15 @@ import {
   TooltipTrigger,
 } from "@mcpjam/design-system/tooltip";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
+import { cn } from "@/lib/utils";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { computeIterationResult } from "./pass-criteria";
 import { formatRelativeTime } from "./helpers";
 import type { EvalCase, EvalIteration } from "./types";
+import {
+  caseListCardClassName,
+  CaseListColumnHeaders,
+} from "./case-list-shared";
 
 function iterationRecencyTs(iter: EvalIteration): number {
   return iter.updatedAt ?? iter.startedAt ?? iter.createdAt ?? 0;
@@ -315,7 +320,9 @@ export function TestCasesOverview({
   return (
     <>
       {/* Cases List */}
-      <div className="rounded-xl border bg-card text-card-foreground flex flex-col max-h-[600px]">
+      <div
+        className={cn(caseListCardClassName, "max-h-[600px]")}
+      >
         {batchDelete &&
         (showPersistentBatchHeader || selectedCaseIds.size > 0) ? (
           <div className="border-b px-4 py-2 shrink-0 bg-muted/50 flex items-center justify-between">
@@ -326,31 +333,35 @@ export function TestCasesOverview({
                 aria-label="Select all cases"
                 disabled={testCaseStats.length === 0}
               />
-              <span className="text-xs font-medium truncate">Select all</span>
+              <span className="text-xs font-medium truncate">Test Cases</span>
             </div>
-            <div className="flex items-center gap-2 shrink-0">
-              {selectedCaseIds.size > 0 && (
-                <span className="text-xs text-muted-foreground">
+            {selectedCaseIds.size > 0 ? (
+              <div className="flex items-center gap-2 shrink-0">
+                <span className="text-xs tabular-nums text-muted-foreground">
                   {selectedCaseIds.size} selected
                 </span>
-              )}
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setSelectedCaseIds(new Set())}
-                disabled={isBatchDeleting || selectedCaseIds.size === 0}
-              >
-                Cancel
-              </Button>
-              <Button
-                variant="destructive"
-                size="sm"
-                onClick={() => setShowBatchDeleteModal(true)}
-                disabled={isBatchDeleting || selectedCaseIds.size === 0}
-              >
-                Delete
-              </Button>
-            </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 text-muted-foreground"
+                  onClick={() => setSelectedCaseIds(new Set())}
+                  disabled={isBatchDeleting}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="button"
+                  variant="destructive"
+                  size="sm"
+                  className="h-8"
+                  onClick={() => setShowBatchDeleteModal(true)}
+                  disabled={isBatchDeleting}
+                >
+                  Delete
+                </Button>
+              </div>
+            ) : null}
           </div>
         ) : !showDisconnectedPlaygroundEmptyState ? (
           <div className="border-b px-4 py-2 shrink-0 flex items-center justify-between">
@@ -376,17 +387,12 @@ export function TestCasesOverview({
 
         {/* Column Headers */}
         {testCaseStats.length > 0 && (
-          <div className="flex items-center gap-3 w-full px-4 py-1.5 bg-muted/30 border-b text-xs font-medium text-muted-foreground">
-            {batchDelete ? <div className="w-7 shrink-0" aria-hidden /> : null}
-            <div className="flex-1 min-w-[120px]">Case name</div>
-            <div className="flex flex-1 min-w-0 justify-end items-center gap-2 max-w-[min(100%,20rem)]">
-              <span className="text-right">Last run</span>
-              <span className="w-3.5 shrink-0" aria-hidden />
-            </div>
-            {showRunColumn ? (
-              <div className="w-7 shrink-0" aria-hidden />
-            ) : null}
-          </div>
+          <CaseListColumnHeaders
+            firstColumnLabel="Case name"
+            secondColumnLabel="Last run"
+            leadingGutter={batchDelete}
+            trailingGutter={showRunColumn}
+          />
         )}
 
         <div className="divide-y overflow-y-auto">
@@ -412,6 +418,7 @@ export function TestCasesOverview({
             )
           ) : (
             testCaseStats.map(({ testCase, lastRunIteration }) => {
+              const hasConfiguredSuiteServers = suiteServers.length > 0;
               const missingServers =
                 connectedServerNames == null
                   ? []
@@ -434,9 +441,10 @@ export function TestCasesOverview({
                 !hasModels ||
                 serverGateBlocked ||
                 isThisCaseRunning;
-              const disconnectedRunTooltip = serverGateBlocked
-                ? `Connect: ${missingServers.join(", ")}`
-                : null;
+              const disconnectedRunTooltip =
+                serverGateBlocked
+                  ? "Connect and run."
+                  : null;
 
               const lastRunResult = lastRunIteration
                 ? computeIterationResult(lastRunIteration)
@@ -457,7 +465,6 @@ export function TestCasesOverview({
                   lastRunIteration.createdAt ??
                   null
                 : null;
-              const showLastRunFailed = lastRunResult === "failed";
               const caseTitle = testCase.title || "Untitled test case";
               const passBadge = (
                 <span
@@ -523,20 +530,12 @@ export function TestCasesOverview({
                       {lastRunSummary}
                     </span>
                   )}
-                  <span className="w-3.5 h-3.5 shrink-0 flex items-center justify-center">
-                    {showLastRunFailed ? (
-                      <CircleAlert
-                        className="h-3.5 w-3.5 text-destructive"
-                        aria-label="Last run failed"
-                      />
-                    ) : null}
-                  </span>
                 </div>
               );
 
               const caseAndLast = (
                 <>
-                  <span className="min-w-0 flex-1 truncate text-xs font-medium text-left">
+                  <span className="min-w-0 flex-1 truncate text-left text-xs font-semibold text-foreground">
                     {caseTitle}
                   </span>
                   {lastPart}
@@ -594,7 +593,19 @@ export function TestCasesOverview({
 
               const runControl =
                 showRunColumn && onRunTestCase ? (
-                  disconnectedRunTooltip ? (
+                  !hasConfiguredSuiteServers ? (
+                    <Tooltip>
+                      <TooltipTrigger asChild>{runButton}</TooltipTrigger>
+                      <TooltipContent
+                        variant="muted"
+                        side="left"
+                        sideOffset={8}
+                        className="max-w-[16rem]"
+                      >
+                        Configure suite servers before running this case.
+                      </TooltipContent>
+                    </Tooltip>
+                  ) : disconnectedRunTooltip ? (
                     <Tooltip>
                       <TooltipTrigger asChild>{runButton}</TooltipTrigger>
                       <TooltipContent

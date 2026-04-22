@@ -189,6 +189,24 @@ export function getHostedWorkspaceId(): string {
   return workspaceId;
 }
 
+/**
+ * Long alphanumeric refs are usually Convex/legacy document ids. Never echo
+ * them in user-visible error strings; short names and slugs may still be shown.
+ */
+function shouldIncludeHostedRefInNotFoundError(serverNameOrId: string): boolean {
+  const t = serverNameOrId.trim();
+  if (t.length < 1) {
+    return false;
+  }
+  if (t.length >= 20 && /^[a-z0-9]+$/i.test(t)) {
+    return false;
+  }
+  return true;
+}
+
+const HOSTED_SERVER_NOT_FOUND_OPAQUE_MESSAGE =
+  "Hosted server not found. The server is not in your hosted workspace, or the server list is still loading.";
+
 export function resolveHostedServerId(serverNameOrId: string): string {
   assertHostedMode();
 
@@ -202,7 +220,10 @@ export function resolveHostedServerId(serverNameOrId: string): string {
     return serverNameOrId;
   }
 
-  throw new Error(`Hosted server not found for \"${serverNameOrId}\"`);
+  if (shouldIncludeHostedRefInNotFoundError(serverNameOrId)) {
+    throw new Error(`Hosted server not found for \"${serverNameOrId}\"`);
+  }
+  throw new Error(HOSTED_SERVER_NOT_FOUND_OPAQUE_MESSAGE);
 }
 
 export function resolveHostedServerIds(serverNamesOrIds: string[]): string[] {
@@ -223,6 +244,65 @@ function findHostedServerName(serverId: string): string | undefined {
   return Object.entries(hostedApiContext.serverIdsByName).find(
     ([, mappedId]) => mappedId === serverId,
   )?.[0];
+}
+
+/**
+ * Resolves a hosted server display name or Convex server document ID to a
+ * user-facing label when the server still exists in the current
+ * `serverIdsByName` mapping. Returns undefined when the ref cannot be resolved
+ * (for example, the server was removed from the workspace).
+ */
+export function tryGetHostedServerDisplayName(
+  serverNameOrId: string,
+): string | undefined {
+  if (!HOSTED_MODE) {
+    return undefined;
+  }
+
+  const trimmed = serverNameOrId.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+
+  if (hostedApiContext.serverIdsByName[trimmed] !== undefined) {
+    return trimmed;
+  }
+
+  return findHostedServerName(trimmed);
+}
+
+export function normalizeHostedServerNames(
+  serverNamesOrIds: string[],
+): string[] {
+  assertHostedMode();
+
+  const seen = new Set<string>();
+  const normalized: string[] = [];
+
+  for (const serverNameOrId of serverNamesOrIds) {
+    if (typeof serverNameOrId !== "string") {
+      continue;
+    }
+
+    const trimmed = serverNameOrId.trim();
+    if (!trimmed) {
+      continue;
+    }
+
+    const serverName =
+      hostedApiContext.serverIdsByName[trimmed] !== undefined
+        ? trimmed
+        : (findHostedServerName(trimmed) ?? trimmed);
+    const dedupeKey = serverName.toLowerCase();
+    if (seen.has(dedupeKey)) {
+      continue;
+    }
+
+    seen.add(dedupeKey);
+    normalized.push(serverName);
+  }
+
+  return normalized;
 }
 
 function resolveHostedServerEntries(

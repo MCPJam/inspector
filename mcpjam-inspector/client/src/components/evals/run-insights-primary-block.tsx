@@ -12,7 +12,7 @@ export function RunInsightsPrimaryBlock(props: {
   error: string | null;
   onRetry: () => void;
   className?: string;
-  /** When true, omit outer card chrome for use inside a parent Run insights panel. */
+  /** When true, omit outer card chrome for use inside the run metrics stack. */
   embedded?: boolean;
 }) {
   return <InsightPrimaryBlock title="Run insights" {...props} />;

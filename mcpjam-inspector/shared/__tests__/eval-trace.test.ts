@@ -105,4 +105,46 @@ describe("eval-trace helpers", () => {
       }),
     );
   });
+
+  it("evalTraceBlobV1Z accepts widget snapshots", () => {
+    const parsed = evalTraceBlobV1Z.parse({
+      traceVersion: 1,
+      messages: [],
+      widgetSnapshots: [
+        {
+          toolCallId: "tool-1",
+          toolName: "create_view",
+          protocol: "mcp-apps",
+          serverId: "server-1",
+          resourceUri: "ui://widget/index.html",
+          toolMetadata: {
+            ui: {
+              resourceUri: "ui://widget/index.html",
+            },
+          },
+          widgetCsp: {
+            connectDomains: ["https://example.com"],
+          },
+          widgetPermissions: {
+            camera: true,
+          },
+          widgetPermissive: true,
+          prefersBorder: true,
+          widgetHtmlBlobId: "blob-1",
+        },
+      ],
+    });
+
+    expect(parsed.widgetSnapshots).toHaveLength(1);
+    expect(parsed.widgetSnapshots?.[0]).toEqual(
+      expect.objectContaining({
+        toolCallId: "tool-1",
+        toolName: "create_view",
+        protocol: "mcp-apps",
+        serverId: "server-1",
+        resourceUri: "ui://widget/index.html",
+        widgetHtmlBlobId: "blob-1",
+      }),
+    );
+  });
 });

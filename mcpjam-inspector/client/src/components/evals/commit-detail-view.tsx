@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo } from "react";
 import { GitBranch, GitCommit, Clock, Loader2 } from "lucide-react";
 import { useQuery } from "convex/react";
 import { Badge } from "@mcpjam/design-system/badge";
@@ -247,19 +247,6 @@ function CommitSuiteRunDetail({
     allIterations,
     runDetailSortBy,
   );
-
-  // Auto-select first iteration
-  useEffect(() => {
-    if (caseGroupsForSelectedRun.length === 0) return;
-
-    const iterationIds = new Set(caseGroupsForSelectedRun.map((i) => i._id));
-
-    if (!selectedIterationId) {
-      onSelectIteration(caseGroupsForSelectedRun[0]._id);
-    } else if (!iterationIds.has(selectedIterationId)) {
-      onSelectIteration(caseGroupsForSelectedRun[0]._id);
-    }
-  }, [caseGroupsForSelectedRun, selectedIterationId, onSelectIteration]);
 
   if (!suiteDetails) {
     return (

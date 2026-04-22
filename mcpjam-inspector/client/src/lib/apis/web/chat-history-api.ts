@@ -41,6 +41,7 @@ export interface ResumeConfig {
 
 export interface ChatHistoryDetailSession extends ChatHistorySession {
   messagesBlobUrl: string | null;
+  usedServerIds?: string[];
   resumeConfig?: ResumeConfig;
 }
 
@@ -57,6 +58,7 @@ export interface ChatHistoryWidgetSnapshot {
   widgetPermissive: boolean;
   prefersBorder: boolean;
   widgetHtmlUrl?: string | null;
+  toolOutputUrl?: string | null;
 }
 
 export interface ChatHistoryTurnTrace {

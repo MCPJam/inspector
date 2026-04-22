@@ -334,10 +334,10 @@ describe("useChatSession hosted mode", () => {
   });
 
   it("marks session bootstrap complete only after auth setup finishes", async () => {
-    let resolveAccessToken: (value: string | null) => void = () => {};
+    let resolveAccessToken: (value: string) => void = () => {};
     mockState.getAccessToken.mockImplementation(
       () =>
-        new Promise<string | null>((resolve) => {
+        new Promise<string>((resolve) => {
           resolveAccessToken = resolve;
         }),
     );
@@ -845,6 +845,66 @@ describe("useChatSession hosted mode", () => {
       );
     });
 
+    unmount();
+  });
+
+  it("hydrates persisted widget snapshot tool output for replayed widgets", async () => {
+    const toolOutput = {
+      content: [{ type: "text", text: "rendered" }],
+      structuredContent: { checkpointId: "checkpoint-1" },
+      _meta: {
+        ui: { resourceUri: "ui://excalidraw/mcp-app.html" },
+        _serverId: "server-id-1",
+      },
+    };
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(toolOutput), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+
+    const { result, unmount } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        hostedWorkspaceId: "workspace-1",
+        hostedSelectedServerIds: ["server-id-1"],
+      }),
+    );
+
+    await waitFor(() => {
+      expect(result.current.isSessionBootstrapComplete).toBe(true);
+    });
+
+    await result.current.loadChatSession({
+      chatSessionId: "history-session-2",
+      messagesBlobUrl: null,
+      version: 4,
+      widgetSnapshots: [
+        {
+          toolCallId: "tool-call-1",
+          toolName: "create_view",
+          serverId: "server-id-1",
+          uiType: "mcp-apps",
+          resourceUri: "ui://excalidraw/mcp-app.html",
+          widgetCsp: null,
+          widgetPermissions: null,
+          widgetPermissive: false,
+          prefersBorder: false,
+          toolOutputUrl: "https://storage.example.com/tool-output.json",
+        },
+      ],
+    });
+
+    await waitFor(() => {
+      expect(
+        result.current.restoredToolRenderOverrides["tool-call-1"]?.toolOutput,
+      ).toEqual(toolOutput);
+    });
+
+    fetchSpy.mockRestore();
     unmount();
   });
 

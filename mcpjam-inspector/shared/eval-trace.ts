@@ -45,10 +45,26 @@ export type PromptTraceSummary = {
   }>;
 };
 
+export type EvalTraceWidgetSnapshot = {
+  toolCallId: string;
+  toolName: string;
+  protocol: "mcp-apps" | "openai-apps";
+  serverId: string;
+  resourceUri?: string;
+  toolMetadata: Record<string, unknown>;
+  widgetCsp?: Record<string, unknown> | null;
+  widgetPermissions?: Record<string, unknown> | null;
+  widgetPermissive?: boolean;
+  prefersBorder?: boolean;
+  widgetHtmlBlobId?: string;
+  widgetHtmlUrl?: string | null;
+};
+
 /** Versioned blob written by `testSuites:updateTestIteration` when messages are stored. */
 export type EvalTraceBlobV1 = {
   traceVersion: 1;
   messages: ModelMessage[];
+  widgetSnapshots?: EvalTraceWidgetSnapshot[];
   spans?: EvalTraceSpan[];
   prompts?: PromptTraceSummary[];
 };
@@ -98,9 +114,25 @@ const promptTraceSummaryZ = z.object({
   ),
 });
 
+const evalTraceWidgetSnapshotZ = z.object({
+  toolCallId: z.string(),
+  toolName: z.string(),
+  protocol: z.union([z.literal("mcp-apps"), z.literal("openai-apps")]),
+  serverId: z.string(),
+  resourceUri: z.string().optional(),
+  toolMetadata: z.record(z.string(), z.unknown()),
+  widgetCsp: z.record(z.string(), z.unknown()).nullable().optional(),
+  widgetPermissions: z.record(z.string(), z.unknown()).nullable().optional(),
+  widgetPermissive: z.boolean().optional(),
+  prefersBorder: z.boolean().optional(),
+  widgetHtmlBlobId: z.string().optional(),
+  widgetHtmlUrl: z.string().nullable().optional(),
+});
+
 export const evalTraceBlobV1Z = z.object({
   traceVersion: z.literal(1),
   messages: z.array(z.any()),
+  widgetSnapshots: z.array(evalTraceWidgetSnapshotZ).optional(),
   spans: z.array(evalTraceSpanZ).optional(),
   prompts: z.array(promptTraceSummaryZ).optional(),
 });

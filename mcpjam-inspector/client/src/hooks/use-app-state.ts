@@ -19,7 +19,10 @@ import {
 import { HOSTED_OAUTH_PENDING_STORAGE_KEY } from "@/lib/hosted-oauth-callback";
 
 export type { ServerWithName } from "@/state/app-types";
-export type { ServerUpdateResult } from "./use-server-state";
+export type {
+  EnsureServersReadyResult,
+  ServerUpdateResult,
+} from "./use-server-state";
 
 export interface PendingDashboardOAuthState {
   serverName: string;
@@ -572,6 +575,7 @@ export function useAppState({
     handleConnect: serverState.handleConnect,
     handleDisconnect: serverState.handleDisconnect,
     handleReconnect: serverState.handleReconnect,
+    ensureServersReady: serverState.ensureServersReady,
     handleUpdate: serverState.handleUpdate,
     handleRemoveServer: serverState.handleRemoveServer,
     setSelectedServer: serverState.setSelectedServer,

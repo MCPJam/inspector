@@ -18,6 +18,7 @@ import {
 
 interface UseSharedChatWidgetCaptureOptions {
   enabled: boolean;
+  readyToPersist?: boolean;
   directGuestMode?: boolean;
   chatSessionId: string;
   hostedShareToken?: string;
@@ -25,6 +26,9 @@ interface UseSharedChatWidgetCaptureOptions {
   persistedSnapshotToolCallIds?: string[];
   messages: UIMessage[];
 }
+
+const MAX_PENDING_SESSION_RETRIES = 5;
+const SNAPSHOT_CAPTURE_DELAY_MS = 500;
 
 interface ToolSnapshotSource {
   toolName: string;
@@ -168,6 +172,7 @@ function shouldRetryPendingSnapshot(result: unknown, error: unknown): boolean {
 
 export function useSharedChatWidgetCapture({
   enabled,
+  readyToPersist = true,
   directGuestMode = false,
   chatSessionId,
   hostedShareToken,
@@ -256,7 +261,7 @@ export function useSharedChatWidgetCapture({
     const chatboxToken = chatboxTokenRef.current;
     const shouldUseWebHistoryApi =
       directGuestMode && !shareToken && !chatboxToken;
-    if (!enabled || inFlightRef.current.has(toolCallId)) {
+    if (!enabled || !readyToPersist || inFlightRef.current.has(toolCallId)) {
       return;
     }
 
@@ -391,7 +396,7 @@ export function useSharedChatWidgetCapture({
     } catch (error) {
       if (shouldRetryPendingSnapshot(undefined, error)) {
         const retries = retryCountRef.current.get(toolCallId) ?? 0;
-        if (retries >= 15) {
+        if (retries >= MAX_PENDING_SESSION_RETRIES) {
           console.warn(
             "[useSharedChatWidgetCapture] Giving up on snapshot for",
             toolCallId,
@@ -427,7 +432,11 @@ export function useSharedChatWidgetCapture({
   };
 
   useEffect(() => {
-    if (!enabled) {
+    if (!enabled || !readyToPersist) {
+      for (const timer of pendingTimersRef.current.values()) {
+        clearTimeout(timer);
+      }
+      pendingTimersRef.current.clear();
       return;
     }
 
@@ -459,12 +468,13 @@ export function useSharedChatWidgetCapture({
       const timer = setTimeout(() => {
         pendingTimersRef.current.delete(toolCallId);
         void uploadAttemptRef.current(toolCallId);
-      }, 500);
+      }, SNAPSHOT_CAPTURE_DELAY_MS);
 
       pendingTimersRef.current.set(toolCallId, timer);
     }
   }, [
     enabled,
+    readyToPersist,
     hostedChatboxToken,
     hostedShareToken,
     persistedSnapshotToolCallIds,

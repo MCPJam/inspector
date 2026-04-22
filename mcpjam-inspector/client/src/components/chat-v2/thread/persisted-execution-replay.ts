@@ -50,6 +50,7 @@ export function buildPersistedExecutionReplay(
       serverId: input.serverId,
       isOffline: input.isOffline,
       cachedWidgetHtmlUrl: input.cachedWidgetHtmlUrl,
+      toolOutput: input.toolOutput,
       initialWidgetState:
         input.protocol === "openai-apps" ? input.initialWidgetState : undefined,
       resourceUri:

@@ -139,6 +139,34 @@ describe("single-test-case-runner", () => {
     });
   });
 
+  it("does not require a user API key for MCPJam-provided models stored without the provider prefix", async () => {
+    const prepared = await prepareSingleTestCaseRun({
+      workspaceId: "workspace-1",
+      suite,
+      testCase: {
+        _id: "case-1",
+        models: [{ provider: "anthropic", model: "claude-haiku-4.5" }],
+      },
+      getAccessToken: vi.fn().mockResolvedValue("token-123"),
+      getToken: vi.fn().mockReturnValue(null),
+      hasToken: vi.fn().mockReturnValue(false),
+    });
+
+    expect(prepared).toEqual({
+      modelValue: "anthropic/claude-haiku-4.5",
+      request: {
+        workspaceId: "workspace-1",
+        testCaseId: "case-1",
+        model: "claude-haiku-4.5",
+        provider: "anthropic",
+        serverIds: ["asana"],
+        modelApiKeys: undefined,
+        convexAuthToken: "token-123",
+        testCaseOverrides: undefined,
+      },
+    });
+  });
+
   it("throws when a case has no configured model", async () => {
     await expect(
       prepareSingleTestCaseRun({

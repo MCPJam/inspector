@@ -6,6 +6,7 @@ import {
   type ToolChoice,
   stepCountIs,
 } from "ai";
+import { getToolUiResourceUri } from "@modelcontextprotocol/ext-apps/app-bridge";
 import {
   evaluateMultiTurnResults,
   type EvaluationResult,
@@ -13,10 +14,16 @@ import {
   type UsageTotals,
 } from "./evals/types";
 import { buildIterationMetadata } from "./evals/iteration-metadata";
-import { finalizePassedForEval, type MCPClientManager } from "@mcpjam/sdk";
+import {
+  finalizePassedForEval,
+  isMcpAppTool,
+  type MCPClientManager,
+} from "@mcpjam/sdk";
 import { createLlmModel } from "../utils/chat-helpers";
 import { logger } from "../utils/logger";
+import { injectOpenAICompat } from "../utils/widget-helpers.js";
 import {
+  getCanonicalModelId,
   getModelById,
   isMCPJamProvidedModel,
   type ModelDefinition,
@@ -48,6 +55,7 @@ import type {
   EvalTraceBlobV1,
   EvalTraceSpan,
   PromptTraceSummary,
+  EvalTraceWidgetSnapshot,
 } from "@/shared/eval-trace";
 import { appendDedupedModelMessages } from "@/shared/eval-trace";
 import {
@@ -89,7 +97,13 @@ export type RunEvalSuiteOptions = {
   runId: string | null; // null for quick runs
   config: {
     tests: EvalTestCase[];
-    environment: { servers: string[] };
+    environment: {
+      servers: string[];
+      serverBindings?: Array<{
+        serverName: string;
+        workspaceServerId?: string;
+      }>;
+    };
   };
   modelApiKeys?: Record<string, string>;
   convexClient: ConvexHttpClient;
@@ -117,6 +131,457 @@ const MAX_STEPS = 20;
 type ToolSet = Record<string, any>;
 type ToolCall = { toolName: string; arguments: Record<string, any> };
 type TraceSnapshotKind = "step_finish" | "turn_finish" | "failure";
+type ToolSnapshotSource = {
+  toolCallId: string;
+  toolName: string;
+  toolInput: Record<string, unknown>;
+  toolOutput: unknown;
+  serverId: string;
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function readRecordString(value: unknown, key: string): string | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const candidate = value[key];
+  return typeof candidate === "string" && candidate.trim().length > 0
+    ? candidate
+    : undefined;
+}
+
+function normalizeToolInput(input: unknown): Record<string, unknown> {
+  return isRecord(input) ? input : {};
+}
+
+function unwrapToolResultPayload(part: Record<string, unknown>): unknown {
+  if (part.result !== undefined) {
+    return part.result;
+  }
+
+  const output = part.output;
+  if (
+    isRecord(output) &&
+    typeof output.type === "string" &&
+    Object.hasOwn(output, "value")
+  ) {
+    return output.value;
+  }
+
+  return output;
+}
+
+function readServerIdFromToolOutput(value: unknown): string | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+
+  if (typeof value._serverId === "string") {
+    return value._serverId;
+  }
+
+  if (isRecord(value._meta) && typeof value._meta._serverId === "string") {
+    return value._meta._serverId;
+  }
+
+  return undefined;
+}
+
+function extractHtmlFromResourceContent(content: unknown): string {
+  if (!isRecord(content)) {
+    return "";
+  }
+
+  if (typeof content.text === "string") {
+    return content.text;
+  }
+
+  if (typeof content.blob === "string") {
+    return Buffer.from(content.blob, "base64").toString("utf-8");
+  }
+
+  return "";
+}
+
+function normalizeWidgetCsp(value: unknown): Record<string, unknown> | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const normalized: Record<string, unknown> = {};
+  const connectDomains = Array.isArray(value.connectDomains)
+    ? value.connectDomains.filter((entry): entry is string => typeof entry === "string")
+    : undefined;
+  const resourceDomains = Array.isArray(value.resourceDomains)
+    ? value.resourceDomains.filter((entry): entry is string => typeof entry === "string")
+    : undefined;
+  const frameDomains = Array.isArray(value.frameDomains)
+    ? value.frameDomains.filter((entry): entry is string => typeof entry === "string")
+    : undefined;
+  const baseUriDomains = Array.isArray(value.baseUriDomains)
+    ? value.baseUriDomains.filter((entry): entry is string => typeof entry === "string")
+    : undefined;
+
+  if (connectDomains && connectDomains.length > 0) {
+    normalized.connectDomains = connectDomains;
+  }
+  if (resourceDomains && resourceDomains.length > 0) {
+    normalized.resourceDomains = resourceDomains;
+  }
+  if (frameDomains && frameDomains.length > 0) {
+    normalized.frameDomains = frameDomains;
+  }
+  if (baseUriDomains && baseUriDomains.length > 0) {
+    normalized.baseUriDomains = baseUriDomains;
+  }
+
+  return Object.keys(normalized).length > 0 ? normalized : null;
+}
+
+function normalizeWidgetPermissions(
+  value: unknown,
+): Record<string, unknown> | null {
+  return isRecord(value) ? value : null;
+}
+
+function collectToolSnapshotSources(messages: ModelMessage[]): ToolSnapshotSource[] {
+  const toolInputsByCallId = new Map<
+    string,
+    { toolName: string; toolInput: Record<string, unknown> }
+  >();
+
+  for (const message of messages) {
+    if (message?.role !== "assistant") {
+      continue;
+    }
+
+    const content = Array.isArray((message as any).content)
+      ? ((message as any).content as unknown[])
+      : [];
+    for (const part of content) {
+      if (!isRecord(part) || part.type !== "tool-call") {
+        continue;
+      }
+      const toolCallId = readRecordString(part, "toolCallId");
+      const toolName =
+        readRecordString(part, "toolName") ?? readRecordString(part, "name");
+      if (!toolCallId || !toolName) {
+        continue;
+      }
+      toolInputsByCallId.set(toolCallId, {
+        toolName,
+        toolInput: normalizeToolInput(
+          part.input ?? part.parameters ?? part.args ?? {},
+        ),
+      });
+    }
+
+    const toolCalls = Array.isArray((message as any).toolCalls)
+      ? ((message as any).toolCalls as unknown[])
+      : [];
+    for (const call of toolCalls) {
+      if (!isRecord(call)) {
+        continue;
+      }
+      const toolCallId =
+        readRecordString(call, "toolCallId") ?? readRecordString(call, "id");
+      const toolName =
+        readRecordString(call, "toolName") ?? readRecordString(call, "name");
+      if (!toolCallId || !toolName) {
+        continue;
+      }
+      toolInputsByCallId.set(toolCallId, {
+        toolName,
+        toolInput: normalizeToolInput(
+          call.args ?? call.input ?? call.parameters ?? {},
+        ),
+      });
+    }
+  }
+
+  const sources: ToolSnapshotSource[] = [];
+  const seenToolCallIds = new Set<string>();
+
+  for (const message of messages) {
+    if (message?.role !== "tool") {
+      continue;
+    }
+    const content = Array.isArray((message as any).content)
+      ? ((message as any).content as unknown[])
+      : [];
+    for (const part of content) {
+      if (!isRecord(part) || part.type !== "tool-result") {
+        continue;
+      }
+
+      const toolCallId = readRecordString(part, "toolCallId");
+      if (!toolCallId || seenToolCallIds.has(toolCallId)) {
+        continue;
+      }
+
+      const toolOutput = unwrapToolResultPayload(part);
+      const serverId =
+        readRecordString(part, "serverId") ?? readServerIdFromToolOutput(toolOutput);
+      const sourceFromCall = toolInputsByCallId.get(toolCallId);
+      const toolName =
+        readRecordString(part, "toolName") ??
+        readRecordString(part, "name") ??
+        sourceFromCall?.toolName;
+
+      if (!serverId || !toolName) {
+        continue;
+      }
+
+      seenToolCallIds.add(toolCallId);
+      sources.push({
+        toolCallId,
+        toolName,
+        toolInput: sourceFromCall?.toolInput ?? {},
+        toolOutput,
+        serverId,
+      });
+    }
+  }
+
+  return sources;
+}
+
+async function uploadEvalWidgetHtmlBlob(
+  convexClient: ConvexHttpClient,
+  html: string,
+): Promise<string | undefined> {
+  const uploadUrl = await convexClient.mutation(
+    "chatSessions:generateSnapshotUploadUrl" as any,
+    {},
+  );
+
+  if (typeof uploadUrl !== "string" || uploadUrl.length === 0) {
+    return undefined;
+  }
+
+  const response = await fetch(uploadUrl, {
+    method: "POST",
+    body: new Blob([html], { type: "text/html" }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to upload widget HTML (${response.status})`);
+  }
+
+  const body = (await response.json().catch(() => null)) as
+    | { storageId?: string }
+    | null;
+  return typeof body?.storageId === "string" ? body.storageId : undefined;
+}
+
+async function captureEvalTraceWidgetSnapshots(params: {
+  messages: ModelMessage[];
+  mcpClientManager: MCPClientManager;
+  convexClient: ConvexHttpClient;
+}): Promise<EvalTraceWidgetSnapshot[] | undefined> {
+  const sources = collectToolSnapshotSources(params.messages);
+  if (sources.length === 0) {
+    return undefined;
+  }
+
+  const snapshots = await Promise.all(
+    sources.map(async (source) => {
+      try {
+        const toolMetadata =
+          params.mcpClientManager.getAllToolsMetadata(source.serverId)?.[
+            source.toolName
+          ];
+        if (!isRecord(toolMetadata) || !isMcpAppTool(toolMetadata)) {
+          return null;
+        }
+
+        const resourceUri = getToolUiResourceUri({
+          _meta: toolMetadata,
+        });
+        if (!resourceUri) {
+          return null;
+        }
+
+        const snapshot: EvalTraceWidgetSnapshot = {
+          toolCallId: source.toolCallId,
+          toolName: source.toolName,
+          protocol: "mcp-apps",
+          serverId: source.serverId,
+          resourceUri,
+          toolMetadata,
+          widgetCsp: null,
+          widgetPermissions: null,
+          widgetPermissive: true,
+          prefersBorder: true,
+        };
+
+        try {
+          const resourceResult = await params.mcpClientManager.readResource(
+            source.serverId,
+            { uri: resourceUri },
+          );
+          const contents = Array.isArray((resourceResult as any)?.contents)
+            ? ((resourceResult as any).contents as unknown[])
+            : [];
+          const content = contents[0];
+          if (!isRecord(content)) {
+            return snapshot;
+          }
+
+          const uiMeta =
+            isRecord(content._meta) && isRecord(content._meta.ui)
+              ? (content._meta.ui as Record<string, unknown>)
+              : undefined;
+          snapshot.widgetCsp = normalizeWidgetCsp(uiMeta?.csp);
+          snapshot.widgetPermissions = normalizeWidgetPermissions(
+            uiMeta?.permissions,
+          );
+          snapshot.prefersBorder =
+            typeof uiMeta?.prefersBorder === "boolean"
+              ? uiMeta.prefersBorder
+              : true;
+
+          const html = extractHtmlFromResourceContent(content);
+          if (!html) {
+            return snapshot;
+          }
+
+          const widgetHtml = injectOpenAICompat(html, {
+            toolId: source.toolCallId,
+            toolName: source.toolName,
+            toolInput: source.toolInput,
+            toolOutput: source.toolOutput,
+          });
+          const widgetHtmlBlobId = await uploadEvalWidgetHtmlBlob(
+            params.convexClient,
+            widgetHtml,
+          );
+          if (widgetHtmlBlobId) {
+            snapshot.widgetHtmlBlobId = widgetHtmlBlobId;
+          }
+        } catch (error) {
+          logger.warn("[evals] Failed to capture MCP App widget snapshot", {
+            toolCallId: source.toolCallId,
+            toolName: source.toolName,
+            serverId: source.serverId,
+            resourceUri,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+
+        return snapshot;
+      } catch (error) {
+        // Snapshot capture must stay best-effort: throwing here would fail the
+        // entire iteration finalization. Surface the error and skip.
+        logger.warn("[evals] Skipped widget snapshot due to unexpected error", {
+          toolCallId: source.toolCallId,
+          toolName: source.toolName,
+          serverId: source.serverId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        return null;
+      }
+    }),
+  );
+
+  const filtered = snapshots.filter(
+    (snapshot): snapshot is EvalTraceWidgetSnapshot => snapshot !== null,
+  );
+  return filtered.length > 0 ? filtered : undefined;
+}
+
+function resolveConfiguredServerIds(args: {
+  environment: RunEvalSuiteOptions["config"]["environment"] | undefined;
+  mcpClientManager: MCPClientManager;
+}): string[] {
+  const configuredServerRefs = args.environment?.servers ?? [];
+  if (configuredServerRefs.length === 0) {
+    return [];
+  }
+
+  const availableServerIds = args.mcpClientManager.listServers();
+  if (availableServerIds.length === 0) {
+    return configuredServerRefs;
+  }
+
+  const availableServerIdsSet = new Set(availableServerIds);
+  const availableServerIdByLowercase = new Map(
+    availableServerIds.map((serverId) => [serverId.toLowerCase(), serverId]),
+  );
+  const workspaceServerIdByName = new Map<string, string>();
+  const serverNameByWorkspaceServerId = new Map<string, string>();
+
+  for (const binding of args.environment?.serverBindings ?? []) {
+    if (typeof binding.serverName !== "string") {
+      continue;
+    }
+    const serverName = binding.serverName.trim();
+    const workspaceServerId =
+      typeof binding.workspaceServerId === "string"
+        ? binding.workspaceServerId.trim()
+        : "";
+    if (!serverName || !workspaceServerId) {
+      continue;
+    }
+    workspaceServerIdByName.set(serverName.toLowerCase(), workspaceServerId);
+    serverNameByWorkspaceServerId.set(workspaceServerId.toLowerCase(), serverName);
+  }
+
+  const resolvedServerIds: string[] = [];
+  const seen = new Set<string>();
+
+  for (const serverRef of configuredServerRefs) {
+    if (typeof serverRef !== "string") {
+      continue;
+    }
+    const trimmedServerRef = serverRef.trim();
+    if (!trimmedServerRef) {
+      continue;
+    }
+
+    const normalizedServerId =
+      availableServerIdsSet.has(trimmedServerRef)
+        ? trimmedServerRef
+        : availableServerIdByLowercase.get(trimmedServerRef.toLowerCase()) ??
+          (() => {
+            const workspaceServerId = workspaceServerIdByName.get(
+              trimmedServerRef.toLowerCase(),
+            );
+            if (workspaceServerId) {
+              return (
+                (availableServerIdsSet.has(workspaceServerId)
+                  ? workspaceServerId
+                  : undefined) ??
+                availableServerIdByLowercase.get(workspaceServerId.toLowerCase())
+              );
+            }
+
+            const serverName = serverNameByWorkspaceServerId.get(
+              trimmedServerRef.toLowerCase(),
+            );
+            if (serverName) {
+              return (
+                (availableServerIdsSet.has(serverName) ? serverName : undefined) ??
+                availableServerIdByLowercase.get(serverName.toLowerCase())
+              );
+            }
+
+            return undefined;
+          })() ??
+          trimmedServerRef;
+
+    if (seen.has(normalizedServerId)) {
+      continue;
+    }
+    seen.add(normalizedServerId);
+    resolvedServerIds.push(normalizedServerId);
+  }
+
+  return resolvedServerIds;
+}
 
 type ResolvedEvalTestCase = {
   promptTurns: PromptTurn[];
@@ -303,6 +768,59 @@ function toStreamToolCalls(toolCalls: ToolCall[]): EvalStreamToolCall[] {
   }));
 }
 
+/**
+ * Parse the backend's UI Message Stream (SSE format produced by
+ * `toUIMessageStreamResponse()` in AI SDK v6) into chunk objects.
+ *
+ * Wire format: `data: <JSON>\n\n` per event, terminated by `data: [DONE]\n\n`.
+ */
+async function* parseBackendUIMessageSSE(
+  body: ReadableStream<Uint8Array>,
+): AsyncGenerator<{ type: string; [key: string]: unknown }> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      let boundary: number;
+      while ((boundary = buffer.indexOf("\n\n")) !== -1) {
+        const event = buffer.slice(0, boundary);
+        buffer = buffer.slice(boundary + 2);
+        for (const line of event.split("\n")) {
+          if (!line.startsWith("data: ")) continue;
+          const data = line.slice(6);
+          if (data === "[DONE]") return;
+          try {
+            yield JSON.parse(data);
+          } catch {
+            /* ignore malformed JSON */
+          }
+        }
+      }
+    }
+    // Flush remaining buffer
+    if (buffer.trim()) {
+      for (const line of buffer.split("\n")) {
+        if (!line.startsWith("data: ")) continue;
+        const data = line.slice(6);
+        if (data === "[DONE]") return;
+        try {
+          yield JSON.parse(data);
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
 function buildTraceSnapshotEvent(params: {
   turnIndex: number;
   stepIndex?: number;
@@ -390,6 +908,7 @@ async function finishIterationDirectly(
     messages: ModelMessage[];
     spans?: EvalTraceSpan[];
     prompts?: PromptTraceSummary[];
+    widgetSnapshots?: EvalTraceWidgetSnapshot[];
     status?: "completed" | "failed" | "cancelled";
     startedAt?: number;
     error?: string;
@@ -435,6 +954,13 @@ async function finishIterationDirectly(
       ...(params.prompts?.length
         ? { prompts: sanitizeForConvexTransport(params.prompts) }
         : {}),
+      ...(params.widgetSnapshots?.length
+        ? {
+            widgetSnapshots: sanitizeForConvexTransport(
+              params.widgetSnapshots,
+            ),
+          }
+        : {}),
       error: params.error,
       errorDetails: params.errorDetails,
       resultSource: params.resultSource,
@@ -463,6 +989,7 @@ type RunIterationBaseParams = {
   test: EvalTestCase;
   runIndex: number;
   tools: ToolSet;
+  mcpClientManager: MCPClientManager;
   recorder: SuiteRunRecorder | null;
   testCaseId?: string;
   suiteId?: string;
@@ -480,6 +1007,7 @@ type RunIterationAiSdkParams = RunIterationBaseParams & {
 type RunIterationBackendParams = RunIterationBaseParams & {
   convexHttpUrl: string;
   convexAuthToken: string;
+  modelId: string;
 };
 
 const buildModelDefinition = (test: EvalTestCase): ModelDefinition => {
@@ -496,6 +1024,7 @@ const runIterationWithAiSdk = async ({
   test,
   runIndex,
   tools,
+  mcpClientManager,
   recorder,
   testCaseId,
   suiteId,
@@ -797,6 +1326,11 @@ const runIterationWithAiSdk = async ({
       outputTokens: accumulatedUsage.outputTokens,
       totalTokens: accumulatedUsage.totalTokens,
     };
+    const widgetSnapshots = await captureEvalTraceWidgetSnapshots({
+      messages: conversationMessages,
+      mcpClientManager,
+      convexClient,
+    });
 
     const finishParams = {
       iterationId,
@@ -806,6 +1340,7 @@ const runIterationWithAiSdk = async ({
       messages: conversationMessages,
       ...(recordedSpans.length ? { spans: recordedSpans } : {}),
       ...(promptTraceSummaries.length ? { prompts: promptTraceSummaries } : {}),
+      ...(widgetSnapshots?.length ? { widgetSnapshots } : {}),
       status: "completed" as const,
       startedAt: runStartedAt,
       resultSource: "reported" as const,
@@ -886,6 +1421,11 @@ const runIterationWithAiSdk = async ({
       test.isNegativeTest,
     );
     const promptTraceSummaries = buildPromptTraceSummaries(evaluation);
+    const widgetSnapshots = await captureEvalTraceWidgetSnapshots({
+      messages: failMessages,
+      mcpClientManager,
+      convexClient,
+    });
 
     const failParams = {
       iterationId,
@@ -899,6 +1439,7 @@ const runIterationWithAiSdk = async ({
       messages: failMessages,
       ...(recordedSpans.length ? { spans: recordedSpans } : {}),
       ...(promptTraceSummaries.length ? { prompts: promptTraceSummaries } : {}),
+      ...(widgetSnapshots?.length ? { widgetSnapshots } : {}),
       status: "failed" as const,
       startedAt: runStartedAt,
       error: errorMessage,
@@ -926,10 +1467,12 @@ const runIterationViaBackend = async ({
   test,
   runIndex,
   tools,
+  mcpClientManager,
   recorder,
   testCaseId,
   convexHttpUrl,
   convexAuthToken,
+  modelId,
   convexClient,
   runId,
   abortSignal,
@@ -1099,7 +1642,7 @@ const runIterationViaBackend = async ({
           body: JSON.stringify({
             mode: "step",
             messages: JSON.stringify(messageHistory),
-            model: String(test.model),
+            model: modelId,
             ...(systemPrompt ? { systemPrompt } : {}),
             ...(temperature == null ? {} : { temperature }),
             ...(toolChoice ? { toolChoice } : {}),
@@ -1149,7 +1692,7 @@ const runIterationViaBackend = async ({
             llmStartAbs,
             failAbs,
             {
-              modelId: test.model,
+              modelId,
             },
           );
           break;
@@ -1254,7 +1797,7 @@ const runIterationViaBackend = async ({
                 pushAggregateSpan: newToolMessages.length === 0,
               },
               {
-                modelId: test.model,
+                modelId,
                 inputTokens: json.usage?.promptTokens,
                 outputTokens: json.usage?.completionTokens,
                 totalTokens: json.usage?.totalTokens,
@@ -1282,7 +1825,7 @@ const runIterationViaBackend = async ({
               toolsStartAbs,
               failAbs,
               {
-                modelId: test.model,
+                modelId,
                 inputTokens: json.usage?.promptTokens,
                 outputTokens: json.usage?.completionTokens,
                 totalTokens: json.usage?.totalTokens,
@@ -1313,7 +1856,7 @@ const runIterationViaBackend = async ({
             { startAbs: llmStartAbs, endAbs: llmEndAbs },
             undefined,
             {
-              modelId: test.model,
+              modelId,
               inputTokens: json.usage?.promptTokens,
               outputTokens: json.usage?.completionTokens,
               totalTokens: json.usage?.totalTokens,
@@ -1372,7 +1915,7 @@ const runIterationViaBackend = async ({
           llmStartAbs,
           failAbs,
           {
-            modelId: test.model,
+            modelId,
           },
         );
         break;
@@ -1410,6 +1953,11 @@ const runIterationViaBackend = async ({
     iterationError,
     failOnToolError,
   });
+  const widgetSnapshots = await captureEvalTraceWidgetSnapshots({
+    messages: messageHistory,
+    mcpClientManager,
+    convexClient,
+  });
 
   const finishParams = {
     iterationId,
@@ -1419,6 +1967,7 @@ const runIterationViaBackend = async ({
     messages: messageHistory,
     ...(capturedSpans.length ? { spans: capturedSpans } : {}),
     ...(promptTraceSummaries.length ? { prompts: promptTraceSummaries } : {}),
+    ...(widgetSnapshots?.length ? { widgetSnapshots } : {}),
     status: "completed" as const,
     startedAt: runStartedAt,
     error: iterationError,
@@ -1445,6 +1994,7 @@ const runIterationViaBackend = async ({
 const runTestCase = async (params: {
   test: EvalTestCase;
   tools: ToolSet;
+  mcpClientManager: MCPClientManager;
   recorder: SuiteRunRecorder | null;
   modelApiKeys?: Record<string, string>;
   convexHttpUrl: string;
@@ -1459,6 +2009,7 @@ const runTestCase = async (params: {
   const {
     test,
     tools,
+    mcpClientManager,
     recorder,
     modelApiKeys,
     convexHttpUrl,
@@ -1472,7 +2023,14 @@ const runTestCase = async (params: {
   } = params;
   const testCaseId = test.testCaseId || parentTestCaseId;
   const modelDefinition = buildModelDefinition(test);
-  const isJamModel = isMCPJamProvidedModel(String(modelDefinition.id));
+  const resolvedModelId = getCanonicalModelId(
+    String(modelDefinition.id),
+    modelDefinition.provider,
+  );
+  const isJamModel = isMCPJamProvidedModel(
+    resolvedModelId,
+    modelDefinition.provider,
+  );
 
   const outcomes: EvalIterationOutcome[] = [];
 
@@ -1482,11 +2040,13 @@ const runTestCase = async (params: {
         test,
         runIndex,
         tools,
+        mcpClientManager,
         recorder,
         testCaseId,
         suiteId,
         convexHttpUrl,
         convexAuthToken,
+        modelId: resolvedModelId,
         convexClient,
         modelApiKeys,
         runId,
@@ -1501,6 +2061,7 @@ const runTestCase = async (params: {
       test,
       runIndex,
       tools,
+      mcpClientManager,
       recorder,
       testCaseId,
       suiteId,
@@ -1531,7 +2092,10 @@ export const runEvalSuiteWithAiSdk = async ({
   compareRunId,
 }: RunEvalSuiteOptions): Promise<RunEvalSuiteWithAiSdkResult | undefined> => {
   const tests = config.tests ?? [];
-  const serverIds = config.environment?.servers ?? [];
+  const serverIds = resolveConfiguredServerIds({
+    environment: config.environment,
+    mcpClientManager,
+  });
 
   if (!tests.length) {
     throw new Error("No tests supplied for eval run");
@@ -1588,6 +2152,7 @@ export const runEvalSuiteWithAiSdk = async ({
       runTestCase({
         test,
         tools,
+        mcpClientManager,
         recorder,
         modelApiKeys,
         convexHttpUrl,
@@ -1743,6 +2308,7 @@ const streamIterationWithAiSdk = async ({
   test,
   runIndex,
   tools,
+  mcpClientManager,
   recorder,
   testCaseId,
   suiteId,
@@ -2123,6 +2689,11 @@ const streamIterationWithAiSdk = async ({
       outputTokens: accumulatedUsage.outputTokens,
       totalTokens: accumulatedUsage.totalTokens,
     };
+    const widgetSnapshots = await captureEvalTraceWidgetSnapshots({
+      messages: conversationMessages,
+      mcpClientManager,
+      convexClient,
+    });
 
     const finishParams = {
       iterationId,
@@ -2132,6 +2703,7 @@ const streamIterationWithAiSdk = async ({
       messages: conversationMessages,
       ...(recordedSpans.length ? { spans: recordedSpans } : {}),
       ...(promptTraceSummaries.length ? { prompts: promptTraceSummaries } : {}),
+      ...(widgetSnapshots?.length ? { widgetSnapshots } : {}),
       status: "completed" as const,
       startedAt: runStartedAt,
       resultSource: "reported" as const,
@@ -2210,6 +2782,11 @@ const streamIterationWithAiSdk = async ({
       test.isNegativeTest,
     );
     const promptTraceSummaries = buildPromptTraceSummaries(evaluation);
+    const widgetSnapshots = await captureEvalTraceWidgetSnapshots({
+      messages: failMessages,
+      mcpClientManager,
+      convexClient,
+    });
 
     emit(
       buildTraceSnapshotEvent({
@@ -2249,6 +2826,7 @@ const streamIterationWithAiSdk = async ({
       messages: failMessages,
       ...(recordedSpans.length ? { spans: recordedSpans } : {}),
       ...(promptTraceSummaries.length ? { prompts: promptTraceSummaries } : {}),
+      ...(widgetSnapshots?.length ? { widgetSnapshots } : {}),
       status: "failed" as const,
       startedAt: runStartedAt,
       error: errorMessage,
@@ -2276,10 +2854,12 @@ const streamIterationViaBackend = async ({
   test,
   runIndex,
   tools,
+  mcpClientManager,
   recorder,
   testCaseId,
   convexHttpUrl,
   convexAuthToken,
+  modelId,
   convexClient,
   runId,
   abortSignal,
@@ -2455,9 +3035,9 @@ const streamIterationViaBackend = async ({
             ...(authHeader ? { ...authHeader } : {}),
           },
           body: JSON.stringify({
-            mode: "step",
+            skipChatIngestion: true,
             messages: JSON.stringify(messageHistory),
-            model: String(test.model),
+            model: modelId,
             ...(systemPrompt ? { systemPrompt } : {}),
             ...(temperature == null ? {} : { temperature }),
             ...(toolChoice ? { toolChoice } : {}),
@@ -2506,15 +3086,8 @@ const streamIterationViaBackend = async ({
           break;
         }
 
-        const json: any = await res.json();
-        const llmEndAbs = Date.now();
-        if (!json?.ok || !Array.isArray(json.messages)) {
-          iterationError = "Invalid backend response payload";
-          iterationErrorDetails = JSON.stringify(json, null, 2);
-          logger.error(
-            "[evals] invalid backend response payload",
-            new Error("Invalid backend response payload"),
-          );
+        if (!res.body) {
+          iterationError = "No response body from backend stream";
           const failAbs = Date.now();
           pushBackendStepLlmFailureSpans(
             capturedSpans,
@@ -2524,9 +3097,104 @@ const streamIterationViaBackend = async ({
             stepStartAbs,
             llmStartAbs,
             failAbs,
-            {
-              modelId: test.model,
-            },
+            { modelId },
+          );
+          emit(
+            buildTraceSnapshotEvent({
+              turnIndex: promptIndex,
+              stepIndex,
+              snapshotKind: "failure",
+              messages: messageHistory,
+              spans: capturedSpans,
+              actualToolCalls: extractToolCallsFromConversation({
+                messages: messageHistory,
+              }),
+              usage: accumulatedUsage,
+            }),
+          );
+          emit({
+            type: "error",
+            message: iterationError,
+          });
+          break;
+        }
+
+        // Consume SSE stream from the backend (real-time text deltas)
+        let stepText = "";
+        const stepToolCalls: Array<{
+          toolCallId: string;
+          toolName: string;
+          input: unknown;
+        }> = [];
+        let stepFinishReason: string | undefined;
+        let stepUsage: {
+          inputTokens?: number;
+          outputTokens?: number;
+          totalTokens?: number;
+        } = {};
+
+        for await (const chunk of parseBackendUIMessageSSE(res.body)) {
+          switch (chunk.type) {
+            case "text-delta":
+              stepText += (chunk.delta as string) ?? "";
+              emit({
+                type: "text_delta",
+                content: (chunk.delta as string) ?? "",
+              });
+              break;
+            case "tool-input-available": {
+              const tcId =
+                (chunk.toolCallId as string) ??
+                `tc_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+              const tcName = chunk.toolName as string;
+              const tcInput = (chunk.input ?? {}) as Record<string, unknown>;
+              stepToolCalls.push({
+                toolCallId: tcId,
+                toolName: tcName,
+                input: tcInput,
+              });
+              if (tcName) {
+                emit({
+                  type: "tool_call",
+                  toolName: tcName,
+                  toolCallId: tcId,
+                  args: tcInput,
+                });
+              }
+              break;
+            }
+            case "finish": {
+              stepFinishReason = chunk.finishReason as string | undefined;
+              const metadata = chunk.messageMetadata as
+                | Record<string, number>
+                | undefined;
+              if (metadata) {
+                stepUsage = {
+                  inputTokens: metadata.inputTokens,
+                  outputTokens: metadata.outputTokens,
+                  totalTokens: metadata.totalTokens,
+                };
+              }
+              break;
+            }
+            case "error":
+              iterationError =
+                (chunk.errorText as string) ?? "Backend stream error";
+              break;
+          }
+        }
+
+        if (iterationError) {
+          const failAbs = Date.now();
+          pushBackendStepLlmFailureSpans(
+            capturedSpans,
+            runStartedAt,
+            promptIndex,
+            stepIndex,
+            stepStartAbs,
+            llmStartAbs,
+            failAbs,
+            { modelId },
           );
           emit(
             buildTraceSnapshotEvent({
@@ -2549,73 +3217,41 @@ const streamIterationViaBackend = async ({
           break;
         }
 
-        if (json.usage) {
-          accumulatedUsage.inputTokens =
-            (accumulatedUsage.inputTokens || 0) +
-            (json.usage.promptTokens || 0);
-          accumulatedUsage.outputTokens =
-            (accumulatedUsage.outputTokens || 0) +
-            (json.usage.completionTokens || 0);
-          accumulatedUsage.totalTokens =
-            (accumulatedUsage.totalTokens || 0) + (json.usage.totalTokens || 0);
-        }
+        const llmEndAbs = Date.now();
 
-        // Emit events for the assistant messages from the backend response
-        for (const msg of json.messages as any[]) {
-          if (msg?.role === "assistant") {
-            if (typeof msg.content === "string" && msg.content.length > 0) {
-              emit({ type: "text_delta", content: msg.content });
-            } else if (Array.isArray(msg.content)) {
-              for (const item of msg.content) {
-                if (
-                  item?.type === "text" &&
-                  typeof item.text === "string" &&
-                  item.text.length > 0
-                ) {
-                  emit({ type: "text_delta", content: item.text });
-                } else if (item?.type === "tool-call") {
-                  const name = item.toolName ?? item.name;
-                  const fallbackToolCallId =
-                    item.toolCallId ??
-                    `tc_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-                  if (!item.toolCallId) {
-                    item.toolCallId = fallbackToolCallId;
-                  }
-                  if (item.input == null) {
-                    item.input = item.parameters ?? item.args ?? {};
-                  }
-                  if (name) {
-                    emit({
-                      type: "tool_call",
-                      toolName: name,
-                      toolCallId: fallbackToolCallId,
-                      args: item.input,
-                    });
-                  }
-                }
-              }
-            }
-          }
-        }
+        // Update accumulated usage from stream metadata
+        accumulatedUsage.inputTokens =
+          (accumulatedUsage.inputTokens || 0) +
+          (stepUsage.inputTokens || 0);
+        accumulatedUsage.outputTokens =
+          (accumulatedUsage.outputTokens || 0) +
+          (stepUsage.outputTokens || 0);
+        accumulatedUsage.totalTokens =
+          (accumulatedUsage.totalTokens || 0) +
+          (stepUsage.totalTokens || 0);
 
-        for (const msg of json.messages as any[]) {
-          if (msg?.role === "assistant" && Array.isArray(msg.content)) {
-            for (const item of msg.content) {
-              if (item?.type === "tool-call") {
-                const name = item.toolName ?? item.name;
-                if (name) {
-                  promptToolsCalled.push({
-                    toolName: name,
-                    arguments: item.input ?? item.parameters ?? item.args ?? {},
-                  });
-                }
-                if (item.input == null) {
-                  item.input = item.parameters ?? item.args ?? {};
-                }
-              }
-            }
-          }
-          messageHistory.push(msg);
+        // Reconstruct assistant message from stream chunks
+        const assistantContent: unknown[] = [];
+        if (stepText) {
+          assistantContent.push({ type: "text", text: stepText });
+        }
+        for (const tc of stepToolCalls) {
+          assistantContent.push({
+            type: "tool-call",
+            toolCallId: tc.toolCallId,
+            toolName: tc.toolName,
+            input: tc.input ?? {},
+          });
+          promptToolsCalled.push({
+            toolName: tc.toolName,
+            arguments: (tc.input ?? {}) as Record<string, any>,
+          });
+        }
+        if (assistantContent.length > 0) {
+          messageHistory.push({
+            role: "assistant",
+            content: assistantContent,
+          } as ModelMessage);
         }
 
         if (hasUnresolvedToolCalls(messageHistory as any)) {
@@ -2706,10 +3342,10 @@ const streamIterationViaBackend = async ({
                 pushAggregateSpan: newToolMessages.length === 0,
               },
               {
-                modelId: test.model,
-                inputTokens: json.usage?.promptTokens,
-                outputTokens: json.usage?.completionTokens,
-                totalTokens: json.usage?.totalTokens,
+                modelId,
+                inputTokens: stepUsage.inputTokens,
+                outputTokens: stepUsage.outputTokens,
+                totalTokens: stepUsage.totalTokens,
                 messageStartIndex:
                   stepMessageEndIndex != null
                     ? stepMessageStartIndex
@@ -2734,10 +3370,10 @@ const streamIterationViaBackend = async ({
               toolsStartAbs,
               failAbs,
               {
-                modelId: test.model,
-                inputTokens: json.usage?.promptTokens,
-                outputTokens: json.usage?.completionTokens,
-                totalTokens: json.usage?.totalTokens,
+                modelId,
+                inputTokens: stepUsage.inputTokens,
+                outputTokens: stepUsage.outputTokens,
+                totalTokens: stepUsage.totalTokens,
                 messageStartIndex:
                   stepMessageEndIndex != null
                     ? stepMessageStartIndex
@@ -2783,10 +3419,10 @@ const streamIterationViaBackend = async ({
             { startAbs: llmStartAbs, endAbs: llmEndAbs },
             undefined,
             {
-              modelId: test.model,
-              inputTokens: json.usage?.promptTokens,
-              outputTokens: json.usage?.completionTokens,
-              totalTokens: json.usage?.totalTokens,
+              modelId,
+              inputTokens: stepUsage.inputTokens,
+              outputTokens: stepUsage.outputTokens,
+              totalTokens: stepUsage.totalTokens,
               messageStartIndex:
                 stepMessageEndIndex != null ? stepMessageStartIndex : undefined,
               messageEndIndex: stepMessageEndIndex,
@@ -2801,8 +3437,8 @@ const streamIterationViaBackend = async ({
           type: "step_finish",
           stepNumber: steps,
           usage: {
-            inputTokens: json.usage?.promptTokens ?? 0,
-            outputTokens: json.usage?.completionTokens ?? 0,
+            inputTokens: stepUsage.inputTokens ?? 0,
+            outputTokens: stepUsage.outputTokens ?? 0,
           },
         });
         emit(
@@ -2819,8 +3455,7 @@ const streamIterationViaBackend = async ({
           }),
         );
 
-        const finishReason: string | undefined = json.finishReason;
-        if (finishReason && finishReason !== "tool-calls") {
+        if (stepFinishReason && stepFinishReason !== "tool-calls") {
           break;
         }
       } catch (error) {
@@ -2866,7 +3501,7 @@ const streamIterationViaBackend = async ({
           llmStartAbs,
           failAbs,
           {
-            modelId: test.model,
+            modelId,
           },
         );
         emit(
@@ -2936,6 +3571,11 @@ const streamIterationViaBackend = async ({
     iterationError,
     failOnToolError,
   });
+  const widgetSnapshots = await captureEvalTraceWidgetSnapshots({
+    messages: messageHistory,
+    mcpClientManager,
+    convexClient,
+  });
 
   const finishParams = {
     iterationId,
@@ -2945,6 +3585,7 @@ const streamIterationViaBackend = async ({
     messages: messageHistory,
     ...(capturedSpans.length ? { spans: capturedSpans } : {}),
     ...(promptTraceSummaries.length ? { prompts: promptTraceSummaries } : {}),
+    ...(widgetSnapshots?.length ? { widgetSnapshots } : {}),
     status: "completed" as const,
     startedAt: runStartedAt,
     error: iterationError,
@@ -2971,6 +3612,7 @@ const streamIterationViaBackend = async ({
 export const streamTestCase = async (params: {
   test: EvalTestCase;
   tools: ToolSet;
+  mcpClientManager: MCPClientManager;
   recorder: SuiteRunRecorder | null;
   modelApiKeys?: Record<string, string>;
   convexHttpUrl: string;
@@ -2986,6 +3628,7 @@ export const streamTestCase = async (params: {
   const {
     test,
     tools,
+    mcpClientManager,
     recorder,
     modelApiKeys,
     convexHttpUrl,
@@ -3000,7 +3643,14 @@ export const streamTestCase = async (params: {
   } = params;
   const testCaseId = test.testCaseId || parentTestCaseId;
   const modelDefinition = buildModelDefinition(test);
-  const isJamModel = isMCPJamProvidedModel(String(modelDefinition.id));
+  const resolvedModelId = getCanonicalModelId(
+    String(modelDefinition.id),
+    modelDefinition.provider,
+  );
+  const isJamModel = isMCPJamProvidedModel(
+    resolvedModelId,
+    modelDefinition.provider,
+  );
 
   const outcomes: EvalIterationOutcome[] = [];
 
@@ -3010,11 +3660,13 @@ export const streamTestCase = async (params: {
         test,
         runIndex,
         tools,
+        mcpClientManager,
         recorder,
         testCaseId,
         suiteId,
         convexHttpUrl,
         convexAuthToken,
+        modelId: resolvedModelId,
         convexClient,
         modelApiKeys,
         runId,
@@ -3030,6 +3682,7 @@ export const streamTestCase = async (params: {
       test,
       runIndex,
       tools,
+      mcpClientManager,
       recorder,
       testCaseId,
       suiteId,

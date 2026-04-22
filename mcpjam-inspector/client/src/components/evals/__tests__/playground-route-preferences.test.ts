@@ -150,7 +150,7 @@ describe("getPlaygroundCasesRedirect", () => {
     ).toBeNull();
   });
 
-  it("opens cases when an explore suite has no suite runs yet", () => {
+  it("keeps the runs view as-is — all suite-overview views render the same dashboard", () => {
     expect(
       getPlaygroundCasesRedirect({
         ...defaultParams,
@@ -160,14 +160,10 @@ describe("getPlaygroundCasesRedirect", () => {
           view: "runs",
         },
       }),
-    ).toEqual({
-      type: "suite-overview",
-      suiteId: "suite-1",
-      view: "test-cases",
-    });
+    ).toBeNull();
   });
 
-  it("does not override the cases view once it is already selected", () => {
+  it("keeps the cases view as-is", () => {
     expect(
       getPlaygroundCasesRedirect({
         ...defaultParams,
@@ -180,7 +176,7 @@ describe("getPlaygroundCasesRedirect", () => {
     ).toBeNull();
   });
 
-  it("does not override the executions view once it is already selected", () => {
+  it("keeps the executions view as-is", () => {
     expect(
       getPlaygroundCasesRedirect({
         ...defaultParams,
@@ -191,22 +187,5 @@ describe("getPlaygroundCasesRedirect", () => {
         },
       }),
     ).toBeNull();
-  });
-
-  it("redirects the runs overview to cases in Playground", () => {
-    expect(
-      getPlaygroundCasesRedirect({
-        ...defaultParams,
-        route: {
-          type: "suite-overview",
-          suiteId: "suite-1",
-          view: "runs",
-        },
-      }),
-    ).toEqual({
-      type: "suite-overview",
-      suiteId: "suite-1",
-      view: "test-cases",
-    });
   });
 });

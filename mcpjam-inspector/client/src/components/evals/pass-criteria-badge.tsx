@@ -5,8 +5,8 @@ import {
   TooltipTrigger,
 } from "@mcpjam/design-system/tooltip";
 import { cn } from "@/lib/utils";
-import { Check, X, AlertTriangle, CheckCircle2, XCircle } from "lucide-react";
-import { EVAL_OUTCOME_STATUS_TEXT_CLASS } from "./constants";
+import { CheckCircle2, XCircle } from "lucide-react";
+import { suitePassCriteriaCompactBadgeClassNames } from "./iteration-result-presentation";
 import { EvalSuiteRun } from "./types";
 
 interface PassCriteriaBadgeProps {
@@ -40,65 +40,41 @@ export function PassCriteriaBadge({
   }
 
   if (variant === "compact") {
-    const surface = passedWithFailures
-      ? "border-amber-200/90 bg-amber-500/[0.07] text-amber-950 hover:bg-amber-500/[0.11] dark:border-amber-500/22 dark:bg-amber-400/[0.06] dark:text-amber-50 dark:hover:bg-amber-400/[0.1]"
+    const outcome = passedWithFailures
+      ? "passed_with_failures"
       : passed
-        ? cn(
-            "border-green-500/25 bg-green-500/[0.07] hover:bg-green-500/[0.11] dark:border-green-400/25 dark:bg-green-400/[0.08] dark:hover:bg-green-400/[0.12]",
-            EVAL_OUTCOME_STATUS_TEXT_CLASS.passed,
-          )
-        : cn(
-            "border-red-500/25 bg-red-500/[0.07] hover:bg-red-500/[0.11] dark:border-red-400/25 dark:bg-red-400/[0.08] dark:hover:bg-red-400/[0.12]",
-            EVAL_OUTCOME_STATUS_TEXT_CLASS.failed,
-          );
+        ? "passed"
+        : "failed";
+    const badgeLabel = passedWithFailures
+      ? `Passed (${failedCount} failed)`
+      : passed
+        ? "Passed"
+        : "Failed";
+    const ariaOutcome = passedWithFailures
+      ? `Passed with ${failedCount} failure${failedCount !== 1 ? "s" : ""}`
+      : passed
+        ? "Suite passed"
+        : "Suite failed";
 
     return (
       <Tooltip>
         <TooltipTrigger asChild>
-          <button
-            type="button"
+          <span
+            tabIndex={0}
             className={cn(
-              "inline-flex cursor-default items-center gap-1.5 rounded-full border px-2.5 py-1",
-              "text-[11px] font-medium leading-none tracking-tight",
-              "shadow-[0_1px_2px_rgba(0,0,0,0.045)] transition-[background-color,border-color,box-shadow] duration-150 dark:shadow-none",
-              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foreground/[0.08] focus-visible:ring-offset-2 focus-visible:ring-offset-background",
-              surface,
+              suitePassCriteriaCompactBadgeClassNames(outcome),
+              "cursor-default outline-none",
+              "focus-visible:ring-2 focus-visible:ring-foreground/[0.08] focus-visible:ring-offset-2 focus-visible:ring-offset-background",
             )}
+            aria-label={`${ariaOutcome}. Required ${minimumPassRate}% ${metricLabel}, actual ${passRate.toFixed(0)}%.`}
           >
-            {passedWithFailures ? (
-              <AlertTriangle
-                className="size-3 shrink-0 opacity-[0.88]"
-                strokeWidth={1.5}
-                aria-hidden
-              />
-            ) : passed ? (
-              <Check
-                className="size-3 shrink-0 opacity-[0.88]"
-                strokeWidth={1.5}
-                aria-hidden
-              />
-            ) : (
-              <X
-                className="size-3 shrink-0 opacity-[0.88]"
-                strokeWidth={1.5}
-                aria-hidden
-              />
-            )}
-            {passedWithFailures
-              ? `Passed (${failedCount} failed)`
-              : passed
-                ? "Passed"
-                : "Failed"}
-          </button>
+            {badgeLabel}
+          </span>
         </TooltipTrigger>
         <TooltipContent className="max-w-xs">
           <div className="space-y-1 text-xs">
             <div className="font-medium text-primary-foreground">
-              {passedWithFailures
-                ? `Passed with ${failedCount} failure${failedCount !== 1 ? "s" : ""}`
-                : passed
-                  ? "Suite passed"
-                  : "Suite failed"}
+              {ariaOutcome}
             </div>
             <div className="text-primary-foreground/90">
               Required {minimumPassRate}% {metricLabel}. Actual{" "}

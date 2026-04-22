@@ -57,11 +57,19 @@ import { SdkEvalQuickstart } from "./evals/sdk-eval-quickstart";
 import { TraceViewer } from "./evals/trace-viewer";
 import { isExploreSuite } from "./evals/constants";
 import { HOSTED_MODE } from "@/lib/config";
+import { useWorkspaceServers } from "@/hooks/useViews";
+import type { EnsureServersReadyResult } from "@/hooks/use-app-state";
 interface CiEvalsTabProps {
   convexWorkspaceId: string | null;
+  ensureServersReady?: (
+    serverNames: string[],
+  ) => Promise<EnsureServersReadyResult>;
 }
 
-export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
+export function CiEvalsTab({
+  convexWorkspaceId,
+  ensureServersReady,
+}: CiEvalsTabProps) {
   const { isAuthenticated, isLoading } = useConvexAuth();
   const { user } = useAuth();
   const route = useCiEvalsRoute();
@@ -96,6 +104,11 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
     canDeleteRuns,
     availableModels,
   } = useEvalTabContext({
+    isAuthenticated,
+    workspaceId: convexWorkspaceId,
+  });
+
+  const { servers: ciWorkspaceServers = [] } = useWorkspaceServers({
     isAuthenticated,
     workspaceId: convexWorkspaceId,
   });
@@ -266,8 +279,10 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
     selectedSuiteId,
     selectedTestId,
     connectedServerNames,
+    ensureServersReady,
     latestRunBySuiteId,
     evalsNavigationContext: "ci-evals",
+    workspaceServers: ciWorkspaceServers,
   });
 
   const suiteAggregate = useMemo(() => {

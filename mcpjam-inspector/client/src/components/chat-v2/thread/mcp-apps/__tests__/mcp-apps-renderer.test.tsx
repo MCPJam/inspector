@@ -522,6 +522,37 @@ describe("MCPAppsRenderer tool input streaming", () => {
     });
   });
 
+  it("waits for the bridge transport before loading widget HTML into the sandbox", async () => {
+    let resolveConnect: (() => void) | undefined;
+    mockBridge.connect.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveConnect = resolve;
+        }),
+    );
+
+    render(
+      <MCPAppsRenderer {...baseProps} cachedWidgetHtmlUrl="blob:cached" />,
+    );
+
+    await vi.waitFor(() => {
+      expect(mockBridge.connect).toHaveBeenCalled();
+    });
+
+    expect(sandboxedIframePropsRef.current?.html).toBeNull();
+
+    await act(async () => {
+      resolveConnect?.();
+      await Promise.resolve();
+    });
+
+    await vi.waitFor(() => {
+      expect(sandboxedIframePropsRef.current?.html).toBe(
+        "<html><body>widget</body></html>",
+      );
+    });
+  });
+
   it("sends partial tool input during input-streaming", async () => {
     const partialInput = { elements: '[{"type":"rectangle"' };
     render(
