@@ -374,6 +374,8 @@ export function SetupChecklistPanel({
   onDraftChange,
   onOpenAddServer,
   onToggleServer,
+  stagedAccessInviteEmail,
+  onStagedAccessInviteEmailChange,
   onCloseMobile,
   /** When the chatbox is saved, invite by email from the Access section (invite-only draft). */
   inviteChatboxMember,
@@ -390,6 +392,8 @@ export function SetupChecklistPanel({
   ) => void;
   onOpenAddServer: () => void;
   onToggleServer: (serverId: string, checked: boolean) => void;
+  stagedAccessInviteEmail: string;
+  onStagedAccessInviteEmailChange: (email: string) => void;
   onCloseMobile?: () => void;
   inviteChatboxMember?: (email: string) => Promise<void>;
 }) {
@@ -405,7 +409,6 @@ export function SetupChecklistPanel({
   const [openMap, setOpenMap] = useState<
     Partial<Record<SetupSectionId, boolean>>
   >({});
-  const [accessInviteEmail, setAccessInviteEmail] = useState("");
   const [accessInviteBusy, setAccessInviteBusy] = useState(false);
   const didAutoExpandRef = useRef(false);
 
@@ -447,13 +450,13 @@ export function SetupChecklistPanel({
 
   const handleAccessInvite = async () => {
     if (!inviteChatboxMember) return;
-    const normalized = accessInviteEmail.trim().toLowerCase();
+    const normalized = stagedAccessInviteEmail.trim().toLowerCase();
     if (!normalized) return;
     setAccessInviteBusy(true);
     try {
       await inviteChatboxMember(normalized);
       toast.success(`Invited ${normalized}`);
-      setAccessInviteEmail("");
+      onStagedAccessInviteEmailChange("");
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : "Failed to send invite",
@@ -640,14 +643,18 @@ export function SetupChecklistPanel({
                             chatboxDraft.mode,
                             chatboxDraft.allowGuestAccess,
                           )}
-                          onValueChange={(value) =>
+                          onValueChange={(value) => {
+                            const nextSettings = settingsFromChatboxAccessPreset(
+                              value as ChatboxAccessPreset,
+                            );
                             onDraftChange((draft) => ({
                               ...draft,
-                              ...settingsFromChatboxAccessPreset(
-                                value as ChatboxAccessPreset,
-                              ),
-                            }))
-                          }
+                              ...nextSettings,
+                            }));
+                            if (nextSettings.mode !== "invited_only") {
+                              onStagedAccessInviteEmailChange("");
+                            }
+                          }}
                           className="grid gap-2"
                         >
                           <label
@@ -733,13 +740,18 @@ export function SetupChecklistPanel({
                                   type="email"
                                   autoComplete="email"
                                   placeholder="colleague@company.com"
-                                  disabled={!inviteChatboxMember}
-                                  value={accessInviteEmail}
+                                  disabled={accessInviteBusy}
+                                  value={stagedAccessInviteEmail}
                                   onChange={(event) =>
-                                    setAccessInviteEmail(event.target.value)
+                                    onStagedAccessInviteEmailChange(
+                                      event.target.value,
+                                    )
                                   }
                                   onKeyDown={(event) => {
-                                    if (event.key === "Enter") {
+                                    if (
+                                      event.key === "Enter" &&
+                                      inviteChatboxMember
+                                    ) {
                                       event.preventDefault();
                                       void handleAccessInvite();
                                     }
@@ -750,14 +762,16 @@ export function SetupChecklistPanel({
                                   className="shrink-0"
                                   disabled={
                                     !inviteChatboxMember ||
-                                    !accessInviteEmail.trim() ||
+                                    !stagedAccessInviteEmail.trim() ||
                                     accessInviteBusy
                                   }
                                   onClick={() => void handleAccessInvite()}
                                 >
                                   {accessInviteBusy &&
-                                  accessInviteEmail.trim() ? (
+                                  stagedAccessInviteEmail.trim() ? (
                                     <Loader2 className="size-4 animate-spin" />
+                                  ) : !inviteChatboxMember ? (
+                                    "Save to send"
                                   ) : (
                                     "Invite"
                                   )}
@@ -765,7 +779,8 @@ export function SetupChecklistPanel({
                               </div>
                               {!inviteChatboxMember ? (
                                 <p className="text-xs text-muted-foreground">
-                                  Save the chatbox to invite people by email.
+                                  The invite will be sent when you save this
+                                  chatbox.
                                 </p>
                               ) : null}
                             </div>

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import {
   computeSectionStatuses,
@@ -8,14 +8,25 @@ import {
 import { CHATBOX_STARTERS } from "../drafts";
 import type { RemoteServer } from "@/hooks/useWorkspaces";
 
+vi.mock("@/lib/chatbox-host-style", () => ({
+  getChatboxHostLogo: () => "/mock-host-logo.png",
+  getChatboxHostStyleShortLabel: (hostStyle: string) =>
+    hostStyle === "claude" ? "Claude" : "ChatGPT",
+}));
+
 const baseDraft = CHATBOX_STARTERS.find((s) => s.id === "blank")!.createDraft(
   "openai/gpt-5-mini",
 );
+const stagedInviteProps = {
+  stagedAccessInviteEmail: "",
+  onStagedAccessInviteEmailChange: vi.fn(),
+};
 
 describe("SetupChecklistPanel", () => {
   it("does not render the Setup header row on desktop (no onCloseMobile)", () => {
     render(
       <SetupChecklistPanel
+        {...stagedInviteProps}
         chatboxDraft={baseDraft}
         savedChatbox={null}
         workspaceServers={[]}
@@ -36,6 +47,7 @@ describe("SetupChecklistPanel", () => {
   it("shows a subdued checkmark label with Done for complete sections (not a colored pill)", () => {
     render(
       <SetupChecklistPanel
+        {...stagedInviteProps}
         chatboxDraft={baseDraft}
         savedChatbox={null}
         workspaceServers={[]}
@@ -57,6 +69,7 @@ describe("SetupChecklistPanel", () => {
   it("uses the same muted inline template for Optional, Default on, and Collapsed (no secondary badges)", () => {
     render(
       <SetupChecklistPanel
+        {...stagedInviteProps}
         chatboxDraft={{
           ...baseDraft,
           welcomeDialog: { ...baseDraft.welcomeDialog, enabled: false },
@@ -91,6 +104,7 @@ describe("SetupChecklistPanel", () => {
   it("renders mobile Done header when onCloseMobile is provided", () => {
     render(
       <SetupChecklistPanel
+        {...stagedInviteProps}
         chatboxDraft={baseDraft}
         savedChatbox={null}
         workspaceServers={[]}
@@ -110,6 +124,7 @@ describe("SetupChecklistPanel", () => {
   it("shows draft access controls inline in Access (no General access heading)", () => {
     render(
       <SetupChecklistPanel
+        {...stagedInviteProps}
         chatboxDraft={baseDraft}
         savedChatbox={null}
         workspaceServers={[]}
@@ -132,12 +147,13 @@ describe("SetupChecklistPanel", () => {
     ).toBeInTheDocument();
   });
 
-  it("shows invite-only save prompt in Access when chatbox is unsaved", () => {
+  it("stages invite-only emails in Access when the chatbox is unsaved", () => {
     const internalDraft = CHATBOX_STARTERS.find(
       (s) => s.id === "internal-qa",
     )!.createDraft("openai/gpt-5-mini");
     render(
       <SetupChecklistPanel
+        {...stagedInviteProps}
         chatboxDraft={internalDraft}
         savedChatbox={null}
         workspaceServers={[]}
@@ -151,11 +167,11 @@ describe("SetupChecklistPanel", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /Access/i }));
     expect(
-      screen.getByText(/Save the chatbox to invite people by email/i),
+      screen.getByText(/The invite will be sent when you save this chatbox/i),
     ).toBeInTheDocument();
     const emailInput = screen.getByLabelText(/email address/i);
-    expect(emailInput).toBeDisabled();
-    expect(screen.getByRole("button", { name: /^Invite$/i })).toBeDisabled();
+    expect(emailInput).toBeEnabled();
+    expect(screen.getByRole("button", { name: /Save to send/i })).toBeDisabled();
   });
 
   it("shows invite email field when inviteChatboxMember is wired (e.g. saved chatbox id)", () => {
@@ -164,6 +180,7 @@ describe("SetupChecklistPanel", () => {
     )!.createDraft("openai/gpt-5-mini");
     render(
       <SetupChecklistPanel
+        {...stagedInviteProps}
         chatboxDraft={internalDraft}
         savedChatbox={null}
         workspaceServers={[]}

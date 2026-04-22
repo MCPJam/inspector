@@ -90,8 +90,12 @@ interface ChatboxBuilderViewProps {
   chatboxId?: string | null;
   draft: ChatboxDraftConfig | null;
   initialViewMode?: "setup" | "preview" | "usage" | "insights";
+  initialFocusedSetupSection?: SetupSectionId | null;
   onBack: () => void;
-  onSavedDraft: (chatbox: ChatboxSettings) => void;
+  onSavedDraft: (
+    chatbox: ChatboxSettings,
+    options?: SavedDraftNavigationOptions,
+  ) => void;
 }
 
 /** Right (setup) rail: favor setup on desktop */
@@ -100,6 +104,12 @@ const DESKTOP_SETUP_RAIL_MIN_PERCENT = 40;
 const DESKTOP_SETUP_RAIL_MAX_PERCENT = 70;
 
 type ViewMode = "setup" | "preview" | "usage" | "insights";
+type SavedDraftViewMode = Extract<ViewMode, "setup" | "preview">;
+
+export interface SavedDraftNavigationOptions {
+  initialViewMode?: SavedDraftViewMode;
+  initialFocusedSetupSection?: SetupSectionId | null;
+}
 
 function normalizeInitialViewMode(
   mode: string | undefined,
@@ -287,6 +297,7 @@ export function ChatboxBuilderView({
   chatboxId,
   draft,
   initialViewMode,
+  initialFocusedSetupSection,
   onBack,
   onSavedDraft,
 }: ChatboxBuilderViewProps) {
@@ -341,12 +352,13 @@ export function ChatboxBuilderView({
   const [isSetupSheetOpen, setIsSetupSheetOpen] = useState(true);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>("host");
   const [focusedSetupSection, setFocusedSetupSection] =
-    useState<SetupSectionId | null>(null);
+    useState<SetupSectionId | null>(initialFocusedSetupSection ?? null);
   const [desktopSettingsPaneSize, setDesktopSettingsPaneSize] = useState(
     DESKTOP_SETUP_RAIL_DEFAULT_PERCENT,
   );
   const [isSaving, setIsSaving] = useState(false);
   const [isAddServerOpen, setIsAddServerOpen] = useState(false);
+  const [stagedAccessInviteEmail, setStagedAccessInviteEmail] = useState("");
   const [canvasViewportRefitNonce, setCanvasViewportRefitNonce] = useState(0);
   const panelGroupContainerRef = useRef<HTMLDivElement | null>(null);
   const rightPanelRef = useRef<ImperativePanelHandle | null>(null);
@@ -365,6 +377,25 @@ export function ChatboxBuilderView({
       viewMode,
     });
   }, [workspaceId, chatboxId, draftChatboxConfig, viewMode]);
+
+  useEffect(() => {
+    const nextViewMode = normalizeInitialViewMode(initialViewMode);
+    if (!nextViewMode) return;
+    setViewMode(nextViewMode);
+  }, [initialViewMode]);
+
+  useEffect(() => {
+    if (initialFocusedSetupSection === undefined) return;
+    setFocusedSetupSection(initialFocusedSetupSection ?? null);
+    if (initialFocusedSetupSection) {
+      setIsSetupSheetOpen(true);
+    }
+  }, [initialFocusedSetupSection]);
+
+  useEffect(() => {
+    if (draftChatboxConfig.mode === "invited_only") return;
+    setStagedAccessInviteEmail((current) => (current ? "" : current));
+  }, [draftChatboxConfig.mode]);
 
   const behaviorFingerprint = useMemo(
     () =>
@@ -731,97 +762,157 @@ export function ChatboxBuilderView({
     [markOAuthRequired],
   );
 
-  const saveChatbox = useCallback(async (): Promise<boolean> => {
-    const trimmedName = draftChatboxConfig.name.trim();
-    if (!trimmedName) {
-      toast.error("Chatbox name is required");
-      return false;
-    }
-    if (draftChatboxConfig.selectedServerIds.length === 0) {
-      toast.error("Select at least one HTTPS server");
-      return false;
-    }
-    if (
-      countRequiredServers(
-        draftChatboxConfig.selectedServerIds,
-        draftChatboxConfig.optionalServerIds,
-      ) < 1
-    ) {
-      toast.error("At least one server must be required (on by default)");
-      return false;
-    }
-    const selectedServers = workspaceServers.filter((server) =>
-      draftChatboxConfig.selectedServerIds.includes(server._id),
-    );
-    if (selectedServers.some((server) => isInsecureUrl(server.url))) {
-      toast.error("Only HTTPS servers can be used in chatboxes");
-      return false;
-    }
-
-    setIsSaving(true);
-    try {
-      const payload = {
-        name: trimmedName,
-        description: draftChatboxConfig.description.trim() || undefined,
-        hostStyle: draftChatboxConfig.hostStyle,
-        systemPrompt:
-          draftChatboxConfig.systemPrompt.trim() || DEFAULT_SYSTEM_PROMPT,
-        modelId: draftChatboxConfig.modelId,
-        temperature: draftChatboxConfig.temperature,
-        requireToolApproval: draftChatboxConfig.requireToolApproval,
-        serverIds: draftChatboxConfig.selectedServerIds,
-        optionalServerIds: draftChatboxConfig.optionalServerIds,
-        allowGuestAccess: draftChatboxConfig.allowGuestAccess,
-        welcomeDialog: draftChatboxConfig.welcomeDialog,
-        feedbackDialog: draftChatboxConfig.feedbackDialog,
-      };
-
-      if (!chatbox) {
-        let created = (await createChatbox({
-          workspaceId,
-          ...payload,
-        })) as ChatboxSettings;
-        if (draftChatboxConfig.mode !== "invited_only") {
-          created = (await setChatboxMode({
-            chatboxId: created.chatboxId,
-            mode: draftChatboxConfig.mode,
-          })) as ChatboxSettings;
-        }
-        toast.success("Chatbox created");
-        setViewMode("preview");
-        onSavedDraft(created);
-        return true;
+  const saveChatbox = useCallback(
+    async ({
+      targetViewMode,
+    }: {
+      targetViewMode?: SavedDraftViewMode;
+    } = {}): Promise<boolean> => {
+      const requestedViewMode =
+        targetViewMode ?? (viewMode === "preview" ? "preview" : "setup");
+      const trimmedName = draftChatboxConfig.name.trim();
+      if (!trimmedName) {
+        toast.error("Chatbox name is required");
+        return false;
+      }
+      if (draftChatboxConfig.selectedServerIds.length === 0) {
+        toast.error("Select at least one HTTPS server");
+        return false;
+      }
+      if (
+        countRequiredServers(
+          draftChatboxConfig.selectedServerIds,
+          draftChatboxConfig.optionalServerIds,
+        ) < 1
+      ) {
+        toast.error("At least one server must be required (on by default)");
+        return false;
+      }
+      const selectedServers = workspaceServers.filter((server) =>
+        draftChatboxConfig.selectedServerIds.includes(server._id),
+      );
+      if (selectedServers.some((server) => isInsecureUrl(server.url))) {
+        toast.error("Only HTTPS servers can be used in chatboxes");
+        return false;
       }
 
-      await updateChatbox({
-        chatboxId: chatbox.chatboxId,
-        ...payload,
-      });
-      toast.success("Chatbox updated");
-      return true;
-    } catch (error) {
-      toast.error(getBillingErrorMessage(error, "Failed to save chatbox"));
-      return false;
-    } finally {
-      setIsSaving(false);
-    }
-  }, [
-    createChatbox,
-    draftChatboxConfig,
-    onSavedDraft,
-    chatbox,
-    setChatboxMode,
-    updateChatbox,
-    workspaceId,
-    workspaceServers,
-  ]);
+      setIsSaving(true);
+      try {
+        const payload = {
+          name: trimmedName,
+          description: draftChatboxConfig.description.trim() || undefined,
+          hostStyle: draftChatboxConfig.hostStyle,
+          systemPrompt:
+            draftChatboxConfig.systemPrompt.trim() || DEFAULT_SYSTEM_PROMPT,
+          modelId: draftChatboxConfig.modelId,
+          temperature: draftChatboxConfig.temperature,
+          requireToolApproval: draftChatboxConfig.requireToolApproval,
+          serverIds: draftChatboxConfig.selectedServerIds,
+          optionalServerIds: draftChatboxConfig.optionalServerIds,
+          allowGuestAccess: draftChatboxConfig.allowGuestAccess,
+          welcomeDialog: draftChatboxConfig.welcomeDialog,
+          feedbackDialog: draftChatboxConfig.feedbackDialog,
+        };
+
+        if (!chatbox) {
+          let created = (await createChatbox({
+            workspaceId,
+            ...payload,
+          })) as ChatboxSettings;
+          if (draftChatboxConfig.mode !== "invited_only") {
+            created = (await setChatboxMode({
+              chatboxId: created.chatboxId,
+              mode: draftChatboxConfig.mode,
+            })) as ChatboxSettings;
+          }
+
+          const normalizedStagedInviteEmail =
+            draftChatboxConfig.mode === "invited_only"
+              ? stagedAccessInviteEmail.trim().toLowerCase()
+              : "";
+          let navigation: SavedDraftNavigationOptions = {
+            initialViewMode: requestedViewMode,
+          };
+
+          if (normalizedStagedInviteEmail) {
+            try {
+              await upsertChatboxMember({
+                chatboxId: created.chatboxId,
+                email: normalizedStagedInviteEmail,
+                sendInviteEmail: true,
+              });
+              setStagedAccessInviteEmail("");
+              if (requestedViewMode === "setup") {
+                navigation = {
+                  initialViewMode: "setup",
+                  initialFocusedSetupSection: "access",
+                };
+              }
+              toast.success("Chatbox created and invite sent");
+            } catch (error) {
+              const inviteFailureNavigation: SavedDraftNavigationOptions = {
+                initialViewMode: "setup",
+                initialFocusedSetupSection: "access",
+              };
+              toast.success("Chatbox created");
+              toast.error(
+                error instanceof Error
+                  ? error.message
+                  : "Failed to send invite",
+              );
+              setViewMode("setup");
+              setFocusedSetupSection("access");
+              setIsSetupSheetOpen(true);
+              onSavedDraft(created, inviteFailureNavigation);
+              return true;
+            }
+          } else {
+            toast.success("Chatbox created");
+          }
+
+          setViewMode(navigation.initialViewMode ?? "setup");
+          setFocusedSetupSection(navigation.initialFocusedSetupSection ?? null);
+          if (navigation.initialViewMode === "setup") {
+            setIsSetupSheetOpen(true);
+          }
+          onSavedDraft(created, navigation);
+          return true;
+        }
+
+        await updateChatbox({
+          chatboxId: chatbox.chatboxId,
+          ...payload,
+        });
+        toast.success("Chatbox updated");
+        return true;
+      } catch (error) {
+        toast.error(getBillingErrorMessage(error, "Failed to save chatbox"));
+        return false;
+      } finally {
+        setIsSaving(false);
+      }
+    },
+    [
+      createChatbox,
+      draftChatboxConfig,
+      onSavedDraft,
+      chatbox,
+      setChatboxMode,
+      stagedAccessInviteEmail,
+      updateChatbox,
+      upsertChatboxMember,
+      viewMode,
+      workspaceId,
+      workspaceServers,
+    ],
+  );
 
   const saveAndOpenPreview = useCallback(async () => {
-    const ok = await saveChatbox();
-    if (ok) {
+    const ok = await saveChatbox({ targetViewMode: "preview" });
+    if (ok && chatbox) {
       setViewMode("preview");
     }
-  }, [saveChatbox]);
+  }, [chatbox, saveChatbox]);
 
   const handleCopyLink = useCallback(async () => {
     if (!shareLink) {
@@ -972,10 +1063,12 @@ export function ChatboxBuilderView({
       setIsAddServerOpen(true);
     },
     onToggleServer: handleToggleServer,
-    inviteChatboxMember: chatboxId
+    stagedAccessInviteEmail,
+    onStagedAccessInviteEmailChange: setStagedAccessInviteEmail,
+    inviteChatboxMember: (chatbox?.chatboxId ?? chatboxId)
       ? async (email: string) => {
           await upsertChatboxMember({
-            chatboxId,
+            chatboxId: (chatbox?.chatboxId ?? chatboxId)!,
             email: email.trim().toLowerCase(),
             sendInviteEmail: true,
           });

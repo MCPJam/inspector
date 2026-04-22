@@ -19,7 +19,10 @@ import {
 } from "@/hooks/useWorkspaces";
 import { readBuilderSession, clearBuilderSession } from "@/lib/chatbox-session";
 import { ChatboxIndexPage, type ChatboxOpenOptions } from "./ChatboxIndexPage";
-import { ChatboxBuilderView } from "./ChatboxBuilderView";
+import {
+  ChatboxBuilderView,
+  type SavedDraftNavigationOptions,
+} from "./ChatboxBuilderView";
 import { ChatboxLauncher } from "./ChatboxLauncher";
 import { getDefaultHostedModelId } from "./drafts";
 import type { ChatboxDraftConfig, ChatboxStarterDefinition } from "./types";
@@ -65,6 +68,8 @@ export default function ChatboxBuilderExperience({
   const [restoredViewMode, setRestoredViewMode] = useState<
     "setup" | "preview" | "usage" | "insights" | undefined
   >();
+  const [restoredFocusedSetupSection, setRestoredFocusedSetupSection] =
+    useState<SavedDraftNavigationOptions["initialFocusedSetupSection"]>();
   const [starterLauncherOpen, setStarterLauncherOpen] = useState(false);
   const [deletingChatboxId, setDeletingChatboxId] = useState<string | null>(
     null,
@@ -94,6 +99,7 @@ export default function ChatboxBuilderExperience({
     startTransition(() => {
       setSelectedChatboxId(session.chatboxId);
       setDraft((session.draft as ChatboxDraftConfig | null) ?? null);
+      setRestoredFocusedSetupSection(undefined);
       const vm = session.viewMode;
       if (vm === "builder") {
         setRestoredViewMode("setup");
@@ -116,6 +122,7 @@ export default function ChatboxBuilderExperience({
         setSelectedChatboxId(null);
         setDraft(starter.createDraft(getDefaultHostedModelId()));
         setRestoredViewMode(undefined);
+        setRestoredFocusedSetupSection(undefined);
         setStarterLauncherOpen(false);
       });
     },
@@ -133,13 +140,19 @@ export default function ChatboxBuilderExperience({
     [applyStarterDraft],
   );
 
-  const handleSavedDraft = useCallback((chatbox: ChatboxSettings) => {
-    startTransition(() => {
-      setDraft(null);
-      setSelectedChatboxId(chatbox.chatboxId);
-      setRestoredViewMode(undefined);
-    });
-  }, []);
+  const handleSavedDraft = useCallback(
+    (chatbox: ChatboxSettings, options?: SavedDraftNavigationOptions) => {
+      startTransition(() => {
+        setDraft(null);
+        setSelectedChatboxId(chatbox.chatboxId);
+        setRestoredViewMode(options?.initialViewMode);
+        setRestoredFocusedSetupSection(
+          options?.initialFocusedSetupSection,
+        );
+      });
+    },
+    [],
+  );
 
   const handleDeleteChatbox = useCallback(
     async (chatbox: ChatboxListItem) => {
@@ -177,6 +190,7 @@ export default function ChatboxBuilderExperience({
           startTransition(() => {
             setSelectedChatboxId(newId);
             setRestoredViewMode(undefined);
+            setRestoredFocusedSetupSection(undefined);
           });
         }
       } catch (error) {
@@ -220,6 +234,7 @@ export default function ChatboxBuilderExperience({
           chatboxId={selectedChatboxId}
           draft={draft}
           initialViewMode={restoredViewMode}
+          initialFocusedSetupSection={restoredFocusedSetupSection}
           onSavedDraft={handleSavedDraft}
           onBack={() => {
             clearBuilderSession();
@@ -227,6 +242,7 @@ export default function ChatboxBuilderExperience({
               setSelectedChatboxId(null);
               setDraft(null);
               setRestoredViewMode(undefined);
+              setRestoredFocusedSetupSection(undefined);
             });
           }}
         />
@@ -238,6 +254,7 @@ export default function ChatboxBuilderExperience({
             startTransition(() => {
               setSelectedChatboxId(chatboxId);
               setRestoredViewMode(options?.initialViewMode);
+              setRestoredFocusedSetupSection(undefined);
             });
           }}
           onDuplicateChatbox={handleDuplicateChatbox}
