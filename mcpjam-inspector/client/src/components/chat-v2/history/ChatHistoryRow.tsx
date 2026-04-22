@@ -8,7 +8,11 @@ import {
   DropdownMenuTrigger,
 } from "@mcpjam/design-system/dropdown-menu";
 import { Input } from "@mcpjam/design-system/input";
-import { Avatar, AvatarFallback, AvatarImage } from "@mcpjam/design-system/avatar";
+import {
+  Avatar,
+  AvatarFallback,
+  AvatarImage,
+} from "@mcpjam/design-system/avatar";
 import {
   Tooltip,
   TooltipContent,
@@ -56,6 +60,7 @@ interface ChatHistoryRowProps {
   isActive: boolean;
   isAuthenticated: boolean;
   isStreaming: boolean;
+  sharedThreadsEnabled?: boolean;
   /** Which host aesthetic governs the active-row highlight (defaults to "claude"). */
   hostStyle?: ChatboxHostStyle;
   onSelect: (session: ChatHistorySession) => void;
@@ -90,6 +95,7 @@ export function ChatHistoryRow({
   isActive,
   isAuthenticated,
   isStreaming,
+  sharedThreadsEnabled = true,
   hostStyle = "claude",
   onSelect,
   onActionComplete,
@@ -190,6 +196,7 @@ export function ChatHistoryRow({
     if (isStreaming || isRenaming) return;
     onSelect(session);
   };
+  const canManageWorkspaceSharing = isAuthenticated && sharedThreadsEnabled;
 
   if (isRenaming) {
     const renameField = (
@@ -330,7 +337,7 @@ export function ChatHistoryRow({
                 {session.isPinned ? "Unpin" : "Pin"}
               </DropdownMenuItem>
 
-              {isAuthenticated && (
+              {canManageWorkspaceSharing && (
                 <>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem

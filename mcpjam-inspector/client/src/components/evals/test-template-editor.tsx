@@ -25,7 +25,6 @@ import { toast } from "sonner";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import {
   listEvalTools,
-  runEvalTestCase,
   streamEvalTestCase,
 } from "@/lib/apis/evals-api";
 import { Button } from "@mcpjam/design-system/button";
@@ -95,6 +94,7 @@ import type {
 import type { EvalExportDraftInput } from "@/lib/evals/eval-export";
 import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
 import { ProviderLogo } from "@/components/chat-v2/chat-input/model/provider-logo";
+import { getGuestBearerToken } from "@/lib/guest-session";
 import {
   reduceEvalStreamEvent,
   initialEvalStreamState,
@@ -133,6 +133,12 @@ interface TestTemplateEditorProps {
   openCompareFromRoute?: boolean;
   /** Deep link: exact iteration to anchor compare hydration to. */
   openCompareIterationId?: string | null;
+  /**
+   * When true, this is rendering the direct-guest eval playground flow.
+   * Guests still use the inline runner for direct server access, but the saved
+   * suite/case/iteration state lives in Convex.
+   */
+  isDirectGuest?: boolean;
 }
 
 const createEmptyPromptTurn = (index: number): PromptTurn => ({
@@ -145,7 +151,7 @@ const validateExpectedToolCalls = (
   toolCalls: Array<{
     toolName: string;
     arguments: Record<string, any>;
-  }>,
+  }>
 ): boolean => {
   for (const toolCall of toolCalls) {
     if (!toolCall.toolName || toolCall.toolName.trim() === "") {
@@ -164,7 +170,7 @@ const validateExpectedToolCalls = (
 
 /** When every step has no asserted tool calls, the case expects no tool usage (stored as isNegativeTest). */
 function deriveIsNegativeTestFromPromptTurns(
-  promptTurns: PromptTurn[],
+  promptTurns: PromptTurn[]
 ): boolean {
   return promptTurns.every((turn) => turn.expectedToolCalls.length === 0);
 }
@@ -188,20 +194,20 @@ const validatePromptTurns = (promptTurns: PromptTurn[]): boolean => {
   }
 
   const assertedTurns = promptTurns.filter(
-    (turn) => turn.expectedToolCalls.length > 0,
+    (turn) => turn.expectedToolCalls.length > 0
   );
   if (assertedTurns.length === 0) {
     return false;
   }
 
   return assertedTurns.every((turn) =>
-    validateExpectedToolCalls(turn.expectedToolCalls),
+    validateExpectedToolCalls(turn.expectedToolCalls)
   );
 };
 
 /** Short message when Run/Save are blocked by prompt or expected-tool validation. */
 export function getPromptTurnBlockReason(
-  promptTurns: PromptTurn[],
+  promptTurns: PromptTurn[]
 ): string | null {
   if (!Array.isArray(promptTurns) || promptTurns.length === 0) {
     return "Configure at least one prompt step.";
@@ -255,20 +261,17 @@ const normalizeForComparison = (value: any): any => {
   if (typeof value === "object") {
     return Object.keys(value)
       .sort()
-      .reduce(
-        (acc, key) => {
-          acc[key] = normalizeForComparison(value[key]);
-          return acc;
-        },
-        {} as Record<string, any>,
-      );
+      .reduce((acc, key) => {
+        acc[key] = normalizeForComparison(value[key]);
+        return acc;
+      }, {} as Record<string, any>);
   }
 
   return value;
 };
 
 function normalizeAdvancedConfig(
-  advancedConfig: Record<string, unknown> | undefined,
+  advancedConfig: Record<string, unknown> | undefined
 ): Record<string, unknown> | undefined {
   const stripped = stripPromptTurnsFromAdvancedConfig(advancedConfig);
   if (!stripped) {
@@ -298,7 +301,7 @@ function normalizeAdvancedConfig(
 }
 
 function readCompareRunIdFromIteration(
-  iteration: Pick<EvalIteration, "metadata"> | null | undefined,
+  iteration: Pick<EvalIteration, "metadata"> | null | undefined
 ) {
   const compareRunId = iteration?.metadata?.compareRunId;
   return typeof compareRunId === "string" && compareRunId.trim().length > 0
@@ -318,13 +321,16 @@ export function TestTemplateEditor({
   onContinueInChat,
   openCompareFromRoute = false,
   openCompareIterationId = null,
+  isDirectGuest = false,
 }: TestTemplateEditorProps) {
   const { getAccessToken } = useAuth();
   const { getToken, hasToken } = useAiProviderKeys();
+  const hostStyle = usePreferencesStore((state) => state.hostStyle);
+  const setHostStyle = usePreferencesStore((state) => state.setHostStyle);
   const [editForm, setEditForm] = useState<TestTemplate | null>(null);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [editorMode, setEditorMode] = useState<EditorMode>(
-    openCompareFromRoute ? "run" : "config",
+    openCompareFromRoute ? "run" : "config"
   );
   const [availableTools, setAvailableTools] = useState<
     Array<{
@@ -342,7 +348,7 @@ export function TestTemplateEditor({
   const [routeCompareAnchorIterationId, setRouteCompareAnchorIterationId] =
     useState<string | null>(openCompareIterationId);
   const [activeCompareRunId, setActiveCompareRunId] = useState<string | null>(
-    null,
+    null
   );
   const [runColumnTabByModel, setRunColumnTabByModel] = useState<
     Record<string, RunColumnTab>
@@ -351,7 +357,7 @@ export function TestTemplateEditor({
     string | null
   >(null);
   const [expandedPromptTurnIds, setExpandedPromptTurnIds] = useState<string[]>(
-    [],
+    []
   );
   const [isRunningCompare, setIsRunningCompare] = useState(false);
   /** Concurrent compare `handleRunCompare` calls; used only for global `isRunningCompare`. */
@@ -364,18 +370,21 @@ export function TestTemplateEditor({
   const compareRequestGenByModelRef = useRef<Record<string, number>>({});
   /** Per-model AbortControllers for cancelling superseded streaming runs. */
   const compareAbortControllersRef = useRef<Record<string, AbortController>>(
-    {},
+    {}
   );
   /** True when the user clicked Stop for the current batch (suppresses failure toasts). */
   const compareRunUserStoppedRef = useRef(false);
   const initializedSelectionCaseRef = useRef<string | null>(null);
+  const updateTestCaseMutation = useMutation(
+    "testSuites:updateTestCase" as any
+  ) as unknown as (args: {
+    testCaseId: string;
+    [key: string]: unknown;
+  }) => Promise<unknown>;
 
   const testCases = useQuery("testSuites:listTestCases" as any, {
     suiteId,
   }) as any[] | undefined;
-  const updateTestCaseMutation = useMutation(
-    "testSuites:updateTestCase" as any,
-  );
 
   const currentTestCase = useMemo(() => {
     if (!testCases) return null;
@@ -386,24 +395,24 @@ export function TestTemplateEditor({
     "testSuites:getTestIteration" as any,
     routeCompareAnchorIterationId
       ? { iterationId: routeCompareAnchorIterationId }
-      : "skip",
+      : "skip"
   ) as EvalIteration | null | undefined;
+
   const lastSavedIteration = useQuery(
     "testSuites:getTestIteration" as any,
     currentTestCase?.lastMessageRun
       ? { iterationId: currentTestCase.lastMessageRun }
-      : "skip",
+      : "skip"
   ) as EvalIteration | undefined;
+
   const recentIterations = useQuery(
     "testSuites:listTestIterations" as any,
     currentTestCase?._id
       ? ({ testCaseId: currentTestCase._id, limit: 200 } as any)
-      : "skip",
+      : "skip"
   ) as EvalIteration[] | undefined;
 
-  const suite = useQuery("testSuites:getTestSuite" as any, {
-    suiteId,
-  }) as any;
+  const suite = useQuery("testSuites:getTestSuite" as any, { suiteId }) as any;
 
   useEffect(() => {
     setEditorMode(openCompareFromRoute ? "run" : "config");
@@ -461,14 +470,17 @@ export function TestTemplateEditor({
     if (!suite) return [];
     const suiteServers = suite.environment?.servers || [];
     return suiteServers.filter(
-      (server: string) => !connectedServerNames.has(server),
+      (server: string) => !connectedServerNames.has(server)
     );
   }, [suite, connectedServerNames]);
 
   const hasConfiguredSuiteServers = Boolean(
     suite?.environment?.servers?.length,
   );
-  const canRun = hasConfiguredSuiteServers;
+  // Guests rely on the local persistent MCP manager; don't block Run on the
+  // connected-servers check — the runner surfaces a connection error if the
+  // server is genuinely missing.
+  const canRun = isDirectGuest || hasConfiguredSuiteServers;
 
   useEffect(() => {
     let cancelled = false;
@@ -527,27 +539,27 @@ export function TestTemplateEditor({
 
   const currentPromptTurns = useMemo(
     () => (currentTestCase ? resolvePromptTurns(currentTestCase) : []),
-    [currentTestCase],
+    [currentTestCase]
   );
   const currentAdvancedConfig = useMemo(
     () => normalizeAdvancedConfig(currentTestCase?.advancedConfig),
-    [currentTestCase],
+    [currentTestCase]
   );
 
   const hasUnsavedChanges = useMemo(() => {
     if (!editForm || !currentTestCase) return false;
 
     const normalizedPromptTurns = JSON.stringify(
-      normalizeForComparison(editForm.promptTurns),
+      normalizeForComparison(editForm.promptTurns)
     );
     const normalizedCurrentPromptTurns = JSON.stringify(
-      normalizeForComparison(currentPromptTurns),
+      normalizeForComparison(currentPromptTurns)
     );
     const normalizedAdvancedConfig = JSON.stringify(
-      normalizeForComparison(editForm.advancedConfig || {}),
+      normalizeForComparison(editForm.advancedConfig || {})
     );
     const normalizedCurrentAdvancedConfig = JSON.stringify(
-      normalizeForComparison(currentAdvancedConfig || {}),
+      normalizeForComparison(currentAdvancedConfig || {})
     );
 
     const normalizedScenario = (editForm.scenario ?? "").trim();
@@ -626,12 +638,12 @@ export function TestTemplateEditor({
 
   const updatePromptTurn = (
     index: number,
-    updater: (turn: PromptTurn) => PromptTurn,
+    updater: (turn: PromptTurn) => PromptTurn
   ) => {
     setEditForm((current) => {
       if (!current) return current;
       const nextTurns = current.promptTurns.map((turn, turnIndex) =>
-        turnIndex === index ? updater(turn) : turn,
+        turnIndex === index ? updater(turn) : turn
       );
       return { ...current, promptTurns: nextTurns };
     });
@@ -671,15 +683,15 @@ export function TestTemplateEditor({
 
       const removedTurnId = current.promptTurns[index]?.id;
       const nextTurns = current.promptTurns.filter(
-        (_turn, turnIndex) => turnIndex !== index,
+        (_turn, turnIndex) => turnIndex !== index
       );
       setExpandedPromptTurnIds((previous) => {
         const nextExpanded = previous.filter((id) => id !== removedTurnId);
         return nextExpanded.length > 0
           ? nextExpanded
           : nextTurns[0]
-            ? [nextTurns[0].id]
-            : [];
+          ? [nextTurns[0].id]
+          : [];
       });
 
       return {
@@ -693,13 +705,13 @@ export function TestTemplateEditor({
     setExpandedPromptTurnIds((current) =>
       current.includes(turnId)
         ? current.filter((id) => id !== turnId)
-        : [...current, turnId],
+        : [...current, turnId]
     );
   };
 
   const buildSavePayload = (form: TestTemplate) => {
     const isNegativeTest = deriveIsNegativeTestFromPromptTurns(
-      form.promptTurns,
+      form.promptTurns
     );
     const normalizedPromptTurns = isNegativeTest
       ? form.promptTurns.map((turn) => ({
@@ -748,7 +760,7 @@ export function TestTemplateEditor({
     if (!validatePromptTurns(editForm.promptTurns)) {
       toast.error(
         getPromptTurnBlockReason(editForm.promptTurns) ??
-          "Fix the test configuration before saving.",
+          "Fix the test configuration before saving."
       );
       return;
     }
@@ -766,55 +778,66 @@ export function TestTemplateEditor({
     }
   };
 
-  const persistSelectedCompareModels = async (modelValues: string[]) => {
-    if (!currentTestCase) {
-      return;
-    }
-
-    const nextModels = modelValues.map((modelValue) => {
+  const buildSelectedCompareModels = (
+    modelValues: string[],
+  ): Array<{ provider: string; model: string }> => {
+    return modelValues.map((modelValue) => {
       const { provider, model } = parseModelValue(modelValue);
       if (!provider || !model) {
         throw new Error(`Invalid model selection: ${modelValue}`);
       }
       return { provider, model };
     });
+  };
 
-    const currentModels = currentTestCase.models ?? [];
+  const persistCompareRunDraft = async (
+    savePayload: ReturnType<typeof buildSavePayload>,
+    modelValues: string[],
+  ) => {
+    if (!currentTestCase) {
+      return;
+    }
+
+    const nextModels = buildSelectedCompareModels(modelValues);
+
+    const currentModels: Array<{ provider: string; model: string }> =
+      currentTestCase.models ?? [];
     const modelsUnchanged =
       currentModels.length === nextModels.length &&
       currentModels.every(
         (model, index) =>
           model.provider === nextModels[index]?.provider &&
-          model.model === nextModels[index]?.model,
+          model.model === nextModels[index]?.model
       );
 
-    if (modelsUnchanged) {
+    if (!hasUnsavedChanges && modelsUnchanged) {
       return;
     }
 
     await updateTestCaseMutation({
       testCaseId: currentTestCase._id,
-      models: nextModels,
+      ...(hasUnsavedChanges ? savePayload : {}),
+      ...(modelsUnchanged ? {} : { models: nextModels }),
     });
   };
 
   const latestHistoricalCompareRunId = useMemo(
     () => resolveLatestCompareRunId(recentIterations ?? []),
-    [recentIterations],
+    [recentIterations]
   );
   const routeCompareAnchorModelValue = useMemo(
     () =>
       routeCompareAnchorIteration
         ? resolveIterationModelValue(
             routeCompareAnchorIteration,
-            currentTestCase,
+            currentTestCase
           )
         : null,
-    [currentTestCase, routeCompareAnchorIteration],
+    [currentTestCase, routeCompareAnchorIteration]
   );
   const routeCompareAnchorRunId = useMemo(
     () => readCompareRunIdFromIteration(routeCompareAnchorIteration),
-    [routeCompareAnchorIteration],
+    [routeCompareAnchorIteration]
   );
 
   const modelOptions = useMemo(() => {
@@ -824,19 +847,19 @@ export function TestTemplateEditor({
   const modelLabelByValue = useMemo(
     () =>
       Object.fromEntries(
-        modelOptions.map((option) => [option.value, option.label] as const),
+        modelOptions.map((option) => [option.value, option.label] as const)
       ),
-    [modelOptions],
+    [modelOptions]
   );
 
   const modelOptionByValue = useMemo(
     () =>
       Object.fromEntries(
         modelOptions.map(
-          (option) => [option.value, option] as [string, TestCaseModelOption],
-        ),
+          (option) => [option.value, option] as [string, TestCaseModelOption]
+        )
       ),
-    [modelOptions],
+    [modelOptions]
   );
 
   useEffect(() => {
@@ -869,7 +892,7 @@ export function TestTemplateEditor({
       ? [
           routeCompareAnchorModelValue,
           ...initialSelectedModels.filter(
-            (modelValue) => modelValue !== routeCompareAnchorModelValue,
+            (modelValue) => modelValue !== routeCompareAnchorModelValue
           ),
         ].slice(0, 3)
       : initialSelectedModels;
@@ -894,7 +917,7 @@ export function TestTemplateEditor({
       const next = [
         routeCompareAnchorModelValue,
         ...current.filter(
-          (modelValue) => modelValue !== routeCompareAnchorModelValue,
+          (modelValue) => modelValue !== routeCompareAnchorModelValue
         ),
       ].slice(0, 3);
 
@@ -921,7 +944,7 @@ export function TestTemplateEditor({
         testCase: currentTestCase,
         existingRecords: current,
         preferredIteration: routeCompareAnchorIteration ?? null,
-      }),
+      })
     );
   }, [
     currentTestCase,
@@ -956,7 +979,7 @@ export function TestTemplateEditor({
   useEffect(() => {
     setPersistedTestCaseModelValue(
       selectedTestCaseId,
-      selectedModelValues[0] ?? null,
+      selectedModelValues[0] ?? null
     );
   }, [selectedModelValues, selectedTestCaseId]);
 
@@ -996,16 +1019,16 @@ export function TestTemplateEditor({
     setMobileVisibleModelValue((current) =>
       current && selectedModelValues.includes(current)
         ? current
-        : (selectedModelValues[0] ?? null),
+        : selectedModelValues[0] ?? null
     );
   }, [selectedModelValues]);
 
   const addableModelOptions = useMemo(
     () =>
       modelOptions.filter(
-        (option) => !selectedModelValues.includes(option.value),
+        (option) => !selectedModelValues.includes(option.value)
       ),
-    [modelOptions, selectedModelValues],
+    [modelOptions, selectedModelValues]
   );
 
   const selectedCompareRecords = useMemo(
@@ -1022,14 +1045,14 @@ export function TestTemplateEditor({
           iteration: null,
         });
       }),
-    [compareRunRecords, modelLabelByValue, selectedModelValues],
+    [compareRunRecords, modelLabelByValue, selectedModelValues]
   );
 
   const hasRunViewContent = selectedCompareRecords.some(
     (record) =>
       record.iteration != null ||
       record.status === "running" ||
-      Boolean(record.error),
+      Boolean(record.error)
   );
 
   const openRunView = useCallback(
@@ -1038,7 +1061,7 @@ export function TestTemplateEditor({
       setMobileVisibleModelValue((current) =>
         current && selectedModelValues.includes(current)
           ? current
-          : (selectedModelValues[0] ?? null),
+          : selectedModelValues[0] ?? null
       );
       posthog.capture("compare_run_view_opened", {
         location: "test_template_editor",
@@ -1050,7 +1073,7 @@ export function TestTemplateEditor({
         models: selectedModelValues,
       });
     },
-    [currentTestCase?._id, selectedModelValues, suiteId],
+    [currentTestCase?._id, selectedModelValues, suiteId]
   );
 
   const handleAddModel = (modelValue: string) => {
@@ -1064,7 +1087,7 @@ export function TestTemplateEditor({
 
   const handleRemoveModel = (modelValue: string) => {
     setSelectedModelValues((previous) =>
-      previous.filter((value) => value !== modelValue),
+      previous.filter((value) => value !== modelValue)
     );
   };
 
@@ -1092,7 +1115,7 @@ export function TestTemplateEditor({
       }
       const next = [...previous];
       const otherIndex = next.findIndex(
-        (v, idx) => v === newValue && idx !== index,
+        (v, idx) => v === newValue && idx !== index
       );
       if (otherIndex >= 0) {
         next[otherIndex] = next[index];
@@ -1105,7 +1128,7 @@ export function TestTemplateEditor({
   const handleStopCompare = useCallback(() => {
     compareRunUserStoppedRef.current = true;
     for (const controller of Object.values(
-      compareAbortControllersRef.current,
+      compareAbortControllersRef.current
     )) {
       controller.abort();
     }
@@ -1120,7 +1143,7 @@ export function TestTemplateEditor({
     }
 
     const runModelValues = (options?.modelValues ?? selectedModelValues).filter(
-      Boolean,
+      Boolean
     );
     if (runModelValues.length === 0) {
       toast.error("Select at least one model to run.");
@@ -1130,7 +1153,7 @@ export function TestTemplateEditor({
     if (!validatePromptTurns(editForm.promptTurns)) {
       toast.error(
         getPromptTurnBlockReason(editForm.promptTurns) ??
-          "Fix the test configuration before running.",
+          "Fix the test configuration before running."
       );
       return;
     }
@@ -1142,20 +1165,20 @@ export function TestTemplateEditor({
     compareRunUserStoppedRef.current = false;
     const reusableCompareRunId =
       options?.sessionMode === "reuse"
-        ? (activeCompareRunId ?? latestHistoricalCompareRunId)
+        ? activeCompareRunId ?? latestHistoricalCompareRunId
         : null;
     const compareRunId = reusableCompareRunId ?? createCompareSessionId();
     const startsNewCompareSession = reusableCompareRunId == null;
 
     if (startsNewCompareSession) {
       try {
-        await persistSelectedCompareModels(selectedModelValues);
+        await persistCompareRunDraft(savePayload, selectedModelValues);
       } catch (error) {
-        console.error("Failed to save compare model selection:", error);
+        console.error("Failed to save test case before compare run:", error);
         toast.error(
           getBillingErrorMessage(
             error,
-            "Failed to save compare models before running",
+            "Failed to save test case before running",
           ),
         );
         return;
@@ -1179,7 +1202,7 @@ export function TestTemplateEditor({
       runModelValues.map(async (modelValue) => {
         const modelLabel = resolveModelOptionLabel(
           modelValue,
-          modelLabelByValue,
+          modelLabelByValue
         );
         const advancedConfig = mergeAdvancedConfigWithOverride({
           baseAdvancedConfig: savePayload.advancedConfig,
@@ -1187,11 +1210,13 @@ export function TestTemplateEditor({
         });
 
         const preparedRun = await prepareSingleTestCaseRun({
-          workspaceId,
+          workspaceId: isDirectGuest ? null : workspaceId,
           suite,
           testCase: currentTestCase,
           selectedModel: modelValue,
-          getAccessToken,
+          getAccessToken: isDirectGuest
+            ? getGuestBearerToken
+            : getAccessToken,
           getToken,
           hasToken,
           testCaseOverrides: {
@@ -1210,7 +1235,7 @@ export function TestTemplateEditor({
           modelLabel,
           request: preparedRun,
         };
-      }),
+      })
     );
 
     for (const [index, preparedResult] of preparedResults.entries()) {
@@ -1224,7 +1249,7 @@ export function TestTemplateEditor({
 
       console.error(
         `Failed to prepare compare run for model ${modelValue}:`,
-        preparedResult.reason,
+        preparedResult.reason
       );
       preparationFailures.push({
         modelValue,
@@ -1237,8 +1262,8 @@ export function TestTemplateEditor({
       toast.error(
         getBillingErrorMessage(
           preparationFailures[0]?.error,
-          "Failed to prepare compare run",
-        ),
+          "Failed to prepare compare run"
+        )
       );
       return;
     }
@@ -1557,7 +1582,7 @@ export function TestTemplateEditor({
       );
 
       const successfulCount = completedRecords.filter(
-        (record) => record.iteration != null,
+        (record) => record.iteration != null
       ).length;
       if (compareRunUserStoppedRef.current) {
         toast.message("Compare run stopped.");
@@ -1565,13 +1590,13 @@ export function TestTemplateEditor({
         toast.success(
           `Compare run finished across ${totalRequestedModels} model${
             totalRequestedModels === 1 ? "" : "s"
-          }.`,
+          }.`
         );
       } else if (successfulCount > 0) {
         toast.error(
           `${successfulCount}/${totalRequestedModels} model${
             totalRequestedModels === 1 ? "" : "s"
-          } completed successfully.`,
+          } completed successfully.`
         );
       } else {
         toast.error("Compare run failed for all selected models.");
@@ -1598,7 +1623,7 @@ export function TestTemplateEditor({
     } catch (error) {
       console.error("Failed to clear latest result:", error);
       toast.error(
-        getBillingErrorMessage(error, "Failed to clear latest result"),
+        getBillingErrorMessage(error, "Failed to clear latest result")
       );
     }
   };
@@ -1648,14 +1673,14 @@ export function TestTemplateEditor({
   }
 
   const connectedServerList = (suite?.environment?.servers || []).filter(
-    (name: string) => connectedServerNames.has(name),
+    (name: string) => connectedServerNames.has(name)
   );
   const runGridClassName =
     selectedCompareRecords.length <= 1
       ? "lg:grid-cols-1"
       : selectedCompareRecords.length === 2
-        ? "lg:grid-cols-2"
-        : "lg:grid-cols-3";
+      ? "lg:grid-cols-2"
+      : "lg:grid-cols-3";
   const latestAvailableIteration =
     routeCompareAnchorIteration ??
     recentIterations?.[0] ??
@@ -1675,28 +1700,28 @@ export function TestTemplateEditor({
           ariaOpen: "Open last run, failed",
         }
       : latestAvailableResult === "passed"
-        ? {
-            dotClass:
-              "size-1.5 shrink-0 rounded-full bg-emerald-500 dark:bg-emerald-400",
-            buttonTextClass: "text-emerald-700 dark:text-emerald-300",
-            ariaResults: "View results, last run passed",
-            ariaOpen: "Open last run passed",
-          }
-        : latestAvailableResult === "cancelled"
-          ? {
-              dotClass:
-                "size-1.5 shrink-0 rounded-full bg-amber-500 dark:bg-amber-400",
-              buttonTextClass: "text-amber-800 dark:text-amber-200",
-              ariaResults: "View results, last run stopped",
-              ariaOpen: "Open last run stopped",
-            }
-          : {
-              dotClass:
-                "size-1.5 shrink-0 rounded-full bg-amber-500 dark:bg-amber-400 animate-pulse motion-reduce:animate-none",
-              buttonTextClass: "text-amber-800 dark:text-amber-200",
-              ariaResults: "View results, run in progress",
-              ariaOpen: "Open last run, in progress",
-            };
+      ? {
+          dotClass:
+            "size-1.5 shrink-0 rounded-full bg-emerald-500 dark:bg-emerald-400",
+          buttonTextClass: "text-emerald-700 dark:text-emerald-300",
+          ariaResults: "View results, last run passed",
+          ariaOpen: "Open last run passed",
+        }
+      : latestAvailableResult === "cancelled"
+      ? {
+          dotClass:
+            "size-1.5 shrink-0 rounded-full bg-amber-500 dark:bg-amber-400",
+          buttonTextClass: "text-amber-800 dark:text-amber-200",
+          ariaResults: "View results, last run stopped",
+          ariaOpen: "Open last run stopped",
+        }
+      : {
+          dotClass:
+            "size-1.5 shrink-0 rounded-full bg-amber-500 dark:bg-amber-400 animate-pulse motion-reduce:animate-none",
+          buttonTextClass: "text-amber-800 dark:text-amber-200",
+          ariaResults: "View results, run in progress",
+          ariaOpen: "Open last run, in progress",
+        };
   const latestAvailableIsSaved =
     Boolean(latestAvailableIteration?._id) &&
     latestAvailableIteration?._id === currentTestCase.lastMessageRun;
@@ -1769,7 +1794,7 @@ export function TestTemplateEditor({
                       size="sm"
                       className={cn(
                         "h-8 gap-1.5 px-2 text-xs",
-                        latestRunNavCue.buttonTextClass,
+                        latestRunNavCue.buttonTextClass
                       )}
                       aria-label={latestRunNavCue.ariaResults}
                       onClick={() => openRunView("config_toggle")}
@@ -1784,7 +1809,7 @@ export function TestTemplateEditor({
                       size="sm"
                       className={cn(
                         "h-8 gap-1.5 px-2 text-xs",
-                        latestRunNavCue.buttonTextClass,
+                        latestRunNavCue.buttonTextClass
                       )}
                       aria-label={latestRunNavCue.ariaOpen}
                       onClick={() =>
@@ -1931,6 +1956,7 @@ export function TestTemplateEditor({
 
             <div>
               <div
+                data-testid="test-template-model-bar"
                 className="rounded-xl bg-[#f8f5f1] py-2.5 dark:bg-muted/10"
                 title={
                   !latestAvailableIsSaved &&
@@ -1989,7 +2015,7 @@ export function TestTemplateEditor({
                             const option = modelOptionByValue[modelValue];
                             const label = resolveModelOptionLabel(
                               modelValue,
-                              modelLabelByValue,
+                              modelLabelByValue
                             );
                             const isSingleSelection =
                               selectedModelValues.length === 1;
@@ -2043,11 +2069,11 @@ export function TestTemplateEditor({
                                           onClick={() =>
                                             isSingleSelection
                                               ? handlePrimaryModelChange(
-                                                  opt.value,
+                                                  opt.value
                                                 )
                                               : handleReplaceModelAt(
                                                   index,
-                                                  opt.value,
+                                                  opt.value
                                                 )
                                           }
                                         >
@@ -2127,7 +2153,7 @@ export function TestTemplateEditor({
                         aria-label="Use lead model only"
                         onClick={() =>
                           setSelectedModelValues((previous) =>
-                            previous.slice(0, 1),
+                            previous.slice(0, 1)
                           )
                         }
                       >
@@ -2137,6 +2163,20 @@ export function TestTemplateEditor({
                   </div>
                 </div>
               </div>
+            </div>
+
+            <div
+              data-testid="test-template-host-style-row"
+              className="flex items-center justify-start gap-2 px-1 pt-2"
+            >
+              <p className="shrink-0 text-[11px] font-medium text-muted-foreground">
+                Host style
+              </p>
+              <HostStylePillSelector
+                className="w-[164px] shrink-0"
+                value={hostStyle}
+                onValueChange={setHostStyle}
+              />
             </div>
 
             <div className="space-y-4 pt-1">
@@ -2322,7 +2362,7 @@ export function TestTemplateEditor({
                   // to content and scroll this panel instead.
                   "max-lg:auto-rows-min max-lg:overflow-y-auto",
                   "lg:auto-rows-[minmax(0,1fr)] lg:overflow-hidden",
-                  runGridClassName,
+                  runGridClassName
                 )}
               >
                 {selectedCompareRecords.map((record) => {
@@ -2335,7 +2375,7 @@ export function TestTemplateEditor({
                       key={record.modelValue}
                       className={cn(
                         showOnMobile ? "block" : "hidden",
-                        "min-h-0 min-w-0 flex flex-col lg:block",
+                        "min-h-0 min-w-0 flex flex-col lg:block"
                       )}
                     >
                       <RunColumn
@@ -2344,6 +2384,7 @@ export function TestTemplateEditor({
                         testCase={currentTestCase}
                         serverNames={connectedServerList}
                         workspaceId={workspaceId}
+                        onContinueInChat={onContinueInChat}
                         onStreamingTraceLoaded={() =>
                           clearCompareStreamingState(record.modelValue)
                         }
@@ -2397,7 +2438,6 @@ function RunColumn({
 }) {
   const themeMode = usePreferencesStore((state) => state.themeMode);
   const hostStyle = usePreferencesStore((state) => state.hostStyle);
-  const setHostStyle = usePreferencesStore((state) => state.setHostStyle);
   const { toolsMetadata, toolServerMap, connectedServerIds } =
     useEvalTraceToolContext({
       serverNames,
@@ -2424,19 +2464,18 @@ function RunColumn({
 
   const effectiveActiveTab: RunColumnTab =
     activeTab === "tools" && !showToolsTab ? "timeline" : activeTab;
-
   const traceMode =
     effectiveActiveTab === "chat"
       ? "chat"
       : effectiveActiveTab === "timeline"
-        ? "timeline"
-        : effectiveActiveTab === "raw"
-          ? "raw"
-          : "tools";
+      ? "timeline"
+      : effectiveActiveTab === "raw"
+      ? "raw"
+      : "tools";
   const streamingTraceEnvelope = useMemo(
     () =>
       mergeStreamingTrace(record.streamingTrace, record.streamingDraftMessages),
-    [record.streamingDraftMessages, record.streamingTrace],
+    [record.streamingDraftMessages, record.streamingTrace]
   );
   const {
     blob: persistedTraceBlob,
@@ -2501,6 +2540,8 @@ function RunColumn({
     toolServerMap,
     toolsMetadata,
   ]);
+  // Keep the handoff payload logic wired up while the action itself is hidden.
+  void continueInChatPayload;
   const hasStreamingTrace = streamingTraceEnvelope != null;
   const previewTrace = record.previewTrace ?? null;
   const activeLiveChatTrace: TraceEnvelope | null =
@@ -2518,7 +2559,6 @@ function RunColumn({
   const toolCount =
     record.streamingMetrics?.toolCallCount ?? record.metrics.toolCallCount;
   const isRunningRecord = record.status === "running";
-
   const toSummaryStatus = (
     r: CompareRunRecord,
   ): MultiModelCardSummary["status"] => {
@@ -2724,21 +2764,7 @@ function RunColumn({
         tabsInline
         actionsSlot={
           <>
-            {onContinueInChat ? (
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                className="h-7 shrink-0 px-2 text-[11px]"
-                onClick={() =>
-                  continueInChatPayload &&
-                  onContinueInChat(continueInChatPayload)
-                }
-                disabled={!continueInChatPayload}
-              >
-                Continue in Chat
-              </Button>
-            ) : null}
+            {/* Continue in Chat is temporarily hidden while guest playground testing is in progress. */}
             <Button
               type="button"
               size="sm"
@@ -2757,7 +2783,7 @@ function RunColumn({
                   record.status === "running" &&
                     record.iteration == null &&
                     !hasStreamingTrace &&
-                    "animate-spin",
+                    "animate-spin"
                 )}
               />
               Retry
@@ -2788,19 +2814,7 @@ function RunColumn({
                 data-host-style={hostStyle}
                 style={shellStyle}
               >
-                <div className="shrink-0 px-3 pt-3">
-                  <div className="flex items-center justify-between gap-2">
-                    <p className="shrink-0 text-[9px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
-                      Host Styles
-                    </p>
-                    <HostStylePillSelector
-                      className="w-[164px] shrink-0"
-                      value={hostStyle}
-                      onValueChange={setHostStyle}
-                    />
-                  </div>
-                </div>
-                <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden p-3 pt-2">
+                <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden p-3">
                   {renderedRunContent}
                 </div>
               </div>

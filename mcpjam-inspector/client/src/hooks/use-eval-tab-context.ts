@@ -6,10 +6,17 @@ import { useAvailableEvalModels } from "@/hooks/use-available-eval-models";
 export function useEvalTabContext({
   isAuthenticated,
   workspaceId,
+  isDirectGuest = false,
 }: {
   isAuthenticated: boolean;
   workspaceId: string | null;
+  /**
+   * Present so callers can thread guest context; not consumed here — Convex
+   * mutations enforce guest policy server-side via the foundation actor helper.
+   */
+  isDirectGuest?: boolean;
 }) {
+  void isDirectGuest;
   const appState = useSharedAppState();
   const { availableModels } = useAvailableEvalModels();
   const { members, canManageMembers } = useWorkspaceMembers({

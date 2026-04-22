@@ -17,7 +17,7 @@ function renderWithProviders(
       hostStyle={hostStyle}
     >
       {ui}
-    </PreferencesStoreProvider>,
+    </PreferencesStoreProvider>
   );
 }
 
@@ -34,6 +34,9 @@ const useQueryMock = vi.hoisted(() => vi.fn());
 const updateTestCaseMutationMock = vi.hoisted(() => vi.fn());
 const streamEvalTestCaseMock = vi.hoisted(() => vi.fn());
 const mockTraceViewer = vi.hoisted(() => vi.fn());
+const getGuestBearerTokenMock = vi.hoisted(() =>
+  vi.fn().mockResolvedValue("guest-token")
+);
 const useAuthMock = vi.hoisted(() => ({
   getAccessToken: vi.fn().mockResolvedValue("token"),
 }));
@@ -65,9 +68,13 @@ vi.mock("@/state/app-state-context", () => ({
   }),
 }));
 
-vi.mock("@/hooks/useViews", () => ({
-  useWorkspaceServers: () => workspaceServersMock,
-}));
+vi.mock("@/hooks/useViews", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/hooks/useViews")>();
+  return {
+    ...actual,
+    useWorkspaceServers: () => workspaceServersMock,
+  };
+});
 
 vi.mock("@/stores/client-config-store", () => ({
   useClientConfigStore: (selector: (state: any) => unknown) =>
@@ -133,6 +140,10 @@ vi.mock("@/lib/PosthogUtils", () => ({
   standardEventProps: () => ({}),
 }));
 
+vi.mock("@/lib/guest-session", () => ({
+  getGuestBearerToken: () => getGuestBearerTokenMock(),
+}));
+
 vi.mock("@/lib/apis/evals-api", () => ({
   listEvalTools: vi.fn().mockResolvedValue([]),
   runEvalTestCase: vi.fn(),
@@ -140,7 +151,7 @@ vi.mock("@/lib/apis/evals-api", () => ({
 }));
 
 vi.mock("convex/react", () => ({
-  useMutation: (_name: unknown) => useMutationMock(),
+  useMutation: (name: unknown) => useMutationMock(name),
   useQuery: (name: unknown, args: unknown) => useQueryMock(name, args),
   useAction: () => vi.fn(),
   useConvexAuth: () => useConvexAuthMock,
@@ -210,7 +221,7 @@ describe("TestTemplateEditor run view from route", () => {
         (_value, index) => ({
           toolName: `tool-${index + 1}`,
           arguments: { index: index + 1 },
-        }),
+        })
       ),
       tokensUsed: params.tokensUsed,
       metadata: params.compareRunId
@@ -229,7 +240,7 @@ describe("TestTemplateEditor run view from route", () => {
       .getByText(modelLabel, { selector: "div" })
       .closest(".rounded-2xl");
     expect(card).not.toBeNull();
-    return card!;
+    return card as HTMLElement;
   }
 
   function getMetricBar(card: HTMLElement, label: "Latency" | "Tokens") {
@@ -261,7 +272,13 @@ describe("TestTemplateEditor run view from route", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockTraceViewer.mockReset();
-    useMutationMock.mockReturnValue(updateTestCaseMutationMock);
+    useMutationMock.mockImplementation((name: string) => {
+      if (name === "testSuites:updateTestCase") {
+        return updateTestCaseMutationMock;
+      }
+      return vi.fn();
+    });
+    getGuestBearerTokenMock.mockResolvedValue("guest-token");
     useQueryMock.mockImplementation((name: string, args: unknown) => {
       if (name === "testSuites:listTestCases") {
         return [caseDoc];
@@ -297,7 +314,7 @@ describe("TestTemplateEditor run view from route", () => {
           type: "complete";
           iterationId: string;
           iteration: EvalIteration;
-        }) => void,
+        }) => void
       ) => {
         const iterationId = `iter-${request.provider}-${request.model}`;
         onEvent({
@@ -320,7 +337,7 @@ describe("TestTemplateEditor run view from route", () => {
             },
           },
         });
-      },
+      }
     );
   });
 
@@ -339,7 +356,7 @@ describe("TestTemplateEditor run view from route", () => {
           } as any,
         ]}
         openCompareFromRoute
-      />,
+      />
     );
 
     await waitFor(() => {
@@ -351,7 +368,7 @@ describe("TestTemplateEditor run view from route", () => {
       limit: 200,
     });
     expect(
-      screen.getByRole("button", { name: /retry all/i }),
+      screen.getByRole("button", { name: /retry all/i })
     ).toBeInTheDocument();
   });
 
@@ -408,7 +425,7 @@ describe("TestTemplateEditor run view from route", () => {
           } as any,
         ]}
         openCompareFromRoute
-      />,
+      />
     );
 
     expect(screen.getByText("Loading results...")).toBeInTheDocument();
@@ -431,12 +448,12 @@ describe("TestTemplateEditor run view from route", () => {
           ]}
           openCompareFromRoute
         />
-      </PreferencesStoreProvider>,
+      </PreferencesStoreProvider>
     );
 
     await waitFor(() => {
       expect(
-        screen.getByRole("button", { name: /retry all/i }),
+        screen.getByRole("button", { name: /retry all/i })
       ).toBeInTheDocument();
     });
   });
@@ -498,12 +515,12 @@ describe("TestTemplateEditor run view from route", () => {
         ]}
         openCompareFromRoute
         openCompareIterationId={clickedIteration._id}
-      />,
+      />
     );
 
     await waitFor(() => {
       expect(screen.getByTestId("eval-trace-surface")).toHaveTextContent(
-        clickedIteration._id,
+        clickedIteration._id
       );
     });
   });
@@ -523,7 +540,7 @@ describe("TestTemplateEditor run view from route", () => {
           } as any,
         ]}
         onExportDraft={vi.fn()}
-      />,
+      />
     );
 
     await waitFor(() => {
@@ -566,7 +583,7 @@ describe("TestTemplateEditor run view from route", () => {
             label: "Gemini 2.5 Pro",
           } as any,
         ]}
-      />,
+      />
     );
 
     await waitFor(() => {
@@ -574,11 +591,11 @@ describe("TestTemplateEditor run view from route", () => {
     });
 
     await user.click(
-      screen.getByRole("button", { name: /add model to compare/i }),
+      screen.getByRole("button", { name: /add model to compare/i })
     );
     await user.click(screen.getByText("Claude 4.5 Sonnet"));
     await user.click(
-      screen.getByRole("button", { name: /add model to compare/i }),
+      screen.getByRole("button", { name: /add model to compare/i })
     );
     await user.click(screen.getByText("Gemini 2.5 Pro"));
 
@@ -597,7 +614,7 @@ describe("TestTemplateEditor run view from route", () => {
     });
 
     const initialCompareRunIds = streamEvalTestCaseMock.mock.calls.map(
-      ([request]) => (request as { compareRunId?: string }).compareRunId,
+      ([request]) => (request as { compareRunId?: string }).compareRunId
     );
     expect(new Set(initialCompareRunIds).size).toBe(1);
     expect(initialCompareRunIds[0]).toMatch(/^cmp_/);
@@ -618,6 +635,87 @@ describe("TestTemplateEditor run view from route", () => {
     expect(retryRequest.provider).toBe("openai");
     expect(retryRequest.model).toBe("gpt-4");
     expect(updateTestCaseMutationMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("persists unsaved test case draft fields before starting a compare run", async () => {
+    const user = userEvent.setup();
+    const draftCase = {
+      ...caseDoc,
+      title: "Untitled test case",
+      query: "",
+      isNegativeTest: false,
+      promptTurns: undefined,
+      expectedToolCalls: [],
+      lastMessageRun: undefined,
+    };
+
+    useQueryMock.mockImplementation((name: string, args: unknown) => {
+      if (name === "testSuites:listTestCases") return [draftCase];
+      if (name === "testSuites:getTestSuite") {
+        return { _id: "suite-1", environment: { servers: ["srv"] } };
+      }
+      if (name === "testSuites:listTestIterations" && args !== "skip") {
+        return [];
+      }
+      return undefined;
+    });
+
+    renderWithProviders(
+      <TestTemplateEditor
+        suiteId="suite-1"
+        selectedTestCaseId="case-1"
+        connectedServerNames={new Set(["srv"])}
+        workspaceId={null}
+        availableModels={[
+          {
+            provider: "openai",
+            id: "gpt-4",
+            model: "gpt-4",
+            name: "GPT-4",
+            label: "GPT-4",
+          } as any,
+        ]}
+      />,
+    );
+
+    await user.type(
+      await screen.findByPlaceholderText("Enter the user prompt…"),
+      "Find the latest incidents",
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Untitled test case" }),
+    );
+    const titleInput = screen.getByDisplayValue("Untitled test case");
+    await user.clear(titleInput);
+    await user.type(titleInput, "Named draft case");
+    await user.keyboard("{Enter}");
+
+    await user.click(screen.getByRole("button", { name: /^run$/i }));
+
+    await waitFor(() => {
+      expect(streamEvalTestCaseMock).toHaveBeenCalledTimes(1);
+    });
+
+    expect(updateTestCaseMutationMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        testCaseId: "case-1",
+        title: "Named draft case",
+        query: "Find the latest incidents",
+        runs: 1,
+        expectedToolCalls: [],
+        isNegativeTest: true,
+        promptTurns: [
+          expect.objectContaining({
+            id: "turn-1",
+            prompt: "Find the latest incidents",
+            expectedToolCalls: [],
+          }),
+        ],
+      }),
+    );
+    expect(updateTestCaseMutationMock.mock.invocationCallOrder[0]).toBeLessThan(
+      streamEvalTestCaseMock.mock.invocationCallOrder[0],
+    );
   });
 
   it("renders an immediate chat preview instead of the generic spinner before the first stream event", async () => {
@@ -827,7 +925,48 @@ describe("TestTemplateEditor run view from route", () => {
     });
   });
 
-  it("keeps the host-style pill shared across compare columns", async () => {
+  it("renders the host-style control below models and before the scenario form", async () => {
+    renderWithProviders(
+      <TestTemplateEditor
+        suiteId="suite-1"
+        selectedTestCaseId="case-1"
+        connectedServerNames={new Set(["srv"])}
+        workspaceId={null}
+        availableModels={[
+          {
+            provider: "openai",
+            id: "gpt-4",
+            model: "gpt-4",
+            name: "GPT-4",
+            label: "GPT-4",
+          } as any,
+        ]}
+      />,
+      { hostStyle: "claude" },
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /run$/i })).toBeInTheDocument();
+    });
+
+    const modelBar = screen.getByTestId("test-template-model-bar");
+    const hostStyleRow = screen.getByTestId("test-template-host-style-row");
+    const scenarioHeading = screen.getByText("Test scenario");
+
+    expect(
+      modelBar.compareDocumentPosition(hostStyleRow) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).not.toBe(0);
+    expect(
+      hostStyleRow.compareDocumentPosition(scenarioHeading) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).not.toBe(0);
+    expect(
+      hostStyleRow.querySelector('[data-selected-host-style="claude"]'),
+    ).not.toBeNull();
+  });
+
+  it("updates the pre-run host-style control and carries it across compare columns", async () => {
     const user = userEvent.setup();
 
     streamEvalTestCaseMock.mockImplementation(
@@ -864,6 +1003,20 @@ describe("TestTemplateEditor run view from route", () => {
       expect(screen.getByRole("button", { name: /run$/i })).toBeInTheDocument();
     });
 
+    const hostStyleRow = screen.getByTestId("test-template-host-style-row");
+
+    await user.click(
+      within(hostStyleRow).getByRole("radio", {
+        name: "ChatGPT",
+      }),
+    );
+
+    await waitFor(() => {
+      expect(
+        hostStyleRow.querySelector('[data-selected-host-style="chatgpt"]'),
+      ).not.toBeNull();
+    });
+
     await user.click(
       screen.getByRole("button", { name: /add model to compare/i }),
     );
@@ -874,21 +1027,9 @@ describe("TestTemplateEditor run view from route", () => {
       expect(streamEvalTestCaseMock).toHaveBeenCalledTimes(2);
     });
 
-    expect(
-      view.container.querySelectorAll('[data-selected-host-style="claude"]'),
-    ).toHaveLength(2);
-
-    await user.click(
-      within(getCompareCard("GPT-4")).getByRole("radio", {
-        name: "ChatGPT",
-      }),
-    );
-
     await waitFor(() => {
       expect(
-        view.container.querySelectorAll(
-          '[data-selected-host-style="chatgpt"]',
-        ),
+        view.container.querySelectorAll('[data-host-style="chatgpt"]'),
       ).toHaveLength(2);
     });
   });
@@ -981,7 +1122,7 @@ describe("TestTemplateEditor run view from route", () => {
     });
   });
 
-  it("shows the host-style pill only while the chat tab is active", async () => {
+  it("removes the pre-run host-style selector and only applies the host shell on Chat", async () => {
     const user = userEvent.setup();
     const caseWithExpectedToolCalls = {
       ...caseDoc,
@@ -1021,7 +1162,7 @@ describe("TestTemplateEditor run view from route", () => {
       async () => new Promise<void>(() => {}),
     );
 
-    renderWithProviders(
+    const view = renderWithProviders(
       <TestTemplateEditor
         suiteId="suite-1"
         selectedTestCaseId="case-1"
@@ -1044,35 +1185,41 @@ describe("TestTemplateEditor run view from route", () => {
       expect(screen.getByRole("button", { name: /run$/i })).toBeInTheDocument();
     });
 
+    expect(screen.getByTestId("test-template-host-style-row")).toBeInTheDocument();
+
     await user.click(screen.getByRole("button", { name: /run$/i }));
 
     await waitFor(() => {
       expect(streamEvalTestCaseMock).toHaveBeenCalledTimes(1);
     });
 
+    expect(
+      screen.queryByTestId("test-template-host-style-row"),
+    ).not.toBeInTheDocument();
+    expect(
+      view.container.querySelector("[data-selected-host-style]"),
+    ).toBeNull();
+
     const card = getCompareCard("GPT-4");
 
-    // Default tab is Results when the case has expected tools — host-style pill is Chat-only.
-    expect(card.querySelector("[data-selected-host-style]")).toBeNull();
+    // Default tab is Results when the case has expected tools, so the chat host shell
+    // should only appear after switching back to Chat.
+    expect(card.querySelector("[data-host-style]")).toBeNull();
 
     await user.click(within(card).getByRole("button", { name: /^Chat$/i }));
-    expect(card.querySelector('[data-selected-host-style="claude"]')).not.toBe(
-      null,
-    );
+    expect(card.querySelector('[data-host-style="claude"]')).not.toBeNull();
 
     await user.click(within(card).getByRole("button", { name: /^Trace$/i }));
-    expect(card.querySelector("[data-selected-host-style]")).toBeNull();
+    expect(card.querySelector("[data-host-style]")).toBeNull();
 
     await user.click(within(card).getByRole("button", { name: /^Chat$/i }));
-    expect(card.querySelector('[data-selected-host-style="claude"]')).not.toBe(
-      null,
-    );
+    expect(card.querySelector('[data-host-style="claude"]')).not.toBeNull();
 
     await user.click(within(card).getByRole("button", { name: /^Raw$/i }));
-    expect(card.querySelector("[data-selected-host-style]")).toBeNull();
+    expect(card.querySelector("[data-host-style]")).toBeNull();
 
     await user.click(within(card).getByRole("button", { name: /^Results$/i }));
-    expect(card.querySelector("[data-selected-host-style]")).toBeNull();
+    expect(card.querySelector("[data-host-style]")).toBeNull();
   });
 
   it("renders running spinners in the eval compare metric bars", async () => {
@@ -1090,7 +1237,7 @@ describe("TestTemplateEditor run view from route", () => {
           type: "complete";
           iterationId: string;
           iteration: EvalIteration;
-        }) => void,
+        }) => void
       ) => {
         const complete = (params: {
           id: string;
@@ -1138,7 +1285,7 @@ describe("TestTemplateEditor run view from route", () => {
           tokensUsed: 333,
           toolCallCount: 3,
         });
-      },
+      }
     );
 
     renderWithProviders(
@@ -1170,7 +1317,7 @@ describe("TestTemplateEditor run view from route", () => {
             label: "Gemini 2.5 Pro",
           } as any,
         ]}
-      />,
+      />
     );
 
     await waitFor(() => {
@@ -1178,11 +1325,11 @@ describe("TestTemplateEditor run view from route", () => {
     });
 
     await user.click(
-      screen.getByRole("button", { name: /add model to compare/i }),
+      screen.getByRole("button", { name: /add model to compare/i })
     );
     await user.click(screen.getByText("Claude 4.5 Sonnet"));
     await user.click(
-      screen.getByRole("button", { name: /add model to compare/i }),
+      screen.getByRole("button", { name: /add model to compare/i })
     );
     await user.click(screen.getByText("Gemini 2.5 Pro"));
 
@@ -1219,7 +1366,7 @@ describe("TestTemplateEditor run view from route", () => {
           type: "complete";
           iterationId: string;
           iteration: EvalIteration;
-        }) => void,
+        }) => void
       ) => {
         const complete = (params: {
           id: string;
@@ -1267,7 +1414,7 @@ describe("TestTemplateEditor run view from route", () => {
           tokensUsed: 333,
           toolCallCount: 3,
         });
-      },
+      }
     );
 
     renderWithProviders(
@@ -1299,7 +1446,7 @@ describe("TestTemplateEditor run view from route", () => {
             label: "Gemini 2.5 Pro",
           } as any,
         ]}
-      />,
+      />
     );
 
     await waitFor(() => {
@@ -1307,11 +1454,11 @@ describe("TestTemplateEditor run view from route", () => {
     });
 
     await user.click(
-      screen.getByRole("button", { name: /add model to compare/i }),
+      screen.getByRole("button", { name: /add model to compare/i })
     );
     await user.click(screen.getByText("Claude 4.5 Sonnet"));
     await user.click(
-      screen.getByRole("button", { name: /add model to compare/i }),
+      screen.getByRole("button", { name: /add model to compare/i })
     );
     await user.click(screen.getByText("Gemini 2.5 Pro"));
 
@@ -1330,7 +1477,7 @@ describe("TestTemplateEditor run view from route", () => {
     await waitFor(() => {
       expect(getMetricRunningSpinnerCount(compareCard)).toBe(0);
       expect(
-        within(compareCard).queryByLabelText("Running"),
+        within(compareCard).queryByLabelText("Running")
       ).not.toBeInTheDocument();
       expect(within(compareCard).getByLabelText("Passed")).toBeInTheDocument();
     });
@@ -1351,7 +1498,7 @@ describe("TestTemplateEditor run view from route", () => {
           type: "complete";
           iterationId: string;
           iteration: EvalIteration;
-        }) => void,
+        }) => void
       ) => {
         const complete = (params: {
           id: string;
@@ -1399,7 +1546,7 @@ describe("TestTemplateEditor run view from route", () => {
           tokensUsed: 333,
           toolCallCount: 3,
         });
-      },
+      }
     );
 
     renderWithProviders(
@@ -1431,7 +1578,7 @@ describe("TestTemplateEditor run view from route", () => {
             label: "Gemini 2.5 Pro",
           } as any,
         ]}
-      />,
+      />
     );
 
     await waitFor(() => {
@@ -1439,11 +1586,11 @@ describe("TestTemplateEditor run view from route", () => {
     });
 
     await user.click(
-      screen.getByRole("button", { name: /add model to compare/i }),
+      screen.getByRole("button", { name: /add model to compare/i })
     );
     await user.click(screen.getByText("Claude 4.5 Sonnet"));
     await user.click(
-      screen.getByRole("button", { name: /add model to compare/i }),
+      screen.getByRole("button", { name: /add model to compare/i })
     );
     await user.click(screen.getByText("Gemini 2.5 Pro"));
 
@@ -1487,7 +1634,7 @@ describe("TestTemplateEditor run view from route", () => {
           type: "complete";
           iterationId: string;
           iteration: EvalIteration;
-        }) => void,
+        }) => void
       ) => {
         const complete = (params: {
           id: string;
@@ -1537,7 +1684,7 @@ describe("TestTemplateEditor run view from route", () => {
           toolCallCount: 1,
           result: "failed",
         });
-      },
+      }
     );
 
     renderWithProviders(
@@ -1569,7 +1716,7 @@ describe("TestTemplateEditor run view from route", () => {
             label: "Gemini 2.5 Pro",
           } as any,
         ]}
-      />,
+      />
     );
 
     await waitFor(() => {
@@ -1577,11 +1724,11 @@ describe("TestTemplateEditor run view from route", () => {
     });
 
     await user.click(
-      screen.getByRole("button", { name: /add model to compare/i }),
+      screen.getByRole("button", { name: /add model to compare/i })
     );
     await user.click(screen.getByText("Claude 4.5 Sonnet"));
     await user.click(
-      screen.getByRole("button", { name: /add model to compare/i }),
+      screen.getByRole("button", { name: /add model to compare/i })
     );
     await user.click(screen.getByText("Gemini 2.5 Pro"));
 
@@ -1599,7 +1746,7 @@ describe("TestTemplateEditor run view from route", () => {
       expect(openAiScope.getByText("1.1s")).toHaveClass("text-emerald-700");
       expect(openAiScope.getByText("100")).toHaveClass("text-emerald-700");
       expect(openAiScope.getByText("2 tool calls")).toHaveClass(
-        "text-emerald-700",
+        "text-emerald-700"
       );
     });
 

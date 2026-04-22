@@ -39,6 +39,8 @@ vi.mock("convex/react", () => ({
   useConvex: () => ({
     query: mockConvexQuery,
   }),
+  useMutation: () => vi.fn().mockResolvedValue(undefined),
+  useAction: () => vi.fn().mockResolvedValue(undefined),
 }));
 
 // Mock useAiProviderKeys (mutable for replay-without-keys coverage)

@@ -37,6 +37,7 @@ interface ChatHistoryRailProps {
   hostStyle?: ChatboxHostStyle;
   isAuthenticated: boolean;
   isStreaming: boolean;
+  sharedThreadsEnabled?: boolean;
   workspaceId?: string | null;
   requestHeaders?: HeadersInit;
   enabled?: boolean;
@@ -199,6 +200,7 @@ export function ChatHistoryRail({
   hostStyle = "claude",
   isAuthenticated,
   isStreaming,
+  sharedThreadsEnabled = true,
   workspaceId,
   requestHeaders,
   enabled = true,
@@ -345,11 +347,11 @@ export function ChatHistoryRail({
                 <div className={isAuthenticated ? "mb-1" : undefined}>
                   <ThreadSection
                     headingId="chat-history-my-threads-heading"
-                    title="My Threads"
-                    triggerLabel="My threads section"
-                    archiveAriaLabel="Archive all threads in My Threads"
-                    newChatAriaLabel="New chat in My Threads"
-                    archiveTooltip="Archive all in My Threads"
+                    title="Sessions"
+                    triggerLabel="Sessions section"
+                    archiveAriaLabel="Archive all sessions in Sessions"
+                    newChatAriaLabel="New chat in Sessions"
+                    archiveTooltip="Archive all in Sessions"
                     canArchive={
                       personal.length > 0 && !isStreaming && !archiveBusy
                     }
@@ -367,6 +369,7 @@ export function ChatHistoryRail({
                         isActive={session._id === activeSessionId}
                         isAuthenticated={isAuthenticated}
                         isStreaming={isStreaming}
+                        sharedThreadsEnabled={sharedThreadsEnabled}
                         hostStyle={hostStyle}
                         onSelect={onSelectThread}
                         onActionComplete={onSessionAction}
@@ -378,14 +381,14 @@ export function ChatHistoryRail({
                   </ThreadSection>
                 </div>
 
-                {isAuthenticated ? (
+                {isAuthenticated && sharedThreadsEnabled ? (
                   <ThreadSection
                     headingId="chat-history-shared-threads-heading"
-                    title="Shared Threads"
-                    triggerLabel="Shared threads section"
-                    archiveAriaLabel="Archive all threads in Shared Threads"
-                    newChatAriaLabel="New chat in Shared Threads"
-                    archiveTooltip="Archive all in Shared Threads"
+                    title="Shared Sessions"
+                    triggerLabel="Shared sessions section"
+                    archiveAriaLabel="Archive all sessions in Shared Sessions"
+                    newChatAriaLabel="New chat in Shared Sessions"
+                    archiveTooltip="Archive all in Shared Sessions"
                     canArchive={
                       workspace.length > 0 && !isStreaming && !archiveBusy
                     }
@@ -403,6 +406,7 @@ export function ChatHistoryRail({
                         isActive={session._id === activeSessionId}
                         isAuthenticated={isAuthenticated}
                         isStreaming={isStreaming}
+                        sharedThreadsEnabled={sharedThreadsEnabled}
                         hostStyle={hostStyle}
                         onSelect={onSelectThread}
                         onActionComplete={onSessionAction}

@@ -51,13 +51,13 @@ export interface SuiteNavigation {
     suiteId: string,
     runId: string,
     iteration?: string,
-    options?: { insightsFocus?: boolean; replace?: boolean },
+    options?: { insightsFocus?: boolean; replace?: boolean }
   ) => void;
   toTestDetail: (suiteId: string, testId: string, iteration?: string) => void;
   toTestEdit: (
     suiteId: string,
     testId: string,
-    options?: { openCompare?: boolean; replace?: boolean; iteration?: string },
+    options?: { openCompare?: boolean; replace?: boolean; iteration?: string }
   ) => void;
   toSuiteEdit: (suiteId: string) => void;
 }
@@ -111,6 +111,7 @@ export function SuiteIterationsView({
   onContinueInChat,
   workspaceServers,
   generateTestCasesDisabledReason,
+  isDirectGuest = false,
 }: {
   suite: EvalSuite;
   cases: EvalCase[];
@@ -176,6 +177,8 @@ export function SuiteIterationsView({
     name: string;
     transportType?: "stdio" | "http";
   }>;
+  /** When true, this is rendering the direct-guest eval playground flow. */
+  isDirectGuest?: boolean;
 }) {
   const appState = useSharedAppState();
   // Derive view state from route
@@ -209,7 +212,7 @@ export function SuiteIterationsView({
     onRunDetailSortByChange ?? setRunDetailSortBy;
   const [defaultMinimumPassRate, setDefaultMinimumPassRate] = useState(100);
   const [editedDescription, setEditedDescription] = useState(
-    suite.description || "",
+    suite.description || ""
   );
   const [isEditingDescription, setIsEditingDescription] = useState(false);
   const [exportState, setExportState] = useState<{
@@ -227,13 +230,13 @@ export function SuiteIterationsView({
     iterations,
     allIterations,
     runs,
-    aggregate,
+    aggregate
   );
 
   const { caseGroupsForSelectedRun, selectedRunChartData } = useRunDetailData(
     selectedRunId,
     allIterations,
-    effectiveRunDetailSortBy,
+    effectiveRunDetailSortBy
   );
 
   // Selected run details
@@ -245,7 +248,7 @@ export function SuiteIterationsView({
 
   // Derive selectedIterationId from route
   const selectedIterationId =
-    route.type === "run-detail" ? (route.iteration ?? null) : null;
+    route.type === "run-detail" ? route.iteration ?? null : null;
 
   const handleSelectIteration = (iterationId: string) => {
     if (route.type !== "run-detail") {
@@ -287,12 +290,12 @@ export function SuiteIterationsView({
         try {
           localStorage.setItem(
             `suite-${suite._id}-criteria-rate`,
-            String(suite.defaultPassCriteria.minimumPassRate),
+            String(suite.defaultPassCriteria.minimumPassRate)
           );
         } catch (error) {
           console.warn(
             "Failed to sync default pass criteria to localStorage",
-            error,
+            error
           );
         }
       }
@@ -322,7 +325,7 @@ export function SuiteIterationsView({
         toast.success("Suite description updated");
       } catch (error) {
         toast.error(
-          getBillingErrorMessage(error, "Failed to update suite description"),
+          getBillingErrorMessage(error, "Failed to update suite description")
         );
         console.error("Failed to update suite description:", error);
         setEditedDescription(suite.description || "");
@@ -339,7 +342,7 @@ export function SuiteIterationsView({
         setEditedDescription(suite.description || "");
       }
     },
-    [suite.description],
+    [suite.description]
   );
 
   const handleUpdateTests = async (models: any[]) => {
@@ -402,7 +405,7 @@ export function SuiteIterationsView({
       }
     }
     return [...providers].filter(
-      (p) => !hasToken(p.toLowerCase() as keyof ProviderTokens),
+      (p) => !hasToken(p.toLowerCase() as keyof ProviderTokens)
     );
   }, [cases, hasToken]);
 
@@ -410,7 +413,7 @@ export function SuiteIterationsView({
     () =>
       replayingRunId != null &&
       runs.some(
-        (run) => run._id === replayingRunId && run.hasServerReplayConfig,
+        (run) => run._id === replayingRunId && run.hasServerReplayConfig
       ) &&
       runs
         .filter((run) => run.hasServerReplayConfig)
@@ -419,7 +422,7 @@ export function SuiteIterationsView({
           const bTime = b.completedAt ?? b.createdAt ?? 0;
           return bTime - aTime;
         })[0]?._id === replayingRunId,
-    [replayingRunId, runs],
+    [replayingRunId, runs]
   );
 
   const shouldReduceMotion = useReducedMotion();
@@ -519,14 +522,13 @@ export function SuiteIterationsView({
                   connectedServerNames={connectedServerNames}
                   workspaceId={workspaceId}
                   availableModels={availableModels}
+                  isDirectGuest={isDirectGuest}
                   onExportDraft={handleOpenDraftExport}
                   openCompareFromRoute={
                     route.type === "test-edit" && Boolean(route.openCompare)
                   }
                   openCompareIterationId={
-                    route.type === "test-edit"
-                      ? (route.iteration ?? null)
-                      : null
+                    route.type === "test-edit" ? route.iteration ?? null : null
                   }
                   onBackToList={() =>
                     navigation.toSuiteOverview(suite._id, "test-cases")
@@ -539,7 +541,7 @@ export function SuiteIterationsView({
                     navigation.toRunDetail(
                       suite._id,
                       iteration.suiteRunId,
-                      iteration._id,
+                      iteration._id
                     );
                   }}
                 />
@@ -547,12 +549,12 @@ export function SuiteIterationsView({
             ) : viewMode === "test-detail" && selectedTestId ? (
               (() => {
                 const selectedCase = cases.find(
-                  (c) => c._id === selectedTestId,
+                  (c) => c._id === selectedTestId
                 );
                 if (!selectedCase) return null;
 
                 const caseIterations = allIterations.filter(
-                  (iter) => iter.testCaseId === selectedTestId,
+                  (iter) => iter.testCaseId === selectedTestId
                 );
 
                 return (
@@ -721,6 +723,7 @@ export function SuiteIterationsView({
                     )
                   ) : (
                     <TestCasesOverview
+                      isDirectGuest={isDirectGuest}
                       suite={suite}
                       cases={cases}
                       allIterations={allIterations}
@@ -753,7 +756,7 @@ export function SuiteIterationsView({
                       onRunTestCase={onRunTestCase}
                       runningTestCaseId={runningTestCaseId}
                       blockTestCaseRuns={Boolean(
-                        rerunningSuiteId || replayingRunId,
+                        rerunningSuiteId || replayingRunId
                       )}
                       connectedServerNames={connectedServerNames}
                     />
@@ -795,7 +798,7 @@ export function SuiteIterationsView({
                             route.suiteId,
                             route.runId,
                             undefined,
-                            { insightsFocus: true },
+                            { insightsFocus: true }
                           )
                       : undefined
                   }
@@ -899,7 +902,7 @@ export function SuiteIterationsView({
                   setDefaultMinimumPassRate(rate);
                   localStorage.setItem(
                     `suite-${suite._id}-criteria-rate`,
-                    String(rate),
+                    String(rate)
                   );
                   try {
                     await updateSuite({
@@ -911,11 +914,11 @@ export function SuiteIterationsView({
                     toast.success("Suite updated successfully");
                   } catch (error) {
                     toast.error(
-                      getBillingErrorMessage(error, "Failed to update suite"),
+                      getBillingErrorMessage(error, "Failed to update suite")
                     );
                     console.error("Failed to update suite:", error);
                     setDefaultMinimumPassRate(
-                      suite.defaultPassCriteria?.minimumPassRate ?? 100,
+                      suite.defaultPassCriteria?.minimumPassRate ?? 100
                     );
                   }
                 }}

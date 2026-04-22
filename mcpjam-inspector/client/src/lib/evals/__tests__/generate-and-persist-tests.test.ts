@@ -5,7 +5,12 @@ vi.mock("@/lib/apis/evals-api", () => ({
   generateEvalTests: vi.fn(),
 }));
 
+vi.mock("@/lib/guest-session", () => ({
+  getGuestBearerToken: vi.fn(),
+}));
+
 import { generateEvalTests } from "@/lib/apis/evals-api";
+import { getGuestBearerToken } from "@/lib/guest-session";
 
 describe("generateAndPersistEvalTests", () => {
   const mockQuery = vi.fn();
@@ -17,6 +22,7 @@ describe("generateAndPersistEvalTests", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockGetAccessToken.mockResolvedValue("token");
+    vi.mocked(getGuestBearerToken).mockResolvedValue("guest-token");
     vi.mocked(generateEvalTests).mockResolvedValue({
       success: true,
       tests: [],
@@ -124,5 +130,32 @@ describe("generateAndPersistEvalTests", () => {
         ],
       }),
     );
+  });
+
+  it("uses the guest bearer token for direct guest generation", async () => {
+    mockQuery.mockResolvedValue([]);
+    vi.mocked(generateEvalTests).mockResolvedValue({
+      success: true,
+      tests: [{ title: "T", query: "q", runs: 1, expectedToolCalls: [] }],
+    });
+    mockCreateTestCase.mockResolvedValue({});
+
+    await generateAndPersistEvalTests({
+      convex,
+      getAccessToken: mockGetAccessToken,
+      workspaceId: null,
+      suiteId: "suite",
+      serverIds: ["srv"],
+      createTestCase: mockCreateTestCase,
+      isDirectGuest: true,
+    });
+
+    expect(getGuestBearerToken).toHaveBeenCalledTimes(1);
+    expect(mockGetAccessToken).not.toHaveBeenCalled();
+    expect(generateEvalTests).toHaveBeenCalledWith({
+      workspaceId: null,
+      serverIds: ["srv"],
+      convexAuthToken: "guest-token",
+    });
   });
 });

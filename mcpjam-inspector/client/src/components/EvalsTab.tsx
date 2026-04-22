@@ -9,6 +9,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { useWorkspaceServers } from "@/hooks/useViews";
 import { useEvalsRoute } from "@/lib/evals-router";
 import { useEvalTabContext } from "@/hooks/use-eval-tab-context";
+import { useIsDirectGuest } from "@/hooks/use-is-direct-guest";
 import { aggregateSuite } from "./evals/helpers";
 import { EvalTabGate } from "./evals/EvalTabGate";
 import {
@@ -58,6 +59,7 @@ export function EvalsTab({
   const route = useEvalsRoute();
   const [workspaceBrowse, setWorkspaceBrowse] =
     useState<PlaygroundWorkspaceBrowse>("suites");
+  const isDirectGuest = useIsDirectGuest({ workspaceId });
   const {
     connectedServerNames,
     userMap,
@@ -67,12 +69,13 @@ export function EvalsTab({
   } = useEvalTabContext({
     isAuthenticated,
     workspaceId: workspaceId ?? null,
+    isDirectGuest,
   });
   const { servers: workspaceServers = [] } = useWorkspaceServers({
     isAuthenticated,
     workspaceId: workspaceId ?? null,
   });
-  const mutations = useEvalMutations();
+  const mutations = useEvalMutations({ isDirectGuest });
 
   const selectedSuiteId =
     route.type === "suite-overview" ||
@@ -106,6 +109,7 @@ export function EvalsTab({
     deletingSuiteId: null,
     workspaceId: workspaceId ?? null,
     organizationId: null,
+    isDirectGuest,
   });
 
   const visibleSuites = useMemo(
@@ -141,15 +145,32 @@ export function EvalsTab({
     ensureServersReady,
     latestRunBySuiteId,
     workspaceServers,
+    isDirectGuest,
   });
+  const {
+    deletingSuiteId,
+    rerunningSuiteId,
+    cancellingRunId,
+    deletingRunId,
+    isGeneratingTests,
+    handleCreateTestCase,
+    handleGenerateTests,
+    handleRerun,
+    handleCancelRun,
+    handleDelete,
+    handleDeleteRun,
+    directDeleteRun,
+    directDeleteTestCase,
+  } = handlers;
 
   const queries = useEvalQueries({
     isAuthenticated: isAuthenticated && Boolean(workspaceId),
     user: workspaceId ? user : null,
     selectedSuiteId,
-    deletingSuiteId: handlers.deletingSuiteId,
+    deletingSuiteId,
     workspaceId: workspaceId ?? null,
     organizationId: null,
+    isDirectGuest,
   });
 
   const selectedSuite = queries.selectedSuite;
@@ -163,13 +184,12 @@ export function EvalsTab({
     return aggregateSuite(
       selectedSuite,
       suiteDetails.testCases,
-      activeIterations,
+      activeIterations
     );
   }, [selectedSuite, suiteDetails, activeIterations]);
-
   const playgroundNavigation = useMemo(
     () => createPlaygroundSuiteNavigation(),
-    [],
+    []
   );
 
   const playgroundWorkspaceSuiteIds = useMemo(
@@ -440,18 +460,18 @@ export function EvalsTab({
     async (testCaseIds: string[]) => {
       const settledDeletes = await Promise.allSettled(
         testCaseIds.map(async (id) => {
-          await handlers.directDeleteTestCase(id);
+          await directDeleteTestCase(id);
           return id;
-        }),
+        })
       );
       const deletedIds = new Set(
         settledDeletes.flatMap((result) =>
-          result.status === "fulfilled" ? [result.value] : [],
-        ),
+          result.status === "fulfilled" ? [result.value] : []
+        )
       );
       const failedDeletes = settledDeletes.filter(
         (result): result is PromiseRejectedResult =>
-          result.status === "rejected",
+          result.status === "rejected"
       );
 
       if (failedDeletes.length > 0) {
@@ -459,22 +479,22 @@ export function EvalsTab({
         toast.error(
           `Failed to delete ${failedDeletes.length} test case${
             failedDeletes.length === 1 ? "" : "s"
-          }.`,
+          }.`
         );
       }
 
-      if (selectedSuite && selectedTestId && deletedIds.has(selectedTestId)) {
+      if (selectedSuiteId && selectedTestId && deletedIds.has(selectedTestId)) {
         navigatePlaygroundEvalsRoute(
           {
             type: "suite-overview",
-            suiteId: selectedSuite._id,
+            suiteId: selectedSuiteId,
             view: "test-cases",
           },
-          { replace: true },
+          { replace: true }
         );
       }
     },
-    [handlers, selectedSuite, selectedTestId],
+    [directDeleteTestCase, selectedSuiteId, selectedTestId],
   );
 
   const handleDeleteSuitesBatch = useCallback(
@@ -611,6 +631,7 @@ export function EvalsTab({
     return (
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden px-6 pb-6 pt-6">
         <SuiteIterationsView
+          isDirectGuest={isDirectGuest}
           suite={selectedSuite}
           cases={suiteDetails?.testCases ?? []}
           iterations={activeIterations}
@@ -638,10 +659,10 @@ export function EvalsTab({
           onDirectDeleteRun={handlers.directDeleteRun}
           connectedServerNames={connectedServerNames}
           canDeleteSuite={canDeleteSuite}
-          rerunningSuiteId={handlers.rerunningSuiteId}
-          cancellingRunId={handlers.cancellingRunId}
-          deletingSuiteId={handlers.deletingSuiteId}
-          deletingRunId={handlers.deletingRunId}
+          rerunningSuiteId={rerunningSuiteId}
+          cancellingRunId={cancellingRunId}
+          deletingSuiteId={deletingSuiteId}
+          deletingRunId={deletingRunId}
           availableModels={availableModels}
           route={route}
           userMap={userMap}
@@ -791,6 +812,7 @@ export function EvalsTab({
       isAuthenticated={isAuthenticated}
       user={user}
       workspaceId={workspaceId}
+      isDirectGuest={isDirectGuest}
     >
       <>
         <CreateSuiteDialog

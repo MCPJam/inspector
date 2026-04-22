@@ -197,6 +197,8 @@ export function ChatTabV2({
     useJsonRpcPanelVisibility();
   const posthog = usePostHog();
   const chatHistoryRailEnabled = useFeatureFlagEnabled("chat-history-rail");
+  const sharedThreadsEnabled =
+    useFeatureFlagEnabled("shared-threads-enabled") === true;
 
   // Local state for ChatTabV2-specific features
   const [input, setInput] = useState("");
@@ -1947,6 +1949,7 @@ export function ChatTabV2({
                 hostStyle={hostStyle}
                 isAuthenticated={isConvexAuthenticated}
                 isStreaming={historyRailStreaming}
+                sharedThreadsEnabled={sharedThreadsEnabled}
                 workspaceId={effectiveHostedWorkspaceId}
                 enabled={isSessionBootstrapComplete}
                 refreshSignal={historyRefreshSignal}

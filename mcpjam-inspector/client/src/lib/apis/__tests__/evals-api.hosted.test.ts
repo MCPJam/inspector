@@ -4,6 +4,8 @@ import { createFetchResponse } from "@/test";
 const authFetchMock = vi.fn();
 const listHostedToolsMock = vi.fn();
 const buildHostedServerBatchRequestMock = vi.fn();
+const buildHostedServerRequestMock = vi.fn();
+const isGuestModeMock = vi.fn(() => false);
 
 vi.mock("@/lib/config", () => ({
   HOSTED_MODE: true,
@@ -20,6 +22,9 @@ vi.mock("@/lib/apis/web/tools-api", () => ({
 vi.mock("@/lib/apis/web/context", () => ({
   buildHostedServerBatchRequest: (...args: unknown[]) =>
     buildHostedServerBatchRequestMock(...args),
+  buildHostedServerRequest: (...args: unknown[]) =>
+    buildHostedServerRequestMock(...args),
+  isGuestMode: () => isGuestModeMock(),
 }));
 
 import {
@@ -34,6 +39,7 @@ import {
 describe("evals-api hosted mode", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    isGuestModeMock.mockReturnValue(false);
     buildHostedServerBatchRequestMock.mockImplementation(
       (serverNames: string[]) => {
         const serverIds = serverNames.map((serverName) =>
@@ -54,6 +60,13 @@ describe("evals-api hosted mode", () => {
         };
       },
     );
+    buildHostedServerRequestMock.mockReturnValue({
+      serverUrl: "https://guest.example.com/mcp",
+      serverName: "Guest Server",
+      serverHeaders: { "X-Guest": "yes" },
+      oauthAccessToken: "guest-oauth-token",
+      clientCapabilities: { sampling: true },
+    });
     authFetchMock.mockResolvedValue(createFetchResponse({ success: true }));
   });
 
@@ -84,6 +97,23 @@ describe("evals-api hosted mode", () => {
       storageServerIds: ["Server A", "Server B"],
     });
     expect(body).not.toHaveProperty("convexAuthToken");
+  });
+
+  it("rejects direct guest full-suite runs before workspace lookup", async () => {
+    isGuestModeMock.mockReturnValue(true);
+
+    await expect(
+      runEvals({
+        workspaceId: null,
+        suiteName: "Guest Suite",
+        tests: [],
+        serverIds: ["Guest Server"],
+        convexAuthToken: "guest-convex-token",
+      }),
+    ).rejects.toThrow("Not available for guests yet. Sign in to use this.");
+
+    expect(buildHostedServerBatchRequestMock).not.toHaveBeenCalled();
+    expect(authFetchMock).not.toHaveBeenCalled();
   });
 
   it("uses /api/web/evals/generate-tests for hosted test generation", async () => {
@@ -158,6 +188,92 @@ describe("evals-api hosted mode", () => {
     expect(body).not.toHaveProperty("convexAuthToken");
   });
 
+  it("posts direct guest quick runs with the guest server payload", async () => {
+    isGuestModeMock.mockReturnValue(true);
+
+    await runEvalTestCase({
+      workspaceId: null,
+      testCaseId: "guest-case-1",
+      model: "openai/gpt-5-mini",
+      provider: "openai",
+      serverIds: ["Guest Server"],
+      convexAuthToken: "guest-convex-token",
+    });
+
+    expect(buildHostedServerRequestMock).toHaveBeenCalledWith("Guest Server");
+    expect(buildHostedServerBatchRequestMock).not.toHaveBeenCalled();
+
+    const body = JSON.parse(authFetchMock.mock.calls[0][1].body);
+    expect(body).toMatchObject({
+      serverUrl: "https://guest.example.com/mcp",
+      serverName: "Guest Server",
+      serverHeaders: { "X-Guest": "yes" },
+      oauthAccessToken: "guest-oauth-token",
+      clientCapabilities: { sampling: true },
+      testCaseId: "guest-case-1",
+      model: "openai/gpt-5-mini",
+      provider: "openai",
+    });
+    expect(body).not.toHaveProperty("workspaceId");
+    expect(body).not.toHaveProperty("serverIds");
+    expect(body).not.toHaveProperty("convexAuthToken");
+  });
+
+  it("posts direct guest generation with the guest server payload", async () => {
+    isGuestModeMock.mockReturnValue(true);
+
+    await generateEvalTests({
+      workspaceId: null,
+      serverIds: ["Guest Server"],
+      convexAuthToken: "guest-convex-token",
+    });
+
+    expect(authFetchMock).toHaveBeenCalledWith(
+      "/api/web/evals/generate-tests",
+      expect.objectContaining({
+        method: "POST",
+      }),
+    );
+
+    const body = JSON.parse(authFetchMock.mock.calls[0][1].body);
+    expect(body).toMatchObject({
+      serverUrl: "https://guest.example.com/mcp",
+      serverName: "Guest Server",
+      serverHeaders: { "X-Guest": "yes" },
+      oauthAccessToken: "guest-oauth-token",
+      clientCapabilities: { sampling: true },
+    });
+    expect(body).not.toHaveProperty("workspaceId");
+    expect(body).not.toHaveProperty("serverIds");
+    expect(body).not.toHaveProperty("convexAuthToken");
+  });
+
+  it("posts direct guest negative generation with the guest server payload", async () => {
+    isGuestModeMock.mockReturnValue(true);
+
+    await generateNegativeEvalTests({
+      workspaceId: null,
+      serverIds: ["Guest Server"],
+      convexAuthToken: "guest-convex-token",
+    });
+
+    expect(authFetchMock).toHaveBeenCalledWith(
+      "/api/web/evals/generate-negative-tests",
+      expect.objectContaining({
+        method: "POST",
+      }),
+    );
+
+    const body = JSON.parse(authFetchMock.mock.calls[0][1].body);
+    expect(body).toMatchObject({
+      serverUrl: "https://guest.example.com/mcp",
+      serverName: "Guest Server",
+    });
+    expect(body).not.toHaveProperty("workspaceId");
+    expect(body).not.toHaveProperty("serverIds");
+    expect(body).not.toHaveProperty("convexAuthToken");
+  });
+
   it("uses /api/web/evals/stream-test-case and parses SSE events", async () => {
     const encoder = new TextEncoder();
     authFetchMock.mockResolvedValueOnce(
@@ -229,6 +345,60 @@ describe("evals-api hosted mode", () => {
         iteration: { _id: "iter-1" },
       }),
     ]);
+  });
+
+  it("posts direct guest compare streams with the guest server payload", async () => {
+    isGuestModeMock.mockReturnValue(true);
+    const encoder = new TextEncoder();
+    authFetchMock.mockResolvedValueOnce(
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(
+              encoder.encode('data: {"type":"complete"}\n\n'),
+            );
+            controller.close();
+          },
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "text/event-stream" },
+        },
+      ),
+    );
+
+    await streamEvalTestCase(
+      {
+        workspaceId: null,
+        testCaseId: "guest-case-1",
+        model: "openai/gpt-5-mini",
+        provider: "openai",
+        serverIds: ["Guest Server"],
+        convexAuthToken: "guest-convex-token",
+        compareRunId: "cmp_guest",
+      },
+      () => {},
+    );
+
+    expect(authFetchMock).toHaveBeenCalledWith(
+      "/api/web/evals/stream-test-case",
+      expect.objectContaining({
+        method: "POST",
+      }),
+    );
+
+    const body = JSON.parse(authFetchMock.mock.calls[0][1].body);
+    expect(body).toMatchObject({
+      serverUrl: "https://guest.example.com/mcp",
+      serverName: "Guest Server",
+      testCaseId: "guest-case-1",
+      model: "openai/gpt-5-mini",
+      provider: "openai",
+      compareRunId: "cmp_guest",
+    });
+    expect(body).not.toHaveProperty("workspaceId");
+    expect(body).not.toHaveProperty("serverIds");
+    expect(body).not.toHaveProperty("convexAuthToken");
   });
 
   it("uses hosted tool listing instead of /api/mcp/list-tools", async () => {

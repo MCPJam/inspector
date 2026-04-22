@@ -11,6 +11,9 @@ const mocks = vi.hoisted(() => ({
   navigatePlaygroundEvalsRoute: vi.fn(),
   createTestSuiteMutation: vi.fn(),
   suiteIterationsView: vi.fn(),
+  updateSuiteMutation: vi.fn(),
+  handleGenerateTests: vi.fn(),
+  isDirectGuest: false,
 }));
 
 vi.mock("@workos-inc/authkit-react", () => ({
@@ -57,6 +60,19 @@ vi.mock("@/hooks/useViews", () => ({
       { _id: "srv-a", name: "server-a", transportType: "http" },
       { _id: "srv-b", name: "server-b", transportType: "stdio" },
     ],
+  }),
+}));
+
+vi.mock("@/hooks/use-is-direct-guest", () => ({
+  useIsDirectGuest: () => mocks.isDirectGuest,
+}));
+
+vi.mock("@/state/app-state-context", () => ({
+  useSharedAppState: () => ({
+    servers: {
+      "server-a": { connectionStatus: "connected" },
+      "server-b": { connectionStatus: "connected" },
+    },
   }),
 }));
 
@@ -135,7 +151,7 @@ vi.mock("../evals/use-eval-handlers", () => ({
     cancellingRunId: null,
     runningTestCaseId: null,
     isGeneratingTests: false,
-    handleGenerateTests: vi.fn(),
+    handleGenerateTests: mocks.handleGenerateTests,
     handleCreateTestCase: vi.fn(),
     handleRerun: vi.fn(),
     handleCancelRun: vi.fn(),
@@ -210,6 +226,7 @@ function makeQueryState(selectedSuiteId: string | null) {
 describe("EvalsTab", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.isDirectGuest = false;
     mocks.route.current = { type: "suite-overview", suiteId: "suite-a" };
     mocks.useEvalQueries.mockImplementation(
       ({ selectedSuiteId }: { selectedSuiteId: string | null }) =>
@@ -272,4 +289,5 @@ describe("EvalsTab", () => {
       );
     });
   });
+
 });

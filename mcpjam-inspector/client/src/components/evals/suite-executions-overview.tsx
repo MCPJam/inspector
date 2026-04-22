@@ -44,15 +44,19 @@ export function SuiteExecutionsOverview({
   const sortedIterations = useMemo(() => {
     const deduped = new Map<string, EvalIteration>();
     for (const iteration of allIterations) {
-      if (iteration?._id) {
-        deduped.set(iteration._id, iteration);
+      if (!iteration?._id) {
+        continue;
       }
+      if (iteration.testCaseId && !caseById.has(iteration.testCaseId)) {
+        continue;
+      }
+      deduped.set(iteration._id, iteration);
     }
     return Array.from(deduped.values()).sort(
       (a, b) =>
         getIterationRecencyTimestamp(b) - getIterationRecencyTimestamp(a),
     );
-  }, [allIterations]);
+  }, [allIterations, caseById]);
 
   return (
     <div

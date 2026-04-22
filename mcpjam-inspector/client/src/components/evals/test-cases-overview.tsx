@@ -78,6 +78,8 @@ interface TestCasesOverviewProps {
    * When set (e.g. playground), show run-style selection + batch delete for test cases.
    */
   onDeleteTestCasesBatch?: (testCaseIds: string[]) => Promise<void>;
+  /** When true, the surrounding view is the direct-guest eval playground. */
+  isDirectGuest?: boolean;
 }
 
 export function TestCasesOverview({
@@ -95,17 +97,18 @@ export function TestCasesOverview({
   runningTestCaseId = null,
   blockTestCaseRuns = false,
   connectedServerNames,
+  isDirectGuest = false,
 }: TestCasesOverviewProps) {
   const convex = useConvex();
   const liveCases = useQuery(
     "testSuites:listTestCases" as any,
-    { suiteId: suite._id } as any,
+    { suiteId: suite._id } as any
   ) as EvalCase[] | undefined;
   const [hydratedIterations, setHydratedIterations] = useState<EvalIteration[]>(
-    [],
+    []
   );
   const [selectedCaseIds, setSelectedCaseIds] = useState<Set<string>>(
-    new Set(),
+    new Set()
   );
   const [showBatchDeleteModal, setShowBatchDeleteModal] = useState(false);
   const [isBatchDeleting, setIsBatchDeleting] = useState(false);
@@ -135,7 +138,7 @@ export function TestCasesOverview({
     }
 
     const liveCaseById = new Map(
-      liveCases.map((testCase) => [testCase._id, testCase] as const),
+      liveCases.map((testCase) => [testCase._id, testCase] as const)
     );
     const mergedCases = cases.map((testCase) => ({
       ...testCase,
@@ -171,7 +174,7 @@ export function TestCasesOverview({
       setSelectedCaseIds(new Set());
       setShowBatchDeleteModal(false);
       toast.success(
-        `Deleted ${ids.length} test case${ids.length === 1 ? "" : "s"}`,
+        `Deleted ${ids.length} test case${ids.length === 1 ? "" : "s"}`
       );
     } catch (error) {
       console.error("Failed to delete test cases:", error);
@@ -183,14 +186,14 @@ export function TestCasesOverview({
 
   useEffect(() => {
     const localIterationIds = new Set(
-      allIterations.map((iteration) => iteration._id),
+      allIterations.map((iteration) => iteration._id)
     );
     const localCaseIds = new Set(
       allIterations
         .map((iteration) => iteration.testCaseId)
         .filter(
-          (testCaseId): testCaseId is string => typeof testCaseId === "string",
-        ),
+          (testCaseId): testCaseId is string => typeof testCaseId === "string"
+        )
     );
     const casesNeedingHydration = effectiveCases.filter((testCase) => {
       const missingSavedIteration =
@@ -213,7 +216,7 @@ export function TestCasesOverview({
           try {
             const iterations = (await convex.query(
               "testSuites:listTestIterations" as any,
-              { testCaseId: testCase._id } as any,
+              { testCaseId: testCase._id } as any
             )) as EvalIteration[] | undefined;
 
             if (Array.isArray(iterations) && iterations.length > 0) {
@@ -222,7 +225,7 @@ export function TestCasesOverview({
           } catch (error) {
             console.error(
               "Failed to hydrate test case iterations from listTestIterations:",
-              error,
+              error
             );
           }
 
@@ -233,17 +236,17 @@ export function TestCasesOverview({
           try {
             const iteration = (await convex.query(
               "testSuites:getTestIteration" as any,
-              { iterationId: testCase.lastMessageRun } as any,
+              { iterationId: testCase.lastMessageRun } as any
             )) as EvalIteration | null;
             return iteration ? [iteration] : [];
           } catch (error) {
             console.error(
               "Failed to hydrate saved iteration from getTestIteration:",
-              error,
+              error
             );
             return [];
           }
-        }),
+        })
       );
 
       if (cancelled) {
@@ -278,7 +281,7 @@ export function TestCasesOverview({
   const testCaseStats = useMemo(() => {
     return effectiveCases.map((testCase) => {
       const caseIterations = effectiveIterations.filter(
-        (iter) => iter.testCaseId === testCase._id,
+        (iter) => iter.testCaseId === testCase._id
       );
       let lastRunIteration: EvalIteration | null = null;
       for (const iter of caseIterations) {
@@ -302,7 +305,9 @@ export function TestCasesOverview({
   const missingSuiteServers =
     connectedServerNames == null
       ? []
-      : suiteServers.filter((serverName) => !connectedServerNames.has(serverName));
+      : suiteServers.filter(
+          (serverName) => !connectedServerNames.has(serverName)
+        );
   const showPersistentBatchHeader =
     batchDelete && hideViewModeSelect && testCaseStats.length > 0;
   const showDisconnectedPlaygroundEmptyState =
@@ -399,6 +404,13 @@ export function TestCasesOverview({
                 description="Playground can automatically generate test cases once a server is connected."
                 className="h-auto min-h-[240px]"
               />
+            ) : hideViewModeSelect ? (
+              <EmptyState
+                icon={Puzzle}
+                title="No test cases yet"
+                description="Click Generate to create a starter set from your tools, or New case to add one manually."
+                className="h-auto min-h-[240px]"
+              />
             ) : (
               <div className="px-4 py-12 text-center text-sm text-muted-foreground">
                 No cases found.
@@ -411,21 +423,26 @@ export function TestCasesOverview({
                 connectedServerNames == null
                   ? []
                   : suiteServers.filter(
-                      (serverName) => !connectedServerNames.has(serverName),
+                      (serverName) => !connectedServerNames.has(serverName)
                     );
               const hasModels = Boolean(testCase.models?.length);
               const isThisCaseRunning = runningTestCaseId === testCase._id;
               const isAnotherCaseRunning =
                 runningTestCaseId != null && runningTestCaseId !== testCase._id;
+              // Guests rely on the local persistent MCP manager; skip the
+              // suite-server-connected gate and let the runner surface a
+              // connection error if the server is actually missing.
+              const serverGateBlocked =
+                !isDirectGuest && missingServers.length > 0;
               const runDisabled =
                 !onRunTestCase ||
                 blockTestCaseRuns ||
                 isAnotherCaseRunning ||
                 !hasModels ||
-                !hasConfiguredSuiteServers ||
+                serverGateBlocked ||
                 isThisCaseRunning;
               const disconnectedRunTooltip =
-                missingServers.length > 0
+                serverGateBlocked
                   ? "Connect and run."
                   : null;
 
@@ -436,17 +453,17 @@ export function TestCasesOverview({
                 lastRunResult === "passed"
                   ? "Passed"
                   : lastRunResult === "failed"
-                    ? "Failed"
-                    : lastRunResult === "cancelled"
-                      ? "Cancelled"
-                      : lastRunResult === "pending"
-                        ? "Running"
-                        : "Never run";
+                  ? "Failed"
+                  : lastRunResult === "cancelled"
+                  ? "Cancelled"
+                  : lastRunResult === "pending"
+                  ? "Running"
+                  : "Never run";
               const lastRunTimestamp = lastRunIteration
-                ? (lastRunIteration.updatedAt ??
+                ? lastRunIteration.updatedAt ??
                   lastRunIteration.startedAt ??
                   lastRunIteration.createdAt ??
-                  null)
+                  null
                 : null;
               const caseTitle = testCase.title || "Untitled test case";
               const passBadge = (
@@ -483,7 +500,7 @@ export function TestCasesOverview({
                 "Never run"
               );
               const lastRunOpenable = Boolean(
-                onOpenLastRun && lastRunIteration?._id,
+                onOpenLastRun && lastRunIteration?._id
               );
               const lastRunAriaLabel =
                 lastRunIteration && lastRunOpenable
@@ -624,7 +641,9 @@ export function TestCasesOverview({
                           toggleCaseSelection(testCase._id)
                         }
                         onClick={(e) => e.stopPropagation()}
-                        aria-label={`Select case ${testCase.title || "Untitled test case"}`}
+                        aria-label={`Select case ${
+                          testCase.title || "Untitled test case"
+                        }`}
                       />
                     </div>
                     {caseRowClickTarget}

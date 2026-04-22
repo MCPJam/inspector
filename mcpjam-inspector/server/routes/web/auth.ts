@@ -39,6 +39,7 @@ function refineHostedTokens<T extends z.ZodRawShape>(schema: z.ZodObject<T>) {
 }
 
 const clientCapabilitiesSchema = z.record(z.string(), z.unknown());
+export const GUEST_SERVER_ID = "__guest__";
 
 export const workspaceServerSchema = refineHostedTokens(
   z.object({
@@ -119,6 +120,7 @@ export const guestServerInputSchema = z.object({
   serverUrl: z.string().min(1),
   serverName: z.string().min(1).optional(),
   serverHeaders: z.record(z.string(), z.string()).optional(),
+  oauthAccessToken: z.string().optional(),
   clientCapabilities: clientCapabilitiesSchema.optional(),
 });
 
@@ -151,6 +153,85 @@ function buildServerNamesById(
   });
 
   return entries.length > 0 ? Object.fromEntries(entries) : undefined;
+}
+
+export function isGuestServerRequestBody(
+  rawBody: Record<string, unknown>,
+): boolean {
+  return typeof rawBody.serverUrl === "string" && !rawBody.workspaceId;
+}
+
+function requireGuestId(c: any): string {
+  const guestId = c.get("guestId") as string | undefined;
+  if (!guestId) {
+    throw new WebRouteError(
+      401,
+      ErrorCode.UNAUTHORIZED,
+      "Valid guest token required. Please refresh the page to obtain a new session.",
+    );
+  }
+  return guestId;
+}
+
+export async function createGuestEphemeralManager(
+  c: any,
+  rawBody: Record<string, unknown>,
+  options?: { timeoutMs?: number; rpcLogger?: RpcLogger },
+): Promise<{
+  manager: InstanceType<typeof MCPClientManager>;
+  augmentedBody: Record<string, unknown>;
+}> {
+  requireGuestId(c);
+
+  const guestInput = parseWithSchema(guestServerInputSchema, rawBody);
+
+  try {
+    await validateUrl(guestInput.serverUrl, true);
+  } catch (err) {
+    if (err instanceof OAuthProxyError) {
+      throw new WebRouteError(
+        err.status,
+        ErrorCode.VALIDATION_ERROR,
+        err.message,
+      );
+    }
+    throw err;
+  }
+
+  const timeoutMs = options?.timeoutMs ?? WEB_CALL_TIMEOUT_MS;
+  const headers: Record<string, string> = {
+    ...(guestInput.serverHeaders ?? {}),
+  };
+
+  if (guestInput.oauthAccessToken) {
+    headers["Authorization"] = `Bearer ${guestInput.oauthAccessToken}`;
+  }
+
+  const httpConfig: HttpServerConfig = {
+    url: guestInput.serverUrl,
+    capabilities: guestInput.clientCapabilities,
+    requestInit: {
+      headers,
+    },
+    timeout: timeoutMs,
+  };
+
+  return {
+    manager: new MCPClientManager(
+      { [GUEST_SERVER_ID]: httpConfig },
+      {
+        defaultTimeout: timeoutMs,
+        rpcLogger: options?.rpcLogger,
+        retryPolicy: INSPECTOR_MCP_RETRY_POLICY,
+      },
+    ),
+    augmentedBody: {
+      ...rawBody,
+      workspaceId: GUEST_SERVER_ID,
+      serverId: GUEST_SERVER_ID,
+      serverIds: [GUEST_SERVER_ID],
+    },
+  };
 }
 
 // ── Authorization ────────────────────────────────────────────────────
@@ -608,7 +689,11 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
     manager: InstanceType<typeof MCPClientManager>,
     body: z.infer<S>
   ) => Promise<T>,
-  options?: { timeoutMs?: number; rpcLogs?: boolean }
+  options?: {
+    timeoutMs?: number;
+    rpcLogs?: boolean;
+    guestUnsupportedMessage?: string;
+  },
 ) {
   let rpcCollector: ReturnType<typeof createHostedRpcLogCollector> | undefined;
 
@@ -623,8 +708,7 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
     // This is more robust than relying solely on guestId from middleware, which
     // may not be set when the guest token is expired/invalid but the client still
     // sends a guest-shaped body.
-    const isGuestRequest =
-      typeof rawBody.serverUrl === "string" && !rawBody.workspaceId;
+    const isGuestRequest = isGuestServerRequestBody(rawBody);
 
     let result: T;
 
@@ -639,69 +723,25 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
         );
       }
 
-      // Validate guest-specific fields (serverUrl is required)
-      const guestInput = parseWithSchema(guestServerInputSchema, rawBody);
-
-      // Safety: HTTPS-only, no private/reserved IPs
-      try {
-        await validateUrl(guestInput.serverUrl, true);
-      } catch (err) {
-        if (err instanceof OAuthProxyError) {
-          throw new WebRouteError(
-            err.status,
-            ErrorCode.VALIDATION_ERROR,
-            err.message
-          );
-        }
-        throw err;
+      if (options?.guestUnsupportedMessage) {
+        throw new WebRouteError(
+          403,
+          ErrorCode.FEATURE_NOT_SUPPORTED,
+          options.guestUnsupportedMessage,
+        );
       }
 
-      const timeoutMs = options?.timeoutMs ?? WEB_CALL_TIMEOUT_MS;
-
-      // Inject synthetic IDs so downstream schema parsing works unchanged
-      const augmentedBody = {
-        ...rawBody,
-        workspaceId: "__guest__",
-        serverId: "__guest__",
-      };
-      const body = parseWithSchema(schema, augmentedBody);
-
-      // Create ephemeral manager directly from guest-provided config
-      const headers: Record<string, string> = {
-        ...(guestInput.serverHeaders ?? {}),
-      };
-
-      // Allow callers to supply a fresh OAuth bearer explicitly. This avoids
-      // depending on reactive client state having already persisted updated
-      // Authorization headers after an OAuth callback completes.
-      if (
-        typeof (body as { oauthAccessToken?: unknown }).oauthAccessToken ===
-        "string"
-      ) {
-        headers["Authorization"] = `Bearer ${
-          (body as { oauthAccessToken: string }).oauthAccessToken
-        }`;
-      }
-
-      const httpConfig: HttpServerConfig = {
-        url: guestInput.serverUrl,
-        capabilities: guestInput.clientCapabilities,
-        requestInit: {
-          headers,
-        },
-        timeout: timeoutMs,
-      };
-
-      const manager = new MCPClientManager(
-        { __guest__: httpConfig },
+      const { manager, augmentedBody } = await createGuestEphemeralManager(
+        c,
+        rawBody,
         {
-          defaultTimeout: timeoutMs,
+          timeoutMs: options?.timeoutMs,
           rpcLogger: rpcCollector?.rpcLogger,
-          retryPolicy: INSPECTOR_MCP_RETRY_POLICY,
-        }
+        },
       );
 
       try {
+        const body = parseWithSchema(schema, augmentedBody);
         result = await fn(manager, body as z.infer<S>);
       } finally {
         await manager.disconnectAllServers();

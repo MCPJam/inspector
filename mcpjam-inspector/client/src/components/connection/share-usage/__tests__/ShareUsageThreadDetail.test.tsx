@@ -81,11 +81,11 @@ describe("ShareUsageThreadDetail", () => {
 
     await waitFor(() => {
       expect(
-        screen.queryByRole("button", { name: "Chat" }),
-      ).not.toBeInTheDocument();
+        screen.getByRole("button", { name: "Chat" }),
+      ).toBeInTheDocument();
       expect(
-        screen.queryByRole("button", { name: "Trace" }),
-      ).not.toBeInTheDocument();
+        screen.getByRole("button", { name: "Trace" }),
+      ).toBeInTheDocument();
       expect(mockAdaptTraceToUiMessages).toHaveBeenCalledWith(
         expect.objectContaining({
           toolResultDisplay: "attached-to-tool",
@@ -101,7 +101,7 @@ describe("ShareUsageThreadDetail", () => {
     });
   });
 
-  it("keeps chatbox threads in chat mode without a toggle", async () => {
+  it("renders chatbox threads with collapsible reasoning in chat mode", async () => {
     render(<ShareUsageThreadDetail threadId="thread-1" />);
 
     await waitFor(() => {
@@ -114,18 +114,18 @@ describe("ShareUsageThreadDetail", () => {
     });
   });
 
-  it("keeps server share threads in trace mode without a toggle", async () => {
+  it("renders server share threads with sibling-text tool display and a mode toggle", async () => {
     mockThreadState.sourceType = "serverShare";
 
     render(<ShareUsageThreadDetail threadId="thread-1" />);
 
     await waitFor(() => {
       expect(
-        screen.queryByRole("button", { name: "Chat" }),
-      ).not.toBeInTheDocument();
+        screen.getByRole("button", { name: "Chat" }),
+      ).toBeInTheDocument();
       expect(
-        screen.queryByRole("button", { name: "Trace" }),
-      ).not.toBeInTheDocument();
+        screen.getByRole("button", { name: "Trace" }),
+      ).toBeInTheDocument();
       expect(mockAdaptTraceToUiMessages).toHaveBeenCalledWith(
         expect.objectContaining({
           toolResultDisplay: "sibling-text",
