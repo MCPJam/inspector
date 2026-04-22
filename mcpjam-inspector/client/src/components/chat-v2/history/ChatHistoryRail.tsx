@@ -425,6 +425,7 @@ export function ChatHistoryRail({
       <ConvertChatSessionDialog
         open={sessionToConvert !== null}
         session={sessionToConvert}
+        isAuthenticated={isAuthenticated}
         workspaceId={workspaceId ?? null}
         requestHeaders={requestHeaders}
         onOpenChange={(open) => {

@@ -1,5 +1,5 @@
 import { useAction, useQuery } from "convex/react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -13,7 +13,6 @@ import {
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
 import { Label } from "@mcpjam/design-system/label";
-import { Textarea } from "@mcpjam/design-system/textarea";
 import {
   Select,
   SelectContent,
@@ -33,10 +32,13 @@ import {
   normalizeServerNames,
 } from "@/components/evals/suite-environment-utils";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
+import { useWorkspaceServers } from "@/hooks/useViews";
+import { resolveRestorableServerNames } from "./session-restore";
 
 type ConvertChatSessionDialogProps = {
   open: boolean;
   session: ChatHistorySession | null;
+  isAuthenticated: boolean;
   workspaceId: string | null;
   requestHeaders?: HeadersInit;
   onOpenChange: (open: boolean) => void;
@@ -59,12 +61,22 @@ function getSessionTitle(session: ChatHistorySession | null): string {
 export function ConvertChatSessionDialog({
   open,
   session,
+  isAuthenticated,
   workspaceId,
   requestHeaders,
   onOpenChange,
   onImported,
 }: ConvertChatSessionDialogProps) {
   const effectiveWorkspaceId = session?.workspaceId ?? workspaceId ?? null;
+  const { servers, serversById, isLoading: workspaceServersLoading } =
+    useWorkspaceServers({
+      isAuthenticated,
+      workspaceId: effectiveWorkspaceId,
+    });
+  const knownServerNames = useMemo(
+    () => (servers ?? []).map((s) => s.name),
+    [servers],
+  );
   const suitesOverview = useQuery(
     "testSuites:getTestSuitesOverview" as any,
     open && effectiveWorkspaceId
@@ -82,10 +94,20 @@ export function ConvertChatSessionDialog({
     useState<DestinationMode>("new");
   const [selectedSuiteId, setSelectedSuiteId] = useState<string>("");
   const [newSuiteName, setNewSuiteName] = useState("");
-  const [newSuiteDescription, setNewSuiteDescription] = useState("");
-  const [sessionServers, setSessionServers] = useState<string[]>([]);
+  const [rawSelectedServers, setRawSelectedServers] = useState<string[]>([]);
   const [updateSuiteEnvironment, setUpdateSuiteEnvironment] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const suiteDefaultsAppliedForSessionId = useRef<string | null>(null);
+
+  const sessionServers = useMemo(
+    () =>
+      resolveRestorableServerNames(
+        rawSelectedServers,
+        serversById,
+        knownServerNames,
+      ),
+    [rawSelectedServers, serversById, knownServerNames],
+  );
 
   const availableSuites = useMemo(
     () =>
@@ -150,13 +172,7 @@ export function ConvertChatSessionDialog({
         const selectedServers = normalizeServerNames(
           detail.session.resumeConfig?.selectedServers,
         );
-        setSessionServers(selectedServers);
-        setNewSuiteName(
-          buildServerBasedSuiteName(selectedServers, `${title} suite`),
-        );
-        setNewSuiteDescription(
-          `Imported from chat session "${title}".`,
-        );
+        setRawSelectedServers(selectedServers);
       } catch (error) {
         if (cancelled) {
           return;
@@ -179,11 +195,47 @@ export function ConvertChatSessionDialog({
   useEffect(() => {
     if (!open) {
       setDetailError(null);
-      setSessionServers([]);
+      setRawSelectedServers([]);
       setUpdateSuiteEnvironment(false);
       setIsSubmitting(false);
     }
   }, [open]);
+
+  useEffect(() => {
+    if (!open) {
+      suiteDefaultsAppliedForSessionId.current = null;
+      return;
+    }
+    if (!session) {
+      return;
+    }
+    if (detailLoading) {
+      return;
+    }
+    if (
+      rawSelectedServers.length > 0 &&
+      sessionServers.length === 0 &&
+      workspaceServersLoading
+    ) {
+      return;
+    }
+    if (suiteDefaultsAppliedForSessionId.current === session._id) {
+      return;
+    }
+
+    const title = getSessionTitle(session);
+    const forSuiteName =
+      sessionServers.length > 0 ? sessionServers : rawSelectedServers;
+    setNewSuiteName(buildServerBasedSuiteName(forSuiteName, `${title} suite`));
+    suiteDefaultsAppliedForSessionId.current = session._id;
+  }, [
+    open,
+    session,
+    detailLoading,
+    workspaceServersLoading,
+    sessionServers,
+    rawSelectedServers,
+  ]);
 
   const canSubmit =
     Boolean(session) &&
@@ -192,6 +244,11 @@ export function ConvertChatSessionDialog({
     !detailError &&
     caseTitle.trim().length > 0 &&
     !isSubmitting &&
+    !(
+      rawSelectedServers.length > 0 &&
+      sessionServers.length === 0 &&
+      workspaceServersLoading
+    ) &&
     (destinationMode === "new"
       ? newSuiteName.trim().length > 0
       : Boolean(selectedSuiteId) &&
@@ -214,7 +271,6 @@ export function ConvertChatSessionDialog({
             }
           : {
               newSuiteName: newSuiteName.trim(),
-              newSuiteDescription: newSuiteDescription.trim() || undefined,
             }),
         testCaseTitle: caseTitle.trim(),
       })) as {
@@ -224,12 +280,12 @@ export function ConvertChatSessionDialog({
         updatedSuiteEnvironment?: boolean;
       };
 
-      toast.success("Chat session converted to a test case");
+      toast.success("Chat session promoted to a test case");
       onOpenChange(false);
       onImported({ suiteId: result.suiteId, testCaseId: result.testCaseId });
     } catch (error) {
       toast.error(
-        getBillingErrorMessage(error, "Failed to convert chat session"),
+        getBillingErrorMessage(error, "Failed to promote chat session"),
       );
     } finally {
       setIsSubmitting(false);
@@ -242,10 +298,10 @@ export function ConvertChatSessionDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>Convert to test case</DialogTitle>
-          <DialogDescription>
-            Turn this chat session into a normal suite-backed eval case. The
-            full session will be compiled into multi-turn `promptTurns`.
+          <DialogTitle>Promote to test case</DialogTitle>
+          <DialogDescription className="sr-only">
+            Create a suite-backed test case from this chat session. The full
+            session is compiled into multi-turn prompt turns.
           </DialogDescription>
         </DialogHeader>
 
@@ -286,12 +342,19 @@ export function ConvertChatSessionDialog({
                 <AlertTitle>Import unavailable</AlertTitle>
                 <AlertDescription>
                   This chat session is not linked to a shared workspace yet, so
-                  it cannot be converted into a suite-backed test case.
+                  it cannot be promoted to a suite-backed test case.
                 </AlertDescription>
               </Alert>
             ) : (
               <div className="flex flex-wrap gap-2 rounded-lg border bg-card/50 px-3 py-3">
-                {sessionServers.length > 0 ? (
+                {workspaceServersLoading &&
+                rawSelectedServers.length > 0 &&
+                sessionServers.length === 0 ? (
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Resolving server names…
+                  </div>
+                ) : sessionServers.length > 0 ? (
                   sessionServers.map((serverName) => (
                     <span
                       key={serverName}
@@ -346,19 +409,6 @@ export function ConvertChatSessionDialog({
                     value={newSuiteName}
                     onChange={(event) => setNewSuiteName(event.target.value)}
                     placeholder="Imported suite"
-                  />
-                </div>
-                <div className="grid gap-2">
-                  <Label htmlFor="chat-import-suite-description">
-                    Description
-                  </Label>
-                  <Textarea
-                    id="chat-import-suite-description"
-                    value={newSuiteDescription}
-                    onChange={(event) =>
-                      setNewSuiteDescription(event.target.value)
-                    }
-                    placeholder="Optional suite description"
                   />
                 </div>
               </div>
@@ -424,7 +474,7 @@ export function ConvertChatSessionDialog({
           </Button>
           <Button type="button" onClick={() => void handleSubmit()} disabled={!canSubmit}>
             {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-            Convert to test case
+            Promote to test case
           </Button>
         </DialogFooter>
       </DialogContent>

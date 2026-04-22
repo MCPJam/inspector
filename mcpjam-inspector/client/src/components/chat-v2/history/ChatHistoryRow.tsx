@@ -316,7 +316,7 @@ export function ChatHistoryRow({
                       <DropdownMenuItem
                         onClick={() => onConvertToTestCase(session)}
                       >
-                        Convert to test case
+                        Promote to test case
                       </DropdownMenuItem>
                       <DropdownMenuSeparator />
                     </>

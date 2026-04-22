@@ -256,6 +256,24 @@ describe("ChatHistoryRow", () => {
     expect(screen.getByText("Archive")).toBeInTheDocument();
   });
 
+  it("shows Promote to test case when conversion is available", () => {
+    const onConvertToTestCase = vi.fn();
+    render(
+      <ChatHistoryRow
+        session={sessionStub({ status: "active" })}
+        isActive={false}
+        isAuthenticated
+        isStreaming={false}
+        onSelect={vi.fn()}
+        canConvertToTestCase
+        onConvertToTestCase={onConvertToTestCase}
+        actions={actions}
+      />,
+    );
+
+    expect(screen.getByText("Promote to test case")).toBeInTheDocument();
+  });
+
   it("shows Unarchive when the session is archived", () => {
     render(
       <ChatHistoryRow
