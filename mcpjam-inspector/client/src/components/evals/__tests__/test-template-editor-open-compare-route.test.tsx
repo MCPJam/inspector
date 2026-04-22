@@ -229,7 +229,7 @@ describe("TestTemplateEditor run view from route", () => {
       .getByText(modelLabel, { selector: "div" })
       .closest(".rounded-2xl");
     expect(card).not.toBeNull();
-    return card!;
+    return card as HTMLElement;
   }
 
   function getMetricBar(card: HTMLElement, label: "Latency" | "Tokens") {
@@ -618,6 +618,87 @@ describe("TestTemplateEditor run view from route", () => {
     expect(retryRequest.provider).toBe("openai");
     expect(retryRequest.model).toBe("gpt-4");
     expect(updateTestCaseMutationMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("persists unsaved test case draft fields before starting a compare run", async () => {
+    const user = userEvent.setup();
+    const draftCase = {
+      ...caseDoc,
+      title: "Untitled test case",
+      query: "",
+      isNegativeTest: false,
+      promptTurns: undefined,
+      expectedToolCalls: [],
+      lastMessageRun: undefined,
+    };
+
+    useQueryMock.mockImplementation((name: string, args: unknown) => {
+      if (name === "testSuites:listTestCases") return [draftCase];
+      if (name === "testSuites:getTestSuite") {
+        return { _id: "suite-1", environment: { servers: ["srv"] } };
+      }
+      if (name === "testSuites:listTestIterations" && args !== "skip") {
+        return [];
+      }
+      return undefined;
+    });
+
+    renderWithProviders(
+      <TestTemplateEditor
+        suiteId="suite-1"
+        selectedTestCaseId="case-1"
+        connectedServerNames={new Set(["srv"])}
+        workspaceId={null}
+        availableModels={[
+          {
+            provider: "openai",
+            id: "gpt-4",
+            model: "gpt-4",
+            name: "GPT-4",
+            label: "GPT-4",
+          } as any,
+        ]}
+      />,
+    );
+
+    await user.type(
+      await screen.findByPlaceholderText("Enter the user prompt…"),
+      "Find the latest incidents",
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Untitled test case" }),
+    );
+    const titleInput = screen.getByDisplayValue("Untitled test case");
+    await user.clear(titleInput);
+    await user.type(titleInput, "Named draft case");
+    await user.keyboard("{Enter}");
+
+    await user.click(screen.getByRole("button", { name: /^run$/i }));
+
+    await waitFor(() => {
+      expect(streamEvalTestCaseMock).toHaveBeenCalledTimes(1);
+    });
+
+    expect(updateTestCaseMutationMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        testCaseId: "case-1",
+        title: "Named draft case",
+        query: "Find the latest incidents",
+        runs: 1,
+        expectedToolCalls: [],
+        isNegativeTest: true,
+        promptTurns: [
+          expect.objectContaining({
+            id: "turn-1",
+            prompt: "Find the latest incidents",
+            expectedToolCalls: [],
+          }),
+        ],
+      }),
+    );
+    expect(updateTestCaseMutationMock.mock.invocationCallOrder[0]).toBeLessThan(
+      streamEvalTestCaseMock.mock.invocationCallOrder[0],
+    );
   });
 
   it("renders an immediate chat preview instead of the generic spinner before the first stream event", async () => {

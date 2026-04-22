@@ -25,7 +25,6 @@ import { toast } from "sonner";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import {
   listEvalTools,
-  runEvalTestCase,
   streamEvalTestCase,
 } from "@/lib/apis/evals-api";
 import { Button } from "@mcpjam/design-system/button";
@@ -764,20 +763,30 @@ export function TestTemplateEditor({
     }
   };
 
-  const persistSelectedCompareModels = async (modelValues: string[]) => {
-    if (!currentTestCase) {
-      return;
-    }
-
-    const nextModels = modelValues.map((modelValue) => {
+  const buildSelectedCompareModels = (
+    modelValues: string[],
+  ): Array<{ provider: string; model: string }> => {
+    return modelValues.map((modelValue) => {
       const { provider, model } = parseModelValue(modelValue);
       if (!provider || !model) {
         throw new Error(`Invalid model selection: ${modelValue}`);
       }
       return { provider, model };
     });
+  };
 
-    const currentModels = currentTestCase.models ?? [];
+  const persistCompareRunDraft = async (
+    savePayload: ReturnType<typeof buildSavePayload>,
+    modelValues: string[],
+  ) => {
+    if (!currentTestCase) {
+      return;
+    }
+
+    const nextModels = buildSelectedCompareModels(modelValues);
+
+    const currentModels: Array<{ provider: string; model: string }> =
+      currentTestCase.models ?? [];
     const modelsUnchanged =
       currentModels.length === nextModels.length &&
       currentModels.every(
@@ -786,13 +795,14 @@ export function TestTemplateEditor({
           model.model === nextModels[index]?.model,
       );
 
-    if (modelsUnchanged) {
+    if (!hasUnsavedChanges && modelsUnchanged) {
       return;
     }
 
     await updateTestCaseMutation({
       testCaseId: currentTestCase._id,
-      models: nextModels,
+      ...(hasUnsavedChanges ? savePayload : {}),
+      ...(modelsUnchanged ? {} : { models: nextModels }),
     });
   };
 
@@ -1147,13 +1157,13 @@ export function TestTemplateEditor({
 
     if (startsNewCompareSession) {
       try {
-        await persistSelectedCompareModels(selectedModelValues);
+        await persistCompareRunDraft(savePayload, selectedModelValues);
       } catch (error) {
-        console.error("Failed to save compare model selection:", error);
+        console.error("Failed to save test case before compare run:", error);
         toast.error(
           getBillingErrorMessage(
             error,
-            "Failed to save compare models before running",
+            "Failed to save test case before running",
           ),
         );
         return;
@@ -2357,6 +2367,7 @@ export function TestTemplateEditor({
                         testCase={currentTestCase}
                         serverNames={connectedServerList}
                         workspaceId={workspaceId}
+                        onContinueInChat={onContinueInChat}
                         onStreamingTraceLoaded={() =>
                           clearCompareStreamingState(record.modelValue)
                         }

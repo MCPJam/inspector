@@ -102,6 +102,70 @@ describe("SuiteExecutionsOverview", () => {
     expect(screen.queryByText("Snapshot title")).toBeNull();
   });
 
+  it("hides executions whose test case no longer exists live", () => {
+    render(
+      <SuiteExecutionsOverview
+        cases={cases}
+        allIterations={[
+          iteration({ _id: "live" }),
+          iteration({
+            _id: "deleted",
+            testCaseId: "deleted-case",
+            suiteRunId: "run-deleted",
+            testCaseSnapshot: { title: "Deleted snapshot" } as any,
+          }),
+        ]}
+        onOpenIteration={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByTestId("suite-execution-row-live")).toBeInTheDocument();
+    expect(screen.queryByTestId("suite-execution-row-deleted")).toBeNull();
+    expect(screen.queryByText("Deleted snapshot")).toBeNull();
+  });
+
+  it("keeps run-linked executions without a test case id", () => {
+    render(
+      <SuiteExecutionsOverview
+        cases={cases}
+        allIterations={[
+          iteration({
+            _id: "run-linked",
+            testCaseId: undefined,
+            suiteRunId: "run-1",
+            testCaseSnapshot: { title: "Snapshot case" } as any,
+          }),
+        ]}
+        onOpenIteration={vi.fn()}
+      />,
+    );
+
+    expect(
+      screen.getByTestId("suite-execution-row-run-linked"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Snapshot case")).toBeInTheDocument();
+  });
+
+  it("shows the empty state when all executions are filtered out", () => {
+    render(
+      <SuiteExecutionsOverview
+        cases={cases}
+        allIterations={[
+          iteration({
+            _id: "deleted-only",
+            testCaseId: "deleted-case",
+            suiteRunId: "run-deleted",
+            testCaseSnapshot: { title: "Deleted snapshot" } as any,
+          }),
+        ]}
+        onOpenIteration={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("No executions found.")).toBeInTheDocument();
+    expect(screen.queryByTestId(/suite-execution-row-/)).toBeNull();
+  });
+
   it("fires onOpenIteration when an openable row is clicked", async () => {
     const user = userEvent.setup();
     const onOpenIteration = vi.fn();
