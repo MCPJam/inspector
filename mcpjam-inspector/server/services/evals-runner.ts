@@ -400,6 +400,59 @@ function toStreamToolCalls(toolCalls: ToolCall[]): EvalStreamToolCall[] {
   }));
 }
 
+/**
+ * Parse the backend's UI Message Stream (SSE format produced by
+ * `toUIMessageStreamResponse()` in AI SDK v6) into chunk objects.
+ *
+ * Wire format: `data: <JSON>\n\n` per event, terminated by `data: [DONE]\n\n`.
+ */
+async function* parseBackendUIMessageSSE(
+  body: ReadableStream<Uint8Array>,
+): AsyncGenerator<{ type: string; [key: string]: unknown }> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      let boundary: number;
+      while ((boundary = buffer.indexOf("\n\n")) !== -1) {
+        const event = buffer.slice(0, boundary);
+        buffer = buffer.slice(boundary + 2);
+        for (const line of event.split("\n")) {
+          if (!line.startsWith("data: ")) continue;
+          const data = line.slice(6);
+          if (data === "[DONE]") return;
+          try {
+            yield JSON.parse(data);
+          } catch {
+            /* ignore malformed JSON */
+          }
+        }
+      }
+    }
+    // Flush remaining buffer
+    if (buffer.trim()) {
+      for (const line of buffer.split("\n")) {
+        if (!line.startsWith("data: ")) continue;
+        const data = line.slice(6);
+        if (data === "[DONE]") return;
+        try {
+          yield JSON.parse(data);
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
 function buildTraceSnapshotEvent(params: {
   turnIndex: number;
   stepIndex?: number;
@@ -2566,7 +2619,7 @@ const streamIterationViaBackend = async ({
             ...(authHeader ? { ...authHeader } : {}),
           },
           body: JSON.stringify({
-            mode: "step",
+            skipChatIngestion: true,
             messages: JSON.stringify(messageHistory),
             model: modelId,
             ...(systemPrompt ? { systemPrompt } : {}),
@@ -2617,15 +2670,8 @@ const streamIterationViaBackend = async ({
           break;
         }
 
-        const json: any = await res.json();
-        const llmEndAbs = Date.now();
-        if (!json?.ok || !Array.isArray(json.messages)) {
-          iterationError = "Invalid backend response payload";
-          iterationErrorDetails = JSON.stringify(json, null, 2);
-          logger.error(
-            "[evals] invalid backend response payload",
-            new Error("Invalid backend response payload"),
-          );
+        if (!res.body) {
+          iterationError = "No response body from backend stream";
           const failAbs = Date.now();
           pushBackendStepLlmFailureSpans(
             capturedSpans,
@@ -2635,9 +2681,104 @@ const streamIterationViaBackend = async ({
             stepStartAbs,
             llmStartAbs,
             failAbs,
-            {
-              modelId,
-            },
+            { modelId },
+          );
+          emit(
+            buildTraceSnapshotEvent({
+              turnIndex: promptIndex,
+              stepIndex,
+              snapshotKind: "failure",
+              messages: messageHistory,
+              spans: capturedSpans,
+              actualToolCalls: extractToolCallsFromConversation({
+                messages: messageHistory,
+              }),
+              usage: accumulatedUsage,
+            }),
+          );
+          emit({
+            type: "error",
+            message: iterationError,
+          });
+          break;
+        }
+
+        // Consume SSE stream from the backend (real-time text deltas)
+        let stepText = "";
+        const stepToolCalls: Array<{
+          toolCallId: string;
+          toolName: string;
+          input: unknown;
+        }> = [];
+        let stepFinishReason: string | undefined;
+        let stepUsage: {
+          inputTokens?: number;
+          outputTokens?: number;
+          totalTokens?: number;
+        } = {};
+
+        for await (const chunk of parseBackendUIMessageSSE(res.body)) {
+          switch (chunk.type) {
+            case "text-delta":
+              stepText += (chunk.delta as string) ?? "";
+              emit({
+                type: "text_delta",
+                content: (chunk.delta as string) ?? "",
+              });
+              break;
+            case "tool-input-available": {
+              const tcId =
+                (chunk.toolCallId as string) ??
+                `tc_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+              const tcName = chunk.toolName as string;
+              const tcInput = (chunk.input ?? {}) as Record<string, unknown>;
+              stepToolCalls.push({
+                toolCallId: tcId,
+                toolName: tcName,
+                input: tcInput,
+              });
+              if (tcName) {
+                emit({
+                  type: "tool_call",
+                  toolName: tcName,
+                  toolCallId: tcId,
+                  args: tcInput,
+                });
+              }
+              break;
+            }
+            case "finish": {
+              stepFinishReason = chunk.finishReason as string | undefined;
+              const metadata = chunk.messageMetadata as
+                | Record<string, number>
+                | undefined;
+              if (metadata) {
+                stepUsage = {
+                  inputTokens: metadata.inputTokens,
+                  outputTokens: metadata.outputTokens,
+                  totalTokens: metadata.totalTokens,
+                };
+              }
+              break;
+            }
+            case "error":
+              iterationError =
+                (chunk.errorText as string) ?? "Backend stream error";
+              break;
+          }
+        }
+
+        if (iterationError) {
+          const failAbs = Date.now();
+          pushBackendStepLlmFailureSpans(
+            capturedSpans,
+            runStartedAt,
+            promptIndex,
+            stepIndex,
+            stepStartAbs,
+            llmStartAbs,
+            failAbs,
+            { modelId },
           );
           emit(
             buildTraceSnapshotEvent({
@@ -2660,73 +2801,41 @@ const streamIterationViaBackend = async ({
           break;
         }
 
-        if (json.usage) {
-          accumulatedUsage.inputTokens =
-            (accumulatedUsage.inputTokens || 0) +
-            (json.usage.promptTokens || 0);
-          accumulatedUsage.outputTokens =
-            (accumulatedUsage.outputTokens || 0) +
-            (json.usage.completionTokens || 0);
-          accumulatedUsage.totalTokens =
-            (accumulatedUsage.totalTokens || 0) + (json.usage.totalTokens || 0);
-        }
+        const llmEndAbs = Date.now();
 
-        // Emit events for the assistant messages from the backend response
-        for (const msg of json.messages as any[]) {
-          if (msg?.role === "assistant") {
-            if (typeof msg.content === "string" && msg.content.length > 0) {
-              emit({ type: "text_delta", content: msg.content });
-            } else if (Array.isArray(msg.content)) {
-              for (const item of msg.content) {
-                if (
-                  item?.type === "text" &&
-                  typeof item.text === "string" &&
-                  item.text.length > 0
-                ) {
-                  emit({ type: "text_delta", content: item.text });
-                } else if (item?.type === "tool-call") {
-                  const name = item.toolName ?? item.name;
-                  const fallbackToolCallId =
-                    item.toolCallId ??
-                    `tc_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-                  if (!item.toolCallId) {
-                    item.toolCallId = fallbackToolCallId;
-                  }
-                  if (item.input == null) {
-                    item.input = item.parameters ?? item.args ?? {};
-                  }
-                  if (name) {
-                    emit({
-                      type: "tool_call",
-                      toolName: name,
-                      toolCallId: fallbackToolCallId,
-                      args: item.input,
-                    });
-                  }
-                }
-              }
-            }
-          }
-        }
+        // Update accumulated usage from stream metadata
+        accumulatedUsage.inputTokens =
+          (accumulatedUsage.inputTokens || 0) +
+          (stepUsage.inputTokens || 0);
+        accumulatedUsage.outputTokens =
+          (accumulatedUsage.outputTokens || 0) +
+          (stepUsage.outputTokens || 0);
+        accumulatedUsage.totalTokens =
+          (accumulatedUsage.totalTokens || 0) +
+          (stepUsage.totalTokens || 0);
 
-        for (const msg of json.messages as any[]) {
-          if (msg?.role === "assistant" && Array.isArray(msg.content)) {
-            for (const item of msg.content) {
-              if (item?.type === "tool-call") {
-                const name = item.toolName ?? item.name;
-                if (name) {
-                  promptToolsCalled.push({
-                    toolName: name,
-                    arguments: item.input ?? item.parameters ?? item.args ?? {},
-                  });
-                }
-                if (item.input == null) {
-                  item.input = item.parameters ?? item.args ?? {};
-                }
-              }
-            }
-          }
-          messageHistory.push(msg);
+        // Reconstruct assistant message from stream chunks
+        const assistantContent: unknown[] = [];
+        if (stepText) {
+          assistantContent.push({ type: "text", text: stepText });
+        }
+        for (const tc of stepToolCalls) {
+          assistantContent.push({
+            type: "tool-call",
+            toolCallId: tc.toolCallId,
+            toolName: tc.toolName,
+            input: tc.input ?? {},
+          });
+          promptToolsCalled.push({
+            toolName: tc.toolName,
+            arguments: (tc.input ?? {}) as Record<string, any>,
+          });
+        }
+        if (assistantContent.length > 0) {
+          messageHistory.push({
+            role: "assistant",
+            content: assistantContent,
+          } as ModelMessage);
         }
 
         if (hasUnresolvedToolCalls(messageHistory as any)) {
@@ -2818,9 +2927,9 @@ const streamIterationViaBackend = async ({
               },
               {
                 modelId,
-                inputTokens: json.usage?.promptTokens,
-                outputTokens: json.usage?.completionTokens,
-                totalTokens: json.usage?.totalTokens,
+                inputTokens: stepUsage.inputTokens,
+                outputTokens: stepUsage.outputTokens,
+                totalTokens: stepUsage.totalTokens,
                 messageStartIndex:
                   stepMessageEndIndex != null
                     ? stepMessageStartIndex
@@ -2846,9 +2955,9 @@ const streamIterationViaBackend = async ({
               failAbs,
               {
                 modelId,
-                inputTokens: json.usage?.promptTokens,
-                outputTokens: json.usage?.completionTokens,
-                totalTokens: json.usage?.totalTokens,
+                inputTokens: stepUsage.inputTokens,
+                outputTokens: stepUsage.outputTokens,
+                totalTokens: stepUsage.totalTokens,
                 messageStartIndex:
                   stepMessageEndIndex != null
                     ? stepMessageStartIndex
@@ -2895,9 +3004,9 @@ const streamIterationViaBackend = async ({
             undefined,
             {
               modelId,
-              inputTokens: json.usage?.promptTokens,
-              outputTokens: json.usage?.completionTokens,
-              totalTokens: json.usage?.totalTokens,
+              inputTokens: stepUsage.inputTokens,
+              outputTokens: stepUsage.outputTokens,
+              totalTokens: stepUsage.totalTokens,
               messageStartIndex:
                 stepMessageEndIndex != null ? stepMessageStartIndex : undefined,
               messageEndIndex: stepMessageEndIndex,
@@ -2912,8 +3021,8 @@ const streamIterationViaBackend = async ({
           type: "step_finish",
           stepNumber: steps,
           usage: {
-            inputTokens: json.usage?.promptTokens ?? 0,
-            outputTokens: json.usage?.completionTokens ?? 0,
+            inputTokens: stepUsage.inputTokens ?? 0,
+            outputTokens: stepUsage.outputTokens ?? 0,
           },
         });
         emit(
@@ -2930,8 +3039,7 @@ const streamIterationViaBackend = async ({
           }),
         );
 
-        const finishReason: string | undefined = json.finishReason;
-        if (finishReason && finishReason !== "tool-calls") {
+        if (stepFinishReason && stepFinishReason !== "tool-calls") {
           break;
         }
       } catch (error) {

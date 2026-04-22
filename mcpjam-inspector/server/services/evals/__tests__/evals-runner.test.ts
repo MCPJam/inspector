@@ -147,6 +147,31 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     };
   }
 
+  /** SSE-format response for the streaming backend path (no mode:"step"). */
+  function createBackendStreamResponse() {
+    const chunks = [
+      'data: {"type":"text-delta","id":"t1","delta":"Done"}\n\n',
+      'data: {"type":"finish","finishReason":"stop","messageMetadata":{"inputTokens":1,"outputTokens":2,"totalTokens":3}}\n\n',
+      "data: [DONE]\n\n",
+    ];
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const chunk of chunks) {
+          controller.enqueue(encoder.encode(chunk));
+        }
+        controller.close();
+      },
+    });
+    return {
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      body: stream,
+      text: vi.fn().mockResolvedValue(""),
+    };
+  }
+
   it("persists compareRunId in quick-run iteration metadata when provided", async () => {
     const updatePayload = await runQuickTestCase("cmp_123");
 
@@ -439,7 +464,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
 
   it("streams bare MCPJam Anthropic test cases through the backend without a BYOK key", async () => {
     const emitted: Array<Record<string, unknown>> = [];
-    fetchMock.mockResolvedValue(createBackendSuccessResponse());
+    fetchMock.mockResolvedValue(createBackendStreamResponse());
 
     await expect(
       streamTestCase({

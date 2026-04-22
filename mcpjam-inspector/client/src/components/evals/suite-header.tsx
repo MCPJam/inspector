@@ -10,11 +10,14 @@ import {
   GitBranch,
   Loader2,
   PanelLeft,
+  Play,
   Plus,
   RotateCw,
   Sparkles,
   X,
 } from "lucide-react";
+import posthog from "posthog-js";
+import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { formatRunId } from "./helpers";
 import {
   EvalSuite,
@@ -37,6 +40,11 @@ import {
   type ProviderTokens,
 } from "@/hooks/use-ai-provider-keys";
 import { RunDetailPlaygroundActions } from "./run-detail-playground-actions";
+import type { ModelDefinition } from "@/shared/types";
+import {
+  SuiteOverviewModelBar,
+  type SuiteOverviewModelRow,
+} from "./suite-overview-model-bar";
 
 interface SuiteHeaderProps {
   suite: EvalSuite;
@@ -74,6 +82,18 @@ interface SuiteHeaderProps {
   generateTestCasesDisabledReason?: string;
   isGeneratingTestCases?: boolean;
   onCreateTestCase?: () => void;
+  /** Per-case runs from the test cases list / sidebar; not shown in the suite header. */
+  onRunTestCase?: (testCase: EvalCase) => void;
+  /** When true, per-case runs (row play + header run-first) are disabled. */
+  blockTestCaseRuns?: boolean;
+  /**
+   * Playground: block suite-level Run all while a single case quick-run is in flight.
+   */
+  runningTestCaseId?: string | null;
+  /** Models catalog for the suite overview model bar (same source as suite settings). */
+  availableModels?: ModelDefinition[];
+  /** Persists suite models for all cases (same flow as suite settings → Models). */
+  onSuiteModelsUpdate?: (models: SuiteOverviewModelRow[]) => Promise<void>;
 }
 
 export function SuiteHeader(props: SuiteHeaderProps) {
@@ -104,7 +124,11 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     generateTestCasesDisabledReason,
     isGeneratingTestCases = false,
     onCreateTestCase,
+    blockTestCaseRuns = false,
+    runningTestCaseId = null,
     runsViewMode = "runs",
+    availableModels = [],
+    onSuiteModelsUpdate,
   } = props;
 
   const showTestCaseCtas =
@@ -289,8 +313,9 @@ export function SuiteHeader(props: SuiteHeaderProps) {
 
   // Overview mode
   return (
-    <div className="flex items-center justify-between gap-4 mb-4">
-      <div className="flex items-center gap-4 flex-1">
+    <div className="mb-4 space-y-3">
+      <div className="flex items-center justify-between gap-4">
+        <div className="flex flex-1 items-center gap-4">
         {isEditingName ? (
           <input
             type="text"
@@ -318,8 +343,8 @@ export function SuiteHeader(props: SuiteHeaderProps) {
             compact={true}
           />
         )}
-      </div>
-      <div className="flex items-center gap-2 shrink-0">
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
         {casesSidebarHidden && onShowCasesSidebar && runsViewMode === "runs" ? (
           <Button
             type="button"
@@ -337,43 +362,129 @@ export function SuiteHeader(props: SuiteHeaderProps) {
             Setup CI
           </Button>
         )}
-        {showTestCaseCtas && onGenerateTestCases ? (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <span className="inline-flex">
+        {hideRunActions && showTestCaseCtas
+          ? (() => {
+              const testCaseCount = testCases?.length ?? 0;
+              const isRunAllDisabled = Boolean(
+                isRerunning ||
+                  replayingRunId != null ||
+                  runningTestCaseId != null ||
+                  testCaseCount === 0 ||
+                  !hasServersConfigured,
+              );
+              const runAllDisabledReasonTooltip = !hasServersConfigured
+                ? "Configure suite servers before running the full suite."
+                : testCaseCount === 0
+                  ? "Add a test case first."
+                  : isRerunning || replayingRunId != null
+                    ? "A suite or replay is already in progress."
+                    : runningTestCaseId != null
+                      ? "Finish the in-progress test case run first."
+                      : null;
+              const runAllConnectionHint =
+                missingServers.length > 0 ? "Connect and run." : null;
+              const runAllButton = (
                 <Button
                   type="button"
-                  variant="outline"
+                  variant="default"
                   size="sm"
-                  className="h-8"
-                  onClick={onGenerateTestCases}
-                  disabled={!canGenerateTestCases || isGeneratingTestCases}
-                  aria-busy={isGeneratingTestCases}
+                  className="h-8 gap-1.5"
+                  disabled={isRunAllDisabled}
+                  aria-label="Run all cases in this suite"
+                  aria-busy={isRerunning}
+                  onClick={() => {
+                    posthog.capture("run_all_cases_button_clicked", {
+                      location: "suite_header",
+                      platform: detectPlatform(),
+                      environment: detectEnvironment(),
+                      suite_id: suite._id,
+                    });
+                    onRerun(suite);
+                  }}
                 >
-                  {isGeneratingTestCases ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  {isRerunning ? (
+                    <Loader2
+                      className="h-3.5 w-3.5 shrink-0 animate-spin"
+                      aria-hidden
+                    />
                   ) : (
-                    <Sparkles className="h-3.5 w-3.5" />
+                    <Play className="h-3.5 w-3.5 shrink-0" aria-hidden />
                   )}
-                  Generate
+                  Run all
                 </Button>
-              </span>
-            </TooltipTrigger>
-            <TooltipContent
-              variant="muted"
-              side="bottom"
-              align="start"
-              sideOffset={8}
-              className="max-w-[min(17rem,calc(100vw-1.5rem))] px-3 py-2 text-left font-normal leading-relaxed"
-            >
-              {isGeneratingTestCases
-                ? "Generating test cases…"
-                : !canGenerateTestCases
-                  ? generateTestCasesDisabledReason ??
-                    "Configure suite servers before generating cases."
-                  : "Generate suggested cases from your server's tools."}
-            </TooltipContent>
-          </Tooltip>
+              );
+              if (isRunAllDisabled && runAllDisabledReasonTooltip) {
+                return (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span className="inline-flex">{runAllButton}</span>
+                    </TooltipTrigger>
+                    <TooltipContent
+                      variant="muted"
+                      side="bottom"
+                      className="max-w-[16rem]"
+                    >
+                      {runAllDisabledReasonTooltip}
+                    </TooltipContent>
+                  </Tooltip>
+                );
+              }
+              if (!isRunAllDisabled && runAllConnectionHint) {
+                return (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span className="inline-flex">{runAllButton}</span>
+                    </TooltipTrigger>
+                    <TooltipContent
+                      variant="muted"
+                      side="bottom"
+                      className="max-w-[16rem]"
+                    >
+                      {runAllConnectionHint}
+                    </TooltipContent>
+                  </Tooltip>
+                );
+              }
+              return runAllButton;
+            })()
+          : null}
+        {showTestCaseCtas && onGenerateTestCases ? (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="inline-flex">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-8"
+                    onClick={onGenerateTestCases}
+                    disabled={!canGenerateTestCases || isGeneratingTestCases}
+                    aria-busy={isGeneratingTestCases}
+                  >
+                    {isGeneratingTestCases ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Sparkles className="h-3.5 w-3.5" />
+                    )}
+                    Generate
+                  </Button>
+                </span>
+              </TooltipTrigger>
+              <TooltipContent
+                variant="muted"
+                side="bottom"
+                align="start"
+                sideOffset={8}
+                className="max-w-[min(17rem,calc(100vw-1.5rem))] px-3 py-2 text-left font-normal leading-relaxed"
+              >
+                {isGeneratingTestCases
+                  ? "Generating test cases…"
+                  : !canGenerateTestCases
+                    ? generateTestCasesDisabledReason ??
+                      "Configure suite servers before generating cases."
+                    : "Generate suggested cases from your server's tools."}
+              </TooltipContent>
+            </Tooltip>
         ) : null}
         {showTestCaseCtas && onCreateTestCase ? (
           <Button
@@ -441,7 +552,16 @@ export function SuiteHeader(props: SuiteHeaderProps) {
             </TooltipContent>
           </Tooltip>
         )}
+        </div>
       </div>
+      {testCases.length > 0 ? (
+        <SuiteOverviewModelBar
+          testCases={testCases}
+          availableModels={availableModels}
+          readOnly={readOnlyConfig}
+          onUpdate={onSuiteModelsUpdate}
+        />
+      ) : null}
     </div>
   );
 }

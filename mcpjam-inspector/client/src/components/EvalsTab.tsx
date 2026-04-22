@@ -580,6 +580,10 @@ export function EvalsTab({
           canDeleteSuites={canDeleteSuite}
           onDeleteSuitesBatch={handleDeleteSuitesBatch}
           deleteInProgress={Boolean(handlers.deletingSuiteId)}
+          onRunAll={handlers.handleRerun}
+          rerunningSuiteId={handlers.rerunningSuiteId}
+          replayingRunId={handlers.replayingRunId}
+          runningTestCaseId={handlers.runningTestCaseId}
         />
       </div>
     );

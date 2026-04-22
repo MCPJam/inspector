@@ -170,7 +170,6 @@ describe("TestCasesOverview", () => {
     await waitFor(() => {
       expect(within(row).getByLabelText("Failed")).toBeInTheDocument();
     });
-    expect(within(row).getByLabelText("Last run failed")).toBeInTheDocument();
     expect(within(row).queryByLabelText("Passed")).not.toBeInTheDocument();
   });
 
@@ -454,11 +453,11 @@ describe("TestCasesOverview", () => {
 
     expect(screen.getByText("Select all")).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Cancel" }),
-    ).toBeDisabled();
+      screen.queryByRole("button", { name: "Cancel" }),
+    ).not.toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Delete" }),
-    ).toBeDisabled();
+      screen.queryByRole("button", { name: "Delete" }),
+    ).not.toBeInTheDocument();
     await user.click(
       screen.getByRole("checkbox", {
         name: /Select case Create a simple flowchart diagram/i,

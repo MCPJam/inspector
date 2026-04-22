@@ -469,6 +469,13 @@ export function SuiteIterationsView({
             canGenerateTestCases={canGenerateTestCases}
             generateTestCasesDisabledReason={generateTestCasesDisabledReason}
             isGeneratingTestCases={isGeneratingTestCases}
+            onRunTestCase={onRunTestCase}
+            blockTestCaseRuns={Boolean(rerunningSuiteId || replayingRunId)}
+            runningTestCaseId={runningTestCaseId}
+            availableModels={availableModels}
+            onSuiteModelsUpdate={
+              readOnlyConfig ? undefined : handleUpdateTests
+            }
           />
         </div>
       ) : null}
@@ -605,13 +612,6 @@ export function SuiteIterationsView({
                     connectedServerNames={connectedServerNames}
                     onDeleteTestCasesBatch={onDeleteTestCasesBatch}
                     testCasesClickHint="Click a case row to open the test case. Click the last-run summary to jump straight to compare results for that run."
-                    onReplayLatestRun={
-                      onReplayRun
-                        ? (run) => onReplayRun(suite, run)
-                        : undefined
-                    }
-                    isReplayingLatestRun={isReplayingLatestRun}
-                    missingReplayProviderKeys={missingReplayProviderKeys}
                     userMap={userMap}
                   />
                 </motion.div>

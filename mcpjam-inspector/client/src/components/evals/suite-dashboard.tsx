@@ -1,4 +1,3 @@
-import { SuiteHeroStats } from "./suite-hero-stats";
 import { SuiteRunsChartGrid } from "./suite-runs-chart-grid";
 import { SuiteInsightsCollapsible } from "./suite-insights-collapsible";
 import { SuiteRunsList } from "./suite-runs-list";
@@ -46,16 +45,12 @@ export interface SuiteDashboardProps {
   connectedServerNames?: Set<string>;
   onDeleteTestCasesBatch?: (testCaseIds: string[]) => Promise<void>;
   testCasesClickHint?: string;
-  onReplayLatestRun?: (run: EvalSuiteRun) => void;
-  isReplayingLatestRun?: boolean;
-  missingReplayProviderKeys?: string[];
   userMap?: Map<string, { name: string; imageUrl?: string }>;
 }
 
 /**
- * Unified suite detail view: hero stats + trend/insights charts on top, with
- * test cases and recent runs surfaced side-by-side below. Replaces the nested
- * "Test cases" / "Executions" tab selector so both lists are visible at once.
+ * Unified suite detail view: pass-rate / model charts on top, run insights
+ * under the charts when available, then test cases and runs side by side.
  */
 export function SuiteDashboard({
   suite,
@@ -74,41 +69,21 @@ export function SuiteDashboard({
   connectedServerNames,
   onDeleteTestCasesBatch,
   testCasesClickHint,
-  onReplayLatestRun,
-  isReplayingLatestRun,
-  missingReplayProviderKeys,
   userMap,
 }: SuiteDashboardProps) {
   const hasRuns = runs.length > 0;
-  const isSDK = suite.source === "sdk";
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4">
-      <SuiteHeroStats
-        runs={runs}
-        allIterations={allIterations}
+      <SuiteRunsChartGrid
+        suiteSource={suite.source}
         runTrendData={runTrendData}
         modelStats={modelStats}
-        testCaseCount={cases.length}
-        isSDK={isSDK}
+        runsLoading={runsLoading}
         onRunClick={onRunClick}
-        onReplayLatestRun={onReplayLatestRun}
-        isReplayingLatestRun={isReplayingLatestRun}
-        missingReplayProviderKeys={missingReplayProviderKeys}
       />
-      {hasRuns ? (
-        <>
-          <SuiteRunsChartGrid
-            suiteSource={suite.source}
-            runTrendData={runTrendData}
-            modelStats={modelStats}
-            runsLoading={runsLoading}
-            onRunClick={onRunClick}
-          />
-          <SuiteInsightsCollapsible runs={runs} />
-        </>
-      ) : null}
-      <div className="grid min-h-0 gap-4 xl:grid-cols-2">
+      {hasRuns ? <SuiteInsightsCollapsible runs={runs} /> : null}
+      <div className="grid min-h-0 gap-4 lg:grid-cols-2">
         <TestCasesOverview
           suite={suite}
           cases={cases}

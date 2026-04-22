@@ -3,10 +3,13 @@ import {
   CircleAlert,
   ChevronRight,
   FlaskConical,
+  Loader2,
   Play,
   Plus,
   Trash2,
 } from "lucide-react";
+import posthog from "posthog-js";
+import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { Button } from "@mcpjam/design-system/button";
 import { Checkbox } from "@mcpjam/design-system/checkbox";
 import {
@@ -17,7 +20,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@mcpjam/design-system/dialog";
-import type { EvalSuiteOverviewEntry } from "./types";
+import type { EvalSuite, EvalSuiteOverviewEntry } from "./types";
 import { evalOverviewEntryOutcomeTitle } from "./helpers";
 import { cn } from "@/lib/utils";
 
@@ -157,6 +160,14 @@ type EvalsSuiteListSidebarProps = {
   onDeleteSuitesBatch?: (suiteIds: string[]) => Promise<void>;
   /** Disable selection actions while a suite delete is in progress elsewhere. */
   deleteInProgress?: boolean;
+  /**
+   * When set, the row play control runs the full suite (same as suite header "Run all")
+   * instead of only navigating into the suite.
+   */
+  onRunAll?: (suite: EvalSuite) => void | Promise<void>;
+  rerunningSuiteId?: string | null;
+  replayingRunId?: string | null;
+  runningTestCaseId?: string | null;
 };
 
 export function EvalsSuiteListSidebar({
@@ -168,6 +179,10 @@ export function EvalsSuiteListSidebar({
   canDeleteSuites = false,
   onDeleteSuitesBatch,
   deleteInProgress = false,
+  onRunAll,
+  rerunningSuiteId = null,
+  replayingRunId = null,
+  runningTestCaseId = null,
 }: EvalsSuiteListSidebarProps) {
   useTick();
 
@@ -347,6 +362,12 @@ export function EvalsSuiteListSidebar({
                     entry.latestRun?.status === "failed";
                   const isSelected = selectedSuiteId === suite._id;
                   const suiteTitle = suite.name || "Untitled suite";
+                  const runAllBlocked = Boolean(
+                    rerunningSuiteId ||
+                      replayingRunId != null ||
+                      runningTestCaseId != null,
+                  );
+                  const isThisSuiteRerunning = rerunningSuiteId === suite._id;
 
                   return (
                     <div
@@ -408,14 +429,37 @@ export function EvalsSuiteListSidebar({
                         variant="secondary"
                         size="sm"
                         className="h-8 w-8 shrink-0 p-0"
-                        aria-label={`Open suite: ${suiteTitle}`}
+                        aria-label={
+                          onRunAll
+                            ? `Run all cases in ${suiteTitle}`
+                            : `Open suite: ${suiteTitle}`
+                        }
+                        aria-busy={onRunAll ? isThisSuiteRerunning : undefined}
+                        disabled={onRunAll ? runAllBlocked : false}
                         onClick={(e) => {
                           e.preventDefault();
                           e.stopPropagation();
-                          onSelectSuite(suite._id);
+                          if (onRunAll) {
+                            posthog.capture("run_all_cases_button_clicked", {
+                              location: "suite_list_sidebar",
+                              platform: detectPlatform(),
+                              environment: detectEnvironment(),
+                              suite_id: suite._id,
+                            });
+                            void onRunAll(suite);
+                          } else {
+                            onSelectSuite(suite._id);
+                          }
                         }}
                       >
-                        <Play className="h-3.5 w-3.5" />
+                        {onRunAll && isThisSuiteRerunning ? (
+                          <Loader2
+                            className="h-3.5 w-3.5 animate-spin"
+                            aria-hidden
+                          />
+                        ) : (
+                          <Play className="h-3.5 w-3.5" />
+                        )}
                       </Button>
                     </div>
                   );

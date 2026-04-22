@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useConvex, useQuery } from "convex/react";
 import posthog from "posthog-js";
-import { CircleAlert, Loader2, Play, Puzzle, Trash2 } from "lucide-react";
+import { Loader2, Play, Puzzle, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@mcpjam/design-system/button";
 import { Checkbox } from "@mcpjam/design-system/checkbox";
@@ -323,29 +323,33 @@ export function TestCasesOverview({
               />
               <span className="text-xs font-medium truncate">Select all</span>
             </div>
-            <div className="flex items-center gap-2 shrink-0">
-              {selectedCaseIds.size > 0 && (
-                <span className="text-xs text-muted-foreground">
+            {selectedCaseIds.size > 0 ? (
+              <div className="flex items-center gap-2 shrink-0">
+                <span className="text-xs tabular-nums text-muted-foreground">
                   {selectedCaseIds.size} selected
                 </span>
-              )}
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setSelectedCaseIds(new Set())}
-                disabled={isBatchDeleting || selectedCaseIds.size === 0}
-              >
-                Cancel
-              </Button>
-              <Button
-                variant="destructive"
-                size="sm"
-                onClick={() => setShowBatchDeleteModal(true)}
-                disabled={isBatchDeleting || selectedCaseIds.size === 0}
-              >
-                Delete
-              </Button>
-            </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 text-muted-foreground"
+                  onClick={() => setSelectedCaseIds(new Set())}
+                  disabled={isBatchDeleting}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="button"
+                  variant="destructive"
+                  size="sm"
+                  className="h-8"
+                  onClick={() => setShowBatchDeleteModal(true)}
+                  disabled={isBatchDeleting}
+                >
+                  Delete
+                </Button>
+              </div>
+            ) : null}
           </div>
         ) : !showDisconnectedPlaygroundEmptyState ? (
           <div className="border-b px-4 py-2 shrink-0 flex items-center justify-between">
@@ -376,7 +380,6 @@ export function TestCasesOverview({
             <div className="flex-1 min-w-[120px]">Case name</div>
             <div className="flex flex-1 min-w-0 justify-end items-center gap-2 max-w-[min(100%,20rem)]">
               <span className="text-right">Last run</span>
-              <span className="w-3.5 shrink-0" aria-hidden />
             </div>
             {showRunColumn ? (
               <div className="w-7 shrink-0" aria-hidden />
@@ -442,7 +445,6 @@ export function TestCasesOverview({
                   lastRunIteration.createdAt ??
                   null)
                 : null;
-              const showLastRunFailed = lastRunResult === "failed";
               const caseTitle = testCase.title || "Untitled test case";
               const passBadge = (
                 <span
@@ -508,14 +510,6 @@ export function TestCasesOverview({
                       {lastRunSummary}
                     </span>
                   )}
-                  <span className="w-3.5 h-3.5 shrink-0 flex items-center justify-center">
-                    {showLastRunFailed ? (
-                      <CircleAlert
-                        className="h-3.5 w-3.5 text-destructive"
-                        aria-label="Last run failed"
-                      />
-                    ) : null}
-                  </span>
                 </div>
               );
 
