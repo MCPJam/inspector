@@ -320,6 +320,8 @@ export function TestTemplateEditor({
 }: TestTemplateEditorProps) {
   const { getAccessToken } = useAuth();
   const { getToken, hasToken } = useAiProviderKeys();
+  const hostStyle = usePreferencesStore((state) => state.hostStyle);
+  const setHostStyle = usePreferencesStore((state) => state.setHostStyle);
   const [editForm, setEditForm] = useState<TestTemplate | null>(null);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [editorMode, setEditorMode] = useState<EditorMode>(
@@ -1937,6 +1939,7 @@ export function TestTemplateEditor({
 
             <div>
               <div
+                data-testid="test-template-model-bar"
                 className="rounded-xl bg-[#f8f5f1] py-2.5 dark:bg-muted/10"
                 title={
                   !latestAvailableIsSaved &&
@@ -2143,6 +2146,20 @@ export function TestTemplateEditor({
                   </div>
                 </div>
               </div>
+            </div>
+
+            <div
+              data-testid="test-template-host-style-row"
+              className="flex items-center justify-start gap-2 px-1 pt-2"
+            >
+              <p className="shrink-0 text-[11px] font-medium text-muted-foreground">
+                Host style
+              </p>
+              <HostStylePillSelector
+                className="w-[164px] shrink-0"
+                value={hostStyle}
+                onValueChange={setHostStyle}
+              />
             </div>
 
             <div className="space-y-4 pt-1">
@@ -2404,7 +2421,6 @@ function RunColumn({
 }) {
   const themeMode = usePreferencesStore((state) => state.themeMode);
   const hostStyle = usePreferencesStore((state) => state.hostStyle);
-  const setHostStyle = usePreferencesStore((state) => state.setHostStyle);
   const { toolsMetadata, toolServerMap, connectedServerIds } =
     useEvalTraceToolContext({
       serverNames,
@@ -2795,19 +2811,7 @@ function RunColumn({
                 data-host-style={hostStyle}
                 style={shellStyle}
               >
-                <div className="shrink-0 px-3 pt-3">
-                  <div className="flex items-center justify-between gap-2">
-                    <p className="shrink-0 text-[9px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
-                      Host Styles
-                    </p>
-                    <HostStylePillSelector
-                      className="w-[164px] shrink-0"
-                      value={hostStyle}
-                      onValueChange={setHostStyle}
-                    />
-                  </div>
-                </div>
-                <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden p-3 pt-2">
+                <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden p-3">
                   {renderedRunContent}
                 </div>
               </div>
