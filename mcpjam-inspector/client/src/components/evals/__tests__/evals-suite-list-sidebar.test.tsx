@@ -19,7 +19,7 @@ function makeEntry(
 }
 
 describe("EvalsSuiteListSidebar", () => {
-  it("renders a card table with suite column headers", () => {
+  it("renders suite rows with last-run status", () => {
     const onSelectSuite = vi.fn();
     render(
       <EvalsSuiteListSidebar
@@ -45,10 +45,41 @@ describe("EvalsSuiteListSidebar", () => {
       />,
     );
 
-    expect(screen.getByText("Suite name")).toBeInTheDocument();
-    expect(screen.getByText("Last run")).toBeInTheDocument();
+    expect(screen.getByText("Browse and open suites")).toBeInTheDocument();
     expect(screen.getByText("Alpha suite")).toBeInTheDocument();
     expect(screen.getByText("Never run")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("checkbox", { name: "Select all suites" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows batch selection when batch delete is enabled", () => {
+    render(
+      <EvalsSuiteListSidebar
+        suites={[
+          makeEntry({
+            suite: {
+              _id: "s1",
+              createdBy: "u",
+              name: "Alpha suite",
+              description: "",
+              configRevision: "r",
+              environment: { servers: ["srv"] },
+              createdAt: 1,
+              updatedAt: 1,
+              source: "ui",
+              tags: [],
+            },
+          }),
+        ]}
+        selectedSuiteId={null}
+        onSelectSuite={vi.fn()}
+        onCreateSuite={vi.fn()}
+        canDeleteSuites
+        onDeleteSuitesBatch={vi.fn()}
+      />,
+    );
+
     expect(
       screen.getByRole("checkbox", { name: "Select all suites" }),
     ).toBeInTheDocument();

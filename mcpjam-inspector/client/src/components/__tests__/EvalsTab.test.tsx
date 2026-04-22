@@ -1,7 +1,6 @@
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
 
 const mocks = vi.hoisted(() => ({
   route: {
@@ -16,6 +15,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@workos-inc/authkit-react", () => ({
   useAuth: () => ({
     user: { id: "user-1" },
+    getAccessToken: vi.fn().mockResolvedValue("token"),
   }),
 }));
 
@@ -23,6 +23,19 @@ vi.mock("convex/react", () => ({
   useConvexAuth: () => ({
     isAuthenticated: true,
     isLoading: false,
+  }),
+  useConvex: () => ({ query: vi.fn().mockResolvedValue([]) }),
+}));
+
+vi.mock("posthog-js", () => ({
+  default: { capture: vi.fn() },
+}));
+
+vi.mock("@/lib/evals/generate-and-persist-tests", () => ({
+  generateAndPersistEvalTests: vi.fn().mockResolvedValue({
+    skippedBecauseExistingCases: false,
+    createdCount: 0,
+    apiReturnedTests: 0,
   }),
 }));
 
@@ -100,6 +113,8 @@ vi.mock("../evals/suite-iterations-view", () => ({
 vi.mock("../evals/use-eval-mutations", () => ({
   useEvalMutations: () => ({
     createTestSuiteMutation: mocks.createTestSuiteMutation,
+    updateTestSuiteMutation: vi.fn().mockResolvedValue(undefined),
+    createTestCaseMutation: vi.fn().mockResolvedValue("tc-1"),
   }),
 }));
 
@@ -204,9 +219,14 @@ describe("EvalsTab", () => {
     render(<EvalsTab workspaceId="ws-1" />);
 
     expect(mocks.navigatePlaygroundEvalsRoute).not.toHaveBeenCalled();
-    expect(
-      screen.getByRole("tab", { name: "Executions" }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Suites" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.getByRole("tab", { name: "Executions" })).toHaveAttribute(
+      "aria-selected",
+      "false",
+    );
     expect(mocks.suiteIterationsView).toHaveBeenCalled();
     expect(mocks.suiteIterationsView.mock.calls.at(-1)?.[0]).toMatchObject({
       suite: expect.objectContaining({ _id: "suite-a" }),
@@ -217,12 +237,10 @@ describe("EvalsTab", () => {
     });
   });
 
-  it("shows the suite list on the Suites tab", async () => {
-    const user = userEvent.setup();
+  it("shows the suite list on the Suites tab when the route is the eval list", () => {
+    mocks.route.current = { type: "list" };
     render(<EvalsTab workspaceId="ws-1" />);
 
-    expect(screen.getByTestId("suite-iterations-view")).toBeInTheDocument();
-    await user.click(screen.getByRole("tab", { name: "Suites" }));
     expect(screen.getByTestId("suite-sidebar")).toBeInTheDocument();
     expect(screen.queryByTestId("suite-iterations-view")).toBeNull();
   });

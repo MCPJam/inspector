@@ -24,6 +24,13 @@ describe("injectHostedServerMapping", () => {
     });
   });
 
+  it("does not embed long opaque id refs in not-found errors", () => {
+    const opaque = "mn79gdfjnftd2esny26j8n4w0s83hc8n";
+    expect(() => resolveHostedServerId(opaque)).toThrow(
+      "Hosted server not found. The server is not in your hosted workspace, or the server list is still loading.",
+    );
+  });
+
   it("makes a new server resolvable by name immediately", () => {
     // Before injection, the server is not found
     expect(() => resolveHostedServerId("new-server")).toThrow(

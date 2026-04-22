@@ -10,7 +10,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, act, waitFor } from "@testing-library/react";
 import { toast } from "sonner";
-import { useEvalHandlers } from "../use-eval-handlers";
+import { formatEnsureServersReadyError, useEvalHandlers } from "../use-eval-handlers";
 import { API_ENDPOINTS } from "../constants";
 import { createFetchResponse, createDeferred } from "@/test";
 import { setHostedApiContext } from "@/lib/apis/web/context";
@@ -1329,5 +1329,89 @@ describe("useEvalHandlers", () => {
         expect(result.current.rerunningSuiteId).toBe(null);
       });
     });
+  });
+});
+
+describe("formatEnsureServersReadyError", () => {
+  const base: {
+    readyServerNames: string[];
+    missingServerNames: string[];
+    failedServerNames: string[];
+    reauthServerNames: string[];
+  } = {
+    readyServerNames: [],
+    missingServerNames: [],
+    failedServerNames: [],
+    reauthServerNames: [],
+  };
+
+  it("does not list server refs for missing servers (avoids id-like strings in toasts)", () => {
+    const msg = formatEnsureServersReadyError(
+      {
+        ...base,
+        missingServerNames: [
+          "k1234567890123456789012345",
+          "k9876543210987654321098765",
+        ],
+      },
+      "run this test case",
+      [],
+    );
+    expect(msg).toBe(
+      "Unable to run this test case. This test depends on 2 MCP servers that are no longer in this workspace.",
+    );
+    expect(msg).not.toMatch(/k123/);
+  });
+
+  it("uses single missing-server test copy", () => {
+    expect(
+      formatEnsureServersReadyError(
+        { ...base, missingServerNames: ["k1234567890123456789012345"] },
+        "run this test case",
+        [],
+      ),
+    ).toBe(
+      "Unable to run this test case. This test depends on an MCP server that is no longer in this workspace.",
+    );
+  });
+
+  it("uses single missing-server suite copy", () => {
+    expect(
+      formatEnsureServersReadyError(
+        { ...base, missingServerNames: ["k1234567890123456789012345"] },
+        "run this suite",
+        [],
+      ),
+    ).toBe(
+      "Unable to run this suite. This suite depends on an MCP server that is no longer in this workspace.",
+    );
+  });
+
+  it("uses generic reauth when every ref is unresolvable (no a removed server label)", () => {
+    expect(
+      formatEnsureServersReadyError(
+        {
+          ...base,
+          reauthServerNames: ["mn79gdfjnftd2esny26j8n4w0s83hc8n"],
+        },
+        "run this test case",
+        [],
+      ),
+    ).toBe("Re-authenticate, then try to run this test case.");
+  });
+
+  it("uses generic failed-server copy when every ref is unresolvable", () => {
+    expect(
+      formatEnsureServersReadyError(
+        {
+          ...base,
+          failedServerNames: ["mn79gdfjnftd2esny26j8n4w0s83hc8n"],
+        },
+        "run this suite",
+        [],
+      ),
+    ).toBe(
+      "We couldn't connect to a required server. Try again to run this suite.",
+    );
   });
 });

@@ -58,7 +58,7 @@ function isTransientHostedToolContextError(error: unknown): boolean {
   return (
     withMessage.message === CLIENT_CONFIG_SYNC_PENDING_ERROR_MESSAGE ||
     withMessage.message === "Hosted workspace is not available yet" ||
-    withMessage.message.startsWith("Hosted server not found for ") ||
+    withMessage.message.startsWith("Hosted server not found") ||
     /\b(401|403)\b|unauthorized|forbidden/i.test(withMessage.message)
   );
 }

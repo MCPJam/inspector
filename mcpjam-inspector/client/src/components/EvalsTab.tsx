@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
-import { useConvexAuth } from "convex/react";
+import { useConvex, useConvexAuth } from "convex/react";
 import { FlaskConical, Loader2 } from "lucide-react";
 import { toast } from "sonner";
+import posthog from "posthog-js";
 import { Button } from "@mcpjam/design-system/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { useWorkspaceServers } from "@/hooks/useViews";
@@ -31,6 +32,9 @@ import { usePlaygroundWorkspaceExecutions } from "./evals/use-playground-workspa
 import type { EvalIteration } from "./evals/types";
 import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
 import type { EnsureServersReadyResult } from "@/hooks/use-app-state";
+import { EXPLORE_SUITE_TAG, isExploreSuite } from "./evals/constants";
+import { generateAndPersistEvalTests } from "@/lib/evals/generate-and-persist-tests";
+import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 
 const FIRST_SUITE_EMPTY_DESCRIPTION =
   "A suite groups eval cases with the MCP servers they use. Create one, then generate cases or import a chat transcript.";
@@ -49,15 +53,11 @@ export function EvalsTab({
   ensureServersReady,
 }: EvalsTabProps) {
   const { isAuthenticated, isLoading } = useConvexAuth();
-  const { user } = useAuth();
+  const convex = useConvex();
+  const { user, getAccessToken } = useAuth();
   const route = useEvalsRoute();
   const [workspaceBrowse, setWorkspaceBrowse] =
-    useState<PlaygroundWorkspaceBrowse>(() =>
-      route.type === "list" || route.type === "create"
-        ? "suites"
-        : "executions",
-    );
-  const lastOpenedSuiteIdRef = useRef<string | null>(null);
+    useState<PlaygroundWorkspaceBrowse>("suites");
   const {
     connectedServerNames,
     userMap,
@@ -87,37 +87,17 @@ export function EvalsTab({
       ? route.testId
       : null;
 
-  useEffect(() => {
-    if (route.type === "list") {
-      setWorkspaceBrowse("suites");
-      lastOpenedSuiteIdRef.current = null;
-      return;
-    }
-
+  useLayoutEffect(() => {
     if (
+      route.type === "suite-overview" ||
       route.type === "run-detail" ||
       route.type === "test-detail" ||
       route.type === "test-edit" ||
       route.type === "suite-edit"
     ) {
-      lastOpenedSuiteIdRef.current = route.suiteId;
-      setWorkspaceBrowse("executions");
-      return;
+      setWorkspaceBrowse("suites");
     }
-
-    if (route.type !== "suite-overview") {
-      return;
-    }
-
-    if (!selectedSuiteId) {
-      return;
-    }
-
-    if (selectedSuiteId !== lastOpenedSuiteIdRef.current) {
-      lastOpenedSuiteIdRef.current = selectedSuiteId;
-      setWorkspaceBrowse("executions");
-    }
-  }, [route, selectedSuiteId]);
+  }, [route]);
 
   const overviewQueries = useEvalQueries({
     isAuthenticated: isAuthenticated && Boolean(workspaceId),
@@ -254,6 +234,96 @@ export function EvalsTab({
     }
   }, [overviewQueries.isOverviewLoading, route.type, selectedSuiteEntry, selectedSuiteId]);
 
+  // ---------------------------------------------------------------------------
+  // Auto-create an explore suite for each connected server that doesn't have one
+  // ---------------------------------------------------------------------------
+  const explorePrefetchInFlightRef = useRef(new Set<string>());
+
+  useEffect(() => {
+    if (
+      !isAuthenticated ||
+      !workspaceId ||
+      overviewQueries.isOverviewLoading ||
+      connectedServerNames.size === 0
+    ) {
+      return;
+    }
+
+    // Find connected servers that don't already have an explore suite
+    const serversWithExploreSuite = new Set(
+      visibleSuites
+        .filter((entry) => isExploreSuite(entry.suite))
+        .flatMap((entry) => entry.suite.environment?.servers ?? []),
+    );
+
+    const serversNeedingSuite = [...connectedServerNames].filter(
+      (name) =>
+        !serversWithExploreSuite.has(name) &&
+        !explorePrefetchInFlightRef.current.has(name),
+    );
+
+    if (serversNeedingSuite.length === 0) {
+      return;
+    }
+
+    for (const serverName of serversNeedingSuite) {
+      explorePrefetchInFlightRef.current.add(serverName);
+
+      void (async () => {
+        try {
+          const createdSuite = await mutations.createTestSuiteMutation({
+            workspaceId,
+            name: serverName,
+            description: `Explore cases for ${serverName}`,
+            environment: { servers: [serverName] },
+          });
+
+          if (!createdSuite?._id) return;
+
+          await mutations.updateTestSuiteMutation({
+            suiteId: createdSuite._id,
+            tags: [EXPLORE_SUITE_TAG],
+          });
+
+          const outcome = await generateAndPersistEvalTests({
+            convex,
+            getAccessToken,
+            workspaceId,
+            suiteId: createdSuite._id,
+            serverIds: [serverName],
+            createTestCase: mutations.createTestCaseMutation,
+            skipIfExistingCases: true,
+          });
+
+          if (outcome.createdCount > 0) {
+            posthog.capture("eval_explore_cases_prefetched_on_connect", {
+              location: "playground_tab",
+              platform: detectPlatform(),
+              environment: detectEnvironment(),
+              workspace_id: workspaceId,
+              server_id: serverName,
+              suite_id: createdSuite._id,
+              generated_count: outcome.createdCount,
+            });
+          }
+        } catch (error) {
+          console.error("Explore suite auto-create failed:", error);
+        } finally {
+          explorePrefetchInFlightRef.current.delete(serverName);
+        }
+      })();
+    }
+  }, [
+    isAuthenticated,
+    workspaceId,
+    connectedServerNames,
+    visibleSuites,
+    overviewQueries.isOverviewLoading,
+    convex,
+    getAccessToken,
+    mutations,
+  ]);
+
   const handleOpenCreateSuite = useCallback(() => {
     navigatePlaygroundEvalsRoute({ type: "create" });
   }, []);
@@ -304,9 +374,18 @@ export function EvalsTab({
     [mutations.createTestSuiteMutation, workspaceId],
   );
 
+  const handleWorkspaceBrowseChange = useCallback(
+    (value: PlaygroundWorkspaceBrowse) => {
+      if (value === "executions" && selectedSuiteId) {
+        navigatePlaygroundEvalsRoute({ type: "list" }, { replace: true });
+      }
+      setWorkspaceBrowse(value);
+    },
+    [selectedSuiteId],
+  );
+
   const handleSelectSuite = useCallback((suiteId: string) => {
-    lastOpenedSuiteIdRef.current = suiteId;
-    setWorkspaceBrowse("executions");
+    setWorkspaceBrowse("suites");
     navigatePlaygroundEvalsRoute({ type: "suite-overview", suiteId });
   }, []);
 
@@ -466,8 +545,32 @@ export function EvalsTab({
       );
     }
 
+    if (
+      selectedSuiteId &&
+      (route.type === "suite-overview" ||
+        route.type === "run-detail" ||
+        route.type === "test-detail" ||
+        route.type === "test-edit" ||
+        route.type === "suite-edit")
+    ) {
+      if (queries.isSuiteDetailsLoading) {
+        return (
+          <div className="flex min-h-0 flex-1 items-center justify-center">
+            <div className="text-center">
+              <Loader2 className="mx-auto h-8 w-8 animate-spin text-primary" />
+              <p className="mt-4 text-sm text-muted-foreground">
+                Loading suite data...
+              </p>
+            </div>
+          </div>
+        );
+      }
+
+      return renderSuiteIterationsDetail();
+    }
+
     return (
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden px-6 pb-6 pt-4">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden px-5 pb-5 pt-3">
         <EvalsSuiteListSidebar
           suites={visibleSuites}
           selectedSuiteId={selectedSuiteId}
@@ -601,7 +704,7 @@ export function EvalsTab({
         workspaceExecutions.status === "idle"
       ) {
         return (
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col px-6 pb-6 pt-4">
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col px-5 pb-5 pt-3">
             <div className="flex flex-1 items-center justify-center">
               <div className="text-center">
                 <Loader2 className="mx-auto h-8 w-8 animate-spin text-primary" />
@@ -625,7 +728,7 @@ export function EvalsTab({
       }
 
       return (
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden px-6 pb-6 pt-4">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden px-5 pb-5 pt-3">
           <SuiteExecutionsOverview
             cases={workspaceExecutions.cases}
             allIterations={workspaceExecutions.iterations}
@@ -637,20 +740,7 @@ export function EvalsTab({
       );
     }
 
-    if (queries.isSuiteDetailsLoading) {
-      return (
-        <div className="flex min-h-0 flex-1 items-center justify-center">
-          <div className="text-center">
-            <Loader2 className="mx-auto h-8 w-8 animate-spin text-primary" />
-            <p className="mt-4 text-sm text-muted-foreground">
-              Loading suite data...
-            </p>
-          </div>
-        </div>
-      );
-    }
-
-    return renderSuiteIterationsDetail();
+    return null;
   };
 
   const showWorkspaceBrowseTabs =
@@ -665,7 +755,7 @@ export function EvalsTab({
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         <PlaygroundSuitesExecutionsTabs
           value={workspaceBrowse}
-          onChange={setWorkspaceBrowse}
+          onChange={handleWorkspaceBrowseChange}
         />
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           {workspaceBrowse === "suites"

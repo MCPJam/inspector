@@ -41,7 +41,11 @@ import {
 } from "./single-test-case-runner";
 import type { EnsureServersReadyResult } from "@/hooks/use-app-state";
 import type { RemoteServer } from "@/hooks/useWorkspaces";
-import { formatMcpServerRefsForError } from "@/lib/mcp-server-display-name";
+import {
+  formatMcpConnectServerPrompt,
+  formatMcpServerRefsForError,
+  isUnresolvableMcpServerRef,
+} from "@/lib/mcp-server-display-name";
 
 function getConfiguredTestCaseModelValues(
   testCase: Pick<EvalCase, "models">,
@@ -67,26 +71,46 @@ function hasUnavailableServers(result: EnsureServersReadyResult) {
   );
 }
 
-function formatEnsureServersReadyError(
+/** User-facing copy when ensureServersReady reports blockers. Never lists raw server ids. */
+export function formatEnsureServersReadyError(
   result: EnsureServersReadyResult,
   actionLabel: string,
   workspaceServers: RemoteServer[] | undefined,
 ) {
   if (result.missingServerNames.length > 0) {
-    const noun =
-      result.missingServerNames.length === 1 ? "server is" : "servers are";
-    return `Can't ${actionLabel}. The following ${noun} no longer available: ${formatMcpServerRefsForError(result.missingServerNames, { remoteServers: workspaceServers })}.`;
+    // Never list server names/ids in this toast: refs may be legacy Convex
+    // ids or other opaque values that read like random strings.
+    const n = result.missingServerNames.length;
+    const isTest = actionLabel.includes("test case");
+    if (n === 1) {
+      return isTest
+        ? `Unable to ${actionLabel}. This test depends on an MCP server that is no longer in this workspace.`
+        : `Unable to ${actionLabel}. This suite depends on an MCP server that is no longer in this workspace.`;
+    }
+    return isTest
+      ? `Unable to ${actionLabel}. This test depends on ${n} MCP servers that are no longer in this workspace.`
+      : `Unable to ${actionLabel}. This suite depends on ${n} MCP servers that are no longer in this workspace.`;
   }
 
   if (result.reauthServerNames.length > 0) {
-    return `Reauthenticate ${formatMcpServerRefsForError(result.reauthServerNames, { remoteServers: workspaceServers })} to ${actionLabel}.`;
+    const names = result.reauthServerNames;
+    const opts = { remoteServers: workspaceServers };
+    if (names.length > 0 && names.every((r) => isUnresolvableMcpServerRef(r, opts))) {
+      return `Re-authenticate, then try to ${actionLabel}.`;
+    }
+    return `Re-authenticate with ${formatMcpServerRefsForError(names, opts)} to ${actionLabel}.`;
   }
 
   if (result.failedServerNames.length > 0) {
-    return `Couldn't connect to ${formatMcpServerRefsForError(result.failedServerNames, { remoteServers: workspaceServers })} to ${actionLabel}.`;
+    const names = result.failedServerNames;
+    const opts = { remoteServers: workspaceServers };
+    if (names.length > 0 && names.every((r) => isUnresolvableMcpServerRef(r, opts))) {
+      return `We couldn't connect to a required server. Try again to ${actionLabel}.`;
+    }
+    return `We couldn't connect to ${formatMcpServerRefsForError(names, opts)}. Try again to ${actionLabel}.`;
   }
 
-  return `Couldn't prepare the required servers to ${actionLabel}.`;
+  return `Unable to prepare the required servers to ${actionLabel}.`;
 }
 
 function normalizeSuiteServerRefs(
@@ -435,7 +459,10 @@ export function useEvalHandlers({
           }
         } else {
           toast.error(
-            `Connect ${formatMcpServerRefsForError(rerunEligibility.missingServers, { remoteServers: workspaceServers })} to run this suite.`,
+            formatMcpConnectServerPrompt(rerunEligibility.missingServers, {
+              remoteServers: workspaceServers,
+              kind: "suite",
+            }),
           );
           return;
         }
@@ -573,7 +600,10 @@ export function useEvalHandlers({
           }
         } else {
           toast.error(
-            `Connect ${formatMcpServerRefsForError(disconnectedSuiteServers, { remoteServers: workspaceServers })} to run this test case.`,
+            formatMcpConnectServerPrompt(disconnectedSuiteServers, {
+              remoteServers: workspaceServers,
+              kind: "test-case",
+            }),
           );
           return null;
         }

@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   getMcpServerDisplayName,
   formatMcpServerRefsForError,
+  formatMcpConnectServerPrompt,
+  isUnresolvableMcpServerRef,
 } from "../mcp-server-display-name";
 import { setHostedApiContext } from "../apis/web/context";
 
@@ -49,12 +51,12 @@ describe("getMcpServerDisplayName", () => {
     ).toBe("asana");
   });
 
-  it("hides unresolvable opaque ids", () => {
+  it("hides unresolvable opaque ids with a short list label", () => {
     expect(
       getMcpServerDisplayName("mn79gdfjnftd2esny26j8n4w0s83hc8n", {
         remoteServers: [],
       }),
-    ).toBe("A server that is no longer in this workspace");
+    ).toBe("a removed server");
   });
 
   it("passes through readable names", () => {
@@ -71,6 +73,57 @@ describe("formatMcpServerRefsForError", () => {
         ["a11111111111111111111111111111", "a22222222222222222222222222222"],
         { remoteServers: [] },
       ),
-    ).toBe("A server that is no longer in this workspace");
+    ).toBe("a removed server");
+  });
+});
+
+describe("isUnresolvableMcpServerRef", () => {
+  it("is true for opaque ids with no workspace or hosted match", () => {
+    mockHosted = false;
+    expect(
+      isUnresolvableMcpServerRef("mn79gdfjnftd2esny26j8n4w0s83hc8n", {
+        remoteServers: [],
+      }),
+    ).toBe(true);
+  });
+
+  it("is false when the id exists in remote servers", () => {
+    expect(
+      isUnresolvableMcpServerRef("kid", {
+        remoteServers: [
+          {
+            _id: "kid",
+            workspaceId: "w",
+            name: "Known",
+            enabled: true,
+            transportType: "http" as const,
+            createdAt: 0,
+            updatedAt: 0,
+          },
+        ],
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("formatMcpConnectServerPrompt", () => {
+  it("uses plain language when every ref is unresolvable", () => {
+    expect(
+      formatMcpConnectServerPrompt(
+        ["mn79gdfjnftd2esny26j8n4w0s83hc8n"],
+        { remoteServers: [], kind: "test-case" },
+      ),
+    ).toBe(
+      "Add or reconnect the MCP server this test needs, then run it.",
+    );
+  });
+
+  it("keeps the Connect … phrasing when names are known", () => {
+    expect(
+      formatMcpConnectServerPrompt(["asana"], {
+        remoteServers: [],
+        kind: "suite",
+      }),
+    ).toBe("Connect to asana to run this suite.");
   });
 });

@@ -230,20 +230,20 @@ export function EvalsSuiteListSidebar({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-border/80 bg-card text-card-foreground shadow-sm ring-1 ring-black/5 dark:ring-white/10">
-        <div className="flex shrink-0 items-start justify-between gap-4 border-b border-border/60 bg-gradient-to-b from-muted/30 to-card px-4 py-3">
-          <div className="min-w-0 space-y-0.5">
-            <p className="text-xs font-medium text-foreground/90">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-border/60 bg-card text-card-foreground">
+        <div className="flex shrink-0 flex-wrap items-start justify-between gap-3 border-b border-border/50 px-5 py-4">
+          <div className="min-w-0 space-y-1">
+            <p className="text-sm font-semibold text-foreground">
               Browse and open suites
             </p>
-            <p className="text-[11px] leading-snug text-muted-foreground">
+            <p className="text-xs text-muted-foreground">
               Click a row to see runs, test cases, and environment.
             </p>
           </div>
           <Button
             type="button"
             size="sm"
-            className="h-8 shrink-0 font-semibold shadow-sm"
+            className="h-8 shrink-0 font-semibold"
             onClick={onCreateSuite}
           >
             <Plus className="h-3.5 w-3.5" />
@@ -287,137 +287,127 @@ export function EvalsSuiteListSidebar({
           </div>
         ) : (
           <>
-            <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border/50 bg-muted/20 px-4 py-2">
-              <div className="flex min-w-0 items-center gap-3">
-                <Checkbox
-                  checked={
-                    suites.length > 0 &&
-                    selectedForBatch.size === suites.length
-                  }
-                  onCheckedChange={() => toggleAllSuites()}
-                  aria-label="Select all suites"
-                  disabled={suites.length === 0 || selectionBlocked}
-                />
-                <span className="truncate text-xs font-medium text-foreground/80">
-                  Select all
-                </span>
-              </div>
-              <div className="flex shrink-0 items-center gap-2">
-                {selectedForBatch.size > 0 ? (
-                  <span className="rounded-md bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
-                    {selectedForBatch.size} selected
-                  </span>
-                ) : null}
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="h-7 border-dashed"
-                  onClick={() => setSelectedForBatch(new Set())}
-                  disabled={selectionBlocked || selectedForBatch.size === 0}
-                >
-                  Cancel
-                </Button>
-                {batchDeleteEnabled ? (
-                  <Button
-                    type="button"
-                    variant="destructive"
-                    size="sm"
-                    className="h-7 disabled:opacity-35"
-                    onClick={() => setShowBatchDeleteModal(true)}
-                    disabled={
-                      selectionBlocked || selectedForBatch.size === 0
+            {batchDeleteEnabled ? (
+              <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border/40 px-5 py-2.5">
+                <div className="flex min-w-0 items-center gap-2">
+                  <Checkbox
+                    checked={
+                      suites.length > 0 &&
+                      selectedForBatch.size === suites.length
                     }
-                  >
-                    Delete
-                  </Button>
+                    onCheckedChange={() => toggleAllSuites()}
+                    aria-label="Select all suites"
+                    disabled={suites.length === 0 || selectionBlocked}
+                  />
+                  <span className="truncate text-xs text-muted-foreground">
+                    Select all
+                  </span>
+                </div>
+                {selectedForBatch.size > 0 ? (
+                  <div className="flex shrink-0 items-center gap-2">
+                    <span className="text-xs tabular-nums text-muted-foreground">
+                      {selectedForBatch.size} selected
+                    </span>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 text-muted-foreground"
+                      onClick={() => setSelectedForBatch(new Set())}
+                      disabled={selectionBlocked}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      size="sm"
+                      className="h-8"
+                      onClick={() => setShowBatchDeleteModal(true)}
+                      disabled={selectionBlocked}
+                    >
+                      Delete
+                    </Button>
+                  </div>
                 ) : null}
               </div>
-            </div>
+            ) : null}
 
-            <div className="flex w-full items-center gap-2 border-b border-border/40 bg-muted/25 px-4 py-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-              <div className="flex w-7 shrink-0 justify-center" aria-hidden />
-              <div className="min-w-0 flex-1">Suite name</div>
-              <div className="flex max-w-[min(100%,20rem)] min-w-0 flex-1 items-center justify-end gap-2">
-                <span className="text-right">Last run</span>
-                <span className="w-3.5 shrink-0" aria-hidden />
-              </div>
-              <div className="h-4 w-7 shrink-0" aria-hidden />
-            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
+              <div className="flex flex-col gap-2">
+                {suites.map((entry) => {
+                  const suite = entry.suite;
+                  const serverSummary =
+                    suite.environment?.servers?.length > 0
+                      ? suite.environment.servers.join(", ")
+                      : "No servers configured";
+                  const rowTitle = evalOverviewEntryOutcomeTitle(entry);
+                  const showLastRunFailed =
+                    entry.latestRun?.result === "failed" ||
+                    entry.latestRun?.status === "failed";
+                  const isSelected = selectedSuiteId === suite._id;
+                  const suiteTitle = suite.name || "Untitled suite";
 
-            <div className="min-h-0 flex-1 space-y-0.5 overflow-y-auto p-2">
-              {suites.map((entry) => {
-                const suite = entry.suite;
-                const serverSummary =
-                  suite.environment?.servers?.length > 0
-                    ? suite.environment.servers.join(", ")
-                    : "No servers configured";
-                const rowTitle = evalOverviewEntryOutcomeTitle(entry);
-                const showLastRunFailed =
-                  entry.latestRun?.result === "failed" ||
-                  entry.latestRun?.status === "failed";
-                const isSelected = selectedSuiteId === suite._id;
-                const suiteTitle = suite.name || "Untitled suite";
-
-                return (
-                  <div
-                    key={suite._id}
-                    data-testid={`suite-row-${suite._id}`}
-                    className={cn(
-                      "group/row flex w-full items-stretch gap-1 rounded-lg border border-l-4 px-1.5 py-0.5 transition-all",
-                      isSelected
-                        ? "border-primary/30 border-l-primary bg-primary/[0.07]"
-                        : "border-border/50 border-l-transparent bg-card hover:border-border hover:bg-muted/40 hover:shadow-sm",
-                    )}
-                  >
-                    <div className="flex w-7 shrink-0 items-center justify-center">
-                      <Checkbox
-                        checked={selectedForBatch.has(suite._id)}
-                        onCheckedChange={() => toggleSuiteSelected(suite._id)}
-                        onClick={(e) => e.stopPropagation()}
-                        aria-label={`Select suite ${suiteTitle}`}
-                        disabled={selectionBlocked}
-                      />
-                    </div>
+                  return (
                     <div
-                      role="button"
-                      tabIndex={0}
-                      aria-label={`Select suite: ${suiteTitle}`}
-                      title={`${rowTitle}\n${serverSummary}`}
-                      className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md py-1.5 pl-0.5 pr-1 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
-                      onClick={() => onSelectSuite(suite._id)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" || e.key === " ") {
-                          e.preventDefault();
-                          onSelectSuite(suite._id);
-                        }
-                      }}
+                      key={suite._id}
+                      data-testid={`suite-row-${suite._id}`}
+                      className={cn(
+                        "group/row flex w-full min-w-0 items-center gap-3 rounded-lg border px-4 py-3 transition-colors",
+                        isSelected
+                          ? "border-primary/35 bg-primary/[0.06]"
+                          : "border-border/60 bg-background hover:border-border hover:bg-muted/30",
+                      )}
                     >
-                      <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
-                        {suiteTitle}
-                      </span>
-                      <div className="flex max-w-[min(100%,20rem)] min-w-0 flex-1 items-center justify-end gap-2">
-                        {suiteLastRunCell(entry)}
-                        <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center">
+                      {batchDeleteEnabled ? (
+                        <div className="flex shrink-0 items-center">
+                          <Checkbox
+                            checked={selectedForBatch.has(suite._id)}
+                            onCheckedChange={() =>
+                              toggleSuiteSelected(suite._id)
+                            }
+                            onClick={(e) => e.stopPropagation()}
+                            aria-label={`Select suite ${suiteTitle}`}
+                            disabled={selectionBlocked}
+                          />
+                        </div>
+                      ) : null}
+                      <div
+                        role="button"
+                        tabIndex={0}
+                        aria-label={`Select suite: ${suiteTitle}`}
+                        title={`${rowTitle}\n${serverSummary}`}
+                        className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-2"
+                        onClick={() => onSelectSuite(suite._id)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            onSelectSuite(suite._id);
+                          }
+                        }}
+                      >
+                        <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
+                          {suiteTitle}
+                        </span>
+                        <div className="flex shrink-0 items-center gap-2">
+                          {suiteLastRunCell(entry)}
                           {showLastRunFailed ? (
                             <CircleAlert
-                              className="h-3.5 w-3.5 text-destructive"
+                              className="h-3.5 w-3.5 shrink-0 text-destructive"
                               aria-label="Last run failed"
                             />
                           ) : null}
-                        </span>
+                          <ChevronRight
+                            className="h-4 w-4 shrink-0 text-muted-foreground/45 transition group-hover/row:translate-x-0.5 group-hover/row:text-primary"
+                            aria-hidden
+                          />
+                        </div>
                       </div>
-                      <ChevronRight
-                        className="h-4 w-4 shrink-0 text-muted-foreground/50 transition group-hover/row:translate-x-0.5 group-hover/row:text-primary"
-                        aria-hidden
-                      />
-                    </div>
-                    <span className="inline-flex shrink-0 items-center">
                       <Button
                         type="button"
                         variant="secondary"
                         size="sm"
-                        className="h-8 w-8 shrink-0 p-0 shadow-sm"
+                        className="h-8 w-8 shrink-0 p-0"
                         aria-label={`Open suite: ${suiteTitle}`}
                         onClick={(e) => {
                           e.preventDefault();
@@ -427,10 +417,10 @@ export function EvalsSuiteListSidebar({
                       >
                         <Play className="h-3.5 w-3.5" />
                       </Button>
-                    </span>
-                  </div>
-                );
-              })}
+                    </div>
+                  );
+                })}
+              </div>
             </div>
 
             <Dialog

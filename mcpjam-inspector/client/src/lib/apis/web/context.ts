@@ -189,6 +189,24 @@ export function getHostedWorkspaceId(): string {
   return workspaceId;
 }
 
+/**
+ * Long alphanumeric refs are usually Convex/legacy document ids. Never echo
+ * them in user-visible error strings; short names and slugs may still be shown.
+ */
+function shouldIncludeHostedRefInNotFoundError(serverNameOrId: string): boolean {
+  const t = serverNameOrId.trim();
+  if (t.length < 1) {
+    return false;
+  }
+  if (t.length >= 20 && /^[a-z0-9]+$/i.test(t)) {
+    return false;
+  }
+  return true;
+}
+
+const HOSTED_SERVER_NOT_FOUND_OPAQUE_MESSAGE =
+  "Hosted server not found. The server is not in your hosted workspace, or the server list is still loading.";
+
 export function resolveHostedServerId(serverNameOrId: string): string {
   assertHostedMode();
 
@@ -202,7 +220,10 @@ export function resolveHostedServerId(serverNameOrId: string): string {
     return serverNameOrId;
   }
 
-  throw new Error(`Hosted server not found for \"${serverNameOrId}\"`);
+  if (shouldIncludeHostedRefInNotFoundError(serverNameOrId)) {
+    throw new Error(`Hosted server not found for \"${serverNameOrId}\"`);
+  }
+  throw new Error(HOSTED_SERVER_NOT_FOUND_OPAQUE_MESSAGE);
 }
 
 export function resolveHostedServerIds(serverNamesOrIds: string[]): string[] {
