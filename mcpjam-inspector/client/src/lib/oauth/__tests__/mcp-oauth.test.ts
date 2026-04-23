@@ -26,15 +26,21 @@ const {
   mockStartAuthorization: vi.fn(),
 }));
 
-vi.mock("@mcpjam/sdk/browser", () => ({
-  discoverAuthorizationServerMetadata: mockDiscoverAuthorizationServerMetadata,
-  discoverOAuthServerInfo: mockDiscoverOAuthServerInfo,
-  exchangeAuthorization: mockExchangeAuthorization,
-  fetchToken: mockFetchToken,
-  registerClient: mockRegisterClient,
-  selectResourceURL: mockSelectResourceURL,
-  startAuthorization: mockStartAuthorization,
-}));
+vi.mock("@mcpjam/sdk/browser", async () => {
+  const actual = await vi.importActual<typeof import("@mcpjam/sdk/browser")>(
+    "@mcpjam/sdk/browser",
+  );
+  return {
+    ...actual,
+    discoverAuthorizationServerMetadata: mockDiscoverAuthorizationServerMetadata,
+    discoverOAuthServerInfo: mockDiscoverOAuthServerInfo,
+    exchangeAuthorization: mockExchangeAuthorization,
+    fetchToken: mockFetchToken,
+    registerClient: mockRegisterClient,
+    selectResourceURL: mockSelectResourceURL,
+    startAuthorization: mockStartAuthorization,
+  };
+});
 
 vi.mock("@/lib/session-token", () => ({
   authFetch: vi.fn(),
@@ -267,6 +273,38 @@ describe("mcp-oauth", () => {
       expect(result.success).toBe(false);
     });
 
+    it("does not fall back to direct fetch when the oauth proxy throws", async () => {
+      vi.resetModules();
+      const directFetch = vi.fn();
+      vi.stubGlobal("fetch", directFetch);
+
+      const sessionToken = await import("@/lib/session-token");
+      const isolatedAuthFetch = sessionToken.authFetch as ReturnType<typeof vi.fn>;
+      isolatedAuthFetch.mockReset();
+      isolatedAuthFetch.mockRejectedValueOnce(new Error("proxy exploded"));
+
+      mockDiscoverOAuthServerInfo.mockReset();
+      mockDiscoverOAuthServerInfo.mockImplementationOnce(
+        async (_serverUrl, options) => {
+          await expect(
+            options?.fetchFn?.(
+              "https://example.com/.well-known/oauth-protected-resource/mcp",
+            ),
+          ).rejects.toThrow("proxy exploded");
+          throw new Error("proxy exploded");
+        },
+      );
+
+      const { initiateOAuth } = await import("../mcp-oauth");
+      const result = await initiateOAuth({
+        serverName: "test-server",
+        serverUrl: "https://example.com/mcp",
+      });
+
+      expect(result.success).toBe(false);
+      expect(directFetch).not.toHaveBeenCalled();
+    });
+
     it("propagates successful proxy responses correctly", async () => {
       const metadataResponse = new Response(
         JSON.stringify({
@@ -398,6 +436,36 @@ describe("mcp-oauth", () => {
         registryServerId: "registry-linear",
         useRegistryOAuthProxy: true,
       });
+    });
+
+    it("normalizes malformed persisted oauth trace history", async () => {
+      const { appendOAuthTraceHttpHistory, loadOAuthTrace } =
+        await import("../oauth-trace");
+
+      localStorage.setItem(
+        "mcp-oauth-trace-linear",
+        JSON.stringify({
+          version: 1,
+          source: "refresh",
+          currentStep: "idle",
+          steps: [],
+          httpHistory: null,
+        }),
+      );
+
+      const trace = loadOAuthTrace("linear");
+      expect(trace?.httpHistory).toEqual([]);
+      expect(() =>
+        appendOAuthTraceHttpHistory(trace!, {
+          step: "idle",
+          timestamp: Date.now(),
+          request: {
+            method: "GET",
+            url: "https://example.com",
+            headers: {},
+          },
+        }),
+      ).not.toThrow();
     });
 
     it("detects OAuth token grant requests", async () => {
@@ -563,6 +631,7 @@ describe("mcp-oauth", () => {
       });
       expect(getStoredTokens("asana")?.access_token).toBe("access-token");
       expect(localStorage.getItem("mcp-discovery-asana")).not.toBeNull();
+      expect(localStorage.getItem("mcp-verifier-asana")).toBeNull();
       expect(mockDiscoverOAuthServerInfo).toHaveBeenCalledTimes(1);
       expect(mockExchangeAuthorization).toHaveBeenCalledTimes(1);
     });
@@ -629,6 +698,7 @@ describe("mcp-oauth", () => {
       const callbackResult = await handleOAuthCallback("oauth-code");
 
       expect(callbackResult.success).toBe(true);
+      expect(localStorage.getItem("mcp-verifier-asana")).toBeNull();
       expect(authFetch).toHaveBeenCalledTimes(1);
       expect(authFetch).toHaveBeenCalledWith(
         expect.stringMatching(/\.convex\.site\/registry\/oauth\/token$/),
@@ -660,6 +730,8 @@ describe("mcp-oauth", () => {
         JSON.stringify({
           registryServerId: "registry-asana",
           useRegistryOAuthProxy: true,
+          protocolVersion: "2025-11-25",
+          registrationStrategy: "preregistered",
         }),
       );
     });

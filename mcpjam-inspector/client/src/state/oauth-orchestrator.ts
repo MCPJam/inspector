@@ -67,20 +67,32 @@ export async function ensureAuthorizedForReconnect(
     // Get stored OAuth configuration
     const oauthConfig = readStoredOAuthConfig(server.name);
     const clientInfo = storedClientInfo ? JSON.parse(storedClientInfo) : {};
+    const effectiveRegistrationStrategy =
+      server.oauthFlowProfile?.registrationStrategy ??
+      oauthConfig.registrationStrategy;
+    const shouldReuseStoredClientCredentials =
+      effectiveRegistrationStrategy === "preregistered";
 
     const opts: MCPOAuthOptions = {
       serverName: server.name,
       serverUrl: url,
-      clientId:
-        server.oauthTokens?.client_id ||
-        storedTokens?.client_id ||
-        clientInfo?.client_id,
-      clientSecret:
-        server.oauthTokens?.client_secret || clientInfo?.client_secret,
       scopes: oauthConfig.scopes,
+      customHeaders: oauthConfig.customHeaders,
       registryServerId: oauthConfig.registryServerId,
       useRegistryOAuthProxy: oauthConfig.useRegistryOAuthProxy,
+      protocolVersion:
+        server.oauthFlowProfile?.protocolVersion ?? oauthConfig.protocolVersion,
+      registrationStrategy: effectiveRegistrationStrategy,
     } as MCPOAuthOptions;
+
+    if (shouldReuseStoredClientCredentials) {
+      opts.clientId =
+        server.oauthTokens?.client_id ||
+        storedTokens?.client_id ||
+        clientInfo?.client_id;
+      opts.clientSecret =
+        server.oauthTokens?.client_secret || clientInfo?.client_secret;
+    }
     options?.beforeRedirect?.(opts);
     const init = await initiateOAuth(opts);
     if (init.success && init.serverConfig) {

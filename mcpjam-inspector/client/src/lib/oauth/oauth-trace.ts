@@ -92,6 +92,9 @@ export function loadOAuthTrace(serverName: string): OAuthTrace | undefined {
     if (parsed?.version !== 1 || !Array.isArray(parsed.steps)) {
       return undefined;
     }
+    parsed.httpHistory = Array.isArray(parsed.httpHistory)
+      ? parsed.httpHistory
+      : [];
     return parsed;
   } catch {
     return undefined;
