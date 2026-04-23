@@ -293,7 +293,6 @@ export async function runOAuthLogin(
     oauthConformanceChecks: false,
   });
   let state = cloneEmptyFlowState();
-  let redirectUrl = config.redirectUrl;
   let interactiveSession: InteractiveAuthorizationSession | undefined;
 
   const updateState = (updates: Partial<OAuthFlowState>) => {
@@ -311,7 +310,7 @@ export async function runOAuthLogin(
       });
     }
 
-    redirectUrl =
+    const redirectUrl =
       interactiveSession?.redirectUrl ??
       config.redirectUrl ??
       (deps.createDefaultRedirectUrl ?? createDefaultRedirectUrl)();
@@ -358,7 +357,7 @@ export async function runOAuthLogin(
       serverUrl: config.serverUrl,
       serverName: config.serverName,
       redirectUrl,
-      requestExecutor: (request) => trackedRequest(request),
+      requestExecutor: (request: OAuthHttpRequest) => trackedRequest(request),
       loadPreregisteredCredentials: async () => ({
         clientId: config.client.preregistered?.clientId,
         clientSecret: config.client.preregistered?.clientSecret,
