@@ -351,14 +351,12 @@ describe("useServerState OAuth callback failures", () => {
           workspaceProfile: {},
         },
         sampling: {},
-        elicitation: {},
       },
       clientCapabilities: {
         experimental: {
           workspaceProfile: {},
         },
         sampling: {},
-        elicitation: {},
       },
     });
   });

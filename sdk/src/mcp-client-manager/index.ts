@@ -90,6 +90,7 @@ export {
 export { buildRequestInit } from "./transport-utils.js";
 export { isMethodUnavailableError, formatError } from "./error-utils.js";
 export {
+  applyRuntimeClientCapabilities,
   MCP_UI_EXTENSION_ID,
   MCP_UI_RESOURCE_MIME_TYPE,
   getDefaultClientCapabilities,

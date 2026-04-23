@@ -1,8 +1,8 @@
 import type { ClientCapabilityOptions } from "@mcpjam/sdk/browser";
 import {
   getDefaultClientCapabilities,
-  normalizeClientCapabilities,
   mergeClientCapabilities,
+  normalizeClientCapabilities,
 } from "@mcpjam/sdk/browser";
 
 export type WorkspaceClientConfig = {
@@ -141,9 +141,11 @@ export function getEffectiveServerClientCapabilities(args: {
     args.workspaceCapabilities ??
     getEffectiveWorkspaceClientCapabilities(args.workspaceClientConfig);
 
-  return mergeWorkspaceClientCapabilities(
-    workspaceCapabilities as Record<string, unknown>,
-    args.serverCapabilities,
+  return normalizeWorkspaceClientCapabilities(
+    mergeWorkspaceClientCapabilities(
+      workspaceCapabilities as Record<string, unknown>,
+      args.serverCapabilities,
+    ) as Record<string, unknown>,
   );
 }
 
