@@ -5,7 +5,7 @@ import { RunInsightsPrimaryBlock } from "../run-insights-primary-block";
 const noop = () => {};
 
 describe("RunInsightsPrimaryBlock", () => {
-  it("uses insight glow and left accent classes in embedded mode", () => {
+  it("uses the left accent styling in embedded mode", () => {
     const { container } = render(
       <RunInsightsPrimaryBlock
         summary={null}
@@ -19,7 +19,7 @@ describe("RunInsightsPrimaryBlock", () => {
     );
 
     const root = container.firstElementChild as HTMLElement;
-    expect(root.className).toContain("ai-insight-glow");
+    expect(root.className).not.toContain("ai-insight-glow");
     expect(root.className).toContain("border-l-primary");
   });
 

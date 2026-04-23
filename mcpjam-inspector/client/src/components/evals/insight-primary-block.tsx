@@ -135,7 +135,7 @@ export function InsightPrimaryBlock({
     return (
       <div
         className={cn(
-          "rounded-lg border-l-2 border-l-primary/50 ai-insight-glow pl-3.5 pr-3 py-3",
+          "rounded-lg border-l-2 border-l-primary/50 pl-3.5 pr-3 py-3",
           className,
         )}
       >
