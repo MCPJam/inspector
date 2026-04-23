@@ -20,6 +20,9 @@ export interface OAuthTraceStep {
   message?: string;
   error?: string;
   details?: Record<string, unknown>;
+  recovered?: boolean;
+  recoveredAt?: number;
+  recoveryMessage?: string;
   startedAt: number;
   completedAt?: number;
 }
@@ -39,8 +42,28 @@ function storageKey(serverName: string): string {
   return `mcp-oauth-trace-${serverName}`;
 }
 
+const MAX_OAUTH_TRACE_HTTP_HISTORY = 50;
+
 function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function trimHttpHistory(httpHistory: HttpHistoryEntry[]): HttpHistoryEntry[] {
+  if (httpHistory.length <= MAX_OAUTH_TRACE_HTTP_HISTORY) {
+    return httpHistory;
+  }
+
+  return httpHistory.slice(-MAX_OAUTH_TRACE_HTTP_HISTORY);
+}
+
+function buildPersistableTrace(
+  trace: OAuthTrace,
+  options: { dropHttpHistory?: boolean } = {},
+): OAuthTrace {
+  return clone({
+    ...trace,
+    httpHistory: options.dropHttpHistory ? [] : trimHttpHistory(trace.httpHistory),
+  });
 }
 
 export function createOAuthTrace(input: {
@@ -76,7 +99,23 @@ export function loadOAuthTrace(serverName: string): OAuthTrace | undefined {
 }
 
 export function saveOAuthTrace(serverName: string, trace: OAuthTrace): void {
-  localStorage.setItem(storageKey(serverName), JSON.stringify(trace));
+  try {
+    localStorage.setItem(
+      storageKey(serverName),
+      JSON.stringify(buildPersistableTrace(trace)),
+    );
+  } catch (error) {
+    console.warn("Failed to persist OAuth trace with HTTP history.", error);
+
+    try {
+      localStorage.setItem(
+        storageKey(serverName),
+        JSON.stringify(buildPersistableTrace(trace, { dropHttpHistory: true })),
+      );
+    } catch (retryError) {
+      console.warn("Failed to persist OAuth trace.", retryError);
+    }
+  }
 }
 
 export function clearOAuthTrace(serverName: string): void {
@@ -188,6 +227,30 @@ export function appendOAuthTraceHttpHistory(
   entry: HttpHistoryEntry,
 ): void {
   trace.httpHistory.push(entry);
+  trace.httpHistory = trimHttpHistory(trace.httpHistory);
+}
+
+export function resolveOAuthTraceStepError(
+  trace: OAuthTrace,
+  step: OAuthFlowStep,
+  input: { message?: string } = {},
+): void {
+  const existing = [...trace.steps]
+    .reverse()
+    .find((entry) => entry.step === step && entry.status === "error" && !entry.recovered);
+
+  if (!existing) {
+    return;
+  }
+
+  existing.recovered = true;
+  existing.recoveredAt = Date.now();
+  existing.recoveryMessage = input.message ?? existing.recoveryMessage;
+
+  const remainingFailure = [...trace.steps]
+    .reverse()
+    .find((entry) => entry.status === "error" && !entry.recovered);
+  trace.error = remainingFailure?.error;
 }
 
 export function mergeOAuthTraces(
@@ -195,11 +258,11 @@ export function mergeOAuthTraces(
   next: OAuthTrace,
 ): OAuthTrace {
   if (!base) {
-    return clone(next);
+    return buildPersistableTrace(next);
   }
 
-  return {
-    ...clone(base),
+  return buildPersistableTrace({
+    version: 1,
     source: next.source,
     serverName: next.serverName ?? base.serverName,
     serverUrl: next.serverUrl ?? base.serverUrl,
@@ -209,9 +272,9 @@ export function mergeOAuthTraces(
         left.startedAt - right.startedAt ||
         getStepIndex(left.step) - getStepIndex(right.step),
     ),
-    httpHistory: [...base.httpHistory, ...next.httpHistory],
+    httpHistory: trimHttpHistory([...base.httpHistory, ...next.httpHistory]),
     error: next.error ?? base.error,
-  };
+  });
 }
 
 export function getOAuthTraceFailureStep(
@@ -223,7 +286,7 @@ export function getOAuthTraceFailureStep(
 
   return [...trace.steps]
     .reverse()
-    .find((entry) => entry.status === "error");
+    .find((entry) => entry.status === "error" && !entry.recovered);
 }
 
 export function getOAuthTraceSummary(

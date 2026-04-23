@@ -34,6 +34,7 @@ import {
   failOAuthTraceStep,
   loadOAuthTrace,
   mergeOAuthTraces,
+  resolveOAuthTraceStepError,
   saveOAuthTrace,
   startOAuthTraceStep,
   type OAuthTrace,
@@ -96,9 +97,39 @@ function redactSensitiveValue(value: unknown): string {
   return `${value.slice(0, 4)}...[redacted]...${value.slice(-2)}`;
 }
 
+function sanitizeOAuthTraceString(value: string): unknown {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return value;
+  }
+
+  const looksStructured =
+    trimmed.includes("=") ||
+    trimmed.includes("&") ||
+    ((trimmed.startsWith("{") && trimmed.endsWith("}")) ||
+      (trimmed.startsWith("[") && trimmed.endsWith("]")));
+  if (looksStructured) {
+    const parsed = parseOAuthRequestFields(trimmed);
+    if (parsed) {
+      return sanitizeOAuthTraceValue(parsed);
+    }
+  }
+
+  return trimmed
+    .replace(
+      /\b(access_token|refresh_token|id_token|client_secret|code_verifier)\b(\s*[:=]\s*)([^\s&,;]+)/gi,
+      (_match, key: string, separator: string) => `${key}${separator}[redacted]`,
+    )
+    .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+\b/gi, "Bearer [redacted]");
+}
+
 function sanitizeOAuthTraceValue(value: unknown): unknown {
   if (Array.isArray(value)) {
     return value.map((item) => sanitizeOAuthTraceValue(item));
+  }
+
+  if (typeof value === "string") {
+    return sanitizeOAuthTraceString(value);
   }
 
   if (!value || typeof value !== "object") {
@@ -145,6 +176,51 @@ function createHttpHistoryEntry(input: {
       body: sanitizeOAuthTraceValue(input.body),
     },
   };
+}
+
+async function readResponseBodyForTrace(response: Response): Promise<unknown> {
+  try {
+    return sanitizeOAuthTraceValue(await response.clone().json());
+  } catch {
+    try {
+      const text = await response.clone().text();
+      return text ? sanitizeOAuthTraceValue(text) : null;
+    } catch {
+      return null;
+    }
+  }
+}
+
+function getOAuthErrorCode(error: unknown): string | undefined {
+  if (error && typeof error === "object") {
+    const record = error as Record<string, unknown>;
+    if (typeof record.code === "string") {
+      return record.code.toLowerCase();
+    }
+    if (typeof record.error === "string") {
+      return record.error.toLowerCase();
+    }
+  }
+
+  if (error instanceof Error) {
+    const message = error.message.toLowerCase();
+    if (message.includes("invalid_client")) {
+      return "invalid_client";
+    }
+    if (message.includes("unauthorized_client")) {
+      return "unauthorized_client";
+    }
+    if (message.includes("invalid_grant")) {
+      return "invalid_grant";
+    }
+  }
+
+  return undefined;
+}
+
+function shouldInvalidateOAuthClient(error: unknown): boolean {
+  const code = getOAuthErrorCode(error);
+  return code === "invalid_client" || code === "unauthorized_client";
 }
 
 export function readStoredOAuthConfig(
@@ -469,7 +545,7 @@ function createOAuthFetchInterceptor(
           headers: sanitizeOAuthHeaders(
             Object.fromEntries(response.headers.entries()),
           ),
-          body: sanitizeOAuthTraceValue(await response.clone().json().catch(() => null)),
+          body: await readResponseBodyForTrace(response),
         };
         entry.duration = Date.now() - entry.timestamp;
         return response;
@@ -492,7 +568,7 @@ function createOAuthFetchInterceptor(
           headers: sanitizeOAuthHeaders(
             Object.fromEntries(response.headers.entries()),
           ),
-          body: sanitizeOAuthTraceValue(await response.clone().json().catch(() => null)),
+          body: await readResponseBodyForTrace(response),
         };
         entry.duration = Date.now() - entry.timestamp;
         return response;
@@ -520,7 +596,7 @@ function createOAuthFetchInterceptor(
           headers: sanitizeOAuthHeaders(
             Object.fromEntries(response.headers.entries()),
           ),
-          body: sanitizeOAuthTraceValue(await response.clone().json().catch(() => null)),
+          body: await readResponseBodyForTrace(response),
         };
         entry.duration = Date.now() - entry.timestamp;
         return response;
@@ -907,12 +983,16 @@ async function attemptRefreshWithStoredTokens(
     });
     return refreshedTokens;
   } catch (error) {
+    const invalidClient = shouldInvalidateOAuthClient(error);
     failOAuthTraceStep(trace, "token_request", error, {
       message:
         "Stored refresh token failed. Falling back to an interactive authorization flow.",
     });
-    await provider.invalidateCredentials("tokens");
-    trace.error = undefined;
+    await provider.invalidateCredentials(invalidClient ? "all" : "tokens");
+    resolveOAuthTraceStepError(trace, "token_request", {
+      message:
+        "Stored refresh failure was recovered by falling back to an interactive OAuth flow.",
+    });
     return null;
   }
 }

@@ -1728,7 +1728,6 @@ export function useServerState({
           type: "CONNECT_FAILURE",
           name: serverName,
           error: errorMessage,
-          oauthTrace: authResult.kind === "ready" ? authResult.oauthTrace : undefined,
         });
         logger.error("Reconnection failed", {
           serverName,

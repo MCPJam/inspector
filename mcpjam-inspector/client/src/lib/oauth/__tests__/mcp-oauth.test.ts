@@ -741,6 +741,60 @@ describe("mcp-oauth", () => {
       );
     });
 
+    it("re-registers the OAuth client after invalid_client refresh failures", async () => {
+      localStorage.setItem(
+        "mcp-serverUrl-asana",
+        "https://mcp.asana.com/v2/mcp",
+      );
+      localStorage.setItem(
+        "mcp-client-asana",
+        JSON.stringify({
+          client_id: "stale-client-id",
+        }),
+      );
+      localStorage.setItem(
+        "mcp-tokens-asana",
+        JSON.stringify({
+          access_token: "old-access-token",
+          refresh_token: "stored-refresh-token",
+          token_type: "Bearer",
+        }),
+      );
+
+      mockDiscoverOAuthServerInfo.mockResolvedValueOnce(createAsanaDiscoveryState());
+      mockFetchToken.mockRejectedValueOnce(
+        Object.assign(new Error("Client authentication failed"), {
+          code: "invalid_client",
+        }),
+      );
+      mockRegisterClient.mockResolvedValueOnce({
+        client_id: "new-client-id",
+      });
+      mockStartAuthorization.mockResolvedValueOnce({
+        authorizationUrl: new URL("https://app.asana.com/-/oauth_authorize"),
+        codeVerifier: "fresh-verifier",
+      });
+
+      const [{ getOAuthTraceFailureStep }, { initiateOAuth }] =
+        await Promise.all([
+          import("../oauth-trace"),
+          import("../mcp-oauth"),
+        ]);
+
+      const result = await initiateOAuth({
+        serverName: "asana",
+        serverUrl: "https://mcp.asana.com/v2/mcp",
+      });
+
+      expect(result.success).toBe(true);
+      expect(localStorage.getItem("mcp-client-asana")).toBe(
+        JSON.stringify({
+          client_id: "new-client-id",
+        }),
+      );
+      expect(getOAuthTraceFailureStep(result.oauthTrace)).toBeUndefined();
+    });
+
     it("preserves the original callback error and verifier when registry token exchange fails", async () => {
       authFetch.mockImplementationOnce(async (input: RequestInfo | URL) => {
         const url =
