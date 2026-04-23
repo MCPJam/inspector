@@ -44,6 +44,9 @@ type OAuthTraceEntryDraft = {
   message?: string;
   details?: Record<string, unknown>;
   error?: string;
+  recovered?: boolean;
+  recoveredAt?: number;
+  recoveryMessage?: string;
 };
 
 type OAuthRequestFields = Record<string, string>;
@@ -308,6 +311,17 @@ function sanitizeHttpHistoryEntry(entry: HttpHistoryEntry): HttpHistoryEntry {
   };
 }
 
+function maxDefined(
+  ...values: Array<number | undefined>
+): number | undefined {
+  const defined = values.filter((value): value is number => value != null);
+  if (defined.length === 0) {
+    return undefined;
+  }
+
+  return Math.max(...defined);
+}
+
 export function createOAuthTraceProjectionContext(): OAuthTraceProjectionContext {
   return {
     syntheticStepTimestamps: {},
@@ -409,6 +423,88 @@ function didCurrentStepReachSuccess(
   }
 }
 
+function extractResponseErrorMessage(
+  response: HttpHistoryEntry["response"],
+): string | undefined {
+  if (!response || response.status < 400) {
+    return undefined;
+  }
+
+  const body = response.body;
+  if (body && typeof body === "object" && !Array.isArray(body)) {
+    const data = body as Record<string, unknown>;
+    const errorType =
+      typeof data.error_type === "string" ? data.error_type : undefined;
+    const errorMessage =
+      typeof data.error_message === "string"
+        ? data.error_message
+        : typeof data.error_description === "string"
+          ? data.error_description
+          : typeof data.message === "string"
+            ? data.message
+            : undefined;
+    if (errorType && errorMessage) {
+      return `${errorType}: ${errorMessage}`;
+    }
+
+    if (
+      typeof data.error === "string" &&
+      typeof data.error_description === "string"
+    ) {
+      return `${data.error}: ${data.error_description}`;
+    }
+
+    if (typeof data.error === "string") {
+      return data.error;
+    }
+
+    const nestedError = data.error;
+    if (
+      nestedError &&
+      typeof nestedError === "object" &&
+      !Array.isArray(nestedError) &&
+      typeof (nestedError as Record<string, unknown>).message === "string"
+    ) {
+      return (nestedError as Record<string, unknown>).message as string;
+    }
+
+    if (errorMessage) {
+      return errorMessage;
+    }
+  }
+
+  return `HTTP ${response.status} ${response.statusText}`;
+}
+
+function inferHttpHistoryEntryError(entry: HttpHistoryEntry): string | undefined {
+  if (entry.error?.message) {
+    return entry.error.message;
+  }
+
+  if (entry.step === "request_client_registration") {
+    return extractResponseErrorMessage(entry.response);
+  }
+
+  return undefined;
+}
+
+function usesRecoveredDynamicClientRegistrationFallback(
+  state: OAuthFlowState,
+): boolean {
+  if (!state.error || !state.clientId) {
+    return false;
+  }
+
+  if (getStepIndex(state.currentStep) <= getStepIndex("request_client_registration")) {
+    return false;
+  }
+
+  return (
+    state.error.startsWith("Dynamic Client Registration failed") ||
+    state.error.startsWith("Client registration failed:")
+  );
+}
+
 export function projectOAuthTraceSnapshot(input: {
   state: OAuthFlowState;
   context?: OAuthTraceProjectionContext;
@@ -437,8 +533,9 @@ export function projectOAuthTraceSnapshot(input: {
           : {}),
       };
     }
-    if (entry.error?.message) {
-      record.error = entry.error.message;
+    const entryError = inferHttpHistoryEntryError(entry);
+    if (entryError) {
+      record.error = entryError;
     }
   }
 
@@ -499,7 +596,27 @@ export function projectOAuthTraceSnapshot(input: {
   });
   inferStepEntry(entries, context, "complete", state.currentStep === "complete");
 
-  if (state.error && !entries.has(state.currentStep)) {
+  const registrationEntry = entries.get("request_client_registration");
+  if (
+    registrationEntry?.error &&
+    getStepIndex(state.currentStep) > getStepIndex("request_client_registration") &&
+    Boolean(state.clientId)
+  ) {
+    registrationEntry.recovered = true;
+    registrationEntry.recoveredAt = maxDefined(
+      registrationEntry.recoveredAt,
+      registrationEntry.completedAt,
+      entries.get("received_client_credentials")?.startedAt,
+    );
+    registrationEntry.recoveryMessage =
+      "Using pre-registered client credentials after registration failed.";
+  }
+
+  if (
+    state.error &&
+    !usesRecoveredDynamicClientRegistrationFallback(state) &&
+    !entries.has(state.currentStep)
+  ) {
     inferStepEntry(entries, context, state.currentStep, true);
     const currentEntry = entries.get(state.currentStep);
     if (currentEntry) {
@@ -515,8 +632,15 @@ export function projectOAuthTraceSnapshot(input: {
     )
     .map((entry) => {
       const stepIndex = getStepIndex(entry.step);
+      const usesStateError =
+        entry.step === state.currentStep &&
+        Boolean(state.error) &&
+        !usesRecoveredDynamicClientRegistrationFallback(state);
+      const error = entry.error ?? (usesStateError ? state.error : undefined);
       const status =
-        entry.error || (entry.step === state.currentStep && state.error)
+        entry.recovered
+          ? "success"
+          : error
           ? "error"
           : stepIndex < currentStepIndex ||
               state.currentStep === "complete" ||
@@ -531,8 +655,11 @@ export function projectOAuthTraceSnapshot(input: {
         title: getStepInfo(entry.step).title,
         status,
         message: entry.message ?? getStepInfo(entry.step).summary,
-        ...(entry.error ? { error: entry.error } : {}),
+        ...(error ? { error } : {}),
         ...(entry.details ? { details: entry.details } : {}),
+        ...(entry.recovered ? { recovered: true } : {}),
+        ...(entry.recoveredAt ? { recoveredAt: entry.recoveredAt } : {}),
+        ...(entry.recoveryMessage ? { recoveryMessage: entry.recoveryMessage } : {}),
         startedAt: entry.startedAt,
         completedAt: status === "pending" ? undefined : entry.completedAt,
       } satisfies OAuthTraceStepSnapshot;

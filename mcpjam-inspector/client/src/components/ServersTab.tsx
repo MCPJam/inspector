@@ -109,6 +109,14 @@ import { compareQuickConnectCatalogCards } from "@/lib/quick-connect-catalog-sor
 import { toast } from "sonner";
 
 const ORDER_STORAGE_KEY = "mcp-server-order";
+const LOGGER_FOCUS_STORAGE_KEY = "mcp-server-logger-focus";
+const LOGGER_FOCUS_TTL_MS = 15 * 60 * 1000;
+
+interface PersistedLoggerFocus {
+  workspaceId: string;
+  serverName: string;
+  sinceTimestamp: number;
+}
 
 function variantIsAlreadyInWorkspaceForQuickConnect(
   v: EnrichedRegistryServer,
@@ -167,6 +175,77 @@ function saveServerOrder(workspaceId: string, orderedNames: string[]): void {
     const all = raw ? JSON.parse(raw) : {};
     all[workspaceId] = orderedNames;
     localStorage.setItem(ORDER_STORAGE_KEY, JSON.stringify(all));
+  } catch {
+    // ignore
+  }
+}
+
+function clearPersistedLoggerFocus(): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  try {
+    sessionStorage.removeItem(LOGGER_FOCUS_STORAGE_KEY);
+  } catch {
+    // ignore
+  }
+}
+
+function readPersistedLoggerFocus(
+  workspaceId: string
+): PersistedLoggerFocus | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  try {
+    const raw = sessionStorage.getItem(LOGGER_FOCUS_STORAGE_KEY);
+    if (!raw) {
+      return null;
+    }
+
+    const parsed = JSON.parse(raw) as Partial<PersistedLoggerFocus> | null;
+    if (
+      !parsed ||
+      typeof parsed.workspaceId !== "string" ||
+      typeof parsed.serverName !== "string" ||
+      typeof parsed.sinceTimestamp !== "number"
+    ) {
+      clearPersistedLoggerFocus();
+      return null;
+    }
+
+    if (Date.now() - parsed.sinceTimestamp > LOGGER_FOCUS_TTL_MS) {
+      clearPersistedLoggerFocus();
+      return null;
+    }
+
+    if (parsed.workspaceId !== workspaceId) {
+      return null;
+    }
+
+    return {
+      workspaceId: parsed.workspaceId,
+      serverName: parsed.serverName,
+      sinceTimestamp: parsed.sinceTimestamp,
+    };
+  } catch {
+    clearPersistedLoggerFocus();
+    return null;
+  }
+}
+
+function writePersistedLoggerFocus(input: PersistedLoggerFocus): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  try {
+    sessionStorage.setItem(
+      LOGGER_FOCUS_STORAGE_KEY,
+      JSON.stringify(input)
+    );
   } catch {
     // ignore
   }
@@ -493,9 +572,14 @@ export function ServersTab({
   const [isActionMenuOpen, setIsActionMenuOpen] = useState(false);
   const [isClientConfigOpen, setIsClientConfigOpen] = useState(false);
   const [activeId, setActiveId] = useState<string | null>(null);
+  const persistedLoggerFocus = readPersistedLoggerFocus(activeWorkspaceId);
   const [focusedLoggerServerIds, setFocusedLoggerServerIds] = useState<
     string[] | undefined
-  >(undefined);
+  >(
+    persistedLoggerFocus ? [persistedLoggerFocus.serverName] : undefined
+  );
+  const [focusedLoggerSinceTimestamp, setFocusedLoggerSinceTimestamp] =
+    useState<number | undefined>(persistedLoggerFocus?.sinceTimestamp);
   const [detailModalState, setDetailModalState] = useState<{
     isOpen: boolean;
     serverName: string | null;
@@ -539,7 +623,11 @@ export function ServersTab({
   }, [allNames.join(","), activeWorkspaceId]);
 
   useEffect(() => {
-    setFocusedLoggerServerIds(undefined);
+    const persistedFocus = readPersistedLoggerFocus(activeWorkspaceId);
+    setFocusedLoggerServerIds(
+      persistedFocus ? [persistedFocus.serverName] : undefined
+    );
+    setFocusedLoggerSinceTimestamp(persistedFocus?.sinceTimestamp);
   }, [activeWorkspaceId]);
 
   const sensors = useSensors(
@@ -771,14 +859,23 @@ export function ServersTab({
     []
   );
 
-  const focusLoggerOnServer = useCallback((serverName: string | null) => {
-    const normalizedServerName = serverName?.trim();
-    if (!normalizedServerName) {
-      return;
-    }
+  const focusLoggerOnServer = useCallback(
+    (serverName: string | null, sinceTimestamp = Date.now()) => {
+      const normalizedServerName = serverName?.trim();
+      if (!normalizedServerName) {
+        return;
+      }
 
-    setFocusedLoggerServerIds([normalizedServerName]);
-  }, []);
+      setFocusedLoggerServerIds([normalizedServerName]);
+      setFocusedLoggerSinceTimestamp(sinceTimestamp);
+      writePersistedLoggerFocus({
+        workspaceId: activeWorkspaceId,
+        serverName: normalizedServerName,
+        sinceTimestamp,
+      });
+    },
+    [activeWorkspaceId]
+  );
 
   const handleCloseDetailModal = useCallback(() => {
     setDetailModalState((prev) => ({
@@ -929,9 +1026,49 @@ export function ServersTab({
   ]);
 
   const loggerServerIds =
-    pendingLoggerServerIds.length > 0
+    focusedLoggerServerIds && focusedLoggerServerIds.length > 0
+      ? focusedLoggerServerIds
+      : pendingLoggerServerIds.length > 0
       ? pendingLoggerServerIds
-      : focusedLoggerServerIds;
+      : undefined;
+  const loggerSinceTimestamp = useMemo(() => {
+    if (
+      loggerServerIds &&
+      focusedLoggerServerIds &&
+      focusedLoggerSinceTimestamp
+    ) {
+      const focusedIds = new Set(focusedLoggerServerIds);
+      if (loggerServerIds.some((serverId) => focusedIds.has(serverId))) {
+        return focusedLoggerSinceTimestamp;
+      }
+    }
+
+    if (
+      loggerServerIds?.includes(pendingDashboardOAuth?.serverName ?? "") &&
+      isPendingDashboardOAuthVisible
+    ) {
+      return pendingDashboardOAuth?.startedAt;
+    }
+
+    if (
+      loggerServerIds?.includes(pendingQuickConnect?.serverName ?? "") &&
+      isPendingQuickConnectVisible
+    ) {
+      return pendingQuickConnect?.createdAt;
+    }
+
+    return focusedLoggerSinceTimestamp;
+  }, [
+    focusedLoggerServerIds,
+    focusedLoggerSinceTimestamp,
+    isPendingDashboardOAuthVisible,
+    isPendingQuickConnectVisible,
+    loggerServerIds,
+    pendingDashboardOAuth?.serverName,
+    pendingDashboardOAuth?.startedAt,
+    pendingQuickConnect?.createdAt,
+    pendingQuickConnect?.serverName,
+  ]);
 
   const handleAddServerClick = () => {
     if (serverCreationGate.isDenied) {
@@ -1277,6 +1414,7 @@ export function ServersTab({
               <LoggerView
                 key={connectedCount}
                 serverIds={loggerServerIds}
+                sinceTimestamp={loggerSinceTimestamp}
                 onClose={toggleJsonRpcPanel}
               />
             </div>

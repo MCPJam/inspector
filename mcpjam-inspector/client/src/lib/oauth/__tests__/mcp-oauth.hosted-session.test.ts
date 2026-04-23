@@ -196,6 +196,9 @@ describe("mcp-oauth hosted callback sessions", () => {
         "https://test.convex.site/web/oauth/complete",
         expect.any(Object)
       );
+      expect(result.oauthTrace?.steps.map((step) => step.step)).toEqual([
+        ...new Set(result.oauthTrace?.steps.map((step) => step.step)),
+      ]);
     } finally {
       vi.useRealTimers();
     }

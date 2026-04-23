@@ -435,6 +435,40 @@ export const createDebugOAuthStateMachine = (
       body: options.body as any,
     });
 
+  const loadFallbackPreregisteredClient = async (note: string) => {
+    const { clientId, clientSecret } =
+      (await loadPreregisteredCredentials?.({
+        serverName,
+        serverUrl,
+      })) ?? {};
+
+    if (!clientId) {
+      return undefined;
+    }
+
+    const preregInfo: Record<string, any> = {
+      "Client ID": clientId,
+      "Client Secret": clientSecret
+        ? "Configured"
+        : "Not provided (public client)",
+      "Token Auth Method": clientSecret ? "client_secret_post" : "none",
+      Note: note,
+    };
+
+    return {
+      clientId,
+      clientSecret: clientSecret || undefined,
+      tokenEndpointAuthMethod: clientSecret ? "client_secret_post" : "none",
+      infoLogs: addInfoLog(
+        getCurrentState(),
+        "received_client_credentials",
+        "preregistered-fallback",
+        "Pre-registered Client",
+        preregInfo,
+      ),
+    };
+  };
+
   // Create machine object that can reference itself
   const machine: OAuthStateMachine = {
     state: initialState,
@@ -1174,11 +1208,28 @@ export const createDebugOAuthStateMachine = (
                 return;
               }
 
-              // No registration endpoint and DCR strategy - skip to PKCE generation with a mock client ID
+              const fallbackClient =
+                await loadFallbackPreregisteredClient(
+                  "Authorization server did not advertise registration_endpoint; using pre-registered client credentials.",
+                );
+
+              if (!fallbackClient) {
+                updateState({
+                  error:
+                    "Authorization server metadata does not include a registration_endpoint. Configure a pre-registered client or use a different registration strategy.",
+                  isInitiatingAuth: false,
+                });
+                return;
+              }
+
               updateState({
-                currentStep: "generate_pkce_parameters",
-                clientId: "mock-client-id-for-demo",
-                tokenEndpointAuthMethod: "none", // Public client
+                currentStep: "received_client_credentials",
+                clientId: fallbackClient.clientId,
+                clientSecret: fallbackClient.clientSecret,
+                tokenEndpointAuthMethod:
+                  fallbackClient.tokenEndpointAuthMethod,
+                infoLogs: fallbackClient.infoLogs,
+                error: undefined,
                 isInitiatingAuth: false,
               });
             }
@@ -1226,9 +1277,7 @@ export const createDebugOAuthStateMachine = (
 
               if (!response.ok) {
                 // Registration failed - could be server doesn't support DCR or request was invalid
-                const registrationError = strictConformance
-                  ? `Dynamic Client Registration failed (${response.status}).`
-                  : `Dynamic Client Registration failed (${response.status}). Using fallback client ID.`;
+                const registrationError = `Dynamic Client Registration failed (${response.status}).`;
 
                 // Update state with error but continue with fallback
                 updateState({
@@ -1241,14 +1290,28 @@ export const createDebugOAuthStateMachine = (
                   return;
                 }
 
-                // Fall back to mock client ID (simulating preregistered client)
-                const fallbackClientId = "preregistered-client-id";
+                const fallbackClient =
+                  await loadFallbackPreregisteredClient(
+                    `Dynamic Client Registration failed (${response.status}); using pre-registered client credentials.`,
+                  );
+
+                if (!fallbackClient) {
+                  updateState({
+                    error:
+                      `${registrationError} Configure a pre-registered client or enable DCR on the authorization server.`,
+                    isInitiatingAuth: false,
+                  });
+                  return;
+                }
 
                 updateState({
                   currentStep: "received_client_credentials",
-                  clientId: fallbackClientId,
-                  clientSecret: undefined,
-                  tokenEndpointAuthMethod: "none", // Assume public client
+                  clientId: fallbackClient.clientId,
+                  clientSecret: fallbackClient.clientSecret,
+                  tokenEndpointAuthMethod:
+                    fallbackClient.tokenEndpointAuthMethod,
+                  infoLogs: fallbackClient.infoLogs,
+                  error: undefined,
                   isInitiatingAuth: false,
                 });
               } else {
@@ -1327,26 +1390,40 @@ export const createDebugOAuthStateMachine = (
                   Date.now() - (lastEntry.timestamp || Date.now());
               }
 
+              const registrationError = `Client registration failed: ${error instanceof Error ? error.message : String(error)}`;
+
               updateState({
                 lastResponse: errorResponse,
                 httpHistory: updatedHistoryError,
-                error: strictConformance
-                  ? `Client registration failed: ${error instanceof Error ? error.message : String(error)}`
-                  : `Client registration failed: ${error instanceof Error ? error.message : String(error)}. Using fallback.`,
+                error: registrationError,
               });
 
               if (strictConformance) {
                 return;
               }
 
-              // Fall back to mock client ID
-              const fallbackClientId = "preregistered-client-id";
+              const fallbackClient =
+                await loadFallbackPreregisteredClient(
+                  "Client registration failed; using pre-registered client credentials.",
+                );
+
+              if (!fallbackClient) {
+                updateState({
+                  error:
+                    `${registrationError}. Configure a pre-registered client or enable DCR on the authorization server.`,
+                  isInitiatingAuth: false,
+                });
+                return;
+              }
 
               updateState({
                 currentStep: "received_client_credentials",
-                clientId: fallbackClientId,
-                clientSecret: undefined,
-                tokenEndpointAuthMethod: "none", // Assume public client
+                clientId: fallbackClient.clientId,
+                clientSecret: fallbackClient.clientSecret,
+                tokenEndpointAuthMethod:
+                  fallbackClient.tokenEndpointAuthMethod,
+                infoLogs: fallbackClient.infoLogs,
+                error: undefined,
                 isInitiatingAuth: false,
               });
             }

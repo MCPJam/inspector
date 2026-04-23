@@ -329,7 +329,11 @@ vi.mock("../workspace/WorkspaceMembersFacepile", () => ({
 }));
 
 vi.mock("../logger-view", () => ({
-  LoggerView: (props: { serverIds?: string[]; onClose?: () => void }) => {
+  LoggerView: (props: {
+    serverIds?: string[];
+    sinceTimestamp?: number;
+    onClose?: () => void;
+  }) => {
     mockLoggerView(props);
     return <div data-testid="logger-view-stub" />;
   },
@@ -450,6 +454,7 @@ describe("ServersTab shared detail modal", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     localStorage.clear();
+    sessionStorage.clear();
     mockIsAuthenticated = false;
     mockCatalogCards = [];
     mockRegistryLoading = false;
@@ -597,8 +602,132 @@ describe("ServersTab shared detail modal", () => {
     expect(mockLoggerView).toHaveBeenLastCalledWith(
       expect.objectContaining({
         serverIds: ["linear"],
+        sinceTimestamp: expect.any(Number),
       })
     );
+  });
+
+  it("preserves explicit logger focus across remounts and does not widen it to other pending servers", async () => {
+    mockJsonRpcPanelVisible = true;
+
+    const linearServer = createServer({ name: "linear" });
+    const asanaServer = createServer({ name: "asana" });
+    const initialServers = {
+      linear: linearServer,
+      asana: asanaServer,
+    };
+
+    const firstRender = render(
+      <ServersTab
+        {...defaultProps}
+        workspaceServers={initialServers}
+        workspaces={{
+          "workspace-1": createWorkspace(initialServers),
+        }}
+      />
+    );
+
+    fireEvent.click(screen.getByText("Reconnect linear"));
+
+    await waitFor(() => {
+      expect(defaultProps.onReconnect).toHaveBeenCalledWith(
+        "linear",
+        undefined
+      );
+    });
+
+    const focusedLoggerProps = mockLoggerView.mock.lastCall?.[0] as
+      | {
+          serverIds?: string[];
+          sinceTimestamp?: number;
+        }
+      | undefined;
+    expect(focusedLoggerProps?.serverIds).toEqual(["linear"]);
+    expect(focusedLoggerProps?.sinceTimestamp).toEqual(expect.any(Number));
+
+    firstRender.unmount();
+    mockLoggerView.mockReset();
+
+    const remountedServers = {
+      linear: createServer({ name: "linear" }),
+      asana: createServer({ name: "asana", connectionStatus: "connecting" }),
+    };
+
+    render(
+      <ServersTab
+        {...defaultProps}
+        workspaceServers={remountedServers}
+        workspaces={{
+          "workspace-1": createWorkspace(remountedServers),
+        }}
+      />
+    );
+
+    expect(mockLoggerView).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        serverIds: ["linear"],
+        sinceTimestamp: focusedLoggerProps?.sinceTimestamp,
+      })
+    );
+  });
+
+  it("keeps persisted logger focus until the matching hosted workspace hydrates", async () => {
+    mockJsonRpcPanelVisible = true;
+    const persistedSinceTimestamp = Date.now();
+
+    const asanaServer = createServer({ name: "asana" });
+    const workspaceOne = createWorkspace({ asana: asanaServer });
+    const workspaceTwo = {
+      ...createWorkspace({ asana: asanaServer }),
+      id: "workspace-2",
+      name: "Hosted Workspace",
+    };
+
+    sessionStorage.setItem(
+      "mcp-server-logger-focus",
+      JSON.stringify({
+        workspaceId: "workspace-2",
+        serverName: "asana",
+        sinceTimestamp: persistedSinceTimestamp,
+      })
+    );
+
+    const { rerender } = render(
+      <ServersTab
+        {...defaultProps}
+        activeWorkspaceId="workspace-1"
+        workspaceServers={{ asana: asanaServer }}
+        workspaces={{
+          "workspace-1": workspaceOne,
+          "workspace-2": workspaceTwo,
+        }}
+      />
+    );
+
+    expect(sessionStorage.getItem("mcp-server-logger-focus")).toContain(
+      "\"workspaceId\":\"workspace-2\""
+    );
+
+    rerender(
+      <ServersTab
+        {...defaultProps}
+        activeWorkspaceId="workspace-2"
+        workspaceServers={{ asana: asanaServer }}
+        workspaces={{
+          "workspace-1": workspaceOne,
+          "workspace-2": workspaceTwo,
+        }}
+      />
+    );
+
+    await waitFor(() => {
+      expect(mockLoggerView).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          serverIds: ["asana"],
+          sinceTimestamp: persistedSinceTimestamp,
+        })
+      );
+    });
   });
 
   it("keeps the shared modal open after saving without a rename", async () => {
