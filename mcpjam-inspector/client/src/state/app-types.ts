@@ -115,6 +115,11 @@ export type AppAction =
       name: string;
       initInfo: InitializationInfo;
     }
+  | {
+      type: "SET_SERVER_OAUTH_TRACE";
+      name: string;
+      oauthTrace?: OAuthTrace;
+    }
   | { type: "CREATE_WORKSPACE"; workspace: Workspace }
   | {
       type: "UPDATE_WORKSPACE";

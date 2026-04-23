@@ -451,6 +451,9 @@ describe("App hosted OAuth callback handling", () => {
           serverName: "asana",
         }),
         "oauth-code",
+        expect.objectContaining({
+          onTraceUpdate: expect.any(Function),
+        }),
       );
     });
   });
@@ -827,6 +830,9 @@ describe("App hosted OAuth callback handling", () => {
           serverName: "asana",
         }),
         "oauth-code",
+        expect.objectContaining({
+          onTraceUpdate: expect.any(Function),
+        }),
       );
     });
 

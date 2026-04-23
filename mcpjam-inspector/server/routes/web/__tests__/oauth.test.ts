@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createWebTestApp,
   expectJson,
@@ -194,5 +194,55 @@ describe("web routes — oauth error contract", () => {
       message: "connect ECONNREFUSED",
       error: "connect ECONNREFUSED",
     });
+  });
+});
+
+describe("web routes — oauth session forwarding", () => {
+  const { app, token } = createWebTestApp();
+
+  beforeEach(() => {
+    vi.stubEnv("CONVEX_HTTP_URL", "https://example.convex.site");
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  it("POST /session forwards the bearer-authenticated session bootstrap to Convex", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      new Response(JSON.stringify({ success: true, sessionId: "session-123" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const payload = {
+      workspaceId: "ws_1",
+      serverId: "srv_1",
+      codeVerifier: "verifier",
+      redirectUri: "http://localhost:5173/oauth/callback",
+      clientInformation: {
+        clientId: "client-id",
+      },
+    };
+
+    const response = await postJson(app, "/api/web/oauth/session", payload, token);
+    const { status, data } = await expectJson(response);
+
+    expect(status).toBe(200);
+    expect(data).toEqual({ success: true, sessionId: "session-123" });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://example.convex.site/web/oauth/session",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(payload),
+      },
+    );
   });
 });

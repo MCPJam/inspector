@@ -71,6 +71,7 @@ interface RenderableRpcItem {
 
 interface LoggerViewProps {
   serverIds?: string[]; // Optional filter for specific server IDs
+  sinceTimestamp?: number; // Optional minimum timestamp (ms since epoch) for displayed logs
   onClose?: () => void; // Optional callback to close/hide the panel
   isLogLevelVisible?: boolean;
   isCollapsable?: boolean;
@@ -115,7 +116,7 @@ function buildOAuthTraceIngestionKey(trace: {
 }
 
 function normalizePayload(
-  payload: unknown,
+  payload: unknown
 ): Record<string, unknown> | unknown[] {
   if (payload !== null && typeof payload === "object")
     return payload as Record<string, unknown>;
@@ -137,6 +138,36 @@ function getDisplayServerTitle(item: {
     return `${item.serverName} (${item.serverId})`;
   }
   return getDisplayServerLabel(item);
+}
+
+function normalizeInlineSummary(text: string): string {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  if (normalized.length <= 96) {
+    return normalized;
+  }
+
+  return `${normalized.slice(0, 93).trimEnd()}...`;
+}
+
+function getOAuthInlineSummary(payload: unknown): string | undefined {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return undefined;
+  }
+
+  const data = payload as Record<string, unknown>;
+  const error = typeof data.error === "string" ? data.error : undefined;
+  const recoveryMessage =
+    typeof data.recoveryMessage === "string" ? data.recoveryMessage : undefined;
+  const message =
+    typeof data.message === "string" ? data.message : undefined;
+  const title = typeof data.title === "string" ? data.title : undefined;
+
+  const preferredSummary = error ?? recoveryMessage ?? message;
+  if (!preferredSummary || preferredSummary === title) {
+    return undefined;
+  }
+
+  return normalizeInlineSummary(preferredSummary);
 }
 
 function DirectionLabel({
@@ -163,23 +194,23 @@ function DirectionLabel({
     const className = oauthRecovered
       ? "text-amber-600 dark:text-amber-400"
       : oauthStatus === "error"
-        ? "text-destructive"
-        : oauthStatus === "pending"
-          ? "text-muted-foreground"
-          : "text-orange-600 dark:text-orange-400";
+      ? "text-destructive"
+      : oauthStatus === "pending"
+      ? "text-muted-foreground"
+      : "text-orange-600 dark:text-orange-400";
     const label = oauthRecovered
       ? "oauth ↺"
       : oauthStatus === "error"
-        ? "oauth !"
-        : oauthStatus === "pending"
-          ? "oauth …"
-          : "oauth ✓";
+      ? "oauth !"
+      : oauthStatus === "pending"
+      ? "oauth …"
+      : "oauth ✓";
 
     return (
       <span
         className={cn(
           "font-mono text-[10px] leading-none flex-shrink-0",
-          className,
+          className
         )}
       >
         {label}
@@ -194,7 +225,7 @@ function DirectionLabel({
         "font-mono text-[10px] leading-none flex-shrink-0",
         isSend
           ? "text-green-600 dark:text-green-400"
-          : "text-blue-600 dark:text-blue-400",
+          : "text-blue-600 dark:text-blue-400"
       )}
     >
       {isSend ? "req →" : "← res"}
@@ -204,6 +235,7 @@ function DirectionLabel({
 
 export function LoggerView({
   serverIds,
+  sinceTimestamp,
   onClose,
   isLogLevelVisible = true,
   isCollapsable = true,
@@ -217,7 +249,7 @@ export function LoggerView({
     Record<string, LoggingLevel>
   >({});
   const [sourceFilter, setSourceFilter] = useState<"all" | TrafficSource>(
-    "all",
+    "all"
   );
   const lastIngestedOAuthTraceKeysRef = useRef<Map<string, string>>(new Map());
 
@@ -236,7 +268,9 @@ export function LoggerView({
 
       const ingestionKey = buildOAuthTraceIngestionKey(server.lastOAuthTrace);
       nextKeys.set(serverId, ingestionKey);
-      if (lastIngestedOAuthTraceKeysRef.current.get(serverId) === ingestionKey) {
+      if (
+        lastIngestedOAuthTraceKeysRef.current.get(serverId) === ingestionKey
+      ) {
         return;
       }
 
@@ -292,7 +326,7 @@ export function LoggerView({
       Object.entries(appState.servers)
         .filter(([, server]) => server.connectionStatus === "connected")
         .map(([id, server]) => ({ id, server })),
-    [appState.servers],
+    [appState.servers]
   );
 
   const selectableServers = useMemo(() => {
@@ -346,7 +380,7 @@ export function LoggerView({
     const combined = [...mcpServerItems, ...mcpAppsItems];
     return combined.sort(
       (a, b) =>
-        new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime(),
+        new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
     );
   }, [mcpServerItems, mcpAppsItems]);
 
@@ -364,8 +398,17 @@ export function LoggerView({
       result = result.filter(
         (item) =>
           serverIdSet.has(item.serverId) ||
-          (!!item.serverName && serverIdSet.has(item.serverName)),
+          (!!item.serverName && serverIdSet.has(item.serverName))
       );
+    }
+
+    if (sinceTimestamp != null) {
+      result = result.filter((item) => {
+        const itemTimestamp = new Date(item.timestamp).getTime();
+        return (
+          Number.isFinite(itemTimestamp) && itemTimestamp >= sinceTimestamp
+        );
+      });
     }
 
     // Filter by search query
@@ -382,7 +425,7 @@ export function LoggerView({
     }
 
     return result;
-  }, [allItems, searchQuery, serverIds, sourceFilter]);
+  }, [allItems, searchQuery, serverIds, sinceTimestamp, sourceFilter]);
 
   const totalItemCount = allItems.length;
   const filteredItemCount = filteredItems.length;
@@ -418,7 +461,7 @@ export function LoggerView({
                     <Filter
                       className={cn(
                         "h-3.5 w-3.5",
-                        sourceFilter !== "all" && "text-primary",
+                        sourceFilter !== "all" && "text-primary"
                       )}
                     />
                     {sourceFilter !== "all" && (
@@ -498,15 +541,15 @@ export function LoggerView({
                                     .then((res) => {
                                       if (res?.success)
                                         toast.success(
-                                          `Updated ${server.id} to ${level}`,
+                                          `Updated ${server.id} to ${level}`
                                         );
                                       else
                                         toast.error(
-                                          res?.error || "Failed to update",
+                                          res?.error || "Failed to update"
                                         );
                                     })
                                     .catch(() =>
-                                      toast.error("Failed to update"),
+                                      toast.error("Failed to update")
                                     );
                                 }}
                               >
@@ -587,6 +630,12 @@ export function LoggerView({
               const isExpanded = expanded.has(it.id);
               const isAppsTraffic = it.source === "mcp-apps";
               const isOAuthTraffic = it.source === "oauth";
+              const oauthInlineSummary = isOAuthTraffic
+                ? getOAuthInlineSummary(it.payload)
+                : undefined;
+              const displayMethod = oauthInlineSummary
+                ? `${it.method} - ${oauthInlineSummary}`
+                : it.method;
 
               const isError =
                 it.method === "error" ||
@@ -597,10 +646,10 @@ export function LoggerView({
               const borderClass = isError
                 ? "border-l-destructive"
                 : isAppsTraffic
-                  ? "border-l-purple-500/50"
-                  : isOAuthTraffic
-                    ? "border-l-orange-300/60"
-                    : "border-l-transparent";
+                ? "border-l-purple-500/50"
+                : isOAuthTraffic
+                ? "border-l-orange-300/60"
+                : "border-l-transparent";
 
               return (
                 <div
@@ -609,7 +658,7 @@ export function LoggerView({
                     "border-b border-border border-l-2",
                     borderClass,
                     isError && "bg-destructive/5",
-                    isExpanded && "bg-muted/20",
+                    isExpanded && "bg-muted/20"
                   )}
                 >
                   <div
@@ -619,7 +668,7 @@ export function LoggerView({
                     <ChevronRight
                       className={cn(
                         "h-3 w-3 flex-shrink-0 text-muted-foreground transition-transform duration-150",
-                        isExpanded && "rotate-90",
+                        isExpanded && "rotate-90"
                       )}
                     />
                     {isError ? (
@@ -635,11 +684,11 @@ export function LoggerView({
                     <span
                       className={cn(
                         "flex-1 min-w-0 font-mono text-xs truncate",
-                        isError ? "text-destructive" : "text-foreground",
+                        isError ? "text-destructive" : "text-foreground"
                       )}
-                      title={it.method}
+                      title={displayMethod}
                     >
-                      {it.method}
+                      {displayMethod}
                     </span>
                     <span
                       className="hidden sm:inline text-muted-foreground truncate max-w-[120px] text-[11px]"

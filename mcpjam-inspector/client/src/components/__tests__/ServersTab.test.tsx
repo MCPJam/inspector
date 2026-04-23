@@ -123,7 +123,9 @@ let mockIsAuthenticated = false;
 let mockCatalogCards: EnrichedRegistryCatalogCard[] = [];
 let mockRegistryLoading = false;
 let mockClientConfigFlagEnabled: boolean | undefined = false;
+let mockJsonRpcPanelVisible = false;
 const mockConnectRegistry = vi.fn();
+const mockLoggerView = vi.fn();
 const mockUseRegistryServers = vi.fn();
 const mockUseWorkspaceBillingGate = vi.fn();
 
@@ -136,11 +138,7 @@ vi.mock("posthog-js/react", () => ({
 }));
 
 vi.mock("../client-config/ClientConfigTab", () => ({
-  ClientConfigTab: ({
-    activeWorkspaceId,
-  }: {
-    activeWorkspaceId: string;
-  }) => (
+  ClientConfigTab: ({ activeWorkspaceId }: { activeWorkspaceId: string }) => (
     <div data-testid="client-config-tab-stub">
       ClientConfigTab:{activeWorkspaceId}
     </div>
@@ -166,8 +164,9 @@ vi.mock("convex/react", () => ({
 }));
 
 vi.mock("@/hooks/useRegistryServers", async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import("@/hooks/useRegistryServers")>();
+  const actual = await importOriginal<
+    typeof import("@/hooks/useRegistryServers")
+  >();
   return {
     ...actual,
     useRegistryServers: (args: unknown) => {
@@ -197,7 +196,7 @@ vi.mock("@/hooks/use-ai-provider-keys", () => ({
 
 vi.mock("@/hooks/use-json-rpc-panel", () => ({
   useJsonRpcPanelVisibility: () => ({
-    isVisible: false,
+    isVisible: mockJsonRpcPanelVisible,
     toggle: vi.fn(),
   }),
 }));
@@ -224,15 +223,23 @@ vi.mock("../connection/ServerConnectionCard", () => ({
   ServerConnectionCard: ({
     server,
     needsReconnect,
+    onReconnect,
     onOpenDetailModal,
   }: {
     server: ServerWithName;
     needsReconnect?: boolean;
+    onReconnect?: (
+      serverName: string,
+      options?: { forceOAuthFlow?: boolean }
+    ) => Promise<void>;
     onOpenDetailModal?: (server: ServerWithName, defaultTab: string) => void;
   }) => (
     <div>
       <button onClick={() => onOpenDetailModal?.(server, "configuration")}>
         Open {server.name}
+      </button>
+      <button onClick={() => void onReconnect?.(server.name)}>
+        Reconnect {server.name}
       </button>
       {needsReconnect ? <span>Needs reconnect</span> : null}
       <div data-testid={`server-card-${server.name}`}>
@@ -255,7 +262,7 @@ vi.mock("../connection/ServerDetailModal", () => ({
     defaultTab: string;
     onSubmit: (
       formData: ServerFormData,
-      originalServerName: string,
+      originalServerName: string
     ) => Promise<ServerUpdateResult>;
     onClose: () => void;
   }) =>
@@ -275,7 +282,7 @@ vi.mock("../connection/ServerDetailModal", () => ({
                 command: "npx",
                 args: ["-y", "@modelcontextprotocol/server-test"],
               },
-              server.name,
+              server.name
             )
           }
         >
@@ -290,7 +297,7 @@ vi.mock("../connection/ServerDetailModal", () => ({
                 command: "npx",
                 args: ["-y", "@modelcontextprotocol/server-test"],
               },
-              server.name,
+              server.name
             )
           }
         >
@@ -322,7 +329,14 @@ vi.mock("../workspace/WorkspaceMembersFacepile", () => ({
 }));
 
 vi.mock("../logger-view", () => ({
-  LoggerView: () => null,
+  LoggerView: (props: {
+    serverIds?: string[];
+    sinceTimestamp?: number;
+    onClose?: () => void;
+  }) => {
+    mockLoggerView(props);
+    return <div data-testid="logger-view-stub" />;
+  },
 }));
 
 vi.mock("../ui/resizable", () => ({
@@ -440,10 +454,13 @@ describe("ServersTab shared detail modal", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     localStorage.clear();
+    sessionStorage.clear();
     mockIsAuthenticated = false;
     mockCatalogCards = [];
     mockRegistryLoading = false;
     mockClientConfigFlagEnabled = false;
+    mockJsonRpcPanelVisible = false;
+    mockLoggerView.mockReset();
     mockUseWorkspaceBillingGate.mockImplementation(
       ({
         organizationId,
@@ -461,7 +478,7 @@ describe("ServersTab shared detail modal", () => {
         isLoading: false,
         isDenied: false,
         denialMessage: null,
-      }),
+      })
     );
     mockConnectRegistry.mockReset();
     mockConnectRegistry.mockImplementation(async (server) => {
@@ -484,10 +501,10 @@ describe("ServersTab shared detail modal", () => {
 
     expect(screen.getByRole("dialog")).toBeInTheDocument();
     expect(screen.getByTestId("modal-server-name")).toHaveTextContent(
-      "test-server",
+      "test-server"
     );
     expect(screen.getByTestId("modal-default-tab")).toHaveTextContent(
-      "configuration",
+      "configuration"
     );
   });
 
@@ -495,14 +512,14 @@ describe("ServersTab shared detail modal", () => {
     render(<ServersTab {...defaultProps} isBillingContextPending={true} />);
 
     expect(
-      screen.getByTestId("servers-billing-context-pending"),
+      screen.getByTestId("servers-billing-context-pending")
     ).toBeInTheDocument();
     expect(screen.queryByText("Add Server")).not.toBeInTheDocument();
     expect(mockUseWorkspaceBillingGate).toHaveBeenCalledWith(
       expect.objectContaining({
         workspaceId: null,
         organizationId: null,
-      }),
+      })
     );
   });
 
@@ -513,7 +530,7 @@ describe("ServersTab shared detail modal", () => {
         workspaces={{}}
         activeWorkspaceId="none"
         workspaceServers={{}}
-      />,
+      />
     );
 
     expect(screen.getByTestId("servers-no-workspace")).toBeInTheDocument();
@@ -539,12 +556,178 @@ describe("ServersTab shared detail modal", () => {
           serverUrl: "https://example.com/mcp",
           startedAt: Date.now(),
         }}
-      />,
+      />
     );
 
     expect(screen.getByTestId("server-card-demo-server")).toHaveTextContent(
-      "demo-server:connecting",
+      "demo-server:connecting"
     );
+  });
+
+  it("scopes the logger panel to the reconnect target server", async () => {
+    mockJsonRpcPanelVisible = true;
+
+    const linearServer = createServer({ name: "linear" });
+    const asanaServer = createServer({ name: "asana" });
+    const workspaceServers = {
+      linear: linearServer,
+      asana: asanaServer,
+    };
+
+    render(
+      <ServersTab
+        {...defaultProps}
+        workspaceServers={workspaceServers}
+        workspaces={{
+          "workspace-1": createWorkspace(workspaceServers),
+        }}
+      />
+    );
+
+    expect(mockLoggerView).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        serverIds: undefined,
+      })
+    );
+
+    fireEvent.click(screen.getByText("Reconnect linear"));
+
+    await waitFor(() => {
+      expect(defaultProps.onReconnect).toHaveBeenCalledWith(
+        "linear",
+        undefined
+      );
+    });
+
+    expect(mockLoggerView).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        serverIds: ["linear"],
+        sinceTimestamp: expect.any(Number),
+      })
+    );
+  });
+
+  it("preserves explicit logger focus across remounts and does not widen it to other pending servers", async () => {
+    mockJsonRpcPanelVisible = true;
+
+    const linearServer = createServer({ name: "linear" });
+    const asanaServer = createServer({ name: "asana" });
+    const initialServers = {
+      linear: linearServer,
+      asana: asanaServer,
+    };
+
+    const firstRender = render(
+      <ServersTab
+        {...defaultProps}
+        workspaceServers={initialServers}
+        workspaces={{
+          "workspace-1": createWorkspace(initialServers),
+        }}
+      />
+    );
+
+    fireEvent.click(screen.getByText("Reconnect linear"));
+
+    await waitFor(() => {
+      expect(defaultProps.onReconnect).toHaveBeenCalledWith(
+        "linear",
+        undefined
+      );
+    });
+
+    const focusedLoggerProps = mockLoggerView.mock.lastCall?.[0] as
+      | {
+          serverIds?: string[];
+          sinceTimestamp?: number;
+        }
+      | undefined;
+    expect(focusedLoggerProps?.serverIds).toEqual(["linear"]);
+    expect(focusedLoggerProps?.sinceTimestamp).toEqual(expect.any(Number));
+
+    firstRender.unmount();
+    mockLoggerView.mockReset();
+
+    const remountedServers = {
+      linear: createServer({ name: "linear" }),
+      asana: createServer({ name: "asana", connectionStatus: "connecting" }),
+    };
+
+    render(
+      <ServersTab
+        {...defaultProps}
+        workspaceServers={remountedServers}
+        workspaces={{
+          "workspace-1": createWorkspace(remountedServers),
+        }}
+      />
+    );
+
+    expect(mockLoggerView).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        serverIds: ["linear"],
+        sinceTimestamp: focusedLoggerProps?.sinceTimestamp,
+      })
+    );
+  });
+
+  it("keeps persisted logger focus until the matching hosted workspace hydrates", async () => {
+    mockJsonRpcPanelVisible = true;
+    const persistedSinceTimestamp = Date.now();
+
+    const asanaServer = createServer({ name: "asana" });
+    const workspaceOne = createWorkspace({ asana: asanaServer });
+    const workspaceTwo = {
+      ...createWorkspace({ asana: asanaServer }),
+      id: "workspace-2",
+      name: "Hosted Workspace",
+    };
+
+    sessionStorage.setItem(
+      "mcp-server-logger-focus",
+      JSON.stringify({
+        workspaceId: "workspace-2",
+        serverName: "asana",
+        sinceTimestamp: persistedSinceTimestamp,
+      })
+    );
+
+    const { rerender } = render(
+      <ServersTab
+        {...defaultProps}
+        activeWorkspaceId="workspace-1"
+        workspaceServers={{ asana: asanaServer }}
+        workspaces={{
+          "workspace-1": workspaceOne,
+          "workspace-2": workspaceTwo,
+        }}
+      />
+    );
+
+    expect(sessionStorage.getItem("mcp-server-logger-focus")).toContain(
+      "\"workspaceId\":\"workspace-2\""
+    );
+
+    rerender(
+      <ServersTab
+        {...defaultProps}
+        activeWorkspaceId="workspace-2"
+        workspaceServers={{ asana: asanaServer }}
+        workspaces={{
+          "workspace-1": workspaceOne,
+          "workspace-2": workspaceTwo,
+        }}
+      />
+    );
+
+    await waitFor(() => {
+      expect(mockLoggerView).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          serverIds: ["asana"],
+          sinceTimestamp: persistedSinceTimestamp,
+        })
+      );
+    });
   });
 
   it("keeps the shared modal open after saving without a rename", async () => {
@@ -556,12 +739,12 @@ describe("ServersTab shared detail modal", () => {
     await waitFor(() => {
       expect(defaultProps.onUpdate).toHaveBeenCalledWith(
         "test-server",
-        expect.objectContaining({ name: "test-server" }),
+        expect.objectContaining({ name: "test-server" })
       );
     });
     expect(screen.getByRole("dialog")).toBeInTheDocument();
     expect(screen.getByTestId("modal-server-name")).toHaveTextContent(
-      "test-server",
+      "test-server"
     );
   });
 
@@ -604,7 +787,7 @@ describe("ServersTab shared detail modal", () => {
     await waitFor(() => {
       expect(screen.getByRole("dialog")).toBeInTheDocument();
       expect(screen.getByTestId("modal-connection-status")).toHaveTextContent(
-        "connecting",
+        "connecting"
       );
     });
   });
@@ -623,12 +806,12 @@ describe("ServersTab shared detail modal", () => {
     await waitFor(() => {
       expect(onUpdate).toHaveBeenCalledWith(
         "test-server",
-        expect.objectContaining({ name: "renamed-server" }),
+        expect.objectContaining({ name: "renamed-server" })
       );
     });
     expect(screen.getByRole("dialog")).toBeInTheDocument();
     expect(screen.getByTestId("modal-server-name")).toHaveTextContent(
-      "renamed-server",
+      "renamed-server"
     );
   });
 
@@ -641,14 +824,14 @@ describe("ServersTab shared detail modal", () => {
     await waitFor(() => {
       expect(screen.getByRole("dialog")).toBeInTheDocument();
       expect(screen.getByTestId("modal-server-name")).toHaveTextContent(
-        "test-server",
+        "test-server"
       );
       expect(screen.getByTestId("modal-default-tab")).toHaveTextContent(
-        "configuration",
+        "configuration"
       );
     });
     expect(
-      localStorage.getItem("mcp-server-detail-modal-oauth-resume"),
+      localStorage.getItem("mcp-server-detail-modal-oauth-resume")
     ).toBeNull();
   });
 
@@ -686,7 +869,7 @@ describe("ServersTab shared detail modal", () => {
             }),
           }),
         }}
-      />,
+      />
     );
 
     expect(screen.queryByText("Needs reconnect")).not.toBeInTheDocument();
@@ -722,7 +905,7 @@ describe("ServersTab shared detail modal", () => {
             },
           },
         }}
-      />,
+      />
     );
 
     expect(screen.getByText("Needs reconnect")).toBeInTheDocument();
@@ -736,7 +919,7 @@ describe("ServersTab shared detail modal", () => {
     };
     const initializedCapabilities = mergeWorkspaceClientCapabilities(
       getDefaultClientCapabilities() as Record<string, unknown>,
-      serverCapabilities,
+      serverCapabilities
     );
 
     render(
@@ -768,7 +951,7 @@ describe("ServersTab shared detail modal", () => {
             }),
           }),
         }}
-      />,
+      />
     );
 
     expect(screen.queryByText("Needs reconnect")).not.toBeInTheDocument();
@@ -782,10 +965,10 @@ describe("ServersTab shared detail modal", () => {
 
     expect(screen.getByText("Quick Connect")).toBeInTheDocument();
     expect(
-      screen.getByTestId("servers-quick-connect-browse-registry"),
+      screen.getByTestId("servers-quick-connect-browse-registry")
     ).toBeInTheDocument();
     expect(
-      screen.getByTestId("servers-quick-connect-mini-card"),
+      screen.getByTestId("servers-quick-connect-mini-card")
     ).toBeInTheDocument();
   });
 
@@ -804,15 +987,15 @@ describe("ServersTab shared detail modal", () => {
         url: "https://mcp.linear.app/mcp",
         useOAuth: true,
         registryServerId: "linear-1",
-      }),
+      })
     );
     expect(screen.getByText("Quick Connect")).toBeInTheDocument();
     expect(screen.getByText("Connecting Linear...")).toBeInTheDocument();
     expect(screen.getAllByText("Authorizing...").length).toBeGreaterThanOrEqual(
-      1,
+      1
     );
     expect(
-      screen.getByRole("button", { name: "Connect Linear" }),
+      screen.getByRole("button", { name: "Connect Linear" })
     ).toBeDisabled();
   });
 
@@ -846,16 +1029,16 @@ describe("ServersTab shared detail modal", () => {
             }),
           }),
         }}
-      />,
+      />
     );
 
     expect(screen.getByText("Quick Connect")).toBeInTheDocument();
     expect(screen.getByText("Connecting Linear...")).toBeInTheDocument();
     expect(screen.getAllByText("Authorizing...").length).toBeGreaterThanOrEqual(
-      1,
+      1
     );
     expect(screen.getByTestId("server-card-Linear")).toHaveTextContent(
-      "Linear:oauth-flow",
+      "Linear:oauth-flow"
     );
   });
 
@@ -889,14 +1072,14 @@ describe("ServersTab shared detail modal", () => {
             }),
           }),
         }}
-      />,
+      />
     );
 
     expect(
-      screen.getAllByText("Finishing setup...").length,
+      screen.getAllByText("Finishing setup...").length
     ).toBeGreaterThanOrEqual(1);
     expect(screen.getByTestId("server-card-Linear")).toHaveTextContent(
-      "Linear:connecting",
+      "Linear:connecting"
     );
   });
 
@@ -930,7 +1113,7 @@ describe("ServersTab shared detail modal", () => {
             }),
           }),
         }}
-      />,
+      />
     );
 
     expect(screen.queryByText("Connecting Linear...")).not.toBeInTheDocument();
@@ -956,16 +1139,16 @@ describe("ServersTab shared detail modal", () => {
         workspaces={{
           "workspace-1": createWorkspace({ a: s1 }),
         }}
-      />,
+      />
     );
     expect(
-      screen.getByTestId("servers-quick-connect-section"),
+      screen.getByTestId("servers-quick-connect-section")
     ).toBeInTheDocument();
     expect(
-      screen.getByTestId("servers-quick-connect-section"),
+      screen.getByTestId("servers-quick-connect-section")
     ).not.toHaveAttribute("data-minimized", "true");
     expect(
-      screen.getByTestId("servers-quick-connect-mini-card"),
+      screen.getByTestId("servers-quick-connect-mini-card")
     ).toBeInTheDocument();
 
     rerender(
@@ -975,16 +1158,16 @@ describe("ServersTab shared detail modal", () => {
         workspaces={{
           "workspace-1": createWorkspace({ a: s1, b: s2 }),
         }}
-      />,
+      />
     );
     expect(
-      screen.getByTestId("servers-quick-connect-section"),
+      screen.getByTestId("servers-quick-connect-section")
     ).toBeInTheDocument();
     expect(
-      screen.getByTestId("servers-quick-connect-section"),
+      screen.getByTestId("servers-quick-connect-section")
     ).not.toHaveAttribute("data-minimized", "true");
     expect(
-      screen.getByTestId("servers-quick-connect-mini-card"),
+      screen.getByTestId("servers-quick-connect-mini-card")
     ).toBeInTheDocument();
 
     rerender(
@@ -994,28 +1177,28 @@ describe("ServersTab shared detail modal", () => {
         workspaces={{
           "workspace-1": createWorkspace(three),
         }}
-      />,
+      />
     );
     const minimized = screen.getByTestId("servers-quick-connect-section");
     expect(minimized).toBeInTheDocument();
     expect(minimized).toHaveAttribute("data-minimized", "true");
     expect(
-      screen.getByTestId("servers-quick-connect-mini-cards-toggle"),
+      screen.getByTestId("servers-quick-connect-mini-cards-toggle")
     ).toHaveTextContent(/Show \(1\)/);
     expect(
-      screen.queryByTestId("servers-tab-browse-registry-header-fallback"),
+      screen.queryByTestId("servers-tab-browse-registry-header-fallback")
     ).not.toBeInTheDocument();
     expect(
-      screen.queryByTestId("servers-quick-connect-mini-card"),
+      screen.queryByTestId("servers-quick-connect-mini-card")
     ).not.toBeInTheDocument();
     fireEvent.click(
-      screen.getByTestId("servers-quick-connect-mini-cards-toggle"),
+      screen.getByTestId("servers-quick-connect-mini-cards-toggle")
     );
     expect(
-      screen.getByTestId("servers-quick-connect-mini-card"),
+      screen.getByTestId("servers-quick-connect-mini-card")
     ).toBeInTheDocument();
     expect(
-      screen.getByTestId("servers-quick-connect-mini-cards-toggle"),
+      screen.getByTestId("servers-quick-connect-mini-cards-toggle")
     ).toHaveTextContent(/Hide \(1\)/);
   });
 
@@ -1056,14 +1239,14 @@ describe("ServersTab shared detail modal", () => {
             }),
           }),
         }}
-      />,
+      />
     );
 
     expect(
-      screen.getByTestId("servers-quick-connect-section"),
+      screen.getByTestId("servers-quick-connect-section")
     ).toBeInTheDocument();
     expect(
-      screen.queryByTestId("servers-tab-browse-registry-header-fallback"),
+      screen.queryByTestId("servers-tab-browse-registry-header-fallback")
     ).not.toBeInTheDocument();
   });
 
@@ -1078,10 +1261,10 @@ describe("ServersTab shared detail modal", () => {
     expect(screen.getByLabelText("Verified publisher")).toBeInTheDocument();
     expect(screen.getByLabelText("42 stars")).toBeInTheDocument();
     expect(
-      screen.getByText("Interact with Linear issues."),
+      screen.getByText("Interact with Linear issues.")
     ).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: /star this server/i }),
+      screen.queryByRole("button", { name: /star this server/i })
     ).not.toBeInTheDocument();
   });
 
@@ -1099,10 +1282,10 @@ describe("ServersTab shared detail modal", () => {
     mockCatalogCards = [createLinearCatalogCard()];
 
     const { rerender } = render(
-      <ServersTab {...defaultProps} workspaceServers={{}} />,
+      <ServersTab {...defaultProps} workspaceServers={{}} />
     );
     expect(
-      screen.getByTestId("servers-quick-connect-section"),
+      screen.getByTestId("servers-quick-connect-section")
     ).toBeInTheDocument();
 
     const s1 = createServer({ name: "a" });
@@ -1117,14 +1300,14 @@ describe("ServersTab shared detail modal", () => {
         workspaces={{
           "workspace-1": createWorkspace(three),
         }}
-      />,
+      />
     );
 
     const minimized = screen.getByTestId("servers-quick-connect-section");
     expect(minimized).toBeInTheDocument();
     expect(minimized).toHaveAttribute("data-minimized", "true");
     expect(
-      screen.queryByTestId("servers-tab-browse-registry-header-fallback"),
+      screen.queryByTestId("servers-tab-browse-registry-header-fallback")
     ).not.toBeInTheDocument();
   });
 
@@ -1138,19 +1321,19 @@ describe("ServersTab shared detail modal", () => {
         isRegistryEnabled={false}
         onNavigateToRegistry={undefined}
         workspaceServers={{}}
-      />,
+      />
     );
 
     expect(
-      screen.queryByTestId("servers-quick-connect-section"),
+      screen.queryByTestId("servers-quick-connect-section")
     ).not.toBeInTheDocument();
     expect(
-      screen.queryByTestId("servers-tab-browse-registry-header-fallback"),
+      screen.queryByTestId("servers-tab-browse-registry-header-fallback")
     ).not.toBeInTheDocument();
     expect(mockUseRegistryServers).toHaveBeenCalledWith(
       expect.objectContaining({
         enabled: false,
-      }),
+      })
     );
   });
 
@@ -1167,14 +1350,14 @@ describe("ServersTab shared detail modal", () => {
             sharedWorkspaceId: "ws_shared_123",
           },
         }}
-      />,
+      />
     );
 
     expect(mockUseRegistryServers).toHaveBeenCalledWith(
       expect.objectContaining({
         enabled: true,
         workspaceId: "ws_shared_123",
-      }),
+      })
     );
   });
 
@@ -1188,14 +1371,14 @@ describe("ServersTab shared detail modal", () => {
         workspaces={{
           "workspace-1": createWorkspace(defaultProps.workspaceServers),
         }}
-      />,
+      />
     );
 
     expect(mockUseRegistryServers).toHaveBeenCalledWith(
       expect.objectContaining({
         enabled: true,
         workspaceId: null,
-      }),
+      })
     );
   });
 
@@ -1214,11 +1397,11 @@ describe("ServersTab shared detail modal", () => {
             Linear: createServer({ name: "Linear" }),
           }),
         }}
-      />,
+      />
     );
 
     expect(
-      screen.queryByTestId("servers-quick-connect-section"),
+      screen.queryByTestId("servers-quick-connect-section")
     ).not.toBeInTheDocument();
   });
 
@@ -1228,7 +1411,7 @@ describe("ServersTab shared detail modal", () => {
     render(<ServersTab {...defaultProps} />);
 
     expect(
-      screen.queryByRole("button", { name: /client config/i }),
+      screen.queryByRole("button", { name: /client config/i })
     ).not.toBeInTheDocument();
   });
 
@@ -1240,13 +1423,13 @@ describe("ServersTab shared detail modal", () => {
     const button = screen.getByRole("button", { name: /client config/i });
     expect(button).toBeInTheDocument();
     expect(
-      screen.queryByTestId("client-config-tab-stub"),
+      screen.queryByTestId("client-config-tab-stub")
     ).not.toBeInTheDocument();
 
     fireEvent.click(button);
 
     expect(screen.getByTestId("client-config-tab-stub")).toHaveTextContent(
-      "ClientConfigTab:workspace-1",
+      "ClientConfigTab:workspace-1"
     );
   });
 
@@ -1256,7 +1439,7 @@ describe("ServersTab shared detail modal", () => {
     render(<ServersTab {...defaultProps} onSaveClientConfig={undefined} />);
 
     expect(
-      screen.queryByRole("button", { name: /client config/i }),
+      screen.queryByRole("button", { name: /client config/i })
     ).not.toBeInTheDocument();
   });
 
@@ -1275,11 +1458,11 @@ describe("ServersTab shared detail modal", () => {
             "DualServer (App)": createServer({ name: "DualServer (App)" }),
           }),
         }}
-      />,
+      />
     );
 
     expect(
-      screen.queryByTestId("servers-quick-connect-section"),
+      screen.queryByTestId("servers-quick-connect-section")
     ).not.toBeInTheDocument();
   });
 });

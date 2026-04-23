@@ -121,4 +121,74 @@ describe("LoggerView hosted rpc logs", () => {
     expect(screen.getByText("Dynamic Client Registration")).toBeInTheDocument();
     expect(screen.getByText("Notion")).toBeInTheDocument();
   });
+
+  it("shows oauth failure detail inline for collapsed rows", () => {
+    useTrafficLogStore.getState().addMcpServerLog({
+      id: "oauth:srv-1:interactive_connect:request_client_registration:2",
+      serverId: "srv-1",
+      serverName: "Notion",
+      direction: "OAUTH",
+      method: "Dynamic Client Registration",
+      timestamp: "2026-04-10T12:00:03.000Z",
+      payload: {
+        source: "interactive_connect",
+        step: "request_client_registration",
+        title: "Dynamic Client Registration",
+        status: "success",
+        error: "Dynamic Client Registration is not enabled for this project.",
+        recovered: true,
+        recoveryMessage:
+          "Using pre-registered client credentials after registration failed.",
+      },
+      kind: "oauth",
+      oauthStatus: "success",
+      oauthRecovered: true,
+    });
+
+    render(<LoggerView serverIds={["srv-1"]} />);
+
+    expect(
+      screen.getByText(
+        "Dynamic Client Registration - Dynamic Client Registration is not enabled for this project."
+      )
+    ).toBeInTheDocument();
+  });
+
+  it("filters logs to the current session when sinceTimestamp is provided", () => {
+    useTrafficLogStore.getState().addMcpServerLog({
+      id: "oauth:srv-1:interactive_connect:request_client_registration:1",
+      serverId: "srv-1",
+      serverName: "Notion",
+      direction: "OAUTH",
+      method: "Old OAuth Flow",
+      timestamp: "2026-04-10T12:00:00.000Z",
+      payload: {
+        source: "interactive_connect",
+        step: "request_client_registration",
+        title: "Old OAuth Flow",
+        status: "success",
+      },
+      kind: "oauth",
+      oauthStatus: "success",
+    });
+    useTrafficLogStore.getState().addMcpServerLog({
+      id: "rpc:srv-1:initialize:2",
+      serverId: "srv-1",
+      serverName: "Notion",
+      direction: "SEND",
+      method: "initialize",
+      timestamp: "2026-04-10T12:00:02.000Z",
+      payload: { ok: true },
+    });
+
+    render(
+      <LoggerView
+        serverIds={["srv-1"]}
+        sinceTimestamp={Date.parse("2026-04-10T12:00:01.000Z")}
+      />
+    );
+
+    expect(screen.getByText("initialize")).toBeInTheDocument();
+    expect(screen.queryByText("Old OAuth Flow")).not.toBeInTheDocument();
+  });
 });

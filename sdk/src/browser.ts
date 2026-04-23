@@ -98,6 +98,16 @@ export type {
   OAuthStateMachineRunResult,
 } from "./oauth/state-machines/runner.js";
 export {
+  createOAuthTraceProjectionContext,
+  projectOAuthTraceSnapshot,
+} from "./oauth/state-machines/trace.js";
+export type {
+  OAuthTraceProjectionContext,
+  OAuthTraceSnapshot,
+  OAuthTraceStepSnapshot,
+  OAuthTraceStepStatus,
+} from "./oauth/state-machines/trace.js";
+export {
   getStepInfo,
   getStepIndex,
 } from "./oauth/state-machines/shared/step-metadata.js";

@@ -8,6 +8,7 @@ import {
   type SetStateAction,
 } from "react";
 import { getStoredTokens, initiateOAuth } from "@/lib/oauth/mcp-oauth";
+import type { OAuthTrace } from "@/lib/oauth/oauth-trace";
 import type { HostedOAuthRequiredDetails } from "@/lib/hosted-oauth-required";
 import {
   clearHostedOAuthPendingState,
@@ -25,6 +26,7 @@ import {
 } from "@/lib/hosted-oauth-resume";
 import { validateHostedServer } from "@/lib/apis/web/servers-api";
 import { slugify } from "@/lib/shared-server-session";
+import { ingestOAuthTraceLogs } from "@/stores/traffic-log-store";
 
 const INLINE_TOKEN_POLL_ATTEMPTS = 15;
 const RESUME_TOKEN_POLL_ATTEMPTS = 24;
@@ -390,6 +392,13 @@ export function useHostedOAuthGate({
         serverUrl: server.serverUrl,
         clientId: server.clientId ?? undefined,
         scopes: server.oauthScopes ?? undefined,
+        onTraceUpdate: (oauthTrace: OAuthTrace) => {
+          ingestOAuthTraceLogs({
+            serverId: server.serverId,
+            serverName: server.serverName,
+            trace: oauthTrace,
+          });
+        },
       });
 
       if (!result.success) {

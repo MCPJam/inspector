@@ -120,6 +120,7 @@ import {
   type OrganizationRouteSection,
 } from "./lib/hosted-navigation";
 import { buildOAuthTokensByServerId } from "./lib/oauth/oauth-tokens";
+import type { OAuthTrace } from "./lib/oauth/oauth-trace";
 import {
   formatBillingFeatureName,
   formatPlanName,
@@ -165,6 +166,7 @@ import { getEffectiveWorkspaceClientCapabilities } from "./lib/client-config";
 import { buildEvalsHash } from "./lib/evals-router";
 import { withTestingSurface } from "./lib/testing-surface";
 import { useClientConfigStore } from "./stores/client-config-store";
+import { ingestOAuthTraceLogs } from "./stores/traffic-log-store";
 import { clearGuestSession } from "./lib/guest-session";
 
 function getHostedOAuthCallbackErrorMessage(): string {
@@ -476,10 +478,26 @@ export default function App() {
       return;
     }
 
+    const handleLiveOAuthTrace = (oauthTrace: OAuthTrace) => {
+      const serverId = callbackContext.serverId ?? callbackContext.serverName;
+      if (!serverId) {
+        return;
+      }
+      ingestOAuthTraceLogs({
+        serverId,
+        serverName: callbackContext.serverName,
+        trace: oauthTrace,
+      });
+    };
+
     const completeCallback =
       isAuthenticated
-        ? completeHostedOAuthCallback(callbackContext, code)
-        : handleOAuthCallback(code);
+        ? completeHostedOAuthCallback(callbackContext, code, {
+            onTraceUpdate: handleLiveOAuthTrace,
+          })
+        : handleOAuthCallback(code, {
+            onTraceUpdate: handleLiveOAuthTrace,
+          });
 
     completeCallback
       .then((result) => {

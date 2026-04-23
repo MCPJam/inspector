@@ -243,6 +243,16 @@ export function useServerState({
     },
     [dispatch],
   );
+  const updateServerOAuthTrace = useCallback(
+    (serverName: string, oauthTrace: OAuthTrace) => {
+      dispatch({
+        type: "SET_SERVER_OAUTH_TRACE",
+        name: serverName,
+        oauthTrace,
+      });
+    },
+    [dispatch],
+  );
   const isStaleOp = (name: string, token: number) =>
     (opTokenRef.current.get(name) ?? 0) !== token;
 
@@ -703,11 +713,25 @@ export function useServerState({
         HOSTED_MODE &&
         isAuthenticated &&
         hostedCallbackContext?.surface === "workspace";
+      const handleLiveOAuthTrace = (oauthTrace: OAuthTrace) => {
+        const traceServerName =
+          oauthTrace.serverName ??
+          hostedCallbackContext?.serverName ??
+          pendingServerName ??
+          null;
+        if (traceServerName) {
+          updateServerOAuthTrace(traceServerName, oauthTrace);
+        }
+      };
 
       try {
         const result = isHostedWorkspaceCallback
-          ? await completeHostedOAuthCallback(hostedCallbackContext, code)
-          : await handleOAuthCallback(code);
+          ? await completeHostedOAuthCallback(hostedCallbackContext, code, {
+              onTraceUpdate: handleLiveOAuthTrace,
+            })
+          : await handleOAuthCallback(code, {
+              onTraceUpdate: handleLiveOAuthTrace,
+            });
 
         localStorage.removeItem("mcp-oauth-return-hash");
         if (isHostedWorkspaceCallback) {
@@ -828,6 +852,7 @@ export function useServerState({
       logger,
       storeInitInfo,
       guardedTestConnection,
+      updateServerOAuthTrace,
       withWorkspaceClientCapabilities,
     ],
   );
@@ -1079,6 +1104,9 @@ export function useServerState({
             customHeaders: formData.headers,
             protocolVersion: existingOAuthProfile?.protocolVersion,
             registrationStrategy: existingOAuthProfile?.registrationStrategy,
+            onTraceUpdate: (oauthTrace: OAuthTrace) => {
+              updateServerOAuthTrace(formData.name, oauthTrace);
+            },
           };
           if (oauthInputs.scopes && oauthInputs.scopes.length > 0) {
             oauthOptions.scopes = oauthInputs.scopes;
@@ -1226,6 +1254,7 @@ export function useServerState({
       logger,
       storeInitInfo,
       guardedTestConnection,
+      updateServerOAuthTrace,
       withWorkspaceClientCapabilities,
     ],
   );
@@ -1795,6 +1824,9 @@ export function useServerState({
               : undefined,
           protocolVersion: server.oauthFlowProfile?.protocolVersion,
           registrationStrategy: server.oauthFlowProfile?.registrationStrategy,
+          onTraceUpdate: (oauthTrace: OAuthTrace) => {
+            updateServerOAuthTrace(serverName, oauthTrace);
+          },
         });
 
         if (oauthResult.success && !oauthResult.serverConfig) {
@@ -1966,6 +1998,9 @@ export function useServerState({
                 serverUrl: oauthOptions.serverUrl,
               });
             },
+            onTraceUpdate: (oauthTrace: OAuthTrace) => {
+              updateServerOAuthTrace(serverName, oauthTrace);
+            },
           },
         );
         if (authResult.kind === "redirect") {
@@ -2065,6 +2100,7 @@ export function useServerState({
       dispatch,
       prepareHostedWorkspaceOAuthRedirect,
       guardedReconnectServer,
+      updateServerOAuthTrace,
       withWorkspaceClientCapabilities,
     ],
   );
