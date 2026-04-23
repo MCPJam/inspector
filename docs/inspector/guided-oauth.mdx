@@ -27,6 +27,22 @@ The OAuth Debugger provides comprehensive tooling for testing OAuth implementati
 - **Sequence Diagram** - Visual representation of the OAuth flow synchronized with your progress
 - **Export Capabilities** - Copy logs in guide or raw format for debugging and documentation
 
+## Inline OAuth tracing
+
+When you connect a server using OAuth 2.0, Inspector automatically records a trace of every step in the flow and surfaces it in the connection UI — no separate tool required.
+
+**On the connection card**, if OAuth fails, a banner identifies the exact step where the failure occurred (for example, "OAuth failed during Token Request").
+
+**In the server detail panel**, the **Last OAuth Trace** section shows:
+
+- Each OAuth step (discovery, client registration, PKCE, authorization redirect, token exchange) with a status indicator and message
+- The error text for any failed step
+- An **HTTP History** log of every request and response, with tokens and secrets automatically redacted
+
+The trace persists across page reloads so you can inspect it after the browser returns from the authorization redirect. It is cleared when you disconnect or reset OAuth data for the server.
+
+Use the inline trace for a quick diagnosis of real connection attempts, and switch to the OAuth Debugger when you need a guided, step-by-step walkthrough against a specific protocol version.
+
 ## Getting Started
 
 To begin debugging OAuth flows:
