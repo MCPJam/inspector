@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import { ServerWithName } from "@/hooks/use-app-state";
 import { getStoredTokensState } from "@/lib/oauth/mcp-oauth";
+import { getOAuthTraceFailureStep } from "@/lib/oauth/oauth-trace";
 import { decodeJWT } from "@/lib/oauth/jwt-decoder";
 import { ScrollableJsonView } from "@/components/ui/json-editor";
 
@@ -43,6 +44,8 @@ export function ServerInfoContent({
   const instructions = initializationInfo?.instructions;
   const serverCapabilities = initializationInfo?.serverCapabilities;
   const clientCapabilities = initializationInfo?.clientCapabilities;
+  const oauthTrace = server.lastOAuthTrace;
+  const oauthFailureStep = getOAuthTraceFailureStep(oauthTrace);
 
   // Build capabilities list
   const capabilities: string[] = [];
@@ -178,6 +181,87 @@ export function ServerInfoContent({
     );
   };
 
+  const renderOAuthTraceSection = () => {
+    if (!oauthTrace) {
+      return null;
+    }
+
+    return (
+      <div className="space-y-3 text-xs pt-2">
+        <div className="text-sm font-medium text-muted-foreground">
+          Last OAuth Trace
+        </div>
+        <div className="space-y-3 rounded-md bg-muted/40 p-3">
+          <div className="flex flex-wrap gap-3 text-sm text-muted-foreground">
+            <span>Source: {oauthTrace.source.replaceAll("_", " ")}</span>
+            <span>Current step: {oauthTrace.currentStep}</span>
+            {oauthFailureStep?.error ? (
+              <span className="text-destructive">
+                Failure: {oauthFailureStep.title}
+              </span>
+            ) : null}
+          </div>
+
+          <div className="space-y-2">
+            {oauthTrace.steps.map((step, index) => (
+              <div
+                key={`${step.step}-${index}-${step.startedAt}`}
+                className="rounded-md border border-border/40 bg-background/60 p-2"
+              >
+                <div className="flex flex-wrap items-center gap-2 text-sm">
+                  <span className="font-medium text-foreground">
+                    {step.title}
+                  </span>
+                  <span
+                    className={
+                      step.status === "error"
+                        ? "text-destructive"
+                        : step.status === "success"
+                          ? "text-emerald-600 dark:text-emerald-400"
+                          : "text-amber-600 dark:text-amber-400"
+                    }
+                  >
+                    {step.status}
+                  </span>
+                </div>
+                {step.message ? (
+                  <div className="mt-1 text-sm text-muted-foreground">
+                    {step.message}
+                  </div>
+                ) : null}
+                {step.error ? (
+                  <div className="mt-1 break-all text-sm text-destructive">
+                    {step.error}
+                  </div>
+                ) : null}
+                {step.details ? (
+                  <ScrollableJsonView
+                    value={step.details}
+                    showLineNumbers={false}
+                    containerClassName="mt-2 max-h-48 rounded-lg"
+                  />
+                ) : null}
+              </div>
+            ))}
+          </div>
+
+          {oauthTrace.httpHistory.length > 0 ? (
+            <div>
+              <div className="mb-2 text-sm font-medium text-muted-foreground">
+                HTTP History
+              </div>
+              <ScrollableJsonView
+                value={oauthTrace.httpHistory}
+                showLineNumbers={false}
+                containerClassName="max-h-96 rounded-lg"
+              />
+            </div>
+          ) : null}
+        </div>
+      </div>
+    );
+  };
+
   const renderIconRow = () => (
     <div>
       <div className="text-sm font-medium text-muted-foreground mb-1">Icon</div>
@@ -197,6 +281,16 @@ export function ServerInfoContent({
 
   return (
     <div className="space-y-4">
+      {server.lastError ? (
+        <div className="rounded-md border border-red-300/40 bg-red-500/10 p-3 text-sm text-red-700 dark:text-red-300">
+          <div className="font-medium">
+            {oauthFailureStep
+              ? `OAuth failed during ${oauthFailureStep.title}`
+              : "Last connection error"}
+          </div>
+          <div className="mt-1 break-all">{server.lastError}</div>
+        </div>
+      ) : null}
       {needsReconnect ? (
         <div className="rounded-md border border-amber-500/30 bg-amber-500/5 p-3 text-sm text-muted-foreground">
           Saved client capabilities differ from this server's last initialize
@@ -302,6 +396,7 @@ export function ServerInfoContent({
       )}
 
       {renderOAuthTokensSection()}
+      {renderOAuthTraceSection()}
     </div>
   );
 }

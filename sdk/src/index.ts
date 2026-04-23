@@ -190,6 +190,12 @@ export type {
   OAuthLoginDependencies,
   OAuthLoginResult,
 } from "./oauth-login.js";
+export { runOAuthStateMachine } from "./oauth/state-machines/runner.js";
+export type {
+  OAuthAuthorizationRequestResult,
+  OAuthStateMachineRunConfig,
+  OAuthStateMachineRunResult,
+} from "./oauth/state-machines/runner.js";
 
 // EvalAgent interface (for deterministic testing without concrete TestAgent)
 export type { EvalAgent, PromptOptions } from "./EvalAgent.js";

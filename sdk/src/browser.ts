@@ -90,6 +90,12 @@ export {
   getDefaultRegistrationStrategy,
   getSupportedRegistrationStrategies,
 } from "./oauth/state-machines/factory.js";
+export { runOAuthStateMachine } from "./oauth/state-machines/runner.js";
+export type {
+  OAuthAuthorizationRequestResult,
+  OAuthStateMachineRunConfig,
+  OAuthStateMachineRunResult,
+} from "./oauth/state-machines/runner.js";
 export {
   getStepInfo,
   getStepIndex,

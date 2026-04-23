@@ -9,26 +9,38 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const {
   mockDiscoverAuthorizationServerMetadata,
   mockDiscoverOAuthServerInfo,
+  mockExchangeAuthorization,
   mockFetchToken,
   mockGetConvexSiteUrl,
-  mockSdkAuth,
+  mockRegisterClient,
   mockSelectResourceURL,
+  mockStartAuthorization,
 } = vi.hoisted(() => ({
   mockDiscoverAuthorizationServerMetadata: vi.fn(),
   mockDiscoverOAuthServerInfo: vi.fn(),
+  mockExchangeAuthorization: vi.fn(),
   mockFetchToken: vi.fn(),
   mockGetConvexSiteUrl: vi.fn(),
-  mockSdkAuth: vi.fn(),
+  mockRegisterClient: vi.fn(),
   mockSelectResourceURL: vi.fn(),
+  mockStartAuthorization: vi.fn(),
 }));
 
-vi.mock("@mcpjam/sdk/browser", () => ({
-  auth: mockSdkAuth,
-  discoverAuthorizationServerMetadata: mockDiscoverAuthorizationServerMetadata,
-  discoverOAuthServerInfo: mockDiscoverOAuthServerInfo,
-  fetchToken: mockFetchToken,
-  selectResourceURL: mockSelectResourceURL,
-}));
+vi.mock("@mcpjam/sdk/browser", async () => {
+  const actual = await vi.importActual<typeof import("@mcpjam/sdk/browser")>(
+    "@mcpjam/sdk/browser",
+  );
+  return {
+    ...actual,
+    discoverAuthorizationServerMetadata: mockDiscoverAuthorizationServerMetadata,
+    discoverOAuthServerInfo: mockDiscoverOAuthServerInfo,
+    exchangeAuthorization: mockExchangeAuthorization,
+    fetchToken: mockFetchToken,
+    registerClient: mockRegisterClient,
+    selectResourceURL: mockSelectResourceURL,
+    startAuthorization: mockStartAuthorization,
+  };
+});
 
 vi.mock("@/lib/session-token", () => ({
   authFetch: vi.fn(),
@@ -112,18 +124,43 @@ describe("mcp-oauth", () => {
     sessionStorage.clear();
     vi.unstubAllEnvs();
     vi.unstubAllGlobals();
-    mockSdkAuth.mockReset();
     mockDiscoverAuthorizationServerMetadata.mockReset();
     mockDiscoverOAuthServerInfo.mockReset();
+    mockExchangeAuthorization.mockReset();
     mockFetchToken.mockReset();
     mockGetConvexSiteUrl.mockReset();
+    mockRegisterClient.mockReset();
     mockGetConvexSiteUrl.mockReturnValue("https://test.convex.site");
     mockSelectResourceURL.mockReset();
+    mockStartAuthorization.mockReset();
+
+    mockDiscoverOAuthServerInfo.mockResolvedValue(createDiscoveryState());
+    mockDiscoverAuthorizationServerMetadata.mockResolvedValue(
+      createDiscoveryState().authorizationServerMetadata,
+    );
+    mockRegisterClient.mockResolvedValue({
+      client_id: "registered-client-id",
+    });
+    mockStartAuthorization.mockResolvedValue({
+      authorizationUrl: new URL("https://auth.example.com/authorize"),
+      codeVerifier: "test-verifier",
+    });
+    mockExchangeAuthorization.mockResolvedValue({
+      access_token: "access-token",
+      refresh_token: "refresh-token",
+      token_type: "Bearer",
+    });
 
     const sessionToken = await import("@/lib/session-token");
     authFetch = sessionToken.authFetch as ReturnType<typeof vi.fn>;
     authFetch.mockReset();
     mockSelectResourceURL.mockResolvedValue(undefined);
+
+    const oauthModule = await import("../mcp-oauth");
+    vi.spyOn(
+      oauthModule.MCPOAuthProvider.prototype,
+      "redirectToAuthorization",
+    ).mockResolvedValue(undefined);
   });
 
   afterEach(() => {
@@ -141,10 +178,15 @@ describe("mcp-oauth", () => {
     serverName: string = "asana",
     serverUrl: string = "https://mcp.asana.com/v2/mcp",
   ) {
-    mockSdkAuth.mockImplementationOnce(async (provider) => {
-      await provider.saveDiscoveryState?.(discoveryState);
-      await provider.saveCodeVerifier("test-verifier");
-      return "REDIRECT";
+    mockDiscoverOAuthServerInfo.mockResolvedValueOnce(discoveryState);
+    mockRegisterClient.mockResolvedValueOnce({
+      client_id: `${serverName}-client-id`,
+    });
+    mockStartAuthorization.mockResolvedValueOnce({
+      authorizationUrl: new URL(
+        `${discoveryState.authorizationServerMetadata.authorization_endpoint}?state=mock-state`,
+      ),
+      codeVerifier: "test-verifier",
     });
 
     const { initiateOAuth } = await import("../mcp-oauth");
@@ -155,7 +197,7 @@ describe("mcp-oauth", () => {
       useRegistryOAuthProxy,
     });
 
-    expect(result).toEqual({ success: true });
+    expect(result.success).toBe(true);
     return discoveryState;
   }
 
@@ -174,14 +216,17 @@ describe("mcp-oauth", () => {
         },
       );
       authFetch.mockResolvedValue(authErrorResponse);
-      mockSdkAuth.mockImplementation(async () => {
-        const response = await window.fetch(
+      mockDiscoverOAuthServerInfo.mockImplementation(async (_serverUrl, options) => {
+        const response = await options?.fetchFn?.(
           "https://example.com/.well-known/oauth-protected-resource/mcp",
         );
+        if (!response) {
+          throw new Error("Missing OAuth fetch function");
+        }
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}`);
         }
-        return "AUTHORIZED";
+        return createDiscoveryState();
       });
 
       const { initiateOAuth } = await import("../mcp-oauth");
@@ -206,14 +251,17 @@ describe("mcp-oauth", () => {
         },
       );
       authFetch.mockResolvedValue(authErrorResponse);
-      mockSdkAuth.mockImplementation(async () => {
-        const response = await window.fetch(
+      mockDiscoverOAuthServerInfo.mockImplementation(async (_serverUrl, options) => {
+        const response = await options?.fetchFn?.(
           "https://example.com/.well-known/oauth-protected-resource/mcp",
         );
+        if (!response) {
+          throw new Error("Missing OAuth fetch function");
+        }
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}`);
         }
-        return "AUTHORIZED";
+        return createDiscoveryState();
       });
 
       const { initiateOAuth } = await import("../mcp-oauth");
@@ -225,6 +273,38 @@ describe("mcp-oauth", () => {
       expect(result.success).toBe(false);
     });
 
+    it("does not fall back to direct fetch when the oauth proxy throws", async () => {
+      vi.resetModules();
+      const directFetch = vi.fn();
+      vi.stubGlobal("fetch", directFetch);
+
+      const sessionToken = await import("@/lib/session-token");
+      const isolatedAuthFetch = sessionToken.authFetch as ReturnType<typeof vi.fn>;
+      isolatedAuthFetch.mockReset();
+      isolatedAuthFetch.mockRejectedValueOnce(new Error("proxy exploded"));
+
+      mockDiscoverOAuthServerInfo.mockReset();
+      mockDiscoverOAuthServerInfo.mockImplementationOnce(
+        async (_serverUrl, options) => {
+          await expect(
+            options?.fetchFn?.(
+              "https://example.com/.well-known/oauth-protected-resource/mcp",
+            ),
+          ).rejects.toThrow("proxy exploded");
+          throw new Error("proxy exploded");
+        },
+      );
+
+      const { initiateOAuth } = await import("../mcp-oauth");
+      const result = await initiateOAuth({
+        serverName: "test-server",
+        serverUrl: "https://example.com/mcp",
+      });
+
+      expect(result.success).toBe(false);
+      expect(directFetch).not.toHaveBeenCalled();
+    });
+
     it("propagates successful proxy responses correctly", async () => {
       const metadataResponse = new Response(
         JSON.stringify({
@@ -233,12 +313,15 @@ describe("mcp-oauth", () => {
         { status: 200 },
       );
       authFetch.mockResolvedValue(metadataResponse);
-      mockSdkAuth.mockImplementation(async (_provider: any, options: any) => {
-        const response = await options.fetchFn(
+      mockDiscoverOAuthServerInfo.mockImplementation(async (_serverUrl, options) => {
+        const response = await options?.fetchFn?.(
           "https://example.com/.well-known/oauth-protected-resource/mcp",
         );
+        if (!response) {
+          throw new Error("Missing OAuth fetch function");
+        }
         expect(response.ok).toBe(true);
-        return "REDIRECT";
+        return createDiscoveryState();
       });
 
       const { initiateOAuth } = await import("../mcp-oauth");
@@ -268,7 +351,8 @@ describe("mcp-oauth", () => {
           },
         }),
       );
-      mockSdkAuth.mockImplementationOnce(async (_provider, options) => {
+      mockDiscoverOAuthServerInfo.mockResolvedValueOnce(createLinearDiscoveryState());
+      mockRegisterClient.mockImplementationOnce(async (_authServerUrl, options) => {
         const registrationBody = JSON.stringify({
           client_name: "MCPJam - Linear",
           redirect_uris: [`${window.location.origin}/oauth/callback`],
@@ -286,7 +370,7 @@ describe("mcp-oauth", () => {
           },
         );
         expect(response.ok).toBe(true);
-        return "REDIRECT";
+        return await response.json();
       });
 
       const { initiateOAuth } = await import("../mcp-oauth");
@@ -352,6 +436,36 @@ describe("mcp-oauth", () => {
         registryServerId: "registry-linear",
         useRegistryOAuthProxy: true,
       });
+    });
+
+    it("normalizes malformed persisted oauth trace history", async () => {
+      const { appendOAuthTraceHttpHistory, loadOAuthTrace } =
+        await import("../oauth-trace");
+
+      localStorage.setItem(
+        "mcp-oauth-trace-linear",
+        JSON.stringify({
+          version: 1,
+          source: "refresh",
+          currentStep: "idle",
+          steps: [],
+          httpHistory: null,
+        }),
+      );
+
+      const trace = loadOAuthTrace("linear");
+      expect(trace?.httpHistory).toEqual([]);
+      expect(() =>
+        appendOAuthTraceHttpHistory(trace!, {
+          step: "idle",
+          timestamp: Date.now(),
+          request: {
+            method: "GET",
+            url: "https://example.com",
+            headers: {},
+          },
+        }),
+      ).not.toThrow();
     });
 
     it("detects OAuth token grant requests", async () => {
@@ -484,15 +598,14 @@ describe("mcp-oauth", () => {
 
     it("reuses cached discovery state after the callback reload", async () => {
       const discoveryState = createDiscoveryState();
-      mockSdkAuth.mockImplementationOnce(async (provider) => {
-        await provider.saveDiscoveryState?.(discoveryState);
-        await provider.saveCodeVerifier("code-verifier");
-        return "REDIRECT";
+      mockDiscoverOAuthServerInfo.mockResolvedValueOnce(discoveryState);
+      mockStartAuthorization.mockResolvedValueOnce({
+        authorizationUrl: new URL("https://auth.example.com/authorize"),
+        codeVerifier: "code-verifier",
       });
-      mockFetchToken.mockImplementationOnce(async (provider, _url, options) => {
+      mockExchangeAuthorization.mockImplementationOnce(async (_url, options) => {
         expect(options?.authorizationCode).toBe("oauth-code");
-        expect(provider.discoveryState?.()).toEqual(discoveryState);
-        expect(provider.codeVerifier()).toBe("code-verifier");
+        expect(options?.codeVerifier).toBe("code-verifier");
         return {
           access_token: "access-token",
           refresh_token: "refresh-token",
@@ -507,7 +620,7 @@ describe("mcp-oauth", () => {
         serverName: "asana",
         serverUrl: "https://mcp.asana.com/sse",
       });
-      expect(initiateResult).toEqual({ success: true });
+      expect(initiateResult.success).toBe(true);
 
       const callbackResult = await handleOAuthCallback("oauth-code");
 
@@ -518,8 +631,9 @@ describe("mcp-oauth", () => {
       });
       expect(getStoredTokens("asana")?.access_token).toBe("access-token");
       expect(localStorage.getItem("mcp-discovery-asana")).not.toBeNull();
-      expect(mockSdkAuth).toHaveBeenCalledTimes(1);
-      expect(mockFetchToken).toHaveBeenCalledTimes(1);
+      expect(localStorage.getItem("mcp-verifier-asana")).toBeNull();
+      expect(mockDiscoverOAuthServerInfo).toHaveBeenCalledTimes(1);
+      expect(mockExchangeAuthorization).toHaveBeenCalledTimes(1);
     });
 
     it("treats malformed stored token data as invalid instead of throwing", async () => {
@@ -558,8 +672,8 @@ describe("mcp-oauth", () => {
 
       const discoveryState = createAsanaDiscoveryState();
       await seedPendingOAuth("registry-asana", discoveryState, true);
-      mockFetchToken.mockImplementationOnce(
-        async (provider, authServerUrl, options) => {
+      mockExchangeAuthorization.mockImplementationOnce(
+        async (authServerUrl, options) => {
           expect(authServerUrl).toBe("https://app.asana.com");
           expect(options?.metadata?.token_endpoint).toBe(
             "https://app.asana.com/-/oauth_token",
@@ -571,8 +685,8 @@ describe("mcp-oauth", () => {
               body: new URLSearchParams({
                 grant_type: "authorization_code",
                 code: options!.authorizationCode!,
-                code_verifier: provider.codeVerifier(),
-                redirect_uri: String(provider.redirectUrl),
+                code_verifier: options!.codeVerifier,
+                redirect_uri: String(options!.redirectUri),
               }),
             },
           );
@@ -584,6 +698,7 @@ describe("mcp-oauth", () => {
       const callbackResult = await handleOAuthCallback("oauth-code");
 
       expect(callbackResult.success).toBe(true);
+      expect(localStorage.getItem("mcp-verifier-asana")).toBeNull();
       expect(authFetch).toHaveBeenCalledTimes(1);
       expect(authFetch).toHaveBeenCalledWith(
         expect.stringMatching(/\.convex\.site\/registry\/oauth\/token$/),
@@ -615,6 +730,8 @@ describe("mcp-oauth", () => {
         JSON.stringify({
           registryServerId: "registry-asana",
           useRegistryOAuthProxy: true,
+          protocolVersion: "2025-11-25",
+          registrationStrategy: "preregistered",
         }),
       );
     });
@@ -639,7 +756,9 @@ describe("mcp-oauth", () => {
         throw new Error(`Unexpected direct fetch to ${url}`);
       });
 
-      mockSdkAuth.mockImplementationOnce(async (_provider, options) => {
+      mockDiscoverOAuthServerInfo.mockResolvedValueOnce(createAsanaDiscoveryState());
+      mockFetchToken.mockImplementationOnce(async (_provider, authServerUrl, options) => {
+        expect(authServerUrl).toBe("https://app.asana.com");
         const response = await options.fetchFn!(
           "https://app.asana.com/-/oauth_token",
           {
@@ -650,9 +769,7 @@ describe("mcp-oauth", () => {
             }),
           },
         );
-        const tokens = await response.json();
-        await _provider.saveTokens(tokens);
-        return "AUTHORIZED";
+        return await response.json();
       });
 
       localStorage.setItem(
@@ -696,6 +813,60 @@ describe("mcp-oauth", () => {
       );
     });
 
+    it("re-registers the OAuth client after invalid_client refresh failures", async () => {
+      localStorage.setItem(
+        "mcp-serverUrl-asana",
+        "https://mcp.asana.com/v2/mcp",
+      );
+      localStorage.setItem(
+        "mcp-client-asana",
+        JSON.stringify({
+          client_id: "stale-client-id",
+        }),
+      );
+      localStorage.setItem(
+        "mcp-tokens-asana",
+        JSON.stringify({
+          access_token: "old-access-token",
+          refresh_token: "stored-refresh-token",
+          token_type: "Bearer",
+        }),
+      );
+
+      mockDiscoverOAuthServerInfo.mockResolvedValueOnce(createAsanaDiscoveryState());
+      mockFetchToken.mockRejectedValueOnce(
+        Object.assign(new Error("Client authentication failed"), {
+          code: "invalid_client",
+        }),
+      );
+      mockRegisterClient.mockResolvedValueOnce({
+        client_id: "new-client-id",
+      });
+      mockStartAuthorization.mockResolvedValueOnce({
+        authorizationUrl: new URL("https://app.asana.com/-/oauth_authorize"),
+        codeVerifier: "fresh-verifier",
+      });
+
+      const [{ getOAuthTraceFailureStep }, { initiateOAuth }] =
+        await Promise.all([
+          import("../oauth-trace"),
+          import("../mcp-oauth"),
+        ]);
+
+      const result = await initiateOAuth({
+        serverName: "asana",
+        serverUrl: "https://mcp.asana.com/v2/mcp",
+      });
+
+      expect(result.success).toBe(true);
+      expect(localStorage.getItem("mcp-client-asana")).toBe(
+        JSON.stringify({
+          client_id: "new-client-id",
+        }),
+      );
+      expect(getOAuthTraceFailureStep(result.oauthTrace)).toBeUndefined();
+    });
+
     it("preserves the original callback error and verifier when registry token exchange fails", async () => {
       authFetch.mockImplementationOnce(async (input: RequestInfo | URL) => {
         const url =
@@ -719,8 +890,8 @@ describe("mcp-oauth", () => {
       });
 
       await seedPendingOAuth("registry-asana", undefined, true);
-      mockFetchToken.mockImplementationOnce(
-        async (provider, _authServerUrl, options) => {
+      mockExchangeAuthorization.mockImplementationOnce(
+        async (_authServerUrl, options) => {
           const response = await options!.fetchFn!(
             "https://app.asana.com/-/oauth_token",
             {
@@ -728,8 +899,8 @@ describe("mcp-oauth", () => {
               body: new URLSearchParams({
                 grant_type: "authorization_code",
                 code: options!.authorizationCode!,
-                code_verifier: provider.codeVerifier(),
-                redirect_uri: String(provider.redirectUrl),
+                code_verifier: options!.codeVerifier,
+                redirect_uri: String(options!.redirectUri),
               }),
             },
           );
@@ -768,8 +939,8 @@ describe("mcp-oauth", () => {
           },
         }),
       );
-      mockFetchToken.mockImplementationOnce(
-        async (provider, _authServerUrl, options) => {
+      mockExchangeAuthorization.mockImplementationOnce(
+        async (_authServerUrl, options) => {
           const response = await options!.fetchFn!(
             "https://app.asana.com/-/oauth_token",
             {
@@ -777,8 +948,8 @@ describe("mcp-oauth", () => {
               body: new URLSearchParams({
                 grant_type: "authorization_code",
                 code: options!.authorizationCode!,
-                code_verifier: provider.codeVerifier(),
-                redirect_uri: String(provider.redirectUrl),
+                code_verifier: options!.codeVerifier,
+                redirect_uri: String(options!.redirectUri),
               }),
             },
           );
@@ -833,8 +1004,8 @@ describe("mcp-oauth", () => {
           },
         }),
       );
-      mockFetchToken.mockImplementationOnce(
-        async (provider, _authServerUrl, options) => {
+      mockExchangeAuthorization.mockImplementationOnce(
+        async (_authServerUrl, options) => {
           const response = await options!.fetchFn!(
             "https://app.asana.com/-/oauth_token",
             {
@@ -842,8 +1013,8 @@ describe("mcp-oauth", () => {
               body: new URLSearchParams({
                 grant_type: "authorization_code",
                 code: options!.authorizationCode!,
-                code_verifier: provider.codeVerifier(),
-                redirect_uri: String(provider.redirectUrl),
+                code_verifier: options!.codeVerifier,
+                redirect_uri: String(options!.redirectUri),
               }),
             },
           );
@@ -902,8 +1073,8 @@ describe("mcp-oauth", () => {
           },
         }),
       );
-      mockFetchToken.mockImplementationOnce(
-        async (provider, _authServerUrl, options) => {
+      mockExchangeAuthorization.mockImplementationOnce(
+        async (_authServerUrl, options) => {
           const response = await options!.fetchFn!(
             "https://mcp.linear.app/token",
             {
@@ -911,8 +1082,8 @@ describe("mcp-oauth", () => {
               body: new URLSearchParams({
                 grant_type: "authorization_code",
                 code: options!.authorizationCode!,
-                code_verifier: provider.codeVerifier(),
-                redirect_uri: String(provider.redirectUrl),
+                code_verifier: options!.codeVerifier,
+                redirect_uri: String(options!.redirectUri),
               }),
             },
           );
@@ -963,7 +1134,8 @@ describe("mcp-oauth", () => {
         }),
       );
 
-      mockSdkAuth.mockImplementationOnce(async (_provider, options) => {
+      mockDiscoverOAuthServerInfo.mockResolvedValueOnce(createLinearDiscoveryState());
+      mockFetchToken.mockImplementationOnce(async (_provider, _authServerUrl, options) => {
         const response = await options.fetchFn!(
           "https://mcp.linear.app/token",
           {
@@ -974,9 +1146,7 @@ describe("mcp-oauth", () => {
             }),
           },
         );
-        const tokens = await response.json();
-        await _provider.saveTokens(tokens);
-        return "AUTHORIZED";
+        return await response.json();
       });
 
       localStorage.setItem(

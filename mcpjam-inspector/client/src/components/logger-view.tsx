@@ -18,6 +18,7 @@ import {
   SelectValue,
 } from "@mcpjam/design-system/select";
 import {
+  ingestOAuthTraceLogs,
   useTrafficLogStore,
   subscribeToRpcStream,
   type UiLogEvent,
@@ -44,7 +45,7 @@ import { Filter, Settings2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 type RpcDirection = "in" | "out" | string;
-type TrafficSource = "mcp-server" | "mcp-apps";
+type TrafficSource = "mcp-server" | "mcp-apps" | "oauth";
 
 interface RpcEventMessage {
   serverId: string;
@@ -62,6 +63,8 @@ interface RenderableRpcItem {
   timestamp: string;
   payload: unknown;
   source: TrafficSource;
+  oauthStatus?: "pending" | "success" | "error";
+  oauthRecovered?: boolean;
   protocol?: UiProtocol;
   widgetId?: string;
 }
@@ -84,6 +87,32 @@ const LOGGING_LEVELS: LoggingLevel[] = [
   "alert",
   "emergency",
 ];
+
+function buildOAuthTraceIngestionKey(trace: {
+  source: string;
+  currentStep: string;
+  steps: Array<{
+    step: string;
+    status: string;
+    startedAt: number;
+    completedAt?: number;
+    recovered?: boolean;
+  }>;
+  httpHistory: Array<{ step: string; timestamp: number }>;
+  error?: string;
+}): string {
+  const lastStep = trace.steps[trace.steps.length - 1];
+  const lastHttpHistoryEntry = trace.httpHistory[trace.httpHistory.length - 1];
+  return JSON.stringify({
+    source: trace.source,
+    currentStep: trace.currentStep,
+    stepCount: trace.steps.length,
+    lastStep,
+    httpHistoryCount: trace.httpHistory.length,
+    lastHttpHistoryEntry,
+    error: trace.error,
+  });
+}
 
 function normalizePayload(
   payload: unknown,
@@ -113,15 +142,47 @@ function getDisplayServerTitle(item: {
 function DirectionLabel({
   direction,
   source,
+  oauthStatus,
+  oauthRecovered,
 }: {
   direction: string;
   source: TrafficSource;
+  oauthStatus?: "pending" | "success" | "error";
+  oauthRecovered?: boolean;
 }) {
   if (source === "mcp-apps") {
     const isHostToUi = direction === "HOST→UI";
     return (
       <span className="font-mono text-[10px] leading-none flex-shrink-0 text-purple-500">
         {isHostToUi ? "host → view" : "view → host"}
+      </span>
+    );
+  }
+
+  if (source === "oauth") {
+    const className = oauthRecovered
+      ? "text-amber-600 dark:text-amber-400"
+      : oauthStatus === "error"
+        ? "text-destructive"
+        : oauthStatus === "pending"
+          ? "text-muted-foreground"
+          : "text-orange-600 dark:text-orange-400";
+    const label = oauthRecovered
+      ? "oauth ↺"
+      : oauthStatus === "error"
+        ? "oauth !"
+        : oauthStatus === "pending"
+          ? "oauth …"
+          : "oauth ✓";
+
+    return (
+      <span
+        className={cn(
+          "font-mono text-[10px] leading-none flex-shrink-0",
+          className,
+        )}
+      >
+        {label}
       </span>
     );
   }
@@ -158,11 +219,36 @@ export function LoggerView({
   const [sourceFilter, setSourceFilter] = useState<"all" | TrafficSource>(
     "all",
   );
+  const lastIngestedOAuthTraceKeysRef = useRef<Map<string, string>>(new Map());
 
   // Subscribe to UI log store (includes both MCP Apps and MCP Server RPC traffic)
   const uiLogItems = useTrafficLogStore((s) => s.items);
   const mcpServerRpcItems = useTrafficLogStore((s) => s.mcpServerItems);
   const clearLogs = useTrafficLogStore((s) => s.clear);
+
+  useEffect(() => {
+    const nextKeys = new Map<string, string>();
+
+    Object.entries(appState.servers).forEach(([serverId, server]) => {
+      if (!server.lastOAuthTrace) {
+        return;
+      }
+
+      const ingestionKey = buildOAuthTraceIngestionKey(server.lastOAuthTrace);
+      nextKeys.set(serverId, ingestionKey);
+      if (lastIngestedOAuthTraceKeysRef.current.get(serverId) === ingestionKey) {
+        return;
+      }
+
+      ingestOAuthTraceLogs({
+        serverId,
+        serverName: server.name,
+        trace: server.lastOAuthTrace,
+      });
+    });
+
+    lastIngestedOAuthTraceKeysRef.current = nextKeys;
+  }, [appState.servers]);
 
   // Convert UI log items to renderable format
   const mcpAppsItems = useMemo<RenderableRpcItem[]>(() => {
@@ -190,7 +276,12 @@ export function LoggerView({
       method: item.method,
       timestamp: item.timestamp,
       payload: item.payload,
-      source: "mcp-server" as TrafficSource,
+      source:
+        item.kind === "oauth"
+          ? ("oauth" as TrafficSource)
+          : ("mcp-server" as TrafficSource),
+      oauthStatus: item.oauthStatus,
+      oauthRecovered: item.oauthRecovered,
     }));
   }, [mcpServerRpcItems]);
 
@@ -351,6 +442,9 @@ export function LoggerView({
                     >
                       Server
                     </DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="oauth" className="text-xs">
+                      OAuth
+                    </DropdownMenuRadioItem>
                     <DropdownMenuRadioItem value="mcp-apps" className="text-xs">
                       Apps
                     </DropdownMenuRadioItem>
@@ -492,16 +586,21 @@ export function LoggerView({
             {filteredItems.map((it) => {
               const isExpanded = expanded.has(it.id);
               const isAppsTraffic = it.source === "mcp-apps";
+              const isOAuthTraffic = it.source === "oauth";
 
               const isError =
-                it.method === "error" || it.method === "csp-violation";
+                it.method === "error" ||
+                it.method === "csp-violation" ||
+                (isOAuthTraffic && it.oauthStatus === "error");
 
               // Left border: 2px — red for errors, purple for Apps, transparent for MCP Server
               const borderClass = isError
                 ? "border-l-destructive"
                 : isAppsTraffic
                   ? "border-l-purple-500/50"
-                  : "border-l-transparent";
+                  : isOAuthTraffic
+                    ? "border-l-orange-300/60"
+                    : "border-l-transparent";
 
               return (
                 <div
@@ -529,6 +628,8 @@ export function LoggerView({
                       <DirectionLabel
                         direction={it.direction}
                         source={it.source}
+                        oauthStatus={it.oauthStatus}
+                        oauthRecovered={it.oauthRecovered}
                       />
                     )}
                     <span

@@ -28,6 +28,7 @@ import {
   clearOAuthData,
   initiateOAuth,
 } from "@/lib/oauth/mcp-oauth";
+import type { OAuthTrace } from "@/lib/oauth/oauth-trace";
 import {
   clearHostedOAuthPendingState,
   getHostedOAuthCallbackContext,
@@ -79,6 +80,9 @@ function saveOAuthConfigToLocalStorage(formData: ServerFormData): void {
   }
   if (formData.registryServerId) {
     oauthConfig.registryServerId = formData.registryServerId;
+  }
+  if (formData.clientId || formData.clientSecret) {
+    oauthConfig.registrationStrategy = "preregistered";
   }
   if (Object.keys(oauthConfig).length > 0) {
     localStorage.setItem(
@@ -220,13 +224,14 @@ export function useServerState({
   };
 
   const failPendingOAuthConnection = useCallback(
-    (errorMessage: string) => {
+    (errorMessage: string, oauthTrace?: OAuthTrace) => {
       const pendingServerName = localStorage.getItem("mcp-oauth-pending");
       if (pendingServerName) {
         dispatch({
           type: "CONNECT_FAILURE",
           name: pendingServerName,
           error: errorMessage,
+          oauthTrace,
         });
       }
 
@@ -734,6 +739,7 @@ export function useServerState({
                     ? undefined
                     : getStoredTokens(serverName),
                   useOAuth: true,
+                  oauthTrace: result.oauthTrace,
                 });
                 logger.info("OAuth connection successful", { serverName });
                 toast.success(
@@ -753,6 +759,7 @@ export function useServerState({
                 error:
                   connectionResult.error ||
                   "Connection test failed after OAuth",
+                oauthTrace: result.oauthTrace,
               });
               logger.error("OAuth connection test failed", {
                 serverName,
@@ -771,6 +778,7 @@ export function useServerState({
               type: "CONNECT_FAILURE",
               name: serverName,
               error: errorMessage,
+              oauthTrace: result.oauthTrace,
             });
             logger.error("OAuth connection test error", {
               serverName,
@@ -781,15 +789,30 @@ export function useServerState({
             );
           }
         } else {
-          throw new Error(result.error || "OAuth callback failed");
+          throw {
+            message: result.error || "OAuth callback failed",
+            oauthTrace: result.oauthTrace,
+          };
         }
       } catch (error) {
         const errorMessage =
-          error instanceof Error ? error.message : "Unknown error";
+          error instanceof Error
+            ? error.message
+            : typeof error === "object" &&
+                error !== null &&
+                "message" in error &&
+                typeof (error as { message?: unknown }).message === "string"
+              ? ((error as { message: string }).message)
+              : "Unknown error";
         toast.error(`Error completing OAuth flow: ${errorMessage}`);
         logger.error("OAuth callback failed", { error: errorMessage });
+        const oauthTrace =
+          typeof error === "object" && error !== null && "oauthTrace" in error
+            ? ((error as { oauthTrace?: OAuthTrace }).oauthTrace)
+            : undefined;
         const failedServerName =
-          failPendingOAuthConnection(errorMessage) ?? pendingServerName;
+          failPendingOAuthConnection(errorMessage, oauthTrace) ??
+          pendingServerName;
         if (failedServerName) {
           logger.warn("Marked pending OAuth connection as failed", {
             serverName: failedServerName,
@@ -1044,6 +1067,8 @@ export function useServerState({
           });
 
           const oauthInputs = await resolveOAuthInitiationInputs(formData);
+          const existingOAuthProfile =
+            appState.servers[formData.name]?.oauthFlowProfile;
           const oauthOptions: any = {
             serverName: formData.name,
             serverUrl: formData.url,
@@ -1051,6 +1076,9 @@ export function useServerState({
             clientSecret: oauthInputs.clientSecret,
             registryServerId: oauthInputs.registryServerId,
             useRegistryOAuthProxy: oauthInputs.useRegistryOAuthProxy,
+            customHeaders: formData.headers,
+            protocolVersion: existingOAuthProfile?.protocolVersion,
+            registrationStrategy: existingOAuthProfile?.registrationStrategy,
           };
           if (oauthInputs.scopes && oauthInputs.scopes.length > 0) {
             oauthOptions.scopes = oauthInputs.scopes;
@@ -1078,6 +1106,7 @@ export function useServerState({
                       ? undefined
                       : getStoredTokens(formData.name),
                   useOAuth: true,
+                  oauthTrace: oauthResult.oauthTrace,
                 });
                 toast.success("Connected successfully with OAuth!");
                 storeInitInfo(formData.name, connectionResult.initInfo).catch(
@@ -1093,6 +1122,7 @@ export function useServerState({
                   name: formData.name,
                   error:
                     connectionResult.error || "OAuth connection test failed",
+                  oauthTrace: oauthResult.oauthTrace,
                 });
                 toast.error(
                   `OAuth succeeded but connection failed: ${connectionResult.error}`,
@@ -1111,6 +1141,7 @@ export function useServerState({
             type: "CONNECT_FAILURE",
             name: formData.name,
             error: oauthResult.error || "OAuth initialization failed",
+            oauthTrace: oauthResult.oauthTrace,
           });
           toast.error(`OAuth initialization failed: ${oauthResult.error}`);
           return;
@@ -1185,6 +1216,7 @@ export function useServerState({
     [
       dispatch,
       isAuthenticated,
+      appState.servers,
       appState.workspaces,
       appState.activeWorkspaceId,
       notifyIfClientConfigSyncPending,
@@ -1755,6 +1787,14 @@ export function useServerState({
         const oauthResult = await initiateOAuth({
           serverName,
           serverUrl,
+          customHeaders:
+            "requestInit" in server.config &&
+            server.config.requestInit?.headers &&
+            !Array.isArray(server.config.requestInit.headers)
+              ? (server.config.requestInit.headers as Record<string, string>)
+              : undefined,
+          protocolVersion: server.oauthFlowProfile?.protocolVersion,
+          registrationStrategy: server.oauthFlowProfile?.registrationStrategy,
         });
 
         if (oauthResult.success && !oauthResult.serverConfig) {
@@ -1775,6 +1815,7 @@ export function useServerState({
             type: "CONNECT_FAILURE",
             name: serverName,
             error: errorMessage,
+            oauthTrace: oauthResult.oauthTrace,
           });
           reportError(`OAuth failed: ${serverName}`);
           return {
@@ -1802,6 +1843,7 @@ export function useServerState({
                 ? undefined
                 : getStoredTokens(serverName),
             useOAuth: true,
+            oauthTrace: oauthResult.oauthTrace,
           });
           logger.info("Reconnection with fresh OAuth successful", {
             serverName,
@@ -1816,6 +1858,7 @@ export function useServerState({
           type: "CONNECT_FAILURE",
           name: serverName,
           error: errorMessage,
+          oauthTrace: oauthResult.oauthTrace,
         });
         reportError(errorMessage);
         return {
@@ -1942,6 +1985,7 @@ export function useServerState({
             type: "CONNECT_FAILURE",
             name: serverName,
             error: authResult.error,
+            oauthTrace: authResult.oauthTrace,
           });
           reportError(`Failed to connect: ${serverName}`);
           return {
@@ -1966,6 +2010,7 @@ export function useServerState({
             config: authResult.serverConfig,
             tokens: authResult.tokens,
             useOAuth: server.useOAuth === true || authResult.tokens != null,
+            oauthTrace: authResult.oauthTrace,
           });
           logger.info("Reconnection successful", { serverName, result });
           storeInitInfo(serverName, result.initInfo).catch((err) =>
@@ -1978,6 +2023,7 @@ export function useServerState({
           type: "CONNECT_FAILURE",
           name: serverName,
           error: errorMessage,
+          oauthTrace: authResult.oauthTrace,
         });
         logger.error("Reconnection failed", { serverName, result });
         reportError(errorMessage || `Failed to reconnect: ${serverName}`);
