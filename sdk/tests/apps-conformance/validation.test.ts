@@ -20,7 +20,6 @@ describe("normalizeMCPAppsConformanceConfig", () => {
       experimental: {
         customClient: {},
       },
-      elicitation: {},
     });
     expect(
       (

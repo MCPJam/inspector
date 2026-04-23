@@ -77,6 +77,13 @@ export class ElicitationManager {
   }
 
   /**
+   * Returns whether this server will have an elicitation handler installed.
+   */
+  hasHandler(serverId: string): boolean {
+    return this.handlers.has(serverId) || this.globalCallback !== undefined;
+  }
+
+  /**
    * Gets the pending elicitations map.
    * Useful for external code that needs to add resolvers.
    *
