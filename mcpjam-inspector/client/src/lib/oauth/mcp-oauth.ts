@@ -109,8 +109,64 @@ const SENSITIVE_FIELD_NAMES = new Set([
   "client_secret",
   "code",
   "code_verifier",
+  "authorization_code",
   "authorization",
+  "state",
+  "cookie",
+  "set_cookie",
+  "api_key",
 ]);
+
+const SENSITIVE_HEADER_PATTERNS = [
+  /^authorization$/i,
+  /^proxy-authorization$/i,
+  /^cookie$/i,
+  /^set-cookie$/i,
+  /^x-api-key$/i,
+  /^api-key$/i,
+  /^apikey$/i,
+  /^x-auth-token$/i,
+  /^x-csrf-token$/i,
+  /^x-session-token$/i,
+  /^x-access-token$/i,
+  /^x-refresh-token$/i,
+  /^x-client-secret$/i,
+  /^x-credential$/i,
+];
+
+function normalizeSensitiveKey(key: string): string {
+  return key
+    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+    .replace(/[^a-zA-Z0-9]+/g, "_")
+    .toLowerCase();
+}
+
+function isSensitiveTraceFieldName(key: string): boolean {
+  return SENSITIVE_FIELD_NAMES.has(normalizeSensitiveKey(key));
+}
+
+function isSensitiveHeaderName(key: string): boolean {
+  const normalized = normalizeSensitiveKey(key);
+  return (
+    SENSITIVE_FIELD_NAMES.has(normalized) ||
+    SENSITIVE_HEADER_PATTERNS.some((pattern) => pattern.test(key)) ||
+    /(^|_)(token|secret|password|credential|cookie|auth)(_|$)/.test(
+      normalized,
+    ) ||
+    /(^|_)api_?key(_|$)/.test(normalized)
+  );
+}
+
+function isSensitiveQueryParamName(key: string): boolean {
+  const normalized = normalizeSensitiveKey(key);
+  return (
+    SENSITIVE_FIELD_NAMES.has(normalized) ||
+    /(^|_)(token|secret|password|credential|cookie|auth)(_|$)/.test(
+      normalized,
+    ) ||
+    /(^|_)api_?key(_|$)/.test(normalized)
+  );
+}
 
 function redactSensitiveValue(value: unknown): string {
   if (typeof value !== "string") {
@@ -128,6 +184,10 @@ function sanitizeOAuthTraceString(value: string): unknown {
   const trimmed = value.trim();
   if (!trimmed) {
     return value;
+  }
+
+  if (/^https?:\/\//i.test(trimmed)) {
+    return sanitizeOAuthUrl(trimmed);
   }
 
   const looksStructured =
@@ -150,6 +210,26 @@ function sanitizeOAuthTraceString(value: string): unknown {
     .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+\b/gi, "Bearer [redacted]");
 }
 
+function sanitizeOAuthUrl(rawUrl: string): string {
+  try {
+    const url = new URL(rawUrl);
+    for (const key of [...url.searchParams.keys()]) {
+      if (isSensitiveQueryParamName(key)) {
+        url.searchParams.set(key, "[redacted]");
+      }
+    }
+    if (url.hash) {
+      url.hash = "#[redacted]";
+    }
+    return url.toString();
+  } catch {
+    return rawUrl.replace(
+      /\bBearer\s+[A-Za-z0-9._~+/=-]+\b/gi,
+      "Bearer [redacted]",
+    );
+  }
+}
+
 function sanitizeOAuthTraceValue(value: unknown): unknown {
   if (Array.isArray(value)) {
     return value.map((item) => sanitizeOAuthTraceValue(item));
@@ -165,7 +245,7 @@ function sanitizeOAuthTraceValue(value: unknown): unknown {
 
   return Object.fromEntries(
     Object.entries(value).map(([key, entryValue]) => {
-      if (SENSITIVE_FIELD_NAMES.has(key.toLowerCase())) {
+      if (isSensitiveTraceFieldName(key)) {
         return [key, redactSensitiveValue(entryValue)];
       }
       return [key, sanitizeOAuthTraceValue(entryValue)];
@@ -173,15 +253,23 @@ function sanitizeOAuthTraceValue(value: unknown): unknown {
   );
 }
 
+function sanitizeOAuthHeaderValue(value: string): string {
+  const sanitized = sanitizeOAuthTraceString(value);
+  if (typeof sanitized === "string") {
+    return sanitized;
+  }
+  return redactSensitiveValue(value);
+}
+
 function sanitizeOAuthHeaders(
   headers: Record<string, string>,
 ): Record<string, string> {
   return Object.fromEntries(
     Object.entries(headers).map(([key, value]) => {
-      if (SENSITIVE_FIELD_NAMES.has(key.toLowerCase())) {
+      if (isSensitiveHeaderName(key)) {
         return [key, redactSensitiveValue(value)];
       }
-      return [key, value];
+      return [key, sanitizeOAuthHeaderValue(value)];
     }),
   );
 }
@@ -198,7 +286,7 @@ function createHttpHistoryEntry(input: {
     timestamp: Date.now(),
     request: {
       method: input.method,
-      url: input.url,
+      url: sanitizeOAuthUrl(input.url),
       headers: sanitizeOAuthHeaders(input.headers ?? {}),
       body: sanitizeOAuthTraceValue(input.body),
     },
@@ -377,18 +465,15 @@ function resolveOAuthRegistrationStrategy(
     MCPOAuthOptions,
     "registrationStrategy" | "clientId" | "clientSecret" | "useRegistryOAuthProxy"
   >,
-  provider: MCPOAuthProvider,
 ): OAuthRegistrationStrategy {
   if (options.registrationStrategy) {
     return options.registrationStrategy;
   }
 
-  const storedClient = provider.clientInformation();
   if (
     options.useRegistryOAuthProxy ||
     options.clientId ||
-    options.clientSecret ||
-    storedClient?.client_id
+    options.clientSecret
   ) {
     return "preregistered";
   }
@@ -534,13 +619,14 @@ function buildOAuthTraceFromFlowState(input: {
   for (const log of state.infoLogs ?? []) {
     const record = ensureStep(log.step, log.timestamp);
     record.message = log.label;
+    const sanitizedLogData = sanitizeOAuthTraceValue(log.data);
     if (
-      log.data &&
-      typeof sanitizeOAuthTraceValue(log.data) === "object" &&
-      sanitizeOAuthTraceValue(log.data) !== null &&
-      !Array.isArray(sanitizeOAuthTraceValue(log.data))
+      sanitizedLogData &&
+      typeof sanitizedLogData === "object" &&
+      sanitizedLogData !== null &&
+      !Array.isArray(sanitizedLogData)
     ) {
-      record.details = sanitizeOAuthTraceValue(log.data) as Record<string, unknown>;
+      record.details = sanitizedLogData as Record<string, unknown>;
     }
     if (log.error?.message) {
       record.error = log.error.message;
@@ -567,7 +653,10 @@ function buildOAuthTraceFromFlowState(input: {
       step,
       startedAt: syntheticTimestamp,
       completedAt: syntheticTimestamp,
-      details,
+      details:
+        details == null
+          ? undefined
+          : (sanitizeOAuthTraceValue(details) as Record<string, unknown>),
     });
   };
 
@@ -1068,8 +1157,8 @@ function createOAuthFetchInterceptor(
         message: error instanceof Error ? error.message : String(error),
       };
       entry.duration = Date.now() - entry.timestamp;
-      console.error("OAuth proxy failed, falling back to direct fetch:", error);
-      return await originalFetch(input, init);
+      console.error("OAuth proxy failed:", error);
+      throw error instanceof Error ? error : new Error(String(error));
     }
   };
 }
@@ -1361,10 +1450,7 @@ export async function initiateOAuth(
       options.clientSecret,
     );
     const protocolVersion = resolveOAuthProtocolVersion(options);
-    const registrationStrategy = resolveOAuthRegistrationStrategy(
-      options,
-      provider,
-    );
+    const registrationStrategy = resolveOAuthRegistrationStrategy(options);
     const fetchFn = createOAuthFetchInterceptor(
       {
         registryServerId: options.registryServerId,
@@ -1382,7 +1468,11 @@ export async function initiateOAuth(
     localStorage.setItem("mcp-oauth-pending", options.serverName);
 
     // Store OAuth configuration (scopes, registryServerId) for recovery if connection fails
-    const oauthConfig = buildStoredOAuthConfig(options);
+    const oauthConfig = buildStoredOAuthConfig({
+      ...options,
+      protocolVersion,
+      registrationStrategy,
+    });
     localStorage.setItem(
       `mcp-oauth-config-${options.serverName}`,
       JSON.stringify(oauthConfig),
@@ -1835,6 +1925,7 @@ export async function handleOAuthCallback(
 
       await persistOAuthStateArtifacts(provider, flowResult.state);
       clearOAuthFlowSession(serverName);
+      localStorage.removeItem(`mcp-verifier-${serverName}`);
       localStorage.removeItem("mcp-oauth-pending");
       return {
         success: true,
@@ -1904,6 +1995,7 @@ export async function handleOAuthCallback(
 
     // Clean up pending state
     localStorage.removeItem("mcp-oauth-pending");
+    localStorage.removeItem(`mcp-verifier-${serverName}`);
     const mergedTrace = mergeOAuthTraces(
       loadOAuthTrace(serverName),
       callbackTrace,

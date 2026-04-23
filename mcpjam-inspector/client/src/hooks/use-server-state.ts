@@ -81,6 +81,9 @@ function saveOAuthConfigToLocalStorage(formData: ServerFormData): void {
   if (formData.registryServerId) {
     oauthConfig.registryServerId = formData.registryServerId;
   }
+  if (formData.clientId || formData.clientSecret) {
+    oauthConfig.registrationStrategy = "preregistered";
+  }
   if (Object.keys(oauthConfig).length > 0) {
     localStorage.setItem(
       `mcp-oauth-config-${formData.name}`,

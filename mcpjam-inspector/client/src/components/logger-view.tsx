@@ -88,6 +88,32 @@ const LOGGING_LEVELS: LoggingLevel[] = [
   "emergency",
 ];
 
+function buildOAuthTraceIngestionKey(trace: {
+  source: string;
+  currentStep: string;
+  steps: Array<{
+    step: string;
+    status: string;
+    startedAt: number;
+    completedAt?: number;
+    recovered?: boolean;
+  }>;
+  httpHistory: Array<{ step: string; timestamp: number }>;
+  error?: string;
+}): string {
+  const lastStep = trace.steps[trace.steps.length - 1];
+  const lastHttpHistoryEntry = trace.httpHistory[trace.httpHistory.length - 1];
+  return JSON.stringify({
+    source: trace.source,
+    currentStep: trace.currentStep,
+    stepCount: trace.steps.length,
+    lastStep,
+    httpHistoryCount: trace.httpHistory.length,
+    lastHttpHistoryEntry,
+    error: trace.error,
+  });
+}
+
 function normalizePayload(
   payload: unknown,
 ): Record<string, unknown> | unknown[] {
@@ -193,6 +219,7 @@ export function LoggerView({
   const [sourceFilter, setSourceFilter] = useState<"all" | TrafficSource>(
     "all",
   );
+  const lastIngestedOAuthTraceKeysRef = useRef<Map<string, string>>(new Map());
 
   // Subscribe to UI log store (includes both MCP Apps and MCP Server RPC traffic)
   const uiLogItems = useTrafficLogStore((s) => s.items);
@@ -200,8 +227,16 @@ export function LoggerView({
   const clearLogs = useTrafficLogStore((s) => s.clear);
 
   useEffect(() => {
+    const nextKeys = new Map<string, string>();
+
     Object.entries(appState.servers).forEach(([serverId, server]) => {
       if (!server.lastOAuthTrace) {
+        return;
+      }
+
+      const ingestionKey = buildOAuthTraceIngestionKey(server.lastOAuthTrace);
+      nextKeys.set(serverId, ingestionKey);
+      if (lastIngestedOAuthTraceKeysRef.current.get(serverId) === ingestionKey) {
         return;
       }
 
@@ -211,6 +246,8 @@ export function LoggerView({
         trace: server.lastOAuthTrace,
       });
     });
+
+    lastIngestedOAuthTraceKeysRef.current = nextKeys;
   }, [appState.servers]);
 
   // Convert UI log items to renderable format

@@ -404,7 +404,6 @@ export async function runOAuthLogin(
             };
           } catch (error) {
             updateState({
-              currentStep: "received_authorization_code",
               error: error instanceof Error ? error.message : String(error),
             });
             throw error;
