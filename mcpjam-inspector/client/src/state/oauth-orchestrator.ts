@@ -24,6 +24,7 @@ export async function ensureAuthorizedForReconnect(
   server: ServerWithName,
   options?: {
     beforeRedirect?: (oauthOptions: MCPOAuthOptions) => void;
+    onTraceUpdate?: (trace: OAuthTrace) => void;
   },
 ): Promise<OAuthResult> {
   // If server is explicitly configured without OAuth, skip OAuth flow entirely
@@ -45,7 +46,9 @@ export async function ensureAuthorizedForReconnect(
   // If OAuth was configured, try to refresh or re-initiate
   if (server.oauthTokens) {
     // Try refresh first
-    const refreshed = await refreshOAuthTokens(server.name);
+    const refreshed = await refreshOAuthTokens(server.name, {
+      onTraceUpdate: options?.onTraceUpdate,
+    });
     if (refreshed.success && refreshed.serverConfig) {
       return {
         kind: "ready",
@@ -94,6 +97,7 @@ export async function ensureAuthorizedForReconnect(
         server.oauthTokens?.client_secret || clientInfo?.client_secret;
     }
     options?.beforeRedirect?.(opts);
+    opts.onTraceUpdate = options?.onTraceUpdate;
     const init = await initiateOAuth(opts);
     if (init.success && init.serverConfig) {
       return {

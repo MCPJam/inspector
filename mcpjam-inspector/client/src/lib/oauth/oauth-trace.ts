@@ -3,6 +3,9 @@ import {
   getStepInfo,
   type HttpHistoryEntry,
   type OAuthFlowStep,
+  type OAuthTraceSnapshot,
+  type OAuthTraceStepSnapshot,
+  type OAuthTraceStepStatus,
 } from "@mcpjam/sdk/browser";
 
 export type OAuthTraceSource =
@@ -11,31 +14,13 @@ export type OAuthTraceSource =
   | "refresh"
   | "hosted_callback";
 
-export type OAuthTraceStepStatus = "pending" | "success" | "error";
+export type { OAuthTraceStepStatus };
+export type OAuthTraceStep = OAuthTraceStepSnapshot;
 
-export interface OAuthTraceStep {
-  step: OAuthFlowStep;
-  title: string;
-  status: OAuthTraceStepStatus;
-  message?: string;
-  error?: string;
-  details?: Record<string, unknown>;
-  recovered?: boolean;
-  recoveredAt?: number;
-  recoveryMessage?: string;
-  startedAt: number;
-  completedAt?: number;
-}
-
-export interface OAuthTrace {
-  version: 1;
+export interface OAuthTrace extends OAuthTraceSnapshot {
   source: OAuthTraceSource;
   serverName?: string;
   serverUrl?: string;
-  currentStep: OAuthFlowStep;
-  steps: OAuthTraceStep[];
-  httpHistory: HttpHistoryEntry[];
-  error?: string;
 }
 
 function storageKey(serverName: string): string {
@@ -79,6 +64,24 @@ export function createOAuthTrace(input: {
     currentStep: "idle",
     steps: [],
     httpHistory: [],
+  };
+}
+
+export function buildOAuthTraceFromSnapshot(input: {
+  source: OAuthTraceSource;
+  serverName?: string;
+  serverUrl?: string;
+  snapshot: OAuthTraceSnapshot;
+}): OAuthTrace {
+  return {
+    version: input.snapshot.version,
+    source: input.source,
+    serverName: input.serverName,
+    serverUrl: input.serverUrl,
+    currentStep: input.snapshot.currentStep,
+    steps: input.snapshot.steps,
+    httpHistory: input.snapshot.httpHistory,
+    ...(input.snapshot.error ? { error: input.snapshot.error } : {}),
   };
 }
 

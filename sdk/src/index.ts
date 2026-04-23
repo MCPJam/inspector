@@ -196,6 +196,16 @@ export type {
   OAuthStateMachineRunConfig,
   OAuthStateMachineRunResult,
 } from "./oauth/state-machines/runner.js";
+export {
+  createOAuthTraceProjectionContext,
+  projectOAuthTraceSnapshot,
+} from "./oauth/state-machines/trace.js";
+export type {
+  OAuthTraceProjectionContext,
+  OAuthTraceSnapshot,
+  OAuthTraceStepSnapshot,
+  OAuthTraceStepStatus,
+} from "./oauth/state-machines/trace.js";
 
 // EvalAgent interface (for deterministic testing without concrete TestAgent)
 export type { EvalAgent, PromptOptions } from "./EvalAgent.js";

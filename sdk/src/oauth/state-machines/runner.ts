@@ -4,6 +4,12 @@ import type {
   OAuthFlowState,
 } from "./types.js";
 import type { OAuthStateMachineFactoryConfig } from "./factory.js";
+import {
+  createOAuthTraceProjectionContext,
+  projectOAuthTraceSnapshot,
+  type OAuthTraceProjectionContext,
+  type OAuthTraceSnapshot,
+} from "./trace.js";
 
 export type OAuthAuthorizationRequestResult =
   | {
@@ -21,6 +27,11 @@ export interface OAuthStateMachineRunConfig
     authorizationUrl: string;
     state: OAuthFlowState;
   }) => MaybePromise<OAuthAuthorizationRequestResult>;
+  onTraceUpdate?: (input: {
+    trace: OAuthTraceSnapshot;
+    state: OAuthFlowState;
+    reason: "state_update" | "redirect" | "error" | "complete";
+  }) => void;
 }
 
 export interface OAuthStateMachineRunResult {
@@ -45,16 +56,33 @@ export async function runOAuthStateMachine(
   const {
     maxSteps = 40,
     onAuthorizationRequest,
+    onTraceUpdate,
     getState: providedGetState,
     ...machineConfig
   } = config;
 
   let localState = config.state;
+  const traceProjectionContext = createOAuthTraceProjectionContext();
+  const getState = providedGetState ?? (() => localState);
+  const emitTrace = (
+    reason: "state_update" | "redirect" | "error" | "complete",
+    state = getState(),
+    context: OAuthTraceProjectionContext = traceProjectionContext,
+  ) => {
+    onTraceUpdate?.({
+      trace: projectOAuthTraceSnapshot({
+        state,
+        context,
+      }),
+      state,
+      reason,
+    });
+  };
   const updateState = (updates: Partial<OAuthFlowState>) => {
     localState = { ...localState, ...updates };
     config.updateState(updates);
+    emitTrace("state_update", localState);
   };
-  const getState = providedGetState ?? (() => localState);
   const machine = createOAuthStateMachine({
     ...machineConfig,
     getState,
@@ -68,6 +96,9 @@ export async function runOAuthStateMachine(
 
     if (currentState.currentStep === "authorization_request") {
       if (!currentState.authorizationUrl) {
+        updateState({
+          error: "Authorization URL was not generated.",
+        });
         return {
           completed: false,
           redirected: false,
@@ -79,6 +110,9 @@ export async function runOAuthStateMachine(
       }
 
       if (!onAuthorizationRequest) {
+        updateState({
+          error: "Authorization request requires an authorization handler.",
+        });
         return {
           completed: false,
           redirected: false,
@@ -97,6 +131,7 @@ export async function runOAuthStateMachine(
         });
 
         if (authorizationResult.type === "redirect") {
+          emitTrace("redirect");
           return {
             completed: false,
             redirected: true,
@@ -112,6 +147,9 @@ export async function runOAuthStateMachine(
         });
         continue;
       } catch (error) {
+        updateState({
+          error: normalizeError(error).message,
+        });
         return {
           completed: false,
           redirected: false,
@@ -127,6 +165,13 @@ export async function runOAuthStateMachine(
     try {
       await machine.proceedToNextStep();
     } catch (error) {
+      if (!getState().error) {
+        updateState({
+          error: normalizeError(error).message,
+        });
+      } else {
+        emitTrace("error");
+      }
       return {
         completed: false,
         redirected: false,
@@ -137,12 +182,20 @@ export async function runOAuthStateMachine(
 
     const nextState = getState();
     if (nextState.currentStep === startingStep) {
+      if (!nextState.error) {
+        updateState({
+          error: `Step ${startingStep} did not advance.`,
+        });
+      } else {
+        emitTrace("error", nextState);
+      }
       return {
         completed: false,
         redirected: false,
-        state: nextState,
+        state: getState(),
         error: {
-          message: nextState.error || `Step ${startingStep} did not advance.`,
+          message:
+            getState().error || `Step ${startingStep} did not advance.`,
         },
       };
     }
@@ -150,16 +203,20 @@ export async function runOAuthStateMachine(
 
   const finalState = getState();
   if (guard >= maxSteps && finalState.currentStep !== "complete") {
+    updateState({
+      error: "OAuth login exceeded its step guard.",
+    });
     return {
       completed: false,
       redirected: false,
-      state: finalState,
+      state: getState(),
       error: {
         message: "OAuth login exceeded its step guard.",
       },
     };
   }
 
+  emitTrace(finalState.currentStep === "complete" ? "complete" : "state_update");
   return {
     completed: finalState.currentStep === "complete",
     redirected: false,

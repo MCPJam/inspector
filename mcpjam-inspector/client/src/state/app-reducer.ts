@@ -253,6 +253,37 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       };
     }
 
+    case "SET_SERVER_OAUTH_TRACE": {
+      const activeWorkspace = state.workspaces[state.activeWorkspaceId];
+      const existing =
+        state.servers[action.name] ?? activeWorkspace?.servers[action.name];
+      if (!existing) return state;
+
+      const nextServer = {
+        ...existing,
+        lastOAuthTrace: action.oauthTrace,
+      };
+
+      return {
+        ...state,
+        servers: {
+          ...state.servers,
+          [action.name]: nextServer,
+        },
+        workspaces: {
+          ...state.workspaces,
+          [state.activeWorkspaceId]: {
+            ...activeWorkspace,
+            servers: {
+              ...activeWorkspace.servers,
+              [action.name]: nextServer,
+            },
+            updatedAt: new Date(),
+          },
+        },
+      };
+    }
+
     case "CREATE_WORKSPACE": {
       return {
         ...state,

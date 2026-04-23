@@ -15,6 +15,7 @@ export interface HostedOAuthPendingMarker {
   serverId?: string | null;
   serverName: string;
   serverUrl: string | null;
+  sessionId?: string | null;
   accessScope?: "workspace_member" | "chat_v2";
   shareToken?: string | null;
   chatboxToken?: string | null;
@@ -75,6 +76,7 @@ export function writeHostedOAuthPendingMarker(
         workspaceId: marker.workspaceId ?? null,
         serverId: marker.serverId ?? null,
         serverUrl: marker.serverUrl ?? null,
+        sessionId: marker.sessionId ?? null,
         accessScope: marker.accessScope ?? null,
         shareToken: marker.shareToken ?? null,
         chatboxToken: marker.chatboxToken ?? null,
@@ -111,16 +113,18 @@ export function readHostedOAuthPendingMarker(): HostedOAuthPendingMarker | null 
       return null;
     }
 
-    return {
-      surface: parsed.surface,
-      workspaceId:
-        typeof parsed.workspaceId === "string" ? parsed.workspaceId : null,
-      serverId: typeof parsed.serverId === "string" ? parsed.serverId : null,
-      serverName: parsed.serverName,
-      serverUrl: typeof parsed.serverUrl === "string" ? parsed.serverUrl : null,
-      accessScope:
-        parsed.accessScope === "workspace_member" ||
-        parsed.accessScope === "chat_v2"
+      return {
+        surface: parsed.surface,
+        workspaceId:
+          typeof parsed.workspaceId === "string" ? parsed.workspaceId : null,
+        serverId: typeof parsed.serverId === "string" ? parsed.serverId : null,
+        serverName: parsed.serverName,
+        serverUrl: typeof parsed.serverUrl === "string" ? parsed.serverUrl : null,
+        sessionId:
+          typeof parsed.sessionId === "string" ? parsed.sessionId : null,
+        accessScope:
+          parsed.accessScope === "workspace_member" ||
+          parsed.accessScope === "chat_v2"
           ? parsed.accessScope
           : undefined,
       shareToken:
@@ -238,6 +242,7 @@ export function getHostedOAuthCallbackContext(): HostedOAuthCallbackContext | nu
     serverId: null,
     serverName,
     serverUrl,
+    sessionId: null,
     accessScope: undefined,
     shareToken: null,
     chatboxToken: null,

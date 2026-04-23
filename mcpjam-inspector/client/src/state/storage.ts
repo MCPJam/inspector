@@ -5,11 +5,12 @@ import {
   Workspace,
 } from "./app-types";
 import { isWorkspaceClientConfig } from "@/lib/client-config";
+import { loadOAuthTrace } from "@/lib/oauth/oauth-trace";
 
 const STORAGE_KEY = "mcp-inspector-state";
 const WORKSPACES_STORAGE_KEY = "mcp-inspector-workspaces";
 
-function reviveServer(server: any): ServerWithName {
+function reviveServer(name: string, server: any): ServerWithName {
   const cfg: any = server.config;
   let nextCfg = cfg;
   if (cfg && typeof cfg.url === "string") {
@@ -21,7 +22,11 @@ function reviveServer(server: any): ServerWithName {
   }
   return {
     ...server,
+    name: server.name ?? name,
     config: nextCfg,
+    lastOAuthTrace:
+      server.lastOAuthTrace ??
+      (typeof window !== "undefined" ? loadOAuthTrace(server.name ?? name) : undefined),
     connectionStatus: server.connectionStatus || "disconnected",
     retryCount: server.retryCount || 0,
     lastConnectionTime: server.lastConnectionTime
@@ -54,7 +59,7 @@ export function loadAppState(): AppState {
                   : undefined,
                 servers: Object.fromEntries(
                   Object.entries(workspace.servers || {}).map(
-                    ([name, server]) => [name, reviveServer(server)],
+                    ([name, server]) => [name, reviveServer(name, server)],
                   ),
                 ),
                 createdAt: new Date(workspace.createdAt),
@@ -79,7 +84,7 @@ export function loadAppState(): AppState {
           migratedServers = Object.fromEntries(
             Object.entries(parsed.servers || {}).map(([name, server]) => [
               name,
-              reviveServer(server),
+              reviveServer(name, server),
             ]),
           );
         } catch (e) {
