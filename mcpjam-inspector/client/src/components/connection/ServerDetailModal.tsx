@@ -380,7 +380,9 @@ export function ServerDetailModal({
                 className="mt-0 flex-none absolute inset-0 overflow-y-auto bg-background"
               >
                 <div className="pl-1 pr-6">
-                  {!isConnected ? (
+                  {!isConnected &&
+                  !server.lastError &&
+                  !server.lastOAuthTrace ? (
                     <div className="flex items-center justify-center h-full min-h-[120px] text-sm text-muted-foreground">
                       Connect to view server overview
                     </div>

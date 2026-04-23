@@ -2,6 +2,7 @@ import type { MCPServerConfig } from "@mcpjam/sdk/browser";
 import { OauthTokens } from "@/shared/types.js";
 import type { OAuthTestProfile } from "@/lib/oauth/profile";
 import type { WorkspaceClientConfig } from "@/lib/client-config";
+import type { OAuthTrace } from "@/lib/oauth/oauth-trace";
 
 export type ConnectionStatus =
   | "connected"
@@ -41,6 +42,7 @@ export interface ServerWithName {
   connectionStatus: ConnectionStatus;
   retryCount: number;
   lastError?: string;
+  lastOAuthTrace?: OAuthTrace;
   enabled?: boolean;
   /** Whether OAuth is explicitly enabled for this server. When false, reconnect skips OAuth flow. */
   useOAuth?: boolean;
@@ -88,8 +90,14 @@ export type AppAction =
       config: MCPServerConfig;
       tokens?: OauthTokens;
       useOAuth?: boolean;
+      oauthTrace?: OAuthTrace;
     }
-  | { type: "CONNECT_FAILURE"; name: string; error: string }
+  | {
+      type: "CONNECT_FAILURE";
+      name: string;
+      error: string;
+      oauthTrace?: OAuthTrace;
+    }
   | {
       type: "RECONNECT_REQUEST";
       name: string;

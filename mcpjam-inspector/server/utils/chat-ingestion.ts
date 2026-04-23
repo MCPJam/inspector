@@ -195,7 +195,7 @@ export async function persistChatSessionToConvex(
       const logMessage =
         response.status === 409 && responsePreview.includes("VERSION_CONFLICT")
           ? "[chat-session-persistence] Chat session version conflict"
-          : "[chat-session-persistence] Failed to persist chat session";
+          : `[chat-session-persistence] Failed to persist chat session (${response.status}): ${responsePreview}`;
       logger.warn(logMessage, {
         status: response.status,
         responsePreview,

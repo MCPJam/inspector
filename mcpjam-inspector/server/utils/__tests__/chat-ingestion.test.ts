@@ -98,14 +98,21 @@ describe("chat-ingestion", () => {
     });
 
     expect(mockLogger.warn).toHaveBeenCalledWith(
-      "[chat-session-persistence] Failed to persist chat session",
+      expect.stringContaining(
+        "[chat-session-persistence] Failed to persist chat session (500):",
+      ),
       expect.objectContaining({
         status: 500,
         responsePreview: expect.any(String),
       }),
     );
 
-    const [, metadata] = mockLogger.warn.mock.calls[0];
+    const [message, metadata] = mockLogger.warn.mock.calls[0];
+    expect(message).toContain("[redacted-secret]");
+    expect(message).toContain("[redacted-email]");
+    expect(message).toContain("Bearer [redacted-token]");
+    expect(message).not.toContain("support@example.com");
+    expect(message).not.toContain("super-secret-token");
     expect(metadata.responsePreview).toContain("[redacted-secret]");
     expect(metadata.responsePreview).toContain("[redacted-email]");
     expect(metadata.responsePreview).toContain("Bearer [redacted-token]");

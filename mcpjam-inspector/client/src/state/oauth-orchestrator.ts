@@ -8,14 +8,16 @@ import {
   MCPOAuthOptions,
 } from "@/lib/oauth/mcp-oauth";
 import { ServerWithName } from "./app-types";
+import type { OAuthTrace } from "@/lib/oauth/oauth-trace";
 
 export type OAuthReady = {
   kind: "ready";
   serverConfig: any;
   tokens?: any;
+  oauthTrace?: OAuthTrace;
 };
 export type OAuthRedirect = { kind: "redirect" };
-export type OAuthError = { kind: "error"; error: string };
+export type OAuthError = { kind: "error"; error: string; oauthTrace?: OAuthTrace };
 export type OAuthResult = OAuthReady | OAuthRedirect | OAuthError;
 
 export async function ensureAuthorizedForReconnect(
@@ -49,6 +51,7 @@ export async function ensureAuthorizedForReconnect(
         kind: "ready",
         serverConfig: refreshed.serverConfig,
         tokens: getStoredTokens(server.name),
+        oauthTrace: refreshed.oauthTrace,
       };
     }
   }
@@ -85,12 +88,17 @@ export async function ensureAuthorizedForReconnect(
         kind: "ready",
         serverConfig: init.serverConfig,
         tokens: getStoredTokens(server.name),
+        oauthTrace: init.oauthTrace,
       };
     }
     if (init.success && !init.serverConfig) {
       return { kind: "redirect" };
     }
-    return { kind: "error", error: init.error || "OAuth init failed" };
+    return {
+      kind: "error",
+      error: init.error || "OAuth init failed",
+      oauthTrace: init.oauthTrace,
+    };
   }
 
   return { kind: "error", error: "OAuth refresh failed and no URL present" };
