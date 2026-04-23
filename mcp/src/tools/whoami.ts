@@ -1,7 +1,7 @@
-import { ConvexHttpClient } from "convex/browser";
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { McpJamMcpServer } from "../server.js";
+import { fetchMcpWhoAmI } from "../convexBridge.js";
 
 export function registerWhoamiTool(
   server: McpServer,
@@ -20,18 +20,16 @@ export function registerWhoamiTool(
       if (!token) {
         return toolError("No bearer token on the request.");
       }
-
-      const client = new ConvexHttpClient(agent.runtimeEnv.CONVEX_URL);
-      client.setAuth(token);
-
-      const id = await client.mutation("users:ensureUser" as any, {});
-      const user = await client.query("users:getCurrentUser" as any, {});
+      const { userId, user } = await fetchMcpWhoAmI(
+        agent.runtimeEnv.CONVEX_HTTP_URL,
+        token
+      );
 
       return {
         content: [
           {
             type: "text",
-            text: JSON.stringify({ id, user }, null, 2),
+            text: JSON.stringify({ id: userId, user }, null, 2),
           },
         ],
       };

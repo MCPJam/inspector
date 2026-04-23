@@ -1,4 +1,3 @@
-import { ConvexHttpClient } from "convex/browser";
 import {
   redactSensitiveValue,
   runHttpServerDoctor,
@@ -8,6 +7,10 @@ import {
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { McpJamMcpServer } from "../server.js";
+import {
+  fetchMcpWorkspaceServers,
+  fetchMcpWorkspaces,
+} from "../convexBridge.js";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_TIMEOUT_MS = 120_000;
@@ -103,14 +106,14 @@ export function registerDoctorTool(
         return toolError("Server misconfigured: CONVEX_HTTP_URL is not set.");
       }
 
-      const convex = new ConvexHttpClient(env.CONVEX_URL);
-      convex.setAuth(token);
-
       let workspaces: RemoteWorkspace[];
       try {
-        workspaces = (await convex.query("workspaces:getMyWorkspaces" as any, {
-          organizationId,
-        })) as RemoteWorkspace[];
+        const response = await fetchMcpWorkspaces(
+          env.CONVEX_HTTP_URL,
+          token,
+          organizationId
+        );
+        workspaces = response.workspaces as RemoteWorkspace[];
       } catch {
         return toolError(
           "Workspace not found in this organization or not accessible."
@@ -124,10 +127,9 @@ export function registerDoctorTool(
         );
       }
 
-      const allServers = (await convex.query(
-        "servers:getWorkspaceServers" as any,
-        { workspaceId }
-      )) as RemoteServer[];
+      const allServers = (
+        await fetchMcpWorkspaceServers(env.CONVEX_HTTP_URL, token, workspaceId)
+      ).servers as RemoteServer[];
 
       const serverById = new Map(allServers.map((entry) => [entry._id, entry]));
       const requestedServerIds =
