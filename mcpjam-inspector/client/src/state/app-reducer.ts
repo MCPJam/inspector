@@ -68,6 +68,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         lastConnectionTime: new Date(),
         retryCount: 0,
         lastError: undefined,
+        lastOAuthTrace: action.oauthTrace,
         oauthTokens: action.tokens,
         enabled: true,
         // Hosted workspace OAuth can succeed without browser-side tokens.
@@ -107,6 +108,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
           [action.name]: setStatus(existing, "failed", {
             retryCount: existing.retryCount,
             lastError: action.error,
+            lastOAuthTrace: action.oauthTrace,
           }),
         },
       };

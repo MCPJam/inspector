@@ -1,17 +1,22 @@
 /**
- * Clean OAuth implementation using only the official MCP SDK with CORS proxy support
+ * Production OAuth implementation using explicit SDK primitives with trace support.
  */
 
 import {
-  auth,
   discoverAuthorizationServerMetadata,
   discoverOAuthServerInfo,
+  exchangeAuthorization,
   fetchToken,
+  registerClient,
   selectResourceURL,
+  startAuthorization,
 } from "@mcpjam/sdk/browser";
 import type {
+  HttpHistoryEntry,
+  OAuthClientInformation,
   OAuthClientProvider,
   OAuthDiscoveryState,
+  OAuthTokens,
 } from "@mcpjam/sdk/browser";
 import type { HttpServerConfig } from "@mcpjam/sdk/browser";
 import { generateRandomString } from "./pkce";
@@ -21,6 +26,18 @@ import { captureServerDetailModalOAuthResume } from "@/lib/server-detail-modal-r
 import type { HostedOAuthCallbackContext } from "@/lib/hosted-oauth-callback";
 import { getRedirectUri } from "./constants";
 import { getConvexSiteUrl } from "@/lib/convex-site-url";
+import {
+  appendOAuthTraceHttpHistory,
+  clearOAuthTrace,
+  completeOAuthTraceStep,
+  createOAuthTrace,
+  failOAuthTraceStep,
+  loadOAuthTrace,
+  mergeOAuthTraces,
+  saveOAuthTrace,
+  startOAuthTraceStep,
+  type OAuthTrace,
+} from "./oauth-trace";
 
 // Store original fetch for restoration
 const originalFetch = window.fetch;
@@ -56,6 +73,79 @@ function clearStoredDiscoveryState(serverName: string): void {
 }
 
 type OAuthRequestFields = Record<string, string>;
+
+const SENSITIVE_FIELD_NAMES = new Set([
+  "access_token",
+  "refresh_token",
+  "id_token",
+  "client_secret",
+  "code",
+  "code_verifier",
+  "authorization",
+]);
+
+function redactSensitiveValue(value: unknown): string {
+  if (typeof value !== "string") {
+    return "[redacted]";
+  }
+
+  if (value.length <= 8) {
+    return "[redacted]";
+  }
+
+  return `${value.slice(0, 4)}...[redacted]...${value.slice(-2)}`;
+}
+
+function sanitizeOAuthTraceValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => sanitizeOAuthTraceValue(item));
+  }
+
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+
+  return Object.fromEntries(
+    Object.entries(value).map(([key, entryValue]) => {
+      if (SENSITIVE_FIELD_NAMES.has(key.toLowerCase())) {
+        return [key, redactSensitiveValue(entryValue)];
+      }
+      return [key, sanitizeOAuthTraceValue(entryValue)];
+    }),
+  );
+}
+
+function sanitizeOAuthHeaders(
+  headers: Record<string, string>,
+): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(headers).map(([key, value]) => {
+      if (SENSITIVE_FIELD_NAMES.has(key.toLowerCase())) {
+        return [key, redactSensitiveValue(value)];
+      }
+      return [key, value];
+    }),
+  );
+}
+
+function createHttpHistoryEntry(input: {
+  step: HttpHistoryEntry["step"];
+  method: string;
+  url: string;
+  headers?: Record<string, string>;
+  body?: unknown;
+}): HttpHistoryEntry {
+  return {
+    step: input.step,
+    timestamp: Date.now(),
+    request: {
+      method: input.method,
+      url: input.url,
+      headers: sanitizeOAuthHeaders(input.headers ?? {}),
+      body: sanitizeOAuthTraceValue(input.body),
+    },
+  };
+}
 
 export function readStoredOAuthConfig(
   serverName: string | null,
@@ -295,6 +385,7 @@ async function loadCallbackDiscoveryState(
  */
 function createOAuthFetchInterceptor(
   routingConfig: OAuthRoutingConfig = {},
+  trace?: OAuthTrace,
 ): typeof fetch {
   return async function interceptedFetch(
     input: RequestInfo | URL,
@@ -330,6 +421,30 @@ function createOAuthFetchInterceptor(
       return await originalFetch(input, init);
     }
 
+    const traceStep =
+      oauthGrantType === "authorization_code" ||
+      oauthGrantType === "refresh_token"
+        ? "token_request"
+        : url.includes("/register")
+          ? "request_client_registration"
+          : url.includes("oauth-protected-resource")
+            ? "request_resource_metadata"
+            : url.includes("/.well-known/")
+              ? "request_authorization_server_metadata"
+              : "authorization_request";
+    const entry = createHttpHistoryEntry({
+      step: traceStep,
+      method,
+      url,
+      headers: init?.headers
+        ? Object.fromEntries(new Headers(init.headers as HeadersInit))
+        : {},
+      body: serializedBody,
+    });
+    if (trace) {
+      appendOAuthTraceHttpHistory(trace, entry);
+    }
+
     // For registry servers, route token exchange/refresh through Convex HTTP actions
     if (isRegistryTokenRequest) {
       const convexSiteUrl = getConvexSiteUrl();
@@ -348,6 +463,15 @@ function createOAuthFetchInterceptor(
             ),
           ),
         });
+        entry.response = {
+          status: response.status,
+          statusText: response.statusText,
+          headers: sanitizeOAuthHeaders(
+            Object.fromEntries(response.headers.entries()),
+          ),
+          body: sanitizeOAuthTraceValue(await response.clone().json().catch(() => null)),
+        };
+        entry.duration = Date.now() - entry.timestamp;
         return response;
       }
     }
@@ -361,7 +485,17 @@ function createOAuthFetchInterceptor(
         : `${proxyBase}/proxy`;
 
       if (isMetadata) {
-        return await authFetch(proxyUrl, { ...init, method: "GET" });
+        const response = await authFetch(proxyUrl, { ...init, method: "GET" });
+        entry.response = {
+          status: response.status,
+          statusText: response.statusText,
+          headers: sanitizeOAuthHeaders(
+            Object.fromEntries(response.headers.entries()),
+          ),
+          body: sanitizeOAuthTraceValue(await response.clone().json().catch(() => null)),
+        };
+        entry.duration = Date.now() - entry.timestamp;
+        return response;
       }
 
       // For OAuth endpoints, serialize and proxy the full request
@@ -380,16 +514,36 @@ function createOAuthFetchInterceptor(
 
       // If the proxy call itself failed (e.g., auth error), return that response directly
       if (!response.ok) {
+        entry.response = {
+          status: response.status,
+          statusText: response.statusText,
+          headers: sanitizeOAuthHeaders(
+            Object.fromEntries(response.headers.entries()),
+          ),
+          body: sanitizeOAuthTraceValue(await response.clone().json().catch(() => null)),
+        };
+        entry.duration = Date.now() - entry.timestamp;
         return response;
       }
 
       const data = await response.json();
+      entry.response = {
+        status: data.status,
+        statusText: data.statusText,
+        headers: sanitizeOAuthHeaders(data.headers ?? {}),
+        body: sanitizeOAuthTraceValue(data.body),
+      };
+      entry.duration = Date.now() - entry.timestamp;
       return new Response(JSON.stringify(data.body), {
         status: data.status,
         statusText: data.statusText,
         headers: new Headers(data.headers),
       });
     } catch (error) {
+      entry.error = {
+        message: error instanceof Error ? error.message : String(error),
+      };
+      entry.duration = Date.now() - entry.timestamp;
       console.error("OAuth proxy failed, falling back to direct fetch:", error);
       return await originalFetch(input, init);
     }
@@ -437,12 +591,15 @@ export interface OAuthResult {
   success: boolean;
   serverConfig?: HttpServerConfig;
   error?: string;
+  oauthTrace?: OAuthTrace;
 }
 
 interface HostedOAuthCompletionResponse {
   success: boolean;
   expiresAt?: number | null;
   kind?: "generic" | "registry";
+  error?: string;
+  oauthTrace?: OAuthTrace;
 }
 
 /**
@@ -536,6 +693,18 @@ export class MCPOAuthProvider implements OAuthClientProvider {
       `mcp-tokens-${this.serverName}`,
       JSON.stringify(tokens),
     );
+  }
+
+  prepareTokenRequest() {
+    const currentTokens = this.tokens();
+    if (!currentTokens?.refresh_token) {
+      return undefined;
+    }
+
+    return new URLSearchParams({
+      grant_type: "refresh_token",
+      refresh_token: currentTokens.refresh_token,
+    });
   }
 
   discoveryState(): OAuthDiscoveryState | undefined {
@@ -645,17 +814,128 @@ function readStoredClientInformation(
   }
 }
 
+async function resolveOAuthClientInformation(
+  provider: MCPOAuthProvider,
+  trace: OAuthTrace,
+  authorizationServerUrl: string,
+  metadata: OAuthDiscoveryState["authorizationServerMetadata"],
+  scope?: string,
+  fetchFn?: typeof fetch,
+): Promise<OAuthClientInformation> {
+  startOAuthTraceStep(trace, "request_client_registration", {
+    message: "Resolving OAuth client information.",
+  });
+
+  const existingClientInformation = await provider.clientInformation();
+  if (existingClientInformation?.client_id) {
+    completeOAuthTraceStep(trace, "request_client_registration", {
+      message: "Using stored or preregistered client information.",
+      details: {
+        clientId: existingClientInformation.client_id,
+      },
+    });
+    completeOAuthTraceStep(trace, "received_client_credentials", {
+      message: "Client credentials are ready.",
+      details: {
+        clientId: existingClientInformation.client_id,
+      },
+    });
+    return existingClientInformation;
+  }
+
+  try {
+    const registeredClient = await registerClient(authorizationServerUrl, {
+      metadata,
+      clientMetadata: provider.clientMetadata,
+      ...(scope ? { scope } : {}),
+      ...(fetchFn ? { fetchFn } : {}),
+    });
+    await provider.saveClientInformation(registeredClient);
+    completeOAuthTraceStep(trace, "request_client_registration", {
+      message: "Dynamic client registration completed.",
+      details: {
+        clientId: registeredClient.client_id,
+      },
+    });
+    completeOAuthTraceStep(trace, "received_client_credentials", {
+      message: "Client credentials are ready.",
+      details: {
+        clientId: registeredClient.client_id,
+      },
+    });
+    return registeredClient;
+  } catch (error) {
+    failOAuthTraceStep(trace, "request_client_registration", error, {
+      message: "Dynamic client registration failed.",
+    });
+    throw error;
+  }
+}
+
+async function attemptRefreshWithStoredTokens(
+  provider: MCPOAuthProvider,
+  trace: OAuthTrace,
+  authorizationServerUrl: string,
+  metadata: OAuthDiscoveryState["authorizationServerMetadata"],
+  resource: URL | null,
+  fetchFn: typeof fetch,
+): Promise<OAuthTokens | null> {
+  const existingTokens = provider.tokens();
+  if (!existingTokens?.refresh_token) {
+    return null;
+  }
+
+  startOAuthTraceStep(trace, "token_request", {
+    message: "Attempting to refresh stored OAuth tokens before redirecting.",
+  });
+
+  try {
+    const refreshedTokens = await fetchToken(provider, authorizationServerUrl, {
+      metadata,
+      ...(resource ? { resource } : {}),
+      fetchFn,
+    });
+    await provider.saveTokens(refreshedTokens);
+    completeOAuthTraceStep(trace, "token_request", {
+      message: "Stored refresh token succeeded.",
+    });
+    completeOAuthTraceStep(trace, "received_access_token", {
+      message: "Refreshed OAuth tokens are ready.",
+    });
+    completeOAuthTraceStep(trace, "complete", {
+      message: "OAuth completed using the stored refresh token.",
+    });
+    return refreshedTokens;
+  } catch (error) {
+    failOAuthTraceStep(trace, "token_request", error, {
+      message:
+        "Stored refresh token failed. Falling back to an interactive authorization flow.",
+    });
+    await provider.invalidateCredentials("tokens");
+    trace.error = undefined;
+    return null;
+  }
+}
+
 /**
  * Initiates OAuth flow for an MCP server
  */
 export async function initiateOAuth(
   options: MCPOAuthOptions,
 ): Promise<OAuthResult> {
-  // Build fetch interceptor — routes token requests through Convex for registry servers
-  const fetchFn = createOAuthFetchInterceptor({
-    registryServerId: options.registryServerId,
-    useRegistryOAuthProxy: options.useRegistryOAuthProxy,
+  const trace = createOAuthTrace({
+    source: "interactive_connect",
+    serverName: options.serverName,
+    serverUrl: options.serverUrl,
   });
+  // Build fetch interceptor — routes token requests through Convex for registry servers
+  const fetchFn = createOAuthFetchInterceptor(
+    {
+      registryServerId: options.registryServerId,
+      useRegistryOAuthProxy: options.useRegistryOAuthProxy,
+    },
+    trace,
+  );
 
   try {
     const provider = new MCPOAuthProvider(
@@ -702,32 +982,119 @@ export async function initiateOAuth(
       );
     }
 
-    const authArgs: any = { serverUrl: options.serverUrl, fetchFn };
-    if (options.scopes && options.scopes.length > 0) {
-      authArgs.scope = options.scopes.join(" ");
-    }
-    const result = await auth(provider, authArgs);
+    const requestedScope =
+      options.scopes && options.scopes.length > 0
+        ? options.scopes.join(" ")
+        : undefined;
 
-    if (result === "REDIRECT") {
+    startOAuthTraceStep(trace, "request_resource_metadata", {
+      message: "Discovering protected resource metadata.",
+    });
+    const discoveryState = await loadCallbackDiscoveryState(
+      provider,
+      options.serverUrl,
+      fetchFn,
+    );
+    completeOAuthTraceStep(trace, "request_resource_metadata", {
+      message: "Protected resource metadata loaded.",
+      details: {
+        authorizationServerUrl: discoveryState.authorizationServerUrl,
+        resource:
+          discoveryState.resourceMetadata?.resource ?? options.serverUrl,
+      },
+    });
+    completeOAuthTraceStep(trace, "received_resource_metadata", {
+      message: "Resource metadata is ready.",
+      details: {
+        authorizationServers:
+          discoveryState.resourceMetadata?.authorization_servers ?? [],
+      },
+    });
+
+    startOAuthTraceStep(trace, "request_authorization_server_metadata", {
+      message: "Loading authorization server metadata.",
+      details: {
+        authorizationServerUrl: discoveryState.authorizationServerUrl,
+      },
+    });
+    completeOAuthTraceStep(trace, "request_authorization_server_metadata", {
+      message: "Authorization server metadata loaded.",
+    });
+    completeOAuthTraceStep(trace, "received_authorization_server_metadata", {
+      message: "Authorization server metadata is ready.",
+      details: {
+        authorizationEndpoint:
+          discoveryState.authorizationServerMetadata?.authorization_endpoint,
+        tokenEndpoint:
+          discoveryState.authorizationServerMetadata?.token_endpoint,
+      },
+    });
+
+    const resource = await selectResourceURL(
+      options.serverUrl,
+      provider,
+      discoveryState.resourceMetadata,
+    );
+
+    const refreshedTokens = await attemptRefreshWithStoredTokens(
+      provider,
+      trace,
+      discoveryState.authorizationServerUrl,
+      discoveryState.authorizationServerMetadata,
+      resource ?? null,
+      fetchFn,
+    );
+    if (refreshedTokens) {
+      saveOAuthTrace(options.serverName, trace);
       return {
         success: true,
+        serverConfig: createServerConfig(options.serverUrl, refreshedTokens),
+        oauthTrace: trace,
       };
     }
 
-    if (result === "AUTHORIZED") {
-      const tokens = provider.tokens();
-      if (tokens) {
-        const serverConfig = createServerConfig(options.serverUrl, tokens);
-        return {
-          success: true,
-          serverConfig,
-        };
-      }
-    }
+    const clientInformation = await resolveOAuthClientInformation(
+      provider,
+      trace,
+      discoveryState.authorizationServerUrl,
+      discoveryState.authorizationServerMetadata,
+      requestedScope,
+      fetchFn,
+    );
+
+    startOAuthTraceStep(trace, "generate_pkce_parameters", {
+      message: "Generating PKCE verifier and challenge.",
+    });
+    const { authorizationUrl, codeVerifier } = await startAuthorization(
+      discoveryState.authorizationServerUrl,
+      {
+        metadata: discoveryState.authorizationServerMetadata,
+        clientInformation,
+        redirectUrl: provider.redirectUrl,
+        ...(requestedScope ? { scope: requestedScope } : {}),
+        state: provider.state(),
+        ...(resource ? { resource } : {}),
+      },
+    );
+    completeOAuthTraceStep(trace, "generate_pkce_parameters", {
+      message: "PKCE verifier and challenge are ready.",
+    });
+    startOAuthTraceStep(trace, "authorization_request", {
+      message: "Preparing authorization redirect.",
+    });
+    await provider.saveCodeVerifier(codeVerifier);
+    completeOAuthTraceStep(trace, "authorization_request", {
+      message: "Redirecting to the authorization server.",
+      details: {
+        authorizationUrl: authorizationUrl.toString(),
+      },
+    });
+    saveOAuthTrace(options.serverName, trace);
+    await provider.redirectToAuthorization(authorizationUrl);
 
     return {
-      success: false,
-      error: "OAuth flow failed",
+      success: true,
+      oauthTrace: trace,
     };
   } catch (error) {
     let errorMessage = "Unknown OAuth error";
@@ -751,9 +1118,15 @@ export async function initiateOAuth(
       }
     }
 
+    failOAuthTraceStep(trace, trace.currentStep, errorMessage, {
+      message: "OAuth initialization failed.",
+    });
+    saveOAuthTrace(options.serverName, trace);
+
     return {
       success: false,
       error: errorMessage,
+      oauthTrace: trace,
     };
   } finally {
     // Restore original fetch
@@ -762,23 +1135,24 @@ export async function initiateOAuth(
 }
 
 function formatOAuthCallbackError(error: unknown): string {
-  let errorMessage = "Unknown callback error";
+  const errorMessage =
+    error instanceof Error
+      ? error.message
+      : typeof error === "string"
+        ? error
+        : "Unknown callback error";
 
-  if (error instanceof Error) {
-    errorMessage = error.message;
-
-    if (
-      errorMessage.includes("invalid_client") ||
-      errorMessage.includes("client_id")
-    ) {
-      return "Invalid client ID during token exchange. Please verify the client ID is correctly registered.";
-    }
-    if (errorMessage.includes("unauthorized_client")) {
-      return "Client not authorized for token exchange. The client ID may not match the one used for authorization.";
-    }
-    if (errorMessage.includes("invalid_grant")) {
-      return "Authorization code invalid or expired. Please try the OAuth flow again.";
-    }
+  if (
+    errorMessage.includes("invalid_client") ||
+    errorMessage.includes("client_id")
+  ) {
+    return "Invalid client ID during token exchange. Please verify the client ID is correctly registered.";
+  }
+  if (errorMessage.includes("unauthorized_client")) {
+    return "Client not authorized for token exchange. The client ID may not match the one used for authorization.";
+  }
+  if (errorMessage.includes("invalid_grant")) {
+    return "Authorization code invalid or expired. Please try the OAuth flow again.";
   }
 
   return errorMessage;
@@ -789,6 +1163,10 @@ export async function completeHostedOAuthCallback(
   authorizationCode: string,
 ): Promise<OAuthResult & { serverName?: string; expiresAt?: number | null }> {
   const serverName = context.serverName || localStorage.getItem("mcp-oauth-pending");
+  const callbackTrace = createOAuthTrace({
+    source: "hosted_callback",
+    serverName: serverName ?? undefined,
+  });
 
   try {
     if (!serverName) {
@@ -798,6 +1176,9 @@ export async function completeHostedOAuthCallback(
       throw new Error("Hosted OAuth callback is missing server context");
     }
 
+    startOAuthTraceStep(callbackTrace, "received_authorization_code", {
+      message: "Received hosted OAuth callback and loading stored callback state.",
+    });
     const serverUrl =
       context.serverUrl || localStorage.getItem(`mcp-serverUrl-${serverName}`);
     if (!serverUrl) {
@@ -813,6 +1194,13 @@ export async function completeHostedOAuthCallback(
     if (!clientInformation.client_id) {
       throw new Error("OAuth client ID not found");
     }
+    completeOAuthTraceStep(callbackTrace, "received_authorization_code", {
+      message: "Hosted callback state restored.",
+      details: {
+        serverUrl,
+        clientId: clientInformation.client_id,
+      },
+    });
 
     const convexSiteUrl = getConvexSiteUrl();
     const response = await authFetch(`${convexSiteUrl}/web/oauth/complete`, {
@@ -839,30 +1227,90 @@ export async function completeHostedOAuthCallback(
       }),
     });
 
+    const result =
+      (await response
+        .clone()
+        .json()
+        .catch(() => null)) as HostedOAuthCompletionResponse | null;
     if (!response.ok) {
       const responseText = await response.text();
-      throw new Error(responseText || `Hosted OAuth callback failed (${response.status})`);
+      throw {
+        message:
+          result?.error ||
+          responseText ||
+          `Hosted OAuth callback failed (${response.status})`,
+        oauthTrace: result?.oauthTrace,
+      };
     }
 
-    const result =
-      (await response.json()) as HostedOAuthCompletionResponse | null;
     if (!result?.success) {
-      throw new Error("Hosted OAuth callback failed");
+      throw {
+        message: result?.error || "Hosted OAuth callback failed",
+        oauthTrace: result?.oauthTrace,
+      };
     }
 
     localStorage.removeItem(`mcp-tokens-${serverName}`);
     localStorage.removeItem(`mcp-verifier-${serverName}`);
+    completeOAuthTraceStep(callbackTrace, "token_request", {
+      message: "Hosted token exchange succeeded.",
+    });
+    completeOAuthTraceStep(callbackTrace, "received_access_token", {
+      message: "Hosted access token is stored in the backend vault.",
+    });
+    completeOAuthTraceStep(callbackTrace, "complete", {
+      message: "Hosted OAuth callback completed successfully.",
+    });
+    const mergedTrace = mergeOAuthTraces(
+      loadOAuthTrace(serverName),
+      result.oauthTrace
+        ? mergeOAuthTraces(callbackTrace, result.oauthTrace)
+        : callbackTrace,
+    );
+    saveOAuthTrace(serverName, mergedTrace);
 
     return {
       success: true,
       serverName,
       serverConfig: createServerConfig(serverUrl),
       expiresAt: result.expiresAt ?? null,
+      oauthTrace: mergedTrace,
     };
   } catch (error) {
+    const message =
+      error instanceof Error
+        ? error.message
+        : typeof error === "object" &&
+            error !== null &&
+            "message" in error &&
+            typeof (error as { message?: unknown }).message === "string"
+          ? ((error as { message: string }).message)
+          : String(error);
+    failOAuthTraceStep(callbackTrace, callbackTrace.currentStep, message, {
+      message: "Hosted OAuth callback failed.",
+    });
+    const backendTrace =
+      typeof error === "object" && error !== null && "oauthTrace" in error
+        ? ((error as { oauthTrace?: OAuthTrace }).oauthTrace ?? undefined)
+        : undefined;
+    const mergedTrace =
+      serverName != null
+        ? mergeOAuthTraces(
+            loadOAuthTrace(serverName),
+            backendTrace
+              ? mergeOAuthTraces(callbackTrace, backendTrace)
+              : callbackTrace,
+          )
+        : backendTrace
+          ? mergeOAuthTraces(callbackTrace, backendTrace)
+          : callbackTrace;
+    if (serverName) {
+      saveOAuthTrace(serverName, mergedTrace);
+    }
     return {
       success: false,
-      error: formatOAuthCallbackError(error),
+      error: formatOAuthCallbackError(message),
+      oauthTrace: mergedTrace,
     };
   }
 }
@@ -875,12 +1323,16 @@ export async function handleOAuthCallback(
 ): Promise<OAuthResult & { serverName?: string }> {
   // Get pending server name from localStorage (needed before creating interceptor)
   const serverName = localStorage.getItem("mcp-oauth-pending");
+  const callbackTrace = createOAuthTrace({
+    source: "callback",
+    serverName: serverName ?? undefined,
+  });
 
   // Read registryServerId from stored OAuth config if present
   const oauthConfig = readStoredOAuthConfig(serverName);
 
   // Build fetch interceptor — routes token requests through Convex for registry servers
-  const fetchFn = createOAuthFetchInterceptor(oauthConfig);
+  const fetchFn = createOAuthFetchInterceptor(oauthConfig, callbackTrace);
 
   try {
     if (!serverName) {
@@ -892,6 +1344,12 @@ export async function handleOAuthCallback(
     if (!serverUrl) {
       throw new Error("Server URL not found for OAuth callback");
     }
+    startOAuthTraceStep(callbackTrace, "received_authorization_code", {
+      message: "Received OAuth callback and loading stored state.",
+      details: {
+        serverUrl,
+      },
+    });
 
     // Get stored client credentials if any
     const storedClientInfo = localStorage.getItem(`mcp-client-${serverName}`);
@@ -908,41 +1366,81 @@ export async function handleOAuthCallback(
       customClientId,
       customClientSecret,
     );
+    const clientInformation = await provider.clientInformation();
+    if (!clientInformation?.client_id) {
+      throw new Error("OAuth client ID not found");
+    }
     const discoveryState = await loadCallbackDiscoveryState(
       provider,
       serverUrl,
       fetchFn,
     );
+    completeOAuthTraceStep(callbackTrace, "received_authorization_code", {
+      message: "Callback state restored.",
+      details: {
+        clientId: clientInformation.client_id,
+      },
+    });
     const resource = await selectResourceURL(
       serverUrl,
       provider,
       discoveryState.resourceMetadata,
     );
-    const tokens = await fetchToken(
-      provider,
+    startOAuthTraceStep(callbackTrace, "token_request", {
+      message: "Exchanging authorization code for OAuth tokens.",
+    });
+    const tokens = await exchangeAuthorization(
       discoveryState.authorizationServerUrl,
       {
         metadata: discoveryState.authorizationServerMetadata,
-        resource,
         authorizationCode,
+        clientInformation,
+        codeVerifier: provider.codeVerifier(),
+        redirectUri: provider.redirectUrl,
+        ...(resource ? { resource } : {}),
         fetchFn,
       },
     );
     await provider.saveTokens(tokens);
+    completeOAuthTraceStep(callbackTrace, "token_request", {
+      message: "Authorization code exchange succeeded.",
+    });
+    completeOAuthTraceStep(callbackTrace, "received_access_token", {
+      message: "OAuth tokens were stored locally.",
+    });
+    completeOAuthTraceStep(callbackTrace, "complete", {
+      message: "OAuth callback completed successfully.",
+    });
 
     // Clean up pending state
     localStorage.removeItem("mcp-oauth-pending");
+    const mergedTrace = mergeOAuthTraces(
+      loadOAuthTrace(serverName),
+      callbackTrace,
+    );
+    saveOAuthTrace(serverName, mergedTrace);
 
     const serverConfig = createServerConfig(serverUrl, tokens);
     return {
       success: true,
       serverConfig,
       serverName, // Return server name so caller doesn't need to look it up
+      oauthTrace: mergedTrace,
     };
   } catch (error) {
+    failOAuthTraceStep(callbackTrace, callbackTrace.currentStep, error, {
+      message: "OAuth callback failed.",
+    });
+    const mergedTrace = serverName
+      ? mergeOAuthTraces(loadOAuthTrace(serverName), callbackTrace)
+      : callbackTrace;
+    if (serverName) {
+      saveOAuthTrace(serverName, mergedTrace);
+    }
     return {
       success: false,
       error: formatOAuthCallbackError(error),
+      oauthTrace: mergedTrace,
     };
   } finally {
     // Restore original fetch
@@ -1033,9 +1531,13 @@ export async function waitForTokens(
 export async function refreshOAuthTokens(
   serverName: string,
 ): Promise<OAuthResult> {
+  const trace = createOAuthTrace({
+    source: "refresh",
+    serverName,
+  });
   // Build fetch interceptor — routes token requests through Convex for registry servers
   const oauthConfig = readStoredOAuthConfig(serverName);
-  const fetchFn = createOAuthFetchInterceptor(oauthConfig);
+  const fetchFn = createOAuthFetchInterceptor(oauthConfig, trace);
 
   try {
     // Get stored client credentials if any
@@ -1068,25 +1570,56 @@ export async function refreshOAuthTokens(
       return {
         success: false,
         error: "No refresh token available",
+        oauthTrace: trace,
       };
     }
 
-    const result = await auth(provider, { serverUrl, fetchFn });
-
-    if (result === "AUTHORIZED") {
-      const tokens = provider.tokens();
-      if (tokens) {
-        const serverConfig = createServerConfig(serverUrl, tokens);
-        return {
-          success: true,
-          serverConfig,
-        };
-      }
-    }
-
+    startOAuthTraceStep(trace, "request_resource_metadata", {
+      message: "Refreshing OAuth tokens and rediscovering server metadata.",
+    });
+    const discoveryState = await loadCallbackDiscoveryState(
+      provider,
+      serverUrl,
+      fetchFn,
+    );
+    completeOAuthTraceStep(trace, "request_resource_metadata", {
+      message: "Protected resource metadata loaded.",
+    });
+    completeOAuthTraceStep(trace, "received_resource_metadata", {
+      message: "Resource metadata is ready.",
+    });
+    completeOAuthTraceStep(trace, "received_authorization_server_metadata", {
+      message: "Authorization server metadata is ready.",
+    });
+    const resource = await selectResourceURL(
+      serverUrl,
+      provider,
+      discoveryState.resourceMetadata,
+    );
+    startOAuthTraceStep(trace, "token_request", {
+      message: "Refreshing tokens with the stored refresh token.",
+    });
+    const tokens = await fetchToken(provider, discoveryState.authorizationServerUrl, {
+      metadata: discoveryState.authorizationServerMetadata,
+      ...(resource ? { resource } : {}),
+      fetchFn,
+    });
+    await provider.saveTokens(tokens);
+    completeOAuthTraceStep(trace, "token_request", {
+      message: "Refresh token exchange succeeded.",
+    });
+    completeOAuthTraceStep(trace, "received_access_token", {
+      message: "Refreshed OAuth tokens were stored locally.",
+    });
+    completeOAuthTraceStep(trace, "complete", {
+      message: "OAuth token refresh completed successfully.",
+    });
+    saveOAuthTrace(serverName, trace);
+    const serverConfig = createServerConfig(serverUrl, tokens);
     return {
-      success: false,
-      error: "Token refresh failed",
+      success: true,
+      serverConfig,
+      oauthTrace: trace,
     };
   } catch (error) {
     let errorMessage = "Unknown refresh error";
@@ -1110,9 +1643,15 @@ export async function refreshOAuthTokens(
       }
     }
 
+    failOAuthTraceStep(trace, trace.currentStep, errorMessage, {
+      message: "OAuth token refresh failed.",
+    });
+    saveOAuthTrace(serverName, trace);
+
     return {
       success: false,
       error: errorMessage,
+      oauthTrace: trace,
     };
   } finally {
     // Restore original fetch
@@ -1130,6 +1669,7 @@ export function clearOAuthData(serverName: string): void {
   localStorage.removeItem(`mcp-serverUrl-${serverName}`);
   localStorage.removeItem(`mcp-oauth-config-${serverName}`);
   clearStoredDiscoveryState(serverName);
+  clearOAuthTrace(serverName);
 }
 
 /**
