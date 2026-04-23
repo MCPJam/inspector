@@ -54,3 +54,18 @@ All communication between MCPJam and your MCP server is logged in real-time:
 - **Timestamps** - Track message timing and performance
 
 The JSON-RPC logger helps you debug your MCP server implementation and understand the complete protocol flow.
+
+### OAuth log entries
+
+When a server uses OAuth, each step of the OAuth flow appears as a log entry in the traffic log alongside regular JSON-RPC messages. Use the **Source** filter dropdown and select **OAuth** to show only OAuth entries.
+
+Each OAuth log entry displays a status indicator:
+
+| Indicator | Meaning |
+|-----------|---------|
+| `oauth ✓` | Step completed successfully |
+| `oauth !` | Step failed |
+| `oauth …` | Step is in progress |
+| `oauth ↺` | Step failed but was recovered (for example, after re-registering the client) |
+
+Click any entry to expand it and inspect the full step payload, including HTTP request and response details.
