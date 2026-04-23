@@ -1,8 +1,8 @@
 import type { ClientCapabilityOptions } from "@mcpjam/sdk/browser";
 import {
-  applyRuntimeClientCapabilities,
   getDefaultClientCapabilities,
   mergeClientCapabilities,
+  normalizeClientCapabilities,
 } from "@mcpjam/sdk/browser";
 
 export type WorkspaceClientConfig = {
@@ -45,12 +45,6 @@ export const DEFAULT_HOST_DISPLAY_MODES: HostDisplayMode[] = [
   "pip",
   "fullscreen",
 ];
-
-// The inspector server installs a global elicitation callback during app boot,
-// so reconnect comparisons should match that on-wire initialize payload.
-const INSPECTOR_RUNTIME_CLIENT_CAPABILITIES = {
-  elicitation: true,
-} as const;
 
 export function buildDefaultHostContext(args: {
   theme: "light" | "dark";
@@ -158,9 +152,8 @@ export function getEffectiveServerClientCapabilities(args: {
 export function normalizeWorkspaceClientCapabilities(
   capabilities?: Record<string, unknown>,
 ): ClientCapabilityOptions {
-  return applyRuntimeClientCapabilities(
+  return normalizeClientCapabilities(
     capabilities as ClientCapabilityOptions | undefined,
-    INSPECTOR_RUNTIME_CLIENT_CAPABILITIES,
   );
 }
 

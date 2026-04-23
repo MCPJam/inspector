@@ -96,6 +96,7 @@ import {
   applyRuntimeClientCapabilities,
   getDefaultClientCapabilities,
   mergeClientCapabilities,
+  normalizeClientCapabilities,
 } from "./capabilities.js";
 import {
   assertCallToolResult,
@@ -1119,7 +1120,9 @@ export class MCPClientManager {
       if (this.defaultProgressHandler) {
         applyProgressHandler(serverId, client, this.defaultProgressHandler);
       }
-      this.elicitationManager.applyToClient(serverId, client);
+      if ((clientCapabilities as Record<string, unknown>).elicitation != null) {
+        this.elicitationManager.applyToClient(serverId, client);
+      }
 
       if (config.onError) {
         client.onerror = (error) => config.onError?.(error);
@@ -1725,12 +1728,24 @@ export class MCPClientManager {
     serverId: string,
     config: MCPServerConfig
   ): ClientCapabilityOptions {
+    const hasElicitationHandler = this.elicitationManager.hasHandler(serverId);
+    if (config.clientCapabilities) {
+      const exactCapabilities = normalizeClientCapabilities(
+        config.clientCapabilities
+      ) as Record<string, unknown>;
+
+      if (!hasElicitationHandler) {
+        delete exactCapabilities.elicitation;
+      }
+
+      return exactCapabilities as ClientCapabilityOptions;
+    }
+
     const configuredCapabilities =
-      config.clientCapabilities ??
       mergeClientCapabilities(this.defaultCapabilities, config.capabilities);
 
     return applyRuntimeClientCapabilities(configuredCapabilities, {
-      elicitation: this.elicitationManager.hasHandler(serverId),
+      elicitation: hasElicitationHandler,
     });
   }
 

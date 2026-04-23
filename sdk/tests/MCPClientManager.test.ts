@@ -826,6 +826,33 @@ describe("MCPClientManager", () => {
       await manager.disconnectServer("elicitation-enabled-test");
     }, 30000);
 
+    it("should keep exact clientCapabilities free of elicitation when not explicitly configured", async () => {
+      manager.setElicitationCallback(() => ({ action: "cancel" } as any));
+
+      await manager.connectToServer("exact-caps-no-elicitation-test", {
+        command: "npx",
+        args: ["-y", "@modelcontextprotocol/server-everything"],
+        clientCapabilities: {
+          experimental: {
+            exactPath: {},
+          },
+        } as any,
+      });
+
+      const info = manager.getInitializationInfo(
+        "exact-caps-no-elicitation-test"
+      );
+      expect(info).toBeDefined();
+      expect(info!.clientCapabilities).toMatchObject({
+        experimental: {
+          exactPath: {},
+        },
+      });
+      expect(info!.clientCapabilities).not.toHaveProperty("elicitation");
+
+      await manager.disconnectServer("exact-caps-no-elicitation-test");
+    }, 30000);
+
     it("should preserve the initialize payload after elicitation is enabled post-connect", async () => {
       await manager.connectToServer("late-elicitation-test", {
         command: "npx",
