@@ -12,10 +12,6 @@ const MAX_RESPONSE_PREVIEW_CHARS = 200;
 const ENRICHMENT_HEADERS_TO_FORWARD = [
   "user-agent",
   "accept-language",
-  // Client IP headers for visitor hashing
-  "x-forwarded-for",
-  "x-real-ip",
-  "cf-connecting-ip",
 ] as const;
 
 /**
