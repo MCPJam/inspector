@@ -50,6 +50,20 @@ If you're seeing **401 Unauthorized** errors when trying to connect to your serv
   process and identify where things might be going wrong.
 </Info>
 
+### OAuth connection failures
+
+When an OAuth flow fails, Inspector surfaces the failure directly in the connection UI so you can diagnose the problem without leaving the Servers tab.
+
+**Connection card** — a banner above the error message identifies the exact OAuth step that failed (for example, "OAuth failed during Token Request").
+
+**Server detail panel** — open the server's detail view to see the full **Last OAuth Trace**, which includes:
+
+- Each OAuth step with its status (pending / success / error) and a short message
+- The specific error for any failed step
+- An **HTTP History** log of every request and response made during the flow, with sensitive values automatically redacted
+
+Use the trace to pinpoint whether the failure occurred during discovery, client registration, PKCE generation, the authorization redirect, or the token exchange, then cross-reference with the OAuth Debugger for a guided walkthrough of the same steps.
+
 ### Common Configuration Mistakes
 
 - Missing required environment variables
