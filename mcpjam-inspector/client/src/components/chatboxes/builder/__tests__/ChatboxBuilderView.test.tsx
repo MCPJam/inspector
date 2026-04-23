@@ -329,7 +329,7 @@ describe("ChatboxBuilderView", () => {
     );
   });
 
-  it("sends the staged invite before Save and open preview switches to preview", async () => {
+  it("sends the staged invite and honors Save and open preview", async () => {
     const user = userEvent.setup();
     const createdChatbox = createSavedChatbox("claude", {
       name: "Internal QA",
@@ -371,8 +371,7 @@ describe("ChatboxBuilderView", () => {
     );
     await waitFor(() =>
       expect(onSavedDraft).toHaveBeenCalledWith(createdChatbox, {
-        initialViewMode: "setup",
-        initialFocusedSetupSection: "access",
+        initialViewMode: "preview",
       })
     );
   });

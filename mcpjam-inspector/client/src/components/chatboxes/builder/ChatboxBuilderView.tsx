@@ -833,6 +833,7 @@ export function ChatboxBuilderView({
 
           toast.success("Chatbox created");
 
+          let hadInviteFailure = false;
           for (const email of emailsToInvite) {
             try {
               await upsertChatboxMember({
@@ -841,6 +842,7 @@ export function ChatboxBuilderView({
                 sendInviteEmail: true,
               });
             } catch (error) {
+              hadInviteFailure = true;
               toast.error(
                 error instanceof Error
                   ? error.message
@@ -851,15 +853,18 @@ export function ChatboxBuilderView({
 
           setStagedAccessInviteEmails([]);
 
+          const shouldReturnToAccess =
+            emailsToInvite.length > 0 &&
+            (requestedViewMode === "setup" || hadInviteFailure);
           const navigation: SavedDraftNavigationOptions =
-            emailsToInvite.length > 0
+            shouldReturnToAccess
               ? {
                   initialViewMode: "setup",
                   initialFocusedSetupSection: "access",
                 }
               : { initialViewMode: requestedViewMode };
 
-          if (emailsToInvite.length > 0) {
+          if (shouldReturnToAccess) {
             setViewMode("setup");
             setFocusedSetupSection("access");
             setIsSetupSheetOpen(true);
