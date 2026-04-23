@@ -53,7 +53,11 @@ import {
 } from "@/hooks/useRegistryServers";
 import { formatRegistryStarCount } from "@/lib/format-registry-star-count";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
-import { HoverCard, HoverCardContent, HoverCardTrigger } from "@mcpjam/design-system/hover-card";
+import {
+  HoverCard,
+  HoverCardContent,
+  HoverCardTrigger,
+} from "@mcpjam/design-system/hover-card";
 import { BILLING_GATES, useWorkspaceBillingGate } from "@/lib/billing-gates";
 import {
   ResizablePanelGroup,
@@ -110,7 +114,7 @@ function variantIsAlreadyInWorkspaceForQuickConnect(
   v: EnrichedRegistryServer,
   workspaceServers: Record<string, ServerWithName>,
   pendingQuickConnect: PendingQuickConnectState | null,
-  isPendingQuickConnectVisible: boolean,
+  isPendingQuickConnectVisible: boolean
 ): boolean {
   const name = getRegistryServerName(v);
   const ws = workspaceServers[name];
@@ -136,15 +140,15 @@ function isQuickConnectCardExcludedByWorkspace(
   card: EnrichedRegistryCatalogCard,
   workspaceServers: Record<string, ServerWithName>,
   pendingQuickConnect: PendingQuickConnectState | null,
-  isPendingQuickConnectVisible: boolean,
+  isPendingQuickConnectVisible: boolean
 ): boolean {
   return card.variants.some((v) =>
     variantIsAlreadyInWorkspaceForQuickConnect(
       v,
       workspaceServers,
       pendingQuickConnect,
-      isPendingQuickConnectVisible,
-    ),
+      isPendingQuickConnectVisible
+    )
   );
 }
 
@@ -201,14 +205,14 @@ function ServersQuickConnectMiniCard({
 }) {
   const first = card.variants[0];
   const isPublisherVerified = card.variants.some(
-    (v) => v.publishStatus === "verified",
+    (v) => v.publishStatus === "verified"
   );
   const isPending =
     pendingQuickConnect?.sourceTab === "servers" &&
     card.variants.some(
       (v) =>
         v._id === pendingQuickConnect.registryServerId ||
-        getRegistryServerName(v) === pendingQuickConnect.serverName,
+        getRegistryServerName(v) === pendingQuickConnect.serverName
     );
 
   const description = first.description?.trim() ?? "";
@@ -316,7 +320,9 @@ function ServersQuickConnectMiniCard({
                 ) : null}
                 <span
                   className="inline-flex shrink-0 items-center gap-0.5 tabular-nums text-muted-foreground"
-                  aria-label={`${formatRegistryStarCount(card.starCount)} stars`}
+                  aria-label={`${formatRegistryStarCount(
+                    card.starCount
+                  )} stars`}
                 >
                   <Star className="h-3 w-3 shrink-0 text-amber-400/80 fill-amber-400/30 pointer-events-none" />
                   {formatRegistryStarCount(card.starCount)}
@@ -353,13 +359,13 @@ function SortableServerCard({
   onDisconnect: (name: string) => void;
   onReconnect: (
     name: string,
-    opts?: { forceOAuthFlow?: boolean },
+    opts?: { forceOAuthFlow?: boolean }
   ) => Promise<void>;
   onRemove: (name: string) => void;
   hostedServerId?: string;
   onOpenDetailModal?: (
     server: ServerWithName,
-    defaultTab: ServerDetailTab,
+    defaultTab: ServerDetailTab
   ) => void;
   workspaceId: string;
 }) {
@@ -400,12 +406,12 @@ interface ServersTabProps {
   onDisconnect: (serverName: string) => void;
   onReconnect: (
     serverName: string,
-    options?: { forceOAuthFlow?: boolean },
+    options?: { forceOAuthFlow?: boolean }
   ) => Promise<void>;
   onUpdate: (
     originalServerName: string,
     formData: ServerFormData,
-    skipAutoConnect?: boolean,
+    skipAutoConnect?: boolean
   ) => Promise<ServerUpdateResult>;
   onRemove: (serverName: string) => void;
   workspaces: Record<string, Workspace>;
@@ -415,14 +421,14 @@ interface ServersTabProps {
   isLoadingWorkspaces?: boolean;
   onWorkspaceShared?: (
     sharedWorkspaceId: string,
-    sourceWorkspaceId?: string,
+    sourceWorkspaceId?: string
   ) => void;
   onLeaveWorkspace?: () => void;
   isRegistryEnabled?: boolean;
   onNavigateToRegistry?: () => void;
   onSaveClientConfig?: (
     workspaceId: string,
-    clientConfig: WorkspaceClientConfig | undefined,
+    clientConfig: WorkspaceClientConfig | undefined
   ) => Promise<void>;
 }
 
@@ -487,6 +493,9 @@ export function ServersTab({
   const [isActionMenuOpen, setIsActionMenuOpen] = useState(false);
   const [isClientConfigOpen, setIsClientConfigOpen] = useState(false);
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [focusedLoggerServerIds, setFocusedLoggerServerIds] = useState<
+    string[] | undefined
+  >(undefined);
   const [detailModalState, setDetailModalState] = useState<{
     isOpen: boolean;
     serverName: string | null;
@@ -504,7 +513,7 @@ export function ServersTab({
   // --- Self-contained local ordering (localStorage only, never synced to Convex) ---
   const allNames = useMemo(
     () => Object.keys(workspaceServers),
-    [workspaceServers],
+    [workspaceServers]
   );
 
   const [orderedServerNames, setOrderedServerNames] = useState<string[]>(() => {
@@ -529,8 +538,12 @@ export function ServersTab({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allNames.join(","), activeWorkspaceId]);
 
+  useEffect(() => {
+    setFocusedLoggerServerIds(undefined);
+  }, [activeWorkspaceId]);
+
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
   );
 
   const handleDragStart = (event: DragStartEvent) => {
@@ -541,7 +554,7 @@ export function ServersTab({
     const { active, over } = event;
     if (over && active.id !== over.id) {
       const oldIndex = orderedServerNames.findIndex(
-        (name) => name === active.id,
+        (name) => name === active.id
       );
       const newIndex = orderedServerNames.findIndex((name) => name === over.id);
       if (oldIndex !== -1 && newIndex !== -1) {
@@ -571,13 +584,13 @@ export function ServersTab({
               initializedCapabilities: server.initializationInfo
                 ?.clientCapabilities as Record<string, unknown> | undefined,
             }),
-        ]),
+        ])
       ),
-    [activeWorkspaceId, workspaceServers, workspaces],
+    [activeWorkspaceId, workspaceServers, workspaces]
   );
 
   const detailModalLiveServer = detailModalState.serverName
-    ? (workspaceServers[detailModalState.serverName] ?? null)
+    ? workspaceServers[detailModalState.serverName] ?? null
     : null;
   const detailModalServer =
     detailModalLiveServer ?? detailModalState.serverSnapshot;
@@ -681,8 +694,8 @@ export function ServersTab({
             card,
             workspaceServers,
             pendingQuickConnect,
-            isPendingQuickConnectVisible,
-          ),
+            isPendingQuickConnectVisible
+          )
       )
       .slice(0, 4);
   }, [
@@ -724,7 +737,7 @@ export function ServersTab({
         enabled: true,
       };
     },
-    [isPendingDashboardOAuthVisible, pendingDashboardOAuth?.serverName],
+    [isPendingDashboardOAuthVisible, pendingDashboardOAuth?.serverName]
   );
 
   const shouldShowQuickConnect =
@@ -755,8 +768,17 @@ export function ServersTab({
         serverSnapshot: server,
       }));
     },
-    [],
+    []
   );
+
+  const focusLoggerOnServer = useCallback((serverName: string | null) => {
+    const normalizedServerName = serverName?.trim();
+    if (!normalizedServerName) {
+      return;
+    }
+
+    setFocusedLoggerServerIds([normalizedServerName]);
+  }, []);
 
   const handleCloseDetailModal = useCallback(() => {
     setDetailModalState((prev) => ({
@@ -788,14 +810,14 @@ export function ServersTab({
           serverSnapshot: liveServer
             ? liveServer
             : prev.serverSnapshot
-              ? { ...prev.serverSnapshot, name: result.serverName }
-              : prev.serverSnapshot,
+            ? { ...prev.serverSnapshot, name: result.serverName }
+            : prev.serverSnapshot,
         };
       });
 
       return result;
     },
-    [onUpdate, workspaceServers],
+    [onUpdate, workspaceServers]
   );
 
   useEffect(() => {
@@ -825,9 +847,26 @@ export function ServersTab({
 
   const handleJsonImport = (servers: ServerFormData[]) => {
     servers.forEach((server) => {
+      focusLoggerOnServer(server.name);
       onConnect(server);
     });
   };
+
+  const handleConnectServer = useCallback(
+    (formData: ServerFormData) => {
+      focusLoggerOnServer(formData.name);
+      onConnect(formData);
+    },
+    [focusLoggerOnServer, onConnect]
+  );
+
+  const handleReconnectServer = useCallback(
+    async (serverName: string, options?: { forceOAuthFlow?: boolean }) => {
+      focusLoggerOnServer(serverName);
+      await onReconnect(serverName, options);
+    },
+    [focusLoggerOnServer, onReconnect]
+  );
 
   const clearPendingQuickConnectIfMatches = useCallback(
     (serverName: string) => {
@@ -837,11 +876,12 @@ export function ServersTab({
       clearPendingQuickConnect();
       setPendingQuickConnect(null);
     },
-    [pendingQuickConnect],
+    [pendingQuickConnect]
   );
 
   const handleQuickConnect = async (server: EnrichedRegistryServer) => {
     const serverName = getRegistryServerName(server);
+    focusLoggerOnServer(serverName);
     const nextPendingQuickConnect: PendingQuickConnectState = {
       serverName,
       registryServerId: server._id,
@@ -859,11 +899,45 @@ export function ServersTab({
     }
   };
 
+  const pendingLoggerServerIds = useMemo(() => {
+    const pendingServerIds = new Set<string>();
+
+    if (isPendingDashboardOAuthVisible && pendingDashboardOAuth?.serverName) {
+      pendingServerIds.add(pendingDashboardOAuth.serverName);
+    }
+
+    if (isPendingQuickConnectVisible && pendingQuickConnect?.serverName) {
+      pendingServerIds.add(pendingQuickConnect.serverName);
+    }
+
+    Object.entries(workspaceServers).forEach(([serverId, server]) => {
+      if (
+        server.connectionStatus === "connecting" ||
+        server.connectionStatus === "oauth-flow"
+      ) {
+        pendingServerIds.add(serverId);
+      }
+    });
+
+    return Array.from(pendingServerIds);
+  }, [
+    isPendingDashboardOAuthVisible,
+    isPendingQuickConnectVisible,
+    pendingDashboardOAuth?.serverName,
+    pendingQuickConnect?.serverName,
+    workspaceServers,
+  ]);
+
+  const loggerServerIds =
+    pendingLoggerServerIds.length > 0
+      ? pendingLoggerServerIds
+      : focusedLoggerServerIds;
+
   const handleAddServerClick = () => {
     if (serverCreationGate.isDenied) {
       toast.error(
         serverCreationGate.denialMessage ??
-          "Upgrade required to add more servers",
+          "Upgrade required to add more servers"
       );
       return;
     }
@@ -880,7 +954,7 @@ export function ServersTab({
     if (serverCreationGate.isDenied) {
       toast.error(
         serverCreationGate.denialMessage ??
-          "Upgrade required to add more servers",
+          "Upgrade required to add more servers"
       );
       return;
     }
@@ -971,7 +1045,7 @@ export function ServersTab({
       <div
         className={cn(
           "rounded-lg border border-border/50 bg-muted/15",
-          minimized ? "space-y-2 p-2" : "space-y-3 p-3",
+          minimized ? "space-y-2 p-2" : "space-y-3 p-3"
         )}
         data-testid="servers-quick-connect-section"
         data-minimized={minimized ? "true" : undefined}
@@ -980,7 +1054,7 @@ export function ServersTab({
           className={cn(
             minimized
               ? "flex flex-row flex-wrap items-center justify-between gap-x-3 gap-y-2"
-              : "flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between sm:gap-3",
+              : "flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between sm:gap-3"
           )}
         >
           {minimized ? (
@@ -995,7 +1069,7 @@ export function ServersTab({
                     "group inline-flex max-w-full items-center gap-1 rounded-md border border-border/40 bg-muted/10 px-1.5 py-1 text-left",
                     "text-[11px] font-semibold uppercase tracking-wide text-primary underline-offset-4 hover:underline",
                     "transition-colors hover:border-border/60 hover:bg-muted/25",
-                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
                   )}
                   aria-expanded={quickConnectMiniCardsExpanded}
                   onClick={() =>
@@ -1006,7 +1080,7 @@ export function ServersTab({
                   <ChevronRight
                     className={cn(
                       "h-3 w-3 shrink-0 text-current opacity-90 transition-transform duration-200 group-hover:opacity-100",
-                      quickConnectMiniCardsExpanded && "rotate-90",
+                      quickConnectMiniCardsExpanded && "rotate-90"
                     )}
                     aria-hidden
                   />
@@ -1039,7 +1113,7 @@ export function ServersTab({
               size="sm"
               className={cn(
                 "h-auto shrink-0 p-0 text-xs",
-                minimized ? "self-center" : "self-start",
+                minimized ? "self-center" : "self-start"
               )}
               onClick={onNavigateToRegistry}
               data-testid="servers-quick-connect-browse-registry"
@@ -1145,7 +1219,7 @@ export function ServersTab({
                         clearPendingQuickConnectIfMatches(serverName);
                         onDisconnect(serverName);
                       }}
-                      onReconnect={onReconnect}
+                      onReconnect={handleReconnectServer}
                       onRemove={(serverName) => {
                         clearPendingQuickConnectIfMatches(serverName);
                         onRemove(serverName);
@@ -1170,7 +1244,7 @@ export function ServersTab({
                       clearPendingQuickConnectIfMatches(serverName);
                       onDisconnect(serverName);
                     }}
-                    onReconnect={onReconnect}
+                    onReconnect={handleReconnectServer}
                     onRemove={(serverName) => {
                       clearPendingQuickConnectIfMatches(serverName);
                       onRemove(serverName);
@@ -1200,7 +1274,11 @@ export function ServersTab({
             onCollapse={toggleJsonRpcPanel}
           >
             <div className="h-full flex flex-col bg-background border-l border-border">
-              <LoggerView key={connectedCount} onClose={toggleJsonRpcPanel} />
+              <LoggerView
+                key={connectedCount}
+                serverIds={loggerServerIds}
+                onClose={toggleJsonRpcPanel}
+              />
             </div>
           </ResizablePanel>
         </>
@@ -1305,7 +1383,7 @@ export function ServersTab({
             platform: detectPlatform(),
             environment: detectEnvironment(),
           });
-          onConnect(formData);
+          handleConnectServer(formData);
         }}
       />
 
@@ -1318,10 +1396,7 @@ export function ServersTab({
 
       {/* Client Config Dialog */}
       {clientConfigEnabled === true && onSaveClientConfig ? (
-        <Dialog
-          open={isClientConfigOpen}
-          onOpenChange={setIsClientConfigOpen}
-        >
+        <Dialog open={isClientConfigOpen} onOpenChange={setIsClientConfigOpen}>
           <DialogContent className="max-w-6xl w-[95vw] h-[85vh] p-0 overflow-hidden flex flex-col gap-0 sm:max-w-6xl">
             <DialogTitle className="sr-only">Client Config</DialogTitle>
             <DialogDescription className="sr-only">
@@ -1348,7 +1423,7 @@ export function ServersTab({
           defaultTab={detailModalState.defaultTab}
           onSubmit={handleSubmitDetailModal}
           onDisconnect={onDisconnect}
-          onReconnect={onReconnect}
+          onReconnect={handleReconnectServer}
           existingServerNames={Object.keys(workspaceServers)}
         />
       )}

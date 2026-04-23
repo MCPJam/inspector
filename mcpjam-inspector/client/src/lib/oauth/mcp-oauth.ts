@@ -460,18 +460,123 @@ function resolveOAuthRegistrationStrategy(
   return DEFAULT_OAUTH_REGISTRATION_STRATEGY;
 }
 
-function createOAuthRequestExecutor(fetchFn: typeof fetch) {
-  return async (request: HttpHistoryEntry["request"]) => {
-    const response = await fetchFn(request.url, {
+function normalizeProxyTargetUrl(url: string): string {
+  try {
+    const parsed = new URL(url);
+    parsed.protocol = parsed.protocol.toLowerCase();
+    parsed.hostname = parsed.hostname.toLowerCase();
+    parsed.hash = "";
+
+    if (parsed.pathname !== "/" && parsed.pathname.endsWith("/")) {
+      parsed.pathname = parsed.pathname.slice(0, -1);
+    }
+
+    return parsed.toString();
+  } catch {
+    return url;
+  }
+}
+
+function shouldRetryMcpRequestViaProxy(
+  request: HttpHistoryEntry["request"],
+  serverUrl: string | undefined
+): boolean {
+  if (!serverUrl) {
+    return false;
+  }
+
+  return (
+    normalizeProxyTargetUrl(request.url) === normalizeProxyTargetUrl(serverUrl)
+  );
+}
+
+async function executeRequestViaProxy(
+  request: HttpHistoryEntry["request"]
+): Promise<{
+  status: number;
+  statusText: string;
+  headers: Record<string, string>;
+  body: unknown;
+  ok: boolean;
+}> {
+  const proxyBase = HOSTED_MODE ? "/api/web/oauth" : "/api/mcp/oauth";
+  const response = await authFetch(`${proxyBase}/proxy`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      url: request.url,
       method: request.method,
       headers: request.headers,
-      body: serializeOAuthRequestBody(request.body, request.headers),
-    });
+      body: request.body,
+    }),
+  });
+
+  if (!response.ok) {
+    const body = await parseOAuthResponseBody(response);
+    const message =
+      body &&
+      typeof body === "object" &&
+      "error" in body &&
+      typeof (body as { error?: unknown }).error === "string"
+        ? (body as { error: string }).error
+        : `MCP request proxy failed (${response.status})`;
+    throw new Error(message);
+  }
+
+  const proxied = (await response.json()) as {
+    status: number;
+    statusText: string;
+    headers?: Record<string, string>;
+    body: unknown;
+  };
+
+  return {
+    status: proxied.status,
+    statusText: proxied.statusText,
+    headers: proxied.headers ?? {},
+    body: sanitizeOAuthTraceValue(proxied.body),
+    ok: proxied.status >= 200 && proxied.status < 300,
+  };
+}
+
+function createOAuthRequestExecutor(fetchFn: typeof fetch, serverUrl?: string) {
+  return async (request: HttpHistoryEntry["request"]) => {
+    let response:
+      | {
+          status: number;
+          statusText: string;
+          headers: Record<string, string>;
+          body: unknown;
+          ok: boolean;
+        }
+      | undefined;
+
+    try {
+      const directResponse = await fetchFn(request.url, {
+        method: request.method,
+        headers: request.headers,
+        body: serializeOAuthRequestBody(request.body, request.headers),
+      });
+      response = {
+        status: directResponse.status,
+        statusText: directResponse.statusText,
+        headers: normalizeResponseHeaders(directResponse.headers),
+        body: await parseOAuthResponseBody(directResponse),
+        ok: directResponse.ok,
+      };
+    } catch (error) {
+      if (!shouldRetryMcpRequestViaProxy(request, serverUrl)) {
+        throw error;
+      }
+
+      response = await executeRequestViaProxy(request);
+    }
+
     return {
       status: response.status,
       statusText: response.statusText,
-      headers: normalizeResponseHeaders(response.headers),
-      body: await parseOAuthResponseBody(response),
+      headers: response.headers,
+      body: response.body,
       ok: response.ok,
     };
   };
@@ -1459,7 +1564,10 @@ export async function initiateOAuth(
       },
       undefined
     );
-    const requestExecutor = createOAuthRequestExecutor(fetchFn);
+    const requestExecutor = createOAuthRequestExecutor(
+      fetchFn,
+      options.serverUrl
+    );
 
     // Store server URL for callback recovery
     localStorage.setItem(
@@ -1964,7 +2072,7 @@ export async function handleOAuthCallback(
       customClientSecret
     );
     const fetchFn = createOAuthFetchInterceptor(oauthConfig, undefined);
-    const requestExecutor = createOAuthRequestExecutor(fetchFn);
+    const requestExecutor = createOAuthRequestExecutor(fetchFn, serverUrl);
     const storedSession = loadOAuthFlowSession(serverName);
 
     if (storedSession) {
