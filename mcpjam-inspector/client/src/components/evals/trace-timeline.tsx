@@ -2318,7 +2318,9 @@ export function TraceTimeline({
                         : derivedLabel!.title;
                     const durationLabel = formatDuration(durationMs);
                     const canToggle =
-                      row.kind === "prompt" ? true : row.hasChildren;
+                      row.kind === "prompt"
+                        ? true
+                        : row.hasChildren || row.span.category === "llm";
                     const gridRow = rowIndex + 2;
                     const borderAccent = getRowBorderAccentClass(
                       row,

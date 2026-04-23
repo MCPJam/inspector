@@ -470,6 +470,31 @@ describe("ChatTabV2 history sync", () => {
     vi.useRealTimers();
   });
 
+  it("does not auto-reconnect workspace chat when oauth is required", async () => {
+    const onReconnectServer = vi.fn().mockResolvedValue(undefined);
+    mockUseChatSession.error = new Error(
+      JSON.stringify({
+        details: {
+          oauthRequired: true,
+          serverId: "server-1",
+          serverName: "server-1",
+          serverUrl: "https://server-1.example.com/mcp",
+        },
+      }),
+    );
+
+    render(
+      <ChatTabV2
+        {...defaultProps}
+        onReconnectServer={onReconnectServer}
+      />,
+    );
+
+    await flushMicrotasks();
+
+    expect(onReconnectServer).not.toHaveBeenCalled();
+  });
+
   it("asks before discarding a draft when switching threads", async () => {
     render(<ChatTabV2 {...defaultProps} />);
 
@@ -477,7 +502,7 @@ describe("ChatTabV2 history sync", () => {
       target: { value: "Unsaved draft" },
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "Show threads" }));
+    fireEvent.click(screen.getByRole("button", { name: "Show sessions" }));
     fireEvent.click(screen.getByRole("button", { name: "Select thread" }));
     await flushMicrotasks();
 
@@ -498,7 +523,7 @@ describe("ChatTabV2 history sync", () => {
       target: { value: "Unsaved draft" },
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "Show threads" }));
+    fireEvent.click(screen.getByRole("button", { name: "Show sessions" }));
     fireEvent.click(
       screen.getByRole("button", { name: "New personal thread" }),
     );
@@ -527,7 +552,7 @@ describe("ChatTabV2 history sync", () => {
 
     render(<ChatTabV2 {...defaultProps} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Show threads" }));
+    fireEvent.click(screen.getByRole("button", { name: "Show sessions" }));
     fireEvent.click(screen.getByRole("button", { name: "Select thread" }));
     await flushMicrotasks();
 
@@ -579,7 +604,7 @@ describe("ChatTabV2 history sync", () => {
 
     const view = render(<ChatTabV2 {...defaultProps} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Show threads" }));
+    fireEvent.click(screen.getByRole("button", { name: "Show sessions" }));
     fireEvent.click(screen.getByRole("button", { name: "Select thread" }));
 
     await flushMicrotasks();
@@ -651,7 +676,7 @@ describe("ChatTabV2 history sync", () => {
 
     const view = render(<ChatTabV2 {...defaultProps} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Show threads" }));
+    fireEvent.click(screen.getByRole("button", { name: "Show sessions" }));
     fireEvent.click(screen.getByRole("button", { name: "Select thread" }));
     await flushMicrotasks();
 
@@ -677,7 +702,7 @@ describe("ChatTabV2 history sync", () => {
   it("switches new shared threads to workspace visibility without persisting a draft", async () => {
     render(<ChatTabV2 {...defaultProps} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Show threads" }));
+    fireEvent.click(screen.getByRole("button", { name: "Show sessions" }));
     fireEvent.click(screen.getByRole("button", { name: "New shared thread" }));
     await flushMicrotasks();
 
@@ -694,7 +719,7 @@ describe("ChatTabV2 history sync", () => {
 
     render(<ChatTabV2 {...defaultProps} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Show threads" }));
+    fireEvent.click(screen.getByRole("button", { name: "Show sessions" }));
 
     expect(screen.getByTestId("history-rail")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "New personal thread" })).toBeInTheDocument();
@@ -722,7 +747,7 @@ describe("ChatTabV2 history sync", () => {
 
     const view = render(<ChatTabV2 {...defaultProps} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Show threads" }));
+    fireEvent.click(screen.getByRole("button", { name: "Show sessions" }));
     fireEvent.click(screen.getByRole("button", { name: "Select thread" }));
     await flushMicrotasks();
 

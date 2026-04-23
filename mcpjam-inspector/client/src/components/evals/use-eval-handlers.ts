@@ -31,6 +31,8 @@ import {
   runEvals,
   runEvalTestCase,
 } from "@/lib/apis/evals-api";
+import { isHostedMode } from "@/lib/apis/mode-client";
+import { normalizeHostedServerNames } from "@/lib/apis/web/context";
 import { generateAndPersistEvalTests } from "@/lib/evals/generate-and-persist-tests";
 import { collectUniqueModelsFromTestCases } from "@/lib/evals/collect-unique-suite-models";
 import { getGuestBearerToken } from "@/lib/guest-session";
@@ -38,6 +40,13 @@ import {
   getDefaultTestCaseModelValue,
   prepareSingleTestCaseRun,
 } from "./single-test-case-runner";
+import type { EnsureServersReadyResult } from "@/hooks/use-app-state";
+import type { RemoteServer } from "@/hooks/useWorkspaces";
+import {
+  formatMcpConnectServerPrompt,
+  formatMcpServerRefsForError,
+  isUnresolvableMcpServerRef,
+} from "@/lib/mcp-server-display-name";
 
 function getConfiguredTestCaseModelValues(
   testCase: Pick<EvalCase, "models">
@@ -55,6 +64,91 @@ function getConfiguredTestCaseModelValues(
   return Array.from(modelValues);
 }
 
+export function hasUnavailableServers(result: EnsureServersReadyResult) {
+  return (
+    result.missingServerNames.length > 0 ||
+    result.failedServerNames.length > 0 ||
+    result.reauthServerNames.length > 0
+  );
+}
+
+/** User-facing copy when ensureServersReady reports blockers. Never lists raw server ids. */
+export function formatEnsureServersReadyError(
+  result: EnsureServersReadyResult,
+  actionLabel: string,
+  workspaceServers: RemoteServer[] | undefined,
+) {
+  if (result.missingServerNames.length > 0) {
+    // Never list server names/ids in this toast: refs may be legacy Convex
+    // ids or other opaque values that read like random strings.
+    const n = result.missingServerNames.length;
+    const isTest = actionLabel.includes("test case");
+    if (n === 1) {
+      return isTest
+        ? `Unable to ${actionLabel}. This test depends on an MCP server that is no longer in this workspace.`
+        : `Unable to ${actionLabel}. This suite depends on an MCP server that is no longer in this workspace.`;
+    }
+    return isTest
+      ? `Unable to ${actionLabel}. This test depends on ${n} MCP servers that are no longer in this workspace.`
+      : `Unable to ${actionLabel}. This suite depends on ${n} MCP servers that are no longer in this workspace.`;
+  }
+
+  if (result.reauthServerNames.length > 0) {
+    const names = result.reauthServerNames;
+    const opts = { remoteServers: workspaceServers };
+    if (names.length > 0 && names.every((r) => isUnresolvableMcpServerRef(r, opts))) {
+      return `Re-authenticate, then try to ${actionLabel}.`;
+    }
+    return `Re-authenticate with ${formatMcpServerRefsForError(names, opts)} to ${actionLabel}.`;
+  }
+
+  if (result.failedServerNames.length > 0) {
+    const names = result.failedServerNames;
+    const opts = { remoteServers: workspaceServers };
+    if (names.length > 0 && names.every((r) => isUnresolvableMcpServerRef(r, opts))) {
+      return `We couldn't connect to a required server. Try again to ${actionLabel}.`;
+    }
+    return `We couldn't connect to ${formatMcpServerRefsForError(names, opts)}. Try again to ${actionLabel}.`;
+  }
+
+  return `Unable to prepare the required servers to ${actionLabel}.`;
+}
+
+export function normalizeSuiteServerRefs(
+  serverNamesOrIds: readonly string[] | undefined,
+): string[] {
+  const rawServerRefs = (serverNamesOrIds ?? []).flatMap((serverRef) =>
+    typeof serverRef === "string" && serverRef.trim().length > 0
+      ? [serverRef.trim()]
+      : [],
+  );
+
+  if (rawServerRefs.length === 0) {
+    return [];
+  }
+
+  if (isHostedMode()) {
+    try {
+      return normalizeHostedServerNames(rawServerRefs);
+    } catch {
+      // Fall back to the raw refs if hosted context has not initialized yet.
+    }
+  }
+
+  return Array.from(new Set(rawServerRefs));
+}
+
+/** Options for {@link useEvalHandlers} `handleGenerateTests` (playground: connect, generate, run). */
+export type HandleGenerateEvalTestsOptions = {
+  /** Required when `runNewCasesAfterGenerate` is true (same object passed to `handleRunTestCase`). */
+  suite?: EvalSuite;
+  /**
+   * When set with `suite`, after persisting new cases, runs them via the same path as
+   * the per-row run control (including `ensureServersReady` and model prep).
+   */
+  runNewCasesAfterGenerate?: boolean;
+};
+
 interface UseEvalHandlersProps {
   mutations: ReturnType<typeof useEvalMutations>;
   selectedSuiteEntry: EvalSuiteOverviewEntry | null;
@@ -62,12 +156,17 @@ interface UseEvalHandlersProps {
   selectedTestId: string | null;
   workspaceId?: string | null;
   connectedServerNames?: Set<string>;
+  ensureServersReady?: (
+    serverNames: string[],
+  ) => Promise<EnsureServersReadyResult>;
   latestRunBySuiteId?: Map<string, EvalSuiteRun | null>;
   /**
    * When `ci-evals`, navigation after test-case mutations stays on CI evals
    * routes (`#/ci-evals/...`). Defaults to main evals (`#/evals/...`).
    */
   evalsNavigationContext?: "evals" | "ci-evals";
+  /** For user-facing server labels (names instead of raw Convex ids). */
+  workspaceServers?: RemoteServer[];
   /** When true, this uses the direct-guest eval playground flow. */
   isDirectGuest?: boolean;
 }
@@ -82,8 +181,10 @@ export function useEvalHandlers({
   selectedTestId,
   workspaceId = null,
   connectedServerNames,
+  ensureServersReady,
   latestRunBySuiteId,
   evalsNavigationContext = "evals",
+  workspaceServers,
   isDirectGuest = false,
 }: UseEvalHandlersProps) {
   const convex = useConvex();
@@ -186,7 +287,7 @@ export function useEvalHandlers({
             testCaseId: testCase._id,
           });
 
-          if (!isMCPJamProvidedModel(modelConfig.model)) {
+          if (!isMCPJamProvidedModel(modelConfig.model, modelConfig.provider)) {
             providersNeeded.add(modelConfig.provider);
           }
         }
@@ -213,7 +314,7 @@ export function useEvalHandlers({
       }
 
       return {
-        suiteServers: suite.environment?.servers || [],
+        suiteServers: normalizeSuiteServerRefs(suite.environment?.servers),
         testCases,
         tests,
         modelApiKeys,
@@ -332,35 +433,51 @@ export function useEvalHandlers({
     async (suite: EvalSuite) => {
       if (rerunningSuiteId) return;
 
+      const suiteServers = normalizeSuiteServerRefs(suite.environment?.servers);
       const latestRun =
         latestRunBySuiteId?.get(suite._id) ??
         (selectedSuiteEntry?.suite._id === suite._id
           ? selectedSuiteEntry.latestRun
           : null);
       const rerunEligibility = getSuiteReplayEligibility({
-        suiteServers: suite.environment?.servers,
+        suiteServers,
         connectedServerNames,
         latestRun,
       });
 
-      if (
-        rerunEligibility.canReplayFallback &&
-        rerunEligibility.replayableLatestRun?._id
-      ) {
-        await handleReplayRun(suite, rerunEligibility.replayableLatestRun);
+      if (suiteServers.length === 0) {
+        if (rerunEligibility.replayableLatestRun?._id) {
+          await handleReplayRun(suite, rerunEligibility.replayableLatestRun);
+          return;
+        }
+        toast.error("No MCP servers are configured for this suite.");
         return;
       }
 
-      if (!rerunEligibility.canRunLive) {
-        if (!rerunEligibility.hasServersConfigured) {
-          toast.error("No MCP servers are configured for this suite.");
-          return;
-        }
-        if (rerunEligibility.missingServers.length > 0) {
+      if (rerunEligibility.missingServers.length > 0) {
+        if (ensureServersReady != null) {
+          const readiness = await ensureServersReady(suiteServers);
+          if (!hasUnavailableServers(readiness)) {
+            // Continue with the live rerun now that the servers are ready.
+          } else if (rerunEligibility.replayableLatestRun?._id) {
+            await handleReplayRun(suite, rerunEligibility.replayableLatestRun);
+            return;
+          } else {
+            toast.error(
+              formatEnsureServersReadyError(
+                readiness,
+                "run this suite",
+                workspaceServers,
+              ),
+            );
+            return;
+          }
+        } else {
           toast.error(
-            `Connect ${rerunEligibility.missingServers.join(
-              ", "
-            )} to run this suite.`
+            formatMcpConnectServerPrompt(rerunEligibility.missingServers, {
+              remoteServers: workspaceServers,
+              kind: "suite",
+            }),
           );
           return;
         }
@@ -441,8 +558,10 @@ export function useEvalHandlers({
       selectedSuiteEntry,
       latestRunBySuiteId,
       connectedServerNames,
+      ensureServersReady,
       getAccessToken,
       workspaceId,
+      workspaceServers,
       getSuiteExecutionContext,
       handleReplayRun,
     ]
@@ -452,7 +571,12 @@ export function useEvalHandlers({
     async (
       suite: EvalSuite,
       testCase: EvalCase,
-      options?: { location?: string; selectedModel?: string | null }
+      options?: {
+        location?: string;
+        selectedModel?: string | null;
+        /** When true, omits the usual per-run success toasts (errors still surface). */
+        suppressCompletionToasts?: boolean;
+      },
     ) => {
       if (runningTestCaseId || rerunningSuiteId || replayingRunId) {
         return null;
@@ -471,6 +595,39 @@ export function useEvalHandlers({
 
       const isMultiModelRun =
         !options?.selectedModel && modelValuesToRun.length > 1;
+      const suiteServers = normalizeSuiteServerRefs(suite.environment?.servers);
+      const disconnectedSuiteServers = suiteServers.filter(
+        (serverName) => !connectedServerNames?.has(serverName),
+      );
+
+      if (suiteServers.length === 0) {
+        toast.error("No MCP servers are configured for this suite.");
+        return null;
+      }
+
+      if (disconnectedSuiteServers.length > 0) {
+        if (ensureServersReady != null) {
+          const readiness = await ensureServersReady(suiteServers);
+          if (hasUnavailableServers(readiness)) {
+            toast.error(
+              formatEnsureServersReadyError(
+                readiness,
+                "run this test case",
+                workspaceServers,
+              ),
+            );
+            return null;
+          }
+        } else {
+          toast.error(
+            formatMcpConnectServerPrompt(disconnectedSuiteServers, {
+              remoteServers: workspaceServers,
+              kind: "test-case",
+            }),
+          );
+          return null;
+        }
+      }
 
       setRunningTestCaseId(testCase._id);
 
@@ -479,7 +636,12 @@ export function useEvalHandlers({
           modelValuesToRun.map((selectedModel) =>
             prepareSingleTestCaseRun({
               workspaceId: isDirectGuest ? null : workspaceId,
-              suite,
+              suite: {
+                environment: {
+                  ...suite.environment,
+                  servers: suiteServers,
+                },
+              },
               testCase,
               getAccessToken: isDirectGuest
                 ? getGuestBearerToken
@@ -606,19 +768,28 @@ export function useEvalHandlers({
           ...failedRuns,
         ];
 
-        if (successfulRuns.length === totalModelsRequested) {
-          toast.success(
-            isMultiModelRun
-              ? `Test completed across ${totalModelsRequested} models!`
-              : "Test completed successfully!"
-          );
-        } else if (successfulRuns.length > 0) {
-          toast.error(
-            `${successfulRuns.length}/${totalModelsRequested} model${
-              totalModelsRequested === 1 ? "" : "s"
-            } completed successfully.`
-          );
-        } else {
+        if (!options?.suppressCompletionToasts) {
+          if (successfulRuns.length === totalModelsRequested) {
+            toast.success(
+              isMultiModelRun
+                ? `Test completed across ${totalModelsRequested} models!`
+                : "Test completed successfully!",
+            );
+          } else if (successfulRuns.length > 0) {
+            toast.error(
+              `${successfulRuns.length}/${totalModelsRequested} model${
+                totalModelsRequested === 1 ? "" : "s"
+              } completed successfully.`,
+            );
+          } else {
+            toast.error(
+              getBillingErrorMessage(
+                totalFailedRuns[0]?.error,
+                "Failed to run test case",
+              ),
+            );
+          }
+        } else if (successfulRuns.length === 0) {
           toast.error(
             getBillingErrorMessage(
               totalFailedRuns[0]?.error,
@@ -656,9 +827,11 @@ export function useEvalHandlers({
       getAccessToken,
       getToken,
       hasToken,
+      connectedServerNames,
+      ensureServersReady,
+      workspaceServers,
       isDirectGuest,
-      convex,
-    ]
+    ],
   );
 
   // Delete handler - opens confirmation modal
@@ -984,8 +1157,47 @@ export function useEvalHandlers({
 
   // Generate tests handler - calls API and creates test cases
   const handleGenerateTests = useCallback(
-    async (suiteId: string, serverIds: string[]) => {
+    async (
+      suiteId: string,
+      serverIds: string[],
+      postOptions?: HandleGenerateEvalTestsOptions,
+    ) => {
       if (isGeneratingTests) return;
+
+      const suiteServers = normalizeSuiteServerRefs(serverIds);
+      if (suiteServers.length === 0) {
+        toast.error(
+          "Add at least one server to this suite before generating cases.",
+        );
+        return;
+      }
+
+      const disconnected = suiteServers.filter(
+        (name) => !connectedServerNames?.has(name),
+      );
+      if (disconnected.length > 0) {
+        if (ensureServersReady != null) {
+          const readiness = await ensureServersReady(suiteServers);
+          if (hasUnavailableServers(readiness)) {
+            toast.error(
+              formatEnsureServersReadyError(
+                readiness,
+                "generate test cases",
+                workspaceServers,
+              ),
+            );
+            return;
+          }
+        } else {
+          toast.error(
+            formatMcpConnectServerPrompt(disconnected, {
+              remoteServers: workspaceServers,
+              kind: "suite",
+            }),
+          );
+          return;
+        }
+      }
 
       setIsGeneratingTests(true);
 
@@ -1012,20 +1224,63 @@ export function useEvalHandlers({
           return;
         }
 
-        if (outcome.createdCount > 0) {
-          toast.success(
-            `Generated ${outcome.createdCount} test case${
-              outcome.createdCount > 1 ? "s" : ""
-            }`
-          );
+        const shouldAutoRun =
+          postOptions?.runNewCasesAfterGenerate === true &&
+          postOptions?.suite != null;
 
+        if (outcome.createdCount > 0) {
           posthog.capture("eval_tests_generated_from_sidebar", {
             location: "test_case_list_sidebar",
             platform: detectPlatform(),
             environment: detectEnvironment(),
             suite_id: suiteId,
             generated_count: outcome.createdCount,
+            auto_ran: Boolean(
+              shouldAutoRun && outcome.createdTestCaseIds.length > 0,
+            ),
           });
+        }
+
+        if (
+          shouldAutoRun &&
+          outcome.createdTestCaseIds.length > 0 &&
+          outcome.createdCount > 0
+        ) {
+          const suite = postOptions!.suite!;
+          const allCases = (await getTestCasesForRerun(
+            suiteId,
+          )) as EvalCase[];
+          const byId = new Map<string, EvalCase>(
+            allCases.map((c) => [c._id, c]),
+          );
+          const toRun: EvalCase[] = [];
+          for (const id of outcome.createdTestCaseIds) {
+            const c = byId.get(id);
+            if (c) {
+              toRun.push(c);
+            }
+          }
+          for (const testCase of toRun) {
+            await handleRunTestCase(suite, testCase, {
+              location: "post_generate_suggested_cases",
+              suppressCompletionToasts: true,
+            });
+          }
+          if (toRun.length === 0) {
+            toast.success(
+              `Generated ${outcome.createdCount} test case${outcome.createdCount > 1 ? "s" : ""}. Open the list to run them when they appear.`,
+            );
+          } else if (toRun.length === 1) {
+            toast.success("Generated 1 new case and ran it.");
+          } else {
+            toast.success(
+              `Generated and ran ${toRun.length} new test cases.`,
+            );
+          }
+        } else if (outcome.createdCount > 0) {
+          toast.success(
+            `Generated ${outcome.createdCount} test case${outcome.createdCount > 1 ? "s" : ""}`,
+          );
         }
       } catch (error) {
         console.error("Failed to generate tests:", error);
@@ -1042,8 +1297,13 @@ export function useEvalHandlers({
       convex,
       mutations.createTestCaseMutation,
       workspaceId,
+      connectedServerNames,
+      ensureServersReady,
+      workspaceServers,
       isDirectGuest,
-    ]
+      getTestCasesForRerun,
+      handleRunTestCase,
+    ],
   );
 
   return {

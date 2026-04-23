@@ -1,7 +1,8 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const generateTextMock = vi.hoisted(() => vi.fn());
 const streamTextMock = vi.hoisted(() => vi.fn());
+const fetchMock = vi.hoisted(() => vi.fn());
 const createLlmModelMock = vi.hoisted(() =>
   vi.fn(
     (
@@ -50,14 +51,18 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
   };
   const mcpClientManager = {
     getToolsForAiSdk: vi.fn(),
+    listServers: vi.fn(),
   };
 
   beforeEach(() => {
     vi.clearAllMocks();
+    fetchMock.mockReset();
+    vi.stubGlobal("fetch", fetchMock);
     convexClient.mutation.mockResolvedValue({ iterationId: "iter-1" });
     convexClient.query.mockResolvedValue({ status: "running" });
     convexClient.action.mockResolvedValue(undefined);
     mcpClientManager.getToolsForAiSdk.mockResolvedValue({});
+    mcpClientManager.listServers.mockReturnValue(["srv-1"]);
     generateTextMock.mockResolvedValue({
       response: {
         modelId: "gpt-5-mini",
@@ -73,7 +78,14 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     streamTextMock.mockReset();
   });
 
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   async function runQuickTestCase(compareRunId?: string) {
+    // Use a BYOK-only model id so the runner takes the local generateText
+    // path (which the test mocks). gpt-5-mini has a hosted "openai/gpt-5-mini"
+    // counterpart and would otherwise route through the backend.
     await runEvalSuiteWithAiSdk({
       suiteId: "suite-1",
       runId: null,
@@ -83,7 +95,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
             title: "Case",
             query: "Hello",
             runs: 1,
-            model: "gpt-5-mini",
+            model: "gpt-4-turbo",
             provider: "openai",
             expectedToolCalls: [],
             promptTurns: [
@@ -116,6 +128,50 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
           yield item;
         }
       },
+    };
+  }
+
+  function createBackendSuccessResponse() {
+    return {
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      json: vi.fn().mockResolvedValue({
+        ok: true,
+        messages: [{ role: "assistant", content: "Done" }],
+        usage: {
+          promptTokens: 1,
+          completionTokens: 2,
+          totalTokens: 3,
+        },
+        finishReason: "stop",
+      }),
+      text: vi.fn().mockResolvedValue(""),
+    };
+  }
+
+  /** SSE-format response for the streaming backend path (no mode:"step"). */
+  function createBackendStreamResponse() {
+    const chunks = [
+      'data: {"type":"text-delta","id":"t1","delta":"Done"}\n\n',
+      'data: {"type":"finish","finishReason":"stop","messageMetadata":{"inputTokens":1,"outputTokens":2,"totalTokens":3}}\n\n',
+      "data: [DONE]\n\n",
+    ];
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const chunk of chunks) {
+          controller.enqueue(encoder.encode(chunk));
+        }
+        controller.close();
+      },
+    });
+    return {
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      body: stream,
+      text: vi.fn().mockResolvedValue(""),
     };
   }
 
@@ -161,6 +217,84 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     const updatePayload = await runQuickTestCase();
 
     expect(updatePayload.tokensUsed).toBe(10);
+  });
+
+  it("resolves persisted hosted server names to the live manager ids", async () => {
+    await runEvalSuiteWithAiSdk({
+      suiteId: "suite-1",
+      runId: null,
+      config: {
+        tests: [
+          {
+            title: "Case",
+            query: "Hello",
+            runs: 1,
+            model: "gpt-5-mini",
+            provider: "openai",
+            expectedToolCalls: [],
+            promptTurns: [{ id: "turn-1", prompt: "Hello", expectedToolCalls: [] }],
+            testCaseId: "case-1",
+          },
+        ],
+        environment: {
+          servers: ["server-1"],
+          serverBindings: [
+            {
+              serverName: "server-1",
+              workspaceServerId: "srv-1",
+            },
+          ],
+        },
+      },
+      modelApiKeys: { openai: "sk-test" },
+      convexClient: convexClient as any,
+      convexHttpUrl: "https://example.convex.site",
+      convexAuthToken: "token",
+      mcpClientManager: mcpClientManager as any,
+      testCaseId: "case-1",
+    });
+
+    expect(mcpClientManager.getToolsForAiSdk).toHaveBeenCalledWith(["srv-1"]);
+  });
+
+  it("keeps persisted hosted server refs when the manager is already keyed by them", async () => {
+    mcpClientManager.listServers.mockReturnValue(["server-1"]);
+
+    await runEvalSuiteWithAiSdk({
+      suiteId: "suite-1",
+      runId: null,
+      config: {
+        tests: [
+          {
+            title: "Case",
+            query: "Hello",
+            runs: 1,
+            model: "gpt-5-mini",
+            provider: "openai",
+            expectedToolCalls: [],
+            promptTurns: [{ id: "turn-1", prompt: "Hello", expectedToolCalls: [] }],
+            testCaseId: "case-1",
+          },
+        ],
+        environment: {
+          servers: ["server-1"],
+          serverBindings: [
+            {
+              serverName: "server-1",
+              workspaceServerId: "srv-1",
+            },
+          ],
+        },
+      },
+      modelApiKeys: { openai: "sk-test" },
+      convexClient: convexClient as any,
+      convexHttpUrl: "https://example.convex.site",
+      convexAuthToken: "token",
+      mcpClientManager: mcpClientManager as any,
+      testCaseId: "case-1",
+    });
+
+    expect(mcpClientManager.getToolsForAiSdk).toHaveBeenCalledWith(["server-1"]);
   });
 
   it("maps current fullStream chunks into eval stream events", async () => {
@@ -233,13 +367,16 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
         title: "Case",
         query: "Hello",
         runs: 1,
-        model: "gpt-5-mini",
+        // BYOK-only id so the runner takes the local streamText path the
+        // test mocks instead of routing to the hosted backend.
+        model: "gpt-4-turbo",
         provider: "openai",
         expectedToolCalls: [],
         promptTurns: [{ id: "turn-1", prompt: "Hello", expectedToolCalls: [] }],
         testCaseId: "case-1",
       },
       tools: {},
+      mcpClientManager: mcpClientManager as any,
       recorder: null,
       modelApiKeys: { openai: "sk-test" },
       convexClient: convexClient as any,
@@ -278,6 +415,109 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
         expect.objectContaining({
           type: "step_finish",
           usage: { inputTokens: 2, outputTokens: 3 },
+        }),
+      ]),
+    );
+  });
+
+  it("routes bare MCPJam Anthropic compare models through the backend without a BYOK key", async () => {
+    fetchMock.mockResolvedValue(createBackendSuccessResponse());
+
+    await expect(
+      runEvalSuiteWithAiSdk({
+        suiteId: "suite-1",
+        runId: null,
+        config: {
+          tests: [
+            {
+              title: "Case",
+              query: "Hello",
+              runs: 1,
+              model: "claude-haiku-4.5",
+              provider: "anthropic",
+              expectedToolCalls: [],
+              promptTurns: [
+                { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+              ],
+              testCaseId: "case-1",
+            },
+          ],
+          environment: { servers: ["srv-1"] },
+        },
+        modelApiKeys: {},
+        convexClient: convexClient as any,
+        convexHttpUrl: "https://example.convex.site",
+        convexAuthToken: "token",
+        mcpClientManager: mcpClientManager as any,
+        testCaseId: "case-1",
+      }),
+    ).resolves.toBeDefined();
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://example.convex.site/stream",
+      expect.objectContaining({
+        method: "POST",
+      }),
+    );
+    const compareRequest = fetchMock.mock.calls[0]?.[1] as {
+      body?: string;
+    };
+    expect(JSON.parse(compareRequest.body ?? "{}").model).toBe(
+      "anthropic/claude-haiku-4.5",
+    );
+    expect(createLlmModelMock).not.toHaveBeenCalled();
+  });
+
+  it("streams bare MCPJam Anthropic test cases through the backend without a BYOK key", async () => {
+    const emitted: Array<Record<string, unknown>> = [];
+    fetchMock.mockResolvedValue(createBackendStreamResponse());
+
+    await expect(
+      streamTestCase({
+        test: {
+          title: "Case",
+          query: "Hello",
+          runs: 1,
+          model: "claude-haiku-4.5",
+          provider: "anthropic",
+          expectedToolCalls: [],
+          promptTurns: [
+            { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+          ],
+          testCaseId: "case-1",
+        },
+        tools: {},
+        mcpClientManager: mcpClientManager as any,
+        recorder: null,
+        modelApiKeys: {},
+        convexClient: convexClient as any,
+        convexHttpUrl: "https://example.convex.site",
+        convexAuthToken: "token",
+        testCaseId: "case-1",
+        suiteId: "suite-1",
+        runId: null,
+        emit: (event) => emitted.push(event as Record<string, unknown>),
+      }),
+    ).resolves.toBeDefined();
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://example.convex.site/stream",
+      expect.objectContaining({
+        method: "POST",
+      }),
+    );
+    const streamRequest = fetchMock.mock.calls[0]?.[1] as {
+      body?: string;
+    };
+    expect(JSON.parse(streamRequest.body ?? "{}").model).toBe(
+      "anthropic/claude-haiku-4.5",
+    );
+    expect(createLlmModelMock).not.toHaveBeenCalled();
+    expect(emitted).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "text_delta",
+          content: "Done",
         }),
       ]),
     );

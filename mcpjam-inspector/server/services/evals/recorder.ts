@@ -2,6 +2,7 @@ import type { ModelMessage } from "ai";
 import type { ConvexHttpClient } from "convex/browser";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 import type { PromptTraceSummary } from "@/shared/eval-trace";
+import type { EvalTraceWidgetSnapshot } from "@/shared/eval-trace";
 import type { PromptTurn } from "@/shared/prompt-turns";
 import type { UsageTotals } from "./types";
 import { logger } from "../../utils/logger";
@@ -44,6 +45,7 @@ export type SuiteRunRecorder = {
     messages: ModelMessage[];
     spans?: EvalTraceSpan[];
     prompts?: PromptTraceSummary[];
+    widgetSnapshots?: EvalTraceWidgetSnapshot[];
     status?: IterationStatus;
     startedAt?: number;
     error?: string;
@@ -83,7 +85,6 @@ export const createSuiteRunRecorder = ({
       testCaseId,
       testCaseSnapshot,
       iterationNumber,
-      startedAt,
     }) {
       if (runDeleted) {
         // Silently skip if run was deleted
@@ -170,8 +171,8 @@ export const createSuiteRunRecorder = ({
       messages,
       spans,
       prompts,
+      widgetSnapshots,
       status,
-      startedAt,
       error,
       errorDetails,
       resultSource,
@@ -216,6 +217,12 @@ export const createSuiteRunRecorder = ({
             : {}),
           ...(prompts?.length
             ? { prompts: sanitizeForConvexTransport(prompts) }
+            : {}),
+          ...(widgetSnapshots?.length
+            ? {
+                widgetSnapshots:
+                  sanitizeForConvexTransport(widgetSnapshots),
+              }
             : {}),
           error,
           errorDetails,

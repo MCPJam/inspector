@@ -34,7 +34,7 @@ function normalizeHostedValidationError(error: unknown): string {
 
   if (
     error instanceof Error &&
-    error.message.startsWith("Hosted server not found for ")
+    error.message.startsWith("Hosted server not found")
   ) {
     return "Hosted server metadata is still syncing. Please retry.";
   }

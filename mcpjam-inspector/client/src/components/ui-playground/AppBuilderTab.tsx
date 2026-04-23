@@ -45,7 +45,10 @@ import { UIType, detectUiTypeFromTool } from "@/lib/mcp-ui/mcp-apps-utils";
 import { useOnboarding } from "@/hooks/use-onboarding";
 import { AppBuilderSkeleton } from "@/components/app-builder/AppBuilderSkeleton";
 import type { ServerFormData } from "@/shared/types.js";
-import type { ServerWithName } from "@/hooks/use-app-state";
+import type {
+  EnsureServersReadyResult,
+  ServerWithName,
+} from "@/hooks/use-app-state";
 import { useSidebar } from "@/components/ui/sidebar";
 import { getLoadingIndicatorVariantForHostStyle } from "@/components/chat-v2/shared/loading-indicator-content";
 import { toast } from "sonner";
@@ -65,6 +68,9 @@ interface AppBuilderTabProps {
    */
   isServerSyncing?: boolean;
   onConnect?: (formData: ServerFormData) => void;
+  ensureServersReady?: (
+    serverNames: string[],
+  ) => Promise<EnsureServersReadyResult>;
   onOnboardingChange?: (isOnboarding: boolean) => void;
   playgroundServerSelectorProps?: PlaygroundServerSelectorProps;
   enableMultiModelChat?: boolean;
@@ -90,6 +96,7 @@ export function AppBuilderTab({
   isAuthLoading = false,
   isServerSyncing = false,
   onConnect,
+  ensureServersReady,
   onOnboardingChange,
   playgroundServerSelectorProps,
   enableMultiModelChat = false,
@@ -452,6 +459,7 @@ export function AppBuilderTab({
             loadingIndicatorVariant={getLoadingIndicatorVariantForHostStyle(
               hostStyle,
             )}
+            ensureServersReady={ensureServersReady}
             pulseSubmit={firstRunComposerSeed}
             showPostConnectGuide={false}
             onFirstMessageSent={

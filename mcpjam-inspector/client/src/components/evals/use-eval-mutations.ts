@@ -21,6 +21,9 @@ export function useEvalMutations({
   const convexCreateTestSuite = useMutation(
     "testSuites:createTestSuite" as any
   );
+  const updateTestSuiteMutation = useMutation(
+    "testSuites:updateTestSuite" as any,
+  );
 
   const mutations = useMemo(() => {
     if (!isDirectGuest) {
@@ -33,6 +36,7 @@ export function useEvalMutations({
         deleteTestCaseMutation: convexDeleteTestCase,
         duplicateTestCaseMutation: convexDuplicateTestCase,
         createTestSuiteMutation: convexCreateTestSuite,
+        updateTestSuiteMutation,
       };
     }
 
@@ -49,6 +53,7 @@ export function useEvalMutations({
       deleteTestCaseMutation: convexDeleteTestCase,
       duplicateTestCaseMutation: guestUnsupported,
       createTestSuiteMutation: convexCreateTestSuite,
+      updateTestSuiteMutation,
     };
   }, [
     isDirectGuest,
@@ -60,6 +65,7 @@ export function useEvalMutations({
     convexDeleteTestCase,
     convexDuplicateTestCase,
     convexCreateTestSuite,
+    updateTestSuiteMutation,
   ]);
 
   return mutations;

@@ -93,6 +93,7 @@ import {
   type ToolSchemaOverrides,
 } from "./tool-converters.js";
 import {
+  applyRuntimeClientCapabilities,
   getDefaultClientCapabilities,
   mergeClientCapabilities,
   normalizeClientCapabilities,
@@ -292,7 +293,9 @@ export class MCPClientManager {
       serverCapabilities: client.getServerCapabilities(),
       serverVersion: client.getServerVersion(),
       instructions: client.getInstructions(),
-      clientCapabilities: this.buildCapabilities(config),
+      clientCapabilities:
+        liveState.initializedClientCapabilities ??
+        this.buildCapabilities(serverId, config),
     };
   }
 
@@ -883,8 +886,9 @@ export class MCPClientManager {
     }
     this.elicitationManager.setHandler(serverId, handler);
 
-    const client = this.liveClientStates.get(serverId)?.client;
-    if (client) {
+    const state = this.liveClientStates.get(serverId);
+    const client = state?.client;
+    if (client && this.hasNegotiatedElicitation(state)) {
       this.elicitationManager.applyToClient(serverId, client);
     }
   }
@@ -894,9 +898,13 @@ export class MCPClientManager {
    */
   clearElicitationHandler(serverId: string): void {
     this.elicitationManager.clearHandler(serverId);
-    const client = this.liveClientStates.get(serverId)?.client;
+    const state = this.liveClientStates.get(serverId);
+    const client = state?.client;
     if (client) {
-      if (this.elicitationManager.getGlobalCallback()) {
+      if (
+        this.elicitationManager.getGlobalCallback() &&
+        this.hasNegotiatedElicitation(state)
+      ) {
         this.elicitationManager.applyToClient(serverId, client);
       } else {
         this.elicitationManager.removeFromClient(client);
@@ -910,7 +918,7 @@ export class MCPClientManager {
   setElicitationCallback(callback: ElicitationCallback): void {
     this.elicitationManager.setGlobalCallback(callback);
     for (const [serverId, state] of this.liveClientStates.entries()) {
-      if (state.client) {
+      if (state.client && this.hasNegotiatedElicitation(state)) {
         this.elicitationManager.applyToClient(serverId, state.client);
       }
     }
@@ -923,7 +931,10 @@ export class MCPClientManager {
     this.elicitationManager.clearGlobalCallback();
     for (const [serverId, state] of this.liveClientStates.entries()) {
       if (!state.client) continue;
-      if (this.elicitationManager.getHandler(serverId)) {
+      if (
+        this.elicitationManager.getHandler(serverId) &&
+        this.hasNegotiatedElicitation(state)
+      ) {
         this.elicitationManager.applyToClient(serverId, state.client);
       } else {
         this.elicitationManager.removeFromClient(state.client);
@@ -1094,13 +1105,14 @@ export class MCPClientManager {
   ): Promise<Client> {
     let client: Client | undefined;
     let transport: Transport | undefined;
+    const clientCapabilities = this.buildCapabilities(serverId, config);
     try {
       client = new Client(
         {
           name: this.defaultClientName ?? serverId,
           version: config.version ?? this.defaultClientVersion,
         },
-        { capabilities: this.buildCapabilities(config) }
+        { capabilities: clientCapabilities }
       );
 
       // Apply handlers
@@ -1108,7 +1120,9 @@ export class MCPClientManager {
       if (this.defaultProgressHandler) {
         applyProgressHandler(serverId, client, this.defaultProgressHandler);
       }
-      this.elicitationManager.applyToClient(serverId, client);
+      if ((clientCapabilities as Record<string, unknown>).elicitation != null) {
+        this.elicitationManager.applyToClient(serverId, client);
+      }
 
       if (config.onError) {
         client.onerror = (error) => config.onError?.(error);
@@ -1146,6 +1160,7 @@ export class MCPClientManager {
 
       state.client = client;
       state.transport = transport;
+      state.initializedClientCapabilities = clientCapabilities;
       state.connectPromise = undefined;
       this.liveClientStates.set(serverId, state);
 
@@ -1461,6 +1476,7 @@ export class MCPClientManager {
     delete state.client;
     delete state.transport;
     delete state.stdioStderrCleanup;
+    delete state.initializedClientCapabilities;
     if (!options?.preservePendingPromises) {
       delete state.connectPromise;
     }
@@ -1497,6 +1513,7 @@ export class MCPClientManager {
     delete state.client;
     delete state.transport;
     delete state.stdioStderrCleanup;
+    delete state.initializedClientCapabilities;
 
     if (nextState.connectPromise || nextState.retryPromise) {
       this.liveClientStates.set(serverId, nextState);
@@ -1707,15 +1724,36 @@ export class MCPClientManager {
     return mergedOptions;
   }
 
-  private buildCapabilities(config: MCPServerConfig): ClientCapabilityOptions {
+  private buildCapabilities(
+    serverId: string,
+    config: MCPServerConfig
+  ): ClientCapabilityOptions {
+    const hasElicitationHandler = this.elicitationManager.hasHandler(serverId);
     if (config.clientCapabilities) {
-      return normalizeClientCapabilities(config.clientCapabilities);
+      const exactCapabilities = normalizeClientCapabilities(
+        config.clientCapabilities
+      ) as Record<string, unknown>;
+
+      if (!hasElicitationHandler) {
+        delete exactCapabilities.elicitation;
+      }
+
+      return exactCapabilities as ClientCapabilityOptions;
     }
 
-    return mergeClientCapabilities(
-      this.defaultCapabilities,
-      config.capabilities
-    );
+    const configuredCapabilities =
+      mergeClientCapabilities(this.defaultCapabilities, config.capabilities);
+
+    return applyRuntimeClientCapabilities(configuredCapabilities, {
+      elicitation: hasElicitationHandler,
+    });
+  }
+
+  private hasNegotiatedElicitation(state?: LiveClientState): boolean {
+    const capabilities = state?.initializedClientCapabilities as
+      | Record<string, unknown>
+      | undefined;
+    return capabilities?.elicitation != null;
   }
 
   private resolveRpcLogger(config: MCPServerConfig): RpcLogger | undefined {

@@ -5,6 +5,7 @@
  */
 
 export {
+  applyRuntimeClientCapabilities,
   MCP_UI_EXTENSION_ID,
   MCP_UI_RESOURCE_MIME_TYPE,
   getDefaultClientCapabilities,
@@ -90,6 +91,12 @@ export {
   getDefaultRegistrationStrategy,
   getSupportedRegistrationStrategies,
 } from "./oauth/state-machines/factory.js";
+export { runOAuthStateMachine } from "./oauth/state-machines/runner.js";
+export type {
+  OAuthAuthorizationRequestResult,
+  OAuthStateMachineRunConfig,
+  OAuthStateMachineRunResult,
+} from "./oauth/state-machines/runner.js";
 export {
   getStepInfo,
   getStepIndex,

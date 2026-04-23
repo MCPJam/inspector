@@ -11,7 +11,11 @@ import { readFileSync } from "fs";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 import { MCPClientManager } from "@mcpjam/sdk";
-import { loadInspectorEnv, warnOnConvexDevMisconfiguration } from "./env";
+import {
+  getInspectorClientRuntimeConfigScript,
+  loadInspectorEnv,
+  warnOnConvexDevMisconfiguration,
+} from "./env";
 import { INSPECTOR_MCP_RETRY_POLICY } from "./utils/mcp-retry-policy";
 
 // Security imports
@@ -415,6 +419,14 @@ if (process.env.NODE_ENV === "production") {
         );
         const warningScript = `<script>console.error("MCPJam: Access via localhost or allowed hosts required for full functionality");</script>`;
         htmlContent = htmlContent.replace("</head>", `${warningScript}</head>`);
+      }
+
+      const runtimeConfigScript = getInspectorClientRuntimeConfigScript();
+      if (runtimeConfigScript) {
+        htmlContent = htmlContent.replace(
+          "</head>",
+          `${runtimeConfigScript}</head>`,
+        );
       }
 
       // Inject MCP server config if provided via CLI

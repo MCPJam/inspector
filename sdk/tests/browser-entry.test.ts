@@ -36,9 +36,42 @@ describe("browser entrypoint", () => {
     expect((merged as Record<string, unknown>).extensions).toEqual({});
   });
 
+  it("does not inject elicitation when normalizing client capabilities", () => {
+    expect(
+      browser.normalizeClientCapabilities({
+        experimental: {
+          inspectorProfile: true,
+        },
+      } as any)
+    ).toEqual({
+      experimental: {
+        inspectorProfile: true,
+      },
+    });
+  });
+
+  it("can advertise runtime-gated capabilities when handlers exist", () => {
+    expect(
+      browser.applyRuntimeClientCapabilities(
+        {
+          experimental: {
+            inspectorProfile: true,
+          },
+        } as any,
+        { elicitation: true }
+      )
+    ).toEqual({
+      experimental: {
+        inspectorProfile: true,
+      },
+      elicitation: {},
+    });
+  });
+
   it("exports browser-safe capability helpers without MCPClientManager", () => {
     expect(browser.MCP_UI_EXTENSION_ID).toBe("io.modelcontextprotocol/ui");
     expect(browser.MCP_UI_RESOURCE_MIME_TYPE).toBe("text/html;profile=mcp-app");
+    expect(typeof browser.applyRuntimeClientCapabilities).toBe("function");
     expect(typeof browser.redactSensitiveValue).toBe("function");
     expect(browser.getDefaultClientCapabilities()).toEqual({
       extensions: {

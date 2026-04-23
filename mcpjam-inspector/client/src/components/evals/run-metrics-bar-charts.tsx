@@ -1,5 +1,6 @@
 import { ChartContainer, ChartTooltip } from "@/components/ui/chart";
 import { BarChart, Bar, CartesianGrid, XAxis, YAxis } from "recharts";
+import { cn } from "@/lib/utils";
 import { formatDuration } from "./helpers";
 
 export type DurationDatum = {
@@ -28,7 +29,7 @@ function DurationBarBlock({ data }: { data: DurationDatum[] }) {
           color: "var(--chart-1)",
         },
       }}
-      className="aspect-auto h-[min(400px,50vh)] w-full"
+      className="aspect-auto h-[min(120px,18vh)] w-full max-h-[140px]"
     >
       <BarChart data={data} margin={{ top: 8, right: 12, left: 0, bottom: 8 }}>
         <CartesianGrid
@@ -83,7 +84,7 @@ function TokensBarBlock({ data }: { data: TokensDatum[] }) {
           color: "var(--chart-2)",
         },
       }}
-      className="aspect-auto h-[min(400px,50vh)] w-full"
+      className="aspect-auto h-[min(120px,18vh)] w-full max-h-[140px]"
     >
       <BarChart data={data} margin={{ top: 8, right: 12, left: 0, bottom: 8 }}>
         <CartesianGrid
@@ -129,7 +130,9 @@ function TokensBarBlock({ data }: { data: TokensDatum[] }) {
   );
 }
 
-/** Railway-style chart cards — always visible, side-by-side grid. */
+const CHART_HINT = "Hover a bar for test names.";
+
+/** Side-by-side duration / token bars with minimal chrome (one shared hint when both show). */
 export function RunMetricsBarCharts({
   durationData,
   tokensData,
@@ -139,42 +142,57 @@ export function RunMetricsBarCharts({
   const showTokens = hasTokenData;
   if (!showDuration && !showTokens) return null;
 
-  const singleChart = (showDuration ? 1 : 0) + (showTokens ? 1 : 0) === 1;
+  const chartCount = (showDuration ? 1 : 0) + (showTokens ? 1 : 0);
+  const singleChart = chartCount === 1;
+
+  const durationSection = showDuration ? (
+    <div className={cn("min-w-0", !singleChart && "lg:pr-4")}>
+      <div className="mb-2 flex items-baseline justify-between gap-2">
+        <h3 className="text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+          Avg duration by test
+        </h3>
+        {singleChart ? (
+          <span className="text-[10px] text-muted-foreground/60">
+            {CHART_HINT}
+          </span>
+        ) : null}
+      </div>
+      <DurationBarBlock data={durationData} />
+    </div>
+  ) : null;
+
+  const tokensSection = showTokens ? (
+    <div className={cn("min-w-0", !singleChart && "lg:pl-4")}>
+      <div className="mb-2 flex items-baseline justify-between gap-2">
+        <h3 className="text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+          Avg tokens by test
+        </h3>
+        {singleChart ? (
+          <span className="text-[10px] text-muted-foreground/60">
+            {CHART_HINT}
+          </span>
+        ) : null}
+      </div>
+      <TokensBarBlock data={tokensData} />
+    </div>
+  ) : null;
+
+  if (singleChart) {
+    return (
+      <div className="mt-2 rounded-lg border border-border/25 bg-muted/10 p-3">
+        {durationSection}
+        {tokensSection}
+      </div>
+    );
+  }
 
   return (
-    <div
-      className={
-        singleChart
-          ? "mt-2 grid grid-cols-1 gap-3"
-          : "mt-2 grid grid-cols-1 gap-3 lg:grid-cols-2"
-      }
-    >
-      {showDuration && (
-        <div className="rounded-xl border border-border/40 bg-card/80 p-4">
-          <div className="mb-3 flex items-baseline justify-between">
-            <h3 className="text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">
-              Avg duration by test
-            </h3>
-            <span className="text-[10px] text-muted-foreground/60">
-              Hover bars to see test names
-            </span>
-          </div>
-          <DurationBarBlock data={durationData} />
-        </div>
-      )}
-      {showTokens && (
-        <div className="rounded-xl border border-border/40 bg-card/80 p-4">
-          <div className="mb-3 flex items-baseline justify-between">
-            <h3 className="text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">
-              Avg tokens by test
-            </h3>
-            <span className="text-[10px] text-muted-foreground/60">
-              Hover bars to see test names
-            </span>
-          </div>
-          <TokensBarBlock data={tokensData} />
-        </div>
-      )}
+    <div className="mt-2 rounded-lg border border-border/25 bg-muted/10 p-3">
+      <p className="mb-3 text-[10px] text-muted-foreground/70">{CHART_HINT}</p>
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 lg:gap-0 lg:divide-x lg:divide-border/30">
+        {durationSection}
+        {tokensSection}
+      </div>
     </div>
   );
 }

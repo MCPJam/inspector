@@ -183,6 +183,85 @@ describe("useSharedChatWidgetCapture", () => {
     unmount();
   });
 
+  it("waits until persistence is ready before uploading widget snapshots", async () => {
+    const { rerender, unmount } = renderHook(
+      ({
+        readyToPersist,
+      }: {
+        readyToPersist: boolean;
+      }) =>
+        useSharedChatWidgetCapture({
+          enabled: true,
+          readyToPersist,
+          chatSessionId: "chat-session-1",
+          hostedShareToken: "share-token",
+          messages: [
+            {
+              id: "assistant-1",
+              role: "assistant",
+              parts: [
+                {
+                  type: "tool-search",
+                  toolCallId: "call-1",
+                  input: { q: "hello" },
+                  output: { result: "world", _serverId: "server-1" },
+                },
+              ],
+            } as any,
+          ],
+        }),
+      {
+        initialProps: {
+          readyToPersist: false,
+        },
+      },
+    );
+
+    act(() => {
+      useWidgetDebugStore.setState({
+        widgets: new Map([
+          [
+            "call-1",
+            {
+              toolCallId: "call-1",
+              toolName: "search",
+              protocol: "mcp-apps",
+              widgetState: null,
+              globals: {
+                theme: "dark",
+                displayMode: "inline",
+              },
+              widgetHtml: "<div>Widget</div>",
+              updatedAt: Date.now(),
+            },
+          ],
+        ]),
+      });
+    });
+
+    act(() => {
+      vi.advanceTimersByTime(5000);
+    });
+
+    await flushMicrotasks();
+
+    expect(mockGenerateSnapshotUploadUrl).not.toHaveBeenCalled();
+    expect(mockCreateWidgetSnapshot).not.toHaveBeenCalled();
+
+    rerender({ readyToPersist: true });
+
+    act(() => {
+      vi.advanceTimersByTime(500);
+    });
+
+    await flushMicrotasks();
+
+    expect(mockCreateWidgetSnapshot).toHaveBeenCalledTimes(1);
+    expect(mockGenerateSnapshotUploadUrl).toHaveBeenCalledTimes(3);
+
+    unmount();
+  });
+
   it("dedupes identical widget html and retries when the thread is not ready yet", async () => {
     const randomSpy = vi.spyOn(Math, "random").mockReturnValue(0);
     mockCreateWidgetSnapshot

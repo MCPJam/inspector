@@ -227,6 +227,7 @@ export interface UseChatSessionReturn {
         widgetPermissive: boolean;
         prefersBorder: boolean;
         widgetHtmlUrl?: string | null;
+        toolOutputUrl?: string | null;
       }>;
       turnTraces?: Array<{
         turnId: string;
@@ -376,6 +377,21 @@ export interface HydratedTurnTrace {
   modelId?: string;
 }
 
+interface PersistedWidgetSnapshot {
+  toolCallId: string;
+  toolName: string;
+  serverId: string;
+  uiType: "mcp-apps" | "openai-apps";
+  resourceUri?: string;
+  widgetCsp: Record<string, unknown> | null;
+  widgetPermissions: Record<string, unknown> | null;
+  widgetPermissive: boolean;
+  prefersBorder: boolean;
+  widgetHtmlUrl?: string | null;
+  toolOutputUrl?: string | null;
+  toolOutput?: unknown;
+}
+
 async function resolveHydratedTurnTraces(
   raw:
     | Array<{
@@ -436,6 +452,43 @@ async function resolveHydratedTurnTraces(
     }),
   );
   return results;
+}
+
+async function resolveHydratedWidgetSnapshots(
+  raw: PersistedWidgetSnapshot[] | undefined,
+): Promise<PersistedWidgetSnapshot[] | undefined> {
+  if (raw === undefined) {
+    return undefined;
+  }
+  if (raw.length === 0) {
+    return [];
+  }
+
+  return Promise.all(
+    raw.map(async (snapshot) => {
+      if (!snapshot.toolOutputUrl) {
+        return snapshot;
+      }
+
+      try {
+        const response = await fetch(snapshot.toolOutputUrl);
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+
+        return {
+          ...snapshot,
+          toolOutput: (await response.json()) as unknown,
+        };
+      } catch (err) {
+        console.warn(
+          `[useChatSession] Failed to fetch tool output for snapshot ${snapshot.toolCallId}:`,
+          err,
+        );
+        return snapshot;
+      }
+    }),
+  );
 }
 
 function buildLiveTraceStateFromTurnTraces(
@@ -1416,6 +1469,7 @@ export function useChatSession({
 
   useSharedChatWidgetCapture({
     enabled: HOSTED_MODE && (isAuthenticated || directGuestMode),
+    readyToPersist: status === "ready",
     directGuestMode,
     chatSessionId,
     hostedShareToken,
@@ -1561,18 +1615,7 @@ export function useChatSession({
           selectedServers?: string[];
         };
         version: number;
-        widgetSnapshots?: Array<{
-          toolCallId: string;
-          toolName: string;
-          serverId: string;
-          uiType: "mcp-apps" | "openai-apps";
-          resourceUri?: string;
-          widgetCsp: Record<string, unknown> | null;
-          widgetPermissions: Record<string, unknown> | null;
-          widgetPermissive: boolean;
-          prefersBorder: boolean;
-          widgetHtmlUrl?: string | null;
-        }>;
+        widgetSnapshots?: PersistedWidgetSnapshot[];
         turnTraces?: Array<{
           turnId: string;
           promptIndex: number;
@@ -1604,11 +1647,14 @@ export function useChatSession({
 
       // Build toolRenderOverrides from widget snapshots if available
       let overrides: Record<string, ToolRenderOverride> = {};
+      const hydratedWidgetSnapshots = await resolveHydratedWidgetSnapshots(
+        session.widgetSnapshots,
+      );
       const persistedSnapshotToolCallIds =
-        session.widgetSnapshots?.map((snapshot) => snapshot.toolCallId) ?? [];
-      if (session.widgetSnapshots && session.widgetSnapshots.length > 0) {
+        hydratedWidgetSnapshots?.map((snapshot) => snapshot.toolCallId) ?? [];
+      if (hydratedWidgetSnapshots && hydratedWidgetSnapshots.length > 0) {
         const traceSnapshots = snapshotsToTraceWidgetSnapshots(
-          session.widgetSnapshots,
+          hydratedWidgetSnapshots,
         );
         overrides = buildToolRenderOverridesFromSnapshots(traceSnapshots);
       }
