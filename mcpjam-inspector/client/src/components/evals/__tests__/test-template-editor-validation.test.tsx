@@ -188,4 +188,34 @@ describe("TestTemplateEditor prompt validation UI", () => {
     const runButton = screen.getByRole("button", { name: /^Run$/ });
     expect(runButton).toBeDisabled();
   });
+
+  it("disables Run when there are no tool assertions", async () => {
+    caseDoc.query = "Hello";
+    baseIteration.testCaseSnapshot.query = "Hello";
+
+    renderWithProviders(
+      <TestTemplateEditor
+        suiteId="suite-1"
+        selectedTestCaseId="case-1"
+        connectedServerNames={new Set(["srv"])}
+        workspaceId={null}
+        availableModels={[
+          {
+            provider: "openai",
+            model: "gpt-4",
+            label: "GPT-4",
+          } as any,
+        ]}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByDisplayValue("Hello")).toBeInTheDocument();
+    });
+
+    expect(screen.getByRole("button", { name: /^Run$/ })).toBeDisabled();
+    expect(
+      screen.getByText("Add at least one expected tool assertion before running."),
+    ).toBeInTheDocument();
+  });
 });

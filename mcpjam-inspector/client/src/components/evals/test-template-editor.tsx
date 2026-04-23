@@ -191,6 +191,10 @@ function deriveIsNegativeTestFromPromptTurns(
   return promptTurns.every((turn) => turn.expectedToolCalls.length === 0);
 }
 
+function hasAnyAssertedToolCall(promptTurns: PromptTurn[]): boolean {
+  return promptTurns.some((turn) => turn.expectedToolCalls.length > 0);
+}
+
 function compactModelLabel(name: string): string {
   return name.replace(/\s*\(Free\)\s*$/i, "").trim() || name;
 }
@@ -603,6 +607,11 @@ export function TestTemplateEditor({
     return validatePromptTurns(editForm.promptTurns);
   }, [editForm]);
 
+  const hasRequiredRunAssertions = useMemo(() => {
+    if (!editForm) return false;
+    return hasAnyAssertedToolCall(editForm.promptTurns);
+  }, [editForm]);
+
   const savePrimaryDisabled = !arePromptTurnsValid || isRunningCompare;
 
   const saveDisabledTooltip = useMemo(() => {
@@ -622,7 +631,8 @@ export function TestTemplateEditor({
     selectedModelValues.length === 0 ||
     isRunningCompare ||
     !canRun ||
-    !arePromptTurnsValid;
+    !arePromptTurnsValid ||
+    !hasRequiredRunAssertions;
 
   const runDisabledTooltip = useMemo(() => {
     if (!runPrimaryDisabled) {
@@ -633,6 +643,9 @@ export function TestTemplateEditor({
     }
     if (!canRun) {
       return "Configure suite servers before running.";
+    }
+    if (!hasRequiredRunAssertions) {
+      return "Add at least one expected tool assertion before running.";
     }
     if (!arePromptTurnsValid && editForm) {
       return (
@@ -658,10 +671,14 @@ export function TestTemplateEditor({
     canRun,
     missingServers,
     isRunningCompare,
+    hasRequiredRunAssertions,
     arePromptTurnsValid,
     editForm,
     ensureServersReady,
   ]);
+
+  const showInlineRunBlockedHint =
+    runPrimaryDisabled && !isRunningCompare && Boolean(runDisabledTooltip);
 
   const updatePromptTurn = (
     index: number,
@@ -1174,6 +1191,11 @@ export function TestTemplateEditor({
     );
     if (runModelValues.length === 0) {
       toast.error("Select at least one model to run.");
+      return;
+    }
+
+    if (!hasAnyAssertedToolCall(editForm.promptTurns)) {
+      toast.error("Add at least one expected tool assertion before running.");
       return;
     }
 
@@ -1930,7 +1952,7 @@ export function TestTemplateEditor({
                     </Button>
                   )
                 ) : null}
-                {runDisabledTooltip ? (
+                {runDisabledTooltip && !showInlineRunBlockedHint ? (
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <span className="inline-flex items-center gap-2">
@@ -2012,7 +2034,7 @@ export function TestTemplateEditor({
                 )}
               </div>
             </div>
-            {runPrimaryDisabled && !isRunningCompare && runDisabledTooltip ? (
+            {showInlineRunBlockedHint ? (
               <p
                 className="text-xs leading-snug text-muted-foreground sm:text-right"
                 data-testid="test-template-run-blocked-hint"
