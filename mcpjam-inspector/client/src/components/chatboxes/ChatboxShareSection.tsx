@@ -29,6 +29,27 @@ import {
 
 const INVITE_EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+function buildChatboxUpdatePayload(
+  chatbox: ChatboxSettings,
+  allowGuestAccess: boolean,
+) {
+  return {
+    chatboxId: chatbox.chatboxId,
+    name: chatbox.name,
+    description: chatbox.description,
+    hostStyle: chatbox.hostStyle,
+    systemPrompt: chatbox.systemPrompt,
+    modelId: chatbox.modelId,
+    temperature: chatbox.temperature,
+    requireToolApproval: chatbox.requireToolApproval,
+    serverIds: chatbox.servers.map((server) => server.serverId),
+    optionalServerIds: chatbox.servers
+      .filter((server) => server.optional)
+      .map((server) => server.serverId),
+    allowGuestAccess,
+  };
+}
+
 interface ChatboxShareSectionProps {
   chatbox: ChatboxSettings;
   onUpdated?: (chatbox: ChatboxSettings) => void;
@@ -113,10 +134,9 @@ export function ChatboxShareSection({
         })) as ChatboxSettings;
       }
       if (target.allowGuestAccess !== next.allowGuestAccess) {
-        next = (await updateChatbox({
-          chatboxId: settings.chatboxId,
-          allowGuestAccess: target.allowGuestAccess,
-        })) as ChatboxSettings;
+        next = (await updateChatbox(
+          buildChatboxUpdatePayload(next, target.allowGuestAccess),
+        )) as ChatboxSettings;
       }
       updateSettings(next);
     } catch (error) {
