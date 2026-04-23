@@ -1,6 +1,21 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Check, ChevronDown, Loader2, Plus } from "lucide-react";
+import {
+  Check,
+  ChevronDown,
+  Clock,
+  Globe,
+  Loader2,
+  Lock,
+  Plus,
+  Users,
+} from "lucide-react";
+import { useAuth } from "@workos-inc/authkit-react";
 import { toast } from "sonner";
+import {
+  Avatar,
+  AvatarFallback,
+  AvatarImage,
+} from "@mcpjam/design-system/avatar";
 import { Badge } from "@mcpjam/design-system/badge";
 import { Button } from "@mcpjam/design-system/button";
 import { Card } from "@mcpjam/design-system/card";
@@ -17,7 +32,14 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@mcpjam/design-system/popover";
-import { RadioGroup, RadioGroupItem } from "@mcpjam/design-system/radio-group";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+} from "@mcpjam/design-system/dropdown-menu";
 import {
   Select,
   SelectContent,
@@ -32,6 +54,7 @@ import { Textarea } from "@mcpjam/design-system/textarea";
 import { ScrollArea } from "@mcpjam/design-system/scroll-area";
 import { ChatboxShareSection } from "@/components/chatboxes/ChatboxShareSection";
 import type { ChatboxSettings } from "@/hooks/useChatboxes";
+import { useProfilePicture } from "@/hooks/useProfilePicture";
 import {
   chatboxAccessPresetFromSettings,
   settingsFromChatboxAccessPreset,
@@ -44,7 +67,7 @@ import {
   type ChatboxHostStyle,
 } from "@/lib/chatbox-host-style";
 import { isMCPJamProvidedModel, SUPPORTED_MODELS } from "@/shared/types";
-import { cn } from "@/lib/utils";
+import { cn, getInitials } from "@/lib/utils";
 import type { ChatboxDraftConfig } from "./types";
 
 export type SetupSectionId =
@@ -64,6 +87,7 @@ type SectionStatusKind =
 
 const sectionStatusMetaClassName =
   "inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground";
+const INVITE_EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 function SectionStatusBadge({ kind }: { kind: SectionStatusKind }) {
   switch (kind) {
@@ -98,7 +122,7 @@ function SetupSectionStepIndex({ step }: { step: number }) {
   return (
     <span
       className={cn(
-        "flex size-7 shrink-0 items-center justify-center rounded-full border border-border/70 bg-muted/40 text-xs font-semibold tabular-nums text-muted-foreground transition-colors",
+        "flex size-7 shrink-0 items-center justify-center rounded-full border border-border/70 bg-muted/40 text-xs font-semibold tabular-nums text-muted-foreground transition-colors"
       )}
     >
       {step}
@@ -147,7 +171,7 @@ function isInsecureUrl(url: string | undefined): boolean {
 function updateSelectedServerIds(
   currentServerIds: string[],
   serverId: string,
-  checked: boolean,
+  checked: boolean
 ): string[] {
   const hasServer = currentServerIds.includes(serverId);
   if (checked) {
@@ -169,7 +193,7 @@ export function WorkspaceServerPickerList({
   onToggleSelection: (serverId: string, checked: boolean) => void;
 }) {
   const availableServers = workspaceServers.filter(
-    (server) => server.transportType === "http",
+    (server) => server.transportType === "http"
   );
   const selectedServerSet = new Set(selectedServerIds);
 
@@ -188,7 +212,9 @@ export function WorkspaceServerPickerList({
         return (
           <label
             key={server._id}
-            className={`flex items-center gap-3 rounded-md px-2 py-1.5 ${insecure ? "cursor-not-allowed opacity-50" : "hover:bg-muted/50"}`}
+            className={`flex items-center gap-3 rounded-md px-2 py-1.5 ${
+              insecure ? "cursor-not-allowed opacity-50" : "hover:bg-muted/50"
+            }`}
             title={insecure ? "Chatboxes require HTTPS server URLs" : undefined}
           >
             <Checkbox
@@ -223,19 +249,19 @@ export function ServerSelectionEditor({
   onOpenAdd: () => void;
 }) {
   const availableServers = workspaceServers.filter(
-    (server) => server.transportType === "http",
+    (server) => server.transportType === "http"
   );
   const selectedServerSet = new Set(selectedServerIds);
   const selectedServers = availableServers.filter((server) =>
-    selectedServerSet.has(server._id),
+    selectedServerSet.has(server._id)
   );
 
   const selectionSummary =
     selectedServers.length === 0
       ? "Choose workspace servers…"
       : selectedServers.length === 1
-        ? "1 server selected"
-        : `${selectedServers.length} servers selected`;
+      ? "1 server selected"
+      : `${selectedServers.length} servers selected`;
 
   return (
     <div className="space-y-3">
@@ -324,7 +350,7 @@ export function ServerSelectionEditor({
 
 export function computeSectionStatuses(
   draft: ChatboxDraftConfig,
-  workspaceServers: RemoteServer[],
+  workspaceServers: RemoteServer[]
 ): Record<SetupSectionId, SectionStatusKind> {
   const nameOk = draft.name.trim().length > 0;
   const modelOk = Boolean(draft.modelId);
@@ -351,8 +377,8 @@ export function computeSectionStatuses(
   const feedback: SectionStatusKind = feedbackInvalid
     ? "attention"
     : draft.feedbackDialog.enabled
-      ? "default_on"
-      : "optional";
+    ? "default_on"
+    : "optional";
 
   return {
     basics,
@@ -374,8 +400,9 @@ export function SetupChecklistPanel({
   onDraftChange,
   onOpenAddServer,
   onToggleServer,
-  stagedAccessInviteEmail,
-  onStagedAccessInviteEmailChange,
+  stagedAccessInviteEmails,
+  onStagedAccessInviteEmailAdd,
+  onStagedAccessInviteEmailRemove,
   onCloseMobile,
   /** When the chatbox is saved, invite by email from the Access section (invite-only draft). */
   inviteChatboxMember,
@@ -388,18 +415,21 @@ export function SetupChecklistPanel({
   focusedSection: SetupSectionId | null;
   isUnsavedNewDraft: boolean;
   onDraftChange: (
-    updater: (draft: ChatboxDraftConfig) => ChatboxDraftConfig,
+    updater: (draft: ChatboxDraftConfig) => ChatboxDraftConfig
   ) => void;
   onOpenAddServer: () => void;
   onToggleServer: (serverId: string, checked: boolean) => void;
-  stagedAccessInviteEmail: string;
-  onStagedAccessInviteEmailChange: (email: string) => void;
+  stagedAccessInviteEmails: string[];
+  onStagedAccessInviteEmailAdd: (email: string) => void;
+  onStagedAccessInviteEmailRemove: (email: string) => void;
   onCloseMobile?: () => void;
   inviteChatboxMember?: (email: string) => Promise<void>;
 }) {
+  const { user } = useAuth();
+  const { profilePictureUrl } = useProfilePicture();
   const statuses = useMemo(
     () => computeSectionStatuses(chatboxDraft, workspaceServers),
-    [chatboxDraft, workspaceServers],
+    [chatboxDraft, workspaceServers]
   );
 
   const sectionRefs = useRef<
@@ -409,8 +439,29 @@ export function SetupChecklistPanel({
   const [openMap, setOpenMap] = useState<
     Partial<Record<SetupSectionId, boolean>>
   >({});
+  const [inviteInputEmail, setInviteInputEmail] = useState("");
   const [accessInviteBusy, setAccessInviteBusy] = useState(false);
   const didAutoExpandRef = useRef(false);
+  const workspaceLabel = workspaceName?.trim() || "Workspace";
+  const accessPreset = chatboxAccessPresetFromSettings(
+    chatboxDraft.mode,
+    chatboxDraft.allowGuestAccess
+  );
+  const displayName =
+    [user?.firstName, user?.lastName].filter(Boolean).join(" ") || "You";
+  const displayInitials = getInitials(displayName);
+  const normalizedInviteInputEmail = inviteInputEmail.trim().toLowerCase();
+  const emailValidationError =
+    normalizedInviteInputEmail &&
+    !INVITE_EMAIL_PATTERN.test(normalizedInviteInputEmail)
+      ? "Enter a valid email address."
+      : null;
+  const AccessIcon =
+    accessPreset === "workspace"
+      ? Users
+      : accessPreset === "link_guests"
+      ? Globe
+      : Lock;
 
   useEffect(() => {
     if (!isUnsavedNewDraft || didAutoExpandRef.current) return;
@@ -439,27 +490,53 @@ export function SetupChecklistPanel({
   const hostedModels = useMemo(
     () =>
       SUPPORTED_MODELS.filter((model) =>
-        isMCPJamProvidedModel(String(model.id)),
+        isMCPJamProvidedModel(String(model.id))
       ),
-    [],
+    []
   );
 
   const setSectionOpen = (id: SetupSectionId, open: boolean) => {
     setOpenMap((prev) => ({ ...prev, [id]: open }));
   };
 
+  const handleAccessPresetChange = (preset: ChatboxAccessPreset) => {
+    const nextSettings = settingsFromChatboxAccessPreset(preset);
+    onDraftChange((draft) => ({
+      ...draft,
+      ...nextSettings,
+    }));
+  };
+
+  const accessTriggerSummary = () => {
+    switch (accessPreset) {
+      case "workspace":
+        return workspaceLabel;
+      case "invited_only":
+        return "Invited users only";
+      case "link_guests":
+        return "Anyone with the link (guests included)";
+    }
+  };
+
   const handleAccessInvite = async () => {
-    if (!inviteChatboxMember) return;
-    const normalized = stagedAccessInviteEmail.trim().toLowerCase();
-    if (!normalized) return;
+    if (!normalizedInviteInputEmail || emailValidationError) return;
+
+    if (!inviteChatboxMember) {
+      onStagedAccessInviteEmailAdd(normalizedInviteInputEmail);
+      setInviteInputEmail("");
+      return;
+    }
+
     setAccessInviteBusy(true);
     try {
-      await inviteChatboxMember(normalized);
-      toast.success(`Invited ${normalized}`);
-      onStagedAccessInviteEmailChange("");
+      await inviteChatboxMember(normalizedInviteInputEmail);
+      toast.success(`Invited ${normalizedInviteInputEmail}`);
+      setInviteInputEmail("");
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : "Failed to send invite",
+        error instanceof Error
+          ? error.message
+          : `Failed to invite ${normalizedInviteInputEmail}`
       );
     } finally {
       setAccessInviteBusy(false);
@@ -549,7 +626,7 @@ export function SetupChecklistPanel({
                               </div>
                             </button>
                           );
-                        },
+                        }
                       )}
                     </div>
                   </div>
@@ -636,162 +713,234 @@ export function SetupChecklistPanel({
                       workspaceName={workspaceName}
                     />
                   ) : (
-                    <>
-                      <div className="space-y-6">
-                        <RadioGroup
-                          value={chatboxAccessPresetFromSettings(
-                            chatboxDraft.mode,
-                            chatboxDraft.allowGuestAccess,
-                          )}
-                          onValueChange={(value) => {
-                            const nextSettings = settingsFromChatboxAccessPreset(
-                              value as ChatboxAccessPreset,
-                            );
-                            onDraftChange((draft) => ({
-                              ...draft,
-                              ...nextSettings,
-                            }));
-                            if (nextSettings.mode !== "invited_only") {
-                              onStagedAccessInviteEmailChange("");
-                            }
-                          }}
-                          className="grid gap-2"
-                        >
-                          <label
-                            htmlFor="access-preset-workspace"
-                            className="flex cursor-pointer items-start gap-3 rounded-xl border border-border/70 bg-card/50 p-3 has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring/50"
+                    <div className="space-y-6">
+                      <div className="space-y-2">
+                        <Label className="text-sm font-medium">
+                          Access settings
+                        </Label>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <button
+                              type="button"
+                              className="flex w-full items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-sm transition-colors hover:bg-accent hover:text-accent-foreground disabled:opacity-50"
+                            >
+                              <AccessIcon className="size-4 shrink-0" />
+                              <span className="flex-1 text-left">
+                                {accessTriggerSummary()}
+                              </span>
+                              <ChevronDown className="size-4 shrink-0 text-muted-foreground" />
+                            </button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent
+                            align="start"
+                            className="w-[--radix-dropdown-menu-trigger-width]"
                           >
-                            <RadioGroupItem
-                              value="workspace"
-                              id="access-preset-workspace"
-                              className="mt-0.5"
-                            />
-                            <span className="min-w-0">
-                              <span className="block text-sm font-medium">
-                                {workspaceName?.trim() || "Workspace"}
-                              </span>
-                              <span className="mt-0.5 block text-xs text-muted-foreground">
-                                Signed-in members of this workspace can open the
-                                chatbox with the link. Guests cannot.
-                              </span>
-                            </span>
-                          </label>
-                          <label
-                            htmlFor="access-preset-invited"
-                            className="flex cursor-pointer items-start gap-3 rounded-xl border border-border/70 bg-card/50 p-3 has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring/50"
-                          >
-                            <RadioGroupItem
-                              value="invited_only"
-                              id="access-preset-invited"
-                              className="mt-0.5"
-                            />
-                            <span className="min-w-0">
-                              <span className="block text-sm font-medium">
-                                Invited users only
-                              </span>
-                              <span className="mt-0.5 block text-xs text-muted-foreground">
-                                Only people you invite by email can open this
-                                chatbox.
-                              </span>
-                            </span>
-                          </label>
-                          <label
-                            htmlFor="access-preset-link-guests"
-                            className="flex cursor-pointer items-start gap-3 rounded-xl border border-border/70 bg-card/50 p-3 has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring/50"
-                          >
-                            <RadioGroupItem
-                              value="link_guests"
-                              id="access-preset-link-guests"
-                              className="mt-0.5"
-                            />
-                            <span className="min-w-0">
-                              <span className="block text-sm font-medium">
-                                Anyone with the link (guests included)
-                              </span>
-                              <span className="mt-0.5 block text-xs text-muted-foreground">
-                                Anyone with the link can open the chatbox,
-                                including guests without an account.
-                              </span>
-                            </span>
-                          </label>
-                        </RadioGroup>
-
-                        {chatboxDraft.mode === "invited_only" ? (
-                          <div className="space-y-3 rounded-xl border border-border/70 bg-card/50 p-4">
-                            <p className="text-xs text-muted-foreground">
-                              Invite-only is email-based. Workspace membership
-                              does not auto-include everyone—you invite each
-                              address (or use the section below once the chatbox
-                              is saved).
-                            </p>
-                            <div className="space-y-2">
-                              <p className="text-sm font-semibold text-foreground">
-                                Invite people
-                              </p>
-                              <Label
-                                htmlFor="access-invite-email"
-                                className="text-xs font-medium text-muted-foreground"
+                            <DropdownMenuRadioGroup
+                              value={accessPreset}
+                              onValueChange={(value) =>
+                                handleAccessPresetChange(
+                                  value as ChatboxAccessPreset
+                                )
+                              }
+                            >
+                              <DropdownMenuRadioItem
+                                value="workspace"
+                                className="items-start"
                               >
-                                Email address
-                              </Label>
-                              <div className="flex gap-2">
+                                <div>
+                                  <div className="flex items-center gap-2 font-medium">
+                                    <Users className="size-4" />
+                                    {workspaceLabel}
+                                  </div>
+                                  <p className="text-xs font-normal text-muted-foreground">
+                                    Signed-in members of this workspace can open
+                                    the chatbox with the link. Guests cannot.
+                                  </p>
+                                </div>
+                              </DropdownMenuRadioItem>
+                              <DropdownMenuRadioItem
+                                value="invited_only"
+                                className="items-start"
+                              >
+                                <div>
+                                  <div className="flex items-center gap-2 font-medium">
+                                    <Lock className="size-4" />
+                                    Invited users only
+                                  </div>
+                                  <p className="text-xs font-normal text-muted-foreground">
+                                    Only people you invite by email can open
+                                    this chatbox.
+                                  </p>
+                                </div>
+                              </DropdownMenuRadioItem>
+                              <DropdownMenuRadioItem
+                                value="link_guests"
+                                className="items-start"
+                              >
+                                <div>
+                                  <div className="flex items-center gap-2 font-medium">
+                                    <Globe className="size-4" />
+                                    Anyone with the link (guests included)
+                                  </div>
+                                  <p className="text-xs font-normal text-muted-foreground">
+                                    Anyone with the link can open the chatbox,
+                                    including guests without an account.
+                                  </p>
+                                </div>
+                              </DropdownMenuRadioItem>
+                            </DropdownMenuRadioGroup>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </div>
+
+                      {chatboxDraft.mode === "invited_only" ? (
+                        <>
+                          <div className="space-y-2">
+                            <Label
+                              className="text-sm font-medium"
+                              htmlFor="access-invite-email"
+                            >
+                              Invite with email
+                            </Label>
+                            <div className="flex gap-2">
+                              <div className="flex flex-1 items-center rounded-md border border-input focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2">
                                 <Input
                                   id="access-invite-email"
                                   type="email"
                                   autoComplete="email"
-                                  placeholder="colleague@company.com"
+                                  placeholder="Add people, emails..."
                                   disabled={accessInviteBusy}
-                                  value={stagedAccessInviteEmail}
+                                  value={inviteInputEmail}
                                   onChange={(event) =>
-                                    onStagedAccessInviteEmailChange(
-                                      event.target.value,
-                                    )
+                                    setInviteInputEmail(event.target.value)
                                   }
                                   onKeyDown={(event) => {
-                                    if (
-                                      event.key === "Enter" &&
-                                      inviteChatboxMember
-                                    ) {
+                                    if (event.key === "Enter") {
                                       event.preventDefault();
                                       void handleAccessInvite();
                                     }
                                   }}
-                                />
-                                <Button
-                                  type="button"
-                                  className="shrink-0"
-                                  disabled={
-                                    !inviteChatboxMember ||
-                                    !stagedAccessInviteEmail.trim() ||
-                                    accessInviteBusy
+                                  aria-invalid={
+                                    emailValidationError ? true : undefined
                                   }
-                                  onClick={() => void handleAccessInvite()}
-                                >
-                                  {accessInviteBusy &&
-                                  stagedAccessInviteEmail.trim() ? (
-                                    <Loader2 className="size-4 animate-spin" />
-                                  ) : !inviteChatboxMember ? (
-                                    "Save to send"
-                                  ) : (
-                                    "Invite"
-                                  )}
-                                </Button>
+                                  className="flex-1 border-0 focus-visible:ring-0 focus-visible:ring-offset-0"
+                                />
                               </div>
-                              {!inviteChatboxMember ? (
-                                <p className="text-xs text-muted-foreground">
-                                  The invite will be sent when you save this
-                                  chatbox.
-                                </p>
-                              ) : null}
+                              <Button
+                                type="button"
+                                className="shrink-0"
+                                disabled={
+                                  !normalizedInviteInputEmail ||
+                                  !!emailValidationError ||
+                                  accessInviteBusy
+                                }
+                                onClick={() => void handleAccessInvite()}
+                              >
+                                {accessInviteBusy &&
+                                normalizedInviteInputEmail ? (
+                                  <Loader2 className="size-4 animate-spin" />
+                                ) : (
+                                  "Invite"
+                                )}
+                              </Button>
+                            </div>
+                            {emailValidationError ? (
+                              <p className="text-sm text-destructive">
+                                {emailValidationError}
+                              </p>
+                            ) : null}
+                          </div>
+
+                          <div className="space-y-2">
+                            <Label className="text-sm font-medium">
+                              Has access
+                            </Label>
+                            <div className="max-h-[300px] space-y-1 overflow-y-auto">
+                              <div className="flex items-center gap-3 rounded-md p-2">
+                                <Avatar className="size-9">
+                                  <AvatarImage
+                                    src={profilePictureUrl}
+                                    alt={displayName}
+                                  />
+                                  <AvatarFallback className="text-sm">
+                                    {displayInitials}
+                                  </AvatarFallback>
+                                </Avatar>
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex items-center gap-1.5">
+                                    <p className="truncate text-sm font-medium">
+                                      {displayName}
+                                    </p>
+                                    <span className="text-xs text-muted-foreground">
+                                      (you)
+                                    </span>
+                                  </div>
+                                  <p className="truncate text-xs text-muted-foreground">
+                                    {user?.email}
+                                  </p>
+                                </div>
+                                <span className="shrink-0 text-sm text-muted-foreground">
+                                  Owner
+                                </span>
+                              </div>
                             </div>
                           </div>
-                        ) : null}
-                      </div>
-                      <p className="text-sm text-muted-foreground">
-                        Save the chatbox to manage invitations and access
-                        settings for the hosted link.
-                      </p>
-                    </>
+
+                          {stagedAccessInviteEmails.length > 0 ? (
+                            <div className="space-y-2">
+                              <Label className="text-sm font-medium">
+                                Invited
+                              </Label>
+                              <div className="max-h-[220px] space-y-1 overflow-y-auto">
+                                {stagedAccessInviteEmails.map((email) => (
+                                  <div
+                                    key={email}
+                                    className="flex items-center gap-3 rounded-md p-2 hover:bg-muted/50"
+                                  >
+                                    <div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-muted">
+                                      <Clock className="size-4 text-muted-foreground" />
+                                    </div>
+                                    <div className="min-w-0 flex-1">
+                                      <p className="truncate text-sm font-medium">
+                                        {email}
+                                      </p>
+                                      <p className="text-xs text-muted-foreground">
+                                        Invitation will be sent when you create
+                                        this chatbox
+                                      </p>
+                                    </div>
+                                    <DropdownMenu>
+                                      <DropdownMenuTrigger asChild>
+                                        <Button
+                                          variant="ghost"
+                                          size="sm"
+                                          className="shrink-0 gap-1 text-sm"
+                                        >
+                                          Pending
+                                          <ChevronDown className="size-3" />
+                                        </Button>
+                                      </DropdownMenuTrigger>
+                                      <DropdownMenuContent align="end">
+                                        <DropdownMenuItem
+                                          className="text-destructive focus:text-destructive"
+                                          onClick={() =>
+                                            onStagedAccessInviteEmailRemove(
+                                              email
+                                            )
+                                          }
+                                        >
+                                          Cancel invite
+                                        </DropdownMenuItem>
+                                      </DropdownMenuContent>
+                                    </DropdownMenu>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          ) : null}
+                        </>
+                      ) : null}
+                    </div>
                   )}
                 </div>
               </CollapsibleContent>

@@ -57,6 +57,20 @@ vi.mock("@/hooks/use-mobile", () => ({
   useIsMobile: () => false,
 }));
 
+vi.mock("@workos-inc/authkit-react", () => ({
+  useAuth: () => ({
+    user: {
+      firstName: "Ignacio",
+      lastName: "Jimenez",
+      email: "ignacio@mcpjam.com",
+    },
+  }),
+}));
+
+vi.mock("@/hooks/useProfilePicture", () => ({
+  useProfilePicture: () => ({ profilePictureUrl: null }),
+}));
+
 vi.mock("@/lib/chatbox-host-style", () => ({
   getChatboxHostLogo: () => "/mock-host-logo.png",
   getChatboxHostStyleShortLabel: (hostStyle: string) =>
@@ -102,11 +116,7 @@ vi.mock("../ChatboxCanvas", () => ({
 }));
 
 vi.mock("@/components/chatboxes/ChatboxUsagePanel", () => ({
-  ChatboxUsagePanel: ({
-    section,
-  }: {
-    section: "sessions" | "insights";
-  }) => (
+  ChatboxUsagePanel: ({ section }: { section: "sessions" | "insights" }) => (
     <div data-testid="chatbox-usage-panel" data-section={section} />
   ),
 }));
@@ -124,7 +134,7 @@ const httpsServer = {
 
 function createSavedChatbox(
   hostStyle: "claude" | "chatgpt",
-  overrides: Partial<ChatboxSettings> = {},
+  overrides: Partial<ChatboxSettings> = {}
 ): ChatboxSettings {
   return {
     chatboxId: `sbx-${hostStyle}`,
@@ -159,7 +169,7 @@ function createSavedChatbox(
 function createUnsavedInviteOnlyDraft() {
   return {
     ...CHATBOX_STARTERS.find((s) => s.id === "internal-qa")!.createDraft(
-      "openai/gpt-5-mini",
+      "openai/gpt-5-mini"
     ),
     selectedServerIds: [httpsServer._id],
   };
@@ -194,18 +204,18 @@ describe("ChatboxBuilderView", () => {
         draft={dirtyDraft}
         onBack={() => {}}
         onSavedDraft={() => {}}
-      />,
+      />
     );
 
     expect(
-      screen.getByRole("button", { name: "Save changes" }),
+      screen.getByRole("button", { name: "Save changes" })
     ).toBeInTheDocument();
     expect(screen.queryByText("Unsaved")).not.toBeInTheDocument();
   });
 
   it("exposes return navigation as an icon button with a descriptive label", () => {
     const draft = CHATBOX_STARTERS.find((s) => s.id === "blank")!.createDraft(
-      "openai/gpt-5-mini",
+      "openai/gpt-5-mini"
     );
     render(
       <ChatboxBuilderView
@@ -214,17 +224,17 @@ describe("ChatboxBuilderView", () => {
         draft={draft}
         onBack={() => {}}
         onSavedDraft={() => {}}
-      />,
+      />
     );
 
     expect(
-      screen.getByRole("button", { name: "Return to chatboxes" }),
+      screen.getByRole("button", { name: "Return to chatboxes" })
     ).toBeInTheDocument();
   });
 
   it("shows setup-mode bottom CTA only in setup mode", () => {
     const draft = CHATBOX_STARTERS.find((s) => s.id === "blank")!.createDraft(
-      "openai/gpt-5-mini",
+      "openai/gpt-5-mini"
     );
     render(
       <ChatboxBuilderView
@@ -233,7 +243,7 @@ describe("ChatboxBuilderView", () => {
         draft={draft}
         onBack={() => {}}
         onSavedDraft={() => {}}
-      />,
+      />
     );
 
     const cta = screen.getByRole("button", { name: "Save and open preview" });
@@ -244,7 +254,7 @@ describe("ChatboxBuilderView", () => {
 
   it("enables the setup bottom CTA when no setup sections need attention", () => {
     const base = CHATBOX_STARTERS.find((s) => s.id === "blank")!.createDraft(
-      "openai/gpt-5-mini",
+      "openai/gpt-5-mini"
     );
     const draft = {
       ...base,
@@ -257,11 +267,11 @@ describe("ChatboxBuilderView", () => {
         draft={draft}
         onBack={() => {}}
         onSavedDraft={() => {}}
-      />,
+      />
     );
 
     expect(
-      screen.getByRole("button", { name: "Save and open preview" }),
+      screen.getByRole("button", { name: "Save and open preview" })
     ).not.toBeDisabled();
     expect(screen.getByRole("button", { name: /^Save$/i })).not.toBeDisabled();
   });
@@ -283,13 +293,14 @@ describe("ChatboxBuilderView", () => {
         draft={createUnsavedInviteOnlyDraft()}
         onBack={() => {}}
         onSavedDraft={onSavedDraft}
-      />,
+      />
     );
 
     await user.click(screen.getByRole("button", { name: /Access/i }));
-    fireEvent.change(screen.getByLabelText(/email address/i), {
+    fireEvent.change(screen.getByLabelText(/invite with email/i), {
       target: { value: "tester@example.com" },
     });
+    await user.click(screen.getByRole("button", { name: /^Invite$/i }));
     await user.click(screen.getByRole("button", { name: /^Save$/i }));
 
     await waitFor(() => expect(mockCreateChatbox).toHaveBeenCalledTimes(1));
@@ -297,7 +308,7 @@ describe("ChatboxBuilderView", () => {
       expect.objectContaining({
         workspaceId: "ws-1",
         serverIds: [httpsServer._id],
-      }),
+      })
     );
     expect(mockSetChatboxMode).not.toHaveBeenCalled();
     await waitFor(() =>
@@ -305,16 +316,16 @@ describe("ChatboxBuilderView", () => {
         chatboxId: createdChatbox.chatboxId,
         email: "tester@example.com",
         sendInviteEmail: true,
-      }),
+      })
     );
     expect(mockCreateChatbox.mock.invocationCallOrder[0]).toBeLessThan(
-      mockUpsertChatboxMember.mock.invocationCallOrder[0],
+      mockUpsertChatboxMember.mock.invocationCallOrder[0]
     );
     await waitFor(() =>
       expect(onSavedDraft).toHaveBeenCalledWith(createdChatbox, {
         initialViewMode: "setup",
         initialFocusedSetupSection: "access",
-      }),
+      })
     );
   });
 
@@ -335,15 +346,16 @@ describe("ChatboxBuilderView", () => {
         draft={createUnsavedInviteOnlyDraft()}
         onBack={() => {}}
         onSavedDraft={onSavedDraft}
-      />,
+      />
     );
 
     await user.click(screen.getByRole("button", { name: /Access/i }));
-    fireEvent.change(screen.getByLabelText(/email address/i), {
+    fireEvent.change(screen.getByLabelText(/invite with email/i), {
       target: { value: "preview@example.com" },
     });
+    await user.click(screen.getByRole("button", { name: /^Invite$/i }));
     await user.click(
-      screen.getByRole("button", { name: "Save and open preview" }),
+      screen.getByRole("button", { name: "Save and open preview" })
     );
 
     await waitFor(() => expect(mockCreateChatbox).toHaveBeenCalledTimes(1));
@@ -352,23 +364,24 @@ describe("ChatboxBuilderView", () => {
         chatboxId: createdChatbox.chatboxId,
         email: "preview@example.com",
         sendInviteEmail: true,
-      }),
+      })
     );
     expect(mockCreateChatbox.mock.invocationCallOrder[0]).toBeLessThan(
-      mockUpsertChatboxMember.mock.invocationCallOrder[0],
+      mockUpsertChatboxMember.mock.invocationCallOrder[0]
     );
     await waitFor(() =>
       expect(onSavedDraft).toHaveBeenCalledWith(createdChatbox, {
-        initialViewMode: "preview",
-      }),
+        initialViewMode: "setup",
+        initialFocusedSetupSection: "access",
+      })
     );
   });
 
   it("keeps the staged invite email in place when save is blocked and does not attempt an invite", async () => {
     const user = userEvent.setup();
-    const draft = CHATBOX_STARTERS.find((s) => s.id === "internal-qa")!.createDraft(
-      "openai/gpt-5-mini",
-    );
+    const draft = CHATBOX_STARTERS.find(
+      (s) => s.id === "internal-qa"
+    )!.createDraft("openai/gpt-5-mini");
     render(
       <ChatboxBuilderView
         workspaceId="ws-1"
@@ -376,11 +389,11 @@ describe("ChatboxBuilderView", () => {
         draft={draft}
         onBack={() => {}}
         onSavedDraft={() => {}}
-      />,
+      />
     );
 
     await user.click(screen.getByRole("button", { name: /Access/i }));
-    const emailInput = screen.getByLabelText(/email address/i);
+    const emailInput = screen.getByLabelText(/invite with email/i);
     fireEvent.change(emailInput, {
       target: { value: "blocked@example.com" },
     });
@@ -411,15 +424,16 @@ describe("ChatboxBuilderView", () => {
         draft={createUnsavedInviteOnlyDraft()}
         onBack={() => {}}
         onSavedDraft={onSavedDraft}
-      />,
+      />
     );
 
     await user.click(screen.getByRole("button", { name: /Access/i }));
-    fireEvent.change(screen.getByLabelText(/email address/i), {
+    fireEvent.change(screen.getByLabelText(/invite with email/i), {
       target: { value: "retry@example.com" },
     });
+    await user.click(screen.getByRole("button", { name: /^Invite$/i }));
     await user.click(
-      screen.getByRole("button", { name: "Save and open preview" }),
+      screen.getByRole("button", { name: "Save and open preview" })
     );
 
     await waitFor(() => expect(mockCreateChatbox).toHaveBeenCalledTimes(1));
@@ -428,13 +442,13 @@ describe("ChatboxBuilderView", () => {
         chatboxId: createdChatbox.chatboxId,
         email: "retry@example.com",
         sendInviteEmail: true,
-      }),
+      })
     );
     await waitFor(() =>
       expect(onSavedDraft).toHaveBeenCalledWith(createdChatbox, {
         initialViewMode: "setup",
         initialFocusedSetupSection: "access",
-      }),
+      })
     );
     expect(mockToastSuccess).toHaveBeenCalledWith("Chatbox created");
     expect(mockToastError).toHaveBeenCalledWith("Invite failed");
@@ -442,7 +456,7 @@ describe("ChatboxBuilderView", () => {
 
   it("disables Preview, Sessions, and Clusters until the chatbox is saved", () => {
     const draft = CHATBOX_STARTERS.find((s) => s.id === "blank")!.createDraft(
-      "openai/gpt-5-mini",
+      "openai/gpt-5-mini"
     );
     render(
       <ChatboxBuilderView
@@ -451,7 +465,7 @@ describe("ChatboxBuilderView", () => {
         draft={draft}
         onBack={() => {}}
         onSavedDraft={() => {}}
-      />,
+      />
     );
 
     expect(screen.getByRole("button", { name: "Preview" })).toBeDisabled();
@@ -471,12 +485,12 @@ describe("ChatboxBuilderView", () => {
         initialViewMode="usage"
         onBack={() => {}}
         onSavedDraft={() => {}}
-      />,
+      />
     );
 
     expect(screen.getByTestId("chatbox-usage-panel")).toHaveAttribute(
       "data-section",
-      "sessions",
+      "sessions"
     );
   });
 
@@ -492,18 +506,18 @@ describe("ChatboxBuilderView", () => {
         initialViewMode="insights"
         onBack={() => {}}
         onSavedDraft={() => {}}
-      />,
+      />
     );
 
     expect(screen.getByTestId("chatbox-usage-panel")).toHaveAttribute(
       "data-section",
-      "insights",
+      "insights"
     );
   });
 
   it("renders the setup checklist on desktop while in setup mode", () => {
     const draft = CHATBOX_STARTERS.find((s) => s.id === "blank")!.createDraft(
-      "openai/gpt-5-mini",
+      "openai/gpt-5-mini"
     );
     render(
       <ChatboxBuilderView
@@ -512,7 +526,7 @@ describe("ChatboxBuilderView", () => {
         draft={draft}
         onBack={() => {}}
         onSavedDraft={() => {}}
-      />,
+      />
     );
 
     expect(screen.getByRole("button", { name: /Basics/i })).toBeInTheDocument();
@@ -531,18 +545,18 @@ describe("ChatboxBuilderView", () => {
         initialViewMode="preview"
         onBack={() => {}}
         onSavedDraft={() => {}}
-      />,
+      />
     );
 
     const rail = screen.getByTestId("chatbox-builder-preview-rail-actions");
     expect(
-      within(rail).getByRole("button", { name: "Copy link" }),
+      within(rail).getByRole("button", { name: "Copy link" })
     ).toBeInTheDocument();
     expect(
-      within(rail).getByRole("button", { name: "Open full preview" }),
+      within(rail).getByRole("button", { name: "Open full preview" })
     ).toBeInTheDocument();
     expect(
-      within(rail).getByRole("button", { name: "Reload preview" }),
+      within(rail).getByRole("button", { name: "Reload preview" })
     ).toBeInTheDocument();
   });
 
@@ -558,14 +572,14 @@ describe("ChatboxBuilderView", () => {
         initialViewMode="preview"
         onBack={() => {}}
         onSavedDraft={() => {}}
-      />,
+      />
     );
 
     expect(screen.getByTestId("chat-tab")).toBeInTheDocument();
     expect(mockChatTabV2).toHaveBeenCalledWith(
       expect.objectContaining({
         loadingIndicatorVariant: "chatgpt-dot",
-      }),
+      })
     );
   });
 
@@ -581,14 +595,14 @@ describe("ChatboxBuilderView", () => {
         initialViewMode="preview"
         onBack={() => {}}
         onSavedDraft={() => {}}
-      />,
+      />
     );
 
     expect(screen.getByTestId("chat-tab")).toBeInTheDocument();
     expect(mockChatTabV2).toHaveBeenCalledWith(
       expect.objectContaining({
         loadingIndicatorVariant: "claude-mark",
-      }),
+      })
     );
   });
 });
