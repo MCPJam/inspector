@@ -31,6 +31,8 @@ export interface RemoteServer {
   workspaceId: string;
   name: string;
   enabled: boolean;
+  autoEvalSuiteId?: string;
+  autoEvalSuiteSuppressedAt?: number;
   transportType: "stdio" | "http";
   // STDIO fields
   command?: string;

@@ -36,6 +36,8 @@ export interface ServerWithName {
   config: MCPServerConfig;
   oauthTokens?: OauthTokens;
   oauthFlowProfile?: OAuthTestProfile;
+  autoEvalSuiteId?: string;
+  autoEvalSuiteSuppressedAt?: number;
   initializationInfo?: InitializationInfo;
   lastConnectionTime: Date;
   connectionStatus: ConnectionStatus;

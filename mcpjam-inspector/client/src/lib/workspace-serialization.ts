@@ -114,6 +114,8 @@ export function deserializeServersFromConvex(
     const server: ServerWithName = {
       name: serverData.name || serverId,
       config,
+      autoEvalSuiteId: serverData.autoEvalSuiteId,
+      autoEvalSuiteSuppressedAt: serverData.autoEvalSuiteSuppressedAt,
       lastConnectionTime: new Date(),
       connectionStatus: "disconnected" as ConnectionStatus,
       retryCount: 0,
@@ -168,6 +170,13 @@ export function serversHaveChanged(
     if (localServer.name !== remoteServer.name) return true;
     if (localServer.enabled !== remoteServer.enabled) return true;
     if (localServer.useOAuth !== remoteServer.useOAuth) return true;
+    if (localServer.autoEvalSuiteId !== remoteServer.autoEvalSuiteId)
+      return true;
+    if (
+      localServer.autoEvalSuiteSuppressedAt !==
+      remoteServer.autoEvalSuiteSuppressedAt
+    )
+      return true;
 
     // Get local URL
     const localUrl =

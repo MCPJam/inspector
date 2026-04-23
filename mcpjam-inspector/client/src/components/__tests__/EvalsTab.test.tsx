@@ -3,6 +3,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
+const { generateAndPersistEvalTestsMock } = vi.hoisted(() => ({
+  generateAndPersistEvalTestsMock: vi.fn().mockResolvedValue({
+    skippedBecauseExistingCases: false,
+    createdCount: 0,
+    apiReturnedTests: 0,
+    createdTestCaseIds: [],
+  }),
+}));
+
 const mocks = vi.hoisted(() => ({
   route: {
     current: { type: "suite-overview" as const, suiteId: "suite-a" },
@@ -10,10 +19,16 @@ const mocks = vi.hoisted(() => ({
   useEvalQueries: vi.fn(),
   navigatePlaygroundEvalsRoute: vi.fn(),
   createTestSuiteMutation: vi.fn(),
+  ensureAutoEvalSuiteMutation: vi.fn(),
   suiteIterationsView: vi.fn(),
   updateSuiteMutation: vi.fn(),
   handleGenerateTests: vi.fn(),
   isDirectGuest: false,
+  connectedServerNames: new Set(["server-a", "server-b"]),
+  appStateServers: {
+    "server-a": { connectionStatus: "connected" },
+    "server-b": { connectionStatus: "connected" },
+  } as Record<string, Record<string, unknown>>,
 }));
 
 vi.mock("@workos-inc/authkit-react", () => ({
@@ -36,17 +51,12 @@ vi.mock("posthog-js", () => ({
 }));
 
 vi.mock("@/lib/evals/generate-and-persist-tests", () => ({
-  generateAndPersistEvalTests: vi.fn().mockResolvedValue({
-    skippedBecauseExistingCases: false,
-    createdCount: 0,
-    apiReturnedTests: 0,
-    createdTestCaseIds: [],
-  }),
+  generateAndPersistEvalTests: generateAndPersistEvalTestsMock,
 }));
 
 vi.mock("@/hooks/use-eval-tab-context", () => ({
   useEvalTabContext: () => ({
-    connectedServerNames: new Set(["server-a", "server-b"]),
+    connectedServerNames: mocks.connectedServerNames,
     userMap: new Map(),
     canDeleteSuite: false,
     canDeleteRuns: false,
@@ -69,10 +79,7 @@ vi.mock("@/hooks/use-is-direct-guest", () => ({
 
 vi.mock("@/state/app-state-context", () => ({
   useSharedAppState: () => ({
-    servers: {
-      "server-a": { connectionStatus: "connected" },
-      "server-b": { connectionStatus: "connected" },
-    },
+    servers: mocks.appStateServers,
   }),
 }));
 
@@ -118,7 +125,30 @@ vi.mock("../evals/use-playground-workspace-executions", () => ({
 }));
 
 vi.mock("../evals/create-suite-dialog", () => ({
-  CreateSuiteDialog: () => null,
+  CreateSuiteDialog: ({
+    open,
+    onSubmit,
+  }: {
+    open: boolean;
+    onSubmit: (payload: {
+      name: string;
+      description?: string;
+      selectedServers: string[];
+    }) => Promise<void>;
+  }) =>
+    open ? (
+      <button
+        type="button"
+        onClick={() =>
+          void onSubmit({
+            name: "server-a",
+            selectedServers: ["server-a"],
+          })
+        }
+      >
+        Submit create suite
+      </button>
+    ) : null,
 }));
 
 vi.mock("../evals/suite-iterations-view", () => ({
@@ -131,6 +161,7 @@ vi.mock("../evals/suite-iterations-view", () => ({
 vi.mock("../evals/use-eval-mutations", () => ({
   useEvalMutations: () => ({
     createTestSuiteMutation: mocks.createTestSuiteMutation,
+    ensureAutoEvalSuiteMutation: mocks.ensureAutoEvalSuiteMutation,
     updateTestSuiteMutation: vi.fn().mockResolvedValue(undefined),
     createTestCaseMutation: vi.fn().mockResolvedValue("tc-1"),
   }),
@@ -226,7 +257,26 @@ function makeQueryState(selectedSuiteId: string | null) {
 describe("EvalsTab", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    generateAndPersistEvalTestsMock.mockResolvedValue({
+      skippedBecauseExistingCases: false,
+      createdCount: 0,
+      apiReturnedTests: 0,
+      createdTestCaseIds: [],
+    });
     mocks.isDirectGuest = false;
+    mocks.ensureAutoEvalSuiteMutation.mockResolvedValue({
+      status: "created",
+      suite: {
+        _id: "suite-new",
+        name: "server-a",
+        description: "Explore cases for server-a",
+      },
+    });
+    mocks.appStateServers = {
+      "server-a": { connectionStatus: "connected" },
+      "server-b": { connectionStatus: "connected" },
+    };
+    mocks.connectedServerNames = new Set(["server-a", "server-b"]);
     mocks.route.current = { type: "suite-overview", suiteId: "suite-a" };
     mocks.useEvalQueries.mockImplementation(
       ({ selectedSuiteId }: { selectedSuiteId: string | null }) =>
@@ -287,6 +337,216 @@ describe("EvalsTab", () => {
         { type: "list" },
         { replace: true },
       );
+    });
+  });
+
+  it("auto-creates missing server suites through ensureAutoEvalSuiteForServer", async () => {
+    mocks.route.current = { type: "list" };
+    mocks.useEvalQueries.mockImplementation(
+      ({ selectedSuiteId }: { selectedSuiteId: string | null }) => {
+        const suiteB = makeSuiteEntry(["server-b"], "suite-b");
+        const selectedSuiteEntry =
+          selectedSuiteId === "suite-b" ? suiteB : null;
+
+        return {
+          suiteOverview: [suiteB],
+          suiteDetails: selectedSuiteEntry
+            ? { testCases: [], iterations: [] }
+            : undefined,
+          suiteRuns: selectedSuiteEntry ? [] : undefined,
+          selectedSuiteEntry,
+          selectedSuite: selectedSuiteEntry?.suite ?? null,
+          sortedIterations: [],
+          runsForSelectedSuite: [],
+          activeIterations: [],
+          sortedSuites: [suiteB],
+          isOverviewLoading: false,
+          isSuiteDetailsLoading: false,
+          isSuiteRunsLoading: false,
+          enableOverviewQuery: true,
+          enableSuiteDetailsQuery: Boolean(selectedSuiteId),
+        };
+      },
+    );
+
+    render(<EvalsTab workspaceId="ws-1" />);
+
+    await waitFor(() => {
+      expect(mocks.ensureAutoEvalSuiteMutation).toHaveBeenCalledWith({
+        workspaceId: "ws-1",
+        serverName: "server-a",
+        mode: "auto",
+      });
+    });
+
+    expect(mocks.createTestSuiteMutation).not.toHaveBeenCalled();
+  });
+
+  it("does not auto-create suites again for suppressed servers", async () => {
+    mocks.route.current = { type: "list" };
+    mocks.appStateServers = {
+      "server-a": {
+        connectionStatus: "connected",
+        autoEvalSuiteSuppressedAt: 123,
+      },
+      "server-b": { connectionStatus: "connected" },
+    };
+    mocks.useEvalQueries.mockImplementation(
+      ({ selectedSuiteId }: { selectedSuiteId: string | null }) => {
+        const suiteB = makeSuiteEntry(["server-b"], "suite-b");
+        const selectedSuiteEntry =
+          selectedSuiteId === "suite-b" ? suiteB : null;
+
+        return {
+          suiteOverview: [suiteB],
+          suiteDetails: selectedSuiteEntry
+            ? { testCases: [], iterations: [] }
+            : undefined,
+          suiteRuns: selectedSuiteEntry ? [] : undefined,
+          selectedSuiteEntry,
+          selectedSuite: selectedSuiteEntry?.suite ?? null,
+          sortedIterations: [],
+          runsForSelectedSuite: [],
+          activeIterations: [],
+          sortedSuites: [suiteB],
+          isOverviewLoading: false,
+          isSuiteDetailsLoading: false,
+          isSuiteRunsLoading: false,
+          enableOverviewQuery: true,
+          enableSuiteDetailsQuery: Boolean(selectedSuiteId),
+        };
+      },
+    );
+
+    render(<EvalsTab workspaceId="ws-1" />);
+
+    await waitFor(() => {
+      expect(mocks.ensureAutoEvalSuiteMutation).not.toHaveBeenCalled();
+    });
+  });
+
+  it("does not leak local suppression across workspaces with the same server name", async () => {
+    mocks.route.current = { type: "list" };
+    mocks.appStateServers = {
+      "server-a": { connectionStatus: "connected" },
+      "server-b": { connectionStatus: "connected" },
+    };
+    mocks.useEvalQueries.mockImplementation(
+      ({ selectedSuiteId }: { selectedSuiteId: string | null }) => {
+        const suiteB = makeSuiteEntry(["server-b"], "suite-b");
+        const selectedSuiteEntry =
+          selectedSuiteId === "suite-b" ? suiteB : null;
+
+        return {
+          suiteOverview: [suiteB],
+          suiteDetails: selectedSuiteEntry
+            ? { testCases: [], iterations: [] }
+            : undefined,
+          suiteRuns: selectedSuiteEntry ? [] : undefined,
+          selectedSuiteEntry,
+          selectedSuite: selectedSuiteEntry?.suite ?? null,
+          sortedIterations: [],
+          runsForSelectedSuite: [],
+          activeIterations: [],
+          sortedSuites: [suiteB],
+          isOverviewLoading: false,
+          isSuiteDetailsLoading: false,
+          isSuiteRunsLoading: false,
+          enableOverviewQuery: true,
+          enableSuiteDetailsQuery: Boolean(selectedSuiteId),
+        };
+      },
+    );
+    mocks.ensureAutoEvalSuiteMutation.mockResolvedValue({
+      status: "suppressed",
+    });
+
+    const { rerender } = render(<EvalsTab workspaceId="ws-1" />);
+
+    await waitFor(() => {
+      expect(mocks.ensureAutoEvalSuiteMutation).toHaveBeenNthCalledWith(1, {
+        workspaceId: "ws-1",
+        serverName: "server-a",
+        mode: "auto",
+      });
+    });
+
+    rerender(<EvalsTab workspaceId="ws-2" />);
+
+    await waitFor(() => {
+      expect(mocks.ensureAutoEvalSuiteMutation).toHaveBeenNthCalledWith(2, {
+        workspaceId: "ws-2",
+        serverName: "server-a",
+        mode: "auto",
+      });
+    });
+  });
+
+  it("recreates a suppressed single-server suite from the create dialog", async () => {
+    const user = userEvent.setup();
+    mocks.route.current = { type: "create" };
+    mocks.appStateServers = {
+      "server-a": {
+        connectionStatus: "connected",
+        autoEvalSuiteSuppressedAt: 123,
+      },
+      "server-b": { connectionStatus: "connected" },
+    };
+
+    render(<EvalsTab workspaceId="ws-1" />);
+
+    await user.click(screen.getByRole("button", { name: "Submit create suite" }));
+
+    await waitFor(() => {
+      expect(mocks.ensureAutoEvalSuiteMutation).toHaveBeenCalledWith({
+        workspaceId: "ws-1",
+        serverName: "server-a",
+        mode: "manual",
+      });
+    });
+
+    expect(mocks.createTestSuiteMutation).not.toHaveBeenCalled();
+    expect(generateAndPersistEvalTestsMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceId: "ws-1",
+        suiteId: "suite-new",
+        serverIds: ["server-a"],
+      }),
+    );
+    expect(mocks.navigatePlaygroundEvalsRoute).toHaveBeenCalledWith({
+      type: "suite-overview",
+      suiteId: "suite-new",
+    });
+  });
+
+  it("recreates a suppressed single-server suite without generating cases when the server is disconnected", async () => {
+    const user = userEvent.setup();
+    mocks.route.current = { type: "create" };
+    mocks.appStateServers = {
+      "server-a": {
+        connectionStatus: "disconnected",
+        autoEvalSuiteSuppressedAt: 123,
+      },
+      "server-b": { connectionStatus: "connected" },
+    };
+    mocks.connectedServerNames = new Set(["server-b"]);
+
+    render(<EvalsTab workspaceId="ws-1" />);
+
+    await user.click(screen.getByRole("button", { name: "Submit create suite" }));
+
+    await waitFor(() => {
+      expect(mocks.ensureAutoEvalSuiteMutation).toHaveBeenCalledWith({
+        workspaceId: "ws-1",
+        serverName: "server-a",
+        mode: "manual",
+      });
+    });
+
+    expect(generateAndPersistEvalTestsMock).not.toHaveBeenCalled();
+    expect(mocks.navigatePlaygroundEvalsRoute).toHaveBeenCalledWith({
+      type: "suite-overview",
+      suiteId: "suite-new",
     });
   });
 
