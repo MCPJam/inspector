@@ -73,6 +73,7 @@ export {
   scrubMetaAndStructuredContentFromToolResult,
 } from "./mcp-client-manager/index.js";
 export {
+  applyRuntimeClientCapabilities,
   MCP_UI_EXTENSION_ID,
   MCP_UI_RESOURCE_MIME_TYPE,
   getDefaultClientCapabilities,

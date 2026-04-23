@@ -774,6 +774,37 @@ describe("ServersTab shared detail modal", () => {
     expect(screen.queryByText("Needs reconnect")).not.toBeInTheDocument();
   });
 
+  it("does not surface reconnect warnings when initialize only adds runtime elicitation support", () => {
+    const initializedCapabilities = {
+      ...(getDefaultClientCapabilities() as Record<string, unknown>),
+      elicitation: {},
+    };
+
+    render(
+      <ServersTab
+        {...defaultProps}
+        workspaceServers={{
+          "test-server": createServer({
+            initializationInfo: {
+              clientCapabilities: initializedCapabilities,
+            } as any,
+          }),
+        }}
+        workspaces={{
+          "workspace-1": createWorkspace({
+            "test-server": createServer({
+              initializationInfo: {
+                clientCapabilities: initializedCapabilities,
+              } as any,
+            }),
+          }),
+        }}
+      />,
+    );
+
+    expect(screen.queryByText("Needs reconnect")).not.toBeInTheDocument();
+  });
+
   it("renders Quick Connect module helper copy and Browse Registry in the section header", () => {
     mockIsAuthenticated = true;
     mockCatalogCards = [createLinearCatalogCard()];
