@@ -481,7 +481,7 @@ export function TestTemplateEditor({
       promptTurns,
       advancedConfig: normalizeAdvancedConfig(currentTestCase.advancedConfig),
     });
-    setExpandedPromptTurnIds(promptTurns[0] ? [promptTurns[0].id] : []);
+    setExpandedPromptTurnIds(promptTurns.map((turn) => turn.id));
   }, [currentTestCase?._id]);
 
   const missingServers = useMemo(() => {
