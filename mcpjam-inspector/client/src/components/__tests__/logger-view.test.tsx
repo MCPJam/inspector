@@ -97,4 +97,28 @@ describe("LoggerView hosted rpc logs", () => {
       }),
     ]);
   });
+
+  it("renders oauth sequence steps as log entries", () => {
+    useTrafficLogStore.getState().addMcpServerLog({
+      id: "oauth:srv-1:interactive_connect:request_client_registration:1",
+      serverId: "srv-1",
+      serverName: "Notion",
+      direction: "OAUTH",
+      method: "Dynamic Client Registration",
+      timestamp: "2026-04-10T12:00:02.000Z",
+      payload: {
+        source: "interactive_connect",
+        step: "request_client_registration",
+        title: "Dynamic Client Registration",
+        status: "success",
+      },
+      kind: "oauth",
+      oauthStatus: "success",
+    });
+
+    render(<LoggerView serverIds={["srv-1"]} />);
+
+    expect(screen.getByText("Dynamic Client Registration")).toBeInTheDocument();
+    expect(screen.getByText("Notion")).toBeInTheDocument();
+  });
 });

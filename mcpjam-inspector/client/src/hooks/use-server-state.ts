@@ -1064,6 +1064,8 @@ export function useServerState({
           });
 
           const oauthInputs = await resolveOAuthInitiationInputs(formData);
+          const existingOAuthProfile =
+            appState.servers[formData.name]?.oauthFlowProfile;
           const oauthOptions: any = {
             serverName: formData.name,
             serverUrl: formData.url,
@@ -1071,6 +1073,9 @@ export function useServerState({
             clientSecret: oauthInputs.clientSecret,
             registryServerId: oauthInputs.registryServerId,
             useRegistryOAuthProxy: oauthInputs.useRegistryOAuthProxy,
+            customHeaders: formData.headers,
+            protocolVersion: existingOAuthProfile?.protocolVersion,
+            registrationStrategy: existingOAuthProfile?.registrationStrategy,
           };
           if (oauthInputs.scopes && oauthInputs.scopes.length > 0) {
             oauthOptions.scopes = oauthInputs.scopes;
@@ -1208,6 +1213,7 @@ export function useServerState({
     [
       dispatch,
       isAuthenticated,
+      appState.servers,
       appState.workspaces,
       appState.activeWorkspaceId,
       notifyIfClientConfigSyncPending,
@@ -1778,6 +1784,14 @@ export function useServerState({
         const oauthResult = await initiateOAuth({
           serverName,
           serverUrl,
+          customHeaders:
+            "requestInit" in server.config &&
+            server.config.requestInit?.headers &&
+            !Array.isArray(server.config.requestInit.headers)
+              ? (server.config.requestInit.headers as Record<string, string>)
+              : undefined,
+          protocolVersion: server.oauthFlowProfile?.protocolVersion,
+          registrationStrategy: server.oauthFlowProfile?.registrationStrategy,
         });
 
         if (oauthResult.success && !oauthResult.serverConfig) {

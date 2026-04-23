@@ -26,15 +26,21 @@ const {
   mockStartAuthorization: vi.fn(),
 }));
 
-vi.mock("@mcpjam/sdk/browser", () => ({
-  discoverAuthorizationServerMetadata: mockDiscoverAuthorizationServerMetadata,
-  discoverOAuthServerInfo: mockDiscoverOAuthServerInfo,
-  exchangeAuthorization: mockExchangeAuthorization,
-  fetchToken: mockFetchToken,
-  registerClient: mockRegisterClient,
-  selectResourceURL: mockSelectResourceURL,
-  startAuthorization: mockStartAuthorization,
-}));
+vi.mock("@mcpjam/sdk/browser", async () => {
+  const actual = await vi.importActual<typeof import("@mcpjam/sdk/browser")>(
+    "@mcpjam/sdk/browser",
+  );
+  return {
+    ...actual,
+    discoverAuthorizationServerMetadata: mockDiscoverAuthorizationServerMetadata,
+    discoverOAuthServerInfo: mockDiscoverOAuthServerInfo,
+    exchangeAuthorization: mockExchangeAuthorization,
+    fetchToken: mockFetchToken,
+    registerClient: mockRegisterClient,
+    selectResourceURL: mockSelectResourceURL,
+    startAuthorization: mockStartAuthorization,
+  };
+});
 
 vi.mock("@/lib/session-token", () => ({
   authFetch: vi.fn(),

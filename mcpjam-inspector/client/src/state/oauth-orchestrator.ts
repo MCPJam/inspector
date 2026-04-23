@@ -78,8 +78,13 @@ export async function ensureAuthorizedForReconnect(
       clientSecret:
         server.oauthTokens?.client_secret || clientInfo?.client_secret,
       scopes: oauthConfig.scopes,
+      customHeaders: oauthConfig.customHeaders,
       registryServerId: oauthConfig.registryServerId,
       useRegistryOAuthProxy: oauthConfig.useRegistryOAuthProxy,
+      protocolVersion: server.oauthFlowProfile?.protocolVersion ?? oauthConfig.protocolVersion,
+      registrationStrategy:
+        server.oauthFlowProfile?.registrationStrategy ??
+        oauthConfig.registrationStrategy,
     } as MCPOAuthOptions;
     options?.beforeRedirect?.(opts);
     const init = await initiateOAuth(opts);
