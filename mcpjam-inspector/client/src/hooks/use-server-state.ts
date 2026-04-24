@@ -72,6 +72,8 @@ function saveOAuthConfigToLocalStorage(formData: ServerFormData): void {
   localStorage.setItem(`mcp-serverUrl-${formData.name}`, formData.url);
 
   const oauthConfig: Record<string, unknown> = {};
+  oauthConfig.protocolMode = "auto";
+  oauthConfig.registrationMode = "auto";
   if (formData.oauthScopes && formData.oauthScopes.length > 0) {
     oauthConfig.scopes = formData.oauthScopes;
   }
@@ -82,6 +84,7 @@ function saveOAuthConfigToLocalStorage(formData: ServerFormData): void {
     oauthConfig.registryServerId = formData.registryServerId;
   }
   if (formData.clientId || formData.clientSecret) {
+    oauthConfig.registrationMode = "preregistered";
     oauthConfig.registrationStrategy = "preregistered";
   }
   if (Object.keys(oauthConfig).length > 0) {

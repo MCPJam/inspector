@@ -261,6 +261,7 @@ export function AddServerModal({
           {/* HTTP: Authentication */}
           {formState.type === "http" && (
             <AuthenticationSection
+              serverUrl={formState.url}
               authType={formState.authType}
               onAuthTypeChange={(value) => {
                 formState.setAuthType(value);

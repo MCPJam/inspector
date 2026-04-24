@@ -1,5 +1,6 @@
 import {
   type OAuthConformanceConfig,
+  type OAuthLoginConfig,
   type OAuthVerificationConfig,
   OAuthConformanceTest,
   OAuthConformanceSuite,
@@ -66,8 +67,8 @@ function writeOAuthOutput(output: string): void {
 
 export interface OAuthCommandOptions {
   url: string;
-  protocolVersion: "2025-03-26" | "2025-06-18" | "2025-11-25";
-  registration: "cimd" | "dcr" | "preregistered";
+  protocolVersion?: "2025-03-26" | "2025-06-18" | "2025-11-25";
+  registration?: "cimd" | "dcr" | "preregistered";
   authMode?: "headless" | "interactive" | "client_credentials";
   clientId?: string;
   clientSecret?: string;
@@ -98,13 +99,13 @@ export function registerOAuthCommands(program: Command): void {
     .command("login")
     .description("Run an OAuth login flow against an HTTP MCP server")
     .requiredOption("--url <url>", "MCP server URL")
-    .requiredOption(
+    .option(
       "--protocol-version <version>",
-      "OAuth protocol version: 2025-03-26, 2025-06-18, or 2025-11-25",
+      "OAuth protocol override: 2025-03-26, 2025-06-18, or 2025-11-25",
     )
-    .requiredOption(
+    .option(
       "--registration <strategy>",
-      "Registration strategy: dcr, preregistered, or cimd",
+      "Registration override: dcr, preregistered, or cimd",
     )
     .option(
       "--auth-mode <mode>",
@@ -145,7 +146,7 @@ export function registerOAuthCommands(program: Command): void {
     )
     .action(async (options, command) => {
       const format = getStructuredOAuthFormat(command);
-      const config = buildOAuthConformanceConfig(
+      const config = buildOAuthLoginConfig(
         options as OAuthCommandOptions,
         {
           defaultAuthMode: "interactive",
@@ -394,8 +395,10 @@ export function buildOAuthConformanceConfig(
   const serverUrl = options.url.trim();
   assertValidUrl(serverUrl, "server URL");
 
-  const protocolVersion = parseProtocolVersion(options.protocolVersion);
-  const registrationStrategy = parseRegistrationStrategy(options.registration);
+  const protocolVersion = parseRequiredProtocolVersion(options.protocolVersion);
+  const registrationStrategy = parseRequiredRegistrationStrategy(
+    options.registration,
+  );
   const authMode = parseAuthMode(
     options.authMode ?? defaults?.defaultAuthMode ?? "interactive",
   );
@@ -498,11 +501,138 @@ export function buildOAuthConformanceConfig(
   };
 }
 
+export function buildOAuthLoginConfig(
+  options: OAuthCommandOptions,
+  defaults?: {
+    defaultAuthMode?: "headless" | "interactive" | "client_credentials";
+  },
+): OAuthLoginConfig {
+  const serverUrl = options.url.trim();
+  assertValidUrl(serverUrl, "server URL");
+
+  const protocolVersion = options.protocolVersion
+    ? parseProtocolVersion(options.protocolVersion)
+    : undefined;
+  const registrationStrategy = options.registration
+    ? parseRegistrationStrategy(options.registration)
+    : undefined;
+  const authMode = parseAuthMode(
+    options.authMode ?? defaults?.defaultAuthMode ?? "interactive",
+  );
+
+  if (options.printUrl && authMode !== "interactive") {
+    throw usageError(
+      "--print-url only applies to --auth-mode interactive. Headless and client_credentials modes do not open a browser.",
+    );
+  }
+
+  if (
+    protocolVersion !== undefined &&
+    registrationStrategy === "cimd" &&
+    protocolVersion !== "2025-11-25"
+  ) {
+    throw usageError(
+      `CIMD registration is not supported for protocol version ${protocolVersion}.`,
+    );
+  }
+
+  if (authMode === "client_credentials" && registrationStrategy === "cimd") {
+    throw usageError(
+      "--auth-mode client_credentials cannot be used with --registration cimd. CIMD is a browser-based registration flow and only works with --auth-mode headless or --auth-mode interactive. For client_credentials, use --registration dcr or --registration preregistered instead.",
+    );
+  }
+
+  const clientId = options.clientId?.trim();
+  const clientSecret = options.clientSecret;
+  const clientMetadataUrl = options.clientMetadataUrl?.trim();
+  const redirectUrl = options.redirectUrl?.trim();
+
+  if (registrationStrategy === "preregistered" && !clientId) {
+    throw usageError(
+      "--client-id is required when --registration preregistered is used.",
+    );
+  }
+
+  if (
+    registrationStrategy === "preregistered" &&
+    authMode === "client_credentials" &&
+    !clientSecret
+  ) {
+    throw usageError(
+      "--client-secret is required for preregistered client_credentials runs.",
+    );
+  }
+
+  if (clientMetadataUrl) {
+    assertValidUrl(clientMetadataUrl, "client metadata URL");
+  }
+
+  if (redirectUrl) {
+    assertValidUrl(redirectUrl, "redirect URL");
+  }
+
+  const customHeaders = parseHeadersOption(options.header);
+  const client: NonNullable<OAuthLoginConfig["client"]> = {};
+
+  if (clientId) {
+    client.preregistered = {
+      clientId,
+      ...(clientSecret ? { clientSecret } : {}),
+    };
+  }
+
+  if (clientMetadataUrl) {
+    client.clientIdMetadataUrl = clientMetadataUrl;
+  }
+
+  const verification: OAuthVerificationConfig | undefined =
+    options.verifyTools || options.verifyCallTool
+      ? {
+          listTools: options.verifyTools ?? !!options.verifyCallTool,
+          ...(options.verifyCallTool
+            ? { callTool: { name: options.verifyCallTool } }
+            : {}),
+        }
+      : undefined;
+
+  const auth = buildAuthConfig(
+    authMode,
+    registrationStrategy ?? "dcr",
+    clientId,
+    clientSecret,
+  );
+
+  if (options.printUrl && auth.mode === "interactive") {
+    (auth as { openUrl?: (url: string) => Promise<void> }).openUrl =
+      async (url: string) => {
+        process.stderr.write(`OAUTH_CONSENT_URL: ${url}\n`);
+      };
+  }
+
+  return {
+    serverUrl,
+    ...(protocolVersion ? { protocolVersion } : {}),
+    ...(registrationStrategy ? { registrationStrategy } : {}),
+    protocolMode: protocolVersion ?? "auto",
+    registrationMode: registrationStrategy ?? "auto",
+    auth,
+    client,
+    scopes: options.scopes?.trim() || undefined,
+    customHeaders,
+    redirectUrl,
+    stepTimeout: options.stepTimeout ?? 30_000,
+    verification,
+    oauthConformanceChecks: false,
+  };
+}
+
 export function summarizeOAuthLoginCommandInput(
   options: OAuthCommandOptions,
 ): Record<string, unknown> {
   return {
     serverUrl: options.url.trim(),
+    protocolMode: options.protocolVersion ?? "auto",
+    registrationMode: options.registration ?? "auto",
     protocolVersion: options.protocolVersion,
     registration: options.registration,
     authMode: options.authMode ?? "interactive",
@@ -519,7 +649,10 @@ export function summarizeOAuthLoginCommandInput(
 }
 
 export function buildOAuthLoginSnapshotConfig(
-  config: OAuthConformanceConfig,
+  config: Pick<
+    OAuthLoginConfig,
+    "serverUrl" | "customHeaders" | "stepTimeout" | "client" | "auth"
+  >,
   result?: OAuthLoginResult,
 ): MCPServerConfig {
   const baseConfig: MCPServerConfig = {
@@ -613,6 +746,18 @@ function parseProtocolVersion(
   );
 }
 
+function parseRequiredProtocolVersion(
+  value: string | undefined,
+): "2025-03-26" | "2025-06-18" | "2025-11-25" {
+  if (!value) {
+    throw usageError(
+      "--protocol-version is required for oauth conformance flows.",
+    );
+  }
+
+  return parseProtocolVersion(value);
+}
+
 function parseRegistrationStrategy(
   value: string,
 ): "cimd" | "dcr" | "preregistered" {
@@ -623,6 +768,18 @@ function parseRegistrationStrategy(
   throw usageError(
     `Invalid registration strategy "${value}". Use ${[...VALID_REGISTRATION_STRATEGIES].join(", ")}.`,
   );
+}
+
+function parseRequiredRegistrationStrategy(
+  value: string | undefined,
+): "cimd" | "dcr" | "preregistered" {
+  if (!value) {
+    throw usageError(
+      "--registration is required for oauth conformance flows.",
+    );
+  }
+
+  return parseRegistrationStrategy(value);
 }
 
 function parseAuthMode(

@@ -132,6 +132,7 @@ export function EditServerFormContent({
       {formState.type === "http" && (
         <div className="space-y-3 pt-2">
           <AuthenticationSection
+            serverUrl={formState.url}
             authType={formState.authType}
             onAuthTypeChange={(value) => {
               formState.setAuthType(value);

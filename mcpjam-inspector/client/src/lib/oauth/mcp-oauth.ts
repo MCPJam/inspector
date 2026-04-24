@@ -11,16 +11,21 @@ import {
   getBrowserDebugDynamicRegistrationMetadata,
   EMPTY_OAUTH_FLOW_STATE,
   projectOAuthTraceSnapshot,
+  resolveAuthorizationPlan,
   runOAuthStateMachine,
   selectResourceURL,
 } from "@mcpjam/sdk/browser";
 import type {
+  AuthorizationDiscoverySnapshot,
+  OAuthProtocolMode,
+  OAuthRegistrationMode,
   HttpHistoryEntry,
   OAuthClientProvider,
   OAuthDiscoveryState,
   OAuthFlowState,
   OAuthProtocolVersion,
   OAuthRequestResult,
+  ResolvedAuthorizationPlan,
   RegistrationStrategy2025_03_26,
   RegistrationStrategy2025_06_18,
   RegistrationStrategy2025_11_25,
@@ -46,6 +51,7 @@ import {
   completeOAuthTraceStep,
   createOAuthTrace,
   failOAuthTraceStep,
+  loadOAuthTrace,
   mergeOAuthTraces,
   startOAuthTraceStep,
   type OAuthTrace,
@@ -74,7 +80,9 @@ export interface StoredOAuthConfig {
   customHeaders?: Record<string, string>;
   registryServerId?: string;
   useRegistryOAuthProxy?: boolean;
+  protocolMode?: OAuthProtocolMode;
   protocolVersion?: OAuthProtocolVersion;
+  registrationMode?: OAuthRegistrationMode;
   registrationStrategy?: OAuthRegistrationStrategy;
 }
 
@@ -89,9 +97,6 @@ interface StoredOAuthFlowSession {
   registrationStrategy: OAuthRegistrationStrategy;
   state: OAuthFlowState;
 }
-
-const DEFAULT_OAUTH_PROTOCOL_VERSION: OAuthProtocolVersion = "2025-11-25";
-const DEFAULT_OAUTH_REGISTRATION_STRATEGY: OAuthRegistrationStrategy = "dcr";
 
 function getFlowStateStorageKey(serverName: string): string {
   return `mcp-oauth-flow-state-${serverName}`;
@@ -465,21 +470,30 @@ function clearOAuthFlowSession(serverName: string): void {
   localStorage.removeItem(getFlowStateStorageKey(serverName));
 }
 
-function resolveOAuthProtocolVersion(
-  options: Pick<MCPOAuthOptions, "protocolVersion">
-): OAuthProtocolVersion {
-  return options.protocolVersion ?? DEFAULT_OAUTH_PROTOCOL_VERSION;
+function resolveOAuthProtocolMode(
+  options: Pick<MCPOAuthOptions, "protocolMode" | "protocolVersion">,
+): OAuthProtocolMode {
+  if (options.protocolMode) {
+    return options.protocolMode;
+  }
+
+  return options.protocolVersion ?? "auto";
 }
 
-function resolveOAuthRegistrationStrategy(
+function resolveOAuthRegistrationMode(
   options: Pick<
     MCPOAuthOptions,
+    | "registrationMode"
     | "registrationStrategy"
     | "clientId"
     | "clientSecret"
     | "useRegistryOAuthProxy"
-  >
-): OAuthRegistrationStrategy {
+  >,
+): OAuthRegistrationMode {
+  if (options.registrationMode) {
+    return options.registrationMode;
+  }
+
   if (options.registrationStrategy) {
     return options.registrationStrategy;
   }
@@ -492,7 +506,59 @@ function resolveOAuthRegistrationStrategy(
     return "preregistered";
   }
 
-  return DEFAULT_OAUTH_REGISTRATION_STRATEGY;
+  return "auto";
+}
+
+async function resolveOAuthExecutionPlan(
+  provider: MCPOAuthProvider,
+  fetchFn: typeof fetch,
+  options: Pick<
+    MCPOAuthOptions,
+    | "serverUrl"
+    | "protocolMode"
+    | "protocolVersion"
+    | "registrationMode"
+    | "registrationStrategy"
+    | "clientId"
+    | "clientSecret"
+    | "useRegistryOAuthProxy"
+    | "customHeaders"
+  >,
+): Promise<ResolvedAuthorizationPlan> {
+  const basePlan = resolveAuthorizationPlan({
+    serverUrl: options.serverUrl,
+    protocolMode: resolveOAuthProtocolMode(options),
+    protocolVersion: options.protocolVersion,
+    registrationMode: resolveOAuthRegistrationMode(options),
+    registrationStrategy: options.registrationStrategy,
+    clientId: options.clientId,
+    clientSecret: options.clientSecret,
+    useRegistryOAuthProxy: options.useRegistryOAuthProxy,
+    authMode: "interactive",
+  });
+
+  if (basePlan.status !== "discovery_required") {
+    return basePlan;
+  }
+
+  const discoveryState = await loadCallbackDiscoveryState(
+    provider,
+    options.serverUrl,
+    fetchFn
+  );
+
+  return resolveAuthorizationPlan({
+    serverUrl: options.serverUrl,
+    protocolMode: resolveOAuthProtocolMode(options),
+    protocolVersion: options.protocolVersion,
+    registrationMode: resolveOAuthRegistrationMode(options),
+    registrationStrategy: options.registrationStrategy,
+    clientId: options.clientId,
+    clientSecret: options.clientSecret,
+    useRegistryOAuthProxy: options.useRegistryOAuthProxy,
+    authMode: "interactive",
+    discovery: toAuthorizationDiscoverySnapshot(discoveryState),
+  });
 }
 
 function normalizeProxyTargetUrl(url: string): string {
@@ -750,11 +816,25 @@ export function readStoredOAuthConfig(
           ? parsed.registryServerId
           : undefined,
       useRegistryOAuthProxy: parsed?.useRegistryOAuthProxy === true,
+      protocolMode:
+        parsed?.protocolMode === "auto" ||
+        parsed?.protocolMode === "2025-03-26" ||
+        parsed?.protocolMode === "2025-06-18" ||
+        parsed?.protocolMode === "2025-11-25"
+          ? parsed.protocolMode
+          : undefined,
       protocolVersion:
         parsed?.protocolVersion === "2025-03-26" ||
         parsed?.protocolVersion === "2025-06-18" ||
         parsed?.protocolVersion === "2025-11-25"
           ? parsed.protocolVersion
+          : undefined,
+      registrationMode:
+        parsed?.registrationMode === "auto" ||
+        parsed?.registrationMode === "cimd" ||
+        parsed?.registrationMode === "dcr" ||
+        parsed?.registrationMode === "preregistered"
+          ? parsed.registrationMode
           : undefined,
       registrationStrategy:
         parsed?.registrationStrategy === "cimd" ||
@@ -799,14 +879,18 @@ export function buildStoredOAuthConfig(
     | "registryServerId"
     | "useRegistryOAuthProxy"
     | "customHeaders"
+    | "protocolMode"
     | "protocolVersion"
+    | "registrationMode"
     | "registrationStrategy"
   >
 ): StoredOAuthConfig {
   const config: StoredOAuthConfig = {
     registryServerId: options.registryServerId,
     useRegistryOAuthProxy: options.useRegistryOAuthProxy === true,
+    protocolMode: options.protocolMode,
     protocolVersion: options.protocolVersion,
+    registrationMode: options.registrationMode,
     registrationStrategy: options.registrationStrategy,
   };
 
@@ -976,6 +1060,21 @@ async function loadCallbackDiscoveryState(
   };
   await provider.saveDiscoveryState(discoveryState);
   return discoveryState;
+}
+
+function toAuthorizationDiscoverySnapshot(
+  discoveryState: OAuthDiscoveryState
+): AuthorizationDiscoverySnapshot {
+  return {
+    authorizationServerMetadataUrl: discoveryState.authorizationServerUrl,
+    authorizationServerMetadata: discoveryState.authorizationServerMetadata as
+      | Record<string, unknown>
+      | undefined,
+    resourceMetadataUrl: discoveryState.resourceMetadataUrl,
+    resourceMetadata: discoveryState.resourceMetadata as
+      | Record<string, unknown>
+      | undefined,
+  };
 }
 
 /**
@@ -1165,7 +1264,9 @@ export interface MCPOAuthOptions {
   registryServerId?: string;
   /** True only for registry servers with backend-managed preregistered OAuth credentials */
   useRegistryOAuthProxy?: boolean;
+  protocolMode?: OAuthProtocolMode;
   protocolVersion?: OAuthProtocolVersion;
+  registrationMode?: OAuthRegistrationMode;
   registrationStrategy?: OAuthRegistrationStrategy;
   onTraceUpdate?: (trace: OAuthTrace) => void;
 }
@@ -1612,8 +1713,6 @@ export async function initiateOAuth(
       options.clientId,
       options.clientSecret
     );
-    const protocolVersion = resolveOAuthProtocolVersion(options);
-    const registrationStrategy = resolveOAuthRegistrationStrategy(options);
     const fetchFn = createOAuthFetchInterceptor(
       {
         registryServerId: options.registryServerId,
@@ -1621,6 +1720,23 @@ export async function initiateOAuth(
       },
       undefined
     );
+    const authorizationPlan = await resolveOAuthExecutionPlan(
+      provider,
+      fetchFn,
+      options
+    );
+    if (
+      authorizationPlan.status !== "ready" ||
+      !authorizationPlan.registrationStrategy
+    ) {
+      return {
+        success: false,
+        error:
+          authorizationPlan.blockers[0] || authorizationPlan.summary,
+      };
+    }
+    const protocolVersion = authorizationPlan.protocolVersion;
+    const registrationStrategy = authorizationPlan.registrationStrategy;
     const requestExecutor = createOAuthRequestExecutor(
       fetchFn,
       options.serverUrl
@@ -1636,7 +1752,9 @@ export async function initiateOAuth(
     // Store OAuth configuration (scopes, registryServerId) for recovery if connection fails
     const oauthConfig = buildStoredOAuthConfig({
       ...options,
+      protocolMode: resolveOAuthProtocolMode(options),
       protocolVersion,
+      registrationMode: resolveOAuthRegistrationMode(options),
       registrationStrategy,
     });
     localStorage.setItem(
@@ -1831,12 +1949,16 @@ export async function completeHostedOAuthCallback(
   } = {}
 ): Promise<OAuthResult & { serverName?: string; expiresAt?: number | null }> {
   const serverName =
-    context.serverName || localStorage.getItem("mcp-oauth-pending");
+    context.serverName ||
+    localStorage.getItem("mcp-oauth-pending") ||
+    undefined;
   const callbackTrace = createOAuthTrace({
     source: "hosted_callback",
     serverName: serverName ?? undefined,
   });
-  let previousTrace: OAuthTrace | undefined;
+  let previousTrace: OAuthTrace | undefined = serverName
+    ? loadOAuthTrace(serverName)
+    : undefined;
   const mergeHostedCallbackTrace = (backendTrace?: OAuthTrace): OAuthTrace =>
     backendTrace
       ? mergeOAuthTraces(callbackTrace, backendTrace)
@@ -1879,7 +2001,7 @@ export async function completeHostedOAuthCallback(
           serverUrl,
           session: storedSession,
         })
-      : undefined;
+      : previousTrace;
     completeOAuthTraceStep(callbackTrace, "received_authorization_code", {
       message: context.sessionId
         ? "Hosted callback state restored from the shared backend session."
@@ -1944,13 +2066,15 @@ export async function completeHostedOAuthCallback(
             }
             if (progress?.success && progress.status === "failed") {
               stopProgressPolling = true;
-              resolveTerminalProgressFailure?.({
-                message:
-                  progress.lastError ||
-                  progress.error ||
-                  "Hosted OAuth callback failed",
-                oauthTrace: progress.oauthTrace,
-              });
+              if (resolveTerminalProgressFailure) {
+                resolveTerminalProgressFailure({
+                  message:
+                    progress.lastError ||
+                    progress.error ||
+                    "Hosted OAuth callback failed",
+                  oauthTrace: progress.oauthTrace,
+                });
+              }
               break;
             }
             if (progress?.success && progress.status === "succeeded") {

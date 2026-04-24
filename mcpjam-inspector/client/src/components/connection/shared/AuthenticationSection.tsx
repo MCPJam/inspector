@@ -8,8 +8,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@mcpjam/design-system/select";
+import {
+  resolveAuthorizationPlan,
+  type ResolvedAuthorizationPlan,
+} from "@mcpjam/sdk/browser";
 
 interface AuthenticationSectionProps {
+  serverUrl?: string;
   authType: "oauth" | "bearer" | "none";
   onAuthTypeChange: (value: "oauth" | "bearer" | "none") => void;
   showAuthSettings: boolean;
@@ -27,7 +32,29 @@ interface AuthenticationSectionProps {
   clientSecretError: string | null;
 }
 
+function getPlanStatusLabel(plan: ResolvedAuthorizationPlan): string {
+  if (plan.status === "blocked") {
+    return "Action needed";
+  }
+
+  if (plan.status === "discovery_required") {
+    return "Automatic";
+  }
+
+  switch (plan.registrationStrategy) {
+    case "preregistered":
+      return "Pre-registered";
+    case "cimd":
+      return "CIMD";
+    case "dcr":
+      return "DCR";
+    default:
+      return "Ready";
+  }
+}
+
 export function AuthenticationSection({
+  serverUrl,
   authType,
   onAuthTypeChange,
   showAuthSettings,
@@ -45,6 +72,28 @@ export function AuthenticationSection({
   clientSecretError,
 }: AuthenticationSectionProps) {
   const [showAdvancedOAuth, setShowAdvancedOAuth] = useState(false);
+  const oauthPlan =
+    authType === "oauth"
+      ? resolveAuthorizationPlan({
+          serverUrl,
+          protocolMode: "auto",
+          registrationMode: useCustomClientId ? "preregistered" : "auto",
+          clientId: useCustomClientId ? clientId : undefined,
+          clientSecret: useCustomClientId ? clientSecret : undefined,
+          authMode: "interactive",
+        })
+      : null;
+  const planDetails = oauthPlan
+    ? [
+        `Protocol ${oauthPlan.protocolVersion}`,
+        oauthPlan.canonicalResource
+          ? `Resource ${oauthPlan.canonicalResource}`
+          : undefined,
+        useCustomClientId
+          ? "Registration pre-registered"
+          : "Automatic order: preregistered -> CIMD -> DCR",
+      ].filter(Boolean)
+    : [];
 
   return (
     <div className="space-y-4">
@@ -68,7 +117,7 @@ export function AuthenticationSection({
             <SelectContent>
               <SelectItem value="none">No Authentication</SelectItem>
               <SelectItem value="bearer">Bearer Token</SelectItem>
-              <SelectItem value="oauth">OAuth</SelectItem>
+              <SelectItem value="oauth">MCP Authorization</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -92,6 +141,59 @@ export function AuthenticationSection({
         {/* OAuth Settings */}
         {showAuthSettings && authType === "oauth" && (
           <div className="border-t border-border bg-muted/30">
+            {oauthPlan && (
+              <div className="px-3 py-3 space-y-2 border-b border-border bg-background/60">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-medium text-foreground">
+                      MCP Authorization
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      Uses the SDK planner to resolve pre-registered
+                      credentials, Client ID Metadata Documents (CIMD), or
+                      Dynamic Client Registration (DCR).
+                    </p>
+                  </div>
+                  <span className="shrink-0 rounded-full border border-border bg-background px-2 py-1 text-[11px] font-medium text-muted-foreground">
+                    {getPlanStatusLabel(oauthPlan)}
+                  </span>
+                </div>
+
+                <p
+                  className={`text-sm ${
+                    oauthPlan.status === "blocked"
+                      ? "text-destructive"
+                      : "text-foreground"
+                  }`}
+                >
+                  {oauthPlan.summary}
+                </p>
+
+                <div className="flex flex-wrap gap-2">
+                  {planDetails.map((detail) => (
+                    <span
+                      key={detail}
+                      className="rounded-full border border-border bg-background px-2 py-1 text-[11px] text-muted-foreground"
+                    >
+                      {detail}
+                    </span>
+                  ))}
+                </div>
+
+                {oauthPlan.blockers.length > 0 && (
+                  <p className="text-xs text-destructive">
+                    {oauthPlan.blockers[0]}
+                  </p>
+                )}
+
+                {oauthPlan.warnings.length > 0 && (
+                  <p className="text-xs text-amber-700">
+                    {oauthPlan.warnings[0]}
+                  </p>
+                )}
+              </div>
+            )}
+
             <button
               type="button"
               onClick={() => setShowAdvancedOAuth(!showAdvancedOAuth)}
@@ -103,7 +205,7 @@ export function AuthenticationSection({
                 <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
               )}
               <span className="text-xs font-medium text-muted-foreground">
-                Advanced
+                Manual Overrides
               </span>
             </button>
 
@@ -111,16 +213,17 @@ export function AuthenticationSection({
               <div className="px-3 pb-3 space-y-3">
                 <div className="space-y-2">
                   <label className="block text-sm font-medium text-foreground">
-                    OAuth Scopes
+                    Scope Override
                   </label>
                   <Input
                     value={oauthScopesInput}
                     onChange={(e) => onOauthScopesChange(e.target.value)}
-                    placeholder="mcp:* or custom scopes separated by spaces"
+                    placeholder="Optional scopes separated by spaces"
                     className="h-10"
                   />
                   <p className="text-xs text-muted-foreground">
-                    Default: mcp:* (space-separated for multiple scopes)
+                    Leave empty to let the SDK use 401 challenge scopes first,
+                    then protected resource metadata.
                   </p>
                 </div>
 
@@ -139,11 +242,12 @@ export function AuthenticationSection({
                       htmlFor="useCustomClientId"
                       className="text-sm font-medium text-foreground"
                     >
-                      Use custom OAuth credentials
+                      Use pre-registered OAuth credentials
                     </label>
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    Leave unchecked to use the server's default OAuth flow
+                    Leave unchecked to let the SDK discover preregistered,
+                    CIMD, or DCR automatically.
                   </p>
                 </div>
 

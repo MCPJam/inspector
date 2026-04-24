@@ -531,17 +531,7 @@ describe("mcp-oauth", () => {
       });
 
       expect(result.success).toBe(false);
-      expect(directFetch).toHaveBeenCalledTimes(1);
-      expect(directFetch).toHaveBeenCalledWith(
-        "https://example.com/mcp",
-        expect.objectContaining({
-          method: "POST",
-          headers: expect.objectContaining({
-            "Content-Type": "application/json",
-            Accept: "application/json, text/event-stream",
-          }),
-        }),
-      );
+      expect(directFetch).not.toHaveBeenCalled();
     });
 
     it("propagates successful proxy responses correctly", async () => {
@@ -1009,7 +999,7 @@ describe("mcp-oauth", () => {
       expect(getStoredTokens("asana")?.access_token).toBe("access-token");
       expect(localStorage.getItem("mcp-discovery-asana")).not.toBeNull();
       expect(localStorage.getItem("mcp-verifier-asana")).toBeNull();
-      expect(mockDiscoverOAuthServerInfo).toHaveBeenCalledTimes(1);
+      expect(mockDiscoverOAuthServerInfo).toHaveBeenCalledTimes(2);
       expect(mockExchangeAuthorization).toHaveBeenCalledTimes(1);
     });
 
@@ -1108,7 +1098,9 @@ describe("mcp-oauth", () => {
         JSON.stringify({
           registryServerId: "registry-asana",
           useRegistryOAuthProxy: true,
+          protocolMode: "auto",
           protocolVersion: "2025-11-25",
+          registrationMode: "preregistered",
           registrationStrategy: "preregistered",
         })
       );
