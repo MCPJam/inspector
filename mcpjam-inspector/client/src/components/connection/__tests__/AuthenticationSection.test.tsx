@@ -14,6 +14,10 @@ describe("AuthenticationSection", () => {
         onBearerTokenChange={vi.fn()}
         oauthScopesInput=""
         onOauthScopesChange={vi.fn()}
+        oauthProtocolMode="auto"
+        onOauthProtocolModeChange={vi.fn()}
+        oauthRegistrationMode="auto"
+        onOauthRegistrationModeChange={vi.fn()}
         useCustomClientId={false}
         onUseCustomClientIdChange={vi.fn()}
         clientId=""
@@ -30,7 +34,7 @@ describe("AuthenticationSection", () => {
       screen.getByText(/Uses the SDK planner to resolve pre-registered credentials/i),
     ).toBeInTheDocument();
     expect(
-      screen.getByText("Automatic order: preregistered -> CIMD -> DCR"),
+      screen.getByText("Automatic order: pre-registered -> CIMD -> DCR"),
     ).toBeInTheDocument();
   });
 
@@ -45,6 +49,10 @@ describe("AuthenticationSection", () => {
         onBearerTokenChange={vi.fn()}
         oauthScopesInput=""
         onOauthScopesChange={vi.fn()}
+        oauthProtocolMode="auto"
+        onOauthProtocolModeChange={vi.fn()}
+        oauthRegistrationMode="auto"
+        onOauthRegistrationModeChange={vi.fn()}
         useCustomClientId={false}
         onUseCustomClientIdChange={vi.fn()}
         clientId=""
@@ -58,9 +66,42 @@ describe("AuthenticationSection", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /manual overrides/i }));
 
+    expect(screen.getByText("Protocol")).toBeInTheDocument();
+    expect(screen.getByText("Registration Strategy")).toBeInTheDocument();
     expect(screen.getByText("Scope Override")).toBeInTheDocument();
     expect(
-      screen.getByText("Use pre-registered OAuth credentials"),
+      screen.getByText(/Automatic discovery uses pre-registered credentials/i),
+    ).toBeInTheDocument();
+  });
+
+  it("shows an explicit registration override summary when developers choose one", () => {
+    render(
+      <AuthenticationSection
+        serverUrl="https://example.com/mcp"
+        authType="oauth"
+        onAuthTypeChange={vi.fn()}
+        showAuthSettings={true}
+        bearerToken=""
+        onBearerTokenChange={vi.fn()}
+        oauthScopesInput=""
+        onOauthScopesChange={vi.fn()}
+        oauthProtocolMode="2025-11-25"
+        onOauthProtocolModeChange={vi.fn()}
+        oauthRegistrationMode="cimd"
+        onOauthRegistrationModeChange={vi.fn()}
+        useCustomClientId={false}
+        onUseCustomClientIdChange={vi.fn()}
+        clientId=""
+        onClientIdChange={vi.fn()}
+        clientSecret=""
+        onClientSecretChange={vi.fn()}
+        clientIdError={null}
+        clientSecretError={null}
+      />,
+    );
+
+    expect(
+      screen.getByText("Registration override: Client ID Metadata Documents (CIMD)"),
     ).toBeInTheDocument();
   });
 });

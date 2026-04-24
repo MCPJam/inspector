@@ -27,6 +27,7 @@ import {
   getStoredTokens,
   clearOAuthData,
   initiateOAuth,
+  readStoredOAuthConfig,
 } from "@/lib/oauth/mcp-oauth";
 import type { OAuthTrace } from "@/lib/oauth/oauth-trace";
 import {
@@ -72,8 +73,16 @@ function saveOAuthConfigToLocalStorage(formData: ServerFormData): void {
   localStorage.setItem(`mcp-serverUrl-${formData.name}`, formData.url);
 
   const oauthConfig: Record<string, unknown> = {};
-  oauthConfig.protocolMode = "auto";
-  oauthConfig.registrationMode = "auto";
+  const protocolMode = formData.oauthProtocolMode ?? "auto";
+  const registrationMode =
+    formData.oauthRegistrationMode ??
+    (formData.clientId || formData.clientSecret ? "preregistered" : "auto");
+
+  oauthConfig.protocolMode = protocolMode;
+  oauthConfig.registrationMode = registrationMode;
+  if (protocolMode !== "auto") {
+    oauthConfig.protocolVersion = protocolMode;
+  }
   if (formData.oauthScopes && formData.oauthScopes.length > 0) {
     oauthConfig.scopes = formData.oauthScopes;
   }
@@ -83,9 +92,8 @@ function saveOAuthConfigToLocalStorage(formData: ServerFormData): void {
   if (formData.registryServerId) {
     oauthConfig.registryServerId = formData.registryServerId;
   }
-  if (formData.clientId || formData.clientSecret) {
-    oauthConfig.registrationMode = "preregistered";
-    oauthConfig.registrationStrategy = "preregistered";
+  if (registrationMode !== "auto") {
+    oauthConfig.registrationStrategy = registrationMode;
   }
   if (Object.keys(oauthConfig).length > 0) {
     localStorage.setItem(
@@ -106,6 +114,35 @@ function saveOAuthConfigToLocalStorage(formData: ServerFormData): void {
       `mcp-client-${formData.name}`,
       JSON.stringify(clientInfo),
     );
+  } else {
+    localStorage.removeItem(`mcp-client-${formData.name}`);
+  }
+}
+
+function readStoredClientCredentials(serverName: string): {
+  clientId?: string;
+  clientSecret?: string;
+} {
+  try {
+    const raw = localStorage.getItem(`mcp-client-${serverName}`);
+    if (!raw) {
+      return {};
+    }
+
+    const parsed = JSON.parse(raw);
+    return {
+      clientId:
+        typeof parsed?.client_id === "string" && parsed.client_id.trim() !== ""
+          ? parsed.client_id
+          : undefined,
+      clientSecret:
+        typeof parsed?.client_secret === "string" &&
+        parsed.client_secret.trim() !== ""
+          ? parsed.client_secret
+          : undefined,
+    };
+  } catch {
+    return {};
   }
 }
 
@@ -1101,6 +1138,14 @@ export function useServerState({
           const oauthInputs = await resolveOAuthInitiationInputs(formData);
           const existingOAuthProfile =
             appState.servers[formData.name]?.oauthFlowProfile;
+          const protocolMode =
+            formData.oauthProtocolMode ??
+            existingOAuthProfile?.protocolVersion ??
+            "auto";
+          const registrationMode =
+            formData.oauthRegistrationMode ??
+            existingOAuthProfile?.registrationStrategy ??
+            "auto";
           const oauthOptions: any = {
             serverName: formData.name,
             serverUrl: formData.url,
@@ -1109,8 +1154,16 @@ export function useServerState({
             registryServerId: oauthInputs.registryServerId,
             useRegistryOAuthProxy: oauthInputs.useRegistryOAuthProxy,
             customHeaders: formData.headers,
-            protocolVersion: existingOAuthProfile?.protocolVersion,
-            registrationStrategy: existingOAuthProfile?.registrationStrategy,
+            protocolMode,
+            registrationMode,
+            protocolVersion:
+              protocolMode !== "auto"
+                ? protocolMode
+                : existingOAuthProfile?.protocolVersion,
+            registrationStrategy:
+              registrationMode !== "auto"
+                ? registrationMode
+                : existingOAuthProfile?.registrationStrategy,
             onTraceUpdate: (oauthTrace: OAuthTrace) => {
               updateServerOAuthTrace(formData.name, oauthTrace);
             },
@@ -1815,6 +1868,17 @@ export function useServerState({
           };
         }
 
+        const storedOAuthConfig = readStoredOAuthConfig(serverName);
+        const storedClientCredentials = readStoredClientCredentials(serverName);
+        const protocolMode =
+          storedOAuthConfig.protocolMode ??
+          server.oauthFlowProfile?.protocolVersion ??
+          "auto";
+        const registrationMode =
+          storedOAuthConfig.registrationMode ??
+          server.oauthFlowProfile?.registrationStrategy ??
+          "auto";
+
         prepareHostedWorkspaceOAuthRedirect({
           serverId: hostedWorkspaceServerId,
           serverName,
@@ -1829,8 +1893,23 @@ export function useServerState({
             !Array.isArray(server.config.requestInit.headers)
               ? (server.config.requestInit.headers as Record<string, string>)
               : undefined,
-          protocolVersion: server.oauthFlowProfile?.protocolVersion,
-          registrationStrategy: server.oauthFlowProfile?.registrationStrategy,
+          clientId:
+            server.oauthTokens?.client_id ?? storedClientCredentials.clientId,
+          clientSecret:
+            server.oauthTokens?.client_secret ??
+            storedClientCredentials.clientSecret,
+          protocolMode,
+          registrationMode,
+          protocolVersion:
+            protocolMode !== "auto"
+              ? protocolMode
+              : server.oauthFlowProfile?.protocolVersion ??
+                storedOAuthConfig.protocolVersion,
+          registrationStrategy:
+            registrationMode !== "auto"
+              ? registrationMode
+              : server.oauthFlowProfile?.registrationStrategy ??
+                storedOAuthConfig.registrationStrategy,
           onTraceUpdate: (oauthTrace: OAuthTrace) => {
             updateServerOAuthTrace(serverName, oauthTrace);
           },

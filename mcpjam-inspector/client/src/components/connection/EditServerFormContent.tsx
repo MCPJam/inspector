@@ -143,6 +143,12 @@ export function EditServerFormContent({
             onBearerTokenChange={formState.setBearerToken}
             oauthScopesInput={formState.oauthScopesInput}
             onOauthScopesChange={formState.setOauthScopesInput}
+            oauthProtocolMode={formState.oauthProtocolMode}
+            onOauthProtocolModeChange={formState.setOauthProtocolMode}
+            oauthRegistrationMode={formState.oauthRegistrationMode}
+            onOauthRegistrationModeChange={
+              formState.setOauthRegistrationMode
+            }
             useCustomClientId={formState.useCustomClientId}
             onUseCustomClientIdChange={(checked) => {
               formState.setUseCustomClientId(checked);

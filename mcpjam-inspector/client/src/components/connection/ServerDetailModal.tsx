@@ -152,7 +152,10 @@ export function ServerDetailModal({
     }
 
     // Validate Client ID if using custom configuration
-    if (formState.authType === "oauth" && formState.useCustomClientId) {
+    if (
+      formState.authType === "oauth" &&
+      formState.oauthRegistrationMode === "preregistered"
+    ) {
       const clientIdError = formState.validateClientId(formState.clientId);
       if (clientIdError) {
         toast.error(clientIdError);

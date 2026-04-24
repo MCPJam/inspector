@@ -12,6 +12,10 @@ import {
   resolveAuthorizationPlan,
   type ResolvedAuthorizationPlan,
 } from "@mcpjam/sdk/browser";
+import type {
+  ServerFormOAuthProtocolMode,
+  ServerFormOAuthRegistrationMode,
+} from "@/shared/types.js";
 
 interface AuthenticationSectionProps {
   serverUrl?: string;
@@ -22,6 +26,12 @@ interface AuthenticationSectionProps {
   onBearerTokenChange: (value: string) => void;
   oauthScopesInput: string;
   onOauthScopesChange: (value: string) => void;
+  oauthProtocolMode: ServerFormOAuthProtocolMode;
+  onOauthProtocolModeChange: (value: ServerFormOAuthProtocolMode) => void;
+  oauthRegistrationMode: ServerFormOAuthRegistrationMode;
+  onOauthRegistrationModeChange: (
+    value: ServerFormOAuthRegistrationMode,
+  ) => void;
   useCustomClientId: boolean;
   onUseCustomClientIdChange: (value: boolean) => void;
   clientId: string;
@@ -30,6 +40,51 @@ interface AuthenticationSectionProps {
   onClientSecretChange: (value: string) => void;
   clientIdError: string | null;
   clientSecretError: string | null;
+}
+
+const PROTOCOL_OPTIONS: Array<{
+  value: ServerFormOAuthProtocolMode;
+  label: string;
+}> = [
+  { value: "auto", label: "Automatic (Latest)" },
+  { value: "2025-11-25", label: "2025-11-25 (Latest)" },
+  { value: "2025-06-18", label: "2025-06-18" },
+  { value: "2025-03-26", label: "2025-03-26 (Legacy)" },
+];
+
+const REGISTRATION_OPTIONS: Array<{
+  value: ServerFormOAuthRegistrationMode;
+  label: string;
+}> = [
+  { value: "auto", label: "Automatic" },
+  { value: "preregistered", label: "Use existing client credentials" },
+  { value: "cimd", label: "Client ID Metadata Documents (CIMD)" },
+  { value: "dcr", label: "Dynamic Client Registration (DCR)" },
+];
+
+function getRegistrationModeLabel(
+  value: ServerFormOAuthRegistrationMode,
+): string {
+  return (
+    REGISTRATION_OPTIONS.find((option) => option.value === value)?.label ??
+    value
+  );
+}
+
+function getRegistrationModeDescription(
+  value: ServerFormOAuthRegistrationMode,
+): string {
+  switch (value) {
+    case "preregistered":
+      return "Use a client ID that was already issued for this authorization server.";
+    case "cimd":
+      return "Requires the latest MCP auth spec and an authorization server that advertises client_id_metadata_document_supported.";
+    case "dcr":
+      return "Requires the authorization server to advertise a registration_endpoint for dynamic registration.";
+    case "auto":
+    default:
+      return "Automatic discovery uses pre-registered credentials first, then CIMD, then DCR after the server is probed.";
+  }
 }
 
 function getPlanStatusLabel(plan: ResolvedAuthorizationPlan): string {
@@ -62,6 +117,10 @@ export function AuthenticationSection({
   onBearerTokenChange,
   oauthScopesInput,
   onOauthScopesChange,
+  oauthProtocolMode,
+  onOauthProtocolModeChange,
+  oauthRegistrationMode,
+  onOauthRegistrationModeChange,
   useCustomClientId,
   onUseCustomClientIdChange,
   clientId,
@@ -72,26 +131,32 @@ export function AuthenticationSection({
   clientSecretError,
 }: AuthenticationSectionProps) {
   const [showAdvancedOAuth, setShowAdvancedOAuth] = useState(false);
+  const showClientCredentials =
+    oauthRegistrationMode === "preregistered" || useCustomClientId;
   const oauthPlan =
     authType === "oauth"
       ? resolveAuthorizationPlan({
           serverUrl,
-          protocolMode: "auto",
-          registrationMode: useCustomClientId ? "preregistered" : "auto",
-          clientId: useCustomClientId ? clientId : undefined,
-          clientSecret: useCustomClientId ? clientSecret : undefined,
+          protocolMode: oauthProtocolMode,
+          registrationMode: oauthRegistrationMode,
+          clientId: showClientCredentials ? clientId : undefined,
+          clientSecret: showClientCredentials ? clientSecret : undefined,
           authMode: "interactive",
         })
       : null;
   const planDetails = oauthPlan
     ? [
-        `Protocol ${oauthPlan.protocolVersion}`,
+        oauthProtocolMode === "auto"
+          ? `Protocol ${oauthPlan.protocolVersion}`
+          : `Protocol override: ${oauthProtocolMode}`,
         oauthPlan.canonicalResource
           ? `Resource ${oauthPlan.canonicalResource}`
           : undefined,
-        useCustomClientId
-          ? "Registration pre-registered"
-          : "Automatic order: preregistered -> CIMD -> DCR",
+        oauthRegistrationMode === "auto"
+          ? "Automatic order: pre-registered -> CIMD -> DCR"
+          : `Registration override: ${getRegistrationModeLabel(
+              oauthRegistrationMode,
+            )}`,
       ].filter(Boolean)
     : [];
 
@@ -211,6 +276,73 @@ export function AuthenticationSection({
 
             {showAdvancedOAuth && (
               <div className="px-3 pb-3 space-y-3">
+                <div className="grid gap-3 md:grid-cols-2">
+                  <div className="space-y-2">
+                    <label className="block text-sm font-medium text-foreground">
+                      Protocol
+                    </label>
+                    <Select
+                      value={oauthProtocolMode}
+                      onValueChange={(value: ServerFormOAuthProtocolMode) =>
+                        onOauthProtocolModeChange(value)
+                      }
+                    >
+                      <SelectTrigger className="w-full h-10">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {PROTOCOL_OPTIONS.map((option) => (
+                          <SelectItem key={option.value} value={option.value}>
+                            {option.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground">
+                      Automatic tracks the SDK default. Pick an older spec only
+                      when you need compatibility testing.
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="block text-sm font-medium text-foreground">
+                      Registration Strategy
+                    </label>
+                    <Select
+                      value={oauthRegistrationMode}
+                      onValueChange={(
+                        value: ServerFormOAuthRegistrationMode,
+                      ) => {
+                        onOauthRegistrationModeChange(value);
+                        onUseCustomClientIdChange(
+                          value === "preregistered",
+                        );
+                      }}
+                    >
+                      <SelectTrigger className="w-full h-10">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {REGISTRATION_OPTIONS.map((option) => (
+                          <SelectItem key={option.value} value={option.value}>
+                            {option.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground">
+                      {getRegistrationModeDescription(oauthRegistrationMode)}
+                    </p>
+                    {oauthRegistrationMode === "cimd" &&
+                      oauthPlan?.clientIdMetadataUrl && (
+                        <p className="text-xs text-muted-foreground break-all">
+                          SDK client metadata URL:{" "}
+                          {oauthPlan.clientIdMetadataUrl}
+                        </p>
+                      )}
+                  </div>
+                </div>
+
                 <div className="space-y-2">
                   <label className="block text-sm font-medium text-foreground">
                     Scope Override
@@ -227,31 +359,7 @@ export function AuthenticationSection({
                   </p>
                 </div>
 
-                <div className="space-y-2">
-                  <div className="flex items-center space-x-2">
-                    <input
-                      type="checkbox"
-                      id="useCustomClientId"
-                      checked={useCustomClientId}
-                      onChange={(e) =>
-                        onUseCustomClientIdChange(e.target.checked)
-                      }
-                      className="rounded"
-                    />
-                    <label
-                      htmlFor="useCustomClientId"
-                      className="text-sm font-medium text-foreground"
-                    >
-                      Use pre-registered OAuth credentials
-                    </label>
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    Leave unchecked to let the SDK discover preregistered,
-                    CIMD, or DCR automatically.
-                  </p>
-                </div>
-
-                {useCustomClientId && (
+                {showClientCredentials && (
                   <div className="space-y-3">
                     <div className="space-y-2">
                       <label className="block text-sm font-medium text-foreground">

@@ -47,4 +47,28 @@ describe("useServerForm", () => {
 
     expect(result.current.validateForm()).toBe("HTTPS is required");
   });
+
+  it("includes OAuth protocol and registration overrides in built HTTP form data", () => {
+    const { result } = renderHook(() => useServerForm());
+
+    act(() => {
+      result.current.setName("Planner test");
+      result.current.setUrl("https://example.com/mcp");
+      result.current.setAuthType("oauth");
+      result.current.setShowAuthSettings(true);
+      result.current.setOauthProtocolMode("2025-06-18");
+      result.current.setOauthRegistrationMode("dcr");
+      result.current.setOauthScopesInput("openid profile");
+    });
+
+    expect(result.current.buildFormData()).toMatchObject({
+      name: "Planner test",
+      type: "http",
+      url: "https://example.com/mcp",
+      useOAuth: true,
+      oauthProtocolMode: "2025-06-18",
+      oauthRegistrationMode: "dcr",
+      oauthScopes: ["openid", "profile"],
+    });
+  });
 });

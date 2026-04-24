@@ -1,5 +1,9 @@
 import { useState, useEffect, useRef } from "react";
-import { ServerFormData } from "@/shared/types.js";
+import {
+  ServerFormData,
+  type ServerFormOAuthProtocolMode,
+  type ServerFormOAuthRegistrationMode,
+} from "@/shared/types.js";
 import { ServerWithName } from "@/hooks/use-app-state";
 import { hasOAuthConfig, getStoredTokens } from "@/lib/oauth/mcp-oauth";
 import { HOSTED_MODE } from "@/lib/config";
@@ -12,6 +16,8 @@ interface InitialFormValues {
   authType: "oauth" | "bearer" | "none";
   bearerToken: string;
   oauthScopesInput: string;
+  oauthProtocolMode: ServerFormOAuthProtocolMode;
+  oauthRegistrationMode: ServerFormOAuthRegistrationMode;
   useCustomClientId: boolean;
   clientId: string;
   clientSecret: string;
@@ -30,6 +36,10 @@ export function useServerForm(
   const [url, setUrl] = useState("");
 
   const [oauthScopesInput, setOauthScopesInput] = useState("");
+  const [oauthProtocolMode, setOauthProtocolMode] =
+    useState<ServerFormOAuthProtocolMode>("auto");
+  const [oauthRegistrationMode, setOauthRegistrationMode] =
+    useState<ServerFormOAuthRegistrationMode>("auto");
   const [clientId, setClientId] = useState("");
   const [clientSecret, setClientSecret] = useState("");
   const [bearerToken, setBearerToken] = useState("");
@@ -64,8 +74,11 @@ export function useServerForm(
       // For HTTP servers, check OAuth from multiple sources like the original
       let hasOAuth = false;
       let scopes: string[] = [];
+      let protocolModeValue: ServerFormOAuthProtocolMode = "auto";
+      let registrationModeValue: ServerFormOAuthRegistrationMode = "auto";
       let clientIdValue = "";
       let clientSecretValue = "";
+      let shouldShowClientCredentials = false;
 
       if (isHttpServer) {
         // Check if OAuth is configured by looking at multiple sources:
@@ -73,7 +86,11 @@ export function useServerForm(
         // 2. Check if there's stored OAuth data
         const hasOAuthTokens = server.oauthTokens != null;
         const hasStoredOAuthConfig = hasOAuthConfig(server.name);
-        hasOAuth = hasOAuthTokens || hasStoredOAuthConfig;
+        hasOAuth =
+          server.useOAuth === true ||
+          hasOAuthTokens ||
+          hasStoredOAuthConfig ||
+          server.oauthFlowProfile != null;
 
         const storedOAuthConfig = localStorage.getItem(
           `mcp-oauth-config-${server.name}`,
@@ -87,18 +104,63 @@ export function useServerForm(
         const oauthConfig = storedOAuthConfig
           ? JSON.parse(storedOAuthConfig)
           : {};
+        const fallbackScopes =
+          typeof server.oauthFlowProfile?.scopes === "string"
+            ? server.oauthFlowProfile.scopes
+                .split(/[,\s]+/)
+                .filter((scope) => scope.length > 0)
+            : [];
 
         // Retrieve scopes from multiple sources (prioritize stored tokens/storage)
         scopes =
           server.oauthTokens?.scope?.split(" ") ||
           storedTokens?.scope?.split(" ") ||
           oauthConfig.scopes ||
-          [];
+          fallbackScopes;
 
-        // Get client ID and secret from multiple sources (prioritize stored)
-        clientIdValue = storedTokens?.client_id || clientInfo?.client_id || "";
+        const savedClientId =
+          clientInfo?.client_id || server.oauthFlowProfile?.clientId || "";
+        const savedClientSecret =
+          clientInfo?.client_secret ||
+          server.oauthFlowProfile?.clientSecret ||
+          "";
 
-        clientSecretValue = clientInfo?.client_secret || "";
+        // Keep runtime token metadata available for preregistered reconnects,
+        // but only surface credential fields from saved client configuration.
+        clientIdValue = storedTokens?.client_id || savedClientId;
+        clientSecretValue = savedClientSecret;
+
+        protocolModeValue =
+          oauthConfig.protocolMode === "auto" ||
+          oauthConfig.protocolMode === "2025-03-26" ||
+          oauthConfig.protocolMode === "2025-06-18" ||
+          oauthConfig.protocolMode === "2025-11-25"
+            ? oauthConfig.protocolMode
+            : server.oauthFlowProfile?.protocolVersion ||
+              (oauthConfig.protocolVersion === "2025-03-26" ||
+              oauthConfig.protocolVersion === "2025-06-18" ||
+              oauthConfig.protocolVersion === "2025-11-25"
+                ? oauthConfig.protocolVersion
+                : "auto");
+
+        registrationModeValue =
+          oauthConfig.registrationMode === "auto" ||
+          oauthConfig.registrationMode === "cimd" ||
+          oauthConfig.registrationMode === "dcr" ||
+          oauthConfig.registrationMode === "preregistered"
+            ? oauthConfig.registrationMode
+            : server.oauthFlowProfile?.registrationStrategy ||
+              (oauthConfig.registrationStrategy === "cimd" ||
+              oauthConfig.registrationStrategy === "dcr" ||
+              oauthConfig.registrationStrategy === "preregistered"
+                ? oauthConfig.registrationStrategy
+                : (savedClientId || savedClientSecret)
+                  ? "preregistered"
+                  : "auto");
+
+        shouldShowClientCredentials =
+          registrationModeValue === "preregistered" ||
+          Boolean(savedClientId || savedClientSecret);
       }
 
       // Derive local values used for both state initialization and snapshot
@@ -138,6 +200,8 @@ export function useServerForm(
       // Don't set a default scope for existing servers - use what's configured
       // Only set default for new servers
       setOauthScopesInput(scopes.join(" "));
+      setOauthProtocolMode(protocolModeValue);
+      setOauthRegistrationMode(registrationModeValue);
       setRequestTimeout(timeoutValue);
 
       // Set auth type based on multiple OAuth detection sources
@@ -154,10 +218,14 @@ export function useServerForm(
       }
 
       // Set custom OAuth credentials if present (from any source)
-      if (clientIdValue) {
+      if (shouldShowClientCredentials) {
         setUseCustomClientId(true);
         setClientId(clientIdValue);
         setClientSecret(clientSecretValue);
+      } else {
+        setUseCustomClientId(false);
+        setClientId("");
+        setClientSecret("");
       }
 
       // Initialize env vars for STDIO servers
@@ -192,7 +260,9 @@ export function useServerForm(
         authType: resolvedAuthType,
         bearerToken: bearerTokenValue,
         oauthScopesInput: scopes.join(" "),
-        useCustomClientId: !!clientIdValue,
+        oauthProtocolMode: protocolModeValue,
+        oauthRegistrationMode: registrationModeValue,
+        useCustomClientId: shouldShowClientCredentials,
         clientId: clientIdValue,
         clientSecret: clientSecretValue,
         envVars: envArray.map(({ key, value }) => ({ key, value })),
@@ -337,6 +407,8 @@ export function useServerForm(
       .trim()
       .split(/\s+/)
       .filter((s) => s.length > 0);
+    const shouldUsePreregisteredCredentials =
+      authType === "oauth" && oauthRegistrationMode === "preregistered";
 
     // Handle authentication
     let useOAuth = false;
@@ -352,9 +424,15 @@ export function useServerForm(
       url: url.trim(),
       headers,
       useOAuth,
+      oauthProtocolMode: useOAuth ? oauthProtocolMode : undefined,
+      oauthRegistrationMode: useOAuth ? oauthRegistrationMode : undefined,
       oauthScopes: scopes.length > 0 ? scopes : undefined,
-      clientId: clientId.trim() || undefined,
-      clientSecret: clientSecret.trim() || undefined,
+      clientId: shouldUsePreregisteredCredentials
+        ? clientId.trim() || undefined
+        : undefined,
+      clientSecret: shouldUsePreregisteredCredentials
+        ? clientSecret.trim() || undefined
+        : undefined,
       requestTimeout: reqTimeout,
     };
   };
@@ -365,6 +443,8 @@ export function useServerForm(
     setCommandInput("");
     setUrl("");
     setOauthScopesInput("");
+    setOauthProtocolMode("auto");
+    setOauthRegistrationMode("auto");
     setClientId("");
     setClientSecret("");
     setBearerToken("");
@@ -392,6 +472,8 @@ export function useServerForm(
       authType !== iv.authType ||
       bearerToken !== iv.bearerToken ||
       oauthScopesInput !== iv.oauthScopesInput ||
+      oauthProtocolMode !== iv.oauthProtocolMode ||
+      oauthRegistrationMode !== iv.oauthRegistrationMode ||
       useCustomClientId !== iv.useCustomClientId ||
       clientId !== iv.clientId ||
       clientSecret !== iv.clientSecret ||
@@ -418,6 +500,10 @@ export function useServerForm(
     // Auth states
     oauthScopesInput,
     setOauthScopesInput,
+    oauthProtocolMode,
+    setOauthProtocolMode,
+    oauthRegistrationMode,
+    setOauthRegistrationMode,
     clientId,
     setClientId,
     clientSecret,

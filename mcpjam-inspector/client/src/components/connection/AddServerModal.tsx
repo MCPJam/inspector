@@ -75,6 +75,26 @@ export function AddServerModal({
       if (initialData.useOAuth) {
         formState.setAuthType("oauth");
         formState.setShowAuthSettings(true);
+        if (initialData.oauthProtocolMode) {
+          formState.setOauthProtocolMode(initialData.oauthProtocolMode);
+        }
+        if (initialData.oauthRegistrationMode) {
+          formState.setOauthRegistrationMode(initialData.oauthRegistrationMode);
+          formState.setUseCustomClientId(
+            initialData.oauthRegistrationMode === "preregistered",
+          );
+        }
+        if (initialData.oauthScopes && initialData.oauthScopes.length > 0) {
+          formState.setOauthScopesInput(initialData.oauthScopes.join(" "));
+        }
+        if (initialData.clientId) {
+          formState.setUseCustomClientId(true);
+          formState.setOauthRegistrationMode("preregistered");
+          formState.setClientId(initialData.clientId);
+        }
+        if (initialData.clientSecret) {
+          formState.setClientSecret(initialData.clientSecret);
+        }
       } else if (
         initialData.headers &&
         initialData.headers["Authorization"] !== undefined
@@ -96,7 +116,10 @@ export function AddServerModal({
     e.preventDefault();
 
     // Validate Client ID if using custom configuration
-    if (formState.authType === "oauth" && formState.useCustomClientId) {
+    if (
+      formState.authType === "oauth" &&
+      formState.oauthRegistrationMode === "preregistered"
+    ) {
       const clientIdError = formState.validateClientId(formState.clientId);
       if (clientIdError) {
         toast.error(clientIdError);
@@ -272,6 +295,12 @@ export function AddServerModal({
               onBearerTokenChange={formState.setBearerToken}
               oauthScopesInput={formState.oauthScopesInput}
               onOauthScopesChange={formState.setOauthScopesInput}
+              oauthProtocolMode={formState.oauthProtocolMode}
+              onOauthProtocolModeChange={formState.setOauthProtocolMode}
+              oauthRegistrationMode={formState.oauthRegistrationMode}
+              onOauthRegistrationModeChange={
+                formState.setOauthRegistrationMode
+              }
               useCustomClientId={formState.useCustomClientId}
               onUseCustomClientIdChange={(checked) => {
                 formState.setUseCustomClientId(checked);
