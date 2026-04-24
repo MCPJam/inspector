@@ -8,6 +8,7 @@ import resources from "./resources.js";
 import prompts from "./prompts.js";
 import chatV2 from "./chat-v2.js";
 import chatboxes from "./chatboxes.js";
+import serverShares from "./server-shares.js";
 import apps from "./apps.js";
 import evals from "./evals.js";
 import oauthWeb from "./oauth.js";
@@ -26,6 +27,7 @@ web.use("/tools/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/resources/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/prompts/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/chatboxes/*", bearerAuthMiddleware, guestRateLimitMiddleware);
+web.use("/server-shares/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/evals/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/chat-v2", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/chat-history/*", bearerAuthMiddleware, guestRateLimitMiddleware);
@@ -33,12 +35,12 @@ web.use("/conformance/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use(
   "/apps/mcp-apps/widget-content",
   bearerAuthMiddleware,
-  guestRateLimitMiddleware,
+  guestRateLimitMiddleware
 );
 web.use(
   "/apps/chatgpt-apps/widget-content",
   bearerAuthMiddleware,
-  guestRateLimitMiddleware,
+  guestRateLimitMiddleware
 );
 
 web.route("/servers", servers);
@@ -46,6 +48,7 @@ web.route("/tools", tools);
 web.route("/resources", resources);
 web.route("/prompts", prompts);
 web.route("/chatboxes", chatboxes);
+web.route("/server-shares", serverShares);
 web.route("/evals", evals);
 web.route("/export", exporter);
 web.route("/chat-v2", chatV2);

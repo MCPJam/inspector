@@ -12,8 +12,8 @@ import {
 } from "@/lib/hosted-oauth-resume";
 
 const {
-  mockResolveShareForViewer,
   mockGetAccessToken,
+  mockGetGuestBearerToken,
   mockClipboardWriteText,
   mockGetStoredTokens,
   mockInitiateOAuth,
@@ -23,8 +23,8 @@ const {
   toastSuccess,
   toastError,
 } = vi.hoisted(() => ({
-  mockResolveShareForViewer: vi.fn(),
   mockGetAccessToken: vi.fn(),
+  mockGetGuestBearerToken: vi.fn(),
   mockClipboardWriteText: vi.fn(),
   mockGetStoredTokens: vi.fn(),
   mockInitiateOAuth: vi.fn(async () => ({ success: false })),
@@ -40,13 +40,16 @@ vi.mock("convex/react", () => ({
     isAuthenticated: true,
     isLoading: false,
   }),
-  useMutation: () => mockResolveShareForViewer,
 }));
 
 vi.mock("@workos-inc/authkit-react", () => ({
   useAuth: () => ({
     getAccessToken: mockGetAccessToken,
   }),
+}));
+
+vi.mock("@/lib/guest-session", () => ({
+  getGuestBearerToken: mockGetGuestBearerToken,
 }));
 
 vi.mock("@/hooks/hosted/use-hosted-api-context", () => ({
@@ -120,7 +123,7 @@ describe("SharedServerChatPage", () => {
       serverUrl: string | null;
       clientId: string | null;
       oauthScopes: string[] | null;
-    }> = {},
+    }> = {}
   ) {
     return {
       workspaceId: "ws_1",
@@ -142,8 +145,8 @@ describe("SharedServerChatPage", () => {
     clearHostedOAuthResumeMarker();
     localStorage.clear();
     sessionStorage.clear();
-    mockResolveShareForViewer.mockReset();
     mockGetAccessToken.mockReset();
+    mockGetGuestBearerToken.mockReset();
     mockClipboardWriteText.mockReset();
     mockGetStoredTokens.mockReset();
     mockInitiateOAuth.mockReset();
@@ -154,6 +157,7 @@ describe("SharedServerChatPage", () => {
     toastError.mockReset();
 
     mockGetAccessToken.mockResolvedValue("workos-token");
+    mockGetGuestBearerToken.mockResolvedValue(null);
     mockGetStoredTokens.mockReturnValue(null);
     mockInitiateOAuth.mockResolvedValue({ success: false });
     mockCheckHostedServerOAuthRequirement.mockResolvedValue({
@@ -172,6 +176,7 @@ describe("SharedServerChatPage", () => {
         writeText: mockClipboardWriteText,
       },
     });
+    vi.stubGlobal("fetch", vi.fn());
   });
 
   afterEach(() => {
@@ -193,11 +198,72 @@ describe("SharedServerChatPage", () => {
 
     await waitFor(() => {
       expect(mockClipboardWriteText).toHaveBeenCalledWith(
-        `${window.location.origin}/shared/server-one/token%20123`,
+        `${window.location.origin}/shared/server-one/token%20123`
       );
     });
     expect(toastSuccess).toHaveBeenCalledWith("Share link copied");
     expect(toastError).not.toHaveBeenCalled();
+  });
+
+  it("bootstraps a shared server with a guest bearer when WorkOS is unavailable", async () => {
+    mockGetAccessToken.mockResolvedValue(null);
+    mockGetGuestBearerToken.mockResolvedValue("guest-token");
+
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify(createSharePayload()), {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json",
+        },
+      })
+    );
+
+    render(<SharedServerChatPage pathToken="guest-share-token" />);
+
+    expect(await screen.findByTestId("shared-chat-tab")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/web/server-shares/bootstrap",
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({
+          Authorization: "Bearer guest-token",
+        }),
+      })
+    );
+  });
+
+  it("shows access denied for guest users on invite-only shared links", async () => {
+    mockGetAccessToken.mockResolvedValue(null);
+    mockGetGuestBearerToken.mockResolvedValue("guest-token");
+
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          code: "FORBIDDEN",
+          message:
+            "Guests cannot access Server One. This shared server is invite-only.",
+        }),
+        {
+          status: 403,
+          headers: {
+            "Content-Type": "application/json",
+          },
+        }
+      )
+    );
+
+    render(<SharedServerChatPage pathToken="invite-only-token" />);
+
+    expect(
+      await screen.findByRole("heading", { name: "Access Denied" })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Guests cannot access Server One. This shared server is invite-only."
+      )
+    ).toBeInTheDocument();
   });
 
   it("keeps shared server reasoning rendering unchanged", async () => {
@@ -212,7 +278,7 @@ describe("SharedServerChatPage", () => {
     expect(mockChatTabV2).toHaveBeenCalledWith(
       expect.not.objectContaining({
         reasoningDisplayMode: "hidden",
-      }),
+      })
     );
   });
 
@@ -220,7 +286,7 @@ describe("SharedServerChatPage", () => {
     vi.useFakeTimers();
     let hasToken = false;
     mockGetStoredTokens.mockImplementation(() =>
-      hasToken ? { access_token: "oauth-token" } : null,
+      hasToken ? { access_token: "oauth-token" } : null
     );
 
     writeSharedServerSession({
@@ -241,10 +307,10 @@ describe("SharedServerChatPage", () => {
     render(<SharedServerChatPage />);
 
     expect(
-      screen.getByRole("heading", { name: "Finishing authorization" }),
+      screen.getByRole("heading", { name: "Finishing authorization" })
     ).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Authorize" }),
+      screen.queryByRole("button", { name: "Authorize" })
     ).not.toBeInTheDocument();
 
     await act(async () => {
@@ -275,19 +341,19 @@ describe("SharedServerChatPage", () => {
     expect(await screen.findByTestId("shared-chat-tab")).toBeInTheDocument();
 
     await userEvent.click(
-      screen.getByRole("button", { name: "Trigger targeted OAuth" }),
+      screen.getByRole("button", { name: "Trigger targeted OAuth" })
     );
 
     expect(
-      await screen.findByRole("heading", { name: "Authorization Required" }),
+      await screen.findByRole("heading", { name: "Authorization Required" })
     ).toBeInTheDocument();
     expect(
       screen.getByText(
-        "Asana requires authorization to continue. You'll return here automatically after consent.",
-      ),
+        "Asana requires authorization to continue. You'll return here automatically after consent."
+      )
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Authorize" }),
+      screen.getByRole("button", { name: "Authorize" })
     ).toBeInTheDocument();
     expect(mockValidateHostedServer).not.toHaveBeenCalled();
   });
@@ -299,7 +365,7 @@ describe("SharedServerChatPage", () => {
       .mockImplementation(() => {});
     mockGetStoredTokens.mockReturnValue({ access_token: "stale-token" });
     mockValidateHostedServer.mockRejectedValue(
-      new Error("invalid_token from hosted validation"),
+      new Error("invalid_token from hosted validation")
     );
 
     writeSharedServerSession({
@@ -315,7 +381,7 @@ describe("SharedServerChatPage", () => {
     render(<SharedServerChatPage />);
 
     expect(
-      screen.getByRole("heading", { name: "Finishing authorization" }),
+      screen.getByRole("heading", { name: "Finishing authorization" })
     ).toBeInTheDocument();
 
     await act(async () => {
@@ -323,18 +389,18 @@ describe("SharedServerChatPage", () => {
     });
 
     expect(
-      screen.getByRole("heading", { name: "Authorization Required" }),
+      screen.getByRole("heading", { name: "Authorization Required" })
     ).toBeInTheDocument();
     expect(
       screen.getByText(
-        "Your authorization expired or was rejected. Authorize again to continue.",
-      ),
+        "Your authorization expired or was rejected. Authorize again to continue."
+      )
     ).toBeInTheDocument();
     expect(
-      screen.queryByText("invalid_token from hosted validation"),
+      screen.queryByText("invalid_token from hosted validation")
     ).not.toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Authorize again" }),
+      screen.getByRole("button", { name: "Authorize again" })
     ).toBeInTheDocument();
     expect(screen.queryByTestId("shared-chat-tab")).not.toBeInTheDocument();
     expect(consoleError).toHaveBeenCalledWith(
@@ -343,7 +409,7 @@ describe("SharedServerChatPage", () => {
         surface: "shared",
         serverId: "srv_asana",
         serverName: "Asana",
-      }),
+      })
     );
   });
 });

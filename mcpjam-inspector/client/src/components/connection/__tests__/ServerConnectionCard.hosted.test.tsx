@@ -3,6 +3,22 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { toast } from "sonner";
 import type { ServerWithName } from "@/hooks/use-app-state";
 
+const {
+  mockConvexQuery,
+  mockCreateHostedServer,
+  mockUpdateHostedServer,
+  mockEnsureServerShare,
+  mockSetServerShareMode,
+  mockRotateServerShareLink,
+} = vi.hoisted(() => ({
+  mockConvexQuery: vi.fn(),
+  mockCreateHostedServer: vi.fn(),
+  mockUpdateHostedServer: vi.fn(),
+  mockEnsureServerShare: vi.fn(),
+  mockSetServerShareMode: vi.fn(),
+  mockRotateServerShareLink: vi.fn(),
+}));
+
 // Mock the agent brief generator to avoid @mcpjam/sdk dependency
 vi.mock("@/lib/generate-agent-brief", () => ({
   generateAgentBrief: vi.fn().mockReturnValue("mocked brief"),
@@ -47,6 +63,27 @@ vi.mock("convex/react", () => ({
   useConvexAuth: () => ({
     isAuthenticated: true,
   }),
+  useConvex: () => ({
+    query: mockConvexQuery,
+  }),
+}));
+
+vi.mock("@/hooks/useWorkspaces", () => ({
+  useServerMutations: () => ({
+    createServer: mockCreateHostedServer,
+    updateServer: mockUpdateHostedServer,
+    deleteServer: vi.fn(),
+  }),
+}));
+
+vi.mock("@/hooks/useServerShares", () => ({
+  useServerShareMutations: () => ({
+    ensureServerShare: mockEnsureServerShare,
+    setServerShareMode: mockSetServerShareMode,
+    rotateServerShareLink: mockRotateServerShareLink,
+    upsertServerShareMember: vi.fn(),
+    removeServerShareMember: vi.fn(),
+  }),
 }));
 
 vi.mock("@/hooks/use-explore-cases-prefetch-on-connect", () => ({
@@ -65,7 +102,7 @@ vi.mock("sonner", () => ({
 import { ServerConnectionCard } from "../ServerConnectionCard";
 
 const createServer = (
-  overrides: Partial<ServerWithName> = {},
+  overrides: Partial<ServerWithName> = {}
 ): ServerWithName =>
   ({
     name: "insecure-http",
@@ -78,7 +115,7 @@ const createServer = (
       url: "http://example.com/mcp",
     },
     ...overrides,
-  }) as ServerWithName;
+  } as ServerWithName);
 
 describe("ServerConnectionCard hosted reconnect guard", () => {
   it("blocks reconnect switch for non-HTTPS servers in hosted mode", () => {
@@ -90,14 +127,14 @@ describe("ServerConnectionCard hosted reconnect guard", () => {
         server={server}
         onDisconnect={vi.fn()}
         onReconnect={onReconnect}
-      />,
+      />
     );
 
     const toggle = screen.getByRole("switch");
     fireEvent.click(toggle);
 
     expect(toast.error).toHaveBeenCalledWith(
-      "HTTP servers are not supported in hosted mode",
+      "HTTP servers are not supported in hosted mode"
     );
     expect(onReconnect).not.toHaveBeenCalled();
   });
@@ -118,11 +155,11 @@ describe("ServerConnectionCard hosted reconnect guard", () => {
         hostedServerId="hosted-server-1"
         onDisconnect={vi.fn()}
         onReconnect={vi.fn().mockResolvedValue(undefined)}
-      />,
+      />
     );
 
     expect(
-      screen.queryByRole("button", { name: "Share" }),
+      screen.queryByRole("button", { name: "Share" })
     ).not.toBeInTheDocument();
   });
 });

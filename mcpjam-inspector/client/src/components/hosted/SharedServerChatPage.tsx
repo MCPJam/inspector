@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useMutation, useConvexAuth } from "convex/react";
-import { ConvexError } from "convex/values";
+import { useConvexAuth } from "convex/react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { Loader2, Link2Off, ShieldX } from "lucide-react";
 import { toast } from "sonner";
@@ -22,21 +21,98 @@ import {
   writeSharedServerSession,
   writePendingServerAdd,
 } from "@/lib/shared-server-session";
+import { getGuestBearerToken } from "@/lib/guest-session";
 import { getStoredTokens } from "@/lib/oauth/mcp-oauth";
 
-function extractShareErrorMessage(error: unknown): string {
-  if (error instanceof ConvexError) {
-    return typeof error.data === "string"
-      ? error.data
-      : "This shared link is invalid or expired.";
+interface SharedServerRouteError {
+  status: number;
+  code?: string;
+  message: string;
+  rawMessage: string;
+}
+
+async function getHostedBearerHeader(
+  getAccessToken: () => Promise<string | undefined | null>
+): Promise<string | null> {
+  try {
+    const workOsToken = await getAccessToken();
+    if (workOsToken) {
+      return `Bearer ${workOsToken}`;
+    }
+  } catch {
+    // Fall through to guest auth.
   }
-  if (error instanceof Error) {
-    const uncaughtMatch = error.message.match(
-      /Uncaught Error:\s*(.*?)\s*(?:\bat handler\b|$)/s,
-    );
-    if (uncaughtMatch) return uncaughtMatch[1].trim();
+
+  const guestToken = await getGuestBearerToken();
+  return guestToken ? `Bearer ${guestToken}` : null;
+}
+
+function sanitizeSharedRouteErrorMessage(message: string): string {
+  const normalized = message.replace(/\s+/g, " ").trim();
+  if (!normalized) {
+    return "";
   }
-  return "This shared link is invalid or expired.";
+
+  const withoutWrapper = normalized.replace(/^Uncaught Error:\s*/i, "");
+  return withoutWrapper
+    .replace(/\s+at\s+(?:async\s+)?[A-Za-z0-9_$./<>-]+(?:\s+\(|$).*/s, "")
+    .trim();
+}
+
+function createSharedRouteError(
+  status: number,
+  message: string,
+  code?: string
+): SharedServerRouteError {
+  const fallbackMessage = `Request failed with status ${status}`;
+  const rawMessage = message.trim() || fallbackMessage;
+  const sanitizedMessage = sanitizeSharedRouteErrorMessage(rawMessage);
+
+  return {
+    status,
+    code,
+    rawMessage,
+    message: sanitizedMessage || fallbackMessage,
+  };
+}
+
+async function readRouteError(
+  response: Response
+): Promise<SharedServerRouteError> {
+  const bodyText = await response.text();
+  const trimmedBody = bodyText.trim();
+  let code: string | undefined;
+  let message = trimmedBody;
+
+  try {
+    const body = (trimmedBody ? JSON.parse(trimmedBody) : null) as {
+      code?: string;
+      message?: string;
+      error?: string;
+    } | null;
+
+    code = typeof body?.code === "string" ? body.code : undefined;
+    message =
+      body?.message ||
+      body?.error ||
+      trimmedBody ||
+      `Request failed with status ${response.status}`;
+  } catch {
+    message = trimmedBody || `Request failed with status ${response.status}`;
+  }
+
+  return createSharedRouteError(response.status, message, code);
+}
+
+function isSharedServerRouteError(
+  error: unknown
+): error is SharedServerRouteError {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    typeof (error as SharedServerRouteError).status === "number" &&
+    typeof (error as SharedServerRouteError).message === "string"
+  );
 }
 
 interface SharedServerChatPageProps {
@@ -46,7 +122,7 @@ interface SharedServerChatPageProps {
 
 function getSharedOAuthCopy(
   status: string,
-  serverName: string,
+  serverName: string
 ): {
   title: string;
   description: string;
@@ -94,17 +170,15 @@ export function SharedServerChatPage({
 }: SharedServerChatPageProps) {
   const { getAccessToken } = useAuth();
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
-  const resolveShareForViewer = useMutation(
-    "serverShares:resolveShareForViewer" as any,
-  );
 
   const [session, setSession] = useState<SharedServerSession | null>(() =>
-    readSharedServerSession(),
+    readSharedServerSession()
   );
   const [isResolving, setIsResolving] = useState(!!pathToken);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [errorStatus, setErrorStatus] = useState<number | null>(null);
   const [isCheckingOAuthRequirement, setIsCheckingOAuthRequirement] = useState(
-    () => !!session && !session.payload.useOAuth,
+    () => !!session && !session.payload.useOAuth
   );
   const [pendingRuntimeOAuthDetails, setPendingRuntimeOAuthDetails] =
     useState<HostedOAuthRequiredDetails | null>(null);
@@ -184,7 +258,7 @@ export function SharedServerChatPage({
   }, [selectedServerName, session]);
 
   useEffect(() => {
-    if (isAuthLoading || !isAuthenticated) {
+    if (isAuthLoading) {
       return;
     }
 
@@ -196,8 +270,30 @@ export function SharedServerChatPage({
       if (tokenFromPath) {
         setIsResolving(true);
         setErrorMessage(null);
+        setErrorStatus(null);
         try {
-          const payload = await resolveShareForViewer({ token: tokenFromPath });
+          const authorization = await getHostedBearerHeader(getAccessToken);
+          if (!authorization) {
+            throw new Error(
+              "Unable to create a hosted session for this shared server."
+            );
+          }
+
+          const response = await fetch("/api/web/server-shares/bootstrap", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: authorization,
+            },
+            body: JSON.stringify({ token: tokenFromPath }),
+          });
+
+          if (!response.ok) {
+            throw await readRouteError(response);
+          }
+
+          const payload =
+            (await response.json()) as SharedServerSession["payload"];
           if (cancelled) return;
 
           const nextSession: SharedServerSession = {
@@ -206,6 +302,7 @@ export function SharedServerChatPage({
           };
           writeSharedServerSession(nextSession);
           setSession(nextSession);
+          setErrorStatus(null);
 
           const nextSlug = slugify(nextSession.payload.serverName);
           if (window.location.hash !== `#${nextSlug}`) {
@@ -215,7 +312,16 @@ export function SharedServerChatPage({
           if (cancelled) return;
           setSession(null);
           clearSharedServerSession();
-          setErrorMessage(extractShareErrorMessage(error));
+          const routeError = isSharedServerRouteError(error)
+            ? error
+            : createSharedRouteError(
+                500,
+                error instanceof Error
+                  ? error.message
+                  : "Unable to open this shared server."
+              );
+          setErrorStatus(routeError.status);
+          setErrorMessage(routeError.message);
         } finally {
           if (!cancelled) {
             setIsResolving(false);
@@ -228,6 +334,7 @@ export function SharedServerChatPage({
       if (recovered) {
         setSession(recovered);
         setErrorMessage(null);
+        setErrorStatus(null);
         const recoveredSlug = slugify(recovered.payload.serverName);
         if (window.location.hash !== `#${recoveredSlug}`) {
           window.history.replaceState({}, "", `/#${recoveredSlug}`);
@@ -237,6 +344,7 @@ export function SharedServerChatPage({
 
       setSession(null);
       setErrorMessage("Invalid or expired share link");
+      setErrorStatus(404);
     };
 
     void resolve();
@@ -244,7 +352,7 @@ export function SharedServerChatPage({
     return () => {
       cancelled = true;
     };
-  }, [isAuthLoading, isAuthenticated, pathToken, resolveShareForViewer]);
+  }, [getAccessToken, isAuthLoading, pathToken]);
 
   useEffect(() => {
     if (!session) return;
@@ -264,7 +372,7 @@ export function SharedServerChatPage({
   }, [session]);
 
   useEffect(() => {
-    if (!session || isAuthLoading || !isAuthenticated) return;
+    if (!session || isAuthLoading) return;
 
     if (session.payload.useOAuth) {
       setIsCheckingOAuthRequirement(false);
@@ -277,7 +385,7 @@ export function SharedServerChatPage({
     const discoverOAuthRequirement = async () => {
       try {
         const result = await checkHostedServerOAuthRequirement(
-          session.payload.serverId,
+          session.payload.serverId
         );
         if (cancelled || !result.useOAuth) {
           return;
@@ -301,7 +409,7 @@ export function SharedServerChatPage({
               workspaceId: session.payload.workspaceId,
               serverId: session.payload.serverId,
               error,
-            },
+            }
           );
         }
       } finally {
@@ -316,7 +424,7 @@ export function SharedServerChatPage({
     return () => {
       cancelled = true;
     };
-  }, [isAuthLoading, isAuthenticated, session]);
+  }, [isAuthLoading, session]);
 
   useEffect(() => {
     if (!pendingRuntimeOAuthDetails || !session?.payload.useOAuth) {
@@ -365,7 +473,7 @@ export function SharedServerChatPage({
         setPendingRuntimeOAuthDetails(nextDetails);
       }
     },
-    [markOAuthRequired, session],
+    [markOAuthRequired, session]
   );
 
   const handleOpenMcpJam = () => {
@@ -400,7 +508,9 @@ export function SharedServerChatPage({
       return;
     }
 
-    const shareUrl = `${getShareableAppOrigin()}/shared/${slugify(session.payload.serverName)}/${encodeURIComponent(token)}`;
+    const shareUrl = `${getShareableAppOrigin()}/shared/${slugify(
+      session.payload.serverName
+    )}/${encodeURIComponent(token)}`;
     try {
       await navigator.clipboard.writeText(shareUrl);
       toast.success("Share link copied");
@@ -426,7 +536,10 @@ export function SharedServerChatPage({
     }
 
     if (!session || !selectedServerName) {
-      const isAccessDenied = errorMessage?.includes("don't have access");
+      const isAccessDenied =
+        errorStatus === 403 ||
+        errorMessage?.includes("don't have access") ||
+        errorMessage?.includes("Guests cannot access");
       return (
         <div className="flex flex-1 items-center justify-center px-4">
           <div className="w-full max-w-md rounded-lg border border-border bg-card p-6 text-center">

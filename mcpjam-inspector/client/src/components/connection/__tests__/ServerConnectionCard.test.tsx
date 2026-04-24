@@ -3,6 +3,22 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { toast } from "sonner";
 import type { ServerWithName } from "@/hooks/use-app-state";
 
+const {
+  mockConvexQuery,
+  mockCreateHostedServer,
+  mockUpdateHostedServer,
+  mockEnsureServerShare,
+  mockSetServerShareMode,
+  mockRotateServerShareLink,
+} = vi.hoisted(() => ({
+  mockConvexQuery: vi.fn(),
+  mockCreateHostedServer: vi.fn(),
+  mockUpdateHostedServer: vi.fn(),
+  mockEnsureServerShare: vi.fn(),
+  mockSetServerShareMode: vi.fn(),
+  mockRotateServerShareLink: vi.fn(),
+}));
+
 // Mock the agent brief generator to avoid @mcpjam/sdk dependency
 vi.mock("@/lib/generate-agent-brief", () => ({
   generateAgentBrief: vi.fn().mockReturnValue("mocked brief"),
@@ -45,6 +61,27 @@ vi.mock("convex/react", () => ({
   useConvexAuth: () => ({
     isAuthenticated: true,
   }),
+  useConvex: () => ({
+    query: mockConvexQuery,
+  }),
+}));
+
+vi.mock("@/hooks/useWorkspaces", () => ({
+  useServerMutations: () => ({
+    createServer: mockCreateHostedServer,
+    updateServer: mockUpdateHostedServer,
+    deleteServer: vi.fn(),
+  }),
+}));
+
+vi.mock("@/hooks/useServerShares", () => ({
+  useServerShareMutations: () => ({
+    ensureServerShare: mockEnsureServerShare,
+    setServerShareMode: mockSetServerShareMode,
+    rotateServerShareLink: mockRotateServerShareLink,
+    upsertServerShareMember: vi.fn(),
+    removeServerShareMember: vi.fn(),
+  }),
 }));
 
 vi.mock("@/hooks/use-explore-cases-prefetch-on-connect", () => ({
@@ -72,7 +109,7 @@ Object.assign(navigator, { clipboard: mockClipboard });
 
 describe("ServerConnectionCard", () => {
   const createServer = (
-    overrides: Partial<ServerWithName> = {},
+    overrides: Partial<ServerWithName> = {}
   ): ServerWithName => ({
     name: "test-server",
     lastConnectionTime: new Date(),
@@ -95,6 +132,23 @@ describe("ServerConnectionCard", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockConvexQuery.mockResolvedValue([]);
+    mockCreateHostedServer.mockResolvedValue("hosted-server-1");
+    mockUpdateHostedServer.mockResolvedValue(undefined);
+    mockEnsureServerShare.mockResolvedValue({
+      mode: "invited_only",
+      link: {
+        url: "https://app.mcpjam.com/shared/test-server/token-initial",
+      },
+    });
+    mockSetServerShareMode.mockResolvedValue({
+      mode: "any_signed_in_with_link",
+    });
+    mockRotateServerShareLink.mockResolvedValue({
+      link: {
+        url: "https://app.mcpjam.com/shared/test-server/token-rotated",
+      },
+    });
   });
 
   describe("rendering", () => {
@@ -106,7 +160,7 @@ describe("ServerConnectionCard", () => {
           server={server}
           workspaceId="ws_abc"
           {...defaultProps}
-        />,
+        />
       );
       expect(prefetch).toHaveBeenCalledWith("ws_abc", server, undefined);
     });
@@ -188,8 +242,8 @@ describe("ServerConnectionCard", () => {
       expect(screen.getByText("Authorizing in browser...")).toBeInTheDocument();
       expect(
         screen.getByText(
-          "Complete sign-in in the browser. Inspector will resume automatically.",
-        ),
+          "Complete sign-in in the browser. Inspector will resume automatically."
+        )
       ).toBeInTheDocument();
     });
 
@@ -230,7 +284,7 @@ describe("ServerConnectionCard", () => {
           server={server}
           {...defaultProps}
           onDisconnect={onDisconnect}
-        />,
+        />
       );
 
       const toggle = screen.getByRole("switch");
@@ -247,7 +301,7 @@ describe("ServerConnectionCard", () => {
           server={server}
           {...defaultProps}
           onReconnect={onReconnect}
-        />,
+        />
       );
 
       const toggle = screen.getByRole("switch");
@@ -262,7 +316,7 @@ describe("ServerConnectionCard", () => {
         () =>
           new Promise<void>((_resolve, reject) => {
             setTimeout(() => reject(new Error("reconnect failed")), 20);
-          }),
+          })
       );
 
       render(
@@ -270,7 +324,7 @@ describe("ServerConnectionCard", () => {
           server={server}
           {...defaultProps}
           onReconnect={onReconnect}
-        />,
+        />
       );
 
       const toggle = screen.getByRole("switch");
@@ -329,7 +383,7 @@ describe("ServerConnectionCard", () => {
       render(<ServerConnectionCard server={server} {...defaultProps} />);
 
       fireEvent.click(
-        screen.getByRole("button", { name: "Copy server command" }),
+        screen.getByRole("button", { name: "Copy server command" })
       );
 
       await waitFor(() => {
@@ -339,11 +393,11 @@ describe("ServerConnectionCard", () => {
 
     it("does not open the actions menu when right-clicking the copy button", () => {
       render(
-        <ServerConnectionCard server={createServer()} {...defaultProps} />,
+        <ServerConnectionCard server={createServer()} {...defaultProps} />
       );
 
       fireEvent.contextMenu(
-        screen.getByRole("button", { name: "Copy server command" }),
+        screen.getByRole("button", { name: "Copy server command" })
       );
 
       expect(screen.queryByText("Configure")).not.toBeInTheDocument();
@@ -393,14 +447,14 @@ describe("ServerConnectionCard", () => {
           server={server}
           {...defaultProps}
           onOpenDetailModal={onOpenDetailModal}
-        />,
+        />
       );
 
       const card = container.querySelector("[data-slot='card']");
       fireEvent.click(card!);
       expect(onOpenDetailModal).toHaveBeenCalledWith(
         expect.objectContaining({ name: "test-server" }),
-        "configuration",
+        "configuration"
       );
     });
   });
@@ -413,7 +467,7 @@ describe("ServerConnectionCard", () => {
           server={server}
           {...defaultProps}
           serverTunnelUrl="https://tunnel.example.com"
-        />,
+        />
       );
 
       expect(screen.getByText("Copy ngrok URL")).toBeInTheDocument();
@@ -426,10 +480,104 @@ describe("ServerConnectionCard", () => {
           server={server}
           {...defaultProps}
           serverTunnelUrl="https://tunnel.example.com"
-        />,
+        />
       );
 
       expect(screen.queryByText("Copy ngrok URL")).not.toBeInTheDocument();
+    });
+  });
+
+  describe("phone testing", () => {
+    it("shows the phone test pill for connected local servers", () => {
+      render(
+        <ServerConnectionCard
+          server={createServer({ connectionStatus: "connected" })}
+          sharedWorkspaceId="shared-ws-1"
+          {...defaultProps}
+        />
+      );
+
+      expect(
+        screen.getByRole("button", { name: "Test on phone" })
+      ).toBeEnabled();
+    });
+
+    it("disables phone testing when no shared workspace is available", () => {
+      render(
+        <ServerConnectionCard
+          server={createServer({ connectionStatus: "connected" })}
+          {...defaultProps}
+        />
+      );
+
+      expect(
+        screen.getByRole("button", { name: "Sign in for phone test" })
+      ).toBeDisabled();
+    });
+
+    it("generates a QR link from the hosted shared-server URL", async () => {
+      render(
+        <ServerConnectionCard
+          server={createServer({ connectionStatus: "connected" })}
+          sharedWorkspaceId="shared-ws-1"
+          {...defaultProps}
+        />
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "Test on phone" }));
+
+      await waitFor(() => {
+        expect(mockCreateHostedServer).toHaveBeenCalledWith(
+          expect.objectContaining({
+            workspaceId: "shared-ws-1",
+            name: "test-server",
+            transportType: "http",
+            url: "https://tunnel.example.com",
+            useOAuth: false,
+          })
+        );
+      });
+      await waitFor(() => {
+        expect(screen.getByTestId("phone-test-qr")).toHaveAttribute(
+          "data-share-url",
+          "https://app.mcpjam.com/shared/test-server/token-rotated"
+        );
+      });
+
+      fireEvent.click(screen.getByRole("button", { name: "Copy link" }));
+
+      await waitFor(() => {
+        expect(mockClipboard.writeText).toHaveBeenCalledWith(
+          "https://app.mcpjam.com/shared/test-server/token-rotated"
+        );
+      });
+    });
+
+    it("restores the hosted server config when the tunnel is closed", async () => {
+      render(
+        <ServerConnectionCard
+          server={createServer({ connectionStatus: "connected" })}
+          sharedWorkspaceId="shared-ws-1"
+          hostedServerId="hosted-server-1"
+          serverTunnelUrl="https://tunnel.example.com"
+          {...defaultProps}
+        />
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "Close tunnel" }));
+
+      await waitFor(() => {
+        expect(mockUpdateHostedServer).toHaveBeenCalledWith(
+          expect.objectContaining({
+            serverId: "hosted-server-1",
+            name: "test-server",
+            transportType: "stdio",
+            command: "npx",
+            args: ["-y", "@modelcontextprotocol/server-test"],
+            useOAuth: false,
+          })
+        );
+      });
     });
   });
 });

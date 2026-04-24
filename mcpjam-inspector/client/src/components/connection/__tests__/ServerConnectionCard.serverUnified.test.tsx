@@ -3,6 +3,22 @@ import { render, screen, fireEvent, cleanup } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ServerWithName } from "@/hooks/use-app-state";
 
+const {
+  mockConvexQuery,
+  mockCreateHostedServer,
+  mockUpdateHostedServer,
+  mockEnsureServerShare,
+  mockSetServerShareMode,
+  mockRotateServerShareLink,
+} = vi.hoisted(() => ({
+  mockConvexQuery: vi.fn(),
+  mockCreateHostedServer: vi.fn(),
+  mockUpdateHostedServer: vi.fn(),
+  mockEnsureServerShare: vi.fn(),
+  mockSetServerShareMode: vi.fn(),
+  mockRotateServerShareLink: vi.fn(),
+}));
+
 vi.mock("@/lib/generate-agent-brief", () => ({
   generateAgentBrief: vi.fn().mockReturnValue("mocked brief"),
 }));
@@ -39,6 +55,27 @@ vi.mock("convex/react", () => ({
   useConvexAuth: () => ({
     isAuthenticated: true,
   }),
+  useConvex: () => ({
+    query: mockConvexQuery,
+  }),
+}));
+
+vi.mock("@/hooks/useWorkspaces", () => ({
+  useServerMutations: () => ({
+    createServer: mockCreateHostedServer,
+    updateServer: mockUpdateHostedServer,
+    deleteServer: vi.fn(),
+  }),
+}));
+
+vi.mock("@/hooks/useServerShares", () => ({
+  useServerShareMutations: () => ({
+    ensureServerShare: mockEnsureServerShare,
+    setServerShareMode: mockSetServerShareMode,
+    rotateServerShareLink: mockRotateServerShareLink,
+    upsertServerShareMember: vi.fn(),
+    removeServerShareMember: vi.fn(),
+  }),
 }));
 
 vi.mock("@/hooks/use-explore-cases-prefetch-on-connect", () => ({
@@ -62,7 +99,7 @@ Object.assign(navigator, { clipboard: mockClipboard });
 
 describe("ServerConnectionCard detail modal trigger", () => {
   const createServer = (
-    overrides: Partial<ServerWithName> = {},
+    overrides: Partial<ServerWithName> = {}
   ): ServerWithName => ({
     name: "test-server",
     lastConnectionTime: new Date(),
@@ -91,7 +128,7 @@ describe("ServerConnectionCard detail modal trigger", () => {
 
   it("keeps pointer styling when the shared modal can be opened", () => {
     const { container } = render(
-      <ServerConnectionCard server={createServer()} {...defaultProps} />,
+      <ServerConnectionCard server={createServer()} {...defaultProps} />
     );
 
     const card = container.querySelector("[data-slot='card']");
@@ -100,7 +137,7 @@ describe("ServerConnectionCard detail modal trigger", () => {
 
   it("card click requests the shared modal on configuration", () => {
     const { container } = render(
-      <ServerConnectionCard server={createServer()} {...defaultProps} />,
+      <ServerConnectionCard server={createServer()} {...defaultProps} />
     );
 
     const card = container.querySelector("[data-slot='card']");
@@ -108,14 +145,14 @@ describe("ServerConnectionCard detail modal trigger", () => {
 
     expect(defaultProps.onOpenDetailModal).toHaveBeenCalledWith(
       expect.objectContaining({ name: "test-server" }),
-      "configuration",
+      "configuration"
     );
     expect(mockCapture).toHaveBeenCalledWith(
       "server_card_clicked",
       expect.objectContaining({
         location: "server_connection_card",
         server_id: "test-server",
-      }),
+      })
     );
     expect(mockCapture).toHaveBeenCalledWith(
       "server_detail_modal_opened",
@@ -123,13 +160,13 @@ describe("ServerConnectionCard detail modal trigger", () => {
         source: "card_click",
         default_tab: "configuration",
         server_id: "test-server",
-      }),
+      })
     );
   });
 
   it("right-click opens the actions menu without opening the detail modal", async () => {
     const { container } = render(
-      <ServerConnectionCard server={createServer()} {...defaultProps} />,
+      <ServerConnectionCard server={createServer()} {...defaultProps} />
     );
 
     const card = container.querySelector("[data-slot='card']");
@@ -141,7 +178,7 @@ describe("ServerConnectionCard detail modal trigger", () => {
 
   it("suppresses the next card click after opening the actions menu", () => {
     const { container } = render(
-      <ServerConnectionCard server={createServer()} {...defaultProps} />,
+      <ServerConnectionCard server={createServer()} {...defaultProps} />
     );
 
     const card = container.querySelector("[data-slot='card']");
@@ -156,7 +193,7 @@ describe("ServerConnectionCard detail modal trigger", () => {
 
     try {
       const { container } = render(
-        <ServerConnectionCard server={createServer()} {...defaultProps} />,
+        <ServerConnectionCard server={createServer()} {...defaultProps} />
       );
 
       const card = container.querySelector("[data-slot='card']");
@@ -178,13 +215,13 @@ describe("ServerConnectionCard detail modal trigger", () => {
     fireEvent.pointerDown(
       screen.getByRole("button", {
         name: "Open actions menu for test-server",
-      }),
+      })
     );
     await user.click(await screen.findByText("Configure"));
 
     expect(defaultProps.onOpenDetailModal).toHaveBeenCalledWith(
       expect.objectContaining({ name: "test-server" }),
-      "configuration",
+      "configuration"
     );
     expect(mockCapture).toHaveBeenCalledWith(
       "server_detail_modal_opened",
@@ -192,7 +229,7 @@ describe("ServerConnectionCard detail modal trigger", () => {
         source: "kebab_edit",
         default_tab: "configuration",
         server_id: "test-server",
-      }),
+      })
     );
   });
 
@@ -208,7 +245,7 @@ describe("ServerConnectionCard detail modal trigger", () => {
     render(<ServerConnectionCard server={createServer()} {...defaultProps} />);
 
     fireEvent.click(
-      screen.getByRole("button", { name: "Copy server command" }),
+      screen.getByRole("button", { name: "Copy server command" })
     );
 
     expect(defaultProps.onOpenDetailModal).not.toHaveBeenCalled();
@@ -223,7 +260,7 @@ describe("ServerConnectionCard detail modal trigger", () => {
           retryCount: 3,
         })}
         {...defaultProps}
-      />,
+      />
     );
 
     const errorArea = container.querySelector("[class*='bg-red-500']");

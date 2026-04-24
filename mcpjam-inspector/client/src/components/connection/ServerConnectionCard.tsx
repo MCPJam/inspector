@@ -30,6 +30,7 @@ import {
   AlertCircle,
   Share2,
   FileText,
+  Smartphone,
 } from "lucide-react";
 import { ServerWithName } from "@/hooks/use-app-state";
 import { exportServerApi } from "@/lib/apis/mcp-export-api";
@@ -54,11 +55,14 @@ import {
   getServerTunnel,
 } from "@/lib/apis/mcp-tunnels-api";
 import { useAuth } from "@workos-inc/authkit-react";
-import { useConvexAuth } from "convex/react";
+import { useConvex, useConvexAuth } from "convex/react";
 import { HOSTED_MODE } from "@/lib/config";
 import { ShareServerDialog } from "./ShareServerDialog";
 import { useExploreCasesPrefetchOnConnect } from "@/hooks/use-explore-cases-prefetch-on-connect";
 import { getOAuthTraceFailureStep } from "@/lib/oauth/oauth-trace";
+import { useServerMutations, type RemoteServer } from "@/hooks/useWorkspaces";
+import { useServerShareMutations } from "@/hooks/useServerShares";
+import { PhoneTestDialog } from "./PhoneTestDialog";
 
 function isHostedInsecureHttpServer(server: ServerWithName): boolean {
   if (!HOSTED_MODE || !("url" in server.config) || !server.config.url) {
@@ -84,23 +88,84 @@ function isContextMenuExemptTarget(target: EventTarget | null): boolean {
   );
 }
 
+interface HostedServerMutationPayload {
+  name: string;
+  enabled: boolean;
+  transportType: "stdio" | "http";
+  command?: string;
+  args?: string[];
+  url?: string;
+  headers?: Record<string, string>;
+  timeout?: number;
+  useOAuth?: boolean;
+  oauthScopes?: string[];
+  clientId?: string;
+}
+
+function buildHostedServerPayload(
+  serverEntry: ServerWithName
+): HostedServerMutationPayload {
+  const config = serverEntry.config as any;
+  const transportType = config?.command ? "stdio" : "http";
+  const url =
+    config?.url instanceof URL ? config.url.href : config?.url || undefined;
+  const headers = config?.requestInit?.headers || undefined;
+  const oauthScopes = serverEntry.oauthFlowProfile?.scopes
+    ? serverEntry.oauthFlowProfile.scopes
+        .split(",")
+        .map((scope) => scope.trim())
+        .filter(Boolean)
+    : undefined;
+
+  return {
+    name: serverEntry.name,
+    enabled: serverEntry.enabled ?? false,
+    transportType,
+    command: config?.command,
+    args: config?.args,
+    url,
+    headers,
+    timeout: config?.timeout,
+    useOAuth: serverEntry.useOAuth ?? false,
+    oauthScopes,
+    clientId: serverEntry.oauthFlowProfile?.clientId,
+  };
+}
+
+function buildTunnelHostedServerPayload(
+  serverEntry: ServerWithName,
+  tunnelUrl: string
+): HostedServerMutationPayload {
+  return {
+    name: serverEntry.name,
+    enabled: true,
+    transportType: "http",
+    url: tunnelUrl,
+    headers: {},
+    timeout: (serverEntry.config as any)?.timeout,
+    useOAuth: false,
+    oauthScopes: [],
+  };
+}
+
 interface ServerConnectionCardProps {
   server: ServerWithName;
   needsReconnect?: boolean;
   onDisconnect: (serverName: string) => void;
   onReconnect: (
     serverName: string,
-    options?: { forceOAuthFlow?: boolean },
+    options?: { forceOAuthFlow?: boolean }
   ) => Promise<void>;
   onRemove?: (serverName: string) => void;
   serverTunnelUrl?: string | null;
   hostedServerId?: string;
   onOpenDetailModal?: (
     server: ServerWithName,
-    defaultTab: ServerDetailTab,
+    defaultTab: ServerDetailTab
   ) => void;
   /** When set (e.g. active workspace on Servers tab), prefetches Explore AI test cases on MCP connect. */
   workspaceId?: string | null;
+  sharedWorkspaceId?: string | null;
 }
 
 export function ServerConnectionCard({
@@ -113,24 +178,41 @@ export function ServerConnectionCard({
   hostedServerId,
   onOpenDetailModal,
   workspaceId,
+  sharedWorkspaceId,
 }: ServerConnectionCardProps) {
   useExploreCasesPrefetchOnConnect(workspaceId ?? null, server, hostedServerId);
 
   const posthog = usePostHog();
   const { getAccessToken } = useAuth();
+  const convex = useConvex();
   const { isAuthenticated } = useConvexAuth();
+  const { createServer: convexCreateServer, updateServer: convexUpdateServer } =
+    useServerMutations();
+  const { ensureServerShare, setServerShareMode, rotateServerShareLink } =
+    useServerShareMutations();
   const [isReconnecting, setIsReconnecting] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [isCopyingBrief, setIsCopyingBrief] = useState(false);
   const [isErrorExpanded, setIsErrorExpanded] = useState(false);
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [tunnelUrl, setTunnelUrl] = useState<string | null>(
-    serverTunnelUrl ?? null,
+    serverTunnelUrl ?? null
   );
   const [isCreatingTunnel, setIsCreatingTunnel] = useState(false);
   const [isClosingTunnel, setIsClosingTunnel] = useState(false);
   const [showTunnelExplanation, setShowTunnelExplanation] = useState(false);
   const [isShareDialogOpen, setIsShareDialogOpen] = useState(false);
+  const [isPhoneTestDialogOpen, setIsPhoneTestDialogOpen] = useState(false);
+  const [isPreparingPhoneTest, setIsPreparingPhoneTest] = useState(false);
+  const [phoneTestStatusMessage, setPhoneTestStatusMessage] = useState(
+    "Preparing a phone test link..."
+  );
+  const [phoneTestShareUrl, setPhoneTestShareUrl] = useState<string | null>(
+    null
+  );
+  const [phoneTestErrorMessage, setPhoneTestErrorMessage] = useState<
+    string | null
+  >(null);
   const [isActionsMenuOpen, setIsActionsMenuOpen] = useState(false);
 
   const {
@@ -150,6 +232,7 @@ export function ServerConnectionCard({
   const isConnected = server.connectionStatus === "connected";
   const isTunnelEnabled = !HOSTED_MODE;
   const canManageTunnels = isAuthenticated;
+  const canGeneratePhoneTest = canManageTunnels && !!sharedWorkspaceId;
   const showTunnelActions = isConnected && isTunnelEnabled;
   const hasTunnel = Boolean(tunnelUrl);
   const hasError =
@@ -210,6 +293,136 @@ export function ServerConnectionCard({
       isCancelled = true;
     };
   }, [getAccessToken, server.name, serverTunnelUrl, showTunnelActions]);
+
+  const loadHostedWorkspaceServerByName = useCallback(async () => {
+    if (!isAuthenticated || !sharedWorkspaceId) {
+      return null;
+    }
+
+    const sharedServers = (await convex.query(
+      "servers:getWorkspaceServers" as any,
+      { workspaceId: sharedWorkspaceId } as any
+    )) as RemoteServer[] | undefined;
+
+    return (
+      sharedServers?.find(
+        (sharedServer) => sharedServer.name === server.name
+      ) ?? null
+    );
+  }, [convex, isAuthenticated, server.name, sharedWorkspaceId]);
+
+  const upsertHostedServerRecord = useCallback(
+    async (payload: HostedServerMutationPayload) => {
+      if (!isAuthenticated || !sharedWorkspaceId) {
+        throw new Error(
+          "Sign in to a synced workspace before generating a phone test link."
+        );
+      }
+
+      const existingServerId = hostedServerId ?? undefined;
+
+      try {
+        if (existingServerId) {
+          await convexUpdateServer({
+            serverId: existingServerId,
+            ...payload,
+          } as any);
+          return existingServerId;
+        }
+
+        const newId = await convexCreateServer({
+          workspaceId: sharedWorkspaceId,
+          ...payload,
+        } as any);
+        return newId as string;
+      } catch (primaryError) {
+        try {
+          if (existingServerId) {
+            try {
+              const newId = await convexCreateServer({
+                workspaceId: sharedWorkspaceId,
+                ...payload,
+              } as any);
+              return newId as string;
+            } catch {
+              const retryExisting = await loadHostedWorkspaceServerByName();
+              if (retryExisting) {
+                await convexUpdateServer({
+                  serverId: retryExisting._id,
+                  ...payload,
+                } as any);
+                return retryExisting._id;
+              }
+            }
+          }
+
+          const retryExisting = await loadHostedWorkspaceServerByName();
+          if (retryExisting) {
+            await convexUpdateServer({
+              serverId: retryExisting._id,
+              ...payload,
+            } as any);
+            return retryExisting._id;
+          }
+        } catch (fallbackError) {
+          const fallbackMessage =
+            fallbackError instanceof Error
+              ? fallbackError.message
+              : "Unknown error";
+          throw new Error(fallbackMessage);
+        }
+
+        const primaryMessage =
+          primaryError instanceof Error
+            ? primaryError.message
+            : "Unknown error";
+        throw new Error(primaryMessage);
+      }
+    },
+    [
+      convexCreateServer,
+      convexUpdateServer,
+      hostedServerId,
+      loadHostedWorkspaceServerByName,
+      sharedWorkspaceId,
+      isAuthenticated,
+    ]
+  );
+
+  const createServerTunnelWithCleanup = useCallback(async () => {
+    const accessToken = await getAccessToken();
+    await cleanupOrphanedTunnels(accessToken);
+
+    const result = await createServerTunnel(server.name, accessToken);
+    setTunnelUrl(result.url);
+
+    await cleanupOrphanedTunnels(accessToken);
+    return result.url;
+  }, [getAccessToken, server.name]);
+
+  const restoreHostedServerAfterTunnelClose = useCallback(async () => {
+    if (!isAuthenticated || !sharedWorkspaceId) {
+      return;
+    }
+
+    const existingServerId =
+      hostedServerId ?? (await loadHostedWorkspaceServerByName())?._id;
+    if (!existingServerId) {
+      return;
+    }
+
+    await convexUpdateServer({
+      serverId: existingServerId,
+      ...buildHostedServerPayload(server),
+    } as any);
+  }, [
+    convexUpdateServer,
+    hostedServerId,
+    loadHostedWorkspaceServerByName,
+    server,
+    sharedWorkspaceId,
+    isAuthenticated,
+  ]);
 
   const copyToClipboard = async (text: string, fieldName: string) => {
     try {
@@ -297,13 +510,7 @@ export function ServerConnectionCard({
   const handleConfirmCreateTunnel = async () => {
     setIsCreatingTunnel(true);
     try {
-      const accessToken = await getAccessToken();
-      await cleanupOrphanedTunnels(accessToken);
-
-      const result = await createServerTunnel(server.name, accessToken);
-      setTunnelUrl(result.url);
-
-      await cleanupOrphanedTunnels(accessToken);
+      await createServerTunnelWithCleanup();
       toast.success("Tunnel is ready to use!");
       posthog.capture("tunnel_created", {
         location: "server_connection_card",
@@ -327,13 +534,27 @@ export function ServerConnectionCard({
       const accessToken = await getAccessToken();
       await closeServerTunnel(server.name, accessToken);
       setTunnelUrl(null);
-      toast.success("Tunnel closed successfully");
+      setPhoneTestShareUrl(null);
+      setPhoneTestErrorMessage(null);
       posthog.capture("tunnel_closed", {
         location: "server_connection_card",
         platform: detectPlatform(),
         environment: detectEnvironment(),
         server_id: server.name,
       });
+
+      try {
+        await restoreHostedServerAfterTunnelClose();
+        toast.success("Tunnel closed successfully");
+      } catch (restoreError) {
+        const restoreMessage =
+          restoreError instanceof Error
+            ? restoreError.message
+            : "Failed to restore hosted server config";
+        toast.error(
+          `Tunnel closed, but failed to restore hosted server config: ${restoreMessage}`
+        );
+      }
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : "Failed to close tunnel";
@@ -341,6 +562,101 @@ export function ServerConnectionCard({
     } finally {
       setIsClosingTunnel(false);
     }
+  };
+
+  const preparePhoneTestLink = useCallback(async () => {
+    if (!canGeneratePhoneTest) {
+      setPhoneTestErrorMessage(
+        "Sign in to a synced workspace before generating a phone test link."
+      );
+      return;
+    }
+
+    setIsPreparingPhoneTest(true);
+    setPhoneTestErrorMessage(null);
+    setPhoneTestShareUrl(null);
+
+    try {
+      setPhoneTestStatusMessage(
+        tunnelUrl
+          ? "Reusing the active tunnel..."
+          : "Creating a fresh tunnel for this server..."
+      );
+      const effectiveTunnelUrl =
+        tunnelUrl ?? (await createServerTunnelWithCleanup());
+
+      setPhoneTestStatusMessage("Pointing the hosted server at the tunnel...");
+      const targetHostedServerId = await upsertHostedServerRecord(
+        buildTunnelHostedServerPayload(server, effectiveTunnelUrl)
+      );
+
+      setPhoneTestStatusMessage("Rotating a fresh mobile test link...");
+      const ensuredShare = (await ensureServerShare({
+        serverId: targetHostedServerId,
+      } as any)) as { mode?: string } | null;
+
+      if (ensuredShare?.mode !== "any_signed_in_with_link") {
+        await setServerShareMode({
+          serverId: targetHostedServerId,
+          mode: "any_signed_in_with_link",
+        } as any);
+      }
+
+      const rotatedShare = (await rotateServerShareLink({
+        serverId: targetHostedServerId,
+      } as any)) as { link?: { url?: string | null } } | null;
+
+      const nextShareUrl = rotatedShare?.link?.url?.trim();
+      if (!nextShareUrl) {
+        throw new Error(
+          "The hosted share service did not return a valid link."
+        );
+      }
+
+      setPhoneTestShareUrl(nextShareUrl);
+      toast.success("Phone test link ready");
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error
+          ? error.message
+          : "Failed to generate a phone test link";
+      setPhoneTestErrorMessage(errorMessage);
+      toast.error(`Phone test link failed: ${errorMessage}`);
+    } finally {
+      setIsPreparingPhoneTest(false);
+      setPhoneTestStatusMessage("Preparing a phone test link...");
+    }
+  }, [
+    canGeneratePhoneTest,
+    createServerTunnelWithCleanup,
+    ensureServerShare,
+    rotateServerShareLink,
+    server,
+    setServerShareMode,
+    tunnelUrl,
+    upsertHostedServerRecord,
+  ]);
+
+  const handleOpenPhoneTestDialog = () => {
+    setIsPhoneTestDialogOpen(true);
+    void preparePhoneTestLink();
+  };
+
+  const handlePhoneTestDialogOpenChange = (open: boolean) => {
+    setIsPhoneTestDialogOpen(open);
+    if (!open) {
+      setPhoneTestErrorMessage(null);
+      setPhoneTestShareUrl(null);
+      setPhoneTestStatusMessage("Preparing a phone test link...");
+    }
+  };
+
+  const handleOpenPhoneTestLink = () => {
+    if (!phoneTestShareUrl) {
+      return;
+    }
+
+    window.open(phoneTestShareUrl, "_blank", "noopener,noreferrer");
   };
 
   const isDetailModalEnabled = onOpenDetailModal != null;
@@ -359,7 +675,7 @@ export function ServerConnectionCard({
         server_id: server.name,
       });
     },
-    [onOpenDetailModal, posthog, server],
+    [onOpenDetailModal, posthog, server]
   );
 
   const handleCardContextMenu = useCallback(
@@ -372,7 +688,7 @@ export function ServerConnectionCard({
       event.stopPropagation();
       setIsActionsMenuOpen(true);
     },
-    [],
+    []
   );
 
   const handleCardClick = useCallback(
@@ -400,7 +716,7 @@ export function ServerConnectionCard({
       server.name,
       posthog,
       openDetailModal,
-    ],
+    ]
   );
 
   return (
@@ -492,7 +808,7 @@ export function ServerConnectionCard({
                     });
                     if (checked && isHostedHttpReconnectBlocked) {
                       toast.error(
-                        "HTTP servers are not supported in hosted mode",
+                        "HTTP servers are not supported in hosted mode"
                       );
                       return;
                     }
@@ -524,7 +840,7 @@ export function ServerConnectionCard({
                       onClick={() => {
                         if (isHostedHttpReconnectBlocked) {
                           toast.error(
-                            "HTTP servers are not supported in hosted mode",
+                            "HTTP servers are not supported in hosted mode"
                           );
                           return;
                         }
@@ -539,7 +855,7 @@ export function ServerConnectionCard({
                         void handleReconnect(
                           shouldForceOAuth
                             ? { forceOAuthFlow: true }
-                            : undefined,
+                            : undefined
                         );
                       }}
                       disabled={isReconnectMenuDisabled}
@@ -680,6 +996,25 @@ export function ServerConnectionCard({
                 </button>
               )}
               {showTunnelActions && (
+                <button
+                  data-server-card-context-menu-exempt
+                  onClick={handleOpenPhoneTestDialog}
+                  disabled={isPreparingPhoneTest || !canGeneratePhoneTest}
+                  className="inline-flex items-center gap-1.5 rounded-full border border-border/70 bg-muted/30 px-2 py-0.5 text-[11px] text-foreground transition-colors hover:bg-accent/60 disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer"
+                >
+                  {isPreparingPhoneTest ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <Smartphone className="h-3 w-3" />
+                  )}
+                  <span>
+                    {canGeneratePhoneTest
+                      ? "Test on phone"
+                      : "Sign in for phone test"}
+                  </span>
+                </button>
+              )}
+              {showTunnelActions && (
                 <>
                   {hasTunnel ? (
                     <div className="inline-flex items-center overflow-hidden rounded-full border border-border/70 bg-muted/30 text-foreground">
@@ -754,8 +1089,8 @@ export function ServerConnectionCard({
                 {isErrorExpanded
                   ? server.lastError
                   : server.lastError!.length > 140
-                    ? `${server.lastError!.substring(0, 140)}...`
-                    : server.lastError}
+                  ? `${server.lastError!.substring(0, 140)}...`
+                  : server.lastError}
               </div>
               {server.lastError!.length > 140 && (
                 <button
@@ -809,6 +1144,25 @@ export function ServerConnectionCard({
           serverName={server.name}
         />
       )}
+      <PhoneTestDialog
+        isOpen={isPhoneTestDialogOpen}
+        onOpenChange={handlePhoneTestDialogOpenChange}
+        serverName={server.name}
+        shareUrl={phoneTestShareUrl}
+        isPreparing={isPreparingPhoneTest}
+        statusMessage={phoneTestStatusMessage}
+        errorMessage={phoneTestErrorMessage}
+        isCopied={copiedField === "phone-test-link"}
+        onCopyLink={() => {
+          if (phoneTestShareUrl) {
+            void copyToClipboard(phoneTestShareUrl, "phone-test-link");
+          }
+        }}
+        onOpenLink={handleOpenPhoneTestLink}
+        onRetry={() => {
+          void preparePhoneTestLink();
+        }}
+      />
     </>
   );
 }

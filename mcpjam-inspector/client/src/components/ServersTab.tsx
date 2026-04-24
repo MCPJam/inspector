@@ -242,10 +242,7 @@ function writePersistedLoggerFocus(input: PersistedLoggerFocus): void {
   }
 
   try {
-    sessionStorage.setItem(
-      LOGGER_FOCUS_STORAGE_KEY,
-      JSON.stringify(input)
-    );
+    sessionStorage.setItem(LOGGER_FOCUS_STORAGE_KEY, JSON.stringify(input));
   } catch {
     // ignore
   }
@@ -430,6 +427,7 @@ function SortableServerCard({
   hostedServerId,
   onOpenDetailModal,
   workspaceId,
+  sharedWorkspaceId,
 }: {
   id: string;
   dndDisabled: boolean;
@@ -447,6 +445,7 @@ function SortableServerCard({
     defaultTab: ServerDetailTab
   ) => void;
   workspaceId: string;
+  sharedWorkspaceId?: string | null;
 }) {
   const { listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id, disabled: dndDisabled });
@@ -473,6 +472,7 @@ function SortableServerCard({
         hostedServerId={hostedServerId}
         onOpenDetailModal={onOpenDetailModal}
         workspaceId={workspaceId}
+        sharedWorkspaceId={sharedWorkspaceId}
       />
     </div>
   );
@@ -575,9 +575,7 @@ export function ServersTab({
   const persistedLoggerFocus = readPersistedLoggerFocus(activeWorkspaceId);
   const [focusedLoggerServerIds, setFocusedLoggerServerIds] = useState<
     string[] | undefined
-  >(
-    persistedLoggerFocus ? [persistedLoggerFocus.serverName] : undefined
-  );
+  >(persistedLoggerFocus ? [persistedLoggerFocus.serverName] : undefined);
   const [focusedLoggerSinceTimestamp, setFocusedLoggerSinceTimestamp] =
     useState<number | undefined>(persistedLoggerFocus?.sinceTimestamp);
   const [detailModalState, setDetailModalState] = useState<{
@@ -1364,6 +1362,7 @@ export function ServersTab({
                       hostedServerId={sharedWorkspaceServersRecord[name]?._id}
                       onOpenDetailModal={handleOpenDetailModal}
                       workspaceId={activeWorkspaceId}
+                      sharedWorkspaceId={sharedWorkspaceId ?? null}
                     />
                   );
                 })}
@@ -1390,6 +1389,7 @@ export function ServersTab({
                       sharedWorkspaceServersRecord[activeId!]?._id
                     }
                     workspaceId={activeWorkspaceId}
+                    sharedWorkspaceId={sharedWorkspaceId ?? null}
                   />
                 </div>
               ) : null}
