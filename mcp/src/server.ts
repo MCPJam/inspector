@@ -3,13 +3,14 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { RESOURCE_MIME_TYPE } from "@modelcontextprotocol/ext-apps/server";
 import type { ClientCapabilities } from "@modelcontextprotocol/sdk/types.js";
 import type { JWTPayload } from "jose";
-import { createSessionToolRegistrar } from "./tools/sessionToolRegistrar.js";
+import {
+  createSessionToolRegistrar,
+  type SessionToolRegistrar,
+} from "./tools/sessionToolRegistrar.js";
 import { registerDoctorTool } from "./tools/doctor.js";
 import { registerGetOrgTool } from "./tools/getOrg.js";
 import { registerGetWorkspacesTool } from "./tools/getWorkspaces.js";
 import { registerWhoamiTool } from "./tools/whoami.js";
-
-const UI_EXTENSION_ID = "io.modelcontextprotocol/ui";
 
 interface McpProps extends Record<string, unknown> {
   bearerToken: string;
@@ -17,6 +18,8 @@ interface McpProps extends Record<string, unknown> {
 }
 
 export class McpJamMcpServer extends McpAgent<Env, unknown, McpProps> {
+  private sessionToolRegistrar?: SessionToolRegistrar;
+
   server = new McpServer({
     name: "MCPJam MCP",
     version: "0.1.0",
@@ -31,39 +34,65 @@ export class McpJamMcpServer extends McpAgent<Env, unknown, McpProps> {
   }
 
   async init(): Promise<void> {
-    const registrar = createSessionToolRegistrar(this.server);
+    const initializeRequest = await this.getInitializeRequest();
+    const initializeClientCapabilities = (initializeRequest as
+      | { params?: { capabilities?: ClientCapabilities } }
+      | undefined)?.params?.capabilities;
+    const registrar = createSessionToolRegistrar(
+      this.server,
+      uiSupportsResourceMime(initializeClientCapabilities)
+    );
+    this.sessionToolRegistrar = registrar;
 
     registerWhoamiTool(registrar, this);
     registerDoctorTool(registrar, this);
     registerGetWorkspacesTool(registrar, this);
     registerGetOrgTool(registrar, this);
+  }
 
-    const initializeRequest = await this.getInitializeRequest();
-    const initializeClientCapabilities = (initializeRequest as
-      | { params?: { capabilities?: ClientCapabilities } }
-      | undefined)?.params?.capabilities;
+  override async onConnect(conn: any, context: { request: Request }): Promise<void> {
+    this.applyUiModeFromRawRequest(context.request);
+    await super.onConnect(conn, context as any);
+  }
 
-    registrar.setUiEnabled(isUiEnabled(initializeClientCapabilities));
+  private applyUiModeFromRawRequest(request: Request): void {
+    if (
+      !this.sessionToolRegistrar ||
+      this.getTransportType() !== "streamable-http" ||
+      request.headers.get("cf-mcp-method") !== "POST"
+    ) {
+      return;
+    }
 
-    this.server.server.oninitialized = () => {
-      registrar.setUiEnabled(
-        isUiEnabled(this.server.server.getClientCapabilities())
-      );
-    };
+    const payloadHeader = request.headers.get("cf-mcp-message");
+    if (!payloadHeader) {
+      return;
+    }
+
+    try {
+      const rawPayload = Buffer.from(payloadHeader, "base64").toString("utf-8");
+      const parsedBody = JSON.parse(rawPayload) as unknown;
+      const messages = Array.isArray(parsedBody) ? parsedBody : [parsedBody];
+
+      for (const message of messages) {
+        const clientCapabilities = getInitializeCapabilities(message);
+        if (!clientCapabilities) {
+          continue;
+        }
+
+        this.sessionToolRegistrar.setUiEnabled(
+          uiSupportsResourceMime(clientCapabilities),
+          { notify: false }
+        );
+        return;
+      }
+    } catch {
+      // Ignore malformed headers and let the transport surface the real error.
+    }
   }
 }
 
-function getUiCapability(
-  clientCapabilities: ClientCapabilities | undefined
-): { mimeTypes?: string[] } | undefined {
-  const extensions = (clientCapabilities as
-    | (ClientCapabilities & { extensions?: Record<string, unknown> })
-    | undefined)?.extensions;
-
-  return extensions?.[UI_EXTENSION_ID] as { mimeTypes?: string[] } | undefined;
-}
-
-function isUiEnabled(
+function uiSupportsResourceMime(
   clientCapabilities: ClientCapabilities | undefined
 ): boolean {
   return (
@@ -71,4 +100,31 @@ function isUiEnabled(
       RESOURCE_MIME_TYPE
     ) ?? false
   );
+}
+
+function getUiCapability(
+  clientCapabilities:
+    | (ClientCapabilities & { extensions?: Record<string, unknown> })
+    | undefined
+): { mimeTypes?: string[] } | undefined {
+  return clientCapabilities?.extensions?.["io.modelcontextprotocol/ui"] as
+    | { mimeTypes?: string[] }
+    | undefined;
+}
+
+function getInitializeCapabilities(
+  message: unknown
+): ClientCapabilities | undefined {
+  if (!message || typeof message !== "object") {
+    return undefined;
+  }
+
+  const initializeMessage = message as {
+    method?: unknown;
+    params?: { capabilities?: ClientCapabilities };
+  };
+
+  return initializeMessage.method === "initialize"
+    ? initializeMessage.params?.capabilities
+    : undefined;
 }

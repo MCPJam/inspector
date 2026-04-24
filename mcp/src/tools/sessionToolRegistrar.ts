@@ -1,10 +1,11 @@
 import {
   RESOURCE_MIME_TYPE,
-  registerAppResource,
+  RESOURCE_URI_META_KEY,
   registerAppTool,
 } from "@modelcontextprotocol/ext-apps/server";
 import type {
   McpServer,
+  RegisteredResource,
   RegisteredTool,
   ToolCallback,
 } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -47,10 +48,39 @@ export interface SessionToolRegistrar {
     callback: ToolCallback<InputArgs>,
     ui?: ToolUiConfig<InputArgs>
   ): RegisteredTool;
-  setUiEnabled(enabled: boolean): void;
+  setUiEnabled(enabled: boolean, options?: SetUiEnabledOptions): void;
 }
 
-export function createSessionToolRegistrar(server: McpServer): SessionToolRegistrar {
+type SetUiEnabledOptions = {
+  notify?: boolean;
+};
+
+type MutableRegisteredTool = RegisteredTool & {
+  _meta?: Record<string, unknown>;
+  enabled: boolean;
+  handler: ToolCallback<any>;
+};
+
+type MutableRegisteredResource = RegisteredResource & {
+  enabled: boolean;
+};
+
+type UiAwareRegistration = {
+  plainCallback: ToolCallback<any>;
+  plainMeta: Record<string, unknown> | undefined;
+  resource: MutableRegisteredResource;
+  tool: MutableRegisteredTool;
+  uiCallback: ToolCallback<any>;
+  uiMeta: Record<string, unknown>;
+};
+
+export function createSessionToolRegistrar(
+  server: McpServer,
+  uiEnabled: boolean
+): SessionToolRegistrar {
+  const uiAwareRegistrations: UiAwareRegistration[] = [];
+  let currentUiEnabled = uiEnabled;
+
   return {
     registerTool<
       OutputArgs extends ZodRawShapeCompat | AnySchema,
@@ -65,26 +95,26 @@ export function createSessionToolRegistrar(server: McpServer): SessionToolRegist
         return server.registerTool(name, config, callback);
       }
 
-      const tool = registerAppTool(
-        server,
-        name,
-        {
-          ...config,
-          _meta: {
-            ...(config._meta ?? {}),
-            ui: {
-              resourceUri: ui.resourceUri,
-            },
-          },
-        } as any,
-        (ui.callback ?? callback) as any
-      );
+      const plainMeta = stripToolUiMeta(config._meta);
+      const uiMeta = createToolUiMeta(config._meta, ui.resourceUri);
+      const uiCallback = (ui.callback ?? callback) as ToolCallback<any>;
+      const tool = currentUiEnabled
+        ? registerAppTool(
+            server,
+            name,
+            {
+              ...config,
+              _meta: uiMeta,
+            } as any,
+            uiCallback as any
+          )
+        : server.registerTool(name, { ...config, _meta: plainMeta }, callback);
 
-      registerAppResource(
-        server,
+      const resource = server.registerResource(
         ui.resourceName ?? `${config.title ?? name} UI`,
         ui.resourceUri,
         {
+          mimeType: RESOURCE_MIME_TYPE,
           description:
             ui.resourceDescription ?? `${config.title ?? name} interactive UI`,
           _meta: ui.resourceMeta,
@@ -101,12 +131,98 @@ export function createSessionToolRegistrar(server: McpServer): SessionToolRegist
         })
       );
 
+      if (!currentUiEnabled) {
+        resource.disable();
+      }
+
+      uiAwareRegistrations.push({
+        plainCallback: callback as ToolCallback<any>,
+        plainMeta,
+        resource: resource as MutableRegisteredResource,
+        tool: tool as MutableRegisteredTool,
+        uiCallback,
+        uiMeta,
+      });
+
       return tool;
     },
-    setUiEnabled() {
-      // The hosted example server always advertises its app tool and relies on
-      // the host to ignore UI metadata when unsupported. Keep the method for
-      // compatibility with existing call sites.
+    setUiEnabled(enabled, options) {
+      if (currentUiEnabled === enabled) {
+        return;
+      }
+
+      currentUiEnabled = enabled;
+      const notify = options?.notify ?? true;
+
+      for (const registration of uiAwareRegistrations) {
+        applyUiEnabledState(registration, enabled, notify);
+      }
     },
   };
+}
+
+function applyUiEnabledState(
+  registration: UiAwareRegistration,
+  enabled: boolean,
+  notify: boolean
+): void {
+  if (notify) {
+    registration.tool.update({
+      _meta: enabled ? registration.uiMeta : (registration.plainMeta ?? {}),
+      callback: enabled
+        ? registration.uiCallback
+        : registration.plainCallback,
+    } as any);
+
+    if (enabled) {
+      registration.resource.enable();
+    } else {
+      registration.resource.disable();
+    }
+
+    return;
+  }
+
+  registration.tool._meta = enabled
+    ? registration.uiMeta
+    : (registration.plainMeta ?? {});
+  registration.tool.handler = enabled
+    ? registration.uiCallback
+    : registration.plainCallback;
+  registration.resource.enabled = enabled;
+}
+
+function createToolUiMeta(
+  meta: Record<string, unknown> | undefined,
+  resourceUri: string
+): Record<string, unknown> {
+  const uiMeta =
+    meta?.ui && typeof meta.ui === "object" && !Array.isArray(meta.ui)
+      ? (meta.ui as Record<string, unknown>)
+      : undefined;
+
+  return {
+    ...(stripToolUiMeta(meta) ?? {}),
+    ui: {
+      ...(uiMeta ?? {}),
+      resourceUri,
+    },
+    [RESOURCE_URI_META_KEY]: resourceUri,
+  };
+}
+
+function stripToolUiMeta(
+  meta: Record<string, unknown> | undefined
+): Record<string, unknown> | undefined {
+  if (!meta) {
+    return undefined;
+  }
+
+  const {
+    [RESOURCE_URI_META_KEY]: _resourceUri,
+    ui: _ui,
+    ...plainMeta
+  } = meta;
+
+  return Object.keys(plainMeta).length > 0 ? plainMeta : undefined;
 }

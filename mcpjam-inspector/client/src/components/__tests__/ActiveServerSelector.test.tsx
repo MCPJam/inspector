@@ -11,6 +11,7 @@ import {
   type ActiveServerSelectorProps,
 } from "../ActiveServerSelector";
 import type { ServerWithName } from "@/hooks/use-app-state";
+import { hasOAuthConfig } from "@/lib/oauth/mcp-oauth";
 
 // Mock posthog
 vi.mock("posthog-js/react", () => ({
@@ -195,6 +196,94 @@ describe("ActiveServerSelector", () => {
 
       expect(screen.queryByText("server-1")).not.toBeInTheDocument();
       expect(screen.getByText("server-2")).toBeInTheDocument();
+    });
+
+    it("filters to OAuth HTTP servers when requested", () => {
+      vi.mocked(hasOAuthConfig).mockImplementation(
+        (serverName) =>
+          serverName === "stored-config-oauth" ||
+          serverName === "opted-out-stored-config",
+      );
+      const httpConfig = {
+        transportType: "streamableHttp",
+        url: "http://localhost:3000/mcp",
+      } as const;
+      const oauthTokens = {
+        client_id: "client-id",
+        client_secret: "client-secret",
+        access_token: "access-token",
+        refresh_token: "refresh-token",
+        expires_in: 3600,
+        scope: "read",
+      };
+      const serverConfigs = {
+        "explicit-oauth": createServer({
+          name: "explicit-oauth",
+          config: httpConfig,
+          useOAuth: true,
+        }),
+        "token-oauth": createServer({
+          name: "token-oauth",
+          config: httpConfig,
+          useOAuth: undefined,
+          oauthTokens,
+        }),
+        "stored-config-oauth": createServer({
+          name: "stored-config-oauth",
+          config: httpConfig,
+          useOAuth: undefined,
+        }),
+        "flow-oauth": createServer({
+          name: "flow-oauth",
+          config: httpConfig,
+          useOAuth: undefined,
+          connectionStatus: "oauth-flow",
+        }),
+        "opted-out-token-oauth": createServer({
+          name: "opted-out-token-oauth",
+          config: httpConfig,
+          useOAuth: false,
+          oauthTokens,
+        }),
+        "opted-out-stored-config": createServer({
+          name: "opted-out-stored-config",
+          config: httpConfig,
+          useOAuth: false,
+        }),
+        "plain-http": createServer({
+          name: "plain-http",
+          config: httpConfig,
+        }),
+        "stdio-with-oauth-state": createServer({
+          name: "stdio-with-oauth-state",
+          useOAuth: true,
+          oauthTokens,
+        }),
+      };
+
+      render(
+        <ActiveServerSelector
+          {...defaultProps}
+          serverConfigs={serverConfigs}
+          selectedServer="explicit-oauth"
+          showOnlyOAuthServers={true}
+        />,
+      );
+
+      expect(screen.getByText("explicit-oauth")).toBeInTheDocument();
+      expect(screen.getByText("token-oauth")).toBeInTheDocument();
+      expect(screen.getByText("stored-config-oauth")).toBeInTheDocument();
+      expect(screen.getByText("flow-oauth")).toBeInTheDocument();
+      expect(
+        screen.queryByText("opted-out-token-oauth"),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByText("opted-out-stored-config"),
+      ).not.toBeInTheDocument();
+      expect(screen.queryByText("plain-http")).not.toBeInTheDocument();
+      expect(
+        screen.queryByText("stdio-with-oauth-state"),
+      ).not.toBeInTheDocument();
     });
   });
 
@@ -526,6 +615,44 @@ describe("ActiveServerSelector", () => {
       );
 
       // Give time for any effects to run
+      await new Promise((r) => setTimeout(r, 50));
+
+      expect(onServerChange).not.toHaveBeenCalled();
+    });
+
+    it("does not auto-select a filtered server when auto-selection is disabled", async () => {
+      const onServerChange = vi.fn();
+      const httpConfig = {
+        transportType: "streamableHttp",
+        url: "http://localhost:3000/mcp",
+      } as const;
+      const serverConfigs = {
+        "selected-plain-http": createServer({
+          name: "selected-plain-http",
+          config: httpConfig,
+        }),
+        "visible-oauth": createServer({
+          name: "visible-oauth",
+          config: httpConfig,
+          useOAuth: true,
+          lastConnectionTime: new Date("2024-01-03"),
+        }),
+      };
+
+      render(
+        <ActiveServerSelector
+          {...defaultProps}
+          serverConfigs={serverConfigs}
+          selectedServer="selected-plain-http"
+          onServerChange={onServerChange}
+          showOnlyOAuthServers={true}
+          autoSelectFilteredServer={false}
+        />,
+      );
+
+      expect(screen.queryByText("selected-plain-http")).not.toBeInTheDocument();
+      expect(screen.getByText("visible-oauth")).toBeInTheDocument();
+
       await new Promise((r) => setTimeout(r, 50));
 
       expect(onServerChange).not.toHaveBeenCalled();
