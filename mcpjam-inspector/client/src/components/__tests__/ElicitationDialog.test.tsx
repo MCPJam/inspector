@@ -66,7 +66,7 @@ const makeRequest = (overrides?: Partial<DialogElicitation>): DialogElicitation 
     },
     required: ["name"],
   },
-  timestamp: Date.now(),
+  timestamp: new Date().toISOString(),
   ...overrides,
 });
 
