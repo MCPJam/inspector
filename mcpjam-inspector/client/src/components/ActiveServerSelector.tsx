@@ -35,6 +35,7 @@ export interface ActiveServerSelectorProps {
   onReconnect?: (serverName: string) => Promise<void>;
   showOnlyOAuthServers?: boolean; // Only show servers that use OAuth
   showOnlyServersWithViews?: boolean; // Only show servers that have saved views
+  autoSelectFilteredServer?: boolean; // Auto-select when current selection is hidden by filters
   serversWithViews?: Set<string>; // Set of server names that have saved views
   hasMessages?: boolean; // Reserved for callers that still compute this
   className?: string;
@@ -87,6 +88,7 @@ export function ActiveServerSelector({
   onReconnect,
   showOnlyOAuthServers = false,
   showOnlyServersWithViews = false,
+  autoSelectFilteredServer = true,
   serversWithViews,
   className,
 }: ActiveServerSelectorProps) {
@@ -103,8 +105,9 @@ export function ActiveServerSelector({
     const isHttpServer = "url" in server.config;
     if (!isHttpServer) return false;
 
-    // Check if server has OAuth tokens, OAuth config in localStorage, or is in oauth-flow state
+    // Check if server is configured for OAuth, has OAuth state, or is mid-flow.
     return !!(
+      server.useOAuth === true ||
       server.oauthTokens ||
       hasOAuthConfig(server.name) ||
       server.connectionStatus === "oauth-flow"
@@ -119,7 +122,13 @@ export function ActiveServerSelector({
 
   // Auto-select first available server if current selection is not in the list
   useEffect(() => {
-    if (isMultiSelectEnabled || hasNoServersWithViews) return;
+    if (
+      !autoSelectFilteredServer ||
+      isMultiSelectEnabled ||
+      hasNoServersWithViews
+    ) {
+      return;
+    }
 
     const serverNames = servers.map(([name]) => name);
     const isCurrentSelectionValid = serverNames.includes(selectedServer);
@@ -142,6 +151,7 @@ export function ActiveServerSelector({
     isMultiSelectEnabled,
     onServerChange,
     hasNoServersWithViews,
+    autoSelectFilteredServer,
   ]);
 
   const handleServerClick = (name: string) => {

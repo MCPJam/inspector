@@ -1656,11 +1656,7 @@ export default function App() {
   const activeServerSelectorProps: ActiveServerSelectorProps | undefined =
     shouldShowActiveServerSelector
       ? {
-          serverConfigs:
-            activeTab === "oauth-flow" ||
-            (activeTab === "xaa-flow" && xaaEnabled === true)
-              ? appState.servers
-              : workspaceServers,
+          serverConfigs: workspaceServers,
           selectedServer: appState.selectedServer,
           onServerChange: setSelectedServer,
           onConnect: handleConnect,
@@ -1668,7 +1664,12 @@ export default function App() {
           isMultiSelectEnabled: activeTab === "chat",
           onMultiServerToggle: toggleServerSelection,
           selectedMultipleServers: appState.selectedMultipleServers,
-          showOnlyOAuthServers: false,
+          showOnlyOAuthServers:
+            activeTab === "oauth-flow" ||
+            (activeTab === "xaa-flow" && xaaEnabled === true),
+          autoSelectFilteredServer:
+            activeTab !== "oauth-flow" &&
+            !(activeTab === "xaa-flow" && xaaEnabled === true),
           showOnlyServersWithViews: activeTab === "views",
           serversWithViews: serversWithViews,
           hasMessages: false,
@@ -1943,7 +1944,6 @@ export default function App() {
               <XAAFlowTab
                 serverConfigs={appState.servers}
                 selectedServerName={appState.selectedServer}
-                onSelectServer={setSelectedServer}
               />
             </ErrorBoundary>
           )}
