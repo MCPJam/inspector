@@ -253,7 +253,9 @@ describe("ServerConnectionCard", () => {
       const toggle = screen.getByRole("switch");
       fireEvent.click(toggle);
 
-      expect(onReconnect).toHaveBeenCalledWith("test-server", undefined);
+      expect(onReconnect).toHaveBeenCalledWith("test-server", {
+        allowInteractiveOAuthFlow: false,
+      });
     });
 
     it("catches rejected reconnect promises and clears reconnect loading state", async () => {

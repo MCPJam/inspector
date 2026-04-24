@@ -23,6 +23,8 @@ export type OAuthAuthorizationRequestResult =
 export interface OAuthStateMachineRunConfig
   extends OAuthStateMachineFactoryConfig {
   maxSteps?: number;
+  /** When true (default), trace snapshots redact secrets. Set false for local dev tooling. */
+  sanitizeTrace?: boolean;
   onAuthorizationRequest?: (input: {
     authorizationUrl: string;
     state: OAuthFlowState;
@@ -58,6 +60,7 @@ export async function runOAuthStateMachine(
     onAuthorizationRequest,
     onTraceUpdate,
     getState: providedGetState,
+    sanitizeTrace = true,
     ...machineConfig
   } = config;
 
@@ -73,6 +76,7 @@ export async function runOAuthStateMachine(
       trace: projectOAuthTraceSnapshot({
         state,
         context,
+        sanitize: sanitizeTrace,
       }),
       state,
       reason,

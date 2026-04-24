@@ -23,6 +23,7 @@ vi.mock("@/stores/traffic-log-store", async () => {
 
 import { LoggerView } from "../logger-view";
 import { useTrafficLogStore } from "@/stores/traffic-log-store";
+import { subscribeToOAuthDebuggerRequests } from "@/lib/oauth/oauth-debugger-navigation";
 
 describe("LoggerView hosted rpc logs", () => {
   beforeEach(() => {
@@ -152,6 +153,50 @@ describe("LoggerView hosted rpc logs", () => {
         "Dynamic Client Registration - Dynamic Client Registration is not enabled for this project."
       )
     ).toBeInTheDocument();
+  });
+
+  it("shows an OAuth Debugger CTA when an oauth log row has error status", async () => {
+    const user = userEvent.setup();
+    const onOpenOAuthDebugger = vi.fn();
+    const unsubscribe = subscribeToOAuthDebuggerRequests(onOpenOAuthDebugger);
+    useTrafficLogStore.getState().addMcpServerLog({
+      id: "oauth:srv-1:interactive_connect:request_client_registration:err",
+      serverId: "srv-1",
+      serverName: "Learn",
+      direction: "OAUTH",
+      method: "Dynamic Client Registration",
+      timestamp: "2026-04-10T12:00:04.000Z",
+      payload: {
+        source: "interactive_connect",
+        step: "request_client_registration",
+        title: "Dynamic Client Registration",
+        status: "error",
+        message:
+          "The client submits metadata to register a public client with the authorization server.",
+        error: "dynamic_client_registration",
+      },
+      kind: "oauth",
+      oauthStatus: "error",
+    });
+
+    render(<LoggerView serverIds={["srv-1"]} />);
+
+    const rowLabel = screen.getByText(
+      "Dynamic Client Registration - dynamic_client_registration"
+    );
+    const entry = rowLabel.closest(".group");
+    expect(entry).toBeTruthy();
+    await user.hover(entry!);
+
+    const cta = screen.getByRole("link", {
+      name: "Continue in OAuth Debugger",
+    });
+    expect(cta).toHaveAttribute("href", "#oauth-flow");
+    await user.click(cta);
+    expect(onOpenOAuthDebugger).toHaveBeenCalledWith({
+      serverName: "Learn",
+    });
+    unsubscribe();
   });
 
   it("filters logs to the current session when sinceTimestamp is provided", () => {

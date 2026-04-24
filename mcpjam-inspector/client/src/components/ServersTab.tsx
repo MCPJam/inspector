@@ -438,7 +438,10 @@ function SortableServerCard({
   onDisconnect: (name: string) => void;
   onReconnect: (
     name: string,
-    opts?: { forceOAuthFlow?: boolean }
+    opts?: {
+      forceOAuthFlow?: boolean;
+      allowInteractiveOAuthFlow?: boolean;
+    }
   ) => Promise<void>;
   onRemove: (name: string) => void;
   hostedServerId?: string;
@@ -485,7 +488,10 @@ interface ServersTabProps {
   onDisconnect: (serverName: string) => void;
   onReconnect: (
     serverName: string,
-    options?: { forceOAuthFlow?: boolean }
+    options?: {
+      forceOAuthFlow?: boolean;
+      allowInteractiveOAuthFlow?: boolean;
+    }
   ) => Promise<void>;
   onUpdate: (
     originalServerName: string,
@@ -958,7 +964,13 @@ export function ServersTab({
   );
 
   const handleReconnectServer = useCallback(
-    async (serverName: string, options?: { forceOAuthFlow?: boolean }) => {
+    async (
+      serverName: string,
+      options?: {
+        forceOAuthFlow?: boolean;
+        allowInteractiveOAuthFlow?: boolean;
+      },
+    ) => {
       focusLoggerOnServer(serverName);
       await onReconnect(serverName, options);
     },

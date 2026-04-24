@@ -96,6 +96,7 @@ import {
 } from "./components/hosted/ChatboxChatPage";
 import { useHostedApiContext } from "./hooks/hosted/use-hosted-api-context";
 import { HOSTED_MODE, NON_PROD_LOCKDOWN } from "./lib/config";
+import { subscribeToOAuthDebuggerRequests } from "./lib/oauth/oauth-debugger-navigation";
 import {
   clearBillingSignInReturnPath,
   clearCheckoutIntentFromUrl,
@@ -682,6 +683,23 @@ export default function App() {
       ? currentHashRoute.organizationId
       : undefined,
   });
+  const oauthDebuggerServersRef = useRef(appState.servers);
+  oauthDebuggerServersRef.current = appState.servers;
+  const selectedServerRef = useRef(appState.selectedServer);
+  selectedServerRef.current = appState.selectedServer;
+  useEffect(() => {
+    return subscribeToOAuthDebuggerRequests(({ serverName }) => {
+      const matchedServerName = Object.entries(
+        oauthDebuggerServersRef.current,
+      ).find(
+        ([name, server]) => name === serverName || server.name === serverName,
+      )?.[0];
+
+      if (matchedServerName && matchedServerName !== selectedServerRef.current) {
+        setSelectedServer(matchedServerName);
+      }
+    });
+  }, [setSelectedServer]);
   const activeOrganizationName = effectiveOrganizations.find(
     (org) => org._id === activeOrganizationId,
   )?.name;

@@ -17,14 +17,35 @@ export type OAuthReady = {
   oauthTrace?: OAuthTrace;
 };
 export type OAuthRedirect = { kind: "redirect" };
+export type OAuthReauthRequired = {
+  kind: "reauth_required";
+  error: string;
+  oauthTrace?: OAuthTrace;
+};
 export type OAuthError = { kind: "error"; error: string; oauthTrace?: OAuthTrace };
-export type OAuthResult = OAuthReady | OAuthRedirect | OAuthError;
+export type OAuthResult =
+  | OAuthReady
+  | OAuthRedirect
+  | OAuthReauthRequired
+  | OAuthError;
+
+function buildOAuthReauthRequired(
+  serverName: string,
+  oauthTrace?: OAuthTrace,
+): OAuthReauthRequired {
+  return {
+    kind: "reauth_required",
+    error: `OAuth consent is required for ${serverName}. Click Reconnect to continue.`,
+    oauthTrace,
+  };
+}
 
 export async function ensureAuthorizedForReconnect(
   server: ServerWithName,
   options?: {
     beforeRedirect?: (oauthOptions: MCPOAuthOptions) => void;
     onTraceUpdate?: (trace: OAuthTrace) => void;
+    allowInteractiveOAuthFlow?: boolean;
   },
 ): Promise<OAuthResult> {
   // If server is explicitly configured without OAuth, skip OAuth flow entirely
@@ -44,6 +65,7 @@ export async function ensureAuthorizedForReconnect(
   }
 
   // If OAuth was configured, try to refresh or re-initiate
+  let refreshTrace: OAuthTrace | undefined;
   if (server.oauthTokens) {
     // Try refresh first
     const refreshed = await refreshOAuthTokens(server.name, {
@@ -57,16 +79,29 @@ export async function ensureAuthorizedForReconnect(
         oauthTrace: refreshed.oauthTrace,
       };
     }
+    refreshTrace = refreshed.oauthTrace;
+  }
+
+  const storedServerUrl = localStorage.getItem(`mcp-serverUrl-${server.name}`);
+  const url = (server.config as any)?.url?.toString?.() || storedServerUrl;
+
+  if (options?.allowInteractiveOAuthFlow === false) {
+    if (url) {
+      return buildOAuthReauthRequired(server.name, refreshTrace);
+    }
+    return {
+      kind: "error",
+      error: "OAuth refresh failed and no URL present",
+      oauthTrace: refreshTrace,
+    };
   }
 
   // Fallback to a fresh OAuth flow if URL is present
   // This may redirect away; the hook should reflect oauth-flow state
-  const storedServerUrl = localStorage.getItem(`mcp-serverUrl-${server.name}`);
-  const storedClientInfo = localStorage.getItem(`mcp-client-${server.name}`);
-  const storedTokens = getStoredTokens(server.name);
-
-  const url = (server.config as any)?.url?.toString?.() || storedServerUrl;
   if (url) {
+    const storedClientInfo = localStorage.getItem(`mcp-client-${server.name}`);
+    const storedTokens = getStoredTokens(server.name);
+
     // Get stored OAuth configuration
     const oauthConfig = readStoredOAuthConfig(server.name);
     const clientInfo = storedClientInfo ? JSON.parse(storedClientInfo) : {};
