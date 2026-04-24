@@ -60,8 +60,8 @@ npx @mcpjam/inspector@latest
 
 We have a Mac and Windows desktop app:
 
-- [Install Mac](https://github.com/MCPJam/inspector/releases/latest/download/MCPJam.Inspector.dmg)
-- [Install Windows](https://github.com/MCPJam/inspector/releases/latest/download/MCPJam-Inspector-Setup.exe)
+- [Install Mac](https://github.com/MCPJam/inspector/releases/latest) — download `MCPJam.Inspector.dmg`
+- [Install Windows](https://github.com/MCPJam/inspector/releases/latest) — download `MCPJam-Inspector-Setup.exe`
 
 Run MCPJam using Docker:
 
