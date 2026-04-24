@@ -324,9 +324,9 @@ describe("useServerState OAuth callback failures", () => {
       config: {
         url: "https://example.com/mcp",
         requestInit: {
-          headers: {
+          headers: new Headers({
             "X-Existing-Header": "present",
-          },
+          }),
         },
         timeout: 15000,
         clientCapabilities: {
@@ -353,7 +353,7 @@ describe("useServerState OAuth callback failures", () => {
           requestInit: expect.objectContaining({
             headers: expect.objectContaining({
               Authorization: "Bearer access-token",
-              "X-Existing-Header": "present",
+              "x-existing-header": "present",
             }),
           }),
           timeout: 15000,
@@ -384,6 +384,56 @@ describe("useServerState OAuth callback failures", () => {
         }),
       },
     });
+  });
+
+  it("replaces a stale stdio config when OAuth callback returns an HTTP config", async () => {
+    localStorage.setItem("mcp-oauth-pending", "demo-server");
+    localStorage.setItem("mcp-oauth-return-hash", "#demo-server");
+    handleOAuthCallbackMock.mockResolvedValue({
+      success: true,
+      serverName: "demo-server",
+      serverConfig: {
+        url: "https://example.com/mcp",
+        requestInit: {
+          headers: {
+            Authorization: "Bearer access-token",
+          },
+        },
+      },
+    });
+    window.history.replaceState({}, "", "/oauth/callback?code=test-code");
+
+    const appState = createAppState();
+    const existingServer = {
+      ...appState.servers["demo-server"],
+      config: {
+        command: "node",
+        args: ["server.js"],
+      } as any,
+    };
+    appState.servers["demo-server"] = existingServer;
+    appState.workspaces.default.servers["demo-server"] = existingServer;
+
+    const dispatch = vi.fn();
+    renderUseServerState(dispatch, appState);
+
+    await waitFor(() => {
+      expect(testConnectionMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          url: "https://example.com/mcp",
+          requestInit: expect.objectContaining({
+            headers: expect.objectContaining({
+              Authorization: "Bearer access-token",
+            }),
+          }),
+        }),
+        "demo-server",
+      );
+    });
+
+    const connectConfig = testConnectionMock.mock.calls.at(-1)?.[0];
+    expect(connectConfig).not.toHaveProperty("command");
+    expect(connectConfig).not.toHaveProperty("args");
   });
 
   it("blocks connect while workspace client config sync is pending", async () => {

@@ -33,6 +33,9 @@ describe("resolveAuthorizationPlan", () => {
 
     expect(plan.status).toBe("blocked");
     expect(plan.registrationStrategy).toBeUndefined();
+    expect(plan.blockerDetails[0]?.code).toBe(
+      "AUTO_INCOMPLETE_PREREGISTERED_CREDENTIALS",
+    );
     expect(plan.blockers[0]).toContain(
       "Provide both a client ID and client secret",
     );
@@ -84,6 +87,9 @@ describe("resolveAuthorizationPlan", () => {
 
     expect(plan.status).toBe("blocked");
     expect(plan.registrationStrategy).toBeUndefined();
+    expect(plan.blockerDetails[0]?.code).toBe(
+      "AUTO_NO_CLIENT_CREDENTIALS_COMPATIBLE_FLOW",
+    );
     expect(plan.blockers[0]).toContain("client_credentials-compatible flow");
   });
 
@@ -97,6 +103,7 @@ describe("resolveAuthorizationPlan", () => {
 
     expect(plan.status).toBe("blocked");
     expect(plan.registrationStrategy).toBe("cimd");
+    expect(plan.blockerDetails[0]?.code).toBe("CIMD_UNSUPPORTED_PROTOCOL");
     expect(plan.blockers[0]).toContain("not supported for protocol version 2025-06-18");
   });
 });

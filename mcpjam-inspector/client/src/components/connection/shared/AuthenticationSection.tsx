@@ -58,10 +58,6 @@ const REGISTRATION_OPTIONS: Array<{
   { value: "dcr", label: "Dynamic Client Registration (DCR)" },
 ];
 
-/** Shown inline via Client ID label + submit guard; hide duplicate banner from the SDK planner. */
-const PREREGISTERED_MISSING_CLIENT_ID_BLOCKER =
-  /requires a client ID before the flow can start/i;
-
 export function AuthenticationSection({
   serverUrl,
   authType,
@@ -103,12 +99,12 @@ export function AuthenticationSection({
 
   const oauthPlanVisibleBlockers =
     oauthPlan?.status === "blocked"
-      ? (oauthPlan.blockers ?? []).filter(
-          (message) =>
+      ? (oauthPlan.blockerDetails ?? []).filter(
+          (blocker) =>
             !(
               oauthRegistrationMode === "preregistered" &&
               clientId.trim() === "" &&
-              PREREGISTERED_MISSING_CLIENT_ID_BLOCKER.test(message)
+              blocker.code === "PREREGISTERED_MISSING_CLIENT_ID"
             ),
         )
       : [];
@@ -166,7 +162,7 @@ export function AuthenticationSection({
               <div className="px-3 py-3 space-y-2 border-b border-border bg-background/60">
                 {oauthPlanVisibleBlockers.length > 0 && (
                   <p className="text-sm text-destructive">
-                    {oauthPlanVisibleBlockers[0]}
+                    {oauthPlanVisibleBlockers[0]?.message}
                   </p>
                 )}
                 {oauthPlan.warnings.length > 0 && (

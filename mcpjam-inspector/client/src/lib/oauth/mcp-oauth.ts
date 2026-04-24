@@ -893,22 +893,25 @@ function annotateTraceWithAuthorizationPlan(input: {
     return trace;
   }
 
-  const targetStepIndex = [
+  const targetStepPriority = [
     "received_authorization_server_metadata",
     "authorization_request",
     "received_client_credentials",
     "request_client_registration",
-  ]
-    .map((stepName) =>
-      trace.steps.findIndex((step) => step.step === stepName)
-    )
-    .find((index) => index >= 0);
+  ] as const;
+  let targetStepIndex: number | undefined;
+  for (const stepName of targetStepPriority) {
+    const index = trace.steps.findIndex((step) => step.step === stepName);
+    if (index >= 0) {
+      targetStepIndex = index;
+      break;
+    }
+  }
   if (targetStepIndex == null || targetStepIndex === -1) {
     return trace;
   }
 
-  const annotatedTrace = JSON.parse(JSON.stringify(trace)) as OAuthTrace;
-  const targetStep = annotatedTrace.steps[targetStepIndex];
+  const targetStep = trace.steps[targetStepIndex];
   const selectedStrategyLabel = formatAuthorizationStrategyLabel(
     authorizationPlan.registrationStrategy
   );
@@ -920,13 +923,13 @@ function annotateTraceWithAuthorizationPlan(input: {
         )
       : undefined;
 
-  targetStep.message = [
+  const nextMessage = [
     `Automatic resolved to ${selectedStrategyLabel} for this run.`,
     reason,
   ]
     .filter(Boolean)
     .join(" ");
-  targetStep.details = {
+  const nextDetails = {
     ...(targetStep.details ?? {}),
     "Automatic Decision": selectedStrategyLabel,
     ...(supportedStrategies
@@ -943,7 +946,18 @@ function annotateTraceWithAuthorizationPlan(input: {
       : {}),
   };
 
-  return annotatedTrace;
+  return {
+    ...trace,
+    steps: trace.steps.map((step, index) =>
+      index === targetStepIndex
+        ? {
+            ...step,
+            message: nextMessage,
+            details: nextDetails,
+          }
+        : step,
+    ),
+  };
 }
 
 export function readStoredOAuthConfig(

@@ -303,6 +303,7 @@ test("buildOAuthLoginSnapshotConfig prefers access tokens over refresh tokens", 
       registrationMode: "auto",
       registrationStrategy: "dcr",
       status: "ready",
+      blockerDetails: [],
       blockers: [],
       warnings: [],
       capabilities: {
@@ -359,6 +360,7 @@ test("buildOAuthLoginSnapshotConfig falls back to refresh-token auth when needed
       registrationMode: "auto",
       registrationStrategy: "preregistered",
       status: "ready",
+      blockerDetails: [],
       blockers: [],
       warnings: [],
       capabilities: {

@@ -50,12 +50,29 @@ export interface AuthorizationPlanCapabilities {
   discoveryError?: string;
 }
 
+export type AuthorizationPlanBlockerCode =
+  | "PREREGISTERED_MISSING_CLIENT_ID"
+  | "PREREGISTERED_MISSING_CLIENT_SECRET"
+  | "CIMD_UNSUPPORTED_PROTOCOL"
+  | "CIMD_UNSUPPORTED_AUTH_MODE"
+  | "CIMD_NOT_ADVERTISED"
+  | "DCR_NOT_ADVERTISED"
+  | "AUTO_INCOMPLETE_PREREGISTERED_CREDENTIALS"
+  | "AUTO_NO_CLIENT_CREDENTIALS_COMPATIBLE_FLOW"
+  | "AUTO_NO_USABLE_REGISTRATION_FLOW";
+
+export interface AuthorizationPlanBlocker {
+  code: AuthorizationPlanBlockerCode;
+  message: string;
+}
+
 export interface ResolvedAuthorizationPlan {
   protocolMode: OAuthProtocolMode;
   protocolVersion: OAuthProtocolVersion;
   registrationMode: OAuthRegistrationMode;
   registrationStrategy?: OAuthRegistrationStrategy;
   status: "ready" | "discovery_required" | "blocked";
+  blockerDetails: AuthorizationPlanBlocker[];
   blockers: string[];
   warnings: string[];
   capabilities: AuthorizationPlanCapabilities;
@@ -193,6 +210,7 @@ export function resolveAuthorizationPlan(
   const protocolMode = normalizeProtocolMode(input);
   const protocolVersion = resolveProtocolVersion(input);
   const registrationMode = normalizeRegistrationMode(input);
+  const blockerDetails: AuthorizationPlanBlocker[] = [];
   const blockers: string[] = [];
   const warnings: string[] = [];
   const capabilities = buildCapabilities(protocolVersion, input.discovery);
@@ -221,6 +239,13 @@ export function resolveAuthorizationPlan(
 
   let status: ResolvedAuthorizationPlan["status"] = "ready";
   let registrationStrategy: OAuthRegistrationStrategy | undefined;
+  const pushBlocker = (
+    code: AuthorizationPlanBlockerCode,
+    message: string,
+  ) => {
+    blockerDetails.push({ code, message });
+    blockers.push(message);
+  };
 
   if (capabilities.discoveryError) {
     warnings.push(capabilities.discoveryError);
@@ -229,41 +254,50 @@ export function resolveAuthorizationPlan(
   if (registrationMode === "preregistered") {
     registrationStrategy = "preregistered";
     if (!input.useRegistryOAuthProxy && !trimmedClientId) {
-      blockers.push(
+      pushBlocker(
+        "PREREGISTERED_MISSING_CLIENT_ID",
         "Pre-registered OAuth requires a client ID before the flow can start.",
       );
     }
     if (authMode === "client_credentials" && !trimmedClientSecret) {
-      blockers.push(
+      pushBlocker(
+        "PREREGISTERED_MISSING_CLIENT_SECRET",
         "Client credentials mode requires a client secret for pre-registered OAuth.",
       );
     }
   } else if (registrationMode === "cimd") {
     registrationStrategy = "cimd";
     if (protocolVersion !== "2025-11-25") {
-      blockers.push(
+      pushBlocker(
+        "CIMD_UNSUPPORTED_PROTOCOL",
         `CIMD registration is not supported for protocol version ${protocolVersion}.`,
       );
     }
     if (authMode === "client_credentials") {
-      blockers.push(
+      pushBlocker(
+        "CIMD_UNSUPPORTED_AUTH_MODE",
         "Client credentials mode cannot use Client ID Metadata Documents (CIMD).",
       );
     }
     if (hasDiscovery && !capabilities.supportsCimd) {
-      blockers.push(
+      pushBlocker(
+        "CIMD_NOT_ADVERTISED",
         "The authorization server did not advertise Client ID Metadata Document support.",
       );
     }
   } else if (registrationMode === "dcr") {
     registrationStrategy = "dcr";
     if (hasDiscovery && !capabilities.supportsDcr) {
-      blockers.push(
+      pushBlocker(
+        "DCR_NOT_ADVERTISED",
         "The authorization server did not advertise a registration_endpoint required for DCR.",
       );
     }
   } else if (hasIncompletePreregisteredCredentials) {
-    blockers.push(preregisteredAutoModeBlocker);
+    pushBlocker(
+      "AUTO_INCOMPLETE_PREREGISTERED_CREDENTIALS",
+      preregisteredAutoModeBlocker,
+    );
   } else if (hasCompletePreregisteredCredentials) {
     registrationStrategy = "preregistered";
   } else if (!hasDiscovery) {
@@ -273,7 +307,10 @@ export function resolveAuthorizationPlan(
   } else if (capabilities.supportsDcr) {
     registrationStrategy = "dcr";
   } else {
-    blockers.push(
+    pushBlocker(
+      authMode === "client_credentials"
+        ? "AUTO_NO_CLIENT_CREDENTIALS_COMPATIBLE_FLOW"
+        : "AUTO_NO_USABLE_REGISTRATION_FLOW",
       authMode === "client_credentials"
         ? "Automatic OAuth could not find a client_credentials-compatible flow. Configure pre-registered credentials or use a server that supports DCR."
         : "Automatic OAuth could not find a usable CIMD or DCR flow. Configure pre-registered credentials to continue.",
@@ -290,6 +327,7 @@ export function resolveAuthorizationPlan(
     registrationMode,
     ...(registrationStrategy ? { registrationStrategy } : {}),
     status,
+    blockerDetails,
     blockers,
     warnings,
     capabilities,
