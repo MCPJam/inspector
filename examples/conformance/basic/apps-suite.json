@@ -1,0 +1,12 @@
+{
+  "name": "Basic Apps Suite",
+  "target": {
+    "url": "http://127.0.0.1:3101/mcp",
+    "timeout": 10000
+  },
+  "runs": [
+    {
+      "label": "apps-surface"
+    }
+  ]
+}

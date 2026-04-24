@@ -184,6 +184,19 @@ export type {
   StructuredRunSummary,
   StructuredRunReport,
 } from "./structured-reporting.js";
+export {
+  toConformanceReport,
+  renderConformanceReportJson,
+  renderConformanceReportJUnitXml,
+} from "./conformance-reporting.js";
+export type {
+  ConformanceReport,
+  ConformanceReportCase,
+  ConformanceReportCaseStatus,
+  ConformanceReportGroup,
+  ConformanceReportKind,
+  SupportedConformanceResult,
+} from "./conformance-reporting.js";
 export { runOAuthLogin } from "./oauth-login.js";
 export type {
   OAuthLoginConfig,
@@ -393,7 +406,10 @@ export type {
 } from "./mcp-conformance/index.js";
 
 // MCP Apps conformance
-export { MCPAppsConformanceTest } from "./apps-conformance/index.js";
+export {
+  MCPAppsConformanceTest,
+  MCPAppsConformanceSuite,
+} from "./apps-conformance/index.js";
 export type {
   MCPAppsCheckCategory,
   MCPAppsCheckId,
@@ -401,6 +417,10 @@ export type {
   MCPAppsCheckStatus,
   MCPAppsConformanceConfig,
   MCPAppsConformanceResult,
+  MCPAppsConformanceSuiteConfig,
+  MCPAppsConformanceSuiteDefaults,
+  MCPAppsConformanceSuiteResult,
+  MCPAppsConformanceSuiteRun,
   MCPAppsResourceReadOutcome,
 } from "./apps-conformance/index.js";
 export {
