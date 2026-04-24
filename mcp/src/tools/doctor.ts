@@ -5,9 +5,9 @@ import {
   type HttpServerConfig,
   type ServerDoctorResult,
 } from "@mcpjam/sdk/worker";
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { McpJamMcpServer } from "../server.js";
+import type { SessionToolRegistrar } from "./sessionToolRegistrar.js";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_TIMEOUT_MS = 120_000;
@@ -76,7 +76,7 @@ type DoctorEntry =
     };
 
 export function registerDoctorTool(
-  server: McpServer,
+  server: SessionToolRegistrar,
   agent: McpJamMcpServer
 ): void {
   server.registerTool(

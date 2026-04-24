@@ -1,13 +1,17 @@
 import { ConvexHttpClient } from "convex/browser";
 import { z } from "zod";
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { WHOAMI_APP_HTML } from "../generated/McpAppsHtml.bundled.js";
+import type { WhoamiPayload } from "../shared/whoami.js";
 import type { McpJamMcpServer } from "../server.js";
+import type { SessionToolRegistrar } from "./sessionToolRegistrar.js";
+
+export const WHOAMI_RESOURCE_URI = "ui://mcpjam/whoami.html";
 
 export function registerWhoamiTool(
-  server: McpServer,
+  registrar: SessionToolRegistrar,
   agent: McpJamMcpServer
 ): void {
-  server.registerTool(
+  registrar.registerTool(
     "whoami",
     {
       title: "Who am I?",
@@ -16,32 +20,56 @@ export function registerWhoamiTool(
       inputSchema: z.object({}),
     },
     async () => {
-      const token = agent.bearerToken;
-      if (!token) {
-        return toolError("No bearer token on the request.");
-      }
-
-      const client = new ConvexHttpClient(agent.runtimeEnv.CONVEX_URL);
-      client.setAuth(token);
-
-      const id = await client.mutation("users:ensureUser" as any, {});
-      const user = await client.query("users:getCurrentUser" as any, {});
+      const payload = await getWhoamiPayload(agent);
 
       return {
         content: [
           {
             type: "text",
-            text: JSON.stringify({ id, user }, null, 2),
+            text: JSON.stringify(payload, null, 2),
           },
         ],
       };
+    },
+    {
+      resourceUri: WHOAMI_RESOURCE_URI,
+      html: WHOAMI_APP_HTML,
+      resourceName: "MCPJam whoami UI",
+      resourceMeta: {
+        ui: {
+          prefersBorder: true,
+        },
+      },
+      callback: async () => {
+        const payload = await getWhoamiPayload(agent);
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(payload, null, 2),
+            },
+          ],
+          structuredContent: payload,
+        };
+      },
     }
   );
 }
 
-function toolError(message: string) {
-  return {
-    isError: true,
-    content: [{ type: "text" as const, text: message }],
-  };
+export async function getWhoamiPayload(
+  agent: McpJamMcpServer
+): Promise<WhoamiPayload> {
+  const token = agent.bearerToken;
+  if (!token) {
+    throw new Error("No bearer token on the request.");
+  }
+
+  const client = new ConvexHttpClient(agent.runtimeEnv.CONVEX_URL);
+  client.setAuth(token);
+
+  const id = (await client.mutation("users:ensureUser" as any, {})) as string;
+  const user = await client.query("users:getCurrentUser" as any, {});
+
+  return { id, user };
 }
