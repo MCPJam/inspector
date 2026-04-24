@@ -412,10 +412,21 @@ export async function runOAuthLogin(
       });
 
       if (flowResult.error) {
+        const resultState =
+          flowResult.state.currentStep === "authorization_request" &&
+          flowResult.state.authorizationUrl
+            ? {
+                ...flowResult.state,
+                // Preserve the SDK login helper's historical contract: once an
+                // authorization URL exists, failures in the browser/headless
+                // handoff are reported as failing to receive the auth code.
+                currentStep: "received_authorization_code" as const,
+              }
+            : flowResult.state;
         return buildResult(
           config,
           redirectUrl,
-          flowResult.state,
+          resultState,
           undefined,
           flowResult.error.message,
         );

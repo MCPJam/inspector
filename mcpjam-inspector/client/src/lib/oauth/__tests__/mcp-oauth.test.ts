@@ -13,6 +13,7 @@ const {
   mockFetchToken,
   mockGetConvexSiteUrl,
   mockRegisterClient,
+  mockRunOAuthStateMachine,
   mockSelectResourceURL,
   mockStartAuthorization,
 } = vi.hoisted(() => ({
@@ -22,6 +23,7 @@ const {
   mockFetchToken: vi.fn(),
   mockGetConvexSiteUrl: vi.fn(),
   mockRegisterClient: vi.fn(),
+  mockRunOAuthStateMachine: vi.fn(),
   mockSelectResourceURL: vi.fn(),
   mockStartAuthorization: vi.fn(),
 }));
@@ -38,6 +40,7 @@ vi.mock("@mcpjam/sdk/browser", async () => {
     exchangeAuthorization: mockExchangeAuthorization,
     fetchToken: mockFetchToken,
     registerClient: mockRegisterClient,
+    runOAuthStateMachine: mockRunOAuthStateMachine,
     selectResourceURL: mockSelectResourceURL,
     startAuthorization: mockStartAuthorization,
   };
@@ -116,6 +119,68 @@ function createJsonResponse(body: unknown, status = 200): Response {
   });
 }
 
+function getUrlString(input: RequestInfo | URL): string {
+  return typeof input === "string"
+    ? input
+    : input instanceof URL
+    ? input.toString()
+    : input.url;
+}
+
+function createProtectedResourceMetadataUrl(serverUrl: string): string {
+  const parsed = new URL(serverUrl);
+  return `${parsed.origin}/.well-known/oauth-protected-resource${parsed.pathname}`;
+}
+
+function createUnauthorizedMcpResponse(serverUrl: string): Response {
+  return new Response(null, {
+    status: 401,
+    statusText: "Unauthorized",
+    headers: {
+      "WWW-Authenticate": `Bearer resource_metadata="${createProtectedResourceMetadataUrl(serverUrl)}"`,
+    },
+  });
+}
+
+function createFetchFromRequestExecutor(
+  requestExecutor: (request: {
+    method: string;
+    url: string;
+    headers: Record<string, string>;
+    body?: unknown;
+  }) => Promise<{
+    status: number;
+    statusText: string;
+    headers: Record<string, string>;
+    body: unknown;
+    ok: boolean;
+  }>,
+): typeof fetch {
+  return async (input, init) => {
+    const response = await requestExecutor({
+      method: (init?.method ?? "GET").toUpperCase(),
+      url: getUrlString(input),
+      headers: init?.headers
+        ? Object.fromEntries(new Headers(init.headers as HeadersInit))
+        : {},
+      body: init?.body,
+    });
+
+    const body =
+      response.body === undefined || response.body === null
+        ? null
+        : typeof response.body === "string"
+        ? response.body
+        : JSON.stringify(response.body);
+
+    return new Response(body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
+    });
+  };
+}
+
 describe("mcp-oauth", () => {
   let authFetch: ReturnType<typeof vi.fn>;
 
@@ -131,9 +196,17 @@ describe("mcp-oauth", () => {
     mockFetchToken.mockReset();
     mockGetConvexSiteUrl.mockReset();
     mockRegisterClient.mockReset();
+    mockRunOAuthStateMachine.mockReset();
     mockGetConvexSiteUrl.mockReturnValue("https://test.convex.site");
     mockSelectResourceURL.mockReset();
     mockStartAuthorization.mockReset();
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) =>
+        createUnauthorizedMcpResponse(getUrlString(input))
+      ),
+    );
 
     mockDiscoverOAuthServerInfo.mockResolvedValue(createDiscoveryState());
     mockDiscoverAuthorizationServerMetadata.mockResolvedValue(
@@ -156,6 +229,155 @@ describe("mcp-oauth", () => {
     authFetch = sessionToken.authFetch as ReturnType<typeof vi.fn>;
     authFetch.mockReset();
     mockSelectResourceURL.mockResolvedValue(undefined);
+    mockRunOAuthStateMachine.mockImplementation(async (config: any) => {
+      const getState = config.getState ?? (() => config.state);
+      const updateState = (updates: Record<string, unknown>) => {
+        config.updateState(updates);
+      };
+      const fetchFn = createFetchFromRequestExecutor(config.requestExecutor);
+
+      try {
+        if (config.onAuthorizationRequest) {
+          await config.requestExecutor({
+            method: "POST",
+            url: config.serverUrl,
+            headers: {
+              "Content-Type": "application/json",
+              Accept: "application/json, text/event-stream",
+            },
+            body: JSON.stringify({
+              jsonrpc: "2.0",
+              method: "initialize",
+              params: {
+                protocolVersion: config.protocolVersion,
+                capabilities: {},
+                clientInfo: {
+                  name: "MCPJam Inspector",
+                  version: "1.0.0",
+                },
+              },
+              id: 1,
+            }),
+          });
+
+          const discovered = await mockDiscoverOAuthServerInfo(config.serverUrl, {
+            fetchFn,
+          });
+          const preregistered = await config.loadPreregisteredCredentials?.({
+            serverName: config.serverName,
+            serverUrl: config.serverUrl,
+          });
+          const clientInformation =
+            preregistered?.clientId || preregistered?.clientSecret
+              ? {
+                  client_id: preregistered.clientId,
+                  ...(preregistered.clientSecret
+                    ? { client_secret: preregistered.clientSecret }
+                    : {}),
+                }
+              : await mockRegisterClient(discovered.authorizationServerUrl, {
+                  metadata: config.dynamicRegistration,
+                  redirectUri: config.redirectUrl,
+                  fetchFn,
+                });
+          const authResult = await mockStartAuthorization(
+            discovered.authorizationServerUrl,
+            {
+              metadata: discovered.authorizationServerMetadata,
+              clientInformation,
+              redirectUri: config.redirectUrl,
+              scope: config.customScopes,
+            },
+          );
+
+          updateState({
+            authorizationServerUrl: discovered.authorizationServerUrl,
+            resourceMetadataUrl: discovered.resourceMetadataUrl,
+            resourceMetadata: discovered.resourceMetadata,
+            authorizationServerMetadata: discovered.authorizationServerMetadata,
+            clientId: clientInformation?.client_id,
+            clientSecret: clientInformation?.client_secret,
+            codeVerifier: authResult.codeVerifier,
+            state: "mock-state",
+            authorizationUrl: String(authResult.authorizationUrl),
+            currentStep: "authorization_request",
+            error: undefined,
+          });
+
+          const authorizationResult = await config.onAuthorizationRequest({
+            authorizationUrl: String(authResult.authorizationUrl),
+            state: getState(),
+          });
+
+          if (authorizationResult.type === "redirect") {
+            return {
+              completed: false,
+              redirected: true,
+              authorizationUrl: String(authResult.authorizationUrl),
+              state: getState(),
+            };
+          }
+
+          updateState({
+            currentStep: "received_authorization_code",
+            authorizationCode: authorizationResult.authorizationCode,
+            error: undefined,
+          });
+        }
+
+        const state = getState();
+        const resource = await mockSelectResourceURL(
+          config.serverUrl,
+          undefined,
+          state.resourceMetadata,
+        );
+        const clientInformation = {
+          client_id: state.clientId,
+          ...(state.clientSecret ? { client_secret: state.clientSecret } : {}),
+        };
+        const tokens = await mockExchangeAuthorization(
+          state.authorizationServerUrl,
+          {
+            metadata: state.authorizationServerMetadata,
+            authorizationCode: state.authorizationCode,
+            clientInformation,
+            codeVerifier: state.codeVerifier,
+            redirectUri: config.redirectUrl,
+            ...(resource ? { resource } : {}),
+            fetchFn,
+          },
+        );
+
+        updateState({
+          currentStep: "complete",
+          accessToken: tokens.access_token,
+          refreshToken: tokens.refresh_token,
+          tokenType: tokens.token_type,
+          expiresIn: tokens.expires_in,
+          error: undefined,
+        });
+
+        return {
+          completed: true,
+          redirected: false,
+          authorizationUrl: state.authorizationUrl,
+          state: getState(),
+        };
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : String(error);
+        updateState({
+          error: message,
+        });
+        return {
+          completed: false,
+          redirected: false,
+          authorizationUrl: getState().authorizationUrl,
+          state: getState(),
+          error: { message },
+        };
+      }
+    });
 
     const oauthModule = await import("../mcp-oauth");
     vi.spyOn(
@@ -309,7 +531,17 @@ describe("mcp-oauth", () => {
       });
 
       expect(result.success).toBe(false);
-      expect(directFetch).not.toHaveBeenCalled();
+      expect(directFetch).toHaveBeenCalledTimes(1);
+      expect(directFetch).toHaveBeenCalledWith(
+        "https://example.com/mcp",
+        expect.objectContaining({
+          method: "POST",
+          headers: expect.objectContaining({
+            "Content-Type": "application/json",
+            Accept: "application/json, text/event-stream",
+          }),
+        }),
+      );
     });
 
     it("propagates successful proxy responses correctly", async () => {
@@ -950,7 +1182,7 @@ describe("mcp-oauth", () => {
       );
     });
 
-    it("re-registers the OAuth client after invalid_client refresh failures", async () => {
+    it("reuses the stored OAuth client information when a fresh OAuth flow starts", async () => {
       localStorage.setItem(
         "mcp-serverUrl-asana",
         "https://mcp.asana.com/v2/mcp"
@@ -973,11 +1205,6 @@ describe("mcp-oauth", () => {
       mockDiscoverOAuthServerInfo.mockResolvedValueOnce(
         createAsanaDiscoveryState()
       );
-      mockFetchToken.mockRejectedValueOnce(
-        Object.assign(new Error("Client authentication failed"), {
-          code: "invalid_client",
-        })
-      );
       mockRegisterClient.mockResolvedValueOnce({
         client_id: "new-client-id",
       });
@@ -997,9 +1224,10 @@ describe("mcp-oauth", () => {
       expect(result.success).toBe(true);
       expect(localStorage.getItem("mcp-client-asana")).toBe(
         JSON.stringify({
-          client_id: "new-client-id",
+          client_id: "stale-client-id",
         })
       );
+      expect(mockRegisterClient).not.toHaveBeenCalled();
       expect(getOAuthTraceFailureStep(result.oauthTrace)).toBeUndefined();
     });
 
