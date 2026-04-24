@@ -747,6 +747,7 @@ export interface ServerFormData {
   url?: string;
   headers?: Record<string, string>;
   env?: Record<string, string>;
+  clientCapabilities?: Record<string, unknown>;
   useOAuth?: boolean;
   oauthProtocolMode?: ServerFormOAuthProtocolMode;
   oauthRegistrationMode?: ServerFormOAuthRegistrationMode;

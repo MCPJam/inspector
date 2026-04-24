@@ -54,26 +54,10 @@ const REGISTRATION_OPTIONS: Array<{
   label: string;
 }> = [
   { value: "auto", label: "Automatic" },
-  { value: "preregistered", label: "Use existing client credentials" },
+  { value: "preregistered", label: "Preregistration (Client Credentials)" },
   { value: "cimd", label: "Client ID Metadata Documents (CIMD)" },
   { value: "dcr", label: "Dynamic Client Registration (DCR)" },
 ];
-
-function getRegistrationModeDescription(
-  value: ServerFormOAuthRegistrationMode,
-): string {
-  switch (value) {
-    case "preregistered":
-      return "Use a client ID that was already issued for this authorization server.";
-    case "cimd":
-      return "Requires the latest MCP auth spec and an authorization server that advertises client_id_metadata_document_supported.";
-    case "dcr":
-      return "Requires the authorization server to advertise a registration_endpoint for dynamic registration.";
-    case "auto":
-    default:
-      return "Automatic discovery uses pre-registered credentials first, then CIMD, then DCR after the server is probed.";
-  }
-}
 
 export function AuthenticationSection({
   serverUrl,
@@ -214,10 +198,6 @@ export function AuthenticationSection({
                         ))}
                       </SelectContent>
                     </Select>
-                    <p className="text-xs text-muted-foreground">
-                      Automatic tracks the SDK default. Pick an older spec only
-                      when you need compatibility testing.
-                    </p>
                   </div>
 
                   <div className="space-y-2">
@@ -246,9 +226,6 @@ export function AuthenticationSection({
                         ))}
                       </SelectContent>
                     </Select>
-                    <p className="text-xs text-muted-foreground">
-                      {getRegistrationModeDescription(oauthRegistrationMode)}
-                    </p>
                     {oauthRegistrationMode === "cimd" &&
                       oauthPlan?.clientIdMetadataUrl && (
                         <p className="text-xs text-muted-foreground break-all">
@@ -269,10 +246,6 @@ export function AuthenticationSection({
                     placeholder="Optional scopes separated by spaces"
                     className="h-10"
                   />
-                  <p className="text-xs text-muted-foreground">
-                    Leave empty to let the SDK use 401 challenge scopes first,
-                    then protected resource metadata.
-                  </p>
                 </div>
 
                 {showClientCredentials && (

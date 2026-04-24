@@ -6,8 +6,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@mcpjam/design-system/select";
+import { AdvancedConnectionSettingsSection } from "./shared/AdvancedConnectionSettingsSection";
 import { AuthenticationSection } from "./shared/AuthenticationSection";
-import { CustomHeadersSection } from "./shared/CustomHeadersSection";
 import { EnvVarsSection } from "./shared/EnvVarsSection";
 import { HostedConnectionTypeControl } from "./shared/HostedConnectionTypeControl";
 import type { useServerForm } from "./hooks/use-server-form";
@@ -188,33 +188,41 @@ export function EditServerFormContent({
         />
       )}
 
-      {formState.type === "http" && (
-        <CustomHeadersSection
-          customHeaders={formState.customHeaders}
-          onAdd={formState.addCustomHeader}
-          onRemove={formState.removeCustomHeader}
-          onUpdate={formState.updateCustomHeader}
-        />
-      )}
-
-      <div className="space-y-2">
-        <label className="block text-sm font-medium text-foreground">
-          Request Timeout (ms)
-        </label>
-        <Input
-          type="number"
-          value={formState.requestTimeout}
-          onChange={(e) => formState.setRequestTimeout(e.target.value)}
-          placeholder="10000"
-          className="h-10"
-          min="1000"
-          max="600000"
-          step="1000"
-        />
-        <p className="text-xs text-muted-foreground">
-          Default 10000 (min 1000, max 600000)
-        </p>
-      </div>
+      <AdvancedConnectionSettingsSection
+        showConfiguration={formState.showConfiguration}
+        onToggle={() =>
+          formState.setShowConfiguration(!formState.showConfiguration)
+        }
+        requestTimeout={formState.requestTimeout}
+        onRequestTimeoutChange={formState.setRequestTimeout}
+        inheritedRequestTimeout={formState.inheritedRequestTimeout}
+        clientCapabilitiesOverrideEnabled={
+          formState.clientCapabilitiesOverrideEnabled
+        }
+        onClientCapabilitiesOverrideEnabledChange={(enabled) => {
+          formState.setClientCapabilitiesOverrideEnabled(enabled);
+          if (!enabled) {
+            formState.setClientCapabilitiesOverrideError(null);
+          }
+        }}
+        clientCapabilitiesOverrideText={
+          formState.clientCapabilitiesOverrideText
+        }
+        onClientCapabilitiesOverrideTextChange={
+          formState.setClientCapabilitiesOverrideText
+        }
+        clientCapabilitiesOverrideError={
+          formState.clientCapabilitiesOverrideError
+        }
+        {...(formState.type === "http"
+          ? {
+              customHeaders: formState.customHeaders,
+              onAddHeader: formState.addCustomHeader,
+              onRemoveHeader: formState.removeCustomHeader,
+              onUpdateHeader: formState.updateCustomHeader,
+            }
+          : {})}
+      />
     </div>
   );
 }

@@ -304,7 +304,7 @@ describe("useServerState OAuth callback failures", () => {
     ).toBe(false);
   });
 
-  it("passes exact workspace-derived clientCapabilities on local reconnect", async () => {
+  it("applies workspace connection defaults on local reconnect", async () => {
     const { reconnectServer } = await import("@/state/mcp-api");
     const { ensureAuthorizedForReconnect } =
       await import("@/state/oauth-orchestrator");
@@ -318,6 +318,12 @@ describe("useServerState OAuth callback failures", () => {
     const appState = createAppState({
       workspaceClientConfig: {
         version: 1,
+        connectionDefaults: {
+          headers: {
+            "X-Workspace-Header": "workspace",
+          },
+          requestTimeout: 30000,
+        },
         clientCapabilities: {
           experimental: {
             workspaceProfile: {},
@@ -346,6 +352,12 @@ describe("useServerState OAuth callback failures", () => {
 
     const [, effectiveConfig] = vi.mocked(reconnectServer).mock.calls[0] ?? [];
     expect(effectiveConfig).toMatchObject({
+      requestInit: {
+        headers: {
+          "X-Workspace-Header": "workspace",
+        },
+      },
+      timeout: 30000,
       capabilities: {
         experimental: {
           workspaceProfile: {},
@@ -357,6 +369,79 @@ describe("useServerState OAuth callback failures", () => {
           workspaceProfile: {},
         },
         sampling: {},
+      },
+    });
+  });
+
+  it("prefers an exact per-server clientCapabilities override over workspace capability merging", async () => {
+    const { reconnectServer } = await import("@/state/mcp-api");
+    const { ensureAuthorizedForReconnect } =
+      await import("@/state/oauth-orchestrator");
+    vi.mocked(reconnectServer).mockResolvedValue({
+      success: true,
+      initInfo: {
+        clientCapabilities: {},
+      },
+    } as any);
+
+    const appState = createAppState({
+      workspaceClientConfig: {
+        version: 1,
+        connectionDefaults: {
+          headers: {},
+          requestTimeout: 10000,
+        },
+        clientCapabilities: {
+          experimental: {
+            workspaceProfile: {},
+          },
+        },
+        hostContext: {},
+      },
+      serverCapabilities: {
+        sampling: {},
+      },
+    });
+
+    appState.workspaces.default.servers["demo-server"].config = {
+      url: "https://example.com/mcp",
+      capabilities: {
+        sampling: {},
+      },
+      clientCapabilities: {
+        roots: {
+          listChanged: true,
+        },
+      },
+    } as any;
+    appState.servers["demo-server"].config =
+      appState.workspaces.default.servers["demo-server"].config;
+
+    const dispatch = vi.fn();
+    const { result } = renderUseServerState(dispatch, appState);
+    vi.mocked(ensureAuthorizedForReconnect).mockResolvedValue({
+      kind: "ready",
+      serverConfig: appState.workspaces.default.servers["demo-server"].config,
+      tokens: undefined,
+    } as any);
+
+    await result.current.handleReconnect("demo-server");
+
+    await waitFor(() => {
+      expect(vi.mocked(reconnectServer)).toHaveBeenCalled();
+    });
+
+    const [, effectiveConfig] = vi.mocked(reconnectServer).mock.calls[0] ?? [];
+    expect(effectiveConfig).toMatchObject({
+      capabilities: {
+        roots: {
+          listChanged: true,
+        },
+      },
+      clientCapabilities: {
+        roots: {
+          listChanged: true,
+        },
       },
     });
   });

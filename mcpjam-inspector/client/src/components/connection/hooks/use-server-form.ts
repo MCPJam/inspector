@@ -5,6 +5,8 @@ import {
   type ServerFormOAuthRegistrationMode,
 } from "@/shared/types.js";
 import { ServerWithName } from "@/hooks/use-app-state";
+import type { WorkspaceClientConfig } from "@/lib/client-config";
+import { getEffectiveWorkspaceConnectionDefaults } from "@/lib/client-config";
 import { hasOAuthConfig, getStoredTokens } from "@/lib/oauth/mcp-oauth";
 import { HOSTED_MODE } from "@/lib/config";
 
@@ -24,11 +26,16 @@ interface InitialFormValues {
   envVars: Array<{ key: string; value: string }>;
   customHeaders: Array<{ key: string; value: string }>;
   requestTimeout: string;
+  clientCapabilitiesOverrideEnabled: boolean;
+  clientCapabilitiesOverrideText: string;
 }
 
 export function useServerForm(
   server?: ServerWithName,
-  options?: { requireHttps?: boolean },
+  options?: {
+    requireHttps?: boolean;
+    workspaceClientConfig?: WorkspaceClientConfig;
+  },
 ) {
   const [name, setName] = useState("");
   const [type, setType] = useState<"stdio" | "http">("http");
@@ -57,13 +64,32 @@ export function useServerForm(
   const [customHeaders, setCustomHeaders] = useState<
     Array<{ key: string; value: string }>
   >([]);
-  const [requestTimeout, setRequestTimeout] = useState<string>("10000");
+  const [requestTimeout, setRequestTimeout] = useState<string>("");
+  const [clientCapabilitiesOverrideEnabled, setClientCapabilitiesOverrideEnabled] =
+    useState(false);
+  const [clientCapabilitiesOverrideText, setClientCapabilitiesOverrideText] =
+    useState("{}");
+  const [clientCapabilitiesOverrideError, setClientCapabilitiesOverrideError] =
+    useState<string | null>(null);
 
   const [showConfiguration, setShowConfiguration] = useState<boolean>(false);
   const [showEnvVars, setShowEnvVars] = useState<boolean>(false);
   const [showAuthSettings, setShowAuthSettings] = useState<boolean>(false);
 
   const initialValues = useRef<InitialFormValues | null>(null);
+  const workspaceConnectionDefaults = getEffectiveWorkspaceConnectionDefaults(
+    options?.workspaceClientConfig,
+  );
+
+  const parseCapabilitiesOverride = (
+    value: string,
+  ): Record<string, unknown> => {
+    const parsed = JSON.parse(value) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("Client capabilities override must be a JSON object");
+    }
+    return parsed as Record<string, unknown>;
+  };
 
   // Initialize form with server data (for edit mode)
   useEffect(() => {
@@ -79,6 +105,7 @@ export function useServerForm(
       let clientIdValue = "";
       let clientSecretValue = "";
       let shouldShowClientCredentials = false;
+      let clientCapabilitiesOverrideValue: Record<string, unknown> | undefined;
 
       if (isHttpServer) {
         // Check if OAuth is configured by looking at multiple sources:
@@ -190,7 +217,13 @@ export function useServerForm(
         : hasBearer
           ? "bearer"
           : "none";
-      const timeoutValue = String(config.timeout || 10000);
+      const timeoutValue =
+        typeof config.timeout === "number" && Number.isFinite(config.timeout)
+          ? String(config.timeout)
+          : "";
+      clientCapabilitiesOverrideValue =
+        (config.clientCapabilities as Record<string, unknown> | undefined) ??
+        (config.capabilities as Record<string, unknown> | undefined);
 
       setName(server.name);
       setType(serverType);
@@ -203,6 +236,13 @@ export function useServerForm(
       setOauthProtocolMode(protocolModeValue);
       setOauthRegistrationMode(registrationModeValue);
       setRequestTimeout(timeoutValue);
+      setClientCapabilitiesOverrideEnabled(
+        clientCapabilitiesOverrideValue != null,
+      );
+      setClientCapabilitiesOverrideText(
+        JSON.stringify(clientCapabilitiesOverrideValue ?? {}, null, 2),
+      );
+      setClientCapabilitiesOverrideError(null);
 
       // Set auth type based on multiple OAuth detection sources
       if (resolvedAuthType === "oauth") {
@@ -250,6 +290,11 @@ export function useServerForm(
           .map(([key, value]) => ({ key, value: String(value) }));
       }
       setCustomHeaders(headersArray);
+      setShowConfiguration(
+        headersArray.length > 0 ||
+          timeoutValue.trim() !== "" ||
+          clientCapabilitiesOverrideValue != null,
+      );
 
       // Capture initial values for change detection (deep copy arrays to avoid aliasing)
       initialValues.current = {
@@ -268,6 +313,13 @@ export function useServerForm(
         envVars: envArray.map(({ key, value }) => ({ key, value })),
         customHeaders: headersArray.map(({ key, value }) => ({ key, value })),
         requestTimeout: timeoutValue,
+        clientCapabilitiesOverrideEnabled:
+          clientCapabilitiesOverrideValue != null,
+        clientCapabilitiesOverrideText: JSON.stringify(
+          clientCapabilitiesOverrideValue ?? {},
+          null,
+          2,
+        ),
       };
     }
   }, [server]);
@@ -320,6 +372,13 @@ export function useServerForm(
       }
     }
 
+    if (
+      clientCapabilitiesOverrideEnabled &&
+      clientCapabilitiesOverrideError != null
+    ) {
+      return clientCapabilitiesOverrideError;
+    }
+
     return null;
   };
 
@@ -361,8 +420,26 @@ export function useServerForm(
     setCustomHeaders(updated);
   };
 
+  const updateClientCapabilitiesOverride = (value: string) => {
+    setClientCapabilitiesOverrideText(value);
+    try {
+      parseCapabilitiesOverride(value);
+      setClientCapabilitiesOverrideError(null);
+    } catch (error) {
+      setClientCapabilitiesOverrideError(
+        error instanceof Error ? error.message : "Invalid JSON",
+      );
+    }
+  };
+
   const buildFormData = (): ServerFormData => {
-    const reqTimeout = parseInt(requestTimeout) || 10000;
+    const parsedTimeout = Number.parseInt(requestTimeout.trim(), 10);
+    const reqTimeout = Number.isFinite(parsedTimeout) ? parsedTimeout : undefined;
+    const clientCapabilities =
+      clientCapabilitiesOverrideEnabled &&
+      clientCapabilitiesOverrideError == null
+        ? parseCapabilitiesOverride(clientCapabilitiesOverrideText)
+        : undefined;
 
     // Handle stdio-specific data
     if (type === "stdio") {
@@ -389,6 +466,7 @@ export function useServerForm(
         args,
         env,
         requestTimeout: reqTimeout,
+        clientCapabilities,
       };
     }
 
@@ -401,6 +479,8 @@ export function useServerForm(
         headers[key.trim()] = value;
       }
     });
+    const explicitHeaders =
+      Object.keys(headers).length > 0 ? headers : undefined;
 
     // Parse OAuth scopes from input
     const scopes = oauthScopesInput
@@ -422,7 +502,8 @@ export function useServerForm(
       name: name.trim(),
       type: "http",
       url: url.trim(),
-      headers,
+      headers: explicitHeaders,
+      clientCapabilities,
       useOAuth,
       oauthProtocolMode: useOAuth ? oauthProtocolMode : undefined,
       oauthRegistrationMode: useOAuth ? oauthRegistrationMode : undefined,
@@ -454,7 +535,10 @@ export function useServerForm(
     setClientSecretError(null);
     setEnvVars([]);
     setCustomHeaders([]);
-    setRequestTimeout("10000");
+    setRequestTimeout("");
+    setClientCapabilitiesOverrideEnabled(false);
+    setClientCapabilitiesOverrideText("{}");
+    setClientCapabilitiesOverrideError(null);
     setShowConfiguration(false);
     setShowEnvVars(false);
     setShowAuthSettings(false);
@@ -478,6 +562,9 @@ export function useServerForm(
       clientId !== iv.clientId ||
       clientSecret !== iv.clientSecret ||
       requestTimeout !== iv.requestTimeout ||
+      clientCapabilitiesOverrideEnabled !==
+        iv.clientCapabilitiesOverrideEnabled ||
+      clientCapabilitiesOverrideText !== iv.clientCapabilitiesOverrideText ||
       JSON.stringify(envVars) !== JSON.stringify(iv.envVars) ||
       JSON.stringify(customHeaders) !== JSON.stringify(iv.customHeaders)
     );
@@ -516,6 +603,13 @@ export function useServerForm(
     setUseCustomClientId,
     requestTimeout,
     setRequestTimeout,
+    inheritedRequestTimeout: workspaceConnectionDefaults.requestTimeout,
+    clientCapabilitiesOverrideEnabled,
+    setClientCapabilitiesOverrideEnabled,
+    clientCapabilitiesOverrideText,
+    setClientCapabilitiesOverrideText: updateClientCapabilitiesOverride,
+    clientCapabilitiesOverrideError,
+    setClientCapabilitiesOverrideError,
 
     // Validation states
     clientIdError,
@@ -547,6 +641,7 @@ export function useServerForm(
     addCustomHeader,
     removeCustomHeader,
     updateCustomHeader,
+    updateClientCapabilitiesOverride,
     buildFormData,
     resetForm,
   };

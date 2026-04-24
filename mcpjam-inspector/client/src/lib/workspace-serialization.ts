@@ -27,6 +27,8 @@ export function serializeServersForSharing(
         config.args = (server.config as any).args;
       if ((server.config as any).timeout)
         config.timeout = (server.config as any).timeout;
+      if ((server.config as any).clientCapabilities)
+        config.clientCapabilities = (server.config as any).clientCapabilities;
 
       if ((server.config as any).requestInit) {
         const requestInit: Record<string, unknown> = {};
@@ -90,6 +92,9 @@ export function deserializeServersFromConvex(
     if (serverData.args) config.args = serverData.args;
     if (serverData.env) config.env = serverData.env;
     if (serverData.timeout) config.timeout = serverData.timeout;
+    if (serverData.clientCapabilities) {
+      config.clientCapabilities = serverData.clientCapabilities;
+    }
     if (serverData.headers) {
       config.requestInit = { headers: serverData.headers };
     }
@@ -107,6 +112,8 @@ export function deserializeServersFromConvex(
       if (serverData.config.args) config.args = serverData.config.args;
       if (serverData.config.env) config.env = serverData.config.env;
       if (serverData.config.timeout) config.timeout = serverData.config.timeout;
+      if (serverData.config.clientCapabilities)
+        config.clientCapabilities = serverData.config.clientCapabilities;
       if (serverData.config.requestInit)
         config.requestInit = serverData.config.requestInit;
     }
@@ -193,6 +200,14 @@ export function serversHaveChanged(
     // Get remote timeout (flat field or nested config)
     const remoteTimeout = remoteServer.timeout || remoteServer.config?.timeout;
     if ((localServer.config as any)?.timeout !== remoteTimeout) return true;
+
+    const remoteClientCapabilities =
+      remoteServer.clientCapabilities || remoteServer.config?.clientCapabilities;
+    if (
+      JSON.stringify((localServer.config as any)?.clientCapabilities) !==
+      JSON.stringify(remoteClientCapabilities)
+    )
+      return true;
 
     // Get remote requestInit/headers (flat headers or nested config.requestInit)
     const remoteRequestInit = remoteServer.headers

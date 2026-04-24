@@ -13,6 +13,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@mcpjam/design-system/
 import { Switch } from "@mcpjam/design-system/switch";
 import { Loader2 } from "lucide-react";
 import { ServerWithName, type ServerUpdateResult } from "@/hooks/use-app-state";
+import type { Workspace } from "@/state/app-types";
 import {
   listTools,
   type ListToolsResultWithMetadata,
@@ -52,6 +53,7 @@ interface ServerDetailModalProps {
     },
   ) => Promise<void>;
   existingServerNames: string[];
+  workspaceClientConfig?: Workspace["clientConfig"];
 }
 
 export function ServerDetailModal({
@@ -64,6 +66,7 @@ export function ServerDetailModal({
   onDisconnect,
   onReconnect,
   existingServerNames,
+  workspaceClientConfig,
 }: ServerDetailModalProps) {
   const posthog = usePostHog();
   const [activeTab, setActiveTab] = useState<ServerDetailTab>(defaultTab);
@@ -82,7 +85,7 @@ export function ServerDetailModal({
   const hasWidgetMetadata =
     isMCPAppServer || isOpenAIAppServer || isOpenAIAppAndMCPAppServer;
 
-  const formState = useServerForm(server);
+  const formState = useServerForm(server, { workspaceClientConfig });
   const trimmedName = formState.name.trim();
   const isDuplicateServerName =
     trimmedName !== "" &&

@@ -48,6 +48,9 @@ import { useServerMutations, type RemoteServer } from "./useWorkspaces";
 import {
   CLIENT_CONFIG_SYNC_PENDING_ERROR_MESSAGE,
   getEffectiveServerClientCapabilities,
+  getEffectiveWorkspaceConnectionDefaults,
+  mergeWorkspaceConnectionHeaders,
+  normalizeWorkspaceClientCapabilities,
 } from "@/lib/client-config";
 import { EXCALIDRAW_SERVER_NAME } from "@/lib/excalidraw-quick-connect";
 import { readOnboardingState } from "@/lib/onboarding-state";
@@ -59,6 +62,40 @@ function shouldSuppressExcalidrawConnectToastForOnboarding(
   if (serverName !== EXCALIDRAW_SERVER_NAME) return false;
   const status = readOnboardingState()?.status;
   return status === "seen";
+}
+
+function extractRequestHeaders(
+  requestInit: RequestInit | undefined,
+): Record<string, string> | undefined {
+  const headers = requestInit?.headers;
+  if (!headers || typeof headers !== "object" || Array.isArray(headers)) {
+    return undefined;
+  }
+
+  if (typeof Headers !== "undefined" && headers instanceof Headers) {
+    return Object.fromEntries(headers.entries());
+  }
+
+  return Object.fromEntries(
+    Object.entries(headers).filter(([, value]) => typeof value === "string"),
+  ) as Record<string, string>;
+}
+
+function omitAuthorizationHeader(
+  headers?: Record<string, string>,
+): Record<string, string> | undefined {
+  if (!headers) {
+    return undefined;
+  }
+
+  const sanitized = Object.fromEntries(
+    Object.entries(headers).filter(
+      ([key, value]) =>
+        key.toLowerCase() !== "authorization" && typeof value === "string",
+    ),
+  );
+
+  return Object.keys(sanitized).length > 0 ? sanitized : undefined;
 }
 
 /**
@@ -390,22 +427,62 @@ export function useServerState({
       state.pendingWorkspaceId === effectiveActiveWorkspaceId,
   );
 
-  const withWorkspaceClientCapabilities = useCallback(
+  const workspaceConnectionDefaults = useMemo(
+    () => getEffectiveWorkspaceConnectionDefaults(activeWorkspace?.clientConfig),
+    [activeWorkspace?.clientConfig],
+  );
+
+  const withWorkspaceConnectionDefaults = useCallback(
     (serverConfig: MCPServerConfig): MCPServerConfig => {
-      const mergedCapabilities = getEffectiveServerClientCapabilities({
-        workspaceClientConfig: activeWorkspace?.clientConfig,
-        serverCapabilities: serverConfig.capabilities as
-          | Record<string, unknown>
-          | undefined,
-      });
+      const explicitClientCapabilities = serverConfig.clientCapabilities as
+        | Record<string, unknown>
+        | undefined;
+      const effectiveClientCapabilities = explicitClientCapabilities
+        ? normalizeWorkspaceClientCapabilities(explicitClientCapabilities)
+        : getEffectiveServerClientCapabilities({
+            workspaceClientConfig: activeWorkspace?.clientConfig,
+            serverCapabilities: serverConfig.capabilities as
+              | Record<string, unknown>
+              | undefined,
+          });
+
+      let nextRequestInit = serverConfig.requestInit;
+      if ("url" in serverConfig) {
+        const mergedHeaders = mergeWorkspaceConnectionHeaders(
+          workspaceConnectionDefaults.headers,
+          extractRequestHeaders(serverConfig.requestInit),
+        );
+
+        if (Object.keys(mergedHeaders).length > 0) {
+          nextRequestInit = {
+            ...(serverConfig.requestInit ?? {}),
+            headers: mergedHeaders,
+          };
+        }
+      }
 
       return {
         ...serverConfig,
-        capabilities: mergedCapabilities,
-        clientCapabilities: mergedCapabilities,
+        ...("url" in serverConfig && nextRequestInit
+          ? { requestInit: nextRequestInit }
+          : {}),
+        timeout: serverConfig.timeout ?? workspaceConnectionDefaults.requestTimeout,
+        capabilities: effectiveClientCapabilities,
+        clientCapabilities: effectiveClientCapabilities,
       };
     },
-    [activeWorkspace?.clientConfig],
+    [activeWorkspace?.clientConfig, workspaceConnectionDefaults],
+  );
+
+  const mergeWithWorkspaceHeaders = useCallback(
+    (headers?: Record<string, string>) => {
+      const merged = mergeWorkspaceConnectionHeaders(
+        workspaceConnectionDefaults.headers,
+        omitAuthorizationHeader(headers),
+      );
+      return Object.keys(merged).length > 0 ? merged : undefined;
+    },
+    [workspaceConnectionDefaults.headers],
   );
 
   const assertClientConfigSynced = useCallback(() => {
@@ -498,6 +575,7 @@ export function useServerState({
         url,
         headers,
         timeout: config?.timeout,
+        clientCapabilities: config?.clientCapabilities,
         useOAuth: serverEntry.useOAuth,
         oauthScopes: serverEntry.oauthFlowProfile?.scopes
           ? serverEntry.oauthFlowProfile.scopes.split(",").filter(Boolean)
@@ -795,7 +873,7 @@ export function useServerState({
 
           try {
             const connectionResult = await guardedTestConnection(
-              withWorkspaceClientCapabilities(result.serverConfig),
+              withWorkspaceConnectionDefaults(result.serverConfig),
               serverName,
             );
             if (connectionResult.success) {
@@ -896,8 +974,9 @@ export function useServerState({
       logger,
       storeInitInfo,
       guardedTestConnection,
+      mergeWithWorkspaceHeaders,
       updateServerOAuthTrace,
-      withWorkspaceClientCapabilities,
+      withWorkspaceConnectionDefaults,
     ],
   );
 
@@ -1091,7 +1170,7 @@ export function useServerState({
               },
             } satisfies HttpServerConfig;
             const connectionResult = await guardedTestConnection(
-              withWorkspaceClientCapabilities(serverConfig),
+              withWorkspaceConnectionDefaults(serverConfig),
               formData.name,
             );
             if (isStaleOp(formData.name, token)) return;
@@ -1153,7 +1232,7 @@ export function useServerState({
             clientSecret: oauthInputs.clientSecret,
             registryServerId: oauthInputs.registryServerId,
             useRegistryOAuthProxy: oauthInputs.useRegistryOAuthProxy,
-            customHeaders: formData.headers,
+            customHeaders: mergeWithWorkspaceHeaders(formData.headers),
             protocolMode,
             registrationMode,
             protocolVersion:
@@ -1180,7 +1259,7 @@ export function useServerState({
           if (oauthResult.success) {
             if (oauthResult.serverConfig) {
               const connectionResult = await guardedTestConnection(
-                withWorkspaceClientCapabilities(oauthResult.serverConfig),
+                withWorkspaceConnectionDefaults(oauthResult.serverConfig),
                 formData.name,
               );
               if (isStaleOp(formData.name, token)) return;
@@ -1241,7 +1320,7 @@ export function useServerState({
         if (!hasPendingCallback) {
           clearOAuthData(formData.name);
         }
-        const effectiveConfig = withWorkspaceClientCapabilities(mcpConfig);
+        const effectiveConfig = withWorkspaceConnectionDefaults(mcpConfig);
         const result = await guardedTestConnection(
           effectiveConfig,
           formData.name,
@@ -1315,7 +1394,7 @@ export function useServerState({
       storeInitInfo,
       guardedTestConnection,
       updateServerOAuthTrace,
-      withWorkspaceClientCapabilities,
+      withWorkspaceConnectionDefaults,
     ],
   );
 
@@ -1460,7 +1539,7 @@ export function useServerState({
       try {
         const result = await guardedReconnectServer(
           serverName,
-          withWorkspaceClientCapabilities(serverConfig),
+          withWorkspaceConnectionDefaults(serverConfig),
         );
         if (isStaleOp(serverName, token)) {
           return { success: false, error: "Operation cancelled" };
@@ -1500,7 +1579,7 @@ export function useServerState({
       dispatch,
       storeInitInfo,
       guardedReconnectServer,
-      withWorkspaceClientCapabilities,
+      withWorkspaceConnectionDefaults,
     ],
   );
 
@@ -1887,12 +1966,11 @@ export function useServerState({
         const oauthResult = await initiateOAuth({
           serverName,
           serverUrl,
-          customHeaders:
-            "requestInit" in server.config &&
-            server.config.requestInit?.headers &&
-            !Array.isArray(server.config.requestInit.headers)
-              ? (server.config.requestInit.headers as Record<string, string>)
+          customHeaders: mergeWithWorkspaceHeaders(
+            "requestInit" in server.config
+              ? extractRequestHeaders(server.config.requestInit)
               : undefined,
+          ),
           clientId:
             server.oauthTokens?.client_id ?? storedClientCredentials.clientId,
           clientSecret:
@@ -1943,7 +2021,7 @@ export function useServerState({
         }
         const result = await guardedReconnectServer(
           serverName,
-          withWorkspaceClientCapabilities(oauthResult.serverConfig!),
+          withWorkspaceConnectionDefaults(oauthResult.serverConfig!),
         );
         if (isStaleOp(serverName, token)) {
           return {
@@ -1986,7 +2064,7 @@ export function useServerState({
       }
 
       if (HOSTED_MODE && isAuthenticated && server.useOAuth === true) {
-        const hostedReconnectConfig = withWorkspaceClientCapabilities(
+        const hostedReconnectConfig = withWorkspaceConnectionDefaults(
           server.config,
         );
         try {
@@ -2136,7 +2214,7 @@ export function useServerState({
         }
         const result = await guardedReconnectServer(
           serverName,
-          withWorkspaceClientCapabilities(authResult.serverConfig),
+          withWorkspaceConnectionDefaults(authResult.serverConfig),
         );
         if (isStaleOp(serverName, token)) {
           return {
@@ -2206,8 +2284,9 @@ export function useServerState({
       dispatch,
       prepareHostedWorkspaceOAuthRedirect,
       guardedReconnectServer,
+      mergeWithWorkspaceHeaders,
       updateServerOAuthTrace,
-      withWorkspaceClientCapabilities,
+      withWorkspaceConnectionDefaults,
     ],
   );
 
@@ -2510,7 +2589,7 @@ export function useServerState({
         saveOAuthConfigToLocalStorage(formData);
         try {
           const result = await guardedTestConnection(
-            withWorkspaceClientCapabilities(originalServer.config),
+            withWorkspaceConnectionDefaults(originalServer.config),
             originalServerName,
           );
           if (result.success) {

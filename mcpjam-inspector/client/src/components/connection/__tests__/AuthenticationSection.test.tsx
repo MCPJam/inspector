@@ -100,9 +100,6 @@ describe("AuthenticationSection", () => {
     expect(screen.getByText("Protocol")).toBeInTheDocument();
     expect(screen.getByText("Registration Strategy")).toBeInTheDocument();
     expect(screen.getByText("Scope Override")).toBeInTheDocument();
-    expect(
-      screen.getByText(/Automatic discovery uses pre-registered credentials/i),
-    ).toBeInTheDocument();
   });
 
   it("reflects a registration strategy override in Advanced Settings", () => {
@@ -134,9 +131,7 @@ describe("AuthenticationSection", () => {
     fireEvent.click(screen.getByRole("button", { name: /advanced settings/i }));
 
     expect(
-      screen.getByText(
-        /Requires the latest MCP auth spec and an authorization server that advertises client_id_metadata_document_supported/i,
-      ),
+      screen.getByText("Client ID Metadata Documents (CIMD)"),
     ).toBeInTheDocument();
   });
 });

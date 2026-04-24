@@ -1,4 +1,4 @@
-import { act, renderHook } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("@/hooks/use-app-state", () => ({}));
@@ -69,6 +69,58 @@ describe("useServerForm", () => {
       oauthProtocolMode: "2025-06-18",
       oauthRegistrationMode: "dcr",
       oauthScopes: ["openid", "profile"],
+    });
+  });
+
+  it("includes an exact client capabilities override when enabled", () => {
+    const { result } = renderHook(() => useServerForm());
+
+    act(() => {
+      result.current.setName("Capabilities test");
+      result.current.setType("stdio");
+      result.current.setCommandInput("npx -y @modelcontextprotocol/server-test");
+      result.current.setClientCapabilitiesOverrideEnabled(true);
+      result.current.setClientCapabilitiesOverrideText(
+        JSON.stringify(
+          {
+            roots: { listChanged: true },
+          },
+          null,
+          2,
+        ),
+      );
+    });
+
+    expect(result.current.buildFormData()).toMatchObject({
+      name: "Capabilities test",
+      type: "stdio",
+      clientCapabilities: {
+        roots: { listChanged: true },
+      },
+    });
+  });
+
+  it("auto-expands advanced settings for existing HTTP servers with custom headers", async () => {
+    const server = {
+      name: "Existing server",
+      config: {
+        url: "https://example.com/mcp",
+        requestInit: {
+          headers: {
+            "X-Test-Header": "present",
+          },
+        },
+      },
+      lastConnectionTime: new Date(),
+      connectionStatus: "disconnected",
+      retryCount: 0,
+      enabled: true,
+    } as any;
+
+    const { result } = renderHook(() => useServerForm(server));
+
+    await waitFor(() => {
+      expect(result.current.showConfiguration).toBe(true);
     });
   });
 });

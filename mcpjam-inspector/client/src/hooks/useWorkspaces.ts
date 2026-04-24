@@ -41,6 +41,7 @@ export interface RemoteServer {
   headers?: Record<string, string>;
   // Shared fields
   timeout?: number;
+  clientCapabilities?: Record<string, unknown>;
   // OAuth fields
   useOAuth?: boolean;
   oauthScopes?: string[];
