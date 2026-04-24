@@ -1,7 +1,7 @@
 import { ConvexHttpClient } from "convex/browser";
 import { z } from "zod";
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { McpJamMcpServer } from "../server.js";
+import type { SessionToolRegistrar } from "./sessionToolRegistrar.js";
 
 type RemoteWorkspace = {
   _id: string;
@@ -16,7 +16,7 @@ type RemoteWorkspace = {
 };
 
 export function registerGetWorkspacesTool(
-  server: McpServer,
+  server: SessionToolRegistrar,
   agent: McpJamMcpServer
 ): void {
   server.registerTool(
