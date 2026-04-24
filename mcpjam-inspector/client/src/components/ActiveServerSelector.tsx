@@ -104,6 +104,7 @@ export function ActiveServerSelector({
   const isOAuthServer = (server: ServerWithName): boolean => {
     const isHttpServer = "url" in server.config;
     if (!isHttpServer) return false;
+    if (server.useOAuth === false) return false;
 
     // Check if server is configured for OAuth, has OAuth state, or is mid-flow.
     return !!(

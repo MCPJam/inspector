@@ -200,7 +200,9 @@ describe("ActiveServerSelector", () => {
 
     it("filters to OAuth HTTP servers when requested", () => {
       vi.mocked(hasOAuthConfig).mockImplementation(
-        (serverName) => serverName === "stored-config-oauth",
+        (serverName) =>
+          serverName === "stored-config-oauth" ||
+          serverName === "opted-out-stored-config",
       );
       const httpConfig = {
         transportType: "streamableHttp",
@@ -223,16 +225,30 @@ describe("ActiveServerSelector", () => {
         "token-oauth": createServer({
           name: "token-oauth",
           config: httpConfig,
+          useOAuth: undefined,
           oauthTokens,
         }),
         "stored-config-oauth": createServer({
           name: "stored-config-oauth",
           config: httpConfig,
+          useOAuth: undefined,
         }),
         "flow-oauth": createServer({
           name: "flow-oauth",
           config: httpConfig,
+          useOAuth: undefined,
           connectionStatus: "oauth-flow",
+        }),
+        "opted-out-token-oauth": createServer({
+          name: "opted-out-token-oauth",
+          config: httpConfig,
+          useOAuth: false,
+          oauthTokens,
+        }),
+        "opted-out-stored-config": createServer({
+          name: "opted-out-stored-config",
+          config: httpConfig,
+          useOAuth: false,
         }),
         "plain-http": createServer({
           name: "plain-http",
@@ -258,6 +274,12 @@ describe("ActiveServerSelector", () => {
       expect(screen.getByText("token-oauth")).toBeInTheDocument();
       expect(screen.getByText("stored-config-oauth")).toBeInTheDocument();
       expect(screen.getByText("flow-oauth")).toBeInTheDocument();
+      expect(
+        screen.queryByText("opted-out-token-oauth"),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByText("opted-out-stored-config"),
+      ).not.toBeInTheDocument();
       expect(screen.queryByText("plain-http")).not.toBeInTheDocument();
       expect(
         screen.queryByText("stdio-with-oauth-state"),

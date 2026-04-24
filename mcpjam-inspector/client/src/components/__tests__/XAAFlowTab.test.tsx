@@ -90,8 +90,7 @@ describe("XAAFlowTab", () => {
       ...overrides,
     } as ServerWithName);
 
-  it("does not select the first HTTP server when opened with a non-HTTP selection", async () => {
-    const onSelectServer = vi.fn();
+  it("shows no configured target when opened with a non-HTTP selection", () => {
     const serverConfigs = {
       "selected-stdio": createServer({ name: "selected-stdio" }),
       "available-oauth": createServer({
@@ -113,9 +112,5 @@ describe("XAAFlowTab", () => {
     expect(screen.getByTestId("xaa-flow-logger")).toHaveTextContent(
       "No target configured",
     );
-
-    await new Promise((r) => setTimeout(r, 50));
-
-    expect(onSelectServer).not.toHaveBeenCalled();
   });
 });
