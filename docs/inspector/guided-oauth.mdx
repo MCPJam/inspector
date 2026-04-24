@@ -38,3 +38,13 @@ To begin debugging OAuth flows:
 5. **Start Testing** - Click **Continue** to begin the OAuth flow
 
 The debugger will guide you through each step of the OAuth handshake, providing real-time feedback and educational context.
+
+## Navigating to the OAuth Debugger from the logger
+
+When an OAuth error appears in the request log, a **Continue in OAuth Debugger** button is shown on hover for that log row. Clicking it switches the selected server to the one that produced the error and deep-links directly to the OAuth Debugger (`#oauth-flow`), so you can investigate the failure without manually locating the right server.
+
+## Reconnecting OAuth servers
+
+The enable/connect toggle on a server card or detail modal reuses existing credentials only — it will not launch a new OAuth consent screen. If the existing tokens are expired or missing and a fresh consent flow is required, the toggle reports a re-authentication error instead of redirecting you to the authorization server.
+
+To start a full OAuth flow, use the explicit **Reconnect** button on the server card or detail modal. This is the only path that will open the OAuth consent screen when new credentials are needed.
