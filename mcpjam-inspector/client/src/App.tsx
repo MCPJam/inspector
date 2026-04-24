@@ -448,6 +448,7 @@ export default function App() {
     const urlParams = new URLSearchParams(window.location.search);
     const code = urlParams.get("code");
     const error = urlParams.get("error");
+    const state = urlParams.get("state");
 
     let cancelled = false;
     setHostedOAuthHandling(true);
@@ -493,6 +494,7 @@ export default function App() {
     const completeCallback =
       isAuthenticated
         ? completeHostedOAuthCallback(callbackContext, code, {
+            callbackState: state,
             onTraceUpdate: handleLiveOAuthTrace,
           })
         : handleOAuthCallback(code, {
