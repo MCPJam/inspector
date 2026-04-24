@@ -32,26 +32,23 @@ export class McpJamMcpServer extends McpAgent<Env, unknown, McpProps> {
 
   async init(): Promise<void> {
     const registrar = createSessionToolRegistrar(this.server);
-    let initialized = false;
 
     registerWhoamiTool(registrar, this);
     registerDoctorTool(registrar, this);
     registerGetWorkspacesTool(registrar, this);
     registerGetOrgTool(registrar, this);
 
+    const initializeRequest = await this.getInitializeRequest();
+    const initializeClientCapabilities = (initializeRequest as
+      | { params?: { capabilities?: ClientCapabilities } }
+      | undefined)?.params?.capabilities;
+
+    registrar.setUiEnabled(isUiEnabled(initializeClientCapabilities));
+
     this.server.server.oninitialized = () => {
-      if (initialized) {
-        return;
-      }
-
-      initialized = true;
-
-      const clientCapabilities = this.server.server.getClientCapabilities();
-      const uiCapability = getUiCapability(clientCapabilities);
-      const uiEnabled =
-        uiCapability?.mimeTypes?.includes(RESOURCE_MIME_TYPE) ?? false;
-
-      registrar.setUiEnabled(uiEnabled);
+      registrar.setUiEnabled(
+        isUiEnabled(this.server.server.getClientCapabilities())
+      );
     };
   }
 }
@@ -64,4 +61,14 @@ function getUiCapability(
     | undefined)?.extensions;
 
   return extensions?.[UI_EXTENSION_ID] as { mimeTypes?: string[] } | undefined;
+}
+
+function isUiEnabled(
+  clientCapabilities: ClientCapabilities | undefined
+): boolean {
+  return (
+    getUiCapability(clientCapabilities)?.mimeTypes?.includes(
+      RESOURCE_MIME_TYPE
+    ) ?? false
+  );
 }
