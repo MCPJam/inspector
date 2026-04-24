@@ -1,4 +1,5 @@
 import {
+  RESOURCE_MIME_TYPE,
   registerAppResource,
   registerAppTool,
 } from "@modelcontextprotocol/ext-apps/server";
@@ -92,6 +93,7 @@ export function createSessionToolRegistrar(server: McpServer): SessionToolRegist
           contents: [
             {
               uri: ui.resourceUri,
+              mimeType: RESOURCE_MIME_TYPE,
               text: ui.html,
               _meta: ui.resourceMeta,
             },
