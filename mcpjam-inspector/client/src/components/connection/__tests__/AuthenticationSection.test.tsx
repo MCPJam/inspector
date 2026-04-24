@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { AuthenticationSection } from "../shared/AuthenticationSection";
 
 describe("AuthenticationSection", () => {
-  it("renders the MCP authorization plan summary for OAuth connections", () => {
+  it("does not show the OAuth plan explainer for a typical automatic OAuth setup", () => {
     render(
       <AuthenticationSection
         serverUrl="https://example.com/mcp"
@@ -29,12 +29,43 @@ describe("AuthenticationSection", () => {
       />,
     );
 
-    expect(screen.getAllByText("MCP Authorization").length).toBeGreaterThan(0);
     expect(
-      screen.getByText(/Uses the SDK planner to resolve pre-registered credentials/i),
-    ).toBeInTheDocument();
+      screen.queryByText(/Uses the SDK planner to resolve pre-registered credentials/i),
+    ).not.toBeInTheDocument();
     expect(
-      screen.getByText("Automatic order: pre-registered -> CIMD -> DCR"),
+      screen.queryByText("Automatic order: pre-registered -> CIMD -> DCR"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /advanced settings/i })).toBeInTheDocument();
+  });
+
+  it("shows a blocker when pre-registered OAuth is missing a client ID", () => {
+    render(
+      <AuthenticationSection
+        serverUrl="https://example.com/mcp"
+        authType="oauth"
+        onAuthTypeChange={vi.fn()}
+        showAuthSettings={true}
+        bearerToken=""
+        onBearerTokenChange={vi.fn()}
+        oauthScopesInput=""
+        onOauthScopesChange={vi.fn()}
+        oauthProtocolMode="auto"
+        onOauthProtocolModeChange={vi.fn()}
+        oauthRegistrationMode="preregistered"
+        onOauthRegistrationModeChange={vi.fn()}
+        useCustomClientId={true}
+        onUseCustomClientIdChange={vi.fn()}
+        clientId=""
+        onClientIdChange={vi.fn()}
+        clientSecret=""
+        onClientSecretChange={vi.fn()}
+        clientIdError={null}
+        clientSecretError={null}
+      />,
+    );
+
+    expect(
+      screen.getByText(/Pre-registered OAuth requires a client ID/i),
     ).toBeInTheDocument();
   });
 
@@ -64,7 +95,7 @@ describe("AuthenticationSection", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: /manual overrides/i }));
+    fireEvent.click(screen.getByRole("button", { name: /advanced settings/i }));
 
     expect(screen.getByText("Protocol")).toBeInTheDocument();
     expect(screen.getByText("Registration Strategy")).toBeInTheDocument();
@@ -74,7 +105,7 @@ describe("AuthenticationSection", () => {
     ).toBeInTheDocument();
   });
 
-  it("shows an explicit registration override summary when developers choose one", () => {
+  it("reflects a registration strategy override in Advanced Settings", () => {
     render(
       <AuthenticationSection
         serverUrl="https://example.com/mcp"
@@ -100,8 +131,12 @@ describe("AuthenticationSection", () => {
       />,
     );
 
+    fireEvent.click(screen.getByRole("button", { name: /advanced settings/i }));
+
     expect(
-      screen.getByText("Registration override: Client ID Metadata Documents (CIMD)"),
+      screen.getByText(
+        /Requires the latest MCP auth spec and an authorization server that advertises client_id_metadata_document_supported/i,
+      ),
     ).toBeInTheDocument();
   });
 });

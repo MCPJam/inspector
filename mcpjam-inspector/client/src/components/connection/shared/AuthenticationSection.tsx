@@ -8,10 +8,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@mcpjam/design-system/select";
-import {
-  resolveAuthorizationPlan,
-  type ResolvedAuthorizationPlan,
-} from "@mcpjam/sdk/browser";
+import { resolveAuthorizationPlan } from "@mcpjam/sdk/browser";
 import type {
   ServerFormOAuthProtocolMode,
   ServerFormOAuthRegistrationMode,
@@ -62,15 +59,6 @@ const REGISTRATION_OPTIONS: Array<{
   { value: "dcr", label: "Dynamic Client Registration (DCR)" },
 ];
 
-function getRegistrationModeLabel(
-  value: ServerFormOAuthRegistrationMode,
-): string {
-  return (
-    REGISTRATION_OPTIONS.find((option) => option.value === value)?.label ??
-    value
-  );
-}
-
 function getRegistrationModeDescription(
   value: ServerFormOAuthRegistrationMode,
 ): string {
@@ -84,27 +72,6 @@ function getRegistrationModeDescription(
     case "auto":
     default:
       return "Automatic discovery uses pre-registered credentials first, then CIMD, then DCR after the server is probed.";
-  }
-}
-
-function getPlanStatusLabel(plan: ResolvedAuthorizationPlan): string {
-  if (plan.status === "blocked") {
-    return "Action needed";
-  }
-
-  if (plan.status === "discovery_required") {
-    return "Automatic";
-  }
-
-  switch (plan.registrationStrategy) {
-    case "preregistered":
-      return "Pre-registered";
-    case "cimd":
-      return "CIMD";
-    case "dcr":
-      return "DCR";
-    default:
-      return "Ready";
   }
 }
 
@@ -144,21 +111,6 @@ export function AuthenticationSection({
           authMode: "interactive",
         })
       : null;
-  const planDetails = oauthPlan
-    ? [
-        oauthProtocolMode === "auto"
-          ? `Protocol ${oauthPlan.protocolVersion}`
-          : `Protocol override: ${oauthProtocolMode}`,
-        oauthPlan.canonicalResource
-          ? `Resource ${oauthPlan.canonicalResource}`
-          : undefined,
-        oauthRegistrationMode === "auto"
-          ? "Automatic order: pre-registered -> CIMD -> DCR"
-          : `Registration override: ${getRegistrationModeLabel(
-              oauthRegistrationMode,
-            )}`,
-      ].filter(Boolean)
-    : [];
 
   return (
     <div className="space-y-4">
@@ -182,7 +134,7 @@ export function AuthenticationSection({
             <SelectContent>
               <SelectItem value="none">No Authentication</SelectItem>
               <SelectItem value="bearer">Bearer Token</SelectItem>
-              <SelectItem value="oauth">MCP Authorization</SelectItem>
+              <SelectItem value="oauth">Oauth</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -206,58 +158,22 @@ export function AuthenticationSection({
         {/* OAuth Settings */}
         {showAuthSettings && authType === "oauth" && (
           <div className="border-t border-border bg-muted/30">
-            {oauthPlan && (
-              <div className="px-3 py-3 space-y-2 border-b border-border bg-background/60">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <p className="text-sm font-medium text-foreground">
-                      MCP Authorization
+            {oauthPlan &&
+              (oauthPlan.status === "blocked" ||
+                oauthPlan.warnings.length > 0) && (
+                <div className="px-3 py-3 space-y-2 border-b border-border bg-background/60">
+                  {oauthPlan.status === "blocked" && (
+                    <p className="text-sm text-destructive">
+                      {oauthPlan.blockers[0] ?? oauthPlan.summary}
                     </p>
-                    <p className="text-xs text-muted-foreground">
-                      Uses the SDK planner to resolve pre-registered
-                      credentials, Client ID Metadata Documents (CIMD), or
-                      Dynamic Client Registration (DCR).
+                  )}
+                  {oauthPlan.warnings.length > 0 && (
+                    <p className="text-xs text-amber-700">
+                      {oauthPlan.warnings[0]}
                     </p>
-                  </div>
-                  <span className="shrink-0 rounded-full border border-border bg-background px-2 py-1 text-[11px] font-medium text-muted-foreground">
-                    {getPlanStatusLabel(oauthPlan)}
-                  </span>
+                  )}
                 </div>
-
-                <p
-                  className={`text-sm ${
-                    oauthPlan.status === "blocked"
-                      ? "text-destructive"
-                      : "text-foreground"
-                  }`}
-                >
-                  {oauthPlan.summary}
-                </p>
-
-                <div className="flex flex-wrap gap-2">
-                  {planDetails.map((detail) => (
-                    <span
-                      key={detail}
-                      className="rounded-full border border-border bg-background px-2 py-1 text-[11px] text-muted-foreground"
-                    >
-                      {detail}
-                    </span>
-                  ))}
-                </div>
-
-                {oauthPlan.blockers.length > 0 && (
-                  <p className="text-xs text-destructive">
-                    {oauthPlan.blockers[0]}
-                  </p>
-                )}
-
-                {oauthPlan.warnings.length > 0 && (
-                  <p className="text-xs text-amber-700">
-                    {oauthPlan.warnings[0]}
-                  </p>
-                )}
-              </div>
-            )}
+              )}
 
             <button
               type="button"
@@ -270,7 +186,7 @@ export function AuthenticationSection({
                 <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
               )}
               <span className="text-xs font-medium text-muted-foreground">
-                Manual Overrides
+                Advanced Settings
               </span>
             </button>
 
