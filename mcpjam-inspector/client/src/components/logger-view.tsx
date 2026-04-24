@@ -6,6 +6,7 @@ import {
   Trash2,
   PanelRightClose,
   Copy,
+  Download,
 } from "lucide-react";
 import { JsonEditor } from "@/components/ui/json-editor";
 import { Input } from "@mcpjam/design-system/input";
@@ -371,8 +372,8 @@ export function LoggerView({
     setExpanded(new Set());
   };
 
-  const copyLogs = async () => {
-    const logs = filteredItems.map((item) => ({
+  const serializeLogs = () =>
+    filteredItems.map((item) => ({
       timestamp: item.timestamp,
       source: item.source,
       serverId: item.serverId,
@@ -381,12 +382,27 @@ export function LoggerView({
       method: item.method,
       payload: item.payload,
     }));
+
+  const copyLogs = async () => {
     try {
-      await navigator.clipboard.writeText(JSON.stringify(logs, null, 2));
+      await navigator.clipboard.writeText(
+        JSON.stringify(serializeLogs(), null, 2),
+      );
       toast.success("Logs copied to clipboard");
     } catch {
       toast.error("Failed to copy logs");
     }
+  };
+
+  const downloadLogs = () => {
+    const json = JSON.stringify(serializeLogs(), null, 2);
+    const blob = new Blob([json], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `json-rpc-logs-${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
   // Subscribe to the singleton SSE connection for RPC traffic
@@ -612,6 +628,16 @@ export function LoggerView({
           title="Copy logs to clipboard"
         >
           <Copy className="h-3.5 w-3.5" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={downloadLogs}
+          disabled={filteredItemCount === 0}
+          className="hidden h-7 w-7 shrink-0 @min-[300px]/logger-toolbar:inline-flex"
+          title="Export logs as JSON file"
+        >
+          <Download className="h-3.5 w-3.5" />
         </Button>
         <Button
           variant="ghost"
