@@ -230,7 +230,10 @@ vi.mock("../connection/ServerConnectionCard", () => ({
     needsReconnect?: boolean;
     onReconnect?: (
       serverName: string,
-      options?: { forceOAuthFlow?: boolean }
+      options?: {
+        forceOAuthFlow?: boolean;
+        allowInteractiveOAuthFlow?: boolean;
+      }
     ) => Promise<void>;
     onOpenDetailModal?: (server: ServerWithName, defaultTab: string) => void;
   }) => (

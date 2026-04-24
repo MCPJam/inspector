@@ -90,7 +90,10 @@ interface ServerConnectionCardProps {
   onDisconnect: (serverName: string) => void;
   onReconnect: (
     serverName: string,
-    options?: { forceOAuthFlow?: boolean },
+    options?: {
+      forceOAuthFlow?: boolean;
+      allowInteractiveOAuthFlow?: boolean;
+    },
   ) => Promise<void>;
   onRemove?: (serverName: string) => void;
   serverTunnelUrl?: string | null;
@@ -221,7 +224,10 @@ export function ServerConnectionCard({
     }
   };
 
-  const handleReconnect = async (options?: { forceOAuthFlow?: boolean }) => {
+  const handleReconnect = async (options?: {
+    forceOAuthFlow?: boolean;
+    allowInteractiveOAuthFlow?: boolean;
+  }) => {
     setIsReconnecting(true);
     try {
       await onReconnect(server.name, options);
@@ -499,7 +505,9 @@ export function ServerConnectionCard({
                     if (!checked) {
                       onDisconnect(server.name);
                     } else {
-                      void handleReconnect();
+                      void handleReconnect({
+                        allowInteractiveOAuthFlow: false,
+                      });
                     }
                   }}
                   className="cursor-pointer scale-75"

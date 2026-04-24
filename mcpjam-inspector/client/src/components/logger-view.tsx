@@ -42,6 +42,10 @@ import {
   PopoverTrigger,
 } from "@mcpjam/design-system/popover";
 import { Filter, Settings2 } from "lucide-react";
+import {
+  OAUTH_DEBUGGER_HASH,
+  requestOpenOAuthDebugger,
+} from "@/lib/oauth/oauth-debugger-navigation";
 import { cn } from "@/lib/utils";
 
 type RpcDirection = "in" | "out" | string;
@@ -138,6 +142,22 @@ function getDisplayServerTitle(item: {
     return `${item.serverName} (${item.serverId})`;
   }
   return getDisplayServerLabel(item);
+}
+
+function getOAuthDebuggerTargetServerName(
+  item: Pick<RenderableRpcItem, "serverId" | "serverName">,
+  servers: Record<string, ServerWithName>,
+): string | undefined {
+  const candidates = [
+    item.serverName,
+    servers[item.serverId]?.name,
+    item.serverId,
+  ];
+
+  return candidates.find(
+    (candidate): candidate is string =>
+      typeof candidate === "string" && candidate.trim().length > 0,
+  );
 }
 
 function normalizeInlineSummary(text: string): string {
@@ -650,11 +670,18 @@ export function LoggerView({
                 ? "border-l-purple-500/50"
                 : "border-l-transparent";
 
+              const oauthDebuggerTargetServerName =
+                isOAuthTraffic && it.oauthStatus === "error"
+                  ? getOAuthDebuggerTargetServerName(it, appState.servers)
+                  : undefined;
+              const showOAuthDebuggerCta =
+                oauthDebuggerTargetServerName !== undefined;
+
               return (
                 <div
                   key={it.id}
                   className={cn(
-                    "border-b border-border border-l-2",
+                    "group border-b border-border border-l-2",
                     borderClass,
                     isError && "bg-destructive/5",
                     isExpanded && "bg-muted/20"
@@ -694,12 +721,54 @@ export function LoggerView({
                       {displayMethod}
                     </span>
                     <span
-                      className="hidden sm:inline text-muted-foreground truncate max-w-[120px] text-[11px]"
+                      className={cn(
+                        "hidden sm:inline text-muted-foreground truncate max-w-[120px] text-[11px]",
+                        showOAuthDebuggerCta &&
+                          "order-4 max-sm:order-5 group-hover:order-5 group-focus-within:order-5"
+                      )}
                       title={getDisplayServerTitle(it)}
                     >
                       {getDisplayServerLabel(it)}
                     </span>
-                    <span className="text-muted-foreground font-mono text-[11px] whitespace-nowrap tabular-nums">
+                    {showOAuthDebuggerCta && (
+                      <div
+                        className={cn(
+                          "order-5 max-sm:order-4 flex max-h-7 shrink-0 overflow-hidden transition-[max-width,opacity] duration-150 ease-out",
+                          "max-w-0 opacity-0",
+                          "max-sm:max-w-[min(100%,15rem)] max-sm:opacity-100",
+                          "group-hover:order-4 group-focus-within:order-4",
+                          "group-hover:max-w-[min(100%,15rem)] group-hover:opacity-100",
+                          "group-focus-within:max-w-[min(100%,15rem)] group-focus-within:opacity-100"
+                        )}
+                      >
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          className="h-6 shrink-0 px-2 text-[10px] leading-none"
+                          asChild
+                        >
+                          <a
+                            href={OAUTH_DEBUGGER_HASH}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (oauthDebuggerTargetServerName) {
+                                requestOpenOAuthDebugger(
+                                  oauthDebuggerTargetServerName,
+                                );
+                              }
+                            }}
+                          >
+                            Continue in OAuth Debugger
+                          </a>
+                        </Button>
+                      </div>
+                    )}
+                    <span
+                      className={cn(
+                        "text-muted-foreground font-mono text-[11px] whitespace-nowrap tabular-nums",
+                        showOAuthDebuggerCta && "order-6"
+                      )}
+                    >
                       {new Date(it.timestamp).toLocaleTimeString()}
                     </span>
                   </div>

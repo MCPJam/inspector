@@ -23,8 +23,10 @@ export interface OAuthTrace extends OAuthTraceSnapshot {
   serverUrl?: string;
 }
 
+const OAUTH_TRACE_STORAGE_PREFIX = "mcp-oauth-trace-";
+
 function storageKey(serverName: string): string {
-  return `mcp-oauth-trace-${serverName}`;
+  return `${OAUTH_TRACE_STORAGE_PREFIX}${serverName}`;
 }
 
 const MAX_OAUTH_TRACE_HTTP_HISTORY = 50;
@@ -273,6 +275,24 @@ export function loadOAuthTrace(serverName: string): OAuthTrace | undefined {
     return parsed;
   } catch {
     return undefined;
+  }
+}
+
+export function clearPersistedOAuthTraces(): void {
+  try {
+    const keysToRemove: string[] = [];
+    for (let index = 0; index < localStorage.length; index += 1) {
+      const key = localStorage.key(index);
+      if (key?.startsWith(OAUTH_TRACE_STORAGE_PREFIX)) {
+        keysToRemove.push(key);
+      }
+    }
+
+    keysToRemove.forEach((key) => {
+      localStorage.removeItem(key);
+    });
+  } catch {
+    // Ignore storage access failures; startup should continue without trace migration.
   }
 }
 

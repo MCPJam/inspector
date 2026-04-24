@@ -5,13 +5,22 @@ import {
   Workspace,
 } from "./app-types";
 import { isWorkspaceClientConfig } from "@/lib/client-config";
-import { loadOAuthTrace } from "@/lib/oauth/oauth-trace";
+import { clearPersistedOAuthTraces } from "@/lib/oauth/oauth-trace";
 
 const STORAGE_KEY = "mcp-inspector-state";
 const WORKSPACES_STORAGE_KEY = "mcp-inspector-workspaces";
 
+function omitLiveOAuthTrace<T extends { lastOAuthTrace?: unknown }>(
+  server: T,
+): Omit<T, "lastOAuthTrace"> {
+  const persistedServer = { ...server };
+  delete persistedServer.lastOAuthTrace;
+  return persistedServer;
+}
+
 function reviveServer(name: string, server: any): ServerWithName {
-  const cfg: any = server.config;
+  const persistedServer = omitLiveOAuthTrace(server ?? {});
+  const cfg: any = persistedServer.config;
   let nextCfg = cfg;
   if (cfg && typeof cfg.url === "string") {
     try {
@@ -21,23 +30,33 @@ function reviveServer(name: string, server: any): ServerWithName {
     }
   }
   return {
-    ...server,
-    name: server.name ?? name,
+    ...persistedServer,
+    name: persistedServer.name ?? name,
     config: nextCfg,
-    lastOAuthTrace:
-      server.lastOAuthTrace ??
-      (typeof window !== "undefined" ? loadOAuthTrace(server.name ?? name) : undefined),
-    connectionStatus: server.connectionStatus || "disconnected",
-    retryCount: server.retryCount || 0,
-    lastConnectionTime: server.lastConnectionTime
-      ? new Date(server.lastConnectionTime)
+    connectionStatus: persistedServer.connectionStatus || "disconnected",
+    retryCount: persistedServer.retryCount || 0,
+    lastConnectionTime: persistedServer.lastConnectionTime
+      ? new Date(persistedServer.lastConnectionTime)
       : new Date(),
-    enabled: server.enabled !== false,
+    enabled: persistedServer.enabled !== false,
   } as ServerWithName;
+}
+
+function serializeServerForStorage(server: ServerWithName) {
+  const persistedServer = omitLiveOAuthTrace(server);
+  const cfg: any = server.config;
+  const serializedConfig =
+    cfg && cfg.url instanceof URL ? { ...cfg, url: cfg.url.toString() } : cfg;
+
+  return {
+    ...persistedServer,
+    config: serializedConfig,
+  };
 }
 
 export function loadAppState(): AppState {
   try {
+    clearPersistedOAuthTraces();
     const raw = localStorage.getItem(STORAGE_KEY);
     const workspacesRaw = localStorage.getItem(WORKSPACES_STORAGE_KEY);
 
@@ -135,12 +154,7 @@ export function saveAppState(state: AppState) {
             ...workspace,
             servers: Object.fromEntries(
               Object.entries(workspace.servers).map(([name, server]) => {
-                const cfg: any = server.config;
-                const serializedConfig =
-                  cfg && cfg.url instanceof URL
-                    ? { ...cfg, url: cfg.url.toString() }
-                    : cfg;
-                return [name, { ...server, config: serializedConfig }];
+                return [name, serializeServerForStorage(server)];
               }),
             ),
           },
@@ -159,12 +173,7 @@ export function saveAppState(state: AppState) {
       isMultiSelectMode: state.isMultiSelectMode,
       servers: Object.fromEntries(
         Object.entries(state.servers).map(([name, server]) => {
-          const cfg: any = server.config;
-          const serializedConfig =
-            cfg && cfg.url instanceof URL
-              ? { ...cfg, url: cfg.url.toString() }
-              : cfg;
-          return [name, { ...server, config: serializedConfig }];
+          return [name, serializeServerForStorage(server)];
         }),
       ),
     };

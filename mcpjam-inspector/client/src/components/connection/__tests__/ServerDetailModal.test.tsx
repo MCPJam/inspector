@@ -198,6 +198,23 @@ describe("ServerDetailModal", () => {
     ).toBeInTheDocument();
   });
 
+  it("uses the non-interactive reconnect path when toggling on from the detail modal", () => {
+    const onReconnect = vi.fn().mockResolvedValue(undefined);
+    render(
+      <ServerDetailModal
+        {...defaultProps}
+        server={createServer({ connectionStatus: "disconnected" })}
+        onReconnect={onReconnect}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("switch"));
+
+    expect(onReconnect).toHaveBeenCalledWith("test-server", {
+      allowInteractiveOAuthFlow: false,
+    });
+  });
+
   it("does not show a conformance launch button in overview", () => {
     render(<ServerDetailModal {...defaultProps} defaultTab="overview" />);
 

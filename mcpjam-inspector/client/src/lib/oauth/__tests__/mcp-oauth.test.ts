@@ -799,6 +799,19 @@ describe("mcp-oauth", () => {
       });
     });
 
+    it("keeps live oauth traces in memory while preserving redirect resume state", async () => {
+      const { initiateOAuth } = await import("../mcp-oauth");
+
+      const result = await initiateOAuth({
+        serverName: "asana",
+        serverUrl: "https://mcp.asana.com/v2/mcp",
+      });
+
+      expect(result.success).toBe(true);
+      expect(localStorage.getItem("mcp-oauth-trace-asana")).toBeNull();
+      expect(localStorage.getItem("mcp-oauth-flow-state-asana")).not.toBeNull();
+    });
+
     it("normalizes malformed persisted oauth trace history", async () => {
       const { appendOAuthTraceHttpHistory, loadOAuthTrace } = await import(
         "../oauth-trace"

@@ -62,4 +62,32 @@ describe("OAuth trace projection", () => {
       status: "success",
     });
   });
+
+  it("omits redaction for PKCE and authorization code when sanitize is false", () => {
+    const snapshot = projectOAuthTraceSnapshot({
+      state: {
+        ...EMPTY_OAUTH_FLOW_STATE,
+        currentStep: "complete",
+        codeVerifier: "full-code-verifier-secret-value",
+        authorizationCode: "auth-code-abc123",
+        authorizationUrl:
+          "https://auth.example.com/authorize?client_id=x&code_challenge=challengexxx",
+        httpHistory: [],
+        infoLogs: [],
+      },
+      sanitize: false,
+    });
+
+    const pkceStep = snapshot.steps.find(
+      (step) => step.step === "generate_pkce_parameters",
+    );
+    const codeStep = snapshot.steps.find(
+      (step) => step.step === "received_authorization_code",
+    );
+
+    expect(pkceStep?.details).toMatchObject({
+      codeVerifier: "full-code-verifier-secret-value",
+    });
+    expect(codeStep?.details).toMatchObject({ code: "auth-code-abc123" });
+  });
 });

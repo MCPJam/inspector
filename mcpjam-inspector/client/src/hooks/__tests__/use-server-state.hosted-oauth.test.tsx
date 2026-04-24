@@ -393,6 +393,7 @@ describe("useServerState hosted OAuth callback guards", () => {
           useOAuth: true,
         }),
         expect.objectContaining({
+          allowInteractiveOAuthFlow: true,
           beforeRedirect: expect.any(Function),
         }),
       );
@@ -424,6 +425,7 @@ describe("useServerState hosted OAuth callback guards", () => {
           useOAuth: true,
         }),
         expect.objectContaining({
+          allowInteractiveOAuthFlow: true,
           beforeRedirect: expect.any(Function),
         }),
       );
@@ -454,9 +456,49 @@ describe("useServerState hosted OAuth callback guards", () => {
           useOAuth: true,
         }),
         expect.objectContaining({
+          allowInteractiveOAuthFlow: true,
           beforeRedirect: expect.any(Function),
         }),
       );
+    });
+  });
+
+  it("reports reauth instead of launching interactive OAuth during automatic readiness checks", async () => {
+    mockReconnectServer.mockResolvedValueOnce({
+      success: false,
+      error:
+        'Server "srv_asana" requires OAuth authentication. Please complete the OAuth flow first.',
+    });
+    mockEnsureAuthorizedForReconnect.mockResolvedValueOnce({
+      kind: "reauth_required",
+      error: "OAuth consent is required for asana. Click Reconnect to continue.",
+    });
+
+    const dispatch = vi.fn();
+    const { result } = renderHostedServerState(dispatch);
+    let readiness:
+      | Awaited<ReturnType<typeof result.current.ensureServersReady>>
+      | undefined;
+
+    await act(async () => {
+      readiness = await result.current.ensureServersReady(["asana"]);
+    });
+
+    expect(mockEnsureAuthorizedForReconnect).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "asana",
+        useOAuth: true,
+      }),
+      expect.objectContaining({
+        allowInteractiveOAuthFlow: false,
+        beforeRedirect: expect.any(Function),
+      }),
+    );
+    expect(readiness).toEqual({
+      readyServerNames: [],
+      missingServerNames: [],
+      failedServerNames: [],
+      reauthServerNames: ["asana"],
     });
   });
 });

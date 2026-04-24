@@ -186,6 +186,7 @@ interface EnsureServerConnectionResult {
 
 interface ReconnectServerInternalOptions {
   forceOAuthFlow?: boolean;
+  allowInteractiveOAuthFlow?: boolean;
   select?: boolean;
   suppressErrors?: boolean;
 }
@@ -2004,12 +2005,32 @@ export function useServerState({
             onTraceUpdate: (oauthTrace: OAuthTrace) => {
               updateServerOAuthTrace(serverName, oauthTrace);
             },
+            allowInteractiveOAuthFlow: options?.allowInteractiveOAuthFlow,
           },
         );
         if (authResult.kind === "redirect") {
           return {
             status: "reauth",
             error: `Reauthenticate ${serverName} to continue.`,
+          };
+        }
+        if (authResult.kind === "reauth_required") {
+          if (isStaleOp(serverName, token)) {
+            return {
+              status: "reauth",
+              error: authResult.error,
+            };
+          }
+          dispatch({
+            type: "CONNECT_FAILURE",
+            name: serverName,
+            error: authResult.error,
+            oauthTrace: authResult.oauthTrace,
+          });
+          reportError(authResult.error);
+          return {
+            status: "reauth",
+            error: authResult.error,
           };
         }
         if (authResult.kind === "error") {
@@ -2109,9 +2130,16 @@ export function useServerState({
   );
 
   const handleReconnect = useCallback(
-    async (serverName: string, options?: { forceOAuthFlow?: boolean }) => {
+    async (
+      serverName: string,
+      options?: {
+        forceOAuthFlow?: boolean;
+        allowInteractiveOAuthFlow?: boolean;
+      },
+    ) => {
       await reconnectServerInternal(serverName, {
         forceOAuthFlow: options?.forceOAuthFlow,
+        allowInteractiveOAuthFlow: options?.allowInteractiveOAuthFlow ?? true,
         select: true,
       });
     },
@@ -2202,6 +2230,7 @@ export function useServerState({
             return [
               resolvedKey,
               await reconnectServerInternal(resolvedKey, {
+                allowInteractiveOAuthFlow: false,
                 select: false,
                 suppressErrors: true,
               }),

@@ -283,6 +283,10 @@ function sanitizeOAuthHeaders(
   );
 }
 
+function cloneHttpHistoryEntry(entry: HttpHistoryEntry): HttpHistoryEntry {
+  return JSON.parse(JSON.stringify(entry)) as HttpHistoryEntry;
+}
+
 function sanitizeHttpHistoryEntry(entry: HttpHistoryEntry): HttpHistoryEntry {
   return {
     ...entry,
@@ -377,7 +381,8 @@ function inferStepEntry(
   context: OAuthTraceProjectionContext | undefined,
   step: OAuthFlowStep,
   condition: boolean,
-  details?: Record<string, unknown>,
+  details: Record<string, unknown> | undefined,
+  sanitize: boolean,
 ): void {
   if (!condition || entries.has(step)) {
     return;
@@ -390,14 +395,18 @@ function inferStepEntry(
     context.lastSyntheticTimestamp = timestamp;
   }
 
+  const projectedDetails =
+    details == null
+      ? undefined
+      : (sanitize
+          ? (sanitizeOAuthTraceValue(details) as Record<string, unknown>)
+          : (JSON.parse(JSON.stringify(details)) as Record<string, unknown>));
+
   entries.set(step, {
     step,
     startedAt: timestamp,
     completedAt: timestamp,
-    details:
-      details == null
-        ? undefined
-        : (sanitizeOAuthTraceValue(details) as Record<string, unknown>),
+    details: projectedDetails,
   });
 }
 
@@ -508,14 +517,19 @@ function usesRecoveredDynamicClientRegistrationFallback(
 export function projectOAuthTraceSnapshot(input: {
   state: OAuthFlowState;
   context?: OAuthTraceProjectionContext;
+  /**
+   * When true (default), redact tokens/secrets/PII from traces. SDK consumers
+   * that are local dev tools may set false to show raw request/response data.
+   */
+  sanitize?: boolean;
 }): OAuthTraceSnapshot {
-  const { state, context } = input;
+  const { state, context, sanitize: sanitizeTraces = true } = input;
   const trace: OAuthTraceSnapshot = {
     version: 1,
     currentStep: state.currentStep,
     steps: [],
     httpHistory: (state.httpHistory ?? []).map((entry) =>
-      sanitizeHttpHistoryEntry(entry),
+      sanitizeTraces ? sanitizeHttpHistoryEntry(entry) : cloneHttpHistoryEntry(entry),
     ),
     ...(state.error ? { error: state.error } : {}),
   };
@@ -527,9 +541,15 @@ export function projectOAuthTraceSnapshot(input: {
     const record = ensureStepEntry(entries, context, entry.step, entry.timestamp);
     if (!record.details) {
       record.details = {
-        request: sanitizeOAuthTraceValue(entry.request),
+        request: (sanitizeTraces
+          ? sanitizeOAuthTraceValue(entry.request)
+          : entry.request) as Record<string, unknown>,
         ...(entry.response
-          ? { response: sanitizeOAuthTraceValue(entry.response) }
+          ? {
+              response: (sanitizeTraces
+                ? sanitizeOAuthTraceValue(entry.response)
+                : entry.response) as Record<string, unknown>,
+            }
           : {}),
       };
     }
@@ -542,14 +562,16 @@ export function projectOAuthTraceSnapshot(input: {
   for (const log of state.infoLogs ?? []) {
     const record = ensureStepEntry(entries, context, log.step, log.timestamp);
     record.message = log.label;
-    const sanitizedLogData = sanitizeOAuthTraceValue(log.data);
+    const logData = sanitizeTraces
+      ? sanitizeOAuthTraceValue(log.data)
+      : log.data;
     if (
-      sanitizedLogData &&
-      typeof sanitizedLogData === "object" &&
-      sanitizedLogData !== null &&
-      !Array.isArray(sanitizedLogData)
+      logData &&
+      typeof logData === "object" &&
+      logData !== null &&
+      !Array.isArray(logData)
     ) {
-      record.details = sanitizedLogData as Record<string, unknown>;
+      record.details = logData as Record<string, unknown>;
     }
     if (log.error?.message) {
       record.error = log.error.message;
@@ -569,32 +591,73 @@ export function projectOAuthTraceSnapshot(input: {
     );
   }
 
-  inferStepEntry(entries, context, "request_client_registration", Boolean(state.clientId), {
-    clientId: state.clientId,
-  });
-  inferStepEntry(entries, context, "received_client_credentials", Boolean(state.clientId), {
-    clientId: state.clientId,
-  });
-  inferStepEntry(entries, context, "generate_pkce_parameters", Boolean(state.codeVerifier), {
-    codeVerifier: redactSensitiveValue(state.codeVerifier),
-  });
-  inferStepEntry(entries, context, "authorization_request", Boolean(state.authorizationUrl), {
-    authorizationUrl: state.authorizationUrl,
-  });
+  inferStepEntry(
+    entries,
+    context,
+    "request_client_registration",
+    Boolean(state.clientId),
+    {
+      clientId: state.clientId,
+    },
+    sanitizeTraces,
+  );
+  inferStepEntry(
+    entries,
+    context,
+    "received_client_credentials",
+    Boolean(state.clientId),
+    {
+      clientId: state.clientId,
+    },
+    sanitizeTraces,
+  );
+  inferStepEntry(
+    entries,
+    context,
+    "generate_pkce_parameters",
+    Boolean(state.codeVerifier),
+    {
+      codeVerifier: state.codeVerifier,
+    },
+    sanitizeTraces,
+  );
+  inferStepEntry(
+    entries,
+    context,
+    "authorization_request",
+    Boolean(state.authorizationUrl),
+    {
+      authorizationUrl: state.authorizationUrl,
+    },
+    sanitizeTraces,
+  );
   inferStepEntry(
     entries,
     context,
     "received_authorization_code",
     Boolean(state.authorizationCode),
-    state.authorizationCode
-      ? { code: redactSensitiveValue(state.authorizationCode) }
-      : undefined,
+    state.authorizationCode ? { code: state.authorizationCode } : undefined,
+    sanitizeTraces,
   );
-  inferStepEntry(entries, context, "received_access_token", Boolean(state.accessToken), {
-    tokenType: state.tokenType,
-    expiresIn: state.expiresIn,
-  });
-  inferStepEntry(entries, context, "complete", state.currentStep === "complete");
+  inferStepEntry(
+    entries,
+    context,
+    "received_access_token",
+    Boolean(state.accessToken),
+    {
+      tokenType: state.tokenType,
+      expiresIn: state.expiresIn,
+    },
+    sanitizeTraces,
+  );
+  inferStepEntry(
+    entries,
+    context,
+    "complete",
+    state.currentStep === "complete",
+    undefined,
+    sanitizeTraces,
+  );
 
   const registrationEntry = entries.get("request_client_registration");
   if (
@@ -617,7 +680,7 @@ export function projectOAuthTraceSnapshot(input: {
     !usesRecoveredDynamicClientRegistrationFallback(state) &&
     !entries.has(state.currentStep)
   ) {
-    inferStepEntry(entries, context, state.currentStep, true);
+    inferStepEntry(entries, context, state.currentStep, true, undefined, sanitizeTraces);
     const currentEntry = entries.get(state.currentStep);
     if (currentEntry) {
       currentEntry.error = state.error;
