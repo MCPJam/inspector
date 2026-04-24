@@ -112,6 +112,25 @@ function createLinearDiscoveryState(): any {
   };
 }
 
+function createCimdDiscoveryState(): any {
+  return {
+    authorizationServerUrl: "https://auth.example.com",
+    resourceMetadataUrl:
+      "https://example.com/.well-known/oauth-protected-resource/mcp",
+    resourceMetadata: {
+      resource: "https://example.com/mcp",
+      authorization_servers: ["https://auth.example.com"],
+    },
+    authorizationServerMetadata: {
+      issuer: "https://auth.example.com",
+      authorization_endpoint: "https://auth.example.com/authorize",
+      token_endpoint: "https://auth.example.com/token",
+      registration_endpoint: "https://auth.example.com/register",
+      client_id_metadata_document_supported: true,
+    },
+  };
+}
+
 function createJsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -130,6 +149,20 @@ function getUrlString(input: RequestInfo | URL): string {
 function createProtectedResourceMetadataUrl(serverUrl: string): string {
   const parsed = new URL(serverUrl);
   return `${parsed.origin}/.well-known/oauth-protected-resource${parsed.pathname}`;
+}
+
+function findAutomaticDecisionStep(result: {
+  oauthTrace?: {
+    steps?: Array<{
+      step: string;
+      message?: string;
+      details?: Record<string, unknown>;
+    }>;
+  };
+}) {
+  return result.oauthTrace?.steps?.find((step) =>
+    step.message?.startsWith("Automatic resolved to ")
+  );
 }
 
 function createUnauthorizedMcpResponse(serverUrl: string): Response {
@@ -755,6 +788,55 @@ describe("mcp-oauth", () => {
   });
 
   describe("persisted discovery state", () => {
+    it("explains why automatic mode resolved to DCR when CIMD support was not advertised", async () => {
+      mockDiscoverOAuthServerInfo.mockResolvedValueOnce(
+        createAsanaDiscoveryState()
+      );
+
+      const { initiateOAuth } = await import("../mcp-oauth");
+      const result = await initiateOAuth({
+        serverName: "asana",
+        serverUrl: "https://mcp.asana.com/v2/mcp",
+      });
+
+      expect(result.success).toBe(true);
+      expect(findAutomaticDecisionStep(result)).toMatchObject({
+        message:
+          "Automatic resolved to DCR for this run. The authorization server advertised registration_endpoint, and CIMD support was not advertised.",
+        details: expect.objectContaining({
+          "Automatic Decision": "DCR",
+          "Advertised Strategies": "Pre-registered, DCR",
+          Reason:
+            "The authorization server advertised registration_endpoint, and CIMD support was not advertised.",
+          "CIMD Support": "Not advertised by authorization server",
+        }),
+      });
+    });
+
+    it("explains when automatic mode resolved to CIMD after discovery", async () => {
+      mockDiscoverOAuthServerInfo.mockResolvedValueOnce(
+        createCimdDiscoveryState()
+      );
+
+      const { initiateOAuth } = await import("../mcp-oauth");
+      const result = await initiateOAuth({
+        serverName: "example",
+        serverUrl: "https://example.com/mcp",
+      });
+
+      expect(result.success).toBe(true);
+      expect(findAutomaticDecisionStep(result)).toMatchObject({
+        message:
+          "Automatic resolved to CIMD for this run. The authorization server advertised client_id_metadata_document_supported, so automatic mode preferred CIMD over DCR.",
+        details: expect.objectContaining({
+          "Automatic Decision": "CIMD",
+          "Advertised Strategies": "Pre-registered, DCR, CIMD",
+          Reason:
+            "The authorization server advertised client_id_metadata_document_supported, so automatic mode preferred CIMD over DCR.",
+        }),
+      });
+    });
+
     it("returns safe defaults when stored OAuth config is missing or malformed", async () => {
       const { readStoredOAuthConfig } = await import("../mcp-oauth");
 

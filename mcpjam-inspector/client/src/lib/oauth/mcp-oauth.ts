@@ -777,6 +777,125 @@ function buildOAuthTraceFromFlowState(input: {
   });
 }
 
+function formatAuthorizationStrategyLabel(
+  strategy: OAuthRegistrationStrategy
+): string {
+  switch (strategy) {
+    case "preregistered":
+      return "pre-registered credentials";
+    case "cimd":
+      return "CIMD";
+    case "dcr":
+      return "DCR";
+  }
+}
+
+function formatSupportedStrategyLabel(
+  strategy: "preregistered" | "cimd" | "dcr"
+): string {
+  switch (strategy) {
+    case "preregistered":
+      return "Pre-registered";
+    case "cimd":
+      return "CIMD";
+    case "dcr":
+      return "DCR";
+  }
+}
+
+function buildAutomaticAuthorizationDecisionReason(
+  plan: ResolvedAuthorizationPlan
+): string | undefined {
+  switch (plan.registrationStrategy) {
+    case "preregistered":
+      return "Client credentials were already available, so automatic mode did not need CIMD or DCR.";
+    case "cimd":
+      return plan.capabilities.supportsDcr
+        ? "The authorization server advertised client_id_metadata_document_supported, so automatic mode preferred CIMD over DCR."
+        : "The authorization server advertised client_id_metadata_document_supported.";
+    case "dcr":
+      if (plan.protocolVersion !== "2025-11-25") {
+        return `CIMD is not available for protocol version ${plan.protocolVersion}, so automatic mode used DCR.`;
+      }
+
+      if (!plan.capabilities.supportsCimd) {
+        return "The authorization server advertised registration_endpoint, and CIMD support was not advertised.";
+      }
+
+      return "The authorization server advertised registration_endpoint.";
+    default:
+      return undefined;
+  }
+}
+
+function annotateTraceWithAuthorizationPlan(input: {
+  trace: OAuthTrace;
+  authorizationPlan?: ResolvedAuthorizationPlan;
+  requestedRegistrationMode: OAuthRegistrationMode;
+}): OAuthTrace {
+  const { trace, authorizationPlan, requestedRegistrationMode } = input;
+  if (
+    requestedRegistrationMode !== "auto" ||
+    !authorizationPlan ||
+    authorizationPlan.status !== "ready" ||
+    !authorizationPlan.registrationStrategy
+  ) {
+    return trace;
+  }
+
+  const targetStepIndex = [
+    "received_authorization_server_metadata",
+    "authorization_request",
+    "received_client_credentials",
+    "request_client_registration",
+  ]
+    .map((stepName) =>
+      trace.steps.findIndex((step) => step.step === stepName)
+    )
+    .find((index) => index >= 0);
+  if (targetStepIndex == null || targetStepIndex === -1) {
+    return trace;
+  }
+
+  const annotatedTrace = JSON.parse(JSON.stringify(trace)) as OAuthTrace;
+  const targetStep = annotatedTrace.steps[targetStepIndex];
+  const selectedStrategyLabel = formatAuthorizationStrategyLabel(
+    authorizationPlan.registrationStrategy
+  );
+  const reason = buildAutomaticAuthorizationDecisionReason(authorizationPlan);
+  const supportedStrategies =
+    authorizationPlan.capabilities.registrationStrategies.length > 0
+      ? authorizationPlan.capabilities.registrationStrategies.map(
+          formatSupportedStrategyLabel
+        )
+      : undefined;
+
+  targetStep.message = [
+    `Automatic resolved to ${selectedStrategyLabel} for this run.`,
+    reason,
+  ]
+    .filter(Boolean)
+    .join(" ");
+  targetStep.details = {
+    ...(targetStep.details ?? {}),
+    "Automatic Decision": selectedStrategyLabel,
+    ...(supportedStrategies
+      ? {
+          "Advertised Strategies": supportedStrategies.join(", "),
+        }
+      : {}),
+    ...(reason ? { Reason: reason } : {}),
+    ...(authorizationPlan.registrationStrategy === "dcr" &&
+    !authorizationPlan.capabilities.supportsCimd
+      ? {
+          "CIMD Support": "Not advertised by authorization server",
+        }
+      : {}),
+  };
+
+  return annotatedTrace;
+}
+
 export function readStoredOAuthConfig(
   serverName: string | null
 ): StoredOAuthConfig {
@@ -1757,25 +1876,36 @@ export async function initiateOAuth(
     state = { ...state, ...updates };
   };
   const getState = () => state;
+  const requestedProtocolMode = resolveOAuthProtocolMode(options);
+  const requestedRegistrationMode = resolveOAuthRegistrationMode(options);
+  let traceAuthorizationPlan: ResolvedAuthorizationPlan | undefined;
   const emitTraceSnapshot = (snapshot: OAuthTraceSnapshot) =>
     publishOAuthTraceUpdate(
       options.serverName,
-      buildOAuthTraceFromSnapshot({
-        source: "interactive_connect",
-        serverName: options.serverName,
-        serverUrl: options.serverUrl,
-        snapshot,
+      annotateTraceWithAuthorizationPlan({
+        trace: buildOAuthTraceFromSnapshot({
+          source: "interactive_connect",
+          serverName: options.serverName,
+          serverUrl: options.serverUrl,
+          snapshot,
+        }),
+        authorizationPlan: traceAuthorizationPlan,
+        requestedRegistrationMode,
       }),
       options.onTraceUpdate
     );
   const emitTraceFromState = (nextState: OAuthFlowState) =>
     publishOAuthTraceUpdate(
       options.serverName,
-      buildOAuthTraceFromFlowState({
-        source: "interactive_connect",
-        serverName: options.serverName,
-        serverUrl: options.serverUrl,
-        state: nextState,
+      annotateTraceWithAuthorizationPlan({
+        trace: buildOAuthTraceFromFlowState({
+          source: "interactive_connect",
+          serverName: options.serverName,
+          serverUrl: options.serverUrl,
+          state: nextState,
+        }),
+        authorizationPlan: traceAuthorizationPlan,
+        requestedRegistrationMode,
       }),
       options.onTraceUpdate
     );
@@ -1799,6 +1929,7 @@ export async function initiateOAuth(
       fetchFn,
       options
     );
+    traceAuthorizationPlan = authorizationPlan;
     if (
       authorizationPlan.status !== "ready" ||
       !authorizationPlan.registrationStrategy
@@ -1826,9 +1957,9 @@ export async function initiateOAuth(
     // Store OAuth configuration (scopes, registryServerId) for recovery if connection fails
     const oauthConfig = buildStoredOAuthConfig({
       ...options,
-      protocolMode: resolveOAuthProtocolMode(options),
+      protocolMode: requestedProtocolMode,
       protocolVersion,
-      registrationMode: resolveOAuthRegistrationMode(options),
+      registrationMode: requestedRegistrationMode,
       registrationStrategy,
     });
     localStorage.setItem(
