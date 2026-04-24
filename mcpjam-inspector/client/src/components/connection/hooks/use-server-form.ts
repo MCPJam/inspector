@@ -214,7 +214,7 @@ export function useServerForm(
   };
 
   const validateClientSecret = (value: string): string | null => {
-    if (value && value.length < 1) {
+    if (value !== undefined && value.trim() === "") {
       return "Client Secret cannot be empty if provided";
     }
     return null;
