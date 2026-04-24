@@ -32,6 +32,7 @@ const {
   mockConvexAuthState,
   mockCompleteHostedOAuthCallback,
   mockHandleOAuthCallback,
+  mockHeader,
   mockHostedShellGateState,
   mockMCPSidebar,
   mockOrganizationsTab,
@@ -128,6 +129,7 @@ const {
     mockUseFeatureFlagEnabled: vi.fn(),
     mockUseQuery: vi.fn(() => undefined),
     mockChatboxesTab: vi.fn(() => <div>Chatboxes Tab</div>),
+    mockHeader: vi.fn((_props: unknown) => <div data-testid="app-header" />),
     mockWorkOsAuthState: {
       getAccessToken: vi.fn(),
       signIn: vi.fn(),
@@ -330,7 +332,7 @@ vi.mock("../components/LoadingScreen", () => ({
   default: () => <div data-testid="hosted-oauth-loading" />,
 }));
 vi.mock("../components/Header", () => ({
-  Header: () => <div data-testid="app-header" />,
+  Header: (props: unknown) => mockHeader(props),
 }));
 vi.mock("../components/hosted/HostedShellGate", () => ({
   HostedShellGate: ({ children }: { children?: ReactNode }) => (
@@ -385,6 +387,10 @@ describe("App hosted OAuth callback handling", () => {
     mockOrganizationsTab.mockImplementation(() => <div />);
     mockChatboxesTab.mockReset();
     mockChatboxesTab.mockImplementation(() => <div>Chatboxes Tab</div>);
+    mockHeader.mockReset();
+    mockHeader.mockImplementation((_props: unknown) => (
+      <div data-testid="app-header" />
+    ));
     mockMCPSidebar.mockReset();
     mockMCPSidebar.mockImplementation(() => <div data-testid="mcp-sidebar" />);
     mockPosthogCapture.mockReset();
@@ -2275,6 +2281,135 @@ describe("App hosted OAuth callback handling", () => {
 
     expect(window.location.hash).toBe("#xaa-flow");
     expect(screen.queryByText("Servers Tab")).not.toBeInTheDocument();
+  });
+
+  it("passes OAuth-only workspace server selector props on the XAA Debugger tab", async () => {
+    clearHostedOAuthPendingState();
+    clearChatboxSession();
+    window.history.replaceState({}, "", "/#xaa-flow");
+    mockHandleOAuthCallback.mockReset();
+    mockUseFeatureFlagEnabled.mockImplementation((flag: string) =>
+      flag === "xaa" ? true : false,
+    );
+    const appStateMock = createAppStateMock();
+    const currentWorkspaceServers = {
+      "current-workspace-xaa-oauth": {
+        name: "current-workspace-xaa-oauth",
+        config: { url: "https://current-xaa.example/mcp" },
+        connectionStatus: "connected",
+        enabled: true,
+        retryCount: 0,
+        useOAuth: true,
+        lastConnectionTime: new Date("2024-01-01"),
+      },
+    };
+    appStateMock.workspaceServers = currentWorkspaceServers;
+    appStateMock.appState.servers = {
+      ...currentWorkspaceServers,
+      "other-workspace-xaa-oauth": {
+        name: "other-workspace-xaa-oauth",
+        config: { url: "https://other-xaa.example/mcp" },
+        connectionStatus: "connected",
+        enabled: true,
+        retryCount: 0,
+        useOAuth: true,
+        lastConnectionTime: new Date("2024-01-02"),
+      },
+    };
+    mockUseAppState.mockImplementation(() => appStateMock);
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(mockHeader).toHaveBeenCalledWith(
+        expect.objectContaining({
+          activeServerSelectorProps: expect.objectContaining({
+            showOnlyOAuthServers: true,
+            autoSelectFilteredServer: false,
+          }),
+        }),
+      );
+    });
+
+    const latestProps = mockHeader.mock.calls.at(-1)?.[0] as {
+      activeServerSelectorProps?: { serverConfigs?: unknown };
+    };
+    expect(latestProps.activeServerSelectorProps?.serverConfigs).toBe(
+      currentWorkspaceServers,
+    );
+  });
+
+  it("passes OAuth-only server selector props on the OAuth Debugger tab", async () => {
+    clearHostedOAuthPendingState();
+    clearChatboxSession();
+    window.history.replaceState({}, "", "/#oauth-flow");
+    mockHandleOAuthCallback.mockReset();
+    const appStateMock = createAppStateMock();
+    const currentWorkspaceServers = {
+      "current-workspace-oauth": {
+        name: "current-workspace-oauth",
+        config: { url: "https://current.example/mcp" },
+        connectionStatus: "connected",
+        enabled: true,
+        retryCount: 0,
+        useOAuth: true,
+        lastConnectionTime: new Date("2024-01-01"),
+      },
+    };
+    appStateMock.workspaceServers = currentWorkspaceServers;
+    appStateMock.appState.servers = {
+      ...currentWorkspaceServers,
+      "other-workspace-oauth": {
+        name: "other-workspace-oauth",
+        config: { url: "https://other.example/mcp" },
+        connectionStatus: "connected",
+        enabled: true,
+        retryCount: 0,
+        useOAuth: true,
+        lastConnectionTime: new Date("2024-01-02"),
+      },
+    };
+    mockUseAppState.mockImplementation(() => appStateMock);
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(mockHeader).toHaveBeenCalledWith(
+        expect.objectContaining({
+          activeServerSelectorProps: expect.objectContaining({
+            showOnlyOAuthServers: true,
+            autoSelectFilteredServer: false,
+          }),
+        }),
+      );
+    });
+
+    const latestProps = mockHeader.mock.calls.at(-1)?.[0] as {
+      activeServerSelectorProps?: { serverConfigs?: unknown };
+    };
+    expect(latestProps.activeServerSelectorProps?.serverConfigs).toBe(
+      currentWorkspaceServers,
+    );
+  });
+
+  it("leaves the header server selector unfiltered outside the OAuth Debugger tab", async () => {
+    clearHostedOAuthPendingState();
+    clearChatboxSession();
+    window.history.replaceState({}, "", "/#tools");
+    mockHandleOAuthCallback.mockReset();
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(mockHeader).toHaveBeenCalledWith(
+        expect.objectContaining({
+          activeServerSelectorProps: expect.objectContaining({
+            showOnlyOAuthServers: false,
+            autoSelectFilteredServer: true,
+          }),
+        }),
+      );
+    });
   });
 
   it("still applies the CI billing redirect when evaluate-runs is enabled", async () => {
