@@ -1,8 +1,7 @@
-import { ChevronDown, ChevronRight } from "lucide-react";
+import { ChevronDown, ChevronRight, Plus, X } from "lucide-react";
 import { Input } from "@mcpjam/design-system/input";
 import { Switch } from "@mcpjam/design-system/switch";
 import { JsonEditor } from "@/components/ui/json-editor";
-import { CustomHeadersSection } from "./CustomHeadersSection";
 
 interface HeaderEntry {
   key: string;
@@ -30,25 +29,6 @@ interface AdvancedConnectionSettingsSectionProps {
   clientCapabilitiesOverrideError?: string | null;
 }
 
-function countConfiguredHeaders(customHeaders: HeaderEntry[] | undefined): number {
-  return (
-    customHeaders?.filter(
-      (header) => header.key.trim() !== "" || header.value.trim() !== "",
-    ).length ?? 0
-  );
-}
-
-function hasCustomTimeout(
-  requestTimeout: string,
-  inheritedRequestTimeout: number,
-): boolean {
-  const parsed = Number.parseInt(requestTimeout.trim(), 10);
-  if (!Number.isFinite(parsed)) {
-    return requestTimeout.trim() !== "";
-  }
-  return parsed !== inheritedRequestTimeout;
-}
-
 export function AdvancedConnectionSettingsSection({
   showConfiguration,
   onToggle,
@@ -65,7 +45,6 @@ export function AdvancedConnectionSettingsSection({
   onClientCapabilitiesOverrideTextChange,
   clientCapabilitiesOverrideError,
 }: AdvancedConnectionSettingsSectionProps) {
-  const headerCount = countConfiguredHeaders(customHeaders);
   const showHeaderControls =
     customHeaders !== undefined &&
     onAddHeader !== undefined &&
@@ -74,133 +53,128 @@ export function AdvancedConnectionSettingsSection({
   const showClientCapabilitiesControls =
     onClientCapabilitiesOverrideEnabledChange !== undefined &&
     onClientCapabilitiesOverrideTextChange !== undefined;
-  const summaryItems = [
-    headerCount > 0
-      ? `${headerCount} header${headerCount === 1 ? "" : "s"} configured`
-      : undefined,
-    hasCustomTimeout(requestTimeout, inheritedRequestTimeout)
-      ? `Timeout: ${requestTimeout}ms`
-      : undefined,
-    clientCapabilitiesOverrideEnabled
-      ? "Client capabilities override"
-      : undefined,
-  ].filter(Boolean) as string[];
 
   return (
-    <div className="border border-border rounded-lg overflow-hidden">
+    <div className="space-y-0">
       <button
         type="button"
         onClick={onToggle}
-        className="w-full flex items-start justify-between gap-3 p-3 hover:bg-muted/50 transition-colors cursor-pointer text-left"
+        className="flex w-full cursor-pointer items-center gap-1.5 py-1 text-left text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
       >
-        <div className="flex items-start gap-2 min-w-0">
-          {showConfiguration ? (
-            <ChevronDown className="h-4 w-4 text-muted-foreground mt-0.5" />
-          ) : (
-            <ChevronRight className="h-4 w-4 text-muted-foreground mt-0.5" />
-          )}
-          <div className="space-y-1 min-w-0">
-            <span className="block text-sm font-medium text-foreground">
-              Connection Overrides
-            </span>
-            <p className="text-xs text-muted-foreground">
-              Override workspace headers, timeout, and client capabilities for
-              this server.
-            </p>
-          </div>
-        </div>
-
-        {summaryItems.length > 0 && (
-          <div className="flex flex-wrap justify-end gap-2">
-            {summaryItems.map((item) => (
-              <span
-                key={item}
-                className="rounded-full border border-border bg-background px-2 py-1 text-[11px] text-muted-foreground whitespace-nowrap"
-              >
-                {item}
-              </span>
-            ))}
-          </div>
+        {showConfiguration ? (
+          <ChevronDown className="h-3 w-3" />
+        ) : (
+          <ChevronRight className="h-3 w-3" />
         )}
+        Connection overrides
       </button>
 
       {showConfiguration && (
-        <div className="p-4 space-y-4 border-t border-border bg-muted/30">
-          {showHeaderControls && (
-            <div className="space-y-2">
-              <CustomHeadersSection
-                customHeaders={customHeaders}
-                onAdd={onAddHeader}
-                onRemove={onRemoveHeader}
-                onUpdate={onUpdateHeader}
-              />
-              <p className="text-xs text-muted-foreground">
-                Workspace default headers are merged automatically. Per-server
-                keys win on conflicts.
-              </p>
-            </div>
-          )}
-
-          <div className="space-y-2">
-            <label className="block text-sm font-medium text-foreground">
-              Request Timeout
+        <div className="mt-2 space-y-3 border-l-2 border-border/60 pl-3">
+          {/* Timeout */}
+          <div className="space-y-1">
+            <label className="text-xs font-medium text-foreground">
+              Timeout{" "}
+              <span className="font-normal text-muted-foreground">
+                (ms, default {inheritedRequestTimeout})
+              </span>
             </label>
             <Input
               type="number"
               value={requestTimeout}
               onChange={(e) => onRequestTimeoutChange(e.target.value)}
               placeholder={String(inheritedRequestTimeout)}
-              className="h-10"
+              className="h-8 text-xs"
               min="1000"
               max="600000"
               step="1000"
             />
-            <p className="text-xs text-muted-foreground">
-              Leave blank to inherit the workspace default ({inheritedRequestTimeout}
-              ms). Min: 1000ms, max: 600000ms.
-            </p>
           </div>
 
-          {showClientCapabilitiesControls && (
-            <div className="space-y-3">
-              <div className="flex items-start justify-between gap-3">
+          {/* Headers */}
+          {showHeaderControls && (
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-medium text-foreground">
+                  Headers
+                </label>
+                <button
+                  type="button"
+                  onClick={onAddHeader}
+                  className="flex items-center gap-1 text-[11px] text-muted-foreground transition-colors hover:text-foreground"
+                >
+                  <Plus className="h-3 w-3" />
+                  Add
+                </button>
+              </div>
+              {customHeaders.length > 0 && (
                 <div className="space-y-1">
-                  <label className="block text-sm font-medium text-foreground">
-                    Client Capabilities Override
-                  </label>
-                  <p className="text-xs text-muted-foreground">
-                    When enabled, this replaces the workspace client
-                    capabilities for this server.
-                  </p>
+                  {customHeaders.map((header, index) => (
+                    <div key={index} className="flex items-center gap-1.5">
+                      <Input
+                        value={header.key}
+                        onChange={(e) => onUpdateHeader(index, "key", e.target.value)}
+                        placeholder="Key"
+                        className="h-7 flex-1 text-xs"
+                      />
+                      <Input
+                        value={header.value}
+                        onChange={(e) =>
+                          onUpdateHeader(index, "value", e.target.value)
+                        }
+                        placeholder="Value"
+                        className="h-7 flex-1 text-xs"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => onRemoveHeader(index)}
+                        className="flex h-7 w-7 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </div>
+                  ))}
                 </div>
+              )}
+            </div>
+          )}
+
+          {/* Client capabilities override */}
+          {showClientCapabilitiesControls && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-medium text-foreground">
+                  Capabilities override
+                </label>
                 <Switch
                   checked={clientCapabilitiesOverrideEnabled}
                   onCheckedChange={onClientCapabilitiesOverrideEnabledChange}
                   aria-label="Toggle client capabilities override"
+                  className="scale-90"
                 />
               </div>
 
               {clientCapabilitiesOverrideEnabled && (
-                <div className="space-y-2">
-                  {clientCapabilitiesOverrideError ? (
-                    <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+                <>
+                  {clientCapabilitiesOverrideError && (
+                    <div className="rounded border border-destructive/30 bg-destructive/5 px-2.5 py-1.5 text-xs text-destructive">
                       {clientCapabilitiesOverrideError}
                     </div>
-                  ) : null}
-                  <div className="overflow-hidden rounded-md border border-border bg-background">
+                  )}
+                  <div className="overflow-hidden rounded border border-border bg-background">
                     <JsonEditor
                       rawContent={clientCapabilitiesOverrideText}
                       onRawChange={onClientCapabilitiesOverrideTextChange}
                       mode="edit"
                       showModeToggle={false}
                       showToolbar={false}
-                      className="h-[220px]"
-                      height="220px"
+                      className="h-[160px]"
+                      height="160px"
                       wrapLongLinesInEdit={false}
                       showLineNumbers
                     />
                   </div>
-                </div>
+                </>
               )}
             </div>
           )}

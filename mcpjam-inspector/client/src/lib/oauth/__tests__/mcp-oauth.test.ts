@@ -800,6 +800,9 @@ describe("mcp-oauth", () => {
       expect(result.success).toBe(true);
       expect(localStorage.getItem("mcp-oauth-trace-asana")).toBeNull();
       expect(localStorage.getItem("mcp-oauth-flow-state-asana")).not.toBeNull();
+      expect(
+        sessionStorage.getItem("mcp-oauth-session-trace-asana")
+      ).not.toBeNull();
     });
 
     it("normalizes malformed persisted oauth trace history", async () => {
@@ -1098,6 +1101,7 @@ describe("mcp-oauth", () => {
         JSON.stringify({
           registryServerId: "registry-asana",
           useRegistryOAuthProxy: true,
+          resourceUrl: "https://mcp.asana.com/v2/mcp",
           protocolMode: "auto",
           protocolVersion: "2025-11-25",
           registrationMode: "preregistered",

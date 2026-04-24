@@ -1,17 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import {
-  AlertTriangle,
-  Globe,
-  Puzzle,
-  AppWindow,
-  RefreshCcw,
-  Save,
-  RotateCcw,
-} from "lucide-react";
+import { AlertTriangle, RotateCcw, Save } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
-import { Card } from "@mcpjam/design-system/card";
-import { Badge } from "@mcpjam/design-system/badge";
 import { JsonEditor } from "@/components/ui/json-editor";
 import type { Workspace } from "@/state/app-types";
 import {
@@ -21,10 +11,11 @@ import {
 } from "@/lib/client-config";
 import { useClientConfigStore } from "@/stores/client-config-store";
 
-/** Toolbar + status bar; textarea uses leading-5 and p-3. */
+/** Toolbar (~34px) + status bar (~28px) + a bit of breathing room. */
 const JSON_EDITOR_TOOLBAR_STATUS_PX = 72;
 const JSON_LINE_PX = 20;
-const JSON_TEXTAREA_VERTICAL_PAD_PX = 24;
+/** Extra vertical padding so the last line isn't hidden behind the status bar. */
+const JSON_TEXTAREA_VERTICAL_PAD_PX = 44;
 
 function useContentSizedJsonHeight(
   text: string,
@@ -164,33 +155,21 @@ export function ClientConfigTab({
   const sections = [
     {
       key: "connectionDefaults" as const,
-      icon: Globe,
       title: "Connection defaults",
-      code: "connectionDefaults",
-      description:
-        "Default HTTP headers and request timeout. Servers can override.",
       text: connectionDefaultsText,
       error: connectionDefaultsError,
       height: connectionDefaultsHeight,
     },
     {
       key: "clientCapabilities" as const,
-      icon: Puzzle,
       title: "Client capabilities",
-      code: "clientCapabilities",
-      description:
-        "Initialize payload. Sent the next time a server connects or reconnects.",
       text: clientCapabilitiesText,
       error: clientCapabilitiesError,
       height: clientCapabilitiesHeight,
     },
     {
       key: "hostContext" as const,
-      icon: AppWindow,
       title: "Host context",
-      code: "hostContext",
-      description:
-        "Passed to mounted MCP App widgets. Updates apply live in the app surface.",
       text: hostContextText,
       error: hostContextError,
       height: hostContextHeight,
@@ -199,141 +178,84 @@ export function ClientConfigTab({
 
   return (
     <div className="h-full overflow-auto">
-      <div className="flex w-full min-w-0 flex-col gap-5 px-4 py-4 sm:px-6 sm:py-5">
-        {/* Header */}
-        <div className="flex flex-col gap-3">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
-            <div className="min-w-0">
-              <h1 className="text-balance text-xl font-semibold tracking-tight sm:text-2xl">
-                Connection Settings
-              </h1>
-              <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
-                Workspace-scoped JSON: defaults for HTTP,{" "}
-                <span className="whitespace-nowrap">MCP capabilities</span>, and
-                app host context.
-              </p>
-            </div>
-            <div className="flex flex-shrink-0 flex-wrap items-center gap-2 sm:justify-end">
-              {isDirty ? (
-                <Badge
-                  variant="secondary"
-                  className="border border-primary/20 bg-primary/10 text-primary"
-                >
-                  Unsaved changes
-                </Badge>
-              ) : (
-                <Badge
-                  variant="outline"
-                  className="border-border/60 text-muted-foreground"
-                >
-                  Saved
-                </Badge>
-              )}
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={resetToBaseline}
-                disabled={isSaving || !isDirty}
-              >
-                <RefreshCcw className="mr-1.5 h-3.5 w-3.5" />
-                Reset
-              </Button>
-              <Button
-                size="sm"
-                onClick={handleSave}
-                disabled={isSaving || !isDirty}
-              >
-                <Save className="mr-1.5 h-3.5 w-3.5" />
-                {isSaving ? "Saving..." : "Save"}
-              </Button>
-            </div>
+      <div className="flex w-full min-w-0 flex-col gap-4 px-4 py-3 sm:px-5 sm:py-4">
+        {/* Header — pr-8 keeps buttons clear of the dialog close ✕ */}
+        <div className="flex items-center justify-between gap-4 pr-8">
+          <h1 className="text-lg font-semibold tracking-tight">
+            Connection Settings
+          </h1>
+          <div className="flex shrink-0 items-center gap-2">
+            {isDirty && (
+              <span className="text-xs text-muted-foreground">Unsaved</span>
+            )}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={resetToBaseline}
+              disabled={isSaving || !isDirty}
+              className="h-7 text-xs"
+            >
+              Reset
+            </Button>
+            <Button
+              size="sm"
+              onClick={handleSave}
+              disabled={isSaving || !isDirty}
+              className="h-7 text-xs"
+            >
+              <Save className="mr-1.5 h-3 w-3" />
+              {isSaving ? "Saving..." : "Save"}
+            </Button>
           </div>
-
-          {reconnectServers.length > 0 && (
-            <Card className="border-amber-500/30 bg-amber-500/5 p-3.5">
-              <div className="flex items-start gap-3">
-                <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-amber-500/15">
-                  <AlertTriangle className="h-3.5 w-3.5 text-amber-600" />
-                </div>
-                <div className="space-y-0.5">
-                  <div className="text-sm font-medium">Needs reconnect</div>
-                  <p className="text-[13px] leading-relaxed text-muted-foreground">
-                    Saved client capabilities differ from the last initialize
-                    payload for:{" "}
-                    {reconnectServers.map((server) => server.name).join(", ")}.
-                  </p>
-                </div>
-              </div>
-            </Card>
-          )}
         </div>
 
-        {/* Sections */}
-        <div className="flex min-w-0 flex-col gap-4">
-          {sections.map((section) => {
-            const Icon = section.icon;
-            return (
-              <section key={section.key} className="min-w-0">
-                <div className="overflow-hidden rounded-xl border border-border/60 bg-card shadow-sm transition-shadow hover:shadow-md">
-                  {/* Section header */}
-                  <div className="flex items-start justify-between gap-3 border-b border-border/50 bg-muted/30 px-4 py-3">
-                    <div className="flex items-start gap-3">
-                      <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-primary/10">
-                        <Icon className="h-3.5 w-3.5 text-primary" />
-                      </div>
-                      <div className="min-w-0 space-y-0.5">
-                        <div className="flex items-center gap-2">
-                          <h2 className="text-sm font-semibold text-foreground">
-                            {section.title}
-                          </h2>
-                          <code className="rounded bg-muted/80 px-1.5 py-0.5 text-[10px] leading-none text-muted-foreground [font-family:var(--font-code,ui-monospace,monospace)]">
-                            {section.code}
-                          </code>
-                        </div>
-                        <p className="text-xs leading-relaxed text-muted-foreground">
-                          {section.description}
-                        </p>
-                      </div>
-                    </div>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-7 shrink-0 gap-1.5 px-2 text-[11px] text-muted-foreground hover:text-foreground"
-                      onClick={() => resetSectionToDefault(section.key)}
-                    >
-                      <RotateCcw className="h-3 w-3" />
-                      Reset
-                    </Button>
-                  </div>
+        {reconnectServers.length > 0 && (
+          <div className="flex items-center gap-2 rounded border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
+            <AlertTriangle className="h-3 w-3 shrink-0" />
+            Capabilities changed for{" "}
+            {reconnectServers.map((s) => s.name).join(", ")} — reconnect to
+            apply.
+          </div>
+        )}
 
-                  {/* Editor area */}
-                  <div className="min-w-0 p-2">
-                    {section.error && (
-                      <div className="mb-2 flex items-center gap-2 rounded-lg border border-destructive/20 bg-destructive/5 px-3 py-2 text-xs text-destructive">
-                        <AlertTriangle className="h-3 w-3 shrink-0" />
-                        {section.error}
-                      </div>
-                    )}
-                    <div className="min-w-0 overflow-hidden rounded-lg border border-border/50 bg-background">
-                      <JsonEditor
-                        rawContent={section.text}
-                        onRawChange={(value) =>
-                          setSectionText(section.key, value)
-                        }
-                        mode="edit"
-                        readOnly={isSaving}
-                        showModeToggle={false}
-                        className="border-0 bg-background"
-                        height={section.height}
-                        wrapLongLinesInEdit={false}
-                        showLineNumbers
-                      />
-                    </div>
-                  </div>
+        {/* Sections */}
+        <div className="flex min-w-0 flex-col gap-3">
+          {sections.map((section) => (
+            <section key={section.key} className="min-w-0">
+              <div className="mb-1.5 flex items-center justify-between">
+                <label className="text-xs font-medium text-foreground">
+                  {section.title}
+                </label>
+                <button
+                  type="button"
+                  className="flex items-center gap-1 text-[11px] text-muted-foreground transition-colors hover:text-foreground"
+                  onClick={() => resetSectionToDefault(section.key)}
+                >
+                  <RotateCcw className="h-2.5 w-2.5" />
+                  Reset
+                </button>
+              </div>
+              {section.error && (
+                <div className="mb-1.5 flex items-center gap-1.5 text-xs text-destructive">
+                  <AlertTriangle className="h-3 w-3 shrink-0" />
+                  {section.error}
                 </div>
-              </section>
-            );
-          })}
+              )}
+              <div className="min-w-0 overflow-hidden rounded-md border border-border/70 bg-background">
+                <JsonEditor
+                  rawContent={section.text}
+                  onRawChange={(value) => setSectionText(section.key, value)}
+                  mode="edit"
+                  readOnly={isSaving}
+                  showModeToggle={false}
+                  className="border-0 bg-background"
+                  height={section.height}
+                  wrapLongLinesInEdit={false}
+                  showLineNumbers
+                />
+              </div>
+            </section>
+          ))}
         </div>
       </div>
     </div>

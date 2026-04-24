@@ -46,6 +46,7 @@ export interface RemoteServer {
   useOAuth?: boolean;
   oauthScopes?: string[];
   clientId?: string;
+  oauthResourceUrl?: string;
   createdAt: number;
   updatedAt: number;
 }

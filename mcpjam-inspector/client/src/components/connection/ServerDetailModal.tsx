@@ -368,7 +368,10 @@ export function ServerDetailModal({
                 <Button
                   type="submit"
                   disabled={
-                    isDuplicateServerName || isSaving || !formState.hasChanges
+                    isDuplicateServerName ||
+                    isSaving ||
+                    !formState.hasChanges ||
+                    formState.preregisteredOauthBlocksSubmit
                   }
                   size="sm"
                 >

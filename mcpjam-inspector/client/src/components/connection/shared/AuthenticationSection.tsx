@@ -43,7 +43,6 @@ const PROTOCOL_OPTIONS: Array<{
   value: ServerFormOAuthProtocolMode;
   label: string;
 }> = [
-  { value: "auto", label: "Automatic (Latest)" },
   { value: "2025-11-25", label: "2025-11-25 (Latest)" },
   { value: "2025-06-18", label: "2025-06-18" },
   { value: "2025-03-26", label: "2025-03-26 (Legacy)" },
@@ -58,6 +57,10 @@ const REGISTRATION_OPTIONS: Array<{
   { value: "cimd", label: "Client ID Metadata Documents (CIMD)" },
   { value: "dcr", label: "Dynamic Client Registration (DCR)" },
 ];
+
+/** Shown inline via Client ID label + submit guard; hide duplicate banner from the SDK planner. */
+const PREREGISTERED_MISSING_CLIENT_ID_BLOCKER =
+  /requires a client ID before the flow can start/i;
 
 export function AuthenticationSection({
   serverUrl,
@@ -84,17 +87,34 @@ export function AuthenticationSection({
   const [showAdvancedOAuth, setShowAdvancedOAuth] = useState(false);
   const showClientCredentials =
     oauthRegistrationMode === "preregistered" || useCustomClientId;
+  const effectiveOauthProtocolMode =
+    oauthProtocolMode === "auto" ? "2025-11-25" : oauthProtocolMode;
   const oauthPlan =
     authType === "oauth"
       ? resolveAuthorizationPlan({
           serverUrl,
-          protocolMode: oauthProtocolMode,
+          protocolMode: effectiveOauthProtocolMode,
           registrationMode: oauthRegistrationMode,
           clientId: showClientCredentials ? clientId : undefined,
           clientSecret: showClientCredentials ? clientSecret : undefined,
           authMode: "interactive",
         })
       : null;
+
+  const oauthPlanVisibleBlockers =
+    oauthPlan?.status === "blocked"
+      ? (oauthPlan.blockers ?? []).filter(
+          (message) =>
+            !(
+              oauthRegistrationMode === "preregistered" &&
+              clientId.trim() === "" &&
+              PREREGISTERED_MISSING_CLIENT_ID_BLOCKER.test(message)
+            ),
+        )
+      : [];
+  const showOauthPlanBanner =
+    oauthPlan != null &&
+    (oauthPlanVisibleBlockers.length > 0 || oauthPlan.warnings.length > 0);
 
   return (
     <div className="space-y-4">
@@ -142,22 +162,20 @@ export function AuthenticationSection({
         {/* OAuth Settings */}
         {showAuthSettings && authType === "oauth" && (
           <div className="border-t border-border bg-muted/30">
-            {oauthPlan &&
-              (oauthPlan.status === "blocked" ||
-                oauthPlan.warnings.length > 0) && (
-                <div className="px-3 py-3 space-y-2 border-b border-border bg-background/60">
-                  {oauthPlan.status === "blocked" && (
-                    <p className="text-sm text-destructive">
-                      {oauthPlan.blockers[0] ?? oauthPlan.summary}
-                    </p>
-                  )}
-                  {oauthPlan.warnings.length > 0 && (
-                    <p className="text-xs text-amber-700">
-                      {oauthPlan.warnings[0]}
-                    </p>
-                  )}
-                </div>
-              )}
+            {oauthPlan && showOauthPlanBanner && (
+              <div className="px-3 py-3 space-y-2 border-b border-border bg-background/60">
+                {oauthPlanVisibleBlockers.length > 0 && (
+                  <p className="text-sm text-destructive">
+                    {oauthPlanVisibleBlockers[0]}
+                  </p>
+                )}
+                {oauthPlan.warnings.length > 0 && (
+                  <p className="text-xs text-amber-700">
+                    {oauthPlan.warnings[0]}
+                  </p>
+                )}
+              </div>
+            )}
 
             <button
               type="button"
@@ -182,7 +200,7 @@ export function AuthenticationSection({
                       Protocol
                     </label>
                     <Select
-                      value={oauthProtocolMode}
+                      value={effectiveOauthProtocolMode}
                       onValueChange={(value: ServerFormOAuthProtocolMode) =>
                         onOauthProtocolModeChange(value)
                       }
@@ -253,11 +271,21 @@ export function AuthenticationSection({
                     <div className="space-y-2">
                       <label className="block text-sm font-medium text-foreground">
                         Client ID
+                        {oauthRegistrationMode === "preregistered" ? (
+                          <span className="text-destructive" aria-hidden="true">
+                            {" *"}
+                          </span>
+                        ) : null}
                       </label>
                       <Input
                         value={clientId}
                         onChange={(e) => onClientIdChange(e.target.value)}
                         placeholder="Your OAuth Client ID"
+                        aria-required={
+                          oauthRegistrationMode === "preregistered"
+                            ? true
+                            : undefined
+                        }
                         className={`h-10 ${clientIdError ? "border-red-500" : ""}`}
                       />
                       {clientIdError && (

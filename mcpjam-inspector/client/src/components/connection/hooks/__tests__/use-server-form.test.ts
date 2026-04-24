@@ -13,6 +13,12 @@ vi.mock("@/lib/oauth/mcp-oauth", () => ({
 import { useServerForm } from "../use-server-form";
 
 describe("useServerForm", () => {
+  it("defaults OAuth protocol mode to explicit latest", () => {
+    const { result } = renderHook(() => useServerForm());
+
+    expect(result.current.oauthProtocolMode).toBe("2025-11-25");
+  });
+
   it("rejects malformed HTTP URLs even when HTTPS is optional", () => {
     const { result } = renderHook(() => useServerForm());
 
@@ -122,5 +128,68 @@ describe("useServerForm", () => {
     await waitFor(() => {
       expect(result.current.showConfiguration).toBe(true);
     });
+  });
+
+  it("normalizes legacy automatic OAuth protocol mode to explicit latest for existing servers", async () => {
+    const server = {
+      name: "Existing OAuth server",
+      config: {
+        url: "https://example.com/mcp",
+      },
+      useOAuth: true,
+      lastConnectionTime: new Date(),
+      connectionStatus: "disconnected",
+      retryCount: 0,
+      enabled: true,
+    } as any;
+
+    localStorage.setItem(
+      "mcp-oauth-config-Existing OAuth server",
+      JSON.stringify({
+        protocolMode: "auto",
+      }),
+    );
+
+    const { result } = renderHook(() => useServerForm(server));
+
+    await waitFor(() => {
+      expect(result.current.oauthProtocolMode).toBe("2025-11-25");
+    });
+
+    localStorage.removeItem("mcp-oauth-config-Existing OAuth server");
+  });
+
+  it("blocks submit for preregistered OAuth until client ID passes validation", () => {
+    const { result } = renderHook(() => useServerForm());
+
+    act(() => {
+      result.current.setType("http");
+      result.current.setAuthType("oauth");
+      result.current.setOauthRegistrationMode("preregistered");
+    });
+
+    expect(result.current.preregisteredOauthBlocksSubmit).toBe(true);
+
+    act(() => {
+      result.current.setClientId("ab");
+    });
+    expect(result.current.preregisteredOauthBlocksSubmit).toBe(true);
+
+    act(() => {
+      result.current.setClientId("abc");
+    });
+    expect(result.current.preregisteredOauthBlocksSubmit).toBe(false);
+  });
+
+  it("does not set preregisteredOauthBlocksSubmit for non-HTTP transports", () => {
+    const { result } = renderHook(() => useServerForm());
+
+    act(() => {
+      result.current.setType("stdio");
+      result.current.setAuthType("oauth");
+      result.current.setOauthRegistrationMode("preregistered");
+    });
+
+    expect(result.current.preregisteredOauthBlocksSubmit).toBe(false);
   });
 });

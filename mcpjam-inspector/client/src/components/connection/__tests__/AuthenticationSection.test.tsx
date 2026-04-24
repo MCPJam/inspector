@@ -14,7 +14,7 @@ describe("AuthenticationSection", () => {
         onBearerTokenChange={vi.fn()}
         oauthScopesInput=""
         onOauthScopesChange={vi.fn()}
-        oauthProtocolMode="auto"
+        oauthProtocolMode="2025-11-25"
         onOauthProtocolModeChange={vi.fn()}
         oauthRegistrationMode="auto"
         onOauthRegistrationModeChange={vi.fn()}
@@ -38,7 +38,7 @@ describe("AuthenticationSection", () => {
     expect(screen.getByRole("button", { name: /advanced settings/i })).toBeInTheDocument();
   });
 
-  it("shows a blocker when pre-registered OAuth is missing a client ID", () => {
+  it("does not show the preregistered client ID banner; marks Client ID as required", () => {
     render(
       <AuthenticationSection
         serverUrl="https://example.com/mcp"
@@ -49,7 +49,7 @@ describe("AuthenticationSection", () => {
         onBearerTokenChange={vi.fn()}
         oauthScopesInput=""
         onOauthScopesChange={vi.fn()}
-        oauthProtocolMode="auto"
+        oauthProtocolMode="2025-11-25"
         onOauthProtocolModeChange={vi.fn()}
         oauthRegistrationMode="preregistered"
         onOauthRegistrationModeChange={vi.fn()}
@@ -65,8 +65,16 @@ describe("AuthenticationSection", () => {
     );
 
     expect(
-      screen.getByText(/Pre-registered OAuth requires a client ID/i),
-    ).toBeInTheDocument();
+      screen.queryByText(/Pre-registered OAuth requires a client ID/i),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /advanced settings/i }));
+
+    const clientIdLabel = screen.getByText("Client ID");
+    expect(clientIdLabel.textContent).toMatch(/\*/);
+    expect(
+      screen.getByPlaceholderText("Your OAuth Client ID"),
+    ).toHaveAttribute("aria-required", "true");
   });
 
   it("shows manual scope and credential overrides when expanded", () => {
@@ -80,7 +88,7 @@ describe("AuthenticationSection", () => {
         onBearerTokenChange={vi.fn()}
         oauthScopesInput=""
         onOauthScopesChange={vi.fn()}
-        oauthProtocolMode="auto"
+        oauthProtocolMode="2025-11-25"
         onOauthProtocolModeChange={vi.fn()}
         oauthRegistrationMode="auto"
         onOauthRegistrationModeChange={vi.fn()}

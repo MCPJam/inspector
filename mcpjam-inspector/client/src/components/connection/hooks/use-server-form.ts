@@ -30,6 +30,18 @@ interface InitialFormValues {
   clientCapabilitiesOverrideText: string;
 }
 
+const DEFAULT_OAUTH_PROTOCOL_MODE: ServerFormOAuthProtocolMode = "2025-11-25";
+
+function normalizeOauthProtocolMode(
+  value?: string,
+): ServerFormOAuthProtocolMode {
+  return value === "2025-03-26" ||
+    value === "2025-06-18" ||
+    value === "2025-11-25"
+    ? value
+    : DEFAULT_OAUTH_PROTOCOL_MODE;
+}
+
 export function useServerForm(
   server?: ServerWithName,
   options?: {
@@ -44,7 +56,7 @@ export function useServerForm(
 
   const [oauthScopesInput, setOauthScopesInput] = useState("");
   const [oauthProtocolMode, setOauthProtocolMode] =
-    useState<ServerFormOAuthProtocolMode>("auto");
+    useState<ServerFormOAuthProtocolMode>(DEFAULT_OAUTH_PROTOCOL_MODE);
   const [oauthRegistrationMode, setOauthRegistrationMode] =
     useState<ServerFormOAuthRegistrationMode>("auto");
   const [clientId, setClientId] = useState("");
@@ -100,7 +112,8 @@ export function useServerForm(
       // For HTTP servers, check OAuth from multiple sources like the original
       let hasOAuth = false;
       let scopes: string[] = [];
-      let protocolModeValue: ServerFormOAuthProtocolMode = "auto";
+      let protocolModeValue: ServerFormOAuthProtocolMode =
+        DEFAULT_OAUTH_PROTOCOL_MODE;
       let registrationModeValue: ServerFormOAuthRegistrationMode = "auto";
       let clientIdValue = "";
       let clientSecretValue = "";
@@ -157,18 +170,15 @@ export function useServerForm(
         clientIdValue = storedTokens?.client_id || savedClientId;
         clientSecretValue = savedClientSecret;
 
-        protocolModeValue =
-          oauthConfig.protocolMode === "auto" ||
-          oauthConfig.protocolMode === "2025-03-26" ||
-          oauthConfig.protocolMode === "2025-06-18" ||
-          oauthConfig.protocolMode === "2025-11-25"
+        protocolModeValue = normalizeOauthProtocolMode(
+          typeof oauthConfig.protocolMode === "string"
             ? oauthConfig.protocolMode
-            : server.oauthFlowProfile?.protocolVersion ||
-              (oauthConfig.protocolVersion === "2025-03-26" ||
-              oauthConfig.protocolVersion === "2025-06-18" ||
-              oauthConfig.protocolVersion === "2025-11-25"
+            : typeof server.oauthFlowProfile?.protocolVersion === "string"
+              ? server.oauthFlowProfile.protocolVersion
+              : typeof oauthConfig.protocolVersion === "string"
                 ? oauthConfig.protocolVersion
-                : "auto");
+                : undefined,
+        );
 
         registrationModeValue =
           oauthConfig.registrationMode === "auto" ||
@@ -524,7 +534,7 @@ export function useServerForm(
     setCommandInput("");
     setUrl("");
     setOauthScopesInput("");
-    setOauthProtocolMode("auto");
+    setOauthProtocolMode(DEFAULT_OAUTH_PROTOCOL_MODE);
     setOauthRegistrationMode("auto");
     setClientId("");
     setClientSecret("");
@@ -570,9 +580,16 @@ export function useServerForm(
     );
   })();
 
+  const preregisteredOauthBlocksSubmit =
+    type === "http" &&
+    authType === "oauth" &&
+    oauthRegistrationMode === "preregistered" &&
+    validateClientId(clientId) !== null;
+
   return {
     // Change detection
     hasChanges,
+    preregisteredOauthBlocksSubmit,
 
     // Form data
     name,

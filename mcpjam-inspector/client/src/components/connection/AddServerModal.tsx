@@ -30,6 +30,16 @@ interface AddServerModalProps {
   workspaceClientConfig?: Workspace["clientConfig"];
 }
 
+function normalizeOauthProtocolMode(
+  value?: ServerFormData["oauthProtocolMode"],
+): ServerFormData["oauthProtocolMode"] {
+  return value === "2025-03-26" ||
+    value === "2025-06-18" ||
+    value === "2025-11-25"
+    ? value
+    : "2025-11-25";
+}
+
 export function AddServerModal({
   isOpen,
   onClose,
@@ -81,7 +91,9 @@ export function AddServerModal({
         formState.setAuthType("oauth");
         formState.setShowAuthSettings(true);
         if (initialData.oauthProtocolMode) {
-          formState.setOauthProtocolMode(initialData.oauthProtocolMode);
+          formState.setOauthProtocolMode(
+            normalizeOauthProtocolMode(initialData.oauthProtocolMode),
+          );
         }
         if (initialData.oauthRegistrationMode) {
           formState.setOauthRegistrationMode(initialData.oauthRegistrationMode);
@@ -414,6 +426,7 @@ export function AddServerModal({
             </Button>
             <Button
               type="submit"
+              disabled={formState.preregisteredOauthBlocksSubmit}
               onClick={() => {
                 posthog.capture("add_server_button_clicked", {
                   location: "add_server_modal",

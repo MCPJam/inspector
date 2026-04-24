@@ -12,6 +12,7 @@ export type OAuthRegistrationStrategy =
 
 export interface OAuthTestProfile {
   serverUrl: string;
+  resourceUrl?: string;
   clientId: string;
   clientSecret: string;
   scopes: string;
@@ -22,6 +23,7 @@ export interface OAuthTestProfile {
 
 export const EMPTY_OAUTH_TEST_PROFILE: OAuthTestProfile = {
   serverUrl: "",
+  resourceUrl: "",
   clientId: "",
   clientSecret: "",
   scopes: "",

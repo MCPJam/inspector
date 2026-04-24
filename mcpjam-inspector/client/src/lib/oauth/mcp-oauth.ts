@@ -48,11 +48,13 @@ import {
   appendOAuthTraceHttpHistory,
   buildOAuthTraceFromSnapshot,
   clearOAuthTrace,
+  clearOAuthTraceSession,
   completeOAuthTraceStep,
   createOAuthTrace,
   failOAuthTraceStep,
-  loadOAuthTrace,
+  loadOAuthTraceFromSession,
   mergeOAuthTraces,
+  saveOAuthTraceToSession,
   startOAuthTraceStep,
   type OAuthTrace,
 } from "./oauth-trace";
@@ -78,6 +80,7 @@ type OAuthRegistrationStrategy =
 export interface StoredOAuthConfig {
   scopes?: string[];
   customHeaders?: Record<string, string>;
+  resourceUrl?: string;
   registryServerId?: string;
   useRegistryOAuthProxy?: boolean;
   protocolMode?: OAuthProtocolMode;
@@ -774,22 +777,6 @@ function buildOAuthTraceFromFlowState(input: {
   });
 }
 
-function buildStoredOAuthTrace(input: {
-  serverName: string;
-  serverUrl: string;
-  session: StoredOAuthFlowSession;
-}): OAuthTrace {
-  return buildOAuthTraceFromSnapshot({
-    source: "interactive_connect",
-    serverName: input.serverName,
-    serverUrl: input.serverUrl,
-    snapshot: projectOAuthTraceSnapshot({
-      state: input.session.state,
-      sanitize: true,
-    }),
-  });
-}
-
 export function readStoredOAuthConfig(
   serverName: string | null
 ): StoredOAuthConfig {
@@ -816,6 +803,11 @@ export function readStoredOAuthConfig(
           ? parsed.registryServerId
           : undefined,
       useRegistryOAuthProxy: parsed?.useRegistryOAuthProxy === true,
+      resourceUrl:
+        typeof parsed?.resourceUrl === "string" &&
+        parsed.resourceUrl.trim() !== ""
+          ? parsed.resourceUrl
+          : undefined,
       protocolMode:
         parsed?.protocolMode === "auto" ||
         parsed?.protocolMode === "2025-03-26" ||
@@ -879,6 +871,7 @@ export function buildStoredOAuthConfig(
     | "registryServerId"
     | "useRegistryOAuthProxy"
     | "customHeaders"
+    | "resourceUrl"
     | "protocolMode"
     | "protocolVersion"
     | "registrationMode"
@@ -900,6 +893,10 @@ export function buildStoredOAuthConfig(
 
   if (options.customHeaders && Object.keys(options.customHeaders).length > 0) {
     config.customHeaders = options.customHeaders;
+  }
+
+  if (options.resourceUrl?.trim()) {
+    config.resourceUrl = options.resourceUrl.trim();
   }
 
   return config;
@@ -1258,6 +1255,7 @@ export interface MCPOAuthOptions {
   serverUrl: string;
   scopes?: string[];
   customHeaders?: Record<string, string>;
+  resourceUrl?: string;
   clientId?: string;
   clientSecret?: string;
   /** Registry record identifier for bookkeeping and optional Convex token exchange */
@@ -1276,6 +1274,7 @@ export interface OAuthResult {
   serverConfig?: HttpServerConfig;
   error?: string;
   oauthTrace?: OAuthTrace;
+  oauthResourceUrl?: string;
 }
 
 interface HostedOAuthCompletionResponse {
@@ -1312,6 +1311,73 @@ function waitForMs(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
+function canonicalizeOAuthResourceUrl(url: string): string {
+  try {
+    const parsed = new URL(url);
+    parsed.protocol = parsed.protocol.toLowerCase();
+    parsed.hostname = parsed.hostname.toLowerCase();
+    parsed.hash = "";
+
+    if (parsed.pathname !== "/" && parsed.pathname.endsWith("/")) {
+      parsed.pathname = parsed.pathname.slice(0, -1);
+    }
+
+    return parsed.toString();
+  } catch {
+    return url;
+  }
+}
+
+function readOAuthResourceFromAuthorizationUrl(
+  authorizationUrl?: string,
+): string | undefined {
+  if (!authorizationUrl) {
+    return undefined;
+  }
+
+  try {
+    const url = new URL(authorizationUrl);
+    const resource = url.searchParams.get("resource")?.trim();
+    return resource || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function resolveOAuthResourceUrl(input: {
+  serverUrl: string;
+  authorizationUrl?: string;
+  configuredResourceUrl?: string;
+}): string {
+  const requestedFromAuth = readOAuthResourceFromAuthorizationUrl(
+    input.authorizationUrl,
+  );
+  if (requestedFromAuth) {
+    return requestedFromAuth;
+  }
+
+  const configured = input.configuredResourceUrl?.trim();
+  if (configured) {
+    return configured;
+  }
+
+  return canonicalizeOAuthResourceUrl(input.serverUrl);
+}
+
+function writeStoredOAuthConfig(
+  serverName: string,
+  updates: Partial<StoredOAuthConfig>,
+): void {
+  const existing = readStoredOAuthConfig(serverName);
+  localStorage.setItem(
+    `mcp-oauth-config-${serverName}`,
+    JSON.stringify({
+      ...existing,
+      ...updates,
+    }),
+  );
+}
+
 function readHostedOAuthExpectedState(state: OAuthFlowState): string {
   const expectedState =
     typeof state.state === "string" ? state.state.trim() : "";
@@ -1327,6 +1393,8 @@ async function createHostedOAuthSessionIfNeeded(input: {
   serverUrl: string;
   redirectUrl: string;
   state: OAuthFlowState;
+  authorizationUrl?: string;
+  configuredResourceUrl?: string;
 }): Promise<string | undefined> {
   if (!HOSTED_MODE) {
     return undefined;
@@ -1360,6 +1428,11 @@ async function createHostedOAuthSessionIfNeeded(input: {
     throw new Error("Code verifier not ready for hosted callback session.");
   }
   const expectedState = readHostedOAuthExpectedState(input.state);
+  const oauthResourceUrl = resolveOAuthResourceUrl({
+    serverUrl: input.serverUrl,
+    authorizationUrl: input.authorizationUrl ?? input.state.authorizationUrl,
+    configuredResourceUrl: input.configuredResourceUrl,
+  });
 
   const response = await authFetch("/api/web/oauth/session", {
     method: "POST",
@@ -1372,6 +1445,7 @@ async function createHostedOAuthSessionIfNeeded(input: {
       codeVerifier,
       redirectUri: input.redirectUrl,
       expectedState,
+      oauthResourceUrl,
       clientInformation: {
         clientId,
         ...(input.state.clientSecret
@@ -1819,11 +1893,21 @@ export async function initiateOAuth(
         emitTraceSnapshot(snapshot);
       },
       onAuthorizationRequest: async ({ authorizationUrl }) => {
+        const oauthResourceUrl = resolveOAuthResourceUrl({
+          serverUrl: options.serverUrl,
+          authorizationUrl,
+          configuredResourceUrl: options.resourceUrl,
+        });
+        writeStoredOAuthConfig(options.serverName, {
+          resourceUrl: oauthResourceUrl,
+        });
         await createHostedOAuthSessionIfNeeded({
           serverName: options.serverName,
           serverUrl: options.serverUrl,
           redirectUrl: provider.redirectUrl,
           state: getState(),
+          authorizationUrl,
+          configuredResourceUrl: oauthResourceUrl,
         });
         await persistOAuthStateArtifacts(provider, getState());
         saveOAuthFlowSession(options.serverName, {
@@ -1832,7 +1916,8 @@ export async function initiateOAuth(
           registrationStrategy,
           state: cloneFlowState(getState()),
         });
-        emitTraceFromState(getState());
+        const preRedirectTrace = emitTraceFromState(getState());
+        saveOAuthTraceToSession(options.serverName, preRedirectTrace);
         await provider.redirectToAuthorization(new URL(authorizationUrl));
         return { type: "redirect" };
       },
@@ -1957,7 +2042,7 @@ export async function completeHostedOAuthCallback(
     serverName: serverName ?? undefined,
   });
   let previousTrace: OAuthTrace | undefined = serverName
-    ? loadOAuthTrace(serverName)
+    ? loadOAuthTraceFromSession(serverName)
     : undefined;
   const mergeHostedCallbackTrace = (backendTrace?: OAuthTrace): OAuthTrace =>
     backendTrace
@@ -1994,14 +2079,16 @@ export async function completeHostedOAuthCallback(
     if (!serverUrl) {
       throw new Error("Server URL not found for OAuth callback");
     }
+    const storedOAuthConfig = readStoredOAuthConfig(serverName);
     const storedSession = loadOAuthFlowSession(serverName);
-    previousTrace = storedSession
-      ? buildStoredOAuthTrace({
-          serverName,
-          serverUrl,
-          session: storedSession,
-        })
-      : previousTrace;
+    const oauthResourceUrl = resolveOAuthResourceUrl({
+      serverUrl,
+      authorizationUrl: storedSession?.state.authorizationUrl,
+      configuredResourceUrl: storedOAuthConfig.resourceUrl,
+    });
+    previousTrace =
+      loadOAuthTraceFromSession(serverName) ?? previousTrace;
+    clearOAuthTraceSession(serverName);
     completeOAuthTraceStep(callbackTrace, "received_authorization_code", {
       message: context.sessionId
         ? "Hosted callback state restored from the shared backend session."
@@ -2103,6 +2190,7 @@ export async function completeHostedOAuthCallback(
           workspaceId: context.workspaceId,
           serverId: context.serverId,
           code: authorizationCode,
+          oauthResourceUrl,
           ...(context.sessionId
             ? {
                 sessionId: context.sessionId,
@@ -2164,6 +2252,9 @@ export async function completeHostedOAuthCallback(
 
     localStorage.removeItem(`mcp-tokens-${serverName}`);
     localStorage.removeItem(`mcp-verifier-${serverName}`);
+    writeStoredOAuthConfig(serverName, {
+      resourceUrl: oauthResourceUrl,
+    });
     completeOAuthTraceStep(callbackTrace, "token_request", {
       message: "Hosted token exchange succeeded.",
     });
@@ -2188,6 +2279,7 @@ export async function completeHostedOAuthCallback(
       serverConfig: createServerConfig(serverUrl),
       expiresAt: result.expiresAt ?? null,
       oauthTrace: mergedTrace,
+      oauthResourceUrl,
     };
   } catch (error) {
     const message =
@@ -2274,13 +2366,8 @@ export async function handleOAuthCallback(
     const fetchFn = createOAuthFetchInterceptor(oauthConfig, undefined);
     const requestExecutor = createOAuthRequestExecutor(fetchFn, serverUrl);
     const storedSession = loadOAuthFlowSession(serverName);
-    previousTrace = storedSession
-      ? buildStoredOAuthTrace({
-          serverName,
-          serverUrl,
-          session: storedSession,
-        })
-      : undefined;
+    previousTrace = loadOAuthTraceFromSession(serverName);
+    clearOAuthTraceSession(serverName);
 
     if (storedSession) {
       let state = cloneFlowState(storedSession.state);
@@ -2354,6 +2441,11 @@ export async function handleOAuthCallback(
         serverUrl,
         state: flowResult.state,
       });
+      const oauthResourceUrl = resolveOAuthResourceUrl({
+        serverUrl,
+        authorizationUrl: flowResult.state.authorizationUrl,
+        configuredResourceUrl: oauthConfig.resourceUrl,
+      });
       const mergedTrace = mergeOAuthTraces(previousTrace, callbackTrace);
       publishOAuthTraceUpdate(serverName, mergedTrace, options.onTraceUpdate);
 
@@ -2372,6 +2464,9 @@ export async function handleOAuthCallback(
       }
 
       await persistOAuthStateArtifacts(provider, flowResult.state);
+      writeStoredOAuthConfig(serverName, {
+        resourceUrl: oauthResourceUrl,
+      });
       clearOAuthFlowSession(serverName);
       localStorage.removeItem(`mcp-verifier-${serverName}`);
       localStorage.removeItem("mcp-oauth-pending");
@@ -2382,6 +2477,7 @@ export async function handleOAuthCallback(
         }),
         serverName,
         oauthTrace: mergedTrace,
+        oauthResourceUrl,
       };
     }
 
@@ -2423,6 +2519,15 @@ export async function handleOAuthCallback(
       provider,
       discoveryState.resourceMetadata
     );
+    const oauthResourceUrl = resolveOAuthResourceUrl({
+      serverUrl,
+      configuredResourceUrl:
+        typeof resource === "string"
+          ? resource
+          : resource instanceof URL
+            ? resource.toString()
+            : oauthConfig.resourceUrl,
+    });
     startOAuthTraceStep(callbackTrace, "token_request", {
       message: "Exchanging authorization code for OAuth tokens.",
     });
@@ -2453,6 +2558,9 @@ export async function handleOAuthCallback(
     // Clean up pending state
     localStorage.removeItem("mcp-oauth-pending");
     localStorage.removeItem(`mcp-verifier-${serverName}`);
+    writeStoredOAuthConfig(serverName, {
+      resourceUrl: oauthResourceUrl,
+    });
     const mergedTrace = mergeOAuthTraces(previousTrace, callbackTrace);
     publishOAuthTraceUpdate(serverName, mergedTrace, options.onTraceUpdate);
 
@@ -2462,6 +2570,7 @@ export async function handleOAuthCallback(
       serverConfig,
       serverName, // Return server name so caller doesn't need to look it up
       oauthTrace: mergedTrace,
+      oauthResourceUrl,
     };
   } catch (error) {
     const callbackTrace = buildOAuthTraceFromFlowState({

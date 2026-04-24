@@ -110,6 +110,7 @@ function saveOAuthConfigToLocalStorage(formData: ServerFormData): void {
   localStorage.setItem(`mcp-serverUrl-${formData.name}`, formData.url);
 
   const oauthConfig: Record<string, unknown> = {};
+  const existingOAuthConfig = readStoredOAuthConfig(formData.name);
   const protocolMode = formData.oauthProtocolMode ?? "auto";
   const registrationMode =
     formData.oauthRegistrationMode ??
@@ -131,6 +132,9 @@ function saveOAuthConfigToLocalStorage(formData: ServerFormData): void {
   }
   if (registrationMode !== "auto") {
     oauthConfig.registrationStrategy = registrationMode;
+  }
+  if (existingOAuthConfig.resourceUrl) {
+    oauthConfig.resourceUrl = existingOAuthConfig.resourceUrl;
   }
   if (Object.keys(oauthConfig).length > 0) {
     localStorage.setItem(
@@ -181,6 +185,66 @@ function readStoredClientCredentials(serverName: string): {
   } catch {
     return {};
   }
+}
+
+function buildResolvedOAuthProfile(input: {
+  serverName: string;
+  serverUrl: string;
+  existingProfile?: OAuthTestProfile;
+  storedOAuthConfig: ReturnType<typeof readStoredOAuthConfig>;
+  storedClientCredentials: ReturnType<typeof readStoredClientCredentials>;
+  oauthResourceUrl?: string;
+}): OAuthTestProfile | undefined {
+  const existingProfile = input.existingProfile;
+  const storedOAuthConfig = input.storedOAuthConfig;
+  const storedClientCredentials = input.storedClientCredentials;
+
+  const protocolVersion =
+    existingProfile?.protocolVersion ??
+    storedOAuthConfig.protocolVersion ??
+    (storedOAuthConfig.protocolMode && storedOAuthConfig.protocolMode !== "auto"
+      ? storedOAuthConfig.protocolMode
+      : undefined);
+  const registrationStrategy =
+    existingProfile?.registrationStrategy ??
+    storedOAuthConfig.registrationStrategy ??
+    (storedOAuthConfig.registrationMode &&
+    storedOAuthConfig.registrationMode !== "auto"
+      ? storedOAuthConfig.registrationMode
+      : undefined);
+
+  if (!protocolVersion || !registrationStrategy) {
+    return existingProfile;
+  }
+
+  const customHeaders = existingProfile?.customHeaders?.length
+    ? existingProfile.customHeaders
+    : Object.entries(storedOAuthConfig.customHeaders ?? {}).map(
+        ([key, value]) => ({
+          key,
+          value,
+        }),
+      );
+
+  return {
+    serverUrl: input.serverUrl,
+    resourceUrl:
+      input.oauthResourceUrl ??
+      existingProfile?.resourceUrl ??
+      storedOAuthConfig.resourceUrl ??
+      "",
+    clientId:
+      existingProfile?.clientId ?? storedClientCredentials.clientId ?? "",
+    clientSecret:
+      existingProfile?.clientSecret ?? storedClientCredentials.clientSecret ?? "",
+    scopes:
+      existingProfile?.scopes ??
+      storedOAuthConfig.scopes?.join(" ") ??
+      "",
+    customHeaders,
+    protocolVersion,
+    registrationStrategy,
+  };
 }
 
 function restorePathAfterOAuthCallback(
@@ -565,6 +629,7 @@ export function useServerState({
       const url =
         config?.url instanceof URL ? config.url.href : config?.url || undefined;
       const headers = config?.requestInit?.headers || undefined;
+      const storedOAuthConfig = readStoredOAuthConfig(serverName);
 
       const payload = {
         name: serverName,
@@ -581,6 +646,9 @@ export function useServerState({
           ? serverEntry.oauthFlowProfile.scopes.split(",").filter(Boolean)
           : undefined,
         clientId: serverEntry.oauthFlowProfile?.clientId,
+        oauthResourceUrl:
+          serverEntry.oauthFlowProfile?.resourceUrl ||
+          storedOAuthConfig.resourceUrl,
       } as const;
 
       try {
@@ -863,6 +931,52 @@ export function useServerState({
 
         if (result.success && result.serverConfig && result.serverName) {
           const serverName = result.serverName;
+          const existingServer = latestEffectiveServersRef.current[serverName];
+          const storedOAuthConfig = readStoredOAuthConfig(serverName);
+          const storedClientCredentials = readStoredClientCredentials(serverName);
+          const resolvedOAuthProfile = buildResolvedOAuthProfile({
+            serverName,
+            serverUrl:
+              result.serverConfig.url instanceof URL
+                ? result.serverConfig.url.href
+                : String(result.serverConfig.url),
+            existingProfile: existingServer?.oauthFlowProfile,
+            storedOAuthConfig,
+            storedClientCredentials,
+            oauthResourceUrl: result.oauthResourceUrl,
+          });
+          const oauthServerEntry: ServerWithName = {
+            ...(existingServer ?? {}),
+            name: serverName,
+            config: result.serverConfig,
+            lastConnectionTime:
+              existingServer?.lastConnectionTime ?? new Date(),
+            connectionStatus:
+              existingServer?.connectionStatus ?? "disconnected",
+            retryCount: existingServer?.retryCount ?? 0,
+            enabled: existingServer?.enabled ?? true,
+            oauthTokens: existingServer?.oauthTokens,
+            oauthFlowProfile: resolvedOAuthProfile,
+            initializationInfo: existingServer?.initializationInfo,
+            useOAuth: true,
+            lastOAuthTrace: result.oauthTrace,
+          };
+
+          dispatch({
+            type: "UPSERT_SERVER",
+            name: serverName,
+            server: oauthServerEntry,
+          });
+          if (!isAuthenticated || useLocalFallback) {
+            persistServerToLocalWorkspace(serverName, oauthServerEntry);
+          } else {
+            syncServerToConvex(serverName, oauthServerEntry).catch((error) =>
+              logger.warn("Failed to sync OAuth profile to Convex", {
+                serverName,
+                error,
+              }),
+            );
+          }
 
           dispatch({
             type: "CONNECT_REQUEST",
@@ -972,10 +1086,12 @@ export function useServerState({
       failPendingOAuthConnection,
       isAuthenticated,
       logger,
+      persistServerToLocalWorkspace,
       storeInitInfo,
       guardedTestConnection,
-      mergeWithWorkspaceHeaders,
+      syncServerToConvex,
       updateServerOAuthTrace,
+      useLocalFallback,
       withWorkspaceConnectionDefaults,
     ],
   );

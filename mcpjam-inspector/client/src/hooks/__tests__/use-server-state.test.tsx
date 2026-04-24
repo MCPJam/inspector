@@ -9,19 +9,23 @@ import { useServerState } from "../use-server-state";
 const {
   toastError,
   toastSuccess,
+  completeHostedOAuthCallbackMock,
   handleOAuthCallbackMock,
   initiateOAuthMock,
   getStoredTokensMock,
   clearOAuthDataMock,
+  readStoredOAuthConfigMock,
   testConnectionMock,
   mockConvexQuery,
 } = vi.hoisted(() => ({
   toastError: vi.fn(),
   toastSuccess: vi.fn(),
+  completeHostedOAuthCallbackMock: vi.fn(),
   handleOAuthCallbackMock: vi.fn(),
   initiateOAuthMock: vi.fn(),
   getStoredTokensMock: vi.fn(),
   clearOAuthDataMock: vi.fn(),
+  readStoredOAuthConfigMock: vi.fn(),
   testConnectionMock: vi.fn(),
   mockConvexQuery: vi.fn(),
 }));
@@ -52,10 +56,12 @@ vi.mock("@/state/oauth-orchestrator", () => ({
 }));
 
 vi.mock("@/lib/oauth/mcp-oauth", () => ({
+  completeHostedOAuthCallback: completeHostedOAuthCallbackMock,
   handleOAuthCallback: handleOAuthCallbackMock,
   getStoredTokens: getStoredTokensMock,
   clearOAuthData: clearOAuthDataMock,
   initiateOAuth: initiateOAuthMock,
+  readStoredOAuthConfig: readStoredOAuthConfigMock,
 }));
 
 vi.mock("@/lib/apis/web/context", () => ({
@@ -195,7 +201,16 @@ describe("useServerState OAuth callback failures", () => {
       success: true,
       initInfo: null,
     });
+    completeHostedOAuthCallbackMock.mockReset();
+    completeHostedOAuthCallbackMock.mockResolvedValue({
+      success: false,
+      error: "Hosted OAuth callback should be mocked per test",
+    });
     initiateOAuthMock.mockResolvedValue({ success: true });
+    readStoredOAuthConfigMock.mockReturnValue({
+      registryServerId: undefined,
+      useRegistryOAuthProxy: false,
+    });
     mockConvexQuery.mockResolvedValue(null);
   });
 
