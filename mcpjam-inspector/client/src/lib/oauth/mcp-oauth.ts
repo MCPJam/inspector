@@ -1161,10 +1161,19 @@ function waitForMs(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
+function readHostedOAuthExpectedState(state: OAuthFlowState): string {
+  const expectedState =
+    typeof state.state === "string" ? state.state.trim() : "";
+  if (!expectedState) {
+    throw new Error("OAuth state not ready for hosted callback session.");
+  }
+
+  return expectedState;
+}
+
 async function createHostedOAuthSessionIfNeeded(input: {
   serverName: string;
   serverUrl: string;
-  authorizationUrl: string;
   redirectUrl: string;
   state: OAuthFlowState;
 }): Promise<string | undefined> {
@@ -1199,6 +1208,7 @@ async function createHostedOAuthSessionIfNeeded(input: {
   if (!codeVerifier) {
     throw new Error("Code verifier not ready for hosted callback session.");
   }
+  const expectedState = readHostedOAuthExpectedState(input.state);
 
   const response = await authFetch("/api/web/oauth/session", {
     method: "POST",
@@ -1210,15 +1220,12 @@ async function createHostedOAuthSessionIfNeeded(input: {
       serverId: pendingMarker.serverId,
       codeVerifier,
       redirectUri: input.redirectUrl,
+      expectedState,
       clientInformation: {
         clientId,
         ...(input.state.clientSecret
           ? { clientSecret: input.state.clientSecret }
           : {}),
-      },
-      flowState: {
-        ...cloneFlowState(input.state),
-        authorizationUrl: input.authorizationUrl,
       },
       ...(pendingMarker.accessScope
         ? { accessScope: pendingMarker.accessScope }
@@ -1646,7 +1653,6 @@ export async function initiateOAuth(
         await createHostedOAuthSessionIfNeeded({
           serverName: options.serverName,
           serverUrl: options.serverUrl,
-          authorizationUrl,
           redirectUrl: provider.redirectUrl,
           state: getState(),
         });
@@ -1768,7 +1774,10 @@ function formatOAuthCallbackError(error: unknown): string {
 export async function completeHostedOAuthCallback(
   context: HostedOAuthCallbackContext,
   authorizationCode: string,
-  options: { onTraceUpdate?: (trace: OAuthTrace) => void } = {}
+  options: {
+    callbackState?: string | null;
+    onTraceUpdate?: (trace: OAuthTrace) => void;
+  } = {}
 ): Promise<OAuthResult & { serverName?: string; expiresAt?: number | null }> {
   const serverName =
     context.serverName || localStorage.getItem("mcp-oauth-pending");
@@ -1845,6 +1854,10 @@ export async function completeHostedOAuthCallback(
     const legacyCodeVerifier = context.sessionId
       ? undefined
       : localStorage.getItem(`mcp-verifier-${serverName}`);
+    const callbackState =
+      typeof options.callbackState === "string"
+        ? options.callbackState.trim()
+        : "";
     if (!context.sessionId && !legacyCodeVerifier) {
       throw new Error("Code verifier not found");
     }
@@ -1908,7 +1921,10 @@ export async function completeHostedOAuthCallback(
           serverId: context.serverId,
           code: authorizationCode,
           ...(context.sessionId
-            ? { sessionId: context.sessionId }
+            ? {
+                sessionId: context.sessionId,
+                ...(callbackState ? { state: callbackState } : {}),
+              }
             : {
                 serverUrl,
                 codeVerifier: legacyCodeVerifier,

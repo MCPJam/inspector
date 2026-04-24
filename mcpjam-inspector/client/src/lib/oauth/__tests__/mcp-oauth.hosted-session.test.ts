@@ -61,7 +61,10 @@ describe("mcp-oauth hosted callback sessions", () => {
         returnHash: "#servers",
         startedAt: Date.now(),
       },
-      "oauth-code"
+      "oauth-code",
+      {
+        callbackState: "oauth-state-1",
+      }
     );
 
     expect(result.success).toBe(true);
@@ -70,6 +73,67 @@ describe("mcp-oauth hosted callback sessions", () => {
       "https://test.convex.site/web/oauth/complete",
       expect.any(Object)
     );
+
+    const completeCall = authFetchMock.mock.calls.find(
+      ([url]) => url === "https://test.convex.site/web/oauth/complete"
+    );
+    expect(completeCall).toBeDefined();
+
+    const [, requestInit] = completeCall as [string, RequestInit];
+    const sentBody = JSON.parse(String(requestInit.body));
+    expect(sentBody).toEqual({
+      workspaceId: "ws_1",
+      serverId: "srv_asana",
+      code: "oauth-code",
+      state: "oauth-state-1",
+      sessionId: "hosted-session-1",
+      accessScope: "workspace_member",
+    });
+  });
+
+  it("allows hosted callbacks to complete when the provider omits state", async () => {
+    authFetchMock.mockImplementation((url: string) => {
+      if (url === "https://test.convex.site/web/oauth/session/progress") {
+        return Promise.resolve(
+          new Response(JSON.stringify({ success: false, error: "not found" }), {
+            status: 404,
+            headers: { "Content-Type": "application/json" },
+          })
+        );
+      }
+
+      if (url === "https://test.convex.site/web/oauth/complete") {
+        return Promise.resolve(
+          new Response(JSON.stringify({ success: true, expiresAt: 789 }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          })
+        );
+      }
+
+      throw new Error(`Unexpected authFetch URL: ${url}`);
+    });
+
+    const { completeHostedOAuthCallback } = await import("../mcp-oauth");
+    const result = await completeHostedOAuthCallback(
+      {
+        surface: "workspace",
+        workspaceId: "ws_1",
+        serverId: "srv_asana",
+        serverName: "asana",
+        serverUrl: "https://mcp.asana.com/sse",
+        sessionId: "hosted-session-1",
+        accessScope: "workspace_member",
+        shareToken: null,
+        chatboxToken: null,
+        returnHash: "#servers",
+        startedAt: Date.now(),
+      },
+      "oauth-code"
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.expiresAt).toBe(789);
 
     const completeCall = authFetchMock.mock.calls.find(
       ([url]) => url === "https://test.convex.site/web/oauth/complete"
@@ -160,7 +224,7 @@ describe("mcp-oauth hosted callback sessions", () => {
           startedAt: Date.now(),
         },
         "oauth-code",
-        { onTraceUpdate }
+        { callbackState: "oauth-state-2", onTraceUpdate }
       );
 
       await vi.waitFor(() =>
@@ -282,7 +346,7 @@ describe("mcp-oauth hosted callback sessions", () => {
           startedAt: Date.now(),
         },
         "oauth-code",
-        { onTraceUpdate }
+        { callbackState: "oauth-state-3", onTraceUpdate }
       );
 
       await vi.waitFor(() =>
