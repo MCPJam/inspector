@@ -181,9 +181,11 @@ function parseConnectionDefaultsJson(text: string): WorkspaceConnectionDefaults 
 
   if (
     requestTimeout !== undefined &&
-    (typeof requestTimeout !== "number" || !Number.isFinite(requestTimeout))
+    (typeof requestTimeout !== "number" ||
+      !Number.isFinite(requestTimeout) ||
+      requestTimeout <= 0)
   ) {
-    throw new Error("connectionDefaults.requestTimeout must be a number");
+    throw new Error("connectionDefaults.requestTimeout must be a positive number");
   }
 
   if (headers !== undefined) {

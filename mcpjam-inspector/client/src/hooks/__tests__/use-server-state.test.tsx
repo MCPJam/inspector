@@ -296,6 +296,96 @@ describe("useServerState OAuth callback failures", () => {
     expect(window.location.hash).toBe("#demo-server");
   });
 
+  it("preserves existing HTTP config when OAuth callback returns a bearer token config", async () => {
+    localStorage.setItem("mcp-oauth-pending", "demo-server");
+    localStorage.setItem("mcp-oauth-return-hash", "#demo-server");
+    readStoredOAuthConfigMock.mockReturnValue({
+      scopes: ["files:read", "files:write"],
+      registryServerId: undefined,
+      useRegistryOAuthProxy: false,
+    });
+    handleOAuthCallbackMock.mockResolvedValue({
+      success: true,
+      serverName: "demo-server",
+      serverConfig: {
+        url: "https://example.com/mcp",
+        requestInit: {
+          headers: {
+            Authorization: "Bearer access-token",
+          },
+        },
+      },
+    });
+    window.history.replaceState({}, "", "/oauth/callback?code=test-code");
+
+    const appState = createAppState();
+    const existingServer = {
+      ...appState.servers["demo-server"],
+      config: {
+        url: "https://example.com/mcp",
+        requestInit: {
+          headers: {
+            "X-Existing-Header": "present",
+          },
+        },
+        timeout: 15000,
+        clientCapabilities: {
+          roots: {
+            listChanged: true,
+          },
+        },
+      } as any,
+      oauthFlowProfile: {
+        protocolVersion: "2025-11-25",
+        registrationStrategy: "dcr",
+      },
+    };
+    appState.servers["demo-server"] = existingServer;
+    appState.workspaces.default.servers["demo-server"] = existingServer;
+
+    const dispatch = vi.fn();
+    renderUseServerState(dispatch, appState);
+
+    await waitFor(() => {
+      expect(testConnectionMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          url: "https://example.com/mcp",
+          requestInit: expect.objectContaining({
+            headers: expect.objectContaining({
+              Authorization: "Bearer access-token",
+              "X-Existing-Header": "present",
+            }),
+          }),
+          timeout: 15000,
+          capabilities: {
+            roots: {
+              listChanged: true,
+            },
+          },
+          clientCapabilities: {
+            roots: {
+              listChanged: true,
+            },
+          },
+        }),
+        "demo-server",
+      );
+    });
+
+    const upsertAction = dispatch.mock.calls.find(
+      ([action]) => action.type === "UPSERT_SERVER",
+    )?.[0] as AppAction | undefined;
+    expect(upsertAction).toMatchObject({
+      type: "UPSERT_SERVER",
+      name: "demo-server",
+      server: {
+        oauthFlowProfile: expect.objectContaining({
+          scopes: "files:read,files:write",
+        }),
+      },
+    });
+  });
+
   it("blocks connect while workspace client config sync is pending", async () => {
     useClientConfigStore.setState({
       pendingWorkspaceId: "default",

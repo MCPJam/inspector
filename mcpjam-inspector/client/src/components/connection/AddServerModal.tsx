@@ -40,6 +40,48 @@ function normalizeOauthProtocolMode(
     : "2025-11-25";
 }
 
+function normalizeOauthRegistrationMode(
+  value?: ServerFormData["oauthRegistrationMode"],
+): ServerFormData["oauthRegistrationMode"] | undefined {
+  return value === "auto" ||
+    value === "cimd" ||
+    value === "dcr" ||
+    value === "preregistered"
+    ? value
+    : undefined;
+}
+
+function isAuthorizationHeader(key: string): boolean {
+  return key.trim().toLowerCase() === "authorization";
+}
+
+function getAuthorizationHeaderValue(
+  headers?: Record<string, string>,
+): string | undefined {
+  if (!headers) {
+    return undefined;
+  }
+
+  for (const [key, value] of Object.entries(headers)) {
+    if (isAuthorizationHeader(key)) {
+      return value;
+    }
+  }
+
+  return undefined;
+}
+
+function createHeaderEntry(key: string, value: string) {
+  return {
+    id:
+      typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    key,
+    value,
+  };
+}
+
 export function AddServerModal({
   isOpen,
   onClose,
@@ -96,7 +138,10 @@ export function AddServerModal({
           );
         }
         if (initialData.oauthRegistrationMode) {
-          formState.setOauthRegistrationMode(initialData.oauthRegistrationMode);
+          formState.setOauthRegistrationMode(
+            normalizeOauthRegistrationMode(initialData.oauthRegistrationMode) ??
+              "auto",
+          );
           formState.setUseCustomClientId(
             initialData.oauthRegistrationMode === "preregistered",
           );
@@ -112,22 +157,26 @@ export function AddServerModal({
         if (initialData.clientSecret) {
           formState.setClientSecret(initialData.clientSecret);
         }
-      } else if (
-        initialData.headers &&
-        initialData.headers["Authorization"] !== undefined
-      ) {
-        // Has Authorization header - set up bearer token
-        formState.setAuthType("bearer");
-        formState.setShowAuthSettings(true);
-        formState.setBearerToken(initialData.headers["Authorization"] || "");
+      } else if (initialData.headers) {
+        const authorizationHeader = getAuthorizationHeaderValue(
+          initialData.headers,
+        );
+
+        if (authorizationHeader !== undefined) {
+          // Has Authorization header - set up bearer token
+          formState.setAuthType("bearer");
+          formState.setShowAuthSettings(true);
+          formState.setBearerToken(
+            authorizationHeader.startsWith("Bearer ")
+              ? authorizationHeader.replace("Bearer ", "")
+              : authorizationHeader,
+          );
+        }
       }
       if (initialData.headers) {
         const headersArray = Object.entries(initialData.headers)
-          .filter(([key]) => key !== "Authorization")
-          .map(([key, value]) => ({
-            key,
-            value,
-          }));
+          .filter(([key]) => !isAuthorizationHeader(key))
+          .map(([key, value]) => createHeaderEntry(key, value));
         if (headersArray.length > 0) {
           formState.setCustomHeaders(headersArray);
           formState.setShowConfiguration(true);

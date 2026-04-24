@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { AdvancedConnectionSettingsSection } from "../shared/AdvancedConnectionSettingsSection";
 
 describe("AdvancedConnectionSettingsSection", () => {
-  it("shows summary chips for configured headers and timeout", () => {
+  it("renders the collapsed connection overrides toggle", () => {
     const onToggle = vi.fn();
 
     render(
@@ -20,9 +20,11 @@ describe("AdvancedConnectionSettingsSection", () => {
       />,
     );
 
-    expect(screen.getByText("Connection Overrides")).toBeInTheDocument();
-    expect(screen.getByText("1 header configured")).toBeInTheDocument();
-    expect(screen.getByText("Timeout: 30000ms")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /connection overrides/i }),
+    ).toHaveTextContent("Connection overrides");
+    expect(screen.queryByText("1 header configured")).not.toBeInTheDocument();
+    expect(screen.queryByText("Timeout: 30000ms")).not.toBeInTheDocument();
 
     fireEvent.click(
       screen.getByRole("button", { name: /connection overrides/i }),
@@ -51,11 +53,9 @@ describe("AdvancedConnectionSettingsSection", () => {
       />,
     );
 
-    expect(screen.getByText("Custom Headers")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /add header/i })).toBeInTheDocument();
-    expect(screen.getByText("Request Timeout")).toBeInTheDocument();
-    expect(
-      screen.getByText("Client Capabilities Override"),
-    ).toBeInTheDocument();
+    expect(screen.getByText("Headers")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^add$/i })).toBeInTheDocument();
+    expect(screen.getByText(/Timeout/)).toBeInTheDocument();
+    expect(screen.getByText("Capabilities override")).toBeInTheDocument();
   });
 });

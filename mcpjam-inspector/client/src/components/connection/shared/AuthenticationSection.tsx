@@ -138,7 +138,7 @@ export function AuthenticationSection({
             <SelectContent>
               <SelectItem value="none">No Authentication</SelectItem>
               <SelectItem value="bearer">Bearer Token</SelectItem>
-              <SelectItem value="oauth">Oauth</SelectItem>
+              <SelectItem value="oauth">OAuth</SelectItem>
             </SelectContent>
           </Select>
         </div>

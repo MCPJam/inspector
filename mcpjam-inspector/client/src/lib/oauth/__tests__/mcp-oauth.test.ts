@@ -603,6 +603,51 @@ describe("mcp-oauth", () => {
       );
     });
 
+    it("forwards custom headers during automatic discovery planning", async () => {
+      const metadataResponse = new Response(
+        JSON.stringify({
+          authorization_servers: ["https://auth.example.com"],
+        }),
+        { status: 200 }
+      );
+      authFetch.mockResolvedValue(metadataResponse);
+      mockDiscoverOAuthServerInfo.mockImplementationOnce(
+        async (_serverUrl, options) => {
+          const response = await options?.fetchFn?.(
+            "https://example.com/.well-known/oauth-protected-resource/mcp"
+          );
+          if (!response) {
+            throw new Error("Missing OAuth fetch function");
+          }
+          expect(response.ok).toBe(true);
+          return createCimdDiscoveryState();
+        }
+      );
+
+      const { initiateOAuth } = await import("../mcp-oauth");
+      const result = await initiateOAuth({
+        serverName: "test-server",
+        serverUrl: "https://example.com/mcp",
+        customHeaders: {
+          "X-Tenant": "workspace-123",
+        },
+      });
+
+      expect(result.success).toBe(true);
+      const metadataCall = authFetch.mock.calls.find(
+        ([input]) =>
+          typeof input === "string" &&
+          input.includes("/api/mcp/oauth/metadata?url="),
+      );
+      expect(metadataCall).toBeDefined();
+      expect(metadataCall?.[1]).toMatchObject({
+        method: "GET",
+      });
+      expect(
+        new Headers(metadataCall?.[1]?.headers as HeadersInit).get("X-Tenant"),
+      ).toBe("workspace-123");
+    });
+
     it("replays the initial MCP initialize through the proxy when browser transport fails", async () => {
       vi.resetModules();
       const browserFetch = vi
@@ -1039,10 +1084,15 @@ describe("mcp-oauth", () => {
         "https://mcp.asana.com/sse"
       );
       await provider.saveDiscoveryState(createDiscoveryState());
+      sessionStorage.setItem(
+        "mcp-oauth-session-trace-asana",
+        JSON.stringify({ serverName: "asana" })
+      );
 
       clearOAuthData("asana");
 
       expect(localStorage.getItem("mcp-discovery-asana")).toBeNull();
+      expect(sessionStorage.getItem("mcp-oauth-session-trace-asana")).toBeNull();
       expect(provider.discoveryState()).toBeUndefined();
     });
 

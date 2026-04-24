@@ -197,15 +197,27 @@ export function resolveAuthorizationPlan(
   const warnings: string[] = [];
   const capabilities = buildCapabilities(protocolVersion, input.discovery);
   const hasDiscovery = input.discovery !== undefined;
+  const authMode = input.authMode ?? "interactive";
   const trimmedClientId = input.clientId?.trim();
   const trimmedClientSecret = input.clientSecret?.trim();
-  const hasPreregisteredCredentials = Boolean(
+  const hasAnyPreregisteredCredentialInput = Boolean(
     input.useRegistryOAuthProxy || trimmedClientId || trimmedClientSecret,
   );
+  const hasCompletePreregisteredCredentials = Boolean(
+    input.useRegistryOAuthProxy ||
+      (authMode === "client_credentials"
+        ? trimmedClientId && trimmedClientSecret
+        : trimmedClientId),
+  );
+  const hasIncompletePreregisteredCredentials =
+    hasAnyPreregisteredCredentialInput && !hasCompletePreregisteredCredentials;
   const clientIdMetadataUrl =
     normalizeClientIdMetadataUrl(input.clientIdMetadataUrl) ??
     DEFAULT_MCPJAM_CLIENT_ID_METADATA_URL;
-  const authMode = input.authMode ?? "interactive";
+  const preregisteredAutoModeBlocker =
+    authMode === "client_credentials"
+      ? "Automatic OAuth found incomplete pre-registered credentials. Provide both a client ID and client secret, or clear the partial credentials to use discovery."
+      : "Automatic OAuth found incomplete pre-registered credentials. Provide a client ID, or clear the partial credentials to use discovery.";
 
   let status: ResolvedAuthorizationPlan["status"] = "ready";
   let registrationStrategy: OAuthRegistrationStrategy | undefined;
@@ -250,7 +262,9 @@ export function resolveAuthorizationPlan(
         "The authorization server did not advertise a registration_endpoint required for DCR.",
       );
     }
-  } else if (hasPreregisteredCredentials) {
+  } else if (hasIncompletePreregisteredCredentials) {
+    blockers.push(preregisteredAutoModeBlocker);
+  } else if (hasCompletePreregisteredCredentials) {
     registrationStrategy = "preregistered";
   } else if (!hasDiscovery) {
     status = "discovery_required";

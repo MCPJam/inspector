@@ -78,6 +78,26 @@ describe("useServerForm", () => {
     });
   });
 
+  it("retains bearer authorization headers even without custom headers", () => {
+    const { result } = renderHook(() => useServerForm());
+
+    act(() => {
+      result.current.setName("Bearer server");
+      result.current.setUrl("https://example.com/mcp");
+      result.current.setAuthType("bearer");
+      result.current.setBearerToken("secret-token");
+    });
+
+    expect(result.current.buildFormData()).toMatchObject({
+      name: "Bearer server",
+      type: "http",
+      url: "https://example.com/mcp",
+      headers: {
+        Authorization: "Bearer secret-token",
+      },
+    });
+  });
+
   it("includes an exact client capabilities override when enabled", () => {
     const { result } = renderHook(() => useServerForm());
 
@@ -157,6 +177,30 @@ describe("useServerForm", () => {
     });
 
     localStorage.removeItem("mcp-oauth-config-Existing OAuth server");
+  });
+
+  it("normalizes invalid stored OAuth registration strategies back to auto", async () => {
+    const server = {
+      name: "Existing OAuth server",
+      config: {
+        url: "https://example.com/mcp",
+      },
+      useOAuth: true,
+      oauthFlowProfile: {
+        protocolVersion: "2025-11-25",
+        registrationStrategy: "corrupted-value",
+      },
+      lastConnectionTime: new Date(),
+      connectionStatus: "disconnected",
+      retryCount: 0,
+      enabled: true,
+    } as any;
+
+    const { result } = renderHook(() => useServerForm(server));
+
+    await waitFor(() => {
+      expect(result.current.oauthRegistrationMode).toBe("auto");
+    });
   });
 
   it("blocks submit for preregistered OAuth until client ID passes validation", () => {

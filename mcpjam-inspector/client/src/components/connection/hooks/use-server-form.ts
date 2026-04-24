@@ -31,6 +31,13 @@ interface InitialFormValues {
 }
 
 const DEFAULT_OAUTH_PROTOCOL_MODE: ServerFormOAuthProtocolMode = "2025-11-25";
+const DEFAULT_OAUTH_REGISTRATION_MODE: ServerFormOAuthRegistrationMode = "auto";
+
+interface HeaderEntry {
+  id?: string;
+  key: string;
+  value: string;
+}
 
 function normalizeOauthProtocolMode(
   value?: string,
@@ -40,6 +47,54 @@ function normalizeOauthProtocolMode(
     value === "2025-11-25"
     ? value
     : DEFAULT_OAUTH_PROTOCOL_MODE;
+}
+
+function normalizeOauthRegistrationMode(
+  value?: string,
+): ServerFormOAuthRegistrationMode | undefined {
+  return value === "auto" ||
+    value === "cimd" ||
+    value === "dcr" ||
+    value === "preregistered"
+    ? value
+    : undefined;
+}
+
+function createHeaderEntry(key = "", value = ""): HeaderEntry {
+  return {
+    id:
+      typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    key,
+    value,
+  };
+}
+
+function isAuthorizationHeader(key: string): boolean {
+  return key.trim().toLowerCase() === "authorization";
+}
+
+function getAuthorizationHeaderValue(
+  headers?: Record<string, unknown>,
+): string | undefined {
+  if (!headers) {
+    return undefined;
+  }
+
+  for (const [key, value] of Object.entries(headers)) {
+    if (isAuthorizationHeader(key) && typeof value === "string") {
+      return value;
+    }
+  }
+
+  return undefined;
+}
+
+function toComparableHeaders(
+  headers: Array<{ key: string; value: string }>,
+): Array<{ key: string; value: string }> {
+  return headers.map(({ key, value }) => ({ key, value }));
 }
 
 export function useServerForm(
@@ -58,7 +113,7 @@ export function useServerForm(
   const [oauthProtocolMode, setOauthProtocolMode] =
     useState<ServerFormOAuthProtocolMode>(DEFAULT_OAUTH_PROTOCOL_MODE);
   const [oauthRegistrationMode, setOauthRegistrationMode] =
-    useState<ServerFormOAuthRegistrationMode>("auto");
+    useState<ServerFormOAuthRegistrationMode>(DEFAULT_OAUTH_REGISTRATION_MODE);
   const [clientId, setClientId] = useState("");
   const [clientSecret, setClientSecret] = useState("");
   const [bearerToken, setBearerToken] = useState("");
@@ -73,9 +128,7 @@ export function useServerForm(
   const [envVars, setEnvVars] = useState<Array<{ key: string; value: string }>>(
     [],
   );
-  const [customHeaders, setCustomHeaders] = useState<
-    Array<{ key: string; value: string }>
-  >([]);
+  const [customHeaders, setCustomHeaders] = useState<HeaderEntry[]>([]);
   const [requestTimeout, setRequestTimeout] = useState<string>("");
   const [clientCapabilitiesOverrideEnabled, setClientCapabilitiesOverrideEnabled] =
     useState(false);
@@ -114,7 +167,8 @@ export function useServerForm(
       let scopes: string[] = [];
       let protocolModeValue: ServerFormOAuthProtocolMode =
         DEFAULT_OAUTH_PROTOCOL_MODE;
-      let registrationModeValue: ServerFormOAuthRegistrationMode = "auto";
+      let registrationModeValue: ServerFormOAuthRegistrationMode =
+        DEFAULT_OAUTH_REGISTRATION_MODE;
       let clientIdValue = "";
       let clientSecretValue = "";
       let shouldShowClientCredentials = false;
@@ -181,19 +235,14 @@ export function useServerForm(
         );
 
         registrationModeValue =
-          oauthConfig.registrationMode === "auto" ||
-          oauthConfig.registrationMode === "cimd" ||
-          oauthConfig.registrationMode === "dcr" ||
-          oauthConfig.registrationMode === "preregistered"
-            ? oauthConfig.registrationMode
-            : server.oauthFlowProfile?.registrationStrategy ||
-              (oauthConfig.registrationStrategy === "cimd" ||
-              oauthConfig.registrationStrategy === "dcr" ||
-              oauthConfig.registrationStrategy === "preregistered"
-                ? oauthConfig.registrationStrategy
-                : (savedClientId || savedClientSecret)
-                  ? "preregistered"
-                  : "auto");
+          normalizeOauthRegistrationMode(oauthConfig.registrationMode) ??
+          normalizeOauthRegistrationMode(
+            server.oauthFlowProfile?.registrationStrategy,
+          ) ??
+          normalizeOauthRegistrationMode(oauthConfig.registrationStrategy) ??
+          ((savedClientId || savedClientSecret)
+            ? "preregistered"
+            : DEFAULT_OAUTH_REGISTRATION_MODE);
 
         shouldShowClientCredentials =
           registrationModeValue === "preregistered" ||
@@ -210,17 +259,16 @@ export function useServerForm(
             .filter(Boolean)
             .join(" ")
         : "";
+      const authorizationHeader = isHttpServer
+        ? getAuthorizationHeaderValue(
+            config.requestInit?.headers as Record<string, unknown> | undefined,
+          )
+        : undefined;
       const hasBearer =
-        isHttpServer &&
-        config.requestInit?.headers &&
-        typeof config.requestInit.headers === "object" &&
-        "Authorization" in config.requestInit.headers &&
-        typeof config.requestInit.headers.Authorization === "string" &&
-        config.requestInit.headers.Authorization.startsWith("Bearer ");
+        typeof authorizationHeader === "string" &&
+        authorizationHeader.startsWith("Bearer ");
       const bearerTokenValue = hasBearer
-        ? (
-            config.requestInit!.headers as Record<string, string>
-          ).Authorization.replace("Bearer ", "")
+        ? authorizationHeader.replace("Bearer ", "")
         : "";
       const resolvedAuthType: "oauth" | "bearer" | "none" = hasOAuth
         ? "oauth"
@@ -289,15 +337,15 @@ export function useServerForm(
       setEnvVars(envArray);
 
       // Initialize custom headers for HTTP servers (excluding Authorization)
-      let headersArray: Array<{ key: string; value: string }> = [];
+      let headersArray: HeaderEntry[] = [];
       if (
         isHttpServer &&
         config.requestInit?.headers &&
         typeof config.requestInit.headers === "object"
       ) {
         headersArray = Object.entries(config.requestInit.headers)
-          .filter(([key]) => key !== "Authorization")
-          .map(([key, value]) => ({ key, value: String(value) }));
+          .filter(([key]) => !isAuthorizationHeader(key))
+          .map(([key, value]) => createHeaderEntry(key, String(value)));
       }
       setCustomHeaders(headersArray);
       setShowConfiguration(
@@ -413,7 +461,7 @@ export function useServerForm(
   };
 
   const addCustomHeader = () => {
-    setCustomHeaders([...customHeaders, { key: "", value: "" }]);
+    setCustomHeaders([...customHeaders, createHeaderEntry()]);
   };
 
   const removeCustomHeader = (index: number) => {
@@ -426,7 +474,10 @@ export function useServerForm(
     value: string,
   ) => {
     const updated = [...customHeaders];
-    updated[index][field] = value;
+    updated[index] = {
+      ...updated[index],
+      [field]: value,
+    };
     setCustomHeaders(updated);
   };
 
@@ -489,9 +540,6 @@ export function useServerForm(
         headers[key.trim()] = value;
       }
     });
-    const explicitHeaders =
-      Object.keys(headers).length > 0 ? headers : undefined;
-
     // Parse OAuth scopes from input
     const scopes = oauthScopesInput
       .trim()
@@ -502,11 +550,13 @@ export function useServerForm(
 
     // Handle authentication
     let useOAuth = false;
-    if (authType === "bearer" && bearerToken) {
+    if (authType === "bearer" && bearerToken.trim()) {
       headers["Authorization"] = `Bearer ${bearerToken.trim()}`;
     } else if (authType === "oauth") {
       useOAuth = true;
     }
+    const explicitHeaders =
+      Object.keys(headers).length > 0 ? headers : undefined;
 
     return {
       name: name.trim(),
@@ -535,7 +585,7 @@ export function useServerForm(
     setUrl("");
     setOauthScopesInput("");
     setOauthProtocolMode(DEFAULT_OAUTH_PROTOCOL_MODE);
-    setOauthRegistrationMode("auto");
+    setOauthRegistrationMode(DEFAULT_OAUTH_REGISTRATION_MODE);
     setClientId("");
     setClientSecret("");
     setBearerToken("");
@@ -576,7 +626,8 @@ export function useServerForm(
         iv.clientCapabilitiesOverrideEnabled ||
       clientCapabilitiesOverrideText !== iv.clientCapabilitiesOverrideText ||
       JSON.stringify(envVars) !== JSON.stringify(iv.envVars) ||
-      JSON.stringify(customHeaders) !== JSON.stringify(iv.customHeaders)
+      JSON.stringify(toComparableHeaders(customHeaders)) !==
+        JSON.stringify(iv.customHeaders)
     );
   })();
 

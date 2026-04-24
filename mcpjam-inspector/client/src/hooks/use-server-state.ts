@@ -98,6 +98,44 @@ function omitAuthorizationHeader(
   return Object.keys(sanitized).length > 0 ? sanitized : undefined;
 }
 
+function mergeOAuthCallbackServerConfig(
+  existingConfig: MCPServerConfig | undefined,
+  callbackConfig: HttpServerConfig,
+): HttpServerConfig {
+  const existingHttpConfig =
+    existingConfig && "url" in existingConfig ? existingConfig : undefined;
+  const mergedHeaders = {
+    ...(omitAuthorizationHeader(
+      extractRequestHeaders(existingHttpConfig?.requestInit),
+    ) ?? {}),
+    ...(extractRequestHeaders(callbackConfig.requestInit) ?? {}),
+  };
+  const nextRequestInit =
+    existingHttpConfig?.requestInit || callbackConfig.requestInit
+      ? {
+          ...(existingHttpConfig?.requestInit ?? {}),
+          ...(callbackConfig.requestInit ?? {}),
+          ...(Object.keys(mergedHeaders).length > 0
+            ? { headers: mergedHeaders }
+            : {}),
+        }
+      : undefined;
+
+  return {
+    ...(existingHttpConfig ?? {}),
+    ...callbackConfig,
+    ...(nextRequestInit ? { requestInit: nextRequestInit } : {}),
+    timeout: callbackConfig.timeout ?? existingHttpConfig?.timeout,
+    capabilities:
+      callbackConfig.capabilities ?? existingHttpConfig?.capabilities,
+    clientCapabilities:
+      callbackConfig.clientCapabilities ??
+      existingHttpConfig?.clientCapabilities ??
+      callbackConfig.capabilities ??
+      existingHttpConfig?.capabilities,
+  };
+}
+
 /**
  * Saves OAuth-related configuration to localStorage for reconnection purposes.
  * This persists server URL, scopes, headers, and client credentials.
@@ -239,7 +277,7 @@ function buildResolvedOAuthProfile(input: {
       existingProfile?.clientSecret ?? storedClientCredentials.clientSecret ?? "",
     scopes:
       existingProfile?.scopes ??
-      storedOAuthConfig.scopes?.join(" ") ??
+      storedOAuthConfig.scopes?.join(",") ??
       "",
     customHeaders,
     protocolVersion,
@@ -932,14 +970,18 @@ export function useServerState({
         if (result.success && result.serverConfig && result.serverName) {
           const serverName = result.serverName;
           const existingServer = latestEffectiveServersRef.current[serverName];
+          const mergedServerConfig = mergeOAuthCallbackServerConfig(
+            existingServer?.config,
+            result.serverConfig,
+          );
           const storedOAuthConfig = readStoredOAuthConfig(serverName);
           const storedClientCredentials = readStoredClientCredentials(serverName);
           const resolvedOAuthProfile = buildResolvedOAuthProfile({
             serverName,
             serverUrl:
-              result.serverConfig.url instanceof URL
-                ? result.serverConfig.url.href
-                : String(result.serverConfig.url),
+              mergedServerConfig.url instanceof URL
+                ? mergedServerConfig.url.href
+                : String(mergedServerConfig.url),
             existingProfile: existingServer?.oauthFlowProfile,
             storedOAuthConfig,
             storedClientCredentials,
@@ -948,7 +990,7 @@ export function useServerState({
           const oauthServerEntry: ServerWithName = {
             ...(existingServer ?? {}),
             name: serverName,
-            config: result.serverConfig,
+            config: mergedServerConfig,
             lastConnectionTime:
               existingServer?.lastConnectionTime ?? new Date(),
             connectionStatus:
@@ -981,20 +1023,20 @@ export function useServerState({
           dispatch({
             type: "CONNECT_REQUEST",
             name: serverName,
-            config: result.serverConfig,
+            config: mergedServerConfig,
             select: true,
           });
 
           try {
             const connectionResult = await guardedTestConnection(
-              withWorkspaceConnectionDefaults(result.serverConfig),
+              withWorkspaceConnectionDefaults(mergedServerConfig),
               serverName,
             );
             if (connectionResult.success) {
                 dispatch({
                   type: "CONNECT_SUCCESS",
                   name: serverName,
-                  config: result.serverConfig,
+                  config: mergedServerConfig,
                   tokens: isHostedWorkspaceCallback
                     ? undefined
                     : getStoredTokens(serverName),

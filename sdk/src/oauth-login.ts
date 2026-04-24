@@ -89,6 +89,8 @@ export interface OAuthLoginDependencies {
   createDefaultRedirectUrl?: () => string;
 }
 
+const DEFAULT_OAUTH_LOGIN_STEP_TIMEOUT_MS = 30_000;
+
 function cloneEmptyFlowState(): OAuthFlowState {
   return {
     ...EMPTY_OAUTH_FLOW_STATE,
@@ -231,7 +233,7 @@ async function resolveOAuthLoginAuthorizationPlan(
     url: input.serverUrl,
     protocolVersion: basePlan.protocolVersion,
     headers: input.customHeaders,
-    timeoutMs: input.stepTimeout,
+    timeoutMs: input.stepTimeout ?? DEFAULT_OAUTH_LOGIN_STEP_TIMEOUT_MS,
     fetchFn: input.fetchFn,
   });
 

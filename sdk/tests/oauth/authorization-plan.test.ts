@@ -24,6 +24,20 @@ describe("resolveAuthorizationPlan", () => {
     expect(plan.registrationStrategy).toBe("preregistered");
   });
 
+  it("blocks automatic preregistered selection when client_credentials inputs are incomplete", () => {
+    const plan = resolveAuthorizationPlan({
+      serverUrl: "https://example.com/mcp",
+      authMode: "client_credentials",
+      clientId: "client-id-only",
+    });
+
+    expect(plan.status).toBe("blocked");
+    expect(plan.registrationStrategy).toBeUndefined();
+    expect(plan.blockers[0]).toContain(
+      "Provide both a client ID and client secret",
+    );
+  });
+
   it("chooses CIMD for latest-spec interactive flows when advertised", () => {
     const plan = resolveAuthorizationPlan({
       serverUrl: "https://example.com/mcp",

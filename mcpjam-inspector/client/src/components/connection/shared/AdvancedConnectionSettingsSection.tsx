@@ -4,6 +4,7 @@ import { Switch } from "@mcpjam/design-system/switch";
 import { JsonEditor } from "@/components/ui/json-editor";
 
 interface HeaderEntry {
+  id?: string;
   key: string;
   value: string;
 }
@@ -110,7 +111,10 @@ export function AdvancedConnectionSettingsSection({
               {customHeaders.length > 0 && (
                 <div className="space-y-1">
                   {customHeaders.map((header, index) => (
-                    <div key={index} className="flex items-center gap-1.5">
+                    <div
+                      key={header.id ?? `${header.key}-${index}`}
+                      className="flex items-center gap-1.5"
+                    >
                       <Input
                         value={header.key}
                         onChange={(e) => onUpdateHeader(index, "key", e.target.value)}

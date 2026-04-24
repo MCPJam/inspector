@@ -512,6 +512,55 @@ function resolveOAuthRegistrationMode(
   return "auto";
 }
 
+function createScopedDiscoveryFetch(
+  fetchFn: typeof fetch,
+  serverUrl: string,
+  customHeaders?: Record<string, string>
+): typeof fetch {
+  if (!customHeaders || Object.keys(customHeaders).length === 0) {
+    return fetchFn;
+  }
+
+  let serverOrigin: string;
+  try {
+    serverOrigin = new URL(serverUrl).origin;
+  } catch {
+    return fetchFn;
+  }
+
+  return (input, init) => {
+    const requestUrl =
+      typeof input === "string"
+        ? input
+        : input instanceof URL
+          ? input.toString()
+          : input.url;
+
+    let requestOrigin: string;
+    try {
+      requestOrigin = new URL(requestUrl, serverUrl).origin;
+    } catch {
+      return fetchFn(input, init);
+    }
+
+    if (requestOrigin !== serverOrigin) {
+      return fetchFn(input, init);
+    }
+
+    const headers = new Headers(init?.headers ?? undefined);
+    for (const [key, value] of Object.entries(customHeaders)) {
+      if (!headers.has(key)) {
+        headers.set(key, value);
+      }
+    }
+
+    return fetchFn(input, {
+      ...init,
+      headers,
+    });
+  };
+}
+
 async function resolveOAuthExecutionPlan(
   provider: MCPOAuthProvider,
   fetchFn: typeof fetch,
@@ -547,7 +596,8 @@ async function resolveOAuthExecutionPlan(
   const discoveryState = await loadCallbackDiscoveryState(
     provider,
     options.serverUrl,
-    fetchFn
+    fetchFn,
+    options.customHeaders
   );
 
   return resolveAuthorizationPlan({
@@ -1149,15 +1199,21 @@ function toConvexOAuthPayload(
 async function loadCallbackDiscoveryState(
   provider: MCPOAuthProvider,
   serverUrl: string,
-  fetchFn: typeof fetch
+  fetchFn: typeof fetch,
+  customHeaders?: Record<string, string>
 ): Promise<OAuthDiscoveryState> {
+  const discoveryFetch = createScopedDiscoveryFetch(
+    fetchFn,
+    serverUrl,
+    customHeaders
+  );
   const cachedState = await provider.discoveryState();
   if (cachedState?.authorizationServerUrl) {
     const authorizationServerMetadata =
       cachedState.authorizationServerMetadata ??
       (await discoverAuthorizationServerMetadata(
         cachedState.authorizationServerUrl,
-        { fetchFn }
+        { fetchFn: discoveryFetch }
       ));
 
     const discoveryState: OAuthDiscoveryState = {
@@ -1168,7 +1224,9 @@ async function loadCallbackDiscoveryState(
     return discoveryState;
   }
 
-  const discovered = await discoverOAuthServerInfo(serverUrl, { fetchFn });
+  const discovered = await discoverOAuthServerInfo(serverUrl, {
+    fetchFn: discoveryFetch,
+  });
   const discoveryState: OAuthDiscoveryState = {
     authorizationServerUrl: discovered.authorizationServerUrl,
     resourceMetadata: discovered.resourceMetadata,
@@ -2636,7 +2694,8 @@ export async function handleOAuthCallback(
     const discoveryState = await loadCallbackDiscoveryState(
       provider,
       serverUrl,
-      fetchFn
+      fetchFn,
+      oauthConfig.customHeaders
     );
     completeOAuthTraceStep(callbackTrace, "received_authorization_code", {
       message: "Callback state restored.",
@@ -2873,7 +2932,8 @@ export async function refreshOAuthTokens(
     const discoveryState = await loadCallbackDiscoveryState(
       provider,
       serverUrl,
-      fetchFn
+      fetchFn,
+      oauthConfig.customHeaders
     );
     completeOAuthTraceStep(trace, "request_resource_metadata", {
       message: "Protected resource metadata loaded.",
@@ -2970,6 +3030,7 @@ export function clearOAuthData(serverName: string): void {
   clearStoredDiscoveryState(serverName);
   clearOAuthFlowSession(serverName);
   clearOAuthTrace(serverName);
+  clearOAuthTraceSession(serverName);
 }
 
 /**
