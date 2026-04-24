@@ -12,7 +12,15 @@ import type {
   AnySchema,
   ZodRawShapeCompat,
 } from "@modelcontextprotocol/sdk/server/zod-compat.js";
-import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
+import type {
+  ToolAnnotations,
+} from "@modelcontextprotocol/sdk/types.js";
+import {
+  CallToolRequestSchema,
+  ListResourcesRequestSchema,
+  ListToolsRequestSchema,
+  ReadResourceRequestSchema,
+} from "@modelcontextprotocol/sdk/types.js";
 
 type ToolConfig<
   OutputArgs extends ZodRawShapeCompat | AnySchema,
@@ -41,6 +49,29 @@ type ToolUiToggle = {
   setUiEnabled(enabled: boolean): void;
 };
 
+type UiRequestHandler = (request: unknown, extra: unknown) => unknown;
+
+const UI_REQUEST_METHODS = [
+  {
+    method: "tools/list",
+    schema: ListToolsRequestSchema,
+  },
+  {
+    method: "tools/call",
+    schema: CallToolRequestSchema,
+  },
+  {
+    method: "resources/list",
+    schema: ListResourcesRequestSchema,
+  },
+  {
+    method: "resources/read",
+    schema: ReadResourceRequestSchema,
+  },
+] as const;
+
+const UI_WRAPPER_FLAG = "__mcpjamUiRequestWrappersInstalled";
+
 export interface SessionToolRegistrar {
   registerTool<
     OutputArgs extends ZodRawShapeCompat | AnySchema,
@@ -56,6 +87,12 @@ export interface SessionToolRegistrar {
 
 export function createSessionToolRegistrar(server: McpServer): SessionToolRegistrar {
   const uiToggles: ToolUiToggle[] = [];
+  const resolveUiEnabled = () =>
+    getUiCapability(
+      server.server.getClientCapabilities() as
+        | { extensions?: Record<string, unknown> }
+        | undefined
+    )?.mimeTypes?.includes(RESOURCE_MIME_TYPE) ?? false;
 
   return {
     registerTool<
@@ -124,6 +161,13 @@ export function createSessionToolRegistrar(server: McpServer): SessionToolRegist
         })
       );
 
+      ensureUiRequestWrappers(server, () => {
+        const enabled = resolveUiEnabled();
+        for (const toggle of uiToggles) {
+          toggle.setUiEnabled(enabled);
+        }
+      });
+
       return plainTool;
     },
     setUiEnabled(enabled) {
@@ -132,6 +176,44 @@ export function createSessionToolRegistrar(server: McpServer): SessionToolRegist
       }
     },
   };
+}
+
+function ensureUiRequestWrappers(
+  server: McpServer,
+  syncUiState: () => void
+): void {
+  const protocol = server.server as unknown as {
+    _requestHandlers?: Map<string, UiRequestHandler>;
+    [UI_WRAPPER_FLAG]?: boolean;
+  };
+
+  if (protocol[UI_WRAPPER_FLAG]) {
+    return;
+  }
+
+  for (const { method, schema } of UI_REQUEST_METHODS) {
+    const originalHandler = protocol._requestHandlers?.get(method);
+    if (!originalHandler) {
+      continue;
+    }
+
+    const wrappedHandler: any = async (request: any, extra: any) => {
+      syncUiState();
+      return await originalHandler(request, extra);
+    };
+
+    server.server.setRequestHandler(schema as any, wrappedHandler);
+  }
+
+  protocol[UI_WRAPPER_FLAG] = true;
+}
+
+function getUiCapability(
+  clientCapabilities: { extensions?: Record<string, unknown> } | undefined
+): { mimeTypes?: string[] } | undefined {
+  return clientCapabilities?.extensions?.["io.modelcontextprotocol/ui"] as
+    | { mimeTypes?: string[] }
+    | undefined;
 }
 
 function createToolUiToggle({
