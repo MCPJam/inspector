@@ -16,6 +16,12 @@
  */
 export const HOSTED_MODE = import.meta.env.VITE_MCPJAM_HOSTED_MODE === "true";
 
+/**
+ * Controls redaction for live OAuth trace rendering.
+ * Redirect resume state and saved app state remain stripped/redacted separately.
+ */
+export const SANITIZE_OAUTH_TRACES = HOSTED_MODE;
+
 export const NON_PROD_LOCKDOWN =
   import.meta.env.VITE_MCPJAM_NONPROD_LOCKDOWN === "true";
 

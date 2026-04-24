@@ -73,6 +73,7 @@ export {
   scrubMetaAndStructuredContentFromToolResult,
 } from "./mcp-client-manager/index.js";
 export {
+  applyRuntimeClientCapabilities,
   MCP_UI_EXTENSION_ID,
   MCP_UI_RESOURCE_MIME_TYPE,
   getDefaultClientCapabilities,
@@ -184,12 +185,41 @@ export type {
   StructuredRunSummary,
   StructuredRunReport,
 } from "./structured-reporting.js";
+export {
+  toConformanceReport,
+  renderConformanceReportJson,
+  renderConformanceReportJUnitXml,
+} from "./conformance-reporting.js";
+export type {
+  ConformanceReport,
+  ConformanceReportCase,
+  ConformanceReportCaseStatus,
+  ConformanceReportGroup,
+  ConformanceReportKind,
+  SupportedConformanceResult,
+} from "./conformance-reporting.js";
 export { runOAuthLogin } from "./oauth-login.js";
 export type {
   OAuthLoginConfig,
   OAuthLoginDependencies,
   OAuthLoginResult,
 } from "./oauth-login.js";
+export { runOAuthStateMachine } from "./oauth/state-machines/runner.js";
+export type {
+  OAuthAuthorizationRequestResult,
+  OAuthStateMachineRunConfig,
+  OAuthStateMachineRunResult,
+} from "./oauth/state-machines/runner.js";
+export {
+  createOAuthTraceProjectionContext,
+  projectOAuthTraceSnapshot,
+} from "./oauth/state-machines/trace.js";
+export type {
+  OAuthTraceProjectionContext,
+  OAuthTraceSnapshot,
+  OAuthTraceStepSnapshot,
+  OAuthTraceStepStatus,
+} from "./oauth/state-machines/trace.js";
 
 // EvalAgent interface (for deterministic testing without concrete TestAgent)
 export type { EvalAgent, PromptOptions } from "./EvalAgent.js";
@@ -393,7 +423,10 @@ export type {
 } from "./mcp-conformance/index.js";
 
 // MCP Apps conformance
-export { MCPAppsConformanceTest } from "./apps-conformance/index.js";
+export {
+  MCPAppsConformanceTest,
+  MCPAppsConformanceSuite,
+} from "./apps-conformance/index.js";
 export type {
   MCPAppsCheckCategory,
   MCPAppsCheckId,
@@ -401,6 +434,10 @@ export type {
   MCPAppsCheckStatus,
   MCPAppsConformanceConfig,
   MCPAppsConformanceResult,
+  MCPAppsConformanceSuiteConfig,
+  MCPAppsConformanceSuiteDefaults,
+  MCPAppsConformanceSuiteResult,
+  MCPAppsConformanceSuiteRun,
   MCPAppsResourceReadOutcome,
 } from "./apps-conformance/index.js";
 export {

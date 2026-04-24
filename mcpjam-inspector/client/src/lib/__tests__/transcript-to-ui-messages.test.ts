@@ -168,6 +168,63 @@ describe("transcriptToUIMessages", () => {
     expect(toolPart.output).toEqual({ ok: true });
   });
 
+  it("prefers raw tool output when a simplified result is also present", () => {
+    const rawOutput = {
+      type: "json",
+      value: {
+        _meta: {
+          ui: { resourceUri: "ui://widget/create-view.html" },
+          _serverId: "server-1",
+        },
+        structuredContent: { checkpointId: "checkpoint-1" },
+      },
+    };
+    const simplifiedResult = {
+      structuredContent: { checkpointId: "checkpoint-1" },
+    };
+    const transcript = [
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool-call",
+            toolCallId: "call-widget-1",
+            toolName: "create_view",
+            args: {},
+          },
+        ],
+      },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "call-widget-1",
+            output: rawOutput,
+            result: simplifiedResult,
+          },
+        ],
+      },
+    ];
+
+    const merged = mergeTranscriptToolResults(transcript);
+    const mergedToolCall = ((merged[0] as { content: unknown[] }).content[0] ??
+      {}) as {
+      output?: unknown;
+      result?: unknown;
+    };
+    expect(mergedToolCall.output).toEqual(rawOutput);
+    expect(mergedToolCall.result).toEqual(simplifiedResult);
+
+    const messages = transcriptToUIMessages(transcript);
+    const toolPart = messages[0].parts[0] as {
+      type: string;
+      output: unknown;
+    };
+    expect(toolPart.type).toBe("dynamic-tool");
+    expect(toolPart.output).toEqual(rawOutput);
+  });
+
   it("merged tool history converts with convertToModelMessages", async () => {
     const transcript = [
       { role: "user", content: "search for cats" },

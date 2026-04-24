@@ -27,6 +27,14 @@ For a local stdio server:
 mcpjam apps conformance --command node --args server.js --cwd /path/to/project
 ```
 
+You can emit CI-friendly JUnit XML from either the single-run or suite command:
+
+```bash
+mcpjam apps conformance \
+  --url https://your-server.com/mcp \
+  --format junit-xml > apps-report.xml
+```
+
 ## What it checks
 
 The current runner validates:
@@ -62,6 +70,51 @@ Typical success summary:
   }
 }
 ```
+
+## Suite runner
+
+Use `apps conformance-suite` when you want a named CI matrix from a config file.
+
+Example config:
+
+```json
+{
+  "name": "Apps CI",
+  "target": {
+    "url": "https://your-server.com/mcp",
+    "timeout": 30000
+  },
+  "defaults": {
+    "checkIds": ["ui-tools-present", "ui-tool-metadata-valid"]
+  },
+  "runs": [
+    {
+      "label": "metadata"
+    },
+    {
+      "label": "resources",
+      "checkIds": [
+        "ui-resources-readable",
+        "ui-resource-contents-valid",
+        "ui-resource-meta-valid"
+      ]
+    }
+  ]
+}
+```
+
+Run it with:
+
+```bash
+mcpjam apps conformance-suite \
+  --config ./apps-conformance.json \
+  --format junit-xml > apps-report.xml
+```
+
+`target` uses the same shared server shape as the rest of the CLI, so it can point at either:
+
+- an HTTP target with `url`
+- a stdio target with `command`, optional `args`, optional `env`, and optional `cwd`
 
 ## Categories and check ids
 
@@ -133,6 +186,7 @@ implies stdio.
 - Deprecated `_meta["ui/resourceUri"]` is accepted but reported as a warning.
 - Tool name SHOULD validations (length, character set, uniqueness) surface as warnings, not failures.
 - `permissions` are validated against the SEP-1865 object shape, for example `geolocation: {}` instead of booleans.
+- Exit codes are CI-friendly: `0` when all selected checks pass, `1` when any check fails, and `2` for invalid command usage or config files.
 
 ## Related commands
 

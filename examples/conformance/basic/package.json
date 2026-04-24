@@ -1,0 +1,21 @@
+{
+  "name": "basic-conformance-example",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "start:server": "node ./mock-http-server.mjs"
+  },
+  "dependencies": {
+    "@mcpjam/sdk": "file:../../../sdk",
+    "@modelcontextprotocol/sdk": "^1.26.0",
+    "zod": "^4.1.13"
+  },
+  "devDependencies": {
+    "@types/node": "^25.0.10",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  }
+}

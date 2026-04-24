@@ -1192,6 +1192,39 @@ describe("PlaygroundMain", () => {
       ).toBeInTheDocument();
     });
 
+    it("auto-connects the selected server before sending a message", async () => {
+      const ensureServersReady = vi.fn().mockResolvedValue({
+        readyServerNames: ["test-server"],
+        missingServerNames: [],
+        failedServerNames: [],
+        reauthServerNames: [],
+      });
+      mockSharedAppState.servers["test-server"] = {
+        connectionStatus: "disconnected",
+      };
+
+      render(
+        <PlaygroundMain
+          {...defaultProps}
+          ensureServersReady={ensureServersReady}
+        />,
+      );
+
+      fireEvent.change(screen.getByTestId("chat-input-field"), {
+        target: { value: "Hello from playground" },
+      });
+      fireEvent.click(screen.getByTestId("chat-submit-button"));
+
+      await waitFor(() => {
+        expect(ensureServersReady).toHaveBeenCalledWith(["test-server"]);
+      });
+      await waitFor(() => {
+        expect(mockUseChatSession.sendMessage).toHaveBeenCalledWith(
+          expect.objectContaining({ text: "Hello from playground" }),
+        );
+      });
+    });
+
     it("shows the guided prompt in the input when post-connect onboarding is active", () => {
       render(
         <PlaygroundMain

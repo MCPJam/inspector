@@ -5,6 +5,7 @@ import {
   getConformanceClientCredentialsDynamicRegistrationMetadata,
 } from "./oauth/client-identity.js";
 import { createOAuthStateMachine } from "./oauth/state-machines/factory.js";
+import { runOAuthStateMachine } from "./oauth/state-machines/runner.js";
 import {
   EMPTY_OAUTH_FLOW_STATE,
   type OAuthFlowState,
@@ -292,7 +293,8 @@ export async function runOAuthLogin(
     oauthConformanceChecks: false,
   });
   let state = cloneEmptyFlowState();
-  let redirectUrl = config.redirectUrl;
+  let redirectUrl =
+    config.redirectUrl ?? (deps.createDefaultRedirectUrl ?? createDefaultRedirectUrl)();
   let interactiveSession: InteractiveAuthorizationSession | undefined;
 
   const updateState = (updates: Partial<OAuthFlowState>) => {
@@ -312,8 +314,7 @@ export async function runOAuthLogin(
 
     redirectUrl =
       interactiveSession?.redirectUrl ??
-      config.redirectUrl ??
-      (deps.createDefaultRedirectUrl ?? createDefaultRedirectUrl)();
+      redirectUrl;
 
     const trackedRequest: TrackedRequestFn = async (request, options = {}) => {
       const controller = new AbortController();
@@ -348,7 +349,7 @@ export async function runOAuthLogin(
       }
     };
 
-    const machine = createOAuthStateMachine({
+    const machineConfig = {
       protocolVersion: config.protocolVersion,
       registrationStrategy: config.registrationStrategy,
       state,
@@ -357,7 +358,7 @@ export async function runOAuthLogin(
       serverUrl: config.serverUrl,
       serverName: config.serverName,
       redirectUrl,
-      requestExecutor: (request) => trackedRequest(request),
+      requestExecutor: (request: OAuthHttpRequest) => trackedRequest(request),
       loadPreregisteredCredentials: async () => ({
         clientId: config.client.preregistered?.clientId,
         clientSecret: config.client.preregistered?.clientSecret,
@@ -369,7 +370,77 @@ export async function runOAuthLogin(
       customScopes: config.scopes,
       customHeaders: config.customHeaders,
       authMode: config.auth.mode,
-    });
+    } as const;
+
+    if (config.auth.mode !== "client_credentials") {
+      const flowResult = await runOAuthStateMachine({
+        ...machineConfig,
+        maxSteps: 40,
+        onAuthorizationRequest: async ({ authorizationUrl, state: flowState }) => {
+          try {
+            config.onProgress("Opening browser for authorization...");
+            const authorizationResult =
+              config.auth.mode === "interactive"
+                ? await interactiveSession!.authorize({
+                    authorizationUrl,
+                    expectedState: flowState.state,
+                    timeoutMs: config.stepTimeout,
+                    openUrl: config.auth.openUrl,
+                  })
+                : await (
+                    deps.completeHeadlessAuthorization ??
+                    completeHeadlessAuthorization
+                  )({
+                    authorizationUrl,
+                    redirectUrl,
+                    expectedState: flowState.state,
+                    request: trackedRequest,
+                  });
+
+            config.onProgress("Authorization received, exchanging token...");
+            return {
+              type: "authorization_code" as const,
+              authorizationCode: authorizationResult.code,
+            };
+          } catch (error) {
+            updateState({
+              error: error instanceof Error ? error.message : String(error),
+            });
+            throw error;
+          }
+        },
+      });
+
+      if (flowResult.error) {
+        const resultState =
+          flowResult.state.currentStep === "authorization_request" &&
+          flowResult.state.authorizationUrl
+            ? {
+                ...flowResult.state,
+                // Preserve the SDK login helper's historical contract: once an
+                // authorization URL exists, failures in the browser/headless
+                // handoff are reported as failing to receive the auth code.
+                currentStep: "received_authorization_code" as const,
+              }
+            : flowResult.state;
+        return buildResult(
+          config,
+          redirectUrl,
+          resultState,
+          undefined,
+          flowResult.error.message,
+        );
+      }
+
+      const verification = await runVerification(
+        config,
+        flowResult.state,
+        config.verification,
+      );
+      return buildResult(config, redirectUrl, flowResult.state, verification);
+    }
+
+    const machine = createOAuthStateMachine(machineConfig);
 
     let guard = 0;
     while (state.currentStep !== "complete" && guard < 40) {
@@ -436,59 +507,6 @@ export async function runOAuthLogin(
             config,
             redirectUrl,
             state,
-            undefined,
-            error instanceof Error ? error.message : String(error),
-          );
-        }
-      }
-
-      if (state.currentStep === "authorization_request") {
-        if (!state.authorizationUrl) {
-          return buildResult(
-            config,
-            redirectUrl,
-            state,
-            undefined,
-            "Authorization URL was not generated.",
-          );
-        }
-
-        try {
-          config.onProgress("Opening browser for authorization...");
-          const authorizationResult =
-            config.auth.mode === "interactive"
-              ? await interactiveSession!.authorize({
-                  authorizationUrl: state.authorizationUrl,
-                  expectedState: state.state,
-                  timeoutMs: config.stepTimeout,
-                  openUrl: config.auth.openUrl,
-                })
-              : await (
-                  deps.completeHeadlessAuthorization ??
-                  completeHeadlessAuthorization
-                )({
-                  authorizationUrl: state.authorizationUrl,
-                  redirectUrl,
-                  expectedState: state.state,
-                  request: trackedRequest,
-                });
-
-          config.onProgress("Authorization received, exchanging token...");
-          updateState({
-            currentStep: "received_authorization_code",
-            authorizationCode: authorizationResult.code,
-            error: undefined,
-          });
-          continue;
-        } catch (error) {
-          return buildResult(
-            config,
-            redirectUrl,
-            {
-              ...state,
-              currentStep: "received_authorization_code",
-              error: error instanceof Error ? error.message : String(error),
-            },
             undefined,
             error instanceof Error ? error.message : String(error),
           );

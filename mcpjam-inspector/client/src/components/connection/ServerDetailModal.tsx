@@ -46,7 +46,10 @@ interface ServerDetailModalProps {
   onDisconnect: (serverName: string) => void;
   onReconnect: (
     serverName: string,
-    options?: { forceOAuthFlow?: boolean },
+    options?: {
+      forceOAuthFlow?: boolean;
+      allowInteractiveOAuthFlow?: boolean;
+    },
   ) => Promise<void>;
   existingServerNames: string[];
 }
@@ -182,7 +185,10 @@ export function ServerDetailModal({
     }
   };
 
-  const handleConnect = async () => {
+  const handleConnect = async (options?: {
+    forceOAuthFlow?: boolean;
+    allowInteractiveOAuthFlow?: boolean;
+  }) => {
     setIsReconnecting(true);
     posthog.capture("server_detail_modal_connect_clicked", {
       platform: detectPlatform(),
@@ -190,12 +196,7 @@ export function ServerDetailModal({
       server_id: server.name,
     });
     try {
-      const shouldForceOAuth =
-        server.useOAuth === true || server.oauthTokens != null;
-      await onReconnect(
-        server.name,
-        shouldForceOAuth ? { forceOAuthFlow: true } : undefined,
-      );
+      await onReconnect(server.name, options);
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : "Unknown error";
@@ -306,7 +307,9 @@ export function ServerDetailModal({
                   if (!checked) {
                     handleDisconnect();
                   } else {
-                    void handleConnect();
+                    void handleConnect({
+                      allowInteractiveOAuthFlow: false,
+                    });
                   }
                 }}
                 className="cursor-pointer scale-75"
@@ -380,7 +383,9 @@ export function ServerDetailModal({
                 className="mt-0 flex-none absolute inset-0 overflow-y-auto bg-background"
               >
                 <div className="pl-1 pr-6">
-                  {!isConnected ? (
+                  {!isConnected &&
+                  !server.lastError &&
+                  !server.lastOAuthTrace ? (
                     <div className="flex items-center justify-center h-full min-h-[120px] text-sm text-muted-foreground">
                       Connect to view server overview
                     </div>

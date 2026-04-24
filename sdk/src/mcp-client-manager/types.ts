@@ -185,6 +185,7 @@ export interface LiveClientState extends BaseClientState {
   stdioStderrCleanup?: () => void;
   connectPromise?: Promise<Client>;
   retryPromise?: Promise<Client>;
+  initializedClientCapabilities?: ClientCapabilityOptions;
 }
 
 // ============================================================================

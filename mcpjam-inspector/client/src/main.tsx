@@ -12,6 +12,7 @@ import { IframeRouterError } from "./components/IframeRouterError.jsx";
 import { initializeSessionToken } from "./lib/session-token.js";
 import { HOSTED_MODE } from "./lib/config";
 import { GuestConvexAuthBridge } from "./lib/guest-convex-auth";
+import { getRuntimeConvexUrl } from "./lib/runtime-config";
 
 // Initialize Sentry before React mounts
 initSentry();
@@ -37,7 +38,9 @@ if (isInIframe) {
     </StrictMode>
   );
 } else {
-  const convexUrl = import.meta.env.VITE_CONVEX_URL as string;
+  const buildConvexUrl = import.meta.env.VITE_CONVEX_URL as string | undefined;
+  const runtimeConvexUrl = getRuntimeConvexUrl();
+  const convexUrl = runtimeConvexUrl || buildConvexUrl || "";
   const workosClientId = import.meta.env.VITE_WORKOS_CLIENT_ID as string;
   const workosDevMode = (() => {
     const explicit = import.meta.env.VITE_WORKOS_DEV_MODE as string | undefined;
@@ -69,6 +72,20 @@ if (isInIframe) {
   if (!convexUrl) {
     console.warn(
       "[main] VITE_CONVEX_URL is not set; Convex features may not work."
+    );
+  }
+  if (
+    HOSTED_MODE &&
+    runtimeConvexUrl &&
+    buildConvexUrl &&
+    runtimeConvexUrl !== buildConvexUrl
+  ) {
+    console.warn(
+      "[main] Hosted runtime Convex URL overrides build-time VITE_CONVEX_URL.",
+      {
+        buildConvexUrl,
+        runtimeConvexUrl,
+      }
     );
   }
   if (!workosClientId) {

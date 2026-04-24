@@ -11,6 +11,14 @@ vi.mock("@/lib/apis/mode-client", () => ({
   isHostedMode: () => mockIsHostedMode(),
 }));
 
+vi.mock("posthog-js", () => ({
+  default: { capture: vi.fn() },
+}));
+
+vi.mock("@/components/chat-v2/chat-input/model/provider-logo", () => ({
+  ProviderLogo: () => null,
+}));
+
 describe("SuiteHeader", () => {
   const baseSuite = {
     _id: "suite-1",
@@ -67,7 +75,7 @@ describe("SuiteHeader", () => {
     mockIsHostedMode.mockReturnValue(false);
   });
 
-  it("shows compact run stats under the run title in run detail", () => {
+  it("shows compact run stats under the run title in run detail when no KPI strip", () => {
     renderWithProviders(
       <SuiteHeader
         {...baseProps}
@@ -78,6 +86,23 @@ describe("SuiteHeader", () => {
       />,
     );
     expect(screen.getByText(/1 passed · 1 failed · 50%/)).toBeInTheDocument();
+  });
+
+  it("hides compact run stats when the KPI strip is shown", () => {
+    renderWithProviders(
+      <SuiteHeader
+        {...baseProps}
+        selectedRunDetails={{
+          ...baseRun,
+          summary: { total: 2, passed: 1, failed: 1, passRate: 0.5 },
+        }}
+        runDetailKpiStrip={<div data-testid="run-kpi-strip">kpis</div>}
+      />,
+    );
+    expect(
+      screen.queryByText(/1 passed · 1 failed · 50%/),
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("run-kpi-strip")).toBeInTheDocument();
   });
 
   it("shows replay lineage under the run title when replayedFromRunId is set", () => {
@@ -132,6 +157,23 @@ describe("SuiteHeader", () => {
     expect(
       screen.getByRole("button", { name: "Replay latest run" }),
     ).toBeTruthy();
+  });
+
+  it("truncates a very long read-only suite name in overview and keeps full name in title", () => {
+    const longName = "excalidraw " + "x".repeat(200);
+    renderWithProviders(
+      <SuiteHeader
+        {...baseProps}
+        viewMode="overview"
+        selectedRunDetails={null}
+        suite={{ ...baseSuite, name: longName }}
+        readOnlyConfig
+      />,
+    );
+
+    const heading = screen.getByRole("heading", { level: 2, name: longName });
+    expect(heading).toHaveClass("truncate");
+    expect(heading).toHaveAttribute("title", longName);
   });
 
   it("hides overview run actions when run actions are suppressed", () => {
@@ -205,4 +247,92 @@ describe("SuiteHeader", () => {
     expect(generateBtn).toBeDisabled();
     expect(generateBtn.querySelector(".animate-spin")).toBeInTheDocument();
   });
+
+  it("shows Generate and New case on unified suite dashboard when URL is still ?view=runs", () => {
+    const onCreate = vi.fn();
+    const onGenerate = vi.fn();
+
+    renderWithProviders(
+      <SuiteHeader
+        {...baseProps}
+        viewMode="overview"
+        selectedRunDetails={null}
+        runsViewMode="runs"
+        hideRunActions
+        unifiedSuiteDashboard
+        onCreateTestCase={onCreate}
+        onGenerateTestCases={onGenerate}
+        canGenerateTestCases
+      />,
+    );
+
+    expect(
+      screen.getByRole("button", { name: "New case" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /generate/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("shows Run all in the playground header and calls onRerun", async () => {
+    const user = userEvent.setup();
+    const onRerun = vi.fn();
+
+    renderWithProviders(
+      <SuiteHeader
+        {...baseProps}
+        viewMode="overview"
+        selectedRunDetails={null}
+        onRerun={onRerun}
+        runsViewMode="runs"
+        hideRunActions
+        unifiedSuiteDashboard
+        onCreateTestCase={vi.fn()}
+        onGenerateTestCases={vi.fn()}
+        canGenerateTestCases
+        testCases={[
+          { _id: "c1", models: [{ provider: "openai", model: "gpt-4" }] } as any,
+        ]}
+        connectedServerNames={new Set(["asana"])}
+      />,
+    );
+
+    const runAll = screen.getByRole("button", {
+      name: /Run all cases in this suite/i,
+    });
+    expect(runAll).toBeEnabled();
+    await user.click(runAll);
+    expect(onRerun).toHaveBeenCalledWith(baseSuite);
+  });
+
+  it("shows the suite model bar on overview when test cases exist", () => {
+    renderWithProviders(
+      <SuiteHeader
+        {...baseProps}
+        viewMode="overview"
+        selectedRunDetails={null}
+        readOnlyConfig={false}
+        testCases={[
+          {
+            _id: "c1",
+            title: "Case",
+            models: [{ provider: "openai", model: "gpt-4" }],
+          } as any,
+        ]}
+        availableModels={
+          [
+            { id: "gpt-4", name: "GPT-4", provider: "openai" },
+            { id: "gpt-5-nano", name: "GPT-5 Nano", provider: "openai" },
+          ] as any
+        }
+        onSuiteModelsUpdate={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("GPT-4")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Add model" }),
+    ).toBeInTheDocument();
+  });
+
 });

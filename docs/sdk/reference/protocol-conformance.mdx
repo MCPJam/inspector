@@ -1,0 +1,187 @@
+---
+title: "Protocol Conformance SDK"
+description: "Programmatic MCP protocol conformance testing with MCPConformanceTest and MCPConformanceSuite"
+icon: "shield"
+---
+
+The Protocol Conformance SDK lets you run the same checks as the CLI `protocol conformance` commands, but inside your own Jest or Vitest suites.
+
+Use it when you want MCP protocol regressions to fail CI directly, or when you need JUnit XML and JSON artifacts from code rather than shell scripts.
+
+<Note>
+  Protocol conformance is currently HTTP-only. For local stdio-only servers, use
+  [MCP Apps Conformance](/sdk/reference/apps-conformance),
+  [unit tests](/sdk/reference/mcp-client-manager), or run your server through an
+  HTTP bridge in CI.
+</Note>
+
+## Import
+
+```typescript
+import {
+  MCPConformanceSuite,
+  MCPConformanceTest,
+  renderConformanceReportJUnitXml,
+  renderConformanceReportJson,
+  toConformanceReport,
+} from "@mcpjam/sdk";
+```
+
+## Single run
+
+```typescript
+const test = new MCPConformanceTest({
+  serverUrl: "https://your-server.com/mcp",
+  checkTimeout: 15_000,
+  checkIds: [
+    "server-initialize",
+    "ping",
+    "tools-list",
+    "prompts-list",
+    "resources-list",
+  ],
+});
+
+const result = await test.run();
+
+console.log(result.passed);
+console.log(result.summary);
+console.log(result.checks);
+```
+
+## Suite
+
+```typescript
+import { writeFileSync } from "node:fs";
+
+const suite = new MCPConformanceSuite({
+  name: "Protocol CI",
+  serverUrl: "https://your-server.com/mcp",
+  defaults: {
+    checkTimeout: 15_000,
+  },
+  runs: [
+    {
+      label: "core-surface",
+      checkIds: [
+        "server-initialize",
+        "ping",
+        "tools-list",
+        "prompts-list",
+        "resources-list",
+      ],
+    },
+    {
+      label: "security",
+      checkIds: [
+        "localhost-host-rebinding-rejected",
+        "localhost-host-valid-accepted",
+      ],
+    },
+  ],
+});
+
+const result = await suite.run();
+const report = toConformanceReport(result);
+
+writeFileSync(
+  "protocol-conformance.junit.xml",
+  renderConformanceReportJUnitXml(report),
+);
+writeFileSync(
+  "protocol-conformance.report.json",
+  JSON.stringify(renderConformanceReportJson(report), null, 2),
+);
+```
+
+`MCPConformanceSuiteConfig` keeps the existing `serverUrl + defaults + runs` shape:
+
+| Property | Type | Required | Description |
+|----------|------|----------|-------------|
+| `name` | `string` | No | Suite label shown in summaries and JUnit XML |
+| `serverUrl` | `string` | Yes | Shared MCP HTTP server URL |
+| `defaults` | `Partial<Omit<MCPConformanceConfig, "serverUrl">>` | No | Shared defaults applied to every run |
+| `runs` | `Array<Partial<Omit<MCPConformanceConfig, "serverUrl">> & { label?: string }>` | Yes | Individual run labels and check selections |
+
+## MCPConformanceConfig
+
+| Property | Type | Required | Default | Description |
+|----------|------|----------|---------|-------------|
+| `serverUrl` | `string` | Yes | | MCP server URL |
+| `accessToken` | `string` | No | | Bearer access token |
+| `customHeaders` | `Record<string, string>` | No | | Extra HTTP headers |
+| `checkTimeout` | `number` | No | `15000` | Per-check timeout in ms |
+| `categories` | `MCPCheckCategory[]` | No | all categories | Restrict checks to categories |
+| `checkIds` | `MCPCheckId[]` | No | all checks | Restrict checks to specific ids |
+| `fetchFn` | `typeof fetch` | No | `fetch` | Custom fetch implementation |
+| `clientName` | `string` | No | SDK default | Custom MCP client name |
+
+## Available categories and check ids
+
+Categories:
+
+- `core`
+- `protocol`
+- `tools`
+- `prompts`
+- `resources`
+- `security`
+- `transport`
+
+Check ids:
+
+- `server-initialize`
+- `ping`
+- `logging-set-level`
+- `completion-complete`
+- `capabilities-consistent`
+- `tools-list`
+- `tools-input-schemas-valid`
+- `prompts-list`
+- `resources-list`
+- `protocol-invalid-method-error`
+- `localhost-host-rebinding-rejected`
+- `localhost-host-valid-accepted`
+- `server-sse-polling-session`
+- `server-accepts-multiple-post-streams`
+- `server-sse-streams-functional`
+
+## Result types
+
+`MCPConformanceTest.run()` returns an `MCPConformanceResult`:
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `passed` | `boolean` | Whether all selected checks passed |
+| `serverUrl` | `string` | Server under test |
+| `checks` | `MCPCheckResult[]` | Individual check results |
+| `summary` | `string` | Human-readable summary |
+| `durationMs` | `number` | Total duration |
+| `categorySummary` | `Record<MCPCheckCategory, ...>` | Pass/fail/skipped counts by category |
+
+`MCPConformanceSuite.run()` returns an `MCPConformanceSuiteResult`:
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `name` | `string` | Suite name |
+| `serverUrl` | `string` | Shared server URL |
+| `passed` | `boolean` | `true` iff every run passed |
+| `results` | `Array<MCPConformanceResult & { label: string }>` | Per-run results |
+| `summary` | `string` | Human-readable suite summary |
+| `durationMs` | `number` | Total suite duration |
+
+## CI reporting
+
+All three conformance domains share the same report helpers:
+
+- `toConformanceReport(result)`
+- `renderConformanceReportJUnitXml(report)`
+- `renderConformanceReportJson(report)`
+
+The CLI uses the same helpers internally, so `protocol conformance --format junit-xml` and `protocol conformance-suite --format junit-xml` emit the same XML that the SDK helpers produce for the same result.
+
+## Related
+
+- [CLI CI / CD](/cli/ci)
+- [MCP Apps Conformance SDK](/sdk/reference/apps-conformance)
+- [OAuth Conformance SDK](/sdk/reference/oauth-conformance)

@@ -52,15 +52,29 @@ export function getDefaultClientCapabilities(): ClientCapabilityOptions {
 export function normalizeClientCapabilities(
   capabilities?: ClientCapabilityOptions
 ): ClientCapabilityOptions {
-  const normalized: ClientCapabilityOptions = {
+  return {
     ...(capabilities ?? {}),
   };
+}
 
-  if (!normalized.elicitation) {
-    normalized.elicitation = {};
+/**
+ * Adds runtime-gated capabilities that are only valid when the corresponding
+ * handlers are actually installed on the client.
+ */
+export function applyRuntimeClientCapabilities(
+  capabilities?: ClientCapabilityOptions,
+  runtime?: { elicitation?: boolean }
+): ClientCapabilityOptions {
+  const resolved = normalizeClientCapabilities(capabilities) as Record<
+    string,
+    unknown
+  >;
+
+  if (runtime?.elicitation && resolved.elicitation == null) {
+    resolved.elicitation = {};
   }
 
-  return normalized;
+  return resolved as ClientCapabilityOptions;
 }
 
 export function mergeClientCapabilities(
@@ -97,5 +111,5 @@ export function mergeClientCapabilities(
     }
   }
 
-  return normalizeClientCapabilities(merged as ClientCapabilityOptions);
+  return merged as ClientCapabilityOptions;
 }

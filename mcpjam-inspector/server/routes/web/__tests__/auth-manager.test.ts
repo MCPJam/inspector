@@ -166,14 +166,22 @@ describe("web auth manager batching", () => {
         "bearer-token",
         "workspace-1",
         ["server-1"],
-        10_000
+        10_000,
+        undefined,
+        undefined,
+        {
+          serverNames: ["Asana"],
+        }
       )
     ).rejects.toMatchObject<WebRouteError>({
       status: 401,
       code: "UNAUTHORIZED",
+      message:
+        'Server "Asana" requires OAuth authentication. Please complete the OAuth flow first.',
       details: {
         oauthRequired: true,
         serverId: "server-1",
+        serverName: "Asana",
         serverUrl: "https://server-1.example.com/mcp",
       },
     });

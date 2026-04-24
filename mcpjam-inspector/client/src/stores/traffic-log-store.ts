@@ -13,13 +13,20 @@ import { create } from "zustand";
 import { addTokenToUrl } from "@/lib/session-token";
 import { HOSTED_MODE } from "@/lib/config";
 import type { HostedRpcLogEvent } from "@/shared/hosted-rpc-log";
+import type {
+  OAuthTrace,
+  OAuthTraceSource,
+  OAuthTraceStepStatus,
+} from "@/lib/oauth/oauth-trace";
 
 export type UiProtocol = "mcp-apps" | "openai-apps";
+export type McpServerLogKind = "rpc" | "oauth";
 
 export interface UiLogEvent {
   id: string;
   widgetId: string; // toolCallId
   serverId: string;
+  serverName?: string;
   direction: "host-to-ui" | "ui-to-host";
   protocol: UiProtocol;
   method: string;
@@ -35,13 +42,17 @@ export interface McpServerRpcItem {
   method: string;
   timestamp: string;
   payload: unknown;
+  kind?: McpServerLogKind;
+  oauthStatus?: OAuthTraceStepStatus;
+  oauthSource?: OAuthTraceSource;
+  oauthRecovered?: boolean;
 }
 
 interface TrafficLogState {
   items: UiLogEvent[];
   mcpServerItems: McpServerRpcItem[];
   addLog: (event: Omit<UiLogEvent, "id" | "timestamp">) => void;
-  addMcpServerLog: (item: Omit<McpServerRpcItem, "id">) => void;
+  addMcpServerLog: (item: Omit<McpServerRpcItem, "id"> & { id?: string }) => void;
   clear: () => void;
 }
 
@@ -63,10 +74,16 @@ export const useTrafficLogStore = create<TrafficLogState>((set) => ({
   addMcpServerLog: (item) => {
     const newItem: McpServerRpcItem = {
       ...item,
-      id: `${item.timestamp}-${Math.random().toString(36).slice(2)}`,
+      id: item.id ?? `${item.timestamp}-${Math.random().toString(36).slice(2)}`,
     };
     set((state) => ({
-      mcpServerItems: [newItem, ...state.mcpServerItems].slice(0, MAX_ITEMS),
+      mcpServerItems: state.mcpServerItems.some(
+        (existing) => existing.id === newItem.id,
+      )
+        ? state.mcpServerItems.map((existing) =>
+            existing.id === newItem.id ? newItem : existing,
+          )
+        : [newItem, ...state.mcpServerItems].slice(0, MAX_ITEMS),
     }));
   },
   clear: () => set({ items: [], mcpServerItems: [] }),
@@ -86,6 +103,47 @@ export function ingestHostedRpcLogs(logs: HostedRpcLogEvent[]): void {
       method: extractMethod(log.message),
       timestamp: log.timestamp,
       payload: log.message,
+    });
+  });
+}
+
+export function ingestOAuthTraceLogs(input: {
+  serverId: string;
+  serverName?: string;
+  trace: OAuthTrace;
+}): void {
+  const { serverId, serverName, trace } = input;
+  if (!trace || !Array.isArray(trace.steps) || trace.steps.length === 0) {
+    return;
+  }
+
+  const store = useTrafficLogStore.getState();
+  trace.steps.forEach((step) => {
+    const timestamp = new Date(step.completedAt ?? step.startedAt).toISOString();
+    store.addMcpServerLog({
+      id: `oauth:${serverId}:${trace.source}:${step.step}:${step.startedAt}`,
+      serverId,
+      serverName,
+      direction: "OAUTH",
+      method: step.title,
+      timestamp,
+      payload: {
+        source: trace.source,
+        step: step.step,
+        title: step.title,
+        status: step.status,
+        message: step.message,
+        error: step.error,
+        details: step.details,
+        recovered: step.recovered,
+        recoveredAt: step.recoveredAt,
+        recoveryMessage: step.recoveryMessage,
+        httpHistory: trace.httpHistory.filter((entry) => entry.step === step.step),
+      },
+      kind: "oauth",
+      oauthStatus: step.status,
+      oauthSource: trace.source,
+      oauthRecovered: step.recovered === true,
     });
   });
 }

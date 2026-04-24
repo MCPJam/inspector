@@ -455,6 +455,29 @@ export function ChatTabV2({
     hasUnsavedDraftRef.current = hasUnsavedDraft;
   }, [hasUnsavedDraft]);
 
+  const handleOAuthRequired = useCallback(
+    (details?: HostedOAuthRequiredDetails) => {
+      const resolvedServerName =
+        typeof details?.serverName === "string" && details.serverName.trim()
+          ? details.serverName.trim()
+          : selectedConnectedServerNames.length === 1
+            ? selectedConnectedServerNames[0]
+            : null;
+
+      if (!onOAuthRequired) {
+        return;
+      }
+
+      onOAuthRequired(
+        resolvedServerName &&
+          resolvedServerName !== details?.serverName
+          ? { ...details, serverName: resolvedServerName }
+          : details,
+      );
+    },
+    [onOAuthRequired, selectedConnectedServerNames],
+  );
+
   useEffect(() => {
     activeHistorySessionIdRef.current = activeHistorySessionId;
   }, [activeHistorySessionId]);
@@ -1686,7 +1709,7 @@ export function ChatTabV2({
     try {
       const parsed = JSON.parse(msg);
       if (parsed?.details?.oauthRequired) {
-        onOAuthRequired({
+        handleOAuthRequired({
           serverUrl:
             typeof parsed.details.serverUrl === "string"
               ? parsed.details.serverUrl
@@ -1711,9 +1734,9 @@ export function ChatTabV2({
       msg.includes("requires OAuth authentication") ||
       (msg.includes("Authentication failed") && msg.includes("invalid_token"));
     if (isOAuthError) {
-      onOAuthRequired();
+      handleOAuthRequired();
     }
-  }, [error, onOAuthRequired]);
+  }, [error, handleOAuthRequired, onOAuthRequired]);
 
   const handleSignUp = () => {
     posthog.capture("sign_up_button_clicked", {
@@ -2155,7 +2178,7 @@ export function ChatTabV2({
                           hostedShareToken={hostedShareToken}
                           hostedChatboxToken={hostedChatboxToken}
                           hostedChatboxSurface={hostedChatboxSurface}
-                          onOAuthRequired={onOAuthRequired}
+                          onOAuthRequired={handleOAuthRequired}
                           onSummaryChange={handleMultiModelSummaryChange}
                           onHasMessagesChange={
                             handleMultiModelHasMessagesChange

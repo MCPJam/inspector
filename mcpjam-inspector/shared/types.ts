@@ -176,12 +176,68 @@ const MCPJAM_GUEST_ALLOWED_MODEL_IDS: string[] =
     (modelId) => !gatedGuestModelIds.has(modelId),
   );
 
-export const isMCPJamProvidedModel = (modelId: string): boolean => {
-  return MCPJAM_PROVIDED_MODEL_IDS.includes(modelId);
+export const getCanonicalModelId = (
+  modelId: string,
+  provider?: string,
+): string => {
+  const normalizedModelId = modelId.trim();
+  if (!normalizedModelId) {
+    return normalizedModelId;
+  }
+
+  const normalizedProvider = provider?.trim().toLowerCase();
+
+  // When a provider is supplied, prefer hosted/prefixed matches first so
+  // bare ids (e.g. "gpt-4o-mini" — BYOK) don't shadow their hosted
+  // counterparts (e.g. "openai/gpt-4o-mini" — MCPJam-provided).
+  if (normalizedProvider) {
+    const providerModels = SUPPORTED_MODELS.filter(
+      (model) => model.provider.toLowerCase() === normalizedProvider,
+    );
+
+    // If the caller didn't already pass a prefixed id, look for a prefixed
+    // (hosted) match first within this provider — bare ids must not win here.
+    const prefixedMatch = !normalizedModelId.includes("/")
+      ? providerModels.find((model) =>
+          String(model.id).endsWith(`/${normalizedModelId}`),
+        )
+      : undefined;
+
+    const providerScopedMatch =
+      prefixedMatch ??
+      providerModels.find((model) => String(model.id) === normalizedModelId);
+
+    if (providerScopedMatch) {
+      return String(providerScopedMatch.id);
+    }
+  }
+
+  const exactMatch = SUPPORTED_MODELS.find(
+    (model) => String(model.id) === normalizedModelId,
+  );
+  if (exactMatch) {
+    return String(exactMatch.id);
+  }
+
+  return normalizedModelId;
 };
 
-export const isMCPJamGuestAllowedModel = (modelId: string): boolean => {
-  return MCPJAM_GUEST_ALLOWED_MODEL_IDS.includes(modelId);
+export const isMCPJamProvidedModel = (
+  modelId: string,
+  provider?: string,
+): boolean => {
+  return MCPJAM_PROVIDED_MODEL_IDS.includes(
+    getCanonicalModelId(modelId, provider),
+  );
+};
+
+export const isMCPJamGuestAllowedModel = (
+  modelId: string,
+  provider?: string,
+): boolean => {
+  return MCPJAM_GUEST_ALLOWED_MODEL_IDS.includes(
+    getCanonicalModelId(modelId, provider),
+  );
 };
 
 export const isGPT5Model = (modelId: string | Model): boolean => {

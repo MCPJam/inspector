@@ -44,6 +44,7 @@ describe("generateAndPersistEvalTests", () => {
 
     expect(result.skippedBecauseExistingCases).toBe(true);
     expect(result.createdCount).toBe(0);
+    expect(result.createdTestCaseIds).toEqual([]);
     expect(generateEvalTests).not.toHaveBeenCalled();
     expect(mockCreateTestCase).not.toHaveBeenCalled();
   });
@@ -54,7 +55,7 @@ describe("generateAndPersistEvalTests", () => {
       success: true,
       tests: [{ title: "T", query: "q", runs: 1, expectedToolCalls: [] }],
     });
-    mockCreateTestCase.mockResolvedValue({});
+    mockCreateTestCase.mockResolvedValue("new-case-id");
 
     const result = await generateAndPersistEvalTests({
       convex,
@@ -67,6 +68,7 @@ describe("generateAndPersistEvalTests", () => {
     });
 
     expect(result.skippedBecauseExistingCases).toBe(false);
+    expect(result.createdTestCaseIds).toEqual(["new-case-id"]);
     expect(generateEvalTests).toHaveBeenCalled();
     expect(mockCreateTestCase).toHaveBeenCalledTimes(1);
   });

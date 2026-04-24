@@ -14,6 +14,7 @@ const {
   stableStoreFns,
   mockSandboxPostMessage,
   sandboxedIframePropsRef,
+  sandboxProxyBehaviorRef,
 } = vi.hoisted(() => {
   const bridge = {
     sendToolInput: vi.fn(),
@@ -58,6 +59,7 @@ const {
     mockPostMessageTransport: vi.fn(),
     mockSandboxPostMessage: vi.fn(),
     sandboxedIframePropsRef: { current: null as any },
+    sandboxProxyBehaviorRef: { current: { autoReady: true } },
     stableStoreFns: stableFns,
     /** Simulate the widget completing initialization. */
     triggerReady: () => {
@@ -123,6 +125,10 @@ vi.mock("@/components/ui/sandboxed-iframe", () => ({
         mockSandboxPostMessage(message);
       },
     }));
+    React.useEffect(() => {
+      if (!sandboxProxyBehaviorRef.current.autoReady) return;
+      props.onProxyReady?.();
+    }, [props.onProxyReady]);
     return (
       <div
         data-testid="sandboxed-iframe"
@@ -229,6 +235,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     mockBridge.oninitialized = null;
     mockSandboxPostMessage.mockClear();
     sandboxedIframePropsRef.current = null;
+    sandboxProxyBehaviorRef.current.autoReady = true;
 
     vi.mocked(global.fetch).mockResolvedValue({
       ok: true,
@@ -519,6 +526,70 @@ describe("MCPAppsRenderer tool input streaming", () => {
     });
     expect(sandboxedIframePropsRef.current?.permissions).toEqual({
       camera: true,
+    });
+  });
+
+  it("waits for the bridge transport before loading widget HTML into the sandbox", async () => {
+    let resolveConnect: (() => void) | undefined;
+    mockBridge.connect.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveConnect = resolve;
+        }),
+    );
+
+    render(
+      <MCPAppsRenderer {...baseProps} cachedWidgetHtmlUrl="blob:cached" />,
+    );
+
+    await vi.waitFor(() => {
+      expect(mockBridge.connect).toHaveBeenCalled();
+    });
+
+    expect(sandboxedIframePropsRef.current?.html).toBeNull();
+
+    await act(async () => {
+      resolveConnect?.();
+      await Promise.resolve();
+    });
+
+    await vi.waitFor(() => {
+      expect(sandboxedIframePropsRef.current?.html).toBe(
+        "<html><body>widget</body></html>",
+      );
+    });
+  });
+
+  it("waits for the sandbox proxy before starting the bridge handshake", async () => {
+    sandboxProxyBehaviorRef.current.autoReady = false;
+
+    render(
+      <MCPAppsRenderer {...baseProps} cachedWidgetHtmlUrl="blob:cached" />,
+    );
+
+    await vi.waitFor(() => {
+      expect(stableStoreFns.setWidgetHtml).toHaveBeenCalledWith(
+        "call-1",
+        "<html><body>widget</body></html>",
+      );
+    });
+
+    expect(mockBridge.connect).not.toHaveBeenCalled();
+    expect(sandboxedIframePropsRef.current?.html).toBeNull();
+
+    await act(async () => {
+      sandboxedIframePropsRef.current?.onProxyReady?.();
+      await Promise.resolve();
+    });
+
+    await vi.waitFor(() => {
+      expect(mockBridge.connect).toHaveBeenCalledTimes(1);
+    });
+
+    await vi.waitFor(() => {
+      expect(sandboxedIframePropsRef.current?.html).toBe(
+        "<html><body>widget</body></html>",
+      );
     });
   });
 

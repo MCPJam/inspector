@@ -33,6 +33,7 @@ import { reconnectServer, testConnection } from "../mcp-api";
 
 describe("mcp-api hosted-mode reconnect hardening", () => {
   beforeEach(() => {
+    vi.useRealTimers();
     validateHostedServerMock.mockReset();
     webPostMock.mockReset();
     buildGuestServerRequestMock.mockReset();
@@ -74,6 +75,21 @@ describe("mcp-api hosted-mode reconnect hardening", () => {
     expect(result).toEqual({
       success: false,
       error: "Boom",
+    });
+  });
+
+  it("times out hung hosted validation requests", async () => {
+    vi.useFakeTimers();
+    validateHostedServerMock.mockReturnValueOnce(new Promise(() => {}));
+
+    const resultPromise = testConnection({} as MCPServerConfig, "server-timeout");
+
+    await vi.advanceTimersByTimeAsync(20_000);
+
+    await expect(resultPromise).resolves.toEqual({
+      success: false,
+      error:
+        "Connection attempt timed out after 20 seconds. The server may not exist or is not responding.",
     });
   });
 

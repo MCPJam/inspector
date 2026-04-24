@@ -96,6 +96,7 @@ import {
 } from "./components/hosted/ChatboxChatPage";
 import { useHostedApiContext } from "./hooks/hosted/use-hosted-api-context";
 import { HOSTED_MODE, NON_PROD_LOCKDOWN } from "./lib/config";
+import { subscribeToOAuthDebuggerRequests } from "./lib/oauth/oauth-debugger-navigation";
 import {
   clearBillingSignInReturnPath,
   clearCheckoutIntentFromUrl,
@@ -120,6 +121,7 @@ import {
   type OrganizationRouteSection,
 } from "./lib/hosted-navigation";
 import { buildOAuthTokensByServerId } from "./lib/oauth/oauth-tokens";
+import type { OAuthTrace } from "./lib/oauth/oauth-trace";
 import {
   formatBillingFeatureName,
   formatPlanName,
@@ -165,6 +167,7 @@ import { getEffectiveWorkspaceClientCapabilities } from "./lib/client-config";
 import { buildEvalsHash } from "./lib/evals-router";
 import { withTestingSurface } from "./lib/testing-surface";
 import { useClientConfigStore } from "./stores/client-config-store";
+import { ingestOAuthTraceLogs } from "./stores/traffic-log-store";
 import { clearGuestSession } from "./lib/guest-session";
 
 function getHostedOAuthCallbackErrorMessage(): string {
@@ -446,6 +449,7 @@ export default function App() {
     const urlParams = new URLSearchParams(window.location.search);
     const code = urlParams.get("code");
     const error = urlParams.get("error");
+    const state = urlParams.get("state");
 
     let cancelled = false;
     setHostedOAuthHandling(true);
@@ -476,10 +480,27 @@ export default function App() {
       return;
     }
 
+    const handleLiveOAuthTrace = (oauthTrace: OAuthTrace) => {
+      const serverId = callbackContext.serverId ?? callbackContext.serverName;
+      if (!serverId) {
+        return;
+      }
+      ingestOAuthTraceLogs({
+        serverId,
+        serverName: callbackContext.serverName,
+        trace: oauthTrace,
+      });
+    };
+
     const completeCallback =
       isAuthenticated
-        ? completeHostedOAuthCallback(callbackContext, code)
-        : handleOAuthCallback(code);
+        ? completeHostedOAuthCallback(callbackContext, code, {
+            callbackState: state,
+            onTraceUpdate: handleLiveOAuthTrace,
+          })
+        : handleOAuthCallback(code, {
+            onTraceUpdate: handleLiveOAuthTrace,
+          });
 
     completeCallback
       .then((result) => {
@@ -628,6 +649,7 @@ export default function App() {
     handleConnect,
     handleDisconnect,
     handleReconnect,
+    ensureServersReady,
     handleUpdate,
     handleRemoveServer,
     setSelectedServer,
@@ -661,6 +683,23 @@ export default function App() {
       ? currentHashRoute.organizationId
       : undefined,
   });
+  const oauthDebuggerServersRef = useRef(appState.servers);
+  oauthDebuggerServersRef.current = appState.servers;
+  const selectedServerRef = useRef(appState.selectedServer);
+  selectedServerRef.current = appState.selectedServer;
+  useEffect(() => {
+    return subscribeToOAuthDebuggerRequests(({ serverName }) => {
+      const matchedServerName = Object.entries(
+        oauthDebuggerServersRef.current,
+      ).find(
+        ([name, server]) => name === serverName || server.name === serverName,
+      )?.[0];
+
+      if (matchedServerName && matchedServerName !== selectedServerRef.current) {
+        setSelectedServer(matchedServerName);
+      }
+    });
+  }, [setSelectedServer]);
   const activeOrganizationName = effectiveOrganizations.find(
     (org) => org._id === activeOrganizationId,
   )?.name;
@@ -1612,7 +1651,6 @@ export default function App() {
     activeTab === "oauth-flow" ||
     (activeTab === "xaa-flow" && xaaEnabled === true) ||
     activeTab === "chat" ||
-    activeTab === "evals" ||
     activeTab === "views";
 
   const activeServerSelectorProps: ActiveServerSelectorProps | undefined =
@@ -1664,7 +1702,7 @@ export default function App() {
           hidden={appBuilderOnboarding}
           activeServerSelectorProps={activeServerSelectorProps}
         />
-        <div className="flex flex-1 min-h-0 flex-col overflow-hidden h-full">
+        <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           {showTrialDecisionNotice ? (
             <div className="border-b border-border/60 px-4 py-3">
               <Alert>
@@ -1751,8 +1789,8 @@ export default function App() {
               />
             ) : (
               <EvalsTab
-                selectedServer={appState.selectedServer}
                 workspaceId={convexWorkspaceId}
+                ensureServersReady={ensureServersReady}
                 onContinueInChat={handleContinueEvalInChat}
               />
             ))}
@@ -1791,7 +1829,10 @@ export default function App() {
                   }}
                 />
               ) : (
-                <CiEvalsTab convexWorkspaceId={convexWorkspaceId} />
+                <CiEvalsTab
+                  convexWorkspaceId={convexWorkspaceId}
+                  ensureServersReady={ensureServersReady}
+                />
               )
             ) : null)}
           {activeTab === "views" && (
@@ -1938,6 +1979,7 @@ export default function App() {
               isAuthLoading={isAuthLoading}
               isServerSyncing={isSelectedServerSyncing}
               onConnect={handleConnect}
+              ensureServersReady={ensureServersReady}
               onOnboardingChange={setAppBuilderOnboarding}
               playgroundServerSelectorProps={playgroundServerSelectorProps}
               enableMultiModelChat

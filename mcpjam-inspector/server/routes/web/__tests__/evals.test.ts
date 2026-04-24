@@ -369,6 +369,47 @@ describe("web routes — evals", () => {
     },
   );
 
+  it("passes hosted server names through to eval suite runs", async () => {
+    runEvalsWithManagerMock.mockResolvedValueOnce({
+      success: true,
+      suiteId: "suite-1",
+      runId: "run-1",
+    });
+
+    const { app, token } = createEvalsTestApp();
+    const response = await postJson(
+      app,
+      "/api/web/evals/run",
+      {
+        workspaceId: "workspace-1",
+        serverIds: ["srv-1"],
+        serverNames: ["server-1"],
+        suiteName: "Hosted Suite",
+        tests: [
+          {
+            title: "Test",
+            query: "Hello",
+            runs: 1,
+            model: "openai/gpt-5-mini",
+            provider: "openai",
+            expectedToolCalls: [],
+          },
+        ],
+      },
+      token,
+    );
+
+    expect(response.status).toBe(200);
+    expect(runEvalsWithManagerMock.mock.calls[0]?.[1]).toEqual(
+      expect.objectContaining({
+        workspaceId: "workspace-1",
+        serverIds: ["srv-1"],
+        serverNames: ["server-1"],
+        convexAuthToken: token,
+      }),
+    );
+  });
+
   it("streams hosted compare quick runs from /api/web/evals/stream-test-case", async () => {
     const encoder = new TextEncoder();
     streamEvalTestCaseWithManagerMock.mockResolvedValueOnce(

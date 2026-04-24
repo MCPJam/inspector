@@ -37,12 +37,11 @@ npx -y @mcpjam/cli@latest --help
 |-------|---------|-------------|
 | [`server`](/cli/server-inspection) | Triage connectivity and capabilities | `probe`, `doctor`, `info`, `validate`, `ping`, `capabilities`, `export` |
 | [`oauth`](/cli/oauth-conformance) | Test OAuth flows and conformance | `conformance`, `conformance-suite`, `login`, `metadata`, `proxy` |
-| [`apps`](/cli/apps-conformance) | Validate MCP Apps tool metadata and `ui://` resources | `conformance`, `mcp-widget`, `chatgpt-widget` |
+| [`apps`](/cli/apps-conformance) | Validate MCP Apps tool metadata, `ui://` resources, and widgets | `conformance`, `conformance-suite`, `mcp-widget`, `chatgpt-widget` |
 | [`tools`](/cli/tools-resources-prompts) | Exercise the tool surface | `list`, `call` |
 | [`resources`](/cli/tools-resources-prompts) | Read resources and templates | `list`, `read`, `templates` |
 | [`prompts`](/cli/tools-resources-prompts) | Fetch prompts | `list`, `get` |
-| [`apps`](/cli/reference) | Render hosted-style widget HTML for MCP and ChatGPT apps | `mcp-widget`, `chatgpt-widget` |
-| [`protocol`](/cli/reference) | MCP protocol conformance checks | `conformance` |
+| [`protocol`](/cli/reference) | MCP protocol conformance checks | `conformance`, `conformance-suite` |
 
 ## Global flags
 
@@ -52,7 +51,7 @@ These flags apply to every command.
 |------|---------|-------------|
 | `--timeout <ms>` | `30000` | Request timeout in milliseconds |
 | `--rpc` | off | Include raw JSON-RPC request/response logs in JSON output under `_rpcLogs` |
-| `--format <format>` | `human` on TTY, `json` when piped | Output format (`json` or `human`; `junit-xml` is available on OAuth conformance commands only) |
+| `--format <format>` | `human` on TTY, `json` when piped | Output format (`json` or `human`; `junit-xml` is available on protocol, OAuth, and apps conformance commands) |
 | `-v, --version` | | Print the CLI version |
 
 ## Output formats
@@ -61,6 +60,7 @@ The CLI auto-detects whether stdout is a terminal:
 
 - **Interactive terminal** — defaults to `--format human`. For most commands this is pretty-printed JSON; `server doctor` and the OAuth conformance commands provide dedicated human-readable summaries.
 - **Piped or redirected** (CI, `| jq`, agent invocation) — defaults to `--format json`, the full structured result.
+- **Conformance in CI** — `protocol conformance`, `protocol conformance-suite`, `oauth conformance`, `oauth conformance-suite`, `apps conformance`, and `apps conformance-suite` also support `--format junit-xml`.
 - **Explicit `--format`** always wins over the auto-detected default.
 
 **For agents**: raw JSON is the source of truth. Human format is a lossy presentation layer. If you're parsing output programmatically, always pass `--format json`.
@@ -104,7 +104,7 @@ Structured debug artifacts only record the explicit env keys you pass through
 `-e/--env`; inherited shell variables are not enumerated.
 
 <Note>
-  `oauth ...` and `protocol conformance` are HTTP-only command groups. They do
+  `oauth ...` and `protocol ...` are HTTP-only command groups. They do
   not accept stdio targets.
 </Note>
 

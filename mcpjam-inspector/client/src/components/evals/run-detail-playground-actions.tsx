@@ -19,7 +19,6 @@ export function RunDetailPlaygroundActions({
   rerunningSuiteId,
   replayingRunId = null,
   cancellingRunId,
-  canRerun,
   hasServersConfigured,
   missingServers,
   showCloseButton = false,
@@ -35,7 +34,6 @@ export function RunDetailPlaygroundActions({
   rerunningSuiteId: string | null;
   replayingRunId?: string | null;
   cancellingRunId: string | null;
-  canRerun: boolean;
   hasServersConfigured: boolean;
   missingServers: string[];
   showCloseButton?: boolean;
@@ -54,9 +52,10 @@ export function RunDetailPlaygroundActions({
     : null;
   const showRunAction = Boolean(replayableSelectedRun) || !readOnlyConfig;
   const isReplayAction = Boolean(replayableSelectedRun);
+  const canUseLiveRun = hasServersConfigured;
   const runActionDisabled = isReplayAction
     ? showAsRunning || !onReplayRun
-    : !canRerun || showAsRunning;
+    : !canUseLiveRun || showAsRunning;
   const runActionLabel = showAsRunning
     ? isReplayAction
       ? "Replaying..."
@@ -67,9 +66,9 @@ export function RunDetailPlaygroundActions({
   const runActionTooltip = isReplayAction
     ? "Replay this CI run in the playground"
     : !hasServersConfigured
-      ? "No connected MCP servers are configured for this suite"
-      : !canRerun
-        ? `Connect the following servers: ${missingServers.join(", ")}`
+      ? "No MCP servers are configured for this suite"
+      : missingServers.length > 0
+        ? "Connect and run."
         : "Run all cases";
 
   return (

@@ -103,12 +103,14 @@ export function SuiteRow({
     return "bg-destructive/50";
   };
 
-  // Check if all servers are connected
+  // Rerun is allowed when the suite has configured servers. Disconnected
+  // servers are reconnected just-in-time by the handler.
   const suiteServers = Array.isArray(servers) ? servers : [];
+  const hasServersConfigured = suiteServers.length > 0;
   const missingServers = suiteServers.filter(
     (server) => !connectedServerNames.has(server),
   );
-  const canRerun = missingServers.length === 0;
+  const canRerun = hasServersConfigured;
   const isRerunning = rerunningSuiteId === suite._id;
 
   const handleRerunClick = (e: React.MouseEvent) => {
@@ -171,8 +173,10 @@ export function SuiteRow({
             </span>
           </TooltipTrigger>
           <TooltipContent>
-            {!canRerun
-              ? `Connect the following servers: ${missingServers.join(", ")}`
+            {!hasServersConfigured
+              ? "No MCP servers are configured for this suite."
+              : missingServers.length > 0
+                ? "Connect and run."
               : "Run all tests"}
           </TooltipContent>
         </Tooltip>

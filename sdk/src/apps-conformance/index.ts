@@ -1,4 +1,5 @@
 export { MCPAppsConformanceTest } from "./runner.js";
+export { MCPAppsConformanceSuite } from "./suite.js";
 
 export type {
   MCPAppsCheckCategory,
@@ -7,6 +8,10 @@ export type {
   MCPAppsCheckStatus,
   MCPAppsConformanceConfig,
   MCPAppsConformanceResult,
+  MCPAppsConformanceSuiteConfig,
+  MCPAppsConformanceSuiteDefaults,
+  MCPAppsConformanceSuiteResult,
+  MCPAppsConformanceSuiteRun,
   MCPAppsResourceReadOutcome,
 } from "./types.js";
 

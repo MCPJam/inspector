@@ -1,26 +1,55 @@
 /**
- * Clean OAuth implementation using only the official MCP SDK with CORS proxy support
+ * Production OAuth implementation using the SDK state-machine runner with trace support.
  */
 
 import {
-  auth,
+  DEFAULT_MCPJAM_CLIENT_ID_METADATA_URL,
   discoverAuthorizationServerMetadata,
   discoverOAuthServerInfo,
+  exchangeAuthorization,
   fetchToken,
+  getBrowserDebugDynamicRegistrationMetadata,
+  EMPTY_OAUTH_FLOW_STATE,
+  projectOAuthTraceSnapshot,
+  runOAuthStateMachine,
   selectResourceURL,
 } from "@mcpjam/sdk/browser";
 import type {
+  HttpHistoryEntry,
   OAuthClientProvider,
   OAuthDiscoveryState,
+  OAuthFlowState,
+  OAuthProtocolVersion,
+  OAuthRequestResult,
+  RegistrationStrategy2025_03_26,
+  RegistrationStrategy2025_06_18,
+  RegistrationStrategy2025_11_25,
+  OAuthTraceSnapshot,
 } from "@mcpjam/sdk/browser";
 import type { HttpServerConfig } from "@mcpjam/sdk/browser";
 import { generateRandomString } from "./pkce";
 import { authFetch } from "@/lib/session-token";
-import { HOSTED_MODE } from "@/lib/config";
+import { HOSTED_MODE, SANITIZE_OAUTH_TRACES } from "@/lib/config";
 import { captureServerDetailModalOAuthResume } from "@/lib/server-detail-modal-resume";
-import type { HostedOAuthCallbackContext } from "@/lib/hosted-oauth-callback";
+import {
+  matchesHostedOAuthServerIdentity,
+  readHostedOAuthPendingMarker,
+  writeHostedOAuthPendingMarker,
+  type HostedOAuthCallbackContext,
+} from "@/lib/hosted-oauth-callback";
 import { getRedirectUri } from "./constants";
 import { getConvexSiteUrl } from "@/lib/convex-site-url";
+import {
+  appendOAuthTraceHttpHistory,
+  buildOAuthTraceFromSnapshot,
+  clearOAuthTrace,
+  completeOAuthTraceStep,
+  createOAuthTrace,
+  failOAuthTraceStep,
+  mergeOAuthTraces,
+  startOAuthTraceStep,
+  type OAuthTrace,
+} from "./oauth-trace";
 
 // Store original fetch for restoration
 const originalFetch = window.fetch;
@@ -35,16 +64,37 @@ interface StoredOAuthClientInformation {
   client_secret?: string;
 }
 
+type OAuthRegistrationStrategy =
+  | RegistrationStrategy2025_03_26
+  | RegistrationStrategy2025_06_18
+  | RegistrationStrategy2025_11_25;
+
 export interface StoredOAuthConfig {
   scopes?: string[];
   customHeaders?: Record<string, string>;
   registryServerId?: string;
   useRegistryOAuthProxy?: boolean;
+  protocolVersion?: OAuthProtocolVersion;
+  registrationStrategy?: OAuthRegistrationStrategy;
 }
 
 interface OAuthRoutingConfig {
   registryServerId?: string;
   useRegistryOAuthProxy?: boolean;
+}
+
+interface StoredOAuthFlowSession {
+  version: 1;
+  protocolVersion: OAuthProtocolVersion;
+  registrationStrategy: OAuthRegistrationStrategy;
+  state: OAuthFlowState;
+}
+
+const DEFAULT_OAUTH_PROTOCOL_VERSION: OAuthProtocolVersion = "2025-11-25";
+const DEFAULT_OAUTH_REGISTRATION_STRATEGY: OAuthRegistrationStrategy = "dcr";
+
+function getFlowStateStorageKey(serverName: string): string {
+  return `mcp-oauth-flow-state-${serverName}`;
 }
 
 function getDiscoveryStorageKey(serverName: string): string {
@@ -57,8 +107,625 @@ function clearStoredDiscoveryState(serverName: string): void {
 
 type OAuthRequestFields = Record<string, string>;
 
+const SENSITIVE_FIELD_NAMES = new Set([
+  "access_token",
+  "refresh_token",
+  "id_token",
+  "client_secret",
+  "code",
+  "code_verifier",
+  "authorization_code",
+  "authorization",
+  "state",
+  "cookie",
+  "set_cookie",
+  "api_key",
+]);
+
+const SENSITIVE_HEADER_PATTERNS = [
+  /^authorization$/i,
+  /^proxy-authorization$/i,
+  /^cookie$/i,
+  /^set-cookie$/i,
+  /^x-api-key$/i,
+  /^api-key$/i,
+  /^apikey$/i,
+  /^x-auth-token$/i,
+  /^x-csrf-token$/i,
+  /^x-session-token$/i,
+  /^x-access-token$/i,
+  /^x-refresh-token$/i,
+  /^x-client-secret$/i,
+  /^x-credential$/i,
+];
+
+function normalizeSensitiveKey(key: string): string {
+  return key
+    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+    .replace(/[^a-zA-Z0-9]+/g, "_")
+    .toLowerCase();
+}
+
+function isSensitiveTraceFieldName(key: string): boolean {
+  return SENSITIVE_FIELD_NAMES.has(normalizeSensitiveKey(key));
+}
+
+function isSensitiveHeaderName(key: string): boolean {
+  const normalized = normalizeSensitiveKey(key);
+  return (
+    SENSITIVE_FIELD_NAMES.has(normalized) ||
+    SENSITIVE_HEADER_PATTERNS.some((pattern) => pattern.test(key)) ||
+    /(^|_)(token|secret|password|credential|cookie|auth)(_|$)/.test(
+      normalized
+    ) ||
+    /(^|_)api_?key(_|$)/.test(normalized)
+  );
+}
+
+function isSensitiveQueryParamName(key: string): boolean {
+  const normalized = normalizeSensitiveKey(key);
+  return (
+    SENSITIVE_FIELD_NAMES.has(normalized) ||
+    /(^|_)(token|secret|password|credential|cookie|auth)(_|$)/.test(
+      normalized
+    ) ||
+    /(^|_)api_?key(_|$)/.test(normalized)
+  );
+}
+
+function redactSensitiveValue(value: unknown): string {
+  if (typeof value !== "string") {
+    return "[redacted]";
+  }
+
+  if (value.length <= 8) {
+    return "[redacted]";
+  }
+
+  return `${value.slice(0, 4)}...[redacted]...${value.slice(-2)}`;
+}
+
+function sanitizeOAuthTraceString(value: string): unknown {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return value;
+  }
+
+  if (/^https?:\/\//i.test(trimmed)) {
+    return sanitizeOAuthUrl(trimmed);
+  }
+
+  const looksStructured =
+    trimmed.includes("=") ||
+    trimmed.includes("&") ||
+    (trimmed.startsWith("{") && trimmed.endsWith("}")) ||
+    (trimmed.startsWith("[") && trimmed.endsWith("]"));
+  if (looksStructured) {
+    const parsed = parseOAuthRequestFields(trimmed);
+    if (parsed) {
+      return sanitizeOAuthTraceValue(parsed);
+    }
+  }
+
+  return trimmed
+    .replace(
+      /\b(access_token|refresh_token|id_token|client_secret|code_verifier)\b(\s*[:=]\s*)([^\s&,;]+)/gi,
+      (_match, key: string, separator: string) => `${key}${separator}[redacted]`
+    )
+    .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+\b/gi, "Bearer [redacted]");
+}
+
+function sanitizeOAuthUrl(rawUrl: string): string {
+  try {
+    const url = new URL(rawUrl);
+    for (const key of [...url.searchParams.keys()]) {
+      if (isSensitiveQueryParamName(key)) {
+        url.searchParams.set(key, "[redacted]");
+      }
+    }
+    if (url.hash) {
+      url.hash = "#[redacted]";
+    }
+    return url.toString();
+  } catch {
+    return rawUrl.replace(
+      /\bBearer\s+[A-Za-z0-9._~+/=-]+\b/gi,
+      "Bearer [redacted]"
+    );
+  }
+}
+
+function sanitizeOAuthTraceValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => sanitizeOAuthTraceValue(item));
+  }
+
+  if (typeof value === "string") {
+    return sanitizeOAuthTraceString(value);
+  }
+
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+
+  return Object.fromEntries(
+    Object.entries(value).map(([key, entryValue]) => {
+      if (isSensitiveTraceFieldName(key)) {
+        return [key, redactSensitiveValue(entryValue)];
+      }
+      return [key, sanitizeOAuthTraceValue(entryValue)];
+    })
+  );
+}
+
+function sanitizeOAuthHeaderValue(value: string): string {
+  const sanitized = sanitizeOAuthTraceString(value);
+  if (typeof sanitized === "string") {
+    return sanitized;
+  }
+  return redactSensitiveValue(value);
+}
+
+function sanitizeOAuthHeaders(
+  headers: Record<string, string>
+): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(headers).map(([key, value]) => {
+      if (isSensitiveHeaderName(key)) {
+        return [key, redactSensitiveValue(value)];
+      }
+      return [key, sanitizeOAuthHeaderValue(value)];
+    })
+  );
+}
+
+function createHttpHistoryEntry(input: {
+  step: HttpHistoryEntry["step"];
+  method: string;
+  url: string;
+  headers?: Record<string, string>;
+  body?: unknown;
+}): HttpHistoryEntry {
+  return {
+    step: input.step,
+    timestamp: Date.now(),
+    request: {
+      method: input.method,
+      url: SANITIZE_OAUTH_TRACES ? sanitizeOAuthUrl(input.url) : input.url,
+      headers: traceOAuthHeaders(input.headers ?? {}),
+      body: traceOAuthValue(input.body),
+    },
+  };
+}
+
+function traceOAuthHeaders(
+  headers: Record<string, string>,
+): Record<string, string> {
+  return SANITIZE_OAUTH_TRACES
+    ? sanitizeOAuthHeaders(headers)
+    : { ...headers };
+}
+
+function traceOAuthValue(value: unknown): unknown {
+  return SANITIZE_OAUTH_TRACES ? sanitizeOAuthTraceValue(value) : value;
+}
+
+function parseOAuthResponseText(
+  text: string,
+  contentType: string,
+): unknown {
+  const looksJson =
+    contentType.includes("application/json") ||
+    contentType.includes("+json") ||
+    text.startsWith("{") ||
+    text.startsWith("[");
+
+  if (!looksJson) {
+    return text;
+  }
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
+  }
+}
+
+async function readResponseBodyForTrace(response: Response): Promise<unknown> {
+  try {
+    const text = await response.clone().text();
+    if (!text) {
+      return null;
+    }
+
+    const contentType =
+      response.headers.get("content-type")?.toLowerCase() ?? "";
+    return traceOAuthValue(parseOAuthResponseText(text, contentType));
+  } catch {
+    return null;
+  }
+}
+
+function cloneEmptyFlowState(): OAuthFlowState {
+  return {
+    ...EMPTY_OAUTH_FLOW_STATE,
+    httpHistory: [],
+    infoLogs: [],
+  };
+}
+
+function cloneFlowState(state: OAuthFlowState): OAuthFlowState {
+  return JSON.parse(JSON.stringify(state)) as OAuthFlowState;
+}
+
+function stripOAuthTraceDataFromFlowState(
+  state: OAuthFlowState
+): OAuthFlowState {
+  return {
+    ...cloneFlowState(state),
+    httpHistory: [],
+    infoLogs: [],
+    lastRequest: undefined,
+    lastResponse: undefined,
+    error: undefined,
+  };
+}
+
+function normalizeResponseHeaders(headers: Headers): Record<string, string> {
+  const normalized: Record<string, string> = {};
+  headers.forEach((value, key) => {
+    normalized[key.toLowerCase()] = value;
+  });
+  return normalized;
+}
+
+async function parseOAuthResponseBody(response: Response): Promise<unknown> {
+  const text = await response.text();
+  if (!text) {
+    return undefined;
+  }
+
+  const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
+  return traceOAuthValue(parseOAuthResponseText(text, contentType));
+}
+
+function serializeOAuthRequestBody(
+  body: HttpHistoryEntry["request"]["body"],
+  headers: Record<string, string>
+): BodyInit | undefined {
+  if (body === undefined || body === null) {
+    return undefined;
+  }
+
+  if (typeof body === "string" || body instanceof URLSearchParams) {
+    return body;
+  }
+
+  const contentType =
+    Object.entries(headers).find(
+      ([key]) => key.toLowerCase() === "content-type"
+    )?.[1] ?? "";
+
+  if (contentType.includes("application/x-www-form-urlencoded")) {
+    return new URLSearchParams(
+      Object.entries(body as Record<string, string>).map(([key, value]) => [
+        key,
+        String(value),
+      ])
+    ).toString();
+  }
+
+  return JSON.stringify(body);
+}
+
+function saveOAuthFlowSession(
+  serverName: string,
+  session: StoredOAuthFlowSession
+): void {
+  const persistedSession: StoredOAuthFlowSession = {
+    ...session,
+    state: stripOAuthTraceDataFromFlowState(session.state),
+  };
+  localStorage.setItem(
+    getFlowStateStorageKey(serverName),
+    JSON.stringify(persistedSession)
+  );
+}
+
+function loadOAuthFlowSession(
+  serverName: string
+): StoredOAuthFlowSession | undefined {
+  try {
+    const raw = localStorage.getItem(getFlowStateStorageKey(serverName));
+    if (!raw) {
+      return undefined;
+    }
+
+    const parsed = JSON.parse(raw) as StoredOAuthFlowSession;
+    if (
+      parsed?.version !== 1 ||
+      !parsed.state ||
+      (parsed.protocolVersion !== "2025-03-26" &&
+        parsed.protocolVersion !== "2025-06-18" &&
+        parsed.protocolVersion !== "2025-11-25")
+    ) {
+      return undefined;
+    }
+
+    return {
+      ...parsed,
+      state: stripOAuthTraceDataFromFlowState(parsed.state),
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+function clearOAuthFlowSession(serverName: string): void {
+  localStorage.removeItem(getFlowStateStorageKey(serverName));
+}
+
+function resolveOAuthProtocolVersion(
+  options: Pick<MCPOAuthOptions, "protocolVersion">
+): OAuthProtocolVersion {
+  return options.protocolVersion ?? DEFAULT_OAUTH_PROTOCOL_VERSION;
+}
+
+function resolveOAuthRegistrationStrategy(
+  options: Pick<
+    MCPOAuthOptions,
+    | "registrationStrategy"
+    | "clientId"
+    | "clientSecret"
+    | "useRegistryOAuthProxy"
+  >
+): OAuthRegistrationStrategy {
+  if (options.registrationStrategy) {
+    return options.registrationStrategy;
+  }
+
+  if (
+    options.useRegistryOAuthProxy ||
+    options.clientId ||
+    options.clientSecret
+  ) {
+    return "preregistered";
+  }
+
+  return DEFAULT_OAUTH_REGISTRATION_STRATEGY;
+}
+
+function normalizeProxyTargetUrl(url: string): string {
+  try {
+    const parsed = new URL(url);
+    parsed.protocol = parsed.protocol.toLowerCase();
+    parsed.hostname = parsed.hostname.toLowerCase();
+    parsed.hash = "";
+
+    if (parsed.pathname !== "/" && parsed.pathname.endsWith("/")) {
+      parsed.pathname = parsed.pathname.slice(0, -1);
+    }
+
+    return parsed.toString();
+  } catch {
+    return url;
+  }
+}
+
+function shouldRetryMcpRequestViaProxy(
+  request: HttpHistoryEntry["request"],
+  serverUrl: string | undefined
+): boolean {
+  if (!serverUrl) {
+    return false;
+  }
+
+  return (
+    normalizeProxyTargetUrl(request.url) === normalizeProxyTargetUrl(serverUrl)
+  );
+}
+
+async function executeRequestViaProxy(
+  request: HttpHistoryEntry["request"]
+): Promise<{
+  status: number;
+  statusText: string;
+  headers: Record<string, string>;
+  body: unknown;
+  ok: boolean;
+}> {
+  const proxyBase = HOSTED_MODE ? "/api/web/oauth" : "/api/mcp/oauth";
+  const response = await authFetch(`${proxyBase}/proxy`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      url: request.url,
+      method: request.method,
+      headers: request.headers,
+      body: request.body,
+    }),
+  });
+
+  if (!response.ok) {
+    const body = await parseOAuthResponseBody(response);
+    const message =
+      body &&
+      typeof body === "object" &&
+      "error" in body &&
+      typeof (body as { error?: unknown }).error === "string"
+        ? (body as { error: string }).error
+        : `MCP request proxy failed (${response.status})`;
+    throw new Error(message);
+  }
+
+  const proxied = (await response.json()) as {
+    status: number;
+    statusText: string;
+    headers?: Record<string, string>;
+    body: unknown;
+  };
+
+  return {
+    status: proxied.status,
+    statusText: proxied.statusText,
+    headers: proxied.headers ?? {},
+    body: traceOAuthValue(proxied.body),
+    ok: proxied.status >= 200 && proxied.status < 300,
+  };
+}
+
+async function createTraceResponseFromFetch(
+  response: Response,
+): Promise<HttpHistoryEntry["response"]> {
+  return {
+    status: response.status,
+    statusText: response.statusText,
+    headers: traceOAuthHeaders(Object.fromEntries(response.headers.entries())),
+    body: await readResponseBodyForTrace(response),
+  };
+}
+
+function createTraceResponseFromResult(
+  result: Pick<OAuthRequestResult, "status" | "statusText" | "headers" | "body">,
+): HttpHistoryEntry["response"] {
+  return {
+    status: result.status,
+    statusText: result.statusText,
+    headers: traceOAuthHeaders(result.headers ?? {}),
+    body: traceOAuthValue(result.body),
+  };
+}
+
+function createOAuthRequestExecutor(fetchFn: typeof fetch, serverUrl?: string) {
+  return async (request: HttpHistoryEntry["request"]) => {
+    let response:
+      | {
+          status: number;
+          statusText: string;
+          headers: Record<string, string>;
+          body: unknown;
+          ok: boolean;
+        }
+      | undefined;
+
+    try {
+      const directResponse = await fetchFn(request.url, {
+        method: request.method,
+        headers: request.headers,
+        body: serializeOAuthRequestBody(request.body, request.headers),
+      });
+      response = {
+        status: directResponse.status,
+        statusText: directResponse.statusText,
+        headers: normalizeResponseHeaders(directResponse.headers),
+        body: await parseOAuthResponseBody(directResponse),
+        ok: directResponse.ok,
+      };
+    } catch (error) {
+      if (!shouldRetryMcpRequestViaProxy(request, serverUrl)) {
+        throw error;
+      }
+
+      response = await executeRequestViaProxy(request);
+    }
+
+    return {
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
+      body: response.body,
+      ok: response.ok,
+    };
+  };
+}
+
+function saveDiscoveryStateFromFlowState(
+  provider: MCPOAuthProvider,
+  state: OAuthFlowState
+): Promise<void> {
+  if (!state.authorizationServerUrl) {
+    return Promise.resolve();
+  }
+
+  return provider.saveDiscoveryState({
+    authorizationServerUrl: state.authorizationServerUrl,
+    ...(state.resourceMetadata
+      ? {
+          resourceMetadata: state.resourceMetadata,
+        }
+      : {}),
+    ...(state.authorizationServerMetadata
+      ? {
+          authorizationServerMetadata: state.authorizationServerMetadata,
+        }
+      : {}),
+  });
+}
+
+async function persistOAuthStateArtifacts(
+  provider: MCPOAuthProvider,
+  state: OAuthFlowState
+): Promise<void> {
+  if (state.clientId) {
+    await provider.saveClientInformation({
+      client_id: state.clientId,
+      ...(state.clientSecret ? { client_secret: state.clientSecret } : {}),
+    });
+  }
+
+  if (state.codeVerifier) {
+    await provider.saveCodeVerifier(state.codeVerifier);
+  }
+
+  if (state.accessToken) {
+    await provider.saveTokens({
+      access_token: state.accessToken,
+      ...(state.refreshToken ? { refresh_token: state.refreshToken } : {}),
+      ...(state.tokenType ? { token_type: state.tokenType } : {}),
+      ...(typeof state.expiresIn === "number"
+        ? { expires_in: state.expiresIn }
+        : {}),
+    });
+  }
+
+  await saveDiscoveryStateFromFlowState(provider, state);
+}
+
+function buildOAuthTraceFromFlowState(input: {
+  source: "interactive_connect" | "callback";
+  serverName?: string;
+  serverUrl?: string;
+  state: OAuthFlowState;
+}): OAuthTrace {
+  return buildOAuthTraceFromSnapshot({
+    source: input.source,
+    serverName: input.serverName,
+    serverUrl: input.serverUrl,
+    snapshot: projectOAuthTraceSnapshot({
+      state: input.state,
+      sanitize: SANITIZE_OAUTH_TRACES,
+    }),
+  });
+}
+
+function buildStoredOAuthTrace(input: {
+  serverName: string;
+  serverUrl: string;
+  session: StoredOAuthFlowSession;
+}): OAuthTrace {
+  return buildOAuthTraceFromSnapshot({
+    source: "interactive_connect",
+    serverName: input.serverName,
+    serverUrl: input.serverUrl,
+    snapshot: projectOAuthTraceSnapshot({
+      state: input.session.state,
+      sanitize: true,
+    }),
+  });
+}
+
 export function readStoredOAuthConfig(
-  serverName: string | null,
+  serverName: string | null
 ): StoredOAuthConfig {
   if (!serverName) {
     return {
@@ -83,6 +750,18 @@ export function readStoredOAuthConfig(
           ? parsed.registryServerId
           : undefined,
       useRegistryOAuthProxy: parsed?.useRegistryOAuthProxy === true,
+      protocolVersion:
+        parsed?.protocolVersion === "2025-03-26" ||
+        parsed?.protocolVersion === "2025-06-18" ||
+        parsed?.protocolVersion === "2025-11-25"
+          ? parsed.protocolVersion
+          : undefined,
+      registrationStrategy:
+        parsed?.registrationStrategy === "cimd" ||
+        parsed?.registrationStrategy === "dcr" ||
+        parsed?.registrationStrategy === "preregistered"
+          ? parsed.registrationStrategy
+          : undefined,
     };
 
     if (
@@ -99,8 +778,8 @@ export function readStoredOAuthConfig(
     ) {
       config.customHeaders = Object.fromEntries(
         Object.entries(parsed.customHeaders).filter(
-          ([, value]) => typeof value === "string",
-        ) as Array<[string, string]>,
+          ([, value]) => typeof value === "string"
+        ) as Array<[string, string]>
       );
     }
 
@@ -116,23 +795,34 @@ export function readStoredOAuthConfig(
 export function buildStoredOAuthConfig(
   options: Pick<
     MCPOAuthOptions,
-    "scopes" | "registryServerId" | "useRegistryOAuthProxy"
-  >,
+    | "scopes"
+    | "registryServerId"
+    | "useRegistryOAuthProxy"
+    | "customHeaders"
+    | "protocolVersion"
+    | "registrationStrategy"
+  >
 ): StoredOAuthConfig {
   const config: StoredOAuthConfig = {
     registryServerId: options.registryServerId,
     useRegistryOAuthProxy: options.useRegistryOAuthProxy === true,
+    protocolVersion: options.protocolVersion,
+    registrationStrategy: options.registrationStrategy,
   };
 
   if (options.scopes && options.scopes.length > 0) {
     config.scopes = options.scopes;
   }
 
+  if (options.customHeaders && Object.keys(options.customHeaders).length > 0) {
+    config.customHeaders = options.customHeaders;
+  }
+
   return config;
 }
 
 function parseOAuthRequestFields(
-  body: unknown,
+  body: unknown
 ): OAuthRequestFields | undefined {
   if (!body) return undefined;
 
@@ -197,7 +887,7 @@ function getOAuthGrantType(body: unknown): string | undefined {
 
 export function isOAuthTokenGrantRequest(
   method: string,
-  body: unknown,
+  body: unknown
 ): body is OAuthRequestFields {
   if (method !== "POST") {
     return false;
@@ -213,7 +903,7 @@ type OAuthRoutingRequestConfig = OAuthRoutingConfig & {
 };
 
 export function shouldUseRegistryOAuthProxy(
-  config: OAuthRoutingRequestConfig,
+  config: OAuthRoutingRequestConfig
 ): config is OAuthRoutingRequestConfig & {
   body: OAuthRequestFields;
 } {
@@ -227,7 +917,7 @@ export function shouldUseRegistryOAuthProxy(
 
 function toConvexOAuthPayload(
   registryServerId: string,
-  fields: OAuthRequestFields,
+  fields: OAuthRequestFields
 ): Record<string, string> {
   const payload: Record<string, string> = {
     registryServerId,
@@ -259,7 +949,7 @@ function toConvexOAuthPayload(
 async function loadCallbackDiscoveryState(
   provider: MCPOAuthProvider,
   serverUrl: string,
-  fetchFn: typeof fetch,
+  fetchFn: typeof fetch
 ): Promise<OAuthDiscoveryState> {
   const cachedState = await provider.discoveryState();
   if (cachedState?.authorizationServerUrl) {
@@ -267,7 +957,7 @@ async function loadCallbackDiscoveryState(
       cachedState.authorizationServerMetadata ??
       (await discoverAuthorizationServerMetadata(
         cachedState.authorizationServerUrl,
-        { fetchFn },
+        { fetchFn }
       ));
 
     const discoveryState: OAuthDiscoveryState = {
@@ -295,10 +985,11 @@ async function loadCallbackDiscoveryState(
  */
 function createOAuthFetchInterceptor(
   routingConfig: OAuthRoutingConfig = {},
+  trace?: OAuthTrace
 ): typeof fetch {
   return async function interceptedFetch(
     input: RequestInfo | URL,
-    init?: RequestInit,
+    init?: RequestInit
   ): Promise<Response> {
     const method = (init?.method || "GET").toUpperCase();
     const serializedBody = init?.body
@@ -308,8 +999,8 @@ function createOAuthFetchInterceptor(
       typeof input === "string"
         ? input
         : input instanceof URL
-          ? input.toString()
-          : input.url;
+        ? input.toString()
+        : input.url;
     const oauthGrantType = getOAuthGrantType(serializedBody);
     const registryTokenRequest = {
       ...routingConfig,
@@ -330,6 +1021,30 @@ function createOAuthFetchInterceptor(
       return await originalFetch(input, init);
     }
 
+    const traceStep =
+      oauthGrantType === "authorization_code" ||
+      oauthGrantType === "refresh_token"
+        ? "token_request"
+        : url.includes("/register")
+        ? "request_client_registration"
+        : url.includes("oauth-protected-resource")
+        ? "request_resource_metadata"
+        : url.includes("/.well-known/")
+        ? "request_authorization_server_metadata"
+        : "authorization_request";
+    const entry = createHttpHistoryEntry({
+      step: traceStep,
+      method,
+      url,
+      headers: init?.headers
+        ? Object.fromEntries(new Headers(init.headers as HeadersInit))
+        : {},
+      body: serializedBody,
+    });
+    if (trace) {
+      appendOAuthTraceHttpHistory(trace, entry);
+    }
+
     // For registry servers, route token exchange/refresh through Convex HTTP actions
     if (isRegistryTokenRequest) {
       const convexSiteUrl = getConvexSiteUrl();
@@ -344,10 +1059,12 @@ function createOAuthFetchInterceptor(
           body: JSON.stringify(
             toConvexOAuthPayload(
               routingConfig.registryServerId!,
-              registryTokenRequest.body,
-            ),
+              registryTokenRequest.body
+            )
           ),
         });
+        entry.response = await createTraceResponseFromFetch(response);
+        entry.duration = Date.now() - entry.timestamp;
         return response;
       }
     }
@@ -361,7 +1078,10 @@ function createOAuthFetchInterceptor(
         : `${proxyBase}/proxy`;
 
       if (isMetadata) {
-        return await authFetch(proxyUrl, { ...init, method: "GET" });
+        const response = await authFetch(proxyUrl, { ...init, method: "GET" });
+        entry.response = await createTraceResponseFromFetch(response);
+        entry.duration = Date.now() - entry.timestamp;
+        return response;
       }
 
       // For OAuth endpoints, serialize and proxy the full request
@@ -380,18 +1100,31 @@ function createOAuthFetchInterceptor(
 
       // If the proxy call itself failed (e.g., auth error), return that response directly
       if (!response.ok) {
+        entry.response = await createTraceResponseFromFetch(response);
+        entry.duration = Date.now() - entry.timestamp;
         return response;
       }
 
       const data = await response.json();
+      entry.response = createTraceResponseFromResult({
+        status: data.status,
+        statusText: data.statusText,
+        headers: data.headers ?? {},
+        body: data.body,
+      });
+      entry.duration = Date.now() - entry.timestamp;
       return new Response(JSON.stringify(data.body), {
         status: data.status,
         statusText: data.statusText,
         headers: new Headers(data.headers),
       });
     } catch (error) {
-      console.error("OAuth proxy failed, falling back to direct fetch:", error);
-      return await originalFetch(input, init);
+      entry.error = {
+        message: error instanceof Error ? error.message : String(error),
+      };
+      entry.duration = Date.now() - entry.timestamp;
+      console.error("OAuth proxy failed:", error);
+      throw error instanceof Error ? error : new Error(String(error));
     }
   };
 }
@@ -425,24 +1158,205 @@ export interface MCPOAuthOptions {
   serverName: string;
   serverUrl: string;
   scopes?: string[];
+  customHeaders?: Record<string, string>;
   clientId?: string;
   clientSecret?: string;
   /** Registry record identifier for bookkeeping and optional Convex token exchange */
   registryServerId?: string;
   /** True only for registry servers with backend-managed preregistered OAuth credentials */
   useRegistryOAuthProxy?: boolean;
+  protocolVersion?: OAuthProtocolVersion;
+  registrationStrategy?: OAuthRegistrationStrategy;
+  onTraceUpdate?: (trace: OAuthTrace) => void;
 }
 
 export interface OAuthResult {
   success: boolean;
   serverConfig?: HttpServerConfig;
   error?: string;
+  oauthTrace?: OAuthTrace;
 }
 
 interface HostedOAuthCompletionResponse {
   success: boolean;
   expiresAt?: number | null;
   kind?: "generic" | "registry";
+  error?: string;
+  oauthTrace?: OAuthTrace;
+}
+
+interface HostedOAuthSessionProgressResponse {
+  success: boolean;
+  sessionId?: string;
+  status?: "pending" | "running" | "succeeded" | "failed";
+  updatedAt?: number;
+  completedAt?: number;
+  lastError?: string;
+  error?: string;
+  oauthTrace?: OAuthTrace;
+}
+
+const HOSTED_OAUTH_PROGRESS_POLL_MS = 250;
+
+function publishOAuthTraceUpdate(
+  _serverName: string | undefined,
+  trace: OAuthTrace,
+  onTraceUpdate?: (trace: OAuthTrace) => void
+): OAuthTrace {
+  onTraceUpdate?.(trace);
+  return trace;
+}
+
+function waitForMs(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function readHostedOAuthExpectedState(state: OAuthFlowState): string {
+  const expectedState =
+    typeof state.state === "string" ? state.state.trim() : "";
+  if (!expectedState) {
+    throw new Error("OAuth state not ready for hosted callback session.");
+  }
+
+  return expectedState;
+}
+
+async function createHostedOAuthSessionIfNeeded(input: {
+  serverName: string;
+  serverUrl: string;
+  redirectUrl: string;
+  state: OAuthFlowState;
+}): Promise<string | undefined> {
+  if (!HOSTED_MODE) {
+    return undefined;
+  }
+
+  const pendingMarker = readHostedOAuthPendingMarker();
+  if (
+    !pendingMarker?.workspaceId ||
+    !pendingMarker.serverId ||
+    !matchesHostedOAuthServerIdentity(
+      {
+        serverName: pendingMarker.serverName,
+        serverUrl: pendingMarker.serverUrl,
+      },
+      {
+        serverName: input.serverName,
+        serverUrl: input.serverUrl,
+      }
+    )
+  ) {
+    return undefined;
+  }
+
+  const clientId = input.state.clientId;
+  if (!clientId) {
+    throw new Error("OAuth client ID not ready for hosted callback session.");
+  }
+
+  const codeVerifier = input.state.codeVerifier;
+  if (!codeVerifier) {
+    throw new Error("Code verifier not ready for hosted callback session.");
+  }
+  const expectedState = readHostedOAuthExpectedState(input.state);
+
+  const response = await authFetch("/api/web/oauth/session", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      workspaceId: pendingMarker.workspaceId,
+      serverId: pendingMarker.serverId,
+      codeVerifier,
+      redirectUri: input.redirectUrl,
+      expectedState,
+      clientInformation: {
+        clientId,
+        ...(input.state.clientSecret
+          ? { clientSecret: input.state.clientSecret }
+          : {}),
+      },
+      ...(pendingMarker.accessScope
+        ? { accessScope: pendingMarker.accessScope }
+        : {}),
+      ...(pendingMarker.shareToken
+        ? { shareToken: pendingMarker.shareToken }
+        : {}),
+      ...(pendingMarker.chatboxToken
+        ? { chatboxToken: pendingMarker.chatboxToken }
+        : {}),
+    }),
+  });
+  const result = (await response
+    .clone()
+    .json()
+    .catch(() => null)) as {
+    success?: boolean;
+    sessionId?: string;
+    error?: string;
+  } | null;
+
+  if (
+    !response.ok ||
+    !result?.success ||
+    typeof result.sessionId !== "string"
+  ) {
+    throw new Error(
+      result?.error || `Hosted OAuth session failed (${response.status})`
+    );
+  }
+
+  writeHostedOAuthPendingMarker({
+    ...pendingMarker,
+    sessionId: result.sessionId,
+  });
+  return result.sessionId;
+}
+
+async function readHostedOAuthSessionProgress(input: {
+  convexSiteUrl: string;
+  context: HostedOAuthCallbackContext;
+}): Promise<HostedOAuthSessionProgressResponse | null> {
+  if (
+    !input.context.workspaceId ||
+    !input.context.serverId ||
+    !input.context.sessionId
+  ) {
+    return null;
+  }
+
+  const response = await authFetch(
+    `${input.convexSiteUrl}/web/oauth/session/progress`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        workspaceId: input.context.workspaceId,
+        serverId: input.context.serverId,
+        sessionId: input.context.sessionId,
+        ...(input.context.accessScope
+          ? { accessScope: input.context.accessScope }
+          : {}),
+        ...(input.context.shareToken
+          ? { shareToken: input.context.shareToken }
+          : {}),
+        ...(input.context.chatboxToken
+          ? { chatboxToken: input.context.chatboxToken }
+          : {}),
+      }),
+    }
+  );
+
+  if (!response.ok) {
+    return null;
+  }
+
+  return (await response
+    .json()
+    .catch(() => null)) as HostedOAuthSessionProgressResponse | null;
 }
 
 /**
@@ -459,7 +1373,7 @@ export class MCPOAuthProvider implements OAuthClientProvider {
     serverName: string,
     serverUrl: string,
     customClientId?: string,
-    customClientSecret?: string,
+    customClientSecret?: string
   ) {
     this.serverName = serverName;
     this.serverUrl = serverUrl;
@@ -522,7 +1436,7 @@ export class MCPOAuthProvider implements OAuthClientProvider {
   async saveClientInformation(clientInformation: any) {
     localStorage.setItem(
       `mcp-client-${this.serverName}`,
-      JSON.stringify(clientInformation),
+      JSON.stringify(clientInformation)
     );
   }
 
@@ -534,13 +1448,25 @@ export class MCPOAuthProvider implements OAuthClientProvider {
   async saveTokens(tokens: any) {
     localStorage.setItem(
       `mcp-tokens-${this.serverName}`,
-      JSON.stringify(tokens),
+      JSON.stringify(tokens)
     );
+  }
+
+  prepareTokenRequest() {
+    const currentTokens = this.tokens();
+    if (!currentTokens?.refresh_token) {
+      return undefined;
+    }
+
+    return new URLSearchParams({
+      grant_type: "refresh_token",
+      refresh_token: currentTokens.refresh_token,
+    });
   }
 
   discoveryState(): OAuthDiscoveryState | undefined {
     const stored = localStorage.getItem(
-      getDiscoveryStorageKey(this.serverName),
+      getDiscoveryStorageKey(this.serverName)
     );
     if (!stored) {
       return undefined;
@@ -569,7 +1495,7 @@ export class MCPOAuthProvider implements OAuthClientProvider {
     };
     localStorage.setItem(
       getDiscoveryStorageKey(this.serverName),
-      JSON.stringify(payload),
+      JSON.stringify(payload)
     );
   }
 
@@ -597,7 +1523,7 @@ export class MCPOAuthProvider implements OAuthClientProvider {
   }
 
   async invalidateCredentials(
-    scope: "all" | "client" | "tokens" | "verifier" | "discovery",
+    scope: "all" | "client" | "tokens" | "verifier" | "discovery"
   ) {
     switch (scope) {
       case "all":
@@ -623,7 +1549,7 @@ export class MCPOAuthProvider implements OAuthClientProvider {
 }
 
 function readStoredClientInformation(
-  serverName: string,
+  serverName: string
 ): StoredOAuthClientInformation {
   try {
     const stored = localStorage.getItem(`mcp-client-${serverName}`);
@@ -649,40 +1575,79 @@ function readStoredClientInformation(
  * Initiates OAuth flow for an MCP server
  */
 export async function initiateOAuth(
-  options: MCPOAuthOptions,
+  options: MCPOAuthOptions
 ): Promise<OAuthResult> {
-  // Build fetch interceptor — routes token requests through Convex for registry servers
-  const fetchFn = createOAuthFetchInterceptor({
-    registryServerId: options.registryServerId,
-    useRegistryOAuthProxy: options.useRegistryOAuthProxy,
-  });
+  let state = cloneEmptyFlowState();
+  const updateState = (updates: Partial<OAuthFlowState>) => {
+    state = { ...state, ...updates };
+  };
+  const getState = () => state;
+  const emitTraceSnapshot = (snapshot: OAuthTraceSnapshot) =>
+    publishOAuthTraceUpdate(
+      options.serverName,
+      buildOAuthTraceFromSnapshot({
+        source: "interactive_connect",
+        serverName: options.serverName,
+        serverUrl: options.serverUrl,
+        snapshot,
+      }),
+      options.onTraceUpdate
+    );
+  const emitTraceFromState = (nextState: OAuthFlowState) =>
+    publishOAuthTraceUpdate(
+      options.serverName,
+      buildOAuthTraceFromFlowState({
+        source: "interactive_connect",
+        serverName: options.serverName,
+        serverUrl: options.serverUrl,
+        state: nextState,
+      }),
+      options.onTraceUpdate
+    );
 
   try {
     const provider = new MCPOAuthProvider(
       options.serverName,
       options.serverUrl,
       options.clientId,
-      options.clientSecret,
+      options.clientSecret
+    );
+    const protocolVersion = resolveOAuthProtocolVersion(options);
+    const registrationStrategy = resolveOAuthRegistrationStrategy(options);
+    const fetchFn = createOAuthFetchInterceptor(
+      {
+        registryServerId: options.registryServerId,
+        useRegistryOAuthProxy: options.useRegistryOAuthProxy,
+      },
+      undefined
+    );
+    const requestExecutor = createOAuthRequestExecutor(
+      fetchFn,
+      options.serverUrl
     );
 
     // Store server URL for callback recovery
     localStorage.setItem(
       `mcp-serverUrl-${options.serverName}`,
-      options.serverUrl,
+      options.serverUrl
     );
     localStorage.setItem("mcp-oauth-pending", options.serverName);
 
     // Store OAuth configuration (scopes, registryServerId) for recovery if connection fails
-    const oauthConfig = buildStoredOAuthConfig(options);
+    const oauthConfig = buildStoredOAuthConfig({
+      ...options,
+      protocolVersion,
+      registrationStrategy,
+    });
     localStorage.setItem(
       `mcp-oauth-config-${options.serverName}`,
-      JSON.stringify(oauthConfig),
+      JSON.stringify(oauthConfig)
     );
 
     // Store custom client credentials if provided, so they can be retrieved during callback
     if (options.clientId || options.clientSecret) {
       const existingClientInfo = localStorage.getItem(
-        `mcp-client-${options.serverName}`,
+        `mcp-client-${options.serverName}`
       );
       const existingJson = existingClientInfo
         ? JSON.parse(existingClientInfo)
@@ -698,36 +1663,96 @@ export async function initiateOAuth(
 
       localStorage.setItem(
         `mcp-client-${options.serverName}`,
-        JSON.stringify(updatedClientInfo),
+        JSON.stringify(updatedClientInfo)
       );
     }
 
-    const authArgs: any = { serverUrl: options.serverUrl, fetchFn };
-    if (options.scopes && options.scopes.length > 0) {
-      authArgs.scope = options.scopes.join(" ");
-    }
-    const result = await auth(provider, authArgs);
+    const requestedScope =
+      options.scopes && options.scopes.length > 0
+        ? options.scopes.join(" ")
+        : undefined;
+    const flowResult = await runOAuthStateMachine({
+      protocolVersion,
+      registrationStrategy,
+      state,
+      getState,
+      updateState,
+      serverUrl: options.serverUrl,
+      serverName: options.serverName,
+      redirectUrl: provider.redirectUrl,
+      sanitizeTrace: SANITIZE_OAUTH_TRACES,
+      requestExecutor,
+      loadPreregisteredCredentials: async () => {
+        const clientInformation = provider.clientInformation();
+        return {
+          clientId: clientInformation?.client_id,
+          clientSecret: clientInformation?.client_secret,
+        };
+      },
+      dynamicRegistration: {
+        ...getBrowserDebugDynamicRegistrationMetadata(protocolVersion),
+        ...provider.clientMetadata,
+      },
+      clientIdMetadataUrl: DEFAULT_MCPJAM_CLIENT_ID_METADATA_URL,
+      customScopes: requestedScope,
+      customHeaders: options.customHeaders,
+      authMode: "interactive",
+      onTraceUpdate: ({ trace: snapshot }) => {
+        emitTraceSnapshot(snapshot);
+      },
+      onAuthorizationRequest: async ({ authorizationUrl }) => {
+        await createHostedOAuthSessionIfNeeded({
+          serverName: options.serverName,
+          serverUrl: options.serverUrl,
+          redirectUrl: provider.redirectUrl,
+          state: getState(),
+        });
+        await persistOAuthStateArtifacts(provider, getState());
+        saveOAuthFlowSession(options.serverName, {
+          version: 1,
+          protocolVersion,
+          registrationStrategy,
+          state: cloneFlowState(getState()),
+        });
+        emitTraceFromState(getState());
+        await provider.redirectToAuthorization(new URL(authorizationUrl));
+        return { type: "redirect" };
+      },
+    });
 
-    if (result === "REDIRECT") {
+    const trace = emitTraceFromState(flowResult.state);
+
+    if (flowResult.error) {
       return {
-        success: true,
+        success: false,
+        error: formatOAuthCallbackError(flowResult.error.message),
+        oauthTrace: trace,
       };
     }
 
-    if (result === "AUTHORIZED") {
-      const tokens = provider.tokens();
-      if (tokens) {
-        const serverConfig = createServerConfig(options.serverUrl, tokens);
-        return {
-          success: true,
-          serverConfig,
-        };
-      }
+    if (flowResult.redirected) {
+      return {
+        success: true,
+        oauthTrace: trace,
+      };
+    }
+
+    if (flowResult.completed && flowResult.state.accessToken) {
+      await persistOAuthStateArtifacts(provider, flowResult.state);
+      clearOAuthFlowSession(options.serverName);
+      return {
+        success: true,
+        serverConfig: createServerConfig(options.serverUrl, {
+          access_token: flowResult.state.accessToken,
+        }),
+        oauthTrace: trace,
+      };
     }
 
     return {
       success: false,
-      error: "OAuth flow failed",
+      error: "OAuth flow did not complete.",
+      oauthTrace: trace,
     };
   } catch (error) {
     let errorMessage = "Unknown OAuth error";
@@ -751,9 +1776,21 @@ export async function initiateOAuth(
       }
     }
 
+    const trace = buildOAuthTraceFromFlowState({
+      source: "interactive_connect",
+      serverName: options.serverName,
+      serverUrl: options.serverUrl,
+      state: {
+        ...getState(),
+        error: errorMessage,
+      },
+    });
+    publishOAuthTraceUpdate(options.serverName, trace, options.onTraceUpdate);
+
     return {
       success: false,
       error: errorMessage,
+      oauthTrace: trace,
     };
   } finally {
     // Restore original fetch
@@ -762,23 +1799,24 @@ export async function initiateOAuth(
 }
 
 function formatOAuthCallbackError(error: unknown): string {
-  let errorMessage = "Unknown callback error";
+  const errorMessage =
+    error instanceof Error
+      ? error.message
+      : typeof error === "string"
+      ? error
+      : "Unknown callback error";
 
-  if (error instanceof Error) {
-    errorMessage = error.message;
-
-    if (
-      errorMessage.includes("invalid_client") ||
-      errorMessage.includes("client_id")
-    ) {
-      return "Invalid client ID during token exchange. Please verify the client ID is correctly registered.";
-    }
-    if (errorMessage.includes("unauthorized_client")) {
-      return "Client not authorized for token exchange. The client ID may not match the one used for authorization.";
-    }
-    if (errorMessage.includes("invalid_grant")) {
-      return "Authorization code invalid or expired. Please try the OAuth flow again.";
-    }
+  if (
+    errorMessage.includes("invalid_client") ||
+    errorMessage.includes("client_id")
+  ) {
+    return "Invalid client ID during token exchange. Please verify the client ID is correctly registered.";
+  }
+  if (errorMessage.includes("unauthorized_client")) {
+    return "Client not authorized for token exchange. The client ID may not match the one used for authorization.";
+  }
+  if (errorMessage.includes("invalid_grant")) {
+    return "Authorization code invalid or expired. Please try the OAuth flow again.";
   }
 
   return errorMessage;
@@ -787,8 +1825,33 @@ function formatOAuthCallbackError(error: unknown): string {
 export async function completeHostedOAuthCallback(
   context: HostedOAuthCallbackContext,
   authorizationCode: string,
+  options: {
+    callbackState?: string | null;
+    onTraceUpdate?: (trace: OAuthTrace) => void;
+  } = {}
 ): Promise<OAuthResult & { serverName?: string; expiresAt?: number | null }> {
-  const serverName = context.serverName || localStorage.getItem("mcp-oauth-pending");
+  const serverName =
+    context.serverName || localStorage.getItem("mcp-oauth-pending");
+  const callbackTrace = createOAuthTrace({
+    source: "hosted_callback",
+    serverName: serverName ?? undefined,
+  });
+  let previousTrace: OAuthTrace | undefined;
+  const mergeHostedCallbackTrace = (backendTrace?: OAuthTrace): OAuthTrace =>
+    backendTrace
+      ? mergeOAuthTraces(callbackTrace, backendTrace)
+      : callbackTrace;
+  const emitTrace = (trace: OAuthTrace) =>
+    publishOAuthTraceUpdate(
+      serverName,
+      previousTrace ? mergeOAuthTraces(previousTrace, trace) : trace,
+      options.onTraceUpdate
+    );
+  let stopProgressPolling = false;
+  let progressPollingPromise: Promise<void> | null = null;
+  let resolveTerminalProgressFailure:
+    | ((failure: { message: string; oauthTrace?: OAuthTrace }) => void)
+    | null = null;
 
   try {
     if (!serverName) {
@@ -798,72 +1861,248 @@ export async function completeHostedOAuthCallback(
       throw new Error("Hosted OAuth callback is missing server context");
     }
 
+    startOAuthTraceStep(callbackTrace, "received_authorization_code", {
+      message: context.sessionId
+        ? "Received hosted OAuth callback and restoring server-side callback state."
+        : "Received hosted OAuth callback and loading stored callback state.",
+    });
+    emitTrace(callbackTrace);
     const serverUrl =
       context.serverUrl || localStorage.getItem(`mcp-serverUrl-${serverName}`);
     if (!serverUrl) {
       throw new Error("Server URL not found for OAuth callback");
     }
+    const storedSession = loadOAuthFlowSession(serverName);
+    previousTrace = storedSession
+      ? buildStoredOAuthTrace({
+          serverName,
+          serverUrl,
+          session: storedSession,
+        })
+      : undefined;
+    completeOAuthTraceStep(callbackTrace, "received_authorization_code", {
+      message: context.sessionId
+        ? "Hosted callback state restored from the shared backend session."
+        : "Hosted callback state restored.",
+      details: {
+        serverUrl,
+        ...(context.sessionId
+          ? { sessionId: context.sessionId }
+          : (() => {
+              const clientInformation = readStoredClientInformation(serverName);
+              return clientInformation.client_id
+                ? { clientId: clientInformation.client_id }
+                : {};
+            })()),
+      },
+    });
+    emitTrace(callbackTrace);
 
-    const codeVerifier = localStorage.getItem(`mcp-verifier-${serverName}`);
-    if (!codeVerifier) {
+    const convexSiteUrl = getConvexSiteUrl();
+    const terminalProgressFailurePromise =
+      context.sessionId && convexSiteUrl
+        ? new Promise<{ message: string; oauthTrace?: OAuthTrace }>(
+            (resolve) => {
+              resolveTerminalProgressFailure = resolve;
+            }
+          )
+        : null;
+    const legacyClientInformation = context.sessionId
+      ? undefined
+      : readStoredClientInformation(serverName);
+    const legacyCodeVerifier = context.sessionId
+      ? undefined
+      : localStorage.getItem(`mcp-verifier-${serverName}`);
+    const callbackState =
+      typeof options.callbackState === "string"
+        ? options.callbackState.trim()
+        : "";
+    if (!context.sessionId && !legacyCodeVerifier) {
       throw new Error("Code verifier not found");
     }
-
-    const clientInformation = readStoredClientInformation(serverName);
-    if (!clientInformation.client_id) {
+    if (!context.sessionId && !legacyClientInformation?.client_id) {
       throw new Error("OAuth client ID not found");
     }
 
-    const convexSiteUrl = getConvexSiteUrl();
-    const response = await authFetch(`${convexSiteUrl}/web/oauth/complete`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        workspaceId: context.workspaceId,
-        serverId: context.serverId,
-        serverUrl,
-        code: authorizationCode,
-        codeVerifier,
-        redirectUri: getRedirectUri(),
-        clientInformation: {
-          clientId: clientInformation.client_id,
-          ...(clientInformation.client_secret
-            ? { clientSecret: clientInformation.client_secret }
-            : {}),
+    if (context.sessionId && convexSiteUrl) {
+      let lastProgressUpdateAt = -1;
+      progressPollingPromise = (async () => {
+        while (!stopProgressPolling) {
+          try {
+            const progress = await readHostedOAuthSessionProgress({
+              convexSiteUrl,
+              context,
+            });
+            if (
+              progress?.success &&
+              progress.oauthTrace &&
+              typeof progress.updatedAt === "number" &&
+              progress.updatedAt !== lastProgressUpdateAt
+            ) {
+              lastProgressUpdateAt = progress.updatedAt;
+              emitTrace(mergeHostedCallbackTrace(progress.oauthTrace));
+            }
+            if (progress?.success && progress.status === "failed") {
+              stopProgressPolling = true;
+              resolveTerminalProgressFailure?.({
+                message:
+                  progress.lastError ||
+                  progress.error ||
+                  "Hosted OAuth callback failed",
+                oauthTrace: progress.oauthTrace,
+              });
+              break;
+            }
+            if (progress?.success && progress.status === "succeeded") {
+              stopProgressPolling = true;
+              break;
+            }
+          } catch {
+            // Best effort only; final callback response remains authoritative.
+          }
+
+          if (stopProgressPolling) {
+            break;
+          }
+          await waitForMs(HOSTED_OAUTH_PROGRESS_POLL_MS);
+        }
+      })();
+    }
+
+    const completionPromise = (async () => {
+      const response = await authFetch(`${convexSiteUrl}/web/oauth/complete`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
         },
-        ...(context.accessScope ? { accessScope: context.accessScope } : {}),
-        ...(context.shareToken ? { shareToken: context.shareToken } : {}),
-        ...(context.chatboxToken ? { chatboxToken: context.chatboxToken } : {}),
-      }),
-    });
+        body: JSON.stringify({
+          workspaceId: context.workspaceId,
+          serverId: context.serverId,
+          code: authorizationCode,
+          ...(context.sessionId
+            ? {
+                sessionId: context.sessionId,
+                ...(callbackState ? { state: callbackState } : {}),
+              }
+            : {
+                serverUrl,
+                codeVerifier: legacyCodeVerifier,
+                redirectUri: getRedirectUri(),
+                clientInformation: {
+                  clientId: legacyClientInformation!.client_id!,
+                  ...(legacyClientInformation?.client_secret
+                    ? { clientSecret: legacyClientInformation.client_secret }
+                    : {}),
+                },
+              }),
+          ...(context.accessScope ? { accessScope: context.accessScope } : {}),
+          ...(context.shareToken ? { shareToken: context.shareToken } : {}),
+          ...(context.chatboxToken
+            ? { chatboxToken: context.chatboxToken }
+            : {}),
+        }),
+      });
 
-    if (!response.ok) {
-      const responseText = await response.text();
-      throw new Error(responseText || `Hosted OAuth callback failed (${response.status})`);
-    }
+      const result = (await response
+        .clone()
+        .json()
+        .catch(() => null)) as HostedOAuthCompletionResponse | null;
+      if (!response.ok) {
+        const responseText = await response.text();
+        throw {
+          message:
+            result?.error ||
+            responseText ||
+            `Hosted OAuth callback failed (${response.status})`,
+          oauthTrace: result?.oauthTrace,
+        };
+      }
 
-    const result =
-      (await response.json()) as HostedOAuthCompletionResponse | null;
-    if (!result?.success) {
-      throw new Error("Hosted OAuth callback failed");
-    }
+      if (!result?.success) {
+        throw {
+          message: result?.error || "Hosted OAuth callback failed",
+          oauthTrace: result?.oauthTrace,
+        };
+      }
+
+      return result;
+    })();
+    const result = terminalProgressFailurePromise
+      ? await Promise.race([
+          completionPromise,
+          terminalProgressFailurePromise.then<HostedOAuthCompletionResponse>(
+            (failure) => {
+              throw failure;
+            }
+          ),
+        ])
+      : await completionPromise;
 
     localStorage.removeItem(`mcp-tokens-${serverName}`);
     localStorage.removeItem(`mcp-verifier-${serverName}`);
+    completeOAuthTraceStep(callbackTrace, "token_request", {
+      message: "Hosted token exchange succeeded.",
+    });
+    completeOAuthTraceStep(callbackTrace, "received_access_token", {
+      message: "Hosted access token is stored in the backend vault.",
+    });
+    completeOAuthTraceStep(callbackTrace, "complete", {
+      message: "Hosted OAuth callback completed successfully.",
+    });
+    const mergedTrace = previousTrace
+      ? mergeOAuthTraces(
+          previousTrace,
+          mergeHostedCallbackTrace(result.oauthTrace)
+        )
+      : mergeHostedCallbackTrace(result.oauthTrace);
+    publishOAuthTraceUpdate(serverName, mergedTrace, options.onTraceUpdate);
+    clearOAuthFlowSession(serverName);
 
     return {
       success: true,
       serverName,
       serverConfig: createServerConfig(serverUrl),
       expiresAt: result.expiresAt ?? null,
+      oauthTrace: mergedTrace,
     };
   } catch (error) {
+    const message =
+      error instanceof Error
+        ? error.message
+        : typeof error === "object" &&
+          error !== null &&
+          "message" in error &&
+          typeof (error as { message?: unknown }).message === "string"
+        ? (error as { message: string }).message
+        : String(error);
+    failOAuthTraceStep(callbackTrace, callbackTrace.currentStep, message, {
+      message: "Hosted OAuth callback failed.",
+    });
+    const backendTrace =
+      typeof error === "object" && error !== null && "oauthTrace" in error
+        ? (error as { oauthTrace?: OAuthTrace }).oauthTrace ?? undefined
+        : undefined;
+    const mergedTrace =
+      serverName != null
+        ? previousTrace
+          ? mergeOAuthTraces(
+              previousTrace,
+              mergeHostedCallbackTrace(backendTrace)
+            )
+          : mergeHostedCallbackTrace(backendTrace)
+        : mergeHostedCallbackTrace(backendTrace);
+    if (serverName) {
+      publishOAuthTraceUpdate(serverName, mergedTrace, options.onTraceUpdate);
+      clearOAuthFlowSession(serverName);
+    }
     return {
       success: false,
-      error: formatOAuthCallbackError(error),
+      error: formatOAuthCallbackError(message),
+      oauthTrace: mergedTrace,
     };
+  } finally {
+    stopProgressPolling = true;
+    await progressPollingPromise?.catch(() => undefined);
   }
 }
 
@@ -872,15 +2111,15 @@ export async function completeHostedOAuthCallback(
  */
 export async function handleOAuthCallback(
   authorizationCode: string,
+  options: { onTraceUpdate?: (trace: OAuthTrace) => void } = {}
 ): Promise<OAuthResult & { serverName?: string }> {
   // Get pending server name from localStorage (needed before creating interceptor)
   const serverName = localStorage.getItem("mcp-oauth-pending");
 
   // Read registryServerId from stored OAuth config if present
   const oauthConfig = readStoredOAuthConfig(serverName);
-
-  // Build fetch interceptor — routes token requests through Convex for registry servers
-  const fetchFn = createOAuthFetchInterceptor(oauthConfig);
+  let serverUrl: string | undefined;
+  let previousTrace: OAuthTrace | undefined;
 
   try {
     if (!serverName) {
@@ -888,7 +2127,7 @@ export async function handleOAuthCallback(
     }
 
     // Get server URL
-    const serverUrl = localStorage.getItem(`mcp-serverUrl-${serverName}`);
+    serverUrl = localStorage.getItem(`mcp-serverUrl-${serverName}`) ?? undefined;
     if (!serverUrl) {
       throw new Error("Server URL not found for OAuth callback");
     }
@@ -906,43 +2145,225 @@ export async function handleOAuthCallback(
       serverName,
       serverUrl,
       customClientId,
-      customClientSecret,
+      customClientSecret
     );
+    const fetchFn = createOAuthFetchInterceptor(oauthConfig, undefined);
+    const requestExecutor = createOAuthRequestExecutor(fetchFn, serverUrl);
+    const storedSession = loadOAuthFlowSession(serverName);
+    previousTrace = storedSession
+      ? buildStoredOAuthTrace({
+          serverName,
+          serverUrl,
+          session: storedSession,
+        })
+      : undefined;
+
+    if (storedSession) {
+      let state = cloneFlowState(storedSession.state);
+      const updateState = (updates: Partial<OAuthFlowState>) => {
+        state = { ...state, ...updates };
+      };
+      const getState = () => state;
+      const emitTraceSnapshot = (snapshot: OAuthTraceSnapshot) =>
+        publishOAuthTraceUpdate(
+          serverName,
+          mergeOAuthTraces(
+            previousTrace,
+            buildOAuthTraceFromSnapshot({
+              source: "callback",
+              serverName,
+              serverUrl,
+              snapshot,
+            })
+          ),
+          options.onTraceUpdate
+        );
+
+      updateState({
+        currentStep: "received_authorization_code",
+        authorizationCode,
+        error: undefined,
+      });
+      emitTraceSnapshot(
+        projectOAuthTraceSnapshot({
+          state: getState(),
+          sanitize: SANITIZE_OAUTH_TRACES,
+        })
+      );
+
+      const flowResult = await runOAuthStateMachine({
+        protocolVersion: storedSession.protocolVersion,
+        registrationStrategy: storedSession.registrationStrategy,
+        state,
+        getState,
+        updateState,
+        serverUrl,
+        serverName,
+        redirectUrl: provider.redirectUrl,
+        sanitizeTrace: SANITIZE_OAUTH_TRACES,
+        requestExecutor,
+        loadPreregisteredCredentials: async () => {
+          const clientInformation = provider.clientInformation();
+          return {
+            clientId: clientInformation?.client_id,
+            clientSecret: clientInformation?.client_secret,
+          };
+        },
+        dynamicRegistration: {
+          ...getBrowserDebugDynamicRegistrationMetadata(
+            storedSession.protocolVersion
+          ),
+          ...provider.clientMetadata,
+        },
+        clientIdMetadataUrl: DEFAULT_MCPJAM_CLIENT_ID_METADATA_URL,
+        customScopes: oauthConfig.scopes?.join(" "),
+        customHeaders: oauthConfig.customHeaders,
+        authMode: "interactive",
+        onTraceUpdate: ({ trace: snapshot }) => {
+          emitTraceSnapshot(snapshot);
+        },
+      });
+
+      const callbackTrace = buildOAuthTraceFromFlowState({
+        source: "callback",
+        serverName,
+        serverUrl,
+        state: flowResult.state,
+      });
+      const mergedTrace = mergeOAuthTraces(previousTrace, callbackTrace);
+      publishOAuthTraceUpdate(serverName, mergedTrace, options.onTraceUpdate);
+
+      if (
+        flowResult.error ||
+        !flowResult.completed ||
+        !flowResult.state.accessToken
+      ) {
+        return {
+          success: false,
+          error: formatOAuthCallbackError(
+            flowResult.error?.message || flowResult.state.error
+          ),
+          oauthTrace: mergedTrace,
+        };
+      }
+
+      await persistOAuthStateArtifacts(provider, flowResult.state);
+      clearOAuthFlowSession(serverName);
+      localStorage.removeItem(`mcp-verifier-${serverName}`);
+      localStorage.removeItem("mcp-oauth-pending");
+      return {
+        success: true,
+        serverConfig: createServerConfig(serverUrl, {
+          access_token: flowResult.state.accessToken,
+        }),
+        serverName,
+        oauthTrace: mergedTrace,
+      };
+    }
+
+    const callbackTrace = createOAuthTrace({
+      source: "callback",
+      serverName: serverName ?? undefined,
+    });
+    const emitTrace = (trace: OAuthTrace) =>
+      publishOAuthTraceUpdate(
+        serverName,
+        mergeOAuthTraces(previousTrace, trace),
+        options.onTraceUpdate
+      );
+    startOAuthTraceStep(callbackTrace, "received_authorization_code", {
+      message: "Received OAuth callback and loading stored state.",
+      details: {
+        serverUrl,
+      },
+    });
+    emitTrace(callbackTrace);
+    const clientInformation = await provider.clientInformation();
+    if (!clientInformation?.client_id) {
+      throw new Error("OAuth client ID not found");
+    }
     const discoveryState = await loadCallbackDiscoveryState(
       provider,
       serverUrl,
-      fetchFn,
+      fetchFn
     );
+    completeOAuthTraceStep(callbackTrace, "received_authorization_code", {
+      message: "Callback state restored.",
+      details: {
+        clientId: clientInformation.client_id,
+      },
+    });
+    emitTrace(callbackTrace);
     const resource = await selectResourceURL(
       serverUrl,
       provider,
-      discoveryState.resourceMetadata,
+      discoveryState.resourceMetadata
     );
-    const tokens = await fetchToken(
-      provider,
+    startOAuthTraceStep(callbackTrace, "token_request", {
+      message: "Exchanging authorization code for OAuth tokens.",
+    });
+    emitTrace(callbackTrace);
+    const tokens = await exchangeAuthorization(
       discoveryState.authorizationServerUrl,
       {
         metadata: discoveryState.authorizationServerMetadata,
-        resource,
         authorizationCode,
+        clientInformation,
+        codeVerifier: provider.codeVerifier(),
+        redirectUri: provider.redirectUrl,
+        ...(resource ? { resource } : {}),
         fetchFn,
-      },
+      }
     );
     await provider.saveTokens(tokens);
+    completeOAuthTraceStep(callbackTrace, "token_request", {
+      message: "Authorization code exchange succeeded.",
+    });
+    completeOAuthTraceStep(callbackTrace, "received_access_token", {
+      message: "OAuth tokens were stored locally.",
+    });
+    completeOAuthTraceStep(callbackTrace, "complete", {
+      message: "OAuth callback completed successfully.",
+    });
 
     // Clean up pending state
     localStorage.removeItem("mcp-oauth-pending");
+    localStorage.removeItem(`mcp-verifier-${serverName}`);
+    const mergedTrace = mergeOAuthTraces(previousTrace, callbackTrace);
+    publishOAuthTraceUpdate(serverName, mergedTrace, options.onTraceUpdate);
 
     const serverConfig = createServerConfig(serverUrl, tokens);
     return {
       success: true,
       serverConfig,
       serverName, // Return server name so caller doesn't need to look it up
+      oauthTrace: mergedTrace,
     };
   } catch (error) {
+    const callbackTrace = buildOAuthTraceFromFlowState({
+      source: "callback",
+      serverName: serverName ?? undefined,
+      serverUrl:
+        serverUrl ??
+        (serverName != null
+          ? localStorage.getItem(`mcp-serverUrl-${serverName}`) ?? ""
+          : ""),
+      state: {
+        ...cloneEmptyFlowState(),
+        currentStep: "received_authorization_code",
+        error: formatOAuthCallbackError(error),
+      },
+    });
+    const mergedTrace = serverName
+      ? mergeOAuthTraces(previousTrace, callbackTrace)
+      : callbackTrace;
+    if (serverName) {
+      publishOAuthTraceUpdate(serverName, mergedTrace, options.onTraceUpdate);
+    }
     return {
       success: false,
       error: formatOAuthCallbackError(error),
+      oauthTrace: mergedTrace,
     };
   } finally {
     // Restore original fetch
@@ -995,7 +2416,7 @@ export function hasOAuthConfig(serverName: string): boolean {
   const storedServerUrl = localStorage.getItem(`mcp-serverUrl-${serverName}`);
   const storedClientInfo = localStorage.getItem(`mcp-client-${serverName}`);
   const storedOAuthConfig = localStorage.getItem(
-    `mcp-oauth-config-${serverName}`,
+    `mcp-oauth-config-${serverName}`
   );
   const storedTokens = getStoredTokens(serverName);
 
@@ -1012,7 +2433,7 @@ export function hasOAuthConfig(serverName: string): boolean {
  */
 export async function waitForTokens(
   serverName: string,
-  timeoutMs: number = 5000,
+  timeoutMs: number = 5000
 ): Promise<any> {
   const startTime = Date.now();
 
@@ -1032,10 +2453,17 @@ export async function waitForTokens(
  */
 export async function refreshOAuthTokens(
   serverName: string,
+  options: { onTraceUpdate?: (trace: OAuthTrace) => void } = {}
 ): Promise<OAuthResult> {
+  const trace = createOAuthTrace({
+    source: "refresh",
+    serverName,
+  });
+  const emitTrace = () =>
+    publishOAuthTraceUpdate(serverName, trace, options.onTraceUpdate);
   // Build fetch interceptor — routes token requests through Convex for registry servers
   const oauthConfig = readStoredOAuthConfig(serverName);
-  const fetchFn = createOAuthFetchInterceptor(oauthConfig);
+  const fetchFn = createOAuthFetchInterceptor(oauthConfig, trace);
 
   try {
     // Get stored client credentials if any
@@ -1050,6 +2478,7 @@ export async function refreshOAuthTokens(
     // Get server URL
     const serverUrl = localStorage.getItem(`mcp-serverUrl-${serverName}`);
     if (!serverUrl) {
+      emitTrace();
       return {
         success: false,
         error: "Server URL not found for token refresh",
@@ -1060,33 +2489,72 @@ export async function refreshOAuthTokens(
       serverName,
       serverUrl,
       customClientId,
-      customClientSecret,
+      customClientSecret
     );
     const existingTokens = provider.tokens();
 
     if (!existingTokens?.refresh_token) {
+      emitTrace();
       return {
         success: false,
         error: "No refresh token available",
+        oauthTrace: trace,
       };
     }
 
-    const result = await auth(provider, { serverUrl, fetchFn });
-
-    if (result === "AUTHORIZED") {
-      const tokens = provider.tokens();
-      if (tokens) {
-        const serverConfig = createServerConfig(serverUrl, tokens);
-        return {
-          success: true,
-          serverConfig,
-        };
+    startOAuthTraceStep(trace, "request_resource_metadata", {
+      message: "Refreshing OAuth tokens and rediscovering server metadata.",
+    });
+    emitTrace();
+    const discoveryState = await loadCallbackDiscoveryState(
+      provider,
+      serverUrl,
+      fetchFn
+    );
+    completeOAuthTraceStep(trace, "request_resource_metadata", {
+      message: "Protected resource metadata loaded.",
+    });
+    completeOAuthTraceStep(trace, "received_resource_metadata", {
+      message: "Resource metadata is ready.",
+    });
+    completeOAuthTraceStep(trace, "received_authorization_server_metadata", {
+      message: "Authorization server metadata is ready.",
+    });
+    emitTrace();
+    const resource = await selectResourceURL(
+      serverUrl,
+      provider,
+      discoveryState.resourceMetadata
+    );
+    startOAuthTraceStep(trace, "token_request", {
+      message: "Refreshing tokens with the stored refresh token.",
+    });
+    emitTrace();
+    const tokens = await fetchToken(
+      provider,
+      discoveryState.authorizationServerUrl,
+      {
+        metadata: discoveryState.authorizationServerMetadata,
+        ...(resource ? { resource } : {}),
+        fetchFn,
       }
-    }
-
+    );
+    await provider.saveTokens(tokens);
+    completeOAuthTraceStep(trace, "token_request", {
+      message: "Refresh token exchange succeeded.",
+    });
+    completeOAuthTraceStep(trace, "received_access_token", {
+      message: "Refreshed OAuth tokens were stored locally.",
+    });
+    completeOAuthTraceStep(trace, "complete", {
+      message: "OAuth token refresh completed successfully.",
+    });
+    emitTrace();
+    const serverConfig = createServerConfig(serverUrl, tokens);
     return {
-      success: false,
-      error: "Token refresh failed",
+      success: true,
+      serverConfig,
+      oauthTrace: trace,
     };
   } catch (error) {
     let errorMessage = "Unknown refresh error";
@@ -1110,9 +2578,15 @@ export async function refreshOAuthTokens(
       }
     }
 
+    failOAuthTraceStep(trace, trace.currentStep, errorMessage, {
+      message: "OAuth token refresh failed.",
+    });
+    emitTrace();
+
     return {
       success: false,
       error: errorMessage,
+      oauthTrace: trace,
     };
   } finally {
     // Restore original fetch
@@ -1130,6 +2604,8 @@ export function clearOAuthData(serverName: string): void {
   localStorage.removeItem(`mcp-serverUrl-${serverName}`);
   localStorage.removeItem(`mcp-oauth-config-${serverName}`);
   clearStoredDiscoveryState(serverName);
+  clearOAuthFlowSession(serverName);
+  clearOAuthTrace(serverName);
 }
 
 /**
@@ -1137,7 +2613,7 @@ export function clearOAuthData(serverName: string): void {
  */
 export function createServerConfig(
   serverUrl: string,
-  tokens?: { access_token?: string | null },
+  tokens?: { access_token?: string | null }
 ): HttpServerConfig {
   // Note: We don't include authProvider in the config because it can't be serialized
   // when sent to the backend via JSON. The backend will use the Authorization header instead.

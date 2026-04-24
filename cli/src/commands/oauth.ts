@@ -25,7 +25,7 @@ import {
   usageError,
   writeResult,
 } from "../lib/output.js";
-import { loadSuiteConfig } from "../lib/config-file.js";
+import { loadOAuthSuiteConfig } from "../lib/config-file.js";
 import {
   renderOAuthConformanceResult,
   renderOAuthConformanceSuiteResult,
@@ -311,7 +311,7 @@ export function registerOAuthCommands(program: Command): void {
     )
     .action(async (options, command) => {
       const format = getOAuthFormat(command);
-      const config = loadSuiteConfig(options.config as string);
+      const config = loadOAuthSuiteConfig(options.config as string);
 
       if (options.verifyTools || options.verifyCallTool) {
         const cliVerification: OAuthVerificationConfig = {

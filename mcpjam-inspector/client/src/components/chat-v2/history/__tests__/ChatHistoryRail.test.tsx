@@ -67,6 +67,10 @@ vi.mock("../ChatHistoryRow", () => ({
   },
 }));
 
+vi.mock("../convert-chat-session-dialog", () => ({
+  ConvertChatSessionDialog: () => null,
+}));
+
 vi.mock("@mcpjam/design-system/button", () => ({
   Button: ({ children, ...props }: ButtonHTMLAttributes<HTMLButtonElement>) => (
     <button {...props}>{children}</button>
@@ -192,6 +196,64 @@ describe("ChatHistoryRail", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("only exposes chat-to-test-case conversion when authenticated", () => {
+    useChatHistoryMock.mockImplementation(() => ({
+      personal: [sessionStub("personal-1")],
+      workspace: [],
+      loading: false,
+      error: null,
+      isReactive: false,
+      refetch: refetchMock,
+      actions: {
+        rename: vi.fn(),
+        archive: vi.fn(),
+        unarchive: vi.fn(),
+        share: vi.fn(),
+        unshare: vi.fn(),
+        pin: vi.fn(),
+        unpin: vi.fn(),
+        archiveManySessionIds: archiveManySessionIdsMock,
+        archiveAllActive: vi.fn(),
+      },
+    }));
+
+    const { rerender } = render(
+      <ChatHistoryRail
+        activeSessionId={null}
+        isAuthenticated={false}
+        isStreaming={false}
+        workspaceId={null}
+        onSelectThread={vi.fn()}
+        onNewChat={vi.fn()}
+      />,
+    );
+
+    expect(chatHistoryRowPropsSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        canConvertToTestCase: false,
+      }),
+    );
+
+    chatHistoryRowPropsSpy.mockReset();
+
+    rerender(
+      <ChatHistoryRail
+        activeSessionId={null}
+        isAuthenticated
+        isStreaming={false}
+        workspaceId={null}
+        onSelectThread={vi.fn()}
+        onNewChat={vi.fn()}
+      />,
+    );
+
+    expect(chatHistoryRowPropsSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        canConvertToTestCase: true,
+      }),
+    );
   });
 
   it("skips fallback refetch retries when history is reactive", async () => {

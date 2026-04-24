@@ -351,14 +351,12 @@ describe("useServerState OAuth callback failures", () => {
           workspaceProfile: {},
         },
         sampling: {},
-        elicitation: {},
       },
       clientCapabilities: {
         experimental: {
           workspaceProfile: {},
         },
         sampling: {},
-        elicitation: {},
       },
     });
   });
@@ -387,15 +385,17 @@ describe("useServerState OAuth callback failures", () => {
       "registryServers:getRegistryServerOAuthConfig",
       { registryServerId: "registry-asana" },
     );
-    expect(initiateOAuthMock).toHaveBeenCalledWith({
-      serverName: "Asana",
-      serverUrl: "https://mcp.asana.com/v2/mcp",
-      clientId: "asana-client-id",
-      clientSecret: undefined,
-      registryServerId: "registry-asana",
-      useRegistryOAuthProxy: true,
-      scopes: ["default"],
-    });
+    expect(initiateOAuthMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        serverName: "Asana",
+        serverUrl: "https://mcp.asana.com/v2/mcp",
+        clientId: "asana-client-id",
+        clientSecret: undefined,
+        registryServerId: "registry-asana",
+        useRegistryOAuthProxy: true,
+        scopes: ["default"],
+      }),
+    );
   });
 
   it("keeps Linear registry OAuth on the generic path when no preregistered client ID is returned", async () => {
@@ -417,15 +417,17 @@ describe("useServerState OAuth callback failures", () => {
       });
     });
 
-    expect(initiateOAuthMock).toHaveBeenCalledWith({
-      serverName: "Linear",
-      serverUrl: "https://mcp.linear.app/mcp",
-      clientId: undefined,
-      clientSecret: undefined,
-      registryServerId: "registry-linear",
-      useRegistryOAuthProxy: false,
-      scopes: ["read", "write"],
-    });
+    expect(initiateOAuthMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        serverName: "Linear",
+        serverUrl: "https://mcp.linear.app/mcp",
+        clientId: undefined,
+        clientSecret: undefined,
+        registryServerId: "registry-linear",
+        useRegistryOAuthProxy: false,
+        scopes: ["read", "write"],
+      }),
+    );
   });
 
   it("fails registry OAuth initiation when the dedicated OAuth config query fails", async () => {

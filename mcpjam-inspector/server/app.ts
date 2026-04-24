@@ -33,7 +33,11 @@ import {
 } from "./middleware/session-auth.js";
 import { originValidationMiddleware } from "./middleware/origin-validation.js";
 import { securityHeadersMiddleware } from "./middleware/security-headers.js";
-import { loadInspectorEnv, warnOnConvexDevMisconfiguration } from "./env.js";
+import {
+  getInspectorClientRuntimeConfigScript,
+  loadInspectorEnv,
+  warnOnConvexDevMisconfiguration,
+} from "./env.js";
 import { startGuestAuthProvisioningInBackground } from "./utils/convex-guest-auth-sync.js";
 import { fetchRemoteGuestJwks } from "./utils/guest-session-source.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "./utils/mcp-retry-policy.js";
@@ -317,6 +321,11 @@ export function createHonoApp() {
           );
           const warningScript = `<script>console.error("MCPJam: Access via allowed host required for full functionality");</script>`;
           html = html.replace("</head>", `${warningScript}</head>`);
+        }
+
+        const runtimeConfigScript = getInspectorClientRuntimeConfigScript();
+        if (runtimeConfigScript) {
+          html = html.replace("</head>", `${runtimeConfigScript}</head>`);
         }
 
         return c.html(html);

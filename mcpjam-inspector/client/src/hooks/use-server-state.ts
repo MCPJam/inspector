@@ -28,13 +28,17 @@ import {
   clearOAuthData,
   initiateOAuth,
 } from "@/lib/oauth/mcp-oauth";
+import type { OAuthTrace } from "@/lib/oauth/oauth-trace";
 import {
   clearHostedOAuthPendingState,
   getHostedOAuthCallbackContext,
   writeHostedOAuthPendingMarker,
 } from "@/lib/hosted-oauth-callback";
 import { HOSTED_MODE } from "@/lib/config";
-import { injectHostedServerMapping } from "@/lib/apis/web/context";
+import {
+  injectHostedServerMapping,
+  tryGetHostedServerDisplayName,
+} from "@/lib/apis/web/context";
 import type { OAuthTestProfile } from "@/lib/oauth/profile";
 import { authFetch } from "@/lib/session-token";
 import { useClientConfigStore } from "@/stores/client-config-store";
@@ -76,6 +80,9 @@ function saveOAuthConfigToLocalStorage(formData: ServerFormData): void {
   }
   if (formData.registryServerId) {
     oauthConfig.registryServerId = formData.registryServerId;
+  }
+  if (formData.clientId || formData.clientSecret) {
+    oauthConfig.registrationStrategy = "preregistered";
   }
   if (Object.keys(oauthConfig).length > 0) {
     localStorage.setItem(
@@ -123,6 +130,9 @@ function requiresFreshOAuthAuthorization(error: unknown): boolean {
   const normalized = errorMessage.toLowerCase();
   return (
     normalized.includes("requires oauth authentication") ||
+    normalized.includes(
+      "stored hosted oauth credential is missing refresh_token",
+    ) ||
     (normalized.includes("authentication failed") &&
       normalized.includes("invalid_token"))
   );
@@ -167,6 +177,27 @@ export interface ServerUpdateResult {
   serverName: string;
 }
 
+type EnsureServerConnectionStatus = "connected" | "failed" | "missing" | "reauth";
+
+interface EnsureServerConnectionResult {
+  status: EnsureServerConnectionStatus;
+  error?: string;
+}
+
+interface ReconnectServerInternalOptions {
+  forceOAuthFlow?: boolean;
+  allowInteractiveOAuthFlow?: boolean;
+  select?: boolean;
+  suppressErrors?: boolean;
+}
+
+export interface EnsureServersReadyResult {
+  readyServerNames: string[];
+  missingServerNames: string[];
+  failedServerNames: string[];
+  reauthServerNames: string[];
+}
+
 export function useServerState({
   appState,
   dispatch,
@@ -197,13 +228,14 @@ export function useServerState({
   };
 
   const failPendingOAuthConnection = useCallback(
-    (errorMessage: string) => {
+    (errorMessage: string, oauthTrace?: OAuthTrace) => {
       const pendingServerName = localStorage.getItem("mcp-oauth-pending");
       if (pendingServerName) {
         dispatch({
           type: "CONNECT_FAILURE",
           name: pendingServerName,
           error: errorMessage,
+          oauthTrace,
         });
       }
 
@@ -212,6 +244,16 @@ export function useServerState({
       localStorage.removeItem("mcp-oauth-pending");
 
       return pendingServerName;
+    },
+    [dispatch],
+  );
+  const updateServerOAuthTrace = useCallback(
+    (serverName: string, oauthTrace: OAuthTrace) => {
+      dispatch({
+        type: "SET_SERVER_OAUTH_TRACE",
+        name: serverName,
+        oauthTrace,
+      });
     },
     [dispatch],
   );
@@ -296,6 +338,11 @@ export function useServerState({
   const effectiveServers = useMemo(() => {
     return activeWorkspace?.servers || {};
   }, [activeWorkspace]);
+  const latestEffectiveServersRef = useRef(effectiveServers);
+
+  useEffect(() => {
+    latestEffectiveServersRef.current = effectiveServers;
+  }, [effectiveServers]);
 
   const isClientConfigSyncPending = useClientConfigStore(
     (state) =>
@@ -670,11 +717,25 @@ export function useServerState({
         HOSTED_MODE &&
         isAuthenticated &&
         hostedCallbackContext?.surface === "workspace";
+      const handleLiveOAuthTrace = (oauthTrace: OAuthTrace) => {
+        const traceServerName =
+          oauthTrace.serverName ??
+          hostedCallbackContext?.serverName ??
+          pendingServerName ??
+          null;
+        if (traceServerName) {
+          updateServerOAuthTrace(traceServerName, oauthTrace);
+        }
+      };
 
       try {
         const result = isHostedWorkspaceCallback
-          ? await completeHostedOAuthCallback(hostedCallbackContext, code)
-          : await handleOAuthCallback(code);
+          ? await completeHostedOAuthCallback(hostedCallbackContext, code, {
+              onTraceUpdate: handleLiveOAuthTrace,
+            })
+          : await handleOAuthCallback(code, {
+              onTraceUpdate: handleLiveOAuthTrace,
+            });
 
         localStorage.removeItem("mcp-oauth-return-hash");
         if (isHostedWorkspaceCallback) {
@@ -706,6 +767,7 @@ export function useServerState({
                     ? undefined
                     : getStoredTokens(serverName),
                   useOAuth: true,
+                  oauthTrace: result.oauthTrace,
                 });
                 logger.info("OAuth connection successful", { serverName });
                 toast.success(
@@ -725,6 +787,7 @@ export function useServerState({
                 error:
                   connectionResult.error ||
                   "Connection test failed after OAuth",
+                oauthTrace: result.oauthTrace,
               });
               logger.error("OAuth connection test failed", {
                 serverName,
@@ -743,6 +806,7 @@ export function useServerState({
               type: "CONNECT_FAILURE",
               name: serverName,
               error: errorMessage,
+              oauthTrace: result.oauthTrace,
             });
             logger.error("OAuth connection test error", {
               serverName,
@@ -753,15 +817,30 @@ export function useServerState({
             );
           }
         } else {
-          throw new Error(result.error || "OAuth callback failed");
+          throw {
+            message: result.error || "OAuth callback failed",
+            oauthTrace: result.oauthTrace,
+          };
         }
       } catch (error) {
         const errorMessage =
-          error instanceof Error ? error.message : "Unknown error";
+          error instanceof Error
+            ? error.message
+            : typeof error === "object" &&
+                error !== null &&
+                "message" in error &&
+                typeof (error as { message?: unknown }).message === "string"
+              ? ((error as { message: string }).message)
+              : "Unknown error";
         toast.error(`Error completing OAuth flow: ${errorMessage}`);
         logger.error("OAuth callback failed", { error: errorMessage });
+        const oauthTrace =
+          typeof error === "object" && error !== null && "oauthTrace" in error
+            ? ((error as { oauthTrace?: OAuthTrace }).oauthTrace)
+            : undefined;
         const failedServerName =
-          failPendingOAuthConnection(errorMessage) ?? pendingServerName;
+          failPendingOAuthConnection(errorMessage, oauthTrace) ??
+          pendingServerName;
         if (failedServerName) {
           logger.warn("Marked pending OAuth connection as failed", {
             serverName: failedServerName,
@@ -777,6 +856,7 @@ export function useServerState({
       logger,
       storeInitInfo,
       guardedTestConnection,
+      updateServerOAuthTrace,
       withWorkspaceClientCapabilities,
     ],
   );
@@ -1016,6 +1096,8 @@ export function useServerState({
           });
 
           const oauthInputs = await resolveOAuthInitiationInputs(formData);
+          const existingOAuthProfile =
+            appState.servers[formData.name]?.oauthFlowProfile;
           const oauthOptions: any = {
             serverName: formData.name,
             serverUrl: formData.url,
@@ -1023,6 +1105,12 @@ export function useServerState({
             clientSecret: oauthInputs.clientSecret,
             registryServerId: oauthInputs.registryServerId,
             useRegistryOAuthProxy: oauthInputs.useRegistryOAuthProxy,
+            customHeaders: formData.headers,
+            protocolVersion: existingOAuthProfile?.protocolVersion,
+            registrationStrategy: existingOAuthProfile?.registrationStrategy,
+            onTraceUpdate: (oauthTrace: OAuthTrace) => {
+              updateServerOAuthTrace(formData.name, oauthTrace);
+            },
           };
           if (oauthInputs.scopes && oauthInputs.scopes.length > 0) {
             oauthOptions.scopes = oauthInputs.scopes;
@@ -1050,6 +1138,7 @@ export function useServerState({
                       ? undefined
                       : getStoredTokens(formData.name),
                   useOAuth: true,
+                  oauthTrace: oauthResult.oauthTrace,
                 });
                 toast.success("Connected successfully with OAuth!");
                 storeInitInfo(formData.name, connectionResult.initInfo).catch(
@@ -1065,6 +1154,7 @@ export function useServerState({
                   name: formData.name,
                   error:
                     connectionResult.error || "OAuth connection test failed",
+                  oauthTrace: oauthResult.oauthTrace,
                 });
                 toast.error(
                   `OAuth succeeded but connection failed: ${connectionResult.error}`,
@@ -1083,6 +1173,7 @@ export function useServerState({
             type: "CONNECT_FAILURE",
             name: formData.name,
             error: oauthResult.error || "OAuth initialization failed",
+            oauthTrace: oauthResult.oauthTrace,
           });
           toast.error(`OAuth initialization failed: ${oauthResult.error}`);
           return;
@@ -1157,6 +1248,7 @@ export function useServerState({
     [
       dispatch,
       isAuthenticated,
+      appState.servers,
       appState.workspaces,
       appState.activeWorkspaceId,
       notifyIfClientConfigSyncPending,
@@ -1166,6 +1258,7 @@ export function useServerState({
       logger,
       storeInitInfo,
       guardedTestConnection,
+      updateServerOAuthTrace,
       withWorkspaceClientCapabilities,
     ],
   );
@@ -1586,14 +1679,91 @@ export function useServerState({
     [logger, handleDisconnect, removeServerFromStateAndCloud],
   );
 
-  const handleReconnect = useCallback(
-    async (serverName: string, options?: { forceOAuthFlow?: boolean }) => {
-      if (notifyIfClientConfigSyncPending()) {
-        return;
+  const waitForServerReconnectOutcome = useCallback(
+    async (
+      serverName: string,
+      timeoutMs = 15_000,
+    ): Promise<EnsureServerConnectionResult> =>
+      await new Promise<EnsureServerConnectionResult>((resolve) => {
+        const startedAt = Date.now();
+
+        const check = () => {
+          const server = latestEffectiveServersRef.current[serverName];
+          if (!server) {
+            resolve({
+              status: "missing",
+              error: `Server ${serverName} not found`,
+            });
+            return;
+          }
+
+          if (server.connectionStatus === "connected") {
+            resolve({ status: "connected" });
+            return;
+          }
+
+          if (server.connectionStatus === "oauth-flow") {
+            resolve({
+              status: "reauth",
+              error: `Reauthenticate ${serverName} to continue.`,
+            });
+            return;
+          }
+
+          if (
+            server.connectionStatus === "failed" ||
+            (server.connectionStatus === "disconnected" &&
+              Date.now() - startedAt > 250)
+          ) {
+            resolve({
+              status: "failed",
+              error:
+                server.lastError || `Failed to reconnect to ${serverName}`,
+            });
+            return;
+          }
+
+          if (Date.now() - startedAt >= timeoutMs) {
+            resolve({
+              status: "failed",
+              error: `Timed out reconnecting to ${serverName}`,
+            });
+            return;
+          }
+
+          window.setTimeout(check, 100);
+        };
+
+        check();
+      }),
+    [],
+  );
+
+  const reconnectServerInternal = useCallback(
+    async (
+      serverName: string,
+      options?: ReconnectServerInternalOptions,
+    ): Promise<EnsureServerConnectionResult> => {
+      const select = options?.select ?? true;
+      const suppressErrors = options?.suppressErrors ?? false;
+
+      const reportError = (errorMessage: string) => {
+        if (!suppressErrors) {
+          toast.error(errorMessage);
+        }
+      };
+
+      if (isClientConfigSyncPending) {
+        const errorMessage = CLIENT_CONFIG_SYNC_PENDING_ERROR_MESSAGE;
+        reportError(errorMessage);
+        return {
+          status: "failed",
+          error: errorMessage,
+        };
       }
 
       logger.info("Reconnecting to server", { serverName, options });
-      const server = effectiveServers[serverName];
+      const server = latestEffectiveServersRef.current[serverName];
       if (!server) {
         const errorMessage = `Server ${serverName} not found`;
         dispatch({
@@ -1605,17 +1775,18 @@ export function useServerState({
           serverName,
           error: errorMessage,
         });
-        toast.error(errorMessage);
-        return;
+        reportError(errorMessage);
+        return {
+          status: "missing",
+          error: errorMessage,
+        };
       }
 
       dispatch({
         type: "RECONNECT_REQUEST",
         name: serverName,
         config: server.config,
-        // User-initiated reconnect → make this the selected server so other
-        // tabs (App Builder, Tools, etc.) follow the most recent intent.
-        select: true,
+        select,
       });
       const token = nextOpToken(serverName);
       const hostedWorkspaceServerId = activeWorkspaceServersFlat?.find(
@@ -1628,12 +1799,17 @@ export function useServerState({
 
         const serverUrl = (server.config as any)?.url?.toString?.();
         if (!serverUrl) {
+          const errorMessage = "No server URL found for OAuth flow";
           dispatch({
             type: "CONNECT_FAILURE",
             name: serverName,
-            error: "No server URL found for OAuth flow",
+            error: errorMessage,
           });
-          return;
+          reportError(errorMessage);
+          return {
+            status: "failed",
+            error: errorMessage,
+          };
         }
 
         prepareHostedWorkspaceOAuthRedirect({
@@ -1644,26 +1820,55 @@ export function useServerState({
         const oauthResult = await initiateOAuth({
           serverName,
           serverUrl,
+          customHeaders:
+            "requestInit" in server.config &&
+            server.config.requestInit?.headers &&
+            !Array.isArray(server.config.requestInit.headers)
+              ? (server.config.requestInit.headers as Record<string, string>)
+              : undefined,
+          protocolVersion: server.oauthFlowProfile?.protocolVersion,
+          registrationStrategy: server.oauthFlowProfile?.registrationStrategy,
+          onTraceUpdate: (oauthTrace: OAuthTrace) => {
+            updateServerOAuthTrace(serverName, oauthTrace);
+          },
         });
 
         if (oauthResult.success && !oauthResult.serverConfig) {
-          return;
+          return {
+            status: "reauth",
+            error: `Reauthenticate ${serverName} to continue.`,
+          };
         }
         if (!oauthResult.success) {
-          if (isStaleOp(serverName, token)) return;
+          if (isStaleOp(serverName, token)) {
+            return {
+              status: "failed",
+              error: oauthResult.error || "OAuth flow failed",
+            };
+          }
+          const errorMessage = oauthResult.error || "OAuth flow failed";
           dispatch({
             type: "CONNECT_FAILURE",
             name: serverName,
-            error: oauthResult.error || "OAuth flow failed",
+            error: errorMessage,
+            oauthTrace: oauthResult.oauthTrace,
           });
-          toast.error(`OAuth failed: ${serverName}`);
-          return;
+          reportError(`OAuth failed: ${serverName}`);
+          return {
+            status: "failed",
+            error: errorMessage,
+          };
         }
         const result = await guardedReconnectServer(
           serverName,
           withWorkspaceClientCapabilities(oauthResult.serverConfig!),
         );
-        if (isStaleOp(serverName, token)) return;
+        if (isStaleOp(serverName, token)) {
+          return {
+            status: "failed",
+            error: result.error || "Reconnection failed after OAuth",
+          };
+        }
         if (result.success) {
           dispatch({
             type: "CONNECT_SUCCESS",
@@ -1674,6 +1879,7 @@ export function useServerState({
                 ? undefined
                 : getStoredTokens(serverName),
             useOAuth: true,
+            oauthTrace: oauthResult.oauthTrace,
           });
           logger.info("Reconnection with fresh OAuth successful", {
             serverName,
@@ -1681,14 +1887,20 @@ export function useServerState({
           storeInitInfo(serverName, result.initInfo).catch((err) =>
             logger.warn("Failed to fetch init info", { serverName, err }),
           );
-          return;
+          return { status: "connected" };
         }
+        const errorMessage = result.error || "Reconnection failed after OAuth";
         dispatch({
           type: "CONNECT_FAILURE",
           name: serverName,
-          error: result.error || "Reconnection failed after OAuth",
+          error: errorMessage,
+          oauthTrace: oauthResult.oauthTrace,
         });
-        return;
+        reportError(errorMessage);
+        return {
+          status: "failed",
+          error: errorMessage,
+        };
       }
 
       if (HOSTED_MODE && isAuthenticated && server.useOAuth === true) {
@@ -1700,7 +1912,12 @@ export function useServerState({
             serverName,
             hostedReconnectConfig,
           );
-          if (isStaleOp(serverName, token)) return;
+          if (isStaleOp(serverName, token)) {
+            return {
+              status: "failed",
+              error: result.error || "Reconnection failed",
+            };
+          }
           if (result.success) {
             dispatch({
               type: "CONNECT_SUCCESS",
@@ -1716,18 +1933,22 @@ export function useServerState({
             storeInitInfo(serverName, result.initInfo).catch((err) =>
               logger.warn("Failed to fetch init info", { serverName, err }),
             );
-            return;
+            return { status: "connected" };
           }
 
           if (!requiresFreshOAuthAuthorization(result.error)) {
+            const errorMessage = result.error || "Reconnection failed";
             dispatch({
               type: "CONNECT_FAILURE",
               name: serverName,
-              error: result.error || "Reconnection failed",
+              error: errorMessage,
             });
             logger.error("Hosted reconnect failed", { serverName, result });
-            toast.error(result.error || `Failed to reconnect: ${serverName}`);
-            return;
+            reportError(errorMessage || `Failed to reconnect: ${serverName}`);
+            return {
+              status: "failed",
+              error: errorMessage,
+            };
           }
 
           logger.info(
@@ -1735,7 +1956,13 @@ export function useServerState({
             { serverName, error: result.error },
           );
         } catch (error) {
-          if (isStaleOp(serverName, token)) return;
+          if (isStaleOp(serverName, token)) {
+            return {
+              status: "failed",
+              error:
+                error instanceof Error ? error.message : "Unknown error",
+            };
+          }
 
           const errorMessage =
             error instanceof Error ? error.message : "Unknown error";
@@ -1750,8 +1977,11 @@ export function useServerState({
               serverName,
               error: errorMessage,
             });
-            toast.error(errorMessage || `Failed to reconnect: ${serverName}`);
-            return;
+            reportError(errorMessage || `Failed to reconnect: ${serverName}`);
+            return {
+              status: "failed",
+              error: errorMessage,
+            };
           }
 
           logger.info(
@@ -1772,24 +2002,66 @@ export function useServerState({
                 serverUrl: oauthOptions.serverUrl,
               });
             },
+            onTraceUpdate: (oauthTrace: OAuthTrace) => {
+              updateServerOAuthTrace(serverName, oauthTrace);
+            },
+            allowInteractiveOAuthFlow: options?.allowInteractiveOAuthFlow,
           },
         );
-        if (authResult.kind === "redirect") return;
-        if (authResult.kind === "error") {
-          if (isStaleOp(serverName, token)) return;
+        if (authResult.kind === "redirect") {
+          return {
+            status: "reauth",
+            error: `Reauthenticate ${serverName} to continue.`,
+          };
+        }
+        if (authResult.kind === "reauth_required") {
+          if (isStaleOp(serverName, token)) {
+            return {
+              status: "reauth",
+              error: authResult.error,
+            };
+          }
           dispatch({
             type: "CONNECT_FAILURE",
             name: serverName,
             error: authResult.error,
+            oauthTrace: authResult.oauthTrace,
           });
-          toast.error(`Failed to connect: ${serverName}`);
-          return;
+          reportError(authResult.error);
+          return {
+            status: "reauth",
+            error: authResult.error,
+          };
+        }
+        if (authResult.kind === "error") {
+          if (isStaleOp(serverName, token)) {
+            return {
+              status: "failed",
+              error: authResult.error,
+            };
+          }
+          dispatch({
+            type: "CONNECT_FAILURE",
+            name: serverName,
+            error: authResult.error,
+            oauthTrace: authResult.oauthTrace,
+          });
+          reportError(`Failed to connect: ${serverName}`);
+          return {
+            status: "failed",
+            error: authResult.error,
+          };
         }
         const result = await guardedReconnectServer(
           serverName,
           withWorkspaceClientCapabilities(authResult.serverConfig),
         );
-        if (isStaleOp(serverName, token)) return;
+        if (isStaleOp(serverName, token)) {
+          return {
+            status: "failed",
+            error: result.error || "Reconnection failed",
+          };
+        }
         if (result.success) {
           dispatch({
             type: "CONNECT_SUCCESS",
@@ -1797,26 +2069,36 @@ export function useServerState({
             config: authResult.serverConfig,
             tokens: authResult.tokens,
             useOAuth: server.useOAuth === true || authResult.tokens != null,
+            oauthTrace: authResult.oauthTrace,
           });
           logger.info("Reconnection successful", { serverName, result });
           storeInitInfo(serverName, result.initInfo).catch((err) =>
             logger.warn("Failed to fetch init info", { serverName, err }),
           );
-          return;
+          return { status: "connected" };
         }
+        const errorMessage = result.error || "Reconnection failed";
         dispatch({
           type: "CONNECT_FAILURE",
           name: serverName,
-          error: result.error || "Reconnection failed",
+          error: errorMessage,
+          oauthTrace: authResult.oauthTrace,
         });
         logger.error("Reconnection failed", { serverName, result });
-        const errorMessage =
-          result.error || `Failed to reconnect: ${serverName}`;
-        toast.error(errorMessage);
+        reportError(errorMessage || `Failed to reconnect: ${serverName}`);
+        return {
+          status: "failed",
+          error: errorMessage,
+        };
       } catch (error) {
         const errorMessage =
           error instanceof Error ? error.message : "Unknown error";
-        if (isStaleOp(serverName, token)) return;
+        if (isStaleOp(serverName, token)) {
+          return {
+            status: "failed",
+            error: errorMessage,
+          };
+        }
         dispatch({
           type: "CONNECT_FAILURE",
           name: serverName,
@@ -1826,19 +2108,182 @@ export function useServerState({
           serverName,
           error: errorMessage,
         });
+        reportError(errorMessage);
+        return {
+          status: "failed",
+          error: errorMessage,
+        };
       }
     },
     [
       activeWorkspaceServersFlat,
       isAuthenticated,
-      effectiveServers,
+      isClientConfigSyncPending,
       storeInitInfo,
       logger,
       dispatch,
-      notifyIfClientConfigSyncPending,
       prepareHostedWorkspaceOAuthRedirect,
       guardedReconnectServer,
+      updateServerOAuthTrace,
       withWorkspaceClientCapabilities,
+    ],
+  );
+
+  const handleReconnect = useCallback(
+    async (
+      serverName: string,
+      options?: {
+        forceOAuthFlow?: boolean;
+        allowInteractiveOAuthFlow?: boolean;
+      },
+    ) => {
+      await reconnectServerInternal(serverName, {
+        forceOAuthFlow: options?.forceOAuthFlow,
+        allowInteractiveOAuthFlow: options?.allowInteractiveOAuthFlow ?? true,
+        select: true,
+      });
+    },
+    [reconnectServerInternal],
+  );
+
+  const ensureServersReady = useCallback(
+    async (serverNames: string[]): Promise<EnsureServersReadyResult> => {
+      const uniqueServerNames = [...new Set(serverNames.filter(Boolean))];
+
+      const resolveToWorkspaceServerKey = (serverRef: string): string => {
+        const effective = latestEffectiveServersRef.current;
+        if (effective[serverRef]) {
+          return serverRef;
+        }
+
+        const fromWorkspace = activeWorkspaceServersFlat?.find(
+          (s) => s._id === serverRef,
+        );
+        if (fromWorkspace) {
+          return fromWorkspace.name;
+        }
+
+        if (HOSTED_MODE) {
+          const hosted = tryGetHostedServerDisplayName(serverRef);
+          if (hosted && effective[hosted]) {
+            return hosted;
+          }
+        }
+
+        return serverRef;
+      };
+
+      // Multiple refs (e.g. hosted id and display name) can collapse to the
+      // same workspace server. Group by resolved key so we only kick off one
+      // reconnect per real server and avoid spurious "stale op" failures.
+      type RefGroup = { resolvedKey: string; refs: string[] };
+      const groupsByKey = new Map<string, RefGroup>();
+      const orderedKeys: string[] = [];
+      for (const serverName of uniqueServerNames) {
+        const resolvedKey = resolveToWorkspaceServerKey(serverName);
+        const existing = groupsByKey.get(resolvedKey);
+        if (existing) {
+          existing.refs.push(serverName);
+        } else {
+          groupsByKey.set(resolvedKey, { resolvedKey, refs: [serverName] });
+          orderedKeys.push(resolvedKey);
+        }
+      }
+
+      const outcomesByKey = await Promise.all(
+        orderedKeys.map(
+          async (
+            resolvedKey,
+          ): Promise<readonly [string, EnsureServerConnectionResult]> => {
+            const server = latestEffectiveServersRef.current[resolvedKey];
+            if (!server) {
+              return [
+                resolvedKey,
+                {
+                  status: "missing",
+                  error: `Server ${resolvedKey} not found`,
+                },
+              ] as const;
+            }
+
+            if (server.connectionStatus === "connected") {
+              return [resolvedKey, { status: "connected" }] as const;
+            }
+
+            if (server.connectionStatus === "connecting") {
+              return [
+                resolvedKey,
+                await waitForServerReconnectOutcome(resolvedKey),
+              ] as const;
+            }
+
+            if (server.connectionStatus === "oauth-flow") {
+              return [
+                resolvedKey,
+                {
+                  status: "reauth",
+                  error: `Reauthenticate ${resolvedKey} to continue.`,
+                },
+              ] as const;
+            }
+
+            return [
+              resolvedKey,
+              await reconnectServerInternal(resolvedKey, {
+                allowInteractiveOAuthFlow: false,
+                select: false,
+                suppressErrors: true,
+              }),
+            ] as const;
+          },
+        ),
+      );
+
+      const outcomeByKey = new Map(outcomesByKey);
+      const outcomes: ReadonlyArray<readonly [string, EnsureServerConnectionResult]> =
+        uniqueServerNames.map((serverName) => {
+          const resolvedKey = resolveToWorkspaceServerKey(serverName);
+          const outcome = outcomeByKey.get(resolvedKey) ?? {
+            status: "missing",
+            error: `Server ${serverName} not found`,
+          };
+          return [serverName, outcome] as const;
+        });
+
+      const readyServerNames: string[] = [];
+      const missingServerNames: string[] = [];
+      const failedServerNames: string[] = [];
+      const reauthServerNames: string[] = [];
+
+      for (const [serverName, outcome] of outcomes) {
+        switch (outcome.status) {
+          case "connected":
+            readyServerNames.push(serverName);
+            break;
+          case "missing":
+            missingServerNames.push(serverName);
+            break;
+          case "reauth":
+            reauthServerNames.push(serverName);
+            break;
+          case "failed":
+          default:
+            failedServerNames.push(serverName);
+            break;
+        }
+      }
+
+      return {
+        readyServerNames,
+        missingServerNames,
+        failedServerNames,
+        reauthServerNames,
+      };
+    },
+    [
+      activeWorkspaceServersFlat,
+      reconnectServerInternal,
+      waitForServerReconnectOutcome,
     ],
   );
 
@@ -2081,6 +2526,7 @@ export function useServerState({
     handleConnect,
     handleDisconnect,
     handleReconnect,
+    ensureServersReady,
     handleUpdate,
     handleRemoveServer,
     setSelectedServer,
