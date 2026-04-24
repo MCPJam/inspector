@@ -192,16 +192,16 @@ function DirectionLabel({
 
   if (source === "oauth") {
     const className = oauthRecovered
-      ? "text-amber-600 dark:text-amber-400"
+      ? "text-indigo-600 dark:text-indigo-400"
       : oauthStatus === "error"
       ? "text-destructive"
       : oauthStatus === "pending"
       ? "text-muted-foreground"
-      : "text-orange-600 dark:text-orange-400";
+      : "text-sky-600 dark:text-sky-400";
     const label = oauthRecovered
       ? "oauth ↺"
       : oauthStatus === "error"
-      ? "oauth !"
+      ? "oauth ✗"
       : oauthStatus === "pending"
       ? "oauth …"
       : "oauth ✓";
@@ -642,13 +642,12 @@ export function LoggerView({
                 it.method === "csp-violation" ||
                 (isOAuthTraffic && it.oauthStatus === "error");
 
-              // Left border: 2px — red for errors, purple for Apps, transparent for MCP Server
+              // Left border: 2px — red for errors (incl. OAuth failures), purple for Apps,
+              // transparent otherwise (OAuth success has no rail)
               const borderClass = isError
                 ? "border-l-destructive"
                 : isAppsTraffic
                 ? "border-l-purple-500/50"
-                : isOAuthTraffic
-                ? "border-l-orange-300/60"
                 : "border-l-transparent";
 
               return (
@@ -671,13 +670,17 @@ export function LoggerView({
                         isExpanded && "rotate-90"
                       )}
                     />
-                    {isError ? (
+                    {isError && !isOAuthTraffic ? (
                       <AlertCircle className="h-3 w-3 flex-shrink-0 text-destructive" />
                     ) : (
                       <DirectionLabel
                         direction={it.direction}
                         source={it.source}
-                        oauthStatus={it.oauthStatus}
+                        oauthStatus={
+                          isOAuthTraffic && isError
+                            ? "error"
+                            : it.oauthStatus
+                        }
                         oauthRecovered={it.oauthRecovered}
                       />
                     )}
