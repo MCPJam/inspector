@@ -429,4 +429,34 @@ describe("useServerState hosted OAuth callback guards", () => {
       );
     });
   });
+
+  it("falls back to interactive OAuth when hosted reconnect reports a missing refresh token", async () => {
+    mockReconnectServer.mockResolvedValueOnce({
+      success: false,
+      error: "Stored hosted OAuth credential is missing refresh_token",
+    });
+    mockEnsureAuthorizedForReconnect.mockResolvedValueOnce({
+      kind: "error",
+      error: "OAuth init failed",
+    });
+
+    const dispatch = vi.fn();
+    const { result } = renderHostedServerState(dispatch);
+
+    await act(async () => {
+      await result.current.handleReconnect("asana");
+    });
+
+    await waitFor(() => {
+      expect(mockEnsureAuthorizedForReconnect).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: "asana",
+          useOAuth: true,
+        }),
+        expect.objectContaining({
+          beforeRedirect: expect.any(Function),
+        }),
+      );
+    });
+  });
 });

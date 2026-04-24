@@ -130,6 +130,9 @@ function requiresFreshOAuthAuthorization(error: unknown): boolean {
   const normalized = errorMessage.toLowerCase();
   return (
     normalized.includes("requires oauth authentication") ||
+    normalized.includes(
+      "stored hosted oauth credential is missing refresh_token",
+    ) ||
     (normalized.includes("authentication failed") &&
       normalized.includes("invalid_token"))
   );
