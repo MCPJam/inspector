@@ -7,8 +7,8 @@ import { buildXAAActions } from "@/lib/xaa/sequence-actions";
 import type { XAAFlowState, XAAFlowStep } from "@/lib/xaa/types";
 
 const XAA_ACTORS = {
-  client: { label: "MCP Client", color: "#10b981" },
-  testIdp: { label: "MCPJam Issuer", color: "#ef4444" },
+  client: { label: "Agent", color: "#10b981" },
+  testIdp: { label: "IdP", color: "#ef4444" },
   mcpServer: { label: "MCP Server", color: "#f59e0b" },
   authServer: { label: "Authorization Server", color: "#3b82f6" },
 };

@@ -301,6 +301,9 @@ describe("useServerState hosted OAuth callback guards", () => {
           serverName: "asana",
         }),
         "oauth-code",
+        expect.objectContaining({
+          onTraceUpdate: expect.any(Function),
+        }),
       );
     });
 

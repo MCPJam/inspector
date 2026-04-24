@@ -11,6 +11,8 @@ import { initSentry } from "./lib/sentry.js";
 import { IframeRouterError } from "./components/IframeRouterError.jsx";
 import { initializeSessionToken } from "./lib/session-token.js";
 import { HOSTED_MODE } from "./lib/config";
+import { GuestConvexAuthBridge } from "./lib/guest-convex-auth";
+import { getRuntimeConvexUrl } from "./lib/runtime-config";
 
 // Initialize Sentry before React mounts
 initSentry();
@@ -33,10 +35,12 @@ if (isInIframe) {
   root.render(
     <StrictMode>
       <IframeRouterError />
-    </StrictMode>,
+    </StrictMode>
   );
 } else {
-  const convexUrl = import.meta.env.VITE_CONVEX_URL as string;
+  const buildConvexUrl = import.meta.env.VITE_CONVEX_URL as string | undefined;
+  const runtimeConvexUrl = getRuntimeConvexUrl();
+  const convexUrl = runtimeConvexUrl || buildConvexUrl || "";
   const workosClientId = import.meta.env.VITE_WORKOS_CLIENT_ID as string;
   const workosDevMode = (() => {
     const explicit = import.meta.env.VITE_WORKOS_DEV_MODE as string | undefined;
@@ -67,12 +71,26 @@ if (isInIframe) {
   // Warn if critical env vars are missing
   if (!convexUrl) {
     console.warn(
-      "[main] VITE_CONVEX_URL is not set; Convex features may not work.",
+      "[main] VITE_CONVEX_URL is not set; Convex features may not work."
+    );
+  }
+  if (
+    HOSTED_MODE &&
+    runtimeConvexUrl &&
+    buildConvexUrl &&
+    runtimeConvexUrl !== buildConvexUrl
+  ) {
+    console.warn(
+      "[main] Hosted runtime Convex URL overrides build-time VITE_CONVEX_URL.",
+      {
+        buildConvexUrl,
+        runtimeConvexUrl,
+      }
     );
   }
   if (!workosClientId) {
     console.warn(
-      "[main] VITE_WORKOS_CLIENT_ID is not set; authentication will not work.",
+      "[main] VITE_WORKOS_CLIENT_ID is not set; authentication will not work."
     );
   }
 
@@ -110,6 +128,7 @@ if (isInIframe) {
       {...workosClientOptions}
     >
       <ConvexProviderWithAuthKit client={convex} useAuth={useAuth}>
+        <GuestConvexAuthBridge client={convex} />
         <App />
       </ConvexProviderWithAuthKit>
     </AuthKitProvider>
@@ -126,7 +145,7 @@ if (isInIframe) {
         console.log("[Auth] Session token initialized");
       } else {
         console.log(
-          "[Auth] Hosted mode active, skipping session token bootstrap",
+          "[Auth] Hosted mode active, skipping session token bootstrap"
         );
       }
     } catch (error) {
@@ -177,7 +196,7 @@ if (isInIframe) {
               Restart App
             </button>
           </div>
-        </StrictMode>,
+        </StrictMode>
       );
       return;
     }
@@ -187,7 +206,7 @@ if (isInIframe) {
         <PostHogProvider apiKey={getPostHogKey()} options={getPostHogOptions()}>
           {Providers}
         </PostHogProvider>
-      </StrictMode>,
+      </StrictMode>
     );
   }
 

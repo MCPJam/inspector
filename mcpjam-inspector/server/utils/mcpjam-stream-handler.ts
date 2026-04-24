@@ -77,6 +77,8 @@ export interface MCPJamHandlerOptions {
   temperature?: number;
   tools: ToolSet;
   authHeader?: string;
+  chatboxToken?: string;
+  workspaceId?: string;
   mcpClientManager: MCPClientManager;
   selectedServers?: string[];
   requireToolApproval?: boolean;
@@ -98,6 +100,8 @@ interface StepContext {
   toolDefs: ToolDefinition[];
   tools: ToolSet;
   authHeader?: string;
+  chatboxToken?: string;
+  workspaceId?: string;
   modelId: string;
   systemPrompt: string;
   temperature?: number;
@@ -590,7 +594,7 @@ function emitToolResults(
             typeof (part as any).serverId === "string"
               ? ((part as any).serverId as string)
               : undefined;
-          const rawOutput = (part as any).result ?? part.output;
+          const rawOutput = part.output ?? (part as any).result;
 
           let outputForUi = rawOutput;
           if (rawOutput && typeof rawOutput === "object") {
@@ -877,6 +881,8 @@ async function processOneStep(
     toolDefs,
     tools,
     authHeader,
+    chatboxToken,
+    workspaceId,
     modelId,
     systemPrompt,
     temperature,
@@ -933,6 +939,8 @@ async function processOneStep(
       systemPrompt,
       ...(temperature !== undefined ? { temperature } : {}),
       tools: toolDefs,
+      ...(chatboxToken ? { chatboxToken } : {}),
+      ...(workspaceId ? { workspaceId } : {}),
     }),
   });
 
@@ -1237,6 +1245,8 @@ export async function handleMCPJamFreeChatModel(
     temperature,
     tools,
     authHeader,
+    chatboxToken,
+    workspaceId,
     mcpClientManager,
     selectedServers,
     requireToolApproval,
@@ -1300,6 +1310,8 @@ export async function handleMCPJamFreeChatModel(
             toolDefs,
             tools,
             authHeader,
+            chatboxToken,
+            workspaceId,
             modelId,
             systemPrompt,
             temperature,

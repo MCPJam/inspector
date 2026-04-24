@@ -256,6 +256,34 @@ describe("ChatHistoryRow", () => {
     expect(screen.getByText("Archive")).toBeInTheDocument();
   });
 
+  it("shows promote to test case control and calls onConvert when clicked", async () => {
+    const onConvertToTestCase = vi.fn();
+    const user = userEvent.setup();
+    const session = sessionStub({ status: "active" });
+    render(
+      <ChatHistoryRow
+        session={session}
+        isActive={false}
+        isAuthenticated
+        isStreaming={false}
+        onSelect={vi.fn()}
+        canConvertToTestCase
+        onConvertToTestCase={onConvertToTestCase}
+        actions={actions}
+      />,
+    );
+
+    const promote = screen.getByTestId("chat-history-promote-to-test-case");
+    expect(promote).toHaveAttribute("aria-label", "Promote to test case");
+    expect(
+      screen.queryByText("Promote to test case", { exact: true }),
+    ).not.toBeInTheDocument();
+
+    await user.click(promote);
+    expect(onConvertToTestCase).toHaveBeenCalledTimes(1);
+    expect(onConvertToTestCase).toHaveBeenCalledWith(session);
+  });
+
   it("shows Unarchive when the session is archived", () => {
     render(
       <ChatHistoryRow
@@ -269,6 +297,54 @@ describe("ChatHistoryRow", () => {
     );
 
     expect(screen.getByText("Unarchive")).toBeInTheDocument();
+  });
+
+  it("shows Share to workspace when shared threads are enabled", () => {
+    render(
+      <ChatHistoryRow
+        session={sessionStub({ directVisibility: "private" })}
+        isActive={false}
+        isAuthenticated
+        isStreaming={false}
+        sharedThreadsEnabled
+        onSelect={vi.fn()}
+        actions={actions}
+      />,
+    );
+
+    expect(screen.getByText("Share to workspace")).toBeInTheDocument();
+  });
+
+  it("hides Share to workspace when shared threads are disabled", () => {
+    render(
+      <ChatHistoryRow
+        session={sessionStub({ directVisibility: "private" })}
+        isActive={false}
+        isAuthenticated
+        isStreaming={false}
+        sharedThreadsEnabled={false}
+        onSelect={vi.fn()}
+        actions={actions}
+      />,
+    );
+
+    expect(screen.queryByText("Share to workspace")).not.toBeInTheDocument();
+  });
+
+  it("hides Unshare when shared threads are disabled", () => {
+    render(
+      <ChatHistoryRow
+        session={sessionStub({ directVisibility: "workspace" })}
+        isActive={false}
+        isAuthenticated
+        isStreaming={false}
+        sharedThreadsEnabled={false}
+        onSelect={vi.fn()}
+        actions={actions}
+      />,
+    );
+
+    expect(screen.queryByText("Unshare")).not.toBeInTheDocument();
   });
 
   it("shows a pinned indicator when isPinned", () => {

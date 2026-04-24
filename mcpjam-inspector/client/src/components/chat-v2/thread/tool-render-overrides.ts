@@ -7,6 +7,7 @@ export interface ToolRenderOverride {
   serverId?: string;
   isOffline?: boolean;
   cachedWidgetHtmlUrl?: string;
+  toolOutput?: unknown;
   initialWidgetState?: unknown;
   resourceUri?: string;
   toolMetadata?: Record<string, unknown>;

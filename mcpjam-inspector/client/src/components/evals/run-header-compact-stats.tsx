@@ -18,7 +18,7 @@ function normalizePassRatePercent(passRate: number): number {
 }
 
 /**
- * Pass-rate label for the run-detail sidebar "Run Insights" row only.
+ * Pass-rate label for the run-detail sidebar overview row only.
  * Returns null when there is no meaningful summary (matches compact-stats empty states).
  */
 export function getSidebarRunInsightsPassRateLabel(

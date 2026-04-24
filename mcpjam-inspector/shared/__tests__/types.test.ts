@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  getCanonicalModelId,
   getModelById,
   isMCPJamGuestAllowedModel,
   isMCPJamProvidedModel,
@@ -37,6 +38,14 @@ describe("MCPJam-provided model classification", () => {
   it("resolves provider metadata for new qwen and xAI hosted models", () => {
     expect(getModelById("qwen/qwen3.6-plus")?.provider).toBe("qwen");
     expect(getModelById("x-ai/grok-4-fast")?.provider).toBe("xai");
+  });
+
+  it("normalizes bare model ids with provider metadata", () => {
+    expect(getCanonicalModelId("claude-haiku-4.5", "anthropic")).toBe(
+      "anthropic/claude-haiku-4.5",
+    );
+    expect(isMCPJamProvidedModel("claude-haiku-4.5", "anthropic")).toBe(true);
+    expect(isMCPJamProvidedModel("grok-4-fast", "xai")).toBe(true);
   });
 
   it("resolves exact hosted IDs that are allowlisted in the backend", () => {

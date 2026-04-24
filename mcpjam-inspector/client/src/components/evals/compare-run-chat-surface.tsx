@@ -36,6 +36,7 @@ function ErrorState({ message }: { message: string }) {
 export function CompareRunChatSurface({
   iteration,
   traceModel,
+  isLoading = false,
   emptyMessage = "Run this test to inspect trace details.",
   fallbackTrace = null,
   onTraceLoaded,
@@ -49,6 +50,7 @@ export function CompareRunChatSurface({
 }: {
   iteration: EvalIteration | null;
   traceModel?: ModelDefinition | null;
+  isLoading?: boolean;
   emptyMessage?: string;
   fallbackTrace?: TraceEnvelope | null;
   onTraceLoaded?: () => void;
@@ -103,6 +105,7 @@ export function CompareRunChatSurface({
         <TraceViewer
           trace={activeTrace}
           model={traceModel ?? undefined}
+          isLoading={isLoading}
           toolsMetadata={toolsMetadata}
           toolServerMap={toolServerMap}
           connectedServerIds={connectedServerIds}

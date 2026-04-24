@@ -120,6 +120,7 @@ import {
   type OrganizationRouteSection,
 } from "./lib/hosted-navigation";
 import { buildOAuthTokensByServerId } from "./lib/oauth/oauth-tokens";
+import type { OAuthTrace } from "./lib/oauth/oauth-trace";
 import {
   formatBillingFeatureName,
   formatPlanName,
@@ -165,6 +166,7 @@ import { getEffectiveWorkspaceClientCapabilities } from "./lib/client-config";
 import { buildEvalsHash } from "./lib/evals-router";
 import { withTestingSurface } from "./lib/testing-surface";
 import { useClientConfigStore } from "./stores/client-config-store";
+import { ingestOAuthTraceLogs } from "./stores/traffic-log-store";
 import { clearGuestSession } from "./lib/guest-session";
 
 function getHostedOAuthCallbackErrorMessage(): string {
@@ -446,6 +448,7 @@ export default function App() {
     const urlParams = new URLSearchParams(window.location.search);
     const code = urlParams.get("code");
     const error = urlParams.get("error");
+    const state = urlParams.get("state");
 
     let cancelled = false;
     setHostedOAuthHandling(true);
@@ -476,10 +479,27 @@ export default function App() {
       return;
     }
 
+    const handleLiveOAuthTrace = (oauthTrace: OAuthTrace) => {
+      const serverId = callbackContext.serverId ?? callbackContext.serverName;
+      if (!serverId) {
+        return;
+      }
+      ingestOAuthTraceLogs({
+        serverId,
+        serverName: callbackContext.serverName,
+        trace: oauthTrace,
+      });
+    };
+
     const completeCallback =
       isAuthenticated
-        ? completeHostedOAuthCallback(callbackContext, code)
-        : handleOAuthCallback(code);
+        ? completeHostedOAuthCallback(callbackContext, code, {
+            callbackState: state,
+            onTraceUpdate: handleLiveOAuthTrace,
+          })
+        : handleOAuthCallback(code, {
+            onTraceUpdate: handleLiveOAuthTrace,
+          });
 
     completeCallback
       .then((result) => {
@@ -628,6 +648,7 @@ export default function App() {
     handleConnect,
     handleDisconnect,
     handleReconnect,
+    ensureServersReady,
     handleUpdate,
     handleRemoveServer,
     setSelectedServer,
@@ -650,6 +671,7 @@ export default function App() {
     setActiveOrganizationId,
     clearConvexActiveWorkspaceSelection,
     clearLocalFallbackWorkspaceSelection,
+    pendingDashboardOAuth,
     isCloudSyncActive,
   } = useAppState({
     currentUserId: workOsUser?.id ?? null,
@@ -684,6 +706,23 @@ export default function App() {
     workOsUserEmail: workOsUser?.email ?? null,
     isLoadingRemoteWorkspaces: false,
   });
+  const baseHostedShellGateState = isHostedChatRoute
+    ? hostedChatShellGateState
+    : hostedShellGateState;
+  const pendingDashboardOAuthServer = pendingDashboardOAuth
+    ? workspaceServers[pendingDashboardOAuth.serverName]
+    : null;
+  const shouldShowPendingDashboardOAuthGate =
+    !!pendingDashboardOAuth &&
+    !pendingDashboardOAuthServer &&
+    baseHostedShellGateState !== "logged-out" &&
+    baseHostedShellGateState !== "restricted";
+  const effectiveHostedShellGateState = shouldShowPendingDashboardOAuthGate
+    ? "workspace-loading"
+    : baseHostedShellGateState;
+  const pendingDashboardOAuthMessage = pendingDashboardOAuth
+    ? `Finishing OAuth sign-in for ${pendingDashboardOAuth.serverName}...`
+    : undefined;
   const isOnboardingDecisionReady = hostedShellGateState === "ready";
   const isHostedDefaultRoute = currentHashRoute.normalizedTab === "servers";
   const shouldHoldHostedDefaultRouteForAuth =
@@ -1594,7 +1633,6 @@ export default function App() {
     activeTab === "oauth-flow" ||
     (activeTab === "xaa-flow" && xaaEnabled === true) ||
     activeTab === "chat" ||
-    activeTab === "evals" ||
     activeTab === "views";
 
   const activeServerSelectorProps: ActiveServerSelectorProps | undefined =
@@ -1625,7 +1663,6 @@ export default function App() {
         hidden={appBuilderOnboarding}
         onNavigate={handleNavigate}
         activeTab={activeTab}
-        servers={workspaceServers}
         workspaces={workspaces}
         activeWorkspaceId={activeWorkspaceId}
         onSwitchWorkspace={handleSidebarSwitchWorkspace}
@@ -1647,7 +1684,7 @@ export default function App() {
           hidden={appBuilderOnboarding}
           activeServerSelectorProps={activeServerSelectorProps}
         />
-        <div className="flex flex-1 min-h-0 flex-col overflow-hidden h-full">
+        <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           {showTrialDecisionNotice ? (
             <div className="border-b border-border/60 px-4 py-3">
               <Alert>
@@ -1672,6 +1709,7 @@ export default function App() {
               workspaces={workspaces}
               activeWorkspaceId={activeWorkspaceId}
               organizationId={activeWorkspaceBillingOrganizationId}
+              pendingDashboardOAuth={pendingDashboardOAuth}
               isBillingContextPending={isBillingContextPending}
               isLoadingWorkspaces={isLoadingRemoteWorkspaces}
               onWorkspaceShared={handleWorkspaceShared}
@@ -1733,8 +1771,8 @@ export default function App() {
               />
             ) : (
               <EvalsTab
-                selectedServer={appState.selectedServer}
                 workspaceId={convexWorkspaceId}
+                ensureServersReady={ensureServersReady}
                 onContinueInChat={handleContinueEvalInChat}
               />
             ))}
@@ -1773,7 +1811,10 @@ export default function App() {
                   }}
                 />
               ) : (
-                <CiEvalsTab convexWorkspaceId={convexWorkspaceId} />
+                <CiEvalsTab
+                  convexWorkspaceId={convexWorkspaceId}
+                  ensureServersReady={ensureServersReady}
+                />
               )
             ) : null)}
           {activeTab === "views" && (
@@ -1920,6 +1961,7 @@ export default function App() {
               isAuthLoading={isAuthLoading}
               isServerSyncing={isSelectedServerSyncing}
               onConnect={handleConnect}
+              ensureServersReady={ensureServersReady}
               onOnboardingChange={setAppBuilderOnboarding}
               playgroundServerSelectorProps={playgroundServerSelectorProps}
               enableMultiModelChat
@@ -2036,10 +2078,11 @@ export default function App() {
           inert={shouldShowBillingHandoffOverlay || undefined}
         >
           <HostedShellGate
-            state={
-              isHostedChatRoute
-                ? hostedChatShellGateState
-                : hostedShellGateState
+            state={effectiveHostedShellGateState}
+            loadingMessage={
+              shouldShowPendingDashboardOAuthGate
+                ? pendingDashboardOAuthMessage
+                : undefined
             }
             onSignIn={() => {
               if (sharedPathToken) {

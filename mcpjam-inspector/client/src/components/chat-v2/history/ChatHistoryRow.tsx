@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { Pin, MoreVertical, User } from "lucide-react";
+import { FlaskConical, Pin, MoreVertical, User } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -8,7 +8,11 @@ import {
   DropdownMenuTrigger,
 } from "@mcpjam/design-system/dropdown-menu";
 import { Input } from "@mcpjam/design-system/input";
-import { Avatar, AvatarFallback, AvatarImage } from "@mcpjam/design-system/avatar";
+import {
+  Avatar,
+  AvatarFallback,
+  AvatarImage,
+} from "@mcpjam/design-system/avatar";
 import {
   Tooltip,
   TooltipContent,
@@ -56,6 +60,7 @@ interface ChatHistoryRowProps {
   isActive: boolean;
   isAuthenticated: boolean;
   isStreaming: boolean;
+  sharedThreadsEnabled?: boolean;
   /** Which host aesthetic governs the active-row highlight (defaults to "claude"). */
   hostStyle?: ChatboxHostStyle;
   onSelect: (session: ChatHistorySession) => void;
@@ -70,6 +75,8 @@ interface ChatHistoryRowProps {
       | "unpin";
     session: ChatHistorySession;
   }) => void | Promise<void>;
+  canConvertToTestCase?: boolean;
+  onConvertToTestCase?: (session: ChatHistorySession) => void;
   /** Workspace list only: avatar for another member's shared thread. */
   workspaceThreadOwner?: WorkspaceThreadOwnerAvatar;
   actions: {
@@ -88,9 +95,12 @@ export function ChatHistoryRow({
   isActive,
   isAuthenticated,
   isStreaming,
+  sharedThreadsEnabled = true,
   hostStyle = "claude",
   onSelect,
   onActionComplete,
+  canConvertToTestCase = false,
+  onConvertToTestCase,
   workspaceThreadOwner,
   actions,
 }: ChatHistoryRowProps) {
@@ -186,6 +196,7 @@ export function ChatHistoryRow({
     if (isStreaming || isRenaming) return;
     onSelect(session);
   };
+  const canManageWorkspaceSharing = isAuthenticated && sharedThreadsEnabled;
 
   if (isRenaming) {
     const renameField = (
@@ -273,6 +284,28 @@ export function ChatHistoryRow({
       </div>
 
       <div className="flex shrink-0 items-center gap-1">
+        {canConvertToTestCase && onConvertToTestCase ? (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="inline-flex shrink-0">
+                <button
+                  type="button"
+                  data-testid="chat-history-promote-to-test-case"
+                  disabled={isStreaming}
+                  aria-label="Promote to test case"
+                  className="flex size-5 shrink-0 items-center justify-center rounded p-0.5 text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onConvertToTestCase(session);
+                  }}
+                >
+                  <FlaskConical className="h-3.5 w-3.5" aria-hidden />
+                </button>
+              </span>
+            </TooltipTrigger>
+            <TooltipContent side="right">Promote to test case</TooltipContent>
+          </Tooltip>
+        ) : null}
         <div className="relative flex h-4 w-8 shrink-0 items-center justify-end tabular-nums [@media(pointer:coarse)]:w-auto [@media(pointer:coarse)]:gap-1">
           <span className="chat-history-time pointer-events-none text-[10px] text-muted-foreground transition-opacity [@media(pointer:fine)]:absolute [@media(pointer:fine)]:inset-y-0 [@media(pointer:fine)]:right-0 [@media(pointer:fine)]:flex [@media(pointer:fine)]:items-center [@media(pointer:fine)]:justify-end [@media(pointer:fine)]:group-hover:opacity-0">
             {relativeTime}
@@ -304,7 +337,7 @@ export function ChatHistoryRow({
                 {session.isPinned ? "Unpin" : "Pin"}
               </DropdownMenuItem>
 
-              {isAuthenticated && (
+              {canManageWorkspaceSharing && (
                 <>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem

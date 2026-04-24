@@ -18,10 +18,13 @@ import { useChatHistory } from "./use-chat-history";
 import type { ChatHistorySession } from "@/lib/apis/web/chat-history-api";
 import { useWorkspaceMembers } from "@/hooks/useWorkspaces";
 import type { ChatboxHostStyle } from "@/lib/chatbox-host-style";
+import { buildEvalsHash } from "@/lib/evals-router";
+import { withTestingSurface } from "@/lib/testing-surface";
 import {
   buildWorkspaceOwnerProfileByUserId,
   resolveWorkspaceThreadOwnerAvatar,
 } from "./workspace-thread-owner-avatar";
+import { ConvertChatSessionDialog } from "./convert-chat-session-dialog";
 
 /** Delays (ms) after a turn completes to re-fetch list while backend ingestion may still be running. */
 const HISTORY_REFETCH_RETRY_DELAYS_MS = [250, 800, 2000] as const;
@@ -34,6 +37,7 @@ interface ChatHistoryRailProps {
   hostStyle?: ChatboxHostStyle;
   isAuthenticated: boolean;
   isStreaming: boolean;
+  sharedThreadsEnabled?: boolean;
   workspaceId?: string | null;
   requestHeaders?: HeadersInit;
   enabled?: boolean;
@@ -196,6 +200,7 @@ export function ChatHistoryRail({
   hostStyle = "claude",
   isAuthenticated,
   isStreaming,
+  sharedThreadsEnabled = true,
   workspaceId,
   requestHeaders,
   enabled = true,
@@ -208,6 +213,8 @@ export function ChatHistoryRail({
 }: ChatHistoryRailProps) {
   const [archivingScope, setArchivingScope] =
     useState<ArchiveSectionScope | null>(null);
+  const [sessionToConvert, setSessionToConvert] =
+    useState<ChatHistorySession | null>(null);
   const { personal, workspace, loading, error, isReactive, refetch, actions } =
     useChatHistory({
       workspaceId,
@@ -265,6 +272,7 @@ export function ChatHistoryRail({
   }, [enabled, isReactive, refetch, refreshSignal]);
 
   const archiveBusy = archivingScope !== null;
+  const canConvertToTestCase = Boolean(isAuthenticated);
 
   const handleArchiveSection = async (
     scope: ArchiveSectionScope,
@@ -291,125 +299,155 @@ export function ChatHistoryRail({
   };
 
   return (
-    <div className="flex h-full min-h-0 min-w-0 flex-col border-r">
-      <ScrollArea
-        className={cn(
-          "min-h-0 min-w-0 flex-1",
-          // Scrollbar: scoped polish — narrower, softer thumb, subtle hover expand.
-          "[&_[data-slot=scroll-area-scrollbar]]:z-20",
-          "[&_[data-slot=scroll-area-scrollbar]]:w-1.5",
-          "[&_[data-slot=scroll-area-scrollbar]]:transition-[width,background-color]",
-          "[&_[data-slot=scroll-area-scrollbar]]:duration-150",
-          "hover:[&_[data-slot=scroll-area-scrollbar]]:w-2",
-          "[&_[data-slot=scroll-area-thumb]]:bg-muted-foreground/30",
-          "[&_[data-slot=scroll-area-thumb]]:transition-colors",
-          "[&_[data-slot=scroll-area-thumb]]:duration-150",
-          "hover:[&_[data-slot=scroll-area-thumb]]:bg-muted-foreground/60",
-        )}
-      >
-        <div className="min-w-0 px-1 py-1">
-          {loading && personal.length === 0 && workspace.length === 0 && (
-            <div className="flex items-center justify-center py-8">
-              <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-            </div>
+    <>
+      <div className="flex h-full min-h-0 min-w-0 flex-col border-r">
+        <ScrollArea
+          className={cn(
+            "min-h-0 min-w-0 flex-1",
+            // Scrollbar: scoped polish — narrower, softer thumb, subtle hover expand.
+            "[&_[data-slot=scroll-area-scrollbar]]:z-20",
+            "[&_[data-slot=scroll-area-scrollbar]]:w-1.5",
+            "[&_[data-slot=scroll-area-scrollbar]]:transition-[width,background-color]",
+            "[&_[data-slot=scroll-area-scrollbar]]:duration-150",
+            "hover:[&_[data-slot=scroll-area-scrollbar]]:w-2",
+            "[&_[data-slot=scroll-area-thumb]]:bg-muted-foreground/30",
+            "[&_[data-slot=scroll-area-thumb]]:transition-colors",
+            "[&_[data-slot=scroll-area-thumb]]:duration-150",
+            "hover:[&_[data-slot=scroll-area-thumb]]:bg-muted-foreground/60",
           )}
-
-          {!loading &&
-            error &&
-            personal.length === 0 &&
-            workspace.length === 0 && (
-              <div className="flex flex-col items-center gap-2 py-8 px-4 text-center">
-                <p className="text-xs text-muted-foreground">
-                  Could not load chat history.
-                </p>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-7 px-3 text-xs"
-                  onClick={() => void refetch()}
-                >
-                  Retry
-                </Button>
+        >
+          <div className="min-w-0 px-1 py-1">
+            {loading && personal.length === 0 && workspace.length === 0 && (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
               </div>
             )}
 
-          {enabled && !loading && !error && (
-            <>
-              <div className={isAuthenticated ? "mb-1" : undefined}>
-                <ThreadSection
-                  headingId="chat-history-my-threads-heading"
-                  title="My Threads"
-                  triggerLabel="My threads section"
-                  archiveAriaLabel="Archive all threads in My Threads"
-                  newChatAriaLabel="New chat in My Threads"
-                  archiveTooltip="Archive all in My Threads"
-                  canArchive={
-                    personal.length > 0 && !isStreaming && !archiveBusy
-                  }
-                  archiving={archivingScope === "personal"}
-                  onArchive={() =>
-                    void handleArchiveSection("personal", personal)
-                  }
-                  onNewChat={onNewChat}
-                  newChatDisabled={isStreaming}
-                >
-                  {personal.map((session) => (
-                    <ChatHistoryRow
-                      key={session._id}
-                      session={session}
-                      isActive={session._id === activeSessionId}
-                      isAuthenticated={isAuthenticated}
-                      isStreaming={isStreaming}
-                      hostStyle={hostStyle}
-                      onSelect={onSelectThread}
-                      onActionComplete={onSessionAction}
-                      actions={actions}
-                    />
-                  ))}
-                </ThreadSection>
-              </div>
+            {!loading &&
+              error &&
+              personal.length === 0 &&
+              workspace.length === 0 && (
+                <div className="flex flex-col items-center gap-2 py-8 px-4 text-center">
+                  <p className="text-xs text-muted-foreground">
+                    Could not load chat history.
+                  </p>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 px-3 text-xs"
+                    onClick={() => void refetch()}
+                  >
+                    Retry
+                  </Button>
+                </div>
+              )}
 
-              {isAuthenticated ? (
-                <ThreadSection
-                  headingId="chat-history-shared-threads-heading"
-                  title="Shared Threads"
-                  triggerLabel="Shared threads section"
-                  archiveAriaLabel="Archive all threads in Shared Threads"
-                  newChatAriaLabel="New chat in Shared Threads"
-                  archiveTooltip="Archive all in Shared Threads"
-                  canArchive={
-                    workspace.length > 0 && !isStreaming && !archiveBusy
-                  }
-                  archiving={archivingScope === "workspace"}
-                  onArchive={() =>
-                    void handleArchiveSection("workspace", workspace)
-                  }
-                  onNewChat={() => onNewChat({ shared: true })}
-                  newChatDisabled={isStreaming}
-                >
-                  {workspace.map((session) => (
-                    <ChatHistoryRow
-                      key={session._id}
-                      session={session}
-                      isActive={session._id === activeSessionId}
-                      isAuthenticated={isAuthenticated}
-                      isStreaming={isStreaming}
-                      hostStyle={hostStyle}
-                      onSelect={onSelectThread}
-                      onActionComplete={onSessionAction}
-                      workspaceThreadOwner={resolveWorkspaceThreadOwnerAvatar(
-                        session,
-                        ownerProfileByUserId,
-                      )}
-                      actions={actions}
-                    />
-                  ))}
-                </ThreadSection>
-              ) : null}
-            </>
-          )}
-        </div>
-      </ScrollArea>
-    </div>
+            {enabled && !loading && !error && (
+              <>
+                <div className={isAuthenticated ? "mb-1" : undefined}>
+                  <ThreadSection
+                    headingId="chat-history-my-threads-heading"
+                    title="Sessions"
+                    triggerLabel="Sessions section"
+                    archiveAriaLabel="Archive all sessions in Sessions"
+                    newChatAriaLabel="New chat in Sessions"
+                    archiveTooltip="Archive all in Sessions"
+                    canArchive={
+                      personal.length > 0 && !isStreaming && !archiveBusy
+                    }
+                    archiving={archivingScope === "personal"}
+                    onArchive={() =>
+                      void handleArchiveSection("personal", personal)
+                    }
+                    onNewChat={onNewChat}
+                    newChatDisabled={isStreaming}
+                  >
+                    {personal.map((session) => (
+                      <ChatHistoryRow
+                        key={session._id}
+                        session={session}
+                        isActive={session._id === activeSessionId}
+                        isAuthenticated={isAuthenticated}
+                        isStreaming={isStreaming}
+                        sharedThreadsEnabled={sharedThreadsEnabled}
+                        hostStyle={hostStyle}
+                        onSelect={onSelectThread}
+                        onActionComplete={onSessionAction}
+                        canConvertToTestCase={canConvertToTestCase}
+                        onConvertToTestCase={setSessionToConvert}
+                        actions={actions}
+                      />
+                    ))}
+                  </ThreadSection>
+                </div>
+
+                {isAuthenticated && sharedThreadsEnabled ? (
+                  <ThreadSection
+                    headingId="chat-history-shared-threads-heading"
+                    title="Shared Sessions"
+                    triggerLabel="Shared sessions section"
+                    archiveAriaLabel="Archive all sessions in Shared Sessions"
+                    newChatAriaLabel="New chat in Shared Sessions"
+                    archiveTooltip="Archive all in Shared Sessions"
+                    canArchive={
+                      workspace.length > 0 && !isStreaming && !archiveBusy
+                    }
+                    archiving={archivingScope === "workspace"}
+                    onArchive={() =>
+                      void handleArchiveSection("workspace", workspace)
+                    }
+                    onNewChat={() => onNewChat({ shared: true })}
+                    newChatDisabled={isStreaming}
+                  >
+                    {workspace.map((session) => (
+                      <ChatHistoryRow
+                        key={session._id}
+                        session={session}
+                        isActive={session._id === activeSessionId}
+                        isAuthenticated={isAuthenticated}
+                        isStreaming={isStreaming}
+                        sharedThreadsEnabled={sharedThreadsEnabled}
+                        hostStyle={hostStyle}
+                        onSelect={onSelectThread}
+                        onActionComplete={onSessionAction}
+                        canConvertToTestCase={canConvertToTestCase}
+                        onConvertToTestCase={setSessionToConvert}
+                        workspaceThreadOwner={resolveWorkspaceThreadOwnerAvatar(
+                          session,
+                          ownerProfileByUserId,
+                        )}
+                        actions={actions}
+                      />
+                    ))}
+                  </ThreadSection>
+                ) : null}
+              </>
+            )}
+          </div>
+        </ScrollArea>
+      </div>
+      <ConvertChatSessionDialog
+        open={sessionToConvert !== null}
+        session={sessionToConvert}
+        isAuthenticated={isAuthenticated}
+        workspaceId={workspaceId ?? null}
+        requestHeaders={requestHeaders}
+        onOpenChange={(open) => {
+          if (!open) {
+            setSessionToConvert(null);
+          }
+        }}
+        onImported={({ suiteId, testCaseId }) => {
+          setSessionToConvert(null);
+          window.location.hash = withTestingSurface(
+            buildEvalsHash({
+              type: "test-edit",
+              suiteId,
+              testId: testCaseId,
+            }),
+          );
+        }}
+      />
+    </>
   );
 }

@@ -58,6 +58,19 @@ function toRouteError(error: unknown): WebRouteError {
   return mapRuntimeError(error);
 }
 
+function getConvexHttpUrl(): string {
+  const convexUrl = process.env.CONVEX_HTTP_URL;
+  if (!convexUrl) {
+    throw new WebRouteError(
+      500,
+      ErrorCode.INTERNAL_ERROR,
+      "Server missing CONVEX_HTTP_URL configuration",
+    );
+  }
+
+  return convexUrl;
+}
+
 /**
  * Proxy OAuth token exchange and client registration requests.
  * POST /api/web/oauth/proxy
@@ -108,6 +121,33 @@ oauthWeb.get("/metadata", async (c) => {
     }
 
     return c.json(result.metadata);
+  } catch (error) {
+    return webErrorCompat(c, toRouteError(error));
+  }
+});
+
+oauthWeb.post("/session", async (c) => {
+  try {
+    const convexUrl = getConvexHttpUrl();
+    const authorization = c.req.header("authorization");
+    const payload = await c.req.json();
+    const response = await fetch(`${convexUrl}/web/oauth/session`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(authorization ? { Authorization: authorization } : {}),
+      },
+      body: JSON.stringify(payload),
+    });
+
+    const bodyText = await response.text();
+    return new Response(bodyText, {
+      status: response.status,
+      headers: {
+        "Content-Type":
+          response.headers.get("content-type") ?? "application/json",
+      },
+    });
   } catch (error) {
     return webErrorCompat(c, toRouteError(error));
   }

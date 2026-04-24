@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useConvex, useQuery } from "convex/react";
 import posthog from "posthog-js";
-import { CircleAlert, Loader2, Play, Puzzle, Trash2 } from "lucide-react";
+import { Loader2, Play, Puzzle, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@mcpjam/design-system/button";
 import { Checkbox } from "@mcpjam/design-system/checkbox";
@@ -20,10 +20,15 @@ import {
   TooltipTrigger,
 } from "@mcpjam/design-system/tooltip";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
+import { cn } from "@/lib/utils";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { computeIterationResult } from "./pass-criteria";
 import { formatRelativeTime } from "./helpers";
 import type { EvalCase, EvalIteration } from "./types";
+import {
+  caseListCardClassName,
+  CaseListColumnHeaders,
+} from "./case-list-shared";
 
 function iterationRecencyTs(iter: EvalIteration): number {
   return iter.updatedAt ?? iter.startedAt ?? iter.createdAt ?? 0;
@@ -73,6 +78,8 @@ interface TestCasesOverviewProps {
    * When set (e.g. playground), show run-style selection + batch delete for test cases.
    */
   onDeleteTestCasesBatch?: (testCaseIds: string[]) => Promise<void>;
+  /** When true, the surrounding view is the direct-guest eval playground. */
+  isDirectGuest?: boolean;
 }
 
 export function TestCasesOverview({
@@ -90,17 +97,18 @@ export function TestCasesOverview({
   runningTestCaseId = null,
   blockTestCaseRuns = false,
   connectedServerNames,
+  isDirectGuest = false,
 }: TestCasesOverviewProps) {
   const convex = useConvex();
   const liveCases = useQuery(
     "testSuites:listTestCases" as any,
-    { suiteId: suite._id } as any,
+    { suiteId: suite._id } as any
   ) as EvalCase[] | undefined;
   const [hydratedIterations, setHydratedIterations] = useState<EvalIteration[]>(
-    [],
+    []
   );
   const [selectedCaseIds, setSelectedCaseIds] = useState<Set<string>>(
-    new Set(),
+    new Set()
   );
   const [showBatchDeleteModal, setShowBatchDeleteModal] = useState(false);
   const [isBatchDeleting, setIsBatchDeleting] = useState(false);
@@ -130,7 +138,7 @@ export function TestCasesOverview({
     }
 
     const liveCaseById = new Map(
-      liveCases.map((testCase) => [testCase._id, testCase] as const),
+      liveCases.map((testCase) => [testCase._id, testCase] as const)
     );
     const mergedCases = cases.map((testCase) => ({
       ...testCase,
@@ -166,7 +174,7 @@ export function TestCasesOverview({
       setSelectedCaseIds(new Set());
       setShowBatchDeleteModal(false);
       toast.success(
-        `Deleted ${ids.length} test case${ids.length === 1 ? "" : "s"}`,
+        `Deleted ${ids.length} test case${ids.length === 1 ? "" : "s"}`
       );
     } catch (error) {
       console.error("Failed to delete test cases:", error);
@@ -178,14 +186,14 @@ export function TestCasesOverview({
 
   useEffect(() => {
     const localIterationIds = new Set(
-      allIterations.map((iteration) => iteration._id),
+      allIterations.map((iteration) => iteration._id)
     );
     const localCaseIds = new Set(
       allIterations
         .map((iteration) => iteration.testCaseId)
         .filter(
-          (testCaseId): testCaseId is string => typeof testCaseId === "string",
-        ),
+          (testCaseId): testCaseId is string => typeof testCaseId === "string"
+        )
     );
     const casesNeedingHydration = effectiveCases.filter((testCase) => {
       const missingSavedIteration =
@@ -208,7 +216,7 @@ export function TestCasesOverview({
           try {
             const iterations = (await convex.query(
               "testSuites:listTestIterations" as any,
-              { testCaseId: testCase._id } as any,
+              { testCaseId: testCase._id } as any
             )) as EvalIteration[] | undefined;
 
             if (Array.isArray(iterations) && iterations.length > 0) {
@@ -217,7 +225,7 @@ export function TestCasesOverview({
           } catch (error) {
             console.error(
               "Failed to hydrate test case iterations from listTestIterations:",
-              error,
+              error
             );
           }
 
@@ -228,17 +236,17 @@ export function TestCasesOverview({
           try {
             const iteration = (await convex.query(
               "testSuites:getTestIteration" as any,
-              { iterationId: testCase.lastMessageRun } as any,
+              { iterationId: testCase.lastMessageRun } as any
             )) as EvalIteration | null;
             return iteration ? [iteration] : [];
           } catch (error) {
             console.error(
               "Failed to hydrate saved iteration from getTestIteration:",
-              error,
+              error
             );
             return [];
           }
-        }),
+        })
       );
 
       if (cancelled) {
@@ -273,7 +281,7 @@ export function TestCasesOverview({
   const testCaseStats = useMemo(() => {
     return effectiveCases.map((testCase) => {
       const caseIterations = effectiveIterations.filter(
-        (iter) => iter.testCaseId === testCase._id,
+        (iter) => iter.testCaseId === testCase._id
       );
       let lastRunIteration: EvalIteration | null = null;
       for (const iter of caseIterations) {
@@ -297,7 +305,9 @@ export function TestCasesOverview({
   const missingSuiteServers =
     connectedServerNames == null
       ? []
-      : suiteServers.filter((serverName) => !connectedServerNames.has(serverName));
+      : suiteServers.filter(
+          (serverName) => !connectedServerNames.has(serverName)
+        );
   const showPersistentBatchHeader =
     batchDelete && hideViewModeSelect && testCaseStats.length > 0;
   const showDisconnectedPlaygroundEmptyState =
@@ -310,7 +320,9 @@ export function TestCasesOverview({
   return (
     <>
       {/* Cases List */}
-      <div className="rounded-xl border bg-card text-card-foreground flex flex-col max-h-[600px]">
+      <div
+        className={cn(caseListCardClassName, "max-h-[600px]")}
+      >
         {batchDelete &&
         (showPersistentBatchHeader || selectedCaseIds.size > 0) ? (
           <div className="border-b px-4 py-2 shrink-0 bg-muted/50 flex items-center justify-between">
@@ -321,31 +333,35 @@ export function TestCasesOverview({
                 aria-label="Select all cases"
                 disabled={testCaseStats.length === 0}
               />
-              <span className="text-xs font-medium truncate">Select all</span>
+              <span className="text-xs font-medium truncate">Test Cases</span>
             </div>
-            <div className="flex items-center gap-2 shrink-0">
-              {selectedCaseIds.size > 0 && (
-                <span className="text-xs text-muted-foreground">
+            {selectedCaseIds.size > 0 ? (
+              <div className="flex items-center gap-2 shrink-0">
+                <span className="text-xs tabular-nums text-muted-foreground">
                   {selectedCaseIds.size} selected
                 </span>
-              )}
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setSelectedCaseIds(new Set())}
-                disabled={isBatchDeleting || selectedCaseIds.size === 0}
-              >
-                Cancel
-              </Button>
-              <Button
-                variant="destructive"
-                size="sm"
-                onClick={() => setShowBatchDeleteModal(true)}
-                disabled={isBatchDeleting || selectedCaseIds.size === 0}
-              >
-                Delete
-              </Button>
-            </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 text-muted-foreground"
+                  onClick={() => setSelectedCaseIds(new Set())}
+                  disabled={isBatchDeleting}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="button"
+                  variant="destructive"
+                  size="sm"
+                  className="h-8"
+                  onClick={() => setShowBatchDeleteModal(true)}
+                  disabled={isBatchDeleting}
+                >
+                  Delete
+                </Button>
+              </div>
+            ) : null}
           </div>
         ) : !showDisconnectedPlaygroundEmptyState ? (
           <div className="border-b px-4 py-2 shrink-0 flex items-center justify-between">
@@ -371,17 +387,12 @@ export function TestCasesOverview({
 
         {/* Column Headers */}
         {testCaseStats.length > 0 && (
-          <div className="flex items-center gap-3 w-full px-4 py-1.5 bg-muted/30 border-b text-xs font-medium text-muted-foreground">
-            {batchDelete ? <div className="w-7 shrink-0" aria-hidden /> : null}
-            <div className="flex-1 min-w-[120px]">Case name</div>
-            <div className="flex flex-1 min-w-0 justify-end items-center gap-2 max-w-[min(100%,20rem)]">
-              <span className="text-right">Last run</span>
-              <span className="w-3.5 shrink-0" aria-hidden />
-            </div>
-            {showRunColumn ? (
-              <div className="w-7 shrink-0" aria-hidden />
-            ) : null}
-          </div>
+          <CaseListColumnHeaders
+            firstColumnLabel="Case name"
+            secondColumnLabel="Last run"
+            leadingGutter={batchDelete}
+            trailingGutter={showRunColumn}
+          />
         )}
 
         <div className="divide-y overflow-y-auto">
@@ -393,6 +404,13 @@ export function TestCasesOverview({
                 description="Playground can automatically generate test cases once a server is connected."
                 className="h-auto min-h-[240px]"
               />
+            ) : hideViewModeSelect ? (
+              <EmptyState
+                icon={Puzzle}
+                title="No test cases yet"
+                description="Click Generate to create a starter set from your tools, or New case to add one manually."
+                className="h-auto min-h-[240px]"
+              />
             ) : (
               <div className="px-4 py-12 text-center text-sm text-muted-foreground">
                 No cases found.
@@ -400,26 +418,32 @@ export function TestCasesOverview({
             )
           ) : (
             testCaseStats.map(({ testCase, lastRunIteration }) => {
+              const hasConfiguredSuiteServers = suiteServers.length > 0;
               const missingServers =
                 connectedServerNames == null
                   ? []
                   : suiteServers.filter(
-                      (serverName) => !connectedServerNames.has(serverName),
+                      (serverName) => !connectedServerNames.has(serverName)
                     );
               const hasModels = Boolean(testCase.models?.length);
               const isThisCaseRunning = runningTestCaseId === testCase._id;
               const isAnotherCaseRunning =
                 runningTestCaseId != null && runningTestCaseId !== testCase._id;
+              // Guests rely on the local persistent MCP manager; skip the
+              // suite-server-connected gate and let the runner surface a
+              // connection error if the server is actually missing.
+              const serverGateBlocked =
+                !isDirectGuest && missingServers.length > 0;
               const runDisabled =
                 !onRunTestCase ||
                 blockTestCaseRuns ||
                 isAnotherCaseRunning ||
                 !hasModels ||
-                missingServers.length > 0 ||
+                serverGateBlocked ||
                 isThisCaseRunning;
               const disconnectedRunTooltip =
-                missingServers.length > 0
-                  ? `Connect: ${missingServers.join(", ")}`
+                serverGateBlocked
+                  ? "Connect and run."
                   : null;
 
               const lastRunResult = lastRunIteration
@@ -429,23 +453,42 @@ export function TestCasesOverview({
                 lastRunResult === "passed"
                   ? "Passed"
                   : lastRunResult === "failed"
-                    ? "Failed"
-                    : lastRunResult === "cancelled"
-                      ? "Cancelled"
-                      : lastRunResult === "pending"
-                        ? "Running"
-                        : "Never run";
+                  ? "Failed"
+                  : lastRunResult === "cancelled"
+                  ? "Cancelled"
+                  : lastRunResult === "pending"
+                  ? "Running"
+                  : "Never run";
               const lastRunTimestamp = lastRunIteration
-                ? (lastRunIteration.updatedAt ??
+                ? lastRunIteration.updatedAt ??
                   lastRunIteration.startedAt ??
                   lastRunIteration.createdAt ??
-                  null)
+                  null
                 : null;
-              const showLastRunFailed = lastRunResult === "failed";
               const caseTitle = testCase.title || "Untitled test case";
+              const passBadge = (
+                <span
+                  className="inline-flex shrink-0 items-center rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider bg-emerald-500/15 text-emerald-700 dark:bg-emerald-400/20 dark:text-emerald-300"
+                  aria-label="Passed"
+                >
+                  Passed
+                </span>
+              );
+              const failBadge = (
+                <span
+                  className="inline-flex shrink-0 items-center rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider bg-rose-500/15 text-rose-700 dark:bg-rose-400/20 dark:text-rose-300"
+                  aria-label="Failed"
+                >
+                  Failed
+                </span>
+              );
               const lastRunSummary = lastRunIteration ? (
                 <>
-                  {lastRunLabel}
+                  {lastRunResult === "passed"
+                    ? passBadge
+                    : lastRunResult === "failed"
+                      ? failBadge
+                      : lastRunLabel}
                   {lastRunTimestamp ? (
                     <span className="font-normal">
                       {" "}
@@ -457,7 +500,7 @@ export function TestCasesOverview({
                 "Never run"
               );
               const lastRunOpenable = Boolean(
-                onOpenLastRun && lastRunIteration?._id,
+                onOpenLastRun && lastRunIteration?._id
               );
               const lastRunAriaLabel =
                 lastRunIteration && lastRunOpenable
@@ -487,20 +530,12 @@ export function TestCasesOverview({
                       {lastRunSummary}
                     </span>
                   )}
-                  <span className="w-3.5 h-3.5 shrink-0 flex items-center justify-center">
-                    {showLastRunFailed ? (
-                      <CircleAlert
-                        className="h-3.5 w-3.5 text-destructive"
-                        aria-label="Last run failed"
-                      />
-                    ) : null}
-                  </span>
                 </div>
               );
 
               const caseAndLast = (
                 <>
-                  <span className="min-w-0 flex-1 truncate text-xs font-medium text-left">
+                  <span className="min-w-0 flex-1 truncate text-left text-xs font-semibold text-foreground">
                     {caseTitle}
                   </span>
                   {lastPart}
@@ -558,7 +593,19 @@ export function TestCasesOverview({
 
               const runControl =
                 showRunColumn && onRunTestCase ? (
-                  disconnectedRunTooltip ? (
+                  !hasConfiguredSuiteServers ? (
+                    <Tooltip>
+                      <TooltipTrigger asChild>{runButton}</TooltipTrigger>
+                      <TooltipContent
+                        variant="muted"
+                        side="left"
+                        sideOffset={8}
+                        className="max-w-[16rem]"
+                      >
+                        Configure suite servers before running this case.
+                      </TooltipContent>
+                    </Tooltip>
+                  ) : disconnectedRunTooltip ? (
                     <Tooltip>
                       <TooltipTrigger asChild>{runButton}</TooltipTrigger>
                       <TooltipContent
@@ -594,7 +641,9 @@ export function TestCasesOverview({
                           toggleCaseSelection(testCase._id)
                         }
                         onClick={(e) => e.stopPropagation()}
-                        aria-label={`Select case ${testCase.title || "Untitled test case"}`}
+                        aria-label={`Select case ${
+                          testCase.title || "Untitled test case"
+                        }`}
                       />
                     </div>
                     {caseRowClickTarget}

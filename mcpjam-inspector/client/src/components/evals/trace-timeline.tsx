@@ -5,9 +5,11 @@ import {
   useMemo,
   useRef,
   useState,
+  type FocusEvent,
   type KeyboardEvent,
   type MouseEvent,
 } from "react";
+import { createPortal } from "react-dom";
 import { motion, useReducedMotion } from "framer-motion";
 import { usePostHog } from "posthog-js/react";
 import { standardEventProps } from "@/lib/PosthogUtils";
@@ -29,11 +31,6 @@ import type { EvalTraceSpan, EvalTraceSpanCategory } from "@/shared/eval-trace";
 import { MemoizedMarkdown } from "@/components/chat-v2/thread/memomized-markdown";
 import { Badge } from "@mcpjam/design-system/badge";
 import { Button } from "@mcpjam/design-system/button";
-import {
-  HoverCard,
-  HoverCardContent,
-  HoverCardTrigger,
-} from "@mcpjam/design-system/hover-card";
 import { ScrollableJsonView } from "@/components/ui/json-editor";
 import {
   ResizableHandle,
@@ -1727,6 +1724,13 @@ export function TraceTimeline({
     onExpandedStepIdsChange ?? setInternalExpandedStepIds;
 
   const [selectedRowKey, setSelectedRowKey] = useState<string | null>(null);
+  const [hoveredRowKey, setHoveredRowKey] = useState<string | null>(null);
+  const [hoverPos, setHoverPos] = useState<{
+    anchorX: number;
+    anchorY: number;
+    anchorBottom: number;
+  } | null>(null);
+  const hoveredRowElRef = useRef<HTMLDivElement | null>(null);
   const posthog = usePostHog();
 
   const axisHeaderMeasureRef = useRef<HTMLDivElement>(null);
@@ -1939,6 +1943,78 @@ export function TraceTimeline({
   }, [rows, selectedRowKey]);
 
   const selectedRow = rows.find((row) => row.key === selectedRowKey);
+  const hoveredRow = hoveredRowKey
+    ? rows.find((row) => row.key === hoveredRowKey)
+    : undefined;
+  const hoveredRowIndex = hoveredRowKey
+    ? rows.findIndex((row) => row.key === hoveredRowKey)
+    : -1;
+
+  useEffect(() => {
+    if (hoveredRowKey && !rows.some((row) => row.key === hoveredRowKey)) {
+      setHoveredRowKey(null);
+      setHoverPos(null);
+      hoveredRowElRef.current = null;
+    }
+  }, [hoveredRowKey, rows]);
+
+  const readHoverAnchor = useCallback((rowEl: HTMLElement) => {
+    const glyphEl = rowEl.querySelector(
+      '[data-testid="trace-row-glyph"]',
+    ) as HTMLElement | null;
+    const rect = (glyphEl ?? rowEl).getBoundingClientRect();
+    return {
+      anchorX: rect.left + rect.width / 2,
+      anchorY: rect.top,
+      anchorBottom: rect.bottom,
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!hoveredRowKey) return;
+    const handle = () => {
+      const el = hoveredRowElRef.current;
+      if (!el) return;
+      setHoverPos(readHoverAnchor(el));
+    };
+    window.addEventListener("scroll", handle, true);
+    window.addEventListener("resize", handle);
+    return () => {
+      window.removeEventListener("scroll", handle, true);
+      window.removeEventListener("resize", handle);
+    };
+  }, [hoveredRowKey, readHoverAnchor]);
+
+  const hoveredRowInfo = useMemo(() => {
+    if (!hoveredRow) return null;
+    const { startMs, endMs } = getRowTiming(hoveredRow);
+    const spanShowsFailure =
+      hoveredRow.kind === "span" &&
+      spanIndicatesTranscriptFailure(hoveredRow.span, transcriptMessages);
+    const derivedLabel =
+      hoveredRow.kind === "span"
+        ? deriveSpanLabel(hoveredRow, transcriptMessages)
+        : null;
+    const label =
+      hoveredRow.kind === "prompt"
+        ? (hoveredRow.conversationLabel ?? hoveredRow.label)
+        : derivedLabel!.title;
+    const tokenStats = getRowTokenStats(hoveredRow, recordedSpans);
+    return {
+      label,
+      spanShowsFailure,
+      tokenStats,
+      rowStartTimestamp:
+        traceStartAnchorMs !== null ? traceStartAnchorMs + startMs : null,
+      rowEndTimestamp:
+        traceStartAnchorMs !== null ? traceStartAnchorMs + endMs : null,
+      glyphCategory: (hoveredRow.kind === "prompt"
+        ? "prompt"
+        : hoveredRow.span.category === "tool" && spanShowsFailure
+          ? "error"
+          : hoveredRow.span.category) as EvalTraceSpanCategory | "prompt",
+    };
+  }, [hoveredRow, recordedSpans, traceStartAnchorMs, transcriptMessages]);
 
   const handleWaterfallKeyDown = useCallback(
     (event: KeyboardEvent<HTMLDivElement>) => {
@@ -2120,7 +2196,7 @@ export function TraceTimeline({
                 role="region"
                 aria-label="Trace timeline. Use arrow keys to change selection, Enter to expand."
                 onKeyDown={handleWaterfallKeyDown}
-                className="min-h-0 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                className="relative min-h-0 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
               >
                 <div
                   className="grid pr-4"
@@ -2241,17 +2317,10 @@ export function TraceTimeline({
                         ? (row.conversationLabel ?? row.label)
                         : derivedLabel!.title;
                     const durationLabel = formatDuration(durationMs);
-                    const tokenStats = getRowTokenStats(row, recordedSpans);
-                    const rowStartTimestamp =
-                      traceStartAnchorMs !== null
-                        ? traceStartAnchorMs + startMs
-                        : null;
-                    const rowEndTimestamp =
-                      traceStartAnchorMs !== null
-                        ? traceStartAnchorMs + endMs
-                        : null;
                     const canToggle =
-                      row.kind === "prompt" ? true : row.hasChildren;
+                      row.kind === "prompt"
+                        ? true
+                        : row.hasChildren || row.span.category === "llm";
                     const gridRow = rowIndex + 2;
                     const borderAccent = getRowBorderAccentClass(
                       row,
@@ -2282,253 +2351,201 @@ export function TraceTimeline({
                       : "bg-background group-hover:bg-muted/20 hover:bg-muted/20";
 
                     return (
-                      <HoverCard key={row.key} openDelay={0} closeDelay={0}>
-                        <HoverCardTrigger asChild>
-                          <motion.div
-                            data-testid="trace-row"
-                            data-state={isSelected ? "selected" : undefined}
-                            onClick={selectRow}
-                            initial={
-                              shouldReduceMotion || rowIndex >= 20
-                                ? false
-                                : { opacity: 0, y: 6 }
-                            }
-                            animate={{ opacity: 1, y: 0 }}
-                            transition={
-                              shouldReduceMotion || rowIndex >= 20
-                                ? { duration: 0 }
-                                : {
-                                    duration: 0.15,
-                                    delay: rowIndex * 0.03 + 0.05,
-                                    ease: [0.16, 1, 0.3, 1],
-                                  }
-                            }
-                            style={{
-                              gridColumn: "1 / 4",
-                              gridRow,
-                              display: "grid",
-                              gridTemplateColumns: "subgrid",
-                            }}
-                            className={cn(
-                              "group min-h-0 min-w-0 cursor-pointer items-stretch",
-                              isSelected &&
-                                "trace-waterfall-row-selected ring-1 ring-inset ring-ring/40",
-                            )}
-                          >
-                            <div
-                              className={cn(
-                                "flex items-center gap-2 border-b border-border/40 px-4 py-2 transition-all duration-150 border-l-2",
-                                leftCellClass,
-                              )}
-                            >
-                              <div
-                                className="flex shrink-0 items-center"
-                                style={{
-                                  paddingLeft:
-                                    row.kind === "prompt" ? 0 : row.depth * 16,
-                                }}
-                              >
-                                {canToggle ? (
-                                  <button
-                                    type="button"
-                                    className="mr-1 inline-flex h-5 w-5 items-center justify-center rounded-sm text-muted-foreground hover:bg-muted/30 hover:text-foreground"
-                                    onClick={(event) => {
-                                      event.stopPropagation();
-                                      if (row.kind === "prompt") {
-                                        const next = new Set(expandedPromptIds);
-                                        if (next.has(row.key))
-                                          next.delete(row.key);
-                                        else next.add(row.key);
-                                        setExpandedPromptIds(next);
-                                        return;
-                                      }
-                                      const next = new Set(expandedStepIds);
-                                      if (next.has(row.key))
-                                        next.delete(row.key);
-                                      else next.add(row.key);
-                                      setExpandedStepIds(next);
-                                    }}
-                                    aria-label={
-                                      row.kind === "prompt"
-                                        ? `${row.isExpanded ? "Collapse" : "Expand"} ${row.label}`
-                                        : `${row.isExpanded ? "Collapse" : "Expand"} ${label}`
-                                    }
-                                  >
-                                    {row.isExpanded ? (
-                                      <ChevronDown className="h-3.5 w-3.5" />
-                                    ) : (
-                                      <ChevronRight className="h-3.5 w-3.5" />
-                                    )}
-                                  </button>
-                                ) : (
-                                  <span className="mr-1 h-5 w-5" />
-                                )}
-                              </div>
-                              <button
-                                type="button"
-                                data-testid="trace-row-label-button"
-                                className="min-w-0 flex-1 text-left"
-                                onClick={selectRowFromChild}
-                              >
-                                <div className="flex min-w-0 items-center gap-2">
-                                  {row.kind === "prompt" ? (
-                                    <CategoryGlyph category="prompt" />
-                                  ) : (
-                                    <CategoryGlyph
-                                      category={rowGlyphCategory}
-                                    />
-                                  )}
-                                  <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
-                                    {label}
-                                  </span>
-                                  {row.kind === "prompt" &&
-                                  row.hasAnyFailure ? (
-                                    <span
-                                      className="inline-block h-2 w-2 shrink-0 rounded-full bg-destructive"
-                                      title="Contains errors"
-                                      aria-label="Contains errors"
-                                    />
-                                  ) : null}
-                                  {row.kind === "span" && spanShowsFailure ? (
-                                    <span
-                                      className="inline-block h-2 w-2 shrink-0 rounded-full bg-destructive"
-                                      title="Error"
-                                      aria-label="Error"
-                                    />
-                                  ) : null}
-                                </div>
-                              </button>
-                            </div>
-                            <button
-                              type="button"
-                              data-testid="trace-row-bar-hit"
-                              data-state={isSelected ? "selected" : undefined}
-                              className={cn(
-                                "relative z-[1] flex min-h-[48px] w-full items-center overflow-hidden border-b border-border/40 border-l-2 border-l-transparent px-4 py-2 text-left transition-all duration-150",
-                                sharedCellClass,
-                              )}
-                              aria-label={`Select on timeline (${formatDuration(durationMs)})`}
-                              onClick={selectRowFromChild}
-                            >
-                              <div
-                                data-testid={
-                                  row.kind === "span" && spanShowsFailure
-                                    ? "trace-row-bar-error"
-                                    : "trace-row-bar"
-                                }
-                                className={cn(
-                                  "absolute top-1/2 z-[1] h-4 min-w-0 -translate-y-1/2 rounded-[3px] transition-[left,width] duration-150",
-                                  waterfallBarClass,
-                                )}
-                                style={{
-                                  left: `${leftPercent}%`,
-                                  width: `max(${widthPercent}%, 3px)`,
-                                }}
-                              />
-                            </button>
-                            <button
-                              type="button"
-                              data-testid="trace-row-duration-hit"
-                              data-state={isSelected ? "selected" : undefined}
-                              className={cn(
-                                "flex min-h-[48px] items-center justify-start gap-1.5 whitespace-nowrap border-b border-l border-border/40 px-3 py-2 pl-4 text-[11px] tabular-nums text-muted-foreground transition-all duration-150",
-                                sharedCellClass,
-                              )}
-                              aria-label={`Select row duration (${durationLabel})`}
-                              onClick={selectRowFromChild}
-                            >
-                              <Clock
-                                className="size-3 shrink-0 opacity-80"
-                                aria-hidden
-                              />
-                              {durationLabel}
-                            </button>
-                          </motion.div>
-                        </HoverCardTrigger>
-                        <HoverCardContent
-                          data-testid="trace-row-hover-content"
-                          align="start"
-                          side="left"
-                          className="w-72 space-y-3 p-3"
+                      <motion.div
+                        key={row.key}
+                        data-testid="trace-row"
+                        data-state={isSelected ? "selected" : undefined}
+                        onClick={selectRow}
+                        onMouseEnter={(event) => {
+                          setHoveredRowKey(row.key);
+                          const rowEl = event.currentTarget;
+                          hoveredRowElRef.current = rowEl;
+                          setHoverPos(readHoverAnchor(rowEl));
+                        }}
+                        onMouseLeave={() => {
+                          setHoveredRowKey((current) =>
+                            current === row.key ? null : current,
+                          );
+                          setHoverPos(null);
+                          hoveredRowElRef.current = null;
+                        }}
+                        onFocus={(event: FocusEvent<HTMLDivElement>) => {
+                          setHoveredRowKey(row.key);
+                          const rowEl = event.currentTarget;
+                          hoveredRowElRef.current = rowEl;
+                          setHoverPos(readHoverAnchor(rowEl));
+                        }}
+                        onBlur={(event: FocusEvent<HTMLDivElement>) => {
+                          if (
+                            event.currentTarget.contains(
+                              event.relatedTarget as Node | null,
+                            )
+                          ) {
+                            return;
+                          }
+                          setHoveredRowKey((current) =>
+                            current === row.key ? null : current,
+                          );
+                          setHoverPos(null);
+                          hoveredRowElRef.current = null;
+                        }}
+                        initial={
+                          shouldReduceMotion || rowIndex >= 20
+                            ? false
+                            : { opacity: 0, y: 6 }
+                        }
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={
+                          shouldReduceMotion || rowIndex >= 20
+                            ? { duration: 0 }
+                            : {
+                                duration: 0.15,
+                                delay: rowIndex * 0.03 + 0.05,
+                                ease: [0.16, 1, 0.3, 1],
+                              }
+                        }
+                        style={{
+                          gridColumn: "1 / 4",
+                          gridRow,
+                          display: "grid",
+                          gridTemplateColumns: "subgrid",
+                        }}
+                        className={cn(
+                          "group min-h-0 min-w-0 cursor-pointer items-stretch",
+                          isSelected &&
+                            "trace-waterfall-row-selected ring-1 ring-inset ring-ring/40",
+                        )}
+                      >
+                        <div
+                          className={cn(
+                            "flex items-center gap-2 border-b border-border/40 px-4 py-2 transition-all duration-150 border-l-2",
+                            leftCellClass,
+                          )}
                         >
                           <div
-                            data-testid="trace-row-hover-card"
-                            className="space-y-3"
+                            className="flex shrink-0 items-center"
+                            style={{
+                              paddingLeft:
+                                row.kind === "prompt" ? 0 : row.depth * 16,
+                            }}
                           >
-                            <div className="space-y-1.5">
-                              <div className="text-[10px] font-semibold uppercase tracking-wide text-popover-foreground/65">
-                                Time
-                              </div>
-                              <div className="space-y-1 text-xs">
-                                <div className="flex min-w-0 items-baseline justify-between gap-3">
-                                  <span className="shrink-0 text-popover-foreground/70">
-                                    Start
-                                  </span>
-                                  <span
-                                    data-testid="trace-row-hover-start"
-                                    className="min-w-0 text-right font-medium text-popover-foreground tabular-nums"
-                                  >
-                                    {formatWallClockTimestamp(
-                                      rowStartTimestamp,
-                                    )}
-                                  </span>
-                                </div>
-                                <div className="flex min-w-0 items-baseline justify-between gap-3">
-                                  <span className="shrink-0 text-popover-foreground/70">
-                                    End
-                                  </span>
-                                  <span
-                                    data-testid="trace-row-hover-end"
-                                    className="min-w-0 text-right font-medium text-popover-foreground tabular-nums"
-                                  >
-                                    {formatWallClockTimestamp(rowEndTimestamp)}
-                                  </span>
-                                </div>
-                              </div>
-                            </div>
-                            <div className="space-y-1.5">
-                              <div className="text-[10px] font-semibold uppercase tracking-wide text-popover-foreground/65">
-                                Tokens
-                              </div>
-                              <div className="space-y-1 text-xs">
-                                <div className="flex min-w-0 items-baseline justify-between gap-3">
-                                  <span className="shrink-0 text-popover-foreground/70">
-                                    Input
-                                  </span>
-                                  <span
-                                    data-testid="trace-row-hover-input-tokens"
-                                    className="min-w-0 text-right font-medium text-popover-foreground tabular-nums"
-                                  >
-                                    {formatTokenCount(tokenStats.inputTokens)}
-                                  </span>
-                                </div>
-                                <div className="flex min-w-0 items-baseline justify-between gap-3">
-                                  <span className="shrink-0 text-popover-foreground/70">
-                                    Output
-                                  </span>
-                                  <span
-                                    data-testid="trace-row-hover-output-tokens"
-                                    className="min-w-0 text-right font-medium text-popover-foreground tabular-nums"
-                                  >
-                                    {formatTokenCount(tokenStats.outputTokens)}
-                                  </span>
-                                </div>
-                                <div className="flex min-w-0 items-baseline justify-between gap-3">
-                                  <span className="shrink-0 text-popover-foreground/70">
-                                    Total
-                                  </span>
-                                  <span
-                                    data-testid="trace-row-hover-total-tokens"
-                                    className="min-w-0 text-right font-medium text-popover-foreground tabular-nums"
-                                  >
-                                    {formatTokenCount(tokenStats.totalTokens)}
-                                  </span>
-                                </div>
-                              </div>
-                            </div>
+                            {canToggle ? (
+                              <button
+                                type="button"
+                                className="mr-1 inline-flex h-5 w-5 items-center justify-center rounded-sm text-muted-foreground hover:bg-muted/30 hover:text-foreground"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  if (row.kind === "prompt") {
+                                    const next = new Set(expandedPromptIds);
+                                    if (next.has(row.key))
+                                      next.delete(row.key);
+                                    else next.add(row.key);
+                                    setExpandedPromptIds(next);
+                                    return;
+                                  }
+                                  const next = new Set(expandedStepIds);
+                                  if (next.has(row.key)) next.delete(row.key);
+                                  else next.add(row.key);
+                                  setExpandedStepIds(next);
+                                }}
+                                aria-label={
+                                  row.kind === "prompt"
+                                    ? `${row.isExpanded ? "Collapse" : "Expand"} ${row.label}`
+                                    : `${row.isExpanded ? "Collapse" : "Expand"} ${label}`
+                                }
+                              >
+                                {row.isExpanded ? (
+                                  <ChevronDown className="h-3.5 w-3.5" />
+                                ) : (
+                                  <ChevronRight className="h-3.5 w-3.5" />
+                                )}
+                              </button>
+                            ) : (
+                              <span className="mr-1 h-5 w-5" />
+                            )}
                           </div>
-                        </HoverCardContent>
-                      </HoverCard>
+                          <button
+                            type="button"
+                            data-testid="trace-row-label-button"
+                            className="min-w-0 flex-1 text-left"
+                            onClick={selectRowFromChild}
+                          >
+                            <div className="flex min-w-0 items-center gap-2">
+                              <span
+                                data-testid="trace-row-glyph"
+                                className="inline-flex shrink-0 items-center"
+                              >
+                                {row.kind === "prompt" ? (
+                                  <CategoryGlyph category="prompt" />
+                                ) : (
+                                  <CategoryGlyph category={rowGlyphCategory} />
+                                )}
+                              </span>
+                              <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
+                                {label}
+                              </span>
+                              {row.kind === "prompt" && row.hasAnyFailure ? (
+                                <span
+                                  className="inline-block h-2 w-2 shrink-0 rounded-full bg-destructive"
+                                  title="Contains errors"
+                                  aria-label="Contains errors"
+                                />
+                              ) : null}
+                              {row.kind === "span" && spanShowsFailure ? (
+                                <span
+                                  className="inline-block h-2 w-2 shrink-0 rounded-full bg-destructive"
+                                  title="Error"
+                                  aria-label="Error"
+                                />
+                              ) : null}
+                            </div>
+                          </button>
+                        </div>
+                        <button
+                          type="button"
+                          data-testid="trace-row-bar-hit"
+                          data-state={isSelected ? "selected" : undefined}
+                          className={cn(
+                            "relative z-[1] flex min-h-[48px] w-full items-center overflow-hidden border-b border-border/40 border-l-2 border-l-transparent px-4 py-2 text-left transition-all duration-150",
+                            sharedCellClass,
+                          )}
+                          aria-label={`Select on timeline (${formatDuration(durationMs)})`}
+                          onClick={selectRowFromChild}
+                        >
+                          <div
+                            data-testid={
+                              row.kind === "span" && spanShowsFailure
+                                ? "trace-row-bar-error"
+                                : "trace-row-bar"
+                            }
+                            className={cn(
+                              "absolute top-1/2 z-[1] h-4 min-w-0 -translate-y-1/2 rounded-[3px] transition-[left,width] duration-150",
+                              waterfallBarClass,
+                            )}
+                            style={{
+                              left: `${leftPercent}%`,
+                              width: `max(${widthPercent}%, 3px)`,
+                            }}
+                          />
+                        </button>
+                        <button
+                          type="button"
+                          data-testid="trace-row-duration-hit"
+                          data-state={isSelected ? "selected" : undefined}
+                          className={cn(
+                            "flex min-h-[48px] items-center justify-start gap-1.5 whitespace-nowrap border-b border-l border-border/40 px-3 py-2 pl-4 text-[11px] tabular-nums text-muted-foreground transition-all duration-150",
+                            sharedCellClass,
+                          )}
+                          aria-label={`Select row duration (${durationLabel})`}
+                          onClick={selectRowFromChild}
+                        >
+                          <Clock
+                            className="size-3 shrink-0 opacity-80"
+                            aria-hidden
+                          />
+                          {durationLabel}
+                        </button>
+                      </motion.div>
                     );
                   })}
                 </div>
@@ -2554,6 +2571,171 @@ export function TraceTimeline({
           </ResizablePanel>
         </ResizablePanelGroup>
       </div>
+      {hoveredRow && hoveredRowInfo && hoverPos ? (
+        <HoveredRowInspector
+          hoverPos={hoverPos}
+          info={hoveredRowInfo}
+          placement={hoveredRowIndex === 0 ? "bottom" : "top"}
+          reduceMotion={shouldReduceMotion ?? false}
+          rowKey={hoveredRow.key}
+        />
+      ) : null}
     </div>
+  );
+}
+
+type HoveredRowInfo = {
+  label: string;
+  spanShowsFailure: boolean;
+  tokenStats: {
+    inputTokens?: number;
+    outputTokens?: number;
+    totalTokens?: number;
+  };
+  rowStartTimestamp: number | null;
+  rowEndTimestamp: number | null;
+  glyphCategory: EvalTraceSpanCategory | "prompt";
+};
+
+function HoveredRowInspector({
+  hoverPos,
+  info,
+  placement,
+  reduceMotion,
+  rowKey,
+}: {
+  hoverPos: { anchorX: number; anchorY: number; anchorBottom: number };
+  info: HoveredRowInfo;
+  placement: "top" | "bottom";
+  reduceMotion: boolean;
+  rowKey: string;
+}) {
+  if (typeof document === "undefined") return null;
+  const CARD_WIDTH_PX = 304;
+  const EDGE_PADDING = 12;
+  const GAP_PX = 8;
+  const halfWidth = CARD_WIDTH_PX / 2;
+  const viewportWidth =
+    typeof window !== "undefined"
+      ? window.innerWidth
+      : hoverPos.anchorX + halfWidth + EDGE_PADDING;
+  const minCenter = EDGE_PADDING + halfWidth;
+  const maxCenter = Math.max(
+    minCenter,
+    viewportWidth - halfWidth - EDGE_PADDING,
+  );
+  const clampedCenter = Math.min(
+    Math.max(hoverPos.anchorX, minCenter),
+    maxCenter,
+  );
+
+  const wrapperStyle: React.CSSProperties = {
+    position: "fixed",
+    top:
+      placement === "top"
+        ? hoverPos.anchorY - GAP_PX
+        : hoverPos.anchorBottom + GAP_PX,
+    left: clampedCenter,
+    transform:
+      placement === "top" ? "translate(-50%, -100%)" : "translateX(-50%)",
+    zIndex: 9999,
+  };
+
+  return createPortal(
+    <div className="pointer-events-none" style={wrapperStyle}>
+      <motion.div
+        key={rowKey}
+        data-placement={placement}
+        data-testid="trace-row-hover-content"
+        initial={
+          reduceMotion ? false : { opacity: 0, y: 6, filter: "blur(2px)" }
+        }
+        animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
+        transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}
+        className="w-[19rem] overflow-hidden rounded-md border border-border/60 bg-popover text-popover-foreground shadow-xl"
+      >
+        <div
+          data-testid="trace-row-hover-card"
+          className="space-y-3 p-3"
+        >
+          <div className="flex min-w-0 items-center gap-2">
+            <CategoryGlyph category={info.glyphCategory} />
+            <span className="min-w-0 flex-1 truncate text-xs font-semibold text-popover-foreground">
+              {info.label}
+            </span>
+          </div>
+          <div className="space-y-1.5">
+            <div className="text-[10px] font-semibold uppercase tracking-wide text-popover-foreground/65">
+              Time
+            </div>
+            <div className="space-y-1 text-xs">
+              <div className="flex min-w-0 items-baseline justify-between gap-3">
+                <span className="shrink-0 text-popover-foreground/70">
+                  Start
+                </span>
+                <span
+                  data-testid="trace-row-hover-start"
+                  className="min-w-0 text-right font-medium text-popover-foreground tabular-nums"
+                >
+                  {formatWallClockTimestamp(info.rowStartTimestamp)}
+                </span>
+              </div>
+              <div className="flex min-w-0 items-baseline justify-between gap-3">
+                <span className="shrink-0 text-popover-foreground/70">
+                  End
+                </span>
+                <span
+                  data-testid="trace-row-hover-end"
+                  className="min-w-0 text-right font-medium text-popover-foreground tabular-nums"
+                >
+                  {formatWallClockTimestamp(info.rowEndTimestamp)}
+                </span>
+              </div>
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <div className="text-[10px] font-semibold uppercase tracking-wide text-popover-foreground/65">
+              Tokens
+            </div>
+            <div className="space-y-1 text-xs">
+              <div className="flex min-w-0 items-baseline justify-between gap-3">
+                <span className="shrink-0 text-popover-foreground/70">
+                  Input
+                </span>
+                <span
+                  data-testid="trace-row-hover-input-tokens"
+                  className="min-w-0 text-right font-medium text-popover-foreground tabular-nums"
+                >
+                  {formatTokenCount(info.tokenStats.inputTokens)}
+                </span>
+              </div>
+              <div className="flex min-w-0 items-baseline justify-between gap-3">
+                <span className="shrink-0 text-popover-foreground/70">
+                  Output
+                </span>
+                <span
+                  data-testid="trace-row-hover-output-tokens"
+                  className="min-w-0 text-right font-medium text-popover-foreground tabular-nums"
+                >
+                  {formatTokenCount(info.tokenStats.outputTokens)}
+                </span>
+              </div>
+              <div className="flex min-w-0 items-baseline justify-between gap-3">
+                <span className="shrink-0 text-popover-foreground/70">
+                  Total
+                </span>
+                <span
+                  data-testid="trace-row-hover-total-tokens"
+                  className="min-w-0 text-right font-medium text-popover-foreground tabular-nums"
+                >
+                  {formatTokenCount(info.tokenStats.totalTokens)}
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </motion.div>
+    </div>,
+    document.body,
   );
 }

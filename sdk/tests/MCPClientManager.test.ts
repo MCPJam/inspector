@@ -711,8 +711,8 @@ describe("MCPClientManager", () => {
         experimental: {
           inspectorProfile: {},
         },
-        elicitation: {},
       });
+      expect(info!.clientCapabilities).not.toHaveProperty("elicitation");
 
       const extensions = (info!.clientCapabilities as Record<string, unknown>)
         .extensions as Record<string, unknown>;
@@ -753,8 +753,8 @@ describe("MCPClientManager", () => {
           experimental: {
             inspectorProfile: {},
           },
-          elicitation: {},
         });
+        expect(info!.clientCapabilities).not.toHaveProperty("elicitation");
         expect(
           (
             (info!.clientCapabilities as Record<string, unknown>).extensions as
@@ -791,8 +791,8 @@ describe("MCPClientManager", () => {
         experimental: {
           exactPath: {},
         },
-        elicitation: {},
       });
+      expect(info!.clientCapabilities).not.toHaveProperty("elicitation");
       expect(info!.clientCapabilities).not.toMatchObject({
         experimental: {
           legacyPath: {},
@@ -807,6 +807,71 @@ describe("MCPClientManager", () => {
       ).toBeUndefined();
 
       await manager.disconnectServer("custom-caps-test");
+    }, 30000);
+
+    it("should advertise elicitation when a global callback is registered before connect", async () => {
+      manager.setElicitationCallback(() => ({ action: "cancel" } as any));
+
+      await manager.connectToServer("elicitation-enabled-test", {
+        command: "npx",
+        args: ["-y", "@modelcontextprotocol/server-everything"],
+      });
+
+      const info = manager.getInitializationInfo("elicitation-enabled-test");
+      expect(info).toBeDefined();
+      expect(info!.clientCapabilities).toMatchObject({
+        elicitation: {},
+      });
+
+      await manager.disconnectServer("elicitation-enabled-test");
+    }, 30000);
+
+    it("should keep exact clientCapabilities free of elicitation when not explicitly configured", async () => {
+      manager.setElicitationCallback(() => ({ action: "cancel" } as any));
+
+      await manager.connectToServer("exact-caps-no-elicitation-test", {
+        command: "npx",
+        args: ["-y", "@modelcontextprotocol/server-everything"],
+        clientCapabilities: {
+          experimental: {
+            exactPath: {},
+          },
+        } as any,
+      });
+
+      const info = manager.getInitializationInfo(
+        "exact-caps-no-elicitation-test"
+      );
+      expect(info).toBeDefined();
+      expect(info!.clientCapabilities).toMatchObject({
+        experimental: {
+          exactPath: {},
+        },
+      });
+      expect(info!.clientCapabilities).not.toHaveProperty("elicitation");
+
+      await manager.disconnectServer("exact-caps-no-elicitation-test");
+    }, 30000);
+
+    it("should preserve the initialize payload after elicitation is enabled post-connect", async () => {
+      await manager.connectToServer("late-elicitation-test", {
+        command: "npx",
+        args: ["-y", "@modelcontextprotocol/server-everything"],
+      });
+
+      const before = manager.getInitializationInfo("late-elicitation-test");
+      expect(before).toBeDefined();
+      expect(before!.clientCapabilities).not.toHaveProperty("elicitation");
+
+      expect(() =>
+        manager.setElicitationCallback(() => ({ action: "cancel" } as any))
+      ).not.toThrow();
+
+      const after = manager.getInitializationInfo("late-elicitation-test");
+      expect(after).toBeDefined();
+      expect(after!.clientCapabilities).not.toHaveProperty("elicitation");
+
+      await manager.disconnectServer("late-elicitation-test");
     }, 30000);
 
     it("should remove server", async () => {

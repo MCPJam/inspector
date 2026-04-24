@@ -12,6 +12,11 @@ export interface LoadedInspectorEnv {
   mode: InspectorEnvMode;
 }
 
+export interface InspectorClientRuntimeConfig {
+  convexUrl?: string;
+  convexSiteUrl?: string;
+}
+
 function getInspectorEnvMode(): InspectorEnvMode {
   return process.env.NODE_ENV === "production" ? "production" : "development";
 }
@@ -80,6 +85,70 @@ export function loadInspectorEnv(serverDir: string): LoadedInspectorEnv {
     loadedFiles,
     mode,
   };
+}
+
+function normalizeUrlOrigin(url: string | undefined): string | undefined {
+  if (!url) return undefined;
+
+  try {
+    return new URL(url).origin;
+  } catch {
+    return undefined;
+  }
+}
+
+function replaceConvexHostnameSuffix(
+  url: string | undefined,
+  fromSuffix: string,
+  toSuffix: string,
+): string | undefined {
+  if (!url) return undefined;
+
+  try {
+    const parsed = new URL(url);
+    if (!parsed.hostname.endsWith(fromSuffix)) {
+      return undefined;
+    }
+    parsed.hostname = parsed.hostname.replace(fromSuffix, toSuffix);
+    return parsed.origin;
+  } catch {
+    return undefined;
+  }
+}
+
+export function getInspectorClientRuntimeConfig(): InspectorClientRuntimeConfig {
+  const convexSiteUrl =
+    normalizeUrlOrigin(process.env.CONVEX_HTTP_URL) ??
+    replaceConvexHostnameSuffix(
+      process.env.VITE_CONVEX_URL,
+      ".convex.cloud",
+      ".convex.site",
+    );
+
+  const convexUrl =
+    replaceConvexHostnameSuffix(
+      process.env.CONVEX_HTTP_URL,
+      ".convex.site",
+      ".convex.cloud",
+    ) ?? normalizeUrlOrigin(process.env.VITE_CONVEX_URL);
+
+  return {
+    convexUrl,
+    convexSiteUrl,
+  };
+}
+
+export function getInspectorClientRuntimeConfigScript(): string | null {
+  const runtimeConfig = getInspectorClientRuntimeConfig();
+  if (!runtimeConfig.convexUrl && !runtimeConfig.convexSiteUrl) {
+    return null;
+  }
+
+  const serializedConfig = JSON.stringify(runtimeConfig).replace(
+    /</g,
+    "\\u003c",
+  );
+  return `<script>window.__MCP_RUNTIME_CONFIG__=${serializedConfig};</script>`;
 }
 
 function getConvexDeploymentSlug(url: string | undefined): string | null {

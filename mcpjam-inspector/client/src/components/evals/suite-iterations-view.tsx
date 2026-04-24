@@ -6,12 +6,18 @@ import { SuiteHeader } from "./suite-header";
 import { SuiteHeroStats } from "./suite-hero-stats";
 import { RunOverview } from "./run-overview";
 import { RunDetailView } from "./run-detail-view";
+import {
+  computeRunDashboardKpis,
+  RunDetailKpiStrip,
+} from "./run-detail-kpis";
 import { SuiteTestsConfig } from "./suite-tests-config";
 import { TestTemplateEditor } from "./test-template-editor";
 import { PassCriteriaSelector } from "./pass-criteria-selector";
 import { TestCasesOverview } from "./test-cases-overview";
 import { TestCaseDetailView } from "./test-case-detail-view";
+import { SuiteDashboard } from "./suite-dashboard";
 import { EvalExportModal } from "./eval-export-modal";
+import { SuiteEnvironmentEditor } from "./suite-environment-editor";
 import { useSuiteData, useRunDetailData } from "./use-suite-data";
 import type {
   EvalCase,
@@ -31,6 +37,7 @@ import {
 import { Button } from "@mcpjam/design-system/button";
 import { Loader2, Trash2 } from "lucide-react";
 import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
+import type { EnsureServersReadyResult } from "@/hooks/use-app-state";
 import {
   normalizeDraftEvalCaseForExport,
   normalizeEvalCaseForExport,
@@ -45,13 +52,13 @@ export interface SuiteNavigation {
     suiteId: string,
     runId: string,
     iteration?: string,
-    options?: { insightsFocus?: boolean; replace?: boolean },
+    options?: { insightsFocus?: boolean; replace?: boolean }
   ) => void;
   toTestDetail: (suiteId: string, testId: string, iteration?: string) => void;
   toTestEdit: (
     suiteId: string,
     testId: string,
-    options?: { openCompare?: boolean; replace?: boolean; iteration?: string },
+    options?: { openCompare?: boolean; replace?: boolean; iteration?: string }
   ) => void;
   toSuiteEdit: (suiteId: string) => void;
 }
@@ -103,6 +110,10 @@ export function SuiteIterationsView({
   onRunTestCase,
   runningTestCaseId = null,
   onContinueInChat,
+  workspaceServers,
+  generateTestCasesDisabledReason,
+  isDirectGuest = false,
+  ensureServersReady,
 }: {
   suite: EvalSuite;
   cases: EvalCase[];
@@ -132,6 +143,7 @@ export function SuiteIterationsView({
   onCreateTestCase?: () => void;
   onGenerateTestCases?: () => void;
   canGenerateTestCases?: boolean;
+  generateTestCasesDisabledReason?: string;
   isGeneratingTestCases?: boolean;
   /** When true, the case list lives in a parent sidebar; omit the duplicate cases table on suite overview. */
   caseListInSidebar?: boolean;
@@ -162,6 +174,17 @@ export function SuiteIterationsView({
   onRunTestCase?: (testCase: EvalCase) => void;
   runningTestCaseId?: string | null;
   onContinueInChat?: (handoff: Omit<EvalChatHandoff, "id">) => void;
+  workspaceServers?: Array<{
+    _id: string;
+    name: string;
+    transportType?: "stdio" | "http";
+  }>;
+  /** When true, this is rendering the direct-guest eval playground flow. */
+  isDirectGuest?: boolean;
+  /** Playground: connect suite MCP servers before compare run (same as per-case run). */
+  ensureServersReady?: (
+    serverNames: string[],
+  ) => Promise<EnsureServersReadyResult>;
 }) {
   const appState = useSharedAppState();
   // Derive view state from route
@@ -195,7 +218,7 @@ export function SuiteIterationsView({
     onRunDetailSortByChange ?? setRunDetailSortBy;
   const [defaultMinimumPassRate, setDefaultMinimumPassRate] = useState(100);
   const [editedDescription, setEditedDescription] = useState(
-    suite.description || "",
+    suite.description || ""
   );
   const [isEditingDescription, setIsEditingDescription] = useState(false);
   const [exportState, setExportState] = useState<{
@@ -213,13 +236,13 @@ export function SuiteIterationsView({
     iterations,
     allIterations,
     runs,
-    aggregate,
+    aggregate
   );
 
   const { caseGroupsForSelectedRun, selectedRunChartData } = useRunDetailData(
     selectedRunId,
     allIterations,
-    effectiveRunDetailSortBy,
+    effectiveRunDetailSortBy
   );
 
   // Selected run details
@@ -231,32 +254,32 @@ export function SuiteIterationsView({
 
   // Derive selectedIterationId from route
   const selectedIterationId =
-    route.type === "run-detail" ? (route.iteration ?? null) : null;
+    route.type === "run-detail" ? route.iteration ?? null : null;
 
-  // Auto-select the first iteration when on run-detail with iterations but no ?iteration= param.
-  useEffect(() => {
-    if (route.type !== "run-detail" || caseGroupsForSelectedRun.length === 0) {
+  const handleSelectIteration = (iterationId: string) => {
+    if (route.type !== "run-detail") {
       return;
     }
-
-    if (route.insightsFocus && !route.iteration) {
-      return;
-    }
-
-    const iterationIds = new Set(caseGroupsForSelectedRun.map((i) => i._id));
-
-    if (!route.iteration || !iterationIds.has(route.iteration)) {
+    const iter = caseGroupsForSelectedRun.find((i) => i._id === iterationId);
+    if (readOnlyConfig) {
       navigation.toRunDetail(
         route.suiteId,
         route.runId,
-        caseGroupsForSelectedRun[0]._id,
+        iterationId,
       );
+      return;
     }
-  }, [route, caseGroupsForSelectedRun, navigation]);
-
-  const handleSelectIteration = (iterationId: string) => {
-    if (route.type === "run-detail") {
-      navigation.toRunDetail(route.suiteId, route.runId, iterationId);
+    if (iter?.testCaseId) {
+      navigation.toTestEdit(route.suiteId, iter.testCaseId, {
+        openCompare: true,
+        iteration: iterationId,
+      });
+    } else {
+      navigation.toRunDetail(
+        route.suiteId,
+        route.runId,
+        iterationId,
+      );
     }
   };
 
@@ -273,12 +296,12 @@ export function SuiteIterationsView({
         try {
           localStorage.setItem(
             `suite-${suite._id}-criteria-rate`,
-            String(suite.defaultPassCriteria.minimumPassRate),
+            String(suite.defaultPassCriteria.minimumPassRate)
           );
         } catch (error) {
           console.warn(
             "Failed to sync default pass criteria to localStorage",
-            error,
+            error
           );
         }
       }
@@ -308,7 +331,7 @@ export function SuiteIterationsView({
         toast.success("Suite description updated");
       } catch (error) {
         toast.error(
-          getBillingErrorMessage(error, "Failed to update suite description"),
+          getBillingErrorMessage(error, "Failed to update suite description")
         );
         console.error("Failed to update suite description:", error);
         setEditedDescription(suite.description || "");
@@ -325,7 +348,7 @@ export function SuiteIterationsView({
         setEditedDescription(suite.description || "");
       }
     },
-    [suite.description],
+    [suite.description]
   );
 
   const handleUpdateTests = async (models: any[]) => {
@@ -382,13 +405,13 @@ export function SuiteIterationsView({
     const providers = new Set<string>();
     for (const tc of cases) {
       for (const m of tc.models ?? []) {
-        if (!isMCPJamProvidedModel(m.model)) {
+        if (!isMCPJamProvidedModel(m.model, m.provider)) {
           providers.add(m.provider);
         }
       }
     }
     return [...providers].filter(
-      (p) => !hasToken(p.toLowerCase() as keyof ProviderTokens),
+      (p) => !hasToken(p.toLowerCase() as keyof ProviderTokens)
     );
   }, [cases, hasToken]);
 
@@ -396,7 +419,7 @@ export function SuiteIterationsView({
     () =>
       replayingRunId != null &&
       runs.some(
-        (run) => run._id === replayingRunId && run.hasServerReplayConfig,
+        (run) => run._id === replayingRunId && run.hasServerReplayConfig
       ) &&
       runs
         .filter((run) => run.hasServerReplayConfig)
@@ -405,7 +428,7 @@ export function SuiteIterationsView({
           const bTime = b.completedAt ?? b.createdAt ?? 0;
           return bTime - aTime;
         })[0]?._id === replayingRunId,
-    [replayingRunId, runs],
+    [replayingRunId, runs]
   );
 
   const shouldReduceMotion = useReducedMotion();
@@ -425,7 +448,7 @@ export function SuiteIterationsView({
     !omitSuiteHeader || viewMode !== "run-detail" || isEditMode;
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       {/* Header */}
       {showSuiteHeader ? (
         <div className="shrink-0">
@@ -451,12 +474,35 @@ export function SuiteIterationsView({
             onOpenExportSuite={handleOpenSuiteExport}
             readOnlyConfig={readOnlyConfig}
             hideRunActions={hideRunActions}
+            unifiedSuiteDashboard={hideRunActions && !caseListInSidebar}
             casesSidebarHidden={casesSidebarHidden}
             onShowCasesSidebar={onShowCasesSidebar}
             onCreateTestCase={onCreateTestCase}
             onGenerateTestCases={onGenerateTestCases}
             canGenerateTestCases={canGenerateTestCases}
+            generateTestCasesDisabledReason={generateTestCasesDisabledReason}
             isGeneratingTestCases={isGeneratingTestCases}
+            onRunTestCase={onRunTestCase}
+            blockTestCaseRuns={Boolean(rerunningSuiteId || replayingRunId)}
+            runningTestCaseId={runningTestCaseId}
+            availableModels={availableModels}
+            onSuiteModelsUpdate={
+              readOnlyConfig ? undefined : handleUpdateTests
+            }
+            runDetailKpiStrip={
+              showSuiteHeader &&
+              viewMode === "run-detail" &&
+              selectedRunDetails ? (
+                <RunDetailKpiStrip
+                  compact
+                  kpis={computeRunDashboardKpis({
+                    selectedRunDetails,
+                    caseGroupsForSelectedRun,
+                    source: suite.source as "ui" | "sdk" | undefined,
+                  })}
+                />
+              ) : undefined
+            }
           />
         </div>
       ) : null}
@@ -474,7 +520,7 @@ export function SuiteIterationsView({
                 transition={
                   shouldReduceMotion ? { duration: 0 } : { duration: 0.15 }
                 }
-                className="h-full min-h-0 min-w-0 overflow-hidden"
+                className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
               >
                 <TestTemplateEditor
                   suiteId={suite._id}
@@ -482,14 +528,15 @@ export function SuiteIterationsView({
                   connectedServerNames={connectedServerNames}
                   workspaceId={workspaceId}
                   availableModels={availableModels}
+                  isDirectGuest={isDirectGuest}
+                  ensureServersReady={ensureServersReady}
+                  workspaceServers={workspaceServers}
                   onExportDraft={handleOpenDraftExport}
                   openCompareFromRoute={
                     route.type === "test-edit" && Boolean(route.openCompare)
                   }
                   openCompareIterationId={
-                    route.type === "test-edit"
-                      ? (route.iteration ?? null)
-                      : null
+                    route.type === "test-edit" ? route.iteration ?? null : null
                   }
                   onBackToList={() =>
                     navigation.toSuiteOverview(suite._id, "test-cases")
@@ -502,7 +549,7 @@ export function SuiteIterationsView({
                     navigation.toRunDetail(
                       suite._id,
                       iteration.suiteRunId,
-                      iteration._id,
+                      iteration._id
                     );
                   }}
                 />
@@ -510,12 +557,12 @@ export function SuiteIterationsView({
             ) : viewMode === "test-detail" && selectedTestId ? (
               (() => {
                 const selectedCase = cases.find(
-                  (c) => c._id === selectedTestId,
+                  (c) => c._id === selectedTestId
                 );
                 if (!selectedCase) return null;
 
                 const caseIterations = allIterations.filter(
-                  (iter) => iter.testCaseId === selectedTestId,
+                  (iter) => iter.testCaseId === selectedTestId
                 );
 
                 return (
@@ -536,9 +583,7 @@ export function SuiteIterationsView({
                       onOpenExportCase={() =>
                         handleOpenTestCaseExport(selectedCase)
                       }
-                      serverNames={(suite.environment?.servers || []).filter(
-                        (name) => connectedServerNames.has(name),
-                      )}
+                      serverNames={suite.environment?.servers || []}
                       suiteName={suite.name}
                       onNavigateToSuite={() =>
                         navigation.toSuiteOverview(suite._id)
@@ -556,7 +601,47 @@ export function SuiteIterationsView({
                 );
               })()
             ) : viewMode === "overview" ? (
-              runsViewMode === "runs" ? (
+              hideRunActions && !caseListInSidebar ? (
+                <motion.div
+                  key={contentKey}
+                  initial={shouldReduceMotion ? false : { opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={shouldReduceMotion ? undefined : { opacity: 0 }}
+                  transition={
+                    shouldReduceMotion ? { duration: 0 } : { duration: 0.15 }
+                  }
+                  className="min-h-0 flex-1 overflow-y-auto p-0.5"
+                >
+                  <SuiteDashboard
+                    suite={suite}
+                    cases={cases}
+                    allIterations={allIterations}
+                    runs={runs}
+                    runsLoading={runsLoading}
+                    runTrendData={runTrendData}
+                    modelStats={modelStats}
+                    onTestCaseClick={(testCaseId) =>
+                      navigation.toTestEdit(suite._id, testCaseId)
+                    }
+                    onOpenLastRun={(testCaseId, iterationId) =>
+                      navigation.toTestEdit(suite._id, testCaseId, {
+                        openCompare: true,
+                        iteration: iterationId,
+                      })
+                    }
+                    onRunClick={handleRunClick}
+                    onRunTestCase={onRunTestCase}
+                    runningTestCaseId={runningTestCaseId}
+                    blockTestCaseRuns={Boolean(
+                      rerunningSuiteId || replayingRunId,
+                    )}
+                    connectedServerNames={connectedServerNames}
+                    onDeleteTestCasesBatch={onDeleteTestCasesBatch}
+                    testCasesClickHint="Click a case row to open the test case. Click the last-run summary to jump straight to compare results for that run."
+                    userMap={userMap}
+                  />
+                </motion.div>
+              ) : runsViewMode === "runs" ? (
                 <motion.div
                   key={contentKey}
                   initial={shouldReduceMotion ? false : { opacity: 0 }}
@@ -646,6 +731,7 @@ export function SuiteIterationsView({
                     )
                   ) : (
                     <TestCasesOverview
+                      isDirectGuest={isDirectGuest}
                       suite={suite}
                       cases={cases}
                       allIterations={allIterations}
@@ -678,7 +764,7 @@ export function SuiteIterationsView({
                       onRunTestCase={onRunTestCase}
                       runningTestCaseId={runningTestCaseId}
                       blockTestCaseRuns={Boolean(
-                        rerunningSuiteId || replayingRunId,
+                        rerunningSuiteId || replayingRunId
                       )}
                       connectedServerNames={connectedServerNames}
                     />
@@ -694,7 +780,7 @@ export function SuiteIterationsView({
                 transition={
                   shouldReduceMotion ? { duration: 0 } : { duration: 0.15 }
                 }
-                className="min-h-0 flex-1 overflow-y-auto"
+                className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
               >
                 <RunDetailView
                   selectedRunDetails={selectedRunDetails}
@@ -703,11 +789,14 @@ export function SuiteIterationsView({
                   selectedRunChartData={selectedRunChartData}
                   runDetailSortBy={effectiveRunDetailSortBy}
                   onSortChange={effectiveRunDetailSortChange}
-                  serverNames={(suite.environment?.servers || []).filter(
-                    (name) => connectedServerNames.has(name),
-                  )}
+                  serverNames={suite.environment?.servers || []}
                   selectedIterationId={selectedIterationId}
                   onSelectIteration={handleSelectIteration}
+                  kpiPlacement={
+                    showSuiteHeader && viewMode === "run-detail"
+                      ? "header"
+                      : "body"
+                  }
                   hideReplayLineage
                   omitIterationList={omitRunIterationList}
                   onOpenRunInsights={
@@ -717,7 +806,7 @@ export function SuiteIterationsView({
                             route.suiteId,
                             route.runId,
                             undefined,
-                            { insightsFocus: true },
+                            { insightsFocus: true }
                           )
                       : undefined
                   }
@@ -738,6 +827,32 @@ export function SuiteIterationsView({
       {isEditMode && (
         <div className="flex-1 min-h-0 overflow-auto">
           <div className="p-6 max-w-5xl mx-auto space-y-8">
+            {workspaceServers ? (
+              <SuiteEnvironmentEditor
+                suite={suite}
+                workspaceServers={workspaceServers}
+                connectedServerNames={connectedServerNames}
+                onSave={async (environment) => {
+                  try {
+                    await updateSuite({
+                      suiteId: suite._id,
+                      environment,
+                    });
+                    toast.success("Suite servers updated");
+                  } catch (error) {
+                    toast.error(
+                      getBillingErrorMessage(
+                        error,
+                        "Failed to update suite servers",
+                      ),
+                    );
+                    console.error("Failed to update suite servers:", error);
+                    throw error;
+                  }
+                }}
+              />
+            ) : null}
+
             {/* Suite Description Section */}
             <div className="space-y-3">
               <div>
@@ -795,7 +910,7 @@ export function SuiteIterationsView({
                   setDefaultMinimumPassRate(rate);
                   localStorage.setItem(
                     `suite-${suite._id}-criteria-rate`,
-                    String(rate),
+                    String(rate)
                   );
                   try {
                     await updateSuite({
@@ -807,11 +922,11 @@ export function SuiteIterationsView({
                     toast.success("Suite updated successfully");
                   } catch (error) {
                     toast.error(
-                      getBillingErrorMessage(error, "Failed to update suite"),
+                      getBillingErrorMessage(error, "Failed to update suite")
                     );
                     console.error("Failed to update suite:", error);
                     setDefaultMinimumPassRate(
-                      suite.defaultPassCriteria?.minimumPassRate ?? 100,
+                      suite.defaultPassCriteria?.minimumPassRate ?? 100
                     );
                   }
                 }}

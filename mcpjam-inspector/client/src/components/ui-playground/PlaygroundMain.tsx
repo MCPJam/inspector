@@ -24,6 +24,7 @@ import { Braces, Loader2, Trash2 } from "lucide-react";
 import { useAuth } from "@workos-inc/authkit-react";
 import type { ContentBlock } from "@modelcontextprotocol/client";
 import type { UIMessage } from "ai";
+import { toast } from "sonner";
 import { ModelDefinition } from "@/shared/types";
 import { cn } from "@/lib/utils";
 import { Thread } from "@/components/chat-v2/thread";
@@ -112,6 +113,7 @@ import {
   MultiModelPlaygroundCard,
   type PlaygroundDeterministicExecutionRequest,
 } from "@/components/ui-playground/multi-model-playground-card";
+import type { EnsureServersReadyResult } from "@/hooks/use-app-state";
 
 /** Custom device config - dimensions come from store */
 const CUSTOM_DEVICE_BASE = {
@@ -123,6 +125,9 @@ type ThreadThemeMode = "light" | "dark";
 
 interface PlaygroundMainProps {
   serverName: string;
+  ensureServersReady?: (
+    serverNames: string[],
+  ) => Promise<EnsureServersReadyResult>;
   enableMultiModelChat?: boolean;
   onWidgetStateChange?: (toolCallId: string, state: unknown) => void;
   playgroundServerSelectorProps?: PlaygroundServerSelectorProps;
@@ -201,6 +206,7 @@ function InvokingIndicator({
 
 export function PlaygroundMain({
   serverName,
+  ensureServersReady,
   enableMultiModelChat = false,
   onWidgetStateChange,
   playgroundServerSelectorProps,
@@ -255,6 +261,8 @@ export function PlaygroundMain({
     useState<PlaygroundTraceViewMode>("chat");
   const [isWidgetFullscreen, setIsWidgetFullscreen] = useState(false);
   const [isFullscreenChatOpen, setIsFullscreenChatOpen] = useState(false);
+  const [isPreparingServerForSend, setIsPreparingServerForSend] =
+    useState(false);
   const [injectedToolRenderOverrides, setInjectedToolRenderOverrides] =
     useState<Record<string, ToolRenderOverride>>({});
   const [preludeTraceExecutions, setPreludeTraceExecutions] = useState<
@@ -606,10 +614,14 @@ export function PlaygroundMain({
   });
   composerOnResetRef.current = composer.onSessionReset;
   const { composerDisabled, sendBlocked } = getChatComposerInteractivity({
-    isStreamingActive,
-    composerDisabled: disableChatInput || submitBlocked,
+    isStreamingActive: isStreamingActive || isPreparingServerForSend,
+    composerDisabled:
+      disableChatInput || submitBlocked || isPreparingServerForSend,
     submitDisabled:
-      disableChatInput || submitBlocked || composer.submitGatedByServer,
+      disableChatInput ||
+      submitBlocked ||
+      composer.submitGatedByServer ||
+      isPreparingServerForSend,
   });
 
   useEffect(() => {
@@ -808,12 +820,55 @@ export function PlaygroundMain({
     [onWidgetStateChange],
   );
 
+  const ensureSelectedServerReadyForChat = useCallback(async () => {
+    if (!serverName || !ensureServersReady) {
+      return true;
+    }
+
+    const connectionStatus = servers[serverName]?.connectionStatus;
+    if (connectionStatus === "connected") {
+      return true;
+    }
+
+    setIsPreparingServerForSend(true);
+    try {
+      const result = await ensureServersReady([serverName]);
+      if (result.readyServerNames.includes(serverName)) {
+        // Yield one frame so React can flush the connection-status state
+        // update before the caller proceeds to send a message.
+        await new Promise<void>((resolve) => {
+          if (typeof window !== "undefined" && window.requestAnimationFrame) {
+            window.requestAnimationFrame(() => resolve());
+            return;
+          }
+          setTimeout(resolve, 0);
+        });
+        return true;
+      }
+
+      const errorMessage = result.missingServerNames.includes(serverName)
+        ? `${serverName} is no longer available in this workspace.`
+        : result.reauthServerNames.includes(serverName)
+          ? `Reauthenticate ${serverName} before sending.`
+          : `Couldn't connect to ${serverName}.`;
+      toast.error(errorMessage);
+      return false;
+    } finally {
+      setIsPreparingServerForSend(false);
+    }
+  }, [ensureServersReady, serverName, servers]);
+
   // Handle follow-up messages from widgets
   const handleSendFollowUp = useCallback(
     (text: string) => {
-      sendMessage({ text });
+      void (async () => {
+        if (!(await ensureSelectedServerReadyForChat())) {
+          return;
+        }
+        sendMessage({ text });
+      })();
     },
-    [sendMessage],
+    [ensureSelectedServerReadyForChat, sendMessage],
   );
 
   // Handle model context updates from widgets (SEP-1865 ui/update-model-context)
@@ -993,6 +1048,10 @@ export function PlaygroundMain({
       mcpPromptResults.length > 0 ||
       fileAttachments.length > 0;
     if (hasContent && !sendBlocked) {
+      if (!(await ensureSelectedServerReadyForChat())) {
+        return;
+      }
+
       if (
         !isMultiModelMode &&
         displayMode === "fullscreen" &&
@@ -1068,18 +1127,25 @@ export function PlaygroundMain({
         composer.setInput(prompt);
         return;
       }
-      queueBroadcastRequest({
-        text: prompt,
-        prependMessages: [],
-      });
-      composer.setInput("");
-      revokeFileAttachmentUrls(fileAttachments);
-      setFileAttachments([]);
-      onFirstMessageSent?.();
+      void (async () => {
+        if (!(await ensureSelectedServerReadyForChat())) {
+          composer.setInput(prompt);
+          return;
+        }
+        queueBroadcastRequest({
+          text: prompt,
+          prependMessages: [],
+        });
+        composer.setInput("");
+        revokeFileAttachmentUrls(fileAttachments);
+        setFileAttachments([]);
+        onFirstMessageSent?.();
+      })();
     },
     [
       composer,
       composerDisabled,
+      ensureSelectedServerReadyForChat,
       fileAttachments,
       onFirstMessageSent,
       queueBroadcastRequest,
@@ -1119,7 +1185,10 @@ export function PlaygroundMain({
     onTemperatureChange: setTemperature,
     onResetChat: handleResetAllChats,
     submitDisabled:
-      disableChatInput || submitBlocked || composer.submitGatedByServer,
+      disableChatInput ||
+      submitBlocked ||
+      composer.submitGatedByServer ||
+      isPreparingServerForSend,
     tokenUsage,
     selectedServers,
     mcpToolsTokenCount: null,
@@ -1396,12 +1465,17 @@ export function PlaygroundMain({
           loadingIndicatorVariant={loadingIndicatorVariant}
           onStop={stopActiveChat}
           onSend={() => {
-            if (sendBlocked) {
-              return;
-            }
-            sendMessage({ text: composer.input });
-            composer.setInput("");
-            setMcpPromptResults([]);
+            void (async () => {
+              if (sendBlocked) {
+                return;
+              }
+              if (!(await ensureSelectedServerReadyForChat())) {
+                return;
+              }
+              sendMessage({ text: composer.input });
+              composer.setInput("");
+              setMcpPromptResults([]);
+            })();
           }}
         />
       )}
@@ -1467,7 +1541,6 @@ export function PlaygroundMain({
           {showTraceViewTabs ? (
             <ChatTraceViewModeHeaderBar
               mode={activeTraceViewMode}
-              activeVariant="sidebar"
               onModeChange={(mode) => {
                 if (mode === "tools") {
                   return;

@@ -29,9 +29,6 @@ export interface SharedChatThread {
   themeClusterId?: string;
   themeClusterLabel?: string;
   themeKeywords?: string[];
-  geoCountry?: string;
-  geoRegion?: string;
-  geoCity?: string;
   deviceKind?: "desktop" | "mobile" | "tablet" | "bot";
   userAgentFamily?: string;
   authType?: "signedIn" | "guest";
@@ -102,4 +99,33 @@ export function useSharedChatWidgetSnapshots({
   ) as SharedChatWidgetSnapshot[] | undefined;
 
   return { snapshots };
+}
+
+export interface SharedChatTurnTrace {
+  turnId: string;
+  promptIndex: number;
+  startedAt: number;
+  endedAt: number;
+  finishReason?: string;
+  usage?: {
+    inputTokens?: number;
+    outputTokens?: number;
+    totalTokens?: number;
+  };
+  spanCount: number;
+  modelId?: string;
+  spansBlobUrl?: string | null;
+}
+
+export function useSharedChatTurnTraces({
+  threadId,
+}: {
+  threadId: string | null;
+}) {
+  const traces = useQuery(
+    "chatSessions:getSessionTurnTraces" as any,
+    threadId ? ({ sessionId: threadId } as any) : "skip",
+  ) as SharedChatTurnTrace[] | undefined;
+
+  return { traces };
 }

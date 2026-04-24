@@ -68,6 +68,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         lastConnectionTime: new Date(),
         retryCount: 0,
         lastError: undefined,
+        lastOAuthTrace: action.oauthTrace,
         oauthTokens: action.tokens,
         enabled: true,
         // Hosted workspace OAuth can succeed without browser-side tokens.
@@ -107,6 +108,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
           [action.name]: setStatus(existing, "failed", {
             retryCount: existing.retryCount,
             lastError: action.error,
+            lastOAuthTrace: action.oauthTrace,
           }),
         },
       };
@@ -231,6 +233,37 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         initializationInfo: action.initInfo,
       };
       const activeWorkspace = state.workspaces[state.activeWorkspaceId];
+      return {
+        ...state,
+        servers: {
+          ...state.servers,
+          [action.name]: nextServer,
+        },
+        workspaces: {
+          ...state.workspaces,
+          [state.activeWorkspaceId]: {
+            ...activeWorkspace,
+            servers: {
+              ...activeWorkspace.servers,
+              [action.name]: nextServer,
+            },
+            updatedAt: new Date(),
+          },
+        },
+      };
+    }
+
+    case "SET_SERVER_OAUTH_TRACE": {
+      const activeWorkspace = state.workspaces[state.activeWorkspaceId];
+      const existing =
+        state.servers[action.name] ?? activeWorkspace?.servers[action.name];
+      if (!existing) return state;
+
+      const nextServer = {
+        ...existing,
+        lastOAuthTrace: action.oauthTrace,
+      };
+
       return {
         ...state,
         servers: {

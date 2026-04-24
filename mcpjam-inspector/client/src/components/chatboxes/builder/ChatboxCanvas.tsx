@@ -1,6 +1,7 @@
 import {
   createContext,
   memo,
+  useCallback,
   useContext,
   useEffect,
   useMemo,
@@ -18,11 +19,20 @@ import {
   SmoothStepEdge,
   useNodesInitialized,
   useReactFlow,
+  useUpdateNodeInternals,
   type Node,
   type NodeProps,
   type EdgeProps,
 } from "@xyflow/react";
-import { Bot, CircleHelp, Network, Plus, Server } from "lucide-react";
+import {
+  Bot,
+  ChevronDown,
+  CircleHelp,
+  Loader2,
+  Network,
+  Plus,
+  Server,
+} from "lucide-react";
 import "@xyflow/react/dist/style.css";
 import { Badge } from "@mcpjam/design-system/badge";
 import { Button } from "@mcpjam/design-system/button";
@@ -36,6 +46,13 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@mcpjam/design-system/tooltip";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@mcpjam/design-system/collapsible";
+import { HOSTED_MODE } from "@/lib/config";
+import { listTools } from "@/lib/apis/mcp-tools-api";
 import type { RemoteServer } from "@/hooks/useWorkspaces";
 import { WorkspaceServerPickerList } from "@/components/chatboxes/builder/setup-checklist-panel";
 import { MCPIcon } from "@/components/ui/mcp-icon";
@@ -63,7 +80,151 @@ export type ChatboxCanvasServerPickerProps = {
 
 const ChatboxCanvasContext = createContext<{
   canvasServerPicker?: ChatboxCanvasServerPickerProps;
+  /** Chatbox draft model; forwarded to tools/list when loading server tools. */
+  builderModelId?: string;
 }>({});
+
+const TOOLS_LIST_MAX_PAGES = 24;
+
+async function fetchAllToolNames(
+  serverId: string,
+  modelId: string | undefined,
+): Promise<string[]> {
+  const names: string[] = [];
+  let cursor: string | undefined;
+  for (let page = 0; page < TOOLS_LIST_MAX_PAGES; page++) {
+    const data = await listTools({ serverId, modelId, cursor });
+    for (const t of data.tools ?? []) {
+      if (typeof t.name === "string" && t.name.length > 0) {
+        names.push(t.name);
+      }
+    }
+    cursor =
+      typeof data.nextCursor === "string" && data.nextCursor.length > 0
+        ? data.nextCursor
+        : undefined;
+    if (!cursor) break;
+  }
+  return [...new Set(names)].sort((a, b) => a.localeCompare(b));
+}
+
+function ServerNodeToolsCollapsible({
+  nodeId,
+  serverDocumentId,
+  workspaceServers,
+  builderModelId,
+}: {
+  nodeId: string;
+  serverDocumentId: string;
+  workspaceServers: RemoteServer[] | undefined;
+  builderModelId: string | undefined;
+}) {
+  const updateNodeInternals = useUpdateNodeInternals();
+  const toolsListServerId = useMemo(
+    () =>
+      HOSTED_MODE
+        ? serverDocumentId
+        : (workspaceServers?.find((s) => s._id === serverDocumentId)?.name ??
+          serverDocumentId),
+    [serverDocumentId, workspaceServers],
+  );
+
+  const [open, setOpen] = useState(false);
+  const [toolNames, setToolNames] = useState<string[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const inFlightRef = useRef(false);
+
+  useEffect(() => {
+    setToolNames(null);
+    setError(null);
+    setLoading(false);
+    setOpen(false);
+    inFlightRef.current = false;
+  }, [toolsListServerId]);
+
+  const load = useCallback(async () => {
+    if (!toolsListServerId || inFlightRef.current) return;
+    inFlightRef.current = true;
+    setLoading(true);
+    setError(null);
+    try {
+      const names = await fetchAllToolNames(toolsListServerId, builderModelId);
+      setToolNames(names);
+    } catch (e) {
+      const message =
+        e instanceof Error ? e.message : "Could not load tools for this server.";
+      setError(message);
+      setToolNames(null);
+    } finally {
+      inFlightRef.current = false;
+      setLoading(false);
+    }
+  }, [toolsListServerId, builderModelId]);
+
+  const onOpenChange = useCallback(
+    (next: boolean) => {
+      setOpen(next);
+      if (next && toolNames === null && !inFlightRef.current) {
+        void load();
+      }
+    },
+    [load, toolNames],
+  );
+
+  useEffect(() => {
+    updateNodeInternals(nodeId);
+  }, [nodeId, open, loading, toolNames, error, updateNodeInternals]);
+
+  const countSuffix =
+    toolNames === null ? "" : ` (${toolNames.length})`;
+
+  return (
+    <Collapsible open={open} onOpenChange={onOpenChange} className="mt-3">
+      <CollapsibleTrigger
+        type="button"
+        className="nodrag nopan pointer-events-auto flex w-full items-center justify-between gap-2 rounded-md border border-border/60 bg-muted/30 px-2 py-1.5 text-left text-[11px] font-medium text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
+        onPointerDown={(e) => e.stopPropagation()}
+      >
+        <span>
+          Tools
+          {countSuffix}
+        </span>
+        <ChevronDown
+          className={cn(
+            "size-3.5 shrink-0 opacity-70 transition-transform",
+            open && "rotate-180",
+          )}
+          aria-hidden
+        />
+      </CollapsibleTrigger>
+      <CollapsibleContent className="data-[state=closed]:animate-none">
+        <div className="mt-1.5 max-h-36 overflow-y-auto rounded-md border border-border/50 bg-background/80 px-2 py-1.5">
+          {loading ? (
+            <div className="flex items-center gap-2 py-1 text-[11px] text-muted-foreground">
+              <Loader2 className="size-3.5 animate-spin" aria-hidden />
+              Loading tools…
+            </div>
+          ) : error ? (
+            <p className="text-[11px] leading-snug text-destructive">{error}</p>
+          ) : toolNames && toolNames.length > 0 ? (
+            <ul className="space-y-0.5 text-[11px] leading-snug text-foreground">
+              {toolNames.map((name) => (
+                <li key={name} className="font-mono">
+                  {name}
+                </li>
+              ))}
+            </ul>
+          ) : toolNames ? (
+            <p className="text-[11px] text-muted-foreground">
+              No tools reported by this server.
+            </p>
+          ) : null}
+        </div>
+      </CollapsibleContent>
+    </Collapsible>
+  );
+}
 
 const CHIP_STYLES = {
   neutral: "border-border/70 bg-muted/40 text-muted-foreground",
@@ -108,10 +269,12 @@ const plusHandleButtonClass =
   "nodrag nopan pointer-events-auto flex size-7 items-center justify-center rounded-full border border-border/60 bg-card text-muted-foreground shadow-sm transition-colors hover:bg-primary hover:text-primary-foreground hover:border-primary";
 
 const ChatboxNode = memo((props: NodeProps<Node<ChatboxBuilderNodeData>>) => {
-  const { data, selected } = props;
+  const { id, data, selected } = props;
   const [canvasPickerOpen, setCanvasPickerOpen] = useState(false);
   const Icon = getNodeIcon(data.kind);
-  const { canvasServerPicker } = useContext(ChatboxCanvasContext);
+  const { canvasServerPicker, builderModelId } = useContext(
+    ChatboxCanvasContext,
+  );
   const isHostPreview = data.kind === "host";
   const hostStyle = data.hostStyle ?? "claude";
   const hostLogoSrc = isHostPreview ? getChatboxHostLogo(hostStyle) : null;
@@ -137,16 +300,6 @@ const ChatboxNode = memo((props: NodeProps<Node<ChatboxBuilderNodeData>>) => {
       )}
       {isHostPreview ? (
         <>
-          <div className="mb-2 flex items-center justify-center gap-2">
-            {data.eyebrow ? (
-              <Badge
-                variant="secondary"
-                className="max-w-[min(100%,11rem)] whitespace-normal rounded-md px-2 py-0.5 text-center text-[10px] font-medium uppercase leading-tight tracking-wide text-muted-foreground"
-              >
-                {data.eyebrow}
-              </Badge>
-            ) : null}
-          </div>
           <div className="flex gap-3">
             <div className="flex size-11 shrink-0 items-center justify-center rounded-2xl border border-border/50 bg-background/80 shadow-inner">
               <img
@@ -156,20 +309,21 @@ const ChatboxNode = memo((props: NodeProps<Node<ChatboxBuilderNodeData>>) => {
               />
             </div>
             <div className="min-w-0 flex-1">
-              <p
-                className="truncate text-sm font-semibold leading-tight"
-                title={data.title}
-              >
-                {data.title}
-              </p>
               {data.subtitle ? (
                 <p
-                  className="mt-1 line-clamp-2 text-xs text-muted-foreground"
+                  className="truncate text-sm font-semibold leading-tight"
                   title={data.subtitle}
                 >
                   {data.subtitle}
                 </p>
-              ) : null}
+              ) : (
+                <p
+                  className="truncate text-sm font-semibold leading-tight"
+                  title={data.title}
+                >
+                  {data.title}
+                </p>
+              )}
               {data.detailLine ? (
                 <p
                   className="mt-1.5 text-[11px] text-muted-foreground/90"
@@ -222,6 +376,15 @@ const ChatboxNode = memo((props: NodeProps<Node<ChatboxBuilderNodeData>>) => {
                 </Badge>
               ))}
             </div>
+          ) : null}
+
+          {data.serverId ? (
+            <ServerNodeToolsCollapsible
+              nodeId={id}
+              serverDocumentId={data.serverId}
+              workspaceServers={canvasServerPicker?.workspaceServers}
+              builderModelId={builderModelId}
+            />
           ) : null}
         </>
       )}
@@ -493,6 +656,7 @@ interface ChatboxCanvasProps {
   onSelectNode: (nodeId: string) => void;
   onClearSelection: () => void;
   canvasServerPicker?: ChatboxCanvasServerPickerProps;
+  builderModelId?: string;
   /** Incremented by the builder shell when the setup canvas is shown again or mobile setup chrome changes. */
   canvasViewportRefitNonce?: number;
 }
@@ -503,6 +667,7 @@ export function ChatboxCanvas({
   onSelectNode,
   onClearSelection,
   canvasServerPicker,
+  builderModelId,
   canvasViewportRefitNonce = 0,
 }: ChatboxCanvasProps) {
   const canvasRef = useRef<HTMLDivElement | null>(null);
@@ -519,8 +684,8 @@ export function ChatboxCanvas({
     [viewModel.nodes],
   );
   const ctxValue = useMemo(
-    () => ({ canvasServerPicker }),
-    [canvasServerPicker],
+    () => ({ canvasServerPicker, builderModelId }),
+    [canvasServerPicker, builderModelId],
   );
 
   return (
@@ -545,11 +710,10 @@ export function ChatboxCanvas({
             <TooltipContent
               side="bottom"
               align="end"
-              className="max-w-[300px] text-balance text-sm"
+              className="max-w-[320px] text-balance text-sm"
             >
-              This diagram maps your chatbox: servers, tools, and the chat
-              experience. Choose a Claude-style or ChatGPT-style host and other
-              behavior in Setup. Preview shows what end users will see.
+              Everything you configure in the panel on the right is reflected in
+              this diagram.
             </TooltipContent>
           </Tooltip>
         </div>

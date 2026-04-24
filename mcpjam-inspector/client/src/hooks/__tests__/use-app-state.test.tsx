@@ -140,8 +140,10 @@ function createLoadedAppState(selectedServerState?: {
 
 describe("useAppState active organization recovery", () => {
   beforeEach(() => {
+    vi.useRealTimers();
     vi.clearAllMocks();
     localStorage.clear();
+    window.history.replaceState({}, "", "/");
     loadAppStateMock.mockReturnValue(initialAppState);
     Object.assign(workspaceStateValue, {
       effectiveWorkspaces: {},
@@ -373,5 +375,138 @@ describe("useAppState active organization recovery", () => {
     await waitFor(() => {
       expect(result.current.isSelectedServerSyncing).toBe(false);
     });
+  });
+
+  it.each(["chatbox", "shared"] as const)(
+    "does not patch dashboard server state for hosted %s OAuth callbacks",
+    async (surface) => {
+      loadAppStateMock.mockReturnValue(
+        createLoadedAppState({
+          name: "demo-server",
+          connectionStatus: "disconnected",
+        }),
+      );
+      localStorage.setItem(
+        "mcp-hosted-oauth-pending",
+        JSON.stringify({
+          surface,
+          serverName: "demo-server",
+          serverUrl: "https://example.com/mcp",
+          returnHash: "#demo",
+          startedAt: Date.now(),
+        }),
+      );
+      localStorage.setItem("mcp-oauth-pending", "demo-server");
+      window.history.replaceState({}, "", "/oauth/callback?code=test-code");
+
+      renderHook(() =>
+        useAppState({
+          currentUserId: "user-1",
+          routeOrganizationId: undefined,
+          hasOrganizations: false,
+          isLoadingOrganizations: false,
+          validOrganizations: [],
+        }),
+      );
+
+      await waitFor(() => {
+        const lastWorkspaceArgs =
+          useWorkspaceStateMock.mock.calls.at(-1)?.[0];
+        expect(
+          lastWorkspaceArgs?.appState.servers["demo-server"]
+            ?.connectionStatus,
+        ).toBe("disconnected");
+      });
+    },
+  );
+
+  it("tracks missing dashboard OAuth callbacks without seeding a temporary server", async () => {
+    loadAppStateMock.mockReturnValue({
+      ...initialAppState,
+      workspaces: {
+        default: {
+          ...initialAppState.workspaces.default,
+          servers: {},
+          createdAt: new Date("2026-01-01T00:00:00.000Z"),
+          updatedAt: new Date("2026-01-01T00:00:00.000Z"),
+        },
+      },
+      servers: {},
+    });
+    localStorage.setItem("mcp-oauth-pending", "demo-server");
+    localStorage.setItem("mcp-serverUrl-demo-server", "https://example.com/mcp");
+    window.history.replaceState({}, "", "/oauth/callback?code=test-code");
+
+    const { result } = renderHook(() =>
+      useAppState({
+        currentUserId: "user-1",
+        routeOrganizationId: undefined,
+        hasOrganizations: false,
+        isLoadingOrganizations: false,
+        validOrganizations: [],
+      }),
+    );
+
+    await waitFor(() => {
+      expect(result.current.pendingDashboardOAuth).toEqual(
+        expect.objectContaining({
+          serverName: "demo-server",
+          serverUrl: "https://example.com/mcp",
+        }),
+      );
+    });
+
+    const lastWorkspaceArgs = useWorkspaceStateMock.mock.calls.at(-1)?.[0];
+    expect(lastWorkspaceArgs?.appState.servers).toEqual({});
+  });
+
+  it("clears missing dashboard OAuth UI state after the safety timeout", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+    try {
+      loadAppStateMock.mockReturnValue({
+        ...initialAppState,
+        workspaces: {
+          default: {
+            ...initialAppState.workspaces.default,
+            servers: {},
+            createdAt: new Date("2026-01-01T00:00:00.000Z"),
+            updatedAt: new Date("2026-01-01T00:00:00.000Z"),
+          },
+        },
+        servers: {},
+      });
+      localStorage.setItem("mcp-oauth-pending", "demo-server");
+      localStorage.setItem(
+        "mcp-serverUrl-demo-server",
+        "https://example.com/mcp",
+      );
+      window.history.replaceState({}, "", "/oauth/callback?code=test-code");
+
+      const { result } = renderHook(() =>
+        useAppState({
+          currentUserId: "user-1",
+          routeOrganizationId: undefined,
+          hasOrganizations: false,
+          isLoadingOrganizations: false,
+          validOrganizations: [],
+        }),
+      );
+
+      expect(result.current.pendingDashboardOAuth).toEqual(
+        expect.objectContaining({
+          serverName: "demo-server",
+          serverUrl: "https://example.com/mcp",
+        }),
+      );
+
+      act(() => {
+        vi.advanceTimersByTime(30_000);
+      });
+
+      expect(result.current.pendingDashboardOAuth).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

@@ -75,10 +75,11 @@ export function SuitesOverview({
           const { suite, latestRun, totals } = entry;
 
           const servers = suite.config?.environment?.servers ?? [];
+          const hasServersConfigured = servers.length > 0;
           const missingServers = servers.filter(
             (server) => !connectedServerNames.has(server),
           );
-          const canRerun = missingServers.length === 0;
+          const canRerun = hasServersConfigured;
           const isRerunning = rerunningSuiteId === suite._id;
 
           const latestPassRate = latestRun?.summary
@@ -216,9 +217,9 @@ export function SuitesOverview({
                     >
                       {showAsRunning
                         ? "Running..."
-                        : canRerun
+                        : hasServersConfigured
                           ? "Rerun suite"
-                          : `Missing servers: ${missingServers.join(", ")}`}
+                          : "No servers configured"}
                     </button>
                   )}
                   <button

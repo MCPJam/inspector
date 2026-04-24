@@ -58,6 +58,7 @@ import { useConvexAuth } from "convex/react";
 import { HOSTED_MODE } from "@/lib/config";
 import { ShareServerDialog } from "./ShareServerDialog";
 import { useExploreCasesPrefetchOnConnect } from "@/hooks/use-explore-cases-prefetch-on-connect";
+import { getOAuthTraceFailureStep } from "@/lib/oauth/oauth-trace";
 
 function isHostedInsecureHttpServer(server: ServerWithName): boolean {
   if (!HOSTED_MODE || !("url" in server.config) || !server.config.url) {
@@ -153,6 +154,7 @@ export function ServerConnectionCard({
   const hasTunnel = Boolean(tunnelUrl);
   const hasError =
     server.connectionStatus === "failed" && Boolean(server.lastError);
+  const oauthFailureStep = getOAuthTraceFailureStep(server.lastOAuthTrace);
   const isHostedHttpReconnectBlocked = isHostedInsecureHttpServer(server);
   const isPendingConnection =
     server.connectionStatus === "connecting" ||
@@ -743,6 +745,11 @@ export function ServerConnectionCard({
               className="mt-3 rounded-md border border-red-300/40 bg-red-500/10 p-2 text-xs text-red-700 dark:text-red-300"
               onClick={(e) => e.stopPropagation()}
             >
+              {oauthFailureStep ? (
+                <div className="mb-1 font-medium">
+                  OAuth failed during {oauthFailureStep.title}
+                </div>
+              ) : null}
               <div className="break-all">
                 {isErrorExpanded
                   ? server.lastError

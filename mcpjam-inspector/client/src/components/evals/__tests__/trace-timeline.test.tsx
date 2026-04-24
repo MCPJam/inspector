@@ -11,6 +11,15 @@ vi.mock("posthog-js/react", () => ({
   usePostHog: () => ({ capture: mockCapture }),
 }));
 
+/** Label button for a trace row (avoids colliding with expand chevron buttons on LLM rows). */
+function getTraceRowLabelButtonContaining(text: string) {
+  const row = screen.getAllByTestId("trace-row").find((el) =>
+    el.textContent?.includes(text),
+  );
+  expect(row).toBeTruthy();
+  return within(row!).getByTestId("trace-row-label-button");
+}
+
 vi.mock("@/components/ui/resizable", () => ({
   ResizablePanelGroup: ({ children }: { children: ReactNode }) => (
     <div data-testid="resizable-panel-group">{children}</div>
@@ -826,7 +835,7 @@ describe("TraceTimeline detail pane", () => {
       highlightSourceIndices: [1, 2],
     });
 
-    await user.click(screen.getByRole("button", { name: /Agent/i }));
+    await user.click(getTraceRowLabelButtonContaining("Summary ready"));
     await user.click(screen.getByRole("button", { name: "Reveal in Chat" }));
     expect(onRevealInTranscript).toHaveBeenLastCalledWith({
       focusSourceIndex: 1,
@@ -873,7 +882,7 @@ describe("TraceTimeline detail pane", () => {
     await user.hover(promptRow!);
 
     const hoverContent = await screen.findByTestId("trace-row-hover-content");
-    expect(hoverContent).toHaveAttribute("data-side", "left");
+    expect(hoverContent).toHaveAttribute("data-placement", "bottom");
 
     const hoverCard = await screen.findByTestId("trace-row-hover-card");
     expect(within(hoverCard).getByText("Time")).toBeTruthy();
@@ -892,6 +901,49 @@ describe("TraceTimeline detail pane", () => {
     expect(
       within(hoverCard).getByTestId("trace-row-hover-output-tokens"),
     ).toHaveTextContent("38");
+    expect(
+      within(hoverCard).getByTestId("trace-row-hover-total-tokens"),
+    ).toHaveTextContent("261");
+  });
+
+  it("shows row hover metadata when a row control receives focus", async () => {
+    const traceStartedAtMs = Date.parse("2026-03-30T02:35:00.000Z");
+    const spans: EvalTraceSpan[] = [
+      {
+        id: "llm-1",
+        name: "Model response",
+        category: "llm",
+        startMs: 0,
+        endMs: 400,
+        promptIndex: 0,
+        modelId: "openai/gpt-5.4-mini",
+        inputTokens: 223,
+        outputTokens: 38,
+        totalTokens: 261,
+      },
+    ];
+
+    render(
+      <TraceTimeline
+        recordedSpans={spans}
+        transcriptMessages={[
+          { role: "user", content: "Draw me a simple flowchart" },
+        ]}
+        traceStartedAtMs={traceStartedAtMs}
+        traceEndedAtMs={traceStartedAtMs + 400}
+      />,
+    );
+
+    const promptRow = screen
+      .getAllByTestId("trace-row")
+      .find((el) =>
+        el.textContent?.includes('User: "Draw me a simple flowchart"'),
+      );
+    expect(promptRow).toBeTruthy();
+
+    fireEvent.focus(within(promptRow!).getByTestId("trace-row-label-button"));
+
+    const hoverCard = await screen.findByTestId("trace-row-hover-card");
     expect(
       within(hoverCard).getByTestId("trace-row-hover-total-tokens"),
     ).toHaveTextContent("261");
@@ -923,6 +975,9 @@ describe("TraceTimeline detail pane", () => {
     expect(toolRow).toBeTruthy();
 
     await user.hover(toolRow!);
+
+    const hoverContent = await screen.findByTestId("trace-row-hover-content");
+    expect(hoverContent).toHaveAttribute("data-placement", "top");
 
     const hoverCard = await screen.findByTestId("trace-row-hover-card");
     expect(
@@ -1119,7 +1174,7 @@ describe("TraceTimeline detail pane", () => {
       />,
     );
 
-    await user.click(screen.getByRole("button", { name: /Agent:/i }));
+    await user.click(getTraceRowLabelButtonContaining("Agent:"));
     const pane = screen.getByTestId("trace-detail-pane");
     const inputPreview = within(pane).getAllByTestId("json-editor")[0];
     const inputJson = inputPreview.textContent ?? "";
@@ -1155,7 +1210,7 @@ describe("TraceTimeline detail pane", () => {
       />,
     );
 
-    await user.click(screen.getByRole("button", { name: /Agent:/i }));
+    await user.click(getTraceRowLabelButtonContaining("Agent:"));
     const pane = screen.getByTestId("trace-detail-pane");
     const inputSection = within(pane)
       .getByText("Input")
@@ -1212,7 +1267,7 @@ describe("TraceTimeline detail pane", () => {
       />,
     );
 
-    await user.click(screen.getByRole("button", { name: /Agent:/i }));
+    await user.click(getTraceRowLabelButtonContaining("Agent:"));
     const pane = screen.getByTestId("trace-detail-pane");
     const inputPreview = within(pane).getAllByTestId("json-editor")[0];
     const inputJson = inputPreview.textContent ?? "";
@@ -1258,7 +1313,7 @@ describe("TraceTimeline detail pane", () => {
     );
 
     expect(
-      screen.getByRole("button", { name: /Agent · Calling read_me/i }),
+      getTraceRowLabelButtonContaining("Agent · Calling read_me"),
     ).toBeInTheDocument();
   });
 
@@ -1298,7 +1353,7 @@ describe("TraceTimeline detail pane", () => {
     );
 
     expect(
-      screen.getByRole("button", { name: /Agent: "I'll fetch that\."/i }),
+      getTraceRowLabelButtonContaining(`Agent: "I'll fetch that."`),
     ).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: /Calling read_me/i }),
@@ -1346,9 +1401,7 @@ describe("TraceTimeline detail pane", () => {
     );
 
     expect(
-      screen.getByRole("button", {
-        name: /Agent · Calling read_me, create_view/i,
-      }),
+      getTraceRowLabelButtonContaining("Agent · Calling read_me, create_view"),
     ).toBeInTheDocument();
   });
 

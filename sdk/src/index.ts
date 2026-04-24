@@ -73,6 +73,7 @@ export {
   scrubMetaAndStructuredContentFromToolResult,
 } from "./mcp-client-manager/index.js";
 export {
+  applyRuntimeClientCapabilities,
   MCP_UI_EXTENSION_ID,
   MCP_UI_RESOURCE_MIME_TYPE,
   getDefaultClientCapabilities,
@@ -203,6 +204,22 @@ export type {
   OAuthLoginDependencies,
   OAuthLoginResult,
 } from "./oauth-login.js";
+export { runOAuthStateMachine } from "./oauth/state-machines/runner.js";
+export type {
+  OAuthAuthorizationRequestResult,
+  OAuthStateMachineRunConfig,
+  OAuthStateMachineRunResult,
+} from "./oauth/state-machines/runner.js";
+export {
+  createOAuthTraceProjectionContext,
+  projectOAuthTraceSnapshot,
+} from "./oauth/state-machines/trace.js";
+export type {
+  OAuthTraceProjectionContext,
+  OAuthTraceSnapshot,
+  OAuthTraceStepSnapshot,
+  OAuthTraceStepStatus,
+} from "./oauth/state-machines/trace.js";
 
 // EvalAgent interface (for deterministic testing without concrete TestAgent)
 export type { EvalAgent, PromptOptions } from "./EvalAgent.js";

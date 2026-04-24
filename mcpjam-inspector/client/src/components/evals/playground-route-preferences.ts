@@ -26,7 +26,6 @@ export function getPlaygroundCasesRedirect(params: {
   exploreSuiteId: string | null;
   isSuiteDetailsLoading: boolean;
   isSuiteRunsLoading: boolean;
-  runsCount: number;
   testCaseIds: string[];
   runIds: string[];
   iterationRunIds: string[];
@@ -36,7 +35,6 @@ export function getPlaygroundCasesRedirect(params: {
     exploreSuiteId,
     isSuiteDetailsLoading,
     isSuiteRunsLoading,
-    runsCount,
     testCaseIds,
     runIds,
     iterationRunIds,
@@ -58,15 +56,9 @@ export function getPlaygroundCasesRedirect(params: {
   }
 
   if (route.type === "suite-overview") {
-    if (route.view === "test-cases") {
-      return null;
-    }
-
-    if (isSuiteRunsLoading) {
-      return null;
-    }
-
-    return runsCount === 0 ? fallbackRoute : null;
+    // All suite-overview views render the same unified dashboard; no need
+    // to rewrite between ?view=test-cases / ?view=executions / ?view=runs.
+    return null;
   }
 
   if (route.type === "test-detail" || route.type === "test-edit") {

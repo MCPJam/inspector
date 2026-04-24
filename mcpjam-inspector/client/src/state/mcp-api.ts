@@ -9,6 +9,8 @@ import {
 import { webPost } from "@/lib/apis/web/base";
 import { buildGuestServerRequest, isGuestMode } from "@/lib/apis/web/context";
 
+const HOSTED_VALIDATE_TIMEOUT_MS = 20_000;
+
 /**
  * Extracts an OAuth access token from an HttpServerConfig's Authorization header.
  * Returns undefined if the config isn't an HTTP config or has no Bearer token.
@@ -34,7 +36,7 @@ function normalizeHostedValidationError(error: unknown): string {
 
   if (
     error instanceof Error &&
-    error.message.startsWith("Hosted server not found for ")
+    error.message.startsWith("Hosted server not found")
   ) {
     return "Hosted server metadata is still syncing. Please retry.";
   }
@@ -59,16 +61,22 @@ async function safeValidateHostedServer(
         serverId,
       );
 
-      return await webPost<typeof request, HostedServerValidateResponse>(
-        "/api/web/servers/validate",
-        request,
+      return await withTimeout(
+        webPost<typeof request, HostedServerValidateResponse>(
+          "/api/web/servers/validate",
+          request,
+        ),
+        HOSTED_VALIDATE_TIMEOUT_MS,
       );
     }
 
-    return await validateHostedServer(
-      serverId,
-      extractOAuthToken(serverConfig),
-      serverConfig.capabilities as Record<string, unknown> | undefined,
+    return await withTimeout(
+      validateHostedServer(
+        serverId,
+        extractOAuthToken(serverConfig),
+        serverConfig.capabilities as Record<string, unknown> | undefined,
+      ),
+      HOSTED_VALIDATE_TIMEOUT_MS,
     );
   } catch (error) {
     return {
@@ -103,6 +111,32 @@ async function authFetchWithTimeout(
     }
     throw error;
   }
+}
+
+async function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+): Promise<T> {
+  return await new Promise<T>((resolve, reject) => {
+    const timeoutId = window.setTimeout(() => {
+      reject(
+        new Error(
+          `Connection attempt timed out after ${timeoutMs / 1000} seconds. The server may not exist or is not responding.`,
+        ),
+      );
+    }, timeoutMs);
+
+    promise.then(
+      (value) => {
+        window.clearTimeout(timeoutId);
+        resolve(value);
+      },
+      (error) => {
+        window.clearTimeout(timeoutId);
+        reject(error);
+      },
+    );
+  });
 }
 
 export async function testConnection(

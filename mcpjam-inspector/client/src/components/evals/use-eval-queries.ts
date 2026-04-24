@@ -5,6 +5,7 @@ import type {
   SuiteDetailsQueryResponse,
   EvalSuiteRun,
 } from "./types";
+import { getIterationRecencyTimestamp } from "./helpers";
 
 /**
  * Hook for fetching eval data (overview, suite details, and runs)
@@ -16,6 +17,7 @@ export function useEvalQueries({
   deletingSuiteId,
   workspaceId,
   organizationId,
+  isDirectGuest = false,
 }: {
   isAuthenticated: boolean;
   user: any;
@@ -23,45 +25,45 @@ export function useEvalQueries({
   deletingSuiteId: string | null;
   workspaceId: string | null;
   organizationId: string | null;
+  isDirectGuest?: boolean;
 }) {
-  // Overview query - list all suites
-  const enableOverviewQuery = isAuthenticated && !!user;
+  const hasActorAccess = isDirectGuest || (isAuthenticated && !!user);
+
+  const suiteOverviewArgs = useMemo(() => {
+    if (workspaceId) {
+      return { workspaceId } as const;
+    }
+    if (organizationId && !isDirectGuest) {
+      return { organizationId } as const;
+    }
+    return {} as const;
+  }, [isDirectGuest, organizationId, workspaceId]);
+
+  const enableOverviewQuery = hasActorAccess;
   const suiteOverview = useQuery(
     "testSuites:getTestSuitesOverview" as any,
-    enableOverviewQuery
-      ? ({
-          ...(workspaceId ? { workspaceId } : {}),
-          ...(!workspaceId && organizationId ? { organizationId } : {}),
-        } as any)
-      : "skip",
+    enableOverviewQuery ? (suiteOverviewArgs as any) : "skip"
   ) as EvalSuiteOverviewEntry[] | undefined;
 
-  // Suite details query - full suite data for selected suite
   const enableSuiteDetailsQuery =
-    isAuthenticated &&
-    !!user &&
-    !!selectedSuiteId &&
-    deletingSuiteId !== selectedSuiteId;
+    hasActorAccess && !!selectedSuiteId && deletingSuiteId !== selectedSuiteId;
   const suiteDetails = useQuery(
     "testSuites:getAllTestCasesAndIterationsBySuite" as any,
-    enableSuiteDetailsQuery ? ({ suiteId: selectedSuiteId } as any) : "skip",
+    enableSuiteDetailsQuery ? ({ suiteId: selectedSuiteId } as any) : "skip"
   ) as SuiteDetailsQueryResponse | undefined;
 
-  // Suite runs query - runs for selected suite
   const suiteRuns = useQuery(
     "testSuites:listTestSuiteRuns" as any,
     enableSuiteDetailsQuery
       ? ({ suiteId: selectedSuiteId, limit: 20 } as any)
-      : "skip",
+      : "skip"
   ) as EvalSuiteRun[] | undefined;
 
-  // Loading states
   const isOverviewLoading = enableOverviewQuery && suiteOverview === undefined;
   const isSuiteDetailsLoading =
     enableSuiteDetailsQuery && suiteDetails === undefined;
   const isSuiteRunsLoading = enableSuiteDetailsQuery && suiteRuns === undefined;
 
-  // Selected suite entry from overview
   const selectedSuiteEntry = useMemo(() => {
     if (!selectedSuiteId || !suiteOverview) return null;
     return (
@@ -71,18 +73,17 @@ export function useEvalQueries({
 
   const selectedSuite = selectedSuiteEntry?.suite ?? null;
 
-  // Sorted iterations by date
   const sortedIterations = useMemo(() => {
     if (!suiteDetails) return [];
     return [...suiteDetails.iterations].sort(
-      (a, b) => (b.startedAt || b.createdAt) - (a.startedAt || a.createdAt),
+      (a, b) =>
+        getIterationRecencyTimestamp(b) - getIterationRecencyTimestamp(a),
     );
   }, [suiteDetails]);
 
-  // Runs array
   const runsForSelectedSuite = useMemo(
     () => (suiteRuns ? [...suiteRuns] : []),
-    [suiteRuns],
+    [suiteRuns]
   );
 
   const activeIterations = useMemo(() => {
@@ -91,11 +92,10 @@ export function useEvalQueries({
     const runIds = new Set(suiteRuns.map((run) => run._id));
 
     return sortedIterations.filter(
-      (iteration) => !iteration.suiteRunId || runIds.has(iteration.suiteRunId),
+      (iteration) => !iteration.suiteRunId || runIds.has(iteration.suiteRunId)
     );
   }, [sortedIterations, suiteRuns]);
 
-  // Sorted suites for sidebar
   const sortedSuites = useMemo(() => {
     if (!suiteOverview) return [];
     return [...suiteOverview].sort((a, b) => {
@@ -116,22 +116,18 @@ export function useEvalQueries({
   }, [suiteOverview]);
 
   return {
-    // Raw data
     suiteOverview,
     suiteDetails,
     suiteRuns,
-    // Computed data
     selectedSuiteEntry,
     selectedSuite,
     sortedIterations,
     runsForSelectedSuite,
     activeIterations,
     sortedSuites,
-    // Loading states
     isOverviewLoading,
     isSuiteDetailsLoading,
     isSuiteRunsLoading,
-    // Query enabled flags
     enableOverviewQuery,
     enableSuiteDetailsQuery,
   };

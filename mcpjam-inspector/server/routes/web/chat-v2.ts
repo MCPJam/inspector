@@ -12,7 +12,10 @@ import {
 import { WEB_STREAM_TIMEOUT_MS } from "../../config.js";
 import { prepareChatV2 } from "../../utils/chat-v2-orchestration.js";
 import { validateUrl, OAuthProxyError } from "../../utils/oauth-proxy.js";
-import { persistChatSessionToConvex } from "../../utils/chat-ingestion.js";
+import {
+  persistChatSessionToConvex,
+  pickEnrichmentHeaders,
+} from "../../utils/chat-ingestion.js";
 import {
   hostedChatSchema,
   guestServerInputSchema,
@@ -230,6 +233,7 @@ chatV2.post("/", async (c) => {
                     selectedServers: hasServer ? ["__guest__"] : [],
                   },
                   turnTrace,
+                  forwardHeaders: pickEnrichmentHeaders(c.req.raw.headers),
                 });
               }
             : undefined,
@@ -248,6 +252,7 @@ chatV2.post("/", async (c) => {
     const body = rawBody as unknown as ChatV2Request & {
       workspaceId: string;
       selectedServerIds: string[];
+      selectedServerNames?: string[];
       shareToken?: string;
       chatboxToken?: string;
       accessScope?: "workspace_member" | "chat_v2";
@@ -261,6 +266,7 @@ chatV2.post("/", async (c) => {
       temperature,
       requireToolApproval,
       selectedServerIds,
+      selectedServerNames,
       shareToken,
       chatboxToken,
       surface,
@@ -295,6 +301,7 @@ chatV2.post("/", async (c) => {
         shareToken,
         chatboxToken,
         rpcLogger: rpcCollector.rpcLogger,
+        serverNames: selectedServerNames,
       },
     );
     oauthServerUrls = urls;
@@ -347,6 +354,8 @@ chatV2.post("/", async (c) => {
         temperature: resolvedTemperature,
         tools: allTools as ToolSet,
         authHeader: c.req.header("authorization"),
+        chatboxToken,
+        workspaceId: hostedBody.workspaceId,
         mcpClientManager: manager,
         selectedServers: selectedServerIds,
         requireToolApproval,
@@ -380,11 +389,16 @@ chatV2.post("/", async (c) => {
                         systemPrompt,
                         temperature,
                         requireToolApproval,
-                        selectedServers: selectedServerIds,
+                        selectedServers:
+                          Array.isArray(selectedServerNames) &&
+                          selectedServerNames.length === selectedServerIds.length
+                            ? selectedServerNames
+                            : selectedServerIds,
                       },
                     }
                   : {}),
                 turnTrace,
+                forwardHeaders: pickEnrichmentHeaders(c.req.raw.headers),
               });
             }
           : undefined,

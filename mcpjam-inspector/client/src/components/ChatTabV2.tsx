@@ -197,6 +197,8 @@ export function ChatTabV2({
     useJsonRpcPanelVisibility();
   const posthog = usePostHog();
   const chatHistoryRailEnabled = useFeatureFlagEnabled("chat-history-rail");
+  const sharedThreadsEnabled =
+    useFeatureFlagEnabled("shared-threads-enabled") === true;
 
   // Local state for ChatTabV2-specific features
   const [input, setInput] = useState("");
@@ -452,6 +454,29 @@ export function ChatTabV2({
   useEffect(() => {
     hasUnsavedDraftRef.current = hasUnsavedDraft;
   }, [hasUnsavedDraft]);
+
+  const handleOAuthRequired = useCallback(
+    (details?: HostedOAuthRequiredDetails) => {
+      const resolvedServerName =
+        typeof details?.serverName === "string" && details.serverName.trim()
+          ? details.serverName.trim()
+          : selectedConnectedServerNames.length === 1
+            ? selectedConnectedServerNames[0]
+            : null;
+
+      if (!onOAuthRequired) {
+        return;
+      }
+
+      onOAuthRequired(
+        resolvedServerName &&
+          resolvedServerName !== details?.serverName
+          ? { ...details, serverName: resolvedServerName }
+          : details,
+      );
+    },
+    [onOAuthRequired, selectedConnectedServerNames],
+  );
 
   useEffect(() => {
     activeHistorySessionIdRef.current = activeHistorySessionId;
@@ -1684,7 +1709,7 @@ export function ChatTabV2({
     try {
       const parsed = JSON.parse(msg);
       if (parsed?.details?.oauthRequired) {
-        onOAuthRequired({
+        handleOAuthRequired({
           serverUrl:
             typeof parsed.details.serverUrl === "string"
               ? parsed.details.serverUrl
@@ -1709,9 +1734,9 @@ export function ChatTabV2({
       msg.includes("requires OAuth authentication") ||
       (msg.includes("Authentication failed") && msg.includes("invalid_token"));
     if (isOAuthError) {
-      onOAuthRequired();
+      handleOAuthRequired();
     }
-  }, [error, onOAuthRequired]);
+  }, [error, handleOAuthRequired, onOAuthRequired]);
 
   const handleSignUp = () => {
     posthog.capture("sign_up_button_clicked", {
@@ -1924,6 +1949,7 @@ export function ChatTabV2({
                 hostStyle={hostStyle}
                 isAuthenticated={isConvexAuthenticated}
                 isStreaming={historyRailStreaming}
+                sharedThreadsEnabled={sharedThreadsEnabled}
                 workspaceId={effectiveHostedWorkspaceId}
                 enabled={isSessionBootstrapComplete}
                 refreshSignal={historyRefreshSignal}
@@ -1940,7 +1966,7 @@ export function ChatTabV2({
           <CollapsedPanelStrip
             side="left"
             onOpen={() => setIsHistorySidebarVisible(true)}
-            tooltipText="Show threads"
+            tooltipText="Show sessions"
           />
         ) : null}
         <ResizablePanel
@@ -1975,7 +2001,6 @@ export function ChatTabV2({
                 {showTopTraceViewTabs ? (
                   <ChatTraceViewModeHeaderBar
                     mode={activeTraceViewMode}
-                    activeVariant="sidebar"
                     onModeChange={(mode) => {
                       if (mode === "tools") {
                         return;
@@ -2153,7 +2178,7 @@ export function ChatTabV2({
                           hostedShareToken={hostedShareToken}
                           hostedChatboxToken={hostedChatboxToken}
                           hostedChatboxSurface={hostedChatboxSurface}
-                          onOAuthRequired={onOAuthRequired}
+                          onOAuthRequired={handleOAuthRequired}
                           onSummaryChange={handleMultiModelSummaryChange}
                           onHasMessagesChange={
                             handleMultiModelHasMessagesChange
@@ -2189,7 +2214,6 @@ export function ChatTabV2({
                 {showTopTraceViewTabs ? (
                   <ChatTraceViewModeHeaderBar
                     mode={activeTraceViewMode}
-                    activeVariant="sidebar"
                     onModeChange={(mode) => {
                       if (mode === "tools") {
                         return;

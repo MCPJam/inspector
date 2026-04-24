@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
-import { GitBranch, Loader2, Play } from "lucide-react";
+import { GitBranch, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import {
   Breadcrumb,
@@ -57,11 +57,19 @@ import { SdkEvalQuickstart } from "./evals/sdk-eval-quickstart";
 import { TraceViewer } from "./evals/trace-viewer";
 import { isExploreSuite } from "./evals/constants";
 import { HOSTED_MODE } from "@/lib/config";
+import { useWorkspaceServers } from "@/hooks/useViews";
+import type { EnsureServersReadyResult } from "@/hooks/use-app-state";
 interface CiEvalsTabProps {
   convexWorkspaceId: string | null;
+  ensureServersReady?: (
+    serverNames: string[],
+  ) => Promise<EnsureServersReadyResult>;
 }
 
-export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
+export function CiEvalsTab({
+  convexWorkspaceId,
+  ensureServersReady,
+}: CiEvalsTabProps) {
   const { isAuthenticated, isLoading } = useConvexAuth();
   const { user } = useAuth();
   const route = useCiEvalsRoute();
@@ -96,6 +104,11 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
     canDeleteRuns,
     availableModels,
   } = useEvalTabContext({
+    isAuthenticated,
+    workspaceId: convexWorkspaceId,
+  });
+
+  const { servers: ciWorkspaceServers = [] } = useWorkspaceServers({
     isAuthenticated,
     workspaceId: convexWorkspaceId,
   });
@@ -266,8 +279,10 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
     selectedSuiteId,
     selectedTestId,
     connectedServerNames,
+    ensureServersReady,
     latestRunBySuiteId,
     evalsNavigationContext: "ci-evals",
+    workspaceServers: ciWorkspaceServers,
   });
 
   const suiteAggregate = useMemo(() => {
@@ -601,15 +616,12 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
                         />
                         <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/60 via-black/30 to-black/20 group-hover:from-black/65 group-hover:via-black/35 group-hover:to-black/25 transition-colors" />
                         <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-                          <div className="rounded-full bg-white/90 group-hover:bg-white p-4 shadow-lg transition-colors">
-                            <Play className="h-6 w-6 text-black fill-black" />
+                          <div className="rounded-md border border-white/20 bg-white/95 px-4 py-2.5 text-sm font-semibold text-foreground shadow-lg transition-colors group-hover:bg-white">
+                            View sample trace
                           </div>
                         </div>
-                        <div className="pointer-events-none absolute bottom-3 left-4">
-                          <p className="text-white text-sm font-semibold drop-shadow-md">
-                            View sample trace
-                          </p>
-                          <p className="text-white/70 text-xs">
+                        <div className="pointer-events-none absolute bottom-3 left-4 max-w-[min(100%,18rem)]">
+                          <p className="text-white/80 text-xs leading-snug">
                             See what a completed eval looks like before you
                             start.
                           </p>

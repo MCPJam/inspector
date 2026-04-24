@@ -1,36 +1,72 @@
+import { useMemo } from "react";
 import { useMutation } from "convex/react";
 
 /**
  * Hook for all eval mutations (delete, duplicate, cancel, etc.)
  */
-export function useEvalMutations() {
-  const deleteSuiteMutation = useMutation("testSuites:deleteTestSuite" as any);
-  const deleteRunMutation = useMutation("testSuites:deleteTestSuiteRun" as any);
-  const cancelRunMutation = useMutation("testSuites:cancelTestSuiteRun" as any);
-  const duplicateSuiteMutation = useMutation(
-    "testSuites:duplicateTestSuite" as any,
+export function useEvalMutations({
+  isDirectGuest = false,
+}: { isDirectGuest?: boolean } = {}) {
+  const convexDeleteSuite = useMutation("testSuites:deleteTestSuite" as any);
+  const convexDeleteRun = useMutation("testSuites:deleteTestSuiteRun" as any);
+  const convexCancelRun = useMutation("testSuites:cancelTestSuiteRun" as any);
+  const convexDuplicateSuite = useMutation(
+    "testSuites:duplicateTestSuite" as any
   );
-  const createTestCaseMutation = useMutation(
-    "testSuites:createTestCase" as any,
+  const convexCreateTestCase = useMutation("testSuites:createTestCase" as any);
+  const convexDeleteTestCase = useMutation("testSuites:deleteTestCase" as any);
+  const convexDuplicateTestCase = useMutation(
+    "testSuites:duplicateTestCase" as any
   );
-  const deleteTestCaseMutation = useMutation(
-    "testSuites:deleteTestCase" as any,
+  const convexCreateTestSuite = useMutation(
+    "testSuites:createTestSuite" as any
   );
-  const duplicateTestCaseMutation = useMutation(
-    "testSuites:duplicateTestCase" as any,
-  );
-  const createTestSuiteMutation = useMutation(
-    "testSuites:createTestSuite" as any,
+  const updateTestSuiteMutation = useMutation(
+    "testSuites:updateTestSuite" as any,
   );
 
-  return {
-    deleteSuiteMutation,
-    deleteRunMutation,
-    cancelRunMutation,
-    duplicateSuiteMutation,
-    createTestCaseMutation,
-    deleteTestCaseMutation,
-    duplicateTestCaseMutation,
-    createTestSuiteMutation,
-  };
+  const mutations = useMemo(() => {
+    if (!isDirectGuest) {
+      return {
+        deleteSuiteMutation: convexDeleteSuite,
+        deleteRunMutation: convexDeleteRun,
+        cancelRunMutation: convexCancelRun,
+        duplicateSuiteMutation: convexDuplicateSuite,
+        createTestCaseMutation: convexCreateTestCase,
+        deleteTestCaseMutation: convexDeleteTestCase,
+        duplicateTestCaseMutation: convexDuplicateTestCase,
+        createTestSuiteMutation: convexCreateTestSuite,
+        updateTestSuiteMutation,
+      };
+    }
+
+    const guestUnsupported = async () => {
+      throw new Error("Not available for guests yet. Sign in to use this.");
+    };
+
+    return {
+      deleteSuiteMutation: convexDeleteSuite,
+      deleteRunMutation: guestUnsupported,
+      cancelRunMutation: guestUnsupported,
+      duplicateSuiteMutation: guestUnsupported,
+      createTestCaseMutation: convexCreateTestCase,
+      deleteTestCaseMutation: convexDeleteTestCase,
+      duplicateTestCaseMutation: guestUnsupported,
+      createTestSuiteMutation: convexCreateTestSuite,
+      updateTestSuiteMutation,
+    };
+  }, [
+    isDirectGuest,
+    convexDeleteSuite,
+    convexDeleteRun,
+    convexCancelRun,
+    convexDuplicateSuite,
+    convexCreateTestCase,
+    convexDeleteTestCase,
+    convexDuplicateTestCase,
+    convexCreateTestSuite,
+    updateTestSuiteMutation,
+  ]);
+
+  return mutations;
 }

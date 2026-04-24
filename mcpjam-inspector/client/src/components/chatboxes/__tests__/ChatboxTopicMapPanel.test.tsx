@@ -1,0 +1,448 @@
+import React from "react";
+import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  ChatboxTopicMapPanel,
+  topicMapNodeHoverLabel,
+} from "../ChatboxTopicMapPanel";
+import type { UsageFilterState } from "@/hooks/chatbox-usage-filters";
+
+const { mockUseChatboxTopicMap } = vi.hoisted(() => ({
+  mockUseChatboxTopicMap: vi.fn(),
+}));
+
+vi.mock("react-force-graph-2d", async () => {
+  const React = await import("react");
+  return {
+    default: React.forwardRef(function MockForceGraph2D(
+      props: {
+        graphData?: { nodes?: Array<{ id: string }> };
+        onNodeClick?: (node: { id: string }) => void;
+        onBackgroundClick?: () => void;
+      },
+      ref,
+    ) {
+      React.useImperativeHandle(ref, () => ({
+        zoomToFit: vi.fn(),
+      }));
+      return (
+        <div data-testid="force-graph">
+          <button
+            type="button"
+            data-testid="force-graph-background"
+            onClick={() => props.onBackgroundClick?.()}
+          >
+            Graph background
+          </button>
+          {(props.graphData?.nodes ?? []).map((node) => (
+            <button
+              key={node.id}
+              type="button"
+              onClick={() => props.onNodeClick?.(node)}
+            >
+              Graph node {node.id}
+            </button>
+          ))}
+        </div>
+      );
+    }),
+  };
+});
+
+vi.mock("@/hooks/useChatboxTopicMap", () => ({
+  useChatboxTopicMap: (...args: unknown[]) => mockUseChatboxTopicMap(...args),
+}));
+
+const EMPTY_FILTER: UsageFilterState = {
+  preset: "all",
+  chips: [],
+};
+
+const SNAPSHOT = {
+  version: 1,
+  chatboxId: "chatbox-1",
+  runId: "run-1",
+  generatedAt: Date.now(),
+  isSampled: false,
+  stats: {
+    nodeCount: 2,
+    edgeCount: 1,
+    clusterCount: 2,
+    mappedSessionCount: 2,
+    unmappedSessionCount: 1,
+  },
+  clusters: [
+    {
+      clusterId: "cluster-a",
+      label: "Password resets",
+      summary: "Reset and account recovery questions.",
+      keywords: ["password", "reset"],
+      memberCount: 12,
+      colorIndex: 0,
+    },
+    {
+      clusterId: "cluster-b",
+      label: "Billing issues",
+      summary: "Invoice and refund help.",
+      keywords: ["billing", "refund"],
+      memberCount: 8,
+      colorIndex: 1,
+    },
+  ],
+  nodes: [
+    {
+      sessionId: "session-a",
+      x: 0.1,
+      y: 0.2,
+      degree: 1,
+      clusterId: "cluster-a",
+      clusterLabel: "Password resets",
+      semanticTitle: "Password reset",
+      semanticPreview: "User needs to reset a forgotten password.",
+      messageCount: 6,
+      startedAt: Date.UTC(2026, 2, 20),
+      lastActivityAt: Date.now() - 5 * 60 * 1000,
+      modelId: "openai/gpt-4o-mini",
+    },
+    {
+      sessionId: "session-b",
+      x: -0.1,
+      y: -0.2,
+      degree: 1,
+      clusterId: "cluster-b",
+      clusterLabel: "Billing issues",
+      semanticTitle: "Refund request",
+      semanticPreview: "Refund request after duplicate charge.",
+      messageCount: 4,
+      startedAt: Date.UTC(2026, 2, 22),
+      lastActivityAt: Date.now() - 2 * 60 * 1000,
+      modelId: "openai/gpt-4o-mini",
+    },
+  ],
+  edges: [
+    {
+      source: "session-a",
+      target: "session-b",
+      score: 0.82,
+    },
+  ],
+};
+
+function createDefaultChatboxTopicMapHookValue() {
+  return {
+    latestRun: {
+      _id: "run-1",
+      status: "done" as const,
+      startedAt: Date.now() - 10_000,
+      finishedAt: Date.now() - 5_000,
+      sessionCount: 2,
+      clusterCount: 2,
+      errorMessage: null,
+      model: "openai/gpt-4o-mini",
+      topicMapVersion: 1,
+      edgeCount: 1,
+      sampleNodeCount: 2,
+      unmappedSessionCount: 1,
+      isSampled: false,
+      topicMapReady: true,
+      isStale: false,
+    },
+    snapshot: SNAPSHOT,
+    snapshotMetadata: {
+      runId: "run-1",
+      topicMapBlobUrl: "https://storage.example.com/topic-map.json",
+      topicMapVersion: 1,
+      edgeCount: 1,
+      sampleNodeCount: 2,
+      unmappedSessionCount: 1,
+      isSampled: false,
+      sessionCount: 2,
+      clusterCount: 2,
+    },
+    clusters: [
+      {
+        _id: "cluster-row-a",
+        label: "Password resets",
+        summary: "Reset and account recovery questions.",
+        keywords: ["password", "reset"],
+        memberCount: 12,
+        createdAt: Date.now(),
+      },
+      {
+        _id: "cluster-row-b",
+        label: "Billing issues",
+        summary: "Invoice and refund help.",
+        keywords: ["billing", "refund"],
+        memberCount: 8,
+        createdAt: Date.now(),
+      },
+    ],
+    snapshotError: null,
+    isLoading: false,
+    metadata: null,
+  };
+}
+
+beforeEach(() => {
+  mockUseChatboxTopicMap.mockReset();
+  mockUseChatboxTopicMap.mockReturnValue(createDefaultChatboxTopicMapHookValue());
+});
+
+describe("topicMapNodeHoverLabel", () => {
+  it("prefers the cached semantic title when it exists", () => {
+    expect(
+      topicMapNodeHoverLabel({
+        semanticTitle: "Password reset",
+        semanticPreview: "User needs to reset a forgotten password.",
+        sessionId: "session-a",
+      }),
+    ).toBe("Password reset");
+  });
+
+  it("extracts the first topical word from the session summary, skipping articles and generic chat framing", () => {
+    expect(
+      topicMapNodeHoverLabel({
+        semanticPreview:
+          "The user requested a drawing of a dog, prompting the assistant to utilize a drawing tool.",
+        sessionId: "session-a",
+      }),
+    ).toBe("drawing");
+  });
+
+  it("strips surrounding punctuation from the chosen word", () => {
+    expect(
+      topicMapNodeHoverLabel({
+        semanticPreview: "User needs: billing help, urgently.",
+        sessionId: "session-a",
+      }),
+    ).toBe("billing");
+  });
+
+  it("prefers sibling-distinctive topics over shared cluster framing", () => {
+    // Two sessions in the same "Drawing requests" cluster should now surface
+    // their own subjects (dog vs cat) instead of both collapsing to the
+    // shared cluster keyword.
+    const dogNode = {
+      semanticPreview: "User asked for a drawing of a dog in watercolor.",
+      sessionId: "session-dog",
+    };
+    const catNode = {
+      semanticPreview: "User requested a pencil sketch of a cat on a couch.",
+      sessionId: "session-cat",
+    };
+    expect(topicMapNodeHoverLabel(dogNode)).not.toBe(
+      topicMapNodeHoverLabel(catNode),
+    );
+  });
+
+  it("falls back to the session id when the preview has no printable content", () => {
+    expect(
+      topicMapNodeHoverLabel({
+        semanticPreview: "   ",
+        sessionId: "sess-xyz",
+      }),
+    ).toBe("sess-xyz");
+  });
+});
+
+describe("ChatboxTopicMapPanel", () => {
+  it("subscribes to ResizeObserver only after the graph pane mounts (post-loading)", () => {
+    const observed: Element[] = [];
+    const originalResizeObserver = globalThis.ResizeObserver;
+    globalThis.ResizeObserver = class ResizeObserverMock {
+      constructor(_cb: ResizeObserverCallback) {}
+      observe(target: Element) {
+        observed.push(target);
+      }
+      disconnect() {}
+    } as unknown as typeof ResizeObserver;
+
+    try {
+      mockUseChatboxTopicMap.mockReturnValue({
+        ...createDefaultChatboxTopicMapHookValue(),
+        snapshot: null,
+        isLoading: true,
+      });
+
+      const panelProps = {
+        chatboxId: "chatbox-1",
+        filter: EMPTY_FILTER,
+        onToggleChip: vi.fn(),
+        onClearChip: vi.fn(),
+        onRebuild: vi.fn(),
+      };
+
+      const { rerender } = render(<ChatboxTopicMapPanel {...panelProps} />);
+      expect(observed).toHaveLength(0);
+
+      mockUseChatboxTopicMap.mockReturnValue(createDefaultChatboxTopicMapHookValue());
+      rerender(<ChatboxTopicMapPanel {...panelProps} />);
+      expect(observed.length).toBeGreaterThan(0);
+    } finally {
+      globalThis.ResizeObserver = originalResizeObserver;
+    }
+  });
+
+  it("renders cluster list with summaries in the sidebar", () => {
+    render(
+      <ChatboxTopicMapPanel
+        chatboxId="chatbox-1"
+        filter={EMPTY_FILTER}
+        onToggleChip={vi.fn()}
+        onClearChip={vi.fn()}
+        onRebuild={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByText("Historical Topic Map")).not.toBeInTheDocument();
+    expect(screen.queryByText("2 mapped sessions")).not.toBeInTheDocument();
+    expect(screen.getByText("Password resets")).toBeInTheDocument();
+    expect(
+      screen.getByText("Reset and account recovery questions."),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Billing issues")).toBeInTheDocument();
+    expect(screen.getByText("Invoice and refund help.")).toBeInTheDocument();
+  });
+
+  it("renders Fit view and rebuild controls overlayed on the canvas", () => {
+    render(
+      <ChatboxTopicMapPanel
+        chatboxId="chatbox-1"
+        filter={EMPTY_FILTER}
+        onToggleChip={vi.fn()}
+        onClearChip={vi.fn()}
+        onRebuild={vi.fn()}
+      />,
+    );
+
+    const fitView = screen.getByRole("button", { name: /fit view/i });
+    const rebuild = screen.getByRole("button", { name: /rebuild clusters/i });
+    expect(fitView.compareDocumentPosition(rebuild)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+  });
+
+  it("shows rebuild status in the header while a run is active", () => {
+    mockUseChatboxTopicMap.mockReturnValue({
+      ...createDefaultChatboxTopicMapHookValue(),
+      latestRun: {
+        _id: "run-2",
+        status: "running" as const,
+        startedAt: Date.now(),
+        finishedAt: null,
+        sessionCount: null,
+        clusterCount: null,
+        errorMessage: null,
+        model: "openai/gpt-4o-mini",
+        topicMapVersion: 1,
+        edgeCount: null,
+        sampleNodeCount: null,
+        unmappedSessionCount: null,
+        isSampled: false,
+        topicMapReady: false,
+        isStale: false,
+      },
+    });
+
+    render(
+      <ChatboxTopicMapPanel
+        chatboxId="chatbox-1"
+        filter={EMPTY_FILTER}
+        onToggleChip={vi.fn()}
+        onClearChip={vi.fn()}
+        onRebuild={vi.fn()}
+      />,
+    );
+
+    expect(
+      screen.getByText("Updating historical topic map"),
+    ).toBeInTheDocument();
+  });
+
+  it("lets operators toggle a community chip from the sidebar", async () => {
+    const user = userEvent.setup();
+    const onToggleChip = vi.fn();
+
+    render(
+      <ChatboxTopicMapPanel
+        chatboxId="chatbox-1"
+        filter={EMPTY_FILTER}
+        onToggleChip={onToggleChip}
+        onClearChip={vi.fn()}
+        onRebuild={vi.fn()}
+      />,
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: /Billing issues Invoice and refund help/i }),
+    );
+
+    expect(onToggleChip).toHaveBeenCalledWith({
+      kind: "cluster",
+      clusterId: "cluster-b",
+      label: "Billing issues",
+    });
+  });
+
+  it("renders cluster keywords as static chips without a popover", () => {
+    render(
+      <ChatboxTopicMapPanel
+        chatboxId="chatbox-1"
+        filter={EMPTY_FILTER}
+        onToggleChip={vi.fn()}
+        onClearChip={vi.fn()}
+        onRebuild={vi.fn()}
+      />,
+    );
+
+    const keywordChip = screen.getByText("password");
+    expect(keywordChip.tagName).toBe("SPAN");
+    expect(
+      screen.queryByRole("button", { name: "password" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("highlights active cluster selection in the list", () => {
+    render(
+      <ChatboxTopicMapPanel
+        chatboxId="chatbox-1"
+        filter={{
+          preset: "all",
+          chips: [{ kind: "cluster", clusterId: "cluster-a", label: "Password resets" }],
+        }}
+        onToggleChip={vi.fn()}
+        onClearChip={vi.fn()}
+        onRebuild={vi.fn()}
+      />,
+    );
+
+    const clusterButton = screen.getByRole("button", {
+      name: /Password resets Reset and account recovery questions/i,
+    });
+    expect(clusterButton.parentElement).toHaveClass("border-primary/40");
+  });
+
+  it("clears node selection when the graph background is clicked", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <ChatboxTopicMapPanel
+        chatboxId="chatbox-1"
+        filter={EMPTY_FILTER}
+        onToggleChip={vi.fn()}
+        onClearChip={vi.fn()}
+        onRebuild={vi.fn()}
+      />,
+    );
+
+    const graphHost = screen.getByTestId("force-graph").parentElement;
+    expect(graphHost).toHaveAttribute("data-selected-session", "session-a");
+
+    await user.click(screen.getByRole("button", { name: /graph node session-b/i }));
+    expect(graphHost).toHaveAttribute("data-selected-session", "session-b");
+
+    await user.click(screen.getByTestId("force-graph-background"));
+    expect(graphHost).toHaveAttribute("data-selected-session", "");
+  });
+});

@@ -20,10 +20,14 @@ import {
 import { Button } from "@mcpjam/design-system/button";
 import { ShareUsageThreadList } from "@/components/connection/share-usage/ShareUsageThreadList";
 import { ShareUsageThreadDetail } from "@/components/connection/share-usage/ShareUsageThreadDetail";
-import { UsageInsightsStrip } from "@/components/shared/usage-insights/UsageInsightsStrip";
+import { ChatboxTopicMapPanel } from "@/components/chatboxes/ChatboxTopicMapPanel";
+
+export type ChatboxUsagePanelSection = "sessions" | "insights";
 
 interface ChatboxUsagePanelProps {
   chatbox: ChatboxSettings;
+  /** Sessions: thread list and detail. Insights: usage dashboards only. */
+  section: ChatboxUsagePanelSection;
 }
 
 const PRESET_OPTIONS: { id: UsageFilterPreset; label: string }[] = [
@@ -33,7 +37,10 @@ const PRESET_OPTIONS: { id: UsageFilterPreset; label: string }[] = [
   { id: "no_feedback", label: "No feedback" },
 ];
 
-export function ChatboxUsagePanel({ chatbox }: ChatboxUsagePanelProps) {
+export function ChatboxUsagePanel({
+  chatbox,
+  section,
+}: ChatboxUsagePanelProps) {
   // Scope selection to the current chatbox so switching chatboxes can't briefly
   // render a detail pane for a thread belonging to the previous chatbox.
   const [selection, setSelection] = useState<{
@@ -60,10 +67,11 @@ export function ChatboxUsagePanel({ chatbox }: ChatboxUsagePanelProps) {
     [chatbox.chatboxId],
   );
 
-  const { threads, breakdown, rebuild } = useUsageInsights({
+  const { threads, rebuild } = useUsageInsights({
     sourceType: "chatbox",
     sourceId: chatbox.chatboxId,
     filters: filter,
+    enabled: section === "sessions",
   });
 
   const sortedThreads = useMemo(() => {
@@ -147,17 +155,23 @@ export function ChatboxUsagePanel({ chatbox }: ChatboxUsagePanelProps) {
     }
   }, [rebuild, chatbox.chatboxId]);
 
+  if (section === "insights") {
+    return (
+      <div className="flex h-full min-h-0 flex-col overflow-hidden">
+        <ChatboxTopicMapPanel
+          chatboxId={chatbox.chatboxId}
+          filter={filter}
+          onToggleChip={handleToggleChip}
+          onClearChip={handleClearChip}
+          onRebuild={handleRebuild}
+          rebuildBusy={rebuildBusy}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="flex h-full flex-col">
-      <UsageInsightsStrip
-        breakdown={breakdown}
-        filter={filter}
-        onToggleChip={handleToggleChip}
-        onClearChip={handleClearChip}
-        onRebuild={handleRebuild}
-        rebuildBusy={rebuildBusy}
-      />
-
       <div className="flex flex-wrap gap-2 border-b px-5 py-3">
         {PRESET_OPTIONS.map(({ id, label }) => (
           <Button

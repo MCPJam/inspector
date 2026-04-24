@@ -8,7 +8,12 @@ import {
 import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, describe, expect, it } from "vitest";
-import { getInspectorEnvFileNames, loadInspectorEnv } from "../env.js";
+import {
+  getInspectorClientRuntimeConfig,
+  getInspectorClientRuntimeConfigScript,
+  getInspectorEnvFileNames,
+  loadInspectorEnv,
+} from "../env.js";
 
 const ORIGINAL_CONVEX_HTTP_URL = process.env.CONVEX_HTTP_URL;
 const ORIGINAL_PRIORITY_TEST = process.env.MCPJAM_ENV_PRIORITY_TEST;
@@ -78,5 +83,22 @@ describe("env loader", () => {
       process.chdir(originalCwd);
       rmSync(tempRoot, { force: true, recursive: true });
     }
+  });
+
+  it("derives hosted client runtime config from CONVEX_HTTP_URL", () => {
+    process.env.CONVEX_HTTP_URL = "https://demo-deployment.convex.site";
+
+    expect(getInspectorClientRuntimeConfig()).toEqual({
+      convexUrl: "https://demo-deployment.convex.cloud",
+      convexSiteUrl: "https://demo-deployment.convex.site",
+    });
+  });
+
+  it("serializes hosted client runtime config for html injection", () => {
+    process.env.CONVEX_HTTP_URL = "https://demo-deployment.convex.site";
+
+    expect(getInspectorClientRuntimeConfigScript()).toBe(
+      '<script>window.__MCP_RUNTIME_CONFIG__={"convexUrl":"https://demo-deployment.convex.cloud","convexSiteUrl":"https://demo-deployment.convex.site"};</script>',
+    );
   });
 });

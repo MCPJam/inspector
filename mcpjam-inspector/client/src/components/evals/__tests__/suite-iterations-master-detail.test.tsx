@@ -28,9 +28,11 @@ vi.mock("../use-suite-data", () => ({
 }));
 
 vi.mock("../suite-header", () => ({
-  SuiteHeader: (props: unknown) => {
+  SuiteHeader: (props: any) => {
     mocks.suiteHeader(props);
-    return <div data-testid="suite-header" />;
+    return (
+      <div data-testid="suite-header">{props.overviewModeSelector}</div>
+    );
   },
 }));
 

@@ -3,6 +3,7 @@ import {
   DEFAULT_NEGATIVE_TEST_MODE,
   type NegativeTestMode,
 } from "@/shared/xaa.js";
+import type { XAACompatibilityReport } from "./capability-preflight";
 
 export type XAAFlowStep =
   | "idle"
@@ -112,6 +113,7 @@ export interface XAAFlowState {
   httpHistory?: Array<XAAHttpHistoryEntry>;
   infoLogs?: Array<XAAInfoLogEntry>;
   error?: string;
+  compatibilityReport?: XAACompatibilityReport;
 }
 
 export interface XAARequestResult {
@@ -182,6 +184,7 @@ export const EMPTY_XAA_FLOW_STATE: XAAFlowState = {
   httpHistory: [],
   infoLogs: [],
   error: undefined,
+  compatibilityReport: undefined,
 };
 
 export function createInitialXAAFlowState(
