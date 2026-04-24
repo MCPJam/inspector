@@ -214,8 +214,8 @@ export function useServerForm(
   };
 
   const validateClientSecret = (value: string): string | null => {
-    if (value && value.length < 8) {
-      return "Client Secret must be at least 8 characters if provided";
+    if (value && value.length < 1) {
+      return "Client Secret cannot be empty if provided";
     }
     return null;
   };
