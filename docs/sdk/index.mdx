@@ -24,6 +24,14 @@ The [**@mcpjam/sdk**](https://www.npmjs.com/package/@mcpjam/sdk) is a TypeScript
   </Card>
 </CardGroup>
 
+CI-friendly conformance is built into the same package:
+
+- [Protocol Conformance SDK](/sdk/reference/protocol-conformance)
+- [OAuth Conformance SDK](/sdk/reference/oauth-conformance)
+- [MCP Apps Conformance SDK](/sdk/reference/apps-conformance)
+
+Use the suite classes inside Jest or Vitest, then convert results into shared JSON or JUnit XML reporters with `toConformanceReport(...)` and `renderConformanceReportJUnitXml(...)`.
+
 ## Installation
 
 ```bash

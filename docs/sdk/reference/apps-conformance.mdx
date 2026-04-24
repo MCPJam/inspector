@@ -17,7 +17,13 @@ Use it when you want the same checks as the CLI's [`apps conformance`](/cli/apps
 ## Import
 
 ```typescript
-import { MCPAppsConformanceTest } from "@mcpjam/sdk";
+import {
+  MCPAppsConformanceSuite,
+  MCPAppsConformanceTest,
+  renderConformanceReportJUnitXml,
+  renderConformanceReportJson,
+  toConformanceReport,
+} from "@mcpjam/sdk";
 ```
 
 ## Basic usage
@@ -44,6 +50,58 @@ const test = new MCPAppsConformanceTest({
   timeout: 30_000,
 });
 ```
+
+## Suite usage
+
+```typescript
+import { writeFileSync } from "node:fs";
+
+const suite = new MCPAppsConformanceSuite({
+  name: "Apps CI",
+  target: {
+    url: "https://your-server.com/mcp",
+    timeout: 30_000,
+  },
+  defaults: {
+    checkIds: [
+      "ui-tools-present",
+      "ui-tool-metadata-valid",
+    ],
+  },
+  runs: [
+    {},
+    {
+      label: "resources",
+      checkIds: [
+        "ui-resources-readable",
+        "ui-resource-contents-valid",
+        "ui-resource-meta-valid",
+      ],
+    },
+  ],
+});
+
+const result = await suite.run();
+const report = toConformanceReport(result);
+
+writeFileSync(
+  "apps-conformance.junit.xml",
+  renderConformanceReportJUnitXml(report),
+);
+writeFileSync(
+  "apps-conformance.report.json",
+  JSON.stringify(renderConformanceReportJson(report), null, 2),
+);
+```
+
+`MCPAppsConformanceSuiteConfig` is shaped for CI matrices:
+
+| Property | Type | Required | Description |
+|----------|------|----------|-------------|
+| `name` | `string` | No | Suite label shown in summaries and JUnit XML |
+| `target` | `MCPServerConfig` | Yes | Shared HTTP or stdio target |
+| `defaults` | `Partial<Omit<MCPAppsConformanceConfig, keyof MCPServerConfig>>` | No | Shared defaults applied to every run |
+| `runs` | `Array<... & { label?: string }>` | Yes | Individual check selections and labels |
 
 ## MCPAppsConformanceConfig
 
@@ -110,6 +168,27 @@ Each `MCPAppsCheckResult` includes:
 - optional `warnings`
 - optional `error`
 
+`MCPAppsConformanceSuite.run()` returns an `MCPAppsConformanceSuiteResult`:
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `name` | `string` | Suite name |
+| `target` | `string` | Shared target under test |
+| `passed` | `boolean` | `true` iff every run passed |
+| `results` | `Array<MCPAppsConformanceResult & { label: string }>` | Per-run results |
+| `summary` | `string` | Human-readable suite summary |
+| `durationMs` | `number` | Total suite duration |
+
+## CI reporting
+
+All three conformance domains use the same shared reporting helpers:
+
+- `toConformanceReport(result)` normalizes protocol, OAuth, and apps runs into a single report shape.
+- `renderConformanceReportJUnitXml(report)` emits redacted JUnit XML for CI dashboards.
+- `renderConformanceReportJson(report)` returns the redacted JSON-ready object for artifact uploads.
+
+That makes the SDK and CLI JUnit output byte-identical for the same result.
+
 ## What the runner validates
 
 The current runner checks:
@@ -128,3 +207,4 @@ The current runner checks:
 - Deprecated `_meta["ui/resourceUri"]` is accepted but surfaced as a warning.
 - Tool name SHOULD validations (length, character set, uniqueness) surface as warnings, not failures.
 - HTML validation is intentionally lightweight. It verifies the expected MIME type and document-style HTML payload, not the full browser lifecycle.
+- For a runnable project that writes JUnit XML from Vitest, see [`examples/conformance/basic/`](https://github.com/MCPJam/inspector/tree/main/examples/conformance/basic).

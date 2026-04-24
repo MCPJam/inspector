@@ -1,10 +1,11 @@
 import {
   formatOAuthConformanceHuman,
   formatOAuthConformanceSuiteHuman,
+  renderConformanceReportJUnitXml,
   type ConformanceResult,
   type OAuthConformanceSuiteResult,
+  toConformanceReport,
 } from "@mcpjam/sdk";
-import { singleResultToJUnitXml, suiteResultToJUnitXml } from "./junit-xml.js";
 import { usageError, type OutputFormat } from "./output.js";
 
 export type OAuthOutputFormat = OutputFormat | "junit-xml";
@@ -34,7 +35,7 @@ export function renderOAuthConformanceResult(
     case "human":
       return formatOAuthConformanceHuman(result);
     case "junit-xml":
-      return singleResultToJUnitXml(result);
+      return renderConformanceReportJUnitXml(toConformanceReport(result));
     case "json":
       return JSON.stringify(result);
   }
@@ -48,7 +49,7 @@ export function renderOAuthConformanceSuiteResult(
     case "human":
       return formatOAuthConformanceSuiteHuman(result);
     case "junit-xml":
-      return suiteResultToJUnitXml(result);
+      return renderConformanceReportJUnitXml(toConformanceReport(result));
     case "json":
       return JSON.stringify(result);
   }

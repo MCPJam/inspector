@@ -2,19 +2,23 @@ import {
   MCP_CHECK_CATEGORIES,
   MCP_CHECK_IDS,
   type MCPConformanceConfig,
+  MCPConformanceSuite,
   MCPConformanceTest,
 } from "@mcpjam/sdk";
 import { Command } from "commander";
+import { loadProtocolSuiteConfig } from "../lib/config-file.js";
+import {
+  renderConformanceResult,
+  resolveConformanceOutputFormat,
+  type ConformanceOutputFormat,
+} from "../lib/conformance-output.js";
 import {
   parseHeadersOption,
   parsePositiveInteger,
 } from "../lib/server-config.js";
 import {
-  resolveOutputFormat,
   setProcessExitCode,
   usageError,
-  writeResult,
-  type OutputFormat,
 } from "../lib/output.js";
 
 export interface ProtocolConformanceOptions {
@@ -65,16 +69,37 @@ export function registerProtocolCommands(program: Command): void {
       const config = buildConfig(options as ProtocolConformanceOptions);
       const result = await new MCPConformanceTest(config).run();
 
-      writeResult(result, format);
+      writeConformanceOutput(renderConformanceResult(result, format));
+      if (!result.passed) {
+        setProcessExitCode(1);
+      }
+    });
+
+  protocol
+    .command("conformance-suite")
+    .description(
+      "Run a matrix of MCP protocol conformance checks from a JSON config file",
+    )
+    .requiredOption("--config <path>", "Path to JSON config file")
+    .action(async (options, command) => {
+      const format = getFormat(command);
+      const config = loadProtocolSuiteConfig(options.config as string);
+      const result = await new MCPConformanceSuite(config).run();
+
+      writeConformanceOutput(renderConformanceResult(result, format));
       if (!result.passed) {
         setProcessExitCode(1);
       }
     });
 }
 
-function getFormat(command: Command): OutputFormat {
+function getFormat(command: Command): ConformanceOutputFormat {
   const opts = command.optsWithGlobals() as { format?: string };
-  return resolveOutputFormat(opts.format, process.stdout.isTTY);
+  return resolveConformanceOutputFormat(opts.format, process.stdout.isTTY);
+}
+
+function writeConformanceOutput(output: string): void {
+  process.stdout.write(output.endsWith("\n") ? output : `${output}\n`);
 }
 
 function collectInvalidEntries(

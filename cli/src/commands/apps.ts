@@ -2,6 +2,7 @@ import { Command } from "commander";
 import {
   MCP_APPS_CHECK_CATEGORIES,
   MCP_APPS_CHECK_IDS,
+  MCPAppsConformanceSuite,
   MCPAppsConformanceTest,
   type MCPAppsCheckCategory,
   type MCPAppsCheckId,
@@ -11,6 +12,12 @@ import {
   buildChatGptWidgetContent,
   buildMcpWidgetContent,
 } from "../lib/apps.js";
+import { loadAppsSuiteConfig } from "../lib/config-file.js";
+import {
+  renderConformanceResult,
+  resolveConformanceOutputFormat,
+  type ConformanceOutputFormat,
+} from "../lib/conformance-output.js";
 import { withEphemeralManager } from "../lib/ephemeral.js";
 import { createCliRpcLogCollector } from "../lib/rpc-logs.js";
 import { withRpcLogsIfRequested } from "../lib/rpc-helpers.js";
@@ -53,6 +60,28 @@ export interface AppsConformanceOptions extends SharedServerTargetOptions {
   checkId?: string[];
 }
 
+function getConformanceGlobals(command: Command): {
+  format: ConformanceOutputFormat;
+  timeout: number;
+  rpc: boolean;
+} {
+  const options = command.optsWithGlobals() as {
+    format?: string;
+    timeout?: number;
+    rpc?: boolean;
+  };
+
+  return {
+    format: resolveConformanceOutputFormat(options.format, process.stdout.isTTY),
+    timeout: options.timeout ?? 30_000,
+    rpc: options.rpc ?? false,
+  };
+}
+
+function writeConformanceOutput(output: string): void {
+  process.stdout.write(output.endsWith("\n") ? output : `${output}\n`);
+}
+
 export function registerAppsCommands(program: Command): void {
   const apps = program
     .command("apps")
@@ -77,7 +106,7 @@ export function registerAppsCommands(program: Command): void {
         [],
       ),
   ).action(async (options, command) => {
-    const globalOptions = getGlobalOptions(command);
+    const globalOptions = getConformanceGlobals(command);
     const target = describeTarget(options);
     const collector = globalOptions.rpc
       ? createCliRpcLogCollector({ __cli__: target })
@@ -91,14 +120,47 @@ export function registerAppsCommands(program: Command): void {
     };
     const result = await new MCPAppsConformanceTest(config).run();
 
-    writeResult(
-      withRpcLogsIfRequested(result, collector, globalOptions),
-      globalOptions.format,
+    writeConformanceOutput(
+      renderConformanceResult(
+        withRpcLogsIfRequested(result, collector, globalOptions) as typeof result,
+        globalOptions.format,
+      ),
     );
     if (!result.passed) {
       setProcessExitCode(1);
     }
   });
+
+  apps
+    .command("conformance-suite")
+    .description("Run MCP Apps conformance runs from a JSON config file")
+    .requiredOption("--config <path>", "Path to JSON config file")
+    .action(async (options, command) => {
+      const globalOptions = getConformanceGlobals(command);
+      const config = loadAppsSuiteConfig(options.config as string);
+      const target = config.target.command ?? config.target.url ?? "apps-suite";
+      const collector = globalOptions.rpc
+        ? createCliRpcLogCollector({ __cli__: target })
+        : undefined;
+      const suite = new MCPAppsConformanceSuite({
+        ...config,
+        target: {
+          ...config.target,
+          ...(collector ? { rpcLogger: collector.rpcLogger } : {}),
+        },
+      });
+      const result = await suite.run();
+
+      writeConformanceOutput(
+        renderConformanceResult(
+          withRpcLogsIfRequested(result, collector, globalOptions) as typeof result,
+          globalOptions.format,
+        ),
+      );
+      if (!result.passed) {
+        setProcessExitCode(1);
+      }
+    });
 
   addRetryOptions(
     addSharedServerOptions(

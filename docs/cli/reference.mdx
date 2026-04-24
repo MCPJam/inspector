@@ -12,7 +12,7 @@ Complete flag tables for every `mcpjam` command. For guides and recipes, see the
 |------|---------|-------------|
 | `--timeout <ms>` | `30000` | Request timeout in milliseconds |
 | `--rpc` | off | Include raw JSON-RPC logs in JSON output under `_rpcLogs` |
-| `--format <format>` | `human` on TTY, `json` when piped | Output format (`json` or `human`; `junit-xml` is available on OAuth conformance commands only) |
+| `--format <format>` | `human` on TTY, `json` when piped | Output format (`json` or `human`; `junit-xml` is available on protocol, OAuth, and apps conformance commands) |
 | `-v, --version` | | Print the CLI version |
 
 ---
@@ -218,7 +218,14 @@ Plus shared connection flags.
 | `--category <category>` | No | all | Restrict checks to one or more categories |
 | `--check-id <id>` | No | all | Restrict checks to one or more check IDs |
 
-Supports `--format json` and `--format human`. `junit-xml` is not supported on protocol conformance.
+Supports `--format json`, `--format human`, and `--format junit-xml`.
+
+### `protocol conformance-suite`
+
+| Flag | Required | Default | Description |
+|------|----------|---------|-------------|
+| `--config <path>` | Yes | | Path to JSON config file |
+| `--format <fmt>` | No | Auto-detected | `json`, `human`, or `junit-xml` |
 
 ---
 
@@ -255,6 +262,15 @@ MCP Apps server-side conformance checks. Uses shared connection flags plus:
 |------|-------------|
 | `--category <category>` | Check category to run (`tools`, `resources`). Repeatable |
 | `--check-id <id>` | Specific check id to run. Repeatable |
+
+Supports `--format json`, `--format human`, and `--format junit-xml`.
+
+### `apps conformance-suite`
+
+| Flag | Required | Default | Description |
+|------|----------|---------|-------------|
+| `--config <path>` | Yes | | Path to JSON config file |
+| `--format <fmt>` | No | Auto-detected | `json`, `human`, or `junit-xml` |
 
 ### `apps mcp-widget`
 

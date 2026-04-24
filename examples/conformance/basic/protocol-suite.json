@@ -1,0 +1,16 @@
+{
+  "name": "Basic Protocol Suite",
+  "serverUrl": "http://127.0.0.1:3101/mcp",
+  "runs": [
+    {
+      "label": "core-surface",
+      "checkIds": [
+        "server-initialize",
+        "ping",
+        "tools-list",
+        "prompts-list",
+        "resources-list"
+      ]
+    }
+  ]
+}

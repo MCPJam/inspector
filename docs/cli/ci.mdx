@@ -202,6 +202,46 @@ Run the full registration x protocol version x auth mode matrix from a config fi
 
 See [OAuth Conformance](/cli/oauth-conformance) for details on the config file format.
 
+### Protocol conformance suite
+
+Run a repeatable matrix of protocol check selections from a config file and publish JUnit XML.
+
+```yaml
+      - name: Protocol conformance
+        run: |
+          npx -y @mcpjam/cli@latest protocol conformance-suite \
+            --config ./protocol-conformance.json \
+            --format junit-xml > protocol-report.xml
+
+      - name: Upload protocol report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: protocol-conformance
+          path: protocol-report.xml
+```
+
+### MCP Apps conformance suite
+
+Run the server-side MCP Apps surface checks from a config file and publish JUnit XML for CI dashboards.
+
+```yaml
+      - name: MCP Apps conformance
+        run: |
+          npx -y @mcpjam/cli@latest apps conformance-suite \
+            --config ./apps-conformance.json \
+            --format junit-xml > apps-report.xml
+
+      - name: Upload apps report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: apps-conformance
+          path: apps-report.xml
+```
+
+Single-run `protocol conformance` and `apps conformance` also accept `--format junit-xml` when you only need one target/check selection instead of a suite config file.
+
 ---
 
 ## GitLab CI

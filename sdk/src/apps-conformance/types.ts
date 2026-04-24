@@ -40,6 +40,16 @@ export type MCPAppsConformanceConfig = MCPServerConfig & {
   checkIds?: MCPAppsCheckId[];
 };
 
+export type MCPAppsConformanceSuiteDefaults = Partial<
+  Omit<MCPAppsConformanceConfig, keyof MCPServerConfig>
+>;
+
+export type MCPAppsConformanceSuiteRun = Partial<
+  Omit<MCPAppsConformanceConfig, keyof MCPServerConfig>
+> & {
+  label?: string;
+};
+
 export interface NormalizedMCPAppsConformanceConfig {
   serverConfig: MCPServerConfig;
   target: string;
@@ -77,4 +87,20 @@ export interface MCPAppsConformanceResult {
     listedUiResourceCount: number;
     checkedUiResourceCount: number;
   };
+}
+
+export interface MCPAppsConformanceSuiteConfig {
+  name?: string;
+  target: MCPServerConfig;
+  defaults?: MCPAppsConformanceSuiteDefaults;
+  runs: MCPAppsConformanceSuiteRun[];
+}
+
+export interface MCPAppsConformanceSuiteResult {
+  name: string;
+  target: string;
+  passed: boolean;
+  results: Array<MCPAppsConformanceResult & { label: string }>;
+  summary: string;
+  durationMs: number;
 }
