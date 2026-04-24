@@ -50,6 +50,12 @@ If you're seeing **401 Unauthorized** errors when trying to connect to your serv
   process and identify where things might be going wrong.
 </Info>
 
+### Toggle shows a re-authentication error for an OAuth server
+
+The enable/connect toggle on a server card or detail modal reuses existing credentials only. If your tokens are expired or missing, the toggle will report a re-authentication error rather than opening the OAuth consent screen.
+
+**Solution:** Use the **Reconnect** button on the server card or detail modal to start a full OAuth flow and obtain new credentials. The toggle is intentionally non-interactive for OAuth to avoid unexpected browser redirects.
+
 ### Common Configuration Mistakes
 
 - Missing required environment variables
