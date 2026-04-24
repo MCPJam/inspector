@@ -1135,7 +1135,7 @@ export function ServersTab({
           className="cursor-pointer"
         >
           <Settings className="h-4 w-4 mr-2" />
-          Client Config
+          Connection Settings
         </Button>
       ) : null}
       <HoverCard
@@ -1535,6 +1535,7 @@ export function ServersTab({
           });
           handleConnectServer(formData);
         }}
+        workspaceClientConfig={selectedWorkspace?.clientConfig}
       />
 
       {/* JSON Import Modal */}
@@ -1547,10 +1548,11 @@ export function ServersTab({
       {/* Client Config Dialog */}
       {clientConfigEnabled === true && onSaveClientConfig ? (
         <Dialog open={isClientConfigOpen} onOpenChange={setIsClientConfigOpen}>
-          <DialogContent className="max-w-6xl w-[95vw] h-[85vh] p-0 overflow-hidden flex flex-col gap-0 sm:max-w-6xl">
-            <DialogTitle className="sr-only">Client Config</DialogTitle>
+          <DialogContent className="flex h-[88vh] w-[min(96vw,88rem)] max-w-[88rem] flex-col gap-0 overflow-hidden p-0 sm:max-w-[88rem]">
+            <DialogTitle className="sr-only">Connection Settings</DialogTitle>
             <DialogDescription className="sr-only">
-              Edit workspace client capabilities and host context.
+              Edit workspace connection settings, client capabilities, and host
+              context.
             </DialogDescription>
             <div className="min-h-0 flex-1 overflow-hidden">
               <ClientConfigTab
@@ -1575,6 +1577,7 @@ export function ServersTab({
           onDisconnect={onDisconnect}
           onReconnect={handleReconnectServer}
           existingServerNames={Object.keys(workspaceServers)}
+          workspaceClientConfig={selectedWorkspace?.clientConfig}
         />
       )}
     </div>

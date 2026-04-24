@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { mergeOAuthTraces, type OAuthTrace } from "../oauth-trace";
+import { projectOAuthTraceSnapshot } from "@mcpjam/sdk/browser";
 
 describe("oauth-trace mergeOAuthTraces", () => {
   it("collapses duplicate resume steps from the callback half of a local OAuth flow", () => {
@@ -182,5 +183,37 @@ describe("oauth-trace mergeOAuthTraces", () => {
         (step) => step.step === "received_authorization_code",
       ),
     ).toHaveLength(1);
+  });
+
+  it("does not synthesize a DCR step for CIMD flows once client credentials are ready", () => {
+    const snapshot = projectOAuthTraceSnapshot({
+      state: {
+        isInitiatingAuth: false,
+        currentStep: "received_client_credentials",
+        clientId: "https://app.example.com/oauth/client-metadata.json",
+        tokenEndpointAuthMethod: "none",
+        infoLogs: [
+          {
+            id: "cimd-success",
+            step: "received_client_credentials",
+            label: "Client ID Metadata Document",
+            data: {
+              "Registration Method": "Client ID Metadata Document (CIMD)",
+            },
+            timestamp: 100,
+            level: "info",
+          },
+        ],
+        httpHistory: [],
+      },
+    });
+
+    expect(snapshot.steps.map((step) => step.step)).toEqual([
+      "received_client_credentials",
+    ]);
+    expect(snapshot.steps[0]).toMatchObject({
+      title: "Client Credentials Ready",
+      message: "Client ID Metadata Document",
+    });
   });
 });

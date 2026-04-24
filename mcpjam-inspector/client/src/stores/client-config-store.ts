@@ -1,18 +1,22 @@
 import { create } from "zustand";
 import {
+  buildDefaultWorkspaceConnectionDefaults,
   stableStringifyJson,
   type WorkspaceClientConfig,
+  type WorkspaceConnectionDefaults,
 } from "@/lib/client-config";
 
-type JsonSection = "clientCapabilities" | "hostContext";
+type JsonSection = "connectionDefaults" | "clientCapabilities" | "hostContext";
 
 interface ClientConfigStoreState {
   activeWorkspaceId: string | null;
   defaultConfig: WorkspaceClientConfig | null;
   savedConfig: WorkspaceClientConfig | undefined;
   draftConfig: WorkspaceClientConfig | null;
+  connectionDefaultsText: string;
   clientCapabilitiesText: string;
   hostContextText: string;
+  connectionDefaultsError: string | null;
   clientCapabilitiesError: string | null;
   hostContextError: string | null;
   isSaving: boolean;
@@ -58,8 +62,10 @@ function createInitialState(): Omit<
     defaultConfig: null,
     savedConfig: undefined,
     draftConfig: null,
+    connectionDefaultsText: "{}",
     clientCapabilitiesText: "{}",
     hostContextText: "{}",
+    connectionDefaultsError: null,
     clientCapabilitiesError: null,
     hostContextError: null,
     isSaving: false,
@@ -92,19 +98,48 @@ function computeDirtyState(
   );
 }
 
+function normalizeConfigForEditing(
+  config: WorkspaceClientConfig | null | undefined,
+  defaultConfig: WorkspaceClientConfig | null,
+): WorkspaceClientConfig | null | undefined {
+  if (!config) {
+    return config;
+  }
+
+  return {
+    ...config,
+    connectionDefaults:
+      config.connectionDefaults ??
+      defaultConfig?.connectionDefaults ??
+      buildDefaultWorkspaceConnectionDefaults(),
+  };
+}
+
 function resetFromConfig(
   workspaceId: string | null,
   defaultConfig: WorkspaceClientConfig | null,
   savedConfig?: WorkspaceClientConfig,
 ) {
-  const baseline = savedConfig ?? defaultConfig;
+  const normalizedDefaultConfig = normalizeConfigForEditing(
+    defaultConfig,
+    defaultConfig,
+  ) ?? null;
+  const normalizedSavedConfig = normalizeConfigForEditing(
+    savedConfig,
+    normalizedDefaultConfig,
+  );
+  const baseline = normalizedSavedConfig ?? normalizedDefaultConfig;
   return {
     activeWorkspaceId: workspaceId,
-    defaultConfig,
-    savedConfig,
+    defaultConfig: normalizedDefaultConfig,
+    savedConfig: normalizedSavedConfig,
     draftConfig: baseline,
+    connectionDefaultsText: stringifyJson(
+      baseline?.connectionDefaults ?? buildDefaultWorkspaceConnectionDefaults(),
+    ),
     clientCapabilitiesText: stringifyJson(baseline?.clientCapabilities ?? {}),
     hostContextText: stringifyJson(baseline?.hostContext ?? {}),
+    connectionDefaultsError: null,
     clientCapabilitiesError: null,
     hostContextError: null,
     pendingWorkspaceId: null,
@@ -139,6 +174,69 @@ function parseRecordJson(text: string): Record<string, unknown> {
   return parsed as Record<string, unknown>;
 }
 
+function parseConnectionDefaultsJson(text: string): WorkspaceConnectionDefaults {
+  const parsed = parseRecordJson(text);
+  const requestTimeout = parsed.requestTimeout;
+  const headers = parsed.headers;
+
+  if (
+    requestTimeout !== undefined &&
+    (typeof requestTimeout !== "number" ||
+      !Number.isFinite(requestTimeout) ||
+      requestTimeout <= 0)
+  ) {
+    throw new Error("connectionDefaults.requestTimeout must be a positive number");
+  }
+
+  if (headers !== undefined) {
+    if (!headers || typeof headers !== "object" || Array.isArray(headers)) {
+      throw new Error("connectionDefaults.headers must be a JSON object");
+    }
+
+    for (const [key, value] of Object.entries(headers)) {
+      if (key.toLowerCase() === "authorization") {
+        throw new Error(
+          "connectionDefaults.headers must not include Authorization",
+        );
+      }
+
+      if (typeof value !== "string") {
+        throw new Error(
+          `connectionDefaults.headers.${key} must be a string value`,
+        );
+      }
+    }
+  }
+
+  return {
+    headers: (headers as Record<string, string> | undefined) ?? {},
+    requestTimeout:
+      typeof requestTimeout === "number"
+        ? requestTimeout
+        : buildDefaultWorkspaceConnectionDefaults().requestTimeout,
+  };
+}
+
+function getSectionFieldNames(section: JsonSection) {
+  switch (section) {
+    case "connectionDefaults":
+      return {
+        textField: "connectionDefaultsText" as const,
+        errorField: "connectionDefaultsError" as const,
+      };
+    case "clientCapabilities":
+      return {
+        textField: "clientCapabilitiesText" as const,
+        errorField: "clientCapabilitiesError" as const,
+      };
+    case "hostContext":
+      return {
+        textField: "hostContextText" as const,
+        errorField: "hostContextError" as const,
+      };
+  }
+}
+
 function setSectionValue(
   state: ClientConfigStoreState,
   section: JsonSection,
@@ -150,7 +248,10 @@ function setSectionValue(
 
   const nextDraftConfig: WorkspaceClientConfig = {
     ...state.draftConfig,
-    [section]: nextValue,
+    [section]:
+      section === "connectionDefaults"
+        ? (nextValue as WorkspaceConnectionDefaults)
+        : nextValue,
   };
 
   return {
@@ -169,10 +270,16 @@ export const useClientConfigStore = create<ClientConfigStoreState>(
 
     loadWorkspaceConfig: ({ workspaceId, defaultConfig, savedConfig }) => {
       const state = get();
+      const normalizedDefaultConfig =
+        normalizeConfigForEditing(defaultConfig, defaultConfig) ?? null;
+      const normalizedSavedConfig = normalizeConfigForEditing(
+        savedConfig,
+        normalizedDefaultConfig,
+      );
       const shouldApplyPendingRemoteEcho = isPendingRemoteEchoMatch(
         state,
         workspaceId,
-        savedConfig,
+        normalizedSavedConfig,
       );
 
       if (
@@ -185,10 +292,10 @@ export const useClientConfigStore = create<ClientConfigStoreState>(
       const sameWorkspace = state.activeWorkspaceId === workspaceId;
       const sameDefault =
         stableStringifyJson(state.defaultConfig) ===
-        stableStringifyJson(defaultConfig);
+        stableStringifyJson(normalizedDefaultConfig);
       const sameSaved =
         stableStringifyJson(state.savedConfig) ===
-        stableStringifyJson(savedConfig);
+        stableStringifyJson(normalizedSavedConfig);
 
       if (
         sameWorkspace &&
@@ -199,22 +306,24 @@ export const useClientConfigStore = create<ClientConfigStoreState>(
         return;
       }
 
-      set(resetFromConfig(workspaceId, defaultConfig, savedConfig));
+      set(
+        resetFromConfig(
+          workspaceId,
+          normalizedDefaultConfig,
+          normalizedSavedConfig,
+        ),
+      );
     },
 
     setSectionText: (section, text) => {
       set((state) => {
-        const textField =
-          section === "clientCapabilities"
-            ? "clientCapabilitiesText"
-            : "hostContextText";
-        const errorField =
-          section === "clientCapabilities"
-            ? "clientCapabilitiesError"
-            : "hostContextError";
+        const { textField, errorField } = getSectionFieldNames(section);
 
         try {
-          const parsed = parseRecordJson(text);
+          const parsed =
+            section === "connectionDefaults"
+              ? parseConnectionDefaultsJson(text)
+              : parseRecordJson(text);
           return {
             ...setSectionValue(state, section, parsed),
             [textField]: text,
@@ -259,17 +368,11 @@ export const useClientConfigStore = create<ClientConfigStoreState>(
 
         const nextValue = defaultConfig[section];
         const nextState = setSectionValue(state, section, nextValue);
+        const { textField, errorField } = getSectionFieldNames(section);
         return {
           ...nextState,
-          ...(section === "clientCapabilities"
-            ? {
-                clientCapabilitiesText: stringifyJson(nextValue),
-                clientCapabilitiesError: null,
-              }
-            : {
-                hostContextText: stringifyJson(nextValue),
-                hostContextError: null,
-              }),
+          [textField]: stringifyJson(nextValue),
+          [errorField]: null,
         };
       });
     },

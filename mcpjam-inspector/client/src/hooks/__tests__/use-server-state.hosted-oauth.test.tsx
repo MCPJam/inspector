@@ -12,6 +12,7 @@ const {
   mockUseServerMutations,
   mockConvexQuery,
   testConnectionMock,
+  readStoredOAuthConfigMock,
   toastSuccess,
 } = vi.hoisted(() => ({
   mockHandleOAuthCallback: vi.fn(),
@@ -25,6 +26,7 @@ const {
   })),
   mockConvexQuery: vi.fn(),
   testConnectionMock: vi.fn(),
+  readStoredOAuthConfigMock: vi.fn(),
   toastSuccess: vi.fn(),
 }));
 
@@ -56,6 +58,7 @@ vi.mock("@/lib/oauth/mcp-oauth", () => ({
   getStoredTokens: vi.fn(),
   clearOAuthData: vi.fn(),
   initiateOAuth: vi.fn(),
+  readStoredOAuthConfig: readStoredOAuthConfigMock,
 }));
 
 vi.mock("@/lib/apis/web/context", () => ({
@@ -193,6 +196,7 @@ describe("useServerState hosted OAuth callback guards", () => {
     mockEnsureAuthorizedForReconnect.mockReset();
     mockConvexQuery.mockReset();
     testConnectionMock.mockReset();
+    readStoredOAuthConfigMock.mockReset();
     toastSuccess.mockReset();
     mockListServers.mockResolvedValue({ success: true, servers: [] });
     mockReconnectServer.mockResolvedValue({
@@ -203,6 +207,7 @@ describe("useServerState hosted OAuth callback guards", () => {
       success: true,
       initInfo: {},
     });
+    readStoredOAuthConfigMock.mockReturnValue({});
   });
 
   it("defers hosted chatbox OAuth callbacks to App.tsx", async () => {

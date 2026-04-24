@@ -22,7 +22,10 @@ vi.mock("@/stores/traffic-log-store", async () => {
 });
 
 import { LoggerView } from "../logger-view";
-import { useTrafficLogStore } from "@/stores/traffic-log-store";
+import {
+  ingestOAuthTraceLogs,
+  useTrafficLogStore,
+} from "@/stores/traffic-log-store";
 import { subscribeToOAuthDebuggerRequests } from "@/lib/oauth/oauth-debugger-navigation";
 
 describe("LoggerView hosted rpc logs", () => {
@@ -121,6 +124,41 @@ describe("LoggerView hosted rpc logs", () => {
 
     expect(screen.getByText("Dynamic Client Registration")).toBeInTheDocument();
     expect(screen.getByText("Notion")).toBeInTheDocument();
+  });
+
+  it("renders automatic OAuth decisions as their own log entry", () => {
+    ingestOAuthTraceLogs({
+      serverId: "srv-1",
+      serverName: "Notion",
+      trace: {
+        version: 1,
+        source: "interactive_connect",
+        currentStep: "authorization_request",
+        steps: [
+          {
+            step: "received_authorization_server_metadata",
+            title: "Authorization Server Metadata Received",
+            status: "success",
+            message:
+              "Automatic resolved to DCR for this run. The authorization server advertised registration_endpoint, and CIMD support was not advertised.",
+            details: {
+              "Automatic Decision": "DCR",
+            },
+            startedAt: Date.parse("2026-04-10T12:00:02.000Z"),
+            completedAt: Date.parse("2026-04-10T12:00:02.000Z"),
+          },
+        ],
+        httpHistory: [],
+      },
+    });
+
+    render(<LoggerView serverIds={["srv-1"]} />);
+
+    expect(
+      screen.getByText(
+        /Automatic Resolution - Automatic resolved to DCR for this run\./
+      )
+    ).toBeInTheDocument();
   });
 
   it("shows oauth failure detail inline for collapsed rows", () => {

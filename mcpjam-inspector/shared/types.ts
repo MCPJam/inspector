@@ -727,6 +727,18 @@ export const isModelSupported = (id: string): boolean => {
   return SUPPORTED_MODELS.some((model) => model.id === id);
 };
 
+export type ServerFormOAuthProtocolMode =
+  | "auto"
+  | "2025-03-26"
+  | "2025-06-18"
+  | "2025-11-25";
+
+export type ServerFormOAuthRegistrationMode =
+  | "auto"
+  | "cimd"
+  | "dcr"
+  | "preregistered";
+
 export interface ServerFormData {
   name: string;
   type: "stdio" | "http";
@@ -735,7 +747,10 @@ export interface ServerFormData {
   url?: string;
   headers?: Record<string, string>;
   env?: Record<string, string>;
+  clientCapabilities?: Record<string, unknown>;
   useOAuth?: boolean;
+  oauthProtocolMode?: ServerFormOAuthProtocolMode;
+  oauthRegistrationMode?: ServerFormOAuthRegistrationMode;
   oauthScopes?: string[];
   clientId?: string;
   clientSecret?: string;

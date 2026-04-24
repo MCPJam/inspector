@@ -320,6 +320,55 @@ export function clearOAuthTrace(serverName: string): void {
   localStorage.removeItem(storageKey(serverName));
 }
 
+const SESSION_TRACE_PREFIX = "mcp-oauth-session-trace-";
+
+function sessionTraceKey(serverName: string): string {
+  return `${SESSION_TRACE_PREFIX}${serverName}`;
+}
+
+export function saveOAuthTraceToSession(
+  serverName: string,
+  trace: OAuthTrace,
+): void {
+  try {
+    sessionStorage.setItem(
+      sessionTraceKey(serverName),
+      JSON.stringify(buildPersistableTrace(trace)),
+    );
+  } catch {
+    // sessionStorage full or unavailable — trace will be lost across redirect.
+  }
+}
+
+export function loadOAuthTraceFromSession(
+  serverName: string,
+): OAuthTrace | undefined {
+  try {
+    const raw = sessionStorage.getItem(sessionTraceKey(serverName));
+    if (!raw) {
+      return undefined;
+    }
+    const parsed = JSON.parse(raw) as OAuthTrace;
+    if (parsed?.version !== 1 || !Array.isArray(parsed.steps)) {
+      return undefined;
+    }
+    parsed.httpHistory = Array.isArray(parsed.httpHistory)
+      ? parsed.httpHistory
+      : [];
+    return parsed;
+  } catch {
+    return undefined;
+  }
+}
+
+export function clearOAuthTraceSession(serverName: string): void {
+  try {
+    sessionStorage.removeItem(sessionTraceKey(serverName));
+  } catch {
+    // Ignore — cleanup is best-effort.
+  }
+}
+
 export function startOAuthTraceStep(
   trace: OAuthTrace,
   step: OAuthFlowStep,
