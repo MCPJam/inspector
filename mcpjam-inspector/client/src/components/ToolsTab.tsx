@@ -507,6 +507,8 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
   ) => {
     if (!activeElicitation) {
       logger.warn("Cannot handle elicitation response: no active request");
+      // Elicitation may have already timed out server-side; ensure dialog closes.
+      setActiveElicitation(null);
       return;
     }
 
@@ -531,6 +533,11 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
         error: message,
       });
       setError(message);
+      // Always close the dialog on cancel/decline even if the API call failed
+      // so users are never stuck with an unclosable dialog.
+      if (action === "cancel" || action === "decline") {
+        setActiveElicitation(null);
+      }
     } finally {
       setElicitationLoading(false);
     }
