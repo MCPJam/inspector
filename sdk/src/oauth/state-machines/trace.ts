@@ -594,16 +594,6 @@ export function projectOAuthTraceSnapshot(input: {
   inferStepEntry(
     entries,
     context,
-    "request_client_registration",
-    Boolean(state.clientId),
-    {
-      clientId: state.clientId,
-    },
-    sanitizeTraces,
-  );
-  inferStepEntry(
-    entries,
-    context,
     "received_client_credentials",
     Boolean(state.clientId),
     {
