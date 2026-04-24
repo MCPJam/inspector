@@ -456,6 +456,65 @@ describe("useServerState OAuth callback failures", () => {
       "Network error: Failed to resolve registry OAuth config: registry lookup failed",
     );
   });
+
+  it("keeps saved registry OAuth settings when forcing a fresh reconnect", async () => {
+    localStorage.setItem(
+      "mcp-oauth-config-demo-server",
+      JSON.stringify({
+        scopes: ["default"],
+        customHeaders: { "X-MCPJam": "yes" },
+        registryServerId: "registry-asana",
+        useRegistryOAuthProxy: true,
+        protocolVersion: "2025-11-25",
+        registrationStrategy: "preregistered",
+      }),
+    );
+    localStorage.setItem(
+      "mcp-client-demo-server",
+      JSON.stringify({
+        client_id: "asana-client-id",
+        client_secret: "asana-client-secret",
+      }),
+    );
+    clearOAuthDataMock.mockImplementationOnce((serverName: string) => {
+      localStorage.removeItem(`mcp-oauth-config-${serverName}`);
+      localStorage.removeItem(`mcp-client-${serverName}`);
+    });
+    initiateOAuthMock.mockResolvedValueOnce({ success: true });
+
+    const dispatch = vi.fn();
+    const { result } = renderUseServerState(dispatch);
+
+    await act(async () => {
+      await result.current.handleReconnect("demo-server", {
+        forceOAuthFlow: true,
+      });
+    });
+
+    expect(clearOAuthDataMock).toHaveBeenCalledWith("demo-server");
+    expect(initiateOAuthMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        serverName: "demo-server",
+        serverUrl: "https://example.com/mcp",
+        scopes: ["default"],
+        customHeaders: { "X-MCPJam": "yes" },
+        clientId: "asana-client-id",
+        clientSecret: "asana-client-secret",
+        registryServerId: "registry-asana",
+        useRegistryOAuthProxy: true,
+        protocolVersion: "2025-11-25",
+        registrationStrategy: "preregistered",
+      }),
+    );
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "UPSERT_SERVER",
+      name: "demo-server",
+      server: expect.objectContaining({
+        connectionStatus: "oauth-flow",
+        useOAuth: true,
+      }),
+    });
+  });
 });
 
 describe("useServerState auth mode regressions", () => {

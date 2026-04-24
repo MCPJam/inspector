@@ -215,6 +215,26 @@ describe("ServerDetailModal", () => {
     });
   });
 
+  it("forces a fresh OAuth flow when toggling on an OAuth server without tokens", () => {
+    const onReconnect = vi.fn().mockResolvedValue(undefined);
+    render(
+      <ServerDetailModal
+        {...defaultProps}
+        server={createServer({
+          connectionStatus: "disconnected",
+          useOAuth: true,
+        })}
+        onReconnect={onReconnect}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("switch"));
+
+    expect(onReconnect).toHaveBeenCalledWith("test-server", {
+      forceOAuthFlow: true,
+    });
+  });
+
   it("does not show a conformance launch button in overview", () => {
     render(<ServerDetailModal {...defaultProps} defaultTab="overview" />);
 

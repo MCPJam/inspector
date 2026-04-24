@@ -27,6 +27,7 @@ import {
   getStoredTokens,
   clearOAuthData,
   initiateOAuth,
+  type MCPOAuthOptions,
 } from "@/lib/oauth/mcp-oauth";
 import type { OAuthTrace } from "@/lib/oauth/oauth-trace";
 import {
@@ -104,6 +105,119 @@ function saveOAuthConfigToLocalStorage(formData: ServerFormData): void {
       JSON.stringify(clientInfo),
     );
   }
+}
+
+function readJsonObjectFromLocalStorage(
+  key: string,
+): Record<string, unknown> | undefined {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) {
+      return undefined;
+    }
+
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function readSavedOAuthReconnectOptions(
+  serverName: string,
+): Partial<MCPOAuthOptions> {
+  const oauthConfig = readJsonObjectFromLocalStorage(
+    `mcp-oauth-config-${serverName}`,
+  );
+  const clientInfo = readJsonObjectFromLocalStorage(`mcp-client-${serverName}`);
+  const options: Partial<MCPOAuthOptions> = {};
+  const storedScopes = oauthConfig?.scopes;
+  const storedCustomHeaders = oauthConfig?.customHeaders;
+
+  if (
+    Array.isArray(storedScopes) &&
+    storedScopes.every((scope) => typeof scope === "string")
+  ) {
+    options.scopes = storedScopes;
+  }
+
+  if (
+    storedCustomHeaders &&
+    typeof storedCustomHeaders === "object" &&
+    !Array.isArray(storedCustomHeaders)
+  ) {
+    options.customHeaders = Object.fromEntries(
+      Object.entries(storedCustomHeaders).filter(
+        ([, value]) => typeof value === "string",
+      ) as Array<[string, string]>,
+    );
+  }
+
+  if (typeof oauthConfig?.registryServerId === "string") {
+    options.registryServerId = oauthConfig.registryServerId;
+  }
+
+  if (oauthConfig?.useRegistryOAuthProxy === true) {
+    options.useRegistryOAuthProxy = true;
+  }
+
+  if (
+    oauthConfig?.protocolVersion === "2025-03-26" ||
+    oauthConfig?.protocolVersion === "2025-06-18" ||
+    oauthConfig?.protocolVersion === "2025-11-25"
+  ) {
+    options.protocolVersion = oauthConfig.protocolVersion;
+  }
+
+  if (
+    oauthConfig?.registrationStrategy === "cimd" ||
+    oauthConfig?.registrationStrategy === "dcr" ||
+    oauthConfig?.registrationStrategy === "preregistered"
+  ) {
+    options.registrationStrategy = oauthConfig.registrationStrategy;
+  }
+
+  if (typeof clientInfo?.client_id === "string") {
+    options.clientId = clientInfo.client_id;
+  }
+
+  if (typeof clientInfo?.client_secret === "string") {
+    options.clientSecret = clientInfo.client_secret;
+  }
+
+  return options;
+}
+
+function parseOAuthScopes(scopes?: string): string[] | undefined {
+  const parsed = scopes
+    ?.split(/[,\s]+/)
+    .map((scope) => scope.trim())
+    .filter(Boolean);
+  return parsed && parsed.length > 0 ? parsed : undefined;
+}
+
+function getServerCustomHeaders(
+  serverConfig: MCPServerConfig,
+): Record<string, string> | undefined {
+  if (
+    !("requestInit" in serverConfig) ||
+    !serverConfig.requestInit?.headers
+  ) {
+    return undefined;
+  }
+
+  const headers: Record<string, string> = {};
+  new Headers(serverConfig.requestInit.headers as HeadersInit).forEach(
+    (value, key) => {
+      if (key.toLowerCase() !== "authorization") {
+        headers[key] = value;
+      }
+    },
+  );
+
+  return Object.keys(headers).length > 0 ? headers : undefined;
 }
 
 function restorePathAfterOAuthCallback(
@@ -1794,9 +1908,6 @@ export function useServerState({
       )?._id;
 
       if (options?.forceOAuthFlow) {
-        clearOAuthData(serverName);
-        await deleteServer(serverName);
-
         const serverUrl = (server.config as any)?.url?.toString?.();
         if (!serverUrl) {
           const errorMessage = "No server URL found for OAuth flow";
@@ -1812,26 +1923,64 @@ export function useServerState({
           };
         }
 
+        const savedOAuthOptions = readSavedOAuthReconnectOptions(serverName);
+        const profileScopes = parseOAuthScopes(server.oauthFlowProfile?.scopes);
+        const customHeaders =
+          savedOAuthOptions.customHeaders ??
+          getServerCustomHeaders(server.config);
+        const registrationStrategy =
+          server.oauthFlowProfile?.registrationStrategy ??
+          savedOAuthOptions.registrationStrategy;
+        const shouldReuseClientCredentials =
+          registrationStrategy === "preregistered" ||
+          savedOAuthOptions.useRegistryOAuthProxy === true ||
+          Boolean(server.oauthFlowProfile?.clientId);
+        const oauthOptions: MCPOAuthOptions = {
+          serverName,
+          serverUrl,
+          scopes: savedOAuthOptions.scopes ?? profileScopes,
+          clientId:
+            server.oauthFlowProfile?.clientId ||
+            (shouldReuseClientCredentials
+              ? savedOAuthOptions.clientId
+              : undefined),
+          clientSecret:
+            server.oauthFlowProfile?.clientSecret ||
+            (shouldReuseClientCredentials
+              ? savedOAuthOptions.clientSecret
+              : undefined),
+          customHeaders,
+          registryServerId: savedOAuthOptions.registryServerId,
+          useRegistryOAuthProxy: savedOAuthOptions.useRegistryOAuthProxy,
+          protocolVersion:
+            server.oauthFlowProfile?.protocolVersion ??
+            savedOAuthOptions.protocolVersion,
+          registrationStrategy,
+          onTraceUpdate: (oauthTrace: OAuthTrace) => {
+            updateServerOAuthTrace(serverName, oauthTrace);
+          },
+        };
+
+        clearOAuthData(serverName);
+        dispatch({
+          type: "UPSERT_SERVER",
+          name: serverName,
+          server: {
+            ...server,
+            connectionStatus: "oauth-flow",
+            enabled: true,
+            lastError: undefined,
+            useOAuth: true,
+          },
+        });
+        await deleteServer(serverName);
+
         prepareHostedWorkspaceOAuthRedirect({
           serverId: hostedWorkspaceServerId,
           serverName,
           serverUrl,
         });
-        const oauthResult = await initiateOAuth({
-          serverName,
-          serverUrl,
-          customHeaders:
-            "requestInit" in server.config &&
-            server.config.requestInit?.headers &&
-            !Array.isArray(server.config.requestInit.headers)
-              ? (server.config.requestInit.headers as Record<string, string>)
-              : undefined,
-          protocolVersion: server.oauthFlowProfile?.protocolVersion,
-          registrationStrategy: server.oauthFlowProfile?.registrationStrategy,
-          onTraceUpdate: (oauthTrace: OAuthTrace) => {
-            updateServerOAuthTrace(serverName, oauthTrace);
-          },
-        });
+        const oauthResult = await initiateOAuth(oauthOptions);
 
         if (oauthResult.success && !oauthResult.serverConfig) {
           return {

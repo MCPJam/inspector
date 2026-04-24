@@ -25,6 +25,7 @@ import {
   isOpenAIApp,
   isOpenAIAppAndMCPApp,
 } from "@/lib/mcp-ui/mcp-apps-utils";
+import { HOSTED_MODE } from "@/lib/config";
 import { getConnectionStatusMeta } from "./server-card-utils";
 import { useServerForm } from "./hooks/use-server-form";
 import { ServerInfoContent } from "./ServerInfoContent";
@@ -206,6 +207,14 @@ export function ServerDetailModal({
     }
   };
 
+  const getSwitchReconnectOptions = () => {
+    if (!HOSTED_MODE && server.useOAuth === true && !server.oauthTokens) {
+      return { forceOAuthFlow: true };
+    }
+
+    return { allowInteractiveOAuthFlow: false };
+  };
+
   const handleDisconnect = () => {
     posthog.capture("server_detail_modal_disconnect_clicked", {
       platform: detectPlatform(),
@@ -307,9 +316,7 @@ export function ServerDetailModal({
                   if (!checked) {
                     handleDisconnect();
                   } else {
-                    void handleConnect({
-                      allowInteractiveOAuthFlow: false,
-                    });
+                    void handleConnect(getSwitchReconnectOptions());
                   }
                 }}
                 className="cursor-pointer scale-75"
