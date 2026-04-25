@@ -16,7 +16,12 @@ import {
   readStoredActiveOrganizationId,
   writeStoredActiveOrganizationId,
 } from "@/lib/active-organization-storage";
-import { HOSTED_OAUTH_PENDING_STORAGE_KEY } from "@/lib/hosted-oauth-callback";
+import {
+  clearHostedOAuthPendingState,
+  HOSTED_OAUTH_PENDING_STORAGE_KEY,
+} from "@/lib/hosted-oauth-callback";
+import { clearPendingQuickConnect } from "@/lib/quick-connect-pending";
+import { HOSTED_MODE } from "@/lib/config";
 
 export type { ServerWithName } from "@/state/app-types";
 export type {
@@ -55,11 +60,14 @@ function createDefaultWorkspace() {
   };
 }
 
-// Resolves dashboard/server-list OAuth callbacks only. Hosted chatbox/shared
-// callbacks are handled by App.tsx and must not affect server-card state.
-function readPendingDashboardOAuth(): PendingDashboardOAuthState | null {
+function hasHostedOAuthCallbackParams(): boolean {
+  if (typeof window === "undefined") return false;
+  const params = new URLSearchParams(window.location.search);
+  return params.has("code") || params.has("error");
+}
+
+function readPendingDashboardOAuthFromStorage(): PendingDashboardOAuthState | null {
   if (typeof window === "undefined") return null;
-  if (!new URLSearchParams(window.location.search).has("code")) return null;
 
   try {
     const raw = localStorage.getItem(HOSTED_OAUTH_PENDING_STORAGE_KEY);
@@ -97,6 +105,22 @@ function readPendingDashboardOAuth(): PendingDashboardOAuthState | null {
     serverUrl: localStorage.getItem(`mcp-serverUrl-${serverName}`),
     startedAt: Date.now(),
   };
+}
+
+// Resolves dashboard/server-list OAuth callbacks only. Hosted chatbox/shared
+// callbacks are handled by App.tsx and must not affect server-card state.
+function readPendingDashboardOAuth(): PendingDashboardOAuthState | null {
+  if (!hasHostedOAuthCallbackParams()) return null;
+  return readPendingDashboardOAuthFromStorage();
+}
+
+function isHistoryRestore(event: PageTransitionEvent): boolean {
+  if (event.persisted) return true;
+
+  const navigationEntry = performance
+    .getEntriesByType?.("navigation")
+    .at(0) as PerformanceNavigationTiming | undefined;
+  return navigationEntry?.type === "back_forward";
 }
 
 // Patches only existing server state. Missing servers are represented by
@@ -360,6 +384,42 @@ export function useAppState({
 
     return () => window.clearTimeout(timeoutId);
   }, [pendingDashboardOAuth]);
+
+  useEffect(() => {
+    if (!HOSTED_MODE) return;
+
+    const handlePageShow = (event: PageTransitionEvent) => {
+      if (!isHistoryRestore(event) || hasHostedOAuthCallbackParams()) {
+        return;
+      }
+
+      const pendingOAuth = readPendingDashboardOAuthFromStorage();
+      if (!pendingOAuth) {
+        return;
+      }
+
+      clearHostedOAuthPendingState();
+      clearPendingQuickConnect();
+      localStorage.removeItem("mcp-oauth-pending");
+      localStorage.removeItem("mcp-oauth-return-hash");
+      setPendingDashboardOAuth(null);
+
+      const pendingServer = appState.servers[pendingOAuth.serverName];
+      if (
+        pendingServer?.connectionStatus === "connecting" ||
+        pendingServer?.connectionStatus === "oauth-flow"
+      ) {
+        dispatch({
+          type: "CONNECT_FAILURE",
+          name: pendingOAuth.serverName,
+          error: "Authorization was cancelled. Try again.",
+        });
+      }
+    };
+
+    window.addEventListener("pageshow", handlePageShow);
+    return () => window.removeEventListener("pageshow", handlePageShow);
+  }, [appState.servers]);
 
   const workspaceState = useWorkspaceState({
     appState,

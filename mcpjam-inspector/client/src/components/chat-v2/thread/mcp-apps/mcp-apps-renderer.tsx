@@ -178,6 +178,7 @@ export function MCPAppsRenderer({
 }: MCPAppsRendererProps) {
   const sandboxRef = useRef<SandboxedIframeHandle>(null);
   const themeMode = usePreferencesStore((s) => s.themeMode);
+  const themePreset = usePreferencesStore((s) => s.themePreset);
   const sharedHostStyle = usePreferencesStore((s) => s.hostStyle);
   const chatboxHostStyle = useChatboxHostStyle();
   const draftHostContext = useHostContextStore((s) => s.draftHostContext);
@@ -760,6 +761,41 @@ export function MCPAppsRenderer({
         : getClaudeDesktopStyleVariables(resolvedTheme),
     [resolvedTheme, useChatGPTStyle],
   );
+  const defaultFontCss = useChatGPTStyle
+    ? CHATGPT_FONT_CSS
+    : CLAUDE_DESKTOP_FONT_CSS;
+  const configuredStyles =
+    baseHostContext.styles &&
+    typeof baseHostContext.styles === "object" &&
+    !Array.isArray(baseHostContext.styles)
+      ? (baseHostContext.styles as McpUiHostContext["styles"])
+      : undefined;
+  const mergedStyleVariables = useMemo(() => {
+    const configuredVariables =
+      configuredStyles?.variables &&
+      typeof configuredStyles.variables === "object" &&
+      !Array.isArray(configuredStyles.variables)
+        ? configuredStyles.variables
+        : undefined;
+
+    return {
+      ...(configuredVariables && Object.keys(configuredVariables).length > 0
+        ? configuredVariables
+        : styleVariables),
+      "--mcpjam-theme-preset": themePreset,
+    };
+  }, [configuredStyles?.variables, styleVariables, themePreset]);
+  const mergedStyles = useMemo<McpUiHostContext["styles"]>(
+    () => ({
+      ...configuredStyles,
+      variables: mergedStyleVariables,
+      css: {
+        ...configuredStyles?.css,
+        fonts: configuredStyles?.css?.fonts ?? defaultFontCss,
+      },
+    }),
+    [configuredStyles, defaultFontCss, mergedStyleVariables],
+  );
 
   // containerDimensions (maxWidth/maxHeight) was previously sent here but
   // removed — width is now fully host-controlled.
@@ -785,21 +821,7 @@ export function MCPAppsRenderer({
       userAgent: navigator.userAgent,
       deviceCapabilities,
       safeAreaInsets,
-      styles:
-        baseHostContext.styles &&
-        typeof baseHostContext.styles === "object" &&
-        !Array.isArray(baseHostContext.styles) &&
-        Object.keys(baseHostContext.styles as Record<string, unknown>).length >
-          0
-          ? (baseHostContext.styles as McpUiHostContext["styles"])
-          : {
-              variables: styleVariables,
-              css: {
-                fonts: useChatGPTStyle
-                  ? CHATGPT_FONT_CSS
-                  : CLAUDE_DESKTOP_FONT_CSS,
-              },
-            },
+      styles: mergedStyles,
       toolInfo: {
         id: toolCallId,
         tool: {
@@ -823,7 +845,7 @@ export function MCPAppsRenderer({
       timeZone,
       deviceCapabilities,
       safeAreaInsets,
-      styleVariables,
+      mergedStyles,
       useChatGPTStyle,
       toolCallId,
       toolName,

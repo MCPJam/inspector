@@ -5,6 +5,7 @@
   "type": "module",
   "description": "Shared MCPJam design system: tokens + primitive components.",
   "exports": {
+    "./index.css": "./src/index.css",
     "./tokens.css": "./src/tokens.css",
     "./tokens": "./src/tokens.ts",
     "./cn": "./src/cn.ts",

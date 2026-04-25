@@ -1,35 +1,38 @@
-* {
-  box-sizing: border-box;
-}
+@import "tailwindcss";
+@import "@mcpjam/design-system/index.css";
 
-:root {
-  color-scheme: light dark;
-  font-family:
-    "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Palatino, Georgia,
-    serif;
-  line-height: 1.5;
-}
+@source "./**/*.{ts,tsx,html}";
+@source "../../../design-system/src/**/*.tsx";
 
-html,
-body,
-#root {
-  margin: 0;
-  min-height: 100%;
-}
+@custom-variant dark (&:is(.dark *));
 
-body {
-  min-width: 320px;
-}
+@layer base {
+  * {
+    @apply border-border;
+    box-sizing: border-box;
+  }
 
-button,
-input,
-textarea,
-select {
-  font: inherit;
-}
+  html,
+  body,
+  #root {
+    margin: 0;
+    min-height: 100%;
+  }
 
-code,
-pre {
-  font-family:
-    "SFMono-Regular", "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+  body {
+    @apply antialiased;
+    min-width: 320px;
+  }
+
+  button,
+  input,
+  textarea,
+  select {
+    font: inherit;
+  }
+
+  code,
+  pre {
+    font-family: var(--font-code);
+  }
 }
