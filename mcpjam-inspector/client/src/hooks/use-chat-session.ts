@@ -90,34 +90,20 @@ import {
 } from "@/shared/live-chat-trace-preview";
 import { isHostedRpcLogDataPart } from "@/shared/hosted-rpc-log";
 import { ingestHostedRpcLogsFromResponse } from "@/lib/apis/web/rpc-logs";
+import type { ExecutionConfig } from "@/lib/chat-execution-config";
+import type { HostedRuntimeContext } from "@/lib/hosted-runtime-context";
 
 export interface UseChatSessionOptions {
   /** Server names to connect to */
   selectedServers: string[];
   /** Visibility to apply when persisting a new direct chat */
   directVisibility?: "private" | "workspace";
-  /** Active Convex workspace ID when running in hosted mode */
-  hostedWorkspaceId?: string | null;
-  /** Hosted server IDs mapped from selected server names */
-  hostedSelectedServerIds?: string[];
-  /** OAuth tokens for hosted servers keyed by server ID */
-  hostedOAuthTokens?: Record<string, string>;
-  /** Optional server-share token for hosted shared chat sessions */
-  hostedShareToken?: string;
-  /** Optional chatbox token for hosted chatbox chat sessions */
-  hostedChatboxToken?: string;
-  /** Surface classification for hosted chatbox chat sessions */
-  hostedChatboxSurface?: "preview" | "share_link";
+  /** Hosted runtime context (workspace, server IDs, OAuth tokens, share/chatbox scope) */
+  hostedContext?: HostedRuntimeContext;
   /** Minimal UI mode for shared chat (hides diagnostics surfaces only) */
   minimalMode?: boolean;
-  /** Fixed initial model for hosted chatbox sessions */
-  initialModelId?: string;
-  /** Initial system prompt (defaults to DEFAULT_SYSTEM_PROMPT) */
-  initialSystemPrompt?: string;
-  /** Initial temperature (defaults to 0.7) */
-  initialTemperature?: number;
-  /** Initial tool approval mode for hosted chatbox sessions */
-  initialRequireToolApproval?: boolean;
+  /** Execution configuration (model, system prompt, temperature, tool approval) */
+  executionConfig?: ExecutionConfig;
   /** Callback when chat is reset */
   onReset?: (reason?: ChatSessionResetReason) => void;
 }
@@ -905,19 +891,21 @@ function isAuthDeniedError(error: unknown): boolean {
 export function useChatSession({
   selectedServers,
   directVisibility = "private",
-  hostedWorkspaceId,
-  hostedSelectedServerIds = [],
-  hostedOAuthTokens,
-  hostedShareToken,
-  hostedChatboxToken,
-  hostedChatboxSurface,
+  hostedContext,
   minimalMode: _minimalMode = false,
-  initialModelId,
-  initialSystemPrompt = DEFAULT_SYSTEM_PROMPT,
-  initialTemperature = 0.7,
-  initialRequireToolApproval = false,
+  executionConfig,
   onReset,
 }: UseChatSessionOptions): UseChatSessionReturn {
+  const hostedWorkspaceId = hostedContext?.workspaceId;
+  const hostedSelectedServerIds = hostedContext?.selectedServerIds ?? [];
+  const hostedOAuthTokens = hostedContext?.oauthTokens;
+  const hostedShareToken = hostedContext?.shareToken;
+  const hostedChatboxToken = hostedContext?.chatboxToken;
+  const hostedChatboxSurface = hostedContext?.chatboxSurface;
+  const initialModelId = executionConfig?.modelId;
+  const initialSystemPrompt = executionConfig?.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
+  const initialTemperature = executionConfig?.temperature ?? 0.7;
+  const initialRequireToolApproval = executionConfig?.requireToolApproval ?? false;
   const { getAccessToken } = useAuth();
 
   // Store onReset in a ref to avoid triggering effects when the callback changes identity

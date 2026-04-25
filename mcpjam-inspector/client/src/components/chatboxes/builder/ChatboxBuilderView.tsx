@@ -1110,18 +1110,19 @@ export function ChatboxBuilderView({
                                     (s) => s.serverId,
                                   )}
                                   hostedOAuthTokensOverride={previewOAuthTokens}
-                                  hostedChatboxToken={chatbox.link.token}
-                                  hostedChatboxSurface="preview"
-                                  initialModelId={draftChatboxConfig.modelId}
-                                  initialSystemPrompt={
-                                    draftChatboxConfig.systemPrompt
-                                  }
-                                  initialTemperature={
-                                    draftChatboxConfig.temperature
-                                  }
-                                  initialRequireToolApproval={
-                                    draftChatboxConfig.requireToolApproval
-                                  }
+                                  hostedContext={{
+                                    chatboxToken: chatbox.link.token,
+                                    chatboxSurface: "preview",
+                                  }}
+                                  executionConfig={{
+                                    modelId: draftChatboxConfig.modelId,
+                                    systemPrompt:
+                                      draftChatboxConfig.systemPrompt,
+                                    temperature:
+                                      draftChatboxConfig.temperature,
+                                    requireToolApproval:
+                                      draftChatboxConfig.requireToolApproval,
+                                  }}
                                   loadingIndicatorVariant={getLoadingIndicatorVariantForHostStyle(
                                     draftChatboxConfig.hostStyle,
                                   )}

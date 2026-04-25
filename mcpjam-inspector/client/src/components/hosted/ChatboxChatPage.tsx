@@ -697,12 +697,16 @@ export function ChatboxChatPage({
             (server) => server.serverId,
           )}
           hostedOAuthTokensOverride={oauthTokensForChat}
-          hostedChatboxToken={session.token}
-          hostedChatboxSurface={session.surface ?? "share_link"}
-          initialModelId={session.payload.modelId}
-          initialSystemPrompt={session.payload.systemPrompt}
-          initialTemperature={session.payload.temperature}
-          initialRequireToolApproval={session.payload.requireToolApproval}
+          hostedContext={{
+            chatboxToken: session.token,
+            chatboxSurface: session.surface ?? "share_link",
+          }}
+          executionConfig={{
+            modelId: session.payload.modelId,
+            systemPrompt: session.payload.systemPrompt,
+            temperature: session.payload.temperature,
+            requireToolApproval: session.payload.requireToolApproval,
+          }}
           onOAuthRequired={handleOAuthRequired}
           chatboxComposerBlocked={introGate.composerBlocked}
           chatboxComposerBlockedReason="Get started or authorize to send messages…"

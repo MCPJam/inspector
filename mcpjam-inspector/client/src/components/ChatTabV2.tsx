@@ -87,6 +87,8 @@ import { HOSTED_MODE } from "@/lib/config";
 import { buildOAuthTokensByServerId } from "@/lib/oauth/oauth-tokens";
 import type { HostedOAuthRequiredDetails } from "@/lib/hosted-oauth-required";
 import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
+import type { ExecutionConfig } from "@/lib/chat-execution-config";
+import type { HostedRuntimeContext } from "@/lib/hosted-runtime-context";
 import { useModelSelectorLayoutLock } from "@/hooks/use-model-selector-layout-lock";
 import { LiveTraceTimelineEmptyState } from "@/components/evals/live-trace-timeline-empty";
 import { LiveTraceRawEmptyState } from "@/components/evals/live-trace-raw-empty";
@@ -126,13 +128,8 @@ interface ChatTabProps {
   hostedWorkspaceIdOverride?: string;
   hostedSelectedServerIdsOverride?: string[];
   hostedOAuthTokensOverride?: Record<string, string>;
-  hostedShareToken?: string;
-  hostedChatboxToken?: string;
-  hostedChatboxSurface?: "preview" | "share_link";
-  initialModelId?: string;
-  initialSystemPrompt?: string;
-  initialTemperature?: number;
-  initialRequireToolApproval?: boolean;
+  hostedContext?: HostedRuntimeContext;
+  executionConfig?: ExecutionConfig;
   reasoningDisplayMode?: ReasoningDisplayMode;
   loadingIndicatorVariant?: LoadingIndicatorVariant;
   showHostStyleSelector?: boolean;
@@ -170,13 +167,8 @@ export function ChatTabV2({
   hostedWorkspaceIdOverride,
   hostedSelectedServerIdsOverride,
   hostedOAuthTokensOverride,
-  hostedShareToken,
-  hostedChatboxToken,
-  hostedChatboxSurface,
-  initialModelId,
-  initialSystemPrompt,
-  initialTemperature,
-  initialRequireToolApproval,
+  hostedContext,
+  executionConfig,
   reasoningDisplayMode = "inline",
   loadingIndicatorVariant,
   showHostStyleSelector = false,
@@ -321,6 +313,9 @@ export function ChatTabV2({
       ),
     [selectedConnectedServerNames, serversByName, appState.servers],
   );
+  const hostedShareToken = hostedContext?.shareToken;
+  const hostedChatboxToken = hostedContext?.chatboxToken;
+  const hostedChatboxSurface = hostedContext?.chatboxSurface;
   const effectiveHostedWorkspaceId =
     hostedWorkspaceIdOverride ?? convexWorkspaceId;
   const effectiveHostedSelectedServerIds =
@@ -383,16 +378,13 @@ export function ChatTabV2({
   } = useChatSession({
     selectedServers: selectedConnectedServerNames,
     directVisibility: pendingDirectVisibility,
-    hostedWorkspaceId: effectiveHostedWorkspaceId,
-    hostedSelectedServerIds: effectiveHostedSelectedServerIds,
-    hostedOAuthTokens: effectiveHostedOAuthTokens,
-    hostedShareToken,
-    hostedChatboxToken,
-    hostedChatboxSurface,
-    initialModelId,
-    initialSystemPrompt,
-    initialTemperature,
-    initialRequireToolApproval,
+    hostedContext: {
+      ...hostedContext,
+      workspaceId: effectiveHostedWorkspaceId,
+      selectedServerIds: effectiveHostedSelectedServerIds,
+      oauthTokens: effectiveHostedOAuthTokens,
+    },
+    executionConfig,
     minimalMode,
     onReset: (reason?: ChatSessionResetReason) => {
       if (reason === "auth-bootstrap" || reason === "hydrate") {
@@ -1098,7 +1090,7 @@ export function ChatTabV2({
   const canEnableMultiModel =
     enableMultiModelChat &&
     !minimalMode &&
-    !initialModelId &&
+    !executionConfig?.modelId &&
     !hostedShareToken &&
     !hostedChatboxToken &&
     !hostedChatboxSurface &&
@@ -1310,6 +1302,10 @@ export function ChatTabV2({
       setTemperature(evalChatHandoff.temperature);
     }
 
+    if (typeof evalChatHandoff.requireToolApproval === "boolean") {
+      setRequireToolApproval(evalChatHandoff.requireToolApproval);
+    }
+
     setInput("");
     onEvalChatHandoffConsumed?.(evalChatHandoff.id);
   }, [
@@ -1323,6 +1319,7 @@ export function ChatTabV2({
     setSelectedModelIds,
     setSystemPrompt,
     setTemperature,
+    setRequireToolApproval,
     startChatWithMessages,
   ]);
 
@@ -2167,17 +2164,17 @@ export function ChatTabV2({
                           stopRequestId={stopBroadcastRequestId}
                           placeholder={placeholder}
                           reasoningDisplayMode={reasoningDisplayMode}
-                          initialSystemPrompt={systemPrompt}
-                          initialTemperature={temperature}
-                          initialRequireToolApproval={requireToolApproval}
-                          hostedWorkspaceId={effectiveHostedWorkspaceId}
-                          hostedSelectedServerIds={
-                            effectiveHostedSelectedServerIds
-                          }
-                          hostedOAuthTokens={effectiveHostedOAuthTokens}
-                          hostedShareToken={hostedShareToken}
-                          hostedChatboxToken={hostedChatboxToken}
-                          hostedChatboxSurface={hostedChatboxSurface}
+                          executionConfig={{
+                            systemPrompt,
+                            temperature,
+                            requireToolApproval,
+                          }}
+                          hostedContext={{
+                            ...hostedContext,
+                            workspaceId: effectiveHostedWorkspaceId,
+                            selectedServerIds: effectiveHostedSelectedServerIds,
+                            oauthTokens: effectiveHostedOAuthTokens,
+                          }}
                           onOAuthRequired={handleOAuthRequired}
                           onSummaryChange={handleMultiModelSummaryChange}
                           onHasMessagesChange={

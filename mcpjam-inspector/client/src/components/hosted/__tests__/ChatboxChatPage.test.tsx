@@ -263,7 +263,9 @@ describe("ChatboxChatPage", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
     expect(mockChatTabV2).toHaveBeenCalledWith(
       expect.objectContaining({
-        hostedChatboxSurface: "preview",
+        hostedContext: expect.objectContaining({
+          chatboxSurface: "preview",
+        }),
       }),
     );
   });
