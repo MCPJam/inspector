@@ -18,12 +18,18 @@ function resetClientConfigStore(defaultConfig: WorkspaceClientConfig) {
     defaultConfig,
     savedConfig: undefined,
     draftConfig: defaultConfig,
+    connectionDefaultsText: JSON.stringify(
+      defaultConfig.connectionDefaults ?? { headers: {}, requestTimeout: 10000 },
+      null,
+      2,
+    ),
     clientCapabilitiesText: JSON.stringify(
       defaultConfig.clientCapabilities,
       null,
       2,
     ),
     hostContextText: JSON.stringify(defaultConfig.hostContext, null, 2),
+    connectionDefaultsError: null,
     clientCapabilitiesError: null,
     hostContextError: null,
     isSaving: false,
@@ -38,6 +44,10 @@ describe("ClientConfigTab reconnect warnings", () => {
   beforeEach(() => {
     const defaultConfig: WorkspaceClientConfig = {
       version: 1,
+      connectionDefaults: {
+        headers: {},
+        requestTimeout: 10000,
+      },
       clientCapabilities: getDefaultClientCapabilities() as Record<
         string,
         unknown

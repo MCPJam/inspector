@@ -27,7 +27,7 @@ import {
   getStoredTokens,
   clearOAuthData,
   initiateOAuth,
-  type MCPOAuthOptions,
+  readStoredOAuthConfig,
 } from "@/lib/oauth/mcp-oauth";
 import type { OAuthTrace } from "@/lib/oauth/oauth-trace";
 import {
@@ -48,6 +48,9 @@ import { useServerMutations, type RemoteServer } from "./useWorkspaces";
 import {
   CLIENT_CONFIG_SYNC_PENDING_ERROR_MESSAGE,
   getEffectiveServerClientCapabilities,
+  getEffectiveWorkspaceConnectionDefaults,
+  mergeWorkspaceConnectionHeaders,
+  normalizeWorkspaceClientCapabilities,
 } from "@/lib/client-config";
 import { EXCALIDRAW_SERVER_NAME } from "@/lib/excalidraw-quick-connect";
 import { readOnboardingState } from "@/lib/onboarding-state";
@@ -59,6 +62,78 @@ function shouldSuppressExcalidrawConnectToastForOnboarding(
   if (serverName !== EXCALIDRAW_SERVER_NAME) return false;
   const status = readOnboardingState()?.status;
   return status === "seen";
+}
+
+function extractRequestHeaders(
+  requestInit: RequestInit | undefined,
+): Record<string, string> | undefined {
+  const headers = requestInit?.headers;
+  if (!headers || typeof headers !== "object" || Array.isArray(headers)) {
+    return undefined;
+  }
+
+  if (typeof Headers !== "undefined" && headers instanceof Headers) {
+    return Object.fromEntries(headers.entries());
+  }
+
+  return Object.fromEntries(
+    Object.entries(headers).filter(([, value]) => typeof value === "string"),
+  ) as Record<string, string>;
+}
+
+function omitAuthorizationHeader(
+  headers?: Record<string, string>,
+): Record<string, string> | undefined {
+  if (!headers) {
+    return undefined;
+  }
+
+  const sanitized = Object.fromEntries(
+    Object.entries(headers).filter(
+      ([key, value]) =>
+        key.toLowerCase() !== "authorization" && typeof value === "string",
+    ),
+  );
+
+  return Object.keys(sanitized).length > 0 ? sanitized : undefined;
+}
+
+function mergeOAuthCallbackServerConfig(
+  existingConfig: MCPServerConfig | undefined,
+  callbackConfig: HttpServerConfig,
+): HttpServerConfig {
+  const existingHttpConfig =
+    existingConfig && "url" in existingConfig ? existingConfig : undefined;
+  const mergedHeaders = {
+    ...(omitAuthorizationHeader(
+      extractRequestHeaders(existingHttpConfig?.requestInit),
+    ) ?? {}),
+    ...(extractRequestHeaders(callbackConfig.requestInit) ?? {}),
+  };
+  const nextRequestInit =
+    existingHttpConfig?.requestInit || callbackConfig.requestInit
+      ? {
+          ...(existingHttpConfig?.requestInit ?? {}),
+          ...(callbackConfig.requestInit ?? {}),
+          ...(Object.keys(mergedHeaders).length > 0
+            ? { headers: mergedHeaders }
+            : {}),
+        }
+      : undefined;
+
+  return {
+    ...(existingHttpConfig ?? {}),
+    ...callbackConfig,
+    ...(nextRequestInit ? { requestInit: nextRequestInit } : {}),
+    timeout: callbackConfig.timeout ?? existingHttpConfig?.timeout,
+    capabilities:
+      callbackConfig.capabilities ?? existingHttpConfig?.capabilities,
+    clientCapabilities:
+      callbackConfig.clientCapabilities ??
+      existingHttpConfig?.clientCapabilities ??
+      callbackConfig.capabilities ??
+      existingHttpConfig?.capabilities,
+  };
 }
 
 /**
@@ -73,6 +148,17 @@ function saveOAuthConfigToLocalStorage(formData: ServerFormData): void {
   localStorage.setItem(`mcp-serverUrl-${formData.name}`, formData.url);
 
   const oauthConfig: Record<string, unknown> = {};
+  const existingOAuthConfig = readStoredOAuthConfig(formData.name);
+  const protocolMode = formData.oauthProtocolMode ?? "auto";
+  const registrationMode =
+    formData.oauthRegistrationMode ??
+    (formData.clientId || formData.clientSecret ? "preregistered" : "auto");
+
+  oauthConfig.protocolMode = protocolMode;
+  oauthConfig.registrationMode = registrationMode;
+  if (protocolMode !== "auto") {
+    oauthConfig.protocolVersion = protocolMode;
+  }
   if (formData.oauthScopes && formData.oauthScopes.length > 0) {
     oauthConfig.scopes = formData.oauthScopes;
   }
@@ -82,8 +168,11 @@ function saveOAuthConfigToLocalStorage(formData: ServerFormData): void {
   if (formData.registryServerId) {
     oauthConfig.registryServerId = formData.registryServerId;
   }
-  if (formData.clientId || formData.clientSecret) {
-    oauthConfig.registrationStrategy = "preregistered";
+  if (registrationMode !== "auto") {
+    oauthConfig.registrationStrategy = registrationMode;
+  }
+  if (existingOAuthConfig.resourceUrl) {
+    oauthConfig.resourceUrl = existingOAuthConfig.resourceUrl;
   }
   if (Object.keys(oauthConfig).length > 0) {
     localStorage.setItem(
@@ -104,90 +193,36 @@ function saveOAuthConfigToLocalStorage(formData: ServerFormData): void {
       `mcp-client-${formData.name}`,
       JSON.stringify(clientInfo),
     );
+  } else {
+    localStorage.removeItem(`mcp-client-${formData.name}`);
   }
 }
 
-function readJsonObjectFromLocalStorage(
-  key: string,
-): Record<string, unknown> | undefined {
+function readStoredClientCredentials(serverName: string): {
+  clientId?: string;
+  clientSecret?: string;
+} {
   try {
-    const raw = localStorage.getItem(key);
+    const raw = localStorage.getItem(`mcp-client-${serverName}`);
     if (!raw) {
-      return undefined;
+      return {};
     }
 
     const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-      ? (parsed as Record<string, unknown>)
-      : undefined;
+    return {
+      clientId:
+        typeof parsed?.client_id === "string" && parsed.client_id.trim() !== ""
+          ? parsed.client_id
+          : undefined,
+      clientSecret:
+        typeof parsed?.client_secret === "string" &&
+        parsed.client_secret.trim() !== ""
+          ? parsed.client_secret
+          : undefined,
+    };
   } catch {
-    return undefined;
+    return {};
   }
-}
-
-function readSavedOAuthReconnectOptions(
-  serverName: string,
-): Partial<MCPOAuthOptions> {
-  const oauthConfig = readJsonObjectFromLocalStorage(
-    `mcp-oauth-config-${serverName}`,
-  );
-  const clientInfo = readJsonObjectFromLocalStorage(`mcp-client-${serverName}`);
-  const options: Partial<MCPOAuthOptions> = {};
-  const storedScopes = oauthConfig?.scopes;
-  const storedCustomHeaders = oauthConfig?.customHeaders;
-
-  if (
-    Array.isArray(storedScopes) &&
-    storedScopes.every((scope) => typeof scope === "string")
-  ) {
-    options.scopes = storedScopes;
-  }
-
-  if (
-    storedCustomHeaders &&
-    typeof storedCustomHeaders === "object" &&
-    !Array.isArray(storedCustomHeaders)
-  ) {
-    options.customHeaders = Object.fromEntries(
-      Object.entries(storedCustomHeaders).filter(
-        ([, value]) => typeof value === "string",
-      ) as Array<[string, string]>,
-    );
-  }
-
-  if (typeof oauthConfig?.registryServerId === "string") {
-    options.registryServerId = oauthConfig.registryServerId;
-  }
-
-  if (oauthConfig?.useRegistryOAuthProxy === true) {
-    options.useRegistryOAuthProxy = true;
-  }
-
-  if (
-    oauthConfig?.protocolVersion === "2025-03-26" ||
-    oauthConfig?.protocolVersion === "2025-06-18" ||
-    oauthConfig?.protocolVersion === "2025-11-25"
-  ) {
-    options.protocolVersion = oauthConfig.protocolVersion;
-  }
-
-  if (
-    oauthConfig?.registrationStrategy === "cimd" ||
-    oauthConfig?.registrationStrategy === "dcr" ||
-    oauthConfig?.registrationStrategy === "preregistered"
-  ) {
-    options.registrationStrategy = oauthConfig.registrationStrategy;
-  }
-
-  if (typeof clientInfo?.client_id === "string") {
-    options.clientId = clientInfo.client_id;
-  }
-
-  if (typeof clientInfo?.client_secret === "string") {
-    options.clientSecret = clientInfo.client_secret;
-  }
-
-  return options;
 }
 
 function parseOAuthScopes(scopes?: string): string[] | undefined {
@@ -198,26 +233,64 @@ function parseOAuthScopes(scopes?: string): string[] | undefined {
   return parsed && parsed.length > 0 ? parsed : undefined;
 }
 
-function getServerCustomHeaders(
-  serverConfig: MCPServerConfig,
-): Record<string, string> | undefined {
-  if (
-    !("requestInit" in serverConfig) ||
-    !serverConfig.requestInit?.headers
-  ) {
-    return undefined;
+function buildResolvedOAuthProfile(input: {
+  serverName: string;
+  serverUrl: string;
+  existingProfile?: OAuthTestProfile;
+  storedOAuthConfig: ReturnType<typeof readStoredOAuthConfig>;
+  storedClientCredentials: ReturnType<typeof readStoredClientCredentials>;
+  oauthResourceUrl?: string;
+}): OAuthTestProfile | undefined {
+  const existingProfile = input.existingProfile;
+  const storedOAuthConfig = input.storedOAuthConfig;
+  const storedClientCredentials = input.storedClientCredentials;
+
+  const protocolVersion =
+    existingProfile?.protocolVersion ??
+    storedOAuthConfig.protocolVersion ??
+    (storedOAuthConfig.protocolMode && storedOAuthConfig.protocolMode !== "auto"
+      ? storedOAuthConfig.protocolMode
+      : undefined);
+  const registrationStrategy =
+    existingProfile?.registrationStrategy ??
+    storedOAuthConfig.registrationStrategy ??
+    (storedOAuthConfig.registrationMode &&
+    storedOAuthConfig.registrationMode !== "auto"
+      ? storedOAuthConfig.registrationMode
+      : undefined);
+
+  if (!protocolVersion || !registrationStrategy) {
+    return existingProfile;
   }
 
-  const headers: Record<string, string> = {};
-  new Headers(serverConfig.requestInit.headers as HeadersInit).forEach(
-    (value, key) => {
-      if (key.toLowerCase() !== "authorization") {
-        headers[key] = value;
-      }
-    },
-  );
+  const customHeaders = existingProfile?.customHeaders?.length
+    ? existingProfile.customHeaders
+    : Object.entries(storedOAuthConfig.customHeaders ?? {}).map(
+        ([key, value]) => ({
+          key,
+          value,
+        }),
+      );
 
-  return Object.keys(headers).length > 0 ? headers : undefined;
+  return {
+    serverUrl: input.serverUrl,
+    resourceUrl:
+      input.oauthResourceUrl ??
+      existingProfile?.resourceUrl ??
+      storedOAuthConfig.resourceUrl ??
+      "",
+    clientId:
+      existingProfile?.clientId ?? storedClientCredentials.clientId ?? "",
+    clientSecret:
+      existingProfile?.clientSecret ?? storedClientCredentials.clientSecret ?? "",
+    scopes:
+      existingProfile?.scopes ??
+      storedOAuthConfig.scopes?.join(",") ??
+      "",
+    customHeaders,
+    protocolVersion,
+    registrationStrategy,
+  };
 }
 
 function restorePathAfterOAuthCallback(
@@ -464,22 +537,62 @@ export function useServerState({
       state.pendingWorkspaceId === effectiveActiveWorkspaceId,
   );
 
-  const withWorkspaceClientCapabilities = useCallback(
+  const workspaceConnectionDefaults = useMemo(
+    () => getEffectiveWorkspaceConnectionDefaults(activeWorkspace?.clientConfig),
+    [activeWorkspace?.clientConfig],
+  );
+
+  const withWorkspaceConnectionDefaults = useCallback(
     (serverConfig: MCPServerConfig): MCPServerConfig => {
-      const mergedCapabilities = getEffectiveServerClientCapabilities({
-        workspaceClientConfig: activeWorkspace?.clientConfig,
-        serverCapabilities: serverConfig.capabilities as
-          | Record<string, unknown>
-          | undefined,
-      });
+      const explicitClientCapabilities = serverConfig.clientCapabilities as
+        | Record<string, unknown>
+        | undefined;
+      const effectiveClientCapabilities = explicitClientCapabilities
+        ? normalizeWorkspaceClientCapabilities(explicitClientCapabilities)
+        : getEffectiveServerClientCapabilities({
+            workspaceClientConfig: activeWorkspace?.clientConfig,
+            serverCapabilities: serverConfig.capabilities as
+              | Record<string, unknown>
+              | undefined,
+          });
+
+      let nextRequestInit = serverConfig.requestInit;
+      if ("url" in serverConfig) {
+        const mergedHeaders = mergeWorkspaceConnectionHeaders(
+          workspaceConnectionDefaults.headers,
+          extractRequestHeaders(serverConfig.requestInit),
+        );
+
+        if (Object.keys(mergedHeaders).length > 0) {
+          nextRequestInit = {
+            ...(serverConfig.requestInit ?? {}),
+            headers: mergedHeaders,
+          };
+        }
+      }
 
       return {
         ...serverConfig,
-        capabilities: mergedCapabilities,
-        clientCapabilities: mergedCapabilities,
+        ...("url" in serverConfig && nextRequestInit
+          ? { requestInit: nextRequestInit }
+          : {}),
+        timeout: serverConfig.timeout ?? workspaceConnectionDefaults.requestTimeout,
+        capabilities: effectiveClientCapabilities,
+        clientCapabilities: effectiveClientCapabilities,
       };
     },
-    [activeWorkspace?.clientConfig],
+    [activeWorkspace?.clientConfig, workspaceConnectionDefaults],
+  );
+
+  const mergeWithWorkspaceHeaders = useCallback(
+    (headers?: Record<string, string>) => {
+      const merged = mergeWorkspaceConnectionHeaders(
+        workspaceConnectionDefaults.headers,
+        omitAuthorizationHeader(headers),
+      );
+      return Object.keys(merged).length > 0 ? merged : undefined;
+    },
+    [workspaceConnectionDefaults.headers],
   );
 
   const assertClientConfigSynced = useCallback(() => {
@@ -562,6 +675,7 @@ export function useServerState({
       const url =
         config?.url instanceof URL ? config.url.href : config?.url || undefined;
       const headers = config?.requestInit?.headers || undefined;
+      const storedOAuthConfig = readStoredOAuthConfig(serverName);
 
       const payload = {
         name: serverName,
@@ -572,11 +686,15 @@ export function useServerState({
         url,
         headers,
         timeout: config?.timeout,
+        clientCapabilities: config?.clientCapabilities,
         useOAuth: serverEntry.useOAuth,
         oauthScopes: serverEntry.oauthFlowProfile?.scopes
           ? serverEntry.oauthFlowProfile.scopes.split(",").filter(Boolean)
           : undefined,
         clientId: serverEntry.oauthFlowProfile?.clientId,
+        oauthResourceUrl:
+          serverEntry.oauthFlowProfile?.resourceUrl ||
+          storedOAuthConfig.resourceUrl,
       } as const;
 
       try {
@@ -859,24 +977,74 @@ export function useServerState({
 
         if (result.success && result.serverConfig && result.serverName) {
           const serverName = result.serverName;
+          const existingServer = latestEffectiveServersRef.current[serverName];
+          const mergedServerConfig = mergeOAuthCallbackServerConfig(
+            existingServer?.config,
+            result.serverConfig,
+          );
+          const storedOAuthConfig = readStoredOAuthConfig(serverName);
+          const storedClientCredentials = readStoredClientCredentials(serverName);
+          const resolvedOAuthProfile = buildResolvedOAuthProfile({
+            serverName,
+            serverUrl:
+              mergedServerConfig.url instanceof URL
+                ? mergedServerConfig.url.href
+                : String(mergedServerConfig.url),
+            existingProfile: existingServer?.oauthFlowProfile,
+            storedOAuthConfig,
+            storedClientCredentials,
+            oauthResourceUrl: result.oauthResourceUrl,
+          });
+          const oauthServerEntry: ServerWithName = {
+            ...(existingServer ?? {}),
+            name: serverName,
+            config: mergedServerConfig,
+            lastConnectionTime:
+              existingServer?.lastConnectionTime ?? new Date(),
+            connectionStatus:
+              existingServer?.connectionStatus ?? "disconnected",
+            retryCount: existingServer?.retryCount ?? 0,
+            enabled: existingServer?.enabled ?? true,
+            oauthTokens: existingServer?.oauthTokens,
+            oauthFlowProfile: resolvedOAuthProfile,
+            initializationInfo: existingServer?.initializationInfo,
+            useOAuth: true,
+            lastOAuthTrace: result.oauthTrace,
+          };
+
+          dispatch({
+            type: "UPSERT_SERVER",
+            name: serverName,
+            server: oauthServerEntry,
+          });
+          if (!isAuthenticated || useLocalFallback) {
+            persistServerToLocalWorkspace(serverName, oauthServerEntry);
+          } else {
+            syncServerToConvex(serverName, oauthServerEntry).catch((error) =>
+              logger.warn("Failed to sync OAuth profile to Convex", {
+                serverName,
+                error,
+              }),
+            );
+          }
 
           dispatch({
             type: "CONNECT_REQUEST",
             name: serverName,
-            config: result.serverConfig,
+            config: mergedServerConfig,
             select: true,
           });
 
           try {
             const connectionResult = await guardedTestConnection(
-              withWorkspaceClientCapabilities(result.serverConfig),
+              withWorkspaceConnectionDefaults(mergedServerConfig),
               serverName,
             );
             if (connectionResult.success) {
                 dispatch({
                   type: "CONNECT_SUCCESS",
                   name: serverName,
-                  config: result.serverConfig,
+                  config: mergedServerConfig,
                   tokens: isHostedWorkspaceCallback
                     ? undefined
                     : getStoredTokens(serverName),
@@ -968,10 +1136,13 @@ export function useServerState({
       failPendingOAuthConnection,
       isAuthenticated,
       logger,
+      persistServerToLocalWorkspace,
       storeInitInfo,
       guardedTestConnection,
+      syncServerToConvex,
       updateServerOAuthTrace,
-      withWorkspaceClientCapabilities,
+      useLocalFallback,
+      withWorkspaceConnectionDefaults,
     ],
   );
 
@@ -1165,7 +1336,7 @@ export function useServerState({
               },
             } satisfies HttpServerConfig;
             const connectionResult = await guardedTestConnection(
-              withWorkspaceClientCapabilities(serverConfig),
+              withWorkspaceConnectionDefaults(serverConfig),
               formData.name,
             );
             if (isStaleOp(formData.name, token)) return;
@@ -1212,6 +1383,14 @@ export function useServerState({
           const oauthInputs = await resolveOAuthInitiationInputs(formData);
           const existingOAuthProfile =
             appState.servers[formData.name]?.oauthFlowProfile;
+          const protocolMode =
+            formData.oauthProtocolMode ??
+            existingOAuthProfile?.protocolVersion ??
+            "auto";
+          const registrationMode =
+            formData.oauthRegistrationMode ??
+            existingOAuthProfile?.registrationStrategy ??
+            "auto";
           const oauthOptions: any = {
             serverName: formData.name,
             serverUrl: formData.url,
@@ -1219,9 +1398,17 @@ export function useServerState({
             clientSecret: oauthInputs.clientSecret,
             registryServerId: oauthInputs.registryServerId,
             useRegistryOAuthProxy: oauthInputs.useRegistryOAuthProxy,
-            customHeaders: formData.headers,
-            protocolVersion: existingOAuthProfile?.protocolVersion,
-            registrationStrategy: existingOAuthProfile?.registrationStrategy,
+            customHeaders: mergeWithWorkspaceHeaders(formData.headers),
+            protocolMode,
+            registrationMode,
+            protocolVersion:
+              protocolMode !== "auto"
+                ? protocolMode
+                : existingOAuthProfile?.protocolVersion,
+            registrationStrategy:
+              registrationMode !== "auto"
+                ? registrationMode
+                : existingOAuthProfile?.registrationStrategy,
             onTraceUpdate: (oauthTrace: OAuthTrace) => {
               updateServerOAuthTrace(formData.name, oauthTrace);
             },
@@ -1238,7 +1425,7 @@ export function useServerState({
           if (oauthResult.success) {
             if (oauthResult.serverConfig) {
               const connectionResult = await guardedTestConnection(
-                withWorkspaceClientCapabilities(oauthResult.serverConfig),
+                withWorkspaceConnectionDefaults(oauthResult.serverConfig),
                 formData.name,
               );
               if (isStaleOp(formData.name, token)) return;
@@ -1299,7 +1486,7 @@ export function useServerState({
         if (!hasPendingCallback) {
           clearOAuthData(formData.name);
         }
-        const effectiveConfig = withWorkspaceClientCapabilities(mcpConfig);
+        const effectiveConfig = withWorkspaceConnectionDefaults(mcpConfig);
         const result = await guardedTestConnection(
           effectiveConfig,
           formData.name,
@@ -1373,7 +1560,7 @@ export function useServerState({
       storeInitInfo,
       guardedTestConnection,
       updateServerOAuthTrace,
-      withWorkspaceClientCapabilities,
+      withWorkspaceConnectionDefaults,
     ],
   );
 
@@ -1518,7 +1705,7 @@ export function useServerState({
       try {
         const result = await guardedReconnectServer(
           serverName,
-          withWorkspaceClientCapabilities(serverConfig),
+          withWorkspaceConnectionDefaults(serverConfig),
         );
         if (isStaleOp(serverName, token)) {
           return { success: false, error: "Operation cancelled" };
@@ -1558,7 +1745,7 @@ export function useServerState({
       dispatch,
       storeInitInfo,
       guardedReconnectServer,
-      withWorkspaceClientCapabilities,
+      withWorkspaceConnectionDefaults,
     ],
   );
 
@@ -1923,39 +2110,52 @@ export function useServerState({
           };
         }
 
-        const savedOAuthOptions = readSavedOAuthReconnectOptions(serverName);
+        const storedOAuthConfig = readStoredOAuthConfig(serverName);
+        const storedClientCredentials = readStoredClientCredentials(serverName);
         const profileScopes = parseOAuthScopes(server.oauthFlowProfile?.scopes);
-        const customHeaders =
-          savedOAuthOptions.customHeaders ??
-          getServerCustomHeaders(server.config);
-        const registrationStrategy =
+        const protocolMode =
+          storedOAuthConfig.protocolMode ??
+          server.oauthFlowProfile?.protocolVersion ??
+          "auto";
+        const registrationMode =
+          storedOAuthConfig.registrationMode ??
           server.oauthFlowProfile?.registrationStrategy ??
-          savedOAuthOptions.registrationStrategy;
-        const shouldReuseClientCredentials =
-          registrationStrategy === "preregistered" ||
-          savedOAuthOptions.useRegistryOAuthProxy === true ||
-          Boolean(server.oauthFlowProfile?.clientId);
-        const oauthOptions: MCPOAuthOptions = {
+          "auto";
+        const oauthOptions = {
           serverName,
           serverUrl,
-          scopes: savedOAuthOptions.scopes ?? profileScopes,
+          scopes: storedOAuthConfig.scopes ?? profileScopes,
+          resourceUrl:
+            server.oauthFlowProfile?.resourceUrl ??
+            storedOAuthConfig.resourceUrl,
           clientId:
-            server.oauthFlowProfile?.clientId ||
-            (shouldReuseClientCredentials
-              ? savedOAuthOptions.clientId
-              : undefined),
+            server.oauthTokens?.client_id ??
+            server.oauthFlowProfile?.clientId ??
+            storedClientCredentials.clientId,
           clientSecret:
-            server.oauthFlowProfile?.clientSecret ||
-            (shouldReuseClientCredentials
-              ? savedOAuthOptions.clientSecret
-              : undefined),
-          customHeaders,
-          registryServerId: savedOAuthOptions.registryServerId,
-          useRegistryOAuthProxy: savedOAuthOptions.useRegistryOAuthProxy,
+            server.oauthTokens?.client_secret ??
+            server.oauthFlowProfile?.clientSecret ??
+            storedClientCredentials.clientSecret,
+          customHeaders: mergeWithWorkspaceHeaders(
+            storedOAuthConfig.customHeaders ??
+              ("requestInit" in server.config
+                ? extractRequestHeaders(server.config.requestInit)
+                : undefined),
+          ),
+          registryServerId: storedOAuthConfig.registryServerId,
+          useRegistryOAuthProxy: storedOAuthConfig.useRegistryOAuthProxy,
+          protocolMode,
+          registrationMode,
           protocolVersion:
-            server.oauthFlowProfile?.protocolVersion ??
-            savedOAuthOptions.protocolVersion,
-          registrationStrategy,
+            protocolMode !== "auto"
+              ? protocolMode
+              : server.oauthFlowProfile?.protocolVersion ??
+                storedOAuthConfig.protocolVersion,
+          registrationStrategy:
+            registrationMode !== "auto"
+              ? registrationMode
+              : server.oauthFlowProfile?.registrationStrategy ??
+                storedOAuthConfig.registrationStrategy,
           onTraceUpdate: (oauthTrace: OAuthTrace) => {
             updateServerOAuthTrace(serverName, oauthTrace);
           },
@@ -2010,7 +2210,7 @@ export function useServerState({
         }
         const result = await guardedReconnectServer(
           serverName,
-          withWorkspaceClientCapabilities(oauthResult.serverConfig!),
+          withWorkspaceConnectionDefaults(oauthResult.serverConfig!),
         );
         if (isStaleOp(serverName, token)) {
           return {
@@ -2053,7 +2253,7 @@ export function useServerState({
       }
 
       if (HOSTED_MODE && isAuthenticated && server.useOAuth === true) {
-        const hostedReconnectConfig = withWorkspaceClientCapabilities(
+        const hostedReconnectConfig = withWorkspaceConnectionDefaults(
           server.config,
         );
         try {
@@ -2203,7 +2403,7 @@ export function useServerState({
         }
         const result = await guardedReconnectServer(
           serverName,
-          withWorkspaceClientCapabilities(authResult.serverConfig),
+          withWorkspaceConnectionDefaults(authResult.serverConfig),
         );
         if (isStaleOp(serverName, token)) {
           return {
@@ -2273,8 +2473,9 @@ export function useServerState({
       dispatch,
       prepareHostedWorkspaceOAuthRedirect,
       guardedReconnectServer,
+      mergeWithWorkspaceHeaders,
       updateServerOAuthTrace,
-      withWorkspaceClientCapabilities,
+      withWorkspaceConnectionDefaults,
     ],
   );
 
@@ -2577,7 +2778,7 @@ export function useServerState({
         saveOAuthConfigToLocalStorage(formData);
         try {
           const result = await guardedTestConnection(
-            withWorkspaceClientCapabilities(originalServer.config),
+            withWorkspaceConnectionDefaults(originalServer.config),
             originalServerName,
           );
           if (result.success) {

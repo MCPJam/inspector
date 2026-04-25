@@ -41,10 +41,12 @@ export interface RemoteServer {
   headers?: Record<string, string>;
   // Shared fields
   timeout?: number;
+  clientCapabilities?: Record<string, unknown>;
   // OAuth fields
   useOAuth?: boolean;
   oauthScopes?: string[];
   clientId?: string;
+  oauthResourceUrl?: string;
   createdAt: number;
   updatedAt: number;
 }

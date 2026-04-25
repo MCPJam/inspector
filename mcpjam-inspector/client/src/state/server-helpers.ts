@@ -4,6 +4,7 @@ import type { ServerFormData } from "@/shared/types.js";
 export function toMCPConfig(formData: ServerFormData): MCPServerConfig {
   const baseConfig = {
     timeout: formData.requestTimeout,
+    clientCapabilities: formData.clientCapabilities,
   };
 
   if (formData.type === "stdio") {
@@ -18,7 +19,11 @@ export function toMCPConfig(formData: ServerFormData): MCPServerConfig {
   const httpConfig: HttpServerConfig = {
     ...baseConfig,
     url: formData.url!,
-    requestInit: { headers: formData.headers || {} },
+    ...(formData.headers
+      ? {
+          requestInit: { headers: formData.headers },
+        }
+      : {}),
   };
 
   return httpConfig;

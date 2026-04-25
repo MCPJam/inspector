@@ -9,19 +9,23 @@ import { useServerState } from "../use-server-state";
 const {
   toastError,
   toastSuccess,
+  completeHostedOAuthCallbackMock,
   handleOAuthCallbackMock,
   initiateOAuthMock,
   getStoredTokensMock,
   clearOAuthDataMock,
+  readStoredOAuthConfigMock,
   testConnectionMock,
   mockConvexQuery,
 } = vi.hoisted(() => ({
   toastError: vi.fn(),
   toastSuccess: vi.fn(),
+  completeHostedOAuthCallbackMock: vi.fn(),
   handleOAuthCallbackMock: vi.fn(),
   initiateOAuthMock: vi.fn(),
   getStoredTokensMock: vi.fn(),
   clearOAuthDataMock: vi.fn(),
+  readStoredOAuthConfigMock: vi.fn(),
   testConnectionMock: vi.fn(),
   mockConvexQuery: vi.fn(),
 }));
@@ -52,10 +56,12 @@ vi.mock("@/state/oauth-orchestrator", () => ({
 }));
 
 vi.mock("@/lib/oauth/mcp-oauth", () => ({
+  completeHostedOAuthCallback: completeHostedOAuthCallbackMock,
   handleOAuthCallback: handleOAuthCallbackMock,
   getStoredTokens: getStoredTokensMock,
   clearOAuthData: clearOAuthDataMock,
   initiateOAuth: initiateOAuthMock,
+  readStoredOAuthConfig: readStoredOAuthConfigMock,
 }));
 
 vi.mock("@/lib/apis/web/context", () => ({
@@ -195,7 +201,16 @@ describe("useServerState OAuth callback failures", () => {
       success: true,
       initInfo: null,
     });
+    completeHostedOAuthCallbackMock.mockReset();
+    completeHostedOAuthCallbackMock.mockResolvedValue({
+      success: false,
+      error: "Hosted OAuth callback should be mocked per test",
+    });
     initiateOAuthMock.mockResolvedValue({ success: true });
+    readStoredOAuthConfigMock.mockReturnValue({
+      registryServerId: undefined,
+      useRegistryOAuthProxy: false,
+    });
     mockConvexQuery.mockResolvedValue(null);
   });
 
@@ -281,6 +296,146 @@ describe("useServerState OAuth callback failures", () => {
     expect(window.location.hash).toBe("#demo-server");
   });
 
+  it("preserves existing HTTP config when OAuth callback returns a bearer token config", async () => {
+    localStorage.setItem("mcp-oauth-pending", "demo-server");
+    localStorage.setItem("mcp-oauth-return-hash", "#demo-server");
+    readStoredOAuthConfigMock.mockReturnValue({
+      scopes: ["files:read", "files:write"],
+      registryServerId: undefined,
+      useRegistryOAuthProxy: false,
+    });
+    handleOAuthCallbackMock.mockResolvedValue({
+      success: true,
+      serverName: "demo-server",
+      serverConfig: {
+        url: "https://example.com/mcp",
+        requestInit: {
+          headers: {
+            Authorization: "Bearer access-token",
+          },
+        },
+      },
+    });
+    window.history.replaceState({}, "", "/oauth/callback?code=test-code");
+
+    const appState = createAppState();
+    const existingServer = {
+      ...appState.servers["demo-server"],
+      config: {
+        url: "https://example.com/mcp",
+        requestInit: {
+          headers: new Headers({
+            "X-Existing-Header": "present",
+          }),
+        },
+        timeout: 15000,
+        clientCapabilities: {
+          roots: {
+            listChanged: true,
+          },
+        },
+      } as any,
+      oauthFlowProfile: {
+        protocolVersion: "2025-11-25",
+        registrationStrategy: "dcr",
+      },
+    };
+    appState.servers["demo-server"] = existingServer;
+    appState.workspaces.default.servers["demo-server"] = existingServer;
+
+    const dispatch = vi.fn();
+    renderUseServerState(dispatch, appState);
+
+    await waitFor(() => {
+      expect(testConnectionMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          url: "https://example.com/mcp",
+          requestInit: expect.objectContaining({
+            headers: expect.objectContaining({
+              Authorization: "Bearer access-token",
+              "x-existing-header": "present",
+            }),
+          }),
+          timeout: 15000,
+          capabilities: {
+            roots: {
+              listChanged: true,
+            },
+          },
+          clientCapabilities: {
+            roots: {
+              listChanged: true,
+            },
+          },
+        }),
+        "demo-server",
+      );
+    });
+
+    const upsertAction = dispatch.mock.calls.find(
+      ([action]) => action.type === "UPSERT_SERVER",
+    )?.[0] as AppAction | undefined;
+    expect(upsertAction).toMatchObject({
+      type: "UPSERT_SERVER",
+      name: "demo-server",
+      server: {
+        oauthFlowProfile: expect.objectContaining({
+          scopes: "files:read,files:write",
+        }),
+      },
+    });
+  });
+
+  it("replaces a stale stdio config when OAuth callback returns an HTTP config", async () => {
+    localStorage.setItem("mcp-oauth-pending", "demo-server");
+    localStorage.setItem("mcp-oauth-return-hash", "#demo-server");
+    handleOAuthCallbackMock.mockResolvedValue({
+      success: true,
+      serverName: "demo-server",
+      serverConfig: {
+        url: "https://example.com/mcp",
+        requestInit: {
+          headers: {
+            Authorization: "Bearer access-token",
+          },
+        },
+      },
+    });
+    window.history.replaceState({}, "", "/oauth/callback?code=test-code");
+
+    const appState = createAppState();
+    const existingServer = {
+      ...appState.servers["demo-server"],
+      config: {
+        command: "node",
+        args: ["server.js"],
+      } as any,
+    };
+    appState.servers["demo-server"] = existingServer;
+    appState.workspaces.default.servers["demo-server"] = existingServer;
+
+    const dispatch = vi.fn();
+    renderUseServerState(dispatch, appState);
+
+    await waitFor(() => {
+      expect(testConnectionMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          url: "https://example.com/mcp",
+          requestInit: expect.objectContaining({
+            headers: expect.objectContaining({
+              Authorization: "Bearer access-token",
+            }),
+          }),
+        }),
+        "demo-server",
+      );
+    });
+
+    const connectConfig = testConnectionMock.mock.calls.at(-1)?.[0];
+    expect(connectConfig).not.toHaveProperty("command");
+    expect(connectConfig).not.toHaveProperty("args");
+  });
+
   it("blocks connect while workspace client config sync is pending", async () => {
     useClientConfigStore.setState({
       pendingWorkspaceId: "default",
@@ -304,7 +459,7 @@ describe("useServerState OAuth callback failures", () => {
     ).toBe(false);
   });
 
-  it("passes exact workspace-derived clientCapabilities on local reconnect", async () => {
+  it("applies workspace connection defaults on local reconnect", async () => {
     const { reconnectServer } = await import("@/state/mcp-api");
     const { ensureAuthorizedForReconnect } =
       await import("@/state/oauth-orchestrator");
@@ -318,6 +473,12 @@ describe("useServerState OAuth callback failures", () => {
     const appState = createAppState({
       workspaceClientConfig: {
         version: 1,
+        connectionDefaults: {
+          headers: {
+            "X-Workspace-Header": "workspace",
+          },
+          requestTimeout: 30000,
+        },
         clientCapabilities: {
           experimental: {
             workspaceProfile: {},
@@ -346,6 +507,12 @@ describe("useServerState OAuth callback failures", () => {
 
     const [, effectiveConfig] = vi.mocked(reconnectServer).mock.calls[0] ?? [];
     expect(effectiveConfig).toMatchObject({
+      requestInit: {
+        headers: {
+          "X-Workspace-Header": "workspace",
+        },
+      },
+      timeout: 30000,
       capabilities: {
         experimental: {
           workspaceProfile: {},
@@ -357,6 +524,79 @@ describe("useServerState OAuth callback failures", () => {
           workspaceProfile: {},
         },
         sampling: {},
+      },
+    });
+  });
+
+  it("prefers an exact per-server clientCapabilities override over workspace capability merging", async () => {
+    const { reconnectServer } = await import("@/state/mcp-api");
+    const { ensureAuthorizedForReconnect } =
+      await import("@/state/oauth-orchestrator");
+    vi.mocked(reconnectServer).mockResolvedValue({
+      success: true,
+      initInfo: {
+        clientCapabilities: {},
+      },
+    } as any);
+
+    const appState = createAppState({
+      workspaceClientConfig: {
+        version: 1,
+        connectionDefaults: {
+          headers: {},
+          requestTimeout: 10000,
+        },
+        clientCapabilities: {
+          experimental: {
+            workspaceProfile: {},
+          },
+        },
+        hostContext: {},
+      },
+      serverCapabilities: {
+        sampling: {},
+      },
+    });
+
+    appState.workspaces.default.servers["demo-server"].config = {
+      url: "https://example.com/mcp",
+      capabilities: {
+        sampling: {},
+      },
+      clientCapabilities: {
+        roots: {
+          listChanged: true,
+        },
+      },
+    } as any;
+    appState.servers["demo-server"].config =
+      appState.workspaces.default.servers["demo-server"].config;
+
+    const dispatch = vi.fn();
+    const { result } = renderUseServerState(dispatch, appState);
+    vi.mocked(ensureAuthorizedForReconnect).mockResolvedValue({
+      kind: "ready",
+      serverConfig: appState.workspaces.default.servers["demo-server"].config,
+      tokens: undefined,
+    } as any);
+
+    await result.current.handleReconnect("demo-server");
+
+    await waitFor(() => {
+      expect(vi.mocked(reconnectServer)).toHaveBeenCalled();
+    });
+
+    const [, effectiveConfig] = vi.mocked(reconnectServer).mock.calls[0] ?? [];
+    expect(effectiveConfig).toMatchObject({
+      capabilities: {
+        roots: {
+          listChanged: true,
+        },
+      },
+      clientCapabilities: {
+        roots: {
+          listChanged: true,
+        },
       },
     });
   });
@@ -469,6 +709,14 @@ describe("useServerState OAuth callback failures", () => {
         registrationStrategy: "preregistered",
       }),
     );
+    readStoredOAuthConfigMock.mockReturnValueOnce({
+      scopes: ["default"],
+      customHeaders: { "X-MCPJam": "yes" },
+      registryServerId: "registry-asana",
+      useRegistryOAuthProxy: true,
+      protocolVersion: "2025-11-25",
+      registrationStrategy: "preregistered",
+    });
     localStorage.setItem(
       "mcp-client-demo-server",
       JSON.stringify({

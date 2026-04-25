@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   buildOAuthConformanceConfig,
+  buildOAuthLoginConfig,
   buildOAuthLoginSnapshotConfig,
   summarizeOAuthLoginCommandInput,
 } from "../src/commands/oauth.js";
@@ -136,6 +137,19 @@ test("buildOAuthConformanceConfig defaults conformance checks to false", () => {
   assert.equal(config.oauthConformanceChecks, false);
 });
 
+test("buildOAuthLoginConfig defaults login flows to automatic protocol and registration planning", () => {
+  const config = buildOAuthLoginConfig({
+    url: "https://example.com/mcp",
+    authMode: "interactive",
+  });
+
+  assert.equal(config.protocolMode, "auto");
+  assert.equal(config.registrationMode, "auto");
+  assert.equal(config.protocolVersion, undefined);
+  assert.equal(config.registrationStrategy, undefined);
+  assert.equal(config.auth?.mode, "interactive");
+});
+
 test("buildOAuthConformanceConfig sets openUrl for print-url in interactive mode", () => {
   const config = buildOAuthConformanceConfig({
     url: "https://example.com/mcp",
@@ -255,6 +269,8 @@ test("summarizeOAuthLoginCommandInput captures header names and auth flags", () 
   });
 
   assert.equal(summary.serverUrl, "https://example.com/mcp");
+  assert.equal(summary.protocolMode, "2025-11-25");
+  assert.equal(summary.registrationMode, "dcr");
   assert.equal(summary.hasClientId, true);
   assert.equal(summary.hasClientSecret, true);
   assert.deepEqual(summary.headerNames, ["Authorization", "X-Test"]);
@@ -276,9 +292,28 @@ test("buildOAuthLoginSnapshotConfig prefers access tokens over refresh tokens", 
     serverUrl: "https://example.com/mcp",
     protocolVersion: "2025-11-25",
     registrationStrategy: "dcr",
+    protocolMode: "auto",
+    registrationMode: "auto",
     authMode: "interactive",
     redirectUrl: "https://app.example.com/callback",
     currentStep: "complete",
+    authorizationPlan: {
+      protocolMode: "auto",
+      protocolVersion: "2025-11-25",
+      registrationMode: "auto",
+      registrationStrategy: "dcr",
+      status: "ready",
+      blockerDetails: [],
+      blockers: [],
+      warnings: [],
+      capabilities: {
+        registrationStrategies: ["preregistered", "dcr"],
+        supportsCimd: false,
+        supportsDcr: true,
+      },
+      canonicalResource: "https://example.com/mcp",
+      summary: "Automatic discovery resolved to Dynamic Client Registration (DCR).",
+    },
     credentials: {
       accessToken: "access-token",
       refreshToken: "refresh-token",
@@ -314,9 +349,28 @@ test("buildOAuthLoginSnapshotConfig falls back to refresh-token auth when needed
     serverUrl: "https://example.com/mcp",
     protocolVersion: "2025-06-18",
     registrationStrategy: "preregistered",
+    protocolMode: "auto",
+    registrationMode: "auto",
     authMode: "interactive",
     redirectUrl: "https://app.example.com/callback",
     currentStep: "received_access_token",
+    authorizationPlan: {
+      protocolMode: "auto",
+      protocolVersion: "2025-06-18",
+      registrationMode: "auto",
+      registrationStrategy: "preregistered",
+      status: "ready",
+      blockerDetails: [],
+      blockers: [],
+      warnings: [],
+      capabilities: {
+        registrationStrategies: ["preregistered", "dcr"],
+        supportsCimd: false,
+        supportsDcr: true,
+      },
+      canonicalResource: "https://example.com/mcp",
+      summary: "Using pre-registered client credentials.",
+    },
     credentials: {
       refreshToken: "refresh-token",
     },

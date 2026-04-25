@@ -118,8 +118,10 @@ export async function ensureAuthorizedForReconnect(
       customHeaders: oauthConfig.customHeaders,
       registryServerId: oauthConfig.registryServerId,
       useRegistryOAuthProxy: oauthConfig.useRegistryOAuthProxy,
+      protocolMode: oauthConfig.protocolMode,
       protocolVersion:
         server.oauthFlowProfile?.protocolVersion ?? oauthConfig.protocolVersion,
+      registrationMode: oauthConfig.registrationMode,
       registrationStrategy: effectiveRegistrationStrategy,
     } as MCPOAuthOptions;
 

@@ -161,8 +161,10 @@ export type MockClientConfigStoreState = {
   defaultConfig: WorkspaceClientConfig | null;
   savedConfig: WorkspaceClientConfig | undefined;
   draftConfig: WorkspaceClientConfig | null;
+  connectionDefaultsText: string;
   clientCapabilitiesText: string;
   hostContextText: string;
+  connectionDefaultsError: string | null;
   clientCapabilitiesError: string | null;
   hostContextError: string | null;
   isSaving: boolean;
@@ -178,6 +180,8 @@ export function createMockWorkspaceClientConfig(
 ): WorkspaceClientConfig {
   return {
     version: 1,
+    connectionDefaults:
+      overrides.connectionDefaults ?? { headers: {}, requestTimeout: 10000 },
     clientCapabilities: overrides.clientCapabilities ?? {},
     hostContext: overrides.hostContext ?? {},
   };
@@ -194,10 +198,14 @@ export function createMockClientConfigStoreState(
     defaultConfig: null,
     savedConfig: undefined,
     draftConfig,
+    connectionDefaultsText: stringifyJson(
+      draftConfig?.connectionDefaults ?? { headers: {}, requestTimeout: 10000 },
+    ),
     clientCapabilitiesText: stringifyJson(
       draftConfig?.clientCapabilities ?? {},
     ),
     hostContextText: stringifyJson(draftConfig?.hostContext ?? {}),
+    connectionDefaultsError: null,
     clientCapabilitiesError: null,
     hostContextError: null,
     isSaving: false,
