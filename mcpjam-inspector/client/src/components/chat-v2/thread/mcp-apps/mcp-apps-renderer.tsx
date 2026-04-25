@@ -86,8 +86,37 @@ const DEFAULT_INPUT_SCHEMA = { type: "object" } as const;
 
 const SUPPRESSED_UI_LOG_METHODS = new Set(["ui/notifications/size-changed"]);
 const PIP_MAX_HEIGHT = "min(40vh, 600px)";
+const VALID_HOST_STYLE_VARIABLE_KEYS = new Set<string>([
+  ...Object.keys(getClaudeDesktopStyleVariables("light")),
+  ...Object.keys(getChatGPTStyleVariables("light")),
+]);
 
 type DisplayMode = "inline" | "pip" | "fullscreen";
+type HostStyleVariables = NonNullable<
+  NonNullable<McpUiHostContext["styles"]>["variables"]
+>;
+
+function sanitizeHostStyleVariables(
+  variables: unknown,
+): HostStyleVariables | undefined {
+  if (!variables || typeof variables !== "object" || Array.isArray(variables)) {
+    return undefined;
+  }
+
+  const sanitized: Record<string, string | undefined> = {};
+  for (const [key, value] of Object.entries(variables)) {
+    if (!VALID_HOST_STYLE_VARIABLE_KEYS.has(key)) {
+      continue;
+    }
+    if (typeof value === "string" || value === undefined) {
+      sanitized[key] = value;
+    }
+  }
+
+  return Object.keys(sanitized).length > 0
+    ? (sanitized as HostStyleVariables)
+    : undefined;
+}
 
 // CSP and permissions metadata types are now imported from SDK
 
@@ -178,7 +207,6 @@ export function MCPAppsRenderer({
 }: MCPAppsRendererProps) {
   const sandboxRef = useRef<SandboxedIframeHandle>(null);
   const themeMode = usePreferencesStore((s) => s.themeMode);
-  const themePreset = usePreferencesStore((s) => s.themePreset);
   const sharedHostStyle = usePreferencesStore((s) => s.hostStyle);
   const chatboxHostStyle = useChatboxHostStyle();
   const draftHostContext = useHostContextStore((s) => s.draftHostContext);
@@ -770,21 +798,20 @@ export function MCPAppsRenderer({
     !Array.isArray(baseHostContext.styles)
       ? (baseHostContext.styles as McpUiHostContext["styles"])
       : undefined;
+  // The SDK validates styles.variables against the SEP key enum, so strip
+  // host-specific custom properties before they enter ui/initialize.
+  const configuredStyleVariables = useMemo(
+    () => sanitizeHostStyleVariables(configuredStyles?.variables),
+    [configuredStyles?.variables],
+  );
   const mergedStyleVariables = useMemo(() => {
-    const configuredVariables =
-      configuredStyles?.variables &&
-      typeof configuredStyles.variables === "object" &&
-      !Array.isArray(configuredStyles.variables)
-        ? configuredStyles.variables
-        : undefined;
-
     return {
-      ...(configuredVariables && Object.keys(configuredVariables).length > 0
-        ? configuredVariables
+      ...(configuredStyleVariables &&
+      Object.keys(configuredStyleVariables).length > 0
+        ? configuredStyleVariables
         : styleVariables),
-      "--mcpjam-theme-preset": themePreset,
     };
-  }, [configuredStyles?.variables, styleVariables, themePreset]);
+  }, [configuredStyleVariables, styleVariables]);
   const mergedStyles = useMemo<McpUiHostContext["styles"]>(
     () => ({
       ...configuredStyles,

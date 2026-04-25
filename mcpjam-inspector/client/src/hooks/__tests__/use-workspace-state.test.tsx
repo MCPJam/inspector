@@ -8,6 +8,7 @@ import { useHostContextStore } from "@/stores/host-context-store";
 import type {
   WorkspaceClientConfig,
   WorkspaceConnectionConfigDraft,
+  WorkspaceHostContextDraft,
 } from "@/lib/client-config";
 
 const {
@@ -674,6 +675,350 @@ describe("useWorkspaceState automatic workspace creation", () => {
     });
 
     await savePromise;
+  });
+
+  it("composes host-context saves with the target workspace connection config", async () => {
+    const remoteOneClientConfig: WorkspaceClientConfig = {
+      version: 1,
+      connectionDefaults: {
+        headers: { "x-workspace": "one" },
+        requestTimeout: 1111,
+      },
+      clientCapabilities: {
+        experimental: {
+          workspaceOne: true,
+        },
+      },
+      hostContext: {
+        locale: "en-US",
+      },
+    };
+    const remoteTwoClientConfig: WorkspaceClientConfig = {
+      version: 1,
+      connectionDefaults: {
+        headers: { "x-workspace": "two" },
+        requestTimeout: 2222,
+      },
+      clientCapabilities: {
+        experimental: {
+          workspaceTwo: true,
+        },
+      },
+      hostContext: {
+        locale: "en-GB",
+      },
+    };
+    const savedHostContext: WorkspaceHostContextDraft = {
+      theme: "dark",
+    };
+    const expectedPersistedClientConfig: WorkspaceClientConfig = {
+      ...remoteTwoClientConfig,
+      hostContext: savedHostContext,
+    };
+
+    workspaceQueryState.allWorkspaces = [
+      {
+        _id: "remote-1",
+        name: "Remote workspace 1",
+        servers: {},
+        ownerId: "user-1",
+        createdAt: 1,
+        updatedAt: 1,
+        clientConfig: remoteOneClientConfig,
+      },
+      {
+        _id: "remote-2",
+        name: "Remote workspace 2",
+        servers: {},
+        ownerId: "user-1",
+        createdAt: 2,
+        updatedAt: 2,
+        clientConfig: remoteTwoClientConfig,
+      },
+    ];
+    workspaceQueryState.workspaces = [...workspaceQueryState.allWorkspaces];
+    localStorage.setItem("convex-active-workspace-id", "remote-1");
+    useClientConfigStore.setState({
+      activeWorkspaceId: "remote-1",
+      savedConfig: {
+        version: 1,
+        connectionDefaults: {
+          headers: { "x-workspace": "stale" },
+          requestTimeout: 9999,
+        },
+        clientCapabilities: {
+          experimental: {
+            stale: true,
+          },
+        },
+      },
+      defaultConfig: null,
+      draftConfig: {
+        version: 1,
+        connectionDefaults: {
+          headers: { "x-workspace": "draft" },
+          requestTimeout: 7777,
+        },
+        clientCapabilities: {
+          experimental: {
+            draft: true,
+          },
+        },
+      },
+    });
+
+    const appState = createAppState({
+      default: createSyntheticDefaultWorkspace(),
+    });
+    const { result, rerender } = renderUseWorkspaceState({ appState });
+
+    const savePromise = result.current.handleUpdateHostContext(
+      "remote-2",
+      savedHostContext,
+    );
+
+    await waitFor(() => {
+      expect(updateClientConfigMock).toHaveBeenCalledWith({
+        workspaceId: "remote-2",
+        clientConfig: expectedPersistedClientConfig,
+      });
+    });
+
+    workspaceQueryState.allWorkspaces = [
+      workspaceQueryState.allWorkspaces[0],
+      {
+        ...workspaceQueryState.allWorkspaces[1],
+        clientConfig: expectedPersistedClientConfig,
+      },
+    ];
+    workspaceQueryState.workspaces = [...workspaceQueryState.allWorkspaces];
+    rerender({ organizationId: undefined });
+
+    await savePromise;
+  });
+
+  it("composes connection-config saves with the target workspace host context", async () => {
+    const remoteOneClientConfig: WorkspaceClientConfig = {
+      version: 1,
+      connectionDefaults: {
+        headers: { "x-workspace": "one" },
+        requestTimeout: 1111,
+      },
+      clientCapabilities: {
+        experimental: {
+          workspaceOne: true,
+        },
+      },
+      hostContext: {
+        locale: "en-US",
+      },
+    };
+    const remoteTwoHostContext: WorkspaceHostContextDraft = {
+      locale: "en-GB",
+      theme: "light",
+    };
+    const remoteTwoClientConfig: WorkspaceClientConfig = {
+      version: 1,
+      connectionDefaults: {
+        headers: { "x-workspace": "two" },
+        requestTimeout: 2222,
+      },
+      clientCapabilities: {
+        experimental: {
+          workspaceTwo: true,
+        },
+      },
+      hostContext: remoteTwoHostContext,
+    };
+    const savedConnectionConfig: WorkspaceConnectionConfigDraft = {
+      version: 1,
+      connectionDefaults: {
+        headers: { "x-workspace": "updated" },
+        requestTimeout: 3333,
+      },
+      clientCapabilities: {
+        experimental: {
+          updated: true,
+        },
+      },
+    };
+    const expectedPersistedClientConfig: WorkspaceClientConfig = {
+      version: 1,
+      connectionDefaults: savedConnectionConfig.connectionDefaults,
+      clientCapabilities: savedConnectionConfig.clientCapabilities,
+      hostContext: remoteTwoHostContext,
+    };
+
+    workspaceQueryState.allWorkspaces = [
+      {
+        _id: "remote-1",
+        name: "Remote workspace 1",
+        servers: {},
+        ownerId: "user-1",
+        createdAt: 1,
+        updatedAt: 1,
+        clientConfig: remoteOneClientConfig,
+      },
+      {
+        _id: "remote-2",
+        name: "Remote workspace 2",
+        servers: {},
+        ownerId: "user-1",
+        createdAt: 2,
+        updatedAt: 2,
+        clientConfig: remoteTwoClientConfig,
+      },
+    ];
+    workspaceQueryState.workspaces = [...workspaceQueryState.allWorkspaces];
+    localStorage.setItem("convex-active-workspace-id", "remote-1");
+    useHostContextStore.setState({
+      activeWorkspaceId: "remote-1",
+      savedHostContext: {
+        locale: "stale-locale",
+        theme: "dark",
+      },
+      defaultHostContext: {},
+      draftHostContext: {
+        locale: "draft-locale",
+        theme: "dark",
+      },
+    });
+
+    const appState = createAppState({
+      default: createSyntheticDefaultWorkspace(),
+    });
+    const { result, rerender } = renderUseWorkspaceState({ appState });
+
+    const savePromise = result.current.handleUpdateClientConfig(
+      "remote-2",
+      savedConnectionConfig,
+    );
+
+    await waitFor(() => {
+      expect(updateClientConfigMock).toHaveBeenCalledWith({
+        workspaceId: "remote-2",
+        clientConfig: expectedPersistedClientConfig,
+      });
+    });
+
+    workspaceQueryState.allWorkspaces = [
+      workspaceQueryState.allWorkspaces[0],
+      {
+        ...workspaceQueryState.allWorkspaces[1],
+        clientConfig: expectedPersistedClientConfig,
+      },
+    ];
+    workspaceQueryState.workspaces = [...workspaceQueryState.allWorkspaces];
+    rerender({ organizationId: undefined });
+
+    await savePromise;
+  });
+
+  it("keeps a newer workspace save pending when an older save times out", async () => {
+    vi.useFakeTimers();
+
+    const firstSavedConfig: WorkspaceConnectionConfigDraft = {
+      version: 1,
+      connectionDefaults: {
+        headers: { "x-workspace": "one" },
+        requestTimeout: 1111,
+      },
+      clientCapabilities: {
+        experimental: {
+          workspaceOne: true,
+        },
+      },
+    };
+    const secondSavedConfig: WorkspaceConnectionConfigDraft = {
+      version: 1,
+      connectionDefaults: {
+        headers: { "x-workspace": "two" },
+        requestTimeout: 2222,
+      },
+      clientCapabilities: {
+        experimental: {
+          workspaceTwo: true,
+        },
+      },
+    };
+    const secondPersistedClientConfig: WorkspaceClientConfig = {
+      version: 1,
+      connectionDefaults: secondSavedConfig.connectionDefaults,
+      clientCapabilities: secondSavedConfig.clientCapabilities,
+      hostContext: {},
+    };
+
+    workspaceQueryState.allWorkspaces = [
+      {
+        _id: "remote-1",
+        name: "Remote workspace 1",
+        servers: {},
+        ownerId: "user-1",
+        createdAt: 1,
+        updatedAt: 1,
+        clientConfig: undefined,
+      },
+      {
+        _id: "remote-2",
+        name: "Remote workspace 2",
+        servers: {},
+        ownerId: "user-1",
+        createdAt: 2,
+        updatedAt: 2,
+        clientConfig: undefined,
+      },
+    ];
+    workspaceQueryState.workspaces = [...workspaceQueryState.allWorkspaces];
+
+    const appState = createAppState({
+      default: createSyntheticDefaultWorkspace(),
+    });
+    const { result, rerender } = renderUseWorkspaceState({ appState });
+
+    const firstSavePromise = result.current.handleUpdateClientConfig(
+      "remote-1",
+      firstSavedConfig,
+    );
+    const firstSaveError = firstSavePromise.catch((error) => error);
+
+    await Promise.resolve();
+    expect(updateClientConfigMock).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000);
+    });
+
+    const secondSavePromise = result.current.handleUpdateClientConfig(
+      "remote-2",
+      secondSavedConfig,
+    );
+
+    await Promise.resolve();
+    expect(updateClientConfigMock).toHaveBeenCalledTimes(2);
+    expect(useClientConfigStore.getState().pendingWorkspaceId).toBe("remote-2");
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000);
+    });
+
+    await expect(firstSaveError).resolves.toBeInstanceOf(Error);
+    await expect(firstSavePromise).rejects.toThrow(
+      "Timed out waiting for workspace client config to sync.",
+    );
+    expect(useClientConfigStore.getState().pendingWorkspaceId).toBe("remote-2");
+    expect(useClientConfigStore.getState().isAwaitingRemoteEcho).toBe(true);
+
+    workspaceQueryState.allWorkspaces = [
+      workspaceQueryState.allWorkspaces[0],
+      {
+        ...workspaceQueryState.allWorkspaces[1],
+        clientConfig: secondPersistedClientConfig,
+      },
+    ];
+    workspaceQueryState.workspaces = [...workspaceQueryState.allWorkspaces];
+    rerender({ organizationId: undefined });
+
+    await secondSavePromise;
   });
 
   it("treats the authenticated zero-org state as empty remote workspaces and clears stale synced selection", async () => {

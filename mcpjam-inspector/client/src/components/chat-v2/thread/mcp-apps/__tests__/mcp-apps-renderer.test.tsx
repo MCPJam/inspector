@@ -9,12 +9,14 @@ import React from "react";
 // vi.hoisted runs before imports, letting us capture bridge instances.
 const {
   mockBridge,
+  mockAppBridgeCtor,
   mockPostMessageTransport,
   triggerReady,
   stableStoreFns,
   mockSandboxPostMessage,
   sandboxedIframePropsRef,
   sandboxProxyBehaviorRef,
+  appBridgeArgsRef,
 } = vi.hoisted(() => {
   const bridge = {
     sendToolInput: vi.fn(),
@@ -40,6 +42,18 @@ const {
     onrequestdisplaymode: null as any,
     onupdatemodelcontext: null as any,
   };
+  const appBridgeArgsRef = { current: null as any };
+  const mockAppBridgeCtor = vi
+    .fn()
+    .mockImplementation((client, hostInfo, hostCapabilities, options) => {
+      appBridgeArgsRef.current = {
+        client,
+        hostInfo,
+        hostCapabilities,
+        options,
+      };
+      return bridge;
+    });
 
   // Stable function references for store selectors — prevents useEffect deps
   // from changing on every render, which would teardown/reinitialize the bridge.
@@ -56,10 +70,12 @@ const {
 
   return {
     mockBridge: bridge,
+    mockAppBridgeCtor,
     mockPostMessageTransport: vi.fn(),
     mockSandboxPostMessage: vi.fn(),
     sandboxedIframePropsRef: { current: null as any },
     sandboxProxyBehaviorRef: { current: { autoReady: true } },
+    appBridgeArgsRef,
     stableStoreFns: stableFns,
     /** Simulate the widget completing initialization. */
     triggerReady: () => {
@@ -91,7 +107,7 @@ const mockPlaygroundStoreState = {
 
 // ── Module mocks ───────────────────────────────────────────────────────────
 vi.mock("@modelcontextprotocol/ext-apps/app-bridge", () => ({
-  AppBridge: vi.fn().mockImplementation(() => mockBridge),
+  AppBridge: mockAppBridgeCtor,
   PostMessageTransport: mockPostMessageTransport,
 }));
 
@@ -226,10 +242,12 @@ describe("MCPAppsRenderer tool input streaming", () => {
     mockBridge.setHostContext.mockClear();
     mockBridge.close.mockClear().mockResolvedValue(undefined);
     mockBridge.teardownResource.mockClear().mockResolvedValue({});
+    mockAppBridgeCtor.mockClear();
     mockBridge.oninitialized = null;
     mockSandboxPostMessage.mockClear();
     sandboxedIframePropsRef.current = null;
     sandboxProxyBehaviorRef.current.autoReady = true;
+    appBridgeArgsRef.current = null;
 
     vi.mocked(global.fetch).mockResolvedValue({
       ok: true,
@@ -342,6 +360,47 @@ describe("MCPAppsRenderer tool input streaming", () => {
           availableDisplayModes: ["inline"],
           locale: "fr-FR",
           timeZone: "Europe/Paris",
+        }),
+      );
+    });
+  });
+
+  it("filters non-standard host style variables out of the initialize payload", async () => {
+    mockHostContextStoreState.draftHostContext = {
+      styles: {
+        variables: {
+          "--font-sans": "Custom Sans",
+          "--mcpjam-theme-preset": "soft-pop",
+          "--totally-unknown": "ignore-me",
+        },
+      },
+    };
+
+    render(<MCPAppsRenderer {...baseProps} />);
+
+    await vi.waitFor(() => {
+      expect(mockBridge.connect).toHaveBeenCalled();
+    });
+
+    expect(
+      appBridgeArgsRef.current?.options?.hostContext?.styles?.variables,
+    ).toEqual({
+      "--font-sans": "Custom Sans",
+    });
+
+    await act(async () => {
+      triggerReady();
+      await Promise.resolve();
+    });
+
+    await vi.waitFor(() => {
+      expect(mockBridge.setHostContext).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          styles: expect.objectContaining({
+            variables: {
+              "--font-sans": "Custom Sans",
+            },
+          }),
         }),
       );
     });
