@@ -1669,7 +1669,7 @@ async function createHostedOAuthSessionIfNeeded(input: {
     typeof result.sessionId !== "string"
   ) {
     throw new Error(
-      result?.error || `Hosted OAuth session failed (${response.status})`
+      result?.error || `OAuth session failed (${response.status})`
     );
   }
 
@@ -2268,13 +2268,13 @@ export async function completeHostedOAuthCallback(
       throw new Error("No pending OAuth flow found");
     }
     if (!context.workspaceId || !context.serverId) {
-      throw new Error("Hosted OAuth callback is missing server context");
+      throw new Error("OAuth callback is missing server context");
     }
 
     startOAuthTraceStep(callbackTrace, "received_authorization_code", {
       message: context.sessionId
-        ? "Received hosted OAuth callback and restoring server-side callback state."
-        : "Received hosted OAuth callback and loading stored callback state.",
+        ? "Received OAuth callback and restoring server-side callback state."
+        : "Received OAuth callback and loading stored callback state.",
     });
     emitTrace(callbackTrace);
     const serverUrl =
@@ -2294,8 +2294,8 @@ export async function completeHostedOAuthCallback(
     clearOAuthTraceSession(serverName);
     completeOAuthTraceStep(callbackTrace, "received_authorization_code", {
       message: context.sessionId
-        ? "Hosted callback state restored from the shared backend session."
-        : "Hosted callback state restored.",
+        ? "Callback state restored from the server session."
+        : "Callback state restored.",
       details: {
         serverUrl,
         ...(context.sessionId
@@ -2361,7 +2361,7 @@ export async function completeHostedOAuthCallback(
                   message:
                     progress.lastError ||
                     progress.error ||
-                    "Hosted OAuth callback failed",
+                    "OAuth callback failed",
                   oauthTrace: progress.oauthTrace,
                 });
               }
@@ -2428,14 +2428,14 @@ export async function completeHostedOAuthCallback(
           message:
             result?.error ||
             responseText ||
-            `Hosted OAuth callback failed (${response.status})`,
+            `OAuth callback failed (${response.status})`,
           oauthTrace: result?.oauthTrace,
         };
       }
 
       if (!result?.success) {
         throw {
-          message: result?.error || "Hosted OAuth callback failed",
+          message: result?.error || "OAuth callback failed",
           oauthTrace: result?.oauthTrace,
         };
       }
@@ -2459,13 +2459,13 @@ export async function completeHostedOAuthCallback(
       resourceUrl: oauthResourceUrl,
     });
     completeOAuthTraceStep(callbackTrace, "token_request", {
-      message: "Hosted token exchange succeeded.",
+      message: "Token exchange succeeded.",
     });
     completeOAuthTraceStep(callbackTrace, "received_access_token", {
-      message: "Hosted access token is stored in the backend vault.",
+      message: "Access token stored for reconnection.",
     });
     completeOAuthTraceStep(callbackTrace, "complete", {
-      message: "Hosted OAuth callback completed successfully.",
+      message: "OAuth callback completed successfully.",
     });
     const mergedTrace = previousTrace
       ? mergeOAuthTraces(
@@ -2495,7 +2495,7 @@ export async function completeHostedOAuthCallback(
         ? (error as { message: string }).message
         : String(error);
     failOAuthTraceStep(callbackTrace, callbackTrace.currentStep, message, {
-      message: "Hosted OAuth callback failed.",
+      message: "OAuth callback failed.",
     });
     const backendTrace =
       typeof error === "object" && error !== null && "oauthTrace" in error
