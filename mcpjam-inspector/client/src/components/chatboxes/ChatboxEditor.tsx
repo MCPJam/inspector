@@ -1195,12 +1195,16 @@ export function ChatboxEditor({
                         (server) => server.serverId,
                       )}
                       hostedOAuthTokensOverride={previewOAuthTokens}
-                      hostedChatboxToken={previewToken}
-                      hostedChatboxSurface="preview"
-                      initialModelId={modelId}
-                      initialSystemPrompt={normalizedSystemPrompt}
-                      initialTemperature={temperature}
-                      initialRequireToolApproval={requireToolApproval}
+                      hostedContext={{
+                        chatboxToken: previewToken,
+                        chatboxSurface: "preview",
+                      }}
+                      executionConfig={{
+                        modelId,
+                        systemPrompt: normalizedSystemPrompt,
+                        temperature,
+                        requireToolApproval,
+                      }}
                       loadingIndicatorVariant={getLoadingIndicatorVariantForHostStyle(
                         hostStyle,
                       )}

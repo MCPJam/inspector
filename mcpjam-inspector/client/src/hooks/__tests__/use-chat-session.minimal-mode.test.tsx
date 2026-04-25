@@ -265,7 +265,9 @@ describe("useChatSession minimal mode parity", () => {
       useChatSession({
         selectedServers,
         minimalMode: true,
-        initialSystemPrompt: "You are a helpful assistant.",
+        executionConfig: {
+          systemPrompt: "You are a helpful assistant.",
+        },
       }),
     );
 
@@ -284,7 +286,9 @@ describe("useChatSession minimal mode parity", () => {
       useChatSession({
         selectedServers,
         minimalMode: true,
-        initialSystemPrompt: "Custom prompt",
+        executionConfig: {
+          systemPrompt: "Custom prompt",
+        },
       }),
     );
 
@@ -308,8 +312,12 @@ describe("useChatSession minimal mode parity", () => {
       useChatSession({
         selectedServers,
         minimalMode: true,
-        hostedShareToken: "share-token",
-        initialSystemPrompt: "Prompt",
+        hostedContext: {
+          shareToken: "share-token",
+        },
+        executionConfig: {
+          systemPrompt: "Prompt",
+        },
       }),
     );
 
@@ -333,7 +341,9 @@ describe("useChatSession minimal mode parity", () => {
       useChatSession({
         selectedServers,
         minimalMode: true,
-        initialSystemPrompt: "Prompt",
+        executionConfig: {
+          systemPrompt: "Prompt",
+        },
       }),
     );
 
@@ -380,7 +390,9 @@ describe("useChatSession minimal mode parity", () => {
       useChatSession({
         selectedServers,
         minimalMode: true,
-        initialSystemPrompt: "Prompt",
+        executionConfig: {
+          systemPrompt: "Prompt",
+        },
       }),
     );
 
@@ -441,8 +453,10 @@ describe("useChatSession minimal mode parity", () => {
       useChatSession({
         selectedServers: ["server-1"],
         minimalMode: true,
-        initialSystemPrompt: "Prompt",
-        initialModelId: gatedMcpJamModel.id,
+        executionConfig: {
+          systemPrompt: "Prompt",
+          modelId: gatedMcpJamModel.id,
+        },
       }),
     );
 
@@ -473,8 +487,10 @@ describe("useChatSession minimal mode parity", () => {
       useChatSession({
         selectedServers: ["server-1"],
         minimalMode: true,
-        initialSystemPrompt: "Prompt",
-        initialModelId: gatedMcpJamModel.id,
+        executionConfig: {
+          systemPrompt: "Prompt",
+          modelId: gatedMcpJamModel.id,
+        },
       }),
     );
 
@@ -499,7 +515,9 @@ describe("useChatSession minimal mode parity", () => {
         useChatSession({
           selectedServers,
           minimalMode: true,
-          initialSystemPrompt: "Prompt",
+          executionConfig: {
+            systemPrompt: "Prompt",
+          },
         }),
       {
         initialProps: {
