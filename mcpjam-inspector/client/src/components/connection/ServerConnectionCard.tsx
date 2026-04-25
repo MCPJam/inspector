@@ -241,8 +241,10 @@ export function ServerConnectionCard({
   };
 
   const getSwitchReconnectOptions = () => {
-    if (!HOSTED_MODE && server.useOAuth === true && !server.oauthTokens) {
-      return { forceOAuthFlow: true };
+    if (server.useOAuth === true && !server.oauthTokens) {
+      return HOSTED_MODE
+        ? { allowInteractiveOAuthFlow: true }
+        : { forceOAuthFlow: true };
     }
 
     return { allowInteractiveOAuthFlow: false };

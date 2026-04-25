@@ -2,6 +2,7 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { initialAppState } from "@/state/app-types";
 import { buildDisconnectedRuntimeServers, useAppState } from "../use-app-state";
+import { writePendingQuickConnect } from "@/lib/quick-connect-pending";
 
 const {
   loadAppStateMock,
@@ -68,6 +69,10 @@ vi.mock("convex/react", () => ({
   }),
 }));
 
+vi.mock("@/lib/config", () => ({
+  HOSTED_MODE: true,
+}));
+
 vi.mock("../use-logger", () => ({
   useLogger: () => ({
     info: vi.fn(),
@@ -91,7 +96,12 @@ vi.mock("../use-server-state", () => ({
 
 function createServer(
   name: string,
-  connectionStatus: "connected" | "disconnected" | "failed" = "connected",
+  connectionStatus:
+    | "connected"
+    | "connecting"
+    | "oauth-flow"
+    | "disconnected"
+    | "failed" = "connected",
 ) {
   return {
     name,
@@ -109,7 +119,12 @@ function createServer(
 
 function createLoadedAppState(selectedServerState?: {
   name: string;
-  connectionStatus: "connected" | "disconnected" | "failed";
+  connectionStatus:
+    | "connected"
+    | "connecting"
+    | "oauth-flow"
+    | "disconnected"
+    | "failed";
 }) {
   const baseWorkspace = {
     ...initialAppState.workspaces.default,
@@ -508,5 +523,64 @@ describe("useAppState active organization recovery", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("clears hosted OAuth pending state after browser back from consent", async () => {
+    loadAppStateMock.mockReturnValue(
+      createLoadedAppState({
+        name: "demo-server",
+        connectionStatus: "connecting",
+      }),
+    );
+    localStorage.setItem(
+      "mcp-hosted-oauth-pending",
+      JSON.stringify({
+        surface: "workspace",
+        serverName: "demo-server",
+        serverUrl: "https://example.com/mcp",
+        returnHash: "#servers",
+        startedAt: Date.now(),
+      }),
+    );
+    localStorage.setItem("mcp-oauth-pending", "demo-server");
+    localStorage.setItem("mcp-oauth-return-hash", "#servers");
+    writePendingQuickConnect({
+      serverName: "demo-server",
+      displayName: "Demo Server",
+      sourceTab: "servers",
+      createdAt: Date.now(),
+    });
+
+    renderHook(() =>
+      useAppState({
+        currentUserId: "user-1",
+        routeOrganizationId: undefined,
+        hasOrganizations: false,
+        isLoadingOrganizations: false,
+        validOrganizations: [],
+      }),
+    );
+
+    await waitFor(() => {
+      expect(useWorkspaceStateMock).toHaveBeenCalled();
+    });
+
+    const pageShow = new Event("pageshow") as PageTransitionEvent;
+    Object.defineProperty(pageShow, "persisted", { value: true });
+
+    act(() => {
+      window.dispatchEvent(pageShow);
+    });
+
+    await waitFor(() => {
+      const lastWorkspaceArgs = useWorkspaceStateMock.mock.calls.at(-1)?.[0];
+      expect(
+        lastWorkspaceArgs?.appState.servers["demo-server"]?.connectionStatus,
+      ).toBe("failed");
+    });
+    expect(localStorage.getItem("mcp-hosted-oauth-pending")).toBeNull();
+    expect(localStorage.getItem("mcp-oauth-pending")).toBeNull();
+    expect(localStorage.getItem("mcp-oauth-return-hash")).toBeNull();
+    expect(localStorage.getItem("mcp-quick-connect-pending")).toBeNull();
   });
 });
