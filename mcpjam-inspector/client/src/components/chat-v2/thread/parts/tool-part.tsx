@@ -594,7 +594,7 @@ export function ToolPart({
                 {renderSaveViewButton()}
               </>
             )}
-          {toolState && StatusIcon && (
+          {toolState && StatusIcon && state !== "output-available" && state !== "input-available" && (
             <span
               className="inline-flex h-5 w-5 items-center justify-center"
               title={toolState.label}

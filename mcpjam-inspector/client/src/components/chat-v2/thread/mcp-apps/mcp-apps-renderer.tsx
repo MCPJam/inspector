@@ -1454,11 +1454,7 @@ export function MCPAppsRenderer({
   }
 
   if (!widgetHtml) {
-    return (
-      <div className="border border-border/40 rounded-md bg-muted/30 text-xs text-muted-foreground px-3 py-2">
-        Preparing MCP App widget...
-      </div>
-    );
+    return null;
   }
 
   const isPip = effectiveDisplayMode === "pip";
@@ -1498,6 +1494,9 @@ export function MCPAppsRenderer({
     return "mt-3 space-y-2 relative group";
   })();
 
+  const canTransitionHeight =
+    !isFullscreen &&
+    effectiveDisplayModeRef.current === effectiveDisplayMode;
   const iframeStyle: CSSProperties = {
     height: isFullscreen
       ? "100%"
@@ -1506,26 +1505,21 @@ export function MCPAppsRenderer({
         : lastInlineHeightRef.current,
     width: "100%",
     maxWidth: "100%",
-    // Width transition was previously included here ("width 300ms ease-out").
-    transition:
-      isFullscreen || effectiveDisplayModeRef.current !== effectiveDisplayMode
-        ? undefined
-        : "height 300ms ease-out",
-    // Hide iframe visually while not ready to display
+    opacity: showWidget ? 1 : 0,
+    transition: [
+      "opacity 150ms ease-in",
+      canTransitionHeight ? "height 300ms ease-out" : "",
+    ]
+      .filter(Boolean)
+      .join(", "),
+    // Keep iframe in the layout but invisible while not ready
     ...(!showWidget
-      ? { visibility: "hidden" as const, position: "absolute" as const }
+      ? { position: "absolute" as const, pointerEvents: "none" as const }
       : {}),
   };
 
   return (
     <div className={containerClassName}>
-      {!showWidget && (
-        <div className="border border-border/40 rounded-md bg-muted/30 text-xs text-muted-foreground px-3 py-2">
-          {toolState === "input-streaming"
-            ? "Streaming tool arguments..."
-            : "Preparing MCP App widget..."}
-        </div>
-      )}
 
       {((isFullscreen && isContainedFullscreenMode) ||
         (isPip && isMobilePlaygroundMode)) && (
@@ -1603,11 +1597,6 @@ export function MCPAppsRenderer({
         style={iframeStyle}
       />
 
-      {!minimalMode && (
-        <div className="text-[11px] text-muted-foreground/70">
-          MCP App: <code>{resourceUri}</code>
-        </div>
-      )}
 
       <McpAppsModal
         open={modalOpen}
