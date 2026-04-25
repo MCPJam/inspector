@@ -9,9 +9,16 @@ import {
   CardHeader,
   CardTitle,
 } from "@mcpjam/design-system/card";
+import { cn } from "@mcpjam/design-system/cn";
 import { Separator } from "@mcpjam/design-system/separator";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
-import { StrictMode, type ReactNode, useEffect, useState } from "react";
+import {
+  StrictMode,
+  type CSSProperties,
+  type ReactNode,
+  useEffect,
+  useState,
+} from "react";
 import { createRoot } from "react-dom/client";
 import type { WhoamiPayload } from "../shared/whoami.js";
 import "./global.css";
@@ -21,9 +28,14 @@ const APP_INFO = {
   version: "1.0.0",
 };
 
+type HostShellStyle = CSSProperties & Record<`--${string}`, string | number>;
+
 function WhoamiApp() {
   const [toolResult, setToolResult] = useState<CallToolResult | null>(null);
   const [hostContext, setHostContext] = useState<McpUiHostContext | undefined>();
+  const [prefersDark, setPrefersDark] = useState(() =>
+    window.matchMedia("(prefers-color-scheme: dark)").matches
+  );
   const { app, error } = useApp({
     appInfo: APP_INFO,
     capabilities: {},
@@ -49,28 +61,6 @@ function WhoamiApp() {
   }, [app]);
 
   useEffect(() => {
-    const hostVariables = hostContext?.styles?.variables;
-    if (!hostVariables) {
-      return;
-    }
-
-    const appliedKeys: string[] = [];
-    for (const [key, value] of Object.entries(hostVariables)) {
-      if (value == null) {
-        continue;
-      }
-      document.documentElement.style.setProperty(key, value);
-      appliedKeys.push(key);
-    }
-
-    return () => {
-      for (const key of appliedKeys) {
-        document.documentElement.style.removeProperty(key);
-      }
-    };
-  }, [hostContext?.styles?.variables]);
-
-  useEffect(() => {
     const hostFonts = hostContext?.styles?.css?.fonts;
     if (!hostFonts) {
       return;
@@ -87,33 +77,26 @@ function WhoamiApp() {
   }, [hostContext?.styles?.css?.fonts]);
 
   useEffect(() => {
-    const root = document.documentElement;
     const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
-
-    const applyTheme = () => {
-      const isDark =
-        hostContext?.theme != null
-          ? hostContext.theme === "dark"
-          : mediaQuery.matches;
-      root.classList.toggle("dark", isDark);
-      root.style.colorScheme = isDark ? "dark" : "light";
+    const handleChange = (event: MediaQueryListEvent) => {
+      setPrefersDark(event.matches);
     };
 
-    applyTheme();
-
-    if (hostContext?.theme != null) {
-      return;
-    }
-
-    mediaQuery.addEventListener("change", applyTheme);
+    setPrefersDark(mediaQuery.matches);
+    mediaQuery.addEventListener("change", handleChange);
     return () => {
-      mediaQuery.removeEventListener("change", applyTheme);
+      mediaQuery.removeEventListener("change", handleChange);
     };
-  }, [hostContext?.theme]);
+  }, []);
+
+  const isDark =
+    hostContext?.theme === "dark" ||
+    (hostContext?.theme !== "light" && prefersDark);
+  const themePreset = getThemePreset(hostContext);
 
   if (error) {
     return (
-      <Shell hostContext={hostContext}>
+      <Shell hostContext={hostContext} isDark={isDark} themePreset={themePreset}>
         <MessageBox label="App error" message={error.message} variant="destructive" />
       </Shell>
     );
@@ -121,7 +104,7 @@ function WhoamiApp() {
 
   if (!app) {
     return (
-      <Shell hostContext={hostContext}>
+      <Shell hostContext={hostContext} isDark={isDark} themePreset={themePreset}>
         <MessageBox
           label="Connecting"
           message="Waiting for the host to finish initializing the whoami view."
@@ -131,7 +114,7 @@ function WhoamiApp() {
   }
 
   return (
-    <Shell hostContext={hostContext}>
+    <Shell hostContext={hostContext} isDark={isDark} themePreset={themePreset}>
       <WhoamiContent toolResult={toolResult} hostContext={hostContext} />
     </Shell>
   );
@@ -140,21 +123,33 @@ function WhoamiApp() {
 function Shell({
   children,
   hostContext,
+  isDark,
+  themePreset,
 }: {
   children: ReactNode;
   hostContext?: McpUiHostContext;
+  isDark: boolean;
+  themePreset: string;
 }) {
+  const style = {
+    ...getHostStyleVariables(hostContext),
+    paddingTop: (hostContext?.safeAreaInsets?.top ?? 0) + 16,
+    paddingRight: (hostContext?.safeAreaInsets?.right ?? 0) + 16,
+    paddingBottom: (hostContext?.safeAreaInsets?.bottom ?? 0) + 16,
+    paddingLeft: (hostContext?.safeAreaInsets?.left ?? 0) + 16,
+    colorScheme: isDark ? "dark" : "light",
+  } satisfies HostShellStyle;
+
   return (
     <main
-      className="min-h-full bg-background"
-      style={{
-        paddingTop: (hostContext?.safeAreaInsets?.top ?? 0) + 16,
-        paddingRight: (hostContext?.safeAreaInsets?.right ?? 0) + 16,
-        paddingBottom: (hostContext?.safeAreaInsets?.bottom ?? 0) + 16,
-        paddingLeft: (hostContext?.safeAreaInsets?.left ?? 0) + 16,
-      }}
+      className={cn(
+        "app-theme-scope chatbox-host-shell min-h-full bg-background text-foreground font-sans",
+        isDark && "dark"
+      )}
+      data-theme-preset={themePreset}
+      style={style}
     >
-      <div className="mx-auto w-full max-w-xl">{children}</div>
+      <div className="mx-auto flex w-full max-w-4xl flex-col gap-4">{children}</div>
     </main>
   );
 }
@@ -204,13 +199,13 @@ function WhoamiContent({
   const rawJson = JSON.stringify(payload, null, 2);
 
   return (
-    <Card className="border-border/70 bg-card/95 shadow-lg backdrop-blur">
-      <CardHeader className="gap-4 border-b border-border/70 pb-5">
+    <Card className="overflow-hidden border-border/50 bg-card shadow-sm">
+      <CardHeader className="gap-4 border-b border-border/50 pb-6">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div className="space-y-3">
             <Badge
               variant="secondary"
-              className="w-fit uppercase tracking-[0.18em]"
+              className="w-fit px-3 py-1 uppercase tracking-[0.18em]"
             >
               Authenticated identity
             </Badge>
@@ -218,7 +213,7 @@ function WhoamiContent({
               <CardTitle className="text-2xl leading-tight sm:text-3xl">
                 {displayName}
               </CardTitle>
-              <CardDescription className="max-w-[34rem] text-sm sm:text-[0.95rem]">
+              <CardDescription className="max-w-[42rem] text-sm sm:text-[0.95rem]">
                 The same bearer token accepted by the MCP server was forwarded to
                 Convex and resolved into the user record below.
               </CardDescription>
@@ -234,7 +229,7 @@ function WhoamiContent({
       </CardHeader>
 
       <CardContent className="space-y-6 pt-6">
-        <section className="rounded-lg border bg-muted/35 p-4 sm:p-5">
+        <section className="rounded-xl border border-border/50 bg-muted/25 p-4 sm:p-5">
           <p className="break-all text-base font-semibold sm:text-lg">
             {displayEmail}
           </p>
@@ -260,7 +255,7 @@ function WhoamiContent({
             </p>
           </div>
 
-          <div className="overflow-auto rounded-lg border bg-muted/45 p-4">
+          <div className="max-h-[32rem] overflow-auto rounded-xl border border-border/50 bg-muted/20 p-4">
             <pre className="m-0 font-mono text-xs leading-6 whitespace-pre-wrap break-all text-foreground">
               <code>{rawJson}</code>
             </pre>
@@ -281,7 +276,7 @@ function MessageBox({
   variant?: "default" | "destructive";
 }) {
   return (
-    <Alert variant={variant} className="border-border/70 bg-card/95 shadow-sm">
+    <Alert variant={variant} className="border-border/50 bg-card shadow-sm">
       <AlertTitle>{label}</AlertTitle>
       <AlertDescription>{message}</AlertDescription>
     </Alert>
@@ -298,14 +293,15 @@ function FactItem({
   monospace?: boolean;
 }) {
   return (
-    <div className="rounded-md border bg-background/80 p-3">
+    <div className="rounded-lg border border-border/50 bg-background/80 p-3">
       <dt className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">
         {label}
       </dt>
       <dd
-        className={`mt-2 break-all text-sm font-medium sm:text-[0.95rem] ${
-          monospace ? "font-mono" : ""
-        }`}
+        className={cn(
+          "mt-2 break-all text-sm font-medium sm:text-[0.95rem]",
+          monospace && "font-mono"
+        )}
       >
         {value}
       </dd>
@@ -341,6 +337,28 @@ function getNumberValue(
 ): number | undefined {
   const value = record?.[key];
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function getHostStyleVariables(hostContext?: McpUiHostContext): HostShellStyle {
+  const variables = hostContext?.styles?.variables;
+  if (!variables) {
+    return {};
+  }
+
+  const scopedVariables = Object.fromEntries(
+    Object.entries(variables).filter((entry): entry is [string, string] => {
+      const [key, value] = entry;
+      return key.startsWith("--") && typeof value === "string" && value.length > 0;
+    })
+  );
+
+  return scopedVariables as HostShellStyle;
+}
+
+function getThemePreset(hostContext?: McpUiHostContext): string {
+  const variables = hostContext?.styles?.variables as Record<string, unknown> | undefined;
+  const value = variables?.["--mcpjam-theme-preset"];
+  return typeof value === "string" && value.length > 0 ? value : "default";
 }
 
 function formatCreatedAt(
