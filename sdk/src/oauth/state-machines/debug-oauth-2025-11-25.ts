@@ -1234,6 +1234,23 @@ export const createDebugOAuthStateMachine = (
 
             // Check registration strategy - 2025-11-25 priority: CIMD > Pre-registered > DCR
             if (registrationStrategy === "cimd") {
+              // Per spec: clients SHOULD check client_id_metadata_document_supported
+              // before using CIMD. Fail early instead of redirecting to an AS that
+              // will reject the URL-formatted client_id.
+              if (
+                state.authorizationServerMetadata
+                  .client_id_metadata_document_supported !== true
+              ) {
+                updateState({
+                  error:
+                    "The authorization server does not support Client ID Metadata Documents " +
+                    "(client_id_metadata_document_supported is not advertised in AS metadata). " +
+                    "Try using 'dcr' or 'preregistered' registration strategy instead.",
+                  isInitiatingAuth: false,
+                });
+                return;
+              }
+
               // CIMD Step 1: Prepare client_id URL
               updateState({
                 currentStep: "cimd_prepare",
