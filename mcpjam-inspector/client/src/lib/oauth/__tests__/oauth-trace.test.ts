@@ -105,7 +105,7 @@ describe("oauth-trace mergeOAuthTraces", () => {
           step: "received_authorization_code",
           title: "Authorization Code Received",
           status: "success",
-          message: "Hosted callback state restored.",
+          message: "Callback state restored.",
           startedAt: 1000,
           completedAt: 1010,
         },
@@ -146,7 +146,7 @@ describe("oauth-trace mergeOAuthTraces", () => {
           step: "token_request",
           title: "Exchange Authorization Code",
           status: "success",
-          message: "Hosted token exchange succeeded.",
+          message: "Token exchange succeeded.",
           startedAt: 40,
           completedAt: 50,
         },
@@ -175,7 +175,7 @@ describe("oauth-trace mergeOAuthTraces", () => {
     ).toEqual([
       expect.objectContaining({
         status: "success",
-        message: "Hosted token exchange succeeded.",
+        message: "Token exchange succeeded.",
       }),
     ]);
     expect(

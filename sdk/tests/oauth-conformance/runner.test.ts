@@ -133,6 +133,78 @@ describe("OAuthConformanceTest", () => {
     ]);
   });
 
+  it("fails early when CIMD is requested but AS does not advertise client_id_metadata_document_supported", async () => {
+    const serverUrl = "https://mcp.example.com/mcp";
+    const resourceMetadataUrl =
+      "https://mcp.example.com/.well-known/oauth-protected-resource/mcp";
+    const authServerUrl = "https://auth.example.com";
+
+    const fetchFn: typeof fetch = jest.fn(async (input, init) => {
+      const url = String(input);
+      const headers = new Headers(init?.headers);
+
+      if (url === serverUrl && !headers.get("Authorization")) {
+        return new Response(null, {
+          status: 401,
+          headers: {
+            "WWW-Authenticate": `Bearer resource_metadata="${resourceMetadataUrl}"`,
+          },
+        });
+      }
+
+      if (url === resourceMetadataUrl) {
+        return jsonResponse({
+          resource: serverUrl,
+          authorization_servers: [authServerUrl],
+        });
+      }
+
+      if (url === `${authServerUrl}/.well-known/oauth-authorization-server`) {
+        return jsonResponse({
+          issuer: authServerUrl,
+          authorization_endpoint: `${authServerUrl}/authorize`,
+          token_endpoint: `${authServerUrl}/token`,
+          registration_endpoint: `${authServerUrl}/register`,
+          response_types_supported: ["code"],
+          grant_types_supported: ["authorization_code", "refresh_token"],
+          code_challenge_methods_supported: ["S256"],
+          // NOTE: client_id_metadata_document_supported is NOT set
+        });
+      }
+
+      return jsonResponse({ error: "not found" }, 404);
+    }) as typeof fetch;
+
+    const test = new OAuthConformanceTest(
+      {
+        serverUrl,
+        protocolVersion: "2025-11-25",
+        registrationStrategy: "cimd",
+        auth: { mode: "headless" },
+        fetchFn,
+      },
+      {
+        completeHeadlessAuthorization: jest.fn(),
+      },
+    );
+
+    const result = await test.run();
+
+    expect(result.passed).toBe(false);
+    const failedStep = result.steps.find((step) => step.status === "failed");
+    expect(failedStep).toMatchObject({
+      status: "failed",
+      error: {
+        message: expect.stringContaining("client_id_metadata_document_supported"),
+      },
+    });
+    // Should NOT reach cimd_prepare or authorization_request
+    const stepNames = result.steps.map((step) => step.step);
+    expect(stepNames).toContain("received_authorization_server_metadata");
+    expect(stepNames).not.toContain("cimd_prepare");
+    expect(stepNames).not.toContain("authorization_request");
+  });
+
   it("captures multiple authorization server metadata attempts for the 2025-03-26 fallback flow", async () => {
     const serverUrl = "https://legacy.example.com/mcp";
     const rootMetadataUrl =

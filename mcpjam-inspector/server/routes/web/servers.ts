@@ -151,6 +151,7 @@ async function runGuestDoctor(
     config: {
       url: canonicalUrl,
       capabilities: guestInput.clientCapabilities,
+      clientCapabilities: guestInput.clientCapabilities,
       requestInit: { headers },
       timeout: timeoutMs,
     },

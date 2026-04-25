@@ -210,6 +210,7 @@ export async function createGuestEphemeralManager(
   const httpConfig: HttpServerConfig = {
     url: guestInput.serverUrl,
     capabilities: guestInput.clientCapabilities,
+    clientCapabilities: guestInput.clientCapabilities,
     requestInit: {
       headers,
     },
@@ -477,6 +478,7 @@ export function toHttpConfig(
   return {
     url: authResponse.serverConfig.url,
     capabilities: clientCapabilities,
+    clientCapabilities: clientCapabilities,
     requestInit: {
       headers,
     },
