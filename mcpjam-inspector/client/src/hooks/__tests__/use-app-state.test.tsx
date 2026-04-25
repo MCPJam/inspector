@@ -68,6 +68,10 @@ vi.mock("convex/react", () => ({
   }),
 }));
 
+vi.mock("@/lib/config", () => ({
+  HOSTED_MODE: false,
+}));
+
 vi.mock("../use-logger", () => ({
   useLogger: () => ({
     info: vi.fn(),
@@ -91,7 +95,12 @@ vi.mock("../use-server-state", () => ({
 
 function createServer(
   name: string,
-  connectionStatus: "connected" | "disconnected" | "failed" = "connected",
+  connectionStatus:
+    | "connected"
+    | "connecting"
+    | "oauth-flow"
+    | "disconnected"
+    | "failed" = "connected",
 ) {
   return {
     name,
@@ -109,7 +118,12 @@ function createServer(
 
 function createLoadedAppState(selectedServerState?: {
   name: string;
-  connectionStatus: "connected" | "disconnected" | "failed";
+  connectionStatus:
+    | "connected"
+    | "connecting"
+    | "oauth-flow"
+    | "disconnected"
+    | "failed";
 }) {
   const baseWorkspace = {
     ...initialAppState.workspaces.default,
@@ -509,4 +523,5 @@ describe("useAppState active organization recovery", () => {
       vi.useRealTimers();
     }
   });
+
 });

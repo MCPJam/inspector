@@ -258,6 +258,28 @@ describe("ServerConnectionCard", () => {
       });
     });
 
+    it("forces a fresh OAuth flow when toggling on an OAuth server without tokens", () => {
+      const server = createServer({
+        connectionStatus: "disconnected",
+        useOAuth: true,
+        config: { url: "https://example.com/mcp" } as any,
+      });
+      const onReconnect = vi.fn().mockResolvedValue(undefined);
+      render(
+        <ServerConnectionCard
+          server={server}
+          {...defaultProps}
+          onReconnect={onReconnect}
+        />,
+      );
+
+      fireEvent.click(screen.getByRole("switch"));
+
+      expect(onReconnect).toHaveBeenCalledWith("test-server", {
+        forceOAuthFlow: true,
+      });
+    });
+
     it("catches rejected reconnect promises and clears reconnect loading state", async () => {
       const server = createServer({ connectionStatus: "disconnected" });
       const onReconnect = vi.fn().mockImplementation(

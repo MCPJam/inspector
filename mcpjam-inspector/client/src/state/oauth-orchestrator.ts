@@ -1,7 +1,6 @@
 import {
   clearOAuthData,
   getStoredTokens,
-  hasOAuthConfig,
   initiateOAuth,
   readStoredOAuthConfig,
   refreshOAuthTokens,
@@ -37,6 +36,137 @@ function buildOAuthReauthRequired(
     kind: "reauth_required",
     error: `OAuth consent is required for ${serverName}. Click Reconnect to continue.`,
     oauthTrace,
+  };
+}
+
+function parseOAuthScopes(scopes?: string | string[]): string[] | undefined {
+  const parsed = Array.isArray(scopes)
+    ? scopes
+    : scopes?.split(/[,\s]+/);
+  const normalized = parsed?.map((scope) => scope.trim()).filter(Boolean);
+  return normalized && normalized.length > 0 ? normalized : undefined;
+}
+
+function nonEmptyString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() !== "" ? value : undefined;
+}
+
+function sanitizeOAuthSetupHeaders(
+  headers?: Record<string, string>,
+): Record<string, string> | undefined {
+  if (!headers) return undefined;
+
+  const sanitized = Object.fromEntries(
+    Object.entries(headers).filter(
+      ([key, value]) =>
+        key.toLowerCase() !== "authorization" &&
+        typeof value === "string" &&
+        value !== "",
+    ),
+  );
+  return Object.keys(sanitized).length > 0 ? sanitized : undefined;
+}
+
+function readStoredClientInfo(serverName: string): {
+  client_id?: string;
+  client_secret?: string;
+} {
+  try {
+    const raw = localStorage.getItem(`mcp-client-${serverName}`);
+    if (!raw) return {};
+
+    const parsed = JSON.parse(raw);
+    return {
+      client_id: nonEmptyString(parsed?.client_id),
+      client_secret: nonEmptyString(parsed?.client_secret),
+    };
+  } catch {
+    return {};
+  }
+}
+
+function normalizeHeaders(headers: unknown): Record<string, string> | undefined {
+  if (!headers) return undefined;
+
+  if (typeof Headers !== "undefined" && headers instanceof Headers) {
+    return sanitizeOAuthSetupHeaders(Object.fromEntries(headers.entries()));
+  }
+
+  if (Array.isArray(headers)) {
+    const entries = headers.filter(
+      (entry): entry is [string, string] =>
+        Array.isArray(entry) &&
+        typeof entry[0] === "string" &&
+        typeof entry[1] === "string",
+    );
+    return sanitizeOAuthSetupHeaders(Object.fromEntries(entries));
+  }
+
+  if (typeof headers === "object") {
+    const entries = Object.entries(headers).filter(
+      ([, value]): value is string => typeof value === "string",
+    );
+    return sanitizeOAuthSetupHeaders(Object.fromEntries(entries));
+  }
+
+  return undefined;
+}
+
+function profileHeadersToRecord(
+  headers?: Array<{ key: string; value: string }>,
+): Record<string, string> | undefined {
+  const entries = headers
+    ?.map(({ key, value }) => [key.trim(), value] as const)
+    .filter(([key, value]) => key && value);
+  return entries && entries.length > 0
+    ? sanitizeOAuthSetupHeaders(Object.fromEntries(entries))
+    : undefined;
+}
+
+function buildReconnectOAuthOptions(
+  server: ServerWithName,
+  serverUrl: string,
+): MCPOAuthOptions {
+  const oauthConfig = readStoredOAuthConfig(server.name);
+  const storedClientInfo = readStoredClientInfo(server.name);
+  const storedTokens = getStoredTokens(server.name);
+  const profile = server.oauthFlowProfile;
+  const protocolMode =
+    profile?.protocolVersion ?? oauthConfig.protocolMode ?? "auto";
+  const registrationMode =
+    profile?.registrationStrategy ?? oauthConfig.registrationMode ?? "auto";
+  const profileScopes = parseOAuthScopes(profile?.scopes);
+
+  return {
+    serverName: server.name,
+    serverUrl,
+    scopes: profileScopes ?? oauthConfig.scopes,
+    resourceUrl: nonEmptyString(profile?.resourceUrl) ?? oauthConfig.resourceUrl,
+    customHeaders:
+      profileHeadersToRecord(profile?.customHeaders) ??
+      normalizeHeaders((server.config as any)?.requestInit?.headers) ??
+      sanitizeOAuthSetupHeaders(oauthConfig.customHeaders),
+    registryServerId: oauthConfig.registryServerId,
+    useRegistryOAuthProxy: oauthConfig.useRegistryOAuthProxy,
+    clientId:
+      nonEmptyString(server.oauthTokens?.client_id) ??
+      nonEmptyString(profile?.clientId) ??
+      nonEmptyString(storedTokens?.client_id) ??
+      storedClientInfo.client_id,
+    clientSecret:
+      nonEmptyString(server.oauthTokens?.client_secret) ??
+      nonEmptyString(profile?.clientSecret) ??
+      storedClientInfo.client_secret,
+    protocolMode,
+    protocolVersion:
+      protocolMode !== "auto"
+        ? protocolMode
+        : profile?.protocolVersion ?? oauthConfig.protocolVersion,
+    registrationMode,
+    registrationStrategy:
+      registrationMode !== "auto"
+        ? registrationMode
+        : profile?.registrationStrategy ?? oauthConfig.registrationStrategy,
   };
 }
 
@@ -99,40 +229,8 @@ export async function ensureAuthorizedForReconnect(
   // Fallback to a fresh OAuth flow if URL is present
   // This may redirect away; the hook should reflect oauth-flow state
   if (url) {
-    const storedClientInfo = localStorage.getItem(`mcp-client-${server.name}`);
-    const storedTokens = getStoredTokens(server.name);
-
-    // Get stored OAuth configuration
-    const oauthConfig = readStoredOAuthConfig(server.name);
-    const clientInfo = storedClientInfo ? JSON.parse(storedClientInfo) : {};
-    const effectiveRegistrationStrategy =
-      server.oauthFlowProfile?.registrationStrategy ??
-      oauthConfig.registrationStrategy;
-    const shouldReuseStoredClientCredentials =
-      effectiveRegistrationStrategy === "preregistered";
-
-    const opts: MCPOAuthOptions = {
-      serverName: server.name,
-      serverUrl: url,
-      scopes: oauthConfig.scopes,
-      customHeaders: oauthConfig.customHeaders,
-      registryServerId: oauthConfig.registryServerId,
-      useRegistryOAuthProxy: oauthConfig.useRegistryOAuthProxy,
-      protocolMode: oauthConfig.protocolMode,
-      protocolVersion:
-        server.oauthFlowProfile?.protocolVersion ?? oauthConfig.protocolVersion,
-      registrationMode: oauthConfig.registrationMode,
-      registrationStrategy: effectiveRegistrationStrategy,
-    } as MCPOAuthOptions;
-
-    if (shouldReuseStoredClientCredentials) {
-      opts.clientId =
-        server.oauthTokens?.client_id ||
-        storedTokens?.client_id ||
-        clientInfo?.client_id;
-      opts.clientSecret =
-        server.oauthTokens?.client_secret || clientInfo?.client_secret;
-    }
+    const opts = buildReconnectOAuthOptions(server, url);
+    clearOAuthData(server.name);
     options?.beforeRedirect?.(opts);
     opts.onTraceUpdate = options?.onTraceUpdate;
     const init = await initiateOAuth(opts);

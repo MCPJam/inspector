@@ -225,6 +225,26 @@ function readStoredClientCredentials(serverName: string): {
   }
 }
 
+function parseOAuthScopes(scopes?: string): string[] | undefined {
+  const parsed = scopes
+    ?.split(/[,\s]+/)
+    .map((scope) => scope.trim())
+    .filter(Boolean);
+  return parsed && parsed.length > 0 ? parsed : undefined;
+}
+
+function profileHeadersToRecord(
+  headers?: Array<{ key: string; value: string }>,
+): Record<string, string> | undefined {
+  const entries = headers
+    ?.map(({ key, value }) => [key.trim(), value] as const)
+    .filter(([key, value]) => key && value);
+
+  return entries && entries.length > 0
+    ? Object.fromEntries(entries)
+    : undefined;
+}
+
 function buildResolvedOAuthProfile(input: {
   serverName: string;
   serverUrl: string;
@@ -2087,9 +2107,6 @@ export function useServerState({
       )?._id;
 
       if (options?.forceOAuthFlow) {
-        clearOAuthData(serverName);
-        await deleteServer(serverName);
-
         const serverUrl = (server.config as any)?.url?.toString?.();
         if (!serverUrl) {
           const errorMessage = "No server URL found for OAuth flow";
@@ -2107,33 +2124,42 @@ export function useServerState({
 
         const storedOAuthConfig = readStoredOAuthConfig(serverName);
         const storedClientCredentials = readStoredClientCredentials(serverName);
+        const profileScopes = parseOAuthScopes(server.oauthFlowProfile?.scopes);
+        const profileHeaders = profileHeadersToRecord(
+          server.oauthFlowProfile?.customHeaders,
+        );
         const protocolMode =
-          storedOAuthConfig.protocolMode ??
           server.oauthFlowProfile?.protocolVersion ??
+          storedOAuthConfig.protocolMode ??
           "auto";
         const registrationMode =
-          storedOAuthConfig.registrationMode ??
           server.oauthFlowProfile?.registrationStrategy ??
+          storedOAuthConfig.registrationMode ??
           "auto";
-
-        prepareHostedWorkspaceOAuthRedirect({
-          serverId: hostedWorkspaceServerId,
+        const oauthOptions = {
           serverName,
           serverUrl,
-        });
-        const oauthResult = await initiateOAuth({
-          serverName,
-          serverUrl,
-          customHeaders: mergeWithWorkspaceHeaders(
-            "requestInit" in server.config
-              ? extractRequestHeaders(server.config.requestInit)
-              : undefined,
-          ),
+          scopes: profileScopes ?? storedOAuthConfig.scopes,
+          resourceUrl:
+            server.oauthFlowProfile?.resourceUrl ??
+            storedOAuthConfig.resourceUrl,
           clientId:
-            server.oauthTokens?.client_id ?? storedClientCredentials.clientId,
+            server.oauthTokens?.client_id ??
+            server.oauthFlowProfile?.clientId ??
+            storedClientCredentials.clientId,
           clientSecret:
             server.oauthTokens?.client_secret ??
+            server.oauthFlowProfile?.clientSecret ??
             storedClientCredentials.clientSecret,
+          customHeaders: mergeWithWorkspaceHeaders(
+            profileHeaders ??
+              ("requestInit" in server.config
+                ? extractRequestHeaders(server.config.requestInit)
+                : undefined) ??
+              storedOAuthConfig.customHeaders,
+          ),
+          registryServerId: storedOAuthConfig.registryServerId,
+          useRegistryOAuthProxy: storedOAuthConfig.useRegistryOAuthProxy,
           protocolMode,
           registrationMode,
           protocolVersion:
@@ -2149,7 +2175,55 @@ export function useServerState({
           onTraceUpdate: (oauthTrace: OAuthTrace) => {
             updateServerOAuthTrace(serverName, oauthTrace);
           },
+        };
+
+        clearOAuthData(serverName);
+        dispatch({
+          type: "UPSERT_SERVER",
+          name: serverName,
+          server: {
+            ...server,
+            connectionStatus: "oauth-flow",
+            enabled: true,
+            lastError: undefined,
+            useOAuth: true,
+          },
         });
+        let oauthResult: Awaited<ReturnType<typeof initiateOAuth>>;
+        try {
+          await deleteServer(serverName);
+
+          prepareHostedWorkspaceOAuthRedirect({
+            serverId: hostedWorkspaceServerId,
+            serverName,
+            serverUrl,
+          });
+          oauthResult = await initiateOAuth(oauthOptions);
+        } catch (error) {
+          if (isStaleOp(serverName, token)) {
+            return {
+              status: "failed",
+              error:
+                error instanceof Error
+                  ? error.message
+                  : "OAuth flow failed",
+            };
+          }
+          const errorMessage =
+            error instanceof Error
+              ? error.message
+              : "Failed to start OAuth flow";
+          dispatch({
+            type: "CONNECT_FAILURE",
+            name: serverName,
+            error: errorMessage,
+          });
+          reportError(errorMessage);
+          return {
+            status: "failed",
+            error: errorMessage,
+          };
+        }
 
         if (oauthResult.success && !oauthResult.serverConfig) {
           return {

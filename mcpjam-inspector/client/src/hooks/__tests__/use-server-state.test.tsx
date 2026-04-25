@@ -696,6 +696,162 @@ describe("useServerState OAuth callback failures", () => {
       "Network error: Failed to resolve registry OAuth config: registry lookup failed",
     );
   });
+
+  it("keeps saved registry OAuth settings when forcing a fresh reconnect", async () => {
+    localStorage.setItem(
+      "mcp-oauth-config-demo-server",
+      JSON.stringify({
+        scopes: ["default"],
+        customHeaders: { "X-MCPJam": "yes" },
+        registryServerId: "registry-asana",
+        useRegistryOAuthProxy: true,
+        protocolVersion: "2025-11-25",
+        registrationStrategy: "preregistered",
+      }),
+    );
+    readStoredOAuthConfigMock.mockReturnValueOnce({
+      scopes: ["default"],
+      customHeaders: { "X-MCPJam": "yes" },
+      registryServerId: "registry-asana",
+      useRegistryOAuthProxy: true,
+      protocolVersion: "2025-11-25",
+      registrationStrategy: "preregistered",
+    });
+    localStorage.setItem(
+      "mcp-client-demo-server",
+      JSON.stringify({
+        client_id: "asana-client-id",
+        client_secret: "asana-client-secret",
+      }),
+    );
+    clearOAuthDataMock.mockImplementationOnce((serverName: string) => {
+      localStorage.removeItem(`mcp-oauth-config-${serverName}`);
+      localStorage.removeItem(`mcp-client-${serverName}`);
+    });
+    initiateOAuthMock.mockResolvedValueOnce({ success: true });
+
+    const dispatch = vi.fn();
+    const { result } = renderUseServerState(dispatch);
+
+    await act(async () => {
+      await result.current.handleReconnect("demo-server", {
+        forceOAuthFlow: true,
+      });
+    });
+
+    expect(clearOAuthDataMock).toHaveBeenCalledWith("demo-server");
+    expect(initiateOAuthMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        serverName: "demo-server",
+        serverUrl: "https://example.com/mcp",
+        scopes: ["default"],
+        customHeaders: { "X-MCPJam": "yes" },
+        clientId: "asana-client-id",
+        clientSecret: "asana-client-secret",
+        registryServerId: "registry-asana",
+        useRegistryOAuthProxy: true,
+        protocolVersion: "2025-11-25",
+        registrationStrategy: "preregistered",
+      }),
+    );
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "UPSERT_SERVER",
+      name: "demo-server",
+      server: expect.objectContaining({
+        connectionStatus: "oauth-flow",
+        useOAuth: true,
+      }),
+    });
+  });
+
+  it("prefers the current OAuth profile over stale stored config when forcing a fresh reconnect", async () => {
+    readStoredOAuthConfigMock.mockReturnValueOnce({
+      scopes: ["stale-scope"],
+      customHeaders: { "X-Stale": "browser" },
+      resourceUrl: "https://stale.example.com",
+      registryServerId: "registry-asana",
+      useRegistryOAuthProxy: true,
+      protocolMode: "2025-03-26",
+      protocolVersion: "2025-03-26",
+      registrationMode: "dcr",
+      registrationStrategy: "dcr",
+    });
+    localStorage.setItem(
+      "mcp-client-demo-server",
+      JSON.stringify({
+        client_id: "stored-client-id",
+        client_secret: "stored-client-secret",
+      }),
+    );
+    initiateOAuthMock.mockResolvedValueOnce({ success: true });
+
+    const appState = createAppState();
+    const profiledServer = {
+      ...appState.servers["demo-server"],
+      oauthFlowProfile: {
+        serverUrl: "https://example.com/mcp",
+        resourceUrl: "https://fresh.example.com",
+        clientId: "fresh-client-id",
+        clientSecret: "fresh-client-secret",
+        scopes: "fresh profile",
+        customHeaders: [{ key: "X-Fresh", value: "profile" }],
+        protocolVersion: "2025-11-25",
+        registrationStrategy: "preregistered",
+      },
+    };
+    appState.servers["demo-server"] = profiledServer as any;
+    appState.workspaces.default.servers["demo-server"] =
+      profiledServer as any;
+
+    const dispatch = vi.fn();
+    const { result } = renderUseServerState(dispatch, appState);
+
+    await act(async () => {
+      await result.current.handleReconnect("demo-server", {
+        forceOAuthFlow: true,
+      });
+    });
+
+    expect(initiateOAuthMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        serverName: "demo-server",
+        serverUrl: "https://example.com/mcp",
+        scopes: ["fresh", "profile"],
+        resourceUrl: "https://fresh.example.com",
+        customHeaders: { "X-Fresh": "profile" },
+        clientId: "fresh-client-id",
+        clientSecret: "fresh-client-secret",
+        registryServerId: "registry-asana",
+        useRegistryOAuthProxy: true,
+        protocolMode: "2025-11-25",
+        protocolVersion: "2025-11-25",
+        registrationMode: "preregistered",
+        registrationStrategy: "preregistered",
+      }),
+    );
+  });
+
+  it("marks reconnect failed if server cleanup fails before OAuth redirect", async () => {
+    const { deleteServer } = await import("@/state/mcp-api");
+    vi.mocked(deleteServer).mockRejectedValueOnce(new Error("cleanup failed"));
+    readStoredOAuthConfigMock.mockReturnValueOnce({});
+
+    const dispatch = vi.fn();
+    const { result } = renderUseServerState(dispatch);
+
+    await act(async () => {
+      await result.current.handleReconnect("demo-server", {
+        forceOAuthFlow: true,
+      });
+    });
+
+    expect(initiateOAuthMock).not.toHaveBeenCalled();
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "CONNECT_FAILURE",
+      name: "demo-server",
+      error: "cleanup failed",
+    });
+  });
 });
 
 describe("useServerState auth mode regressions", () => {
