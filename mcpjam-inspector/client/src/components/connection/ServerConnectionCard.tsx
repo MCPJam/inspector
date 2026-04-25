@@ -240,6 +240,16 @@ export function ServerConnectionCard({
     }
   };
 
+  const getSwitchReconnectOptions = () => {
+    if (server.useOAuth === true && !server.oauthTokens) {
+      return HOSTED_MODE
+        ? { allowInteractiveOAuthFlow: true }
+        : { forceOAuthFlow: true };
+    }
+
+    return { allowInteractiveOAuthFlow: false };
+  };
+
   const handleExport = async () => {
     setIsExporting(true);
     try {
@@ -505,9 +515,7 @@ export function ServerConnectionCard({
                     if (!checked) {
                       onDisconnect(server.name);
                     } else {
-                      void handleReconnect({
-                        allowInteractiveOAuthFlow: false,
-                      });
+                      void handleReconnect(getSwitchReconnectOptions());
                     }
                   }}
                   className="cursor-pointer scale-75"
