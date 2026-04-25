@@ -22,6 +22,8 @@ import { LiveTraceTimelineEmptyState } from "@/components/evals/live-trace-timel
 import { TraceViewer } from "@/components/evals/trace-viewer";
 import { useChatSession } from "@/hooks/use-chat-session";
 import { getChatComposerInteractivity } from "@/hooks/use-chat-stop-controls";
+import type { ExecutionConfig } from "@/lib/chat-execution-config";
+import type { HostedRuntimeContext } from "@/lib/hosted-runtime-context";
 import { createDeterministicToolMessages } from "@/components/ui-playground/playground-helpers";
 import {
   buildPreludeTraceEnvelope,
@@ -87,12 +89,8 @@ interface MultiModelPlaygroundCardProps {
   deterministicExecutionRequest: PlaygroundDeterministicExecutionRequest | null;
   stopRequestId: number;
   reasoningDisplayMode?: ReasoningDisplayMode;
-  initialSystemPrompt: string;
-  initialTemperature: number;
-  initialRequireToolApproval: boolean;
-  hostedWorkspaceId?: string | null;
-  hostedSelectedServerIds?: string[];
-  hostedOAuthTokens?: Record<string, string>;
+  executionConfig: ExecutionConfig;
+  hostedContext?: HostedRuntimeContext;
   displayMode: DisplayMode;
   onDisplayModeChange: (mode: DisplayMode) => void;
   hostStyle: ChatboxHostStyle;
@@ -125,12 +123,8 @@ export function MultiModelPlaygroundCard({
   deterministicExecutionRequest,
   stopRequestId,
   reasoningDisplayMode = "inline",
-  initialSystemPrompt,
-  initialTemperature,
-  initialRequireToolApproval,
-  hostedWorkspaceId,
-  hostedSelectedServerIds,
-  hostedOAuthTokens,
+  executionConfig,
+  hostedContext,
   displayMode,
   onDisplayModeChange,
   hostStyle,
@@ -196,13 +190,11 @@ export function MultiModelPlaygroundCard({
     startChatWithMessages,
   } = useChatSession({
     selectedServers,
-    hostedWorkspaceId,
-    hostedSelectedServerIds,
-    hostedOAuthTokens,
-    initialModelId: String(model.id),
-    initialSystemPrompt,
-    initialTemperature,
-    initialRequireToolApproval,
+    hostedContext,
+    executionConfig: {
+      ...executionConfig,
+      modelId: String(model.id),
+    },
     onReset: () => {
       setModelContextQueue([]);
       setPreludeTraceExecutions([]);

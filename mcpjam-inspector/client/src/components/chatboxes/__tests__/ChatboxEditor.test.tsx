@@ -106,11 +106,13 @@ vi.mock("@/components/ChatTabV2", async () => {
   const React = await vi.importActual<typeof import("react")>("react");
   return {
     ChatTabV2: (props: {
-      hostedChatboxSurface?: string;
-      initialModelId?: string;
-      initialSystemPrompt?: string;
-      initialTemperature?: number;
-      initialRequireToolApproval?: boolean;
+      hostedContext?: { chatboxSurface?: string };
+      executionConfig?: {
+        modelId?: string;
+        systemPrompt?: string;
+        temperature?: number;
+        requireToolApproval?: boolean;
+      };
       loadingIndicatorVariant?: string;
     }) => {
       React.useEffect(() => {
@@ -229,11 +231,15 @@ describe("ChatboxEditor preview", () => {
     ).toBeInTheDocument();
     expect(mockPreviewMount).toHaveBeenCalledWith(
       expect.objectContaining({
-        hostedChatboxSurface: "preview",
-        initialModelId: "openai/gpt-5-mini",
-        initialSystemPrompt: "You are helpful.",
-        initialTemperature: 0.4,
-        initialRequireToolApproval: true,
+        hostedContext: expect.objectContaining({
+          chatboxSurface: "preview",
+        }),
+        executionConfig: expect.objectContaining({
+          modelId: "openai/gpt-5-mini",
+          systemPrompt: "You are helpful.",
+          temperature: 0.4,
+          requireToolApproval: true,
+        }),
         loadingIndicatorVariant: "claude-mark",
       }),
     );

@@ -401,9 +401,11 @@ export function PlaygroundMain({
     addToolApprovalResponse,
   } = useChatSession({
     selectedServers,
-    hostedWorkspaceId: convexWorkspaceId,
-    hostedSelectedServerIds,
-    hostedOAuthTokens,
+    hostedContext: {
+      workspaceId: convexWorkspaceId,
+      selectedServerIds: hostedSelectedServerIds,
+      oauthTokens: hostedOAuthTokens,
+    },
     onReset: (reason?: ChatSessionResetReason) => {
       setModelContextQueue([]);
       setPreludeTraceExecutions([]);
@@ -1658,12 +1660,16 @@ export function PlaygroundMain({
                         deterministicExecutionRequest
                       }
                       stopRequestId={stopBroadcastRequestId}
-                      initialSystemPrompt={systemPrompt}
-                      initialTemperature={temperature}
-                      initialRequireToolApproval={requireToolApproval}
-                      hostedWorkspaceId={convexWorkspaceId}
-                      hostedSelectedServerIds={hostedSelectedServerIds}
-                      hostedOAuthTokens={hostedOAuthTokens}
+                      executionConfig={{
+                        systemPrompt,
+                        temperature,
+                        requireToolApproval,
+                      }}
+                      hostedContext={{
+                        workspaceId: convexWorkspaceId,
+                        selectedServerIds: hostedSelectedServerIds,
+                        oauthTokens: hostedOAuthTokens,
+                      }}
                       displayMode={displayMode}
                       onDisplayModeChange={handleDisplayModeChange}
                       hostStyle={hostStyle}

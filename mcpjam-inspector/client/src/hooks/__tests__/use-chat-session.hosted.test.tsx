@@ -272,9 +272,11 @@ describe("useChatSession hosted mode", () => {
     const { result, unmount } = renderHook(() =>
       useChatSession({
         selectedServers: ["server-1"],
-        hostedWorkspaceId: "workspace-1",
-        hostedSelectedServerIds: ["server-id-1"],
-        hostedShareToken: "share-token",
+        hostedContext: {
+          workspaceId: "workspace-1",
+          selectedServerIds: ["server-id-1"],
+          shareToken: "share-token",
+        },
       }),
     );
 
@@ -295,9 +297,11 @@ describe("useChatSession hosted mode", () => {
     const { result, unmount } = renderHook(() =>
       useChatSession({
         selectedServers: ["server-1"],
-        hostedWorkspaceId: "workspace-1",
-        hostedSelectedServerIds: ["server-id-1"],
-        hostedChatboxToken: "chatbox-token",
+        hostedContext: {
+          workspaceId: "workspace-1",
+          selectedServerIds: ["server-id-1"],
+          chatboxToken: "chatbox-token",
+        },
       }),
     );
 
@@ -318,10 +322,12 @@ describe("useChatSession hosted mode", () => {
     const { unmount } = renderHook(() =>
       useChatSession({
         selectedServers: ["server-1"],
-        hostedWorkspaceId: "workspace-1",
-        hostedSelectedServerIds: ["server-id-1"],
-        hostedChatboxToken: "chatbox-token",
-        hostedChatboxSurface: "preview",
+        hostedContext: {
+          workspaceId: "workspace-1",
+          selectedServerIds: ["server-id-1"],
+          chatboxToken: "chatbox-token",
+          chatboxSurface: "preview",
+        },
       }),
     );
 
@@ -345,8 +351,10 @@ describe("useChatSession hosted mode", () => {
     const { result } = renderHook(() =>
       useChatSession({
         selectedServers: ["server-1"],
-        hostedWorkspaceId: "workspace-1",
-        hostedSelectedServerIds: ["server-id-1"],
+        hostedContext: {
+          workspaceId: "workspace-1",
+          selectedServerIds: ["server-id-1"],
+        },
       }),
     );
 
@@ -403,8 +411,10 @@ describe("useChatSession hosted mode", () => {
       }) =>
         useChatSession({
           selectedServers,
-          hostedWorkspaceId: "workspace-1",
-          hostedSelectedServerIds,
+          hostedContext: {
+            workspaceId: "workspace-1",
+            selectedServerIds: hostedSelectedServerIds,
+          },
         }),
       {
         initialProps: {
@@ -622,8 +632,10 @@ describe("useChatSession hosted mode", () => {
     const { result } = renderHook(() =>
       useChatSession({
         selectedServers: ["server-1"],
-        hostedWorkspaceId: "workspace-1",
-        hostedSelectedServerIds: ["server-id-1"],
+        hostedContext: {
+          workspaceId: "workspace-1",
+          selectedServerIds: ["server-id-1"],
+        },
       }),
     );
 
@@ -652,8 +664,10 @@ describe("useChatSession hosted mode", () => {
     renderHook(() =>
       useChatSession({
         selectedServers: ["server-1"],
-        hostedWorkspaceId: "workspace-1",
-        hostedSelectedServerIds: ["server-id-1"],
+        hostedContext: {
+          workspaceId: "workspace-1",
+          selectedServerIds: ["server-id-1"],
+        },
       }),
     );
 
@@ -693,9 +707,11 @@ describe("useChatSession hosted mode", () => {
     const { result, unmount } = renderHook(() =>
       useChatSession({
         selectedServers: ["server-1"],
-        hostedWorkspaceId: "workspace-1",
-        hostedSelectedServerIds: ["server-id-1"],
-        hostedShareToken: "share-token",
+        hostedContext: {
+          workspaceId: "workspace-1",
+          selectedServerIds: ["server-id-1"],
+          shareToken: "share-token",
+        },
       }),
     );
 
@@ -761,9 +777,11 @@ describe("useChatSession hosted mode", () => {
     const { result, unmount } = renderHook(() =>
       useChatSession({
         selectedServers: ["server-1"],
-        hostedWorkspaceId: "workspace-1",
-        hostedSelectedServerIds: ["server-id-1"],
-        hostedShareToken: "share-token",
+        hostedContext: {
+          workspaceId: "workspace-1",
+          selectedServerIds: ["server-id-1"],
+          shareToken: "share-token",
+        },
       }),
     );
 
@@ -781,9 +799,11 @@ describe("useChatSession hosted mode", () => {
     const { result, unmount } = renderHook(() =>
       useChatSession({
         selectedServers: ["server-1"],
-        hostedWorkspaceId: "workspace-1",
-        hostedSelectedServerIds: ["server-id-1"],
-        hostedShareToken: "share-token",
+        hostedContext: {
+          workspaceId: "workspace-1",
+          selectedServerIds: ["server-id-1"],
+          shareToken: "share-token",
+        },
       }),
     );
 
@@ -809,8 +829,10 @@ describe("useChatSession hosted mode", () => {
     const { result, unmount } = renderHook(() =>
       useChatSession({
         selectedServers: ["server-1"],
-        hostedWorkspaceId: "workspace-1",
-        hostedSelectedServerIds: ["server-id-1"],
+        hostedContext: {
+          workspaceId: "workspace-1",
+          selectedServerIds: ["server-id-1"],
+        },
       }),
     );
 
@@ -869,8 +891,10 @@ describe("useChatSession hosted mode", () => {
     const { result, unmount } = renderHook(() =>
       useChatSession({
         selectedServers: ["server-1"],
-        hostedWorkspaceId: "workspace-1",
-        hostedSelectedServerIds: ["server-id-1"],
+        hostedContext: {
+          workspaceId: "workspace-1",
+          selectedServerIds: ["server-id-1"],
+        },
       }),
     );
 
@@ -912,9 +936,11 @@ describe("useChatSession hosted mode", () => {
     const { result, unmount } = renderHook(() =>
       useChatSession({
         selectedServers: ["server-1"],
-        hostedWorkspaceId: "workspace-1",
-        hostedSelectedServerIds: ["server-id-1"],
-        hostedShareToken: "share-token",
+        hostedContext: {
+          workspaceId: "workspace-1",
+          selectedServerIds: ["server-id-1"],
+          shareToken: "share-token",
+        },
       }),
     );
 
