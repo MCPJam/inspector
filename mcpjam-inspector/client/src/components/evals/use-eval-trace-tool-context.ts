@@ -8,9 +8,9 @@ import {
 import { HOSTED_MODE } from "@/lib/config";
 import { CLIENT_CONFIG_SYNC_PENDING_ERROR_MESSAGE } from "@/lib/client-config";
 import { buildOAuthTokensByServerId } from "@/lib/oauth/oauth-tokens";
+import { useWorkspaceClientConfigSyncPending } from "@/hooks/use-workspace-client-config-sync-pending";
 import { useWorkspaceServers } from "@/hooks/useViews";
 import { useSharedAppState } from "@/state/app-state-context";
-import { useClientConfigStore } from "@/stores/client-config-store";
 
 const EMPTY_SERVER_NAMES: string[] = [];
 
@@ -77,10 +77,8 @@ export function useEvalTraceToolContext({
   const activeWorkspace = appState.workspaces[appState.activeWorkspaceId];
   const effectiveHostedWorkspaceId =
     workspaceId ?? activeWorkspace?.sharedWorkspaceId ?? null;
-  const isClientConfigSyncPending = useClientConfigStore(
-    (state) =>
-      state.isAwaitingRemoteEcho &&
-      state.pendingWorkspaceId === appState.activeWorkspaceId,
+  const isClientConfigSyncPending = useWorkspaceClientConfigSyncPending(
+    appState.activeWorkspaceId,
   );
   const serverNamesSignature = useMemo(
     () => Array.from(new Set(serverNames.filter(Boolean))).join("\u0000"),

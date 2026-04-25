@@ -30,6 +30,7 @@ import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { listTools } from "@/lib/apis/mcp-tools-api";
 import { generateFormFieldsFromSchema } from "@/lib/tool-form";
 import type { MCPServerConfig } from "@mcpjam/sdk/browser";
+import type { WorkspaceHostContextDraft } from "@/lib/client-config";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { usePostHog } from "posthog-js/react";
 import { motion, useReducedMotion } from "framer-motion";
@@ -55,6 +56,7 @@ import { toast } from "sonner";
 import type { PlaygroundServerSelectorProps } from "@/components/ActiveServerSelector";
 
 interface AppBuilderTabProps {
+  activeWorkspaceId?: string | null;
   serverConfig?: MCPServerConfig;
   serverName?: string;
   servers?: Record<string, ServerWithName>;
@@ -68,6 +70,10 @@ interface AppBuilderTabProps {
    */
   isServerSyncing?: boolean;
   onConnect?: (formData: ServerFormData) => void;
+  onSaveHostContext?: (
+    workspaceId: string,
+    hostContext: WorkspaceHostContextDraft,
+  ) => Promise<void>;
   ensureServersReady?: (
     serverNames: string[],
   ) => Promise<EnsureServersReadyResult>;
@@ -89,6 +95,7 @@ const APP_BUILDER_FIRST_RUN_PROMPT = "Draw me an MCP architecture diagram";
 const SIDEBAR_EASE: [number, number, number, number] = [0.4, 0, 0.2, 1];
 
 export function AppBuilderTab({
+  activeWorkspaceId = null,
   serverConfig,
   serverName,
   servers = {},
@@ -96,6 +103,7 @@ export function AppBuilderTab({
   isAuthLoading = false,
   isServerSyncing = false,
   onConnect,
+  onSaveHostContext,
   ensureServersReady,
   onOnboardingChange,
   playgroundServerSelectorProps,
@@ -440,7 +448,9 @@ export function AppBuilderTab({
           className="min-h-0 min-w-0 overflow-hidden"
         >
           <PlaygroundMain
+            activeWorkspaceId={activeWorkspaceId}
             serverName={serverName || ""}
+            onSaveHostContext={onSaveHostContext}
             enableMultiModelChat={enableMultiModelChat}
             isExecuting={isExecuting}
             executingToolName={selectedTool}

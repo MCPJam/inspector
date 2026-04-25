@@ -12,6 +12,14 @@ export type WorkspaceClientConfig = {
   hostContext: Record<string, unknown>;
 };
 
+export type WorkspaceConnectionConfigDraft = {
+  version: 1;
+  connectionDefaults?: WorkspaceConnectionDefaults;
+  clientCapabilities: Record<string, unknown>;
+};
+
+export type WorkspaceHostContextDraft = Record<string, unknown>;
+
 export type WorkspaceConnectionDefaults = {
   headers: Record<string, string>;
   requestTimeout: number;
@@ -61,14 +69,25 @@ export function buildDefaultWorkspaceConnectionDefaults(): WorkspaceConnectionDe
   };
 }
 
-export function buildDefaultHostContext(args: {
+export function buildDefaultWorkspaceConnectionConfig(): WorkspaceConnectionConfigDraft {
+  return {
+    version: 1,
+    connectionDefaults: buildDefaultWorkspaceConnectionDefaults(),
+    clientCapabilities: getDefaultClientCapabilities() as Record<
+      string,
+      unknown
+    >,
+  };
+}
+
+export function buildDefaultWorkspaceHostContext(args: {
   theme: "light" | "dark";
   displayMode: HostDisplayMode;
   locale: string;
   timeZone: string;
   deviceCapabilities: HostDeviceCapabilities;
   safeAreaInsets: HostSafeAreaInsets;
-}): Record<string, unknown> {
+}): WorkspaceHostContextDraft {
   return {
     theme: args.theme,
     displayMode: args.displayMode,
@@ -80,6 +99,8 @@ export function buildDefaultHostContext(args: {
   };
 }
 
+export const buildDefaultHostContext = buildDefaultWorkspaceHostContext;
+
 export function buildDefaultWorkspaceClientConfig(args: {
   theme: "light" | "dark";
   displayMode: HostDisplayMode;
@@ -88,15 +109,10 @@ export function buildDefaultWorkspaceClientConfig(args: {
   deviceCapabilities: HostDeviceCapabilities;
   safeAreaInsets: HostSafeAreaInsets;
 }): WorkspaceClientConfig {
-  return {
-    version: 1,
-    connectionDefaults: buildDefaultWorkspaceConnectionDefaults(),
-    clientCapabilities: getDefaultClientCapabilities() as Record<
-      string,
-      unknown
-    >,
-    hostContext: buildDefaultHostContext(args),
-  };
+  return composeWorkspaceClientConfig({
+    connectionConfig: buildDefaultWorkspaceConnectionConfig(),
+    hostContext: buildDefaultWorkspaceHostContext(args),
+  });
 }
 
 export function isWorkspaceClientConfig(
@@ -124,14 +140,83 @@ export function sanitizeWorkspaceClientConfig(
     return fallback;
   }
 
+  return composeWorkspaceClientConfig({
+    connectionConfig: {
+      version: 1,
+      connectionDefaults: sanitizeWorkspaceConnectionDefaults(
+        value.connectionDefaults,
+        fallback.connectionDefaults,
+      ),
+      clientCapabilities: sanitizeWorkspaceClientCapabilities(
+        value.clientCapabilities,
+        fallback.clientCapabilities,
+      ),
+    },
+    hostContext: sanitizeWorkspaceHostContext(value.hostContext, fallback.hostContext),
+  });
+}
+
+export function sanitizeWorkspaceClientCapabilities(
+  value: unknown,
+  fallback: Record<string, unknown> = getDefaultClientCapabilities() as Record<
+    string,
+    unknown
+  >,
+): Record<string, unknown> {
+  return isRecord(value) ? value : fallback;
+}
+
+export function sanitizeWorkspaceHostContext(
+  value: unknown,
+  fallback: WorkspaceHostContextDraft = {},
+): WorkspaceHostContextDraft {
+  return isRecord(value) ? value : fallback;
+}
+
+export function pickWorkspaceConnectionConfig(
+  workspaceClientConfig?: WorkspaceClientConfig | null,
+): WorkspaceConnectionConfigDraft {
   return {
     version: 1,
     connectionDefaults: sanitizeWorkspaceConnectionDefaults(
-      value.connectionDefaults,
-      fallback.connectionDefaults,
+      workspaceClientConfig?.connectionDefaults,
     ),
-    clientCapabilities: value.clientCapabilities,
-    hostContext: value.hostContext,
+    clientCapabilities: sanitizeWorkspaceClientCapabilities(
+      workspaceClientConfig?.clientCapabilities,
+    ),
+  };
+}
+
+export function pickWorkspaceHostContext(
+  workspaceClientConfig?: WorkspaceClientConfig | null,
+  fallback: WorkspaceHostContextDraft = {},
+): WorkspaceHostContextDraft {
+  return sanitizeWorkspaceHostContext(workspaceClientConfig?.hostContext, fallback);
+}
+
+export function composeWorkspaceClientConfig(args: {
+  connectionConfig?: WorkspaceConnectionConfigDraft | null;
+  hostContext?: WorkspaceHostContextDraft | null;
+  fallback?: WorkspaceClientConfig | null;
+}): WorkspaceClientConfig {
+  const fallback = args.fallback ?? null;
+  const fallbackConnectionConfig = pickWorkspaceConnectionConfig(fallback);
+  const fallbackHostContext = pickWorkspaceHostContext(fallback);
+
+  const connectionConfig = args.connectionConfig ?? fallbackConnectionConfig;
+  const hostContext = args.hostContext ?? fallbackHostContext;
+
+  return {
+    version: 1,
+    connectionDefaults: sanitizeWorkspaceConnectionDefaults(
+      connectionConfig.connectionDefaults,
+      fallbackConnectionConfig.connectionDefaults,
+    ),
+    clientCapabilities: sanitizeWorkspaceClientCapabilities(
+      connectionConfig.clientCapabilities,
+      fallbackConnectionConfig.clientCapabilities,
+    ),
+    hostContext: sanitizeWorkspaceHostContext(hostContext, fallbackHostContext),
   };
 }
 
@@ -412,7 +497,7 @@ function normalizeWorkspaceConnectionHeaders(
         key.toLowerCase() !== "authorization" &&
         typeof value === "string",
     ),
-  );
+  ) as Record<string, string>;
 }
 
 function normalizeExplicitConnectionHeaders(
@@ -426,7 +511,7 @@ function normalizeExplicitConnectionHeaders(
     Object.entries(headers).filter(
       ([key, value]) => key.trim() !== "" && typeof value === "string",
     ),
-  );
+  ) as Record<string, string>;
 }
 
 function normalizeWorkspaceRequestTimeout(

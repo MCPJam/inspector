@@ -28,6 +28,7 @@ const {
     handleCreateWorkspace: vi.fn(),
     handleUpdateWorkspace: vi.fn(),
     handleUpdateClientConfig: vi.fn(),
+    handleUpdateHostContext: vi.fn(),
     handleDeleteWorkspace: vi.fn(),
     handleDuplicateWorkspace: vi.fn(),
     handleSetDefaultWorkspace: vi.fn(),

@@ -18,11 +18,17 @@ import {
   serializeServersForSharing,
 } from "@/lib/workspace-serialization";
 import {
+  composeWorkspaceClientConfig,
+  pickWorkspaceConnectionConfig,
+  pickWorkspaceHostContext,
   stableStringifyJson,
   type WorkspaceClientConfig,
+  type WorkspaceConnectionConfigDraft,
+  type WorkspaceHostContextDraft,
 } from "@/lib/client-config";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import { useClientConfigStore } from "@/stores/client-config-store";
+import { useHostContextStore } from "@/stores/host-context-store";
 import { useOrganizationBillingStatus } from "./useOrganizationBilling";
 
 const CLIENT_CONFIG_SYNC_ECHO_TIMEOUT_MS = 10000;
@@ -38,11 +44,37 @@ function buildLocalWorkspaceId() {
 }
 
 interface PendingClientConfigSync {
+  id: string;
   workspaceId: string;
   expectedSerializedConfig: string;
   resolve: () => void;
   reject: (error: Error) => void;
   timeoutId: ReturnType<typeof setTimeout>;
+}
+
+const WORKSPACE_CLIENT_CONFIG_SYNC_INTERRUPTED_ERROR_MESSAGE =
+  "Workspace client config sync was interrupted.";
+const WORKSPACE_CLIENT_CONFIG_SYNC_TIMEOUT_ERROR_MESSAGE =
+  "Timed out waiting for workspace client config to sync.";
+const WORKSPACE_CLIENT_CONFIG_SYNC_SUPERSEDED_ERROR_MESSAGE =
+  "Workspace client config sync was superseded by a newer save.";
+
+interface ClientConfigSaveController<T> {
+  beginSave: (input: {
+    workspaceId: string;
+    savedConfig: T | undefined;
+    awaitRemoteEcho: boolean;
+  }) => void;
+  markSaved: (input: {
+    workspaceId: string;
+    savedConfig: T | undefined;
+    awaitRemoteEcho: boolean;
+  }) => void;
+  failSave: (input: {
+    workspaceId: string;
+    savedConfig: T | undefined;
+    awaitRemoteEcho: boolean;
+  }) => void;
 }
 
 interface LoggerLike {
@@ -60,6 +92,27 @@ function isSyntheticDefaultWorkspace(workspace: Workspace) {
     workspace.name === "Default" &&
     workspace.description === "Default workspace" &&
     Object.keys(workspace.servers).length === 0
+  );
+}
+
+function doesStoreSliceBelongToWorkspace(
+  activeWorkspaceId: string | null,
+  workspaceId: string,
+) {
+  return activeWorkspaceId === workspaceId;
+}
+
+function canApplyStoreSaveState(
+  activeWorkspaceId: string | null,
+  workspaceId: string,
+) {
+  return activeWorkspaceId === null || activeWorkspaceId === workspaceId;
+}
+
+function isSupersededClientConfigSyncError(error: unknown) {
+  return (
+    error instanceof Error &&
+    error.message === WORKSPACE_CLIENT_CONFIG_SYNC_SUPERSEDED_ERROR_MESSAGE
   );
 }
 
@@ -137,8 +190,12 @@ export function useWorkspaceState({
   const migrationErrorNotifiedRef = useRef(new Set<string>());
   const [useLocalFallback, setUseLocalFallback] = useState(false);
   const convexTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const pendingClientConfigSyncRef = useRef<PendingClientConfigSync | null>(
-    null,
+  const pendingClientConfigSyncRef = useRef<
+    Map<string, PendingClientConfigSync>
+  >(new Map());
+  const pendingClientConfigSyncIdRef = useRef(0);
+  const pendingClientConfigSyncByWorkspaceRef = useRef<Map<string, string>>(
+    new Map(),
   );
   const CONVEX_TIMEOUT_MS = 10000;
   const shouldTreatRemoteWorkspacesAsEmpty =
@@ -163,19 +220,43 @@ export function useWorkspaceState({
       isAuthenticated,
     });
 
-  const clearPendingClientConfigSync = useCallback((error?: Error) => {
-    const pending = pendingClientConfigSyncRef.current;
-    if (!pending) {
+  const clearPendingClientConfigSync = useCallback(
+    (pendingId: string, error?: Error) => {
+      const pending = pendingClientConfigSyncRef.current.get(pendingId);
+      if (!pending) {
+        return;
+      }
+
+      clearTimeout(pending.timeoutId);
+      pendingClientConfigSyncRef.current.delete(pendingId);
+      if (
+        pendingClientConfigSyncByWorkspaceRef.current.get(pending.workspaceId) ===
+        pendingId
+      ) {
+        pendingClientConfigSyncByWorkspaceRef.current.delete(
+          pending.workspaceId,
+        );
+      }
+
+      if (error) {
+        pending.reject(error);
+      }
+    },
+    [],
+  );
+
+  const clearAllPendingClientConfigSyncs = useCallback((error?: Error) => {
+    const pendingIds = Array.from(
+      pendingClientConfigSyncRef.current.keys(),
+    );
+    if (pendingIds.length === 0) {
       return;
     }
 
-    clearTimeout(pending.timeoutId);
-    pendingClientConfigSyncRef.current = null;
-
-    if (error) {
-      pending.reject(error);
+    for (const pendingId of pendingIds) {
+      clearPendingClientConfigSync(pendingId, error);
     }
-  }, []);
+  }, [clearPendingClientConfigSync]);
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -241,11 +322,11 @@ export function useWorkspaceState({
       return;
     }
 
-    clearPendingClientConfigSync(
-      new Error("Workspace client config sync was interrupted."),
+    clearAllPendingClientConfigSyncs(
+      new Error(WORKSPACE_CLIENT_CONFIG_SYNC_INTERRUPTED_ERROR_MESSAGE),
     );
   }, [
-    clearPendingClientConfigSync,
+    clearAllPendingClientConfigSyncs,
     isAuthenticated,
     shouldTreatRemoteWorkspacesAsEmpty,
     useLocalFallback,
@@ -253,11 +334,11 @@ export function useWorkspaceState({
 
   useEffect(() => {
     return () => {
-      clearPendingClientConfigSync(
-        new Error("Workspace client config sync was interrupted."),
+      clearAllPendingClientConfigSyncs(
+        new Error(WORKSPACE_CLIENT_CONFIG_SYNC_INTERRUPTED_ERROR_MESSAGE),
       );
     };
-  }, [clearPendingClientConfigSync]);
+  }, [clearAllPendingClientConfigSyncs]);
 
   useEffect(() => {
     if (!shouldTreatRemoteWorkspacesAsEmpty || !convexActiveWorkspaceId) {
@@ -317,24 +398,24 @@ export function useWorkspaceState({
   }, [remoteWorkspaces, convexActiveWorkspaceId, activeWorkspaceServersFlat]);
 
   useEffect(() => {
-    const pending = pendingClientConfigSyncRef.current;
-    if (!pending) {
+    if (pendingClientConfigSyncRef.current.size === 0) {
       return;
     }
 
-    const syncedClientConfig =
-      convexWorkspaces[pending.workspaceId]?.clientConfig ?? undefined;
-    if (
-      stringifyWorkspaceClientConfig(syncedClientConfig) !==
-      pending.expectedSerializedConfig
-    ) {
-      return;
-    }
+    for (const [pendingId, pending] of pendingClientConfigSyncRef.current) {
+      const syncedClientConfig =
+        convexWorkspaces[pending.workspaceId]?.clientConfig;
+      if (
+        stringifyWorkspaceClientConfig(syncedClientConfig) !==
+        pending.expectedSerializedConfig
+      ) {
+        continue;
+      }
 
-    clearTimeout(pending.timeoutId);
-    pendingClientConfigSyncRef.current = null;
-    pending.resolve();
-  }, [convexWorkspaces]);
+      clearPendingClientConfigSync(pendingId);
+      pending.resolve();
+    }
+  }, [clearPendingClientConfigSync, convexWorkspaces]);
 
   const scopedLocalWorkspaces = useMemo((): Record<string, Workspace> => {
     if (!shouldScopeLocalFallbackByOrganization) {
@@ -826,41 +907,62 @@ export function useWorkspaceState({
     ],
   );
 
-  const handleUpdateClientConfig = useCallback(
-    async (
-      workspaceId: string,
-      clientConfig: WorkspaceClientConfig | undefined,
-    ): Promise<void> => {
-      const clientConfigStore = useClientConfigStore.getState();
+  const persistWorkspaceClientConfig = useCallback(
+    async <T,>({
+      workspaceId,
+      clientConfig,
+      savedSlice,
+      controller,
+    }: {
+      workspaceId: string;
+      clientConfig: WorkspaceClientConfig | undefined;
+      savedSlice: T | undefined;
+      controller: ClientConfigSaveController<T>;
+    }): Promise<void> => {
       const awaitRemoteEcho = isAuthenticated && !useLocalFallback;
 
-      clientConfigStore.beginSave({
+      controller.beginSave({
         workspaceId,
-        savedConfig: clientConfig,
+        savedConfig: savedSlice,
         awaitRemoteEcho,
       });
 
       if (awaitRemoteEcho) {
+        const pendingSyncId = `workspace-client-config-sync-${pendingClientConfigSyncIdRef.current++}`;
         const remoteEchoPromise = new Promise<void>((resolve, reject) => {
-          clearPendingClientConfigSync();
+          const supersededPendingId =
+            pendingClientConfigSyncByWorkspaceRef.current.get(workspaceId);
+          if (supersededPendingId) {
+            clearPendingClientConfigSync(
+              supersededPendingId,
+              new Error(WORKSPACE_CLIENT_CONFIG_SYNC_SUPERSEDED_ERROR_MESSAGE),
+            );
+          }
 
           const timeoutId = setTimeout(() => {
-            pendingClientConfigSyncRef.current = null;
-            reject(
-              new Error(
-                "Timed out waiting for workspace client config to sync.",
-              ),
-            );
+            pendingClientConfigSyncRef.current.delete(pendingSyncId);
+            if (
+              pendingClientConfigSyncByWorkspaceRef.current.get(workspaceId) ===
+              pendingSyncId
+            ) {
+              pendingClientConfigSyncByWorkspaceRef.current.delete(workspaceId);
+            }
+            reject(new Error(WORKSPACE_CLIENT_CONFIG_SYNC_TIMEOUT_ERROR_MESSAGE));
           }, CLIENT_CONFIG_SYNC_ECHO_TIMEOUT_MS);
 
-          pendingClientConfigSyncRef.current = {
+          pendingClientConfigSyncByWorkspaceRef.current.set(
+            workspaceId,
+            pendingSyncId,
+          );
+          pendingClientConfigSyncRef.current.set(pendingSyncId, {
+            id: pendingSyncId,
             workspaceId,
             expectedSerializedConfig:
               stringifyWorkspaceClientConfig(clientConfig),
             resolve,
             reject,
             timeoutId,
-          };
+          });
         });
 
         try {
@@ -870,15 +972,21 @@ export function useWorkspaceState({
           });
           await remoteEchoPromise;
         } catch (error) {
-          clearPendingClientConfigSync();
-          clientConfigStore.failSave();
+          clearPendingClientConfigSync(pendingSyncId);
+          controller.failSave({
+            workspaceId,
+            savedConfig: savedSlice,
+            awaitRemoteEcho,
+          });
           const errorMessage =
             error instanceof Error ? error.message : "Unknown error";
-          logger.error("Failed to update workspace client config", {
-            error: errorMessage,
-            workspaceId,
-          });
-          toast.error(errorMessage);
+          if (!isSupersededClientConfigSyncError(error)) {
+            logger.error("Failed to update workspace client config", {
+              error: errorMessage,
+              workspaceId,
+            });
+            toast.error(errorMessage);
+          }
           throw error instanceof Error ? error : new Error(errorMessage);
         }
         return;
@@ -889,15 +997,233 @@ export function useWorkspaceState({
         workspaceId,
         updates: { clientConfig },
       });
-      clientConfigStore.markSaved(clientConfig);
+      controller.markSaved({
+        workspaceId,
+        savedConfig: savedSlice,
+        awaitRemoteEcho,
+      });
     },
     [
       isAuthenticated,
       useLocalFallback,
-      convexUpdateClientConfig,
       clearPendingClientConfigSync,
+      convexUpdateClientConfig,
       logger,
       dispatch,
+    ],
+  );
+
+  const resolvePersistedConnectionConfig = useCallback(
+    (workspaceId: string): WorkspaceConnectionConfigDraft => {
+      const clientConfigStore = useClientConfigStore.getState();
+      const workspaceClientConfig = effectiveWorkspaces[workspaceId]?.clientConfig;
+      const scopedStoreConfig = doesStoreSliceBelongToWorkspace(
+        clientConfigStore.activeWorkspaceId,
+        workspaceId,
+      )
+        ? clientConfigStore.savedConfig ?? clientConfigStore.defaultConfig
+        : undefined;
+
+      return scopedStoreConfig ?? pickWorkspaceConnectionConfig(workspaceClientConfig);
+    },
+    [effectiveWorkspaces],
+  );
+
+  const resolvePersistedHostContext = useCallback(
+    (workspaceId: string): WorkspaceHostContextDraft => {
+      const hostContextStore = useHostContextStore.getState();
+      const workspaceClientConfig = effectiveWorkspaces[workspaceId]?.clientConfig;
+      const scopedStoreHostContext = doesStoreSliceBelongToWorkspace(
+        hostContextStore.activeWorkspaceId,
+        workspaceId,
+      )
+        ? hostContextStore.savedHostContext ?? hostContextStore.defaultHostContext
+        : undefined;
+
+      return scopedStoreHostContext ?? pickWorkspaceHostContext(workspaceClientConfig);
+    },
+    [effectiveWorkspaces],
+  );
+
+  const connectionConfigSaveController = useMemo<
+    ClientConfigSaveController<WorkspaceConnectionConfigDraft>
+  >(
+    () => ({
+      beginSave: ({ workspaceId, savedConfig, awaitRemoteEcho }) => {
+        const state = useClientConfigStore.getState();
+        if (!canApplyStoreSaveState(state.activeWorkspaceId, workspaceId)) {
+          return;
+        }
+
+        useClientConfigStore.getState().beginSave({
+          workspaceId,
+          savedConfig,
+          awaitRemoteEcho,
+        });
+      },
+      markSaved: ({ workspaceId, savedConfig, awaitRemoteEcho }) => {
+        const state = useClientConfigStore.getState();
+        if (!canApplyStoreSaveState(state.activeWorkspaceId, workspaceId)) {
+          return;
+        }
+        if (
+          awaitRemoteEcho &&
+          (state.pendingWorkspaceId !== workspaceId ||
+            stableStringifyJson(state.pendingSavedConfig) !==
+              stableStringifyJson(savedConfig))
+        ) {
+          return;
+        }
+
+        useClientConfigStore.getState().markSaved(savedConfig);
+      },
+      failSave: ({ workspaceId, savedConfig, awaitRemoteEcho }) => {
+        const state = useClientConfigStore.getState();
+        if (!canApplyStoreSaveState(state.activeWorkspaceId, workspaceId)) {
+          return;
+        }
+        if (
+          awaitRemoteEcho &&
+          (state.pendingWorkspaceId !== workspaceId ||
+            stableStringifyJson(state.pendingSavedConfig) !==
+              stableStringifyJson(savedConfig))
+        ) {
+          return;
+        }
+
+        useClientConfigStore.getState().failSave();
+      },
+    }),
+    [],
+  );
+
+  const hostContextSaveController = useMemo<
+    ClientConfigSaveController<WorkspaceHostContextDraft>
+  >(
+    () => ({
+      beginSave: ({ workspaceId, savedConfig, awaitRemoteEcho }) => {
+        const state = useHostContextStore.getState();
+        if (!canApplyStoreSaveState(state.activeWorkspaceId, workspaceId)) {
+          return;
+        }
+
+        useHostContextStore.getState().beginSave({
+          workspaceId,
+          savedHostContext: savedConfig,
+          awaitRemoteEcho,
+        });
+      },
+      markSaved: ({ workspaceId, savedConfig, awaitRemoteEcho }) => {
+        const state = useHostContextStore.getState();
+        if (!canApplyStoreSaveState(state.activeWorkspaceId, workspaceId)) {
+          return;
+        }
+        if (
+          awaitRemoteEcho &&
+          (state.pendingWorkspaceId !== workspaceId ||
+            stableStringifyJson(state.pendingSavedHostContext) !==
+              stableStringifyJson(savedConfig))
+        ) {
+          return;
+        }
+
+        useHostContextStore.getState().markSaved(savedConfig);
+      },
+      failSave: ({ workspaceId, savedConfig, awaitRemoteEcho }) => {
+        const state = useHostContextStore.getState();
+        if (!canApplyStoreSaveState(state.activeWorkspaceId, workspaceId)) {
+          return;
+        }
+        if (
+          awaitRemoteEcho &&
+          (state.pendingWorkspaceId !== workspaceId ||
+            stableStringifyJson(state.pendingSavedHostContext) !==
+              stableStringifyJson(savedConfig))
+        ) {
+          return;
+        }
+
+        useHostContextStore.getState().failSave();
+      },
+    }),
+    [],
+  );
+
+  const handleUpdateClientConfig = useCallback(
+    async (
+      workspaceId: string,
+      connectionConfig: WorkspaceConnectionConfigDraft | undefined,
+    ): Promise<void> => {
+      const clientConfigStore = useClientConfigStore.getState();
+      const workspaceClientConfig = effectiveWorkspaces[workspaceId]?.clientConfig;
+      const scopedDraftConfig = doesStoreSliceBelongToWorkspace(
+        clientConfigStore.activeWorkspaceId,
+        workspaceId,
+      )
+        ? clientConfigStore.draftConfig
+        : undefined;
+      const connectionConfigToPersist =
+        connectionConfig ??
+        scopedDraftConfig ??
+        resolvePersistedConnectionConfig(workspaceId);
+      const clientConfig = composeWorkspaceClientConfig({
+        connectionConfig: connectionConfigToPersist,
+        hostContext: resolvePersistedHostContext(workspaceId),
+        fallback: workspaceClientConfig ?? null,
+      });
+
+      await persistWorkspaceClientConfig({
+        workspaceId,
+        clientConfig,
+        savedSlice: connectionConfigToPersist,
+        controller: connectionConfigSaveController,
+      });
+    },
+    [
+      effectiveWorkspaces,
+      connectionConfigSaveController,
+      persistWorkspaceClientConfig,
+      resolvePersistedConnectionConfig,
+      resolvePersistedHostContext,
+    ],
+  );
+
+  const handleUpdateHostContext = useCallback(
+    async (
+      workspaceId: string,
+      hostContext: WorkspaceHostContextDraft | undefined,
+    ): Promise<void> => {
+      const hostContextStore = useHostContextStore.getState();
+      const workspaceClientConfig = effectiveWorkspaces[workspaceId]?.clientConfig;
+      const scopedDraftHostContext = doesStoreSliceBelongToWorkspace(
+        hostContextStore.activeWorkspaceId,
+        workspaceId,
+      )
+        ? hostContextStore.draftHostContext
+        : undefined;
+      const hostContextToPersist =
+        hostContext ??
+        scopedDraftHostContext ??
+        resolvePersistedHostContext(workspaceId);
+      const clientConfig = composeWorkspaceClientConfig({
+        connectionConfig: resolvePersistedConnectionConfig(workspaceId),
+        hostContext: hostContextToPersist,
+        fallback: workspaceClientConfig ?? null,
+      });
+
+      await persistWorkspaceClientConfig({
+        workspaceId,
+        clientConfig,
+        savedSlice: hostContextToPersist,
+        controller: hostContextSaveController,
+      });
+    },
+    [
+      effectiveWorkspaces,
+      hostContextSaveController,
+      persistWorkspaceClientConfig,
+      resolvePersistedConnectionConfig,
+      resolvePersistedHostContext,
     ],
   );
 
@@ -1198,6 +1524,7 @@ export function useWorkspaceState({
     handleCreateWorkspace,
     handleUpdateWorkspace,
     handleUpdateClientConfig,
+    handleUpdateHostContext,
     handleDeleteWorkspace,
     handleDuplicateWorkspace,
     handleSetDefaultWorkspace,

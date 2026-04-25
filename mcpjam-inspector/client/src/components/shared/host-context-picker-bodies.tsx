@@ -1,5 +1,5 @@
 /**
- * Shared picker bodies for DisplayContextHeader (inline popovers + compact panel).
+ * Shared picker bodies for HostContextHeader popovers.
  */
 
 import { Settings2 } from "lucide-react";
@@ -10,7 +10,7 @@ import {
   LOCALE_OPTIONS,
   TIMEZONE_OPTIONS,
   CSP_MODE_OPTIONS,
-} from "@/components/shared/display-context-constants";
+} from "@/components/shared/host-context-constants";
 import type {
   CustomViewport,
   CspMode,
@@ -32,9 +32,9 @@ export function DevicePickerBody({
   onPickPreset,
 }: {
   deviceType: DeviceType;
-  setDeviceType: (t: DeviceType) => void;
+  setDeviceType: (type: DeviceType) => void;
   customViewport: CustomViewport;
-  setCustomViewport: (v: Partial<CustomViewport>) => void;
+  setCustomViewport: (viewport: Partial<CustomViewport>) => void;
   widthInputId: string;
   heightInputId: string;
   onPickPreset?: () => void;
@@ -60,7 +60,7 @@ export function DevicePickerBody({
               <Icon className="h-3.5 w-3.5" />
               <span>{config.label}</span>
               <span className="ml-auto text-[10px] text-muted-foreground">
-                {config.width}×{config.height}
+                {config.width}x{config.height}
               </span>
             </button>
           );
@@ -77,7 +77,7 @@ export function DevicePickerBody({
         <Settings2 className="h-3.5 w-3.5" />
         <span>Custom</span>
         <span className="ml-auto text-[10px] text-muted-foreground">
-          {customViewport.width}×{customViewport.height}
+          {customViewport.width}x{customViewport.height}
         </span>
       </button>
 
@@ -97,10 +97,10 @@ export function DevicePickerBody({
               max={2560}
               defaultValue={customViewport.width}
               key={`${widthInputId}-w-${customViewport.width}`}
-              onBlur={(e) => {
-                const val = parseInt(e.target.value) || 100;
+              onBlur={(event) => {
+                const value = parseInt(event.target.value, 10) || 100;
                 setCustomViewport({
-                  width: Math.max(100, Math.min(2560, val)),
+                  width: Math.max(100, Math.min(2560, value)),
                 });
               }}
               className="h-7 text-xs [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
@@ -120,10 +120,10 @@ export function DevicePickerBody({
               max={2560}
               defaultValue={customViewport.height}
               key={`${heightInputId}-h-${customViewport.height}`}
-              onBlur={(e) => {
-                const val = parseInt(e.target.value) || 100;
+              onBlur={(event) => {
+                const value = parseInt(event.target.value, 10) || 100;
                 setCustomViewport({
-                  height: Math.max(100, Math.min(2560, val)),
+                  height: Math.max(100, Math.min(2560, value)),
                 });
               }}
               className="h-7 text-xs [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
@@ -141,7 +141,7 @@ export function LocalePickerBody({
   onSelectLocale,
 }: {
   locale: string;
-  patchHostContext: (p: { locale: string }) => void;
+  patchHostContext: (patch: { locale: string }) => void;
   onSelectLocale?: () => void;
 }) {
   return (
@@ -174,7 +174,7 @@ export function TimezonePickerBody({
   onSelectZone,
 }: {
   timeZone: string;
-  patchHostContext: (p: { timeZone: string }) => void;
+  patchHostContext: (patch: { timeZone: string }) => void;
   onSelectZone?: () => void;
 }) {
   return (
@@ -207,7 +207,7 @@ export function CspPickerBody({
   onSelectMode,
 }: {
   activeCspMode: CspMode;
-  setActiveCspMode: (m: CspMode) => void;
+  setActiveCspMode: (mode: CspMode) => void;
   onSelectMode?: () => void;
 }) {
   return (
