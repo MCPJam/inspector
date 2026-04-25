@@ -17,6 +17,8 @@ import type { ModelProvider } from "@/shared/types";
 import { getProductionGuestAuthHeader } from "../../utils/guest-auth.js";
 import { logger } from "../../utils/logger";
 import { handleMCPJamFreeChatModel } from "../../utils/mcpjam-stream-handler";
+import { handleHostedOrgChatModel } from "../../utils/org-model-stream-handler.js";
+import type { ModelDefinition } from "@/shared/types";
 import {
   persistChatSessionToConvex,
   pickEnrichmentHeaders,
@@ -441,6 +443,22 @@ function streamDirectChatWithLiveTrace(options: {
   return createUIMessageStreamResponse({ stream });
 }
 
+/**
+ * Map a ModelDefinition to the providerKey used by the org-managed model
+ * provider config (matches convex/organizationModelProviders.ts). Custom
+ * providers prefix with "custom:<displayName>" because that's how the
+ * inspector's org admin UI registers them.
+ */
+function deriveOrgProviderKey(modelDefinition: ModelDefinition): string {
+  if (modelDefinition.provider === "custom") {
+    if (!modelDefinition.customProviderName) {
+      throw new Error("Custom model is missing customProviderName");
+    }
+    return `custom:${modelDefinition.customProviderName}`;
+  }
+  return modelDefinition.provider;
+}
+
 const chatV2 = new Hono();
 
 chatV2.post("/", async (c) => {
@@ -570,6 +588,59 @@ chatV2.post("/", async (c) => {
                 startedAt: sessionStartedAt,
                 lastActivityAt: Date.now(),
                 ...(body.workspaceId ? { workspaceId: body.workspaceId } : {}),
+                resumeConfig: {
+                  systemPrompt,
+                  temperature,
+                  requireToolApproval,
+                  selectedServers,
+                },
+                expectedVersion: body.expectedVersion,
+                turnTrace,
+                forwardHeaders: pickEnrichmentHeaders(c.req.raw.headers),
+              });
+            }
+          : undefined,
+      });
+    }
+
+    // Hosted org BYOK: when CONVEX_HTTP_URL is set and the request carries
+    // a workspaceId, we route the LLM call through Convex (/stream/org) so
+    // the org's vault-resolved provider keys never leave Convex. Falling
+    // through to local createLlmModel + streamText below covers local-mode
+    // BYOK (CLI / no Convex).
+    if (
+      process.env.CONVEX_HTTP_URL &&
+      typeof body.workspaceId === "string" &&
+      body.workspaceId
+    ) {
+      const providerKey = deriveOrgProviderKey(modelDefinition);
+      const modelMessages = await convertToModelMessages(messages);
+      const sessionStartedAt = Date.now();
+      const chatSessionId = body.chatSessionId;
+      return handleHostedOrgChatModel({
+        workspaceId: body.workspaceId,
+        providerKey,
+        modelId: String(modelDefinition.id),
+        messages: modelMessages as ModelMessage[],
+        systemPrompt: enhancedSystemPrompt,
+        temperature: resolvedTemperature,
+        tools: allTools as ToolSet,
+        mcpClientManager,
+        selectedServers,
+        requireToolApproval,
+        onConversationComplete: chatSessionId
+          ? async (fullHistory, turnTrace) => {
+              await persistChatSessionToConvex({
+                chatSessionId,
+                modelId: String(modelDefinition.id),
+                modelSource: "byok",
+                sourceType: "direct",
+                directVisibility: body.directVisibility,
+                authHeader: c.req.header("authorization"),
+                sessionMessages: fullHistory,
+                startedAt: sessionStartedAt,
+                lastActivityAt: Date.now(),
+                workspaceId: body.workspaceId,
                 resumeConfig: {
                   systemPrompt,
                   temperature,

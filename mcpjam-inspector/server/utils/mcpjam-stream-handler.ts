@@ -90,6 +90,23 @@ export interface MCPJamHandlerOptions {
   onStreamWriterReady?: (writer: {
     write: (chunk: UIMessageChunk) => void;
   }) => void;
+  /**
+   * Override the Convex endpoint path for the per-step LLM call.
+   * Defaults to "/stream". Org BYOK chat uses "/stream/org".
+   */
+  endpointPath?: string;
+  /**
+   * Extra headers added to every per-step Convex request. Used by org BYOK
+   * chat to send the X-Inspector-Service-Token (the org route doesn't use
+   * Convex user auth). The standard authHeader is still forwarded so MCPJam
+   * billing identity can be derived on the /stream route.
+   */
+  extraHeaders?: Record<string, string>;
+  /**
+   * Extra body fields merged into every per-step Convex request. Used by org
+   * BYOK chat to send the providerKey alongside the model id.
+   */
+  extraBodyFields?: Record<string, unknown>;
 }
 
 interface StepContext {
@@ -111,6 +128,9 @@ interface StepContext {
   stepIndex: number;
   usedToolCallIds: Set<string>;
   traceTurn: LiveTraceTurnContext;
+  endpointPath: string;
+  extraHeaders?: Record<string, string>;
+  extraBodyFields?: Record<string, unknown>;
 }
 
 type PersistedAssistantPart = TextPart | ToolCallPart | ReasoningUIPart;
@@ -922,12 +942,16 @@ async function processOneStep(
     }),
   });
 
-  // Call Convex /stream endpoint
-  const res = await fetch(`${process.env.CONVEX_HTTP_URL}/stream`, {
+  // Call the Convex streaming endpoint. The default endpoint is /stream
+  // (MCPJam-provided models); org BYOK chat targets /stream/org and adds
+  // a service-token header via extraHeaders.
+  const { endpointPath, extraHeaders, extraBodyFields } = ctx;
+  const res = await fetch(`${process.env.CONVEX_HTTP_URL}${endpointPath}`, {
     method: "POST",
     headers: {
       "content-type": "application/json",
       ...(authHeader ? { authorization: authHeader } : {}),
+      ...(extraHeaders ?? {}),
     },
     body: JSON.stringify({
       mode: "stream",
@@ -941,6 +965,7 @@ async function processOneStep(
       tools: toolDefs,
       ...(chatboxToken ? { chatboxToken } : {}),
       ...(workspaceId ? { workspaceId } : {}),
+      ...(extraBodyFields ?? {}),
     }),
   });
 
@@ -1253,7 +1278,11 @@ export async function handleMCPJamFreeChatModel(
     onConversationComplete,
     onStreamComplete,
     onStreamWriterReady,
+    endpointPath,
+    extraHeaders,
+    extraBodyFields,
   } = options;
+  const resolvedEndpointPath = endpointPath ?? "/stream";
 
   const toolDefs = serializeToolsForConvex(tools);
   const messageHistory = [...messages];
@@ -1321,6 +1350,9 @@ export async function handleMCPJamFreeChatModel(
             stepIndex: promptStepBaseIndex + steps,
             usedToolCallIds,
             traceTurn,
+            endpointPath: resolvedEndpointPath,
+            extraHeaders,
+            extraBodyFields,
           });
 
           steps++;

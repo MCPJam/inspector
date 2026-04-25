@@ -5,10 +5,12 @@ import type { ChatV2Request } from "@/shared/chat-v2";
 import { isMCPAuthError, MCPClientManager } from "@mcpjam/sdk";
 import type { HttpServerConfig } from "@mcpjam/sdk";
 import { handleMCPJamFreeChatModel } from "../../utils/mcpjam-stream-handler.js";
+import { handleHostedOrgChatModel } from "../../utils/org-model-stream-handler.js";
 import {
   isMCPJamGuestAllowedModel,
   isMCPJamProvidedModel,
 } from "@/shared/types";
+import type { ModelDefinition } from "@/shared/types";
 import { WEB_STREAM_TIMEOUT_MS } from "../../config.js";
 import { prepareChatV2 } from "../../utils/chat-v2-orchestration.js";
 import { validateUrl, OAuthProxyError } from "../../utils/oauth-proxy.js";
@@ -33,6 +35,26 @@ import {
   createHostedRpcLogCollector,
 } from "./hosted-rpc-logs.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "../../utils/mcp-retry-policy.js";
+
+/**
+ * Map a ModelDefinition to the providerKey used by the org-managed model
+ * provider config (matches convex/organizationModelProviders.ts). Custom
+ * providers prefix with "custom:<displayName>" because that's how the
+ * inspector's org admin UI registers them.
+ */
+function deriveOrgProviderKey(modelDefinition: ModelDefinition): string {
+  if (modelDefinition.provider === "custom") {
+    if (!modelDefinition.customProviderName) {
+      throw new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        "Custom model is missing customProviderName",
+      );
+    }
+    return `custom:${modelDefinition.customProviderName}`;
+  }
+  return modelDefinition.provider;
+}
 
 const chatV2 = new Hono();
 
@@ -330,23 +352,85 @@ chatV2.post("/", async (c) => {
       const { allTools, enhancedSystemPrompt, resolvedTemperature } = prepared;
       const hostedChatSessionId = body.chatSessionId;
 
-      if (modelDefinition.id && isMCPJamProvidedModel(modelDefinition.id)) {
-        if (!process.env.CONVEX_HTTP_URL) {
-          throw new WebRouteError(
-            500,
-            ErrorCode.INTERNAL_ERROR,
-            "Server missing CONVEX_HTTP_URL configuration",
-          );
-        }
-      } else {
+      if (!process.env.CONVEX_HTTP_URL) {
         throw new WebRouteError(
-          400,
-          ErrorCode.FEATURE_NOT_SUPPORTED,
-          "Only MCPJam hosted models are supported in hosted mode",
+          500,
+          ErrorCode.INTERNAL_ERROR,
+          "Server missing CONVEX_HTTP_URL configuration",
         );
       }
 
       const modelMessages = await convertToModelMessages(messages);
+      const isMCPJam =
+        Boolean(modelDefinition.id) &&
+        isMCPJamProvidedModel(String(modelDefinition.id));
+
+      if (!isMCPJam) {
+        // Hosted org BYOK: vault-resolved provider keys live in Convex; the
+        // inspector forwards messages and tool definitions to /stream/org and
+        // drives the agentic loop locally.
+        const providerKey = deriveOrgProviderKey(modelDefinition);
+        return handleHostedOrgChatModel({
+          workspaceId: hostedBody.workspaceId,
+          providerKey,
+          modelId: String(modelDefinition.id),
+          messages: modelMessages as ModelMessage[],
+          systemPrompt: enhancedSystemPrompt,
+          temperature: resolvedTemperature,
+          tools: allTools as ToolSet,
+          mcpClientManager: manager,
+          selectedServers: selectedServerIds,
+          requireToolApproval,
+          onConversationComplete: hostedChatSessionId
+            ? async (fullHistory, turnTrace) => {
+                const isDirectChat = !shareToken && !chatboxToken;
+                await persistChatSessionToConvex({
+                  chatSessionId: hostedChatSessionId,
+                  modelId: String(modelDefinition.id),
+                  modelSource: "byok",
+                  workspaceId: hostedBody.workspaceId,
+                  sourceType: shareToken
+                    ? "serverShare"
+                    : chatboxToken
+                      ? "chatbox"
+                      : "direct",
+                  ...(chatboxToken && surface ? { surface } : {}),
+                  shareToken,
+                  chatboxToken,
+                  ...(shareToken && selectedServerIds[0]
+                    ? { serverId: selectedServerIds[0] }
+                    : {}),
+                  authHeader: c.req.header("authorization"),
+                  sessionMessages: fullHistory,
+                  startedAt: sessionStartedAt,
+                  lastActivityAt: Date.now(),
+                  ...(isDirectChat
+                    ? {
+                        directVisibility: body.directVisibility,
+                        resumeConfig: {
+                          systemPrompt,
+                          temperature,
+                          requireToolApproval,
+                          selectedServers:
+                            Array.isArray(selectedServerNames) &&
+                            selectedServerNames.length ===
+                              selectedServerIds.length
+                              ? selectedServerNames
+                              : selectedServerIds,
+                        },
+                      }
+                    : {}),
+                  turnTrace,
+                  forwardHeaders: pickEnrichmentHeaders(c.req.raw.headers),
+                });
+              }
+            : undefined,
+          onStreamComplete: () => manager.disconnectAllServers(),
+          onStreamWriterReady: (writer) =>
+            rpcCollector?.attachStreamWriter(writer),
+        });
+      }
+
       return handleMCPJamFreeChatModel({
         messages: modelMessages as ModelMessage[],
         modelId: String(modelDefinition.id),
