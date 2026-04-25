@@ -18,11 +18,17 @@ import {
   serializeServersForSharing,
 } from "@/lib/workspace-serialization";
 import {
+  composeWorkspaceClientConfig,
+  pickWorkspaceConnectionConfig,
+  pickWorkspaceHostContext,
   stableStringifyJson,
   type WorkspaceClientConfig,
+  type WorkspaceConnectionConfigDraft,
+  type WorkspaceHostContextDraft,
 } from "@/lib/client-config";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import { useClientConfigStore } from "@/stores/client-config-store";
+import { useHostContextStore } from "@/stores/host-context-store";
 import { useOrganizationBillingStatus } from "./useOrganizationBilling";
 
 const CLIENT_CONFIG_SYNC_ECHO_TIMEOUT_MS = 10000;
@@ -43,6 +49,16 @@ interface PendingClientConfigSync {
   resolve: () => void;
   reject: (error: Error) => void;
   timeoutId: ReturnType<typeof setTimeout>;
+}
+
+interface ClientConfigSaveController<T> {
+  beginSave: (input: {
+    workspaceId: string;
+    savedConfig: T | undefined;
+    awaitRemoteEcho: boolean;
+  }) => void;
+  markSaved: (savedConfig: T | undefined) => void;
+  failSave: () => void;
 }
 
 interface LoggerLike {
@@ -826,17 +842,23 @@ export function useWorkspaceState({
     ],
   );
 
-  const handleUpdateClientConfig = useCallback(
-    async (
-      workspaceId: string,
-      clientConfig: WorkspaceClientConfig | undefined,
-    ): Promise<void> => {
-      const clientConfigStore = useClientConfigStore.getState();
+  const persistWorkspaceClientConfig = useCallback(
+    async <T,>({
+      workspaceId,
+      clientConfig,
+      savedSlice,
+      controller,
+    }: {
+      workspaceId: string;
+      clientConfig: WorkspaceClientConfig | undefined;
+      savedSlice: T | undefined;
+      controller: ClientConfigSaveController<T>;
+    }): Promise<void> => {
       const awaitRemoteEcho = isAuthenticated && !useLocalFallback;
 
-      clientConfigStore.beginSave({
+      controller.beginSave({
         workspaceId,
-        savedConfig: clientConfig,
+        savedConfig: savedSlice,
         awaitRemoteEcho,
       });
 
@@ -871,7 +893,7 @@ export function useWorkspaceState({
           await remoteEchoPromise;
         } catch (error) {
           clearPendingClientConfigSync();
-          clientConfigStore.failSave();
+          controller.failSave();
           const errorMessage =
             error instanceof Error ? error.message : "Unknown error";
           logger.error("Failed to update workspace client config", {
@@ -889,15 +911,116 @@ export function useWorkspaceState({
         workspaceId,
         updates: { clientConfig },
       });
-      clientConfigStore.markSaved(clientConfig);
+      controller.markSaved(savedSlice);
     },
     [
       isAuthenticated,
       useLocalFallback,
-      convexUpdateClientConfig,
       clearPendingClientConfigSync,
+      convexUpdateClientConfig,
       logger,
       dispatch,
+    ],
+  );
+
+  const resolvePersistedConnectionConfig = useCallback(
+    (workspaceId: string): WorkspaceConnectionConfigDraft => {
+      const clientConfigStore = useClientConfigStore.getState();
+      const workspaceClientConfig = effectiveWorkspaces[workspaceId]?.clientConfig;
+
+      return (
+        clientConfigStore.savedConfig ??
+        clientConfigStore.defaultConfig ??
+        pickWorkspaceConnectionConfig(workspaceClientConfig)
+      );
+    },
+    [effectiveWorkspaces],
+  );
+
+  const resolvePersistedHostContext = useCallback(
+    (workspaceId: string): WorkspaceHostContextDraft => {
+      const hostContextStore = useHostContextStore.getState();
+      const workspaceClientConfig = effectiveWorkspaces[workspaceId]?.clientConfig;
+
+      return (
+        hostContextStore.savedHostContext ??
+        hostContextStore.defaultHostContext ??
+        pickWorkspaceHostContext(workspaceClientConfig)
+      );
+    },
+    [effectiveWorkspaces],
+  );
+
+  const handleUpdateClientConfig = useCallback(
+    async (
+      workspaceId: string,
+      connectionConfig: WorkspaceConnectionConfigDraft | undefined,
+    ): Promise<void> => {
+      const clientConfigStore = useClientConfigStore.getState();
+      const workspaceClientConfig = effectiveWorkspaces[workspaceId]?.clientConfig;
+      const connectionConfigToPersist =
+        connectionConfig ??
+        clientConfigStore.draftConfig ??
+        resolvePersistedConnectionConfig(workspaceId);
+      const clientConfig = composeWorkspaceClientConfig({
+        connectionConfig: connectionConfigToPersist,
+        hostContext: resolvePersistedHostContext(workspaceId),
+        fallback: workspaceClientConfig ?? null,
+      });
+
+      await persistWorkspaceClientConfig({
+        workspaceId,
+        clientConfig,
+        savedSlice: connectionConfigToPersist,
+        controller: clientConfigStore,
+      });
+    },
+    [
+      effectiveWorkspaces,
+      persistWorkspaceClientConfig,
+      resolvePersistedConnectionConfig,
+      resolvePersistedHostContext,
+    ],
+  );
+
+  const handleUpdateHostContext = useCallback(
+    async (
+      workspaceId: string,
+      hostContext: WorkspaceHostContextDraft | undefined,
+    ): Promise<void> => {
+      const hostContextStore = useHostContextStore.getState();
+      const workspaceClientConfig = effectiveWorkspaces[workspaceId]?.clientConfig;
+      const hostContextToPersist =
+        hostContext ??
+        hostContextStore.draftHostContext ??
+        resolvePersistedHostContext(workspaceId);
+      const clientConfig = composeWorkspaceClientConfig({
+        connectionConfig: resolvePersistedConnectionConfig(workspaceId),
+        hostContext: hostContextToPersist,
+        fallback: workspaceClientConfig ?? null,
+      });
+
+      await persistWorkspaceClientConfig({
+        workspaceId,
+        clientConfig,
+        savedSlice: hostContextToPersist,
+        controller: {
+          beginSave: ({ workspaceId, savedConfig, awaitRemoteEcho }) =>
+            hostContextStore.beginSave({
+              workspaceId,
+              savedHostContext: savedConfig,
+              awaitRemoteEcho,
+            }),
+          markSaved: (savedConfig) => hostContextStore.markSaved(savedConfig),
+          failSave: () => hostContextStore.failSave(),
+        },
+      });
+    },
+    [
+      effectiveWorkspaces,
+      persistWorkspaceClientConfig,
+      resolvePersistedConnectionConfig,
+      resolvePersistedHostContext,
     ],
   );
 
@@ -1198,6 +1321,7 @@ export function useWorkspaceState({
     handleCreateWorkspace,
     handleUpdateWorkspace,
     handleUpdateClientConfig,
+    handleUpdateHostContext,
     handleDeleteWorkspace,
     handleDuplicateWorkspace,
     handleSetDefaultWorkspace,

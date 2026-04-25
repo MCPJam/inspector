@@ -4,7 +4,11 @@ import { toast } from "sonner";
 import type { AppAction, AppState, Workspace } from "@/state/app-types";
 import { useWorkspaceState } from "../use-workspace-state";
 import { useClientConfigStore } from "@/stores/client-config-store";
-import type { WorkspaceClientConfig } from "@/lib/client-config";
+import { useHostContextStore } from "@/stores/host-context-store";
+import type {
+  WorkspaceClientConfig,
+  WorkspaceConnectionConfigDraft,
+} from "@/lib/client-config";
 
 const {
   createWorkspaceMock,
@@ -212,14 +216,27 @@ describe("useWorkspaceState automatic workspace creation", () => {
       defaultConfig: null,
       savedConfig: undefined,
       draftConfig: null,
+      connectionDefaultsText: "{}",
       clientCapabilitiesText: "{}",
-      hostContextText: "{}",
       clientCapabilitiesError: null,
-      hostContextError: null,
+      connectionDefaultsError: null,
       isSaving: false,
       isDirty: false,
       pendingWorkspaceId: null,
       pendingSavedConfig: undefined,
+      isAwaitingRemoteEcho: false,
+    });
+    useHostContextStore.setState({
+      activeWorkspaceId: null,
+      defaultHostContext: {},
+      savedHostContext: undefined,
+      draftHostContext: {},
+      hostContextText: "{}",
+      hostContextError: null,
+      isSaving: false,
+      isDirty: false,
+      pendingWorkspaceId: null,
+      pendingSavedHostContext: undefined,
       isAwaitingRemoteEcho: false,
     });
   });
@@ -585,13 +602,25 @@ describe("useWorkspaceState automatic workspace creation", () => {
   });
 
   it("keeps authenticated client-config saves pending until the remote echo arrives", async () => {
-    const savedConfig: WorkspaceClientConfig = {
+    const savedConfig: WorkspaceConnectionConfigDraft = {
       version: 1,
+      connectionDefaults: {
+        headers: {},
+        requestTimeout: 10000,
+      },
       clientCapabilities: {
         experimental: {
           inspectorProfile: true,
         },
       },
+    };
+    const expectedPersistedClientConfig: WorkspaceClientConfig = {
+      version: 1,
+      connectionDefaults: {
+        headers: {},
+        requestTimeout: 10000,
+      },
+      clientCapabilities: savedConfig.clientCapabilities,
       hostContext: {},
     };
 
@@ -624,7 +653,7 @@ describe("useWorkspaceState automatic workspace creation", () => {
     await waitFor(() => {
       expect(updateClientConfigMock).toHaveBeenCalledWith({
         workspaceId: "remote-1",
-        clientConfig: savedConfig,
+        clientConfig: expectedPersistedClientConfig,
       });
     });
 
@@ -634,7 +663,7 @@ describe("useWorkspaceState automatic workspace creation", () => {
     workspaceQueryState.allWorkspaces = [
       {
         ...workspaceQueryState.allWorkspaces[0],
-        clientConfig: savedConfig,
+        clientConfig: expectedPersistedClientConfig,
       },
     ];
     workspaceQueryState.workspaces = [...workspaceQueryState.allWorkspaces];
@@ -1045,14 +1074,17 @@ describe("useWorkspaceState automatic workspace creation", () => {
   it("fails authenticated client-config saves when the remote echo times out", async () => {
     vi.useFakeTimers();
 
-    const savedConfig: WorkspaceClientConfig = {
+    const savedConfig: WorkspaceConnectionConfigDraft = {
       version: 1,
+      connectionDefaults: {
+        headers: {},
+        requestTimeout: 10000,
+      },
       clientCapabilities: {
         experimental: {
           inspectorProfile: true,
         },
       },
-      hostContext: {},
     };
 
     workspaceQueryState.allWorkspaces = [
@@ -1378,13 +1410,25 @@ describe("useWorkspaceState automatic workspace creation", () => {
   });
 
   it("rejects authenticated client-config saves when the hook unmounts mid-sync", async () => {
-    const savedConfig: WorkspaceClientConfig = {
+    const savedConfig: WorkspaceConnectionConfigDraft = {
       version: 1,
+      connectionDefaults: {
+        headers: {},
+        requestTimeout: 10000,
+      },
       clientCapabilities: {
         experimental: {
           inspectorProfile: true,
         },
       },
+    };
+    const expectedPersistedClientConfig: WorkspaceClientConfig = {
+      version: 1,
+      connectionDefaults: {
+        headers: {},
+        requestTimeout: 10000,
+      },
+      clientCapabilities: savedConfig.clientCapabilities,
       hostContext: {},
     };
 
@@ -1415,7 +1459,7 @@ describe("useWorkspaceState automatic workspace creation", () => {
     await waitFor(() => {
       expect(updateClientConfigMock).toHaveBeenCalledWith({
         workspaceId: "remote-1",
-        clientConfig: savedConfig,
+        clientConfig: expectedPersistedClientConfig,
       });
     });
 

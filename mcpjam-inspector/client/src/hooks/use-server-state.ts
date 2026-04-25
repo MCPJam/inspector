@@ -42,7 +42,7 @@ import {
 } from "@/lib/apis/web/context";
 import type { OAuthTestProfile } from "@/lib/oauth/profile";
 import { authFetch } from "@/lib/session-token";
-import { useClientConfigStore } from "@/stores/client-config-store";
+import { useWorkspaceClientConfigSyncPending } from "./use-workspace-client-config-sync-pending";
 import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
 import { useServerMutations, type RemoteServer } from "./useWorkspaces";
 import {
@@ -523,11 +523,8 @@ export function useServerState({
     latestEffectiveServersRef.current = effectiveServers;
   }, [effectiveServers]);
 
-  const isClientConfigSyncPending = useClientConfigStore(
-    (state) =>
-      state.isAwaitingRemoteEcho &&
-      state.pendingWorkspaceId === effectiveActiveWorkspaceId,
-  );
+  const isClientConfigSyncPending =
+    useWorkspaceClientConfigSyncPending(effectiveActiveWorkspaceId);
 
   const workspaceConnectionDefaults = useMemo(
     () => getEffectiveWorkspaceConnectionDefaults(activeWorkspace?.clientConfig),

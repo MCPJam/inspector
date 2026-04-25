@@ -6,7 +6,9 @@ import { vi } from "vitest";
 import type { AppState, ServerWithName, Workspace } from "@/state/app-types";
 import type {
   HostDisplayMode,
+  WorkspaceConnectionConfigDraft,
   WorkspaceClientConfig,
+  WorkspaceHostContextDraft,
 } from "@/lib/client-config";
 import { createServer, createWorkspace } from "../factories";
 
@@ -158,14 +160,23 @@ export function createMockWorkspaceMutations(overrides = {}) {
 
 export type MockClientConfigStoreState = {
   activeWorkspaceId: string | null;
-  defaultConfig: WorkspaceClientConfig | null;
-  savedConfig: WorkspaceClientConfig | undefined;
-  draftConfig: WorkspaceClientConfig | null;
+  defaultConfig: WorkspaceConnectionConfigDraft | null;
+  savedConfig: WorkspaceConnectionConfigDraft | undefined;
+  draftConfig: WorkspaceConnectionConfigDraft | null;
   connectionDefaultsText: string;
   clientCapabilitiesText: string;
-  hostContextText: string;
   connectionDefaultsError: string | null;
   clientCapabilitiesError: string | null;
+  isSaving: boolean;
+  isDirty: boolean;
+};
+
+export type MockHostContextStoreState = {
+  activeWorkspaceId: string | null;
+  defaultHostContext: WorkspaceHostContextDraft;
+  savedHostContext: WorkspaceHostContextDraft | undefined;
+  draftHostContext: WorkspaceHostContextDraft;
+  hostContextText: string;
   hostContextError: string | null;
   isSaving: boolean;
   isDirty: boolean;
@@ -187,6 +198,17 @@ export function createMockWorkspaceClientConfig(
   };
 }
 
+export function createMockWorkspaceConnectionConfig(
+  overrides: Partial<WorkspaceConnectionConfigDraft> = {},
+): WorkspaceConnectionConfigDraft {
+  return {
+    version: 1,
+    connectionDefaults:
+      overrides.connectionDefaults ?? { headers: {}, requestTimeout: 10000 },
+    clientCapabilities: overrides.clientCapabilities ?? {},
+  };
+}
+
 export function createMockClientConfigStoreState(
   overrides: Partial<MockClientConfigStoreState> = {},
 ): MockClientConfigStoreState {
@@ -204,9 +226,26 @@ export function createMockClientConfigStoreState(
     clientCapabilitiesText: stringifyJson(
       draftConfig?.clientCapabilities ?? {},
     ),
-    hostContextText: stringifyJson(draftConfig?.hostContext ?? {}),
     connectionDefaultsError: null,
     clientCapabilitiesError: null,
+    isSaving: false,
+    isDirty: false,
+    ...overrides,
+  };
+}
+
+export function createMockHostContextStoreState(
+  overrides: Partial<MockHostContextStoreState> = {},
+): MockHostContextStoreState {
+  const draftHostContext =
+    overrides.draftHostContext === undefined ? {} : overrides.draftHostContext;
+
+  return {
+    activeWorkspaceId: null,
+    defaultHostContext: {},
+    savedHostContext: undefined,
+    draftHostContext,
+    hostContextText: stringifyJson(draftHostContext),
     hostContextError: null,
     isSaving: false,
     isDirty: false,
@@ -294,15 +333,13 @@ export const storePresets = {
   clientConfig: (overrides: Partial<MockClientConfigStoreState> = {}) =>
     createMockClientConfigStoreState(overrides),
 
-  /** Client config with specific host-advertised display modes */
-  clientConfigWithHostDisplayModes: (
+  /** Host context with specific host-advertised display modes */
+  hostContextWithDisplayModes: (
     availableDisplayModes: HostDisplayMode[],
-    overrides: Partial<MockClientConfigStoreState> = {},
+    overrides: Partial<MockHostContextStoreState> = {},
   ) =>
-    createMockClientConfigStoreState({
-      draftConfig: createMockWorkspaceClientConfig({
-        hostContext: { availableDisplayModes },
-      }),
+    createMockHostContextStoreState({
+      draftHostContext: { availableDisplayModes },
       ...overrides,
     }),
 };

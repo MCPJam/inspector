@@ -29,7 +29,7 @@ import {
   DialogDescription,
   DialogTitle,
 } from "@mcpjam/design-system/dialog";
-import type { WorkspaceClientConfig } from "@/lib/client-config";
+import type { WorkspaceConnectionConfigDraft } from "@/lib/client-config";
 import {
   ServerDetailModal,
   type ServerDetailTab,
@@ -513,7 +513,7 @@ interface ServersTabProps {
   onNavigateToRegistry?: () => void;
   onSaveClientConfig?: (
     workspaceId: string,
-    clientConfig: WorkspaceClientConfig | undefined
+    clientConfig: WorkspaceConnectionConfigDraft | undefined
   ) => Promise<void>;
 }
 
@@ -1551,8 +1551,7 @@ export function ServersTab({
           <DialogContent className="flex h-[88vh] w-[min(96vw,88rem)] max-w-[88rem] flex-col gap-0 overflow-hidden p-0 sm:max-w-[88rem]">
             <DialogTitle className="sr-only">Connection Settings</DialogTitle>
             <DialogDescription className="sr-only">
-              Edit workspace connection settings, client capabilities, and host
-              context.
+              Edit workspace connection settings and client capabilities.
             </DialogDescription>
             <div className="min-h-0 flex-1 overflow-hidden">
               <ClientConfigTab

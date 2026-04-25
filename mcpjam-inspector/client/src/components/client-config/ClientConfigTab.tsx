@@ -7,8 +7,9 @@ import type { Workspace } from "@/state/app-types";
 import {
   getEffectiveServerClientCapabilities,
   workspaceClientCapabilitiesNeedReconnect,
-  type WorkspaceClientConfig,
+  type WorkspaceConnectionConfigDraft,
 } from "@/lib/client-config";
+import { useWorkspaceClientConfigSyncPending } from "@/hooks/use-workspace-client-config-sync-pending";
 import { useClientConfigStore } from "@/stores/client-config-store";
 
 /** Toolbar (~34px) + status bar (~28px) + a bit of breathing room. */
@@ -56,7 +57,7 @@ interface ClientConfigTabProps {
   workspace?: Workspace;
   onSaveClientConfig: (
     workspaceId: string,
-    clientConfig: WorkspaceClientConfig | undefined,
+    clientConfig: WorkspaceConnectionConfigDraft | undefined,
   ) => Promise<void>;
 }
 
@@ -72,14 +73,12 @@ export function ClientConfigTab({
   const clientCapabilitiesText = useClientConfigStore(
     (s) => s.clientCapabilitiesText,
   );
-  const hostContextText = useClientConfigStore((s) => s.hostContextText);
   const connectionDefaultsError = useClientConfigStore(
     (s) => s.connectionDefaultsError,
   );
   const clientCapabilitiesError = useClientConfigStore(
     (s) => s.clientCapabilitiesError,
   );
-  const hostContextError = useClientConfigStore((s) => s.hostContextError);
   const isDirty = useClientConfigStore((s) => s.isDirty);
   const isSaving = useClientConfigStore((s) => s.isSaving);
   const setSectionText = useClientConfigStore((s) => s.setSectionText);
@@ -88,6 +87,7 @@ export function ClientConfigTab({
   );
   const resetToBaseline = useClientConfigStore((s) => s.resetToBaseline);
   const failSave = useClientConfigStore((s) => s.failSave);
+  const syncPending = useWorkspaceClientConfigSyncPending(activeWorkspaceId);
 
   const connectionDefaultsHeight = useContentSizedJsonHeight(
     connectionDefaultsText,
@@ -100,12 +100,6 @@ export function ClientConfigTab({
     7.5,
     36,
     0.5,
-  );
-  const hostContextHeight = useContentSizedJsonHeight(
-    hostContextText,
-    7.5,
-    32,
-    0.45,
   );
 
   const reconnectServers = useMemo(() => {
@@ -135,11 +129,7 @@ export function ClientConfigTab({
     if (!draftConfig) {
       return;
     }
-    if (
-      connectionDefaultsError ||
-      clientCapabilitiesError ||
-      hostContextError
-    ) {
+    if (connectionDefaultsError || clientCapabilitiesError) {
       toast.error("Fix JSON validation errors before saving.");
       return;
     }
@@ -167,13 +157,6 @@ export function ClientConfigTab({
       error: clientCapabilitiesError,
       height: clientCapabilitiesHeight,
     },
-    {
-      key: "hostContext" as const,
-      title: "Host context",
-      text: hostContextText,
-      error: hostContextError,
-      height: hostContextHeight,
-    },
   ];
 
   return (
@@ -192,7 +175,7 @@ export function ClientConfigTab({
               variant="outline"
               size="sm"
               onClick={resetToBaseline}
-              disabled={isSaving || !isDirty}
+              disabled={isSaving || syncPending || !isDirty}
               className="h-7 text-xs"
             >
               Reset
@@ -200,7 +183,7 @@ export function ClientConfigTab({
             <Button
               size="sm"
               onClick={handleSave}
-              disabled={isSaving || !isDirty}
+              disabled={isSaving || syncPending || !isDirty}
               className="h-7 text-xs"
             >
               <Save className="mr-1.5 h-3 w-3" />
@@ -246,7 +229,7 @@ export function ClientConfigTab({
                   rawContent={section.text}
                   onRawChange={(value) => setSectionText(section.key, value)}
                   mode="edit"
-                  readOnly={isSaving}
+                  readOnly={isSaving || syncPending}
                   showModeToggle={false}
                   className="border-0 bg-background"
                   height={section.height}

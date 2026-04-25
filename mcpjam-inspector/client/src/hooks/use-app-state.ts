@@ -596,6 +596,7 @@ export function useAppState({
     handleCreateWorkspace: workspaceState.handleCreateWorkspace,
     handleUpdateWorkspace: workspaceState.handleUpdateWorkspace,
     handleUpdateClientConfig: workspaceState.handleUpdateClientConfig,
+    handleUpdateHostContext: workspaceState.handleUpdateHostContext,
     handleDeleteWorkspace: workspaceState.handleDeleteWorkspace,
     handleLeaveWorkspace,
     handleDuplicateWorkspace: workspaceState.handleDuplicateWorkspace,

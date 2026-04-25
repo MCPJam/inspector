@@ -70,7 +70,7 @@ import type { CheckoutSession } from "@/shared/acp-types";
 import { listResources, readResource } from "@/lib/apis/mcp-resources-api";
 import { listPrompts } from "@/lib/apis/mcp-prompts-api";
 import { useChatboxHostStyle } from "@/contexts/chatbox-host-style-context";
-import { useClientConfigStore } from "@/stores/client-config-store";
+import { useHostContextStore } from "@/stores/host-context-store";
 import {
   clampDisplayModeToAvailableModes,
   extractHostDisplayMode,
@@ -180,9 +180,7 @@ export function MCPAppsRenderer({
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const sharedHostStyle = usePreferencesStore((s) => s.hostStyle);
   const chatboxHostStyle = useChatboxHostStyle();
-  const draftHostContext = useClientConfigStore(
-    (s) => s.draftConfig?.hostContext,
-  );
+  const draftHostContext = useHostContextStore((s) => s.draftHostContext);
   const baseHostContext = useMemo(
     () =>
       draftHostContext &&

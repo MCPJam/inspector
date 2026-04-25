@@ -68,9 +68,9 @@ import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { CLAUDE_DESKTOP_CHAT_BACKGROUND } from "@/config/claude-desktop-host-context";
 import { CHATGPT_CHAT_BACKGROUND } from "@/config/chatgpt-host-context";
 import {
-  DisplayContextHeader,
+  HostContextHeader,
   PRESET_DEVICE_CONFIGS,
-} from "@/components/shared/DisplayContextHeader";
+} from "@/components/shared/HostContextHeader";
 import { usePostHog } from "posthog-js/react";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { useTrafficLogStore } from "@/stores/traffic-log-store";
@@ -83,8 +83,12 @@ import type { LoadingIndicatorVariant } from "@/components/chat-v2/shared/loadin
 import { useConvexAuth } from "convex/react";
 import { useWorkspaceServers } from "@/hooks/useViews";
 import { buildOAuthTokensByServerId } from "@/lib/oauth/oauth-tokens";
-import { useClientConfigStore } from "@/stores/client-config-store";
-import { extractEffectiveHostDisplayMode } from "@/lib/client-config";
+import { useHostContextStore } from "@/stores/host-context-store";
+import {
+  extractEffectiveHostDisplayMode,
+  extractHostTheme,
+  type WorkspaceHostContextDraft,
+} from "@/lib/client-config";
 import { PostConnectGuide } from "@/components/app-builder/PostConnectGuide";
 import {
   ChatboxHostStyleProvider,
@@ -124,10 +128,15 @@ const CUSTOM_DEVICE_BASE = {
 type ThreadThemeMode = "light" | "dark";
 
 interface PlaygroundMainProps {
+  activeWorkspaceId?: string | null;
   serverName: string;
   ensureServersReady?: (
     serverNames: string[],
   ) => Promise<EnsureServersReadyResult>;
+  onSaveHostContext?: (
+    workspaceId: string,
+    hostContext: WorkspaceHostContextDraft,
+  ) => Promise<void>;
   enableMultiModelChat?: boolean;
   onWidgetStateChange?: (toolCallId: string, state: unknown) => void;
   playgroundServerSelectorProps?: PlaygroundServerSelectorProps;
@@ -205,8 +214,10 @@ function InvokingIndicator({
 }
 
 export function PlaygroundMain({
+  activeWorkspaceId = null,
   serverName,
   ensureServersReady,
+  onSaveHostContext,
   enableMultiModelChat = false,
   onWidgetStateChange,
   playgroundServerSelectorProps,
@@ -216,7 +227,7 @@ export function PlaygroundMain({
   pendingExecution,
   onExecutionInjected,
   toolRenderOverrides: externalToolRenderOverrides = {},
-  // Device/locale/timezone props are now managed via the store by DisplayContextHeader
+  // Device/locale/timezone props are now managed via the store by HostContextHeader
   // These are kept for backward compatibility but are no longer used
   deviceType: _deviceType = "mobile",
   onDeviceTypeChange: _onDeviceTypeChange,
@@ -293,11 +304,11 @@ export function PlaygroundMain({
   const lastMultiLeadIdRef = useRef<string | null>(null);
   const prevCompareModelIdsRef = useRef<Set<string>>(new Set());
   const multiAddColumnSeqRef = useRef(0);
-  // Device config from store (managed by DisplayContextHeader)
+  // Device config from store (managed by HostContextHeader)
   const storeDeviceType = useUIPlaygroundStore((s) => s.deviceType);
   const customViewport = useUIPlaygroundStore((s) => s.customViewport);
-  const hostContext = useClientConfigStore((s) => s.draftConfig?.hostContext);
-  const patchHostContext = useClientConfigStore((s) => s.patchHostContext);
+  const hostContext = useHostContextStore((s) => s.draftHostContext);
+  const patchHostContext = useHostContextStore((s) => s.patchHostContext);
 
   // Device config for frame sizing
   const deviceConfig = useMemo(() => {
@@ -434,9 +445,8 @@ export function PlaygroundMain({
     (s) => s.themeMode,
   ) as ThreadThemeMode;
   const themePreset = usePreferencesStore((s) => s.themePreset);
-  const [threadThemeOverride, setThreadThemeOverride] =
-    useState<ThreadThemeMode | null>(null);
-  const effectiveThreadTheme = threadThemeOverride ?? globalThemeMode;
+  const effectiveThreadTheme =
+    extractHostTheme(hostContext) ?? globalThemeMode;
   const chatBg =
     hostStyle === "chatgpt"
       ? CHATGPT_CHAT_BACKGROUND
@@ -444,19 +454,6 @@ export function PlaygroundMain({
   const hostBackgroundColor = chatBg[effectiveThreadTheme];
   const displayMode =
     extractEffectiveHostDisplayMode(hostContext) ?? displayModeProp;
-
-  // The App Builder theme toggle is intentionally local to the emulated thread
-  // and composer surface. It should not change MCPJam's global theme or leak
-  // into other tabs.
-  const toggleLocalThreadTheme = useCallback(() => {
-    setThreadThemeOverride((currentThemeOverride) => {
-      const currentTheme = currentThemeOverride ?? globalThemeMode;
-      const nextTheme: ThreadThemeMode =
-        currentTheme === "dark" ? "light" : "dark";
-
-      return nextTheme === globalThemeMode ? null : nextTheme;
-    });
-  }, [globalThemeMode]);
 
   const handleDisplayModeChange = useCallback(
     (mode: DisplayMode) => {
@@ -1504,11 +1501,11 @@ export function PlaygroundMain({
             data-testid="playground-main-header"
           >
             <div className="flex min-w-0 max-w-full justify-center">
-              <DisplayContextHeader
+              <HostContextHeader
+                activeWorkspaceId={activeWorkspaceId}
+                onSaveHostContext={onSaveHostContext}
                 protocol={selectedProtocol}
                 showThemeToggle
-                themeModeOverride={effectiveThreadTheme}
-                onThemeToggleOverride={toggleLocalThreadTheme}
               />
             </div>
 
