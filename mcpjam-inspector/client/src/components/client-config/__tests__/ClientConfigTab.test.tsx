@@ -4,15 +4,16 @@ import { getDefaultClientCapabilities } from "@mcpjam/sdk/browser";
 import { ClientConfigTab } from "../ClientConfigTab";
 import {
   mergeWorkspaceClientCapabilities,
-  type WorkspaceClientConfig,
+  type WorkspaceConnectionConfigDraft,
 } from "@/lib/client-config";
 import { useClientConfigStore } from "@/stores/client-config-store";
+import { useHostContextStore } from "@/stores/host-context-store";
 
 vi.mock("@/components/ui/json-editor", () => ({
   JsonEditor: () => <div data-testid="json-editor" />,
 }));
 
-function resetClientConfigStore(defaultConfig: WorkspaceClientConfig) {
+function resetClientConfigStore(defaultConfig: WorkspaceConnectionConfigDraft) {
   useClientConfigStore.setState({
     activeWorkspaceId: "workspace-1",
     defaultConfig,
@@ -28,10 +29,8 @@ function resetClientConfigStore(defaultConfig: WorkspaceClientConfig) {
       null,
       2,
     ),
-    hostContextText: JSON.stringify(defaultConfig.hostContext, null, 2),
     connectionDefaultsError: null,
     clientCapabilitiesError: null,
-    hostContextError: null,
     isSaving: false,
     isDirty: false,
     pendingWorkspaceId: null,
@@ -42,7 +41,7 @@ function resetClientConfigStore(defaultConfig: WorkspaceClientConfig) {
 
 describe("ClientConfigTab reconnect warnings", () => {
   beforeEach(() => {
-    const defaultConfig: WorkspaceClientConfig = {
+    const defaultConfig: WorkspaceConnectionConfigDraft = {
       version: 1,
       connectionDefaults: {
         headers: {},
@@ -52,10 +51,29 @@ describe("ClientConfigTab reconnect warnings", () => {
         string,
         unknown
       >,
-      hostContext: {},
     };
 
     resetClientConfigStore(defaultConfig);
+    useHostContextStore.setState({
+      pendingWorkspaceId: null,
+      isAwaitingRemoteEcho: false,
+      isSaving: false,
+    });
+  });
+
+  it("renders only connection-level JSON editors", () => {
+    render(
+      <ClientConfigTab
+        activeWorkspaceId="workspace-1"
+        workspace={undefined}
+        onSaveClientConfig={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("Connection defaults")).toBeInTheDocument();
+    expect(screen.getByText("Client capabilities")).toBeInTheDocument();
+    expect(screen.queryByText("Host context")).not.toBeInTheDocument();
+    expect(screen.getAllByTestId("json-editor")).toHaveLength(2);
   });
 
   it("does not warn when server capability overrides already match the last initialize payload", () => {

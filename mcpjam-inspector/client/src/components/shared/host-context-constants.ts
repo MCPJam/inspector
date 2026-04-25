@@ -1,5 +1,5 @@
 /**
- * Static option lists and preset device metadata for display context pickers.
+ * Static option lists and preset device metadata for host context controls.
  */
 
 import type { ComponentType } from "react";
@@ -10,7 +10,6 @@ import {
   type DeviceType,
 } from "@/stores/ui-playground-store";
 
-/** Device frame configurations - extends shared viewport config with UI properties */
 export const PRESET_DEVICE_CONFIGS: Record<
   Exclude<DeviceType, "custom">,
   {
@@ -37,7 +36,6 @@ export const PRESET_DEVICE_CONFIGS: Record<
   },
 };
 
-/** Common BCP 47 locales for testing (per OpenAI Apps SDK spec) */
 export const LOCALE_OPTIONS = [
   { code: "en-US", label: "English (US)" },
   { code: "en-GB", label: "English (UK)" },
@@ -57,7 +55,6 @@ export const LOCALE_OPTIONS = [
   { code: "nl-NL", label: "Nederlands" },
 ] as const;
 
-/** Common IANA timezones for testing (per SEP-1865 MCP Apps spec) */
 export const TIMEZONE_OPTIONS = [
   { zone: "America/New_York", label: "New York", offset: "UTC-5/-4" },
   { zone: "America/Chicago", label: "Chicago", offset: "UTC-6/-5" },
@@ -80,7 +77,6 @@ export const TIMEZONE_OPTIONS = [
   { zone: "UTC", label: "UTC", offset: "UTC+0" },
 ] as const;
 
-/** CSP mode options for widget sandbox */
 export const CSP_MODE_OPTIONS: {
   mode: CspMode;
   label: string;

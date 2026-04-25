@@ -3,6 +3,7 @@ import { act, render, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it } from "vitest";
 import { WorkspaceClientConfigSync } from "../WorkspaceClientConfigSync";
 import { useClientConfigStore } from "@/stores/client-config-store";
+import { useHostContextStore } from "@/stores/host-context-store";
 import {
   PreferencesStoreProvider,
   usePreferencesStore,
@@ -29,14 +30,25 @@ describe("WorkspaceClientConfigSync", () => {
       draftConfig: null,
       connectionDefaultsText: "{}",
       clientCapabilitiesText: "{}",
-      hostContextText: "{}",
       connectionDefaultsError: null,
       clientCapabilitiesError: null,
-      hostContextError: null,
       isSaving: false,
       isDirty: false,
       pendingWorkspaceId: null,
       pendingSavedConfig: undefined,
+      isAwaitingRemoteEcho: false,
+    });
+    useHostContextStore.setState({
+      activeWorkspaceId: null,
+      defaultHostContext: {},
+      savedHostContext: undefined,
+      draftHostContext: {},
+      hostContextText: "{}",
+      hostContextError: null,
+      isSaving: false,
+      isDirty: false,
+      pendingWorkspaceId: null,
+      pendingSavedHostContext: undefined,
       isAwaitingRemoteEcho: false,
     });
     useUIPlaygroundStore.getState().reset();
@@ -51,9 +63,14 @@ describe("WorkspaceClientConfigSync", () => {
     );
 
     await waitFor(() => {
-      expect(
-        useClientConfigStore.getState().defaultConfig?.hostContext,
-      ).toMatchObject({
+      expect(useClientConfigStore.getState().defaultConfig).toMatchObject({
+        version: 1,
+        connectionDefaults: {
+          headers: {},
+          requestTimeout: 10000,
+        },
+      });
+      expect(useHostContextStore.getState().defaultHostContext).toMatchObject({
         theme: "light",
         displayMode: "inline",
       });
@@ -85,9 +102,7 @@ describe("WorkspaceClientConfigSync", () => {
     );
 
     await waitFor(() => {
-      expect(
-        useClientConfigStore.getState().defaultConfig?.hostContext,
-      ).toEqual(
+      expect(useHostContextStore.getState().defaultHostContext).toEqual(
         expect.objectContaining({
           theme: "dark",
           displayMode: "fullscreen",
@@ -105,8 +120,8 @@ describe("WorkspaceClientConfigSync", () => {
           },
         }),
       );
-      expect(useClientConfigStore.getState().draftConfig).toEqual(
-        useClientConfigStore.getState().defaultConfig,
+      expect(useHostContextStore.getState().draftHostContext).toEqual(
+        useHostContextStore.getState().defaultHostContext,
       );
     });
   });

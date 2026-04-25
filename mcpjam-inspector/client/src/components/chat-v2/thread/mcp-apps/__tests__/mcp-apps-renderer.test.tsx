@@ -86,14 +86,8 @@ const {
   };
 });
 
-const mockClientConfigStoreState = {
-  draftConfig: undefined as
-    | {
-        version: 1;
-        clientCapabilities: Record<string, unknown>;
-        hostContext: Record<string, unknown>;
-      }
-    | undefined,
+const mockHostContextStoreState = {
+  draftHostContext: {} as Record<string, unknown>,
 };
 
 const mockPreferencesState = {
@@ -165,8 +159,8 @@ vi.mock("@/stores/ui-playground-store", () => ({
     selector(mockPlaygroundStoreState),
 }));
 
-vi.mock("@/stores/client-config-store", () => ({
-  useClientConfigStore: (selector: any) => selector(mockClientConfigStoreState),
+vi.mock("@/stores/host-context-store", () => ({
+  useHostContextStore: (selector: any) => selector(mockHostContextStoreState),
 }));
 
 vi.mock("@/stores/traffic-log-store", () => ({
@@ -230,7 +224,7 @@ const baseProps = {
 describe("MCPAppsRenderer tool input streaming", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockClientConfigStoreState.draftConfig = undefined;
+    mockHostContextStoreState.draftHostContext = {};
     Object.assign(mockPlaygroundStoreState, {
       isPlaygroundActive: false,
       mcpAppsCspMode: "permissive",
@@ -341,15 +335,11 @@ describe("MCPAppsRenderer tool input streaming", () => {
   });
 
   it("clamps configured host display modes before sending host context", async () => {
-    mockClientConfigStoreState.draftConfig = {
-      version: 1,
-      clientCapabilities: {},
-      hostContext: {
-        displayMode: "fullscreen",
-        availableDisplayModes: ["inline"],
-        locale: "fr-FR",
-        timeZone: "Europe/Paris",
-      },
+    mockHostContextStoreState.draftHostContext = {
+      displayMode: "fullscreen",
+      availableDisplayModes: ["inline"],
+      locale: "fr-FR",
+      timeZone: "Europe/Paris",
     };
 
     render(<MCPAppsRenderer {...baseProps} />);
@@ -376,16 +366,12 @@ describe("MCPAppsRenderer tool input streaming", () => {
   });
 
   it("filters non-standard host style variables out of the initialize payload", async () => {
-    mockClientConfigStoreState.draftConfig = {
-      version: 1,
-      clientCapabilities: {},
-      hostContext: {
-        styles: {
-          variables: {
-            "--font-sans": "Custom Sans",
-            "--mcpjam-theme-preset": "soft-pop",
-            "--totally-unknown": "ignore-me",
-          },
+    mockHostContextStoreState.draftHostContext = {
+      styles: {
+        variables: {
+          "--font-sans": "Custom Sans",
+          "--mcpjam-theme-preset": "soft-pop",
+          "--totally-unknown": "ignore-me",
         },
       },
     };
@@ -488,16 +474,12 @@ describe("MCPAppsRenderer tool input streaming", () => {
       );
     });
 
-    mockClientConfigStoreState.draftConfig = {
-      version: 1,
-      clientCapabilities: {},
-      hostContext: {
-        locale: "es-ES",
-        timeZone: "Europe/Madrid",
-        deviceCapabilities: {
-          hover: false,
-          touch: true,
-        },
+    mockHostContextStoreState.draftHostContext = {
+      locale: "es-ES",
+      timeZone: "Europe/Madrid",
+      deviceCapabilities: {
+        hover: false,
+        touch: true,
       },
     };
 

@@ -12,7 +12,7 @@ import {
   type SafeAreaPreset,
 } from "@/stores/ui-playground-store";
 import { cn } from "@/lib/utils";
-import { useClientConfigStore } from "@/stores/client-config-store";
+import { useHostContextStore } from "@/stores/host-context-store";
 import {
   extractHostSafeAreaInsets,
   type HostSafeAreaInsets,
@@ -150,8 +150,8 @@ function InsetInput({
 export function SafeAreaEditor() {
   const safeAreaPreset = useUIPlaygroundStore((s) => s.safeAreaPreset);
   const setSafeAreaPreset = useUIPlaygroundStore((s) => s.setSafeAreaPreset);
-  const hostContext = useClientConfigStore((s) => s.draftConfig?.hostContext);
-  const patchHostContext = useClientConfigStore((s) => s.patchHostContext);
+  const hostContext = useHostContextStore((s) => s.draftHostContext);
+  const patchHostContext = useHostContextStore((s) => s.patchHostContext);
   const safeAreaInsets = extractHostSafeAreaInsets(hostContext);
 
   const handleInsetChange = (key: keyof HostSafeAreaInsets, value: number) => {

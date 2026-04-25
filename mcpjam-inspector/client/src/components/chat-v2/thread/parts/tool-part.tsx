@@ -39,7 +39,7 @@ import { CspDebugPanel } from "../csp-debug-panel";
 import { JsonEditor } from "@/components/ui/json-editor";
 import { cn } from "@/lib/chat-utils";
 import { TextPart } from "./text-part";
-import { useClientConfigStore } from "@/stores/client-config-store";
+import { useHostContextStore } from "@/stores/host-context-store";
 import { extractHostDisplayModes } from "@/lib/client-config";
 import { useChatboxHostTheme } from "@/contexts/chatbox-host-style-context";
 
@@ -167,7 +167,7 @@ export function ToolPart({
   const widgetDebugInfo = useWidgetDebugStore((s) =>
     toolCallId ? s.widgets.get(toolCallId) : undefined,
   );
-  const hostContext = useClientConfigStore((s) => s.draftConfig?.hostContext);
+  const hostContext = useHostContextStore((s) => s.draftHostContext);
   const hostAvailableDisplayModes = useMemo(
     () => extractHostDisplayModes(hostContext),
     [hostContext],

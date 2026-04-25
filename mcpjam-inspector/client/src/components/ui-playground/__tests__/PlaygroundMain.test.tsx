@@ -9,6 +9,7 @@ import {
 } from "@testing-library/react";
 import { PlaygroundMain } from "../PlaygroundMain";
 import { DEFAULT_CHAT_COMPOSER_PLACEHOLDER } from "@/components/chat-v2/shared/chat-helpers";
+import { useHostContextStore } from "@/stores/host-context-store";
 
 vi.mock("framer-motion", async (importOriginal) => {
   const actual = await importOriginal<typeof import("framer-motion")>();
@@ -426,13 +427,6 @@ vi.mock("@/stores/preferences/preferences-provider", () => ({
     selector ? selector(mockPreferencesState) : mockPreferencesState,
 }));
 
-// Mock theme-utils
-const mockUpdateThemeMode = vi.fn();
-
-vi.mock("@/lib/theme-utils", () => ({
-  updateThemeMode: mockUpdateThemeMode,
-}));
-
 // Mock UI Playground store
 const mockUIPlaygroundStore = {
   deviceType: "mobile",
@@ -458,28 +452,16 @@ vi.mock("@/stores/ui-playground-store", () => ({
   },
 }));
 
-// Mock DisplayContextHeader which exports PRESET_DEVICE_CONFIGS
-vi.mock("@/components/shared/DisplayContextHeader", () => ({
-  DisplayContextHeader: ({
+// Mock HostContextHeader which exports PRESET_DEVICE_CONFIGS
+vi.mock("@/components/shared/HostContextHeader", () => ({
+  HostContextHeader: ({
     showThemeToggle,
-    themeModeOverride,
-    onThemeToggleOverride,
   }: {
     showThemeToggle?: boolean;
-    themeModeOverride?: string;
-    onThemeToggleOverride?: () => void;
   }) => (
-    <div
-      data-testid="display-context-header"
-      data-theme-mode-override={themeModeOverride ?? ""}
-    >
+    <div data-testid="host-context-header">
       {showThemeToggle ? (
-        <button
-          data-testid="display-context-theme-toggle"
-          onClick={() => onThemeToggleOverride?.()}
-        >
-          Toggle theme
-        </button>
+        <button data-testid="host-context-theme-toggle">Toggle theme</button>
       ) : null}
     </div>
   ),
@@ -563,6 +545,19 @@ describe("PlaygroundMain", () => {
     mockPreferencesState.themeMode = "light";
     mockPreferencesState.themePreset = "soft-pop";
     mockPreferencesState.hostStyle = "claude";
+    useHostContextStore.setState({
+      activeWorkspaceId: null,
+      defaultHostContext: {},
+      savedHostContext: undefined,
+      draftHostContext: {},
+      hostContextText: "{}",
+      hostContextError: null,
+      isSaving: false,
+      isDirty: false,
+      pendingWorkspaceId: null,
+      pendingSavedHostContext: undefined,
+      isAwaitingRemoteEcho: false,
+    });
     mockSharedAppState.servers["test-server"] = {
       connectionStatus: "connected",
     };
@@ -608,16 +603,14 @@ describe("PlaygroundMain", () => {
     it("renders device controls", () => {
       render(<PlaygroundMain {...defaultProps} />);
 
-      // Device controls are rendered by DisplayContextHeader (mocked)
-      expect(screen.getByTestId("display-context-header")).toBeInTheDocument();
+      // Device controls are rendered by HostContextHeader (mocked)
+      expect(screen.getByTestId("host-context-header")).toBeInTheDocument();
     });
 
     it("renders theme toggle button", () => {
       render(<PlaygroundMain {...defaultProps} />);
 
-      expect(
-        screen.getByTestId("display-context-theme-toggle"),
-      ).toBeInTheDocument();
+      expect(screen.getByTestId("host-context-theme-toggle")).toBeInTheDocument();
     });
 
     it("passes the requested loading indicator variant to Thread", () => {
@@ -640,61 +633,49 @@ describe("PlaygroundMain", () => {
     });
   });
 
-  describe("thread theme override", () => {
-    it("scopes theme changes to the thread shell and composer surface", () => {
+  describe("thread theme from host context", () => {
+    it("scopes hostContext theme changes to the thread shell and composer surface", () => {
       render(<PlaygroundMain {...defaultProps} />);
 
       const header = screen.getByTestId("playground-main-header");
-      const displayContextHeader = screen.getByTestId("display-context-header");
       const threadShell = screen.getByTestId("playground-thread-shell");
 
-      expect(displayContextHeader).toHaveAttribute(
-        "data-theme-mode-override",
-        "light",
-      );
       expect(threadShell).toHaveAttribute("data-host-style", "claude");
       expect(threadShell).toHaveAttribute("data-theme-preset", "soft-pop");
       expect(threadShell).toHaveAttribute("data-thread-theme", "light");
       expect(threadShell).not.toHaveClass("dark");
       expect(header).not.toHaveClass("dark");
 
-      fireEvent.click(screen.getByTestId("display-context-theme-toggle"));
+      act(() => {
+        useHostContextStore.getState().patchHostContext({ theme: "dark" });
+      });
 
-      expect(displayContextHeader).toHaveAttribute(
-        "data-theme-mode-override",
-        "dark",
-      );
       expect(threadShell).toHaveAttribute("data-thread-theme", "dark");
       expect(threadShell).toHaveClass("dark");
       expect(header).not.toHaveClass("dark");
       expect(mockPreferencesState.setThemeMode).not.toHaveBeenCalled();
-      expect(mockUpdateThemeMode).not.toHaveBeenCalled();
     });
 
-    it("resets the local thread theme override on remount", () => {
-      const firstRender = render(<PlaygroundMain {...defaultProps} />);
-
-      fireEvent.click(screen.getByTestId("display-context-theme-toggle"));
-      expect(screen.getByTestId("playground-thread-shell")).toHaveAttribute(
-        "data-thread-theme",
-        "dark",
-      );
-
-      firstRender.unmount();
-
+    it("falls back to the global theme when hostContext.theme is removed", () => {
       render(<PlaygroundMain {...defaultProps} />);
 
-      expect(screen.getByTestId("display-context-header")).toHaveAttribute(
-        "data-theme-mode-override",
-        "light",
+      act(() => {
+        useHostContextStore.getState().patchHostContext({ theme: "dark" });
+      });
+      expect(screen.getByTestId("playground-thread-shell")).toHaveAttribute(
+        "data-thread-theme",
+        "dark",
       );
+
+      act(() => {
+        useHostContextStore.getState().setHostContextText("{}");
+      });
+
       expect(screen.getByTestId("playground-thread-shell")).toHaveAttribute(
         "data-thread-theme",
         "light",
       );
-      expect(screen.getByTestId("playground-thread-shell")).not.toHaveClass(
-        "dark",
-      );
+      expect(screen.getByTestId("playground-thread-shell")).not.toHaveClass("dark");
     });
   });
 
@@ -1589,8 +1570,8 @@ describe("PlaygroundMain", () => {
     it("renders with default mobile device type", () => {
       render(<PlaygroundMain {...defaultProps} />);
 
-      // Device controls are rendered by DisplayContextHeader (mocked)
-      expect(screen.getByTestId("display-context-header")).toBeInTheDocument();
+      // Device controls are rendered by HostContextHeader (mocked)
+      expect(screen.getByTestId("host-context-header")).toBeInTheDocument();
     });
 
     it("renders with device frame using mobile dimensions", () => {
@@ -1606,8 +1587,8 @@ describe("PlaygroundMain", () => {
     it("shows display context header for locale controls", () => {
       render(<PlaygroundMain {...defaultProps} locale="en-US" />);
 
-      // Locale controls are rendered by DisplayContextHeader (mocked)
-      expect(screen.getByTestId("display-context-header")).toBeInTheDocument();
+      // Locale controls are rendered by HostContextHeader (mocked)
+      expect(screen.getByTestId("host-context-header")).toBeInTheDocument();
     });
   });
 

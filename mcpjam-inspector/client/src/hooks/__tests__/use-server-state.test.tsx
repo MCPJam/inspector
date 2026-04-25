@@ -4,6 +4,7 @@ import type { AppState, AppAction } from "@/state/app-types";
 import { CLIENT_CONFIG_SYNC_PENDING_ERROR_MESSAGE } from "@/lib/client-config";
 import type { WorkspaceClientConfig } from "@/lib/client-config";
 import { useClientConfigStore } from "@/stores/client-config-store";
+import { useHostContextStore } from "@/stores/host-context-store";
 import { useServerState } from "../use-server-state";
 
 const {
@@ -186,14 +187,27 @@ describe("useServerState OAuth callback failures", () => {
       defaultConfig: null,
       savedConfig: undefined,
       draftConfig: null,
+      connectionDefaultsText: "{}",
       clientCapabilitiesText: "{}",
-      hostContextText: "{}",
       clientCapabilitiesError: null,
-      hostContextError: null,
+      connectionDefaultsError: null,
       isSaving: false,
       isDirty: false,
       pendingWorkspaceId: null,
       pendingSavedConfig: undefined,
+      isAwaitingRemoteEcho: false,
+    });
+    useHostContextStore.setState({
+      activeWorkspaceId: null,
+      defaultHostContext: {},
+      savedHostContext: undefined,
+      draftHostContext: {},
+      hostContextText: "{}",
+      hostContextError: null,
+      isSaving: false,
+      isDirty: false,
+      pendingWorkspaceId: null,
+      pendingSavedHostContext: undefined,
       isAwaitingRemoteEcho: false,
     });
     getStoredTokensMock.mockReturnValue(undefined);
@@ -864,14 +878,27 @@ describe("useServerState auth mode regressions", () => {
       defaultConfig: null,
       savedConfig: undefined,
       draftConfig: null,
+      connectionDefaultsText: "{}",
       clientCapabilitiesText: "{}",
-      hostContextText: "{}",
       clientCapabilitiesError: null,
-      hostContextError: null,
+      connectionDefaultsError: null,
       isSaving: false,
       isDirty: false,
       pendingWorkspaceId: null,
       pendingSavedConfig: undefined,
+      isAwaitingRemoteEcho: false,
+    });
+    useHostContextStore.setState({
+      activeWorkspaceId: null,
+      defaultHostContext: {},
+      savedHostContext: undefined,
+      draftHostContext: {},
+      hostContextText: "{}",
+      hostContextError: null,
+      isSaving: false,
+      isDirty: false,
+      pendingWorkspaceId: null,
+      pendingSavedHostContext: undefined,
       isAwaitingRemoteEcho: false,
     });
     getStoredTokensMock.mockReturnValue(undefined);
@@ -1003,14 +1030,27 @@ describe("useServerState authenticated fallback persistence", () => {
       defaultConfig: null,
       savedConfig: undefined,
       draftConfig: null,
+      connectionDefaultsText: "{}",
       clientCapabilitiesText: "{}",
-      hostContextText: "{}",
       clientCapabilitiesError: null,
-      hostContextError: null,
+      connectionDefaultsError: null,
       isSaving: false,
       isDirty: false,
       pendingWorkspaceId: null,
       pendingSavedConfig: undefined,
+      isAwaitingRemoteEcho: false,
+    });
+    useHostContextStore.setState({
+      activeWorkspaceId: null,
+      defaultHostContext: {},
+      savedHostContext: undefined,
+      draftHostContext: {},
+      hostContextText: "{}",
+      hostContextError: null,
+      isSaving: false,
+      isDirty: false,
+      pendingWorkspaceId: null,
+      pendingSavedHostContext: undefined,
       isAwaitingRemoteEcho: false,
     });
     getStoredTokensMock.mockReturnValue(undefined);

@@ -166,7 +166,7 @@ import {
 import { getEffectiveWorkspaceClientCapabilities } from "./lib/client-config";
 import { buildEvalsHash } from "./lib/evals-router";
 import { withTestingSurface } from "./lib/testing-surface";
-import { useClientConfigStore } from "./stores/client-config-store";
+import { useWorkspaceClientConfigSyncPending } from "./hooks/use-workspace-client-config-sync-pending";
 import { ingestOAuthTraceLogs } from "./stores/traffic-log-store";
 import { clearGuestSession } from "./lib/guest-session";
 
@@ -663,6 +663,7 @@ export default function App() {
     handleLeaveWorkspace,
     handleUpdateWorkspace,
     handleUpdateClientConfig,
+    handleUpdateHostContext,
     handleDeleteWorkspace,
     handleWorkspaceShared,
     saveServerConfigWithoutConnecting,
@@ -852,11 +853,8 @@ export default function App() {
 
   // Get the Convex workspace ID from the active workspace
   const activeWorkspace = workspaces[activeWorkspaceId];
-  const isClientConfigSyncPending = useClientConfigStore(
-    (state) =>
-      state.isAwaitingRemoteEcho &&
-      state.pendingWorkspaceId === activeWorkspaceId,
-  );
+  const isClientConfigSyncPending =
+    useWorkspaceClientConfigSyncPending(activeWorkspaceId);
   const hostedClientCapabilities = getEffectiveWorkspaceClientCapabilities(
     activeWorkspace?.clientConfig,
   ) as Record<string, unknown>;
@@ -1837,7 +1835,11 @@ export default function App() {
               )
             ) : null)}
           {activeTab === "views" && (
-            <ViewsTab selectedServer={appState.selectedServer} />
+            <ViewsTab
+              selectedServer={appState.selectedServer}
+              activeWorkspaceId={activeWorkspaceId}
+              onSaveHostContext={handleUpdateHostContext}
+            />
           )}
           {activeTab === "conformance" && (
             <ConformanceTab server={selectedServerEntry ?? null} />
@@ -1975,10 +1977,12 @@ export default function App() {
               serverConfig={selectedMCPConfig}
               serverName={appState.selectedServer}
               servers={workspaceServers}
+              activeWorkspaceId={activeWorkspaceId}
               isAuthenticated={isAuthenticated}
               isAuthLoading={isAuthLoading}
               isServerSyncing={isSelectedServerSyncing}
               onConnect={handleConnect}
+              onSaveHostContext={handleUpdateHostContext}
               ensureServersReady={ensureServersReady}
               onOnboardingChange={setAppBuilderOnboarding}
               playgroundServerSelectorProps={playgroundServerSelectorProps}
