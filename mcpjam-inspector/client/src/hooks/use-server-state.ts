@@ -233,6 +233,18 @@ function parseOAuthScopes(scopes?: string): string[] | undefined {
   return parsed && parsed.length > 0 ? parsed : undefined;
 }
 
+function profileHeadersToRecord(
+  headers?: Array<{ key: string; value: string }>,
+): Record<string, string> | undefined {
+  const entries = headers
+    ?.map(({ key, value }) => [key.trim(), value] as const)
+    .filter(([key, value]) => key && value);
+
+  return entries && entries.length > 0
+    ? Object.fromEntries(entries)
+    : undefined;
+}
+
 function buildResolvedOAuthProfile(input: {
   serverName: string;
   serverUrl: string;
@@ -2113,18 +2125,21 @@ export function useServerState({
         const storedOAuthConfig = readStoredOAuthConfig(serverName);
         const storedClientCredentials = readStoredClientCredentials(serverName);
         const profileScopes = parseOAuthScopes(server.oauthFlowProfile?.scopes);
+        const profileHeaders = profileHeadersToRecord(
+          server.oauthFlowProfile?.customHeaders,
+        );
         const protocolMode =
-          storedOAuthConfig.protocolMode ??
           server.oauthFlowProfile?.protocolVersion ??
+          storedOAuthConfig.protocolMode ??
           "auto";
         const registrationMode =
-          storedOAuthConfig.registrationMode ??
           server.oauthFlowProfile?.registrationStrategy ??
+          storedOAuthConfig.registrationMode ??
           "auto";
         const oauthOptions = {
           serverName,
           serverUrl,
-          scopes: storedOAuthConfig.scopes ?? profileScopes,
+          scopes: profileScopes ?? storedOAuthConfig.scopes,
           resourceUrl:
             server.oauthFlowProfile?.resourceUrl ??
             storedOAuthConfig.resourceUrl,
@@ -2137,10 +2152,11 @@ export function useServerState({
             server.oauthFlowProfile?.clientSecret ??
             storedClientCredentials.clientSecret,
           customHeaders: mergeWithWorkspaceHeaders(
-            storedOAuthConfig.customHeaders ??
+            profileHeaders ??
               ("requestInit" in server.config
                 ? extractRequestHeaders(server.config.requestInit)
-                : undefined),
+                : undefined) ??
+              storedOAuthConfig.customHeaders,
           ),
           registryServerId: storedOAuthConfig.registryServerId,
           useRegistryOAuthProxy: storedOAuthConfig.useRegistryOAuthProxy,
@@ -2173,14 +2189,41 @@ export function useServerState({
             useOAuth: true,
           },
         });
-        await deleteServer(serverName);
+        let oauthResult: Awaited<ReturnType<typeof initiateOAuth>>;
+        try {
+          await deleteServer(serverName);
 
-        prepareHostedWorkspaceOAuthRedirect({
-          serverId: hostedWorkspaceServerId,
-          serverName,
-          serverUrl,
-        });
-        const oauthResult = await initiateOAuth(oauthOptions);
+          prepareHostedWorkspaceOAuthRedirect({
+            serverId: hostedWorkspaceServerId,
+            serverName,
+            serverUrl,
+          });
+          oauthResult = await initiateOAuth(oauthOptions);
+        } catch (error) {
+          if (isStaleOp(serverName, token)) {
+            return {
+              status: "failed",
+              error:
+                error instanceof Error
+                  ? error.message
+                  : "OAuth flow failed",
+            };
+          }
+          const errorMessage =
+            error instanceof Error
+              ? error.message
+              : "Failed to start OAuth flow";
+          dispatch({
+            type: "CONNECT_FAILURE",
+            name: serverName,
+            error: errorMessage,
+          });
+          reportError(errorMessage);
+          return {
+            status: "failed",
+            error: errorMessage,
+          };
+        }
 
         if (oauthResult.success && !oauthResult.serverConfig) {
           return {
