@@ -503,14 +503,39 @@ export async function authorizeBatch(
   }
 
   const raw = body as ConvexBatchAuthorizeResponse;
-  // Strip internalLogContext from each result before returning; merge into request log context.
+
+  // Workspace-level fields (auth/user/org/workspace/accessLevel/surface) are
+  // identical across batch results by construction — same Convex auth call,
+  // same workspace. Take them from the first successful result.
+  //
+  // Per-server fields (serverId, serverTransport, chatboxId) are only well-
+  // defined when the batch authorizes a single server. For multi-server
+  // batches they would non-deterministically attribute to whichever server
+  // iterated last, so we null them out at the request envelope; per-server
+  // attribution belongs on per-server child events.
+  const successful = Object.entries(raw.results).filter(
+    (entry): entry is [string, ConvexBatchAuthorizeSuccess] => entry[1].ok,
+  );
+  // Use the first result that actually carries internalLogContext rather than
+  // strictly successful[0]; during a backend rollout the field may be present
+  // on some results and absent on others, and we'd rather log workspace
+  // attribution than nothing.
+  const sourceCtx = successful.find(([, r]) => r.internalLogContext)?.[1]
+    .internalLogContext;
+  if (sourceCtx) {
+    const partial = mapInternalToRequestContext(sourceCtx);
+    if (successful.length > 1) {
+      partial.serverId = null;
+      partial.serverTransport = null;
+      partial.chatboxId = null;
+    }
+    setRequestLogContext(c, partial);
+  }
+
   const strippedResults: Record<string, ConvexBatchAuthorizeResult> = {};
   for (const [serverId, result] of Object.entries(raw.results)) {
     if (result.ok) {
-      const { internalLogContext, ...clientSafeResult } = result as ConvexBatchAuthorizeSuccess;
-      if (internalLogContext) {
-        setRequestLogContext(c, mapInternalToRequestContext(internalLogContext));
-      }
+      const { internalLogContext: _omit, ...clientSafeResult } = result;
       strippedResults[serverId] = clientSafeResult;
     } else {
       strippedResults[serverId] = result;
