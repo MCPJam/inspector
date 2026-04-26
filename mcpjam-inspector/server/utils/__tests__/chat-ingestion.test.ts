@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Context } from "hono";
 import { persistChatSessionToConvex } from "../chat-ingestion";
+import type { RequestLogContext } from "../log-events";
 
 const mockLogger = vi.hoisted(() => ({
   warn: vi.fn(),
@@ -10,6 +11,31 @@ const mockLogger = vi.hoisted(() => ({
 vi.mock("../logger", () => ({
   logger: mockLogger,
 }));
+
+// Mirror the production envelope populated by requestLogContextMiddleware.
+// Without this, getRequestLogger throws — the strict-throw was added in the
+// typed-event foundation to surface wiring bugs, so test fixtures must reflect
+// real production wiring.
+function makeTestContext(): Context {
+  const baseContext: RequestLogContext = {
+    event: "http.request.completed",
+    timestamp: "2024-01-01T00:00:00.000Z",
+    environment: "test",
+    release: null,
+    component: "http",
+    requestId: "test-req",
+    route: "/api/web/test",
+    method: "POST",
+    authType: "unknown",
+  };
+  const vars: Record<string, unknown> = { requestLogContext: baseContext };
+  return {
+    var: new Proxy(vars, { get: (t, p) => t[p as string] }),
+    set: vi.fn((key: string, value: unknown) => {
+      vars[key] = value;
+    }),
+  } as unknown as Context;
+}
 
 describe("chat-ingestion", () => {
   const originalFetch = global.fetch;
@@ -211,7 +237,7 @@ describe("chat-ingestion", () => {
         headers: { "Content-Type": "application/json" },
       }),
     );
-    const c = { var: {}, set: vi.fn() } as unknown as Context;
+    const c = makeTestContext();
 
     await persistChatSessionToConvex(
       {
@@ -238,7 +264,7 @@ describe("chat-ingestion", () => {
     global.fetch = vi.fn().mockResolvedValue(
       new Response("Server Error", { status: 503 }),
     );
-    const c = { var: {}, set: vi.fn() } as unknown as Context;
+    const c = makeTestContext();
 
     await persistChatSessionToConvex(
       {
@@ -274,7 +300,7 @@ describe("chat-ingestion", () => {
           }
         }),
     ) as typeof fetch;
-    const c = { var: {}, set: vi.fn() } as unknown as Context;
+    const c = makeTestContext();
 
     const p = persistChatSessionToConvex(
       {
@@ -301,7 +327,7 @@ describe("chat-ingestion", () => {
 
   it("emits chat.session.persist.failed(exception) via typed event when c is provided", async () => {
     global.fetch = vi.fn().mockRejectedValue(new Error("network failure"));
-    const c = { var: {}, set: vi.fn() } as unknown as Context;
+    const c = makeTestContext();
 
     await persistChatSessionToConvex(
       {
