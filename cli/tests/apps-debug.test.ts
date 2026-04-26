@@ -51,9 +51,61 @@ async function readJsonBody(
   return JSON.parse(body) as Record<string, unknown>;
 }
 
-test("apps debug --engine inspector calls Inspector REST endpoints", async () => {
+test("apps debug rejects removed --engine flag", async () => {
+  const result = await runCli([
+    "--format",
+    "json",
+    "apps",
+    "debug",
+    "--engine",
+    "inspector",
+    "--url",
+    "http://example.test/mcp",
+    "--tool-name",
+    "create_view",
+  ]);
+
+  assert.notEqual(result.exitCode, 0);
+});
+
+test("apps debug rejects removed --render flag", async () => {
+  const result = await runCli([
+    "--format",
+    "json",
+    "apps",
+    "debug",
+    "--render",
+    "inspector",
+    "--url",
+    "http://example.test/mcp",
+    "--tool-name",
+    "create_view",
+  ]);
+
+  assert.notEqual(result.exitCode, 0);
+});
+
+test("apps debug rejects removed --name alias", async () => {
+  const result = await runCli([
+    "--format",
+    "json",
+    "apps",
+    "debug",
+    "--name",
+    "create_view",
+    "--url",
+    "http://example.test/mcp",
+  ]);
+
+  assert.notEqual(result.exitCode, 0);
+});
+
+test("apps debug --ui starts Inspector and drives command bus render", async () => {
   const requests: Array<{ method?: string; url?: string; body?: unknown }> = [];
-  const token = "debug-session-token";
+
+  // This mock server handles both:
+  // 1. Inspector API routes (health, session-token, connect, command)
+  // 2. MCP Streamable HTTP at /mcp (initialize, tools/list, tools/call)
   const server = http.createServer(async (request, response) => {
     if (request.method === "GET" && request.url === "/health") {
       response.writeHead(200, { "Content-Type": "application/json" });
@@ -63,120 +115,65 @@ test("apps debug --engine inspector calls Inspector REST endpoints", async () =>
 
     if (request.method === "GET" && request.url === "/api/session-token") {
       response.writeHead(200, { "Content-Type": "application/json" });
-      response.end(JSON.stringify({ token }));
+      response.end(JSON.stringify({ token: "test-token" }));
       return;
     }
 
-    if (request.url?.startsWith("/api/mcp/servers/init-info/")) {
-      requests.push({ method: request.method, url: request.url });
-      response.writeHead(200, { "Content-Type": "application/json" });
-      response.end(JSON.stringify({ success: true, initInfo: { protocolVersion: "2025-11-25" } }));
-      return;
-    }
-
-    if (request.method === "POST" && request.url) {
+    if (request.method === "POST" && request.url === "/mcp") {
       const body = await readJsonBody(request);
-      requests.push({ method: request.method, url: request.url, body });
+      const method = body.method as string;
+      const id = body.id;
 
-      if (request.url === "/api/mcp/connect") {
-        assert.equal(request.headers["x-mcp-session-auth"], `Bearer ${token}`);
-        response.writeHead(200, { "Content-Type": "application/json" });
-        response.end(JSON.stringify({ success: true, status: "connected" }));
-        return;
-      }
-
-      if (request.url === "/api/mcp/tools/list") {
+      if (method === "initialize") {
         response.writeHead(200, { "Content-Type": "application/json" });
         response.end(
           JSON.stringify({
-            tools: [{ name: "create_view", inputSchema: { type: "object" } }],
-            toolsMetadata: {
-              create_view: { ui: { resourceUri: "ui://demo/widget.html" } },
+            jsonrpc: "2.0",
+            id,
+            result: {
+              protocolVersion: "2025-03-26",
+              capabilities: { tools: {} },
+              serverInfo: { name: "test-server", version: "1.0.0" },
             },
           }),
         );
         return;
       }
 
-      if (request.url === "/api/mcp/tools/execute") {
+      if (method === "tools/list") {
         response.writeHead(200, { "Content-Type": "application/json" });
         response.end(
           JSON.stringify({
-            status: "completed",
-            result: { content: [{ type: "text", text: "view" }] },
+            jsonrpc: "2.0",
+            id,
+            result: {
+              tools: [{ name: "create_view", inputSchema: { type: "object" } }],
+            },
           }),
         );
         return;
       }
-    }
 
-    response.writeHead(404);
-    response.end();
-  });
+      if (method === "tools/call") {
+        response.writeHead(200, { "Content-Type": "application/json" });
+        response.end(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id,
+            result: { content: [{ type: "text", text: "view created" }] },
+          }),
+        );
+        return;
+      }
 
-  await new Promise<void>((resolve) => {
-    server.listen(0, "127.0.0.1", () => resolve());
-  });
-  const { port } = server.address() as AddressInfo;
+      if (method === "notifications/initialized") {
+        response.writeHead(200, { "Content-Type": "application/json" });
+        response.end(JSON.stringify({ jsonrpc: "2.0" }));
+        return;
+      }
 
-  try {
-    const result = await runCli([
-      "--format",
-      "json",
-      "apps",
-      "debug",
-      "--engine",
-      "inspector",
-      "--inspector-url",
-      `http://127.0.0.1:${port}`,
-      "--url",
-      "http://example.test/mcp",
-      "--tool-name",
-      "create_view",
-      "--params",
-      '{"title":"Hello"}',
-    ]);
-
-    assert.equal(result.exitCode, 0, result.stderr);
-    const payload = JSON.parse(result.stdout) as Record<string, any>;
-    assert.equal(payload.engine, "inspector");
-    assert.equal(payload.render, "none");
-    assert.equal(payload.toolName, "create_view");
-    assert.equal(payload.ui.resourceUri, "ui://demo/widget.html");
-    assert.deepEqual(payload.execution, {
-      content: [{ type: "text", text: "view" }],
-    });
-    assert.deepEqual(
-      requests
-        .filter((entry) => entry.method === "POST")
-        .map((entry) => entry.url),
-      ["/api/mcp/connect", "/api/mcp/tools/list", "/api/mcp/tools/execute"],
-    );
-  } finally {
-    await new Promise<void>((resolve, reject) => {
-      server.close((error) => (error ? reject(error) : resolve()));
-    });
-  }
-});
-
-test("apps debug --render inspector performs REST connect before command bus render", async () => {
-  const requests: Array<{ method?: string; url?: string; body?: unknown }> = [];
-  const server = http.createServer(async (request, response) => {
-    if (request.method === "GET" && request.url === "/health") {
       response.writeHead(200, { "Content-Type": "application/json" });
-      response.end(JSON.stringify({ status: "ok" }));
-      return;
-    }
-
-    if (request.method === "GET" && request.url === "/api/session-token") {
-      response.writeHead(200, { "Content-Type": "application/json" });
-      response.end(JSON.stringify({ token: "render-token" }));
-      return;
-    }
-
-    if (request.url?.startsWith("/api/mcp/servers/init-info/")) {
-      response.writeHead(200, { "Content-Type": "application/json" });
-      response.end(JSON.stringify({ success: true, initInfo: null }));
+      response.end(JSON.stringify({ jsonrpc: "2.0", id, result: {} }));
       return;
     }
 
@@ -187,23 +184,6 @@ test("apps debug --render inspector performs REST connect before command bus ren
       if (request.url === "/api/mcp/connect") {
         response.writeHead(200, { "Content-Type": "application/json" });
         response.end(JSON.stringify({ success: true, status: "connected" }));
-        return;
-      }
-
-      if (request.url === "/api/mcp/tools/list") {
-        response.writeHead(200, { "Content-Type": "application/json" });
-        response.end(
-          JSON.stringify({
-            tools: [{ name: "create_view", inputSchema: { type: "object" } }],
-            toolsMetadata: {},
-          }),
-        );
-        return;
-      }
-
-      if (request.url === "/api/mcp/tools/execute") {
-        response.writeHead(200, { "Content-Type": "application/json" });
-        response.end(JSON.stringify({ status: "completed", result: { ok: true } }));
         return;
       }
 
@@ -235,12 +215,11 @@ test("apps debug --render inspector performs REST connect before command bus ren
       "json",
       "apps",
       "debug",
-      "--render",
-      "inspector",
+      "--ui",
       "--inspector-url",
       `http://127.0.0.1:${port}`,
       "--url",
-      "http://example.test/mcp",
+      `http://127.0.0.1:${port}/mcp`,
       "--tool-name",
       "create_view",
       "--params",
@@ -248,21 +227,17 @@ test("apps debug --render inspector performs REST connect before command bus ren
     ]);
 
     assert.equal(result.exitCode, 0, result.stderr);
-    assert.deepEqual(
-      requests.map((entry) => entry.url),
-      [
-        "/api/mcp/connect",
-        "/api/mcp/tools/list",
-        "/api/mcp/tools/execute",
-        "/api/mcp/command",
-        "/api/mcp/command",
-        "/api/mcp/command",
-      ],
+    const payload = JSON.parse(result.stdout) as Record<string, any>;
+    assert.equal(payload.inspectorUi, true);
+    assert.equal(payload.toolName, "create_view");
+    assert.ok(payload.execution, "SDK execution result should be present");
+    assert.ok(payload.inspectorRender, "Inspector render result should be present");
+
+    const commandRequests = requests.filter(
+      (entry) => entry.url === "/api/mcp/command",
     );
     assert.deepEqual(
-      requests
-        .filter((entry) => entry.url === "/api/mcp/command")
-        .map((entry) => (entry.body as { type?: string }).type),
+      commandRequests.map((entry) => (entry.body as { type?: string }).type),
       ["openAppBuilder", "executeTool", "snapshotApp"],
     );
   } finally {

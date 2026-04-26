@@ -29,7 +29,6 @@ import {
   parseJsonRecord,
   parseRetryPolicy,
   parseServerConfig,
-  resolveAliasedStringOption,
   type SharedServerTargetOptions,
 } from "../lib/server-config.js";
 import {
@@ -170,8 +169,7 @@ export function registerAppsCommands(program: Command): void {
       apps
         .command("mcp-widget")
         .description("Fetch hosted-style MCP App widget content")
-        .option("--resource-uri <uri>", "Widget resource URI")
-        .option("--uri <uri>", "Alias for --resource-uri")
+        .requiredOption("--resource-uri <uri>", "Widget resource URI")
         .requiredOption(
           "--tool-id <id>",
           "Tool call id used for runtime injection",
@@ -195,15 +193,6 @@ export function registerAppsCommands(program: Command): void {
     const collector = globalOptions.rpc
       ? createCliRpcLogCollector({ __cli__: target })
       : undefined;
-    const resourceUri = resolveAliasedStringOption(
-      options as Record<string, unknown>,
-      [
-        { key: "resourceUri", flag: "--resource-uri" },
-        { key: "uri", flag: "--uri" },
-      ],
-      "Widget resource URI",
-      { required: true },
-    ) as string;
     const config = parseServerConfig({
       ...options,
       timeout: globalOptions.timeout,
@@ -213,7 +202,7 @@ export function registerAppsCommands(program: Command): void {
       config,
       (manager, serverId) =>
         buildMcpWidgetContent(manager, serverId, {
-          resourceUri,
+          resourceUri: options.resourceUri as string,
           toolId: options.toolId as string,
           toolName: options.toolName as string,
           toolInput: parseJsonRecord(options.toolInput, "Tool input") ?? {},
@@ -242,8 +231,7 @@ export function registerAppsCommands(program: Command): void {
       apps
         .command("chatgpt-widget")
         .description("Fetch hosted-style ChatGPT App widget content")
-        .option("--resource-uri <uri>", "Widget resource URI")
-        .option("--uri <uri>", "Alias for --resource-uri")
+        .requiredOption("--resource-uri <uri>", "Widget resource URI")
         .requiredOption(
           "--tool-id <id>",
           "Tool call id used for runtime injection",
@@ -273,15 +261,6 @@ export function registerAppsCommands(program: Command): void {
     const collector = globalOptions.rpc
       ? createCliRpcLogCollector({ __cli__: target })
       : undefined;
-    const resourceUri = resolveAliasedStringOption(
-      options as Record<string, unknown>,
-      [
-        { key: "resourceUri", flag: "--resource-uri" },
-        { key: "uri", flag: "--uri" },
-      ],
-      "Widget resource URI",
-      { required: true },
-    ) as string;
     const config = parseServerConfig({
       ...options,
       timeout: globalOptions.timeout,
@@ -291,7 +270,7 @@ export function registerAppsCommands(program: Command): void {
       config,
       (manager, serverId) =>
         buildChatGptWidgetContent(manager, serverId, {
-          uri: resourceUri,
+          uri: options.resourceUri as string,
           toolId: options.toolId as string,
           toolName: options.toolName as string,
           toolInput: parseJsonRecord(options.toolInput, "Tool input") ?? {},

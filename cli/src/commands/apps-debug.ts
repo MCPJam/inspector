@@ -19,19 +19,14 @@ import {
   parseJsonRecord,
   parseRetryPolicy,
   parseServerConfig,
-  resolveAliasedStringOption,
   type SharedServerTargetOptions,
 } from "../lib/server-config.js";
 import { usageError, writeResult } from "../lib/output.js";
 
 interface AppsDebugOptions extends SharedServerTargetOptions {
   toolName?: string;
-  name?: string;
   params?: string;
-  toolArgs?: string;
-  engine?: string;
-  render?: string;
-  openInspector?: boolean;
+  ui?: boolean;
   inspectorUrl?: string;
   out?: string;
   serverName?: string;
@@ -41,9 +36,6 @@ interface AppsDebugOptions extends SharedServerTargetOptions {
   locale?: string;
   timeZone?: string;
 }
-
-type AppsDebugEngine = "sdk" | "inspector";
-type AppsDebugRender = "none" | "inspector";
 
 type AppRenderContext = {
   protocol?: "mcp-apps" | "openai-sdk";
@@ -71,38 +63,34 @@ export function registerAppsDebugCommand(parent: Command): void {
       parent
         .command("debug")
         .description("Debug an MCP App tool call from the CLI")
-        .option("--tool-name <name>", "Tool name to execute")
-        .option("--name <name>", "Alias for --tool-name")
+        .requiredOption("--tool-name <name>", "Tool name to execute")
         .option(
           "--params <json|@file>",
           "Tool parameters as JSON or @path to a JSON file",
         )
-        .option("--tool-args <json|@file>", "Alias for --params")
         .option(
-          "--engine <engine>",
-          'Execution engine: "sdk" or "inspector". Default: "sdk".',
+          "--ui",
+          "Open the Inspector UI to render the App after execution",
         )
+        .option("--inspector-url <url>", "Local Inspector base URL (with --ui)")
         .option(
-          "--render <render>",
-          'Render mode: "none" or "inspector". Default: "none".',
+          "--server-name <name>",
+          "Server name inside Inspector (with --ui)",
         )
-        .option(
-          "--open-inspector",
-          "Open the Inspector browser UI while using Inspector-backed execution",
-        )
-        .option("--inspector-url <url>", "Local Inspector base URL")
-        .option("--server-name <name>", "Server name inside Inspector")
         .option(
           "--protocol <protocol>",
-          'Render protocol: "mcp-apps" or "openai-sdk"',
+          'Render protocol: "mcp-apps" or "openai-sdk" (with --ui)',
         )
         .option(
           "--device <device>",
-          'Render device: "mobile", "tablet", "desktop", or "custom"',
+          'Render device: "mobile", "tablet", "desktop", or "custom" (with --ui)',
         )
-        .option("--theme <theme>", 'Render theme: "light" or "dark"')
-        .option("--locale <locale>", "Render locale")
-        .option("--time-zone <iana>", "Render IANA timezone")
+        .option(
+          "--theme <theme>",
+          'Render theme: "light" or "dark" (with --ui)',
+        )
+        .option("--locale <locale>", "Render locale (with --ui)")
+        .option("--time-zone <iana>", "Render IANA timezone (with --ui)")
         .option(
           "--out <path>",
           "Write the full debug artifact to a JSON file",
@@ -112,26 +100,8 @@ export function registerAppsDebugCommand(parent: Command): void {
     const globalOptions = getGlobalOptions(command);
     const retryPolicy = parseRetryPolicy(options);
     const target = describeTarget(options);
-    const toolName = resolveAliasedStringOption(
-      options as Record<string, unknown>,
-      [
-        { key: "toolName", flag: "--tool-name" },
-        { key: "name", flag: "--name" },
-      ],
-      "Tool name",
-      { required: true },
-    ) as string;
-    const rawParams = resolveAliasedStringOption(
-      options as Record<string, unknown>,
-      [
-        { key: "params", flag: "--params" },
-        { key: "toolArgs", flag: "--tool-args" },
-      ],
-      "Tool parameters",
-    );
-    const params = await parseJsonRecordOrFile(rawParams, "Tool parameters");
-    const render = parseAppsDebugRender(options.render);
-    const engine = parseAppsDebugEngine(options.engine, render);
+    const toolName = options.toolName as string;
+    const params = await parseJsonRecordOrFile(options.params, "Tool parameters");
     const serverName =
       typeof options.serverName === "string" && options.serverName.trim()
         ? options.serverName.trim()
@@ -142,44 +112,41 @@ export function registerAppsDebugCommand(parent: Command): void {
       timeout: globalOptions.timeout,
     });
 
-    const result =
-      engine === "inspector"
-        ? await runInspectorAppsDebug({
-            baseUrl: options.inspectorUrl,
-            config,
-            openBrowser:
-              Boolean(options.openInspector) || render === "inspector",
-            params,
-            render,
-            serverName,
-            timeoutMs: globalOptions.timeout,
-            toolName,
-            renderContext: {
-              protocol: parseRenderProtocol(options.protocol),
-              deviceType: parseRenderDevice(options.device),
-              theme: parseTheme(options.theme),
-              locale: trimOptional(options.locale),
-              timeZone: trimOptional(options.timeZone),
-            },
-          })
-        : await runSdkAppsDebug({
-            config,
-            params,
-            retryPolicy,
-            target,
-            toolName,
-          });
+    const sdkResult = await runSdkAppsDebug({
+      config,
+      params,
+      retryPolicy,
+      target,
+      toolName,
+    });
+
+    const uiResult = options.ui
+      ? await runUiRender({
+          baseUrl: options.inspectorUrl,
+          config,
+          params,
+          renderContext: {
+            protocol: parseRenderProtocol(options.protocol),
+            deviceType: parseRenderDevice(options.device),
+            theme: parseTheme(options.theme),
+            locale: trimOptional(options.locale),
+            timeZone: trimOptional(options.timeZone),
+          },
+          serverName,
+          timeoutMs: globalOptions.timeout,
+          toolName,
+        })
+      : undefined;
 
     const payload = {
       success: true,
       command: "apps debug",
-      engine,
-      render,
+      inspectorUi: Boolean(options.ui),
       target,
-      serverName: engine === "inspector" ? serverName : "__cli__",
       toolName,
       params,
-      ...result,
+      ...sdkResult,
+      ...(uiResult ? { inspectorRender: uiResult } : {}),
     };
 
     if (options.out) {
@@ -254,12 +221,10 @@ async function runSdkAppsDebug(options: {
   );
 }
 
-async function runInspectorAppsDebug(options: {
+async function runUiRender(options: {
   baseUrl?: string;
   config: MCPServerConfig;
-  openBrowser: boolean;
   params: Record<string, unknown>;
-  render: AppsDebugRender;
   renderContext: AppRenderContext;
   serverName: string;
   timeoutMs: number;
@@ -272,58 +237,29 @@ async function runInspectorAppsDebug(options: {
     timeoutMs: options.timeoutMs,
   });
 
-  const connection = await client.connectServer(
-    options.serverName,
-    options.config,
-  );
-  const [toolsData, initInfo] = await Promise.all([
-    client.listTools(options.serverName),
-    client.getInitInfo(options.serverName).catch((error) => ({
-      success: false,
-      error: error instanceof Error ? error.message : String(error),
-    })),
-  ]);
-  const execution = await client.executeTool(
-    options.serverName,
-    options.toolName,
-    options.params,
-  );
-  const debugResult = buildAppsDebugResult({
-    execution: normalizeInspectorToolExecution(execution),
-    rawExecution: execution,
-    toolsData,
-    toolName: options.toolName,
+  await client.connectServer(options.serverName, options.config);
+
+  await ensureInspector({
+    baseUrl: ensureResult.baseUrl,
+    openBrowser: true,
+    startIfNeeded: false,
+    tab: "app-builder",
+    timeoutMs: options.timeoutMs,
   });
 
-  if (options.openBrowser) {
-    await ensureInspector({
-      baseUrl: ensureResult.baseUrl,
-      openBrowser: true,
-      startIfNeeded: false,
-      tab: options.render === "inspector" ? "app-builder" : undefined,
-      timeoutMs: options.timeoutMs,
-    });
-  }
-
-  const renderResult =
-    options.render === "inspector"
-      ? await runInspectorAppRender({
-          client,
-          params: options.params,
-          renderContext: options.renderContext,
-          serverName: options.serverName,
-          timeoutMs: options.timeoutMs,
-          toolName: options.toolName,
-        })
-      : undefined;
+  const renderResult = await runInspectorAppRender({
+    client,
+    params: options.params,
+    renderContext: options.renderContext,
+    serverName: options.serverName,
+    timeoutMs: options.timeoutMs,
+    toolName: options.toolName,
+  });
 
   return {
     baseUrl: ensureResult.baseUrl,
     inspectorStarted: ensureResult.started,
-    connection,
-    initInfo,
-    ...debugResult,
-    ...(renderResult ? { inspectorRender: renderResult } : {}),
+    ...renderResult,
   };
 }
 
@@ -406,7 +342,6 @@ async function executeInspectorCommandWithClient(
 
 function buildAppsDebugResult(options: {
   execution: unknown;
-  rawExecution?: unknown;
   toolsData: unknown;
   toolName: string;
 }) {
@@ -427,21 +362,7 @@ function buildAppsDebugResult(options: {
     toolMetadata,
     ui,
     execution: options.execution,
-    ...(options.rawExecution ? { rawExecution: options.rawExecution } : {}),
   };
-}
-
-function normalizeInspectorToolExecution(execution: unknown): unknown {
-  if (!execution || typeof execution !== "object") {
-    return execution;
-  }
-
-  const record = execution as Record<string, unknown>;
-  if (record.status === "completed" && "result" in record) {
-    return record.result;
-  }
-
-  return execution;
 }
 
 function normalizeToolsData(value: unknown): {
@@ -498,32 +419,6 @@ function extractToolUiMetadata(meta: Record<string, unknown>) {
     openAiOutputTemplate:
       typeof openAiOutputTemplate === "string" ? openAiOutputTemplate : null,
   };
-}
-
-function parseAppsDebugEngine(
-  value: string | undefined,
-  render: AppsDebugRender,
-): AppsDebugEngine {
-  if (value === undefined) {
-    return render === "inspector" ? "inspector" : "sdk";
-  }
-  if (value !== "sdk" && value !== "inspector") {
-    throw usageError(`Invalid engine "${value}". Use "sdk" or "inspector".`);
-  }
-  if (value === "sdk" && render === "inspector") {
-    throw usageError("--render inspector requires --engine inspector.");
-  }
-  return value;
-}
-
-function parseAppsDebugRender(value: string | undefined): AppsDebugRender {
-  if (value === undefined || value === "none") {
-    return "none";
-  }
-  if (value === "inspector") {
-    return "inspector";
-  }
-  throw usageError(`Invalid render "${value}". Use "none" or "inspector".`);
 }
 
 function parseRenderProtocol(

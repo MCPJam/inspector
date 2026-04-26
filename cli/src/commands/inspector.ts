@@ -3,6 +3,7 @@ import {
   buildInspectorUrl,
   ensureInspector,
   normalizeInspectorBaseUrl,
+  stopInspector,
 } from "../lib/inspector-api.js";
 import { getGlobalOptions } from "../lib/server-config.js";
 import { writeResult } from "../lib/output.js";
@@ -43,6 +44,59 @@ export function registerInspectorCommands(program: Command): void {
           baseUrl: result.baseUrl,
           url: buildInspectorUrl(result.baseUrl, tab),
           ...(tab ? { tab } : {}),
+        },
+        globalOptions.format,
+      );
+    });
+
+  inspector
+    .command("start")
+    .description(
+      "Start the local Inspector in the background without opening a browser",
+    )
+    .option("--inspector-url <url>", "Local Inspector base URL")
+    .action(async (options, command) => {
+      const globalOptions = getGlobalOptions(command);
+      const baseUrl = normalizeInspectorBaseUrl(
+        typeof options.inspectorUrl === "string"
+          ? options.inspectorUrl
+          : undefined,
+      );
+      const result = await ensureInspector({
+        baseUrl,
+        openBrowser: false,
+        startIfNeeded: true,
+        timeoutMs: globalOptions.timeout,
+      });
+
+      writeResult(
+        {
+          success: true,
+          started: result.started,
+          baseUrl: result.baseUrl,
+        },
+        globalOptions.format,
+      );
+    });
+
+  inspector
+    .command("stop")
+    .description("Stop the local Inspector if it is running")
+    .option("--inspector-url <url>", "Local Inspector base URL")
+    .action(async (options, command) => {
+      const globalOptions = getGlobalOptions(command);
+      const baseUrl = normalizeInspectorBaseUrl(
+        typeof options.inspectorUrl === "string"
+          ? options.inspectorUrl
+          : undefined,
+      );
+      const result = await stopInspector(baseUrl);
+
+      writeResult(
+        {
+          success: true,
+          stopped: result.stopped,
+          baseUrl: result.baseUrl,
         },
         globalOptions.format,
       );

@@ -105,6 +105,25 @@ export async function ensureInspector(
   return { baseUrl, started: true };
 }
 
+export async function stopInspector(
+  baseUrl: string,
+): Promise<{ stopped: boolean; baseUrl: string }> {
+  const normalized = normalizeInspectorBaseUrl(baseUrl);
+
+  if (!(await isInspectorHealthy(normalized))) {
+    return { stopped: false, baseUrl: normalized };
+  }
+
+  try {
+    const response = await fetch(`${normalized}/api/shutdown`, {
+      method: "POST",
+    });
+    return { stopped: response.ok, baseUrl: normalized };
+  } catch {
+    return { stopped: false, baseUrl: normalized };
+  }
+}
+
 export class InspectorApiClient {
   readonly baseUrl: string;
 
