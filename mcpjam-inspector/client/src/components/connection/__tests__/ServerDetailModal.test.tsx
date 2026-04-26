@@ -61,6 +61,12 @@ vi.mock("@/lib/mcp-ui/mcp-apps-utils", () => {
           hasUiResourceUri((meta ?? {}) as Record<string, unknown>),
         ),
       ),
+    UIType: {
+      MCP_APPS: "mcp-apps",
+      OPENAI_SDK: "openai-sdk",
+      OPENAI_SDK_AND_MCP_APPS: "openai-sdk-and-mcp-apps",
+      MCP_UI: "mcp-ui",
+    },
   };
 });
 

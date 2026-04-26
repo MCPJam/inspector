@@ -1,7 +1,6 @@
 import type { CSSProperties } from "react";
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import {
-  findHostStyle,
   getHostStyleOrDefault,
   type HostStyleFamily,
   type HostStyleId,
@@ -40,16 +39,28 @@ export function getChatboxHostLogo(hostStyle: ChatboxHostStyle): string {
   return getHostStyleOrDefault(hostStyle).logoSrc;
 }
 
+/**
+ * MCP-Apps protocol the host emulates. Falsy input (no chatbox context)
+ * returns `undefined` so callers can apply their own default; truthy-but-
+ * unregistered ids resolve to the default host's protocol via
+ * {@link getHostStyleOrDefault}, matching the rest of this file's fallback.
+ */
 export function getChatboxProtocolOverride(
   hostStyle: ChatboxHostStyle | null | undefined,
 ): UIType | undefined {
-  return findHostStyle(hostStyle)?.protocolOverride;
+  if (!hostStyle) return undefined;
+  return getHostStyleOrDefault(hostStyle).protocolOverride;
 }
 
 /**
  * Visual rendering family the host maps onto. Use this — not equality
  * against the host id — when branching on chat-v2 visual variants so that
  * new host styles automatically pick up an existing visual language.
+ *
+ * Returns `null` only when `hostStyle` is falsy (no chatbox context). Any
+ * truthy-but-unregistered id is resolved through {@link getHostStyleOrDefault}
+ * and therefore reports the default host's family ("claude"); call sites
+ * matching `family === "claude"` will also catch unregistered ids.
  */
 export function getChatboxHostFamily(
   hostStyle: ChatboxHostStyle | null | undefined,

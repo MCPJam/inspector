@@ -69,6 +69,7 @@ import {
   getChatboxChatBackground,
   getChatboxHostFamily,
 } from "@/lib/chatbox-host-style";
+import { DEFAULT_HOST_STYLE } from "@/lib/host-styles";
 import {
   HostContextHeader,
   PRESET_DEVICE_CONFIGS,
@@ -453,7 +454,8 @@ export function PlaygroundMain({
     extractHostTheme(hostContext) ?? globalThemeMode;
   const hostStyleFamily = getChatboxHostFamily(hostStyle) ?? "claude";
   const hostBackgroundColor =
-    getChatboxChatBackground(hostStyle, effectiveThreadTheme) ?? "transparent";
+    getChatboxChatBackground(hostStyle, effectiveThreadTheme) ??
+    DEFAULT_HOST_STYLE.resolveChatBackground(effectiveThreadTheme);
   const displayMode =
     extractEffectiveHostDisplayMode(hostContext) ?? displayModeProp;
 

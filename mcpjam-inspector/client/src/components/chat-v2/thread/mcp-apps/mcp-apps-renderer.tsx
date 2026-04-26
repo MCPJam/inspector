@@ -772,7 +772,7 @@ export function MCPAppsRenderer({
   // These are sent via hostContext.styles.variables - the SDK should pass them through
   const effectiveHostStyle = isPlaygroundActive
     ? sharedHostStyle
-    : (chatboxHostStyle ?? "claude");
+    : chatboxHostStyle;
   const hostStyleDefinition = getHostStyleOrDefault(effectiveHostStyle);
   themeModeRef.current = resolvedTheme;
   const styleVariables = useMemo(
