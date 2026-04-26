@@ -13,7 +13,15 @@ import { Badge } from "@mcpjam/design-system/badge";
 import { Card } from "@mcpjam/design-system/card";
 import { cn } from "@mcpjam/design-system/cn";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
-import { BookOpen, Check, Copy, Hammer, MessageSquareCode } from "lucide-react";
+import {
+  ArrowLeft,
+  BookOpen,
+  Check,
+  ChevronDown,
+  Copy,
+  Hammer,
+  MessageSquareCode,
+} from "lucide-react";
 import {
   StrictMode,
   type ComponentType,
@@ -34,6 +42,8 @@ import type {
   ServerToolInfo,
   ShowServersPayload,
 } from "../shared/show-servers.js";
+import mcpJamDarkLogoUrl from "../../../docs/logo/mcp_jam_dark.png?url";
+import mcpJamLightLogoUrl from "../../../docs/logo/mcp_jam_light.png?url";
 import "./global.css";
 
 const APP_INFO = {
@@ -83,7 +93,7 @@ function ShowServersApp() {
       };
     },
   });
-  useHostStyles(app, app?.getHostContext());
+  useHostStyles(app, hostContext ?? app?.getHostContext());
   const documentTheme = useDocumentTheme();
 
   useEffect(() => {
@@ -94,7 +104,8 @@ function ShowServersApp() {
     setHostContext(app.getHostContext());
   }, [app]);
 
-  const isDark = documentTheme === "dark";
+  const activeTheme = hostContext?.theme ?? documentTheme;
+  const isDark = activeTheme === "dark";
   const themePreset = getThemePreset(hostContext);
 
   if (error) {
@@ -130,7 +141,7 @@ function ShowServersApp() {
 
   return (
     <Shell hostContext={hostContext} isDark={isDark} themePreset={themePreset}>
-      <ShowServersContent toolResult={toolResult} />
+      <ShowServersContent toolResult={toolResult} isDark={isDark} />
     </Shell>
   );
 }
@@ -172,8 +183,10 @@ function Shell({
 }
 
 function ShowServersContent({
+  isDark,
   toolResult,
 }: {
+  isDark: boolean;
   toolResult: CallToolResult | null;
 }) {
   if (!toolResult) {
@@ -211,25 +224,43 @@ function ShowServersContent({
     );
   }
 
-  return <ServerInventory payload={payload} />;
+  return <ServerInventory isDark={isDark} payload={payload} />;
 }
 
-function ServerInventory({ payload }: { payload: ShowServersPayload }) {
+function ServerInventory({
+  isDark,
+  payload,
+}: {
+  isDark: boolean;
+  payload: ShowServersPayload;
+}) {
   const [selectedServerId, setSelectedServerId] = useState<string | undefined>(
-    payload.servers[0]?.id
+    undefined
   );
 
   useEffect(() => {
-    if (payload.servers.some((server) => server.id === selectedServerId)) {
+    if (
+      selectedServerId === undefined ||
+      payload.servers.some((server) => server.id === selectedServerId)
+    ) {
       return;
     }
 
-    setSelectedServerId(payload.servers[0]?.id);
+    setSelectedServerId(undefined);
   }, [payload.servers, selectedServerId]);
 
-  const selectedServer =
-    payload.servers.find((server) => server.id === selectedServerId) ??
-    payload.servers[0];
+  const selectedServer = payload.servers.find(
+    (server) => server.id === selectedServerId
+  );
+
+  if (selectedServer) {
+    return (
+      <ServerDetailScreen
+        server={selectedServer}
+        onBack={() => setSelectedServerId(undefined)}
+      />
+    );
+  }
 
   return (
     <>
@@ -242,24 +273,18 @@ function ServerInventory({ payload }: { payload: ShowServersPayload }) {
             {formatServerCount(payload.servers.length)}
           </Badge>
         </div>
-        <McpJamLogo className="h-9 w-9 shrink-0" />
+        <McpJamLogo isDark={isDark} />
       </header>
 
       {payload.servers.length > 0 ? (
-        <section className="grid gap-4 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
-          <div className="grid content-start gap-2 sm:grid-cols-2 lg:grid-cols-1">
-            {payload.servers.map((server) => (
-              <ServerConnectionCard
-                key={server.id}
-                server={server}
-                selected={server.id === selectedServer?.id}
-                onSelect={() => setSelectedServerId(server.id)}
-              />
-            ))}
-          </div>
-          {selectedServer ? (
-            <ServerDetailPanel server={selectedServer} />
-          ) : null}
+        <section className="grid gap-3 sm:grid-cols-2">
+          {payload.servers.map((server) => (
+            <ServerConnectionCard
+              key={server.id}
+              server={server}
+              onSelect={() => setSelectedServerId(server.id)}
+            />
+          ))}
         </section>
       ) : (
         <MessageBox
@@ -273,11 +298,9 @@ function ServerInventory({ payload }: { payload: ShowServersPayload }) {
 
 function ServerConnectionCard({
   server,
-  selected,
   onSelect,
 }: {
   server: ServerEntry;
-  selected: boolean;
   onSelect: () => void;
 }) {
   const [copied, setCopied] = useState(false);
@@ -301,15 +324,9 @@ function ServerConnectionCard({
   };
 
   return (
-    <Card
-      className={cn(
-        "group relative h-full rounded-xl border border-border/50 bg-card/60 p-0 shadow-sm transition-colors duration-200 hover:border-border",
-        selected && "border-primary/60 bg-accent/50"
-      )}
-    >
+    <Card className="group relative h-full rounded-xl border border-border/50 bg-card/60 p-0 shadow-sm transition-colors duration-200 hover:border-border">
       <button
         type="button"
-        aria-pressed={selected}
         onClick={onSelect}
         className="block h-full w-full cursor-pointer rounded-xl p-4 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
@@ -356,36 +373,58 @@ function ServerConnectionCard({
   );
 }
 
-function ServerDetailPanel({ server }: { server: ServerEntry }) {
+function ServerDetailScreen({
+  server,
+  onBack,
+}: {
+  server: ServerEntry;
+  onBack: () => void;
+}) {
   const primitives = server.primitives;
 
   return (
-    <Card className="min-h-[24rem] rounded-xl border border-border/50 bg-card/70 p-0 shadow-sm">
-      <div className="border-b border-border/60 p-4">
-        <div className="flex items-start justify-between gap-3">
+    <div className="flex w-full flex-col gap-4">
+      <header className="flex items-start justify-between gap-4">
+        <div className="flex min-w-0 items-start gap-3">
+          <button
+            type="button"
+            onClick={onBack}
+            aria-label="Back to servers"
+            title="Back to servers"
+            className="mt-1 inline-flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-md border border-border/60 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <ArrowLeft className="h-4 w-4" />
+          </button>
           <div className="min-w-0">
-            <h2 className="break-words text-base font-semibold text-foreground">
-              {server.name}
-            </h2>
-            <p className="mt-1 break-all font-mono text-xs text-muted-foreground">
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <h1 className="break-words text-xl font-semibold leading-tight sm:text-2xl">
+                {server.name}
+              </h1>
+              {server.serverInfo?.version ? (
+                <span className="shrink-0 text-xs text-muted-foreground">
+                  v{server.serverInfo.version}
+                </span>
+              ) : null}
+            </div>
+            <div className="mt-2 break-all font-mono text-xs text-muted-foreground">
               {server.url ?? getMissingUrlLabel(server)}
-            </p>
+            </div>
+            {server.statusDetail ? (
+              <p className="mt-3 text-sm text-muted-foreground">
+                {server.statusDetail}
+              </p>
+            ) : null}
           </div>
-          <span className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-border/60 px-2 py-1 text-xs text-muted-foreground">
-            <StatusDot status={server.status} />
-            {STATUS_LABELS[server.status]}
-          </span>
         </div>
-        {server.statusDetail ? (
-          <p className="mt-3 text-sm text-muted-foreground">
-            {server.statusDetail}
-          </p>
-        ) : null}
-      </div>
+        <span className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-border/60 px-2 py-1 text-xs text-muted-foreground">
+          <StatusDot status={server.status} />
+          {STATUS_LABELS[server.status]}
+        </span>
+      </header>
 
       {primitives ? (
-        <div className="grid gap-5 p-4 xl:grid-cols-3">
-          <PrimitiveGroup
+        <div className="flex flex-col gap-3">
+          <PrimitiveDropdown
             label="Tools"
             icon={Hammer}
             collection={primitives.tools}
@@ -393,7 +432,7 @@ function ServerDetailPanel({ server }: { server: ServerEntry }) {
             getKey={(tool) => tool.name}
             renderItem={(tool) => <ToolPrimitiveItem tool={tool} />}
           />
-          <PrimitiveGroup
+          <PrimitiveDropdown
             label="Resources"
             icon={BookOpen}
             collection={primitives.resources}
@@ -403,7 +442,7 @@ function ServerDetailPanel({ server }: { server: ServerEntry }) {
               <ResourcePrimitiveItem resource={resource} />
             )}
           />
-          <PrimitiveGroup
+          <PrimitiveDropdown
             label="Prompts"
             icon={MessageSquareCode}
             collection={primitives.prompts}
@@ -413,21 +452,19 @@ function ServerDetailPanel({ server }: { server: ServerEntry }) {
           />
         </div>
       ) : (
-        <div className="p-4">
-          <MessageBox
-            label="Primitives unavailable"
-            message={
-              server.statusDetail ??
-              "Tools, resources, and prompts were not collected for this server."
-            }
-          />
-        </div>
+        <MessageBox
+          label="Primitives unavailable"
+          message={
+            server.statusDetail ??
+            "Tools, resources, and prompts were not collected for this server."
+          }
+        />
       )}
-    </Card>
+    </div>
   );
 }
 
-function PrimitiveGroup<TItem>({
+function PrimitiveDropdown<TItem>({
   label,
   icon: Icon,
   collection,
@@ -442,45 +479,62 @@ function PrimitiveGroup<TItem>({
   getKey: (item: TItem) => string;
   renderItem: (item: TItem) => ReactNode;
 }) {
+  const [open, setOpen] = useState(false);
   const hasItems = collection.items.length > 0;
 
   return (
-    <section className="min-w-0">
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex min-w-0 items-center gap-2">
+    <section className="overflow-hidden rounded-lg border border-border/60 bg-card/60">
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        aria-expanded={open}
+        className="flex w-full cursor-pointer items-center justify-between gap-3 p-4 text-left transition-colors hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        <div className="flex min-w-0 items-center gap-3">
           <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
-          <h3 className="truncate text-sm font-semibold">{label}</h3>
+          <div className="min-w-0">
+            <h2 className="truncate text-sm font-semibold">{label}</h2>
+            {collection.statusDetail ? (
+              <p className="mt-1 truncate text-xs text-muted-foreground">
+                {collection.statusDetail}
+              </p>
+            ) : null}
+          </div>
         </div>
-        <div className="flex shrink-0 items-center gap-1.5">
+        <div className="flex shrink-0 items-center gap-2">
           <Badge variant="secondary">{collection.items.length}</Badge>
           {collection.status !== "loaded" ? (
             <Badge variant="outline">
               {PRIMITIVE_STATUS_LABELS[collection.status]}
             </Badge>
           ) : null}
+          <ChevronDown
+            className={cn(
+              "h-4 w-4 text-muted-foreground transition-transform",
+              open && "rotate-180"
+            )}
+          />
         </div>
-      </div>
+      </button>
 
-      {collection.statusDetail ? (
-        <p className="mt-2 text-xs text-muted-foreground">
-          {collection.statusDetail}
-        </p>
+      {open ? (
+        <div className="border-t border-border/60 px-4 py-2">
+          {hasItems ? (
+            <ul>
+              {collection.items.map((item) => (
+                <li
+                  key={getKey(item)}
+                  className="border-t border-border/50 py-3 first:border-t-0"
+                >
+                  {renderItem(item)}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="py-3 text-sm text-muted-foreground">{emptyLabel}</p>
+          )}
+        </div>
       ) : null}
-
-      {hasItems ? (
-        <ul className="mt-3 max-h-80 overflow-auto pr-1">
-          {collection.items.map((item) => (
-            <li
-              key={getKey(item)}
-              className="border-t border-border/50 py-3 first:border-t-0"
-            >
-              {renderItem(item)}
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <p className="mt-3 text-sm text-muted-foreground">{emptyLabel}</p>
-      )}
     </section>
   );
 }
@@ -595,26 +649,13 @@ function MessageBox({
   );
 }
 
-function McpJamLogo({ className }: { className?: string }) {
+function McpJamLogo({ isDark }: { isDark: boolean }) {
   return (
-    <svg
-      aria-label="MCPJam"
-      className={className}
-      role="img"
-      viewBox="0 0 1080 1080"
-      fill="none"
-      xmlns="http://www.w3.org/2000/svg"
-    >
-      <rect width="1080" height="1080" rx="241" fill="#2D2D2D" />
-      <path
-        d="M196.547 508V298H245.447L332.447 440.8H306.647L391.247 298H440.147L440.747 508H386.147L385.547 381.1H394.847L331.547 487.3H305.147L240.047 381.1H251.447V508H196.547ZM587.477 512.2C570.877 512.2 555.477 509.6 541.277 504.4C527.277 499 515.077 491.4 504.677 481.6C494.477 471.8 486.477 460.3 480.677 447.1C474.877 433.7 471.977 419 471.977 403C471.977 387 474.877 372.4 480.677 359.2C486.477 345.8 494.477 334.2 504.677 324.4C515.077 314.6 527.277 307.1 541.277 301.9C555.477 296.5 570.877 293.8 587.477 293.8C606.877 293.8 624.177 297.2 639.377 304C654.777 310.8 667.577 320.6 677.777 333.4L639.977 367.6C633.177 359.6 625.677 353.5 617.477 349.3C609.477 345.1 600.477 343 590.477 343C581.877 343 573.977 344.4 566.777 347.2C559.577 350 553.377 354.1 548.177 359.5C543.177 364.7 539.177 371 536.177 378.4C533.377 385.8 531.977 394 531.977 403C531.977 412 533.377 420.2 536.177 427.6C539.177 435 543.177 441.4 548.177 446.8C553.377 452 559.577 456 566.777 458.8C573.977 461.6 581.877 463 590.477 463C600.477 463 609.477 460.9 617.477 456.7C625.677 452.5 633.177 446.4 639.977 438.4L677.777 472.6C667.577 485.2 654.777 495 639.377 502C624.177 508.8 606.877 512.2 587.477 512.2ZM704.262 508V298H800.262C819.462 298 835.962 301.1 849.762 307.3C863.762 313.5 874.562 322.5 882.162 334.3C889.762 345.9 893.562 359.7 893.562 375.7C893.562 391.5 889.762 405.2 882.162 416.8C874.562 428.4 863.762 437.4 849.762 443.8C835.962 450 819.462 453.1 800.262 453.1H737.262L763.662 427.3V508H704.262ZM763.662 433.6L737.262 406.3H796.662C809.062 406.3 818.262 403.6 824.262 398.2C830.462 392.8 833.562 385.3 833.562 375.7C833.562 365.9 830.462 358.3 824.262 352.9C818.262 347.5 809.062 344.8 796.662 344.8H737.262L763.662 317.5V433.6Z"
-        fill="#FBFBFB"
-      />
-      <path
-        d="M264.566 792.2C249.166 792.2 235.166 789.6 222.566 784.4C210.166 779 199.866 771.3 191.666 761.3L224.066 722.9C229.666 730.1 235.466 735.6 241.466 739.4C247.466 743 253.766 744.8 260.366 744.8C277.966 744.8 286.766 734.6 286.766 714.2V623.9H214.166V578H345.566V710.6C345.566 738 338.666 758.5 324.866 772.1C311.066 785.5 290.966 792.2 264.566 792.2ZM356.064 788L448.764 578H507.264L600.264 788H538.464L465.864 607.1H489.264L416.664 788H356.064ZM406.764 747.2L422.064 703.4H524.664L539.964 747.2H406.764ZM617.104 788V578H666.004L753.004 720.8H727.204L811.804 578H860.704L861.304 788H806.704L806.104 661.1H815.404L752.104 767.3H725.704L660.604 661.1H672.004V788H617.104Z"
-        fill="#F2735B"
-      />
-    </svg>
+    <img
+      src={isDark ? mcpJamDarkLogoUrl : mcpJamLightLogoUrl}
+      alt="MCPJam"
+      className="h-5 w-auto shrink-0 object-contain sm:h-6"
+    />
   );
 }
 
