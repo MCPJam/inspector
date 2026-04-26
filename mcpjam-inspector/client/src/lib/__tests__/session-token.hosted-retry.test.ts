@@ -11,6 +11,12 @@ vi.mock("@/lib/config", () => ({
   HOSTED_MODE: true,
 }));
 
+vi.mock("posthog-js", () => ({
+  default: {
+    capture: vi.fn(),
+  },
+}));
+
 vi.mock("@/lib/guest-session", () => ({
   getGuestBearerToken: vi.fn(),
   forceRefreshGuestSession: vi.fn(),
@@ -35,6 +41,7 @@ import {
   resetTokenCache,
   shouldRetryHostedAuth401,
 } from "@/lib/apis/web/context";
+import posthog from "posthog-js";
 
 describe("authFetch hosted 401 retry", () => {
   beforeEach(() => {
@@ -43,13 +50,14 @@ describe("authFetch hosted 401 retry", () => {
     vi.mocked(forceRefreshGuestSession).mockReset();
     vi.mocked(shouldRetryHostedAuth401).mockReturnValue(true);
     vi.mocked(global.fetch).mockReset();
+    vi.mocked(posthog.capture).mockReset();
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
   });
 
-  it("retries with fresh token on 401 when hosted auth is guest-backed", async () => {
+  it("retries chatbox bootstrap once with a refreshed guest token after a 401", async () => {
     vi.mocked(getHostedAuthorizationHeader).mockResolvedValueOnce(
       "Bearer stale-token",
     );
@@ -63,10 +71,10 @@ describe("authFetch hosted 401 retry", () => {
         json: () => Promise.resolve({ success: true }),
       } as Response);
 
-    const response = await authFetch("/api/web/tools/list", {
+    const response = await authFetch("/api/web/chatboxes/bootstrap", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({}),
+      body: JSON.stringify({ token: "chatbox-token" }),
     });
 
     expect(response.status).toBe(200);
@@ -75,13 +83,18 @@ describe("authFetch hosted 401 retry", () => {
     expect(global.fetch).toHaveBeenCalledTimes(2);
     expect(global.fetch).toHaveBeenNthCalledWith(
       2,
-      "/api/web/tools/list",
+      "/api/web/chatboxes/bootstrap",
       expect.objectContaining({
         headers: expect.objectContaining({
           Authorization: "Bearer fresh-token",
         }),
       }),
     );
+    expect(posthog.capture).toHaveBeenCalledWith("guest_refresh_success", {
+      surface: "chatbox",
+      auth_mode: "guest",
+      status: "success",
+    });
   });
 
   it("returns 401 if retry also fails (no infinite loop)", async () => {
@@ -168,12 +181,18 @@ describe("authFetch hosted 401 retry", () => {
       ok: false,
     } as Response);
 
-    const response = await authFetch("/api/web/test");
+    const response = await authFetch("/api/web/chatboxes/bootstrap");
 
     expect(response.status).toBe(401);
     expect(resetTokenCache).toHaveBeenCalledTimes(1);
     expect(forceRefreshGuestSession).toHaveBeenCalledTimes(1);
     expect(global.fetch).toHaveBeenCalledTimes(1); // no retry
+    expect(posthog.capture).toHaveBeenCalledWith("guest_refresh_failure", {
+      surface: "chatbox",
+      auth_mode: "guest",
+      status: "failure",
+      error_kind: "guest_refresh_unavailable",
+    });
   });
 
   it("passes through successful responses without retry", async () => {

@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
+import { usePostHog } from "posthog-js/react";
 import { Loader2, Link2Off, ShieldX } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@mcpjam/design-system/button";
@@ -10,8 +11,8 @@ import type { ServerWithName } from "@/hooks/use-app-state";
 import { useHostedApiContext } from "@/hooks/hosted/use-hosted-api-context";
 import { useHostedOAuthGate } from "@/hooks/hosted/use-hosted-oauth-gate";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
-import { getGuestBearerToken } from "@/lib/guest-session";
 import { getStoredTokens } from "@/lib/oauth/mcp-oauth";
+import { authFetch } from "@/lib/session-token";
 import {
   buildChatboxLink,
   clearChatboxSession,
@@ -64,21 +65,12 @@ const INVALID_CHATBOX_LINK_MESSAGE =
 const UNEXPECTED_CHATBOX_ERROR_MESSAGE =
   "We couldn't open this chatbox right now. Please try again or open MCPJam.";
 
-async function getHostedBearerHeader(
-  getAccessToken: () => Promise<string | undefined | null>,
-): Promise<string | null> {
-  try {
-    const workOsToken = await getAccessToken();
-    if (workOsToken) {
-      return `Bearer ${workOsToken}`;
-    }
-  } catch {
-    // Fall through to guest auth.
-  }
-
-  const guestToken = await getGuestBearerToken();
-  return guestToken ? `Bearer ${guestToken}` : null;
-}
+type ChatboxBootstrapAuthMode = "workos" | "guest";
+type ChatboxLandingState =
+  | "resolvingAuth"
+  | "bootstrapping"
+  | "ready"
+  | "denied";
 
 function sanitizeChatboxRouteErrorMessage(message: string): string {
   const normalized = message.replace(/\s+/g, " ").trim();
@@ -215,13 +207,34 @@ function getChatboxDisplayError(
   };
 }
 
+function getChatboxBootstrapAuthMode(
+  isAuthenticated: boolean,
+): ChatboxBootstrapAuthMode {
+  return isAuthenticated ? "workos" : "guest";
+}
+
+function isInteractiveSignInRequired(kind: ChatboxErrorKind): boolean {
+  return kind === "access_denied" || kind === "guest_blocked";
+}
+
 export function ChatboxChatPage({
   pathToken,
   onExitChatboxChat,
 }: ChatboxChatPageProps) {
-  const { getAccessToken, signIn } = useAuth();
+  const {
+    getAccessToken,
+    signIn,
+    user: workOsUser,
+    isLoading: isWorkOsLoading,
+  } = useAuth();
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
+  const posthog = usePostHog();
+  const posthogRef = useRef(posthog);
   const themeMode = usePreferencesStore((s) => s.themeMode);
+
+  useEffect(() => {
+    posthogRef.current = posthog;
+  }, [posthog]);
 
   const playgroundParams = useMemo(() => {
     try {
@@ -262,10 +275,19 @@ export function ChatboxChatPage({
   const [session, setSession] = useState<ChatboxSession | null>(() =>
     readCurrentSession(),
   );
-  const [isResolving, setIsResolving] = useState(
+  const [isBootstrapping, setIsBootstrapping] = useState(
     Boolean(pathToken || playgroundParams),
   );
   const [routeError, setRouteError] = useState<ChatboxRouteError | null>(null);
+  const interactiveSignInEventKeyRef = useRef<string | null>(null);
+  const tokenFromPath = useMemo(() => pathToken?.trim() || null, [pathToken]);
+  const hasWorkOsUser = Boolean(workOsUser);
+  const isAuthSettling =
+    Boolean(tokenFromPath) &&
+    !playgroundParams &&
+    (isWorkOsLoading ||
+      isAuthLoading ||
+      (hasWorkOsUser && !isAuthenticated));
 
   const sessionServersRequired = useMemo(
     () => session?.payload.servers.filter((s) => !s.optional) ?? [],
@@ -422,15 +444,15 @@ export function ChatboxChatPage({
 
   useHostedApiContext({
     workspaceId: session?.payload.workspaceId ?? null,
-    serverIdsByName: hostedServerIdsByName,
+    serverIdsByName: session ? hostedServerIdsByName : {},
     getAccessToken,
     oauthTokensByServerId: oauthTokensForChat,
-    chatboxToken: session?.token,
+    chatboxToken: tokenFromPath ?? session?.token,
     isAuthenticated,
   });
 
   useEffect(() => {
-    if (isAuthLoading) {
+    if (isAuthSettling) {
       return;
     }
 
@@ -451,28 +473,24 @@ export function ChatboxChatPage({
             ),
           );
         }
-        setIsResolving(false);
+        setIsBootstrapping(false);
         return;
       }
 
-      const tokenFromPath = pathToken?.trim() || null;
-
       if (tokenFromPath) {
-        setIsResolving(true);
+        const authMode = getChatboxBootstrapAuthMode(isAuthenticated);
+        setIsBootstrapping(true);
         setRouteError(null);
+        posthogRef.current.capture("chatbox_bootstrap_started", {
+          surface: "chatbox",
+          auth_mode: authMode,
+          status: "started",
+        });
         try {
-          const authorization = await getHostedBearerHeader(getAccessToken);
-          if (!authorization) {
-            throw new Error(
-              "Unable to create a hosted session for this chatbox.",
-            );
-          }
-
-          const response = await fetch("/api/web/chatboxes/bootstrap", {
+          const response = await authFetch("/api/web/chatboxes/bootstrap", {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
-              Authorization: authorization,
             },
             body: JSON.stringify({ token: tokenFromPath }),
           });
@@ -497,6 +515,11 @@ export function ChatboxChatPage({
           if (window.location.hash !== `#${nextSlug}`) {
             window.history.replaceState({}, "", `/#${nextSlug}`);
           }
+          posthogRef.current.capture("chatbox_bootstrap_silent_success", {
+            surface: "chatbox",
+            auth_mode: authMode,
+            status: "success",
+          });
         } catch (error) {
           if (cancelled) return;
           setSession(null);
@@ -522,9 +545,16 @@ export function ChatboxChatPage({
           }
 
           setRouteError(nextError);
+          posthogRef.current.capture("chatbox_bootstrap_silent_failure", {
+            surface: "chatbox",
+            auth_mode: authMode,
+            status: "failure",
+            error_kind: displayError.kind,
+            http_status: nextError.status,
+          });
         } finally {
           if (!cancelled) {
-            setIsResolving(false);
+            setIsBootstrapping(false);
           }
         }
         return;
@@ -554,13 +584,48 @@ export function ChatboxChatPage({
     };
   }, [
     clearCurrentSession,
-    getAccessToken,
-    isAuthLoading,
-    pathToken,
+    isAuthenticated,
+    isAuthSettling,
     playgroundParams,
     readCurrentSession,
+    tokenFromPath,
     writeCurrentSession,
   ]);
+
+  const displayError = getChatboxDisplayError(routeError);
+  const landingState: ChatboxLandingState = isAuthSettling
+    ? "resolvingAuth"
+    : isBootstrapping
+      ? "bootstrapping"
+      : session
+        ? "ready"
+        : "denied";
+
+  useEffect(() => {
+    if (
+      landingState !== "denied" ||
+      isAuthenticated ||
+      !isInteractiveSignInRequired(displayError.kind)
+    ) {
+      interactiveSignInEventKeyRef.current = null;
+      return;
+    }
+
+    const authMode = getChatboxBootstrapAuthMode(isAuthenticated);
+    const eventKey = `${displayError.kind}:${authMode}:${routeError?.status ?? 0}`;
+    if (interactiveSignInEventKeyRef.current === eventKey) {
+      return;
+    }
+
+    interactiveSignInEventKeyRef.current = eventKey;
+    posthogRef.current.capture("interactive_signin_required", {
+      surface: "chatbox",
+      auth_mode: authMode,
+      status: "required",
+      error_kind: displayError.kind,
+      http_status: routeError?.status,
+    });
+  }, [displayError.kind, isAuthenticated, landingState, routeError?.status]);
 
   useEffect(() => {
     if (!session) return;
@@ -621,7 +686,6 @@ export function ChatboxChatPage({
 
   const hostStyle = session?.payload.hostStyle ?? "claude";
   const shellStyle = getChatboxShellStyle(hostStyle, themeMode);
-  const displayError = getChatboxDisplayError(routeError);
   const oauthPending = pendingOAuthServers.length > 0;
   const welcomeAvailable =
     (session?.payload.welcomeDialog?.enabled ?? true) &&
@@ -639,7 +703,10 @@ export function ChatboxChatPage({
     pendingOAuthServers.every(({ state }) => isHostedOAuthBusy(state.status));
 
   const renderContent = () => {
-    if (isResolving) {
+    if (
+      landingState === "resolvingAuth" ||
+      landingState === "bootstrapping"
+    ) {
       return (
         <div className="flex flex-1 items-center justify-center">
           <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
@@ -647,7 +714,7 @@ export function ChatboxChatPage({
       );
     }
 
-    if (!session) {
+    if (landingState === "denied") {
       const isAccessDenied = displayError.kind === "access_denied";
       const guestBlocked = displayError.kind === "guest_blocked";
 
