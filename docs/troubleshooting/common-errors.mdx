@@ -57,6 +57,24 @@ If you're seeing **401 Unauthorized** errors when trying to connect to your serv
 - Typos in server URLs or commands
 - Missing file permissions or executable flags
 
+## Chat Model Limit
+
+### "MCPJam model limit reached" warning
+
+MCPJam provides free frontier models for chat. When you hit the daily usage limit, the chat surface shows a warning:
+
+> **MCPJam model limit reached.** Add your own API key under LLM Providers in Settings to continue now, or try again in _N_ minutes.
+
+This is an expected quota state, not an error with your MCP server.
+
+**To continue immediately:**
+
+1. Go to **Settings → LLM Providers**
+2. Add an API key for any supported provider (OpenAI, Anthropic, Gemini, etc.)
+3. Select that provider's model in the chat model picker
+
+**To wait for the limit to reset:** The warning includes the retry window. Free quota resets daily.
+
 ## Getting Help
 
 If you're still experiencing issues:
