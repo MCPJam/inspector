@@ -1,56 +1,61 @@
 import type { CSSProperties } from "react";
-import claudeLogo from "/claude_logo.png";
-import openaiLogo from "/openai_logo.png";
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import {
-  CHATGPT_CHAT_BACKGROUND,
-  getChatGPTStyleVariables,
-} from "@/config/chatgpt-host-context";
-import {
-  CLAUDE_DESKTOP_CHAT_BACKGROUND,
-  getClaudeDesktopStyleVariables,
-} from "@/config/claude-desktop-host-context";
+  findHostStyle,
+  getHostStyleOrDefault,
+  type HostStyleFamily,
+  type HostStyleId,
+  type HostThemeMode,
+} from "@/lib/host-styles";
 
-export type ChatboxHostStyle = "claude" | "chatgpt";
-
-type ResolvedThemeMode = "light" | "dark";
+/**
+ * Identifier of a chatbox host style. Today the registry contains "claude"
+ * and "chatgpt" built-ins; workspace-defined custom hosts will widen this
+ * at the value level without changing this string-based type.
+ */
+export type ChatboxHostStyle = HostStyleId;
 
 type ChatboxShellStyle = CSSProperties & Record<`--${string}`, string>;
 
 export function getChatboxHostLabel(hostStyle: ChatboxHostStyle): string {
-  return hostStyle === "chatgpt" ? "ChatGPT" : "Claude";
+  return getHostStyleOrDefault(hostStyle).label;
 }
 
 /** User-facing label for chatbox builder surfaces (host style terminology). */
 export function getChatboxHostStyleShortLabel(
   hostStyle: ChatboxHostStyle,
 ): string {
-  return hostStyle === "chatgpt" ? "ChatGPT-style host" : "Claude-style host";
+  return getHostStyleOrDefault(hostStyle).shortLabel;
 }
 
 export function getChatboxHostLogo(hostStyle: ChatboxHostStyle): string {
-  return hostStyle === "chatgpt" ? openaiLogo : claudeLogo;
+  return getHostStyleOrDefault(hostStyle).logoSrc;
 }
 
 export function getChatboxProtocolOverride(
   hostStyle: ChatboxHostStyle | null | undefined,
 ): UIType | undefined {
-  if (!hostStyle) return undefined;
-  return hostStyle === "chatgpt" ? UIType.OPENAI_SDK : UIType.MCP_APPS;
+  return findHostStyle(hostStyle)?.protocolOverride;
+}
+
+/**
+ * Visual rendering family the host maps onto. Use this — not equality
+ * against the host id — when branching on chat-v2 visual variants so that
+ * new host styles automatically pick up an existing visual language.
+ */
+export function getChatboxHostFamily(
+  hostStyle: ChatboxHostStyle | null | undefined,
+): HostStyleFamily {
+  return getHostStyleOrDefault(hostStyle).family;
 }
 
 export function getChatboxShellStyle(
   hostStyle: ChatboxHostStyle,
-  themeMode: ResolvedThemeMode,
+  themeMode: HostThemeMode,
 ): CSSProperties {
-  const styleVariables =
-    hostStyle === "chatgpt"
-      ? getChatGPTStyleVariables(themeMode)
-      : getClaudeDesktopStyleVariables(themeMode);
-  const background =
-    hostStyle === "chatgpt"
-      ? CHATGPT_CHAT_BACKGROUND[themeMode]
-      : CLAUDE_DESKTOP_CHAT_BACKGROUND[themeMode];
+  const definition = getHostStyleOrDefault(hostStyle);
+  const styleVariables = definition.resolveStyleVariables(themeMode);
+  const background = definition.resolveChatBackground(themeMode);
   const resolvedStyleVariables = styleVariables as Record<
     string,
     string | undefined

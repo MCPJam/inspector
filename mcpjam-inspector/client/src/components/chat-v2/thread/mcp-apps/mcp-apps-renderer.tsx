@@ -47,16 +47,7 @@ import type {
   CallToolResult,
   ContentBlock,
 } from "@modelcontextprotocol/client";
-import {
-  getClaudeDesktopStyleVariables,
-  CLAUDE_DESKTOP_FONT_CSS,
-  CLAUDE_DESKTOP_PLATFORM,
-} from "@/config/claude-desktop-host-context";
-import {
-  getChatGPTStyleVariables,
-  CHATGPT_FONT_CSS,
-  CHATGPT_PLATFORM,
-} from "@/config/chatgpt-host-context";
+import { getHostStyleOrDefault, listHostStyles } from "@/lib/host-styles";
 import { isVisibleToModelOnly } from "@/lib/mcp-ui/mcp-apps-utils";
 import { LoggingTransport } from "./mcp-apps-logging-transport";
 import { McpAppsModal } from "./mcp-apps-modal";
@@ -86,10 +77,11 @@ const DEFAULT_INPUT_SCHEMA = { type: "object" } as const;
 
 const SUPPRESSED_UI_LOG_METHODS = new Set(["ui/notifications/size-changed"]);
 const PIP_MAX_HEIGHT = "min(40vh, 600px)";
-const VALID_HOST_STYLE_VARIABLE_KEYS = new Set<string>([
-  ...Object.keys(getClaudeDesktopStyleVariables("light")),
-  ...Object.keys(getChatGPTStyleVariables("light")),
-]);
+const VALID_HOST_STYLE_VARIABLE_KEYS = new Set<string>(
+  listHostStyles().flatMap((host) =>
+    Object.keys(host.resolveStyleVariables("light")),
+  ),
+);
 
 type DisplayMode = "inline" | "pip" | "fullscreen";
 type HostStyleVariables = NonNullable<
@@ -780,18 +772,14 @@ export function MCPAppsRenderer({
   const effectiveHostStyle = isPlaygroundActive
     ? sharedHostStyle
     : (chatboxHostStyle ?? "claude");
-  const useChatGPTStyle = effectiveHostStyle === "chatgpt";
+  const hostStyleDefinition = getHostStyleOrDefault(effectiveHostStyle);
+  const useChatGPTStyle = hostStyleDefinition.family === "chatgpt";
   themeModeRef.current = resolvedTheme;
   const styleVariables = useMemo(
-    () =>
-      useChatGPTStyle
-        ? getChatGPTStyleVariables(resolvedTheme)
-        : getClaudeDesktopStyleVariables(resolvedTheme),
-    [resolvedTheme, useChatGPTStyle],
+    () => hostStyleDefinition.resolveStyleVariables(resolvedTheme),
+    [resolvedTheme, hostStyleDefinition],
   );
-  const defaultFontCss = useChatGPTStyle
-    ? CHATGPT_FONT_CSS
-    : CLAUDE_DESKTOP_FONT_CSS;
+  const defaultFontCss = hostStyleDefinition.fontCss;
   const configuredStyles =
     baseHostContext.styles &&
     typeof baseHostContext.styles === "object" &&
@@ -842,9 +830,7 @@ export function MCPAppsRenderer({
         baseHostContext.platform === "desktop" ||
         baseHostContext.platform === "mobile"
           ? baseHostContext.platform
-          : useChatGPTStyle
-            ? CHATGPT_PLATFORM
-            : CLAUDE_DESKTOP_PLATFORM,
+          : hostStyleDefinition.platform,
       userAgent: navigator.userAgent,
       deviceCapabilities,
       safeAreaInsets,

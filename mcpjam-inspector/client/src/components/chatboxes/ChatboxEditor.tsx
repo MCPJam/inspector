@@ -70,11 +70,8 @@ import { useIsMobile } from "@/hooks/use-mobile";
 import type { HostedOAuthRequiredDetails } from "@/lib/hosted-oauth-required";
 import { isHostedOAuthBusy } from "@/lib/hosted-oauth-resume";
 import { getStoredTokens } from "@/lib/oauth/mcp-oauth";
-import {
-  getChatboxHostLabel,
-  getChatboxHostLogo,
-  type ChatboxHostStyle,
-} from "@/lib/chatbox-host-style";
+import type { ChatboxHostStyle } from "@/lib/chatbox-host-style";
+import { listHostStyles } from "@/lib/host-styles";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import {
   CHATBOX_OAUTH_PENDING_KEY,
@@ -121,7 +118,6 @@ interface ChatboxEditorProps {
 }
 
 const DEFAULT_SYSTEM_PROMPT = "You are a helpful assistant.";
-const HOST_STYLE_OPTIONS: ChatboxHostStyle[] = ["claude", "chatgpt"];
 
 function createPlaygroundId(): string {
   if (
@@ -849,29 +845,25 @@ export function ChatboxEditor({
             Host style
           </Label>
           <div className="mt-1.5 grid gap-2 sm:grid-cols-2">
-            {HOST_STYLE_OPTIONS.map((option) => {
-              const isSelected = hostStyle === option;
+            {listHostStyles().map((host) => {
+              const isSelected = hostStyle === host.id;
               return (
                 <Button
-                  key={option}
+                  key={host.id}
                   type="button"
                   variant={isSelected ? "secondary" : "ghost"}
                   className="h-auto justify-start gap-3 rounded-xl border border-border/50 px-3 py-3"
-                  onClick={() => setHostStyle(option)}
+                  onClick={() => setHostStyle(host.id)}
                 >
                   <img
-                    src={getChatboxHostLogo(option)}
-                    alt={getChatboxHostLabel(option)}
+                    src={host.logoSrc}
+                    alt={host.label}
                     className="h-5 w-5 object-contain"
                   />
                   <div className="flex min-w-0 flex-col items-start">
-                    <span className="text-sm font-medium">
-                      {getChatboxHostLabel(option)}
-                    </span>
+                    <span className="text-sm font-medium">{host.label}</span>
                     <span className="text-xs text-muted-foreground">
-                      {option === "chatgpt"
-                        ? "OpenAI-style chatbox chrome"
-                        : "Claude-style chatbox chrome"}
+                      {host.pickerDescription}
                     </span>
                   </div>
                 </Button>
