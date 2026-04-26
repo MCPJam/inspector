@@ -112,6 +112,7 @@ export function getChatboxShellStyle(
       resolvedStyleVariables["--shadow-sm"] ??
       "0 1px 2px -1px rgba(0, 0, 0, 0.08)",
     "--shadow":
+      resolvedStyleVariables["--shadow"] ??
       resolvedStyleVariables["--shadow-sm"] ??
       "0 1px 2px -1px rgba(0, 0, 0, 0.08)",
     "--shadow-md":
