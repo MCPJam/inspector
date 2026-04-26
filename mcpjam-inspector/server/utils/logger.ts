@@ -125,7 +125,10 @@ export const logger = {
       } else {
         Sentry.captureMessage(eventName, {
           level: "error",
-          extra: fullPayload as Record<string, unknown>,
+          extra: {
+            ...fullPayload as Record<string, unknown>,
+            ...(options?.error !== undefined ? { rawError: String(options.error) } : {}),
+          },
         });
       }
     }
@@ -158,7 +161,10 @@ export const logger = {
       } else {
         Sentry.captureMessage(eventName, {
           level: "error",
-          extra: fullPayload as Record<string, unknown>,
+          extra: {
+            ...fullPayload as Record<string, unknown>,
+            ...(options?.error !== undefined ? { rawError: String(options.error) } : {}),
+          },
         });
       }
     }
