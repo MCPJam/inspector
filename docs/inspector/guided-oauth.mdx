@@ -38,3 +38,21 @@ To begin debugging OAuth flows:
 5. **Start Testing** - Click **Continue** to begin the OAuth flow
 
 The debugger will guide you through each step of the OAuth handshake, providing real-time feedback and educational context.
+
+## OAuth trace in server overview
+
+When you connect a server using OAuth, Inspector records a structured trace of the entire flow. You can view this trace at any time — even after a failed connection — by opening the server's detail panel and scrolling to the **Last OAuth Trace** section.
+
+The trace shows:
+
+- **Source** - Which part of the flow produced the trace (`interactive_connect`, `callback`, `refresh`, or `hosted_callback`)
+- **Current step** - The step the flow reached before completing or failing
+- **Step-by-step breakdown** - Each OAuth step with its status (`success`, `pending`, or `error`), a summary message, and optional HTTP request/response details
+- **HTTP history** - A bounded list of all HTTP calls made during the flow, with headers and bodies sanitized to redact sensitive values such as tokens and secrets
+- **Failure highlight** - If a step failed, the error panel on the server card and the overview both identify the specific step that caused the failure
+
+The trace persists across page reloads so you can inspect a failed OAuth flow after returning to the inspector.
+
+### Reading OAuth log entries
+
+OAuth trace steps also appear as filterable entries in the traffic log. Select **OAuth** from the **Source** filter in the log panel to isolate them. See [OAuth log entries](/inspector/tools-prompts-resources#oauth-log-entries) for details on the status indicators.
