@@ -5,6 +5,7 @@
 - **New production diagnostics in `server/routes/`** → use `logger.event()` via `getRequestLogger`
 - **Ad-hoc debugging anywhere** → `logger.debug()` is fine
 - **Legacy code outside converted routes** → `logger.warn/error` remain; migrate opportunistically
+- **Roadmap and sequencing** → keep out of `//` comments. Do not reference other PRs in code (e.g. “PR6 will replace this”); use the current PR description, a tracking issue, or a short update here if the team needs a written reminder.
 
 ---
 
