@@ -47,7 +47,10 @@ import type {
   CallToolResult,
   ContentBlock,
 } from "@modelcontextprotocol/client";
-import { getHostStyleOrDefault, listHostStyles } from "@/lib/host-styles";
+import {
+  DEFAULT_HOST_STYLE,
+  getHostStyleOrDefault,
+} from "@/lib/host-styles";
 import { isVisibleToModelOnly } from "@/lib/mcp-ui/mcp-apps-utils";
 import { LoggingTransport } from "./mcp-apps-logging-transport";
 import { McpAppsModal } from "./mcp-apps-modal";
@@ -86,6 +89,16 @@ type HostStyleVariables = NonNullable<
   NonNullable<McpUiHostContext["styles"]>["variables"]
 >;
 
+// SEP-1865 fixes the set of style variable keys ui/initialize accepts. Every
+// HostStyleDefinition returns McpUiStyles from resolveStyleVariables, so a
+// legitimate built-in's key set is exactly the SEP enum; pinning the allowlist
+// to it both honors the protocol and strips any extra keys a runtime-registered
+// host might smuggle in via `as any`, which the SDK would reject downstream.
+const SEP_HOST_STYLE_VARIABLE_KEYS: ReadonlySet<string> = new Set([
+  ...Object.keys(DEFAULT_HOST_STYLE.resolveStyleVariables("light")),
+  ...Object.keys(DEFAULT_HOST_STYLE.resolveStyleVariables("dark")),
+]);
+
 function sanitizeHostStyleVariables(
   variables: unknown,
 ): HostStyleVariables | undefined {
@@ -93,15 +106,9 @@ function sanitizeHostStyleVariables(
     return undefined;
   }
 
-  const validHostStyleVariableKeys = new Set<string>(
-    listHostStyles().flatMap((host) => [
-      ...Object.keys(host.resolveStyleVariables("light")),
-      ...Object.keys(host.resolveStyleVariables("dark")),
-    ]),
-  );
   const sanitized: Record<string, string | undefined> = {};
   for (const [key, value] of Object.entries(variables)) {
-    if (!validHostStyleVariableKeys.has(key)) {
+    if (!SEP_HOST_STYLE_VARIABLE_KEYS.has(key)) {
       continue;
     }
     if (typeof value === "string" || value === undefined) {
@@ -795,12 +802,11 @@ export function MCPAppsRenderer({
       : undefined;
   // The SDK validates styles.variables against the SEP key enum, so strip
   // host-specific custom properties before they enter ui/initialize. The
-  // registry-size dep invalidates the memo when registerHostStyle adds a
-  // host at runtime, so its variables aren't dropped by a stale allowlist.
-  const registeredHostStyleCount = listHostStyles().length;
+  // allowlist is fixed to the SEP enum (see SEP_HOST_STYLE_VARIABLE_KEYS),
+  // so this memo only depends on the inbound configured variables.
   const configuredStyleVariables = useMemo(
     () => sanitizeHostStyleVariables(configuredStyles?.variables),
-    [configuredStyles?.variables, registeredHostStyleCount],
+    [configuredStyles?.variables],
   );
   const mergedStyleVariables = useMemo(() => {
     return {
