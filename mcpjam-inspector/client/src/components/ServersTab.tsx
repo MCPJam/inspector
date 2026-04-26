@@ -848,11 +848,15 @@ export function ServersTab({
 
   const activeWorkspace = workspaces[activeWorkspaceId];
   const sharedWorkspaceId = activeWorkspace?.sharedWorkspaceId;
+  const hostedWorkspaceId = sharedWorkspaceId ?? activeWorkspaceId;
   const { serversRecord: sharedWorkspaceServersRecord } =
     useRemoteWorkspaceServers({
       workspaceId: sharedWorkspaceId ?? null,
       isAuthenticated,
     });
+  const detailModalHostedServerId = detailModalServer
+    ? sharedWorkspaceServersRecord[detailModalServer.name]?._id
+    : undefined;
   const handleOpenDetailModal = useCallback(
     (server: ServerWithName, defaultTab: ServerDetailTab) => {
       setDetailModalState((prev) => ({
@@ -1571,6 +1575,8 @@ export function ServersTab({
           onReconnect={handleReconnectServer}
           existingServerNames={Object.keys(workspaceServers)}
           workspaceClientConfig={selectedWorkspace?.clientConfig}
+          workspaceId={hostedWorkspaceId}
+          hostedServerId={detailModalHostedServerId}
         />
       )}
     </div>

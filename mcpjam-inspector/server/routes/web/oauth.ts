@@ -82,6 +82,28 @@ function getConvexHttpUrl(): string {
   return convexUrl;
 }
 
+async function proxyConvexOAuthPost(c: Context, path: string) {
+  const convexUrl = getConvexHttpUrl();
+  const authorization = c.req.header("authorization");
+  const payload = await c.req.json();
+  const response = await fetch(`${convexUrl}${path}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(authorization ? { Authorization: authorization } : {}),
+    },
+    body: JSON.stringify(payload),
+  });
+
+  const bodyText = await response.text();
+  return new Response(bodyText, {
+    status: response.status,
+    headers: {
+      "Content-Type": response.headers.get("content-type") ?? "application/json",
+    },
+  });
+}
+
 /**
  * Proxy OAuth token exchange and client registration requests.
  * POST /api/web/oauth/proxy
@@ -153,26 +175,15 @@ oauthWeb.get("/metadata", async (c) => {
 
 oauthWeb.post("/session", async (c) => {
   try {
-    const convexUrl = getConvexHttpUrl();
-    const authorization = c.req.header("authorization");
-    const payload = await c.req.json();
-    const response = await fetch(`${convexUrl}/web/oauth/session`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(authorization ? { Authorization: authorization } : {}),
-      },
-      body: JSON.stringify(payload),
-    });
+    return await proxyConvexOAuthPost(c, "/web/oauth/session");
+  } catch (error) {
+    return webErrorCompat(c, toRouteError(error));
+  }
+});
 
-    const bodyText = await response.text();
-    return new Response(bodyText, {
-      status: response.status,
-      headers: {
-        "Content-Type":
-          response.headers.get("content-type") ?? "application/json",
-      },
-    });
+oauthWeb.post("/tokens", async (c) => {
+  try {
+    return await proxyConvexOAuthPost(c, "/web/oauth/tokens");
   } catch (error) {
     return webErrorCompat(c, toRouteError(error));
   }
