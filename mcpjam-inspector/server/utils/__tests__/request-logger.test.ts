@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import type { Context } from "hono";
 import type { RequestLogContext } from "../log-events.js";
 
@@ -59,12 +59,27 @@ describe("getRequestLogger", () => {
 
     expect(eventSpy).toHaveBeenCalledWith(
       "http.request.completed",
-      expect.objectContaining({ component: "routes.web.test", requestId: "req-123" }),
+      expect.objectContaining({
+        component: "routes.web.test",
+        requestId: "req-123",
+      }),
       { statusCode: 200 },
       undefined,
     );
 
     vi.unstubAllEnvs();
+  });
+
+  it("throws when requestLogContext is missing (middleware not mounted)", async () => {
+    vi.resetModules();
+    const { getRequestLogger } = await import("../request-logger.js");
+
+    const c = makeContext(); // no context set
+    const reqLogger = getRequestLogger(c, "routes.web.test");
+
+    expect(() =>
+      reqLogger.event("http.request.completed", { statusCode: 200 }),
+    ).toThrow(/requestLogContextMiddleware/);
   });
 });
 
@@ -73,10 +88,14 @@ describe("setRequestLogContext", () => {
     vi.resetModules();
     const { setRequestLogContext } = await import("../request-logger.js");
 
-    const vars: Record<string, unknown> = { requestLogContext: { ...baseContext } };
+    const vars: Record<string, unknown> = {
+      requestLogContext: { ...baseContext },
+    };
     const c = {
       var: new Proxy(vars, { get: (t, p) => t[p as string] }),
-      set: (key: string, value: unknown) => { vars[key] = value; },
+      set: (key: string, value: unknown) => {
+        vars[key] = value;
+      },
     } as unknown as Context;
 
     setRequestLogContext(c, { authType: "signedIn", userId: "user-abc" });
@@ -94,46 +113,67 @@ describe("setRequestLogContext", () => {
     const vars: Record<string, unknown> = {};
     const c = {
       var: new Proxy(vars, { get: (t, p) => t[p as string] }),
-      set: (key: string, value: unknown) => { vars[key] = value; },
+      set: (key: string, value: unknown) => {
+        vars[key] = value;
+      },
     } as unknown as Context;
 
-    expect(() => setRequestLogContext(c, { authType: "signedIn" })).not.toThrow();
+    expect(() =>
+      setRequestLogContext(c, { authType: "signedIn" }),
+    ).not.toThrow();
     expect(vars["requestLogContext"]).toBeUndefined();
   });
 });
 
 describe("getSystemLogger", () => {
-  it("calls logger.systemEvent with system envelope", async () => {
+  it("auto-fills the system envelope so callers only pass payload", async () => {
+    vi.stubEnv("ENVIRONMENT", "test");
     vi.resetModules();
     const { getSystemLogger } = await import("../request-logger.js");
     const { logger } = await import("../logger.js");
     const systemEventSpy = vi.spyOn(logger, "systemEvent");
 
     const sysLogger = getSystemLogger("process");
-    sysLogger.event(
-      "mcp.connection.closed_with_pending_requests",
-      {
-        environment: "test",
-        release: null,
-        requestId: null,
-        route: null,
-        method: null,
-        authType: "system" as const,
-      },
-      { errorCode: "connection_closed" },
-    );
+    sysLogger.event("mcp.connection.closed_with_pending_requests", {
+      errorCode: "connection_closed",
+    });
 
     expect(systemEventSpy).toHaveBeenCalledWith(
       "mcp.connection.closed_with_pending_requests",
       expect.objectContaining({
         component: "process",
         authType: "system",
+        environment: "test",
         requestId: null,
         route: null,
         method: null,
       }),
       { errorCode: "connection_closed" },
       undefined,
+    );
+
+    vi.unstubAllEnvs();
+  });
+
+  it("forwards options (error, sentry: true) for opt-in Sentry capture", async () => {
+    vi.resetModules();
+    const { getSystemLogger } = await import("../request-logger.js");
+    const { logger } = await import("../logger.js");
+    const systemEventSpy = vi.spyOn(logger, "systemEvent");
+
+    const err = new Error("boom");
+    const sysLogger = getSystemLogger("process");
+    sysLogger.event(
+      "process.unhandled_rejection",
+      { errorCode: "Error" },
+      { error: err, sentry: true },
+    );
+
+    expect(systemEventSpy).toHaveBeenCalledWith(
+      "process.unhandled_rejection",
+      expect.objectContaining({ component: "process", authType: "system" }),
+      { errorCode: "Error" },
+      { error: err, sentry: true },
     );
   });
 });

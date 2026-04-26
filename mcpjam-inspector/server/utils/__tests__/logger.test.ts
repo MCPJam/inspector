@@ -213,24 +213,25 @@ describe("logger", () => {
       );
     });
 
-    it("calls Sentry.captureException for *.failed events with an Error", () => {
+    it("calls Sentry.captureException only when sentry: true is opted in with an Error", () => {
       const err = new Error("boom");
       logger.event(
         "http.request.failed",
         baseRequestContext,
         { statusCode: 500, errorCode: "unhandled_exception" },
-        { error: err },
+        { error: err, sentry: true },
       );
 
       expect(captureException).toHaveBeenCalledWith(err, expect.any(Object));
       expect(captureMessage).not.toHaveBeenCalled();
     });
 
-    it("calls Sentry.captureMessage for *.failed events without an Error", () => {
+    it("calls Sentry.captureMessage when sentry: true is opted in without an Error", () => {
       logger.event(
         "http.request.failed",
         baseRequestContext,
         { statusCode: 500, errorCode: "internal_error" },
+        { sentry: true },
       );
 
       expect(captureMessage).toHaveBeenCalledWith(
@@ -239,21 +240,23 @@ describe("logger", () => {
       );
     });
 
-    it("does not call Sentry for non-failed events (http.request.completed)", () => {
-      logger.event("http.request.completed", baseRequestContext, { statusCode: 200 });
-
-      expect(captureException).not.toHaveBeenCalled();
-      expect(captureMessage).not.toHaveBeenCalled();
-    });
-
-    it("does not call Sentry when sentry: false is passed", () => {
+    it("does not call Sentry by default for *.failed events (opt-in only)", () => {
       const err = new Error("boom");
       logger.event(
         "http.request.failed",
         baseRequestContext,
         { statusCode: 500, errorCode: "internal_error" },
-        { error: err, sentry: false },
+        { error: err },
       );
+
+      expect(captureException).not.toHaveBeenCalled();
+      expect(captureMessage).not.toHaveBeenCalled();
+    });
+
+    it("does not call Sentry for non-failed events when no opt-in is passed", () => {
+      logger.event("http.request.completed", baseRequestContext, {
+        statusCode: 200,
+      });
 
       expect(captureException).not.toHaveBeenCalled();
       expect(captureMessage).not.toHaveBeenCalled();

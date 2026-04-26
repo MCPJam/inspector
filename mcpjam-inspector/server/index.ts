@@ -34,7 +34,6 @@ import { inAppBrowserMiddleware } from "./middleware/in-app-browser";
 import { startGuestAuthProvisioningInBackground } from "./utils/convex-guest-auth-sync";
 
 import { getSystemLogger } from "./utils/request-logger";
-import { resolveEnvironment, resolveRelease } from "./utils/log-events";
 
 const sysLogger = getSystemLogger("process");
 
@@ -42,32 +41,26 @@ const sysLogger = getSystemLogger("process");
 // This prevents the server from crashing when MCP connections are closed while
 // requests are pending - the SDK rejects pending promises on connection close
 process.on("unhandledRejection", (reason, _promise) => {
-  // Check if this is an expected MCP connection close error
   const isMcpConnectionClosed =
     reason instanceof Error &&
     (reason.message.includes("Connection closed") ||
       reason.name === "McpError");
 
   if (isMcpConnectionClosed) {
-    sysLogger.event(
-      "mcp.connection.closed_with_pending_requests",
-      {
-        environment: resolveEnvironment(),
-        release: resolveRelease(),
-        requestId: null,
-        route: null,
-        method: null,
-        authType: "system" as const,
-      },
-      { errorCode: "connection_closed" },
-    );
-  } else {
-    // Log unexpected rejections as warnings
-    appLogger.warn("Unhandled promise rejection", {
-      reason: reason instanceof Error ? reason.message : String(reason),
-      stack: reason instanceof Error ? reason.stack : undefined,
+    sysLogger.event("mcp.connection.closed_with_pending_requests", {
+      errorCode: "connection_closed",
     });
+    return;
   }
+
+  sysLogger.event(
+    "process.unhandled_rejection",
+    { errorCode: reason instanceof Error ? reason.name : "unknown" },
+    {
+      error: reason instanceof Error ? reason : undefined,
+      sentry: true,
+    },
+  );
 });
 
 const __filename = fileURLToPath(import.meta.url);

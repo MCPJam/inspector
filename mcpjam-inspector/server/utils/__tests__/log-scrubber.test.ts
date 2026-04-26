@@ -129,4 +129,34 @@ describe("scrubLogPayload", () => {
       expect(scrubLogPayload({ count: 42 })).toEqual({ count: 42 });
     });
   });
+
+  describe("cycle protection", () => {
+    it("breaks circular object references with the [circular] sentinel", () => {
+      const a: Record<string, unknown> = { name: "a" };
+      const b: Record<string, unknown> = { name: "b", a };
+      a.b = b; // a -> b -> a
+
+      const result = scrubLogPayload(a) as any;
+      expect(result.name).toBe("a");
+      expect(result.b.name).toBe("b");
+      expect(result.b.a).toBe("[circular]");
+    });
+
+    it("breaks self-referential objects", () => {
+      const o: Record<string, unknown> = { name: "self" };
+      o.self = o;
+
+      const result = scrubLogPayload(o) as any;
+      expect(result.name).toBe("self");
+      expect(result.self).toBe("[circular]");
+    });
+
+    it("breaks circular references through arrays", () => {
+      const o: Record<string, unknown> = { items: [] as unknown[] };
+      (o.items as unknown[]).push(o);
+
+      const result = scrubLogPayload(o) as any;
+      expect(result.items[0]).toBe("[circular]");
+    });
+  });
 });

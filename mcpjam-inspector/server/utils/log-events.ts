@@ -66,6 +66,8 @@ export type BaseLogContext = RequestLogContext | SystemLogContext;
 export type RequestEventMap = {
   "http.request.completed": { statusCode: number };
   "http.request.failed": { statusCode: number; errorCode: string };
+  "http.stream.opened": { statusCode: number };
+  "http.stream.closed": { statusCode: number; durationMs: number };
   "mcp.oauth.proxy.failed": {
     targetUrlHost: string;
     oauthPhase: "metadata" | "proxy" | "token";
@@ -110,6 +112,7 @@ export type RequestEventMap = {
 
 export type SystemEventMap = {
   "mcp.connection.closed_with_pending_requests": { errorCode: string };
+  "process.unhandled_rejection": { errorCode: string };
 };
 
 export type LogEventName = keyof RequestEventMap | keyof SystemEventMap;
@@ -120,24 +123,26 @@ export type RequestEventPayload<E extends keyof RequestEventMap> =
 export type SystemEventPayload<E extends keyof SystemEventMap> =
   SystemLogContext & { event: E } & SystemEventMap[E];
 
-let cachedEnvironment: Environment | undefined;
+// Resolve ENVIRONMENT per call (no module-level cache) so changes to
+// process.env in tests or after a config reload take effect on the next emit.
+// The "missing in production" warning still fires only once via warnedMissingEnv.
 let warnedMissingEnv = false;
 
+const ALLOWED_ENVIRONMENTS: Environment[] = [
+  "prod",
+  "staging",
+  "preview",
+  "dev",
+  "local",
+  "test",
+];
+
 export function resolveEnvironment(): Environment {
-  if (cachedEnvironment) return cachedEnvironment;
   const fromEnv = process.env.ENVIRONMENT;
-  const allowed: Environment[] = [
-    "prod",
-    "staging",
-    "preview",
-    "dev",
-    "local",
-    "test",
-  ];
-  if (fromEnv && allowed.includes(fromEnv as Environment)) {
-    return (cachedEnvironment = fromEnv as Environment);
+  if (fromEnv && ALLOWED_ENVIRONMENTS.includes(fromEnv as Environment)) {
+    return fromEnv as Environment;
   }
-  if (process.env.NODE_ENV === "test") return (cachedEnvironment = "test");
+  if (process.env.NODE_ENV === "test") return "test";
   if (process.env.NODE_ENV === "production") {
     if (!warnedMissingEnv) {
       warnedMissingEnv = true;
@@ -145,9 +150,9 @@ export function resolveEnvironment(): Environment {
         "[logging] ENVIRONMENT not set in production; defaulting to 'prod'\n",
       );
     }
-    return (cachedEnvironment = "prod");
+    return "prod";
   }
-  return (cachedEnvironment = "dev");
+  return "dev";
 }
 
 export function resolveRelease(): string | null {

@@ -121,6 +121,12 @@ export function createHonoApp() {
     await next();
   });
 
+  // Request log context (mounted BEFORE the security stack so that 401s from
+  // session auth, 403s from origin validation, and hosted-mode 410 partition
+  // responses are still observed in Axiom — those are exactly the requests
+  // SREs want to see during an outage or attack).
+  app.use("/api/*", requestLogContextMiddleware);
+
   // ===== SECURITY MIDDLEWARE STACK =====
   // Order matters: headers -> origin validation -> strict partition -> session auth
 
@@ -157,9 +163,6 @@ export function createHonoApp() {
   app.use("*", sessionAuthMiddleware);
 
   // ===== END SECURITY MIDDLEWARE =====
-
-  // 5. Request log context (only on /api/* to avoid static files)
-  app.use("/api/*", requestLogContextMiddleware);
 
   // Middleware - only enable HTTP request logging in dev mode or when --verbose is passed
   const enableHttpLogs =
