@@ -9,7 +9,10 @@
 import { useCallback, useEffect, useState } from "react";
 import type { FormField } from "@/lib/tool-form";
 import { buildParametersFromFields } from "@/lib/tool-form";
-import { executeToolApi } from "@/lib/apis/mcp-tools-api";
+import {
+  executeToolApi,
+  type ToolExecutionResponse,
+} from "@/lib/apis/mcp-tools-api";
 import { usePostHog } from "posthog-js/react";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 
@@ -40,8 +43,32 @@ export interface UseToolExecutionOptions {
 export interface UseToolExecutionReturn {
   pendingExecution: PendingExecution | null;
   clearPendingExecution: () => void;
-  executeTool: () => Promise<void>;
+  executeTool: (
+    options?: ExecuteToolInvocationOptions,
+  ) => Promise<ExecuteToolInvocationResult>;
 }
+
+export interface ExecuteToolInvocationOptions {
+  toolName?: string;
+  parameters?: Record<string, unknown>;
+  formFields?: FormField[];
+}
+
+export type ExecuteToolInvocationResult =
+  | {
+      ok: true;
+      toolName: string;
+      parameters: Record<string, unknown>;
+      result: unknown;
+      response: Extract<ToolExecutionResponse, { status: "completed" }>;
+    }
+  | {
+      ok: false;
+      toolName?: string;
+      parameters?: Record<string, unknown>;
+      error: string;
+      response?: ToolExecutionResponse;
+    };
 
 /**
  * Safely extracts metadata from tool result.
@@ -79,105 +106,158 @@ export function useToolExecution({
     setPendingExecution(null);
   }, []);
 
-  // Execute tool and set up pending injection
-  const executeTool = useCallback(async () => {
-    if (!selectedTool || !serverName) return;
+  const executeTool = useCallback(
+    async (
+      options?: ExecuteToolInvocationOptions,
+    ): Promise<ExecuteToolInvocationResult> => {
+      const effectiveToolName = options?.toolName ?? selectedTool;
+      const effectiveFormFields = options?.formFields ?? formFields;
+      const params =
+        options?.parameters ?? buildParametersFromFields(effectiveFormFields);
 
-    setIsExecuting(true);
-    setExecutionError(null);
+      if (!effectiveToolName || !serverName) {
+        return {
+          ok: false,
+          error: "A connected server and tool selection are required.",
+        };
+      }
 
-    try {
-      const params = buildParametersFromFields(formFields);
-      const response = await executeToolApi(serverName, selectedTool, params);
+      setIsExecuting(true);
+      setExecutionError(null);
 
-      if ("error" in response) {
-        // Log tool execution failure
+      try {
+        const response = await executeToolApi(
+          serverName,
+          effectiveToolName,
+          params,
+        );
+
+        if ("error" in response) {
+          // Log tool execution failure
+          posthog.capture("app_builder_tool_executed", {
+            location: "app_builder_tab",
+            platform: detectPlatform(),
+            environment: detectEnvironment(),
+            toolName: effectiveToolName,
+            success: false,
+            errorType: "api_error",
+          });
+
+          setExecutionError(response.error);
+          return {
+            ok: false,
+            toolName: effectiveToolName,
+            parameters: params,
+            error: response.error,
+            response,
+          };
+        }
+
+        if (response.status === "elicitation_required") {
+          const error =
+            "Tool requires elicitation, which is not supported in the UI Playground yet.";
+          setExecutionError(error);
+          return {
+            ok: false,
+            toolName: effectiveToolName,
+            parameters: params,
+            error,
+            response,
+          };
+        }
+
+        if (response.status === "task_created") {
+          const error =
+            "Task-based tool execution is not supported in the UI Playground yet.";
+          setExecutionError(error);
+          return {
+            ok: false,
+            toolName: effectiveToolName,
+            parameters: params,
+            error,
+            response,
+          };
+        }
+
+        const result = response.result;
+
+        // Store raw output for inspector
+        setToolOutput(result);
+
+        // Extract metadata safely
+        const resultMeta = extractMetadata(result);
+        setToolResponseMetadata(resultMeta || null);
+
+        const definitionMeta = toolsMetadata[effectiveToolName];
+        const mergedMeta =
+          definitionMeta || resultMeta
+            ? {
+                ...(definitionMeta ?? {}),
+                ...(resultMeta ?? {}),
+              }
+            : undefined;
+
+        // Set pending execution for chat thread to inject
+        setPendingExecution({
+          toolName: effectiveToolName,
+          params,
+          result,
+          toolMeta: mergedMeta,
+        });
+
+        // Log successful tool execution
         posthog.capture("app_builder_tool_executed", {
           location: "app_builder_tab",
           platform: detectPlatform(),
           environment: detectEnvironment(),
-          toolName: selectedTool,
-          success: false,
-          errorType: "api_error",
+          toolName: effectiveToolName,
+          success: true,
         });
 
-        setExecutionError(response.error);
+        return {
+          ok: true,
+          toolName: effectiveToolName,
+          parameters: params,
+          result,
+          response,
+        };
+      } catch (err) {
+        console.error("Tool execution error:", err);
+        const errorMessage =
+          err instanceof Error ? err.message : "Tool execution failed";
+
+        posthog.capture("app_builder_tool_executed", {
+          location: "app_builder_tab",
+          platform: detectPlatform(),
+          environment: detectEnvironment(),
+          toolName: effectiveToolName,
+          success: false,
+          errorType: "exception",
+        });
+
+        setExecutionError(errorMessage);
+        return {
+          ok: false,
+          toolName: effectiveToolName,
+          parameters: params,
+          error: errorMessage,
+        };
+      } finally {
         setIsExecuting(false);
-        return;
       }
-
-      if (response.status === "elicitation_required") {
-        setExecutionError(
-          "Tool requires elicitation, which is not supported in the UI Playground yet.",
-        );
-        setIsExecuting(false);
-        return;
-      }
-
-      const result = response.result;
-
-      // Store raw output for inspector
-      setToolOutput(result);
-
-      // Extract metadata safely
-      const resultMeta = extractMetadata(result);
-      setToolResponseMetadata(resultMeta || null);
-
-      const definitionMeta = selectedTool
-        ? toolsMetadata[selectedTool]
-        : undefined;
-      const mergedMeta =
-        definitionMeta || resultMeta
-          ? {
-              ...(definitionMeta ?? {}),
-              ...(resultMeta ?? {}),
-            }
-          : undefined;
-
-      // Set pending execution for chat thread to inject
-      setPendingExecution({
-        toolName: selectedTool,
-        params,
-        result,
-        toolMeta: mergedMeta,
-      });
-
-      // Log successful tool execution
-      posthog.capture("app_builder_tool_executed", {
-        location: "app_builder_tab",
-        platform: detectPlatform(),
-        environment: detectEnvironment(),
-        toolName: selectedTool,
-        success: true,
-      });
-    } catch (err) {
-      console.error("Tool execution error:", err);
-      const errorMessage =
-        err instanceof Error ? err.message : "Tool execution failed";
-
-      posthog.capture("app_builder_tool_executed", {
-        location: "app_builder_tab",
-        platform: detectPlatform(),
-        environment: detectEnvironment(),
-        toolName: selectedTool,
-        success: false,
-        errorType: "exception",
-      });
-
-      setExecutionError(errorMessage);
-    } finally {
-      setIsExecuting(false);
-    }
-  }, [
-    selectedTool,
-    toolsMetadata,
-    serverName,
-    formFields,
-    setIsExecuting,
-    setExecutionError,
-    setToolOutput,
-    setToolResponseMetadata,
-  ]);
+    },
+    [
+      formFields,
+      posthog,
+      selectedTool,
+      serverName,
+      setExecutionError,
+      setIsExecuting,
+      setToolOutput,
+      setToolResponseMetadata,
+      toolsMetadata,
+    ],
+  );
 
   // Keyboard shortcut for execute (Cmd/Ctrl + Enter)
   useEffect(() => {

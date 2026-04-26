@@ -122,6 +122,8 @@ describe("GET /api/mcp/servers/status/:serverId", () => {
   });
 
   it("returns connected status for healthy server", async () => {
+    mcpClientManager.pingServer.mockResolvedValue({ ok: true });
+
     const res = await app.request("/api/mcp/servers/status/server-1", {
       method: "GET",
     });
@@ -131,12 +133,13 @@ describe("GET /api/mcp/servers/status/:serverId", () => {
     expect(data.success).toBe(true);
     expect(data.serverId).toBe("server-1");
     expect(data.status).toBe("connected");
+    expect(data.ping).toEqual({ ok: true });
 
     expect(mcpClientManager.pingServer).toHaveBeenCalledWith("server-1");
   });
 
-  it("returns disconnected status for unhealthy server", async () => {
-    mcpClientManager.pingServer.mockReturnValue("disconnected");
+  it("returns disconnected status without pinging disconnected server", async () => {
+    mcpClientManager.getConnectionStatus.mockReturnValue("disconnected");
 
     const res = await app.request("/api/mcp/servers/status/server-2", {
       method: "GET",
@@ -145,6 +148,8 @@ describe("GET /api/mcp/servers/status/:serverId", () => {
     expect(res.status).toBe(200);
     const data = await res.json();
     expect(data.status).toBe("disconnected");
+    expect(data.ping).toBeNull();
+    expect(mcpClientManager.pingServer).not.toHaveBeenCalled();
   });
 
   it("returns 500 when status check fails", async () => {

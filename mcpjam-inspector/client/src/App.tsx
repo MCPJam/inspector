@@ -99,7 +99,12 @@ import {
   getChatboxPathTokenFromLocation,
 } from "./components/hosted/ChatboxChatPage";
 import { useHostedApiContext } from "./hooks/hosted/use-hosted-api-context";
+import { useInspectorCommandBus } from "./hooks/use-inspector-command-bus";
 import { HOSTED_MODE, NON_PROD_LOCKDOWN } from "./lib/config";
+import {
+  createInspectorCommandClientError,
+  registerInspectorCommandHandler,
+} from "./lib/inspector-command-handlers";
 import { subscribeToOAuthDebuggerRequests } from "./lib/oauth/oauth-debugger-navigation";
 import {
   clearBillingSignInReturnPath,
@@ -173,6 +178,11 @@ import { withTestingSurface } from "./lib/testing-surface";
 import { useWorkspaceClientConfigSyncPending } from "./hooks/use-workspace-client-config-sync-pending";
 import { ingestOAuthTraceLogs } from "./stores/traffic-log-store";
 import { clearGuestSession, getGuestBearerToken } from "./lib/guest-session";
+import type {
+  NavigateInspectorCommand,
+  OpenAppBuilderInspectorCommand,
+  SelectServerInspectorCommand,
+} from "@/shared/inspector-command.js";
 
 function getHostedOAuthCallbackErrorMessage(): string {
   const params = new URLSearchParams(window.location.search);
@@ -215,6 +225,12 @@ function clearHostedCallbackRetryState() {
       storage.removeItem(key);
     }
   }
+}
+
+async function waitForUiCommit(): Promise<void> {
+  await new Promise<void>((resolve) => {
+    window.setTimeout(resolve, 0);
+  });
 }
 
 function BillingHandoffLoading({ overlay = false }: { overlay?: boolean }) {
@@ -303,7 +319,7 @@ export default function App() {
     optimisticallyDeletedOrganizationIds,
     setOptimisticallyDeletedOrganizationIds,
   ] = useState<string[]>([]);
-  const [chatHasMessages, setChatHasMessages] = useState(false);
+  const [, setChatHasMessages] = useState(false);
   const [appBuilderOnboarding, setAppBuilderOnboarding] = useState(false);
   const [callbackCompleted, setCallbackCompleted] = useState(false);
   const [callbackRecoveryExpired, setCallbackRecoveryExpired] = useState(false);
@@ -679,6 +695,7 @@ export default function App() {
     handleDisconnect,
     handleReconnect,
     ensureServersReady,
+    syncAgentStatus,
     handleUpdate,
     handleRemoveServer,
     setSelectedServer,
@@ -713,10 +730,22 @@ export default function App() {
       ? currentHashRoute.organizationId
       : undefined,
   });
+  useInspectorCommandBus();
   const oauthDebuggerServersRef = useRef(appState.servers);
   oauthDebuggerServersRef.current = appState.servers;
+  const workspaceServersRef = useRef(workspaceServers);
+  workspaceServersRef.current = workspaceServers;
   const selectedServerRef = useRef(appState.selectedServer);
   selectedServerRef.current = appState.selectedServer;
+  const getInspectorServerState = useCallback(
+    (serverName: string) => {
+      const runtimeServer = oauthDebuggerServersRef.current[serverName];
+      const workspaceServer = workspaceServersRef.current[serverName];
+      const server = runtimeServer ?? workspaceServer;
+      return server ? { runtimeServer, workspaceServer, server } : null;
+    },
+    [],
+  );
   useEffect(() => {
     return subscribeToOAuthDebuggerRequests(({ serverName }) => {
       const matchedServerName = Object.entries(
@@ -1193,6 +1222,102 @@ export default function App() {
       setSelectedMultipleServersToAllServers,
     ]
   );
+
+  useEffect(() => {
+    if (HOSTED_MODE) {
+      return;
+    }
+
+    const unregisterNavigate = registerInspectorCommandHandler(
+      "navigate",
+      async (rawCommand) => {
+        const command = rawCommand as NavigateInspectorCommand;
+        const resolved = resolveHostedNavigation(command.payload.target, false);
+
+        applyNavigation(command.payload.target, { updateHash: true });
+        await waitForUiCommit();
+
+        return { activeTab: resolved.normalizedTab };
+      },
+    );
+
+    const unregisterSelectServer = registerInspectorCommandHandler(
+      "selectServer",
+      async (rawCommand) => {
+        const command = rawCommand as SelectServerInspectorCommand;
+        let serverState = getInspectorServerState(command.payload.serverName);
+        if (!serverState) {
+          await syncAgentStatus();
+          await waitForUiCommit();
+          serverState = getInspectorServerState(command.payload.serverName);
+        }
+
+        if (!serverState) {
+          throw createInspectorCommandClientError(
+            "unknown_server",
+            `Unknown server "${command.payload.serverName}".`,
+          );
+        }
+
+        setSelectedServer(command.payload.serverName);
+        await waitForUiCommit();
+
+        return {
+          selectedServer: command.payload.serverName,
+          connectionStatus:
+            serverState.runtimeServer?.connectionStatus ??
+            serverState.workspaceServer?.connectionStatus ??
+            "disconnected",
+        };
+      },
+    );
+
+    const unregisterOpenAppBuilder = registerInspectorCommandHandler(
+      "openAppBuilder",
+      async (rawCommand) => {
+        const command = rawCommand as OpenAppBuilderInspectorCommand;
+
+        if (command.payload.serverName) {
+          let serverState = getInspectorServerState(command.payload.serverName);
+          if (!serverState) {
+            await syncAgentStatus();
+            await waitForUiCommit();
+            serverState = getInspectorServerState(command.payload.serverName);
+          }
+
+          if (!serverState) {
+            throw createInspectorCommandClientError(
+              "unknown_server",
+              `Unknown server "${command.payload.serverName}".`,
+            );
+          }
+
+          setSelectedServer(command.payload.serverName);
+        }
+
+        applyNavigation("app-builder", { updateHash: true });
+        await waitForUiCommit();
+
+        return {
+          activeTab: "app-builder",
+          selectedServer:
+            command.payload.serverName || appState.selectedServer || "none",
+        };
+      },
+    );
+
+    return () => {
+      unregisterNavigate();
+      unregisterSelectServer();
+      unregisterOpenAppBuilder();
+    };
+  }, [
+    appState.selectedServer,
+    applyNavigation,
+    getInspectorServerState,
+    setSelectedServer,
+    syncAgentStatus,
+  ]);
 
   // Sync tab with hash on mount and when hash changes
   useLayoutEffect(() => {

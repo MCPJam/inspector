@@ -34,6 +34,7 @@ import { inAppBrowserMiddleware } from "./middleware/in-app-browser";
 import { startGuestAuthProvisioningInBackground } from "./utils/convex-guest-auth-sync";
 
 import { getSystemLogger } from "./utils/request-logger";
+import { requestLogContextMiddleware } from "./middleware/request-log-context";
 
 const sysLogger = getSystemLogger("process");
 
@@ -312,6 +313,9 @@ app.use(
       ),
   }),
 );
+
+// Typed event logging context (matches app.ts)
+app.use("/api/*", requestLogContextMiddleware);
 
 // API Routes
 if (!HOSTED_MODE) {

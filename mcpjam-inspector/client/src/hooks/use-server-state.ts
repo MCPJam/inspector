@@ -2677,22 +2677,25 @@ export function useServerState({
     ],
   );
 
+  const syncAgentStatus = useCallback(async () => {
+    try {
+      const result = await listServers();
+      if (result?.success && result.servers) {
+        dispatch({ type: "SYNC_AGENT_STATUS", servers: result.servers });
+      }
+      return result;
+    } catch (error) {
+      logger.debug("Failed to sync server status", {
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
+      throw error;
+    }
+  }, [logger, dispatch]);
+
   useEffect(() => {
     if (isLoading) return;
-    const syncServerStatus = async () => {
-      try {
-        const result = await listServers();
-        if (result?.success && result.servers) {
-          dispatch({ type: "SYNC_AGENT_STATUS", servers: result.servers });
-        }
-      } catch (error) {
-        logger.debug("Failed to sync server status on startup", {
-          error: error instanceof Error ? error.message : "Unknown error",
-        });
-      }
-    };
-    syncServerStatus();
-  }, [isLoading, logger, dispatch]);
+    void syncAgentStatus();
+  }, [isLoading, syncAgentStatus]);
 
   const setSelectedServer = useCallback(
     (serverName: string) => {
@@ -2917,6 +2920,7 @@ export function useServerState({
     handleDisconnect,
     handleReconnect,
     ensureServersReady,
+    syncAgentStatus,
     handleUpdate,
     handleRemoveServer,
     setSelectedServer,

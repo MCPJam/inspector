@@ -10,6 +10,7 @@ import {
   useEffect,
   useCallback,
   useMemo,
+  useRef,
   useState,
   useLayoutEffect,
 } from "react";
@@ -28,7 +29,11 @@ import SaveRequestDialog from "../tools/SaveRequestDialog";
 import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { listTools } from "@/lib/apis/mcp-tools-api";
-import { generateFormFieldsFromSchema } from "@/lib/tool-form";
+import {
+  applyParametersToFields as applyParamsToFields,
+  buildParametersFromFields,
+  generateFormFieldsFromSchema,
+} from "@/lib/tool-form";
 import type { MCPServerConfig } from "@mcpjam/sdk/browser";
 import type { WorkspaceHostContextDraft } from "@/lib/client-config";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
@@ -52,8 +57,17 @@ import type {
 } from "@/hooks/use-app-state";
 import { useSidebar } from "@/components/ui/sidebar";
 import { getLoadingIndicatorVariantForHostStyle } from "@/components/chat-v2/shared/loading-indicator-content";
-import { toast } from "sonner";
 import type { PlaygroundServerSelectorProps } from "@/components/ActiveServerSelector";
+import {
+  createInspectorCommandClientError,
+  registerInspectorCommandHandler,
+} from "@/lib/inspector-command-handlers";
+import type {
+  ExecuteToolInspectorCommand,
+  SelectToolInspectorCommand,
+  SetAppContextInspectorCommand,
+  SnapshotAppInspectorCommand,
+} from "@/shared/inspector-command.js";
 
 interface AppBuilderTabProps {
   activeWorkspaceId?: string | null;
@@ -93,6 +107,12 @@ const SERVER_SYNC_TIMEOUT_MS = 10000;
 const APP_BUILDER_FIRST_RUN_PROMPT = "Draw me an MCP architecture diagram";
 
 const SIDEBAR_EASE: [number, number, number, number] = [0.4, 0, 0.2, 1];
+
+async function waitForUiCommit(): Promise<void> {
+  await new Promise<void>((resolve) => {
+    window.setTimeout(resolve, 0);
+  });
+}
 
 export function AppBuilderTab({
   activeWorkspaceId = null,
@@ -146,6 +166,8 @@ export function AppBuilderTab({
     setExecutionError,
     setWidgetState,
     setDeviceType,
+    setDisplayMode,
+    updateGlobal,
     toggleSidebar,
     setSelectedProtocol,
     reset,
@@ -251,18 +273,123 @@ export function AppBuilderTab({
     }
   }, [serverName, reset, setTools, setExecutionError]);
 
+  const loadToolsUntilMatch = useCallback(
+    async (toolName?: string) => {
+      if (!serverName) {
+        throw createInspectorCommandClientError(
+          "disconnected_server",
+          "No server is selected in the App Builder.",
+        );
+      }
+
+      if (!toolName && Object.keys(tools).length > 0) {
+        return {
+          tools,
+          metadata: toolsMetadata,
+        };
+      }
+
+      if (toolName && tools[toolName]) {
+        return {
+          tools,
+          metadata: toolsMetadata,
+        };
+      }
+
+      setFetchingTools(true);
+      try {
+        const aggregatedTools = { ...tools };
+        const aggregatedMetadata = { ...toolsMetadata };
+        let cursor: string | undefined;
+
+        do {
+          const data = await listTools({ serverId: serverName, cursor });
+          const toolArray = data.tools ?? [];
+          const dictionary = Object.fromEntries(
+            toolArray.map((tool: Tool) => [tool.name, tool]),
+          );
+
+          Object.assign(aggregatedTools, dictionary);
+          Object.assign(aggregatedMetadata, data.toolsMetadata ?? {});
+          cursor = data.nextCursor;
+
+          if (!toolName || aggregatedTools[toolName] || !cursor) {
+            break;
+          }
+        } while (true);
+
+        setTools(aggregatedTools);
+        setToolsMetadata(aggregatedMetadata);
+
+        return {
+          tools: aggregatedTools,
+          metadata: aggregatedMetadata,
+        };
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : "Failed to fetch tools";
+        setExecutionError(message);
+        throw createInspectorCommandClientError("execution_failed", message);
+      } finally {
+        setFetchingTools(false);
+      }
+    },
+    [serverName, setExecutionError, setTools, tools, toolsMetadata],
+  );
+
+  const buildAppBuilderSnapshot = useCallback(() => {
+    const playgroundState = useUIPlaygroundStore.getState();
+
+    return {
+      serverName: serverName ?? null,
+      selectedTool: playgroundState.selectedTool,
+      selectedProtocol: playgroundState.selectedProtocol,
+      deviceType: playgroundState.deviceType,
+      displayMode: playgroundState.displayMode,
+      globals: playgroundState.globals,
+      toolOutput: playgroundState.toolOutput,
+      toolResponseMetadata: playgroundState.toolResponseMetadata,
+      widgetUrl: playgroundState.widgetUrl,
+      widgetState: playgroundState.widgetState,
+      executionError: playgroundState.executionError,
+      isExecuting: playgroundState.isExecuting,
+    };
+  }, [serverName]);
+
   const serverConnectionStatus = serverName
     ? servers[serverName]?.connectionStatus
     : undefined;
 
+  const prevServerRef = useRef<{
+    serverName: string | null;
+    status: string | undefined;
+  }>({ serverName: null, status: undefined });
+
   useEffect(() => {
+    const prev = prevServerRef.current;
+    const serverChanged = serverName !== prev.serverName;
+    const statusChanged = serverConnectionStatus !== prev.status;
+    prevServerRef.current = {
+      serverName: serverName ?? null,
+      status: serverConnectionStatus,
+    };
+
     if (serverConfig && serverName && serverConnectionStatus === "connected") {
+      // Skip re-fetch when tools are already loaded and only the object
+      // reference changed (e.g. a SYNC_AGENT_STATUS that didn't change status).
+      if (
+        !serverChanged &&
+        !statusChanged &&
+        Object.keys(tools).length > 0
+      ) {
+        return;
+      }
       fetchTools();
     } else {
       reset();
       setToolsMetadata({});
     }
-  }, [serverConfig, serverName, serverConnectionStatus, fetchTools, reset]);
+  }, [serverConfig, serverName, serverConnectionStatus, fetchTools, reset, tools]);
 
   // Update form fields when tool is selected
   useEffect(() => {
@@ -296,6 +423,225 @@ export function AppBuilderTab({
     // No tool selected - keep the stored protocol preference
     // Don't reset to null here as it would clear the persisted user preference
   }, [selectedTool, tools, setSelectedProtocol, selectedProtocol]);
+
+  const selectToolForCommand = useCallback(
+    async (
+      command: SelectToolInspectorCommand | ExecuteToolInspectorCommand,
+    ) => {
+      if (command.payload.surface !== "app-builder") {
+        throw createInspectorCommandClientError(
+          "unsupported_in_mode",
+          `AppBuilderTab cannot handle ${command.type} for ${command.payload.surface}.`,
+        );
+      }
+
+      if (
+        !serverConfig ||
+        !serverName ||
+        serverConnectionStatus !== "connected"
+      ) {
+        throw createInspectorCommandClientError(
+          "disconnected_server",
+          "The App Builder requires a connected server before tools can be selected.",
+        );
+      }
+
+      if (
+        command.payload.serverName &&
+        command.payload.serverName !== serverName
+      ) {
+        throw createInspectorCommandClientError(
+          "disconnected_server",
+          `App Builder is focused on "${serverName}", not "${command.payload.serverName}".`,
+        );
+      }
+
+      const { tools: availableTools } = await loadToolsUntilMatch(
+        command.payload.toolName,
+      );
+      const tool = availableTools[command.payload.toolName];
+      if (!tool) {
+        throw createInspectorCommandClientError(
+          "unknown_tool",
+          `Unknown tool "${command.payload.toolName}" on server "${serverName}".`,
+        );
+      }
+
+      const nextFormFields = generateFormFieldsFromSchema(tool.inputSchema);
+      const currentState = useUIPlaygroundStore.getState();
+      const shouldSwitchTool =
+        currentState.selectedTool !== command.payload.toolName;
+      const resolvedParameters =
+        command.payload.parameters ??
+        (shouldSwitchTool
+          ? buildParametersFromFields(nextFormFields)
+          : buildParametersFromFields(currentState.formFields));
+
+      if (shouldSwitchTool) {
+        setSelectedTool(command.payload.toolName);
+        await waitForUiCommit();
+        setFormFields(nextFormFields);
+        await waitForUiCommit();
+      } else if (currentState.formFields.length === 0) {
+        setFormFields(nextFormFields);
+        await waitForUiCommit();
+      }
+
+      if (command.payload.parameters) {
+        const latestFields = useUIPlaygroundStore.getState().formFields;
+        setFormFields(
+          applyParamsToFields(latestFields, command.payload.parameters),
+        );
+        await waitForUiCommit();
+      }
+
+      return {
+        serverName,
+        tool,
+        parameters: resolvedParameters,
+      };
+    },
+    [
+      loadToolsUntilMatch,
+      serverConfig,
+      serverConnectionStatus,
+      serverName,
+      setFormFields,
+      setSelectedTool,
+    ],
+  );
+
+  const resolveCommandProtocol = useCallback(
+    (protocol?: SetAppContextInspectorCommand["payload"]["protocol"]) => {
+      if (!protocol) {
+        return undefined;
+      }
+
+      if (protocol === UIType.MCP_APPS) {
+        return UIType.MCP_APPS;
+      }
+
+      if (protocol === UIType.OPENAI_SDK) {
+        return UIType.OPENAI_SDK;
+      }
+
+      throw createInspectorCommandClientError(
+        "invalid_request",
+        `Unsupported protocol "${protocol}".`,
+      );
+    },
+    [],
+  );
+
+  useEffect(() => {
+    const unregisterSelectTool = registerInspectorCommandHandler(
+      "selectTool",
+      async (rawCommand) => {
+        const command = rawCommand as SelectToolInspectorCommand;
+        const selection = await selectToolForCommand(command);
+
+        return {
+          ...buildAppBuilderSnapshot(),
+          serverName: selection.serverName,
+          toolName: command.payload.toolName,
+          parameterKeys: Object.keys(selection.parameters),
+        };
+      },
+    );
+
+    const unregisterExecuteTool = registerInspectorCommandHandler(
+      "executeTool",
+      async (rawCommand) => {
+        const command = rawCommand as ExecuteToolInspectorCommand;
+        const selection = await selectToolForCommand(command);
+        const outcome = await executeTool({
+          toolName: command.payload.toolName,
+          parameters: selection.parameters,
+        });
+        await waitForUiCommit();
+
+        if (!outcome.ok) {
+          throw createInspectorCommandClientError(
+            "execution_failed",
+            outcome.error,
+            outcome.response,
+          );
+        }
+
+        return {
+          ...buildAppBuilderSnapshot(),
+          serverName: selection.serverName,
+          toolName: outcome.toolName,
+          parameters: outcome.parameters,
+          result: outcome.result,
+        };
+      },
+    );
+
+    const unregisterSetAppContext = registerInspectorCommandHandler(
+      "setAppContext",
+      async (rawCommand) => {
+        const command = rawCommand as SetAppContextInspectorCommand;
+        const protocol = resolveCommandProtocol(command.payload.protocol);
+
+        if (command.payload.deviceType) {
+          setDeviceType(command.payload.deviceType);
+        }
+        if (command.payload.displayMode) {
+          setDisplayMode(command.payload.displayMode);
+        }
+        if (command.payload.locale) {
+          updateGlobal("locale", command.payload.locale);
+        }
+        if (command.payload.timeZone) {
+          updateGlobal("timeZone", command.payload.timeZone);
+        }
+        if (command.payload.theme) {
+          updateGlobal("theme", command.payload.theme);
+        }
+        if (protocol) {
+          setSelectedProtocol(protocol);
+        }
+
+        await waitForUiCommit();
+        return buildAppBuilderSnapshot();
+      },
+    );
+
+    const unregisterSnapshotApp = registerInspectorCommandHandler(
+      "snapshotApp",
+      async (rawCommand) => {
+        const command = rawCommand as SnapshotAppInspectorCommand;
+        if (
+          command.payload.surface &&
+          command.payload.surface !== "app-builder"
+        ) {
+          throw createInspectorCommandClientError(
+            "unsupported_in_mode",
+            `AppBuilderTab cannot snapshot ${command.payload.surface}.`,
+          );
+        }
+
+        return buildAppBuilderSnapshot();
+      },
+    );
+
+    return () => {
+      unregisterSelectTool();
+      unregisterExecuteTool();
+      unregisterSetAppContext();
+      unregisterSnapshotApp();
+    };
+  }, [
+    buildAppBuilderSnapshot,
+    executeTool,
+    resolveCommandProtocol,
+    selectToolForCommand,
+    setDeviceType,
+    setDisplayMode,
+    setSelectedProtocol,
+    updateGlobal,
+  ]);
 
   // Get invoking message from tool metadata
   const invokingMessage = useMemo(() => {
