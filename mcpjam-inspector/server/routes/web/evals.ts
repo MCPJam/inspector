@@ -175,6 +175,7 @@ evals.post("/stream-test-case", async (c) => {
   const oauthTokens = body.oauthTokens;
 
   const { manager } = await createAuthorizedManager(
+    c,
     bearerToken,
     body.workspaceId,
     serverIds,
