@@ -87,7 +87,7 @@ function sanitizeChatboxRouteErrorMessage(message: string): string {
 function createChatboxRouteError(
   status: number,
   message: string,
-  code?: string,
+  code?: string
 ): ChatboxRouteError {
   const fallbackMessage = `Request failed with status ${status}`;
   const rawMessage = message.trim() || fallbackMessage;
@@ -141,7 +141,7 @@ function isChatboxRouteError(error: unknown): error is ChatboxRouteError {
 }
 
 function getChatboxDisplayError(
-  error: ChatboxRouteError | null,
+  error: ChatboxRouteError | null
 ): ChatboxDisplayError {
   if (!error) {
     return {
@@ -153,7 +153,7 @@ function getChatboxDisplayError(
 
   const normalizedMessage = error.message.toLowerCase();
   const requiresSignIn = normalizedMessage.includes(
-    "sign in to access this chatbox",
+    "sign in to access this chatbox"
   );
   const isAccessDenied = normalizedMessage.includes("don't have access");
   const isGuestBlocked =
@@ -165,7 +165,7 @@ function getChatboxDisplayError(
     normalizedMessage.includes("invalid or has expired") ||
     normalizedMessage.includes("invalid or expired");
   const isPlaygroundExpired = normalizedMessage.includes(
-    "playground session expired",
+    "playground session expired"
   );
 
   if (isPlaygroundExpired) {
@@ -208,7 +208,7 @@ function getChatboxDisplayError(
 }
 
 function getChatboxBootstrapAuthMode(
-  isAuthenticated: boolean,
+  isAuthenticated: boolean
 ): ChatboxBootstrapAuthMode {
   return isAuthenticated ? "workos" : "guest";
 }
@@ -261,7 +261,7 @@ export function ChatboxChatPage({
 
       writeChatboxSession(nextSession);
     },
-    [playgroundParams],
+    [playgroundParams]
   );
 
   const clearCurrentSession = useCallback(() => {
@@ -273,30 +273,27 @@ export function ChatboxChatPage({
   }, [playgroundParams]);
 
   const [session, setSession] = useState<ChatboxSession | null>(() =>
-    readCurrentSession(),
+    readCurrentSession()
   );
   const [isBootstrapping, setIsBootstrapping] = useState(
-    Boolean(pathToken || playgroundParams),
+    Boolean(pathToken || playgroundParams)
   );
   const [routeError, setRouteError] = useState<ChatboxRouteError | null>(null);
   const interactiveSignInEventKeyRef = useRef<string | null>(null);
   const tokenFromPath = useMemo(() => pathToken?.trim() || null, [pathToken]);
-  const hasWorkOsUser = Boolean(workOsUser);
   const isAuthSettling =
     Boolean(tokenFromPath) &&
     !playgroundParams &&
-    (isWorkOsLoading ||
-      isAuthLoading ||
-      (hasWorkOsUser && !isAuthenticated));
+    (isWorkOsLoading || isAuthLoading);
 
   const sessionServersRequired = useMemo(
     () => session?.payload.servers.filter((s) => !s.optional) ?? [],
-    [session],
+    [session]
   );
 
   const sessionServersOptional = useMemo(
     () => session?.payload.servers.filter((s) => s.optional) ?? [],
-    [session],
+    [session]
   );
 
   const [enabledOptionalServerIds, setEnabledOptionalServerIds] = useState<
@@ -307,7 +304,7 @@ export function ChatboxChatPage({
     if (!session?.token) return;
     try {
       const raw = sessionStorage.getItem(
-        chatboxEnabledOptionalStorageKey(session.token),
+        chatboxEnabledOptionalStorageKey(session.token)
       );
       if (!raw) {
         setEnabledOptionalServerIds((prev) => (prev.length === 0 ? prev : []));
@@ -316,12 +313,10 @@ export function ChatboxChatPage({
       const parsed = JSON.parse(raw) as unknown;
       if (!Array.isArray(parsed)) return;
       const optionalIdSet = new Set(
-        session.payload.servers
-          .filter((s) => s.optional)
-          .map((s) => s.serverId),
+        session.payload.servers.filter((s) => s.optional).map((s) => s.serverId)
       );
       const next = parsed.filter(
-        (id): id is string => typeof id === "string" && optionalIdSet.has(id),
+        (id): id is string => typeof id === "string" && optionalIdSet.has(id)
       );
       setEnabledOptionalServerIds((prev) => {
         if (
@@ -355,19 +350,19 @@ export function ChatboxChatPage({
     if (!session) return [];
     const enabled = new Set(enabledOptionalServerIds);
     const optionalActive = session.payload.servers.filter(
-      (s) => s.optional && enabled.has(s.serverId),
+      (s) => s.optional && enabled.has(s.serverId)
     );
     return [...sessionServersRequired, ...optionalActive];
   }, [session, sessionServersRequired, enabledOptionalServerIds]);
 
   const oauthServers = useMemo(
     () => sessionServersActive.map(bootstrapServerToHostedOAuthDescriptor),
-    [sessionServersActive],
+    [sessionServersActive]
   );
 
   const handleEnableChatboxOptionalServer = useCallback((serverId: string) => {
     setEnabledOptionalServerIds((prev) =>
-      prev.includes(serverId) ? prev : [...prev, serverId],
+      prev.includes(serverId) ? prev : [...prev, serverId]
     );
   }, []);
 
@@ -412,7 +407,7 @@ export function ChatboxChatPage({
           retryCount: 0,
           enabled: true,
         } satisfies ServerWithName,
-      ]),
+      ])
     );
   }, [session, sessionServersActive]);
 
@@ -423,7 +418,7 @@ export function ChatboxChatPage({
       sessionServersActive.flatMap((server) => [
         [server.serverName, server.serverId],
         [server.serverId, server.serverId],
-      ]),
+      ])
     );
   }, [session, sessionServersActive]);
 
@@ -436,7 +431,7 @@ export function ChatboxChatPage({
         return token ? ([server.serverId, token] as const) : null;
       })
       .filter((entry): entry is readonly [string, string] =>
-        Array.isArray(entry),
+        Array.isArray(entry)
       );
 
     return entries.length > 0 ? Object.fromEntries(entries) : undefined;
@@ -469,8 +464,8 @@ export function ChatboxChatPage({
           setRouteError(
             createChatboxRouteError(
               410,
-              "Playground session expired. Return to the builder to preview.",
-            ),
+              "Playground session expired. Return to the builder to preview."
+            )
           );
         }
         setIsBootstrapping(false);
@@ -531,7 +526,7 @@ export function ChatboxChatPage({
                 500,
                 error instanceof Error
                   ? error.message
-                  : "Unable to open this chatbox.",
+                  : "Unable to open this chatbox."
               );
           const displayError = getChatboxDisplayError(nextError);
 
@@ -573,7 +568,7 @@ export function ChatboxChatPage({
 
       setSession(null);
       setRouteError(
-        createChatboxRouteError(404, "Invalid or expired chatbox link"),
+        createChatboxRouteError(404, "Invalid or expired chatbox link")
       );
     };
 
@@ -592,14 +587,17 @@ export function ChatboxChatPage({
     writeCurrentSession,
   ]);
 
-  const displayError = getChatboxDisplayError(routeError);
+  const displayError = useMemo(
+    () => getChatboxDisplayError(routeError),
+    [routeError]
+  );
   const landingState: ChatboxLandingState = isAuthSettling
     ? "resolvingAuth"
     : isBootstrapping
-      ? "bootstrapping"
-      : session
-        ? "ready"
-        : "denied";
+    ? "bootstrapping"
+    : session
+    ? "ready"
+    : "denied";
 
   useEffect(() => {
     if (
@@ -612,7 +610,9 @@ export function ChatboxChatPage({
     }
 
     const authMode = getChatboxBootstrapAuthMode(isAuthenticated);
-    const eventKey = `${displayError.kind}:${authMode}:${routeError?.status ?? 0}`;
+    const eventKey = `${displayError.kind}:${authMode}:${
+      routeError?.status ?? 0
+    }`;
     if (interactiveSignInEventKeyRef.current === eventKey) {
       return;
     }
@@ -658,7 +658,7 @@ export function ChatboxChatPage({
 
     try {
       await navigator.clipboard.writeText(
-        buildChatboxLink(token, session.payload.name),
+        buildChatboxLink(token, session.payload.name)
       );
       toast.success("Chatbox link copied");
     } catch {
@@ -681,7 +681,7 @@ export function ChatboxChatPage({
     (details?: HostedOAuthRequiredDetails) => {
       markOAuthRequired(details);
     },
-    [markOAuthRequired],
+    [markOAuthRequired]
   );
 
   const hostStyle = session?.payload.hostStyle ?? "claude";
@@ -703,10 +703,7 @@ export function ChatboxChatPage({
     pendingOAuthServers.every(({ state }) => isHostedOAuthBusy(state.status));
 
   const renderContent = () => {
-    if (
-      landingState === "resolvingAuth" ||
-      landingState === "bootstrapping"
-    ) {
+    if (landingState === "resolvingAuth" || landingState === "bootstrapping") {
       return (
         <div className="flex flex-1 items-center justify-center">
           <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
@@ -752,16 +749,16 @@ export function ChatboxChatPage({
         <ChatTabV2
           connectedOrConnectingServerConfigs={chatboxServerConfigs}
           selectedServerNames={sessionServersActive.map(
-            (server) => server.serverName,
+            (server) => server.serverName
           )}
           minimalMode
           reasoningDisplayMode="hidden"
           loadingIndicatorVariant={getLoadingIndicatorVariantForHostStyle(
-            hostStyle,
+            hostStyle
           )}
           hostedWorkspaceIdOverride={session.payload.workspaceId}
           hostedSelectedServerIdsOverride={sessionServersActive.map(
-            (server) => server.serverId,
+            (server) => server.serverId
           )}
           hostedOAuthTokensOverride={oauthTokensForChat}
           hostedContext={{

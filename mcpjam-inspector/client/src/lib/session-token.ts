@@ -31,28 +31,30 @@ declare global {
 let cachedToken: string | null = null;
 let initPromise: Promise<string> | null = null;
 
-function resolveAuthFetchSurface(input: RequestInfo | URL): "chatbox" | null {
+type AuthFetchSurface = "chatbox";
+
+const AUTH_FETCH_SURFACE_BY_PATH: Record<string, AuthFetchSurface> = {
+  "/api/web/chatboxes/bootstrap": "chatbox",
+};
+
+function resolveAuthFetchSurface(
+  input: RequestInfo | URL
+): AuthFetchSurface | null {
   const rawUrl =
     input instanceof URL
       ? input.toString()
       : typeof Request !== "undefined" && input instanceof Request
-        ? input.url
-        : String(input);
+      ? input.url
+      : String(input);
   const baseOrigin =
     typeof window !== "undefined" ? window.location.origin : "http://localhost";
 
   try {
     const parsed = new URL(rawUrl, baseOrigin);
-    if (parsed.pathname === "/api/web/chatboxes/bootstrap") {
-      return "chatbox";
-    }
+    return AUTH_FETCH_SURFACE_BY_PATH[parsed.pathname] ?? null;
   } catch {
-    if (rawUrl === "/api/web/chatboxes/bootstrap") {
-      return "chatbox";
-    }
+    return AUTH_FETCH_SURFACE_BY_PATH[rawUrl] ?? null;
   }
-
-  return null;
 }
 
 function mergeHeaders(
@@ -95,13 +97,13 @@ function hasAuthorizationHeader(headers?: HeadersInit): boolean {
   }
 
   return Object.keys(headers).some(
-    (key) => key.toLowerCase() === "authorization",
+    (key) => key.toLowerCase() === "authorization"
   );
 }
 
 function buildAuthFetchInit(
   init: RequestInit | undefined,
-  hostedAuthorizationHeader: string | null,
+  hostedAuthorizationHeader: string | null
 ): RequestInit {
   const sessionHeaders = getAuthHeaders();
   const hostedHeaders = hostedAuthorizationHeader
@@ -249,7 +251,7 @@ export function addTokenToUrl(url: string): string {
  */
 export async function authFetch(
   input: RequestInfo | URL,
-  init?: RequestInit,
+  init?: RequestInit
 ): Promise<Response> {
   const surface = resolveAuthFetchSurface(input);
   const hostedAuthHeader = await getHostedAuthorizationHeader();
