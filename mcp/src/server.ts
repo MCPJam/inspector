@@ -7,10 +7,7 @@ import {
   createSessionToolRegistrar,
   type SessionToolRegistrar,
 } from "./tools/sessionToolRegistrar.js";
-import { registerDoctorTool } from "./tools/doctor.js";
-import { registerGetOrgTool } from "./tools/getOrg.js";
-import { registerGetWorkspacesTool } from "./tools/getWorkspaces.js";
-import { registerWhoamiTool } from "./tools/whoami.js";
+import { registerShowServersTool } from "./tools/showServers.js";
 
 interface McpProps extends Record<string, unknown> {
   bearerToken: string;
@@ -44,10 +41,7 @@ export class McpJamMcpServer extends McpAgent<Env, unknown, McpProps> {
     );
     this.sessionToolRegistrar = registrar;
 
-    registerWhoamiTool(registrar, this);
-    registerDoctorTool(registrar, this);
-    registerGetWorkspacesTool(registrar, this);
-    registerGetOrgTool(registrar, this);
+    registerShowServersTool(registrar, this);
   }
 
   override async onConnect(conn: any, context: { request: Request }): Promise<void> {

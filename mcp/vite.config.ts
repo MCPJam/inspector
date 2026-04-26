@@ -18,7 +18,7 @@ export default defineConfig(({ mode }) => ({
     cssMinify: mode !== "development",
     rollupOptions: {
       input: {
-        whoami: resolve(__dirname, "src/ui/whoami.html"),
+        "show-servers": resolve(__dirname, "src/ui/show-servers.html"),
       },
     },
   },

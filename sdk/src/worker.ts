@@ -1,10 +1,19 @@
 export { redactSensitiveValue } from "./redaction.js";
+export { probeMcpServer } from "./server-probe.js";
 export { runHttpServerDoctor } from "./http-server-doctor.js";
 
 export type {
   HttpServerConfig,
   RpcLogger,
 } from "./mcp-client-manager/types.js";
+export type {
+  ProbeHttpAttempt,
+  ProbeInitializeInfo,
+  ProbeMcpServerConfig,
+  ProbeMcpServerResult,
+  ProbeOAuthDetails,
+  ProbeTransportResult,
+} from "./server-probe.js";
 export type {
   ConnectedHttpServerDoctorState,
   HttpServerDoctorDependencies,
