@@ -1,6 +1,10 @@
 import { createStore } from "zustand/vanilla";
 
-import type { ChatboxHostStyle } from "@/lib/chatbox-host-style";
+import {
+  normalizeChatboxHostStyleId,
+  type ChatboxHostStyle,
+} from "@/lib/chatbox-host-style";
+import { DEFAULT_HOST_STYLE } from "@/lib/host-styles";
 import type { ThemeMode, ThemePreset } from "@/types/preferences/theme";
 
 export type PreferencesState = {
@@ -17,18 +21,19 @@ export const THEME_PRESET_KEY = "themePreset";
 export const HOST_STYLE_KEY = "mcpjam-ui-playground-host-style";
 
 function getStoredHostStyle(): ChatboxHostStyle {
-  if (typeof window === "undefined") return "claude";
+  if (typeof window === "undefined") return DEFAULT_HOST_STYLE.id;
 
   try {
     const stored = localStorage.getItem(HOST_STYLE_KEY);
-    if (stored === "claude" || stored === "chatgpt") {
-      return stored;
+    const normalized = normalizeChatboxHostStyleId(stored);
+    if (normalized) {
+      return normalized;
     }
   } catch (error) {
     console.warn("Failed to read persisted host style:", error);
   }
 
-  return "claude";
+  return DEFAULT_HOST_STYLE.id;
 }
 
 export const createPreferencesStore = (init?: Partial<PreferencesState>) =>

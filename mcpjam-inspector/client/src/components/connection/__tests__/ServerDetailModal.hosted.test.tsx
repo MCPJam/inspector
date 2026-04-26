@@ -34,6 +34,12 @@ vi.mock("@/lib/mcp-ui/mcp-apps-utils", () => ({
   isMCPApp: () => false,
   isOpenAIApp: () => false,
   isOpenAIAppAndMCPApp: () => false,
+  UIType: {
+    MCP_APPS: "mcp-apps",
+    OPENAI_SDK: "openai-sdk",
+    OPENAI_SDK_AND_MCP_APPS: "openai-sdk-and-mcp-apps",
+    MCP_UI: "mcp-ui",
+  },
 }));
 
 import { ServerDetailModal } from "../ServerDetailModal";
