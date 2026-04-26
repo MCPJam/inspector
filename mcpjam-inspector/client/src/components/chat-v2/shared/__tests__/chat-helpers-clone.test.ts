@@ -24,9 +24,28 @@ describe("formatErrorMessage", () => {
   it("turns MCPJam model-limit JSON into actionable quota copy", () => {
     const result = formatErrorMessage(
       JSON.stringify({
+        code: "user_rate_limit",
         error:
           "Daily MCPJam model limit reached. Use BYOK or try again tomorrow.",
+        retryAfter: 4500000,
         details: "Try again in 75 minutes.",
+      }),
+    );
+
+    expect(result).toEqual({
+      code: "mcpjam_rate_limit",
+      message:
+        "Add your own API key under LLM Providers in Settings to continue now, or try again in 75 minutes.",
+      isRetryable: false,
+      isMCPJamPlatformError: true,
+    });
+  });
+
+  it("does not leak JSON delimiters from structured retry details", () => {
+    const result = formatErrorMessage(
+      JSON.stringify({
+        error: "Daily MCPJam model limit reached.",
+        details: { hint: "Try again in 75 minutes" },
       }),
     );
 
