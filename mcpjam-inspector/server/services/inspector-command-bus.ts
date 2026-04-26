@@ -23,6 +23,9 @@ class InspectorCommandBus {
 
   registerSubscriber(subscriber: Subscriber): () => void {
     if (this.subscriber) {
+      console.debug(
+        "[inspector-command-bus] Evicting previous subscriber — only one active client is supported.",
+      );
       try {
         this.subscriber.close();
       } catch {}

@@ -8,7 +8,8 @@ const DEFAULT_INSPECTOR_BASE_URL =
   process.env.MCPJAM_INSPECTOR_URL ?? "http://127.0.0.1:6274";
 const DEFAULT_START_TIMEOUT_MS = 30_000;
 
-const tokenCache = new Map<string, string>();
+const TOKEN_TTL_MS = 5 * 60_000;
+const tokenCache = new Map<string, { token: string; fetchedAt: number }>();
 
 export interface InspectorApiClientOptions {
   baseUrl?: string;
@@ -21,6 +22,11 @@ export interface EnsureInspectorOptions extends InspectorApiClientOptions {
   timeoutMs?: number;
 }
 
+/**
+ * Lightweight mirrors of the types in mcpjam-inspector/shared/inspector-command.ts.
+ * The CLI only needs the HTTP-level request/response shapes, so we keep a slim
+ * copy here rather than adding a cross-package dependency on @mcpjam/inspector.
+ */
 export interface InspectorCommandRequest {
   id?: string;
   type: string;
@@ -248,8 +254,8 @@ export async function fetchInspectorSessionToken(
 ): Promise<string> {
   const normalizedBaseUrl = normalizeInspectorBaseUrl(baseUrl);
   const cached = tokenCache.get(normalizedBaseUrl);
-  if (cached) {
-    return cached;
+  if (cached && Date.now() - cached.fetchedAt < TOKEN_TTL_MS) {
+    return cached.token;
   }
 
   let response: Response;
@@ -273,7 +279,7 @@ export async function fetchInspectorSessionToken(
     throw operationalError("Inspector session-token response was invalid.");
   }
 
-  tokenCache.set(normalizedBaseUrl, body.token);
+  tokenCache.set(normalizedBaseUrl, { token: body.token, fetchedAt: Date.now() });
   return body.token;
 }
 
@@ -345,7 +351,7 @@ function openUrl(url: string): void {
   child.unref();
 }
 
-function delay(ms: number): Promise<void> {
+export function delay(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
   });

@@ -1,5 +1,3 @@
-import type { ServerFormData } from "./types.js";
-
 export type InspectorAppDeviceType = "mobile" | "tablet" | "desktop" | "custom";
 export type InspectorAppDisplayMode = "inline" | "pip" | "fullscreen";
 export type InspectorAppProtocol = "mcp-apps" | "openai-sdk";
@@ -94,16 +92,6 @@ export interface SnapshotAppInspectorCommand {
   id: string;
   type: "snapshotApp";
   payload: { surface?: "app-builder" };
-  timeoutMs?: number;
-}
-
-export interface ConnectServerInspectorCommand {
-  id: string;
-  type: "connectServer";
-  payload: {
-    formData: ServerFormData;
-    serverConfig?: Record<string, unknown>;
-  };
   timeoutMs?: number;
 }
 
