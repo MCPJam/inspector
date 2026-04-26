@@ -11,7 +11,6 @@ import { useHostedApiContext } from "@/hooks/hosted/use-hosted-api-context";
 import { useHostedOAuthGate } from "@/hooks/hosted/use-hosted-oauth-gate";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { getGuestBearerToken } from "@/lib/guest-session";
-import { getStoredTokens } from "@/lib/oauth/mcp-oauth";
 import {
   buildChatboxLink,
   clearChatboxSession,
@@ -65,7 +64,7 @@ const UNEXPECTED_CHATBOX_ERROR_MESSAGE =
   "We couldn't open this chatbox right now. Please try again or open MCPJam.";
 
 async function getHostedBearerHeader(
-  getAccessToken: () => Promise<string | undefined | null>,
+  getAccessToken: () => Promise<string | undefined | null>
 ): Promise<string | null> {
   try {
     const workOsToken = await getAccessToken();
@@ -95,7 +94,7 @@ function sanitizeChatboxRouteErrorMessage(message: string): string {
 function createChatboxRouteError(
   status: number,
   message: string,
-  code?: string,
+  code?: string
 ): ChatboxRouteError {
   const fallbackMessage = `Request failed with status ${status}`;
   const rawMessage = message.trim() || fallbackMessage;
@@ -149,7 +148,7 @@ function isChatboxRouteError(error: unknown): error is ChatboxRouteError {
 }
 
 function getChatboxDisplayError(
-  error: ChatboxRouteError | null,
+  error: ChatboxRouteError | null
 ): ChatboxDisplayError {
   if (!error) {
     return {
@@ -161,7 +160,7 @@ function getChatboxDisplayError(
 
   const normalizedMessage = error.message.toLowerCase();
   const requiresSignIn = normalizedMessage.includes(
-    "sign in to access this chatbox",
+    "sign in to access this chatbox"
   );
   const isAccessDenied = normalizedMessage.includes("don't have access");
   const isGuestBlocked =
@@ -173,7 +172,7 @@ function getChatboxDisplayError(
     normalizedMessage.includes("invalid or has expired") ||
     normalizedMessage.includes("invalid or expired");
   const isPlaygroundExpired = normalizedMessage.includes(
-    "playground session expired",
+    "playground session expired"
   );
 
   if (isPlaygroundExpired) {
@@ -248,7 +247,7 @@ export function ChatboxChatPage({
 
       writeChatboxSession(nextSession);
     },
-    [playgroundParams],
+    [playgroundParams]
   );
 
   const clearCurrentSession = useCallback(() => {
@@ -260,21 +259,21 @@ export function ChatboxChatPage({
   }, [playgroundParams]);
 
   const [session, setSession] = useState<ChatboxSession | null>(() =>
-    readCurrentSession(),
+    readCurrentSession()
   );
   const [isResolving, setIsResolving] = useState(
-    Boolean(pathToken || playgroundParams),
+    Boolean(pathToken || playgroundParams)
   );
   const [routeError, setRouteError] = useState<ChatboxRouteError | null>(null);
 
   const sessionServersRequired = useMemo(
     () => session?.payload.servers.filter((s) => !s.optional) ?? [],
-    [session],
+    [session]
   );
 
   const sessionServersOptional = useMemo(
     () => session?.payload.servers.filter((s) => s.optional) ?? [],
-    [session],
+    [session]
   );
 
   const [enabledOptionalServerIds, setEnabledOptionalServerIds] = useState<
@@ -285,7 +284,7 @@ export function ChatboxChatPage({
     if (!session?.token) return;
     try {
       const raw = sessionStorage.getItem(
-        chatboxEnabledOptionalStorageKey(session.token),
+        chatboxEnabledOptionalStorageKey(session.token)
       );
       if (!raw) {
         setEnabledOptionalServerIds((prev) => (prev.length === 0 ? prev : []));
@@ -294,12 +293,10 @@ export function ChatboxChatPage({
       const parsed = JSON.parse(raw) as unknown;
       if (!Array.isArray(parsed)) return;
       const optionalIdSet = new Set(
-        session.payload.servers
-          .filter((s) => s.optional)
-          .map((s) => s.serverId),
+        session.payload.servers.filter((s) => s.optional).map((s) => s.serverId)
       );
       const next = parsed.filter(
-        (id): id is string => typeof id === "string" && optionalIdSet.has(id),
+        (id): id is string => typeof id === "string" && optionalIdSet.has(id)
       );
       setEnabledOptionalServerIds((prev) => {
         if (
@@ -333,19 +330,19 @@ export function ChatboxChatPage({
     if (!session) return [];
     const enabled = new Set(enabledOptionalServerIds);
     const optionalActive = session.payload.servers.filter(
-      (s) => s.optional && enabled.has(s.serverId),
+      (s) => s.optional && enabled.has(s.serverId)
     );
     return [...sessionServersRequired, ...optionalActive];
   }, [session, sessionServersRequired, enabledOptionalServerIds]);
 
   const oauthServers = useMemo(
     () => sessionServersActive.map(bootstrapServerToHostedOAuthDescriptor),
-    [sessionServersActive],
+    [sessionServersActive]
   );
 
   const handleEnableChatboxOptionalServer = useCallback((serverId: string) => {
     setEnabledOptionalServerIds((prev) =>
-      prev.includes(serverId) ? prev : [...prev, serverId],
+      prev.includes(serverId) ? prev : [...prev, serverId]
     );
   }, []);
 
@@ -360,7 +357,6 @@ export function ChatboxChatPage({
       }));
   }, [sessionServersOptional, enabledOptionalServerIds]);
   const {
-    oauthStateByServerId,
     pendingOAuthServers,
     authorizeServer,
     markOAuthRequired,
@@ -390,7 +386,7 @@ export function ChatboxChatPage({
           retryCount: 0,
           enabled: true,
         } satisfies ServerWithName,
-      ]),
+      ])
     );
   }, [session, sessionServersActive]);
 
@@ -401,30 +397,14 @@ export function ChatboxChatPage({
       sessionServersActive.flatMap((server) => [
         [server.serverName, server.serverId],
         [server.serverId, server.serverId],
-      ]),
+      ])
     );
   }, [session, sessionServersActive]);
-
-  const oauthTokensForChat = useMemo(() => {
-    if (!session) return undefined;
-
-    const entries = sessionServersActive
-      .map((server) => {
-        const token = getStoredTokens(server.serverName)?.access_token;
-        return token ? ([server.serverId, token] as const) : null;
-      })
-      .filter((entry): entry is readonly [string, string] =>
-        Array.isArray(entry),
-      );
-
-    return entries.length > 0 ? Object.fromEntries(entries) : undefined;
-  }, [oauthStateByServerId, session, sessionServersActive]);
 
   useHostedApiContext({
     workspaceId: session?.payload.workspaceId ?? null,
     serverIdsByName: hostedServerIdsByName,
     getAccessToken,
-    oauthTokensByServerId: oauthTokensForChat,
     chatboxToken: session?.token,
     isAuthenticated,
   });
@@ -447,8 +427,8 @@ export function ChatboxChatPage({
           setRouteError(
             createChatboxRouteError(
               410,
-              "Playground session expired. Return to the builder to preview.",
-            ),
+              "Playground session expired. Return to the builder to preview."
+            )
           );
         }
         setIsResolving(false);
@@ -464,7 +444,7 @@ export function ChatboxChatPage({
           const authorization = await getHostedBearerHeader(getAccessToken);
           if (!authorization) {
             throw new Error(
-              "Unable to create a hosted session for this chatbox.",
+              "Unable to create a hosted session for this chatbox."
             );
           }
 
@@ -508,7 +488,7 @@ export function ChatboxChatPage({
                 500,
                 error instanceof Error
                   ? error.message
-                  : "Unable to open this chatbox.",
+                  : "Unable to open this chatbox."
               );
           const displayError = getChatboxDisplayError(nextError);
 
@@ -543,7 +523,7 @@ export function ChatboxChatPage({
 
       setSession(null);
       setRouteError(
-        createChatboxRouteError(404, "Invalid or expired chatbox link"),
+        createChatboxRouteError(404, "Invalid or expired chatbox link")
       );
     };
 
@@ -593,7 +573,7 @@ export function ChatboxChatPage({
 
     try {
       await navigator.clipboard.writeText(
-        buildChatboxLink(token, session.payload.name),
+        buildChatboxLink(token, session.payload.name)
       );
       toast.success("Chatbox link copied");
     } catch {
@@ -616,7 +596,7 @@ export function ChatboxChatPage({
     (details?: HostedOAuthRequiredDetails) => {
       markOAuthRequired(details);
     },
-    [markOAuthRequired],
+    [markOAuthRequired]
   );
 
   const hostStyle = session?.payload.hostStyle ?? "claude";
@@ -685,18 +665,17 @@ export function ChatboxChatPage({
         <ChatTabV2
           connectedOrConnectingServerConfigs={chatboxServerConfigs}
           selectedServerNames={sessionServersActive.map(
-            (server) => server.serverName,
+            (server) => server.serverName
           )}
           minimalMode
           reasoningDisplayMode="hidden"
           loadingIndicatorVariant={getLoadingIndicatorVariantForHostStyle(
-            hostStyle,
+            hostStyle
           )}
           hostedWorkspaceIdOverride={session.payload.workspaceId}
           hostedSelectedServerIdsOverride={sessionServersActive.map(
-            (server) => server.serverId,
+            (server) => server.serverId
           )}
-          hostedOAuthTokensOverride={oauthTokensForChat}
           hostedContext={{
             chatboxToken: session.token,
             chatboxSurface: session.surface ?? "share_link",

@@ -116,7 +116,7 @@ describe("ChatboxChatPage", () => {
       ok: boolean;
       status: number;
       statusText: string;
-    }> = {},
+    }> = {}
   ) {
     return {
       ok: overrides.ok ?? true,
@@ -185,14 +185,14 @@ describe("ChatboxChatPage", () => {
 
     expect(await screen.findByTestId("chatbox-chat-tab")).toBeInTheDocument();
     expect(
-      container.querySelector('[data-host-style="chatgpt"]'),
+      container.querySelector('[data-host-style="chatgpt"]')
     ).toBeInTheDocument();
     expect(screen.getByAltText("MCPJam")).toBeInTheDocument();
     expect(mockChatTabV2).toHaveBeenCalledWith(
       expect.objectContaining({
         reasoningDisplayMode: "hidden",
         loadingIndicatorVariant: "chatgpt-dot",
-      }),
+      })
     );
   });
 
@@ -222,7 +222,7 @@ describe("ChatboxChatPage", () => {
     expect(mockChatTabV2).toHaveBeenCalledWith(
       expect.objectContaining({
         loadingIndicatorVariant: "claude-mark",
-      }),
+      })
     );
   });
 
@@ -232,7 +232,7 @@ describe("ChatboxChatPage", () => {
     window.history.replaceState(
       {},
       "",
-      "/chatbox/demo/chatbox-token?playground=1&playgroundId=pg_123",
+      "/chatbox/demo/chatbox-token?playground=1&playgroundId=pg_123"
     );
 
     writePlaygroundSession({
@@ -266,7 +266,7 @@ describe("ChatboxChatPage", () => {
         hostedContext: expect.objectContaining({
           chatboxSurface: "preview",
         }),
-      }),
+      })
     );
   });
 
@@ -274,18 +274,18 @@ describe("ChatboxChatPage", () => {
     window.history.replaceState(
       {},
       "",
-      "/chatbox/demo/chatbox-token?playground=1&playgroundId=missing",
+      "/chatbox/demo/chatbox-token?playground=1&playgroundId=missing"
     );
 
     render(<ChatboxChatPage pathToken="chatbox-token" />);
 
     expect(
-      await screen.findByRole("heading", { name: "Preview unavailable" }),
+      await screen.findByRole("heading", { name: "Preview unavailable" })
     ).toBeInTheDocument();
     expect(
       screen.getByText(
-        "Playground session expired. Return to the builder to preview.",
-      ),
+        "Playground session expired. Return to the builder to preview."
+      )
     ).toBeInTheDocument();
   });
 
@@ -299,24 +299,24 @@ describe("ChatboxChatPage", () => {
             message:
               "Uncaught Error: This chatbox link is invalid or has expired. at resolveChatboxBootstrapForUser (../../convex/chatboxes.ts:309:14) at async handler (../../convex/chatboxes.ts:1088:6)",
           },
-          { ok: false, status: 404, statusText: "Not Found" },
-        ),
-      ),
+          { ok: false, status: 404, statusText: "Not Found" }
+        )
+      )
     );
 
     render(<ChatboxChatPage pathToken="stale-token" />);
 
     expect(
-      await screen.findByRole("heading", { name: "Chatbox Link Unavailable" }),
+      await screen.findByRole("heading", { name: "Chatbox Link Unavailable" })
     ).toBeInTheDocument();
     expect(
       screen.getByText(
-        "This chatbox link is invalid or expired. Ask the owner to share a new link if you still need access.",
-      ),
+        "This chatbox link is invalid or expired. Ask the owner to share a new link if you still need access."
+      )
     ).toBeInTheDocument();
     expect(screen.queryByText(/Uncaught Error:/)).not.toBeInTheDocument();
     expect(
-      screen.queryByText(/resolveChatboxBootstrapForUser/),
+      screen.queryByText(/resolveChatboxBootstrapForUser/)
     ).not.toBeInTheDocument();
   });
 
@@ -332,26 +332,26 @@ describe("ChatboxChatPage", () => {
             message:
               "You don't have access to Test Chatbox. This chatbox is invite-only - ask the owner to invite you.",
           },
-          { ok: false, status: 403, statusText: "Forbidden" },
-        ),
-      ),
+          { ok: false, status: 403, statusText: "Forbidden" }
+        )
+      )
     );
 
     render(<ChatboxChatPage pathToken="token-denied" />);
 
     expect(
-      await screen.findByRole("heading", { name: "Access Denied" }),
+      await screen.findByRole("heading", { name: "Access Denied" })
     ).toBeInTheDocument();
 
     await userEvent.click(
       screen.getByRole("button", {
         name: "Sign in",
-      }),
+      })
     );
 
     expect(mockSignIn).toHaveBeenCalledTimes(1);
     expect(localStorage.getItem(CHATBOX_SIGN_IN_RETURN_PATH_STORAGE_KEY)).toBe(
-      "/chatbox/test/token-denied",
+      "/chatbox/test/token-denied"
     );
   });
 
@@ -368,23 +368,23 @@ describe("ChatboxChatPage", () => {
             message:
               "Uncaught Error: Internal database exploded at handler (../../convex/chatboxes.ts:1088:6)",
           },
-          { ok: false, status: 500, statusText: "Internal Server Error" },
-        ),
-      ),
+          { ok: false, status: 500, statusText: "Internal Server Error" }
+        )
+      )
     );
 
     render(<ChatboxChatPage pathToken="broken-token" />);
 
     expect(
-      await screen.findByRole("heading", { name: "Chatbox Link Unavailable" }),
+      await screen.findByRole("heading", { name: "Chatbox Link Unavailable" })
     ).toBeInTheDocument();
     expect(
       screen.getByText(
-        "We couldn't open this chatbox right now. Please try again or open MCPJam.",
-      ),
+        "We couldn't open this chatbox right now. Please try again or open MCPJam."
+      )
     ).toBeInTheDocument();
     expect(
-      screen.queryByText(/Internal database exploded/),
+      screen.queryByText(/Internal database exploded/)
     ).not.toBeInTheDocument();
     expect(consoleError).toHaveBeenCalledWith(
       "[ChatboxChatPage] Failed to bootstrap chatbox",
@@ -394,7 +394,7 @@ describe("ChatboxChatPage", () => {
         message: "Internal database exploded",
         rawMessage:
           "Uncaught Error: Internal database exploded at handler (../../convex/chatboxes.ts:1088:6)",
-      }),
+      })
     );
   });
 
@@ -402,7 +402,7 @@ describe("ChatboxChatPage", () => {
     vi.useFakeTimers();
     let hasToken = false;
     mockGetStoredTokens.mockImplementation(() =>
-      hasToken ? { access_token: "chatbox-token" } : null,
+      hasToken ? { access_token: "chatbox-token" } : null
     );
 
     writeChatboxSession({
@@ -441,10 +441,10 @@ describe("ChatboxChatPage", () => {
     render(<ChatboxChatPage />);
 
     expect(
-      screen.getByRole("heading", { name: "Finishing authorization" }),
+      screen.getByRole("heading", { name: "Finishing authorization" })
     ).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Authorize" }),
+      screen.queryByRole("button", { name: "Authorize" })
     ).not.toBeInTheDocument();
 
     await act(async () => {
@@ -453,7 +453,18 @@ describe("ChatboxChatPage", () => {
     });
 
     expect(screen.getByTestId("chatbox-chat-tab")).toBeInTheDocument();
-    expect(mockValidateHostedServer).toHaveBeenCalledWith("srv_asana", null);
+    expect(mockValidateHostedServer).toHaveBeenCalledWith(
+      "srv_asana",
+      undefined,
+      undefined,
+      {
+        workspaceId: "ws_1",
+        serverId: "srv_asana",
+        serverName: "asana",
+        accessScope: "chat_v2",
+        chatboxToken: "chatbox-token",
+      }
+    );
     expect(mockValidateHostedServer).toHaveBeenCalledTimes(1);
   });
 
@@ -465,8 +476,8 @@ describe("ChatboxChatPage", () => {
     mockGetStoredTokens.mockReturnValue({ access_token: "stale-token" });
     mockValidateHostedServer.mockRejectedValue(
       new Error(
-        'Authentication failed for MCP server "mn70g96re2qn05cxjw7y4y26ah82jzgh": SSE error: SSE error: Non-200 status code (401)',
-      ),
+        'Authentication failed for MCP server "mn70g96re2qn05cxjw7y4y26ah82jzgh": SSE error: SSE error: Non-200 status code (401)'
+      )
     );
 
     writeChatboxSession({
@@ -500,7 +511,7 @@ describe("ChatboxChatPage", () => {
     render(<ChatboxChatPage />);
 
     expect(
-      screen.getByRole("heading", { name: "Finishing authorization" }),
+      screen.getByRole("heading", { name: "Finishing authorization" })
     ).toBeInTheDocument();
 
     await act(async () => {
@@ -508,17 +519,17 @@ describe("ChatboxChatPage", () => {
     });
 
     expect(
-      screen.getByRole("heading", { name: "Authorization Required" }),
+      screen.getByRole("heading", { name: "Authorization Required" })
     ).toBeInTheDocument();
     expect(
       screen.getByText(
-        "Your authorization expired or was rejected. Authorize again to continue.",
-      ),
+        "Your authorization expired or was rejected. Authorize again to continue."
+      )
     ).toBeInTheDocument();
     expect(screen.queryByText(/SSE error/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/Non-200 status code/i)).not.toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Authorize again" }),
+      screen.getByRole("button", { name: "Authorize again" })
     ).toBeInTheDocument();
     expect(consoleError).toHaveBeenCalledWith(
       "[useHostedOAuthGate] OAuth validation failed",
@@ -526,7 +537,7 @@ describe("ChatboxChatPage", () => {
         surface: "chatbox",
         serverId: "srv_asana",
         serverName: "asana",
-      }),
+      })
     );
   });
 
@@ -566,17 +577,17 @@ describe("ChatboxChatPage", () => {
     expect(await screen.findByTestId("chatbox-chat-tab")).toBeInTheDocument();
 
     await userEvent.click(
-      screen.getByRole("button", { name: "Trigger OAuth" }),
+      screen.getByRole("button", { name: "Trigger OAuth" })
     );
 
     expect(
-      screen.getByRole("heading", { name: "Authorization Required" }),
+      screen.getByRole("heading", { name: "Authorization Required" })
     ).toBeInTheDocument();
     expect(
-      screen.getByText("You'll return here automatically after consent."),
+      screen.getByText("You'll return here automatically after consent.")
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Authorize" }),
+      screen.getByRole("button", { name: "Authorize" })
     ).toBeInTheDocument();
   });
 
@@ -632,15 +643,15 @@ describe("ChatboxChatPage", () => {
     expect(await screen.findByTestId("chatbox-chat-tab")).toBeInTheDocument();
 
     await userEvent.click(
-      screen.getByRole("button", { name: "Trigger targeted OAuth" }),
+      screen.getByRole("button", { name: "Trigger targeted OAuth" })
     );
 
     expect(
-      screen.getByRole("heading", { name: "Authorization Required" }),
+      screen.getByRole("heading", { name: "Authorization Required" })
     ).toBeInTheDocument();
     expect(screen.getByText("asana")).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Authorize again" }),
+      screen.queryByRole("button", { name: "Authorize again" })
     ).not.toBeInTheDocument();
     expect(screen.queryByText("linear")).not.toBeInTheDocument();
   });
@@ -684,14 +695,14 @@ describe("ChatboxChatPage", () => {
       render(<ChatboxChatPage />);
 
       expect(
-        await screen.findByText("Welcome — thanks for trying this out."),
+        await screen.findByText("Welcome — thanks for trying this out.")
       ).toBeInTheDocument();
       expect(
-        screen.getByRole("button", { name: "Get Started" }),
+        screen.getByRole("button", { name: "Get Started" })
       ).toBeInTheDocument();
       // Composer is blocked while the welcome is open
       expect(mockChatTabV2).toHaveBeenCalledWith(
-        expect.objectContaining({ chatboxComposerBlocked: true }),
+        expect.objectContaining({ chatboxComposerBlocked: true })
       );
     });
 
@@ -722,11 +733,11 @@ describe("ChatboxChatPage", () => {
       render(<ChatboxChatPage />);
 
       await userEvent.click(
-        await screen.findByRole("button", { name: "Get Started" }),
+        await screen.findByRole("button", { name: "Get Started" })
       );
 
       expect(
-        screen.queryByText("Welcome — thanks for trying this out."),
+        screen.queryByText("Welcome — thanks for trying this out.")
       ).not.toBeInTheDocument();
       expect(await screen.findByTestId("chatbox-chat-tab")).toBeInTheDocument();
     });
@@ -759,10 +770,10 @@ describe("ChatboxChatPage", () => {
 
       expect(await screen.findByTestId("chatbox-chat-tab")).toBeInTheDocument();
       expect(
-        screen.queryByText("This should not appear."),
+        screen.queryByText("This should not appear.")
       ).not.toBeInTheDocument();
       expect(
-        screen.queryByRole("button", { name: "Get Started" }),
+        screen.queryByRole("button", { name: "Get Started" })
       ).not.toBeInTheDocument();
     });
 
@@ -794,7 +805,7 @@ describe("ChatboxChatPage", () => {
 
       expect(await screen.findByTestId("chatbox-chat-tab")).toBeInTheDocument();
       expect(
-        screen.queryByRole("button", { name: "Get Started" }),
+        screen.queryByRole("button", { name: "Get Started" })
       ).not.toBeInTheDocument();
     });
   });
