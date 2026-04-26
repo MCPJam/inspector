@@ -47,6 +47,10 @@ function ingestToAxiom(
 export const logger = {
   /**
    * Log an error. Always sends to Sentry and Axiom, only prints to console in dev/verbose mode.
+   *
+   * NOTE: For new production diagnostics in `server/routes/web/`, prefer `logger.event()` —
+   * free-form messages are not queryable in Axiom. Legacy callers (CLI, system code,
+   * non-route utilities) remain on this API. See `server/utils/LOGGING.md`.
    */
   error(message: string, error?: unknown, context?: Record<string, unknown>) {
     Sentry.captureException(error ?? new Error(message), {
@@ -65,6 +69,10 @@ export const logger = {
 
   /**
    * Log a warning. Always sends to Sentry and Axiom, only prints to console in dev/verbose mode.
+   *
+   * NOTE: For new production diagnostics in `server/routes/web/`, prefer `logger.event()` —
+   * free-form messages are not queryable in Axiom. Legacy callers (CLI, system code,
+   * non-route utilities) remain on this API. See `server/utils/LOGGING.md`.
    */
   warn(message: string, context?: Record<string, unknown>) {
     Sentry.captureMessage(message, { level: "warning", extra: context });
@@ -78,6 +86,10 @@ export const logger = {
 
   /**
    * Log info. Always sends to Axiom. Only prints to console in dev/verbose mode.
+   *
+   * NOTE: For new production diagnostics in `server/routes/web/`, prefer `logger.event()` —
+   * free-form messages are not queryable in Axiom. Legacy callers (CLI, system code,
+   * non-route utilities) remain on this API. See `server/utils/LOGGING.md`.
    */
   info(message: string, context?: Record<string, unknown>) {
     ingestToAxiom("info", message, context);
