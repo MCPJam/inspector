@@ -49,8 +49,10 @@ export function ErrorBox({
   const [isErrorDetailsOpen, setIsErrorDetailsOpen] = useState(false);
   const errorDetailsJson = parseErrorDetails(errorDetails);
 
-  // Platform errors use warning styling to indicate "not your fault"
-  const isPlatformError = isMCPJamPlatformError === true;
+  const isMCPJamModelLimit = code === "mcpjam_rate_limit";
+
+  // Platform and quota errors use warning styling to indicate recoverable state.
+  const isPlatformError = isMCPJamPlatformError === true || isMCPJamModelLimit;
 
   const containerClasses = isPlatformError
     ? "border-warning bg-warning/20 text-warning-foreground"
@@ -72,9 +74,12 @@ export function ErrorBox({
 
   const isAuthError = code === "auth_error";
 
-  const errorLabel = isPlatformError
+  const errorLabel = isMCPJamModelLimit
+    ? "MCPJam model limit reached"
+    : isPlatformError
     ? "MCPJam platform issue"
     : "An error occurred";
+  const errorPrefix = isMCPJamModelLimit ? `${errorLabel}.` : `${errorLabel}:`;
 
   return (
     <div
@@ -84,9 +89,15 @@ export function ErrorBox({
         <CircleAlert className={cn("h-6 w-6 flex-shrink-0", iconClasses)} />
         <div className="flex-1">
           <p className="text-sm leading-6">
-            {isAuthError ? message : `${errorLabel}: ${message}`}
+            {isAuthError ? (
+              message
+            ) : (
+              <>
+                <span className="font-medium">{errorPrefix}</span> {message}
+              </>
+            )}
           </p>
-          {isPlatformError && (
+          {isPlatformError && !isMCPJamModelLimit && (
             <p className="text-xs opacity-75 mt-0.5">
               This is a temporary issue on our end.
             </p>
