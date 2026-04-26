@@ -1,8 +1,13 @@
-import type { McpUiHostContext } from "@modelcontextprotocol/ext-apps";
+import {
+  applyDocumentTheme,
+  applyHostFonts,
+  applyHostStyleVariables,
+  type McpUiHostContext,
+  type McpUiHostContextChangedNotification,
+} from "@modelcontextprotocol/ext-apps";
 import {
   useApp,
   useDocumentTheme,
-  useHostStyles,
 } from "@modelcontextprotocol/ext-apps/react";
 import {
   Alert,
@@ -86,15 +91,11 @@ function ShowServersApp() {
       createdApp.ontoolresult = async (result) => {
         setToolResult(result);
       };
-      createdApp.onhostcontextchanged = (params) => {
-        setHostContext((previous) => mergeHostContext(previous, params));
-      };
       createdApp.onerror = (appError) => {
         console.error(appError);
       };
     },
   });
-  useHostStyles(app, hostContext ?? app?.getHostContext());
   const documentTheme = useDocumentTheme();
 
   useEffect(() => {
@@ -102,10 +103,30 @@ function ShowServersApp() {
       return;
     }
 
-    setHostContext(app.getHostContext());
+    const initialHostContext = app.getHostContext();
+    setHostContext(initialHostContext);
+
+    const handleHostContextChanged = (
+      params: McpUiHostContextChangedNotification["params"]
+    ) => {
+      setHostContext((previous) =>
+        mergeHostContext(previous ?? app.getHostContext(), params)
+      );
+    };
+
+    app.onhostcontextchanged = handleHostContextChanged;
+    return () => {
+      app.onhostcontextchanged = () => {};
+    };
   }, [app]);
 
-  const activeTheme = hostContext?.theme ?? documentTheme;
+  useEffect(() => {
+    if (hostContext) {
+      applyHostContextToDocument(hostContext);
+    }
+  }, [hostContext]);
+
+  const activeTheme = getResolvedTheme(hostContext, documentTheme);
   const isDark = activeTheme === "dark";
   const themePreset = getThemePreset(hostContext);
 
@@ -174,6 +195,7 @@ function Shell({
         isDark && "dark"
       )}
       data-theme-preset={themePreset}
+      data-theme={isDark ? "dark" : "light"}
       style={style}
     >
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-4">
@@ -705,6 +727,29 @@ function mergeHostContext(
   }
 
   return merged;
+}
+
+function getResolvedTheme(
+  hostContext: McpUiHostContext | undefined,
+  fallback: "light" | "dark"
+): "light" | "dark" {
+  return hostContext?.theme === "light" || hostContext?.theme === "dark"
+    ? hostContext.theme
+    : fallback;
+}
+
+function applyHostContextToDocument(context: Partial<McpUiHostContext>) {
+  if (context.theme === "light" || context.theme === "dark") {
+    applyDocumentTheme(context.theme);
+  }
+
+  if (context.styles?.variables) {
+    applyHostStyleVariables(context.styles.variables);
+  }
+
+  if (context.styles?.css?.fonts) {
+    applyHostFonts(context.styles.css.fonts);
+  }
 }
 
 function getHostStyleVariables(hostContext?: McpUiHostContext): HostShellStyle {
