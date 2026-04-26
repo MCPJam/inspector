@@ -90,9 +90,12 @@ const mockHostContextStoreState = {
   draftHostContext: {} as Record<string, unknown>,
 };
 
-const mockPreferencesState = {
-  themeMode: "light" as const,
-  hostStyle: "claude" as const,
+const mockPreferencesState: {
+  themeMode: "light" | "dark";
+  hostStyle: "claude" | "chatgpt";
+} = {
+  themeMode: "light",
+  hostStyle: "claude",
 };
 
 const mockPlaygroundStoreState = {
@@ -207,7 +210,10 @@ vi.mock("../mcp-apps-modal", () => ({
 // ── Import component under test (after mocks) ─────────────────────────────
 import { MCPAppsRenderer } from "../mcp-apps-renderer";
 import { authFetch } from "@/lib/session-token";
-import { ChatboxHostStyleProvider } from "@/contexts/chatbox-host-style-context";
+import {
+  ChatboxHostStyleProvider,
+  ChatboxHostThemeProvider,
+} from "@/contexts/chatbox-host-style-context";
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 const baseProps = {
@@ -225,6 +231,10 @@ describe("MCPAppsRenderer tool input streaming", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockHostContextStoreState.draftHostContext = {};
+    Object.assign(mockPreferencesState, {
+      themeMode: "light",
+      hostStyle: "claude",
+    });
     Object.assign(mockPlaygroundStoreState, {
       isPlaygroundActive: false,
       mcpAppsCspMode: "permissive",
@@ -329,6 +339,69 @@ describe("MCPAppsRenderer tool input streaming", () => {
               fonts: "",
             }),
           }),
+        }),
+      );
+    });
+  });
+
+  it("uses the current chat host theme for host context outside the playground", async () => {
+    mockPreferencesState.themeMode = "light";
+    mockHostContextStoreState.draftHostContext = {
+      theme: "light",
+    };
+
+    render(
+      <ChatboxHostThemeProvider value="dark">
+        <MCPAppsRenderer {...baseProps} />
+      </ChatboxHostThemeProvider>,
+    );
+
+    await vi.waitFor(() => {
+      expect(mockBridge.connect).toHaveBeenCalled();
+    });
+
+    expect(appBridgeArgsRef.current?.options?.hostContext?.theme).toBe("dark");
+
+    await act(async () => {
+      triggerReady();
+      await Promise.resolve();
+    });
+
+    await vi.waitFor(() => {
+      expect(mockBridge.setHostContext).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          theme: "dark",
+        }),
+      );
+    });
+  });
+
+  it("keeps explicit host context theme inside the playground", async () => {
+    Object.assign(mockPlaygroundStoreState, {
+      isPlaygroundActive: true,
+    });
+    mockPreferencesState.themeMode = "dark";
+    mockHostContextStoreState.draftHostContext = {
+      theme: "light",
+    };
+
+    render(<MCPAppsRenderer {...baseProps} />);
+
+    await vi.waitFor(() => {
+      expect(mockBridge.connect).toHaveBeenCalled();
+    });
+
+    expect(appBridgeArgsRef.current?.options?.hostContext?.theme).toBe("light");
+
+    await act(async () => {
+      triggerReady();
+      await Promise.resolve();
+    });
+
+    await vi.waitFor(() => {
+      expect(mockBridge.setHostContext).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          theme: "light",
         }),
       );
     });

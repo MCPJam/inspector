@@ -1,12 +1,20 @@
 import {
   probeMcpServer,
+  runHttpServerDoctor,
+  type HttpServerConfig,
   type ProbeMcpServerConfig,
   type ProbeMcpServerResult,
 } from "@mcpjam/sdk/worker";
 import type {
+  ServerPrimitiveCollection,
+  ServerPrimitiveListStatus,
   ServerEntry,
   ServerInfo,
+  ServerPromptArgumentInfo,
+  ServerPromptInfo,
+  ServerResourceInfo,
   ServerTransportType,
+  ServerToolInfo,
   ShowServersPayload,
   ShowServersSummary,
   WorkspaceInfo,
@@ -14,6 +22,7 @@ import type {
 
 export const SHOW_SERVERS_PROBE_TIMEOUT_MS = 7_000;
 export const SHOW_SERVERS_PROBE_CONCURRENCY = 5;
+const MAX_PRIMITIVE_DESCRIPTION_LENGTH = 360;
 
 const STDIO_SKIP_REASON =
   "stdio transport is not supported by the hosted MCPJam MCP server.";
@@ -53,7 +62,9 @@ export type BatchAuthorizeFailure = {
   message: string;
 };
 
-export type BatchAuthorizeResult = BatchAuthorizeSuccess | BatchAuthorizeFailure;
+export type BatchAuthorizeResult =
+  | BatchAuthorizeSuccess
+  | BatchAuthorizeFailure;
 
 export type BatchAuthorizeResponse = {
   results: Record<string, BatchAuthorizeResult>;
@@ -89,13 +100,33 @@ export type BuildShowServersPayloadInput = {
   workspaces: RemoteWorkspace[];
   servers: RemoteServer[];
   generatedAt: string;
-  authorizeBatch?: (input: AuthorizeBatchInput) => Promise<AuthorizeBatchResult>;
+  authorizeBatch?: (
+    input: AuthorizeBatchInput
+  ) => Promise<AuthorizeBatchResult>;
   probe?: (config: ProbeMcpServerConfig) => Promise<ProbeMcpServerResult>;
+  inspect?: (config: ProbeMcpServerConfig) => Promise<InspectMcpServerResult>;
 };
 
 type ProbeTarget = {
   index: number;
   server: RemoteServer;
+};
+
+type PrimitiveInspectionCheck = {
+  status: "ok" | "error" | "skipped";
+  detail: string;
+};
+
+export type InspectMcpServerResult = {
+  probe: ProbeMcpServerResult;
+  tools: unknown[];
+  resources: unknown[];
+  prompts: unknown[];
+  checks: {
+    tools: PrimitiveInspectionCheck;
+    resources: PrimitiveInspectionCheck;
+    prompts: PrimitiveInspectionCheck;
+  };
 };
 
 export function resolveWorkspace(
@@ -169,9 +200,12 @@ export async function buildShowServersPayload({
   generatedAt,
   authorizeBatch = authorizeServersForShowServers,
   probe = probeMcpServer,
+  inspect,
 }: BuildShowServersPayloadInput): Promise<ShowServersPayload> {
   const serverEntries = new Array<ServerEntry>(servers.length);
   const probeTargets: ProbeTarget[] = [];
+  const inspectWithDefault =
+    inspect ?? (probe === probeMcpServer ? inspectMcpServer : undefined);
 
   servers.forEach((server, index) => {
     if (server.transportType === "stdio") {
@@ -180,12 +214,18 @@ export async function buildShowServersPayload({
     }
 
     if (!server.url) {
-      serverEntries[index] = skippedServerEntry(server, MISSING_URL_SKIP_REASON);
+      serverEntries[index] = skippedServerEntry(
+        server,
+        MISSING_URL_SKIP_REASON
+      );
       return;
     }
 
     if (!isSupportedHostedHttpUrl(server.url)) {
-      serverEntries[index] = skippedServerEntry(server, HOSTED_HTTP_SKIP_REASON);
+      serverEntries[index] = skippedServerEntry(
+        server,
+        HOSTED_HTTP_SKIP_REASON
+      );
       return;
     }
 
@@ -223,6 +263,7 @@ export async function buildShowServersPayload({
             probeServerEntry({
               authorizationResult:
                 authorization.body.results[target.server._id],
+              inspect: inspectWithDefault,
               probe,
               server: target.server,
             })
@@ -291,8 +332,10 @@ export async function authorizeServersForShowServers({
     };
   }
 
-  let body: BatchAuthorizeResponse | { code?: string; message?: string } | null =
-    null;
+  let body:
+    | BatchAuthorizeResponse
+    | { code?: string; message?: string }
+    | null = null;
   try {
     body = (await response.json()) as
       | BatchAuthorizeResponse
@@ -384,10 +427,12 @@ function errorServerEntry(server: RemoteServer, detail: string): ServerEntry {
 
 async function probeServerEntry({
   authorizationResult,
+  inspect,
   probe,
   server,
 }: {
   authorizationResult: BatchAuthorizeResult | undefined;
+  inspect?: (config: ProbeMcpServerConfig) => Promise<InspectMcpServerResult>;
   probe: (config: ProbeMcpServerConfig) => Promise<ProbeMcpServerResult>;
   server: RemoteServer;
 }): Promise<ServerEntry> {
@@ -418,7 +463,7 @@ async function probeServerEntry({
   }
 
   try {
-    const result = await probe({
+    const probeConfig = {
       url: authorizedUrl,
       headers: authorizationResult.serverConfig.headers,
       accessToken: authorizationResult.oauthAccessToken ?? undefined,
@@ -429,7 +474,14 @@ async function probeServerEntry({
         retries: 0,
         retryDelayMs: 0,
       },
-    });
+    } satisfies ProbeMcpServerConfig;
+
+    if (inspect) {
+      const result = await inspect(probeConfig);
+      return entryFromInspectionResult(server, result);
+    }
+
+    const result = await probe(probeConfig);
 
     return entryFromProbeResult(server, result);
   } catch (error) {
@@ -477,6 +529,239 @@ function entryFromProbeResult(
     ...baseEntry,
     status: "unreachable",
     statusDetail: getProbeStatusDetail(result),
+  };
+}
+
+function entryFromInspectionResult(
+  server: RemoteServer,
+  result: InspectMcpServerResult
+): ServerEntry {
+  const entry = entryFromProbeResult(server, result.probe);
+
+  if (entry.status !== "reachable") {
+    return entry;
+  }
+
+  return {
+    ...entry,
+    primitives: {
+      tools: primitiveCollection(
+        result.tools.map(coerceToolInfo).filter(isPresent),
+        result.checks.tools
+      ),
+      resources: primitiveCollection(
+        result.resources.map(coerceResourceInfo).filter(isPresent),
+        result.checks.resources
+      ),
+      prompts: primitiveCollection(
+        result.prompts.map(coercePromptInfo).filter(isPresent),
+        result.checks.prompts
+      ),
+    },
+  };
+}
+
+export async function inspectMcpServer(
+  config: ProbeMcpServerConfig
+): Promise<InspectMcpServerResult> {
+  const doctorConfig = {
+    url: config.url,
+    ...(config.accessToken ? { accessToken: config.accessToken } : {}),
+    ...(config.headers ? { requestInit: { headers: config.headers } } : {}),
+    ...(config.clientVersion ? { version: config.clientVersion } : {}),
+    ...(config.clientCapabilities
+      ? {
+          clientCapabilities:
+            config.clientCapabilities as HttpServerConfig["clientCapabilities"],
+        }
+      : {}),
+  } satisfies HttpServerConfig;
+
+  const result = await runHttpServerDoctor({
+    config: doctorConfig,
+    target: config.url,
+    timeout: config.timeoutMs ?? SHOW_SERVERS_PROBE_TIMEOUT_MS,
+    retryPolicy: config.retryPolicy,
+  });
+
+  return {
+    probe:
+      result.probe ??
+      inspectionErrorProbe(
+        config,
+        result.error?.message ?? result.connection.detail
+      ),
+    tools: result.tools,
+    resources: result.resources,
+    prompts: result.prompts,
+    checks: {
+      tools: result.checks.tools,
+      resources: result.checks.resources,
+      prompts: result.checks.prompts,
+    },
+  };
+}
+
+function primitiveCollection<TItem>(
+  items: TItem[],
+  check: PrimitiveInspectionCheck
+): ServerPrimitiveCollection<TItem> {
+  return {
+    status: primitiveStatusFromCheck(check),
+    items,
+    statusDetail: check.detail,
+  };
+}
+
+function primitiveStatusFromCheck(
+  check: PrimitiveInspectionCheck
+): ServerPrimitiveListStatus {
+  if (check.status === "error") {
+    return "error";
+  }
+
+  if (check.status === "skipped") {
+    return "skipped";
+  }
+
+  return "loaded";
+}
+
+function coerceToolInfo(value: unknown): ServerToolInfo | undefined {
+  const record = objectRecord(value);
+  const name = record ? optionalString(record, "name") : undefined;
+  if (!record || !name) {
+    return undefined;
+  }
+
+  const title = optionalString(record, "title");
+  const description = optionalDescription(record);
+
+  return {
+    name,
+    ...(title ? { title } : {}),
+    ...(description ? { description } : {}),
+  };
+}
+
+function coerceResourceInfo(value: unknown): ServerResourceInfo | undefined {
+  const record = objectRecord(value);
+  const uri = record ? optionalString(record, "uri") : undefined;
+  if (!record || !uri) {
+    return undefined;
+  }
+
+  const name = optionalString(record, "name");
+  const title = optionalString(record, "title");
+  const description = optionalDescription(record);
+  const mimeType = optionalString(record, "mimeType");
+
+  return {
+    uri,
+    ...(name ? { name } : {}),
+    ...(title ? { title } : {}),
+    ...(description ? { description } : {}),
+    ...(mimeType ? { mimeType } : {}),
+  };
+}
+
+function coercePromptInfo(value: unknown): ServerPromptInfo | undefined {
+  const record = objectRecord(value);
+  const name = record ? optionalString(record, "name") : undefined;
+  if (!record || !name) {
+    return undefined;
+  }
+
+  const promptArguments = Array.isArray(record.arguments)
+    ? record.arguments.map(coercePromptArgumentInfo).filter(isPresent)
+    : undefined;
+  const title = optionalString(record, "title");
+  const description = optionalDescription(record);
+
+  return {
+    name,
+    ...(title ? { title } : {}),
+    ...(description ? { description } : {}),
+    ...(promptArguments && promptArguments.length > 0
+      ? { arguments: promptArguments }
+      : {}),
+  };
+}
+
+function coercePromptArgumentInfo(
+  value: unknown
+): ServerPromptArgumentInfo | undefined {
+  const record = objectRecord(value);
+  const name = record ? optionalString(record, "name") : undefined;
+  if (!record || !name) {
+    return undefined;
+  }
+
+  const description = optionalDescription(record);
+
+  return {
+    name,
+    ...(description ? { description } : {}),
+    ...(typeof record.required === "boolean"
+      ? { required: record.required }
+      : {}),
+  };
+}
+
+function objectRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+function optionalString(
+  record: Record<string, unknown>,
+  key: string
+): string | undefined {
+  const value = record[key];
+  return typeof value === "string" && value.trim().length > 0
+    ? value.trim()
+    : undefined;
+}
+
+function optionalDescription(
+  record: Record<string, unknown>
+): string | undefined {
+  const description = optionalString(record, "description");
+  return description
+    ? truncateText(description, MAX_PRIMITIVE_DESCRIPTION_LENGTH)
+    : undefined;
+}
+
+function truncateText(value: string, maxLength: number): string {
+  if (value.length <= maxLength) {
+    return value;
+  }
+
+  return `${value.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
+}
+
+function isPresent<TValue>(value: TValue | undefined): value is TValue {
+  return value !== undefined;
+}
+
+function inspectionErrorProbe(
+  config: ProbeMcpServerConfig,
+  message: string
+): ProbeMcpServerResult {
+  return {
+    url: config.url,
+    protocolVersion: config.protocolVersion ?? "2025-11-25",
+    status: "error",
+    transport: {
+      attempts: [],
+    },
+    oauth: {
+      required: false,
+      optional: false,
+      registrationStrategies: [],
+    },
+    error: message,
   };
 }
 
