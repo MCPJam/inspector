@@ -1,6 +1,4 @@
-import { WebApiError } from "@/lib/apis/web/base";
-import { getConvexSiteUrl } from "@/lib/convex-site-url";
-import { authFetch } from "@/lib/session-token";
+import { webPost, WebApiError } from "@/lib/apis/web/base";
 
 export interface HostedOAuthTokens {
   access_token?: string;
@@ -22,66 +20,19 @@ export interface FetchHostedOAuthTokensRequest {
   serverId: string;
 }
 
-function getHostedOAuthTokensBaseUrl(): string {
-  const site = getConvexSiteUrl();
-  if (!site) {
-    throw new WebApiError(
-      0,
-      "NO_CONVEX_SITE",
-      "Convex site URL is not configured (VITE_CONVEX_URL or VITE_CONVEX_SITE_URL)",
-    );
-  }
-  return site.replace(/\/$/, "");
-}
-
-async function readJsonBody(response: Response): Promise<unknown> {
-  const text = await response.text();
-  if (!text) return null;
-  try {
-    return JSON.parse(text);
-  } catch {
-    return null;
-  }
-}
-
-function throwFromFailedResponse(response: Response, body: unknown): never {
-  const record =
-    body && typeof body === "object" ? (body as Record<string, unknown>) : null;
-  const code =
-    typeof record?.code === "string"
-      ? record.code
-      : typeof record?.error === "string"
-        ? record.error
-        : null;
-  const message =
-    typeof record?.message === "string"
-      ? record.message
-      : typeof record?.error === "string"
-        ? record.error
-        : `Request failed (${response.status})`;
-  throw new WebApiError(response.status, code, message);
-}
-
 export async function fetchHostedOAuthTokens(
   request: FetchHostedOAuthTokensRequest,
 ): Promise<HostedOAuthTokensResult> {
-  const base = getHostedOAuthTokensBaseUrl();
-  const response = await authFetch(`${base}/web/oauth/tokens`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(request),
-  });
-  const body = await readJsonBody(response);
-  if (!response.ok) {
-    throwFromFailedResponse(response, body);
-  }
-
+  const body = await webPost<FetchHostedOAuthTokensRequest, unknown>(
+    "/api/web/oauth/tokens",
+    request,
+  );
   const result =
     body && typeof body === "object" ? (body as Record<string, unknown>) : null;
   if (!result?.success || !result.tokens || typeof result.tokens !== "object") {
     throw new WebApiError(
-      response.status,
-      null,
+      0,
+      "INVALID_RESPONSE",
       "Hosted OAuth token response was invalid",
     );
   }

@@ -245,4 +245,55 @@ describe("web routes — oauth session forwarding", () => {
       },
     );
   });
+
+  it("POST /tokens forwards the bearer-authenticated token reveal to Convex", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          success: true,
+          tokens: {
+            access_token: "access-token",
+            refresh_token: "refresh-token",
+          },
+          expiresAt: null,
+          kind: "generic",
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const payload = {
+      workspaceId: "ws_1",
+      serverId: "srv_1",
+    };
+
+    const response = await postJson(app, "/api/web/oauth/tokens", payload, token);
+    const { status, data } = await expectJson(response);
+
+    expect(status).toBe(200);
+    expect(data).toEqual({
+      success: true,
+      tokens: {
+        access_token: "access-token",
+        refresh_token: "refresh-token",
+      },
+      expiresAt: null,
+      kind: "generic",
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://example.convex.site/web/oauth/tokens",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(payload),
+      },
+    );
+  });
 });
