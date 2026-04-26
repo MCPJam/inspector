@@ -59,6 +59,7 @@ function buildHostedOAuthStateMap(
   oauthServers: HostedOAuthServerDescriptor[],
   surface: HostedOAuthSurface,
   isVaultBacked: boolean,
+  verifyVaultCredentialOnLoad: boolean,
   previous: Record<string, HostedOAuthState> = {}
 ): Record<string, HostedOAuthState> {
   const resumeMarker = readHostedOAuthResumeMarker(surface);
@@ -98,8 +99,11 @@ function buildHostedOAuthStateMap(
     } else if (hasToken) {
       status = existing?.status === "ready" ? "ready" : "verifying";
       errorMessage = null;
-    } else if (isVaultBacked) {
+    } else if (isVaultBacked && verifyVaultCredentialOnLoad) {
       status = existing?.status === "ready" ? "ready" : "verifying";
+      errorMessage = null;
+    } else if (existing?.status === "ready") {
+      status = "ready";
       errorMessage = null;
     } else if (existing?.status === "error") {
       status = "error";
@@ -217,9 +221,17 @@ export function useHostedOAuthGate({
     [servers]
   );
   const isVaultBacked = isAuthenticated || !!chatboxToken;
+  const verifyVaultCredentialOnLoad = isAuthenticated;
   const [oauthStateByServerId, setOAuthStateByServerId] = useState<
     Record<string, HostedOAuthState>
-  >(() => buildHostedOAuthStateMap(oauthServers, surface, isVaultBacked));
+  >(() =>
+    buildHostedOAuthStateMap(
+      oauthServers,
+      surface,
+      isVaultBacked,
+      verifyVaultCredentialOnLoad
+    )
+  );
   const oauthStateByServerIdRef = useRef(oauthStateByServerId);
   const processingServerIdsRef = useRef<Set<string>>(new Set());
   const isUnmountedRef = useRef(false);
@@ -237,9 +249,15 @@ export function useHostedOAuthGate({
 
   useEffect(() => {
     setOAuthStateByServerId((previous) =>
-      buildHostedOAuthStateMap(oauthServers, surface, isVaultBacked, previous)
+      buildHostedOAuthStateMap(
+        oauthServers,
+        surface,
+        isVaultBacked,
+        verifyVaultCredentialOnLoad,
+        previous
+      )
     );
-  }, [oauthServers, surface, isVaultBacked]);
+  }, [oauthServers, surface, isVaultBacked, verifyVaultCredentialOnLoad]);
 
   useEffect(() => {
     if (oauthServers.length === 0) {

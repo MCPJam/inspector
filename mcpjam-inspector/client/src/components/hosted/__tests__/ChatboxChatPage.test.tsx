@@ -15,15 +15,23 @@ import {
 
 const {
   mockConvexAuthState,
+  mockWorkOsAuthState,
   mockGetAccessToken,
   mockSignIn,
   mockGetStoredTokens,
   mockInitiateOAuth,
   mockValidateHostedServer,
   mockChatTabV2,
+  mockUseHostedApiContext,
+  mockAuthFetch,
+  mockPosthogCapture,
 } = vi.hoisted(() => ({
   mockConvexAuthState: {
     isAuthenticated: true,
+    isLoading: false,
+  },
+  mockWorkOsAuthState: {
+    user: { id: "user_123" },
     isLoading: false,
   },
   mockGetAccessToken: vi.fn(),
@@ -32,6 +40,9 @@ const {
   mockInitiateOAuth: vi.fn(async () => ({ success: false })),
   mockValidateHostedServer: vi.fn(),
   mockChatTabV2: vi.fn(),
+  mockUseHostedApiContext: vi.fn(),
+  mockAuthFetch: vi.fn(),
+  mockPosthogCapture: vi.fn(),
 }));
 
 vi.mock("convex/react", () => ({
@@ -42,11 +53,23 @@ vi.mock("@workos-inc/authkit-react", () => ({
   useAuth: () => ({
     getAccessToken: mockGetAccessToken,
     signIn: mockSignIn,
+    user: mockWorkOsAuthState.user,
+    isLoading: mockWorkOsAuthState.isLoading,
   }),
 }));
 
 vi.mock("@/hooks/hosted/use-hosted-api-context", () => ({
-  useHostedApiContext: vi.fn(),
+  useHostedApiContext: mockUseHostedApiContext,
+}));
+
+vi.mock("@/lib/session-token", () => ({
+  authFetch: mockAuthFetch,
+}));
+
+vi.mock("posthog-js/react", () => ({
+  usePostHog: () => ({
+    capture: mockPosthogCapture,
+  }),
 }));
 
 vi.mock("@/lib/apis/web/servers-api", () => ({
@@ -138,12 +161,17 @@ describe("ChatboxChatPage", () => {
     window.history.replaceState({}, "", "/");
     mockConvexAuthState.isAuthenticated = true;
     mockConvexAuthState.isLoading = false;
+    mockWorkOsAuthState.user = { id: "user_123" };
+    mockWorkOsAuthState.isLoading = false;
     mockGetAccessToken.mockReset();
     mockSignIn.mockReset();
     mockGetStoredTokens.mockReset();
     mockInitiateOAuth.mockReset();
     mockValidateHostedServer.mockReset();
     mockChatTabV2.mockReset();
+    mockUseHostedApiContext.mockReset();
+    mockAuthFetch.mockReset();
+    mockPosthogCapture.mockReset();
 
     mockGetAccessToken.mockResolvedValue("workos-token");
     mockGetStoredTokens.mockReturnValue(null);
@@ -153,6 +181,23 @@ describe("ChatboxChatPage", () => {
       status: "connected",
       initInfo: null,
     });
+    mockAuthFetch.mockResolvedValue(
+      createFetchResponse({
+        workspaceId: "ws_1",
+        chatboxId: "sbx_1",
+        name: "Resolved Chatbox",
+        description: "Hosted chatbox",
+        hostStyle: "claude",
+        mode: "invited_only",
+        allowGuestAccess: false,
+        viewerIsWorkspaceMember: true,
+        systemPrompt: "You are helpful.",
+        modelId: "openai/gpt-5-mini",
+        temperature: 0.4,
+        requireToolApproval: true,
+        servers: [],
+      })
+    );
   });
 
   afterEach(() => {
@@ -227,8 +272,6 @@ describe("ChatboxChatPage", () => {
   });
 
   it("loads playground sessions from local storage and skips bootstrap", async () => {
-    const fetchSpy = vi.fn();
-    vi.stubGlobal("fetch", fetchSpy);
     window.history.replaceState(
       {},
       "",
@@ -260,7 +303,7 @@ describe("ChatboxChatPage", () => {
     render(<ChatboxChatPage pathToken="chatbox-token" />);
 
     expect(await screen.findByTestId("chatbox-chat-tab")).toBeInTheDocument();
-    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(mockAuthFetch).not.toHaveBeenCalled();
     expect(mockChatTabV2).toHaveBeenCalledWith(
       expect.objectContaining({
         hostedContext: expect.objectContaining({
@@ -290,17 +333,14 @@ describe("ChatboxChatPage", () => {
   });
 
   it("shows curated copy for an invalid or expired chatbox link", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue(
-        createFetchResponse(
-          {
-            code: "NOT_FOUND",
-            message:
-              "Uncaught Error: This chatbox link is invalid or has expired. at resolveChatboxBootstrapForUser (../../convex/chatboxes.ts:309:14) at async handler (../../convex/chatboxes.ts:1088:6)",
-          },
-          { ok: false, status: 404, statusText: "Not Found" }
-        )
+    mockAuthFetch.mockResolvedValueOnce(
+      createFetchResponse(
+        {
+          code: "NOT_FOUND",
+          message:
+            "Uncaught Error: This chatbox link is invalid or has expired. at resolveChatboxBootstrapForUser (../../convex/chatboxes.ts:309:14) at async handler (../../convex/chatboxes.ts:1088:6)",
+        },
+        { ok: false, status: 404, statusText: "Not Found" }
       )
     );
 
@@ -320,20 +360,93 @@ describe("ChatboxChatPage", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("waits for active WorkOS and Convex loading to settle before bootstrapping the link", async () => {
+    mockConvexAuthState.isAuthenticated = false;
+    mockConvexAuthState.isLoading = true;
+    mockWorkOsAuthState.user = { id: "user_settling" };
+    mockWorkOsAuthState.isLoading = true;
+
+    const { rerender } = render(<ChatboxChatPage pathToken="token-workos" />);
+
+    expect(mockAuthFetch).not.toHaveBeenCalled();
+    expect(
+      screen.queryByRole("button", {
+        name: "Sign in",
+      })
+    ).not.toBeInTheDocument();
+    expect(mockUseHostedApiContext).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceId: null,
+        serverIdsByName: {},
+        chatboxToken: "token-workos",
+        isAuthenticated: false,
+      })
+    );
+
+    mockWorkOsAuthState.isLoading = false;
+    mockConvexAuthState.isLoading = false;
+    mockConvexAuthState.isAuthenticated = true;
+    rerender(<ChatboxChatPage pathToken="token-workos" />);
+
+    expect(await screen.findByTestId("chatbox-chat-tab")).toBeInTheDocument();
+    expect(mockAuthFetch).toHaveBeenCalledTimes(1);
+    expect(mockAuthFetch).toHaveBeenCalledWith(
+      "/api/web/chatboxes/bootstrap",
+      expect.objectContaining({
+        body: JSON.stringify({ token: "token-workos" }),
+      })
+    );
+    expect(mockPosthogCapture).toHaveBeenCalledWith(
+      "chatbox_bootstrap_started",
+      expect.objectContaining({
+        surface: "chatbox",
+        auth_mode: "workos",
+        status: "started",
+      })
+    );
+  });
+
+  it("does not stay stuck resolving auth when WorkOS is hydrated but Convex remains unauthenticated", async () => {
+    mockConvexAuthState.isAuthenticated = false;
+    mockConvexAuthState.isLoading = false;
+    mockWorkOsAuthState.user = { id: "user_stalled_convex" };
+    mockWorkOsAuthState.isLoading = false;
+    mockAuthFetch.mockResolvedValueOnce(
+      createFetchResponse(
+        {
+          code: "FORBIDDEN",
+          message:
+            "You don't have access to Test Chatbox. This chatbox is invite-only - ask the owner to invite you.",
+        },
+        { ok: false, status: 403, statusText: "Forbidden" }
+      )
+    );
+
+    render(<ChatboxChatPage pathToken="token-stalled-convex" />);
+
+    expect(
+      await screen.findByRole("heading", { name: "Access Denied" })
+    ).toBeInTheDocument();
+    expect(mockAuthFetch).toHaveBeenCalledWith(
+      "/api/web/chatboxes/bootstrap",
+      expect.objectContaining({
+        body: JSON.stringify({ token: "token-stalled-convex" }),
+      })
+    );
+  });
+
   it("keeps the access denied sign-in path intact", async () => {
     mockConvexAuthState.isAuthenticated = false;
+    mockWorkOsAuthState.user = null;
     window.history.replaceState({}, "", "/chatbox/test/token-denied");
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue(
-        createFetchResponse(
-          {
-            code: "FORBIDDEN",
-            message:
-              "You don't have access to Test Chatbox. This chatbox is invite-only - ask the owner to invite you.",
-          },
-          { ok: false, status: 403, statusText: "Forbidden" }
-        )
+    mockAuthFetch.mockResolvedValueOnce(
+      createFetchResponse(
+        {
+          code: "FORBIDDEN",
+          message:
+            "You don't have access to Test Chatbox. This chatbox is invite-only - ask the owner to invite you.",
+        },
+        { ok: false, status: 403, statusText: "Forbidden" }
       )
     );
 
@@ -355,21 +468,85 @@ describe("ChatboxChatPage", () => {
     );
   });
 
+  it("shows the sign-in CTA for guest-blocked links only after bootstrap denies access", async () => {
+    mockConvexAuthState.isAuthenticated = false;
+    mockWorkOsAuthState.user = null;
+    mockAuthFetch.mockResolvedValueOnce(
+      createFetchResponse(
+        {
+          code: "FORBIDDEN",
+          message:
+            "Guests cannot access Test Chatbox. This chatbox does not allow guest access.",
+        },
+        { ok: false, status: 403, statusText: "Forbidden" }
+      )
+    );
+
+    render(<ChatboxChatPage pathToken="token-guest-blocked" />);
+
+    expect(
+      screen.queryByRole("button", {
+        name: "Sign in",
+      })
+    ).not.toBeInTheDocument();
+
+    expect(
+      await screen.findByRole("heading", { name: "Access Denied" })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", {
+        name: "Sign in",
+      })
+    ).toBeInTheDocument();
+    expect(mockPosthogCapture).toHaveBeenCalledWith(
+      "interactive_signin_required",
+      expect.objectContaining({
+        surface: "chatbox",
+        auth_mode: "guest",
+        status: "required",
+        error_kind: "guest_blocked",
+      })
+    );
+  });
+
+  it("does not show the sign-in CTA when an authenticated viewer is denied", async () => {
+    mockConvexAuthState.isAuthenticated = true;
+    mockWorkOsAuthState.user = { id: "user_denied" };
+    mockAuthFetch.mockResolvedValueOnce(
+      createFetchResponse(
+        {
+          code: "FORBIDDEN",
+          message:
+            "You don't have access to Test Chatbox. This chatbox is invite-only - ask the owner to invite you.",
+        },
+        { ok: false, status: 403, statusText: "Forbidden" }
+      )
+    );
+
+    render(<ChatboxChatPage pathToken="token-auth-denied" />);
+
+    expect(
+      await screen.findByRole("heading", { name: "Access Denied" })
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", {
+        name: "Sign in",
+      })
+    ).not.toBeInTheDocument();
+  });
+
   it("shows a generic fallback for unexpected chatbox bootstrap failures", async () => {
     const consoleError = vi
       .spyOn(console, "error")
       .mockImplementation(() => {});
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue(
-        createFetchResponse(
-          {
-            code: "INTERNAL_ERROR",
-            message:
-              "Uncaught Error: Internal database exploded at handler (../../convex/chatboxes.ts:1088:6)",
-          },
-          { ok: false, status: 500, statusText: "Internal Server Error" }
-        )
+    mockAuthFetch.mockResolvedValueOnce(
+      createFetchResponse(
+        {
+          code: "INTERNAL_ERROR",
+          message:
+            "Uncaught Error: Internal database exploded at handler (../../convex/chatboxes.ts:1088:6)",
+        },
+        { ok: false, status: 500, statusText: "Internal Server Error" }
       )
     );
 
@@ -466,6 +643,59 @@ describe("ChatboxChatPage", () => {
       }
     );
     expect(mockValidateHostedServer).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps guest chatbox OAuth in first-consent welcome before callback completion", async () => {
+    mockConvexAuthState.isAuthenticated = false;
+    writeChatboxSession({
+      token: "chatbox-token",
+      payload: {
+        workspaceId: "ws_1",
+        chatboxId: "sbx_1",
+        name: "Asana Chatbox",
+        description: "Hosted chatbox",
+        hostStyle: "claude",
+        mode: "invited_only",
+        allowGuestAccess: true,
+        viewerIsWorkspaceMember: false,
+        systemPrompt: "You are helpful.",
+        modelId: "openai/gpt-5-mini",
+        temperature: 0.4,
+        requireToolApproval: true,
+        servers: [
+          {
+            serverId: "srv_asana",
+            serverName: "asana",
+            useOAuth: true,
+            serverUrl: "https://mcp.asana.com/sse",
+            clientId: null,
+            oauthScopes: null,
+          },
+        ],
+        welcomeDialog: {
+          enabled: true,
+          body: "Connect Asana before chatting.",
+        },
+      },
+    });
+
+    render(<ChatboxChatPage />);
+
+    expect(
+      await screen.findByText("Connect Asana before chatting.")
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Get Started" })
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: "Finishing authorization" })
+    ).not.toBeInTheDocument();
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(mockValidateHostedServer).not.toHaveBeenCalled();
   });
 
   it("shows curated copy instead of transport details when chatbox OAuth validation fails", async () => {

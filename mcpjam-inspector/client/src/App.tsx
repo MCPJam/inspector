@@ -496,24 +496,35 @@ export default function App() {
       });
     };
 
+    const hasHostedServerContext =
+      !!callbackContext.workspaceId && !!callbackContext.serverId;
+    const isGuestChatboxSessionCallback =
+      !isAuthenticated &&
+      !!callbackContext.chatboxToken &&
+      !!callbackContext.sessionId;
     const shouldUseHostedCompletion =
-      !!callbackContext.sessionId &&
-      !!callbackContext.workspaceId &&
-      !!callbackContext.serverId &&
-      (isAuthenticated || !!callbackContext.chatboxToken);
+      hasHostedServerContext &&
+      (isAuthenticated || isGuestChatboxSessionCallback);
 
     const completeCallback = shouldUseHostedCompletion
       ? (async () => {
-          const guestAuthorizationHeader =
-            !isAuthenticated && callbackContext.chatboxToken
-              ? await getGuestBearerToken()
-              : null;
+          let authorizationHeader: string | undefined;
+          if (isGuestChatboxSessionCallback) {
+            const guestBearerToken = await getGuestBearerToken();
+            if (!guestBearerToken) {
+              return {
+                success: false,
+                error:
+                  "Your guest session expired. Reopen the chatbox link and try again.",
+              };
+            }
+            authorizationHeader = `Bearer ${guestBearerToken}`;
+          }
+
           return completeHostedOAuthCallback(callbackContext, code, {
             callbackState: state,
             onTraceUpdate: handleLiveOAuthTrace,
-            authorizationHeader: guestAuthorizationHeader
-              ? `Bearer ${guestAuthorizationHeader}`
-              : undefined,
+            authorizationHeader,
           });
         })()
       : handleOAuthCallback(code, {

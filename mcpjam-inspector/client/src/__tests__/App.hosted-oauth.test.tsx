@@ -12,7 +12,10 @@ import {
   clearHostedOAuthPendingState,
   writeHostedOAuthPendingMarker,
 } from "../lib/hosted-oauth-callback";
-import { writeHostedOAuthResumeMarker } from "../lib/hosted-oauth-resume";
+import {
+  readHostedOAuthResumeMarker,
+  writeHostedOAuthResumeMarker,
+} from "../lib/hosted-oauth-resume";
 import {
   readBillingSignInReturnPath,
   readPersistedCheckoutIntent,
@@ -502,6 +505,57 @@ describe("App hosted OAuth callback handling", () => {
         })
       );
     });
+  });
+
+  it("uses hosted completion for authenticated chatbox callbacks without a hosted session id", async () => {
+    clearHostedOAuthPendingState();
+    writeHostedOAuthPendingMarker({
+      surface: "chatbox",
+      workspaceId: "ws_1",
+      serverId: "srv_asana",
+      accessScope: "chat_v2",
+      chatboxToken: "chatbox-token",
+      serverName: "asana",
+      serverUrl: "https://mcp.asana.com/sse",
+      returnHash: "#asaan",
+    });
+    localStorage.setItem("mcp-oauth-pending", "asana");
+    localStorage.setItem("mcp-serverUrl-asana", "https://mcp.asana.com/sse");
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(mockHandleOAuthCallback).not.toHaveBeenCalled();
+      expect(mockCompleteHostedOAuthCallback).toHaveBeenCalledWith(
+        expect.objectContaining({
+          surface: "chatbox",
+          workspaceId: "ws_1",
+          serverId: "srv_asana",
+          sessionId: null,
+          chatboxToken: "chatbox-token",
+        }),
+        "oauth-code",
+        expect.objectContaining({
+          authorizationHeader: undefined,
+          onTraceUpdate: expect.any(Function),
+        })
+      );
+    });
+  });
+
+  it("reports a clear guest session error when a chatbox callback bearer is unavailable", async () => {
+    mockConvexAuthState.isAuthenticated = false;
+    mockGetGuestBearerToken.mockResolvedValue(null);
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(readHostedOAuthResumeMarker("chatbox")?.errorMessage).toBe(
+        "Your guest session expired. Reopen the chatbox link and try again."
+      );
+    });
+    expect(mockCompleteHostedOAuthCallback).not.toHaveBeenCalled();
+    expect(mockHandleOAuthCallback).not.toHaveBeenCalled();
   });
 
   it("does not keep the hosted loading screen for workspace OAuth callbacks", async () => {
