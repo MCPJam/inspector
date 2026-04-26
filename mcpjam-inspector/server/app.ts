@@ -42,6 +42,7 @@ import { startGuestAuthProvisioningInBackground } from "./utils/convex-guest-aut
 import { fetchRemoteGuestJwks } from "./utils/guest-session-source.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "./utils/mcp-retry-policy.js";
 import { initXAAIdpKeyPair } from "./services/xaa-idp-keypair.js";
+import { requestLogContextMiddleware } from "./middleware/request-log-context.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -119,6 +120,12 @@ export function createHonoApp() {
     c.mcpClientManager = mcpClientManager;
     await next();
   });
+
+  // Request log context (mounted BEFORE the security stack so that 401s from
+  // session auth, 403s from origin validation, and hosted-mode 410 partition
+  // responses are still observed in Axiom — those are exactly the requests
+  // SREs want to see during an outage or attack).
+  app.use("/api/*", requestLogContextMiddleware);
 
   // ===== SECURITY MIDDLEWARE STACK =====
   // Order matters: headers -> origin validation -> strict partition -> session auth

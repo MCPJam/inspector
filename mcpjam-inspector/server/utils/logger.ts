@@ -1,5 +1,13 @@
 import * as Sentry from "@sentry/node";
 import { Axiom } from "@axiomhq/js";
+import type {
+  LogEventName,
+  RequestEventMap,
+  SystemEventMap,
+  RequestLogContext,
+  SystemLogContext,
+} from "./log-events.js";
+import { scrubLogPayload } from "./log-scrubber.js";
 
 const isVerbose = () => process.env.VERBOSE_LOGS === "true";
 const isDev = () => process.env.NODE_ENV !== "production";
@@ -13,6 +21,14 @@ const axiom =
 const dataset = process.env.AXIOM_DATASET ?? "";
 
 const environment = process.env.ENVIRONMENT ?? "unknown";
+
+/**
+ * Sentry capture for typed events is **opt-in**: pass `{ sentry: true }` at the
+ * callsite that owns the error. Auto-capture for any heuristic (e.g. ".failed"
+ * suffix) was removed because it caused double-capture when both middleware
+ * and the route's error handler fired Sentry for the same exception.
+ */
+type SentryOptions = { error?: unknown; sentry?: boolean };
 
 function ingestToAxiom(
   level: "info" | "warn" | "error" | "debug",
@@ -87,6 +103,75 @@ export const logger = {
   async flush() {
     await axiom?.flush();
   },
+
+  event<E extends keyof RequestEventMap>(
+    eventName: E,
+    base: RequestLogContext,
+    payload: RequestEventMap[E],
+    options?: SentryOptions,
+  ): void {
+    emit(eventName, base, payload, options);
+  },
+
+  systemEvent<E extends keyof SystemEventMap>(
+    eventName: E,
+    base: SystemLogContext,
+    payload: SystemEventMap[E],
+    options?: SentryOptions,
+  ): void {
+    emit(eventName, base, payload, options);
+  },
 };
+
+/**
+ * Internal emit shared by `logger.event` and `logger.systemEvent`.
+ *
+ * - `timestamp` is set at emit time; this is the event-observation time and
+ *   is what Axiom indexes as `_time`. Request-start time is recoverable from
+ *   `timestamp - durationMs` for HTTP events.
+ * - Sentry is opt-in via `options.sentry === true`; the caller that owns the
+ *   error decides whether to forward it.
+ * - `*.failed` events route their console echo to stderr.
+ */
+function emit(
+  eventName: LogEventName,
+  base: RequestLogContext | SystemLogContext,
+  payload: Record<string, unknown>,
+  options?: SentryOptions,
+): void {
+  const fullPayload = scrubLogPayload({
+    ...base,
+    ...payload,
+    event: eventName,
+    timestamp: new Date().toISOString(),
+  }) as Record<string, unknown>;
+
+  if (axiom) {
+    axiom.ingest(dataset, [fullPayload]);
+  }
+
+  if (options?.sentry === true) {
+    if (options.error instanceof Error) {
+      Sentry.captureException(options.error, { extra: fullPayload });
+    } else {
+      Sentry.captureMessage(eventName, {
+        level: "error",
+        extra: {
+          ...fullPayload,
+          ...(options.error !== undefined
+            ? { rawError: String(options.error) }
+            : {}),
+        },
+      });
+    }
+  }
+
+  if (shouldLog()) {
+    const consoleFn = eventName.endsWith(".failed")
+      ? console.error
+      : console.log;
+    consoleFn(`[event] ${eventName}`, fullPayload);
+  }
+}
 
 process.on("beforeExit", () => logger.flush());
