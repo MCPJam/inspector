@@ -239,13 +239,15 @@ async function runUiRender(options: {
 
   await client.connectServer(options.serverName, options.config);
 
-  await ensureInspector({
-    baseUrl: ensureResult.baseUrl,
-    openBrowser: true,
-    startIfNeeded: false,
-    tab: "app-builder",
-    timeoutMs: options.timeoutMs,
-  });
+  if (ensureResult.started) {
+    await ensureInspector({
+      baseUrl: ensureResult.baseUrl,
+      openBrowser: true,
+      startIfNeeded: false,
+      tab: "app-builder",
+      timeoutMs: options.timeoutMs,
+    });
+  }
 
   const renderResult = await runInspectorAppRender({
     client,
