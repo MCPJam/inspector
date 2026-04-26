@@ -60,7 +60,10 @@ import { fetchMcpAppsWidgetContent } from "./fetch-widget-content";
 import type { CheckoutSession } from "@/shared/acp-types";
 import { listResources, readResource } from "@/lib/apis/mcp-resources-api";
 import { listPrompts } from "@/lib/apis/mcp-prompts-api";
-import { useChatboxHostStyle } from "@/contexts/chatbox-host-style-context";
+import {
+  useChatboxHostStyle,
+  useChatboxHostTheme,
+} from "@/contexts/chatbox-host-style-context";
 import { useHostContextStore } from "@/stores/host-context-store";
 import {
   clampDisplayModeToAvailableModes,
@@ -202,6 +205,7 @@ export function MCPAppsRenderer({
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const sharedHostStyle = usePreferencesStore((s) => s.hostStyle);
   const chatboxHostStyle = useChatboxHostStyle();
+  const chatboxHostTheme = useChatboxHostTheme();
   const draftHostContext = useHostContextStore((s) => s.draftHostContext);
   const baseHostContext = useMemo(
     () =>
@@ -212,10 +216,13 @@ export function MCPAppsRenderer({
         : {},
     [draftHostContext],
   );
-  const resolvedTheme = extractHostTheme(baseHostContext) ?? themeMode;
 
   // Get CSP mode and host style from playground store when in playground
   const isPlaygroundActive = useUIPlaygroundStore((s) => s.isPlaygroundActive);
+  const configuredHostTheme = extractHostTheme(baseHostContext);
+  const resolvedTheme = isPlaygroundActive
+    ? configuredHostTheme ?? chatboxHostTheme ?? themeMode
+    : chatboxHostTheme ?? themeMode;
   const playgroundCspMode = useUIPlaygroundStore((s) => s.mcpAppsCspMode);
   const cspMode: CspMode = isPlaygroundActive
     ? playgroundCspMode
@@ -820,10 +827,7 @@ export function MCPAppsRenderer({
   const hostContext = useMemo<McpUiHostContext>(
     () => ({
       ...baseHostContext,
-      theme:
-        baseHostContext.theme === "light" || baseHostContext.theme === "dark"
-          ? baseHostContext.theme
-          : resolvedTheme,
+      theme: resolvedTheme,
       displayMode: effectiveDisplayMode,
       availableDisplayModes: configuredAvailableDisplayModes,
       locale,
