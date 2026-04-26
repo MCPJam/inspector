@@ -12,6 +12,20 @@ export {
   mergeClientCapabilities,
 } from "./mcp-client-manager/capabilities.js";
 export { redactSensitiveValue } from "./redaction.js";
+export {
+  toConformanceReport,
+  renderConformanceReportJson,
+  renderConformanceReportJUnitXml,
+} from "./conformance-reporting.js";
+
+export type {
+  ConformanceReport,
+  ConformanceReportCase,
+  ConformanceReportCaseStatus,
+  ConformanceReportGroup,
+  ConformanceReportKind,
+  SupportedConformanceResult,
+} from "./conformance-reporting.js";
 
 export type {
   BaseServerConfig,

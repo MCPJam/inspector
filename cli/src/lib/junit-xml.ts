@@ -1,14 +1,13 @@
 import {
-  renderConformanceReportJUnitXml,
-  toConformanceReport,
   type ConformanceResult,
   type OAuthConformanceSuiteResult,
 } from "@mcpjam/sdk";
+import { renderConformanceResult } from "./conformance-output.js";
 
 export function suiteResultToJUnitXml(
   result: OAuthConformanceSuiteResult,
 ): string {
-  return renderConformanceReportJUnitXml(toConformanceReport(result));
+  return renderConformanceResult(result, "junit-xml");
 }
 
 /**
@@ -20,11 +19,11 @@ export function singleResultToJUnitXml(
   label?: string,
 ): string {
   if (!label) {
-    return renderConformanceReportJUnitXml(toConformanceReport(result));
+    return renderConformanceResult(result, "junit-xml");
   }
 
-  return renderConformanceReportJUnitXml(
-    toConformanceReport({
+  return renderConformanceResult(
+    {
       name: "OAuth Conformance",
       serverUrl: result.serverUrl,
       passed: result.passed,
@@ -36,6 +35,7 @@ export function singleResultToJUnitXml(
       ],
       summary: result.summary,
       durationMs: result.durationMs,
-    }),
+    },
+    "junit-xml",
   );
 }

@@ -1,4 +1,5 @@
 import type {
+  ConformanceReport,
   MCPConformanceResult,
   MCPAppsConformanceResult,
   ConformanceResult as OAuthConformanceResult,
@@ -10,18 +11,26 @@ import { authFetch } from "@/lib/session-token";
 
 // ── Types ───────────────────────────────────────────────────────────────
 
+export interface ConformanceRunResponse<Result> {
+  success: boolean;
+  result: Result;
+  report?: ConformanceReport;
+}
+
 export interface OAuthConformanceStartResult {
   phase: "authorization_needed" | "complete";
   sessionId?: string;
   authorizationUrl?: string;
   completedSteps?: Array<{ step: string; status: string }>;
   result?: OAuthConformanceResult;
+  report?: ConformanceReport;
 }
 
 export interface OAuthConformanceCompleteResult {
   phase: "pending" | "complete";
   completedSteps?: Array<{ step: string; status: string }>;
   result?: OAuthConformanceResult;
+  report?: ConformanceReport;
 }
 
 export interface OAuthStartInput {
@@ -58,7 +67,7 @@ async function localPost<T>(path: string, body: unknown): Promise<T> {
 
 export async function runProtocolConformance(
   serverNameOrId: string,
-): Promise<{ success: boolean; result: MCPConformanceResult }> {
+): Promise<ConformanceRunResponse<MCPConformanceResult>> {
   return runByMode({
     local: () =>
       localPost("/api/mcp/conformance/protocol", {
@@ -73,7 +82,7 @@ export async function runProtocolConformance(
 
 export async function runAppsConformance(
   serverNameOrId: string,
-): Promise<{ success: boolean; result: MCPAppsConformanceResult }> {
+): Promise<ConformanceRunResponse<MCPAppsConformanceResult>> {
   return runByMode({
     local: () =>
       localPost("/api/mcp/conformance/apps", {

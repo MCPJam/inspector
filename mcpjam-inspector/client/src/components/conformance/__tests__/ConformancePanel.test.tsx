@@ -5,6 +5,7 @@ import type {
   MCPAppsConformanceResult,
   ConformanceResult as OAuthConformanceResult,
 } from "@mcpjam/sdk";
+import { toConformanceReport } from "@mcpjam/sdk/browser";
 import type { ServerWithName } from "@/hooks/use-app-state";
 
 const mockRunProtocol = vi.fn();
@@ -109,9 +110,21 @@ function setupSuccessfulRunMocks({
   apps?: MCPAppsConformanceResult;
   oauth?: OAuthConformanceResult;
 } = {}) {
-  mockRunProtocol.mockResolvedValue({ success: true, result: protocol });
-  mockRunApps.mockResolvedValue({ success: true, result: apps });
-  mockStartOAuth.mockResolvedValue({ phase: "complete", result: oauth });
+  mockRunProtocol.mockResolvedValue({
+    success: true,
+    result: protocol,
+    report: toConformanceReport(protocol),
+  });
+  mockRunApps.mockResolvedValue({
+    success: true,
+    result: apps,
+    report: toConformanceReport(apps),
+  });
+  mockStartOAuth.mockResolvedValue({
+    phase: "complete",
+    result: oauth,
+    report: toConformanceReport(oauth),
+  });
 }
 
 function clickRow(title: string) {

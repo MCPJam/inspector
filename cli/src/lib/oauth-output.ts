@@ -1,56 +1,40 @@
 import {
   formatOAuthConformanceHuman,
   formatOAuthConformanceSuiteHuman,
-  renderConformanceReportJUnitXml,
   type ConformanceResult,
   type OAuthConformanceSuiteResult,
-  toConformanceReport,
 } from "@mcpjam/sdk";
-import { usageError, type OutputFormat } from "./output.js";
+import {
+  parseConformanceOutputFormat,
+  renderConformanceResult,
+  resolveConformanceOutputFormat,
+  type ConformanceOutputFormat,
+} from "./conformance-output.js";
 
-export type OAuthOutputFormat = OutputFormat | "junit-xml";
+export type OAuthOutputFormat = ConformanceOutputFormat;
 
-export function parseOAuthOutputFormat(value: string): OAuthOutputFormat {
-  if (value === "json" || value === "human" || value === "junit-xml") {
-    return value;
-  }
+export const parseOAuthOutputFormat = parseConformanceOutputFormat;
 
-  throw usageError(
-    `Invalid output format "${value}". Use "json", "human", or "junit-xml".`,
-  );
-}
-
-export function resolveOAuthOutputFormat(
-  value: string | undefined,
-  isTTY: boolean | undefined,
-): OAuthOutputFormat {
-  return parseOAuthOutputFormat(value ?? (isTTY ? "human" : "json"));
-}
+export const resolveOAuthOutputFormat = resolveConformanceOutputFormat;
 
 export function renderOAuthConformanceResult(
   result: ConformanceResult,
   format: OAuthOutputFormat,
 ): string {
-  switch (format) {
-    case "human":
-      return formatOAuthConformanceHuman(result);
-    case "junit-xml":
-      return renderConformanceReportJUnitXml(toConformanceReport(result));
-    case "json":
-      return JSON.stringify(result);
+  if (format === "human") {
+    return formatOAuthConformanceHuman(result);
   }
+
+  return renderConformanceResult(result, format);
 }
 
 export function renderOAuthConformanceSuiteResult(
   result: OAuthConformanceSuiteResult,
   format: OAuthOutputFormat,
 ): string {
-  switch (format) {
-    case "human":
-      return formatOAuthConformanceSuiteHuman(result);
-    case "junit-xml":
-      return renderConformanceReportJUnitXml(toConformanceReport(result));
-    case "json":
-      return JSON.stringify(result);
+  if (format === "human") {
+    return formatOAuthConformanceSuiteHuman(result);
   }
+
+  return renderConformanceResult(result, format);
 }

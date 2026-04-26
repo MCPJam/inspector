@@ -15,6 +15,9 @@ import {
   OAuthConformanceTest,
   canRunConformance,
   normalizeCustomHeaders,
+  renderConformanceReportJson,
+  toConformanceReport,
+  type ConformanceReport,
   type ConformanceResult as OAuthConformanceResult,
   type MCPAppsConformanceConfig,
   type MCPAppsConformanceResult,
@@ -35,6 +38,25 @@ import {
 
 // ── Result shapes shared with clients ───────────────────────────────────
 
+type SingleConformanceResult =
+  | MCPConformanceResult
+  | MCPAppsConformanceResult
+  | OAuthConformanceResult;
+
+export interface ConformanceRunResponse<T extends SingleConformanceResult> {
+  result: T;
+  report: ConformanceReport;
+}
+
+function createConformanceRunResponse<T extends SingleConformanceResult>(
+  result: T,
+): ConformanceRunResponse<T> {
+  return {
+    result,
+    report: renderConformanceReportJson(toConformanceReport(result)),
+  };
+}
+
 export type StartOAuthConformanceResult =
   | {
       phase: "authorization_needed";
@@ -45,12 +67,14 @@ export type StartOAuthConformanceResult =
   | {
       phase: "complete";
       result: OAuthConformanceResult;
+      report: ConformanceReport;
     };
 
 export type CompleteOAuthConformanceResult =
   | {
       phase: "complete";
       result: OAuthConformanceResult;
+      report: ConformanceReport;
     }
   | {
       phase: "pending";
@@ -82,7 +106,7 @@ export function assertHttpSupported(
 
 export async function runProtocolConformance(
   input: ResolvedHttpConfig,
-): Promise<{ result: MCPConformanceResult }> {
+): Promise<ConformanceRunResponse<MCPConformanceResult>> {
   const config: MCPConformanceConfig = {
     serverUrl: input.serverUrl,
     accessToken: input.accessToken,
@@ -90,17 +114,17 @@ export async function runProtocolConformance(
   };
   const test = new MCPConformanceTest(config);
   const result = await test.run();
-  return { result };
+  return createConformanceRunResponse(result);
 }
 
 // ── Apps ────────────────────────────────────────────────────────────────
 
 export async function runAppsConformance(
   serverConfig: MCPAppsConformanceConfig,
-): Promise<{ result: MCPAppsConformanceResult }> {
+): Promise<ConformanceRunResponse<MCPAppsConformanceResult>> {
   const test = new MCPAppsConformanceTest(serverConfig);
   const result = await test.run();
-  return { result };
+  return createConformanceRunResponse(result);
 }
 
 // ── OAuth (interactive, remote-browser) ─────────────────────────────────
@@ -204,7 +228,7 @@ export async function startOAuthConformance(
   // deadline. In either case, awaiting the runner either gives us a result or
   // surfaces its error.
   const result = await runnerPromise;
-  return { phase: "complete", result };
+  return { phase: "complete", ...createConformanceRunResponse(result) };
 }
 
 export interface SubmitOAuthConformanceCodeInput {
@@ -246,7 +270,10 @@ export async function completeOAuthConformance(
     );
   }
   if (session.result) {
-    return { phase: "complete", result: session.result };
+    return {
+      phase: "complete",
+      ...createConformanceRunResponse(session.result),
+    };
   }
   if (session.error) {
     throw new OAuthConformanceSessionFailedError(session.error);
@@ -263,7 +290,10 @@ export async function completeOAuthConformance(
       throw new OAuthConformanceSessionNotFoundError("Session expired");
     }
     if (current.result) {
-      return { phase: "complete", result: current.result };
+      return {
+        phase: "complete",
+        ...createConformanceRunResponse(current.result),
+      };
     }
     if (current.error) {
       throw new OAuthConformanceSessionFailedError(current.error);

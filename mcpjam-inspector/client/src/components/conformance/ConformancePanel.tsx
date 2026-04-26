@@ -14,16 +14,17 @@ import {
 } from "lucide-react";
 import type { ServerWithName } from "@/hooks/use-app-state";
 import type {
-  MCPConformanceResult,
-  MCPAppsConformanceResult,
-  MCPCheckResult,
-  MCPAppsCheckResult,
-  OAuthConformanceStepResult,
+  ConformanceReport,
+  ConformanceReportCase,
 } from "@mcpjam/sdk";
 // Import from the browser-safe SDK entry — the top-level `@mcpjam/sdk` pulls
 // Node-only transitive deps (MCP client SDK uses `node:stream`, etc.) which
 // break the Vite browser bundle.
-import { canRunConformance } from "@mcpjam/sdk/browser";
+import {
+  canRunConformance,
+  renderConformanceReportJson,
+  toConformanceReport,
+} from "@mcpjam/sdk/browser";
 import type { OAuthConformanceStartResult } from "@/lib/apis/mcp-conformance-api";
 import {
   runProtocolConformance,
@@ -42,16 +43,11 @@ interface SuiteState {
   unavailableReason?: string;
 }
 
-interface ProtocolSuiteState extends SuiteState {
-  result?: MCPConformanceResult;
+interface ConformanceSuiteState extends SuiteState {
+  report?: ConformanceReport;
 }
 
-interface AppsSuiteState extends SuiteState {
-  result?: MCPAppsConformanceResult;
-}
-
-interface OAuthSuiteState extends SuiteState {
-  result?: OAuthConformanceStartResult["result"];
+interface OAuthSuiteState extends ConformanceSuiteState {
   sessionId?: string;
   waitingForAuth?: boolean;
 }
@@ -77,16 +73,20 @@ function suiteState(
     : { status: "unavailable", unavailableReason: support.reason };
 }
 
-function createProtocolState(server: ServerWithName): ProtocolSuiteState {
+function createProtocolState(server: ServerWithName): ConformanceSuiteState {
   return suiteState("protocol", server);
 }
 
-function createAppsState(server: ServerWithName): AppsSuiteState {
+function createAppsState(server: ServerWithName): ConformanceSuiteState {
   return suiteState("apps", server);
 }
 
 function createOAuthState(server: ServerWithName): OAuthSuiteState {
   return suiteState("oauth", server);
+}
+
+function createDisplayReport(report: ConformanceReport): ConformanceReport {
+  return renderConformanceReportJson(report);
 }
 
 function StatusIcon({ status }: { status: string }) {
@@ -129,10 +129,56 @@ function formatDetailValue(value: unknown) {
   }
 }
 
-function CheckRow({ check }: { check: MCPCheckResult | MCPAppsCheckResult }) {
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function readStringArray(
+  value: unknown,
+): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.filter(
+    (entry): entry is string =>
+      typeof entry === "string" && entry.trim().length > 0,
+  );
+}
+
+function normalizeCaseDetails(reportCase: ConformanceReportCase): {
+  detailEntries: Array<[string, unknown]>;
+  warnings: string[];
+  teachableMoments: string[];
+} {
+  if (!isPlainObject(reportCase.details)) {
+    return {
+      detailEntries: [],
+      warnings: [],
+      teachableMoments: [],
+    };
+  }
+
+  const rawDetails = reportCase.details;
+  const nestedDetails = isPlainObject(rawDetails.details)
+    ? Object.entries(rawDetails.details)
+    : [];
+  const extraEntries = Object.entries(rawDetails).filter(
+    ([key]) =>
+      key !== "details" && key !== "warnings" && key !== "teachableMoments",
+  );
+
+  return {
+    detailEntries: [...nestedDetails, ...extraEntries],
+    warnings: readStringArray(rawDetails.warnings),
+    teachableMoments: readStringArray(rawDetails.teachableMoments),
+  };
+}
+
+function ReportCaseRow({ reportCase }: { reportCase: ConformanceReportCase }) {
   const [expanded, setExpanded] = useState(false);
-  const detailEntries = Object.entries(check.details ?? {});
-  const warnings = "warnings" in check ? check.warnings : undefined;
+  const { detailEntries, warnings, teachableMoments } =
+    normalizeCaseDetails(reportCase);
 
   return (
     <div className="border-b border-border/30 last:border-0">
@@ -142,21 +188,23 @@ function CheckRow({ check }: { check: MCPCheckResult | MCPAppsCheckResult }) {
         onClick={() => setExpanded((value) => !value)}
         aria-expanded={expanded}
       >
-        <StatusIcon status={check.status} />
-        <span className="text-xs flex-1 min-w-0 truncate">{check.title}</span>
+        <StatusIcon status={reportCase.status} />
+        <span className="text-xs flex-1 min-w-0 truncate">
+          {reportCase.title}
+        </span>
         {expanded ? (
           <ChevronDown className="h-3 w-3 text-muted-foreground flex-shrink-0" />
         ) : (
           <ChevronRight className="h-3 w-3 text-muted-foreground flex-shrink-0" />
         )}
         <span className="text-[10px] text-muted-foreground flex-shrink-0">
-          {check.durationMs}ms
+          {reportCase.durationMs}ms
         </span>
       </button>
       {expanded && (
         <div className="space-y-2 px-6 pb-2">
           <div className="text-xs text-muted-foreground whitespace-pre-wrap break-words">
-            {check.description}
+            {reportCase.description}
           </div>
 
           {detailEntries.length > 0 && (
@@ -174,7 +222,7 @@ function CheckRow({ check }: { check: MCPCheckResult | MCPAppsCheckResult }) {
             </div>
           )}
 
-          {warnings && warnings.length > 0 && (
+          {warnings.length > 0 && (
             <div className="rounded-sm bg-muted/20 px-2 py-1.5 text-xs text-muted-foreground">
               <div className="mb-1 flex items-center gap-1 font-medium text-foreground/70">
                 <AlertTriangle className="h-3 w-3" />
@@ -188,61 +236,28 @@ function CheckRow({ check }: { check: MCPCheckResult | MCPAppsCheckResult }) {
             </div>
           )}
 
-          {check.error && (
-            <div className="rounded-sm border border-red-500/20 bg-red-500/5 px-2 py-1.5 text-xs text-red-400 whitespace-pre-wrap break-words">
-              {check.error.message}
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function OAuthStepRow({ step }: { step: OAuthConformanceStepResult }) {
-  const [expanded, setExpanded] = useState(false);
-
-  return (
-    <div className="border-b border-border/30 last:border-0">
-      <button
-        type="button"
-        className="w-full flex items-center gap-2 py-1.5 px-1 text-left hover:bg-muted/30 transition-colors cursor-pointer"
-        onClick={() => setExpanded((value) => !value)}
-        aria-expanded={expanded}
-      >
-        <StatusIcon status={step.status} />
-        <span className="text-xs flex-1 min-w-0 truncate">{step.title}</span>
-        {expanded ? (
-          <ChevronDown className="h-3 w-3 text-muted-foreground flex-shrink-0" />
-        ) : (
-          <ChevronRight className="h-3 w-3 text-muted-foreground flex-shrink-0" />
-        )}
-        <span className="text-[10px] text-muted-foreground flex-shrink-0">
-          {step.durationMs}ms
-        </span>
-      </button>
-      {expanded && (
-        <div className="space-y-2 px-6 pb-2">
-          <div className="text-xs text-muted-foreground whitespace-pre-wrap break-words">
-            {step.summary}
-          </div>
-
-          {step.teachableMoments && step.teachableMoments.length > 0 && (
+          {teachableMoments.length > 0 && (
             <div className="rounded-sm bg-muted/20 px-2 py-1.5 text-xs text-muted-foreground">
               <div className="mb-1 font-medium text-foreground/70">
                 Why this matters
               </div>
               <ul className="space-y-1 pl-4 list-disc">
-                {step.teachableMoments.map((moment) => (
+                {teachableMoments.map((moment) => (
                   <li key={moment}>{moment}</li>
                 ))}
               </ul>
             </div>
           )}
 
-          {step.error && (
+          {reportCase.output && (
+            <div className="rounded-sm bg-muted/20 px-2 py-1.5 text-xs text-muted-foreground whitespace-pre-wrap break-words">
+              {reportCase.output}
+            </div>
+          )}
+
+          {reportCase.error && (
             <div className="rounded-sm border border-red-500/20 bg-red-500/5 px-2 py-1.5 text-xs text-red-400 whitespace-pre-wrap break-words">
-              {step.error.message}
+              {reportCase.error}
             </div>
           )}
         </div>
@@ -306,10 +321,10 @@ function SuiteSection({
 
 function ConformanceContent({ server }: { server: ServerWithName }) {
   const httpServer = isHttpServer(server);
-  const [protocol, setProtocol] = useState<ProtocolSuiteState>(() =>
+  const [protocol, setProtocol] = useState<ConformanceSuiteState>(() =>
     createProtocolState(server),
   );
-  const [apps, setApps] = useState<AppsSuiteState>(() =>
+  const [apps, setApps] = useState<ConformanceSuiteState>(() =>
     createAppsState(server),
   );
   const [oauth, setOAuth] = useState<OAuthSuiteState>(() =>
@@ -371,9 +386,14 @@ function ConformanceContent({ server }: { server: ServerWithName }) {
       if (!httpServer) return;
       setProtocol({ status: "running" });
       try {
-        const { result } = await runProtocolConformance(serverName);
+        const response = await runProtocolConformance(serverName);
         if (!isRunActive(runToken, serverName)) return;
-        setProtocol({ status: "done", result });
+        setProtocol({
+          status: "done",
+          report: response.report
+            ? createDisplayReport(response.report)
+            : createDisplayReport(toConformanceReport(response.result)),
+        });
       } catch (err) {
         if (!isRunActive(runToken, serverName)) return;
         setProtocol({
@@ -389,9 +409,14 @@ function ConformanceContent({ server }: { server: ServerWithName }) {
     async (runToken: number, serverName: string) => {
       setApps({ status: "running" });
       try {
-        const { result } = await runAppsConformance(serverName);
+        const response = await runAppsConformance(serverName);
         if (!isRunActive(runToken, serverName)) return;
-        setApps({ status: "done", result });
+        setApps({
+          status: "done",
+          report: response.report
+            ? createDisplayReport(response.report)
+            : createDisplayReport(toConformanceReport(response.result)),
+        });
       } catch (err) {
         if (!isRunActive(runToken, serverName)) return;
         setApps({
@@ -411,7 +436,12 @@ function ConformanceContent({ server }: { server: ServerWithName }) {
           const poll = await completeOAuthConformance(sessionId);
           if (!isRunActive(runToken, serverName)) return;
           if (poll.phase === "complete" && poll.result) {
-            setOAuth({ status: "done", result: poll.result });
+            setOAuth({
+              status: "done",
+              report: poll.report
+                ? createDisplayReport(poll.report)
+                : createDisplayReport(toConformanceReport(poll.result)),
+            });
             return;
           }
         } catch (err) {
@@ -494,7 +524,12 @@ function ConformanceContent({ server }: { server: ServerWithName }) {
         if (!isRunActive(runToken, serverName)) return;
 
         if (startResult.phase === "complete" && startResult.result) {
-          setOAuth({ status: "done", result: startResult.result });
+          setOAuth({
+            status: "done",
+            report: startResult.report
+              ? createDisplayReport(startResult.report)
+              : createDisplayReport(toConformanceReport(startResult.result)),
+          });
           return;
         }
 
@@ -647,26 +682,54 @@ function ConformanceContent({ server }: { server: ServerWithName }) {
 
       <div className="mt-4 space-y-4 overflow-y-auto pr-1">
         <SuiteSection title="Protocol" state={protocol}>
-          {protocol.result ? (
+          {protocol.report ? (
             <div>
-              <div className="px-1 py-1 text-[10px] text-muted-foreground">
-                {protocol.result.summary}
-              </div>
-              {protocol.result.checks.map((check) => (
-                <CheckRow key={`${runVersion}-${check.id}`} check={check} />
+              {protocol.report.groups.map((group) => (
+                <div key={`${runVersion}-${group.id}`}>
+                  {protocol.report.groups.length > 1 ? (
+                    <div className="px-1 pt-1 text-xs font-medium text-foreground/80">
+                      {group.title}
+                    </div>
+                  ) : null}
+                  {group.summary ? (
+                    <div className="px-1 py-1 text-[10px] text-muted-foreground">
+                      {group.summary}
+                    </div>
+                  ) : null}
+                  {group.cases.map((reportCase) => (
+                    <ReportCaseRow
+                      key={`${runVersion}-${group.id}-${reportCase.id}`}
+                      reportCase={reportCase}
+                    />
+                  ))}
+                </div>
               ))}
             </div>
           ) : null}
         </SuiteSection>
 
         <SuiteSection title="Apps" state={apps}>
-          {apps.result ? (
+          {apps.report ? (
             <div>
-              <div className="px-1 py-1 text-[10px] text-muted-foreground">
-                {apps.result.summary}
-              </div>
-              {apps.result.checks.map((check) => (
-                <CheckRow key={`${runVersion}-${check.id}`} check={check} />
+              {apps.report.groups.map((group) => (
+                <div key={`${runVersion}-${group.id}`}>
+                  {apps.report.groups.length > 1 ? (
+                    <div className="px-1 pt-1 text-xs font-medium text-foreground/80">
+                      {group.title}
+                    </div>
+                  ) : null}
+                  {group.summary ? (
+                    <div className="px-1 py-1 text-[10px] text-muted-foreground">
+                      {group.summary}
+                    </div>
+                  ) : null}
+                  {group.cases.map((reportCase) => (
+                    <ReportCaseRow
+                      key={`${runVersion}-${group.id}-${reportCase.id}`}
+                      reportCase={reportCase}
+                    />
+                  ))}
+                </div>
               ))}
             </div>
           ) : null}
@@ -678,13 +741,27 @@ function ConformanceContent({ server }: { server: ServerWithName }) {
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
               Waiting for browser authorization...
             </div>
-          ) : oauth.result ? (
+          ) : oauth.report ? (
             <div>
-              <div className="px-1 py-1 text-[10px] text-muted-foreground">
-                {oauth.result.summary}
-              </div>
-              {oauth.result.steps.map((step) => (
-                <OAuthStepRow key={`${runVersion}-${step.step}`} step={step} />
+              {oauth.report.groups.map((group) => (
+                <div key={`${runVersion}-${group.id}`}>
+                  {oauth.report.groups.length > 1 ? (
+                    <div className="px-1 pt-1 text-xs font-medium text-foreground/80">
+                      {group.title}
+                    </div>
+                  ) : null}
+                  {group.summary ? (
+                    <div className="px-1 py-1 text-[10px] text-muted-foreground">
+                      {group.summary}
+                    </div>
+                  ) : null}
+                  {group.cases.map((reportCase) => (
+                    <ReportCaseRow
+                      key={`${runVersion}-${group.id}-${reportCase.id}`}
+                      reportCase={reportCase}
+                    />
+                  ))}
+                </div>
               ))}
             </div>
           ) : null}
