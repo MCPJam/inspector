@@ -630,8 +630,72 @@ describe("ChatboxChatPage", () => {
     });
 
     expect(screen.getByTestId("chatbox-chat-tab")).toBeInTheDocument();
-    expect(mockValidateHostedServer).toHaveBeenCalledWith("srv_asana", null);
+    expect(mockValidateHostedServer).toHaveBeenCalledWith(
+      "srv_asana",
+      undefined,
+      undefined,
+      {
+        workspaceId: "ws_1",
+        serverId: "srv_asana",
+        serverName: "asana",
+        accessScope: "chat_v2",
+        chatboxToken: "chatbox-token",
+      }
+    );
     expect(mockValidateHostedServer).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps guest chatbox OAuth in first-consent welcome before callback completion", async () => {
+    mockConvexAuthState.isAuthenticated = false;
+    writeChatboxSession({
+      token: "chatbox-token",
+      payload: {
+        workspaceId: "ws_1",
+        chatboxId: "sbx_1",
+        name: "Asana Chatbox",
+        description: "Hosted chatbox",
+        hostStyle: "claude",
+        mode: "invited_only",
+        allowGuestAccess: true,
+        viewerIsWorkspaceMember: false,
+        systemPrompt: "You are helpful.",
+        modelId: "openai/gpt-5-mini",
+        temperature: 0.4,
+        requireToolApproval: true,
+        servers: [
+          {
+            serverId: "srv_asana",
+            serverName: "asana",
+            useOAuth: true,
+            serverUrl: "https://mcp.asana.com/sse",
+            clientId: null,
+            oauthScopes: null,
+          },
+        ],
+        welcomeDialog: {
+          enabled: true,
+          body: "Connect Asana before chatting.",
+        },
+      },
+    });
+
+    render(<ChatboxChatPage />);
+
+    expect(
+      await screen.findByText("Connect Asana before chatting.")
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Get Started" })
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: "Finishing authorization" })
+    ).not.toBeInTheDocument();
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(mockValidateHostedServer).not.toHaveBeenCalled();
   });
 
   it("shows curated copy instead of transport details when chatbox OAuth validation fails", async () => {
