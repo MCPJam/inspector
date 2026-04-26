@@ -307,21 +307,16 @@ function createHttpHistoryEntry(input: {
 }
 
 function traceOAuthHeaders(
-  headers: Record<string, string>,
+  headers: Record<string, string>
 ): Record<string, string> {
-  return SANITIZE_OAUTH_TRACES
-    ? sanitizeOAuthHeaders(headers)
-    : { ...headers };
+  return SANITIZE_OAUTH_TRACES ? sanitizeOAuthHeaders(headers) : { ...headers };
 }
 
 function traceOAuthValue(value: unknown): unknown {
   return SANITIZE_OAUTH_TRACES ? sanitizeOAuthTraceValue(value) : value;
 }
 
-function parseOAuthResponseText(
-  text: string,
-  contentType: string,
-): unknown {
+function parseOAuthResponseText(text: string, contentType: string): unknown {
   const looksJson =
     contentType.includes("application/json") ||
     contentType.includes("+json") ||
@@ -474,7 +469,7 @@ function clearOAuthFlowSession(serverName: string): void {
 }
 
 function resolveOAuthProtocolMode(
-  options: Pick<MCPOAuthOptions, "protocolMode" | "protocolVersion">,
+  options: Pick<MCPOAuthOptions, "protocolMode" | "protocolVersion">
 ): OAuthProtocolMode {
   if (options.protocolMode) {
     return options.protocolMode;
@@ -491,7 +486,7 @@ function resolveOAuthRegistrationMode(
     | "clientId"
     | "clientSecret"
     | "useRegistryOAuthProxy"
-  >,
+  >
 ): OAuthRegistrationMode {
   if (options.registrationMode) {
     return options.registrationMode;
@@ -533,8 +528,8 @@ function createScopedDiscoveryFetch(
       typeof input === "string"
         ? input
         : input instanceof URL
-          ? input.toString()
-          : input.url;
+        ? input.toString()
+        : input.url;
 
     let requestOrigin: string;
     try {
@@ -575,7 +570,7 @@ async function resolveOAuthExecutionPlan(
     | "clientSecret"
     | "useRegistryOAuthProxy"
     | "customHeaders"
-  >,
+  >
 ): Promise<ResolvedAuthorizationPlan> {
   const basePlan = resolveAuthorizationPlan({
     serverUrl: options.serverUrl,
@@ -694,7 +689,7 @@ async function executeRequestViaProxy(
 }
 
 async function createTraceResponseFromFetch(
-  response: Response,
+  response: Response
 ): Promise<HttpHistoryEntry["response"]> {
   return {
     status: response.status,
@@ -705,7 +700,7 @@ async function createTraceResponseFromFetch(
 }
 
 function createTraceResponseFromResult(
-  result: Pick<OAuthRequestResult, "status" | "statusText" | "headers" | "body">,
+  result: Pick<OAuthRequestResult, "status" | "statusText" | "headers" | "body">
 ): HttpHistoryEntry["response"] {
   return {
     status: result.status,
@@ -955,7 +950,7 @@ function annotateTraceWithAuthorizationPlan(input: {
             message: nextMessage,
             details: nextDetails,
           }
-        : step,
+        : step
     ),
   };
 }
@@ -1520,7 +1515,7 @@ function canonicalizeOAuthResourceUrl(url: string): string {
 }
 
 function readOAuthResourceFromAuthorizationUrl(
-  authorizationUrl?: string,
+  authorizationUrl?: string
 ): string | undefined {
   if (!authorizationUrl) {
     return undefined;
@@ -1541,7 +1536,7 @@ function resolveOAuthResourceUrl(input: {
   configuredResourceUrl?: string;
 }): string {
   const requestedFromAuth = readOAuthResourceFromAuthorizationUrl(
-    input.authorizationUrl,
+    input.authorizationUrl
   );
   if (requestedFromAuth) {
     return requestedFromAuth;
@@ -1557,7 +1552,7 @@ function resolveOAuthResourceUrl(input: {
 
 function writeStoredOAuthConfig(
   serverName: string,
-  updates: Partial<StoredOAuthConfig>,
+  updates: Partial<StoredOAuthConfig>
 ): void {
   const existing = readStoredOAuthConfig(serverName);
   localStorage.setItem(
@@ -1565,7 +1560,7 @@ function writeStoredOAuthConfig(
     JSON.stringify({
       ...existing,
       ...updates,
-    }),
+    })
   );
 }
 
@@ -1683,6 +1678,7 @@ async function createHostedOAuthSessionIfNeeded(input: {
 async function readHostedOAuthSessionProgress(input: {
   convexSiteUrl: string;
   context: HostedOAuthCallbackContext;
+  authorizationHeader?: string | null;
 }): Promise<HostedOAuthSessionProgressResponse | null> {
   if (
     !input.context.workspaceId ||
@@ -1698,6 +1694,9 @@ async function readHostedOAuthSessionProgress(input: {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        ...(input.authorizationHeader
+          ? { Authorization: input.authorizationHeader }
+          : {}),
       },
       body: JSON.stringify({
         workspaceId: input.context.workspaceId,
@@ -2008,8 +2007,7 @@ export async function initiateOAuth(
     ) {
       return {
         success: false,
-        error:
-          authorizationPlan.blockers[0] || authorizationPlan.summary,
+        error: authorizationPlan.blockers[0] || authorizationPlan.summary,
       };
     }
     const protocolVersion = authorizationPlan.protocolVersion;
@@ -2234,6 +2232,7 @@ export async function completeHostedOAuthCallback(
   options: {
     callbackState?: string | null;
     onTraceUpdate?: (trace: OAuthTrace) => void;
+    authorizationHeader?: string | null;
   } = {}
 ): Promise<OAuthResult & { serverName?: string; expiresAt?: number | null }> {
   const serverName =
@@ -2289,8 +2288,7 @@ export async function completeHostedOAuthCallback(
       authorizationUrl: storedSession?.state.authorizationUrl,
       configuredResourceUrl: storedOAuthConfig.resourceUrl,
     });
-    previousTrace =
-      loadOAuthTraceFromSession(serverName) ?? previousTrace;
+    previousTrace = loadOAuthTraceFromSession(serverName) ?? previousTrace;
     clearOAuthTraceSession(serverName);
     completeOAuthTraceStep(callbackTrace, "received_authorization_code", {
       message: context.sessionId
@@ -2344,6 +2342,7 @@ export async function completeHostedOAuthCallback(
             const progress = await readHostedOAuthSessionProgress({
               convexSiteUrl,
               context,
+              authorizationHeader: options.authorizationHeader,
             });
             if (
               progress?.success &&
@@ -2388,6 +2387,9 @@ export async function completeHostedOAuthCallback(
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          ...(options.authorizationHeader
+            ? { Authorization: options.authorizationHeader }
+            : {}),
         },
         body: JSON.stringify({
           workspaceId: context.workspaceId,
@@ -2462,7 +2464,7 @@ export async function completeHostedOAuthCallback(
       message: "Token exchange succeeded.",
     });
     completeOAuthTraceStep(callbackTrace, "received_access_token", {
-      message: "Access token stored for reconnection.",
+      message: "OAuth credential stored for reconnection.",
     });
     completeOAuthTraceStep(callbackTrace, "complete", {
       message: "OAuth callback completed successfully.",
@@ -2546,7 +2548,8 @@ export async function handleOAuthCallback(
     }
 
     // Get server URL
-    serverUrl = localStorage.getItem(`mcp-serverUrl-${serverName}`) ?? undefined;
+    serverUrl =
+      localStorage.getItem(`mcp-serverUrl-${serverName}`) ?? undefined;
     if (!serverUrl) {
       throw new Error("Server URL not found for OAuth callback");
     }
@@ -2729,8 +2732,8 @@ export async function handleOAuthCallback(
         typeof resource === "string"
           ? resource
           : resource instanceof URL
-            ? resource.toString()
-            : oauthConfig.resourceUrl,
+          ? resource.toString()
+          : oauthConfig.resourceUrl,
     });
     startOAuthTraceStep(callbackTrace, "token_request", {
       message: "Exchanging authorization code for OAuth tokens.",

@@ -290,6 +290,7 @@ chatV2.post("/", async (c) => {
     }
 
     const { manager, oauthServerUrls: urls } = await createAuthorizedManager(
+      c,
       bearerToken,
       hostedBody.workspaceId,
       selectedServerIds,

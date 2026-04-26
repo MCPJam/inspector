@@ -10,8 +10,19 @@ import {
 import { ErrorCode, WebRouteError, mapRuntimeError } from "./errors.js";
 import { bearerAuthMiddleware } from "../../middleware/bearer-auth.js";
 import { guestRateLimitMiddleware } from "../../middleware/guest-rate-limit.js";
+import { getRequestLogger } from "../../utils/request-logger.js";
+import { classifyError } from "../../utils/error-classify.js";
 
 const oauthWeb = new Hono();
+
+function safeHostname(url: string | undefined): string {
+  if (!url) return "unknown";
+  try {
+    return new URL(url).hostname || url;
+  } catch {
+    return url;
+  }
+}
 
 // Require some form of bearer token (guest or WorkOS) on all OAuth proxy routes
 oauthWeb.use("*", bearerAuthMiddleware);
@@ -79,8 +90,10 @@ function getConvexHttpUrl(): string {
  * Body: { url: string, method?: string, body?: object, headers?: object }
  */
 oauthWeb.post("/proxy", async (c) => {
+  let proxyUrl: string | undefined;
   try {
     const { url, method, body, headers } = await c.req.json();
+    proxyUrl = url;
     const result = await executeOAuthProxy({
       url,
       method,
@@ -90,6 +103,12 @@ oauthWeb.post("/proxy", async (c) => {
     });
     return c.json(result);
   } catch (error) {
+    getRequestLogger(c, "routes.web.oauth").event("mcp.oauth.proxy.failed", {
+      targetUrlHost: safeHostname(proxyUrl),
+      oauthPhase: "proxy",
+      errorCode: classifyError(error),
+      ...(error instanceof OAuthProxyError ? { statusCode: error.status } : {}),
+    });
     return webErrorCompat(c, toRouteError(error));
   }
 });
@@ -101,9 +120,9 @@ oauthWeb.post("/proxy", async (c) => {
  * Mirrors /api/mcp/oauth/metadata with HTTPS-only + private IP blocking.
  */
 oauthWeb.get("/metadata", async (c) => {
+  const metadataUrl = c.req.query("url");
   try {
-    const url = c.req.query("url");
-    if (!url) {
+    if (!metadataUrl) {
       throw new WebRouteError(
         400,
         ErrorCode.VALIDATION_ERROR,
@@ -111,7 +130,7 @@ oauthWeb.get("/metadata", async (c) => {
       );
     }
 
-    const result = await fetchOAuthMetadata(url, true);
+    const result = await fetchOAuthMetadata(metadataUrl, true);
     if ("status" in result && result.status !== undefined) {
       throw new WebRouteError(
         result.status,
@@ -122,6 +141,12 @@ oauthWeb.get("/metadata", async (c) => {
 
     return c.json(result.metadata);
   } catch (error) {
+    getRequestLogger(c, "routes.web.oauth").event("mcp.oauth.proxy.failed", {
+      targetUrlHost: safeHostname(metadataUrl),
+      oauthPhase: "metadata",
+      errorCode: classifyError(error),
+      ...(error instanceof OAuthProxyError ? { statusCode: error.status } : {}),
+    });
     return webErrorCompat(c, toRouteError(error));
   }
 });
@@ -161,8 +186,10 @@ oauthWeb.post("/session", async (c) => {
  * Body: { url: string, method?: string, body?: object, headers?: object }
  */
 oauthWeb.post("/debug/proxy", async (c) => {
+  let proxyUrl: string | undefined;
   try {
     const { url, method, body, headers } = await c.req.json();
+    proxyUrl = url;
     const result = await executeDebugOAuthProxy({
       url,
       method,
@@ -172,6 +199,12 @@ oauthWeb.post("/debug/proxy", async (c) => {
     });
     return c.json(result);
   } catch (error) {
+    getRequestLogger(c, "routes.web.oauth").event("mcp.oauth.proxy.failed", {
+      targetUrlHost: safeHostname(proxyUrl),
+      oauthPhase: "proxy",
+      errorCode: classifyError(error),
+      ...(error instanceof OAuthProxyError ? { statusCode: error.status } : {}),
+    });
     return webErrorCompat(c, toRouteError(error));
   }
 });

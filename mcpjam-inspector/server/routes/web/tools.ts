@@ -7,6 +7,8 @@ import {
   WebRouteError,
 } from "./auth.js";
 import { listTools } from "../../utils/route-handlers.js";
+import { getRequestLogger } from "../../utils/request-logger.js";
+import { classifyError } from "../../utils/error-classify.js";
 
 const tools = new Hono();
 
@@ -26,15 +28,28 @@ tools.post("/execute", async (c) =>
       );
     }
 
-    const result = await manager.executeTool(
-      body.serverId,
-      body.toolName,
-      body.parameters,
-    );
-    return {
-      status: "completed",
-      result,
-    };
+    try {
+      const result = await manager.executeTool(
+        body.serverId,
+        body.toolName,
+        body.parameters,
+      );
+      return {
+        status: "completed",
+        result,
+      };
+    } catch (error) {
+      getRequestLogger(c, "routes.web.tools").event(
+        "mcp.tool.execution.failed",
+        {
+          toolName: body.toolName,
+          serverId: body.serverId,
+          errorCode: classifyError(error),
+        },
+        { error: error instanceof Error ? error : undefined },
+      );
+      throw error;
+    }
   }),
 );
 

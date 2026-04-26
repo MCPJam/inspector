@@ -58,7 +58,7 @@ describe("host-styles registry", () => {
       },
       platform: "web",
       fontCss: "",
-      resolveStyleVariables: () => ({}),
+      resolveStyleVariables: CLAUDE_HOST_STYLE.resolveStyleVariables,
       resolveChatBackground: () => "rgba(0, 0, 0, 1)",
     };
 

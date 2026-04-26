@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { Context } from "hono";
 import { MCPClientManager } from "@mcpjam/sdk";
 import type { HttpServerConfig, RpcLogger } from "@mcpjam/sdk";
 import { WEB_CALL_TIMEOUT_MS } from "../../config.js";
@@ -8,6 +9,8 @@ import {
   createHostedRpcLogCollector,
 } from "./hosted-rpc-logs.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "../../utils/mcp-retry-policy.js";
+import { setRequestLogContext } from "../../utils/request-logger.js";
+import type { RequestLogContext } from "../../utils/log-events.js";
 import {
   ErrorCode,
   WebRouteError,
@@ -237,6 +240,50 @@ export async function createGuestEphemeralManager(
 
 // ── Authorization ────────────────────────────────────────────────────
 
+// Server-only logging context returned by backend. Optional during rollout.
+// When present, it must never be forwarded to the browser.
+type InternalLogContext = {
+  authType: "signedIn" | "guest";
+  userId?: string | null;
+  userExternalId?: string | null;
+  guestExternalId?: string | null;
+  emailDomain?: string | null;
+  orgId?: string | null;
+  orgPlan?: string | null;
+  orgSeatQuantity?: number | null;
+  orgCreatedBy?: string | null;
+  workspaceId?: string | null;
+  workspaceRole?: "owner" | "admin" | "member" | "guest" | "editor" | "chat" | null;
+  accessLevel?: "workspace_member" | "shared_chat" | null;
+  serverId?: string | null;
+  serverTransport?: "stdio" | "http" | null;
+  chatboxId?: string | null;
+  surface?: "preview" | "share_link" | null;
+};
+
+function mapInternalToRequestContext(
+  ctx: InternalLogContext,
+): Partial<RequestLogContext> {
+  return {
+    authType: ctx.authType,
+    userId: ctx.userId ?? null,
+    userExternalId: ctx.userExternalId ?? null,
+    guestExternalId: ctx.guestExternalId ?? null,
+    emailDomain: ctx.emailDomain ?? null,
+    orgId: ctx.orgId ?? null,
+    orgPlan: ctx.orgPlan ?? null,
+    orgSeatQuantity: ctx.orgSeatQuantity ?? null,
+    orgCreatedBy: ctx.orgCreatedBy ?? null,
+    workspaceId: ctx.workspaceId ?? null,
+    workspaceRole: ctx.workspaceRole ?? null,
+    accessLevel: ctx.accessLevel ?? null,
+    serverId: ctx.serverId ?? null,
+    serverTransport: ctx.serverTransport ?? null,
+    chatboxId: ctx.chatboxId ?? null,
+    surface: ctx.surface ?? null,
+  };
+}
+
 export type ConvexAuthorizeResponse = {
   authorized: boolean;
   role: "owner" | "admin" | "member";
@@ -251,7 +298,13 @@ export type ConvexAuthorizeResponse = {
     headers?: Record<string, string>;
     useOAuth?: boolean;
   };
+  internalLogContext?: InternalLogContext;
 };
+
+export type ClientSafeAuthorizeResponse = Omit<
+  ConvexAuthorizeResponse,
+  "internalLogContext"
+>;
 
 type AuthorizedServerConfigHolder = {
   serverConfig: ConvexAuthorizeResponse["serverConfig"];
@@ -272,7 +325,8 @@ export type ConvexBatchAuthorizeSuccess = {
   permissions: {
     chatOnly: boolean;
   };
-  serverConfig: ConvexAuthorizeResponse["serverConfig"];
+  serverConfig: Omit<ConvexAuthorizeResponse, "internalLogContext">["serverConfig"];
+  internalLogContext?: InternalLogContext;
 };
 
 export type ConvexBatchAuthorizeResult =
@@ -284,6 +338,7 @@ export type ConvexBatchAuthorizeResponse = {
 };
 
 export async function authorizeServer(
+  c: Context,
   bearerToken: string,
   workspaceId: string,
   serverId: string,
@@ -292,7 +347,7 @@ export async function authorizeServer(
     shareToken?: string;
     chatboxToken?: string;
   }
-): Promise<ConvexAuthorizeResponse> {
+): Promise<ClientSafeAuthorizeResponse> {
   const convexUrl = process.env.CONVEX_HTTP_URL;
   if (!convexUrl) {
     throw new WebRouteError(
@@ -361,10 +416,15 @@ export async function authorizeServer(
     );
   }
 
-  return body as ConvexAuthorizeResponse;
+  const { internalLogContext, ...clientSafe } = body as ConvexAuthorizeResponse;
+  if (internalLogContext) {
+    setRequestLogContext(c, mapInternalToRequestContext(internalLogContext));
+  }
+  return clientSafe;
 }
 
 export async function authorizeBatch(
+  c: Context,
   bearerToken: string,
   workspaceId: string,
   serverIds: string[],
@@ -442,7 +502,46 @@ export async function authorizeBatch(
     );
   }
 
-  return body as ConvexBatchAuthorizeResponse;
+  const raw = body as ConvexBatchAuthorizeResponse;
+
+  // Workspace-level fields (auth/user/org/workspace/accessLevel/surface) are
+  // identical across batch results by construction — same Convex auth call,
+  // same workspace. Take them from the first successful result.
+  //
+  // Per-server fields (serverId, serverTransport, chatboxId) are only well-
+  // defined when the batch authorizes a single server. For multi-server
+  // batches they would non-deterministically attribute to whichever server
+  // iterated last, so we null them out at the request envelope; per-server
+  // attribution belongs on per-server child events.
+  const successful = Object.entries(raw.results).filter(
+    (entry): entry is [string, ConvexBatchAuthorizeSuccess] => entry[1].ok,
+  );
+  // Use the first result that actually carries internalLogContext rather than
+  // strictly successful[0]; during a backend rollout the field may be present
+  // on some results and absent on others, and we'd rather log workspace
+  // attribution than nothing.
+  const sourceCtx = successful.find(([, r]) => r.internalLogContext)?.[1]
+    .internalLogContext;
+  if (sourceCtx) {
+    const partial = mapInternalToRequestContext(sourceCtx);
+    if (successful.length > 1) {
+      partial.serverId = null;
+      partial.serverTransport = null;
+      partial.chatboxId = null;
+    }
+    setRequestLogContext(c, partial);
+  }
+
+  const strippedResults: Record<string, ConvexBatchAuthorizeResult> = {};
+  for (const [serverId, result] of Object.entries(raw.results)) {
+    if (result.ok) {
+      const { internalLogContext: _omit, ...clientSafeResult } = result;
+      strippedResults[serverId] = clientSafeResult;
+    } else {
+      strippedResults[serverId] = result;
+    }
+  }
+  return { results: strippedResults };
 }
 
 export function toHttpConfig(
@@ -493,6 +592,7 @@ export interface AuthorizedManagerResult {
 }
 
 export async function createAuthorizedManager(
+  c: Context,
   bearerToken: string,
   workspaceId: string,
   serverIds: string[],
@@ -525,6 +625,7 @@ export async function createAuthorizedManager(
 
   const oauthServerUrls: Record<string, string> = {};
   const batch = await authorizeBatch(
+    c,
     bearerToken,
     workspaceId,
     uniqueServerIds,
@@ -773,6 +874,7 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
 
       result = await withManager(
         createAuthorizedManager(
+          c,
           bearerToken,
           raw.workspaceId as string,
           serverIds,

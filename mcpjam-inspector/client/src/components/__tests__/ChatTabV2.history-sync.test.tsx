@@ -15,12 +15,7 @@ const chatSessionOnResetRef = vi.hoisted(() => ({
   current: undefined as undefined | ((reason?: string) => void),
 }));
 const lastUseChatSessionOptionsRef = vi.hoisted(() => ({
-  current: undefined as
-    | undefined
-    | {
-        directVisibility?: "private" | "workspace";
-        onReset?: (reason?: string) => void;
-      },
+  current: undefined as any,
 }));
 const mockHistorySession = vi.hoisted(() => ({
   _id: "history-1",
@@ -187,10 +182,9 @@ vi.mock("@/components/chat-v2/error", () => ({
 }));
 
 vi.mock("@/components/chat-v2/shared/chat-helpers", async (importOriginal) => {
-  const actual =
-    await importOriginal<
-      typeof import("@/components/chat-v2/shared/chat-helpers")
-    >();
+  const actual = await importOriginal<
+    typeof import("@/components/chat-v2/shared/chat-helpers")
+  >();
   return {
     ...actual,
     STARTER_PROMPTS: [],
@@ -375,10 +369,7 @@ const mockUseChatSession = {
 } as any;
 
 vi.mock("@/hooks/use-chat-session", () => ({
-  useChatSession: (options: {
-    directVisibility?: "private" | "workspace";
-    onReset?: (reason?: string) => void;
-  }) => {
+  useChatSession: (options: any) => {
     chatSessionOnResetRef.current = options.onReset;
     lastUseChatSessionOptionsRef.current = options;
 
@@ -426,7 +417,7 @@ describe("ChatTabV2 history sync", () => {
     mockUseFeatureFlagEnabled.mockReturnValue(true);
     vi.stubGlobal(
       "confirm",
-      vi.fn(() => true),
+      vi.fn(() => true)
     );
     chatSessionOnResetRef.current = undefined;
     lastUseChatSessionOptionsRef.current = undefined;
@@ -470,6 +461,24 @@ describe("ChatTabV2 history sync", () => {
     vi.useRealTimers();
   });
 
+  it("suppresses hosted OAuth token fallback for chatbox contexts", () => {
+    render(
+      <ChatTabV2
+        {...defaultProps}
+        hostedWorkspaceIdOverride="workspace-1"
+        hostedSelectedServerIdsOverride={["server-1"]}
+        hostedContext={{ chatboxToken: "chatbox-token" }}
+      />
+    );
+
+    expect(lastUseChatSessionOptionsRef.current?.hostedContext).toMatchObject({
+      chatboxToken: "chatbox-token",
+    });
+    expect(
+      lastUseChatSessionOptionsRef.current?.hostedContext?.oauthTokens
+    ).toBeUndefined();
+  });
+
   it("does not auto-reconnect workspace chat when oauth is required", async () => {
     const onReconnectServer = vi.fn().mockResolvedValue(undefined);
     mockUseChatSession.error = new Error(
@@ -480,14 +489,11 @@ describe("ChatTabV2 history sync", () => {
           serverName: "server-1",
           serverUrl: "https://server-1.example.com/mcp",
         },
-      }),
+      })
     );
 
     render(
-      <ChatTabV2
-        {...defaultProps}
-        onReconnectServer={onReconnectServer}
-      />,
+      <ChatTabV2 {...defaultProps} onReconnectServer={onReconnectServer} />
     );
 
     await flushMicrotasks();
@@ -512,7 +518,7 @@ describe("ChatTabV2 history sync", () => {
 
     expect(mockGetChatHistoryDetail).not.toHaveBeenCalled();
     expect(screen.getByRole("textbox", { name: "Chat input" })).toHaveValue(
-      "Unsaved draft",
+      "Unsaved draft"
     );
   });
 
@@ -525,7 +531,7 @@ describe("ChatTabV2 history sync", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Show sessions" }));
     fireEvent.click(
-      screen.getByRole("button", { name: "New personal thread" }),
+      screen.getByRole("button", { name: "New personal thread" })
     );
     await flushMicrotasks();
 
@@ -535,7 +541,7 @@ describe("ChatTabV2 history sync", () => {
 
     expect(mockUseChatSession.resetChat).not.toHaveBeenCalled();
     expect(screen.getByRole("textbox", { name: "Chat input" })).toHaveValue(
-      "Unsaved draft",
+      "Unsaved draft"
     );
   });
 
@@ -559,7 +565,7 @@ describe("ChatTabV2 history sync", () => {
     expect(screen.getByLabelText("Loading chat")).toBeInTheDocument();
 
     fireEvent.click(
-      screen.getByRole("button", { name: "New personal thread" }),
+      screen.getByRole("button", { name: "New personal thread" })
     );
     await flushMicrotasks();
 
@@ -612,7 +618,7 @@ describe("ChatTabV2 history sync", () => {
     expect(mockUseChatSession.loadChatSession).toHaveBeenCalledTimes(1);
     expect(screen.getByTestId("history-rail")).toHaveAttribute(
       "data-active-session-id",
-      "history-1",
+      "history-1"
     );
 
     mockUseChatSession.status = "submitted";
@@ -629,7 +635,7 @@ describe("ChatTabV2 history sync", () => {
     expect(mockGetChatHistoryDetail).toHaveBeenCalledTimes(4);
     expect(screen.getByTestId("history-rail")).toHaveAttribute(
       "data-active-session-id",
-      "none",
+      "none"
     );
 
     expect(mockUseChatSession.startChatWithMessages).toHaveBeenCalledWith(
@@ -651,11 +657,11 @@ describe("ChatTabV2 history sync", () => {
             uiType: "mcp-apps",
           },
         },
-      },
+      }
     );
     expect(mockUseChatSession.syncResumedVersion).toHaveBeenCalledWith(null);
     expect(mockToastError).toHaveBeenCalledWith(
-      "This chat changed elsewhere. This reply stayed local, and your next send will continue in a new thread.",
+      "This chat changed elsewhere. This reply stayed local, and your next send will continue in a new thread."
     );
   });
 
@@ -682,7 +688,7 @@ describe("ChatTabV2 history sync", () => {
 
     expect(screen.getByTestId("history-rail")).toHaveAttribute(
       "data-active-session-id",
-      "history-1",
+      "history-1"
     );
 
     view.rerender(<ChatTabV2 {...defaultProps} selectedServerNames={[]} />);
@@ -690,11 +696,11 @@ describe("ChatTabV2 history sync", () => {
 
     expect(screen.getByTestId("history-rail")).toHaveAttribute(
       "data-active-session-id",
-      "history-1",
+      "history-1"
     );
     expect(mockUseChatSession.startChatWithMessages).not.toHaveBeenCalled();
     expect(mockUseChatSession.syncResumedVersion).not.toHaveBeenCalledWith(
-      null,
+      null
     );
     expect(mockToastError).not.toHaveBeenCalled();
   });
@@ -707,14 +713,14 @@ describe("ChatTabV2 history sync", () => {
     await flushMicrotasks();
 
     expect(lastUseChatSessionOptionsRef.current?.directVisibility).toBe(
-      "workspace",
+      "workspace"
     );
     expect(mockGetChatHistoryDetail).not.toHaveBeenCalled();
   });
 
   it("keeps the history rail visible while hiding shared-thread affordances when the flag is off", async () => {
     mockUseFeatureFlagEnabled.mockImplementation((flag: string) =>
-      flag === "shared-threads-enabled" ? false : true,
+      flag === "shared-threads-enabled" ? false : true
     );
 
     render(<ChatTabV2 {...defaultProps} />);
@@ -722,11 +728,15 @@ describe("ChatTabV2 history sync", () => {
     fireEvent.click(screen.getByRole("button", { name: "Show sessions" }));
 
     expect(screen.getByTestId("history-rail")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "New personal thread" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "New shared thread" })).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "New personal thread" })
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "New shared thread" })
+    ).not.toBeInTheDocument();
     expect(screen.getByTestId("history-rail")).toHaveAttribute(
       "data-shared-threads-enabled",
-      "false",
+      "false"
     );
   });
 
@@ -771,7 +781,7 @@ describe("ChatTabV2 history sync", () => {
 
     expect(mockUseChatSession.loadChatSession).toHaveBeenCalledTimes(1);
     expect(screen.getByRole("textbox", { name: "Chat input" })).toHaveValue(
-      "Local draft reply",
+      "Local draft reply"
     );
   });
 
@@ -788,11 +798,11 @@ describe("ChatTabV2 history sync", () => {
     await flushMicrotasks();
 
     expect(screen.getByRole("textbox", { name: "Chat input" })).toHaveValue(
-      "Unsaved local draft",
+      "Unsaved local draft"
     );
     expect(mockChatHistoryAction).not.toHaveBeenCalledWith(
       "archive",
-      "history-1",
+      "history-1"
     );
   });
 });

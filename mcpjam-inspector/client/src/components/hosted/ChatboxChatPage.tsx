@@ -11,7 +11,6 @@ import type { ServerWithName } from "@/hooks/use-app-state";
 import { useHostedApiContext } from "@/hooks/hosted/use-hosted-api-context";
 import { useHostedOAuthGate } from "@/hooks/hosted/use-hosted-oauth-gate";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
-import { getStoredTokens } from "@/lib/oauth/mcp-oauth";
 import { authFetch } from "@/lib/session-token";
 import {
   buildChatboxLink,
@@ -377,7 +376,6 @@ export function ChatboxChatPage({
       }));
   }, [sessionServersOptional, enabledOptionalServerIds]);
   const {
-    oauthStateByServerId,
     pendingOAuthServers,
     authorizeServer,
     markOAuthRequired,
@@ -422,26 +420,10 @@ export function ChatboxChatPage({
     );
   }, [session, sessionServersActive]);
 
-  const oauthTokensForChat = useMemo(() => {
-    if (!session) return undefined;
-
-    const entries = sessionServersActive
-      .map((server) => {
-        const token = getStoredTokens(server.serverName)?.access_token;
-        return token ? ([server.serverId, token] as const) : null;
-      })
-      .filter((entry): entry is readonly [string, string] =>
-        Array.isArray(entry)
-      );
-
-    return entries.length > 0 ? Object.fromEntries(entries) : undefined;
-  }, [oauthStateByServerId, session, sessionServersActive]);
-
   useHostedApiContext({
     workspaceId: session?.payload.workspaceId ?? null,
     serverIdsByName: session ? hostedServerIdsByName : {},
     getAccessToken,
-    oauthTokensByServerId: oauthTokensForChat,
     chatboxToken: tokenFromPath ?? session?.token,
     isAuthenticated,
   });
@@ -744,6 +726,10 @@ export function ChatboxChatPage({
       );
     }
 
+    if (!session) {
+      return null;
+    }
+
     return (
       <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
         <ChatTabV2
@@ -760,7 +746,6 @@ export function ChatboxChatPage({
           hostedSelectedServerIdsOverride={sessionServersActive.map(
             (server) => server.serverId
           )}
-          hostedOAuthTokensOverride={oauthTokensForChat}
           hostedContext={{
             chatboxToken: session.token,
             chatboxSurface: session.surface ?? "share_link",
