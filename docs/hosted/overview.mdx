@@ -44,6 +44,25 @@ Try it yourself with the [Excalidraw MCP server](https://app.mcpjam.com/shared/e
 3. Choose your authentication method (None, Bearer Token, or OAuth 2.0)
 4. Start inspecting tools, resources, and prompts
 
+## OAuth token reveal
+
+When you connect an OAuth server in the hosted app, your OAuth credentials are stored securely in Vault. You can inspect those tokens on demand from the server's **Overview** tab without them ever being written to `localStorage` or shared with other users.
+
+To reveal tokens:
+
+1. Open the **Servers** tab and click the server name to open its detail modal.
+2. Go to the **Overview** tab.
+3. Under **OAuth Tokens**, click **Reveal tokens**.
+4. Each token (access token, refresh token, ID token) is masked by default. Click the eye icon next to a token to reveal its value, or click the copy icon to copy it directly without revealing it.
+
+Expired tokens are automatically refreshed before being returned. Revealed values are kept component-local and are cleared when you close the modal.
+
+<Note>
+  The **Reveal tokens** button only appears after the server has been synced to
+  your hosted workspace. If the button is not visible, disconnect and reconnect
+  the server to trigger a sync.
+</Note>
+
 ## What's different
 
 The following features are not available in the hosted app. They are available when running MCPJam locally via [npx, Docker, or the desktop app](/installation).
