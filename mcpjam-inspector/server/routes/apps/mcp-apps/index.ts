@@ -9,6 +9,8 @@
 import { Hono } from "hono";
 import "../../../types/hono";
 import { logger } from "../../../utils/logger";
+import { getRequestLogger } from "../../../utils/request-logger";
+import { classifyWidgetError } from "../../../utils/error-classify";
 import { RESOURCE_MIME_TYPE } from "@modelcontextprotocol/ext-apps/app-bridge";
 import type {
   McpUiResourceCsp,
@@ -92,6 +94,12 @@ apps.post("/widget-content", async (c) => {
     const content = contents[0];
 
     if (!content) {
+      getRequestLogger(c, "routes.apps.mcp-apps").event("widget.resource.failed", {
+        widgetType: "mcp_apps",
+        resourceUri: resolvedResourceUri,
+        cspMode: effectiveCspMode,
+        errorCode: classifyWidgetError(null, "resource_missing"),
+      });
       return c.json({ error: "No content in resource" }, 404);
     }
 
@@ -116,6 +124,12 @@ apps.post("/widget-content", async (c) => {
     } else if ("blob" in content && typeof content.blob === "string") {
       html = Buffer.from(content.blob, "base64").toString("utf-8");
     } else {
+      getRequestLogger(c, "routes.apps.mcp-apps").event("widget.resource.failed", {
+        widgetType: "mcp_apps",
+        resourceUri: resolvedResourceUri,
+        cspMode: effectiveCspMode,
+        errorCode: classifyWidgetError(null, "html_missing"),
+      });
       return c.json({ error: "No HTML content in resource" }, 404);
     }
 
@@ -163,6 +177,12 @@ apps.post("/widget-content", async (c) => {
     });
 
     // Return JSON with HTML and metadata for CSP enforcement
+    getRequestLogger(c, "routes.apps.mcp-apps").event("widget.resource.served", {
+      widgetType: "mcp_apps",
+      resourceUri: resolvedResourceUri,
+      cspMode: effectiveCspMode,
+      mimeTypeValid,
+    });
     c.header("Cache-Control", "no-cache, no-store, must-revalidate");
     return c.json({
       html,
@@ -177,6 +197,10 @@ apps.post("/widget-content", async (c) => {
       mimeTypeWarning,
     });
   } catch (error) {
+    getRequestLogger(c, "routes.apps.mcp-apps").event("widget.resource.failed", {
+      widgetType: "mcp_apps",
+      errorCode: classifyWidgetError(error),
+    });
     logger.error("[MCP Apps] Error fetching resource", error);
     return c.json(
       { error: error instanceof Error ? error.message : "Unknown error" },
