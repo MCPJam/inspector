@@ -1,12 +1,20 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Copy,
   Check,
   ExternalLink,
   ChevronDown,
   ChevronRight,
+  Eye,
+  EyeOff,
+  Loader2,
 } from "lucide-react";
 import { ServerWithName } from "@/hooks/use-app-state";
+import {
+  fetchHostedOAuthTokens,
+  type HostedOAuthTokensResult,
+} from "@/lib/apis/hosted-oauth-tokens-api";
+import { HOSTED_MODE } from "@/lib/config";
 import { getStoredTokensState } from "@/lib/oauth/mcp-oauth";
 import { getOAuthTraceFailureStep } from "@/lib/oauth/oauth-trace";
 import { decodeJWT } from "@/lib/oauth/jwt-decoder";
@@ -15,14 +23,23 @@ import { ScrollableJsonView } from "@/components/ui/json-editor";
 interface ServerInfoContentProps {
   server: ServerWithName;
   needsReconnect?: boolean;
+  workspaceId?: string | null;
+  hostedServerId?: string | null;
 }
 
 export function ServerInfoContent({
   server,
   needsReconnect = false,
+  workspaceId = null,
+  hostedServerId = null,
 }: ServerInfoContentProps) {
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [expandedTokens, setExpandedTokens] = useState<Set<string>>(new Set());
+  const [hostedTokenResult, setHostedTokenResult] =
+    useState<HostedOAuthTokensResult | null>(null);
+  const [isLoadingHostedTokens, setIsLoadingHostedTokens] = useState(false);
+  const [hostedTokenError, setHostedTokenError] = useState<string | null>(null);
+  const hostedRevealRequestIdRef = useRef(0);
 
   const storedTokensState = server.oauthTokens
     ? { tokens: undefined, isInvalid: false }
@@ -31,6 +48,13 @@ export function ServerInfoContent({
   const hasInvalidStoredAuthData =
     server.oauthTokens == null && storedTokensState.isInvalid;
   const isHttpServer = "url" in server.config;
+  const shouldShowHostedOAuthVaultSection =
+    HOSTED_MODE &&
+    server.useOAuth === true &&
+    isHttpServer &&
+    oauthTokens == null;
+  const canRevealHostedOAuthTokens =
+    shouldShowHostedOAuthVaultSection && !!workspaceId && !!hostedServerId;
 
   const initializationInfo = server.initializationInfo;
 
@@ -46,6 +70,22 @@ export function ServerInfoContent({
   const clientCapabilities = initializationInfo?.clientCapabilities;
   const oauthTrace = server.lastOAuthTrace;
   const oauthFailureStep = getOAuthTraceFailureStep(oauthTrace);
+
+  useEffect(() => {
+    hostedRevealRequestIdRef.current += 1;
+    setHostedTokenResult(null);
+    setHostedTokenError(null);
+    setIsLoadingHostedTokens(false);
+    setExpandedTokens((prev) => {
+      const next = new Set(prev);
+      for (const key of next) {
+        if (key.startsWith("hosted")) {
+          next.delete(key);
+        }
+      }
+      return next;
+    });
+  }, [server.name, workspaceId, hostedServerId]);
 
   // Build capabilities list
   const capabilities: string[] = [];
@@ -75,42 +115,102 @@ export function ServerInfoContent({
     });
   };
 
+  const revealHostedTokens = async () => {
+    if (!workspaceId || !hostedServerId || isLoadingHostedTokens) return;
+
+    const requestId = ++hostedRevealRequestIdRef.current;
+    setHostedTokenError(null);
+    setIsLoadingHostedTokens(true);
+
+    try {
+      const result = await fetchHostedOAuthTokens({
+        workspaceId,
+        serverId: hostedServerId,
+      });
+      if (hostedRevealRequestIdRef.current === requestId) {
+        setHostedTokenResult(result);
+      }
+    } catch (error) {
+      if (hostedRevealRequestIdRef.current === requestId) {
+        setHostedTokenResult(null);
+        setHostedTokenError(
+          error instanceof Error
+            ? error.message
+            : "Failed to reveal hosted OAuth tokens",
+        );
+      }
+    } finally {
+      if (hostedRevealRequestIdRef.current === requestId) {
+        setIsLoadingHostedTokens(false);
+      }
+    }
+  };
+
   const renderToken = (
     label: string,
     tokenValue: string | undefined,
     tokenKey: string,
+    options?: { maskedByDefault?: boolean },
   ) => {
     if (!tokenValue) return null;
-    const decoded = decodeJWT(tokenValue);
+    const isExpanded = expandedTokens.has(tokenKey);
+    const isMasked = options?.maskedByDefault === true && !isExpanded;
+    const shouldDecodeJwt = !isMasked && tokenValue.split(".").length === 3;
+    const decoded = shouldDecodeJwt ? decodeJWT(tokenValue) : null;
+    const displayValue = isMasked
+      ? "****************"
+      : isExpanded || options?.maskedByDefault || tokenValue.length <= 50
+        ? tokenValue
+        : `${tokenValue.substring(0, 50)}...`;
+    const showDecodedControls =
+      decoded && (!options?.maskedByDefault || isExpanded);
 
     return (
       <div>
         <span className="text-muted-foreground font-medium">{label}:</span>
         <div
-          className="font-mono text-foreground break-all bg-background/50 p-2 rounded mt-1 relative group cursor-pointer hover:bg-background/70 transition-colors"
+          className="font-mono text-foreground break-all bg-background/50 p-2 rounded mt-1 group cursor-pointer hover:bg-background/70 transition-colors"
           onClick={() => toggleTokenExpansion(tokenKey)}
         >
-          <div className="pr-8">
-            {expandedTokens.has(tokenKey) || tokenValue.length <= 50
-              ? tokenValue
-              : `${tokenValue.substring(0, 50)}...`}
+          <div className="flex items-start gap-2">
+            <div className="min-w-0 flex-1">{displayValue}</div>
+            {options?.maskedByDefault ? (
+              <button
+                type="button"
+                aria-label={`${isExpanded ? "Hide" : "Reveal"} ${label}`}
+                title={`${isExpanded ? "Hide" : "Reveal"} ${label}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  toggleTokenExpansion(tokenKey);
+                }}
+                className="mt-0.5 flex-shrink-0 p-1 text-muted-foreground/60 hover:text-foreground transition-colors cursor-pointer"
+              >
+                {isExpanded ? (
+                  <EyeOff className="h-3 w-3" />
+                ) : (
+                  <Eye className="h-3 w-3" />
+                )}
+              </button>
+            ) : null}
+            <button
+              type="button"
+              aria-label={`Copy ${label}`}
+              title={`Copy ${label}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                copyToClipboard(tokenValue, tokenKey);
+              }}
+              className="mt-0.5 flex-shrink-0 p-1 text-muted-foreground/50 hover:text-foreground transition-colors cursor-pointer"
+            >
+              {copiedField === tokenKey ? (
+                <Check className="h-3 w-3 text-green-500" />
+              ) : (
+                <Copy className="h-3 w-3" />
+              )}
+            </button>
           </div>
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              copyToClipboard(tokenValue, tokenKey);
-            }}
-            className="absolute top-1 right-1 p-1 text-muted-foreground/50 hover:text-foreground transition-colors cursor-pointer"
-          >
-            {copiedField === tokenKey ? (
-              <Check className="h-3 w-3 text-green-500" />
-            ) : (
-              <Copy className="h-3 w-3" />
-            )}
-          </button>
         </div>
-        {decoded && (
+        {showDecodedControls && (
           <div className="mt-1">
             <button
               type="button"
@@ -137,10 +237,91 @@ export function ServerInfoContent({
     );
   };
 
+  const renderHostedOAuthVaultSection = () => {
+    const tokens = hostedTokenResult?.tokens;
+    const formattedExpiresAt =
+      typeof hostedTokenResult?.expiresAt === "number"
+        ? new Date(hostedTokenResult.expiresAt).toLocaleString()
+        : null;
+
+    return (
+      <div className="space-y-3 text-xs pt-2">
+        <div className="text-sm font-medium text-muted-foreground">
+          OAuth Tokens
+        </div>
+        <div className="space-y-3 rounded-md bg-muted/40 p-3">
+          <div className="text-sm text-muted-foreground">
+            OAuth credential is stored in Vault for this account. Reveal tokens
+            only when you need to inspect or copy them.
+          </div>
+
+          {hostedTokenError ? (
+            <div className="rounded-md border border-destructive/30 bg-destructive/10 p-2 text-sm text-destructive">
+              {hostedTokenError}
+            </div>
+          ) : null}
+
+          {!tokens ? (
+            canRevealHostedOAuthTokens ? (
+              <button
+                type="button"
+                onClick={() => void revealHostedTokens()}
+                disabled={isLoadingHostedTokens}
+                className="inline-flex items-center gap-2 rounded-md border border-border bg-background px-3 py-1.5 text-sm font-medium text-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {isLoadingHostedTokens ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : null}
+                {isLoadingHostedTokens ? "Revealing..." : "Reveal tokens"}
+              </button>
+            ) : (
+              <div className="rounded-md bg-background/60 p-2 text-sm text-muted-foreground">
+                Token reveal is unavailable until this server is synced to the
+                hosted workspace.
+              </div>
+            )
+          ) : (
+            <>
+              {renderToken(
+                "Access Token",
+                tokens.access_token,
+                "hostedAccessToken",
+                { maskedByDefault: true },
+              )}
+              {renderToken(
+                "Refresh Token",
+                tokens.refresh_token,
+                "hostedRefreshToken",
+                { maskedByDefault: true },
+              )}
+              {renderToken("ID Token", tokens.id_token, "hostedIdToken", {
+                maskedByDefault: true,
+              })}
+
+              <div className="flex flex-wrap gap-4 text-muted-foreground pt-1">
+                <span>
+                  Source: Vault ({hostedTokenResult?.kind ?? "generic"})
+                </span>
+                <span>Type: {tokens.token_type || "Bearer"}</span>
+                {tokens.expires_in ? (
+                  <span>Expires in: {tokens.expires_in}s</span>
+                ) : null}
+                {tokens.scope ? <span>Scope: {tokens.scope}</span> : null}
+                {formattedExpiresAt ? (
+                  <span>Expires at: {formattedExpiresAt}</span>
+                ) : null}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    );
+  };
+
   const renderOAuthTokensSection = () => {
     if (!isHttpServer) return null;
 
-    if (hasInvalidStoredAuthData) {
+    if (hasInvalidStoredAuthData && !shouldShowHostedOAuthVaultSection) {
       return (
         <div className="space-y-3 text-xs pt-2">
           <div className="text-sm font-medium text-muted-foreground">
@@ -151,6 +332,10 @@ export function ServerInfoContent({
           </div>
         </div>
       );
+    }
+
+    if (shouldShowHostedOAuthVaultSection) {
+      return renderHostedOAuthVaultSection();
     }
 
     if (!oauthTokens) return null;

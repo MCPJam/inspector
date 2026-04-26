@@ -243,6 +243,31 @@ describe("ServerDetailModal", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("renders local OAuth tokens from localStorage in overview", () => {
+    localStorage.setItem(
+      "mcp-tokens-test-server",
+      JSON.stringify({
+        access_token: "local-access-token",
+        refresh_token: "local-refresh-token",
+        token_type: "Bearer",
+        expires_in: 3600,
+        scope: "read",
+      }),
+    );
+
+    render(
+      <ServerDetailModal
+        {...defaultProps}
+        server={createServer({ useOAuth: true })}
+        defaultTab="overview"
+      />,
+    );
+
+    expect(screen.getByText("local-access-token")).toBeInTheDocument();
+    expect(screen.getByText("local-refresh-token")).toBeInTheDocument();
+    expect(screen.getByText("Scope: read")).toBeInTheDocument();
+  });
+
   it("submits the configuration form without closing the modal", async () => {
     const onSubmit = vi.fn().mockResolvedValue({
       ok: true,

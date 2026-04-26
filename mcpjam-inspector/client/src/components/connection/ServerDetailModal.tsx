@@ -55,6 +55,8 @@ interface ServerDetailModalProps {
   ) => Promise<void>;
   existingServerNames: string[];
   workspaceClientConfig?: Workspace["clientConfig"];
+  workspaceId?: string | null;
+  hostedServerId?: string | null;
 }
 
 export function ServerDetailModal({
@@ -68,6 +70,8 @@ export function ServerDetailModal({
   onReconnect,
   existingServerNames,
   workspaceClientConfig,
+  workspaceId = null,
+  hostedServerId = null,
 }: ServerDetailModalProps) {
   const posthog = usePostHog();
   const [activeTab, setActiveTab] = useState<ServerDetailTab>(defaultTab);
@@ -411,6 +415,8 @@ export function ServerDetailModal({
                     <ServerInfoContent
                       server={server}
                       needsReconnect={needsReconnect}
+                      workspaceId={workspaceId}
+                      hostedServerId={hostedServerId}
                     />
                   )}
                 </div>
