@@ -145,6 +145,12 @@ describe("buildShowServersPayload", () => {
         url: "https://non-ready.example.com/mcp",
       },
       {
+        _id: "oauth-required",
+        name: "OAuth Required",
+        transportType: "http",
+        url: "https://oauth-required.example.com/mcp",
+      },
+      {
         _id: "auth-fail",
         name: "Auth Fail",
         transportType: "http",
@@ -179,6 +185,13 @@ describe("buildShowServersPayload", () => {
                 url: "https://non-ready.example.com/mcp",
               },
             },
+            "oauth-required": {
+              ok: true,
+              serverConfig: {
+                transportType: "http",
+                url: "https://oauth-required.example.com/mcp",
+              },
+            },
             "auth-fail": {
               ok: false,
               status: 403,
@@ -203,6 +216,19 @@ describe("buildShowServersPayload", () => {
           status: "reachable",
           initialize: undefined,
           error: "Server responded without initialize result.",
+        });
+      }
+
+      if (config.url.includes("oauth-required")) {
+        return probeResult({
+          url: config.url,
+          status: "oauth_required",
+          initialize: undefined,
+          oauth: {
+            required: true,
+            optional: false,
+            registrationStrategies: [],
+          },
         });
       }
 
@@ -232,7 +258,13 @@ describe("buildShowServersPayload", () => {
 
     expect(authorizeBatch).toHaveBeenCalledWith(
       expect.objectContaining({
-        serverIds: ["ready", "non-ready", "auth-fail", "throws"],
+        serverIds: [
+          "ready",
+          "non-ready",
+          "oauth-required",
+          "auth-fail",
+          "throws",
+        ],
       })
     );
     expect(payload.servers.map((server) => [server.id, server.status])).toEqual([
@@ -240,6 +272,7 @@ describe("buildShowServersPayload", () => {
       ["insecure", "skipped"],
       ["ready", "reachable"],
       ["non-ready", "unreachable"],
+      ["oauth-required", "reachable"],
       ["auth-fail", "error"],
       ["throws", "unreachable"],
     ]);
@@ -247,10 +280,11 @@ describe("buildShowServersPayload", () => {
       name: "ready-server",
       version: "2.0.0",
     });
-    expect(payload.servers[4]?.statusDetail).toContain("FORBIDDEN");
-    expect(payload.servers[5]?.statusDetail).toContain("connect timeout");
+    expect(payload.servers[4]?.statusDetail).toContain("OAuth required");
+    expect(payload.servers[5]?.statusDetail).toContain("FORBIDDEN");
+    expect(payload.servers[6]?.statusDetail).toContain("connect timeout");
     expect(payload.summary).toEqual({
-      reachable: 1,
+      reachable: 2,
       unreachable: 2,
       skipped: 2,
       error: 1,

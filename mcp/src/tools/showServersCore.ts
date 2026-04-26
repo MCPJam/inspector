@@ -465,6 +465,14 @@ function entryFromProbeResult(
     };
   }
 
+  if (result.status === "oauth_required") {
+    return {
+      ...baseEntry,
+      status: "reachable",
+      statusDetail: "OAuth required; endpoint responded to the MCP probe.",
+    };
+  }
+
   return {
     ...baseEntry,
     status: "unreachable",
