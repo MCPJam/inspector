@@ -1,5 +1,13 @@
 import * as Sentry from "@sentry/node";
 import { Axiom } from "@axiomhq/js";
+import type {
+  LogEventName,
+  RequestEventMap,
+  SystemEventMap,
+  RequestLogContext,
+  SystemLogContext,
+} from "./log-events.js";
+import { scrubLogPayload } from "./log-scrubber.js";
 
 const isVerbose = () => process.env.VERBOSE_LOGS === "true";
 const isDev = () => process.env.NODE_ENV !== "production";
@@ -13,6 +21,12 @@ const axiom =
 const dataset = process.env.AXIOM_DATASET ?? "";
 
 const environment = process.env.ENVIRONMENT ?? "unknown";
+
+type SentryOptions = { error?: unknown; sentry?: boolean };
+
+function shouldSendToSentry(eventName: LogEventName): boolean {
+  return eventName.endsWith(".failed");
+}
 
 function ingestToAxiom(
   level: "info" | "warn" | "error" | "debug",
@@ -86,6 +100,72 @@ export const logger = {
    */
   async flush() {
     await axiom?.flush();
+  },
+
+  event<E extends keyof RequestEventMap>(
+    eventName: E,
+    base: RequestLogContext,
+    payload: RequestEventMap[E],
+    options?: SentryOptions,
+  ): void {
+    const fullPayload = scrubLogPayload({
+      ...base,
+      ...payload,
+      event: eventName,
+      timestamp: new Date().toISOString(),
+    });
+
+    if (axiom) {
+      axiom.ingest(dataset, [fullPayload]);
+    }
+
+    if (shouldSendToSentry(eventName) && options?.sentry !== false) {
+      if (options?.error instanceof Error) {
+        Sentry.captureException(options.error, { extra: fullPayload as Record<string, unknown> });
+      } else {
+        Sentry.captureMessage(eventName, {
+          level: "error",
+          extra: fullPayload as Record<string, unknown>,
+        });
+      }
+    }
+
+    if (shouldLog()) {
+      console.log(`[event] ${eventName}`, fullPayload);
+    }
+  },
+
+  systemEvent<E extends keyof SystemEventMap>(
+    eventName: E,
+    base: SystemLogContext,
+    payload: SystemEventMap[E],
+    options?: SentryOptions,
+  ): void {
+    const fullPayload = scrubLogPayload({
+      ...base,
+      ...payload,
+      event: eventName,
+      timestamp: new Date().toISOString(),
+    });
+
+    if (axiom) {
+      axiom.ingest(dataset, [fullPayload]);
+    }
+
+    if (shouldSendToSentry(eventName) && options?.sentry !== false) {
+      if (options?.error instanceof Error) {
+        Sentry.captureException(options.error, { extra: fullPayload as Record<string, unknown> });
+      } else {
+        Sentry.captureMessage(eventName, {
+          level: "error",
+          extra: fullPayload as Record<string, unknown>,
+        });
+      }
+    }
+
+    if (shouldLog()) {
+      console.log(`[event] ${eventName}`, fullPayload);
+    }
   },
 };
 

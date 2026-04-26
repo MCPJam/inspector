@@ -42,6 +42,7 @@ import { startGuestAuthProvisioningInBackground } from "./utils/convex-guest-aut
 import { fetchRemoteGuestJwks } from "./utils/guest-session-source.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "./utils/mcp-retry-policy.js";
 import { initXAAIdpKeyPair } from "./services/xaa-idp-keypair.js";
+import { requestLogContextMiddleware } from "./middleware/request-log-context.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -156,6 +157,9 @@ export function createHonoApp() {
   app.use("*", sessionAuthMiddleware);
 
   // ===== END SECURITY MIDDLEWARE =====
+
+  // 5. Request log context (only on /api/* to avoid static files)
+  app.use("/api/*", requestLogContextMiddleware);
 
   // Middleware - only enable HTTP request logging in dev mode or when --verbose is passed
   const enableHttpLogs =

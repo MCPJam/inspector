@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import type { RequestLogContext, SystemLogContext } from "../log-events.js";
 
 // Mock Sentry before importing logger
 vi.mock("@sentry/node", () => ({
@@ -15,6 +16,30 @@ vi.mock("@axiomhq/js", () => ({
     flush: mockFlush,
   })),
 }));
+
+const baseRequestContext: RequestLogContext = {
+  event: "http.request.completed",
+  timestamp: "2024-01-01T00:00:00.000Z",
+  environment: "test",
+  release: null,
+  component: "http",
+  requestId: "req-abc",
+  route: "/api/web/test",
+  method: "GET",
+  authType: "unknown",
+};
+
+const baseSystemContext: SystemLogContext = {
+  event: "mcp.connection.closed_with_pending_requests",
+  timestamp: "2024-01-01T00:00:00.000Z",
+  environment: "test",
+  release: null,
+  component: "process",
+  requestId: null,
+  route: null,
+  method: null,
+  authType: "system",
+};
 
 describe("logger", () => {
   beforeEach(() => {
@@ -145,6 +170,129 @@ describe("logger", () => {
         await logger.flush();
         expect(mockFlush).toHaveBeenCalled();
       });
+    });
+  });
+
+  describe("logger.event", () => {
+    let logger: (typeof import("../logger.js"))["logger"];
+    let captureException: ReturnType<typeof vi.fn>;
+    let captureMessage: ReturnType<typeof vi.fn>;
+
+    beforeEach(async () => {
+      vi.stubEnv("AXIOM_TOKEN", "test-token");
+      vi.stubEnv("AXIOM_DATASET", "test-dataset");
+      vi.stubEnv("NODE_ENV", "production");
+
+      const mod = await import("../logger.js");
+      logger = mod.logger;
+
+      const sentry = await import("@sentry/node");
+      captureException = vi.mocked(sentry.captureException);
+      captureMessage = vi.mocked(sentry.captureMessage);
+      captureException.mockClear();
+      captureMessage.mockClear();
+    });
+
+    it("ingests a typed event to Axiom with all required fields", () => {
+      logger.event("http.request.completed", baseRequestContext, { statusCode: 200 });
+
+      expect(mockIngest).toHaveBeenCalledWith(
+        "test-dataset",
+        [
+          expect.objectContaining({
+            event: "http.request.completed",
+            environment: "test",
+            requestId: "req-abc",
+            route: "/api/web/test",
+            method: "GET",
+            component: "http",
+            authType: "unknown",
+            statusCode: 200,
+          }),
+        ],
+      );
+    });
+
+    it("calls Sentry.captureException for *.failed events with an Error", () => {
+      const err = new Error("boom");
+      logger.event(
+        "http.request.failed",
+        baseRequestContext,
+        { statusCode: 500, errorCode: "unhandled_exception" },
+        { error: err },
+      );
+
+      expect(captureException).toHaveBeenCalledWith(err, expect.any(Object));
+      expect(captureMessage).not.toHaveBeenCalled();
+    });
+
+    it("calls Sentry.captureMessage for *.failed events without an Error", () => {
+      logger.event(
+        "http.request.failed",
+        baseRequestContext,
+        { statusCode: 500, errorCode: "internal_error" },
+      );
+
+      expect(captureMessage).toHaveBeenCalledWith(
+        "http.request.failed",
+        expect.objectContaining({ level: "error" }),
+      );
+    });
+
+    it("does not call Sentry for non-failed events (http.request.completed)", () => {
+      logger.event("http.request.completed", baseRequestContext, { statusCode: 200 });
+
+      expect(captureException).not.toHaveBeenCalled();
+      expect(captureMessage).not.toHaveBeenCalled();
+    });
+
+    it("does not call Sentry when sentry: false is passed", () => {
+      const err = new Error("boom");
+      logger.event(
+        "http.request.failed",
+        baseRequestContext,
+        { statusCode: 500, errorCode: "internal_error" },
+        { error: err, sentry: false },
+      );
+
+      expect(captureException).not.toHaveBeenCalled();
+      expect(captureMessage).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("logger.systemEvent", () => {
+    let logger: (typeof import("../logger.js"))["logger"];
+
+    beforeEach(async () => {
+      vi.stubEnv("AXIOM_TOKEN", "test-token");
+      vi.stubEnv("AXIOM_DATASET", "test-dataset");
+      vi.stubEnv("NODE_ENV", "production");
+
+      const mod = await import("../logger.js");
+      logger = mod.logger;
+      mockIngest.mockClear();
+    });
+
+    it("ingests a system event to Axiom with system envelope (requestId/route/method all null)", () => {
+      logger.systemEvent(
+        "mcp.connection.closed_with_pending_requests",
+        baseSystemContext,
+        { errorCode: "connection_closed" },
+      );
+
+      expect(mockIngest).toHaveBeenCalledWith(
+        "test-dataset",
+        [
+          expect.objectContaining({
+            event: "mcp.connection.closed_with_pending_requests",
+            requestId: null,
+            route: null,
+            method: null,
+            authType: "system",
+            errorCode: "connection_closed",
+          }),
+        ],
+      );
     });
   });
 });

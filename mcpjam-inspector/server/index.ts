@@ -33,6 +33,11 @@ import { securityHeadersMiddleware } from "./middleware/security-headers";
 import { inAppBrowserMiddleware } from "./middleware/in-app-browser";
 import { startGuestAuthProvisioningInBackground } from "./utils/convex-guest-auth-sync";
 
+import { getSystemLogger } from "./utils/request-logger";
+import { resolveEnvironment, resolveRelease } from "./utils/log-events";
+
+const sysLogger = getSystemLogger("process");
+
 // Handle unhandled promise rejections gracefully (Node.js v24+ throws by default)
 // This prevents the server from crashing when MCP connections are closed while
 // requests are pending - the SDK rejects pending promises on connection close
@@ -44,10 +49,18 @@ process.on("unhandledRejection", (reason, _promise) => {
       reason.name === "McpError");
 
   if (isMcpConnectionClosed) {
-    // Log at debug level - this is expected during disconnect operations
-    appLogger.debug("MCP connection closed with pending requests", {
-      message: reason.message,
-    });
+    sysLogger.event(
+      "mcp.connection.closed_with_pending_requests",
+      {
+        environment: resolveEnvironment(),
+        release: resolveRelease(),
+        requestId: null,
+        route: null,
+        method: null,
+        authType: "system" as const,
+      },
+      { errorCode: "connection_closed" },
+    );
   } else {
     // Log unexpected rejections as warnings
     appLogger.warn("Unhandled promise rejection", {
