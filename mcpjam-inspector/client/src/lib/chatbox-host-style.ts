@@ -17,6 +17,14 @@ export type ChatboxHostStyle = HostStyleId;
 
 type ChatboxShellStyle = CSSProperties & Record<`--${string}`, string>;
 
+export function normalizeChatboxHostStyleId(
+  hostStyle: unknown,
+): ChatboxHostStyle | null {
+  if (typeof hostStyle !== "string") return null;
+  const trimmed = hostStyle.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
 export function getChatboxHostLabel(hostStyle: ChatboxHostStyle): string {
   return getHostStyleOrDefault(hostStyle).label;
 }
@@ -45,8 +53,17 @@ export function getChatboxProtocolOverride(
  */
 export function getChatboxHostFamily(
   hostStyle: ChatboxHostStyle | null | undefined,
-): HostStyleFamily {
+): HostStyleFamily | null {
+  if (!hostStyle) return null;
   return getHostStyleOrDefault(hostStyle).family;
+}
+
+export function getChatboxChatBackground(
+  hostStyle: ChatboxHostStyle | null | undefined,
+  themeMode: HostThemeMode,
+): string | undefined {
+  if (!hostStyle) return undefined;
+  return getHostStyleOrDefault(hostStyle).resolveChatBackground(themeMode);
 }
 
 export function getChatboxShellStyle(

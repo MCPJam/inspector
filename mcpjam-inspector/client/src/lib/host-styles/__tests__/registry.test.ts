@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   CHATGPT_HOST_STYLE,
   CLAUDE_HOST_STYLE,
@@ -53,9 +53,7 @@ describe("host-styles registry", () => {
       pickerDescription: "Test chrome",
       logoSrc: "/test-logo.png",
       family: "claude",
-      get protocolOverride() {
-        return CLAUDE_HOST_STYLE.protocolOverride;
-      },
+      protocolOverride: CLAUDE_HOST_STYLE.protocolOverride,
       platform: "web",
       fontCss: "",
       resolveStyleVariables: CLAUDE_HOST_STYLE.resolveStyleVariables,
@@ -67,5 +65,14 @@ describe("host-styles registry", () => {
     expect(findHostStyle("test-host-registry")).toBe(fakeStyle);
     expect(isKnownHostStyleId("test-host-registry")).toBe(true);
     expect(listHostStyles()).toContain(fakeStyle);
+  });
+
+  it("rejects duplicate host style ids", async () => {
+    vi.resetModules();
+    const { CLAUDE_HOST_STYLE, registerHostStyle } = await import("..");
+
+    expect(() => registerHostStyle(CLAUDE_HOST_STYLE)).toThrow(
+      /already registered/,
+    );
   });
 });

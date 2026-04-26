@@ -71,7 +71,7 @@ import { useIsMobile } from "@/hooks/use-mobile";
 import type { HostedOAuthRequiredDetails } from "@/lib/hosted-oauth-required";
 import { isHostedOAuthBusy } from "@/lib/hosted-oauth-resume";
 import type { ChatboxHostStyle } from "@/lib/chatbox-host-style";
-import { listHostStyles } from "@/lib/host-styles";
+import { DEFAULT_HOST_STYLE, listHostStyles } from "@/lib/host-styles";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import {
   CHATBOX_OAUTH_PENDING_KEY,
@@ -157,7 +157,7 @@ export function ChatboxEditor({
   const [name, setName] = useState(chatbox?.name ?? "");
   const [description, setDescription] = useState(chatbox?.description ?? "");
   const [hostStyle, setHostStyle] = useState<ChatboxHostStyle>(
-    chatbox?.hostStyle ?? "claude"
+    chatbox?.hostStyle ?? DEFAULT_HOST_STYLE.id
   );
   const [systemPrompt, setSystemPrompt] = useState(
     chatbox?.systemPrompt ?? DEFAULT_SYSTEM_PROMPT
@@ -206,7 +206,7 @@ export function ChatboxEditor({
     if (!chatbox) {
       setName("");
       setDescription("");
-      setHostStyle("claude");
+      setHostStyle(DEFAULT_HOST_STYLE.id);
       setSystemPrompt(DEFAULT_SYSTEM_PROMPT);
       setModelId(hostedModels[0]?.id?.toString() ?? "openai/gpt-5-mini");
       setTemperature(0.7);

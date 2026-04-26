@@ -22,9 +22,7 @@ export const CLAUDE_HOST_STYLE: HostStyleDefinition = {
   pickerDescription: "Claude-style chatbox chrome",
   logoSrc: claudeLogo,
   family: "claude",
-  get protocolOverride() {
-    return UIType.MCP_APPS;
-  },
+  protocolOverride: UIType.MCP_APPS,
   platform: CLAUDE_DESKTOP_PLATFORM,
   fontCss: CLAUDE_DESKTOP_FONT_CSS,
   resolveStyleVariables: getClaudeDesktopStyleVariables,
@@ -38,9 +36,7 @@ export const CHATGPT_HOST_STYLE: HostStyleDefinition = {
   pickerDescription: "OpenAI-style chatbox chrome",
   logoSrc: openaiLogo,
   family: "chatgpt",
-  get protocolOverride() {
-    return UIType.OPENAI_SDK;
-  },
+  protocolOverride: UIType.OPENAI_SDK,
   platform: CHATGPT_PLATFORM,
   fontCss: CHATGPT_FONT_CSS,
   resolveStyleVariables: getChatGPTStyleVariables,

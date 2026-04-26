@@ -194,6 +194,11 @@ vi.mock("../mcp-apps-renderer-helper", () => ({
 
 vi.mock("@/lib/mcp-ui/mcp-apps-utils", () => ({
   isVisibleToModelOnly: () => false,
+  UIType: {
+    MCP_APPS: "mcp-apps",
+    OPENAI_SDK: "openai-sdk",
+    OPENAI_SDK_AND_MCP_APPS: "openai-sdk-and-mcp-apps",
+  },
 }));
 
 vi.mock("lucide-react", () => ({

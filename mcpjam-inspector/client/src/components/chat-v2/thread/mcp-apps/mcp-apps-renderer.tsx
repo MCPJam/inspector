@@ -77,11 +77,6 @@ const DEFAULT_INPUT_SCHEMA = { type: "object" } as const;
 
 const SUPPRESSED_UI_LOG_METHODS = new Set(["ui/notifications/size-changed"]);
 const PIP_MAX_HEIGHT = "min(40vh, 600px)";
-const VALID_HOST_STYLE_VARIABLE_KEYS = new Set<string>(
-  listHostStyles().flatMap((host) =>
-    Object.keys(host.resolveStyleVariables("light")),
-  ),
-);
 
 type DisplayMode = "inline" | "pip" | "fullscreen";
 type HostStyleVariables = NonNullable<
@@ -95,9 +90,15 @@ function sanitizeHostStyleVariables(
     return undefined;
   }
 
+  const validHostStyleVariableKeys = new Set<string>(
+    listHostStyles().flatMap((host) => [
+      ...Object.keys(host.resolveStyleVariables("light")),
+      ...Object.keys(host.resolveStyleVariables("dark")),
+    ]),
+  );
   const sanitized: Record<string, string | undefined> = {};
   for (const [key, value] of Object.entries(variables)) {
-    if (!VALID_HOST_STYLE_VARIABLE_KEYS.has(key)) {
+    if (!validHostStyleVariableKeys.has(key)) {
       continue;
     }
     if (typeof value === "string" || value === undefined) {
@@ -773,7 +774,6 @@ export function MCPAppsRenderer({
     ? sharedHostStyle
     : (chatboxHostStyle ?? "claude");
   const hostStyleDefinition = getHostStyleOrDefault(effectiveHostStyle);
-  const useChatGPTStyle = hostStyleDefinition.family === "chatgpt";
   themeModeRef.current = resolvedTheme;
   const styleVariables = useMemo(
     () => hostStyleDefinition.resolveStyleVariables(resolvedTheme),
@@ -859,7 +859,7 @@ export function MCPAppsRenderer({
       deviceCapabilities,
       safeAreaInsets,
       mergedStyles,
-      useChatGPTStyle,
+      hostStyleDefinition,
       toolCallId,
       toolName,
       toolMetadata,

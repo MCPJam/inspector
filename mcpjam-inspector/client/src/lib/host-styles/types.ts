@@ -19,8 +19,8 @@ export type HostThemeMode = "light" | "dark";
  * shell theming, and the MCP Apps iframe bridge.
  *
  * Adding a new built-in host is a matter of authoring one of these objects
- * and registering it; workspace-defined custom hosts may be passed at
- * lookup time without mutating the global registry.
+ * and registering it; future workspace-defined hosts can use the same shape
+ * once a scoped host layer exists.
  */
 export interface HostStyleDefinition {
   id: HostStyleId;

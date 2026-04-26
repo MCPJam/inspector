@@ -11,11 +11,24 @@ for (const definition of BUILT_IN_HOST_STYLES) {
 export const DEFAULT_HOST_STYLE: HostStyleDefinition = CLAUDE_HOST_STYLE;
 
 /**
- * Register an additional host style at runtime. Intended for workspace-defined
- * custom hosts loaded from server config. Built-ins are registered eagerly.
+ * Register an additional app-provided host style. Built-ins are registered
+ * eagerly; workspace-scoped custom hosts will need a scoped layer instead of
+ * mutating this process-wide registry.
  */
 export function registerHostStyle(definition: HostStyleDefinition): void {
-  registry.set(definition.id, definition);
+  const id = definition.id.trim();
+  if (!id) {
+    throw new Error("[host-styles] Host style id is required.");
+  }
+  if (id !== definition.id) {
+    throw new Error(
+      `[host-styles] Host style id "${definition.id}" must not contain leading or trailing whitespace.`,
+    );
+  }
+  if (registry.has(id)) {
+    throw new Error(`[host-styles] Host style "${id}" is already registered.`);
+  }
+  registry.set(id, definition);
 }
 
 /** Strict lookup. Returns `undefined` when the id is unknown. */

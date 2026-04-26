@@ -534,7 +534,7 @@ export function SetupChecklistPanel({
                             <div>
                               <p className="font-medium">{host.shortLabel}</p>
                               <p className="text-xs text-muted-foreground">
-                                Chatbox shell matches this host style.
+                                {host.pickerDescription}
                               </p>
                             </div>
                           </button>
