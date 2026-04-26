@@ -86,8 +86,8 @@ See [Hosted App docs](https://docs.mcpjam.com/hosted/overview) for details.
 
 Download the installer for your OS. Supports HTTP/S and local STDIO servers. No Node.js required.
 
-- [Install Mac](https://github.com/MCPJam/inspector/releases/latest/download/MCPJam.Inspector.dmg)
-- [Install Windows](https://github.com/MCPJam/inspector/releases/latest/download/MCPJam-Inspector-Setup.exe)
+- [Install Mac](https://github.com/MCPJam/inspector/releases/latest) — download `MCPJam.Inspector.dmg`
+- [Install Windows](https://github.com/MCPJam/inspector/releases/latest) — download `MCPJam-Inspector-Setup.exe`
 
 ## Terminal
 
