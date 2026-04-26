@@ -19,6 +19,7 @@ import {
   shouldRetryHostedAuth401,
 } from "@/lib/apis/web/context";
 import { forceRefreshGuestSession } from "@/lib/guest-session";
+import posthog from "posthog-js";
 
 // Extend window type for the injected token
 declare global {
@@ -29,6 +30,32 @@ declare global {
 
 let cachedToken: string | null = null;
 let initPromise: Promise<string> | null = null;
+
+type AuthFetchSurface = "chatbox";
+
+const AUTH_FETCH_SURFACE_BY_PATH: Record<string, AuthFetchSurface> = {
+  "/api/web/chatboxes/bootstrap": "chatbox",
+};
+
+function resolveAuthFetchSurface(
+  input: RequestInfo | URL
+): AuthFetchSurface | null {
+  const rawUrl =
+    input instanceof URL
+      ? input.toString()
+      : typeof Request !== "undefined" && input instanceof Request
+      ? input.url
+      : String(input);
+  const baseOrigin =
+    typeof window !== "undefined" ? window.location.origin : "http://localhost";
+
+  try {
+    const parsed = new URL(rawUrl, baseOrigin);
+    return AUTH_FETCH_SURFACE_BY_PATH[parsed.pathname] ?? null;
+  } catch {
+    return AUTH_FETCH_SURFACE_BY_PATH[rawUrl] ?? null;
+  }
+}
 
 function mergeHeaders(
   ...headersList: Array<HeadersInit | undefined>
@@ -70,13 +97,13 @@ function hasAuthorizationHeader(headers?: HeadersInit): boolean {
   }
 
   return Object.keys(headers).some(
-    (key) => key.toLowerCase() === "authorization",
+    (key) => key.toLowerCase() === "authorization"
   );
 }
 
 function buildAuthFetchInit(
   init: RequestInit | undefined,
-  hostedAuthorizationHeader: string | null,
+  hostedAuthorizationHeader: string | null
 ): RequestInit {
   const sessionHeaders = getAuthHeaders();
   const hostedHeaders = hostedAuthorizationHeader
@@ -224,8 +251,9 @@ export function addTokenToUrl(url: string): string {
  */
 export async function authFetch(
   input: RequestInfo | URL,
-  init?: RequestInit,
+  init?: RequestInit
 ): Promise<Response> {
+  const surface = resolveAuthFetchSurface(input);
   const hostedAuthHeader = await getHostedAuthorizationHeader();
   const callerProvidedAuthorization = hasAuthorizationHeader(init?.headers);
   const mergedInit = buildAuthFetchInit(init, hostedAuthHeader);
@@ -245,7 +273,23 @@ export async function authFetch(
   resetTokenCache();
   const refreshedGuestToken = await forceRefreshGuestSession();
   if (!refreshedGuestToken) {
+    if (surface) {
+      posthog.capture("guest_refresh_failure", {
+        surface,
+        auth_mode: "guest",
+        status: "failure",
+        error_kind: "guest_refresh_unavailable",
+      });
+    }
     return response;
+  }
+
+  if (surface) {
+    posthog.capture("guest_refresh_success", {
+      surface,
+      auth_mode: "guest",
+      status: "success",
+    });
   }
 
   const retryInit = buildAuthFetchInit(init, `Bearer ${refreshedGuestToken}`);
