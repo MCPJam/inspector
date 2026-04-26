@@ -787,10 +787,13 @@ export function MCPAppsRenderer({
       ? (baseHostContext.styles as McpUiHostContext["styles"])
       : undefined;
   // The SDK validates styles.variables against the SEP key enum, so strip
-  // host-specific custom properties before they enter ui/initialize.
+  // host-specific custom properties before they enter ui/initialize. The
+  // registry-size dep invalidates the memo when registerHostStyle adds a
+  // host at runtime, so its variables aren't dropped by a stale allowlist.
+  const registeredHostStyleCount = listHostStyles().length;
   const configuredStyleVariables = useMemo(
     () => sanitizeHostStyleVariables(configuredStyles?.variables),
-    [configuredStyles?.variables],
+    [configuredStyles?.variables, registeredHostStyleCount],
   );
   const mergedStyleVariables = useMemo(() => {
     return {
