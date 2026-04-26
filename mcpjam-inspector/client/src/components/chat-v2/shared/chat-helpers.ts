@@ -178,6 +178,72 @@ const MCPJAM_PLATFORM_CODES = [
   "mcpjam_config_error",
 ];
 
+const MCPJAM_RATE_LIMIT_CODE = "mcpjam_rate_limit";
+const MCPJAM_MODEL_LIMIT_PATTERN = /mcpjam[\w\s-]*model limit/i;
+
+const normalizeDetails = (details: unknown): string | undefined => {
+  if (details == null) return undefined;
+  if (typeof details === "string") return details;
+
+  try {
+    return JSON.stringify(details);
+  } catch {
+    return String(details);
+  }
+};
+
+const lowercaseFirst = (value: string) =>
+  value.length > 0 ? value[0].toLowerCase() + value.slice(1) : value;
+
+const extractRetryPhrase = (...values: Array<unknown>): string | null => {
+  for (const value of values) {
+    if (typeof value !== "string") continue;
+
+    const sentence = value
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find((line) => /try again/i.test(line));
+
+    if (!sentence) continue;
+
+    const match = sentence.match(
+      /try again(?:\s+(?:in|after|tomorrow|later)\b[^.]*)?/i,
+    );
+    if (!match?.[0]) continue;
+
+    return lowercaseFirst(match[0].trim().replace(/[.。]+$/, ""));
+  }
+
+  return null;
+};
+
+const isMCPJamModelLimit = (
+  code: unknown,
+  message: unknown,
+  details?: unknown,
+) => {
+  if (code === MCPJAM_RATE_LIMIT_CODE) return true;
+  if (typeof message === "string" && MCPJAM_MODEL_LIMIT_PATTERN.test(message)) {
+    return true;
+  }
+  if (typeof details === "string" && MCPJAM_MODEL_LIMIT_PATTERN.test(details)) {
+    return true;
+  }
+
+  return false;
+};
+
+const formatMCPJamModelLimit = (
+  retryPhrase: string | null,
+): FormattedError => ({
+  code: MCPJAM_RATE_LIMIT_CODE,
+  message: retryPhrase
+    ? `Add your own API key under LLM Providers in Settings to continue now, or ${retryPhrase}.`
+    : "Add your own API key under LLM Providers in Settings to continue now, or wait until your daily limit resets.",
+  isRetryable: false,
+  isMCPJamPlatformError: true,
+});
+
 export function formatErrorMessage(error: unknown): FormattedError | null {
   if (!error) return null;
 
@@ -201,10 +267,15 @@ export function formatErrorMessage(error: unknown): FormattedError | null {
       // Handle structured error with code
       const code = parsed.code;
       const message = parsed.error || parsed.message || "An error occurred";
+      const details = normalizeDetails(parsed.details);
+
+      if (isMCPJamModelLimit(code, message, details)) {
+        return formatMCPJamModelLimit(extractRetryPhrase(details, message));
+      }
 
       return {
         message,
-        details: parsed.details,
+        details,
         code,
         statusCode: parsed.statusCode,
         isRetryable: parsed.isRetryable,
@@ -215,6 +286,10 @@ export function formatErrorMessage(error: unknown): FormattedError | null {
     }
   } catch {
     // Return as-is
+  }
+
+  if (isMCPJamModelLimit(undefined, errorString)) {
+    return formatMCPJamModelLimit(extractRetryPhrase(errorString));
   }
 
   return { message: errorString };
