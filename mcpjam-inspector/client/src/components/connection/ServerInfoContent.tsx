@@ -239,10 +239,6 @@ export function ServerInfoContent({
 
   const renderHostedOAuthVaultSection = () => {
     const tokens = hostedTokenResult?.tokens;
-    const formattedExpiresAt =
-      typeof hostedTokenResult?.expiresAt === "number"
-        ? new Date(hostedTokenResult.expiresAt).toLocaleString()
-        : null;
 
     return (
       <div className="space-y-3 text-xs pt-2">
@@ -292,20 +288,6 @@ export function ServerInfoContent({
               {renderToken("ID Token", tokens.id_token, "hostedIdToken", {
                 maskedByDefault: true,
               })}
-
-              <div className="flex flex-wrap gap-4 text-muted-foreground pt-1">
-                <span>
-                  Source: Vault ({hostedTokenResult?.kind ?? "generic"})
-                </span>
-                <span>Type: {tokens.token_type || "Bearer"}</span>
-                {tokens.expires_in ? (
-                  <span>Expires in: {tokens.expires_in}s</span>
-                ) : null}
-                {tokens.scope ? <span>Scope: {tokens.scope}</span> : null}
-                {formattedExpiresAt ? (
-                  <span>Expires at: {formattedExpiresAt}</span>
-                ) : null}
-              </div>
             </>
           )}
         </div>

@@ -155,6 +155,8 @@ describe("ServerDetailModal hosted reconnect", () => {
     });
     expect(screen.getAllByText("****************").length).toBeGreaterThan(0);
     expect(screen.queryByText("hosted-access-token")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Source: Vault/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Expires in:/)).not.toBeInTheDocument();
 
     await user.click(
       screen.getByRole("button", { name: "Reveal Access Token" }),
