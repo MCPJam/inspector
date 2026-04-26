@@ -8,10 +8,10 @@ published to npm — clients connect to it remotely via URL.
 
 ## Status
 
-Skeleton. Protected by WorkOS AuthKit and ships one `whoami` tool that proves
-the bearer token reached Convex and resolved to an MCPJam user. Real tools
-(evals, diagnostics, etc.) will be added in later PRs on top of this auth
-foundation.
+Protected by WorkOS AuthKit and ships one `show_servers` tool. The tool lists
+the authenticated user's MCPJam workspace servers, resolves a workspace by name
+or ID, performs a lightweight hosted health probe for HTTPS servers, and can
+render the result as an MCP UI widget when the client supports MCP Apps.
 
 ## Auth
 
@@ -30,8 +30,9 @@ Unauthenticated requests to `/mcp` get a `401` with a `WWW-Authenticate` header
 pointing at the PRM URL, which MCP clients use to kick off the OAuth flow.
 
 The verified bearer token is forwarded to Convex via `ConvexHttpClient.setAuth`
-so Convex sees the same WorkOS identity the main app does. The `whoami` tool
-calls `users:ensureUser` (idempotent) then `users:getCurrentUser`.
+so Convex sees the same WorkOS identity the main app does. `show_servers` uses
+that identity to load accessible workspaces and authorize server probes through
+the hosted Convex HTTP authorization endpoint.
 
 ### AuthKit domains
 
@@ -83,10 +84,10 @@ AuthKit issuer:
 curl -s http://localhost:8787/.well-known/oauth-protected-resource/mcp | jq
 ```
 
-To hit `whoami`, connect the MCPJam Inspector (or any MCP client that supports
-OAuth discovery) to `http://localhost:8787/mcp`; the client will auto-discover
-the AuthKit issuer, run the OAuth flow, and call `whoami` with your
-MCPJam user.
+To hit `show_servers`, connect the MCPJam Inspector (or any MCP client that
+supports OAuth discovery) to `http://localhost:8787/mcp`; the client will
+auto-discover the AuthKit issuer, run the OAuth flow, and call `show_servers`
+with either no arguments or `{ "workspace": "<workspace name or id>" }`.
 
 ## Delivery model
 
