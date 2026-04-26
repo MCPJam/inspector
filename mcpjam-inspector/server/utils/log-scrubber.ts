@@ -45,6 +45,17 @@ function scrubValue(value: unknown): unknown {
   if (value === null || value === undefined) return value;
   if (typeof value === "string") return scrubString(value);
   if (typeof value !== "object") return value;
+  if (value instanceof Date) return value.toISOString();
+  if (value instanceof Error) {
+    return {
+      name: value.name,
+      message: scrubString(value.message),
+      stack: value.stack ? scrubString(value.stack) : undefined,
+    };
+  }
+  if (typeof Buffer !== "undefined" && Buffer.isBuffer(value)) {
+    return "[buffer]";
+  }
   if (Array.isArray(value)) return value.map(scrubValue);
 
   const out: Record<string, unknown> = {};

@@ -120,7 +120,11 @@ export type RequestEventPayload<E extends keyof RequestEventMap> =
 export type SystemEventPayload<E extends keyof SystemEventMap> =
   SystemLogContext & { event: E } & SystemEventMap[E];
 
+let cachedEnvironment: Environment | undefined;
+let warnedMissingEnv = false;
+
 export function resolveEnvironment(): Environment {
+  if (cachedEnvironment) return cachedEnvironment;
   const fromEnv = process.env.ENVIRONMENT;
   const allowed: Environment[] = [
     "prod",
@@ -131,16 +135,19 @@ export function resolveEnvironment(): Environment {
     "test",
   ];
   if (fromEnv && allowed.includes(fromEnv as Environment)) {
-    return fromEnv as Environment;
+    return (cachedEnvironment = fromEnv as Environment);
   }
-  if (process.env.NODE_ENV === "test") return "test";
+  if (process.env.NODE_ENV === "test") return (cachedEnvironment = "test");
   if (process.env.NODE_ENV === "production") {
-    console.warn(
-      "[logging] ENVIRONMENT not set in production; defaulting to 'prod'",
-    );
-    return "prod";
+    if (!warnedMissingEnv) {
+      warnedMissingEnv = true;
+      process.stderr.write(
+        "[logging] ENVIRONMENT not set in production; defaulting to 'prod'\n",
+      );
+    }
+    return (cachedEnvironment = "prod");
   }
-  return "dev";
+  return (cachedEnvironment = "dev");
 }
 
 export function resolveRelease(): string | null {

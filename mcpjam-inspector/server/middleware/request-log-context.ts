@@ -1,4 +1,5 @@
 import type { Context, Next } from "hono";
+import { HTTPException } from "hono/http-exception";
 import { randomUUID } from "node:crypto";
 import {
   resolveEnvironment,
@@ -76,18 +77,22 @@ export async function requestLogContextMiddleware(c: Context, next: Next) {
   };
   c.set("requestLogContext", enriched);
 
-  if (thrown || status >= 500) {
+  const effectiveStatus = thrown
+    ? thrown instanceof HTTPException ? thrown.status : 500
+    : status;
+
+  if (effectiveStatus >= 500) {
     reqLogger.event(
       "http.request.failed",
       {
-        statusCode: thrown ? 500 : status,
+        statusCode: effectiveStatus,
         errorCode: thrown ? classifyError(thrown) : "internal_error",
       },
       { error: thrown instanceof Error ? thrown : undefined, sentry: false },
     );
-    if (thrown) throw thrown;
-    return;
+  } else {
+    reqLogger.event("http.request.completed", { statusCode: effectiveStatus });
   }
 
-  reqLogger.event("http.request.completed", { statusCode: status });
+  if (thrown) throw thrown;
 }
