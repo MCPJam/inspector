@@ -4,15 +4,21 @@ import {
   useDocumentTheme,
   useHostStyles,
 } from "@modelcontextprotocol/ext-apps/react";
-import { Alert, AlertDescription, AlertTitle } from "@mcpjam/design-system/alert";
+import {
+  Alert,
+  AlertDescription,
+  AlertTitle,
+} from "@mcpjam/design-system/alert";
 import { Badge } from "@mcpjam/design-system/badge";
 import { Card } from "@mcpjam/design-system/card";
 import { cn } from "@mcpjam/design-system/cn";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
-import { Check, Copy } from "lucide-react";
+import { BookOpen, Check, Copy, Hammer, MessageSquareCode } from "lucide-react";
 import {
   StrictMode,
+  type ComponentType,
   type CSSProperties,
+  type MouseEvent,
   type ReactNode,
   useEffect,
   useState,
@@ -20,7 +26,12 @@ import {
 import { createRoot } from "react-dom/client";
 import type {
   ServerEntry,
+  ServerPrimitiveCollection,
+  ServerPrimitiveListStatus,
+  ServerPromptInfo,
+  ServerResourceInfo,
   ServerStatus,
+  ServerToolInfo,
   ShowServersPayload,
 } from "../shared/show-servers.js";
 import "./global.css";
@@ -44,11 +55,19 @@ const STATUS_DOT_CLASSES: Record<ServerStatus, string> = {
   error: "bg-amber-500",
 };
 
+const PRIMITIVE_STATUS_LABELS: Record<ServerPrimitiveListStatus, string> = {
+  loaded: "Loaded",
+  skipped: "Skipped",
+  error: "Error",
+};
+
 type HostShellStyle = CSSProperties & Record<`--${string}`, string | number>;
 
 function ShowServersApp() {
   const [toolResult, setToolResult] = useState<CallToolResult | null>(null);
-  const [hostContext, setHostContext] = useState<McpUiHostContext | undefined>();
+  const [hostContext, setHostContext] = useState<
+    McpUiHostContext | undefined
+  >();
   const { app, error } = useApp({
     appInfo: APP_INFO,
     capabilities: {},
@@ -80,16 +99,31 @@ function ShowServersApp() {
 
   if (error) {
     return (
-      <Shell hostContext={hostContext} isDark={isDark} themePreset={themePreset}>
-        <MessageBox label="App error" message={error.message} variant="destructive" />
+      <Shell
+        hostContext={hostContext}
+        isDark={isDark}
+        themePreset={themePreset}
+      >
+        <MessageBox
+          label="App error"
+          message={error.message}
+          variant="destructive"
+        />
       </Shell>
     );
   }
 
   if (!app) {
     return (
-      <Shell hostContext={hostContext} isDark={isDark} themePreset={themePreset}>
-        <MessageBox label="Connecting" message="Waiting for server inventory." />
+      <Shell
+        hostContext={hostContext}
+        isDark={isDark}
+        themePreset={themePreset}
+      >
+        <MessageBox
+          label="Connecting"
+          message="Waiting for server inventory."
+        />
       </Shell>
     );
   }
@@ -137,22 +171,36 @@ function Shell({
   );
 }
 
-function ShowServersContent({ toolResult }: { toolResult: CallToolResult | null }) {
+function ShowServersContent({
+  toolResult,
+}: {
+  toolResult: CallToolResult | null;
+}) {
   if (!toolResult) {
-    return <MessageBox label="Loading servers" message="Collecting workspace status." />;
+    return (
+      <MessageBox
+        label="Loading servers"
+        message="Collecting workspace status."
+      />
+    );
   }
 
   if (toolResult.isError) {
     return (
       <MessageBox
         label="Unable to load servers"
-        message={getResultText(toolResult) ?? "The show_servers tool returned an error."}
+        message={
+          getResultText(toolResult) ??
+          "The show_servers tool returned an error."
+        }
         variant="destructive"
       />
     );
   }
 
-  const payload = toolResult.structuredContent as ShowServersPayload | undefined;
+  const payload = toolResult.structuredContent as
+    | ShowServersPayload
+    | undefined;
   if (!isShowServersPayload(payload)) {
     return (
       <MessageBox
@@ -167,6 +215,22 @@ function ShowServersContent({ toolResult }: { toolResult: CallToolResult | null 
 }
 
 function ServerInventory({ payload }: { payload: ShowServersPayload }) {
+  const [selectedServerId, setSelectedServerId] = useState<string | undefined>(
+    payload.servers[0]?.id
+  );
+
+  useEffect(() => {
+    if (payload.servers.some((server) => server.id === selectedServerId)) {
+      return;
+    }
+
+    setSelectedServerId(payload.servers[0]?.id);
+  }, [payload.servers, selectedServerId]);
+
+  const selectedServer =
+    payload.servers.find((server) => server.id === selectedServerId) ??
+    payload.servers[0];
+
   return (
     <>
       <header className="flex items-center justify-between gap-4 pb-1">
@@ -182,24 +246,47 @@ function ServerInventory({ payload }: { payload: ShowServersPayload }) {
       </header>
 
       {payload.servers.length > 0 ? (
-        <section className="grid gap-3 sm:grid-cols-2">
-          {payload.servers.map((server) => (
-            <ServerConnectionCard key={server.id} server={server} />
-          ))}
+        <section className="grid gap-4 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+          <div className="grid content-start gap-2 sm:grid-cols-2 lg:grid-cols-1">
+            {payload.servers.map((server) => (
+              <ServerConnectionCard
+                key={server.id}
+                server={server}
+                selected={server.id === selectedServer?.id}
+                onSelect={() => setSelectedServerId(server.id)}
+              />
+            ))}
+          </div>
+          {selectedServer ? (
+            <ServerDetailPanel server={selectedServer} />
+          ) : null}
         </section>
       ) : (
-        <MessageBox label="No servers" message="This workspace has no MCP servers." />
+        <MessageBox
+          label="No servers"
+          message="This workspace has no MCP servers."
+        />
       )}
     </>
   );
 }
 
-function ServerConnectionCard({ server }: { server: ServerEntry }) {
+function ServerConnectionCard({
+  server,
+  selected,
+  onSelect,
+}: {
+  server: ServerEntry;
+  selected: boolean;
+  onSelect: () => void;
+}) {
   const [copied, setCopied] = useState(false);
   const displayUrl = server.url ?? getMissingUrlLabel(server);
   const version = server.serverInfo?.version;
 
-  const copyUrl = async () => {
+  const copyUrl = async (event: MouseEvent<HTMLButtonElement>) => {
+    event.stopPropagation();
+
     if (!server.url) {
       return;
     }
@@ -214,8 +301,18 @@ function ServerConnectionCard({ server }: { server: ServerEntry }) {
   };
 
   return (
-    <Card className="group h-full rounded-xl border border-border/50 bg-card/60 p-0 shadow-sm transition-colors duration-200 hover:border-border">
-      <div className="p-4">
+    <Card
+      className={cn(
+        "group relative h-full rounded-xl border border-border/50 bg-card/60 p-0 shadow-sm transition-colors duration-200 hover:border-border",
+        selected && "border-primary/60 bg-accent/50"
+      )}
+    >
+      <button
+        type="button"
+        aria-pressed={selected}
+        onClick={onSelect}
+        className="block h-full w-full cursor-pointer rounded-xl p-4 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
             <div className="flex min-w-0 items-center gap-2">
@@ -238,20 +335,234 @@ function ServerConnectionCard({ server }: { server: ServerEntry }) {
 
         <div className="relative mt-4 rounded-md border border-border/50 bg-muted/30 p-2 pr-8 font-mono text-xs text-muted-foreground">
           <div className="break-all">{displayUrl}</div>
-          {server.url ? (
-            <button
-              aria-label={`Copy URL for ${server.name}`}
-              title={`Copy URL for ${server.name}`}
-              type="button"
-              onClick={copyUrl}
-              className="absolute right-1 top-1 cursor-pointer p-1 text-muted-foreground/60 transition-colors hover:text-foreground"
-            >
-              {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
-            </button>
+        </div>
+      </button>
+      {server.url ? (
+        <button
+          aria-label={`Copy URL for ${server.name}`}
+          title={`Copy URL for ${server.name}`}
+          type="button"
+          onClick={copyUrl}
+          className="absolute bottom-5 right-5 cursor-pointer p-1 text-muted-foreground/60 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          {copied ? (
+            <Check className="h-3 w-3" />
+          ) : (
+            <Copy className="h-3 w-3" />
+          )}
+        </button>
+      ) : null}
+    </Card>
+  );
+}
+
+function ServerDetailPanel({ server }: { server: ServerEntry }) {
+  const primitives = server.primitives;
+
+  return (
+    <Card className="min-h-[24rem] rounded-xl border border-border/50 bg-card/70 p-0 shadow-sm">
+      <div className="border-b border-border/60 p-4">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h2 className="break-words text-base font-semibold text-foreground">
+              {server.name}
+            </h2>
+            <p className="mt-1 break-all font-mono text-xs text-muted-foreground">
+              {server.url ?? getMissingUrlLabel(server)}
+            </p>
+          </div>
+          <span className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-border/60 px-2 py-1 text-xs text-muted-foreground">
+            <StatusDot status={server.status} />
+            {STATUS_LABELS[server.status]}
+          </span>
+        </div>
+        {server.statusDetail ? (
+          <p className="mt-3 text-sm text-muted-foreground">
+            {server.statusDetail}
+          </p>
+        ) : null}
+      </div>
+
+      {primitives ? (
+        <div className="grid gap-5 p-4 xl:grid-cols-3">
+          <PrimitiveGroup
+            label="Tools"
+            icon={Hammer}
+            collection={primitives.tools}
+            emptyLabel="No tools discovered."
+            getKey={(tool) => tool.name}
+            renderItem={(tool) => <ToolPrimitiveItem tool={tool} />}
+          />
+          <PrimitiveGroup
+            label="Resources"
+            icon={BookOpen}
+            collection={primitives.resources}
+            emptyLabel="No resources discovered."
+            getKey={(resource) => resource.uri}
+            renderItem={(resource) => (
+              <ResourcePrimitiveItem resource={resource} />
+            )}
+          />
+          <PrimitiveGroup
+            label="Prompts"
+            icon={MessageSquareCode}
+            collection={primitives.prompts}
+            emptyLabel="No prompts discovered."
+            getKey={(prompt) => prompt.name}
+            renderItem={(prompt) => <PromptPrimitiveItem prompt={prompt} />}
+          />
+        </div>
+      ) : (
+        <div className="p-4">
+          <MessageBox
+            label="Primitives unavailable"
+            message={
+              server.statusDetail ??
+              "Tools, resources, and prompts were not collected for this server."
+            }
+          />
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function PrimitiveGroup<TItem>({
+  label,
+  icon: Icon,
+  collection,
+  emptyLabel,
+  getKey,
+  renderItem,
+}: {
+  label: string;
+  icon: ComponentType<{ className?: string }>;
+  collection: ServerPrimitiveCollection<TItem>;
+  emptyLabel: string;
+  getKey: (item: TItem) => string;
+  renderItem: (item: TItem) => ReactNode;
+}) {
+  const hasItems = collection.items.length > 0;
+
+  return (
+    <section className="min-w-0">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-2">
+          <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
+          <h3 className="truncate text-sm font-semibold">{label}</h3>
+        </div>
+        <div className="flex shrink-0 items-center gap-1.5">
+          <Badge variant="secondary">{collection.items.length}</Badge>
+          {collection.status !== "loaded" ? (
+            <Badge variant="outline">
+              {PRIMITIVE_STATUS_LABELS[collection.status]}
+            </Badge>
           ) : null}
         </div>
       </div>
-    </Card>
+
+      {collection.statusDetail ? (
+        <p className="mt-2 text-xs text-muted-foreground">
+          {collection.statusDetail}
+        </p>
+      ) : null}
+
+      {hasItems ? (
+        <ul className="mt-3 max-h-80 overflow-auto pr-1">
+          {collection.items.map((item) => (
+            <li
+              key={getKey(item)}
+              className="border-t border-border/50 py-3 first:border-t-0"
+            >
+              {renderItem(item)}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="mt-3 text-sm text-muted-foreground">{emptyLabel}</p>
+      )}
+    </section>
+  );
+}
+
+function ToolPrimitiveItem({ tool }: { tool: ServerToolInfo }) {
+  return (
+    <div className="min-w-0">
+      <div className="break-words font-mono text-xs font-medium text-foreground">
+        {tool.name}
+      </div>
+      {tool.title ? (
+        <div className="mt-1 break-words text-sm text-foreground">
+          {tool.title}
+        </div>
+      ) : null}
+      {tool.description ? (
+        <p className="mt-1 break-words text-xs text-muted-foreground">
+          {tool.description}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+function ResourcePrimitiveItem({ resource }: { resource: ServerResourceInfo }) {
+  const title = resource.title ?? resource.name;
+
+  return (
+    <div className="min-w-0">
+      {title ? (
+        <div className="break-words text-sm font-medium text-foreground">
+          {title}
+        </div>
+      ) : null}
+      <div className="mt-1 break-all font-mono text-xs text-muted-foreground">
+        {resource.uri}
+      </div>
+      {resource.mimeType ? (
+        <div className="mt-1 text-xs text-muted-foreground">
+          {resource.mimeType}
+        </div>
+      ) : null}
+      {resource.description ? (
+        <p className="mt-1 break-words text-xs text-muted-foreground">
+          {resource.description}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+function PromptPrimitiveItem({ prompt }: { prompt: ServerPromptInfo }) {
+  return (
+    <div className="min-w-0">
+      <div className="break-words font-mono text-xs font-medium text-foreground">
+        {prompt.name}
+      </div>
+      {prompt.title ? (
+        <div className="mt-1 break-words text-sm text-foreground">
+          {prompt.title}
+        </div>
+      ) : null}
+      {prompt.description ? (
+        <p className="mt-1 break-words text-xs text-muted-foreground">
+          {prompt.description}
+        </p>
+      ) : null}
+      {prompt.arguments && prompt.arguments.length > 0 ? (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {prompt.arguments.map((argument) => (
+            <span
+              key={argument.name}
+              className="rounded border border-border/60 px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground"
+              title={argument.description}
+            >
+              {argument.name}
+              {argument.required ? "*" : ""}
+            </span>
+          ))}
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -259,7 +570,10 @@ function StatusDot({ status }: { status: ServerStatus }) {
   return (
     <span
       aria-hidden="true"
-      className={cn("h-1.5 w-1.5 shrink-0 rounded-full", STATUS_DOT_CLASSES[status])}
+      className={cn(
+        "h-1.5 w-1.5 shrink-0 rounded-full",
+        STATUS_DOT_CLASSES[status]
+      )}
     />
   );
 }
@@ -369,18 +683,73 @@ function getHostStyleVariables(hostContext?: McpUiHostContext): HostShellStyle {
     }
   }
 
-  mapHostToken(scopedVariables, variables, "--background", "--color-background-primary");
-  mapHostToken(scopedVariables, variables, "--foreground", "--color-text-primary");
-  mapHostToken(scopedVariables, variables, "--card", "--color-background-secondary");
-  mapHostToken(scopedVariables, variables, "--card-foreground", "--color-text-primary");
-  mapHostToken(scopedVariables, variables, "--muted", "--color-background-tertiary");
-  mapHostToken(scopedVariables, variables, "--muted-foreground", "--color-text-secondary");
-  mapHostToken(scopedVariables, variables, "--accent", "--color-background-tertiary");
-  mapHostToken(scopedVariables, variables, "--accent-foreground", "--color-text-primary");
-  mapHostToken(scopedVariables, variables, "--border", "--color-border-primary");
-  mapHostToken(scopedVariables, variables, "--input", "--color-border-secondary");
+  mapHostToken(
+    scopedVariables,
+    variables,
+    "--background",
+    "--color-background-primary"
+  );
+  mapHostToken(
+    scopedVariables,
+    variables,
+    "--foreground",
+    "--color-text-primary"
+  );
+  mapHostToken(
+    scopedVariables,
+    variables,
+    "--card",
+    "--color-background-secondary"
+  );
+  mapHostToken(
+    scopedVariables,
+    variables,
+    "--card-foreground",
+    "--color-text-primary"
+  );
+  mapHostToken(
+    scopedVariables,
+    variables,
+    "--muted",
+    "--color-background-tertiary"
+  );
+  mapHostToken(
+    scopedVariables,
+    variables,
+    "--muted-foreground",
+    "--color-text-secondary"
+  );
+  mapHostToken(
+    scopedVariables,
+    variables,
+    "--accent",
+    "--color-background-tertiary"
+  );
+  mapHostToken(
+    scopedVariables,
+    variables,
+    "--accent-foreground",
+    "--color-text-primary"
+  );
+  mapHostToken(
+    scopedVariables,
+    variables,
+    "--border",
+    "--color-border-primary"
+  );
+  mapHostToken(
+    scopedVariables,
+    variables,
+    "--input",
+    "--color-border-secondary"
+  );
   mapHostToken(scopedVariables, variables, "--ring", "--color-ring-primary");
-  mapHostToken(scopedVariables, variables, "--destructive", "--color-background-danger");
+  mapHostToken(
+    scopedVariables,
+    variables,
+    "--destructive",
+    "--color-background-danger"
+  );
   mapHostToken(
     scopedVariables,
     variables,
@@ -406,7 +775,9 @@ function mapHostToken(
 }
 
 function getThemePreset(hostContext?: McpUiHostContext): string {
-  const variables = hostContext?.styles?.variables as Record<string, unknown> | undefined;
+  const variables = hostContext?.styles?.variables as
+    | Record<string, unknown>
+    | undefined;
   const value = variables?.["--mcpjam-theme-preset"];
   return typeof value === "string" && value.length > 0 ? value : "default";
 }
