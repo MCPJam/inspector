@@ -681,10 +681,10 @@ describe("MCPAppsRenderer tool input streaming", () => {
       mockBridge.onsizechange?.({ width: 400, height: 300 });
     });
 
-    expect(
-      (screen.getByTestId("sandboxed-iframe") as HTMLElement).style.visibility,
-    ).toBe("hidden");
-    expect(screen.getByText("Streaming tool arguments...")).toBeTruthy();
+    const iframe = screen.getByTestId("sandboxed-iframe") as HTMLElement;
+    expect(iframe.style.opacity).toBe("0");
+    expect(iframe.style.position).toBe("absolute");
+    expect(iframe.style.pointerEvents).toBe("none");
 
     const partialInput = { elements: '[{"type":"rectangle"' };
     rerender(
@@ -702,12 +702,10 @@ describe("MCPAppsRenderer tool input streaming", () => {
       });
     });
     await vi.waitFor(() => {
-      expect(
-        (screen.getByTestId("sandboxed-iframe") as HTMLElement).style
-          .visibility,
-      ).toBe("");
+      expect(iframe.style.opacity).toBe("1");
+      expect(iframe.style.position).toBe("");
+      expect(iframe.style.pointerEvents).toBe("");
     });
-    expect(screen.queryByText("Streaming tool arguments...")).toBeNull();
   });
 
   it("streams updated partial input values while still streaming", async () => {
