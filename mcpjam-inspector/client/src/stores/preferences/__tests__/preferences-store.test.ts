@@ -27,8 +27,19 @@ describe("preferences-store", () => {
     expect(localStorage.getItem(HOST_STYLE_KEY)).toBe("claude");
   });
 
-  it("falls back to claude when the persisted host style is invalid", () => {
-    localStorage.setItem(HOST_STYLE_KEY, "invalid-host-style");
+  it("preserves extensible persisted host style ids", () => {
+    localStorage.setItem(HOST_STYLE_KEY, "codex");
+
+    const store = createPreferencesStore({
+      themeMode: "light",
+      themePreset: "default",
+    });
+
+    expect(store.getState().hostStyle).toBe("codex");
+  });
+
+  it("falls back to claude when the persisted host style is blank", () => {
+    localStorage.setItem(HOST_STYLE_KEY, "   ");
 
     const store = createPreferencesStore({
       themeMode: "light",

@@ -33,10 +33,11 @@ import {
   ChatboxHostStyleProvider,
   ChatboxHostThemeProvider,
 } from "@/contexts/chatbox-host-style-context";
-import { CHATGPT_CHAT_BACKGROUND } from "@/config/chatgpt-host-context";
-import { CLAUDE_DESKTOP_CHAT_BACKGROUND } from "@/config/claude-desktop-host-context";
 import type { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
-import type { ChatboxHostStyle } from "@/lib/chatbox-host-style";
+import {
+  getChatboxChatBackground,
+  type ChatboxHostStyle,
+} from "@/lib/chatbox-host-style";
 import type { DeviceType, DisplayMode } from "@/stores/ui-playground-store";
 import type { BroadcastChatTurnRequest } from "@/components/chat-v2/multi-model-chat-card";
 
@@ -304,11 +305,8 @@ export function MultiModelPlaygroundCard({
     }),
     [injectedToolRenderOverrides, toolRenderOverrides],
   );
-  const chatBg =
-    hostStyle === "chatgpt"
-      ? CHATGPT_CHAT_BACKGROUND
-      : CLAUDE_DESKTOP_CHAT_BACKGROUND;
-  const hostBackgroundColor = chatBg[effectiveThreadTheme];
+  const hostBackgroundColor =
+    getChatboxChatBackground(hostStyle, effectiveThreadTheme) ?? "transparent";
   const isMobileFullTakeover =
     deviceType === "mobile" &&
     (displayMode === "fullscreen" || displayMode === "pip");

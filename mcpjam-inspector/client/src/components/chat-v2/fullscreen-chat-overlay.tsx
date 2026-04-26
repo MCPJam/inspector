@@ -8,8 +8,11 @@ import {
   useChatboxHostStyle,
   useChatboxHostTheme,
 } from "@/contexts/chatbox-host-style-context";
-import { CHATGPT_CHAT_BACKGROUND } from "@/config/chatgpt-host-context";
-import { CLAUDE_DESKTOP_CHAT_BACKGROUND } from "@/config/claude-desktop-host-context";
+import {
+  getChatboxChatBackground,
+  getChatboxHostFamily,
+  type ChatboxHostStyle,
+} from "@/lib/chatbox-host-style";
 import { cn } from "@/lib/utils";
 import { Button } from "@mcpjam/design-system/button";
 import { TextareaAutosize } from "@/components/ui/textarea-autosize";
@@ -40,19 +43,20 @@ function getMessagePreviewText(message: UIMessage): string {
 }
 
 function getFullscreenChatAppearance(
-  chatboxHostStyle: "claude" | "chatgpt" | null,
+  chatboxHostStyle: ChatboxHostStyle | null,
   isDarkChatboxTheme: boolean,
 ) {
+  const hostFamily = getChatboxHostFamily(chatboxHostStyle);
   return {
     composerClassName:
-      chatboxHostStyle === "chatgpt"
+      hostFamily === "chatgpt"
         ? cn(
             "chatbox-host-composer rounded-[1.75rem]",
             isDarkChatboxTheme
               ? "border border-white/10 shadow-[0_1px_2px_rgba(0,0,0,0.28),0_4px_24px_rgba(130,130,130,0.14)]"
               : "border border-neutral-200/90 shadow-[0_1px_2px_rgba(0,0,0,0.04),0_4px_22px_rgba(100,100,100,0.08)]",
           )
-        : chatboxHostStyle === "claude"
+        : hostFamily === "claude"
           ? cn(
               "chatbox-host-composer rounded-[1.35rem]",
               isDarkChatboxTheme
@@ -61,21 +65,21 @@ function getFullscreenChatAppearance(
             )
           : "rounded-full border border-border/40 bg-background/95 backdrop-blur-xl",
     activeSubmitButtonClassName:
-      chatboxHostStyle === "chatgpt"
+      hostFamily === "chatgpt"
         ? isDarkChatboxTheme
           ? "bg-[#f4f4f4] text-[#1f1f1f] hover:bg-[#e8e8e8]"
           : "bg-[#1f1f1f] text-white hover:bg-[#303030]"
-        : chatboxHostStyle === "claude"
+        : hostFamily === "claude"
           ? isDarkChatboxTheme
             ? "bg-[#d07b53] text-[#fff7f0] hover:bg-[#c06f49]"
             : "bg-[#e27d47] text-white hover:bg-[#d16f3d]"
           : "bg-primary text-primary-foreground hover:bg-primary/90",
     inactiveSubmitButtonClassName:
-      chatboxHostStyle === "chatgpt"
+      hostFamily === "chatgpt"
         ? isDarkChatboxTheme
           ? "bg-[#3a3a3a] text-[#8a8a8a] cursor-not-allowed"
           : "bg-[#e7e7e7] text-[#9b9b9b] cursor-not-allowed"
-        : chatboxHostStyle === "claude"
+        : hostFamily === "claude"
           ? isDarkChatboxTheme
             ? "bg-[#45413b] text-[#8d857a] cursor-not-allowed"
             : "bg-[#ebe5dc] text-[#b6ada0] cursor-not-allowed"
@@ -84,20 +88,14 @@ function getFullscreenChatAppearance(
 }
 
 function getFullscreenSurfaceStyle(
-  chatboxHostStyle: "claude" | "chatgpt" | null,
+  chatboxHostStyle: ChatboxHostStyle | null,
   resolvedThemeMode: "light" | "dark",
 ): CSSProperties | undefined {
-  if (chatboxHostStyle === "chatgpt") {
-    return { backgroundColor: CHATGPT_CHAT_BACKGROUND[resolvedThemeMode] };
-  }
-
-  if (chatboxHostStyle === "claude") {
-    return {
-      backgroundColor: CLAUDE_DESKTOP_CHAT_BACKGROUND[resolvedThemeMode],
-    };
-  }
-
-  return undefined;
+  const backgroundColor = getChatboxChatBackground(
+    chatboxHostStyle,
+    resolvedThemeMode,
+  );
+  return backgroundColor ? { backgroundColor } : undefined;
 }
 
 function MessageBubble({

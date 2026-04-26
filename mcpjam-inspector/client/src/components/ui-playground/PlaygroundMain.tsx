@@ -65,8 +65,11 @@ import {
   type DisplayMode,
 } from "@/stores/ui-playground-store";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
-import { CLAUDE_DESKTOP_CHAT_BACKGROUND } from "@/config/claude-desktop-host-context";
-import { CHATGPT_CHAT_BACKGROUND } from "@/config/chatgpt-host-context";
+import {
+  getChatboxChatBackground,
+  getChatboxHostFamily,
+} from "@/lib/chatbox-host-style";
+import { DEFAULT_HOST_STYLE } from "@/lib/host-styles";
 import {
   HostContextHeader,
   PRESET_DEVICE_CONFIGS,
@@ -449,11 +452,10 @@ export function PlaygroundMain({
   const themePreset = usePreferencesStore((s) => s.themePreset);
   const effectiveThreadTheme =
     extractHostTheme(hostContext) ?? globalThemeMode;
-  const chatBg =
-    hostStyle === "chatgpt"
-      ? CHATGPT_CHAT_BACKGROUND
-      : CLAUDE_DESKTOP_CHAT_BACKGROUND;
-  const hostBackgroundColor = chatBg[effectiveThreadTheme];
+  const hostStyleFamily = getChatboxHostFamily(hostStyle) ?? "claude";
+  const hostBackgroundColor =
+    getChatboxChatBackground(hostStyle, effectiveThreadTheme) ??
+    DEFAULT_HOST_STYLE.resolveChatBackground(effectiveThreadTheme);
   const displayMode =
     extractEffectiveHostDisplayMode(hostContext) ?? displayModeProp;
 
@@ -1247,7 +1249,7 @@ export function PlaygroundMain({
           data-testid="playground-empty-state-shell"
           className={cn(
             "flex flex-1 min-h-0 overflow-hidden",
-            hostStyle === "chatgpt"
+            hostStyleFamily === "chatgpt"
               ? effectiveThreadTheme === "dark"
                 ? "bg-[#212121] text-neutral-50"
                 : "bg-white text-neutral-950"
@@ -1314,7 +1316,7 @@ export function PlaygroundMain({
                         <h3
                           className={cn(
                             "text-lg font-semibold",
-                            hostStyle === "chatgpt"
+                            hostStyleFamily === "chatgpt"
                               ? effectiveThreadTheme === "dark"
                                 ? "text-white"
                                 : "text-neutral-950"
@@ -1328,7 +1330,7 @@ export function PlaygroundMain({
                         <p
                           className={cn(
                             "text-base leading-7",
-                            hostStyle === "chatgpt"
+                            hostStyleFamily === "chatgpt"
                               ? effectiveThreadTheme === "dark"
                                 ? "text-neutral-400"
                                 : "text-neutral-600"
