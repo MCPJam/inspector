@@ -12,6 +12,7 @@ import {
 import { Badge } from "@mcpjam/design-system/badge";
 import { Card } from "@mcpjam/design-system/card";
 import { cn } from "@mcpjam/design-system/cn";
+import { ServersLoadingSkeleton } from "@mcpjam/design-system/servers-loading-skeleton";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import {
   ArrowLeft,
@@ -191,9 +192,9 @@ function ShowServersContent({
 }) {
   if (!toolResult) {
     return (
-      <MessageBox
-        label="Loading servers"
-        message="Collecting workspace status."
+      <ServersLoadingSkeleton
+        className="p-0"
+        data-testid="show-servers-loading"
       />
     );
   }
