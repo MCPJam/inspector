@@ -38,10 +38,10 @@ function scrubString(s: string): string {
 }
 
 export function scrubLogPayload<T>(value: T): T {
-  return scrubValue(value) as T;
+  return scrubValue(value, new WeakSet()) as T;
 }
 
-function scrubValue(value: unknown): unknown {
+function scrubValue(value: unknown, seen: WeakSet<object>): unknown {
   if (value === null || value === undefined) return value;
   if (typeof value === "string") return scrubString(value);
   if (typeof value !== "object") return value;
@@ -56,7 +56,9 @@ function scrubValue(value: unknown): unknown {
   if (typeof Buffer !== "undefined" && Buffer.isBuffer(value)) {
     return "[buffer]";
   }
-  if (Array.isArray(value)) return value.map(scrubValue);
+  if (seen.has(value)) return "[circular]";
+  seen.add(value);
+  if (Array.isArray(value)) return value.map((v) => scrubValue(v, seen));
 
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
@@ -64,7 +66,7 @@ function scrubValue(value: unknown): unknown {
       out[k] = "[redacted]";
       continue;
     }
-    out[k] = scrubValue(v);
+    out[k] = scrubValue(v, seen);
   }
   return out;
 }
