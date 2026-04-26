@@ -83,7 +83,7 @@ export async function requestLogContextMiddleware(c: Context, next: Next) {
         statusCode: thrown ? 500 : status,
         errorCode: thrown ? classifyError(thrown) : "internal_error",
       },
-      { error: thrown instanceof Error ? thrown : undefined },
+      { error: thrown instanceof Error ? thrown : undefined, sentry: false },
     );
     if (thrown) throw thrown;
     return;
