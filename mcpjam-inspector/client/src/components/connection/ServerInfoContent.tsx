@@ -250,11 +250,6 @@ export function ServerInfoContent({
           OAuth Tokens
         </div>
         <div className="space-y-3 rounded-md bg-muted/40 p-3">
-          <div className="text-sm text-muted-foreground">
-            OAuth credential is stored in Vault for this account. Reveal tokens
-            only when you need to inspect or copy them.
-          </div>
-
           {hostedTokenError ? (
             <div className="rounded-md border border-destructive/30 bg-destructive/10 p-2 text-sm text-destructive">
               {hostedTokenError}

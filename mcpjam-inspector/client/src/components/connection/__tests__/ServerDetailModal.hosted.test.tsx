@@ -132,7 +132,10 @@ describe("ServerDetailModal hosted reconnect", () => {
     );
 
     expect(
-      screen.getByText(/OAuth credential is stored in Vault/),
+      screen.queryByText(/OAuth credential is stored in Vault/),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Reveal tokens" }),
     ).toBeInTheDocument();
     expect(screen.queryByText("hosted-access-token")).not.toBeInTheDocument();
 
