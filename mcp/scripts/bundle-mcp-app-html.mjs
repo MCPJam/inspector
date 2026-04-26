@@ -12,8 +12,8 @@ const OUTPUT_TS_PATH = join(
 );
 const APPS = [
   {
-    exportName: "WHOAMI_APP_HTML",
-    fileName: "src/ui/whoami.html",
+    exportName: "SHOW_SERVERS_APP_HTML",
+    fileName: "src/ui/show-servers.html",
   },
 ];
 
