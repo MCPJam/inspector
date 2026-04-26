@@ -108,6 +108,11 @@ export type RequestEventMap = {
     cspMode?: "permissive" | "widget-declared";
     errorCode: string;
   };
+  "mcp.tool.execution.failed": {
+    toolName: string;
+    serverId?: string;
+    errorCode: string;
+  };
 };
 
 export type SystemEventMap = {
