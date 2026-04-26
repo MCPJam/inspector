@@ -77,6 +77,40 @@ describe("requestLogContextMiddleware", () => {
     expect(res.headers.get("x-request-id")).toBe("my-custom-id");
   });
 
+  it("rejects an inbound x-request-id that is too short", async () => {
+    const app = createTestApp();
+    app.get("/api/web/test", (c) => c.json({ ok: true }));
+
+    const res = await app.request("/api/web/test", {
+      headers: { "x-request-id": "short" },
+    });
+    expect(res.headers.get("x-request-id")).not.toBe("short");
+    expect(res.headers.get("x-request-id")).toMatch(/^[A-Za-z0-9_-]{8,128}$/);
+  });
+
+  it("rejects an inbound x-request-id that is excessively long (cardinality blowup)", async () => {
+    const app = createTestApp();
+    app.get("/api/web/test", (c) => c.json({ ok: true }));
+
+    const oversized = "a".repeat(2048);
+    const res = await app.request("/api/web/test", {
+      headers: { "x-request-id": oversized },
+    });
+    expect(res.headers.get("x-request-id")).not.toBe(oversized);
+    expect(res.headers.get("x-request-id")?.length).toBeLessThanOrEqual(128);
+  });
+
+  it("rejects an inbound x-request-id with disallowed characters", async () => {
+    const app = createTestApp();
+    app.get("/api/web/test", (c) => c.json({ ok: true }));
+
+    const res = await app.request("/api/web/test", {
+      headers: { "x-request-id": "abc def!@#$%" },
+    });
+    expect(res.headers.get("x-request-id")).not.toBe("abc def!@#$%");
+    expect(res.headers.get("x-request-id")).toMatch(/^[A-Za-z0-9_-]{8,128}$/);
+  });
+
   it("emits exactly one http.request.completed for a 200 response", async () => {
     const app = createTestApp();
     app.get("/api/web/test", (c) => c.json({ ok: true }));
