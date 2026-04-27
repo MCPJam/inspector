@@ -5,7 +5,7 @@ import {
   delay,
   type InspectorCommandResponse,
 } from "./inspector-api.js";
-import { usageError } from "./output.js";
+import { operationalError, usageError } from "./output.js";
 import type { SharedServerTargetOptions } from "./server-config.js";
 
 export type AppRenderContext = {
@@ -25,28 +25,43 @@ type InspectorAppRenderResult = {
 
 type InspectorUiRenderResult = InspectorAppRenderResult & {
   baseUrl: string;
+  browserOpenRequested: boolean;
   browserUrl: string;
   frontendUrl?: string;
+  hasActiveClient: boolean;
   inspectorStarted: boolean;
 };
 
 export async function runUiRender(options: {
   baseUrl?: string;
   config: MCPServerConfig;
+  openBrowser?: boolean;
   params: Record<string, unknown>;
   renderContext: AppRenderContext;
   serverName: string;
+  startIfNeeded?: boolean;
   timeoutMs: number;
   toolName: string;
   toolResult: unknown;
 }): Promise<InspectorUiRenderResult> {
   const client = new InspectorApiClient({ baseUrl: options.baseUrl });
+  const openBrowser = options.openBrowser === true;
   const ensureResult = await client.ensure({
-    openBrowser: true,
-    startIfNeeded: true,
+    openBrowser,
+    startIfNeeded: options.startIfNeeded ?? true,
     tab: "app-builder",
     timeoutMs: options.timeoutMs,
   });
+
+  if (!ensureResult.hasActiveClient && !openBrowser) {
+    throw operationalError(
+      "Inspector has no active browser client. Open the Inspector App Builder URL in your browser, then rerun `tools call --ui`; or pass `--open` to let the CLI open a system browser.",
+      {
+        inspectorBrowserUrl: ensureResult.url,
+        inspectorStarted: ensureResult.started,
+      },
+    );
+  }
 
   await client.connectServer(options.serverName, options.config, {
     timeoutMs: options.timeoutMs,
@@ -68,6 +83,8 @@ export async function runUiRender(options: {
     ...(ensureResult.frontendUrl
       ? { frontendUrl: ensureResult.frontendUrl }
       : {}),
+    browserOpenRequested: openBrowser,
+    hasActiveClient: ensureResult.hasActiveClient,
     inspectorStarted: ensureResult.started,
     ...renderResult,
   };

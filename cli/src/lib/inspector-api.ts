@@ -81,6 +81,9 @@ export function normalizeInspectorBaseUrl(baseUrl: string | undefined): string {
     const parsed = new URL(value);
     parsed.hash = "";
     parsed.search = "";
+    if (parsed.hostname === "localhost") {
+      parsed.hostname = "127.0.0.1";
+    }
     return parsed.href.replace(/\/$/, "");
   } catch (error) {
     throw operationalError(
@@ -115,13 +118,49 @@ export function normalizeInspectorFrontendUrl(
   }
 }
 
+function canonicalizeInspectorFrontendUrl(
+  baseUrl: string,
+  frontendUrl: string | undefined,
+): string | undefined {
+  if (!frontendUrl) {
+    return undefined;
+  }
+
+  try {
+    const base = new URL(baseUrl);
+    const frontend = new URL(frontendUrl);
+    if (
+      isLoopbackHostname(base.hostname) &&
+      isLoopbackHostname(frontend.hostname) &&
+      base.protocol === frontend.protocol &&
+      getEffectiveUrlPort(base) === getEffectiveUrlPort(frontend)
+    ) {
+      return baseUrl;
+    }
+  } catch {
+    return frontendUrl;
+  }
+
+  return frontendUrl;
+}
+
+function getEffectiveUrlPort(url: URL): string {
+  if (url.port) {
+    return url.port;
+  }
+  return url.protocol === "https:" ? "443" : "80";
+}
+
 export function buildInspectorBrowserUrl(
   baseUrl: string,
   frontendUrl?: string,
   tab?: string,
 ): string {
   return buildInspectorUrl(
-    normalizeInspectorFrontendUrl(frontendUrl) ?? baseUrl,
+    canonicalizeInspectorFrontendUrl(
+      baseUrl,
+      normalizeInspectorFrontendUrl(frontendUrl),
+    ) ?? baseUrl,
     tab,
   );
 }
@@ -130,7 +169,10 @@ export async function resolveInspectorBrowserBaseUrl(
   baseUrl: string,
   frontendUrl?: string,
 ): Promise<string> {
-  const normalizedFrontendUrl = normalizeInspectorFrontendUrl(frontendUrl);
+  const normalizedFrontendUrl = canonicalizeInspectorFrontendUrl(
+    baseUrl,
+    normalizeInspectorFrontendUrl(frontendUrl),
+  );
   const candidates: InspectorFrontendCandidate[] = [];
 
   if (normalizedFrontendUrl) {
@@ -195,6 +237,7 @@ export async function resolveInspectorBrowserBaseUrl(
 export interface EnsureInspectorResult {
   baseUrl: string;
   frontendUrl?: string;
+  hasActiveClient: boolean;
   url: string;
   started: boolean;
 }
@@ -217,6 +260,7 @@ export async function ensureInspector(
     return {
       baseUrl,
       ...(browserBaseUrl !== baseUrl ? { frontendUrl: browserBaseUrl } : {}),
+      hasActiveClient: health.hasActiveClient,
       url,
       started: false,
     };
@@ -245,6 +289,7 @@ export async function ensureInspector(
   return {
     baseUrl,
     ...(browserBaseUrl !== baseUrl ? { frontendUrl: browserBaseUrl } : {}),
+    hasActiveClient: startedHealth.hasActiveClient,
     url,
     started: true,
   };

@@ -315,6 +315,13 @@ test("normalizeInspectorBaseUrl reads MCPJAM_INSPECTOR_URL lazily", () => {
   }
 });
 
+test("normalizeInspectorBaseUrl canonicalizes localhost to 127.0.0.1", () => {
+  assert.equal(
+    normalizeInspectorBaseUrl("http://localhost:6274/"),
+    "http://127.0.0.1:6274",
+  );
+});
+
 test("normalizeInspectorFrontendUrl accepts absolute frontend URLs only", () => {
   assert.equal(
     normalizeInspectorFrontendUrl("http://localhost:5173/?debug=1#app-builder"),
@@ -332,6 +339,14 @@ test("buildInspectorBrowserUrl prefers health frontend URL for UI tabs", () => {
       "app-builder",
     ),
     "http://localhost:5173/#app-builder",
+  );
+  assert.equal(
+    buildInspectorBrowserUrl(
+      "http://127.0.0.1:6274",
+      "http://localhost:6274/",
+      "app-builder",
+    ),
+    "http://127.0.0.1:6274/#app-builder",
   );
   assert.equal(
     buildInspectorBrowserUrl("http://127.0.0.1:6274", undefined, "app-builder"),
@@ -381,6 +396,7 @@ test("ensureInspector reports the frontend URL from Inspector health", async () 
           assert.deepEqual(result, {
             baseUrl,
             frontendUrl,
+            hasActiveClient: true,
             url: `${frontendUrl}/#app-builder`,
             started: false,
           });

@@ -105,7 +105,10 @@ Uses shared connection flags.
 | `--expect-success` | Fail when the tool result reports `isError` |
 | `--reporter <reporter>` | `json-summary` or `junit-xml` validation report output |
 | `--debug-out <path>` | Write debug artifact to file |
-| `--ui` | Start or attach to Inspector and render the completed tool result in App Builder |
+| `--ui` | Attach to Inspector and render the completed tool result in App Builder |
+| `--open` | Open Inspector in the system browser before rendering |
+| `--no-open` | Do not open a system browser; render into an already-open Inspector client |
+| `--attach-only` | Require an already-running Inspector browser client; do not start or open Inspector |
 | `--inspector-url <url>` | Local Inspector base URL |
 | `--server-name <name>` | Server name to use inside Inspector |
 | `--protocol <protocol>` | Render protocol: `mcp-apps` or `openai-sdk` |
@@ -116,7 +119,7 @@ Uses shared connection flags.
 
 Plus shared connection flags.
 
-Without `--ui`, `tools call` returns the raw tool result. With `--ui`, it returns an envelope with `result`, `inspectorBrowserUrl`, and `inspectorRender`. Open `inspectorBrowserUrl` in a browser; `--inspector-url` is the local Inspector API base URL. The Inspector path injects the completed tool result through `renderToolResult`; it does not call the tool a second time. `--ui` cannot be combined with `--reporter`.
+Without `--ui`, `tools call` returns the raw tool result. With `--ui`, it returns a compact envelope with `result`, `inspectorBrowserUrl`, and `inspectorRender` status. JSON/quiet invocations do not open a system browser by default; open `inspectorBrowserUrl` first with your browser automation, then rerun the command, or pass `--open` for interactive use. The Inspector path injects the completed tool result through `renderToolResult`; it does not call the tool a second time. Fresh tabs do not hydrate the injected render state; use the active Inspector client that received the render. Use `--debug-out` for the full render envelope including params and command responses. `--ui` cannot be combined with `--reporter`.
 
 ---
 
