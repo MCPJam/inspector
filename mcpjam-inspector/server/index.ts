@@ -189,6 +189,14 @@ function getMCPConfigFromEnv() {
   };
 }
 
+function getInspectorFrontendUrlOptions() {
+  return {
+    isElectron: process.env.ELECTRON_APP === "true",
+    isPackaged: process.env.IS_PACKAGED === "true",
+    isProduction: process.env.NODE_ENV === "production",
+  };
+}
+
 // Ensure PATH is initialized from the user's shell so spawned processes can find binaries (e.g., npx)
 try {
   fixPath();
@@ -361,7 +369,7 @@ app.get("/health", (c) => {
     status: "ok",
     timestamp: new Date().toISOString(),
     hasActiveClient: inspectorCommandBus.hasActiveClient(),
-    frontend: getInspectorFrontendUrl(),
+    frontend: getInspectorFrontendUrl(getInspectorFrontendUrlOptions()),
   });
 });
 
@@ -475,7 +483,7 @@ if (process.env.NODE_ENV === "production") {
     return c.json({
       message: "MCPJam API Server",
       environment: "development",
-      frontend: getInspectorFrontendUrl(),
+      frontend: getInspectorFrontendUrl(getInspectorFrontendUrlOptions()),
     });
   });
 }

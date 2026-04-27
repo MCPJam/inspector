@@ -133,15 +133,17 @@ async function executeInspectorCommandWithClient(
 ): Promise<InspectorCommandResponse> {
   const startedAt = Date.now();
   const deadline = startedAt + options.timeoutMs;
+  let lastResponse: InspectorCommandResponse | undefined;
 
   do {
     const response = await options.client.executeCommand(request);
+    lastResponse = response;
     const retryable =
       response.status === "error" &&
       (response.error.code === "no_active_client" ||
         response.error.code === "unsupported_in_mode" ||
         response.error.code === "disconnected_server");
-    if (!retryable || Date.now() >= deadline) {
+    if (!retryable) {
       return response;
     }
 
@@ -150,10 +152,12 @@ async function executeInspectorCommandWithClient(
       return response;
     }
     await delay(Math.min(500, remaining));
-    if (Date.now() >= deadline) {
-      return response;
-    }
-  } while (true);
+  } while (Date.now() < deadline);
+
+  if (!lastResponse) {
+    throw new Error("Inspector command was not executed.");
+  }
+  return lastResponse;
 }
 
 export function findInspectorRenderError(

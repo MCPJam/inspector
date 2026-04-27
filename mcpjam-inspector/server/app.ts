@@ -354,9 +354,8 @@ export function createHonoApp() {
     });
   } else if (isElectron && !isPackaged) {
     // Electron development: redirect any front-end route to the renderer dev server
-    const rendererDevUrl = "http://localhost:8080";
     app.get("/*", (c) => {
-      const target = new URL(c.req.path, rendererDevUrl).toString();
+      const target = new URL(c.req.path, frontendUrl).toString();
       return c.redirect(target, 307);
     });
   } else {

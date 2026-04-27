@@ -82,7 +82,9 @@ async function startMockServer(options: {
   const server = http.createServer(async (request, response) => {
     if (request.method === "GET" && request.url === "/health") {
       response.writeHead(200, { "Content-Type": "application/json" });
-      response.end(JSON.stringify({ status: "ok" }));
+      response.end(
+        JSON.stringify({ status: "ok", frontend: "http://localhost:5173/" }),
+      );
       return;
     }
 
