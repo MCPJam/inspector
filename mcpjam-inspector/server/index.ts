@@ -36,6 +36,7 @@ import { startGuestAuthProvisioningInBackground } from "./utils/convex-guest-aut
 
 import { getSystemLogger } from "./utils/request-logger";
 import { requestLogContextMiddleware } from "./middleware/request-log-context";
+import { getInspectorFrontendUrl } from "./utils/inspector-frontend-url";
 
 const sysLogger = getSystemLogger("process");
 
@@ -103,7 +104,6 @@ import { rpcLogBus } from "./services/rpc-log-bus";
 import { tunnelManager } from "./services/tunnel-manager";
 import {
   SERVER_PORT,
-  SERVER_HOSTNAME,
   CORS_ORIGINS,
   HOSTED_MODE,
   ALLOWED_HOSTS,
@@ -187,24 +187,6 @@ function getMCPConfigFromEnv() {
     initialTab,
     cspMode,
   };
-}
-
-function getInspectorFrontendUrl() {
-  const explicitFrontendUrl =
-    process.env.MCPJAM_INSPECTOR_FRONTEND_URL?.trim() ||
-    process.env.FRONTEND_URL?.trim();
-  if (explicitFrontendUrl) {
-    return explicitFrontendUrl;
-  }
-
-  if (process.env.NODE_ENV === "production") {
-    return (
-      process.env.BASE_URL?.trim() ||
-      `http://${SERVER_HOSTNAME}:${SERVER_PORT}`
-    );
-  }
-
-  return `http://localhost:${process.env.CLIENT_PORT || "5173"}`;
 }
 
 // Ensure PATH is initialized from the user's shell so spawned processes can find binaries (e.g., npx)

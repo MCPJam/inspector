@@ -60,7 +60,7 @@ export async function runUiRender(options: {
   };
 }
 
-export async function runInspectorAppRender(options: {
+async function runInspectorAppRender(options: {
   client: InspectorApiClient;
   params: Record<string, unknown>;
   renderContext: AppRenderContext;
@@ -124,7 +124,7 @@ export async function runInspectorAppRender(options: {
   };
 }
 
-export async function executeInspectorCommandWithClient(
+async function executeInspectorCommandWithClient(
   options: {
     client: InspectorApiClient;
     timeoutMs: number;
@@ -145,7 +145,14 @@ export async function executeInspectorCommandWithClient(
       return response;
     }
 
-    await delay(500);
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) {
+      return response;
+    }
+    await delay(Math.min(500, remaining));
+    if (Date.now() >= deadline) {
+      return response;
+    }
   } while (true);
 }
 
@@ -221,8 +228,9 @@ export function buildInspectorServerName(
   options: SharedServerTargetOptions,
 ): string {
   if (typeof options.url === "string" && options.url.trim()) {
+    const trimmedUrl = options.url.trim();
     try {
-      const parsed = new URL(options.url);
+      const parsed = new URL(trimmedUrl);
       const host = parsed.port
         ? `${parsed.hostname}-${parsed.port}`
         : parsed.hostname;

@@ -18,13 +18,7 @@ import { initElicitationCallback } from "./routes/mcp/elicitation.js";
 import { rpcLogBus } from "./services/rpc-log-bus.js";
 import { progressStore } from "./services/progress-store.js";
 import { inspectorCommandBus } from "./services/inspector-command-bus.js";
-import {
-  CORS_ORIGINS,
-  HOSTED_MODE,
-  ALLOWED_HOSTS,
-  SERVER_HOSTNAME,
-  SERVER_PORT,
-} from "./config.js";
+import { CORS_ORIGINS, HOSTED_MODE, ALLOWED_HOSTS } from "./config.js";
 import { inAppBrowserMiddleware } from "./middleware/in-app-browser.js";
 import path from "path";
 
@@ -50,35 +44,10 @@ import { fetchRemoteGuestJwks } from "./utils/guest-session-source.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "./utils/mcp-retry-policy.js";
 import { initXAAIdpKeyPair } from "./services/xaa-idp-keypair.js";
 import { requestLogContextMiddleware } from "./middleware/request-log-context.js";
+import { getInspectorFrontendUrl } from "./utils/inspector-frontend-url.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-
-function getInspectorFrontendUrl(options: {
-  isElectron: boolean;
-  isPackaged: boolean;
-  isProduction: boolean;
-}) {
-  const explicitFrontendUrl =
-    process.env.MCPJAM_INSPECTOR_FRONTEND_URL?.trim() ||
-    process.env.FRONTEND_URL?.trim();
-  if (explicitFrontendUrl) {
-    return explicitFrontendUrl;
-  }
-
-  if (options.isProduction || (options.isElectron && options.isPackaged)) {
-    return (
-      process.env.BASE_URL?.trim() ||
-      `http://${SERVER_HOSTNAME}:${SERVER_PORT}`
-    );
-  }
-
-  if (options.isElectron) {
-    return "http://localhost:8080";
-  }
-
-  return `http://localhost:${process.env.CLIENT_PORT || "5173"}`;
-}
 
 export function createHonoApp() {
   // Load environment variables early so route handlers can read CONVEX_HTTP_URL

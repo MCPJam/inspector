@@ -195,6 +195,16 @@ export function registerToolsCommands(program: Command): void {
       );
     }
 
+    const renderContext = options.ui
+      ? {
+          protocol: parseRenderProtocol(options.protocol),
+          deviceType: parseRenderDevice(options.device),
+          theme: parseRenderTheme(options.theme),
+          locale: trimOptional(options.locale),
+          timeZone: trimOptional(options.timeZone),
+        }
+      : undefined;
+
     let result: unknown;
     let commandError: unknown;
     const startedAt = Date.now();
@@ -271,13 +281,7 @@ export function registerToolsCommands(program: Command): void {
           baseUrl: options.inspectorUrl,
           config,
           params,
-          renderContext: {
-            protocol: parseRenderProtocol(options.protocol),
-            deviceType: parseRenderDevice(options.device),
-            theme: parseRenderTheme(options.theme),
-            locale: trimOptional(options.locale),
-            timeZone: trimOptional(options.timeZone),
-          },
+          renderContext: renderContext!,
           serverName,
           timeoutMs: globalOptions.timeout,
           toolName,

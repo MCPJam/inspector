@@ -5,6 +5,7 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import test from "node:test";
 import type { AddressInfo } from "node:net";
+import { buildInspectorServerName } from "../src/lib/inspector-render.js";
 
 const CLI_DIR = process.cwd().endsWith(`${path.sep}cli`)
   ? process.cwd()
@@ -402,6 +403,40 @@ test("tools call --ui rejects reporter output", async () => {
   assert.match(result.stderr, /--ui cannot be used together with --reporter/);
 });
 
+test("tools call --ui validates render flags before executing the tool", async () => {
+  const server = await startMockServer({});
+
+  try {
+    const result = await runCli([
+      "--format",
+      "json",
+      "tools",
+      "call",
+      "--ui",
+      "--theme",
+      "blue",
+      "--inspector-url",
+      `http://127.0.0.1:${server.port}`,
+      "--url",
+      `http://127.0.0.1:${server.port}/mcp`,
+      "--tool-name",
+      "create_view",
+      "--tool-args",
+      "{}",
+    ]);
+
+    assert.equal(result.exitCode, 2);
+    assert.match(
+      (JSON.parse(result.stderr) as { error?: { message?: string } }).error
+        ?.message ?? "",
+      /Invalid theme "blue"/,
+    );
+    assert.deepEqual(server.requests, []);
+  } finally {
+    await server.stop();
+  }
+});
+
 test("tools call --ui applies expect-success to the raw tool result", async () => {
   const errorToolResult = {
     isError: true,
@@ -435,6 +470,13 @@ test("tools call --ui applies expect-success to the raw tool result", async () =
   } finally {
     await server.stop();
   }
+});
+
+test("buildInspectorServerName trims URL targets before parsing", () => {
+  assert.equal(
+    buildInspectorServerName({ url: " http://example.test:8080/mcp " }),
+    "example-test-8080-mcp",
+  );
 });
 
 test("removed apps debug and widget commands are rejected", async () => {
