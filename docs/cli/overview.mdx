@@ -109,6 +109,25 @@ Structured debug artifacts only record the explicit env keys you pass through
   not accept stdio targets.
 </Note>
 
+## Update notifications
+
+After a successful command, the CLI checks whether a newer version of `@mcpjam/cli` is available and prints a notice to stderr when one is found:
+
+```
+Update available: @mcpjam/cli 1.2.0 -> 1.3.0
+Run npm install -g @mcpjam/cli to update
+```
+
+The check is non-blocking: version data is fetched in a detached background process and cached locally for 24 hours, so it never slows down your commands. The notice only appears on interactive terminals (when stderr is a TTY) and is suppressed automatically in CI.
+
+To opt out, set one of these environment variables before running any command:
+
+| Variable | Effect |
+|----------|--------|
+| `MCPJAM_NO_UPDATE_CHECK=1` | Disable update checks for `@mcpjam/cli` |
+| `NO_UPDATE_NOTIFIER=1` | Disable update checks (conventional npm opt-out) |
+| `CI=true` | Automatically suppressed in CI environments |
+
 ## Exit codes
 
 | Code | Meaning |
