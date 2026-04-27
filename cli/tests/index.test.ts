@@ -5,6 +5,12 @@ import packageJson from "../package.json" with { type: "json" };
 import { main, runCliEntrypoint } from "../src/index.js";
 
 const pkgVersion = packageJson.version;
+const telemetryDisabled = {
+  env: {
+    ...process.env,
+    MCPJAM_TELEMETRY_DISABLED: "1",
+  },
+};
 
 async function captureProcessOutput<T>(
   fn: () => Promise<T>,
@@ -45,14 +51,14 @@ async function captureProcessOutput<T>(
 
 test("main treats help and version output as non-command success", async () => {
   const helpRun = await captureProcessOutput(() =>
-    main(["node", "mcpjam", "--help"]),
+    main(["node", "mcpjam", "--help"], { telemetry: telemetryDisabled }),
   );
   assert.equal(helpRun.result.exitCode, 0);
   assert.equal(helpRun.result.shouldCheckForUpdates, false);
   assert.match(helpRun.stdout, /Usage: mcpjam/);
 
   const versionRun = await captureProcessOutput(() =>
-    main(["node", "mcpjam", "--version"]),
+    main(["node", "mcpjam", "--version"], { telemetry: telemetryDisabled }),
   );
   assert.equal(versionRun.result.exitCode, 0);
   assert.equal(versionRun.result.shouldCheckForUpdates, false);
@@ -78,6 +84,7 @@ test("runCliEntrypoint invokes update check after successful commands", async ()
           "--stable",
         ],
         {
+          telemetry: telemetryDisabled,
           checkForUpdates(version) {
             checkedVersion = version;
           },
@@ -97,6 +104,7 @@ test("runCliEntrypoint does not append update text after usage errors", async ()
   let checked = false;
   const run = await captureProcessOutput(() =>
     runCliEntrypoint(["node", "mcpjam", "not-a-command"], {
+      telemetry: telemetryDisabled,
       checkForUpdates() {
         checked = true;
         process.stderr.write("unexpected update notice\n");

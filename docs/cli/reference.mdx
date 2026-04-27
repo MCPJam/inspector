@@ -13,6 +13,7 @@ Complete flag tables for every `mcpjam` command. For guides and recipes, see the
 | `--timeout <ms>` | `30000` | Request timeout in milliseconds |
 | `--rpc` | off | Include raw JSON-RPC logs in JSON output under `_rpcLogs` |
 | `--quiet` | off | Suppress non-result progress output on stderr |
+| `--no-telemetry` | off | Disable anonymous telemetry for this invocation |
 | `--format <format>` | `human` on TTY, `json` when piped | Raw output format (`json` or `human`) |
 | `-v, --version` | | Print the CLI version |
 
@@ -376,6 +377,24 @@ Stop the local Inspector if it is running.
 | Flag | Required | Description |
 |------|----------|-------------|
 | `--inspector-url <url>` | No | Local Inspector base URL |
+
+---
+
+## `telemetry` commands
+
+Telemetry commands inspect and configure anonymous CLI telemetry. They never emit telemetry events themselves.
+
+### `telemetry status`
+
+Shows the effective telemetry state, install ID state, state file path, debug mode, and disable reason when disabled. This command does not create an install ID.
+
+### `telemetry disable`
+
+Persistently disables anonymous CLI telemetry by writing `enabled: false` to the telemetry state file. If no install ID exists yet, this command does not create one.
+
+### `telemetry enable`
+
+Persistently enables anonymous CLI telemetry. If no install ID exists yet, this command creates a random install UUID.
 
 ---
 
