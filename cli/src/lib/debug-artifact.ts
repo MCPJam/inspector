@@ -52,6 +52,7 @@ export interface CommandDebugArtifactOptions<TTarget = unknown> {
   commandInput: unknown;
   target: TTarget;
   outcome: DebugArtifactOutcome;
+  quiet?: boolean;
   snapshot?: {
     input: RunServerDoctorInput<TTarget>;
     collector?: CliRpcLogCollector;
@@ -87,7 +88,7 @@ export async function writeCommandDebugArtifact<TTarget = unknown>(
   });
   const artifactPath = await writeDebugArtifact(options.outputPath, payload);
 
-  if (options.format === "human") {
+  if (options.format === "human" && !options.quiet) {
     process.stderr.write(`Debug artifact: ${artifactPath}\n`);
   }
 

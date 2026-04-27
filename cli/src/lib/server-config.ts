@@ -9,11 +9,13 @@ import {
   assertNoCredentialsFileAuthConflicts,
   resolveCredentialsFileAuth,
 } from "./credentials-file.js";
+import { parseJsonInputRecord } from "./json-input.js";
 
 export interface GlobalOptions {
   format: OutputFormat;
   timeout: number;
   rpc: boolean;
+  quiet: boolean;
 }
 
 type TransportType = "http" | "stdio";
@@ -78,7 +80,7 @@ export function addSharedServerOptions(command: Command): Command {
     )
     .option(
       "--client-capabilities <json>",
-      "Client capabilities advertised to the server as a JSON object",
+      "Client capabilities as JSON, @path, or - for stdin",
     )
     .option("--command <command>", "Command for a stdio MCP server")
     .option(
@@ -106,6 +108,7 @@ export function getGlobalOptions(command: Command): GlobalOptions {
     ),
     timeout: options.timeout ?? 30_000,
     rpc: options.rpc ?? false,
+    quiet: options.quiet ?? false,
   };
 }
 
@@ -177,24 +180,7 @@ export function parseJsonRecord(
   value: string | undefined,
   label: string,
 ): Record<string, unknown> | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(value);
-  } catch (error) {
-    throw usageError(`${label} must be valid JSON.`, {
-      source: error instanceof Error ? error.message : String(error),
-    });
-  }
-
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw usageError(`${label} must be a JSON object.`);
-  }
-
-  return parsed as Record<string, unknown>;
+  return parseJsonInputRecord(value, label);
 }
 
 export function parseUnknownRecord(
@@ -383,6 +369,7 @@ export function addGlobalOptions(program: Command): Command {
       30_000,
     )
     .option("--rpc", "Include RPC logs in JSON output")
+    .option("--quiet", "Suppress non-result progress output")
     .option("--format <format>", "Output format");
 }
 

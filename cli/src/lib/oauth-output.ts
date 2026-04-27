@@ -1,22 +1,26 @@
 import {
   formatOAuthConformanceHuman,
   formatOAuthConformanceSuiteHuman,
-  renderConformanceReportJUnitXml,
   type ConformanceResult,
   type OAuthConformanceSuiteResult,
-  toConformanceReport,
 } from "@mcpjam/sdk";
 import { usageError, type OutputFormat } from "./output.js";
 
-export type OAuthOutputFormat = OutputFormat | "junit-xml";
+export type OAuthOutputFormat = OutputFormat;
 
 export function parseOAuthOutputFormat(value: string): OAuthOutputFormat {
-  if (value === "json" || value === "human" || value === "junit-xml") {
+  if (value === "json" || value === "human") {
     return value;
   }
 
+  if (value === "junit-xml") {
+    throw usageError(
+      'Invalid output format "junit-xml". Use --reporter junit-xml for CI reporter output.',
+    );
+  }
+
   throw usageError(
-    `Invalid output format "${value}". Use "json", "human", or "junit-xml".`,
+    `Invalid output format "${value}". Use "json" or "human".`,
   );
 }
 
@@ -34,8 +38,6 @@ export function renderOAuthConformanceResult(
   switch (format) {
     case "human":
       return formatOAuthConformanceHuman(result);
-    case "junit-xml":
-      return renderConformanceReportJUnitXml(toConformanceReport(result));
     case "json":
       return JSON.stringify(result);
   }
@@ -48,8 +50,6 @@ export function renderOAuthConformanceSuiteResult(
   switch (format) {
     case "human":
       return formatOAuthConformanceSuiteHuman(result);
-    case "junit-xml":
-      return renderConformanceReportJUnitXml(toConformanceReport(result));
     case "json":
       return JSON.stringify(result);
   }

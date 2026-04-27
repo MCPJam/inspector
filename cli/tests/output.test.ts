@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  CliError,
   detectOutputFormatFromArgv,
+  parseOutputFormat,
   resolveOutputFormat,
 } from "../src/lib/output.js";
 
@@ -28,5 +30,14 @@ test("detectOutputFormatFromArgv respects explicit flags and TTY defaults", () =
   assert.equal(
     detectOutputFormatFromArgv(["node", "cli", "--format=json"], true),
     "json",
+  );
+});
+
+test("parseOutputFormat keeps reporter formats out of --format", () => {
+  assert.throws(
+    () => parseOutputFormat("junit-xml"),
+    (error) =>
+      error instanceof CliError &&
+      error.message.includes("Use --reporter junit-xml"),
   );
 });

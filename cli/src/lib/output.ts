@@ -127,6 +127,12 @@ export function parseOutputFormat(value: string): OutputFormat {
     return value;
   }
 
+  if (value === "junit-xml") {
+    throw usageError(
+      'Invalid output format "junit-xml". Use --reporter junit-xml for CI reporter output.',
+    );
+  }
+
   throw usageError(`Invalid output format "${value}". Use "json" or "human".`);
 }
 

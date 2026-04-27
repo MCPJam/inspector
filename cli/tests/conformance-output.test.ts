@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  renderConformanceReportJson,
   renderConformanceReportJUnitXml,
   toConformanceReport,
   type MCPAppsConformanceResult,
@@ -8,6 +9,7 @@ import {
 } from "@mcpjam/sdk";
 import {
   parseConformanceOutputFormat,
+  renderConformanceReporterResult,
   renderConformanceResult,
   resolveConformanceOutputFormat,
 } from "../src/lib/conformance-output.js";
@@ -85,7 +87,6 @@ function createAppsResult(): MCPAppsConformanceResult {
 test("resolveConformanceOutputFormat defaults to human on TTY and json otherwise", () => {
   assert.equal(resolveConformanceOutputFormat(undefined, true), "human");
   assert.equal(resolveConformanceOutputFormat(undefined, false), "json");
-  assert.equal(resolveConformanceOutputFormat("junit-xml", true), "junit-xml");
 });
 
 test("parseConformanceOutputFormat rejects unsupported formats", () => {
@@ -94,14 +95,24 @@ test("parseConformanceOutputFormat rejects unsupported formats", () => {
     (error) =>
       error instanceof CliError && error.message.includes("Invalid output format"),
   );
+  assert.throws(
+    () => parseConformanceOutputFormat("junit-xml"),
+    (error) =>
+      error instanceof CliError &&
+      error.message.includes("Use --reporter junit-xml"),
+  );
 });
 
-test("renderConformanceResult uses byte-identical JUnit XML from the shared SDK helper", () => {
+test("renderConformanceReporterResult emits conformance reporter output", () => {
   const result = createProtocolResult();
 
   assert.equal(
-    renderConformanceResult(result, "junit-xml"),
+    renderConformanceReporterResult(result, "junit-xml"),
     renderConformanceReportJUnitXml(toConformanceReport(result)),
+  );
+  assert.equal(
+    renderConformanceReporterResult(result, "json-summary"),
+    JSON.stringify(renderConformanceReportJson(toConformanceReport(result))),
   );
 });
 

@@ -8,10 +8,12 @@ import {
 import { Command } from "commander";
 import { loadProtocolSuiteConfig } from "../lib/config-file.js";
 import {
+  renderConformanceReporterResult,
   renderConformanceResult,
   resolveConformanceOutputFormat,
   type ConformanceOutputFormat,
 } from "../lib/conformance-output.js";
+import { parseReporterFormat } from "../lib/reporting.js";
 import {
   parseHeadersOption,
   parsePositiveInteger,
@@ -73,12 +75,21 @@ export function registerProtocolCommands(program: Command): void {
       (value: string, previous: string[] = []) => [...previous, value],
       [],
     )
+    .option(
+      "--reporter <reporter>",
+      "Structured reporter output: json-summary or junit-xml",
+    )
     .action(async (options, command) => {
       const format = getFormat(command);
+      const reporter = parseReporterFormat(options.reporter as string | undefined);
       const config = buildConfig(options as ProtocolConformanceOptions);
       const result = await new MCPConformanceTest(config).run();
 
-      writeConformanceOutput(renderConformanceResult(result, format));
+      writeConformanceOutput(
+        reporter
+          ? renderConformanceReporterResult(result, reporter)
+          : renderConformanceResult(result, format),
+      );
       if (!result.passed) {
         setProcessExitCode(1);
       }
@@ -90,12 +101,21 @@ export function registerProtocolCommands(program: Command): void {
       "Run a matrix of MCP protocol conformance checks from a JSON config file",
     )
     .requiredOption("--config <path>", "Path to JSON config file")
+    .option(
+      "--reporter <reporter>",
+      "Structured reporter output: json-summary or junit-xml",
+    )
     .action(async (options, command) => {
       const format = getFormat(command);
+      const reporter = parseReporterFormat(options.reporter as string | undefined);
       const config = loadProtocolSuiteConfig(options.config as string);
       const result = await new MCPConformanceSuite(config).run();
 
-      writeConformanceOutput(renderConformanceResult(result, format));
+      writeConformanceOutput(
+        reporter
+          ? renderConformanceReporterResult(result, reporter)
+          : renderConformanceResult(result, format),
+      );
       if (!result.passed) {
         setProcessExitCode(1);
       }

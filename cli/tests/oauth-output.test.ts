@@ -9,12 +9,10 @@ import {
 import {
   renderOAuthConformanceResult,
   renderOAuthConformanceSuiteResult,
+  parseOAuthOutputFormat,
   resolveOAuthOutputFormat,
 } from "../src/lib/oauth-output.js";
-import {
-  singleResultToJUnitXml,
-  suiteResultToJUnitXml,
-} from "../src/lib/junit-xml.js";
+import { CliError } from "../src/lib/output.js";
 
 function createSingleResult(): ConformanceResult {
   return {
@@ -78,7 +76,15 @@ test("resolveOAuthOutputFormat defaults to human on TTY and json otherwise", () 
   assert.equal(resolveOAuthOutputFormat(undefined, false), "json");
   assert.equal(resolveOAuthOutputFormat("json", true), "json");
   assert.equal(resolveOAuthOutputFormat("human", false), "human");
-  assert.equal(resolveOAuthOutputFormat("junit-xml", true), "junit-xml");
+});
+
+test("parseOAuthOutputFormat rejects junit-xml and points to reporter", () => {
+  assert.throws(
+    () => parseOAuthOutputFormat("junit-xml"),
+    (error) =>
+      error instanceof CliError &&
+      error.message.includes("Use --reporter junit-xml"),
+  );
 });
 
 test("renderOAuthConformanceResult uses the SDK human formatter for human output", () => {
@@ -90,14 +96,10 @@ test("renderOAuthConformanceResult uses the SDK human formatter for human output
   );
 });
 
-test("renderOAuthConformanceResult preserves raw JSON and junit-xml output", () => {
+test("renderOAuthConformanceResult preserves raw JSON output", () => {
   const result = createSingleResult();
 
   assert.equal(renderOAuthConformanceResult(result, "json"), JSON.stringify(result));
-  assert.equal(
-    renderOAuthConformanceResult(result, "junit-xml"),
-    singleResultToJUnitXml(result),
-  );
 });
 
 test("renderOAuthConformanceSuiteResult uses the SDK human formatter for human output", () => {
@@ -109,15 +111,11 @@ test("renderOAuthConformanceSuiteResult uses the SDK human formatter for human o
   );
 });
 
-test("renderOAuthConformanceSuiteResult preserves raw JSON and junit-xml output", () => {
+test("renderOAuthConformanceSuiteResult preserves raw JSON output", () => {
   const result = createSuiteResult();
 
   assert.equal(
     renderOAuthConformanceSuiteResult(result, "json"),
     JSON.stringify(result),
-  );
-  assert.equal(
-    renderOAuthConformanceSuiteResult(result, "junit-xml"),
-    suiteResultToJUnitXml(result),
   );
 });

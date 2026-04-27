@@ -75,7 +75,10 @@ export function registerToolsCommands(program: Command): void {
       .description("Call an MCP tool")
       .option("--tool-name <tool>", "Tool name")
       .option("--name <tool>", "Alias for --tool-name")
-      .option("--tool-args <json>", "Tool parameter object as JSON")
+      .option(
+        "--tool-args <json>",
+        "Tool parameter object as JSON, @path, or - for stdin",
+      )
       .option("--params <json>", "Alias for --tool-args")
       .option(
         "--validate-response",
@@ -158,6 +161,7 @@ export function registerToolsCommands(program: Command): void {
     await writeCommandDebugArtifact({
       outputPath: options.debugOut as string | undefined,
       format: globalOptions.format,
+      quiet: globalOptions.quiet,
       commandName: "tools call",
       commandInput: {
         toolName,

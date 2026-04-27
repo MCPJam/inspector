@@ -114,7 +114,7 @@ Every `server` subcommand accepts these flags for specifying how to connect:
 | `--client-secret <secret>` | OAuth client secret (used with `--refresh-token`) |
 | `--credentials-file <path>` | Load OAuth credentials from a file created by `oauth login --credentials-out` |
 | `--header <header>` | HTTP header in `Key: Value` format (repeatable) |
-| `--client-capabilities <json>` | Client capabilities as a JSON object |
+| `--client-capabilities <json>` | Client capabilities as inline JSON, `@path`, or `-` for stdin |
 | `--command <command>` | Command for a stdio server |
 | `--args <arg...>` | Preferred stdio command arguments |
 | `--command-args <arg>` | Legacy stdio command argument (repeatable) |
