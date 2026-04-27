@@ -473,7 +473,9 @@ jobs:
           git commit -m "chore(release): version packages"
 
       - name: Push release commit
-        run: git push origin HEAD:main
+        run: |
+          git pull --rebase origin main
+          git push origin HEAD:main
 
       - name: Create and push release tag
         if: needs.preflight.outputs.release_tag != ''
