@@ -351,6 +351,13 @@ test("apps debug --ui starts Inspector and drives command bus render", async () 
     const commandRequests = requests.filter(
       (entry) => entry.url === "/api/mcp/command",
     );
+    const connectRequest = requests.find(
+      (entry) => entry.url === "/api/mcp/connect",
+    );
+    assert.equal(
+      (connectRequest?.body as { serverId?: string } | undefined)?.serverId,
+      `127-0-0-1-${port}-mcp`,
+    );
     const commandTypes = commandRequests.map(
       (entry) => (entry.body as { type?: string }).type,
     );

@@ -557,8 +557,11 @@ function buildInspectorServerName(options: SharedServerTargetOptions): string {
   if (typeof options.url === "string" && options.url.trim()) {
     try {
       const parsed = new URL(options.url);
+      const host = parsed.port
+        ? `${parsed.hostname}-${parsed.port}`
+        : parsed.hostname;
       const raw =
-        `${parsed.hostname}${parsed.pathname}`
+        `${host}${parsed.pathname}`
           .replace(/\/+$/, "")
           .replace(/[^a-zA-Z0-9]+/g, "-")
           .replace(/^-+|-+$/g, "") || parsed.hostname;

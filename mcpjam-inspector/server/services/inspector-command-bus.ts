@@ -60,6 +60,10 @@ export class InspectorCommandBus {
       if (previousSubscriber.clientId !== subscriber.clientId) {
         this.markSuperseded(previousSubscriber.clientId);
       }
+      this.rejectAll(
+        "no_active_client",
+        "The active Inspector client was replaced before the command completed.",
+      );
       try {
         previousSubscriber.supersede();
         previousSubscriber.close();

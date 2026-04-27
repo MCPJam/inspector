@@ -319,3 +319,55 @@ test("InspectorApiClient returns structured command bus errors from non-2xx resp
     },
   );
 });
+
+test("InspectorApiClient reports persistent auth failure instead of command envelope", async () => {
+  let tokenRequests = 0;
+
+  await withServer(
+    (request, response) => {
+      if (request.method === "GET" && request.url === "/api/session-token") {
+        tokenRequests += 1;
+        response.writeHead(200, { "Content-Type": "application/json" });
+        response.end(
+          JSON.stringify({
+            token: tokenRequests === 1 ? "stale-token" : "fresh-token",
+          }),
+        );
+        return;
+      }
+
+      if (request.method === "POST" && request.url === "/api/mcp/command") {
+        response.writeHead(403, { "Content-Type": "application/json" });
+        response.end(
+          JSON.stringify({
+            id: "cmd-auth",
+            status: "error",
+            error: {
+              code: "no_active_client",
+              message: "This body should not mask auth failure.",
+            },
+          }),
+        );
+        return;
+      }
+
+      response.writeHead(404);
+      response.end();
+    },
+    async (baseUrl) => {
+      clearInspectorSessionTokenCache(baseUrl);
+      const client = new InspectorApiClient({ baseUrl });
+
+      await assert.rejects(
+        () =>
+          client.executeCommand({
+            id: "cmd-auth",
+            type: "openAppBuilder",
+            payload: {},
+          }),
+        /Inspector command request failed authentication with 403/,
+      );
+      assert.equal(tokenRequests, 2);
+    },
+  );
+});

@@ -284,7 +284,6 @@ export function useToolExecution({
       parameters,
       result,
     }: InjectToolResultOptions): Promise<CompletedToolInvocationResult> => {
-      setIsExecuting(false);
       setExecutionError(null);
       storeCompletedToolResult(toolName, parameters, result);
 
@@ -296,7 +295,7 @@ export function useToolExecution({
         response: { status: "completed", result },
       };
     },
-    [setExecutionError, setIsExecuting, storeCompletedToolResult],
+    [setExecutionError, storeCompletedToolResult],
   );
 
   // Keyboard shortcut for execute (Cmd/Ctrl + Enter)

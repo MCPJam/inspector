@@ -260,6 +260,12 @@ export class InspectorApiClient {
       );
     }
 
+    if (isAuthFailure(response)) {
+      throw operationalError(
+        `Inspector command request failed authentication with ${response.status}.`,
+      );
+    }
+
     const payload = await readResponsePayload(response);
     if (isInspectorCommandResponse(payload)) {
       return payload;

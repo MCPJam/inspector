@@ -84,4 +84,32 @@ describe("InspectorCommandBus", () => {
       status: "success",
     });
   });
+
+  it("rejects pending commands when a subscriber is replaced", async () => {
+    const bus = new InspectorCommandBus();
+    const first = createSubscriber("first-tab");
+    const second = createSubscriber("second-tab");
+    const command: InspectorCommand = {
+      id: "cmd-replaced",
+      type: "navigate",
+      payload: { target: "app-builder" },
+    };
+
+    bus.registerSubscriber(first);
+    const pending = bus.submit(command, 1_000);
+
+    expect(first.send).toHaveBeenCalledWith(command);
+
+    bus.registerSubscriber(second);
+
+    await expect(pending).resolves.toEqual({
+      id: "cmd-replaced",
+      status: "error",
+      error: {
+        code: "no_active_client",
+        message:
+          "The active Inspector client was replaced before the command completed.",
+      },
+    });
+  });
 });
