@@ -250,8 +250,8 @@ Supports `--format json`, `--format human`, and `--format junit-xml`.
 | `-e, --env <env...>` | Stdio environment `KEY=VALUE` values |
 | `--cwd <path>` | Working directory for the stdio child process |
 
-Apps conformance shares the same transport inference rules as the rest of the
-CLI: `--url` implies HTTP, `--command` implies stdio, and `--transport` is an
+Apps commands share the same transport inference rules as the rest of the CLI:
+`--url` implies HTTP, `--command` implies stdio, and `--transport` is an
 optional explicit override.
 
 ### `apps conformance`
@@ -272,6 +272,30 @@ Supports `--format json`, `--format human`, and `--format junit-xml`.
 | `--config <path>` | Yes | | Path to JSON config file |
 | `--format <fmt>` | No | Auto-detected | `json`, `human`, or `junit-xml` |
 
+### `apps debug`
+
+Execute one MCP App tool and optionally render the result in the local Inspector App Builder.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--tool-name <name>` | Yes | Tool name to execute |
+| `--params <json-or-@file>` | No | Tool parameters as JSON or `@path` to a JSON file |
+| `--ui` | No | Start or attach to Inspector and render the result in App Builder |
+| `--inspector-url <url>` | No | Local Inspector base URL |
+| `--server-name <name>` | No | Server name to use inside Inspector |
+| `--protocol <protocol>` | No | Render protocol: `mcp-apps` or `openai-sdk` |
+| `--device <device>` | No | Render device: `mobile`, `tablet`, `desktop`, or `custom` |
+| `--theme <theme>` | No | Render theme: `light` or `dark` |
+| `--locale <locale>` | No | Render locale |
+| `--time-zone <iana>` | No | Render IANA timezone |
+| `--out <path>` | No | Write the full debug artifact to a JSON file |
+| `--retries <count>` | No | Retry transient failures this many times |
+| `--retry-delay-ms <ms>` | No | Fixed delay between retries in milliseconds |
+
+Plus shared connection flags.
+
+With `--ui`, `execution` is the server tool result and `inspectorRender` is UI render evidence. The UI path injects the completed tool result and does not call the tool a second time.
+
 ### `apps mcp-widget`
 
 Fetch hosted-style MCP App widget content.
@@ -279,7 +303,6 @@ Fetch hosted-style MCP App widget content.
 | Flag | Required | Description |
 |------|----------|-------------|
 | `--resource-uri <uri>` | Yes | Widget resource URI |
-| `--uri <uri>` | No | Legacy alias for `--resource-uri` |
 | `--tool-id <id>` | Yes | Tool call ID used for runtime injection |
 | `--tool-name <name>` | Yes | Tool name used for runtime injection |
 | `--tool-input <json>` | No | Tool input payload as JSON |
@@ -299,7 +322,6 @@ Fetch hosted-style ChatGPT App widget content.
 | Flag | Required | Description |
 |------|----------|-------------|
 | `--resource-uri <uri>` | Yes | Widget resource URI |
-| `--uri <uri>` | No | Legacy alias for `--resource-uri` |
 | `--tool-id <id>` | Yes | Tool call ID used for runtime injection |
 | `--tool-name <name>` | Yes | Tool name used for runtime injection |
 | `--tool-input <json>` | No | Tool input payload as JSON |
@@ -311,6 +333,35 @@ Fetch hosted-style ChatGPT App widget content.
 | `--device-type <type>` | No | Device type: `mobile`, `tablet`, or `desktop` |
 
 Plus shared connection flags.
+
+---
+
+## `inspector` commands
+
+### `inspector open`
+
+Start or attach to the local Inspector and open the UI.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--inspector-url <url>` | No | Local Inspector base URL |
+| `--tab <tab>` | No | Open Inspector on a specific tab |
+
+### `inspector start`
+
+Start the local Inspector in the background without opening a browser.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--inspector-url <url>` | No | Local Inspector base URL |
+
+### `inspector stop`
+
+Stop the local Inspector if it is running.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--inspector-url <url>` | No | Local Inspector base URL |
 
 ---
 
