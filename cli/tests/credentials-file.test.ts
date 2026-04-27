@@ -103,7 +103,14 @@ test("readCredentialsFile validates required shape", async () => {
     JSON.stringify({ version: 2, serverUrl: "https://example.com/mcp", accessToken: "token" }),
     JSON.stringify({ version: 1, serverUrl: "https://example.com/mcp" }),
     JSON.stringify({ version: 1, serverUrl: "not-a-url", accessToken: "token" }),
+    JSON.stringify({ version: 1, serverUrl: "file:///tmp/mcp", accessToken: "token" }),
     JSON.stringify({ version: 1, serverUrl: "https://example.com/mcp", accessToken: 123 }),
+    JSON.stringify({
+      version: 1,
+      serverUrl: "https://example.com/mcp",
+      accessToken: "access-token",
+      refreshToken: "refresh-token",
+    }),
   ]) {
     const invalidPath = await writeCredentialsJsonRaw(contents);
     assert.throws(
@@ -126,6 +133,17 @@ test("resolveCredentialsFileAuth selects access-token or refresh-token auth", as
   assert.deepEqual(
     resolveCredentialsFileAuth(accessPath, "https://example.com/mcp", NOW),
     { accessToken: "access-token" },
+  );
+
+  const trailingSlashPath = await writeCredentialsJson({
+    version: 1,
+    serverUrl: "https://example.com/mcp/",
+    accessToken: "slash-token",
+  });
+
+  assert.deepEqual(
+    resolveCredentialsFileAuth(trailingSlashPath, "https://example.com/mcp", NOW),
+    { accessToken: "slash-token" },
   );
 
   const expiredPath = await writeCredentialsJson({
@@ -187,6 +205,20 @@ test("redactCredentialsFromResult replaces saved secrets and redacts nested valu
   assert.equal(redacted.credentials.clientId, "client-id");
   assert.equal(redacted.credentialsFile, "/tmp/credentials.json");
   assert.equal(redacted.state.nested.accessToken, "[REDACTED]");
+});
+
+test("redactCredentialsFromResult does not claim unsaved secrets were written", () => {
+  const result = createOAuthLoginResult();
+  const redacted = redactCredentialsFromResult(result) as {
+    credentials: Record<string, unknown>;
+    credentialsFile?: string;
+  };
+
+  assert.equal(redacted.credentials.accessToken, "[REDACTED]");
+  assert.equal(redacted.credentials.refreshToken, "[REDACTED]");
+  assert.equal(redacted.credentials.clientSecret, "[REDACTED]");
+  assert.equal(redacted.credentials.clientId, "client-id");
+  assert.equal(redacted.credentialsFile, undefined);
 });
 
 async function writeCredentialsJsonRaw(contents: string): Promise<string> {

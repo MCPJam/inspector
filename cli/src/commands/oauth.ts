@@ -152,7 +152,7 @@ export function registerOAuthCommands(program: Command): void {
     )
     .option(
       "--credentials-out <path>",
-      "Save OAuth credentials to a file instead of printing them",
+      "Write OAuth credentials to <path> (mode 0600); stdout output has secret fields redacted to [SAVED_TO_FILE]",
     )
     .action(async (options, command) => {
       const format = getStructuredOAuthFormat(command);
@@ -237,13 +237,25 @@ export function registerOAuthCommands(program: Command): void {
       }
 
       if (options.credentialsOut) {
-        const credentialsFilePath = hasCredentialsToSave(result)
-          ? await writeCredentialsFile(options.credentialsOut as string, result)
-          : undefined;
+        let credentialsFilePath: string | undefined;
+        let credentialsFileError: unknown;
+        if (hasCredentialsToSave(result)) {
+          try {
+            credentialsFilePath = await writeCredentialsFile(
+              options.credentialsOut as string,
+              result,
+            );
+          } catch (error) {
+            credentialsFileError = error;
+          }
+        }
         writeResult(
           redactCredentialsFromResult(result, credentialsFilePath),
           format,
         );
+        if (credentialsFileError) {
+          throw credentialsFileError;
+        }
       } else {
         writeResult(result, format);
       }

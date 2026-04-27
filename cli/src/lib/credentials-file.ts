@@ -1,5 +1,6 @@
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { chmod, mkdir, writeFile } from "node:fs/promises";
+import { chmod, mkdir, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { OAuthLoginResult } from "@mcpjam/sdk";
 import { redactSensitiveValue } from "./redaction.js";
@@ -41,19 +42,26 @@ export async function writeCredentialsFile(
 ): Promise<string> {
   const contents = buildCredentialsFileContents(result, now);
   const resolvedPath = path.resolve(process.cwd(), outputPath);
+  const outputDirectory = path.dirname(resolvedPath);
+  const temporaryPath = path.join(
+    outputDirectory,
+    `.${path.basename(resolvedPath)}.${randomUUID()}.tmp`,
+  );
 
   try {
-    await mkdir(path.dirname(resolvedPath), { recursive: true });
+    await mkdir(outputDirectory, { recursive: true });
     await writeFile(
-      resolvedPath,
+      temporaryPath,
       `${JSON.stringify(contents, null, 2)}\n`,
       {
         encoding: "utf8",
         mode: 0o600,
       },
     );
-    await chmod(resolvedPath, 0o600);
+    await chmod(temporaryPath, 0o600);
+    await rename(temporaryPath, resolvedPath);
   } catch (error) {
+    await rm(temporaryPath, { force: true }).catch(() => undefined);
     throw operationalError(
       `Failed to write credentials file to "${resolvedPath}".`,
       {
@@ -172,6 +180,7 @@ export function redactCredentialsFromResult(
 ): object {
   const redacted = redactSensitiveValue(result) as Record<string, unknown>;
   const credentials = result.credentials;
+  const secretMarker = credentialsFilePath ? "[SAVED_TO_FILE]" : "[REDACTED]";
   const redactedCredentials = {
     ...((redacted.credentials ?? {}) as Record<string, unknown>),
     ...(credentials.clientId ? { clientId: credentials.clientId } : {}),
@@ -179,9 +188,9 @@ export function redactCredentialsFromResult(
     ...(credentials.expiresIn !== undefined
       ? { expiresIn: credentials.expiresIn }
       : {}),
-    ...(credentials.accessToken ? { accessToken: "[SAVED_TO_FILE]" } : {}),
-    ...(credentials.refreshToken ? { refreshToken: "[SAVED_TO_FILE]" } : {}),
-    ...(credentials.clientSecret ? { clientSecret: "[SAVED_TO_FILE]" } : {}),
+    ...(credentials.accessToken ? { accessToken: secretMarker } : {}),
+    ...(credentials.refreshToken ? { refreshToken: secretMarker } : {}),
+    ...(credentials.clientSecret ? { clientSecret: secretMarker } : {}),
   };
 
   return {
@@ -252,13 +261,13 @@ function validateCredentialsFileContents(
     ...optionalStringField(value, "protocolVersion"),
   };
 
-  assertValidUrl(contents.serverUrl, "serverUrl");
+  normalizeUrl(contents.serverUrl, "serverUrl");
 
   if (!contents.accessToken && !contents.refreshToken) {
     throw usageError(`Credentials file "${filePath}" does not contain OAuth tokens.`);
   }
 
-  if (contents.refreshToken && !contents.clientId && !contents.accessToken) {
+  if (contents.refreshToken && !contents.clientId) {
     throw usageError(
       `Credentials file "${filePath}" with refreshToken requires clientId.`,
     );
@@ -291,14 +300,6 @@ function requireString(value: unknown, label: string): string {
   return value.trim();
 }
 
-function assertValidUrl(value: string, label: string): void {
-  try {
-    new URL(value);
-  } catch {
-    throw usageError(`Invalid ${label}: ${value}`);
-  }
-}
-
 function assertValidDate(value: string, label: string): void {
   if (Number.isNaN(Date.parse(value))) {
     throw usageError(`${label} must be a valid ISO timestamp.`);
@@ -310,7 +311,10 @@ function assertMatchingServerUrl(
   serverUrl: string,
   filePath: string,
 ): void {
-  if (normalizeUrl(credentialsServerUrl) === normalizeUrl(serverUrl)) {
+  if (
+    normalizeUrl(credentialsServerUrl, "credentials file serverUrl") ===
+    normalizeUrl(serverUrl, "server URL")
+  ) {
     return;
   }
 
@@ -319,12 +323,20 @@ function assertMatchingServerUrl(
   );
 }
 
-function normalizeUrl(value: string): string {
+function normalizeUrl(value: string, label: string): string {
+  let parsed: URL;
   try {
-    return new URL(value).href;
+    parsed = new URL(value);
   } catch {
-    throw usageError(`Invalid URL: ${value}`);
+    throw usageError(`Invalid ${label}: ${value}`);
   }
+
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw usageError(`${label} must use http or https: ${value}`);
+  }
+
+  const normalizedPathname = parsed.pathname.replace(/\/+$/u, "") || "/";
+  return `${parsed.origin}${normalizedPathname}${parsed.search}`;
 }
 
 function isAccessTokenUsable(
