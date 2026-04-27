@@ -8,6 +8,7 @@ import { registerOAuthCommands } from "./commands/oauth.js";
 import { registerPromptCommands } from "./commands/prompts.js";
 import { registerResourcesCommands } from "./commands/resources.js";
 import { registerServerCommands } from "./commands/server.js";
+import { registerTelemetryCommands } from "./commands/telemetry.js";
 import { registerToolsCommands } from "./commands/tools.js";
 import { registerInspectorCommands } from "./commands/inspector.js";
 import {
@@ -17,6 +18,11 @@ import {
   writeError,
 } from "./lib/output.js";
 import { addGlobalOptions } from "./lib/server-config.js";
+import {
+  captureCommandEvent,
+  initTelemetry,
+  type TelemetryOptions,
+} from "./lib/telemetry.js";
 import { checkForUpdates } from "./lib/update-notifier.js";
 
 const pkgVersion = packageJson.version;
@@ -26,12 +32,17 @@ export interface CliMainResult {
   shouldCheckForUpdates: boolean;
 }
 
-export interface CliEntrypointDependencies {
+export interface CliMainDependencies {
+  telemetry?: TelemetryOptions;
+}
+
+export interface CliEntrypointDependencies extends CliMainDependencies {
   checkForUpdates?: (currentVersion: string) => void;
 }
 
 export async function main(
   argv: readonly string[] = process.argv,
+  dependencies: CliMainDependencies = {},
 ): Promise<CliMainResult> {
   const program = addGlobalOptions(
     new Command()
@@ -49,6 +60,7 @@ export async function main(
         },
       }),
   );
+  const telemetry = initTelemetry(program, pkgVersion, dependencies.telemetry);
 
   registerServerCommands(program);
   registerToolsCommands(program);
@@ -58,6 +70,7 @@ export async function main(
   registerOAuthCommands(program);
   registerProtocolCommands(program);
   registerInspectorCommands(program);
+  registerTelemetryCommands(program, dependencies.telemetry);
 
   if (argv.length <= 2) {
     program.outputHelp();
@@ -71,14 +84,22 @@ export async function main(
     await program.parseAsync(argv as string[]);
     const exitCode = process.exitCode;
     if (typeof exitCode === "number") {
+      captureCommandEvent(exitCode, exitCode === 0 ? undefined : "UNKNOWN_ERROR");
+      await telemetry.flush();
       return {
         exitCode,
         shouldCheckForUpdates: true,
       };
     }
 
+    const normalizedExitCode = Number(exitCode ?? 0) || 0;
+    captureCommandEvent(
+      normalizedExitCode,
+      normalizedExitCode === 0 ? undefined : "UNKNOWN_ERROR",
+    );
+    await telemetry.flush();
     return {
-      exitCode: Number(exitCode ?? 0) || 0,
+      exitCode: normalizedExitCode,
       shouldCheckForUpdates: true,
     };
   } catch (error) {
@@ -89,6 +110,7 @@ export async function main(
         error.code === "commander.helpDisplayed" ||
         error.code === "commander.version"
       ) {
+        await telemetry.flush();
         return {
           exitCode: 0,
           shouldCheckForUpdates: false,
@@ -96,6 +118,8 @@ export async function main(
       }
 
       writeError(usageError(error.message), format);
+      captureCommandEvent(2, "USAGE_ERROR");
+      await telemetry.flush();
       return {
         exitCode: 2,
         shouldCheckForUpdates: false,
@@ -104,6 +128,8 @@ export async function main(
 
     const normalizedError = normalizeCliError(error);
     writeError(normalizedError, format);
+    captureCommandEvent(normalizedError.exitCode, normalizedError.code);
+    await telemetry.flush();
     return {
       exitCode: normalizedError.exitCode,
       shouldCheckForUpdates: false,
@@ -115,7 +141,7 @@ export async function runCliEntrypoint(
   argv: readonly string[] = process.argv,
   dependencies: CliEntrypointDependencies = {},
 ): Promise<CliMainResult> {
-  const result = await main(argv);
+  const result = await main(argv, dependencies);
   process.exitCode = result.exitCode;
 
   if (result.exitCode === 0 && result.shouldCheckForUpdates) {

@@ -28,6 +28,7 @@ Options:
   --timeout <ms>     Request timeout in milliseconds (default: 30000)
   --rpc              Include RPC logs in JSON output
   --quiet            Suppress non-result progress output
+  --no-telemetry     Disable anonymous usage telemetry
   --format <format>  Output format
   -h, --help         display help for command
 
@@ -40,6 +41,7 @@ Commands:
   oauth              Run MCP OAuth login, proxy, and conformance flows
   protocol           MCP protocol inspection and conformance checks
   inspector          Start or attach to the local MCPJam Inspector
+  telemetry          Inspect and configure anonymous CLI telemetry
 ```
 
 ## Quick start
@@ -160,6 +162,27 @@ echo '{"query":"setup guide"}' | mcpjam tools call --url $URL --access-token $TO
 ```
 
 Use `--format json|human` for the raw command result. Use `--reporter json-summary|junit-xml` on conformance and diff commands when CI needs a report artifact. `server validate` uses `--debug-out` for validation artifacts.
+
+## Telemetry
+
+`mcpjam` collects anonymous command-level telemetry so we can understand CLI usage and reliability. Events include the command/subcommand name, success/failure, exit code, duration, CLI version, Node version, OS, CPU architecture, transport type (`http` or `stdio`), `platform: "cli"`, and coarse CI metadata (`is_ci` and a provider enum such as `github_actions`).
+
+Telemetry uses a random install UUID stored at the same platform cache location as update checks, in `telemetry.json`. It does not collect raw argv, URLs, hostnames, ports, tokens, headers, environment values, working directories, file paths, tool/resource/prompt names, error messages, stack traces, repository names, branch names, workflow names, or CI job ids.
+
+Disable telemetry for one invocation with `--no-telemetry`, or persistently with:
+
+```bash
+mcpjam telemetry disable
+```
+
+Check or re-enable it with:
+
+```bash
+mcpjam telemetry status
+mcpjam telemetry enable
+```
+
+Set `DO_NOT_TRACK=1` or `MCPJAM_TELEMETRY_DISABLED=1` to disable telemetry through the environment. Set `MCPJAM_TELEMETRY_DEBUG=1` to print the sanitized telemetry payload to stderr instead of sending it.
 
 ## GitHub Actions
 

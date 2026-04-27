@@ -16,6 +16,7 @@ export interface GlobalOptions {
   timeout: number;
   rpc: boolean;
   quiet: boolean;
+  telemetry: boolean;
 }
 
 type TransportType = "http" | "stdio";
@@ -109,6 +110,7 @@ export function getGlobalOptions(command: Command): GlobalOptions {
     timeout: options.timeout ?? 30_000,
     rpc: options.rpc ?? false,
     quiet: options.quiet ?? false,
+    telemetry: options.telemetry ?? true,
   };
 }
 
@@ -370,6 +372,7 @@ export function addGlobalOptions(program: Command): Command {
     )
     .option("--rpc", "Include RPC logs in JSON output")
     .option("--quiet", "Suppress non-result progress output")
+    .option("--no-telemetry", "Disable anonymous usage telemetry")
     .option("--format <format>", "Output format");
 }
 
