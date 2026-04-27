@@ -260,7 +260,11 @@ jobs:
     needs:
       - preflight
       - artifact-gate
-    if: ${{ fromJSON(needs.preflight.outputs.publish_any) }}
+    if: |
+      always() &&
+      needs.preflight.result == 'success' &&
+      needs.artifact-gate.result == 'success' &&
+      needs.preflight.outputs.publish_any == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -327,7 +331,10 @@ jobs:
     needs:
       - preflight
       - publish-packages
-    if: ${{ fromJSON(inputs.deploy_backend_prod) }}
+    if: |
+      always() &&
+      needs.publish-packages.result == 'success' &&
+      fromJSON(inputs.deploy_backend_prod)
     runs-on: ubuntu-latest
     environment: backend-production
     steps:
