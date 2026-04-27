@@ -39,7 +39,7 @@ function resetClientConfigStore(defaultConfig: WorkspaceConnectionConfigDraft) {
   });
 }
 
-describe("ClientConfigTab reconnect warnings", () => {
+describe("ClientConfigTab connection settings warnings", () => {
   beforeEach(() => {
     const defaultConfig: WorkspaceConnectionConfigDraft = {
       version: 1,
@@ -119,5 +119,59 @@ describe("ClientConfigTab reconnect warnings", () => {
     );
 
     expect(screen.queryByText("Needs reconnect")).not.toBeInTheDocument();
+  });
+
+  it("prompts users to toggle the connection when settings changed", () => {
+    const initializedCapabilities = getDefaultClientCapabilities() as Record<
+      string,
+      unknown
+    >;
+
+    render(
+      <ClientConfigTab
+        activeWorkspaceId="workspace-1"
+        workspace={{
+          id: "workspace-1",
+          name: "Workspace 1",
+          clientConfig: {
+            version: 1,
+            clientCapabilities: {
+              elicitation: {},
+              experimental: {
+                inspectorProfile: true,
+              },
+            },
+            hostContext: {},
+          },
+          servers: {
+            "test-server": {
+              name: "test-server",
+              config: {
+                command: "npx",
+                args: ["-y", "@modelcontextprotocol/server-test"],
+              },
+              lastConnectionTime: new Date("2026-01-01T00:00:00.000Z"),
+              connectionStatus: "connected",
+              retryCount: 0,
+              enabled: true,
+              useOAuth: false,
+              initializationInfo: {
+                clientCapabilities: initializedCapabilities,
+              } as any,
+            },
+          },
+          createdAt: new Date("2026-01-01T00:00:00.000Z"),
+          updatedAt: new Date("2026-01-01T00:00:00.000Z"),
+        }}
+        onSaveClientConfig={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByText(/reconnect/i)).not.toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /Connection settings changed for test-server\. Turn the connection off and on to apply\./,
+      ),
+    ).toBeInTheDocument();
   });
 });
