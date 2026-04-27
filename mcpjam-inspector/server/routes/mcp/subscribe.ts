@@ -6,6 +6,9 @@ const subscribe = new Hono();
 
 subscribe.get("/", async (c) => {
   const encoder = new TextEncoder();
+  const clientId =
+    c.req.query("clientId") ??
+    `client_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
 
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
@@ -28,8 +31,19 @@ subscribe.get("/", async (c) => {
         } catch {}
       };
 
+      const supersede = () => {
+        try {
+          controller.enqueue(encoder.encode("event: superseded\ndata: {}\n\n"));
+        } catch {}
+      };
+
       controller.enqueue(encoder.encode("retry: 1500\n\n"));
-      const unregister = inspectorCommandBus.registerSubscriber({ send, close });
+      const unregister = inspectorCommandBus.registerSubscriber({
+        clientId,
+        send,
+        supersede,
+        close,
+      });
 
       c.req.raw.signal.addEventListener("abort", () => {
         unregister();

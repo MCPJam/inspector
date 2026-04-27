@@ -22,9 +22,16 @@ async function runCli(args: string[]): Promise<{
     execFile(
       process.execPath,
       [TSX_CLI_PATH, CLI_ENTRY_PATH, ...args],
-      { cwd: CLI_DIR, encoding: "utf8", env: process.env },
+      {
+        cwd: CLI_DIR,
+        encoding: "utf8",
+        env: { ...process.env, MCPJAM_CLI_DISABLE_BROWSER_OPEN: "1" },
+      },
       (error, stdout, stderr) => {
-        if (error && typeof (error as NodeJS.ErrnoException).code !== "number") {
+        if (
+          error &&
+          typeof (error as NodeJS.ErrnoException).code !== "number"
+        ) {
           reject(error);
           return;
         }
@@ -231,14 +238,174 @@ test("apps debug --ui starts Inspector and drives command bus render", async () 
     assert.equal(payload.inspectorUi, true);
     assert.equal(payload.toolName, "create_view");
     assert.ok(payload.execution, "SDK execution result should be present");
-    assert.ok(payload.inspectorRender, "Inspector render result should be present");
+    assert.ok(
+      payload.inspectorRender,
+      "Inspector render result should be present",
+    );
 
     const commandRequests = requests.filter(
       (entry) => entry.url === "/api/mcp/command",
     );
     assert.deepEqual(
       commandRequests.map((entry) => (entry.body as { type?: string }).type),
-      ["openAppBuilder", "executeTool", "snapshotApp"],
+      ["openAppBuilder", "renderToolResult", "snapshotApp"],
+    );
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => (error ? reject(error) : resolve()));
+    });
+  }
+});
+
+test("apps debug --ui exits non-zero when Inspector render command fails", async () => {
+  const requests: Array<{ method?: string; url?: string; body?: unknown }> = [];
+
+  const server = http.createServer(async (request, response) => {
+    if (request.method === "GET" && request.url === "/health") {
+      response.writeHead(200, { "Content-Type": "application/json" });
+      response.end(JSON.stringify({ status: "ok" }));
+      return;
+    }
+
+    if (request.method === "GET" && request.url === "/api/session-token") {
+      response.writeHead(200, { "Content-Type": "application/json" });
+      response.end(JSON.stringify({ token: "test-token" }));
+      return;
+    }
+
+    if (request.method === "POST" && request.url === "/mcp") {
+      const body = await readJsonBody(request);
+      const method = body.method as string;
+      const id = body.id;
+
+      if (method === "initialize") {
+        response.writeHead(200, { "Content-Type": "application/json" });
+        response.end(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id,
+            result: {
+              protocolVersion: "2025-03-26",
+              capabilities: { tools: {} },
+              serverInfo: { name: "test-server", version: "1.0.0" },
+            },
+          }),
+        );
+        return;
+      }
+
+      if (method === "tools/list") {
+        response.writeHead(200, { "Content-Type": "application/json" });
+        response.end(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id,
+            result: {
+              tools: [{ name: "create_view", inputSchema: { type: "object" } }],
+            },
+          }),
+        );
+        return;
+      }
+
+      if (method === "tools/call") {
+        response.writeHead(200, { "Content-Type": "application/json" });
+        response.end(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id,
+            result: { content: [{ type: "text", text: "view created" }] },
+          }),
+        );
+        return;
+      }
+
+      if (method === "notifications/initialized") {
+        response.writeHead(200, { "Content-Type": "application/json" });
+        response.end(JSON.stringify({ jsonrpc: "2.0" }));
+        return;
+      }
+
+      response.writeHead(200, { "Content-Type": "application/json" });
+      response.end(JSON.stringify({ jsonrpc: "2.0", id, result: {} }));
+      return;
+    }
+
+    if (request.method === "POST" && request.url) {
+      const body = await readJsonBody(request);
+      requests.push({ method: request.method, url: request.url, body });
+
+      if (request.url === "/api/mcp/connect") {
+        response.writeHead(200, { "Content-Type": "application/json" });
+        response.end(JSON.stringify({ success: true, status: "connected" }));
+        return;
+      }
+
+      if (request.url === "/api/mcp/command") {
+        const type = body.type as string | undefined;
+        const isRender = type === "renderToolResult";
+        response.writeHead(isRender ? 500 : 200, {
+          "Content-Type": "application/json",
+        });
+        response.end(
+          JSON.stringify(
+            isRender
+              ? {
+                  id: (body.id as string | undefined) ?? "cmd",
+                  status: "error",
+                  error: {
+                    code: "unknown_tool",
+                    message: "Unknown tool.",
+                  },
+                }
+              : {
+                  id: (body.id as string | undefined) ?? "cmd",
+                  status: "success",
+                  result: { type },
+                },
+          ),
+        );
+        return;
+      }
+    }
+
+    response.writeHead(404);
+    response.end();
+  });
+
+  await new Promise<void>((resolve) => {
+    server.listen(0, "127.0.0.1", () => resolve());
+  });
+  const { port } = server.address() as AddressInfo;
+
+  try {
+    const result = await runCli([
+      "--format",
+      "json",
+      "apps",
+      "debug",
+      "--ui",
+      "--inspector-url",
+      `http://127.0.0.1:${port}`,
+      "--url",
+      `http://127.0.0.1:${port}/mcp`,
+      "--tool-name",
+      "create_view",
+      "--params",
+      "{}",
+    ]);
+
+    assert.equal(result.exitCode, 1, result.stderr);
+    const payload = JSON.parse(result.stdout) as Record<string, any>;
+    assert.equal(payload.success, false);
+    assert.equal(payload.error.code, "unknown_tool");
+
+    const commandRequests = requests.filter(
+      (entry) => entry.url === "/api/mcp/command",
+    );
+    assert.deepEqual(
+      commandRequests.map((entry) => (entry.body as { type?: string }).type),
+      ["openAppBuilder", "renderToolResult"],
     );
   } finally {
     await new Promise<void>((resolve, reject) => {

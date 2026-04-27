@@ -64,6 +64,7 @@ import {
 } from "@/lib/inspector-command-handlers";
 import type {
   ExecuteToolInspectorCommand,
+  RenderToolResultInspectorCommand,
   SelectToolInspectorCommand,
   SetAppContextInspectorCommand,
   SnapshotAppInspectorCommand,
@@ -226,17 +227,21 @@ export function AppBuilderTab({
   >({});
 
   // Tool execution hook
-  const { pendingExecution, clearPendingExecution, executeTool } =
-    useToolExecution({
-      serverName,
-      selectedTool,
-      toolsMetadata,
-      formFields,
-      setIsExecuting,
-      setExecutionError,
-      setToolOutput,
-      setToolResponseMetadata,
-    });
+  const {
+    pendingExecution,
+    clearPendingExecution,
+    executeTool,
+    injectToolResult,
+  } = useToolExecution({
+    serverName,
+    selectedTool,
+    toolsMetadata,
+    formFields,
+    setIsExecuting,
+    setExecutionError,
+    setToolOutput,
+    setToolResponseMetadata,
+  });
 
   // Saved requests hook
   const savedRequestsHook = useSavedRequests({
@@ -426,7 +431,10 @@ export function AppBuilderTab({
 
   const selectToolForCommand = useCallback(
     async (
-      command: SelectToolInspectorCommand | ExecuteToolInspectorCommand,
+      command:
+        | SelectToolInspectorCommand
+        | ExecuteToolInspectorCommand
+        | RenderToolResultInspectorCommand,
     ) => {
       if (command.payload.surface !== "app-builder") {
         throw createInspectorCommandClientError(
@@ -533,7 +541,11 @@ export function AppBuilderTab({
     [],
   );
 
-  useEffect(() => {
+  // useLayoutEffect so command handlers update synchronously during commit —
+  // before setTimeout(0)-based waitForUiCommit() resolves.  This prevents
+  // stale-closure races when sequential commands (e.g. openAppBuilder then
+  // renderToolResult) arrive faster than useEffect would re-register handlers.
+  useLayoutEffect(() => {
     const unregisterSelectTool = registerInspectorCommandHandler(
       "selectTool",
       async (rawCommand) => {
@@ -567,6 +579,28 @@ export function AppBuilderTab({
             outcome.response,
           );
         }
+
+        return {
+          ...buildAppBuilderSnapshot(),
+          serverName: selection.serverName,
+          toolName: outcome.toolName,
+          parameters: outcome.parameters,
+          result: outcome.result,
+        };
+      },
+    );
+
+    const unregisterRenderToolResult = registerInspectorCommandHandler(
+      "renderToolResult",
+      async (rawCommand) => {
+        const command = rawCommand as RenderToolResultInspectorCommand;
+        const selection = await selectToolForCommand(command);
+        const outcome = await injectToolResult({
+          toolName: command.payload.toolName,
+          parameters: selection.parameters,
+          result: command.payload.result,
+        });
+        await waitForUiCommit();
 
         return {
           ...buildAppBuilderSnapshot(),
@@ -629,12 +663,14 @@ export function AppBuilderTab({
     return () => {
       unregisterSelectTool();
       unregisterExecuteTool();
+      unregisterRenderToolResult();
       unregisterSetAppContext();
       unregisterSnapshotApp();
     };
   }, [
     buildAppBuilderSnapshot,
     executeTool,
+    injectToolResult,
     resolveCommandProtocol,
     selectToolForCommand,
     setDeviceType,

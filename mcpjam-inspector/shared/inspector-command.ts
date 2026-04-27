@@ -21,6 +21,7 @@ export type InspectorCommandType =
   | "setAppContext"
   | "selectTool"
   | "executeTool"
+  | "renderToolResult"
   | "snapshotApp";
 
 export interface InspectorCommandError {
@@ -88,6 +89,19 @@ export interface ExecuteToolInspectorCommand {
   timeoutMs?: number;
 }
 
+export interface RenderToolResultInspectorCommand {
+  id: string;
+  type: "renderToolResult";
+  payload: {
+    surface: "tools" | "app-builder";
+    serverName?: string;
+    toolName: string;
+    parameters?: Record<string, unknown>;
+    result: unknown;
+  };
+  timeoutMs?: number;
+}
+
 export interface SnapshotAppInspectorCommand {
   id: string;
   type: "snapshotApp";
@@ -102,6 +116,7 @@ export type InspectorCommand =
   | SetAppContextInspectorCommand
   | SelectToolInspectorCommand
   | ExecuteToolInspectorCommand
+  | RenderToolResultInspectorCommand
   | SnapshotAppInspectorCommand;
 
 export interface InspectorCommandSuccessResponse {
@@ -130,6 +145,7 @@ export function isInspectorCommandType(
     value === "setAppContext" ||
     value === "selectTool" ||
     value === "executeTool" ||
+    value === "renderToolResult" ||
     value === "snapshotApp"
   );
 }

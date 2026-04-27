@@ -5,7 +5,6 @@ import { type MCPServerConfig, type RetryPolicy } from "@mcpjam/sdk";
 import { withEphemeralManager } from "../lib/ephemeral.js";
 import {
   InspectorApiClient,
-  ensureInspector,
   delay,
   type InspectorCommandResponse,
 } from "../lib/inspector-api.js";
@@ -21,7 +20,7 @@ import {
   parseServerConfig,
   type SharedServerTargetOptions,
 } from "../lib/server-config.js";
-import { usageError, writeResult } from "../lib/output.js";
+import { setProcessExitCode, usageError, writeResult } from "../lib/output.js";
 
 interface AppsDebugOptions extends SharedServerTargetOptions {
   toolName?: string;
@@ -135,11 +134,15 @@ export function registerAppsDebugCommand(parent: Command): void {
           serverName,
           timeoutMs: globalOptions.timeout,
           toolName,
+          toolResult: sdkResult.execution,
         })
+      : undefined;
+    const inspectorRenderError = uiResult
+      ? findInspectorRenderError(uiResult)
       : undefined;
 
     const payload = {
-      success: true,
+      success: !inspectorRenderError,
       command: "apps debug",
       inspectorUi: Boolean(options.ui),
       target,
@@ -147,7 +150,12 @@ export function registerAppsDebugCommand(parent: Command): void {
       params,
       ...sdkResult,
       ...(uiResult ? { inspectorRender: uiResult } : {}),
+      ...(inspectorRenderError ? { error: inspectorRenderError } : {}),
     };
+
+    if (inspectorRenderError) {
+      setProcessExitCode(1);
+    }
 
     if (options.out) {
       const artifactPath = await writeJsonArtifact(options.out, payload);
@@ -229,25 +237,17 @@ async function runUiRender(options: {
   serverName: string;
   timeoutMs: number;
   toolName: string;
+  toolResult: unknown;
 }) {
   const client = new InspectorApiClient({ baseUrl: options.baseUrl });
   const ensureResult = await client.ensure({
-    openBrowser: false,
+    openBrowser: true,
     startIfNeeded: true,
+    tab: "app-builder",
     timeoutMs: options.timeoutMs,
   });
 
   await client.connectServer(options.serverName, options.config);
-
-  if (ensureResult.started) {
-    await ensureInspector({
-      baseUrl: ensureResult.baseUrl,
-      openBrowser: true,
-      startIfNeeded: false,
-      tab: "app-builder",
-      timeoutMs: options.timeoutMs,
-    });
-  }
 
   const renderResult = await runInspectorAppRender({
     client,
@@ -256,6 +256,7 @@ async function runUiRender(options: {
     serverName: options.serverName,
     timeoutMs: options.timeoutMs,
     toolName: options.toolName,
+    toolResult: options.toolResult,
   });
 
   return {
@@ -272,12 +273,16 @@ async function runInspectorAppRender(options: {
   serverName: string;
   timeoutMs: number;
   toolName: string;
+  toolResult: unknown;
 }) {
   const openAppBuilder = await executeInspectorCommandWithClient(options, {
     type: "openAppBuilder",
     payload: { serverName: options.serverName },
     timeoutMs: options.timeoutMs,
   });
+  if (openAppBuilder.status === "error") {
+    return { openAppBuilder };
+  }
 
   const contextPayload = compactRecord(options.renderContext);
   const setAppContext =
@@ -288,17 +293,28 @@ async function runInspectorAppRender(options: {
           timeoutMs: options.timeoutMs,
         })
       : undefined;
+  if (setAppContext?.status === "error") {
+    return { openAppBuilder, setAppContext };
+  }
 
-  const executeTool = await executeInspectorCommandWithClient(options, {
-    type: "executeTool",
+  const renderToolResult = await executeInspectorCommandWithClient(options, {
+    type: "renderToolResult",
     payload: {
       surface: "app-builder",
       serverName: options.serverName,
       toolName: options.toolName,
       parameters: options.params,
+      result: options.toolResult,
     },
     timeoutMs: options.timeoutMs,
   });
+  if (renderToolResult.status === "error") {
+    return {
+      openAppBuilder,
+      ...(setAppContext ? { setAppContext } : {}),
+      renderToolResult,
+    };
+  }
 
   const snapshotApp = await executeInspectorCommandWithClient(options, {
     type: "snapshotApp",
@@ -309,7 +325,7 @@ async function runInspectorAppRender(options: {
   return {
     openAppBuilder,
     ...(setAppContext ? { setAppContext } : {}),
-    executeTool,
+    renderToolResult,
     snapshot: snapshotApp,
   };
 }
@@ -336,10 +352,28 @@ async function executeInspectorCommandWithClient(
     }
 
     console.debug(
-      `[apps debug] Retrying "${request.type}" command (${response.error.code}), ${Math.max(0, deadline - Date.now())}ms remaining`,
+      `[apps debug] Retrying "${request.type}" command (${
+        response.error.code
+      }), ${Math.max(0, deadline - Date.now())}ms remaining`,
     );
     await delay(500);
   } while (true);
+}
+
+function findInspectorRenderError(
+  renderResult: Record<string, unknown>,
+): Extract<InspectorCommandResponse, { status: "error" }>["error"] | undefined {
+  for (const value of Object.values(renderResult)) {
+    if (
+      value &&
+      typeof value === "object" &&
+      (value as InspectorCommandResponse).status === "error"
+    ) {
+      return (value as Extract<InspectorCommandResponse, { status: "error" }>)
+        .error;
+    }
+  }
+  return undefined;
 }
 
 function buildAppsDebugResult(options: {

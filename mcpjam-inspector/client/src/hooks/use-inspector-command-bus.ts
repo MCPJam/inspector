@@ -7,6 +7,13 @@ import type {
   InspectorCommandResponse,
 } from "@/shared/inspector-command.js";
 
+function buildCommandBusClientId(): string {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
+  return `client_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
 async function postCommandResult(
   response: InspectorCommandResponse,
 ): Promise<void> {
@@ -23,7 +30,12 @@ export function useInspectorCommandBus(): void {
       return;
     }
 
-    const eventSource = new EventSource(addTokenToUrl("/api/mcp/subscribe"));
+    const clientId = buildCommandBusClientId();
+    const eventSource = new EventSource(
+      addTokenToUrl(
+        `/api/mcp/subscribe?clientId=${encodeURIComponent(clientId)}`,
+      ),
+    );
 
     eventSource.onmessage = (event) => {
       void (async () => {
@@ -54,6 +66,10 @@ export function useInspectorCommandBus(): void {
         "[inspector-command-bus] command SSE connection error, browser will retry",
       );
     };
+
+    eventSource.addEventListener("superseded", () => {
+      eventSource.close();
+    });
 
     return () => {
       eventSource.close();

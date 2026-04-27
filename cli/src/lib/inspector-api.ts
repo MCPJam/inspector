@@ -83,8 +83,9 @@ export async function ensureInspector(
 ): Promise<{ baseUrl: string; started: boolean }> {
   const baseUrl = normalizeInspectorBaseUrl(options.baseUrl);
 
-  if (await isInspectorHealthy(baseUrl)) {
-    if (options.openBrowser) {
+  const health = await getInspectorHealth(baseUrl);
+  if (health.healthy) {
+    if (options.openBrowser && !health.hasActiveClient) {
       openUrl(buildInspectorUrl(baseUrl, options.tab));
     }
     return { baseUrl, started: false };
@@ -308,13 +309,32 @@ function getInspectorStartScriptPath(): string {
   );
 }
 
-async function isInspectorHealthy(baseUrl: string): Promise<boolean> {
+interface InspectorHealthStatus {
+  healthy: boolean;
+  hasActiveClient: boolean;
+}
+
+async function getInspectorHealth(
+  baseUrl: string,
+): Promise<InspectorHealthStatus> {
   try {
     const response = await fetch(`${baseUrl}/health`);
-    return response.ok;
+    if (!response.ok) {
+      return { healthy: false, hasActiveClient: false };
+    }
+    const body = (await response.json()) as { hasActiveClient?: boolean };
+    return {
+      healthy: true,
+      hasActiveClient: body.hasActiveClient === true,
+    };
   } catch {
-    return false;
+    return { healthy: false, hasActiveClient: false };
   }
+}
+
+async function isInspectorHealthy(baseUrl: string): Promise<boolean> {
+  const status = await getInspectorHealth(baseUrl);
+  return status.healthy;
 }
 
 async function startInspector(
@@ -356,6 +376,10 @@ async function startInspector(
 }
 
 function openUrl(url: string): void {
+  if (process.env.MCPJAM_CLI_DISABLE_BROWSER_OPEN === "1") {
+    return;
+  }
+
   const platform = process.platform;
   const child =
     platform === "darwin"

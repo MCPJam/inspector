@@ -8,7 +8,9 @@ import {
 } from "@/shared/inspector-command.js";
 
 type Subscriber = {
+  clientId: string;
   send: (command: InspectorCommand) => void;
+  supersede: () => void;
   close: () => void;
 };
 
@@ -17,16 +19,29 @@ type PendingCommand = {
   timeout: NodeJS.Timeout;
 };
 
-class InspectorCommandBus {
+export class InspectorCommandBus {
   private subscriber: Subscriber | null = null;
   private pending = new Map<string, PendingCommand>();
+  private supersededClientIds = new Set<string>();
+
+  hasActiveClient(): boolean {
+    return this.subscriber !== null;
+  }
 
   registerSubscriber(subscriber: Subscriber): () => void {
+    if (this.supersededClientIds.has(subscriber.clientId)) {
+      subscriber.supersede();
+      subscriber.close();
+      return () => {};
+    }
+
     if (this.subscriber) {
       console.debug(
         "[inspector-command-bus] Evicting previous subscriber — only one active client is supported.",
       );
+      this.markSuperseded(this.subscriber.clientId);
       try {
+        this.subscriber.supersede();
         this.subscriber.close();
       } catch {}
     }
@@ -118,6 +133,13 @@ class InspectorCommandBus {
       status: "error",
       error: buildInspectorCommandError(code, message),
     };
+  }
+
+  private markSuperseded(clientId: string): void {
+    this.supersededClientIds.add(clientId);
+    setTimeout(() => {
+      this.supersededClientIds.delete(clientId);
+    }, 60_000).unref?.();
   }
 }
 

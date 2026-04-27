@@ -46,6 +46,9 @@ export interface UseToolExecutionReturn {
   executeTool: (
     options?: ExecuteToolInvocationOptions,
   ) => Promise<ExecuteToolInvocationResult>;
+  injectToolResult: (
+    options: InjectToolResultOptions,
+  ) => Promise<CompletedToolInvocationResult>;
 }
 
 export interface ExecuteToolInvocationOptions {
@@ -54,14 +57,22 @@ export interface ExecuteToolInvocationOptions {
   formFields?: FormField[];
 }
 
+export interface InjectToolResultOptions {
+  toolName: string;
+  parameters: Record<string, unknown>;
+  result: unknown;
+}
+
+export type CompletedToolInvocationResult = {
+  ok: true;
+  toolName: string;
+  parameters: Record<string, unknown>;
+  result: unknown;
+  response: { status: "completed"; result: unknown; durationMs?: number };
+};
+
 export type ExecuteToolInvocationResult =
-  | {
-      ok: true;
-      toolName: string;
-      parameters: Record<string, unknown>;
-      result: unknown;
-      response: Extract<ToolExecutionResponse, { status: "completed" }>;
-    }
+  | CompletedToolInvocationResult
   | {
       ok: false;
       toolName?: string;
@@ -105,6 +116,39 @@ export function useToolExecution({
   const clearPendingExecution = useCallback(() => {
     setPendingExecution(null);
   }, []);
+
+  const storeCompletedToolResult = useCallback(
+    (
+      effectiveToolName: string,
+      params: Record<string, unknown>,
+      result: unknown,
+    ) => {
+      // Store raw output for inspector
+      setToolOutput(result);
+
+      // Extract metadata safely
+      const resultMeta = extractMetadata(result);
+      setToolResponseMetadata(resultMeta || null);
+
+      const definitionMeta = toolsMetadata[effectiveToolName];
+      const mergedMeta =
+        definitionMeta || resultMeta
+          ? {
+              ...(definitionMeta ?? {}),
+              ...(resultMeta ?? {}),
+            }
+          : undefined;
+
+      // Set pending execution for chat thread to inject
+      setPendingExecution({
+        toolName: effectiveToolName,
+        params,
+        result,
+        toolMeta: mergedMeta,
+      });
+    },
+    [setToolOutput, setToolResponseMetadata, toolsMetadata],
+  );
 
   const executeTool = useCallback(
     async (
@@ -180,30 +224,7 @@ export function useToolExecution({
         }
 
         const result = response.result;
-
-        // Store raw output for inspector
-        setToolOutput(result);
-
-        // Extract metadata safely
-        const resultMeta = extractMetadata(result);
-        setToolResponseMetadata(resultMeta || null);
-
-        const definitionMeta = toolsMetadata[effectiveToolName];
-        const mergedMeta =
-          definitionMeta || resultMeta
-            ? {
-                ...(definitionMeta ?? {}),
-                ...(resultMeta ?? {}),
-              }
-            : undefined;
-
-        // Set pending execution for chat thread to inject
-        setPendingExecution({
-          toolName: effectiveToolName,
-          params,
-          result,
-          toolMeta: mergedMeta,
-        });
+        storeCompletedToolResult(effectiveToolName, params, result);
 
         // Log successful tool execution
         posthog.capture("app_builder_tool_executed", {
@@ -253,10 +274,29 @@ export function useToolExecution({
       serverName,
       setExecutionError,
       setIsExecuting,
-      setToolOutput,
-      setToolResponseMetadata,
-      toolsMetadata,
+      storeCompletedToolResult,
     ],
+  );
+
+  const injectToolResult = useCallback(
+    async ({
+      toolName,
+      parameters,
+      result,
+    }: InjectToolResultOptions): Promise<CompletedToolInvocationResult> => {
+      setIsExecuting(false);
+      setExecutionError(null);
+      storeCompletedToolResult(toolName, parameters, result);
+
+      return {
+        ok: true,
+        toolName,
+        parameters,
+        result,
+        response: { status: "completed", result },
+      };
+    },
+    [setExecutionError, setIsExecuting, storeCompletedToolResult],
   );
 
   // Keyboard shortcut for execute (Cmd/Ctrl + Enter)
@@ -276,5 +316,6 @@ export function useToolExecution({
     pendingExecution,
     clearPendingExecution,
     executeTool,
+    injectToolResult,
   };
 }

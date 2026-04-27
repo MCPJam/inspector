@@ -23,6 +23,7 @@ import {
   generateSessionToken,
   getSessionToken,
 } from "./services/session-token";
+import { inspectorCommandBus } from "./services/inspector-command-bus";
 import { isAllowedHost } from "./utils/localhost-check";
 import {
   sessionAuthMiddleware,
@@ -356,7 +357,11 @@ app.options("/sse/message", (c) => {
 
 // Health check
 app.get("/health", (c) => {
-  return c.json({ status: "ok", timestamp: new Date().toISOString() });
+  return c.json({
+    status: "ok",
+    timestamp: new Date().toISOString(),
+    hasActiveClient: inspectorCommandBus.hasActiveClient(),
+  });
 });
 
 // Session token endpoint (for dev mode where HTML isn't served by this server)
