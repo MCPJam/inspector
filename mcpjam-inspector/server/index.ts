@@ -23,6 +23,7 @@ import {
   generateSessionToken,
   getSessionToken,
 } from "./services/session-token";
+import { inspectorCommandBus } from "./services/inspector-command-bus";
 import { isAllowedHost } from "./utils/localhost-check";
 import {
   sessionAuthMiddleware,
@@ -34,6 +35,7 @@ import { inAppBrowserMiddleware } from "./middleware/in-app-browser";
 import { startGuestAuthProvisioningInBackground } from "./utils/convex-guest-auth-sync";
 
 import { getSystemLogger } from "./utils/request-logger";
+import { requestLogContextMiddleware } from "./middleware/request-log-context";
 
 const sysLogger = getSystemLogger("process");
 
@@ -313,6 +315,9 @@ app.use(
   }),
 );
 
+// Typed event logging context (matches app.ts)
+app.use("/api/*", requestLogContextMiddleware);
+
 // API Routes
 if (!HOSTED_MODE) {
   app.route("/api/apps", appsRoutes);
@@ -352,7 +357,11 @@ app.options("/sse/message", (c) => {
 
 // Health check
 app.get("/health", (c) => {
-  return c.json({ status: "ok", timestamp: new Date().toISOString() });
+  return c.json({
+    status: "ok",
+    timestamp: new Date().toISOString(),
+    hasActiveClient: inspectorCommandBus.hasActiveClient(),
+  });
 });
 
 // Session token endpoint (for dev mode where HTML isn't served by this server)
@@ -375,6 +384,14 @@ app.get("/api/session-token", (c) => {
   }
 
   return c.json({ token: getSessionToken() });
+});
+
+// Protected by sessionAuthMiddleware mounted above; the CLI supplies the session token.
+app.post("/api/shutdown", (c) => {
+  setTimeout(() => {
+    void shutdown();
+  }, 25);
+  return c.json({ ok: true });
 });
 
 // API endpoint to get MCP CLI config (for development mode)
@@ -438,7 +455,9 @@ if (process.env.NODE_ENV === "production") {
       // Inject MCP server config if provided via CLI
       const mcpConfig = getMCPConfigFromEnv();
       if (mcpConfig) {
-        const configScript = `<script>window.MCP_CLI_CONFIG = ${JSON.stringify(mcpConfig)};</script>`;
+        const configScript = `<script>window.MCP_CLI_CONFIG = ${JSON.stringify(
+          mcpConfig,
+        )};</script>`;
         htmlContent = htmlContent.replace("</head>", `${configScript}</head>`);
       }
 

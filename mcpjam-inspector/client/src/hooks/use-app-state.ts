@@ -636,6 +636,7 @@ export function useAppState({
     handleDisconnect: serverState.handleDisconnect,
     handleReconnect: serverState.handleReconnect,
     ensureServersReady: serverState.ensureServersReady,
+    syncAgentStatus: serverState.syncAgentStatus,
     handleUpdate: serverState.handleUpdate,
     handleRemoveServer: serverState.handleRemoveServer,
     setSelectedServer: serverState.setSelectedServer,

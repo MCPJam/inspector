@@ -1,6 +1,6 @@
 ---
 name: mcp-inspector
-description: Interpret `mcpjam-cli` probe, doctor, OAuth, apps conformance, tools, resources, and prompts output conservatively against MCP 2025-11-25. Use when triaging MCP server findings, performing security reviews, deciding whether a CLI finding is real or overstated, or turning inspection output into an engineer-facing report with severity and confidence.
+description: Interpret `mcpjam-cli` probe, doctor, OAuth, apps conformance/debug, tools, resources, and prompts output conservatively against MCP 2025-11-25. Use when triaging MCP server findings, performing security reviews, deciding whether a CLI finding is real or overstated, or turning inspection output into an engineer-facing report with severity and confidence.
 ---
 
 # MCPJam CLI Investigation
@@ -29,10 +29,11 @@ Use this skill when analyzing MCP server behavior from `mcpjam-cli` output. The 
 5. Use `server doctor --out <path>` when you need one breadth-first snapshot instead of several single-purpose command outputs.
 6. If the output came from `server doctor` or a `--debug-out` artifact, split it into primary command evidence, probe evidence, and connected-sweep evidence.
 7. If the claim is specifically about MCP Apps tool metadata or `ui://` resources, start with `apps conformance --format json` before dropping to `tools list` or `resources read`.
-8. If a field may be CLI-added or SDK-normalized, read `references/cli-surface-notes.md` before concluding anything.
-9. If the claim depends on MCP semantics, read `references/mcp-2025-11-25-interpretation.md`.
-10. If the task involves security review, read `references/security-best-practices.md` for the full checklist and follow the security review workflow below.
-11. Write the result using the output contract below.
+8. If the claim is about an MCP App tool result rendering in Inspector, use `apps debug --tool-name <name> --params <json|@file> --ui --format json`. Prefer `--out <path>` when the tool result or snapshot may be large.
+9. If a field may be CLI-added or SDK-normalized, read `references/cli-surface-notes.md` before concluding anything.
+10. If the claim depends on MCP semantics, read `references/mcp-2025-11-25-interpretation.md`.
+11. If the task involves security review, read `references/security-best-practices.md` for the full checklist and follow the security review workflow below.
+12. Write the result using the output contract below.
 
 ## Security review workflow
 
@@ -105,6 +106,7 @@ Use `pending` instead of manufacturing a `medium` or `high` security severity fr
 - `oauth login`: obtain reusable credentials and verify the authenticated MCP path. Use this when the goal is to inspect a server that requires OAuth, then follow it with connected commands rather than stopping at the login result.
 - `oauth conformance`, `oauth conformance-suite`: flow-level auth checks. Treat these as targeted probes, not a complete security review. When `--conformance-checks` is enabled, the command can directly probe DCR non-loopback `http://` redirects, invalid client rejection, authorization-endpoint redirect mismatch handling, invalid bearer-token rejection at the MCP server, and token-endpoint redirect mismatch handling.
 - `apps conformance`: server-side MCP Apps checks for `_meta.ui.resourceUri`, `ui://` resources, `resources/read`, HTML MIME and payload shape, and `_meta.ui` metadata. Use this for MCP Apps surface triage.
+- `apps debug`: one MCP App tool execution plus optional Inspector App Builder rendering. With `--ui`, treat `execution` as the tool result and `inspectorRender` as UI command/render evidence; render errors are not automatically tool execution errors.
 - `server info`, `server capabilities`, `server validate`, `server ping`, `server export`: connected behavior after initialization and auth.
 - `tools list` and `tools call`, `resources list/read/templates`, `prompts list/get/list-multi`: direct post-connect capability checks.
 - Prefer `--format json`. Add `--rpc` when available if you need request and response evidence rather than a summary. Add `--debug-out` when you need a failure-safe artifact, not as a replacement for raw evidence.
