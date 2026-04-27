@@ -80,7 +80,6 @@ export function registerProtocolCommands(program: Command): void {
       "Structured reporter output: json-summary or junit-xml",
     )
     .action(async (options, command) => {
-      const format = getFormat(command);
       const reporter = parseReporterFormat(options.reporter as string | undefined);
       const config = buildConfig(options as ProtocolConformanceOptions);
       const result = await new MCPConformanceTest(config).run();
@@ -88,7 +87,7 @@ export function registerProtocolCommands(program: Command): void {
       writeConformanceOutput(
         reporter
           ? renderConformanceReporterResult(result, reporter)
-          : renderConformanceResult(result, format),
+          : renderConformanceResult(result, getFormat(command)),
       );
       if (!result.passed) {
         setProcessExitCode(1);
@@ -106,7 +105,6 @@ export function registerProtocolCommands(program: Command): void {
       "Structured reporter output: json-summary or junit-xml",
     )
     .action(async (options, command) => {
-      const format = getFormat(command);
       const reporter = parseReporterFormat(options.reporter as string | undefined);
       const config = loadProtocolSuiteConfig(options.config as string);
       const result = await new MCPConformanceSuite(config).run();
@@ -114,7 +112,7 @@ export function registerProtocolCommands(program: Command): void {
       writeConformanceOutput(
         reporter
           ? renderConformanceReporterResult(result, reporter)
-          : renderConformanceResult(result, format),
+          : renderConformanceResult(result, getFormat(command)),
       );
       if (!result.passed) {
         setProcessExitCode(1);

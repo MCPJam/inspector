@@ -181,24 +181,18 @@ test("writeCommandDebugArtifact suppresses human notice when quiet", async () =>
   }) as typeof process.stderr.write;
 
   try {
-    await writeCommandDebugArtifact(
-      {
-        outputPath: artifactPath,
-        format: "human",
-        quiet: true,
-        commandName: "server validate",
-        commandInput: {},
-        target: "https://example.com/mcp",
-        outcome: {
-          status: "success",
-          result: { success: true },
-        },
+    await writeCommandDebugArtifact({
+      outputPath: artifactPath,
+      format: "human",
+      quiet: true,
+      commandName: "server validate",
+      commandInput: {},
+      target: "https://example.com/mcp",
+      outcome: {
+        status: "success",
+        result: { success: true },
       },
-      {
-        runDoctor: async <TTarget>() =>
-          createDoctorResult("https://example.com/mcp" as TTarget),
-      },
-    );
+    });
 
     assert.equal(stderr, "");
   } finally {

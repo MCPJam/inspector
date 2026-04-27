@@ -4,7 +4,11 @@ import {
   type ConformanceResult,
   type OAuthConformanceSuiteResult,
 } from "@mcpjam/sdk";
-import { usageError, type OutputFormat } from "./output.js";
+import {
+  rejectReporterFormatAsOutputFormat,
+  usageError,
+  type OutputFormat,
+} from "./output.js";
 
 export type OAuthOutputFormat = OutputFormat;
 
@@ -13,11 +17,7 @@ export function parseOAuthOutputFormat(value: string): OAuthOutputFormat {
     return value;
   }
 
-  if (value === "junit-xml") {
-    throw usageError(
-      'Invalid output format "junit-xml". Use --reporter junit-xml for CI reporter output.',
-    );
-  }
+  rejectReporterFormatAsOutputFormat(value);
 
   throw usageError(
     `Invalid output format "${value}". Use "json" or "human".`,

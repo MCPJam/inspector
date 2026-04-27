@@ -127,13 +127,17 @@ export function parseOutputFormat(value: string): OutputFormat {
     return value;
   }
 
+  rejectReporterFormatAsOutputFormat(value);
+
+  throw usageError(`Invalid output format "${value}". Use "json" or "human".`);
+}
+
+export function rejectReporterFormatAsOutputFormat(value: string): void {
   if (value === "junit-xml") {
     throw usageError(
       'Invalid output format "junit-xml". Use --reporter junit-xml for CI reporter output.',
     );
   }
-
-  throw usageError(`Invalid output format "${value}". Use "json" or "human".`);
 }
 
 export function resolveOutputFormat(

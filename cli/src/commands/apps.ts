@@ -60,24 +60,32 @@ export interface AppsConformanceOptions extends SharedServerTargetOptions {
   checkId?: string[];
 }
 
-function getConformanceGlobals(command: Command): {
+function getConformanceGlobals(
+  command: Command,
+  options: { resolveFormat: boolean } = { resolveFormat: true },
+): {
   format: ConformanceOutputFormat;
   timeout: number;
   rpc: boolean;
+  quiet: boolean;
 } {
-  const options = command.optsWithGlobals() as {
+  const globalOptions = command.optsWithGlobals() as {
     format?: string;
     timeout?: number;
     rpc?: boolean;
+    quiet?: boolean;
   };
 
   return {
-    format: resolveConformanceOutputFormat(
-      options.format,
-      process.stdout.isTTY,
-    ),
-    timeout: options.timeout ?? 30_000,
-    rpc: options.rpc ?? false,
+    format: options.resolveFormat
+      ? resolveConformanceOutputFormat(
+          globalOptions.format,
+          process.stdout.isTTY,
+        )
+      : "json",
+    timeout: globalOptions.timeout ?? 30_000,
+    rpc: globalOptions.rpc ?? false,
+    quiet: globalOptions.quiet ?? false,
   };
 }
 
@@ -113,8 +121,10 @@ export function registerAppsCommands(program: Command): void {
         "Structured reporter output: json-summary or junit-xml",
       ),
   ).action(async (options, command) => {
-    const globalOptions = getConformanceGlobals(command);
     const reporter = parseReporterFormat(options.reporter as string | undefined);
+    const globalOptions = getConformanceGlobals(command, {
+      resolveFormat: !reporter,
+    });
     const target = describeTarget(options);
     const collector = globalOptions.rpc
       ? createCliRpcLogCollector({ __cli__: target })
@@ -128,11 +138,13 @@ export function registerAppsCommands(program: Command): void {
     };
     const result = await new MCPAppsConformanceTest(config).run();
 
-    const outputResult = withRpcLogsIfRequested(
-      result,
-      collector,
-      globalOptions,
-    ) as typeof result;
+    const outputResult = reporter
+      ? result
+      : (withRpcLogsIfRequested(
+          result,
+          collector,
+          globalOptions,
+        ) as typeof result);
     writeConformanceOutput(
       reporter
         ? renderConformanceReporterResult(outputResult, reporter)
@@ -152,8 +164,10 @@ export function registerAppsCommands(program: Command): void {
       "Structured reporter output: json-summary or junit-xml",
     )
     .action(async (options, command) => {
-      const globalOptions = getConformanceGlobals(command);
       const reporter = parseReporterFormat(options.reporter as string | undefined);
+      const globalOptions = getConformanceGlobals(command, {
+        resolveFormat: !reporter,
+      });
       const config = loadAppsSuiteConfig(options.config as string);
       const target = config.target.command ?? config.target.url ?? "apps-suite";
       const collector = globalOptions.rpc
@@ -168,11 +182,13 @@ export function registerAppsCommands(program: Command): void {
       });
       const result = await suite.run();
 
-      const outputResult = withRpcLogsIfRequested(
-        result,
-        collector,
-        globalOptions,
-      ) as typeof result;
+      const outputResult = reporter
+        ? result
+        : (withRpcLogsIfRequested(
+            result,
+            collector,
+            globalOptions,
+          ) as typeof result);
       writeConformanceOutput(
         reporter
           ? renderConformanceReporterResult(outputResult, reporter)
@@ -236,7 +252,7 @@ export function registerAppsCommands(program: Command): void {
           toolId: options.toolId as string,
           toolName: options.toolName as string,
           toolInput: parseJsonRecord(options.toolInput, "Tool input") ?? {},
-          toolOutput: parseJsonValue(options.toolOutput, "Tool output"),
+          toolOutput: parseJsonInputValue(options.toolOutput, "Tool output"),
           theme: parseTheme(options.theme),
           cspMode: parseCspMode(options.cspMode),
           template: options.template as string | undefined,
@@ -310,7 +326,7 @@ export function registerAppsCommands(program: Command): void {
           toolId: options.toolId as string,
           toolName: options.toolName as string,
           toolInput: parseJsonRecord(options.toolInput, "Tool input") ?? {},
-          toolOutput: parseJsonValue(options.toolOutput, "Tool output"),
+          toolOutput: parseJsonInputValue(options.toolOutput, "Tool output"),
           toolResponseMetadata:
             parseJsonRecord(
               options.toolResponseMetadata,
@@ -333,10 +349,6 @@ export function registerAppsCommands(program: Command): void {
       globalOptions.format,
     );
   });
-}
-
-function parseJsonValue(value: string | undefined, label: string): unknown {
-  return parseJsonInputValue(value, label);
 }
 
 function parseCspMode(

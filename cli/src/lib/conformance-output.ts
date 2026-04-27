@@ -4,7 +4,11 @@ import {
   toConformanceReport,
   type SupportedConformanceResult,
 } from "@mcpjam/sdk";
-import { usageError, type OutputFormat } from "./output.js";
+import {
+  rejectReporterFormatAsOutputFormat,
+  usageError,
+  type OutputFormat,
+} from "./output.js";
 import type { ReporterFormat } from "./reporting.js";
 
 export type ConformanceOutputFormat = OutputFormat;
@@ -16,11 +20,7 @@ export function parseConformanceOutputFormat(
     return value;
   }
 
-  if (value === "junit-xml") {
-    throw usageError(
-      'Invalid output format "junit-xml". Use --reporter junit-xml for CI reporter output.',
-    );
-  }
+  rejectReporterFormatAsOutputFormat(value);
 
   throw usageError(
     `Invalid output format "${value}". Use "json" or "human".`,

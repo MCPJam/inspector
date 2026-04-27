@@ -34,8 +34,12 @@ async function runCli(
       stderr += chunk;
     });
     child.on("error", reject);
-    child.on("close", (code) => {
-      resolve({ exitCode: code ?? 0, stdout, stderr });
+    child.on("close", (code, signal) => {
+      if (code === null) {
+        reject(new Error(`CLI terminated by signal ${signal}`));
+        return;
+      }
+      resolve({ exitCode: code, stdout, stderr });
     });
 
     child.stdin.end(input ?? "");
@@ -87,7 +91,7 @@ test("protocol conformance supports junit reporter output", async () => {
   try {
     const result = await runCli([
       "--format",
-      "json",
+      "junit-xml",
       "protocol",
       "conformance",
       "--url",
@@ -101,6 +105,7 @@ test("protocol conformance supports junit reporter output", async () => {
     assert.notEqual(result.exitCode, 2, result.stderr);
     assert.match(result.stdout, /^<\?xml version="1\.0"/);
     assert.match(result.stdout, /<testsuites/);
+    assert.doesNotMatch(result.stdout, /^\{/);
   } finally {
     await server.stop();
   }

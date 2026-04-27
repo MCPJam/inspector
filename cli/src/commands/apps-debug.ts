@@ -52,7 +52,7 @@ export function registerAppsDebugCommand(parent: Command): void {
         .description("Debug an MCP App tool call from the CLI")
         .requiredOption("--tool-name <name>", "Tool name to execute")
         .option(
-          "--params <json|@file>",
+          "--params <json>",
           "Tool parameters as JSON, @path, or - for stdin",
         )
         .option(

@@ -61,10 +61,6 @@ function getOAuthFormat(command: Command): OAuthOutputFormat {
   return resolveOAuthOutputFormat(opts.format, process.stdout.isTTY);
 }
 
-function getStructuredOAuthFormat(command: Command): "json" | "human" {
-  return getOAuthFormat(command);
-}
-
 function writeOAuthOutput(output: string): void {
   process.stdout.write(output.endsWith("\n") ? output : `${output}\n`);
 }
@@ -192,7 +188,7 @@ export function registerOAuthCommands(program: Command): void {
     )
     .action(async (options, command) => {
       const globalOptions = getGlobalOptions(command);
-      const format = getStructuredOAuthFormat(command);
+      const format = getOAuthFormat(command);
       const config = buildOAuthLoginConfig(
         options as OAuthCommandOptions,
         {
@@ -353,7 +349,6 @@ export function registerOAuthCommands(program: Command): void {
       "Structured reporter output: json-summary or junit-xml",
     )
     .action(async (options, command) => {
-      const format = getOAuthFormat(command);
       const reporter = parseReporterFormat(options.reporter as string | undefined);
       const config = buildOAuthConformanceConfig(options as OAuthCommandOptions);
       const result = await new OAuthConformanceTest(config).run();
@@ -361,7 +356,7 @@ export function registerOAuthCommands(program: Command): void {
       writeOAuthOutput(
         reporter
           ? renderConformanceReporterResult(result, reporter)
-          : renderOAuthConformanceResult(result, format),
+          : renderOAuthConformanceResult(result, getOAuthFormat(command)),
       );
       if (!result.passed) {
         setProcessExitCode(1);
@@ -387,7 +382,6 @@ export function registerOAuthCommands(program: Command): void {
       "Structured reporter output: json-summary or junit-xml",
     )
     .action(async (options, command) => {
-      const format = getOAuthFormat(command);
       const reporter = parseReporterFormat(options.reporter as string | undefined);
       const config = loadOAuthSuiteConfig(options.config as string);
 
@@ -414,7 +408,7 @@ export function registerOAuthCommands(program: Command): void {
       writeOAuthOutput(
         reporter
           ? renderConformanceReporterResult(result, reporter)
-          : renderOAuthConformanceSuiteResult(result, format),
+          : renderOAuthConformanceSuiteResult(result, getOAuthFormat(command)),
       );
       if (!result.passed) {
         setProcessExitCode(1);
@@ -427,7 +421,7 @@ export function registerOAuthCommands(program: Command): void {
     .requiredOption("--url <url>", "OAuth metadata URL")
     .action(async (options, command) => {
       const result = await runOAuthMetadata(options.url as string);
-      writeResult(result, getStructuredOAuthFormat(command));
+      writeResult(result, getOAuthFormat(command));
     });
 
   oauth
@@ -447,7 +441,7 @@ export function registerOAuthCommands(program: Command): void {
     )
     .action(async (options, command) => {
       const result = await runOAuthProxy(options as OAuthProxyCommandOptions);
-      writeResult(result, getStructuredOAuthFormat(command));
+      writeResult(result, getOAuthFormat(command));
     });
 
   oauth
@@ -469,7 +463,7 @@ export function registerOAuthCommands(program: Command): void {
       const result = await runOAuthDebugProxy(
         options as OAuthProxyCommandOptions,
       );
-      writeResult(result, getStructuredOAuthFormat(command));
+      writeResult(result, getOAuthFormat(command));
     });
 }
 
