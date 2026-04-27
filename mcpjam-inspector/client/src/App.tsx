@@ -314,7 +314,6 @@ export default function App() {
     optimisticallyDeletedOrganizationIds,
     setOptimisticallyDeletedOrganizationIds,
   ] = useState<string[]>([]);
-  const [, setChatHasMessages] = useState(false);
   const [appBuilderOnboarding, setAppBuilderOnboarding] = useState(false);
   const [callbackCompleted, setCallbackCompleted] = useState(false);
   const [callbackRecoveryExpired, setCallbackRecoveryExpired] = useState(false);
@@ -1179,7 +1178,6 @@ export default function App() {
         );
         setActiveOrganizationId(undefined);
         setActiveTab("servers");
-        setChatHasMessages(false);
         if (window.location.hash !== "#servers") {
           window.location.hash = "servers";
         }
@@ -1198,9 +1196,6 @@ export default function App() {
       }
       if (resolved.shouldSelectAllServers) {
         setSelectedMultipleServersToAllServers();
-      }
-      if (resolved.shouldClearChatMessages) {
-        setChatHasMessages(false);
       }
       if (options?.updateHash) {
         window.location.hash = resolved.normalizedSection;
@@ -2117,7 +2112,6 @@ export default function App() {
               onReconnectServer={handleReconnect}
               onAddServer={handleConnect}
               onSelectedServerNamesChange={setSelectedMCPConfigs}
-              onHasMessagesChange={setChatHasMessages}
               enableMultiModelChat
               showHostStyleSelector
               evalChatHandoff={evalChatHandoff}

@@ -440,6 +440,10 @@ async function isInspectorHealthy(baseUrl: string): Promise<boolean> {
   return status.healthy;
 }
 
+export function getNpxExecutable(platform = process.platform): string {
+  return platform === "win32" ? "npx.cmd" : "npx";
+}
+
 async function startInspector(
   baseUrl: string,
   timeoutMs: number,
@@ -451,7 +455,7 @@ async function startInspector(
   const args = hasStartScript
     ? [startScriptPath, "--port", port]
     : ["-y", "@mcpjam/inspector@latest", "--port", port];
-  const executable = hasStartScript ? process.execPath : "npx";
+  const executable = hasStartScript ? process.execPath : getNpxExecutable();
   const logPath = getInspectorStartupLogPath();
   const logFd = openStartupLogFile(logPath);
 

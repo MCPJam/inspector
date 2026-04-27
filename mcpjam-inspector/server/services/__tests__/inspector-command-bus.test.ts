@@ -85,6 +85,30 @@ describe("InspectorCommandBus", () => {
     });
   });
 
+  it("preserves pending commands on same-client reconnect", async () => {
+    const bus = new InspectorCommandBus();
+    const first = createSubscriber("same-tab");
+    const reconnect = createSubscriber("same-tab");
+    const command: InspectorCommand = {
+      id: "cmd-same-reconnect",
+      type: "navigate",
+      payload: { target: "app-builder" },
+    };
+
+    bus.registerSubscriber(first);
+    const pending = bus.submit(command, 1_000);
+
+    expect(first.send).toHaveBeenCalledWith(command);
+
+    bus.registerSubscriber(reconnect);
+    bus.complete({ id: "cmd-same-reconnect", status: "success" });
+
+    await expect(pending).resolves.toEqual({
+      id: "cmd-same-reconnect",
+      status: "success",
+    });
+  });
+
   it("rejects pending commands when a subscriber is replaced", async () => {
     const bus = new InspectorCommandBus();
     const first = createSubscriber("first-tab");

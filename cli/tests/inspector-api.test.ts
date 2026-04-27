@@ -5,6 +5,7 @@ import type { AddressInfo } from "node:net";
 import {
   InspectorApiClient,
   clearInspectorSessionTokenCache,
+  getNpxExecutable,
   normalizeInspectorBaseUrl,
   stopInspector,
 } from "../src/lib/inspector-api.js";
@@ -214,6 +215,12 @@ test("normalizeInspectorBaseUrl reads MCPJAM_INSPECTOR_URL lazily", () => {
       process.env.MCPJAM_INSPECTOR_URL = previous;
     }
   }
+});
+
+test("getNpxExecutable resolves Windows batch shim", () => {
+  assert.equal(getNpxExecutable("win32"), "npx.cmd");
+  assert.equal(getNpxExecutable("darwin"), "npx");
+  assert.equal(getNpxExecutable("linux"), "npx");
 });
 
 test("stopInspector posts shutdown with session auth", async () => {

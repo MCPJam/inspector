@@ -347,11 +347,6 @@ async function executeInspectorCommandWithClient(
       return response;
     }
 
-    console.debug(
-      `[apps debug] Retrying "${request.type}" command (${
-        response.error.code
-      }), ${Math.max(0, deadline - Date.now())}ms remaining`,
-    );
     await delay(500);
   } while (true);
 }
