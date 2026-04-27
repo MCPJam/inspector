@@ -58,8 +58,10 @@ if (!cachePath || !packageName) {
   process.exit(0);
 }
 
+const maxResponseBytes = 1024 * 1024;
+const registryPackageName = encodeURIComponent(packageName);
 const request = https.get(
-  "https://registry.npmjs.org/" + packageName + "/latest",
+  "https://registry.npmjs.org/" + registryPackageName + "/latest",
   {
     headers: {
       accept: "application/json",
@@ -72,19 +74,22 @@ const request = https.get(
       return;
     }
 
-    response.setEncoding("utf8");
-    let body = "";
+    const chunks = [];
+    let bytes = 0;
 
     response.on("error", () => {});
     response.on("data", (chunk) => {
-      body += chunk;
-      if (body.length > 1024 * 1024) {
+      bytes += chunk.length;
+      if (bytes > maxResponseBytes) {
         request.destroy();
+        return;
       }
+      chunks.push(chunk);
     });
 
     response.on("end", () => {
       try {
+        const body = Buffer.concat(chunks, bytes).toString("utf8");
         const payload = JSON.parse(body);
         if (typeof payload.version !== "string") {
           return;
@@ -120,7 +125,7 @@ export function getUpdateCacheDir(options: CachePathOptions = {}): string {
 
   if (platform === "win32") {
     return join(
-      env.LOCALAPPDATA ?? join(homeDirectory, "AppData", "Local"),
+      env.LOCALAPPDATA || join(homeDirectory, "AppData", "Local"),
       "mcpjam",
       "Cache",
     );
@@ -130,7 +135,7 @@ export function getUpdateCacheDir(options: CachePathOptions = {}): string {
     return join(homeDirectory, "Library", "Caches", "mcpjam");
   }
 
-  return join(env.XDG_CACHE_HOME ?? join(homeDirectory, ".cache"), "mcpjam");
+  return join(env.XDG_CACHE_HOME || join(homeDirectory, ".cache"), "mcpjam");
 }
 
 export function getUpdateCachePath(options: CachePathOptions = {}): string {

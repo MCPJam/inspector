@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { startMockHttpServer } from "../../sdk/tests/mock-servers/index.js";
+import packageJson from "../package.json" with { type: "json" };
 import { main, runCliEntrypoint } from "../src/index.js";
+
+const pkgVersion = packageJson.version;
 
 async function captureProcessOutput<T>(
   fn: () => Promise<T>,
@@ -53,7 +56,7 @@ test("main treats help and version output as non-command success", async () => {
   );
   assert.equal(versionRun.result.exitCode, 0);
   assert.equal(versionRun.result.didRunCommand, false);
-  assert.match(versionRun.stdout, /3\.0\.0/);
+  assert.ok(versionRun.stdout.includes(pkgVersion));
 });
 
 test("runCliEntrypoint invokes update check after successful commands", async () => {
@@ -84,7 +87,7 @@ test("runCliEntrypoint invokes update check after successful commands", async ()
 
     assert.equal(run.result.exitCode, 0, run.stderr);
     assert.equal(run.result.didRunCommand, true);
-    assert.equal(checkedVersion, "3.0.0");
+    assert.equal(checkedVersion, pkgVersion);
   } finally {
     await server.stop();
   }

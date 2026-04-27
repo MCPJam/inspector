@@ -71,11 +71,31 @@ test("getUpdateCacheDir follows OS cache conventions", () => {
   );
   assert.equal(
     getUpdateCacheDir({
+      env: {
+        XDG_CACHE_HOME: "",
+      },
+      platform: "linux",
+      homeDirectory: "/home/mcpjam",
+    }),
+    join("/home/mcpjam", ".cache", "mcpjam"),
+  );
+  assert.equal(
+    getUpdateCacheDir({
       env: {},
       platform: "darwin",
       homeDirectory: "/Users/mcpjam",
     }),
     join("/Users/mcpjam", "Library", "Caches", "mcpjam"),
+  );
+  assert.equal(
+    getUpdateCacheDir({
+      env: {
+        LOCALAPPDATA: "",
+      },
+      platform: "win32",
+      homeDirectory: "C:\\Users\\mcpjam",
+    }),
+    join("C:\\Users\\mcpjam", "AppData", "Local", "mcpjam", "Cache"),
   );
   assert.equal(
     getUpdateCacheDir({
@@ -341,6 +361,7 @@ test("spawnBackgroundFetch starts a detached node process with positional args",
 
   assert.equal(command, "/usr/bin/node");
   assert.equal(args[0], "-e");
+  assert.match(args[1] ?? "", /encodeURIComponent\(packageName\)/);
   assert.equal(args[2], "/tmp/update-cache.json");
   assert.equal(args[3], "@mcpjam/cli");
   assert.deepEqual(options, {
