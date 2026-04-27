@@ -249,14 +249,47 @@ test("checkForUpdates stays quiet for fresh same or older cached versions", () =
   });
 });
 
-test("checkForUpdates spawns a background fetch for stale or missing cache", () => {
+test("checkForUpdates prints stale newer cache and refreshes in the background", () => {
+  withTempDir((directory) => {
+    const staleCachePath = join(directory, "stale.json");
+    const spawns: string[] = [];
+    let stderr = "";
+    writeCache(staleCachePath, {
+      latestVersion: "3.1.0",
+      checkedAt: 1_000,
+    });
+
+    const spawn: SpawnBackgroundFetch = (cachePath) => {
+      spawns.push(cachePath);
+    };
+
+    checkForUpdates("3.0.0", {
+      cachePath: staleCachePath,
+      env: {},
+      isStderrTTY: true,
+      now: 1_000 + UPDATE_CHECK_INTERVAL_MS,
+      stderr: {
+        write(chunk) {
+          stderr += chunk;
+          return true;
+        },
+      },
+      spawnBackgroundFetch: spawn,
+    });
+
+    assert.match(stderr, /Update available: @mcpjam\/cli 3\.0\.0 -> 3\.1\.0/);
+    assert.deepEqual(spawns, [staleCachePath]);
+  });
+});
+
+test("checkForUpdates spawns a background fetch for stale same-version or missing cache", () => {
   withTempDir((directory) => {
     const staleCachePath = join(directory, "stale.json");
     const missingCachePath = join(directory, "missing.json");
     const spawns: string[] = [];
     let stderr = "";
     writeCache(staleCachePath, {
-      latestVersion: "3.1.0",
+      latestVersion: "3.0.0",
       checkedAt: 1_000,
     });
 

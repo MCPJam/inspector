@@ -22,7 +22,7 @@ const pkgVersion = packageJson.version;
 
 export interface CliMainResult {
   exitCode: number;
-  didRunCommand: boolean;
+  shouldCheckForUpdates: boolean;
 }
 
 export interface CliEntrypointDependencies {
@@ -61,7 +61,7 @@ export async function main(
     program.outputHelp();
     return {
       exitCode: 0,
-      didRunCommand: false,
+      shouldCheckForUpdates: false,
     };
   }
 
@@ -71,13 +71,13 @@ export async function main(
     if (typeof exitCode === "number") {
       return {
         exitCode,
-        didRunCommand: true,
+        shouldCheckForUpdates: true,
       };
     }
 
     return {
       exitCode: Number(exitCode ?? 0) || 0,
-      didRunCommand: true,
+      shouldCheckForUpdates: true,
     };
   } catch (error) {
     const format = detectOutputFormatFromArgv(argv);
@@ -89,14 +89,14 @@ export async function main(
       ) {
         return {
           exitCode: 0,
-          didRunCommand: false,
+          shouldCheckForUpdates: false,
         };
       }
 
       writeError(usageError(error.message), format);
       return {
         exitCode: 2,
-        didRunCommand: false,
+        shouldCheckForUpdates: false,
       };
     }
 
@@ -104,7 +104,7 @@ export async function main(
     writeError(normalizedError, format);
     return {
       exitCode: normalizedError.exitCode,
-      didRunCommand: false,
+      shouldCheckForUpdates: false,
     };
   }
 }
@@ -116,7 +116,7 @@ export async function runCliEntrypoint(
   const result = await main(argv);
   process.exitCode = result.exitCode;
 
-  if (result.exitCode === 0 && result.didRunCommand) {
+  if (result.exitCode === 0 && result.shouldCheckForUpdates) {
     (dependencies.checkForUpdates ?? checkForUpdates)(pkgVersion);
   }
 
@@ -140,6 +140,7 @@ export function isDirectRun(
   try {
     return importMetaUrl === pathToFileURL(realpathSync(entrypoint)).href;
   } catch {
+    // If realpath resolution fails, fall back to the direct path comparison above.
     return false;
   }
 }

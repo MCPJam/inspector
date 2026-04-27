@@ -48,14 +48,14 @@ test("main treats help and version output as non-command success", async () => {
     main(["node", "mcpjam", "--help"]),
   );
   assert.equal(helpRun.result.exitCode, 0);
-  assert.equal(helpRun.result.didRunCommand, false);
+  assert.equal(helpRun.result.shouldCheckForUpdates, false);
   assert.match(helpRun.stdout, /Usage: mcpjam/);
 
   const versionRun = await captureProcessOutput(() =>
     main(["node", "mcpjam", "--version"]),
   );
   assert.equal(versionRun.result.exitCode, 0);
-  assert.equal(versionRun.result.didRunCommand, false);
+  assert.equal(versionRun.result.shouldCheckForUpdates, false);
   assert.ok(versionRun.stdout.includes(pkgVersion));
 });
 
@@ -86,7 +86,7 @@ test("runCliEntrypoint invokes update check after successful commands", async ()
     );
 
     assert.equal(run.result.exitCode, 0, run.stderr);
-    assert.equal(run.result.didRunCommand, true);
+    assert.equal(run.result.shouldCheckForUpdates, true);
     assert.equal(checkedVersion, pkgVersion);
   } finally {
     await server.stop();
@@ -105,7 +105,7 @@ test("runCliEntrypoint does not append update text after usage errors", async ()
   );
 
   assert.equal(run.result.exitCode, 2);
-  assert.equal(run.result.didRunCommand, false);
+  assert.equal(run.result.shouldCheckForUpdates, false);
   assert.equal(checked, false);
   assert.match(run.stderr, /"USAGE_ERROR"/);
   assert.doesNotMatch(run.stderr, /unexpected update notice/);

@@ -46,7 +46,8 @@ export interface SpawnBackgroundFetchOptions {
 
 const UPDATE_CACHE_FILE = "update-check.json";
 
-const BACKGROUND_FETCH_SCRIPT = String.raw`
+// Keep this inline so the tsup single-file CLI bundle contains the fetcher.
+const BACKGROUND_FETCH_SCRIPT = `
 const fs = require("node:fs");
 const https = require("node:https");
 const path = require("node:path");
@@ -107,6 +108,7 @@ const request = https.get(
         );
         fs.renameSync(temporaryPath, cachePath);
       } catch {
+        // Silently ignore: update cache refresh is best-effort.
       }
     });
   },
@@ -162,6 +164,7 @@ export function readUpdateCache(cachePath: string): UpdateCheckCache | null {
       checkedAt: payload.checkedAt,
     };
   } catch {
+    // Silently ignore malformed or missing cache data; update checks are best-effort.
     return null;
   }
 }
@@ -226,6 +229,7 @@ export function spawnBackgroundFetch(
     child.on("error", () => {});
     child.unref();
   } catch {
+    // Silently ignore spawn failures; the CLI command has already completed.
   }
 }
 
@@ -269,8 +273,13 @@ export function checkForUpdates(
       });
     const cache = readUpdateCache(cachePath);
 
-    if (cache && isUpdateCacheFresh(cache, now)) {
-      if (isNewerVersion(cache.latestVersion, currentVersion)) {
+    if (cache) {
+      const hasNewerCachedVersion = isNewerVersion(
+        cache.latestVersion,
+        currentVersion,
+      );
+
+      if (hasNewerCachedVersion) {
         printUpdateNotification(
           currentVersion,
           cache.latestVersion,
@@ -278,12 +287,16 @@ export function checkForUpdates(
           options.stderr,
         );
       }
-      return;
+
+      if (isUpdateCacheFresh(cache, now)) {
+        return;
+      }
     }
 
     const fetchSpawner = options.spawnBackgroundFetch ?? spawnBackgroundFetch;
     fetchSpawner(cachePath, packageName);
   } catch {
+    // Silently ignore all notifier failures; update checks must never break CLI runs.
   }
 }
 
