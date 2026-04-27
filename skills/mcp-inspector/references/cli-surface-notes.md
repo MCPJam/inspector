@@ -35,9 +35,10 @@ If a higher-priority surface contradicts a lower-priority summary, trust the hig
 
 ### `--credentials-out` / `--credentials-file`
 
-- `--credentials-out` is supported on `oauth login`. Writes OAuth credentials (access token, refresh token, client ID) to a JSON file with `0600` permissions. Stdout output has secret fields redacted to `[SAVED_TO_FILE]`.
+- `--credentials-out` is supported on `oauth login`. Writes OAuth credentials to a JSON file with `0600` permissions. Depending on the flow, the file may include access token, refresh token, client ID, and client secret. Stdout output has secret fields redacted to `[SAVED_TO_FILE]`.
 - `--credentials-file` is supported on `server` commands (including `server probe`), `tools` commands, `resources` commands, `prompts` commands, `protocol conformance`, and `apps` commands. Reads credentials from a file created by `--credentials-out`.
-- The CLI validates that the credential file's server URL matches the target URL, checks token expiry (with a 60ms skew buffer), and rejects conflicts with individual token flags.
+- The CLI validates that the credential file's server URL matches the target URL, checks token expiry (with a 60-second skew buffer), and rejects conflicts with individual token flags.
+- Connected commands such as `tools list`, `resources list`, `prompts list`, `server doctor`, and `apps` commands can use refresh-token credentials from the file when the saved access token is expired. `protocol conformance` and `server probe` require a non-expired access token from the file.
 - Credentials files are not debug artifacts — they contain live secrets. Do not confuse with `--debug-out` artifacts that redact secrets.
 
 ### `--debug-out`
