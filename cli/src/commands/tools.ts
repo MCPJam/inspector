@@ -138,7 +138,7 @@ export function registerToolsCommands(program: Command): void {
       .option("--open", "Open Inspector in the system browser before rendering")
       .option(
         "--no-open",
-        "Do not open a system browser; render into an already-open Inspector client",
+        "Start/use Inspector without opening a system browser",
       )
       .option(
         "--attach-only",
@@ -301,7 +301,7 @@ export function registerToolsCommands(program: Command): void {
           params,
           renderContext: renderContext!,
           serverName,
-          startIfNeeded: options.attachOnly === true ? false : undefined,
+          startIfNeeded: resolveInspectorStartIfNeeded(options),
           timeoutMs: globalOptions.timeout,
           toolName,
           toolResult: result,
@@ -418,6 +418,13 @@ function resolveInspectorOpenBrowser(
     return options.open;
   }
   return globalOptions.format === "human" && !globalOptions.quiet;
+}
+
+export function resolveInspectorStartIfNeeded(options: {
+  attachOnly?: boolean;
+  open?: boolean;
+}): boolean {
+  return options.attachOnly !== true;
 }
 
 function extractInspectorRenderErrorUrls(error: {

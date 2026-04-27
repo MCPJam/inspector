@@ -48,7 +48,7 @@ export async function runUiRender(options: {
   const openBrowser = options.openBrowser === true;
   const ensureResult = await client.ensure({
     openBrowser,
-    startIfNeeded: options.startIfNeeded ?? openBrowser,
+    startIfNeeded: options.startIfNeeded ?? true,
     tab: "app-builder",
     timeoutMs: options.timeoutMs,
   });

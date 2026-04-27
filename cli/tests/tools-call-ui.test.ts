@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import type { AddressInfo } from "node:net";
+import { resolveInspectorStartIfNeeded } from "../src/commands/tools.js";
 import { buildInspectorServerName } from "../src/lib/inspector-render.js";
 
 const CLI_DIR = process.cwd().endsWith(`${path.sep}cli`)
@@ -623,6 +624,13 @@ test("tools call --ui rejects attach-only with open", async () => {
     result.stderr,
     /--attach-only cannot be used together with --open/,
   );
+});
+
+test("tools call --ui treats no-open as startable but attach-only as strict attach", () => {
+  assert.equal(resolveInspectorStartIfNeeded({}), true);
+  assert.equal(resolveInspectorStartIfNeeded({ open: false }), true);
+  assert.equal(resolveInspectorStartIfNeeded({ open: true }), true);
+  assert.equal(resolveInspectorStartIfNeeded({ attachOnly: true }), false);
 });
 
 test("tools call --ui validates render flags before executing the tool", async () => {
