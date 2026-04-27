@@ -43,6 +43,7 @@ npx -y @mcpjam/cli@latest --help
 | [`resources`](/cli/tools-resources-prompts) | Read resources and templates | `list`, `read`, `templates` |
 | [`prompts`](/cli/tools-resources-prompts) | Fetch prompts | `list`, `get` |
 | [`protocol`](/cli/reference) | MCP protocol conformance checks | `conformance`, `conformance-suite` |
+| [`telemetry`](/cli/telemetry) | Inspect and configure anonymous CLI telemetry | `status`, `disable`, `enable` |
 
 ## Global flags
 
@@ -53,6 +54,7 @@ These flags apply to every command.
 | `--timeout <ms>` | `30000` | Request timeout in milliseconds |
 | `--rpc` | off | Include raw JSON-RPC request/response logs in JSON output under `_rpcLogs` |
 | `--quiet` | off | Suppress non-result progress output on stderr |
+| `--no-telemetry` | off | Disable anonymous telemetry for this invocation |
 | `--format <format>` | `human` on TTY, `json` when piped | Raw output format (`json` or `human`) |
 | `-v, --version` | | Print the CLI version |
 

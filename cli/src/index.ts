@@ -82,17 +82,8 @@ export async function main(
 
   try {
     await program.parseAsync(argv as string[]);
-    const exitCode = process.exitCode;
-    if (typeof exitCode === "number") {
-      captureCommandEvent(exitCode, exitCode === 0 ? undefined : "UNKNOWN_ERROR");
-      await telemetry.flush();
-      return {
-        exitCode,
-        shouldCheckForUpdates: true,
-      };
-    }
-
-    const normalizedExitCode = Number(exitCode ?? 0) || 0;
+    const normalizedExitCode =
+      typeof process.exitCode === "number" ? process.exitCode : 0;
     captureCommandEvent(
       normalizedExitCode,
       normalizedExitCode === 0 ? undefined : "UNKNOWN_ERROR",

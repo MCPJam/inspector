@@ -3,7 +3,6 @@ import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { startMockHttpServer } from "../../sdk/tests/mock-servers/index.js";
 import { main } from "../src/index.js";
 import {
   getTelemetryStatus,
@@ -290,64 +289,78 @@ test("telemetry status, disable, and enable support human and JSON output", asyn
 
 test("successful command emits one allowlisted CLI event with CI tags", async () => {
   const statePath = await createStatePath();
-  const server = await startMockHttpServer();
   const recorder = createRecordingClient();
 
-  try {
-    const run = await captureProcessOutput(() =>
-      main(
-        [
-          "node",
-          "mcpjam",
-          "--format",
-          "json",
-          "server",
-          "export",
-          "--url",
-          server.url,
-          "--stable",
-        ],
-        {
-          telemetry: {
-            statePath,
-            env: cleanTelemetryEnv({
-              CI: "true",
-              GITHUB_ACTIONS: "true",
-              GITHUB_WORKFLOW: "sensitive-workflow",
-            }),
-            createId: () => UUID_A,
-            createClient: recorder.createClient,
-          },
+  const run = await captureProcessOutput(() =>
+    main(
+      [
+        "node",
+        "mcpjam",
+        "--format",
+        "json",
+        "inspector",
+        "stop",
+        "--inspector-url",
+        "http://127.0.0.1:1",
+      ],
+      {
+        telemetry: {
+          statePath,
+          env: cleanTelemetryEnv({
+            CI: "true",
+            GITHUB_ACTIONS: "true",
+            GITHUB_WORKFLOW: "sensitive-workflow",
+          }),
+          createId: () => UUID_A,
+          createClient: recorder.createClient,
         },
-      ),
-    );
+      },
+    ),
+  );
 
-    assert.equal(run.result.exitCode, 0, run.stderr);
-    assert.equal(recorder.events.length, 1);
-    assert.equal(recorder.flushes(), 1);
+  assert.equal(run.result.exitCode, 0, run.stderr);
+  assert.equal(recorder.events.length, 1);
+  assert.equal(recorder.flushes(), 1);
 
-    const event = recorder.events[0];
-    assert.equal(event.distinctId, UUID_A);
-    assert.equal(event.event, "cli_command");
-    assert.deepEqual(event.properties, {
-      platform: "cli",
-      command: "server export",
-      success: true,
-      exit_code: 0,
-      duration_ms: event.properties.duration_ms,
-      cli_version: "3.0.0",
-      os: process.platform,
-      arch: process.arch,
-      node_version: process.version,
-      is_ci: true,
-      ci_name: "github_actions",
-      transport: "http",
-    });
-    assert.equal(typeof event.properties.duration_ms, "number");
-    assert.doesNotMatch(JSON.stringify(event), /sensitive-workflow/);
-  } finally {
-    await server.stop();
-  }
+  const event = recorder.events[0];
+  assert.equal(event.distinctId, UUID_A);
+  assert.equal(event.event, "cli_command");
+  assert.deepEqual(event.properties, {
+    platform: "cli",
+    command: "inspector stop",
+    success: true,
+    exit_code: 0,
+    duration_ms: event.properties.duration_ms,
+    cli_version: "3.0.0",
+    os: process.platform,
+    arch: process.arch,
+    node_version: process.version,
+    is_ci: true,
+    ci_name: "github_actions",
+  });
+  assert.equal(typeof event.properties.duration_ms, "number");
+  assert.doesNotMatch(JSON.stringify(event), /sensitive-workflow/);
+});
+
+test("non-CI command omits ci_name", async () => {
+  const statePath = await createStatePath();
+  const recorder = createRecordingClient();
+
+  const run = await captureProcessOutput(() =>
+    main(["node", "mcpjam", "server", "probe", "--url", "not-a-url"], {
+      telemetry: {
+        statePath,
+        env: cleanTelemetryEnv(),
+        createId: () => UUID_A,
+        createClient: recorder.createClient,
+      },
+    }),
+  );
+
+  assert.equal(run.result.exitCode, 2);
+  assert.equal(recorder.events.length, 1);
+  assert.equal(recorder.events[0].properties.is_ci, false);
+  assert.equal("ci_name" in recorder.events[0].properties, false);
 });
 
 test("action-level failures emit sanitized errors without sensitive argv values", async () => {

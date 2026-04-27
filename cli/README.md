@@ -167,6 +167,8 @@ Use `--format json|human` for the raw command result. Use `--reporter json-summa
 
 `mcpjam` collects anonymous command-level telemetry so we can understand CLI usage and reliability. Events include the command/subcommand name, success/failure, exit code, duration, CLI version, Node version, OS, CPU architecture, transport type (`http` or `stdio`), `platform: "cli"`, and coarse CI metadata (`is_ci` and a provider enum such as `github_actions`).
 
+Telemetry is enabled by default. The first command invocation that is not opted out writes `telemetry.json` with `enabled: true` and a random install UUID.
+
 Telemetry uses a random install UUID stored at the same platform cache location as update checks, in `telemetry.json`. It does not collect raw argv, URLs, hostnames, ports, tokens, headers, environment values, working directories, file paths, tool/resource/prompt names, error messages, stack traces, repository names, branch names, workflow names, or CI job ids.
 
 Disable telemetry for one invocation with `--no-telemetry`, or persistently with:

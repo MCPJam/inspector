@@ -248,6 +248,7 @@ export function captureCommandEvent(
     }
 
     const distinctId = resolveInstallId(run, decision.state);
+    const isCiRun = isCi(run.options.env);
     const properties: Record<string, unknown> = {
       platform: "cli",
       command: run.command,
@@ -258,9 +259,12 @@ export function captureCommandEvent(
       os: process.platform,
       arch: process.arch,
       node_version: process.version,
-      is_ci: isCi(run.options.env),
-      ci_name: detectCiName(run.options.env),
+      is_ci: isCiRun,
     };
+
+    if (isCiRun) {
+      properties.ci_name = detectCiName(run.options.env);
+    }
 
     if (run.transport) {
       properties.transport = run.transport;
@@ -509,7 +513,7 @@ function parseTelemetryState(value: unknown): TelemetryState | null {
 }
 
 function isValidUuid(value: string): boolean {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
     value,
   );
 }
