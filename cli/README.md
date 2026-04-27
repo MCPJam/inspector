@@ -159,7 +159,7 @@ echo '{"query":"setup guide"}' | mcpjam tools call --url $URL --access-token $TO
   --tool-name search_docs --tool-args - --quiet --format json
 ```
 
-Use `--format json|human` for the raw command result. Use `--reporter json-summary|junit-xml` on conformance, validation, and diff commands when CI needs a report artifact.
+Use `--format json|human` for the raw command result. Use `--reporter json-summary|junit-xml` on conformance and diff commands when CI needs a report artifact. `server validate` uses `--debug-out` for validation artifacts.
 
 ## GitHub Actions
 
