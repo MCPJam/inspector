@@ -51,6 +51,7 @@ vi.mock("lucide-react", () => ({
   Globe: () => <span data-testid="icon-globe" />,
   Clock: () => <span data-testid="icon-clock" />,
   Shield: () => <span data-testid="icon-shield" />,
+  Settings2: () => <span data-testid="icon-settings" />,
   MousePointer2: () => <span data-testid="icon-mouse" />,
   Hand: () => <span data-testid="icon-hand" />,
   Palette: () => <span data-testid="icon-palette" />,
@@ -241,5 +242,14 @@ describe("HostContextHeader", () => {
     fireEvent.click(screen.getByTestId("host-context-trigger"));
 
     expect(screen.getByTestId("host-context-dialog")).toBeInTheDocument();
+  });
+
+  it("does not render the display-mode badge in the toolbar", () => {
+    render(
+      <HostContextHeader activeWorkspaceId="workspace-1" protocol={null} />,
+    );
+
+    expect(screen.queryByText("Display")).not.toBeInTheDocument();
+    expect(screen.queryByText("Inline")).not.toBeInTheDocument();
   });
 });

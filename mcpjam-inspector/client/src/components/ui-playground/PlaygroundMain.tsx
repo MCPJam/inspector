@@ -1503,7 +1503,7 @@ export function PlaygroundMain({
             )}
             data-testid="playground-main-header"
           >
-            <div className="flex min-w-0 max-w-full justify-center">
+            <div className="flex min-w-0 flex-1 justify-center overflow-hidden">
               <HostContextHeader
                 activeWorkspaceId={activeWorkspaceId}
                 onSaveHostContext={onSaveHostContext}
