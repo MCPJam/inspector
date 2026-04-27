@@ -15,13 +15,12 @@ import {
 } from "../lib/apps.js";
 import { loadAppsSuiteConfig } from "../lib/config-file.js";
 import {
-  renderConformanceReporterResult,
-  renderConformanceResult,
-  resolveConformanceOutputFormat,
+  renderConformanceForCli,
+  resolveConformanceOutputFormatForCli,
   type ConformanceOutputFormat,
 } from "../lib/conformance-output.js";
 import { parseJsonInputValue } from "../lib/json-input.js";
-import { parseReporterFormat } from "../lib/reporting.js";
+import { parseReporterFormat, type ReporterFormat } from "../lib/reporting.js";
 import { withEphemeralManager } from "../lib/ephemeral.js";
 import { createCliRpcLogCollector } from "../lib/rpc-logs.js";
 import { withRpcLogsIfRequested } from "../lib/rpc-helpers.js";
@@ -60,10 +59,7 @@ export interface AppsConformanceOptions extends SharedServerTargetOptions {
   checkId?: string[];
 }
 
-function getConformanceGlobals(
-  command: Command,
-  options: { resolveFormat: boolean } = { resolveFormat: true },
-): {
+function getConformanceGlobals(command: Command, reporter?: ReporterFormat): {
   format: ConformanceOutputFormat;
   timeout: number;
   rpc: boolean;
@@ -77,12 +73,11 @@ function getConformanceGlobals(
   };
 
   return {
-    format: options.resolveFormat
-      ? resolveConformanceOutputFormat(
-          globalOptions.format,
-          process.stdout.isTTY,
-        )
-      : "json",
+    format: resolveConformanceOutputFormatForCli(
+      globalOptions.format,
+      process.stdout.isTTY,
+      reporter,
+    ),
     timeout: globalOptions.timeout ?? 30_000,
     rpc: globalOptions.rpc ?? false,
     quiet: globalOptions.quiet ?? false,
@@ -122,9 +117,7 @@ export function registerAppsCommands(program: Command): void {
       ),
   ).action(async (options, command) => {
     const reporter = parseReporterFormat(options.reporter as string | undefined);
-    const globalOptions = getConformanceGlobals(command, {
-      resolveFormat: !reporter,
-    });
+    const globalOptions = getConformanceGlobals(command, reporter);
     const target = describeTarget(options);
     const collector = globalOptions.rpc
       ? createCliRpcLogCollector({ __cli__: target })
@@ -146,9 +139,7 @@ export function registerAppsCommands(program: Command): void {
           globalOptions,
         ) as typeof result);
     writeConformanceOutput(
-      reporter
-        ? renderConformanceReporterResult(outputResult, reporter)
-        : renderConformanceResult(outputResult, globalOptions.format),
+      renderConformanceForCli(outputResult, reporter, globalOptions.format),
     );
     if (!result.passed) {
       setProcessExitCode(1);
@@ -165,9 +156,7 @@ export function registerAppsCommands(program: Command): void {
     )
     .action(async (options, command) => {
       const reporter = parseReporterFormat(options.reporter as string | undefined);
-      const globalOptions = getConformanceGlobals(command, {
-        resolveFormat: !reporter,
-      });
+      const globalOptions = getConformanceGlobals(command, reporter);
       const config = loadAppsSuiteConfig(options.config as string);
       const target = config.target.command ?? config.target.url ?? "apps-suite";
       const collector = globalOptions.rpc
@@ -190,9 +179,7 @@ export function registerAppsCommands(program: Command): void {
             globalOptions,
           ) as typeof result);
       writeConformanceOutput(
-        reporter
-          ? renderConformanceReporterResult(outputResult, reporter)
-          : renderConformanceResult(outputResult, globalOptions.format),
+        renderConformanceForCli(outputResult, reporter, globalOptions.format),
       );
       if (!result.passed) {
         setProcessExitCode(1);

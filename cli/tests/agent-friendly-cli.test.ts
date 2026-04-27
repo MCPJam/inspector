@@ -111,6 +111,54 @@ test("protocol conformance supports junit reporter output", async () => {
   }
 });
 
+test("conformance commands reject unknown formats before reporter output", async () => {
+  const protocol = await runCli([
+    "--format",
+    "xml",
+    "protocol",
+    "conformance",
+    "--url",
+    "https://example.com/mcp",
+    "--reporter",
+    "junit-xml",
+  ]);
+  assert.equal(protocol.exitCode, 2);
+  assert.match(protocol.stderr, /Invalid output format/);
+  assert.match(protocol.stderr, /xml/);
+
+  const oauth = await runCli([
+    "--format",
+    "xml",
+    "oauth",
+    "conformance",
+    "--url",
+    "https://example.com/mcp",
+    "--protocol-version",
+    "2025-11-25",
+    "--registration",
+    "dcr",
+    "--reporter",
+    "junit-xml",
+  ]);
+  assert.equal(oauth.exitCode, 2);
+  assert.match(oauth.stderr, /Invalid output format/);
+  assert.match(oauth.stderr, /xml/);
+
+  const apps = await runCli([
+    "--format",
+    "xml",
+    "apps",
+    "conformance",
+    "--url",
+    "https://example.com/mcp",
+    "--reporter",
+    "junit-xml",
+  ]);
+  assert.equal(apps.exitCode, 2);
+  assert.match(apps.stderr, /Invalid output format/);
+  assert.match(apps.stderr, /xml/);
+});
+
 test("JSON options accept stdin and reject duplicate stdin consumers", async () => {
   const valid = await runCli(
     [

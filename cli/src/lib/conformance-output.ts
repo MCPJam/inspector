@@ -34,6 +34,28 @@ export function resolveConformanceOutputFormat(
   return parseConformanceOutputFormat(value ?? (isTTY ? "human" : "json"));
 }
 
+export function resolveConformanceOutputFormatForCli(
+  value: string | undefined,
+  isTTY: boolean | undefined,
+  reporter: ReporterFormat | undefined,
+): ConformanceOutputFormat {
+  if (reporter === undefined || value === undefined) {
+    return resolveConformanceOutputFormat(value, isTTY);
+  }
+
+  if (value === "json" || value === "human") {
+    return value;
+  }
+
+  if (value === "junit-xml" || value === "json-summary") {
+    return "json";
+  }
+
+  throw usageError(
+    `Invalid output format "${value}". Use "json" or "human".`,
+  );
+}
+
 export function renderConformanceResult(
   result: SupportedConformanceResult,
   format: ConformanceOutputFormat,
@@ -58,4 +80,14 @@ export function renderConformanceReporterResult(
     case "junit-xml":
       return renderConformanceReportJUnitXml(report);
   }
+}
+
+export function renderConformanceForCli(
+  result: SupportedConformanceResult,
+  reporter: ReporterFormat | undefined,
+  format: ConformanceOutputFormat,
+): string {
+  return reporter
+    ? renderConformanceReporterResult(result, reporter)
+    : renderConformanceResult(result, format);
 }

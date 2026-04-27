@@ -9,9 +9,11 @@ import {
 } from "@mcpjam/sdk";
 import {
   parseConformanceOutputFormat,
+  renderConformanceForCli,
   renderConformanceReporterResult,
   renderConformanceResult,
   resolveConformanceOutputFormat,
+  resolveConformanceOutputFormatForCli,
 } from "../src/lib/conformance-output.js";
 import { CliError } from "../src/lib/output.js";
 
@@ -101,6 +103,32 @@ test("parseConformanceOutputFormat rejects unsupported formats", () => {
       error instanceof CliError &&
       error.message.includes("Use --reporter junit-xml"),
   );
+  assert.throws(
+    () => parseConformanceOutputFormat("json-summary"),
+    (error) =>
+      error instanceof CliError &&
+      error.message.includes("Use --reporter json-summary"),
+  );
+});
+
+test("resolveConformanceOutputFormatForCli validates format before reporter output", () => {
+  assert.equal(
+    resolveConformanceOutputFormatForCli("json", false, "junit-xml"),
+    "json",
+  );
+  assert.equal(
+    resolveConformanceOutputFormatForCli("junit-xml", false, "junit-xml"),
+    "json",
+  );
+  assert.equal(
+    resolveConformanceOutputFormatForCli("json-summary", false, "junit-xml"),
+    "json",
+  );
+  assert.throws(
+    () => resolveConformanceOutputFormatForCli("typo", false, "junit-xml"),
+    (error) =>
+      error instanceof CliError && error.message.includes("Invalid output format"),
+  );
 });
 
 test("renderConformanceReporterResult emits conformance reporter output", () => {
@@ -113,6 +141,10 @@ test("renderConformanceReporterResult emits conformance reporter output", () => 
   assert.equal(
     renderConformanceReporterResult(result, "json-summary"),
     JSON.stringify(renderConformanceReportJson(toConformanceReport(result))),
+  );
+  assert.equal(
+    renderConformanceForCli(result, "junit-xml", "json"),
+    renderConformanceReportJUnitXml(toConformanceReport(result)),
   );
 });
 

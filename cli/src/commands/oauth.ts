@@ -34,9 +34,12 @@ import {
   resolveOAuthOutputFormat,
   type OAuthOutputFormat,
 } from "../lib/oauth-output.js";
-import { renderConformanceReporterResult } from "../lib/conformance-output.js";
+import {
+  renderConformanceReporterResult,
+  resolveConformanceOutputFormatForCli,
+} from "../lib/conformance-output.js";
 import { readInputSource } from "../lib/json-input.js";
-import { parseReporterFormat } from "../lib/reporting.js";
+import { parseReporterFormat, type ReporterFormat } from "../lib/reporting.js";
 import {
   buildCommandArtifactError,
   type DebugArtifactOutcome,
@@ -56,8 +59,18 @@ import type { MCPServerConfig, OAuthLoginResult } from "@mcpjam/sdk";
 const DYNAMIC_CLIENT_ID_PLACEHOLDER = "__dynamic_registration_client__";
 const DYNAMIC_CLIENT_SECRET_PLACEHOLDER = "__dynamic_registration_secret__";
 
-function getOAuthFormat(command: Command): OAuthOutputFormat {
+function getOAuthFormat(
+  command: Command,
+  reporter?: ReporterFormat,
+): OAuthOutputFormat {
   const opts = command.optsWithGlobals() as { format?: string };
+  if (reporter) {
+    return resolveConformanceOutputFormatForCli(
+      opts.format,
+      process.stdout.isTTY,
+      reporter,
+    );
+  }
   return resolveOAuthOutputFormat(opts.format, process.stdout.isTTY);
 }
 
@@ -350,13 +363,14 @@ export function registerOAuthCommands(program: Command): void {
     )
     .action(async (options, command) => {
       const reporter = parseReporterFormat(options.reporter as string | undefined);
+      const format = getOAuthFormat(command, reporter);
       const config = buildOAuthConformanceConfig(options as OAuthCommandOptions);
       const result = await new OAuthConformanceTest(config).run();
 
       writeOAuthOutput(
         reporter
           ? renderConformanceReporterResult(result, reporter)
-          : renderOAuthConformanceResult(result, getOAuthFormat(command)),
+          : renderOAuthConformanceResult(result, format),
       );
       if (!result.passed) {
         setProcessExitCode(1);
@@ -383,6 +397,7 @@ export function registerOAuthCommands(program: Command): void {
     )
     .action(async (options, command) => {
       const reporter = parseReporterFormat(options.reporter as string | undefined);
+      const format = getOAuthFormat(command, reporter);
       const config = loadOAuthSuiteConfig(options.config as string);
 
       if (options.verifyTools || options.verifyCallTool) {
@@ -408,7 +423,7 @@ export function registerOAuthCommands(program: Command): void {
       writeOAuthOutput(
         reporter
           ? renderConformanceReporterResult(result, reporter)
-          : renderOAuthConformanceSuiteResult(result, getOAuthFormat(command)),
+          : renderOAuthConformanceSuiteResult(result, format),
       );
       if (!result.passed) {
         setProcessExitCode(1);

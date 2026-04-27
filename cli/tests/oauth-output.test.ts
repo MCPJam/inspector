@@ -85,6 +85,12 @@ test("parseOAuthOutputFormat rejects junit-xml and points to reporter", () => {
       error instanceof CliError &&
       error.message.includes("Use --reporter junit-xml"),
   );
+  assert.throws(
+    () => parseOAuthOutputFormat("json-summary"),
+    (error) =>
+      error instanceof CliError &&
+      error.message.includes("Use --reporter json-summary"),
+  );
 });
 
 test("renderOAuthConformanceResult uses the SDK human formatter for human output", () => {

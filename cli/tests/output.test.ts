@@ -40,4 +40,10 @@ test("parseOutputFormat keeps reporter formats out of --format", () => {
       error instanceof CliError &&
       error.message.includes("Use --reporter junit-xml"),
   );
+  assert.throws(
+    () => parseOutputFormat("json-summary"),
+    (error) =>
+      error instanceof CliError &&
+      error.message.includes("Use --reporter json-summary"),
+  );
 });

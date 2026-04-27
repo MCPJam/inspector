@@ -8,9 +8,8 @@ import {
 import { Command } from "commander";
 import { loadProtocolSuiteConfig } from "../lib/config-file.js";
 import {
-  renderConformanceReporterResult,
-  renderConformanceResult,
-  resolveConformanceOutputFormat,
+  renderConformanceForCli,
+  resolveConformanceOutputFormatForCli,
   type ConformanceOutputFormat,
 } from "../lib/conformance-output.js";
 import { parseReporterFormat } from "../lib/reporting.js";
@@ -81,14 +80,11 @@ export function registerProtocolCommands(program: Command): void {
     )
     .action(async (options, command) => {
       const reporter = parseReporterFormat(options.reporter as string | undefined);
+      const format = getFormat(command, reporter);
       const config = buildConfig(options as ProtocolConformanceOptions);
       const result = await new MCPConformanceTest(config).run();
 
-      writeConformanceOutput(
-        reporter
-          ? renderConformanceReporterResult(result, reporter)
-          : renderConformanceResult(result, getFormat(command)),
-      );
+      writeConformanceOutput(renderConformanceForCli(result, reporter, format));
       if (!result.passed) {
         setProcessExitCode(1);
       }
@@ -106,23 +102,27 @@ export function registerProtocolCommands(program: Command): void {
     )
     .action(async (options, command) => {
       const reporter = parseReporterFormat(options.reporter as string | undefined);
+      const format = getFormat(command, reporter);
       const config = loadProtocolSuiteConfig(options.config as string);
       const result = await new MCPConformanceSuite(config).run();
 
-      writeConformanceOutput(
-        reporter
-          ? renderConformanceReporterResult(result, reporter)
-          : renderConformanceResult(result, getFormat(command)),
-      );
+      writeConformanceOutput(renderConformanceForCli(result, reporter, format));
       if (!result.passed) {
         setProcessExitCode(1);
       }
     });
 }
 
-function getFormat(command: Command): ConformanceOutputFormat {
+function getFormat(
+  command: Command,
+  reporter: ReturnType<typeof parseReporterFormat>,
+): ConformanceOutputFormat {
   const opts = command.optsWithGlobals() as { format?: string };
-  return resolveConformanceOutputFormat(opts.format, process.stdout.isTTY);
+  return resolveConformanceOutputFormatForCli(
+    opts.format,
+    process.stdout.isTTY,
+    reporter,
+  );
 }
 
 function writeConformanceOutput(output: string): void {

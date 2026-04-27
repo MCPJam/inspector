@@ -109,4 +109,10 @@ test("parseJsonInputValue wraps stdin read failures", () => {
       error instanceof CliError &&
       error.message.includes("Failed to read Params from stdin"),
   );
+  assert.throws(
+    () => context.parseJsonInputValue("-", "Retry"),
+    (error) =>
+      error instanceof CliError &&
+      error.message.includes("Failed to read Retry from stdin"),
+  );
 });

@@ -22,9 +22,10 @@ export class JsonInputContext {
         );
       }
 
-      this.stdinConsumer = label;
       try {
-        return this.readFile(0, "utf8");
+        const contents = this.readFile(0, "utf8");
+        this.stdinConsumer = label;
+        return contents;
       } catch (error) {
         throw usageError(`Failed to read ${label} from stdin.`, {
           source: error instanceof Error ? error.message : String(error),
