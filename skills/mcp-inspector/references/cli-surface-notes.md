@@ -35,11 +35,13 @@ If a higher-priority surface contradicts a lower-priority summary, trust the hig
 
 ### `--credentials-out` / `--credentials-file`
 
-- `--credentials-out` is supported on `oauth login`. Writes OAuth credentials to a JSON file with `0600` permissions. Depending on the flow, the file may include access token, refresh token, client ID, and client secret. Stdout output has secret fields redacted to `[SAVED_TO_FILE]`.
+- `--credentials-out` is supported on `oauth login`, `oauth conformance`, and `oauth conformance-suite`. Writes OAuth credentials to a JSON file with `0600` permissions. Depending on the flow, the file may include access token, refresh token, client ID, and client secret. Stdout output has secret fields redacted to `[SAVED_TO_FILE]`.
+- On `oauth conformance-suite`, `--credentials-out` writes credentials from the first flow that returns usable credentials.
 - `--credentials-file` is supported on `server` commands (including `server probe`), `tools` commands, `resources` commands, `prompts` commands, `protocol conformance`, and `apps` commands. Reads credentials from a file created by `--credentials-out`.
 - The CLI validates that the credential file's server URL matches the target URL, checks token expiry (with a 60-second skew buffer), and rejects conflicts with individual token flags.
 - Connected commands such as `tools list`, `resources list`, `prompts list`, `server doctor`, and `apps` commands can use refresh-token credentials from the file when the saved access token is expired. `protocol conformance` and `server probe` require a non-expired access token from the file.
 - Credentials files are not debug artifacts — they contain live secrets. Do not confuse with `--debug-out` artifacts that redact secrets.
+- Do not extract tokens from `oauth conformance --format json`; default output redacts OAuth secrets and credentials should move between commands through the credentials file.
 
 ### `--debug-out`
 
@@ -68,6 +70,7 @@ If a higher-priority surface contradicts a lower-priority summary, trust the hig
 ### `oauth login`, `oauth conformance`, `oauth conformance-suite`
 
 - These are targeted flow tests, not a full security audit.
+- Use `--credentials-out <path>` when conformance is the auth handoff for later connected commands, then pass that path with `--credentials-file`.
 - `oauth conformance --conformance-checks` adds targeted negative probes for:
   - DCR acceptance of non-loopback `http://` redirect URIs
   - invalid client rejection at the token endpoint

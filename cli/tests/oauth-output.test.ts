@@ -35,26 +35,63 @@ function createSingleResult(): ConformanceResult {
           request: {
             method: "GET",
             url: "https://auth.example.com/authorize",
-            headers: {},
+            headers: { Authorization: "Bearer request-token" },
           },
           response: {
             status: 200,
             statusText: "OK",
             headers: { "content-type": "text/html" },
-            body: "<html><head><title>Log in</title></head><body>Sign in</body></html>",
+            body: {
+              access_token: "nested-access-token",
+              refresh_token: "nested-refresh-token",
+              id_token: "nested-id-token",
+            },
           },
           duration: 10,
         },
-        httpAttempts: [],
+        httpAttempts: [
+          {
+            step: "token_request",
+            timestamp: 0,
+            request: {
+              method: "POST",
+              url: "https://auth.example.com/token",
+              headers: { Authorization: "Bearer attempt-token" },
+              body: {
+                code: "authorization-code",
+                client_secret: "attempt-client-secret",
+              },
+            },
+            response: {
+              status: 200,
+              statusText: "OK",
+              headers: { "content-type": "application/json" },
+              body: {
+                access_token: "attempt-access-token",
+                refresh_token: "attempt-refresh-token",
+                id_token: "attempt-id-token",
+              },
+            },
+          },
+        ],
         error: {
           message:
             "Headless authorization requires auto-consent. The authorization endpoint returned a 200 response instead of redirecting back with a code.",
+          details: "Authorization: Bearer error-token access_token=error-token",
         },
       },
     ],
     summary:
       "OAuth conformance failed at received_authorization_code: Headless authorization requires auto-consent.",
     durationMs: 40,
+    credentials: {
+      accessToken: "result-access-token",
+      refreshToken: "result-refresh-token",
+      clientId: "client-id",
+      clientSecret: "result-client-secret",
+      tokenType: "bearer",
+      expiresIn: 3600,
+    },
   };
 }
 
@@ -102,10 +139,42 @@ test("renderOAuthConformanceResult uses the SDK human formatter for human output
   );
 });
 
-test("renderOAuthConformanceResult preserves raw JSON output", () => {
+test("renderOAuthConformanceResult redacts sensitive JSON output", () => {
   const result = createSingleResult();
+  const output = renderOAuthConformanceResult(result, "json");
+  const payload = JSON.parse(output);
 
-  assert.equal(renderOAuthConformanceResult(result, "json"), JSON.stringify(result));
+  assert.equal(payload.credentials.accessToken, "[REDACTED]");
+  assert.equal(payload.credentials.refreshToken, "[REDACTED]");
+  assert.equal(payload.credentials.clientSecret, "[REDACTED]");
+  assert.equal(payload.credentials.clientId, "client-id");
+  assert.equal(payload.credentials.tokenType, "bearer");
+  assert.equal(payload.steps[0].http.request.headers.Authorization, "[REDACTED]");
+  assert.equal(payload.steps[0].http.response.body.access_token, "[REDACTED]");
+  assert.equal(payload.steps[0].httpAttempts[0].request.body.code, "[REDACTED]");
+  assert.equal(
+    payload.steps[0].httpAttempts[0].response.body.refresh_token,
+    "[REDACTED]",
+  );
+  assert.doesNotMatch(
+    output,
+    /result-access-token|result-refresh-token|nested-access-token|attempt-access-token|attempt-refresh-token|attempt-client-secret|error-token/,
+  );
+});
+
+test("renderOAuthConformanceResult marks credentials saved to file", () => {
+  const result = createSingleResult();
+  const output = renderOAuthConformanceResult(result, "json", {
+    credentialsFilePath: "/tmp/credentials.json",
+  });
+  const payload = JSON.parse(output);
+
+  assert.equal(payload.credentials.accessToken, "[SAVED_TO_FILE]");
+  assert.equal(payload.credentials.refreshToken, "[SAVED_TO_FILE]");
+  assert.equal(payload.credentials.clientSecret, "[SAVED_TO_FILE]");
+  assert.equal(payload.credentials.clientId, "client-id");
+  assert.equal(payload.credentialsFile, "/tmp/credentials.json");
+  assert.equal(payload.steps[0].http.response.body.access_token, "[REDACTED]");
 });
 
 test("renderOAuthConformanceSuiteResult uses the SDK human formatter for human output", () => {
@@ -117,11 +186,29 @@ test("renderOAuthConformanceSuiteResult uses the SDK human formatter for human o
   );
 });
 
-test("renderOAuthConformanceSuiteResult preserves raw JSON output", () => {
+test("renderOAuthConformanceSuiteResult redacts sensitive JSON output", () => {
   const result = createSuiteResult();
+  const output = renderOAuthConformanceSuiteResult(result, "json");
+  const payload = JSON.parse(output);
 
+  assert.equal(payload.results[0].credentials.accessToken, "[REDACTED]");
   assert.equal(
-    renderOAuthConformanceSuiteResult(result, "json"),
-    JSON.stringify(result),
+    payload.results[0].steps[0].httpAttempts[0].request.headers.Authorization,
+    "[REDACTED]",
   );
+  assert.doesNotMatch(output, /result-access-token|attempt-access-token/);
+});
+
+test("renderOAuthConformanceSuiteResult marks selected flow credentials saved", () => {
+  const result = createSuiteResult();
+  const output = renderOAuthConformanceSuiteResult(result, "json", {
+    credentialsFilePath: "/tmp/suite-credentials.json",
+    credentialsResultIndex: 0,
+  });
+  const payload = JSON.parse(output);
+
+  assert.equal(payload.credentialsFile, "/tmp/suite-credentials.json");
+  assert.equal(payload.results[0].credentialsFile, "/tmp/suite-credentials.json");
+  assert.equal(payload.results[0].credentials.accessToken, "[SAVED_TO_FILE]");
+  assert.equal(payload.results[0].credentials.clientSecret, "[SAVED_TO_FILE]");
 });

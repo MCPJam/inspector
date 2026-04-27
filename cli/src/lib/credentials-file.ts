@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { chmod, mkdir, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { OAuthLoginResult } from "@mcpjam/sdk";
 import { redactSensitiveValue } from "./redaction.js";
 import { operationalError, usageError } from "./output.js";
 
@@ -21,6 +20,19 @@ export interface CredentialsFileContents {
   protocolVersion?: string;
 }
 
+export interface CredentialsFileSource {
+  serverUrl: string;
+  protocolVersion?: string;
+  credentials?: {
+    accessToken?: string;
+    refreshToken?: string;
+    clientId?: string;
+    clientSecret?: string;
+    tokenType?: string;
+    expiresIn?: number;
+  };
+}
+
 export type CredentialsFileAuth =
   | {
       accessToken: string;
@@ -37,7 +49,7 @@ export type CredentialsFileAuth =
 
 export async function writeCredentialsFile(
   outputPath: string,
-  result: OAuthLoginResult,
+  result: CredentialsFileSource,
   now = new Date(),
 ): Promise<string> {
   const resolvedPath = path.resolve(process.cwd(), outputPath);
@@ -178,11 +190,12 @@ export function assertNoCredentialsFileAuthConflicts(
 }
 
 export function redactCredentialsFromResult(
-  result: OAuthLoginResult,
+  result: CredentialsFileSource,
   credentialsFilePath?: string,
 ): object {
   const redacted = redactSensitiveValue(result) as Record<string, unknown>;
-  const credentials = result.credentials;
+  const credentials = result.credentials ?? {};
+  const hasCredentials = Object.keys(credentials).length > 0;
   const secretMarker = credentialsFilePath ? "[SAVED_TO_FILE]" : "[REDACTED]";
   const redactedCredentials = {
     ...((redacted.credentials ?? {}) as Record<string, unknown>),
@@ -198,44 +211,47 @@ export function redactCredentialsFromResult(
 
   return {
     ...redacted,
-    credentials: redactedCredentials,
+    ...(hasCredentials ? { credentials: redactedCredentials } : {}),
     ...(credentialsFilePath ? { credentialsFile: credentialsFilePath } : {}),
   };
 }
 
-export function hasCredentialsToSave(result: OAuthLoginResult): boolean {
-  return Boolean(result.credentials.accessToken || result.credentials.refreshToken);
+export function hasCredentialsToSave(result: CredentialsFileSource): boolean {
+  return Boolean(
+    result.credentials?.accessToken || result.credentials?.refreshToken,
+  );
 }
 
 function buildCredentialsFileContents(
-  result: OAuthLoginResult,
+  result: CredentialsFileSource,
   now: Date,
 ): CredentialsFileContents {
   if (!hasCredentialsToSave(result)) {
-    throw usageError("OAuth login did not return usable credentials to save.");
+    throw usageError("OAuth flow did not return usable credentials to save.");
   }
 
+  const credentials = result.credentials ?? {};
   const expiresAt =
-    typeof result.credentials.expiresIn === "number" &&
-    Number.isFinite(result.credentials.expiresIn)
-      ? new Date(now.getTime() + result.credentials.expiresIn * 1000).toISOString()
+    typeof credentials.expiresIn === "number" &&
+    Number.isFinite(credentials.expiresIn)
+      ? new Date(now.getTime() + credentials.expiresIn * 1000).toISOString()
       : undefined;
 
   return {
     version: CREDENTIALS_FILE_VERSION,
     serverUrl: result.serverUrl,
-    ...(result.credentials.accessToken
-      ? { accessToken: result.credentials.accessToken }
+    ...(credentials.accessToken
+      ? { accessToken: credentials.accessToken }
       : {}),
-    ...(result.credentials.refreshToken
-      ? { refreshToken: result.credentials.refreshToken }
+    ...(credentials.refreshToken
+      ? { refreshToken: credentials.refreshToken }
       : {}),
-    ...(result.credentials.clientId ? { clientId: result.credentials.clientId } : {}),
-    ...(result.credentials.clientSecret
-      ? { clientSecret: result.credentials.clientSecret }
+    ...(credentials.clientId ? { clientId: credentials.clientId } : {}),
+    ...(credentials.clientSecret
+      ? { clientSecret: credentials.clientSecret }
       : {}),
-    ...(result.credentials.tokenType
-      ? { tokenType: result.credentials.tokenType }
+    ...(credentials.tokenType
+      ? { tokenType: credentials.tokenType }
       : {}),
     ...(expiresAt ? { expiresAt } : {}),
     ...(result.protocolVersion ? { protocolVersion: result.protocolVersion } : {}),

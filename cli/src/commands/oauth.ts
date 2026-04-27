@@ -1,5 +1,6 @@
 import {
   type OAuthConformanceConfig,
+  type OAuthConformanceSuiteResult,
   type OAuthLoginConfig,
   type OAuthVerificationConfig,
   OAuthConformanceTest,
@@ -358,6 +359,10 @@ export function registerOAuthCommands(program: Command): void {
       "Run additional OAuth negative checks (invalid client, invalid redirect, token format) after the main flow",
     )
     .option(
+      "--credentials-out <path>",
+      "Write OAuth credentials to <path> (mode 0600); stdout output has secret fields redacted to [SAVED_TO_FILE]",
+    )
+    .option(
       "--print-url",
       "In interactive mode, print the consent URL to stderr instead of launching a browser",
     )
@@ -370,12 +375,30 @@ export function registerOAuthCommands(program: Command): void {
       const format = getOAuthConformanceFormat(command, reporter);
       const config = buildOAuthConformanceConfig(options as OAuthCommandOptions);
       const result = await new OAuthConformanceTest(config).run();
+      let credentialsFilePath: string | undefined;
+      let credentialsFileError: unknown;
+
+      if (options.credentialsOut && hasCredentialsToSave(result)) {
+        try {
+          credentialsFilePath = await writeCredentialsFile(
+            options.credentialsOut as string,
+            result,
+          );
+        } catch (error) {
+          credentialsFileError = error;
+        }
+      }
 
       writeOAuthOutput(
         reporter
           ? renderConformanceReporterResult(result, reporter)
-          : renderOAuthConformanceResult(result, format),
+          : renderOAuthConformanceResult(result, format, {
+              credentialsFilePath,
+            }),
       );
+      if (credentialsFileError) {
+        throw credentialsFileError;
+      }
       if (!result.passed) {
         setProcessExitCode(1);
       }
@@ -394,6 +417,10 @@ export function registerOAuthCommands(program: Command): void {
     .option(
       "--verify-call-tool <name>",
       "Also call the named tool after listing",
+    )
+    .option(
+      "--credentials-out <path>",
+      "Write OAuth credentials from the first flow that returns credentials to <path> (mode 0600)",
     )
     .option(
       "--reporter <reporter>",
@@ -423,12 +450,35 @@ export function registerOAuthCommands(program: Command): void {
 
       const suite = new OAuthConformanceSuite(config);
       const result = await suite.run();
+      const credentialsResultIndex = findCredentialsResultIndex(result);
+      let credentialsFilePath: string | undefined;
+      let credentialsFileError: unknown;
+
+      if (
+        options.credentialsOut &&
+        credentialsResultIndex !== undefined
+      ) {
+        try {
+          credentialsFilePath = await writeCredentialsFile(
+            options.credentialsOut as string,
+            result.results[credentialsResultIndex],
+          );
+        } catch (error) {
+          credentialsFileError = error;
+        }
+      }
 
       writeOAuthOutput(
         reporter
           ? renderConformanceReporterResult(result, reporter)
-          : renderOAuthConformanceSuiteResult(result, format),
+          : renderOAuthConformanceSuiteResult(result, format, {
+              credentialsFilePath,
+              credentialsResultIndex,
+            }),
       );
+      if (credentialsFileError) {
+        throw credentialsFileError;
+      }
       if (!result.passed) {
         setProcessExitCode(1);
       }
@@ -602,6 +652,13 @@ export function buildOAuthConformanceConfig(
     verification,
     oauthConformanceChecks: options.conformanceChecks ?? false,
   };
+}
+
+function findCredentialsResultIndex(
+  result: OAuthConformanceSuiteResult,
+): number | undefined {
+  const index = result.results.findIndex(hasCredentialsToSave);
+  return index >= 0 ? index : undefined;
 }
 
 export function buildOAuthLoginConfig(

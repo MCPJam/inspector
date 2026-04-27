@@ -112,6 +112,13 @@ describe("OAuthConformanceTest", () => {
     const result = await test.run();
 
     expect(result.passed).toBe(true);
+    expect(result.credentials).toMatchObject({
+      clientId: DEFAULT_MCPJAM_CLIENT_ID_METADATA_URL,
+      accessToken: "access-token",
+      refreshToken: "refresh-token",
+      tokenType: "Bearer",
+      expiresIn: 3600,
+    });
     expect(result.steps.map((step) => step.step)).toEqual([
       "request_without_token",
       "received_401_unauthorized",

@@ -5,7 +5,7 @@ description: Interpret and use `mcpjam` probe, doctor, OAuth, apps conformance, 
 
 # MCPJam CLI Investigation
 
-Use this skill when analyzing MCP server behavior from `mcpjam` output. The goal is to separate:
+Use this skill when analyzing MCP server behavior from `mcpjam` or MCP Inspector output. The goal is to separate:
 
 - real protocol issues
 - interoperability warnings
@@ -16,10 +16,13 @@ Use this skill when analyzing MCP server behavior from `mcpjam` output. The goal
 
 When the user wants to connect to a server and use it:
 
-1. Discover tools: `tools list --url <url> --quiet --format json`.
+1. Probe the server first: `server probe --url <url> --quiet --format json`.
+   - Use the probe to learn auth posture, resource metadata, authorization-server metadata, and registration strategies before assuming the connected surface is public.
+2. If the probe shows `oauth_required`, authenticate with `oauth login --credentials-out <path>` or run `oauth conformance --credentials-out <path>` when the task is specifically to test the OAuth flow.
+3. Discover tools: `tools list --url <url> --credentials-file <path> --quiet --format json`.
    - Tools with `_meta.ui.resourceUri`, deprecated `_meta["ui/resourceUri"]`, or `openai/outputTemplate` in `toolsMetadata` have interactive UI.
-2. Execute a tool: `tools call --url <url> --tool-name <name> --tool-args <json>`.
-3. Execute with UI: `tools call --url <url> --tool-name <name> --tool-args <json> --ui`.
+4. Execute a tool: `tools call --url <url> --tool-name <name> --tool-args <json> --credentials-file <path>`.
+5. Execute with UI: `tools call --url <url> --tool-name <name> --tool-args <json> --credentials-file <path> --ui`.
    - `--ui` starts Inspector and renders the completed result in App Builder.
    - Use `--ui` only when the tool has UI metadata or the user explicitly asks to see UI.
 
@@ -37,7 +40,7 @@ When the user asks to investigate, audit, or triage, use the Investigation workf
 
 1. Start with the narrowest command that actually proves the claim.
 2. If the command may fail, you want a reusable handoff artifact, or CI should retain evidence, add `--debug-out <path>` to `server probe`, `server validate`, `tools call`, or `oauth login`.
-3. If the probe shows `oauth_required` and the task is to inspect the server surface, continue with `oauth login` or another supported auth flow to obtain reusable credentials before judging post-auth behavior. For multi-command connected sessions, use `--credentials-out <path>` to persist tokens and `--credentials-file <path>` on later commands; read `references/cli-surface-notes.md` for access-token-only exceptions. When a token is already available (CI, M2M, env var), pass `--access-token` or `--oauth-access-token` directly.
+3. If the probe shows `oauth_required` and the task is to inspect the server surface, continue with `oauth login` or another supported auth flow to obtain reusable credentials before judging post-auth behavior. For multi-command connected sessions, use `--credentials-out <path>` on `oauth login`, `oauth conformance`, or `oauth conformance-suite` to persist tokens and `--credentials-file <path>` on later commands; read `references/cli-surface-notes.md` for access-token-only exceptions. When a token is already available (CI, M2M, env var), prefer a credentials file when possible and pass `--access-token` or `--oauth-access-token` only as an escape hatch.
 4. After successful auth, inspect the connected surface with direct commands such as `server info`, `server capabilities`, `tools list`, `resources list/read/templates`, and `prompts list/get`.
 5. Use `server doctor --out <path>` when you need one breadth-first snapshot instead of several single-purpose command outputs.
 6. If the output came from `server doctor` or a `--debug-out` artifact, split it into primary command evidence, probe evidence, and connected-sweep evidence.
@@ -117,7 +120,7 @@ Use `pending` instead of manufacturing a `medium` or `high` security severity fr
 - `server doctor`: combined triage artifact for probe plus connected behavior. Good for breadth, not always sufficient to prove wire-level behavior by itself.
 - `oauth metadata`, `oauth proxy`, `oauth debug-proxy`: exact endpoint and metadata inspection when conformance output looks surprising.
 - `oauth login`: obtain reusable credentials and verify the authenticated MCP path. Use `--credentials-out <path>` to save tokens to disk (mode 0600) so later connected commands can use `--credentials-file <path>` without manual token extraction; check `references/cli-surface-notes.md` for commands that require a non-expired access token. Use this when the goal is to inspect a server that requires OAuth, then follow it with connected commands rather than stopping at the login result.
-- `oauth conformance`, `oauth conformance-suite`: flow-level auth checks. Treat these as targeted probes, not a complete security review. When `--conformance-checks` is enabled, the command can directly probe DCR non-loopback `http://` redirects, invalid client rejection, authorization-endpoint redirect mismatch handling, invalid bearer-token rejection at the MCP server, and token-endpoint redirect mismatch handling.
+- `oauth conformance`, `oauth conformance-suite`: flow-level auth checks. Treat these as targeted probes, not a complete security review. Use `--credentials-out <path>` when a passing flow should hand credentials to later connected commands; use `--credentials-file <path>` after that instead of extracting tokens from JSON output. Raw JSON output redacts OAuth secrets by default. When `--conformance-checks` is enabled, the command can directly probe DCR non-loopback `http://` redirects, invalid client rejection, authorization-endpoint redirect mismatch handling, invalid bearer-token rejection at the MCP server, and token-endpoint redirect mismatch handling.
 - `apps conformance`: server-side MCP Apps checks for `_meta.ui.resourceUri`, `ui://` resources, `resources/read`, HTML MIME and payload shape, and `_meta.ui` metadata. Use this for MCP Apps surface triage.
 - `server info`, `server capabilities`, `server validate`, `server ping`, `server export`: connected behavior after initialization and auth.
 - `tools list` and `tools call`, `resources list/read/templates`, `prompts list/get/list-multi`: direct post-connect capability checks. With `--ui`, `tools call` renders the completed tool result in Inspector and reports `inspectorRender` as UI command/render evidence.

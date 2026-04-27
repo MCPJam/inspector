@@ -34,7 +34,7 @@ All server commands accept the shared connection flags below, plus command-speci
 | `--refresh-token <token>` | OAuth refresh token |
 | `--client-id <id>` | OAuth client ID (with `--refresh-token`) |
 | `--client-secret <secret>` | OAuth client secret (with `--refresh-token`) |
-| `--credentials-file <path>` | Load OAuth credentials from a file created by `oauth login --credentials-out` |
+| `--credentials-file <path>` | Load OAuth credentials from a file created by `oauth login --credentials-out` or `oauth conformance --credentials-out` |
 | `--header <header>` | HTTP header `Key: Value` (repeatable) |
 | `--client-capabilities <json>` | Client capabilities as inline JSON, `@path`, or `-` for stdin |
 | `--command <command>` | Stdio server command |
@@ -202,6 +202,7 @@ Plus shared connection flags.
 | `--verify-tools` | No | | After OAuth, list tools |
 | `--verify-call-tool <name>` | No | | Also call the named tool |
 | `--conformance-checks` | No | | Run additional negative OAuth checks, including DCR redirect URI policy and redirect-mismatch probes |
+| `--credentials-out <path>` | No | | Write OAuth credentials to file (mode 0600); stdout has secrets redacted |
 | `--print-url` | No | | Print consent URL to stderr (interactive only) |
 | `--reporter <reporter>` | No | | `json-summary` or `junit-xml` CI report output |
 
@@ -212,6 +213,7 @@ Plus shared connection flags.
 | `--config <path>` | Yes | | Path to JSON config file |
 | `--verify-tools` | No | | Enable tool listing on all flows |
 | `--verify-call-tool <name>` | No | | Call the named tool after listing |
+| `--credentials-out <path>` | No | | Write OAuth credentials from the first flow that returns credentials to file (mode 0600) |
 | `--reporter <reporter>` | No | | `json-summary` or `junit-xml` CI report output |
 
 ### `oauth metadata`
@@ -239,7 +241,7 @@ Plus shared connection flags.
 |------|----------|---------|-------------|
 | `--url <url>` | Yes | | MCP server URL |
 | `--access-token <token>` | No | | Bearer access token |
-| `--credentials-file <path>` | No | | Load OAuth credentials from a file created by `oauth login --credentials-out` |
+| `--credentials-file <path>` | No | | Load OAuth credentials from a file created by `oauth login --credentials-out` or `oauth conformance --credentials-out` |
 | `--header <header>` | No | | HTTP header `Key: Value` (repeatable) |
 | `--check-timeout <ms>` | No | `15000` | Per-check timeout in milliseconds |
 | `--category <category>` | No | all | Restrict checks to one or more categories |
@@ -270,7 +272,7 @@ Use `--format json|human` for raw output and `--reporter json-summary|junit-xml`
 | `--refresh-token <token>` | OAuth refresh token |
 | `--client-id <id>` | OAuth client ID (with `--refresh-token`) |
 | `--client-secret <secret>` | OAuth client secret (with `--refresh-token`) |
-| `--credentials-file <path>` | Load OAuth credentials from a file created by `oauth login --credentials-out` |
+| `--credentials-file <path>` | Load OAuth credentials from a file created by `oauth login --credentials-out` or `oauth conformance --credentials-out` |
 | `--header <header>` | HTTP header `Key: Value` (repeatable) |
 | `--client-capabilities <json>` | Client capabilities as inline JSON, `@path`, or `-` for stdin |
 | `--command <command>` | Stdio server command |

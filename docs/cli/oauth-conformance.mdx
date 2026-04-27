@@ -229,6 +229,28 @@ Three silent-failure modes this catches:
 | `--verify-tools` | After OAuth, connect to the MCP server and call `tools/list` |
 | `--verify-call-tool <name>` | Also call the named tool (implies `--verify-tools`) |
 
+## Reuse credentials safely
+
+Use `--credentials-out <path>` when a conformance run should hand credentials to
+later connected commands. The file is written with `0600` permissions and can be
+passed to commands such as `tools list`, `apps conformance`, `resources list`,
+and `server doctor` with `--credentials-file <path>`.
+
+```bash
+mcpjam oauth conformance \
+  --url https://your-server.com/mcp \
+  --protocol-version 2025-11-25 \
+  --registration dcr \
+  --credentials-out creds.json
+
+mcpjam tools list \
+  --url https://your-server.com/mcp \
+  --credentials-file creds.json
+```
+
+Raw JSON output redacts OAuth secrets by default. `--credentials-out` is the
+supported way to persist live tokens.
+
 ## Troubleshooting
 
 | Step that failed | Likely cause | Fix |
@@ -295,6 +317,7 @@ oauth-conformance:
 | `--verify-tools` | No | | After OAuth, connect and list tools |
 | `--verify-call-tool <name>` | No | | Also call the named tool (implies `--verify-tools`) |
 | `--conformance-checks` | No | | Run additional negative OAuth checks after the main flow |
+| `--credentials-out <path>` | No | | Write OAuth credentials to file (mode 0600); stdout has secrets redacted |
 | `--print-url` | No | | Print consent URL to stderr instead of launching a browser |
 | `--reporter <reporter>` | No | | `json-summary` or `junit-xml` CI report output |
 
@@ -311,6 +334,7 @@ oauth-conformance:
 | `--config <path>` | Yes | | Path to JSON config file |
 | `--verify-tools` | No | | Enable tool listing on all flows |
 | `--verify-call-tool <name>` | No | | Call the named tool after listing |
+| `--credentials-out <path>` | No | | Write OAuth credentials from the first flow that returns credentials to file (mode 0600) |
 | `--reporter <reporter>` | No | | `json-summary` or `junit-xml` CI report output |
 
 <Note>

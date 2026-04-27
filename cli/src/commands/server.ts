@@ -69,7 +69,7 @@ export function registerServerCommands(program: Command): void {
       )
       .option(
         "--credentials-file <path>",
-        "Load OAuth access token from a file created by oauth login --credentials-out",
+        "Load OAuth access token from a file created by oauth login or oauth conformance --credentials-out",
       )
       .option(
         "--header <header>",

@@ -48,7 +48,7 @@ export function registerProtocolCommands(program: Command): void {
     .option("--access-token <token>", "Bearer access token for HTTP servers")
     .option(
       "--credentials-file <path>",
-      "Load OAuth access token from a file created by oauth login --credentials-out",
+      "Load OAuth access token from a file created by oauth login or oauth conformance --credentials-out",
     )
     .option(
       "--header <header>",

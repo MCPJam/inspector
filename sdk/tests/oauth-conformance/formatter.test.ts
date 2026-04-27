@@ -260,7 +260,7 @@ describe("OAuth conformance human formatter", () => {
             message: "Invalid redirect was accepted",
             details: {
               evidence:
-                'Authorization: Bearer tok /?code=abc&access_token=xyz {"client_secret":"shh","refresh_token":"ref"}',
+                'Authorization: Bearer tok /?code=abc&access_token=xyz&id_token=id {"client_secret":"shh"}',
             },
           },
         },
@@ -273,13 +273,13 @@ describe("OAuth conformance human formatter", () => {
     expect(output).toContain("Authorization: Bearer [REDACTED]");
     expect(output).toContain("code=[REDACTED]");
     expect(output).toContain("access_token=[REDACTED]");
+    expect(output).toContain("id_token=[REDACTED]");
     expect(output).toContain('"client_secret":"[REDACTED]"');
-    expect(output).toContain('"refresh_token":"[REDACTED]"');
     expect(output).not.toContain("Bearer tok");
     expect(output).not.toContain("code=abc");
     expect(output).not.toContain("access_token=xyz");
+    expect(output).not.toContain("id_token=id");
     expect(output).not.toContain('"client_secret":"shh"');
-    expect(output).not.toContain('"refresh_token":"ref"');
   });
 });
 

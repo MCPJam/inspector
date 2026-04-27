@@ -3,7 +3,7 @@ import { mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import type { OAuthLoginResult } from "@mcpjam/sdk";
+import type { ConformanceResult, OAuthLoginResult } from "@mcpjam/sdk";
 import {
   readCredentialsFile,
   redactCredentialsFromResult,
@@ -50,6 +50,30 @@ function createOAuthLoginResult(
   };
 }
 
+function createOAuthConformanceResult(
+  overrides: Partial<ConformanceResult> = {},
+): ConformanceResult {
+  return {
+    passed: true,
+    serverUrl: "https://example.com/mcp",
+    protocolVersion: "2025-11-25",
+    registrationStrategy: "dcr",
+    steps: [],
+    summary: "OAuth conformance passed",
+    durationMs: 10,
+    ...overrides,
+    credentials: {
+      accessToken: "conformance-access-token",
+      refreshToken: "conformance-refresh-token",
+      clientId: "conformance-client-id",
+      clientSecret: "conformance-client-secret",
+      tokenType: "Bearer",
+      expiresIn: 1800,
+      ...overrides.credentials,
+    },
+  };
+}
+
 async function writeCredentialsJson(contents: object): Promise<string> {
   const directory = await mkdtemp(path.join(os.tmpdir(), "mcpjam-creds-test-"));
   const filePath = path.join(directory, "credentials.json");
@@ -81,6 +105,28 @@ test("writeCredentialsFile writes versioned JSON with secret-safe permissions", 
     clientSecret: "client-secret",
     tokenType: "bearer",
     expiresAt: "2026-04-26T13:00:00.000Z",
+    protocolVersion: "2025-11-25",
+  });
+});
+
+test("writeCredentialsFile accepts oauth conformance results", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "mcpjam-creds-test-"));
+  const filePath = path.join(directory, "conformance-credentials.json");
+
+  await writeCredentialsFile(filePath, createOAuthConformanceResult(), NOW);
+
+  const fileMode = (await stat(filePath)).mode & 0o777;
+  assert.equal(fileMode, 0o600);
+  const payload = JSON.parse(await readFile(filePath, "utf8"));
+  assert.deepEqual(payload, {
+    version: 1,
+    serverUrl: "https://example.com/mcp",
+    accessToken: "conformance-access-token",
+    refreshToken: "conformance-refresh-token",
+    clientId: "conformance-client-id",
+    clientSecret: "conformance-client-secret",
+    tokenType: "Bearer",
+    expiresAt: "2026-04-26T12:30:00.000Z",
     protocolVersion: "2025-11-25",
   });
 });

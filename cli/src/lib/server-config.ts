@@ -71,7 +71,7 @@ export function addSharedServerOptions(command: Command): Command {
     )
     .option(
       "--credentials-file <path>",
-      "Load OAuth credentials from a file created by oauth login --credentials-out",
+      "Load OAuth credentials from a file created by oauth login or oauth conformance --credentials-out",
     )
     .option(
       "--header <header>",
