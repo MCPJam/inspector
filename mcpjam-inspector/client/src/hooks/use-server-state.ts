@@ -958,6 +958,7 @@ export function useServerState({
   const handleOAuthCallbackComplete = useCallback(
     async (
       code: string,
+      state: string | null,
       hostedCallbackContext: ReturnType<typeof getHostedOAuthCallbackContext>,
     ) => {
       const pendingServerName = localStorage.getItem("mcp-oauth-pending");
@@ -979,6 +980,7 @@ export function useServerState({
       try {
         const result = isHostedWorkspaceCallback
           ? await completeHostedOAuthCallback(hostedCallbackContext, code, {
+              callbackState: state,
               onTraceUpdate: handleLiveOAuthTrace,
             })
           : await handleOAuthCallback(code, {
@@ -1181,6 +1183,7 @@ export function useServerState({
 
     const urlParams = new URLSearchParams(window.location.search);
     const code = urlParams.get("code");
+    const state = urlParams.get("state");
     const error = urlParams.get("error");
     const errorDescription = urlParams.get("error_description");
     const hostedOAuthCallbackContext = HOSTED_MODE
@@ -1226,6 +1229,7 @@ export function useServerState({
 
       handleOAuthCallbackComplete(
         code,
+        state,
         isHostedWorkspaceCallback ? hostedOAuthCallbackContext : null,
       );
     } else if (error) {
