@@ -1,6 +1,6 @@
 # CLI Surface Notes
 
-Use this file when a finding may be influenced by how `mcpjam-cli` or the SDK shapes results.
+Use this file when a finding may be influenced by how `mcpjam` or the SDK shapes results.
 
 ## Evidence priority
 

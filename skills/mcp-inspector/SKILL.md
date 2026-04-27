@@ -1,11 +1,11 @@
 ---
 name: mcp-inspector
-description: Interpret `mcpjam-cli` probe, doctor, OAuth, apps conformance/debug, tools, resources, and prompts output conservatively against MCP 2025-11-25. Use when triaging MCP server findings, performing security reviews, deciding whether a CLI finding is real or overstated, or turning inspection output into an engineer-facing report with severity and confidence.
+description: Interpret `mcpjam` probe, doctor, OAuth, apps conformance/debug, tools, resources, and prompts output conservatively against MCP 2025-11-25. Use when triaging MCP server findings, performing security reviews, deciding whether a CLI finding is real or overstated, or turning inspection output into an engineer-facing report with severity and confidence.
 ---
 
 # MCPJam CLI Investigation
 
-Use this skill when analyzing MCP server behavior from `mcpjam-cli` output. The goal is to separate:
+Use this skill when analyzing MCP server behavior from `mcpjam` output. The goal is to separate:
 
 - real protocol issues
 - interoperability warnings
