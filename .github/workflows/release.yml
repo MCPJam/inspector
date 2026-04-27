@@ -71,7 +71,7 @@ jobs:
         run: npm ci --legacy-peer-deps
 
       - name: Verify workspace
-        if: ${{ !inputs.skip_verify }}
+        if: inputs.skip_verify != 'true'
         run: npm run verify
 
       - name: Require green staging smoke for candidate SHA
@@ -327,7 +327,7 @@ jobs:
     needs:
       - preflight
       - publish-packages
-    if: inputs.deploy_backend_prod
+    if: inputs.deploy_backend_prod == 'true'
     runs-on: ubuntu-latest
     environment: backend-production
     steps:
@@ -397,11 +397,11 @@ jobs:
       - deploy-backend-prod
     if: |
       always() &&
-      inputs.promote_production &&
+      inputs.promote_production == 'true' &&
       needs.preflight.result == 'success' &&
       needs.publish-packages.result == 'success' &&
       (
-        inputs.deploy_backend_prod != true ||
+        inputs.deploy_backend_prod != 'true' ||
         needs.deploy-backend-prod.result == 'success'
       )
     runs-on: ubuntu-latest
@@ -446,21 +446,14 @@ jobs:
     if: |
       always() &&
       needs.preflight.result == 'success' &&
-      needs.publish-packages.result == 'success' &&
-      (
-        (inputs.deploy_backend_prod && needs.deploy-backend-prod.result == 'success') ||
-        (!inputs.deploy_backend_prod && needs.deploy-backend-prod.result == 'skipped')
-      ) &&
-      (
-        (inputs.promote_production && needs.promote-production.result == 'success') ||
-        (!inputs.promote_production && needs.promote-production.result == 'skipped')
-      )
+      needs.publish-packages.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          token: ${{ secrets.PREVIEW_GH_TOKEN }}
 
       - name: Download release patch
         uses: actions/download-artifact@v4

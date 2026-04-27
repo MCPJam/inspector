@@ -1,7 +1,7 @@
 {
   "name": "@mcpjam/inspector",
   "productName": "MCPJam Inspector",
-  "version": "2.3.0",
+  "version": "2.4.0",
   "type": "module",
   "engines": {
     "node": ">=22.0.0"
@@ -110,7 +110,7 @@
     "@hono/node-server": "^1.13.7",
     "@hookform/resolvers": "^3.10.0",
     "@mcp-ui/client": "^5.9.0",
-    "@mcpjam/sdk": "^1.0.0",
+    "@mcpjam/sdk": "^1.1.0",
     "@modelcontextprotocol/client": "^2.0.0-alpha.2",
     "@modelcontextprotocol/ext-apps": "^1.0.1",
     "@ngrok/ngrok": "^1.6.0",
