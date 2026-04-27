@@ -170,6 +170,36 @@ test("writeCommandDebugArtifact writes a snapshot artifact and emits a human not
   }
 });
 
+test("writeCommandDebugArtifact suppresses human notice when quiet", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "mcpjam-debug-artifact-"));
+  const artifactPath = path.join(directory, "quiet.json");
+  const originalWrite = process.stderr.write.bind(process.stderr);
+  let stderr = "";
+  process.stderr.write = ((chunk: string | Uint8Array) => {
+    stderr += String(chunk);
+    return true;
+  }) as typeof process.stderr.write;
+
+  try {
+    await writeCommandDebugArtifact({
+      outputPath: artifactPath,
+      format: "human",
+      quiet: true,
+      commandName: "server validate",
+      commandInput: {},
+      target: "https://example.com/mcp",
+      outcome: {
+        status: "success",
+        result: { success: true },
+      },
+    });
+
+    assert.equal(stderr, "");
+  } finally {
+    process.stderr.write = originalWrite;
+  }
+});
+
 test("writeCommandDebugArtifact preserves command failure and records snapshot errors", async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "mcpjam-debug-artifact-"));
   const artifactPath = path.join(directory, "failure.json");

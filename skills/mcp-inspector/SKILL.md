@@ -28,8 +28,8 @@ Use this skill when analyzing MCP server behavior from `mcpjam-cli` output. The 
 4. After successful auth, inspect the connected surface with direct commands such as `server info`, `server capabilities`, `tools list`, `resources list/read/templates`, and `prompts list/get`.
 5. Use `server doctor --out <path>` when you need one breadth-first snapshot instead of several single-purpose command outputs.
 6. If the output came from `server doctor` or a `--debug-out` artifact, split it into primary command evidence, probe evidence, and connected-sweep evidence.
-7. If the claim is specifically about MCP Apps tool metadata or `ui://` resources, start with `apps conformance --format json` before dropping to `tools list` or `resources read`.
-8. If the claim is about an MCP App tool result rendering in Inspector, use `apps debug --tool-name <name> --params <json|@file> --ui --format json`. Prefer `--out <path>` when the tool result or snapshot may be large.
+7. If the claim is specifically about MCP Apps tool metadata or `ui://` resources, start with `apps conformance --quiet --format json` before dropping to `tools list` or `resources read`.
+8. If the claim is about an MCP App tool result rendering in Inspector, use `apps debug --tool-name <name> --params <json|@file|-> --ui --quiet --format json`. Prefer `--out <path>` when the tool result or snapshot may be large.
 9. If a field may be CLI-added or SDK-normalized, read `references/cli-surface-notes.md` before concluding anything.
 10. If the claim depends on MCP semantics, read `references/mcp-2025-11-25-interpretation.md`.
 11. If the task involves security review, read `references/security-best-practices.md` for the full checklist and follow the security review workflow below.
@@ -41,7 +41,7 @@ Use this when the task is to assess an MCP server's security posture. All checks
 
 ### Phase 1: Observe (read-only)
 
-Run `server probe --url <target> --format json` first. Add `oauth metadata` or `server doctor --out <path>` only when they clarify the picture.
+Run `server probe --url <target> --quiet --format json` first. Add `oauth metadata` or `server doctor --out <path>` only when they clarify the picture.
 
 - Record an initial auth signal:
   - `full-auth candidate`: probe `status` is `oauth_required`
@@ -109,7 +109,9 @@ Use `pending` instead of manufacturing a `medium` or `high` security severity fr
 - `apps debug`: one MCP App tool execution plus optional Inspector App Builder rendering. With `--ui`, treat `execution` as the tool result and `inspectorRender` as UI command/render evidence; render errors are not automatically tool execution errors.
 - `server info`, `server capabilities`, `server validate`, `server ping`, `server export`: connected behavior after initialization and auth.
 - `tools list` and `tools call`, `resources list/read/templates`, `prompts list/get/list-multi`: direct post-connect capability checks.
-- Prefer `--format json`. Add `--rpc` when available if you need request and response evidence rather than a summary. Add `--debug-out` when you need a failure-safe artifact, not as a replacement for raw evidence.
+- Prefer `--quiet --format json`. Add `--rpc` when available if you need request and response evidence rather than a summary. Add `--debug-out` when you need a failure-safe artifact, not as a replacement for raw evidence.
+- Use `--reporter junit-xml` or `--reporter json-summary` for CI report artifacts on conformance and diff commands. `server validate` does not accept `--reporter`; use `--debug-out` for validation artifacts. Do not use `--format junit-xml`; `--format` is only for raw `json` or `human` output.
+- For JSON-valued options, prefer `@path` or `-` stdin over shell-escaped inline JSON when payloads are generated or contain quotes. For example: `mcpjam tools call --url <target> --tool-name <name> --tool-args @params.json --quiet --format json`.
 
 ## Output contract
 

@@ -12,7 +12,8 @@ Complete flag tables for every `mcpjam` command. For guides and recipes, see the
 |------|---------|-------------|
 | `--timeout <ms>` | `30000` | Request timeout in milliseconds |
 | `--rpc` | off | Include raw JSON-RPC logs in JSON output under `_rpcLogs` |
-| `--format <format>` | `human` on TTY, `json` when piped | Output format (`json` or `human`; `junit-xml` is available on protocol, OAuth, and apps conformance commands) |
+| `--quiet` | off | Suppress non-result progress output on stderr |
+| `--format <format>` | `human` on TTY, `json` when piped | Raw output format (`json` or `human`) |
 | `-v, --version` | | Print the CLI version |
 
 ---
@@ -34,7 +35,7 @@ All server commands accept the shared connection flags below, plus command-speci
 | `--client-secret <secret>` | OAuth client secret (with `--refresh-token`) |
 | `--credentials-file <path>` | Load OAuth credentials from a file created by `oauth login --credentials-out` |
 | `--header <header>` | HTTP header `Key: Value` (repeatable) |
-| `--client-capabilities <json>` | Client capabilities JSON object |
+| `--client-capabilities <json>` | Client capabilities as inline JSON, `@path`, or `-` for stdin |
 | `--command <command>` | Stdio server command |
 | `--args <arg...>` | Preferred stdio command arguments |
 | `--command-args <arg>` | Legacy stdio command argument (repeatable) |
@@ -97,8 +98,9 @@ Uses shared connection flags.
 |------|-------------|
 | `--tool-name <name>` | Name of the tool to call |
 | `--name <name>` | Legacy alias for `--tool-name` |
-| `--tool-args <json>` | Tool arguments as a JSON string |
+| `--tool-args <json>` | Tool arguments as inline JSON, `@path`, or `-` for stdin |
 | `--params <json>` | Legacy alias for `--tool-args` |
+| `--reporter <reporter>` | `json-summary` or `junit-xml` validation report output |
 | `--debug-out <path>` | Write debug artifact to file |
 
 Plus shared connection flags.
@@ -138,7 +140,7 @@ Uses shared connection flags.
 |------|-------------|
 | `--prompt-name <name>` | Name of the prompt |
 | `--name <name>` | Legacy alias for `--prompt-name` |
-| `--prompt-args <json>` | Prompt arguments as a JSON string |
+| `--prompt-args <json>` | Prompt arguments as inline JSON, `@path`, or `-` for stdin |
 
 Plus shared connection flags.
 
@@ -185,6 +187,7 @@ Plus shared connection flags.
 | `--verify-call-tool <name>` | No | | Also call the named tool |
 | `--conformance-checks` | No | | Run additional negative OAuth checks, including DCR redirect URI policy and redirect-mismatch probes |
 | `--print-url` | No | | Print consent URL to stderr (interactive only) |
+| `--reporter <reporter>` | No | | `json-summary` or `junit-xml` CI report output |
 
 ### `oauth conformance-suite`
 
@@ -193,6 +196,7 @@ Plus shared connection flags.
 | `--config <path>` | Yes | | Path to JSON config file |
 | `--verify-tools` | No | | Enable tool listing on all flows |
 | `--verify-call-tool <name>` | No | | Call the named tool after listing |
+| `--reporter <reporter>` | No | | `json-summary` or `junit-xml` CI report output |
 
 ### `oauth metadata`
 
@@ -207,7 +211,7 @@ Plus shared connection flags.
 | `--url <url>` | Yes | | OAuth request URL |
 | `--method <method>` | No | `GET` | HTTP method |
 | `--header <header>` | No | | HTTP header `Key: Value` (repeatable) |
-| `--body <value>` | No | | Request body (JSON or raw string) |
+| `--body <value>` | No | | Request body as JSON, raw string, `@path`, or `-` for stdin |
 
 ---
 
@@ -224,15 +228,16 @@ Plus shared connection flags.
 | `--check-timeout <ms>` | No | `15000` | Per-check timeout in milliseconds |
 | `--category <category>` | No | all | Restrict checks to one or more categories |
 | `--check-id <id>` | No | all | Restrict checks to one or more check IDs |
+| `--reporter <reporter>` | No | | `json-summary` or `junit-xml` CI report output |
 
-Supports `--format json`, `--format human`, and `--format junit-xml`.
+Use `--format json|human` for raw output and `--reporter json-summary|junit-xml` for CI reports.
 
 ### `protocol conformance-suite`
 
 | Flag | Required | Default | Description |
 |------|----------|---------|-------------|
 | `--config <path>` | Yes | | Path to JSON config file |
-| `--format <fmt>` | No | Auto-detected | `json`, `human`, or `junit-xml` |
+| `--reporter <reporter>` | No | | `json-summary` or `junit-xml` CI report output |
 
 ---
 
@@ -251,7 +256,7 @@ Supports `--format json`, `--format human`, and `--format junit-xml`.
 | `--client-secret <secret>` | OAuth client secret (with `--refresh-token`) |
 | `--credentials-file <path>` | Load OAuth credentials from a file created by `oauth login --credentials-out` |
 | `--header <header>` | HTTP header `Key: Value` (repeatable) |
-| `--client-capabilities <json>` | Client capabilities JSON object |
+| `--client-capabilities <json>` | Client capabilities as inline JSON, `@path`, or `-` for stdin |
 | `--command <command>` | Stdio server command |
 | `--args <arg...>` | Preferred stdio command arguments |
 | `--command-args <arg>` | Legacy stdio command argument (repeatable) |
@@ -270,15 +275,16 @@ MCP Apps server-side conformance checks. Uses shared connection flags plus:
 |------|-------------|
 | `--category <category>` | Check category to run (`tools`, `resources`). Repeatable |
 | `--check-id <id>` | Specific check id to run. Repeatable |
+| `--reporter <reporter>` | `json-summary` or `junit-xml` CI report output |
 
-Supports `--format json`, `--format human`, and `--format junit-xml`.
+Use `--format json|human` for raw output and `--reporter json-summary|junit-xml` for CI reports.
 
 ### `apps conformance-suite`
 
 | Flag | Required | Default | Description |
 |------|----------|---------|-------------|
 | `--config <path>` | Yes | | Path to JSON config file |
-| `--format <fmt>` | No | Auto-detected | `json`, `human`, or `junit-xml` |
+| `--reporter <reporter>` | No | | `json-summary` or `junit-xml` CI report output |
 
 ### `apps debug`
 
@@ -287,7 +293,7 @@ Execute one MCP App tool and optionally render the result in the local Inspector
 | Flag | Required | Description |
 |------|----------|-------------|
 | `--tool-name <name>` | Yes | Tool name to execute |
-| `--params <json-or-@file>` | No | Tool parameters as JSON or `@path` to a JSON file |
+| `--params <json>` | No | Tool parameters as inline JSON, `@path`, or `-` for stdin |
 | `--ui` | No | Start or attach to Inspector and render the result in App Builder |
 | `--inspector-url <url>` | No | Local Inspector base URL |
 | `--server-name <name>` | No | Server name to use inside Inspector |
@@ -313,13 +319,13 @@ Fetch hosted-style MCP App widget content.
 | `--resource-uri <uri>` | Yes | Widget resource URI |
 | `--tool-id <id>` | Yes | Tool call ID used for runtime injection |
 | `--tool-name <name>` | Yes | Tool name used for runtime injection |
-| `--tool-input <json>` | No | Tool input payload as JSON |
-| `--tool-output <json>` | No | Tool output payload as JSON |
+| `--tool-input <json>` | No | Tool input payload as inline JSON, `@path`, or `-` for stdin |
+| `--tool-output <json>` | No | Tool output payload as inline JSON, `@path`, or `-` for stdin |
 | `--theme <theme>` | No | Widget theme: `light` or `dark` |
 | `--csp-mode <mode>` | No | CSP mode: `permissive` or `widget-declared` |
 | `--template <uri>` | No | Optional `ui://` template override |
 | `--view-mode <mode>` | No | Widget view mode |
-| `--view-params <json>` | No | Widget view params as JSON |
+| `--view-params <json>` | No | Widget view params as inline JSON, `@path`, or `-` for stdin |
 
 Plus shared connection flags.
 
@@ -332,9 +338,9 @@ Fetch hosted-style ChatGPT App widget content.
 | `--resource-uri <uri>` | Yes | Widget resource URI |
 | `--tool-id <id>` | Yes | Tool call ID used for runtime injection |
 | `--tool-name <name>` | Yes | Tool name used for runtime injection |
-| `--tool-input <json>` | No | Tool input payload as JSON |
-| `--tool-output <json>` | No | Tool output payload as JSON |
-| `--tool-response-metadata <json>` | No | Tool response metadata as a JSON object |
+| `--tool-input <json>` | No | Tool input payload as inline JSON, `@path`, or `-` for stdin |
+| `--tool-output <json>` | No | Tool output payload as inline JSON, `@path`, or `-` for stdin |
+| `--tool-response-metadata <json>` | No | Tool response metadata as inline JSON, `@path`, or `-` for stdin |
 | `--theme <theme>` | No | Widget theme: `light` or `dark` |
 | `--csp-mode <mode>` | No | CSP mode: `permissive` or `widget-declared` |
 | `--locale <locale>` | No | Locale override |

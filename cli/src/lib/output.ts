@@ -127,7 +127,17 @@ export function parseOutputFormat(value: string): OutputFormat {
     return value;
   }
 
+  rejectReporterFormatAsOutputFormat(value);
+
   throw usageError(`Invalid output format "${value}". Use "json" or "human".`);
+}
+
+export function rejectReporterFormatAsOutputFormat(value: string): void {
+  if (value === "junit-xml" || value === "json-summary") {
+    throw usageError(
+      `Invalid output format "${value}". Use --reporter ${value} for CI reporter output.`,
+    );
+  }
 }
 
 export function resolveOutputFormat(

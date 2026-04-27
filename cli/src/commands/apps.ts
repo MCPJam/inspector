@@ -15,10 +15,12 @@ import {
 } from "../lib/apps.js";
 import { loadAppsSuiteConfig } from "../lib/config-file.js";
 import {
-  renderConformanceResult,
-  resolveConformanceOutputFormat,
+  renderConformanceForCli,
+  resolveConformanceOutputFormatForCli,
   type ConformanceOutputFormat,
 } from "../lib/conformance-output.js";
+import { parseJsonInputValue } from "../lib/json-input.js";
+import { parseReporterFormat, type ReporterFormat } from "../lib/reporting.js";
 import { withEphemeralManager } from "../lib/ephemeral.js";
 import { createCliRpcLogCollector } from "../lib/rpc-logs.js";
 import { withRpcLogsIfRequested } from "../lib/rpc-helpers.js";
@@ -57,24 +59,28 @@ export interface AppsConformanceOptions extends SharedServerTargetOptions {
   checkId?: string[];
 }
 
-function getConformanceGlobals(command: Command): {
+function getConformanceGlobals(command: Command, reporter?: ReporterFormat): {
   format: ConformanceOutputFormat;
   timeout: number;
   rpc: boolean;
+  quiet: boolean;
 } {
-  const options = command.optsWithGlobals() as {
+  const globalOptions = command.optsWithGlobals() as {
     format?: string;
     timeout?: number;
     rpc?: boolean;
+    quiet?: boolean;
   };
 
   return {
-    format: resolveConformanceOutputFormat(
-      options.format,
+    format: resolveConformanceOutputFormatForCli(
+      globalOptions.format,
       process.stdout.isTTY,
+      reporter,
     ),
-    timeout: options.timeout ?? 30_000,
-    rpc: options.rpc ?? false,
+    timeout: globalOptions.timeout ?? 30_000,
+    rpc: globalOptions.rpc ?? false,
+    quiet: globalOptions.quiet ?? false,
   };
 }
 
@@ -104,9 +110,14 @@ export function registerAppsCommands(program: Command): void {
         "Specific check ID to run. Repeat for multiple. Default: all.",
         (value: string, previous: string[] = []) => [...previous, value],
         [],
+      )
+      .option(
+        "--reporter <reporter>",
+        "Structured reporter output: json-summary or junit-xml",
       ),
   ).action(async (options, command) => {
-    const globalOptions = getConformanceGlobals(command);
+    const reporter = parseReporterFormat(options.reporter as string | undefined);
+    const globalOptions = getConformanceGlobals(command, reporter);
     const target = describeTarget(options);
     const collector = globalOptions.rpc
       ? createCliRpcLogCollector({ __cli__: target })
@@ -120,15 +131,15 @@ export function registerAppsCommands(program: Command): void {
     };
     const result = await new MCPAppsConformanceTest(config).run();
 
-    writeConformanceOutput(
-      renderConformanceResult(
-        withRpcLogsIfRequested(
+    const outputResult = reporter
+      ? result
+      : (withRpcLogsIfRequested(
           result,
           collector,
           globalOptions,
-        ) as typeof result,
-        globalOptions.format,
-      ),
+        ) as typeof result);
+    writeConformanceOutput(
+      renderConformanceForCli(outputResult, reporter, globalOptions.format),
     );
     if (!result.passed) {
       setProcessExitCode(1);
@@ -139,8 +150,13 @@ export function registerAppsCommands(program: Command): void {
     .command("conformance-suite")
     .description("Run MCP Apps conformance runs from a JSON config file")
     .requiredOption("--config <path>", "Path to JSON config file")
+    .option(
+      "--reporter <reporter>",
+      "Structured reporter output: json-summary or junit-xml",
+    )
     .action(async (options, command) => {
-      const globalOptions = getConformanceGlobals(command);
+      const reporter = parseReporterFormat(options.reporter as string | undefined);
+      const globalOptions = getConformanceGlobals(command, reporter);
       const config = loadAppsSuiteConfig(options.config as string);
       const target = config.target.command ?? config.target.url ?? "apps-suite";
       const collector = globalOptions.rpc
@@ -155,15 +171,15 @@ export function registerAppsCommands(program: Command): void {
       });
       const result = await suite.run();
 
-      writeConformanceOutput(
-        renderConformanceResult(
-          withRpcLogsIfRequested(
+      const outputResult = reporter
+        ? result
+        : (withRpcLogsIfRequested(
             result,
             collector,
             globalOptions,
-          ) as typeof result,
-          globalOptions.format,
-        ),
+          ) as typeof result);
+      writeConformanceOutput(
+        renderConformanceForCli(outputResult, reporter, globalOptions.format),
       );
       if (!result.passed) {
         setProcessExitCode(1);
@@ -186,13 +202,22 @@ export function registerAppsCommands(program: Command): void {
           "--tool-name <name>",
           "Tool name used for runtime injection",
         )
-        .option("--tool-input <json>", "Tool input payload as JSON")
-        .option("--tool-output <json>", "Tool output payload as JSON")
+        .option(
+          "--tool-input <json>",
+          "Tool input payload as JSON, @path, or - for stdin",
+        )
+        .option(
+          "--tool-output <json>",
+          "Tool output payload as JSON, @path, or - for stdin",
+        )
         .option("--theme <theme>", "Widget theme: light or dark")
         .option("--csp-mode <mode>", "CSP mode: permissive or widget-declared")
         .option("--template <uri>", "Optional ui:// template override")
         .option("--view-mode <mode>", "Widget view mode")
-        .option("--view-params <json>", "Widget view params as JSON"),
+        .option(
+          "--view-params <json>",
+          "Widget view params as JSON, @path, or - for stdin",
+        ),
     ),
   ).action(async (options, command) => {
     const globalOptions = getGlobalOptions(command);
@@ -214,7 +239,7 @@ export function registerAppsCommands(program: Command): void {
           toolId: options.toolId as string,
           toolName: options.toolName as string,
           toolInput: parseJsonRecord(options.toolInput, "Tool input") ?? {},
-          toolOutput: parseJsonValue(options.toolOutput),
+          toolOutput: parseJsonInputValue(options.toolOutput, "Tool output"),
           theme: parseTheme(options.theme),
           cspMode: parseCspMode(options.cspMode),
           template: options.template as string | undefined,
@@ -248,11 +273,17 @@ export function registerAppsCommands(program: Command): void {
           "--tool-name <name>",
           "Tool name used for runtime injection",
         )
-        .option("--tool-input <json>", "Tool input payload as JSON")
-        .option("--tool-output <json>", "Tool output payload as JSON")
+        .option(
+          "--tool-input <json>",
+          "Tool input payload as JSON, @path, or - for stdin",
+        )
+        .option(
+          "--tool-output <json>",
+          "Tool output payload as JSON, @path, or - for stdin",
+        )
         .option(
           "--tool-response-metadata <json>",
-          "Tool response metadata as a JSON object",
+          "Tool response metadata as JSON, @path, or - for stdin",
         )
         .option("--theme <theme>", "Widget theme: light or dark")
         .option("--csp-mode <mode>", "CSP mode: permissive or widget-declared")
@@ -282,7 +313,7 @@ export function registerAppsCommands(program: Command): void {
           toolId: options.toolId as string,
           toolName: options.toolName as string,
           toolInput: parseJsonRecord(options.toolInput, "Tool input") ?? {},
-          toolOutput: parseJsonValue(options.toolOutput),
+          toolOutput: parseJsonInputValue(options.toolOutput, "Tool output"),
           toolResponseMetadata:
             parseJsonRecord(
               options.toolResponseMetadata,
@@ -305,20 +336,6 @@ export function registerAppsCommands(program: Command): void {
       globalOptions.format,
     );
   });
-}
-
-function parseJsonValue(value: string | undefined): unknown {
-  if (value === undefined) {
-    return undefined;
-  }
-
-  try {
-    return JSON.parse(value);
-  } catch (error) {
-    throw usageError("Value must be valid JSON.", {
-      source: error instanceof Error ? error.message : String(error),
-    });
-  }
 }
 
 function parseCspMode(

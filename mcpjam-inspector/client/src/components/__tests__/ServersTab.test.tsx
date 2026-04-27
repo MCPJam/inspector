@@ -244,7 +244,9 @@ vi.mock("../connection/ServerConnectionCard", () => ({
       <button onClick={() => void onReconnect?.(server.name)}>
         Reconnect {server.name}
       </button>
-      {needsReconnect ? <span>Needs reconnect</span> : null}
+      {needsReconnect ? (
+        <span aria-label="Connection settings changed" />
+      ) : null}
       <div data-testid={`server-card-${server.name}`}>
         {server.name}:{server.connectionStatus}
       </div>
@@ -847,7 +849,7 @@ describe("ServersTab shared detail modal", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
-  it("surfaces reconnect warnings when workspace client capabilities changed", () => {
+  it("surfaces connection settings update indicators when workspace client capabilities changed", () => {
     const initializedCapabilities = getDefaultClientCapabilities() as Record<
       string,
       unknown
@@ -876,6 +878,9 @@ describe("ServersTab shared detail modal", () => {
     );
 
     expect(screen.queryByText("Needs reconnect")).not.toBeInTheDocument();
+    expect(
+      screen.queryByLabelText("Connection settings changed")
+    ).not.toBeInTheDocument();
 
     rerender(
       <ServersTab
@@ -911,10 +916,13 @@ describe("ServersTab shared detail modal", () => {
       />
     );
 
-    expect(screen.getByText("Needs reconnect")).toBeInTheDocument();
+    expect(screen.queryByText("Needs reconnect")).not.toBeInTheDocument();
+    expect(
+      screen.getByLabelText("Connection settings changed")
+    ).toBeInTheDocument();
   });
 
-  it("does not surface reconnect warnings when server capability overrides already match initialize payload", () => {
+  it("does not surface connection settings update indicators when server capability overrides already match initialize payload", () => {
     const serverCapabilities = {
       experimental: {
         serverOverride: { enabled: true },
@@ -958,6 +966,9 @@ describe("ServersTab shared detail modal", () => {
     );
 
     expect(screen.queryByText("Needs reconnect")).not.toBeInTheDocument();
+    expect(
+      screen.queryByLabelText("Connection settings changed")
+    ).not.toBeInTheDocument();
   });
 
   it("renders Quick Connect module helper copy and Browse Registry in the section header", () => {

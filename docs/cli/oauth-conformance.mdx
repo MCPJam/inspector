@@ -11,7 +11,7 @@ The OAuth conformance module runs real OAuth handshakes against your MCP server 
 - **Each MCP client exercises OAuth slightly differently.** Passing conformance means your server works for all of them.
 - **OAuth bugs are silent.** A valid-looking token can be rejected by MCP authentication downstream. Users see "failed to connect" with no context. `--verify-tools` catches this.
 - **3 registration strategies x 3 protocol versions x 3 auth modes** = 27 possible flow combinations. The suite runner covers the matrix in one invocation.
-- **CI-ready output.** `--format junit-xml` for dashboards. Exit 0/1/2 for scripts.
+- **CI-ready output.** `--reporter junit-xml` for dashboards. Exit 0/1/2 for scripts.
 
 ## Quick start
 
@@ -269,7 +269,7 @@ oauth-conformance:
   script:
     - npx -y @mcpjam/cli@latest oauth conformance-suite
         --config ./oauth-tests.json
-        --format junit-xml > report.xml
+        --reporter junit-xml > report.xml
   artifacts:
     reports:
       junit: report.xml
@@ -296,6 +296,7 @@ oauth-conformance:
 | `--verify-call-tool <name>` | No | | Also call the named tool (implies `--verify-tools`) |
 | `--conformance-checks` | No | | Run additional negative OAuth checks after the main flow |
 | `--print-url` | No | | Print consent URL to stderr instead of launching a browser |
+| `--reporter <reporter>` | No | | `json-summary` or `junit-xml` CI report output |
 
 <Note>
   For interactive conformance runs, a custom `--redirect-url` must still be an
@@ -310,7 +311,7 @@ oauth-conformance:
 | `--config <path>` | Yes | | Path to JSON config file |
 | `--verify-tools` | No | | Enable tool listing on all flows |
 | `--verify-call-tool <name>` | No | | Call the named tool after listing |
-| `--format <fmt>` | No | Auto-detected | `json`, `human`, or `junit-xml` |
+| `--reporter <reporter>` | No | | `json-summary` or `junit-xml` CI report output |
 
 <Note>
   `--verify-tools` and `--verify-call-tool` on the suite command are forced

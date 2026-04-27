@@ -16,9 +16,15 @@ import {
   DropdownMenuTrigger,
 } from "@mcpjam/design-system/dropdown-menu";
 import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@mcpjam/design-system/tooltip";
+import {
   MoreVertical,
   Link2Off,
   RefreshCw,
+  Power,
   Loader2,
   Copy,
   Download,
@@ -447,11 +453,6 @@ export function ServerConnectionCard({
                 <h3 className="truncate text-sm font-semibold text-foreground">
                   {server.name}
                 </h3>
-                {needsReconnect ? (
-                  <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-300">
-                    Needs reconnect
-                  </span>
-                ) : null}
                 {version && (
                   <span className="text-xs text-muted-foreground">
                     v{version}
@@ -495,6 +496,26 @@ export function ServerConnectionCard({
                       ? `${connectionStatusLabel} (${server.retryCount})`
                       : connectionStatusLabel}
                   </span>
+                  {needsReconnect ? (
+                    <Tooltip>
+                      <TooltipTrigger
+                        type="button"
+                        aria-label="Connection settings changed"
+                        className="inline-flex h-4 w-4 items-center justify-center rounded-full text-amber-600 outline-none transition-colors hover:text-amber-700 focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:ring-offset-2 focus-visible:ring-offset-background dark:text-amber-300 dark:hover:text-amber-200"
+                      >
+                        <Power className="h-3 w-3" />
+                      </TooltipTrigger>
+                      <TooltipContent
+                        side="top"
+                        sideOffset={4}
+                        variant="muted"
+                        className="max-w-48 px-2.5 text-left [text-wrap:normal]"
+                      >
+                        Turn the connection off and on to apply the new
+                        connection settings.
+                      </TooltipContent>
+                    </Tooltip>
+                  ) : null}
                 </span>
 
                 <Switch

@@ -54,6 +54,22 @@ test("parseServerConfig accepts oauth access token and client capabilities", () 
   });
 });
 
+test("parseServerConfig accepts client capabilities from @file", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "mcpjam-capabilities-"));
+  const capabilitiesPath = path.join(directory, "capabilities.json");
+  await writeFile(capabilitiesPath, '{"sampling":{},"roots":{}}\n', "utf8");
+
+  const config = parseServerConfig({
+    url: "https://example.com/mcp",
+    clientCapabilities: `@${capabilitiesPath}`,
+  });
+
+  assert.deepEqual(config.clientCapabilities, {
+    sampling: {},
+    roots: {},
+  });
+});
+
 test("parseServerConfig accepts refresh-token auth for HTTP servers", () => {
   const config = parseServerConfig({
     url: "https://example.com/mcp",
