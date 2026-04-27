@@ -38,11 +38,7 @@ import {
   type ChatboxAccessPreset,
 } from "@/lib/chatbox-access-presets";
 import type { RemoteServer } from "@/hooks/useWorkspaces";
-import {
-  getChatboxHostLogo,
-  getChatboxHostStyleShortLabel,
-  type ChatboxHostStyle,
-} from "@/lib/chatbox-host-style";
+import { listHostStyles } from "@/lib/host-styles";
 import { isMCPJamProvidedModel, SUPPORTED_MODELS } from "@/shared/types";
 import { cn } from "@/lib/utils";
 import type { ChatboxDraftConfig } from "./types";
@@ -512,42 +508,38 @@ export function SetupChecklistPanel({
                   <div className="space-y-2">
                     <Label>Host style</Label>
                     <div className="grid gap-2">
-                      {(["claude", "chatgpt"] as ChatboxHostStyle[]).map(
-                        (hostStyle) => {
-                          const selected = chatboxDraft.hostStyle === hostStyle;
-                          return (
-                            <button
-                              key={hostStyle}
-                              type="button"
-                              className={`flex items-center gap-3 rounded-2xl border px-4 py-4 text-left transition-colors ${
-                                selected
-                                  ? "border-primary/50 bg-primary/10"
-                                  : "border-border/70 bg-card/60 hover:bg-muted/20"
-                              }`}
-                              onClick={() =>
-                                onDraftChange((draft) => ({
-                                  ...draft,
-                                  hostStyle,
-                                }))
-                              }
-                            >
-                              <img
-                                src={getChatboxHostLogo(hostStyle)}
-                                alt=""
-                                className="size-6 rounded-md object-contain"
-                              />
-                              <div>
-                                <p className="font-medium">
-                                  {getChatboxHostStyleShortLabel(hostStyle)}
-                                </p>
-                                <p className="text-xs text-muted-foreground">
-                                  Chatbox shell matches this host style.
-                                </p>
-                              </div>
-                            </button>
-                          );
-                        },
-                      )}
+                      {listHostStyles().map((host) => {
+                        const selected = chatboxDraft.hostStyle === host.id;
+                        return (
+                          <button
+                            key={host.id}
+                            type="button"
+                            className={`flex items-center gap-3 rounded-2xl border px-4 py-4 text-left transition-colors ${
+                              selected
+                                ? "border-primary/50 bg-primary/10"
+                                : "border-border/70 bg-card/60 hover:bg-muted/20"
+                            }`}
+                            onClick={() =>
+                              onDraftChange((draft) => ({
+                                ...draft,
+                                hostStyle: host.id,
+                              }))
+                            }
+                          >
+                            <img
+                              src={host.logoSrc}
+                              alt=""
+                              className="size-6 rounded-md object-contain"
+                            />
+                            <div>
+                              <p className="font-medium">{host.shortLabel}</p>
+                              <p className="text-xs text-muted-foreground">
+                                {host.pickerDescription}
+                              </p>
+                            </div>
+                          </button>
+                        );
+                      })}
                     </div>
                   </div>
 

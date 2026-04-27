@@ -4,10 +4,14 @@ import {
   resolveWorkspace,
   type AuthorizeBatchInput,
   type AuthorizeBatchResult,
+  type InspectMcpServerResult,
   type RemoteServer,
   type RemoteWorkspace,
 } from "../src/tools/showServersCore.js";
-import type { ProbeMcpServerConfig, ProbeMcpServerResult } from "@mcpjam/sdk/worker";
+import type {
+  ProbeMcpServerConfig,
+  ProbeMcpServerResult,
+} from "@mcpjam/sdk/worker";
 
 const WORKSPACES: RemoteWorkspace[] = [
   {
@@ -267,15 +271,17 @@ describe("buildShowServersPayload", () => {
         ],
       })
     );
-    expect(payload.servers.map((server) => [server.id, server.status])).toEqual([
-      ["stdio", "skipped"],
-      ["insecure", "skipped"],
-      ["ready", "reachable"],
-      ["non-ready", "unreachable"],
-      ["oauth-required", "reachable"],
-      ["auth-fail", "error"],
-      ["throws", "unreachable"],
-    ]);
+    expect(payload.servers.map((server) => [server.id, server.status])).toEqual(
+      [
+        ["stdio", "skipped"],
+        ["insecure", "skipped"],
+        ["ready", "reachable"],
+        ["non-ready", "unreachable"],
+        ["oauth-required", "reachable"],
+        ["auth-fail", "error"],
+        ["throws", "unreachable"],
+      ]
+    );
     expect(payload.servers[2]?.serverInfo).toEqual({
       name: "ready-server",
       version: "2.0.0",
@@ -319,5 +325,137 @@ describe("buildShowServersPayload", () => {
     expect(payload.servers[0]?.statusDetail).toBe(
       "Batch authorization unavailable."
     );
+  });
+
+  it("adds compact tool, resource, and prompt summaries from server inspection", async () => {
+    const inspect = vi.fn(
+      async (): Promise<InspectMcpServerResult> => ({
+        probe: probeResult({
+          initialize: {
+            protocolVersion: "2025-11-25",
+            serverInfo: { name: "ready-server", version: "2.0.0" },
+          },
+        }),
+        tools: [
+          {
+            name: "search_tasks",
+            title: "Search tasks",
+            description: "Search the task index.",
+            inputSchema: { type: "object" },
+          },
+        ],
+        resources: [
+          {
+            uri: "file:///tmp/example.txt",
+            name: "example",
+            title: "Example",
+            description: "Example resource.",
+            mimeType: "text/plain",
+          },
+        ],
+        prompts: [
+          {
+            name: "summarize_project",
+            description: "Summarize project state.",
+            arguments: [
+              {
+                name: "project_id",
+                description: "Project ID.",
+                required: true,
+              },
+            ],
+          },
+        ],
+        checks: {
+          tools: { status: "ok", detail: "1 tool discovered." },
+          resources: { status: "ok", detail: "1 resource discovered." },
+          prompts: { status: "ok", detail: "1 prompt discovered." },
+        },
+      })
+    );
+
+    const payload = await buildShowServersPayload({
+      bearerToken: "token",
+      convexHttpUrl: "https://convex.example.com",
+      workspace: WORKSPACES[0]!,
+      workspaces: WORKSPACES,
+      servers: [
+        {
+          _id: "ready",
+          name: "Ready",
+          transportType: "http",
+          url: "https://ready.example.com/mcp",
+        },
+      ],
+      generatedAt: "2026-04-26T00:00:00.000Z",
+      authorizeBatch: async () => ({
+        ok: true,
+        body: {
+          results: {
+            ready: {
+              ok: true,
+              oauthAccessToken: "ready-token",
+              serverConfig: {
+                transportType: "http",
+                url: "https://ready.example.com/mcp",
+                headers: { "X-Test": "ready" },
+              },
+            },
+          },
+        },
+      }),
+      inspect,
+    });
+
+    expect(inspect).toHaveBeenCalledWith(
+      expect.objectContaining({
+        url: "https://ready.example.com/mcp",
+        accessToken: "ready-token",
+        headers: { "X-Test": "ready" },
+      })
+    );
+    expect(payload.servers[0]?.primitives).toEqual({
+      tools: {
+        status: "loaded",
+        statusDetail: "1 tool discovered.",
+        items: [
+          {
+            name: "search_tasks",
+            title: "Search tasks",
+            description: "Search the task index.",
+          },
+        ],
+      },
+      resources: {
+        status: "loaded",
+        statusDetail: "1 resource discovered.",
+        items: [
+          {
+            uri: "file:///tmp/example.txt",
+            name: "example",
+            title: "Example",
+            description: "Example resource.",
+            mimeType: "text/plain",
+          },
+        ],
+      },
+      prompts: {
+        status: "loaded",
+        statusDetail: "1 prompt discovered.",
+        items: [
+          {
+            name: "summarize_project",
+            description: "Summarize project state.",
+            arguments: [
+              {
+                name: "project_id",
+                description: "Project ID.",
+                required: true,
+              },
+            ],
+          },
+        ],
+      },
+    });
   });
 });

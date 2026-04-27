@@ -61,6 +61,12 @@ vi.mock("@/lib/mcp-ui/mcp-apps-utils", () => {
           hasUiResourceUri((meta ?? {}) as Record<string, unknown>),
         ),
       ),
+    UIType: {
+      MCP_APPS: "mcp-apps",
+      OPENAI_SDK: "openai-sdk",
+      OPENAI_SDK_AND_MCP_APPS: "openai-sdk-and-mcp-apps",
+      MCP_UI: "mcp-ui",
+    },
   };
 });
 
@@ -241,6 +247,31 @@ describe("ServerDetailModal", () => {
     expect(
       screen.queryByRole("button", { name: "Run conformance" }),
     ).not.toBeInTheDocument();
+  });
+
+  it("renders local OAuth tokens from localStorage in overview", () => {
+    localStorage.setItem(
+      "mcp-tokens-test-server",
+      JSON.stringify({
+        access_token: "local-access-token",
+        refresh_token: "local-refresh-token",
+        token_type: "Bearer",
+        expires_in: 3600,
+        scope: "read",
+      }),
+    );
+
+    render(
+      <ServerDetailModal
+        {...defaultProps}
+        server={createServer({ useOAuth: true })}
+        defaultTab="overview"
+      />,
+    );
+
+    expect(screen.getByText("local-access-token")).toBeInTheDocument();
+    expect(screen.getByText("local-refresh-token")).toBeInTheDocument();
+    expect(screen.getByText("Scope: read")).toBeInTheDocument();
   });
 
   it("submits the configuration form without closing the modal", async () => {

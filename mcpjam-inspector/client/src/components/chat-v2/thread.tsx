@@ -19,6 +19,7 @@ import {
   type LoadingIndicatorVariant,
   useResolvedLoadingIndicatorVariant,
 } from "@/components/chat-v2/shared/loading-indicator-content";
+import { getChatboxHostFamily } from "@/lib/chatbox-host-style";
 import { type ReasoningDisplayMode } from "./thread/parts/reasoning-part";
 import { TranscriptThread } from "./thread/transcript-thread";
 import {
@@ -150,7 +151,8 @@ export function Thread({
     },
   );
   const isChatgptDark =
-    chatboxHostStyle === "chatgpt" && chatboxHostTheme === "dark";
+    getChatboxHostFamily(chatboxHostStyle) === "chatgpt" &&
+    chatboxHostTheme === "dark";
   const lastRenderableMessage = useMemo(
     () => getLastRenderableConversationMessage(messages),
     [messages],

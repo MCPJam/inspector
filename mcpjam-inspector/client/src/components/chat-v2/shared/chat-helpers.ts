@@ -178,6 +178,180 @@ const MCPJAM_PLATFORM_CODES = [
   "mcpjam_config_error",
 ];
 
+const MCPJAM_RATE_LIMIT_CODE = "mcpjam_rate_limit";
+const MCPJAM_MODEL_LIMIT_PATTERN = /mcpjam[\w\s-]*model limit/i;
+const MINUTES_PER_HOUR = 60;
+const MINUTES_PER_DAY = 24 * MINUTES_PER_HOUR;
+
+const normalizeDetails = (details: unknown): string | undefined => {
+  if (details == null) return undefined;
+  if (typeof details === "string") return details;
+
+  try {
+    return JSON.stringify(details);
+  } catch {
+    return String(details);
+  }
+};
+
+const lowercaseFirst = (value: string) =>
+  value.length > 0 ? value[0].toLowerCase() + value.slice(1) : value;
+
+const pluralize = (value: number, unit: string) =>
+  `${value} ${unit}${value === 1 ? "" : "s"}`;
+
+const collectStringValues = (
+  value: unknown,
+  strings: string[] = [],
+  seen = new WeakSet<object>(),
+): string[] => {
+  if (typeof value === "string") {
+    strings.push(value);
+    return strings;
+  }
+
+  if (!value || typeof value !== "object") {
+    return strings;
+  }
+
+  if (seen.has(value)) {
+    return strings;
+  }
+  seen.add(value);
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      collectStringValues(item, strings, seen);
+    }
+    return strings;
+  }
+
+  for (const item of Object.values(value)) {
+    collectStringValues(item, strings, seen);
+  }
+
+  return strings;
+};
+
+const formatRetryMinutes = (minutes: number): string | null => {
+  if (!Number.isFinite(minutes) || minutes < 1) return null;
+
+  if (minutes < MINUTES_PER_HOUR) {
+    return `try again in ${pluralize(minutes, "minute")}`;
+  }
+
+  if (minutes >= 20 * MINUTES_PER_HOUR && minutes < 36 * MINUTES_PER_HOUR) {
+    return "try again tomorrow";
+  }
+
+  if (minutes < MINUTES_PER_DAY) {
+    const hours = Math.floor(minutes / MINUTES_PER_HOUR);
+    const remainingMinutes = minutes % MINUTES_PER_HOUR;
+    const hourText = pluralize(hours, "hour");
+
+    if (remainingMinutes < 5) {
+      return `try again in ${hourText}`;
+    }
+
+    return `try again in ${hourText} ${pluralize(remainingMinutes, "minute")}`;
+  }
+
+  const days = Math.max(2, Math.round(minutes / MINUTES_PER_DAY));
+  return `try again in about ${pluralize(days, "day")}`;
+};
+
+const formatRetryAfter = (retryAfter: unknown): string | null => {
+  if (typeof retryAfter !== "number" || !Number.isFinite(retryAfter)) {
+    return null;
+  }
+
+  return formatRetryMinutes(Math.ceil(retryAfter / 60000));
+};
+
+const normalizeRetryPhrase = (phrase: string): string => {
+  const normalized = lowercaseFirst(phrase.trim().replace(/[.。]+$/, ""));
+  const durationMatch = normalized.match(
+    /\btry again\s+(?:in|after)\s+(\d+(?:\.\d+)?)\s*(milliseconds?|msecs?|ms|seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h|days?|d)\b/i,
+  );
+
+  if (!durationMatch) {
+    return normalized;
+  }
+
+  const value = Number(durationMatch[1]);
+  const unit = durationMatch[2]?.toLowerCase();
+  if (!Number.isFinite(value) || !unit) {
+    return normalized;
+  }
+
+  let minutes: number;
+  if (
+    unit.startsWith("ms") ||
+    unit.startsWith("msec") ||
+    unit.startsWith("millisecond")
+  ) {
+    minutes = Math.ceil(value / 60000);
+  } else if (unit === "s" || unit.startsWith("sec")) {
+    minutes = Math.ceil(value / 60);
+  } else if (unit === "m" || unit.startsWith("min")) {
+    minutes = Math.ceil(value);
+  } else if (unit === "h" || unit.startsWith("hr") || unit.startsWith("hour")) {
+    minutes = Math.ceil(value * MINUTES_PER_HOUR);
+  } else {
+    minutes = Math.ceil(value * MINUTES_PER_DAY);
+  }
+
+  return formatRetryMinutes(minutes) ?? normalized;
+};
+
+const extractRetryPhrase = (...values: Array<unknown>): string | null => {
+  for (const value of values.flatMap((item) => collectStringValues(item))) {
+    const sentence = value
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find((line) => /try again/i.test(line));
+
+    if (!sentence) continue;
+
+    const match = sentence.match(
+      /\btry again(?:\s+(?:in|after)\s+[^.。,;}\]"'\n]+|\s+(?:tomorrow|later))?/i,
+    );
+
+    if (!match?.[0]) continue;
+
+    return normalizeRetryPhrase(match[0]);
+  }
+
+  return null;
+};
+
+const isMCPJamModelLimit = (
+  code: unknown,
+  message: unknown,
+  details?: unknown,
+) => {
+  if (code === MCPJAM_RATE_LIMIT_CODE) return true;
+  if (typeof message === "string" && MCPJAM_MODEL_LIMIT_PATTERN.test(message)) {
+    return true;
+  }
+  if (typeof details === "string" && MCPJAM_MODEL_LIMIT_PATTERN.test(details)) {
+    return true;
+  }
+
+  return false;
+};
+
+const formatMCPJamModelLimit = (
+  retryPhrase: string | null,
+): FormattedError => ({
+  code: MCPJAM_RATE_LIMIT_CODE,
+  message: retryPhrase
+    ? `Add your own API key in Settings > LLM Providers to keep chatting now, or ${retryPhrase}.`
+    : "Add your own API key in Settings > LLM Providers to keep chatting now, or wait until your daily limit resets.",
+  isRetryable: false,
+  isMCPJamPlatformError: true,
+});
+
 export function formatErrorMessage(error: unknown): FormattedError | null {
   if (!error) return null;
 
@@ -201,10 +375,18 @@ export function formatErrorMessage(error: unknown): FormattedError | null {
       // Handle structured error with code
       const code = parsed.code;
       const message = parsed.error || parsed.message || "An error occurred";
+      const details = normalizeDetails(parsed.details);
+
+      if (isMCPJamModelLimit(code, message, details)) {
+        return formatMCPJamModelLimit(
+          formatRetryAfter(parsed.retryAfter) ??
+            extractRetryPhrase(parsed.details, message),
+        );
+      }
 
       return {
         message,
-        details: parsed.details,
+        details,
         code,
         statusCode: parsed.statusCode,
         isRetryable: parsed.isRetryable,
@@ -215,6 +397,10 @@ export function formatErrorMessage(error: unknown): FormattedError | null {
     }
   } catch {
     // Return as-is
+  }
+
+  if (isMCPJamModelLimit(undefined, errorString)) {
+    return formatMCPJamModelLimit(extractRetryPhrase(errorString));
   }
 
   return { message: errorString };

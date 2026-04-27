@@ -68,6 +68,7 @@ import { CollapsedPanelStrip } from "./ui/collapsed-panel-strip";
 import { LoggerView } from "./logger-view";
 import { useJsonRpcPanelVisibility } from "@/hooks/use-json-rpc-panel";
 import { Skeleton } from "@mcpjam/design-system/skeleton";
+import { ServersLoadingSkeleton } from "@mcpjam/design-system/servers-loading-skeleton";
 import { useConvexAuth } from "convex/react";
 import { Workspace } from "@/state/app-types";
 import {
@@ -847,11 +848,15 @@ export function ServersTab({
 
   const activeWorkspace = workspaces[activeWorkspaceId];
   const sharedWorkspaceId = activeWorkspace?.sharedWorkspaceId;
+  const hostedWorkspaceId = sharedWorkspaceId ?? activeWorkspaceId;
   const { serversRecord: sharedWorkspaceServersRecord } =
     useRemoteWorkspaceServers({
       workspaceId: sharedWorkspaceId ?? null,
       isAuthenticated,
     });
+  const detailModalHostedServerId = detailModalServer
+    ? sharedWorkspaceServersRecord[detailModalServer.name]?._id
+    : undefined;
   const handleOpenDetailModal = useCallback(
     (server: ServerWithName, defaultTab: ServerDetailTab) => {
       setDetailModalState((prev) => ({
@@ -1481,14 +1486,7 @@ export function ServersTab({
     </div>
   );
 
-  const renderLoadingContent = () => (
-    <div className="flex-1 p-6">
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-        <Skeleton className="h-48 w-full rounded-lg" />
-        <Skeleton className="h-48 w-full rounded-lg" />
-      </div>
-    </div>
-  );
+  const renderLoadingContent = () => <ServersLoadingSkeleton />;
 
   const renderNoWorkspaceContent = () => (
     <div className="space-y-6 p-8 h-full overflow-auto">
@@ -1577,6 +1575,8 @@ export function ServersTab({
           onReconnect={handleReconnectServer}
           existingServerNames={Object.keys(workspaceServers)}
           workspaceClientConfig={selectedWorkspace?.clientConfig}
+          workspaceId={hostedWorkspaceId}
+          hostedServerId={detailModalHostedServerId}
         />
       )}
     </div>

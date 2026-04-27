@@ -45,6 +45,7 @@ import {
   extractHostTimeZone,
 } from "@/lib/client-config";
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
+import { listHostStyles } from "@/lib/host-styles";
 import { cn } from "@/lib/utils";
 import { useHostContextStore } from "@/stores/host-context-store";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
@@ -414,30 +415,21 @@ export function HostContextHeader({
               <div className="flex h-6 w-6 items-center justify-center">
                 <Palette className="h-3.5 w-3.5 text-muted-foreground" />
               </div>
-              <Button
-                variant={hostStyle === "claude" ? "secondary" : "ghost"}
-                size="icon"
-                onClick={() => setHostStyle("claude")}
-                className="h-6 w-6"
-              >
-                <img
-                  src="/claude_logo.png"
-                  alt="Claude"
-                  className="h-3.5 w-3.5 object-contain"
-                />
-              </Button>
-              <Button
-                variant={hostStyle === "chatgpt" ? "secondary" : "ghost"}
-                size="icon"
-                onClick={() => setHostStyle("chatgpt")}
-                className="h-6 w-6"
-              >
-                <img
-                  src="/openai_logo.png"
-                  alt="ChatGPT"
-                  className="h-3.5 w-3.5 object-contain"
-                />
-              </Button>
+              {listHostStyles().map((host) => (
+                <Button
+                  key={host.id}
+                  variant={hostStyle === host.id ? "secondary" : "ghost"}
+                  size="icon"
+                  onClick={() => setHostStyle(host.id)}
+                  className="h-6 w-6"
+                >
+                  <img
+                    src={host.logoSrc}
+                    alt={host.label}
+                    className="h-3.5 w-3.5 object-contain"
+                  />
+                </Button>
+              ))}
             </div>
           </TooltipTrigger>
           <TooltipContent>Host Styles</TooltipContent>
