@@ -1,4 +1,6 @@
 import { Command, CommanderError } from "commander";
+import { realpathSync } from "node:fs";
+import { pathToFileURL } from "node:url";
 import packageJson from "../package.json" with { type: "json" };
 import { registerAppsCommands } from "./commands/apps.js";
 import { registerProtocolCommands } from "./commands/conformance.js";
@@ -14,10 +16,22 @@ import {
   writeError,
 } from "./lib/output.js";
 import { addGlobalOptions } from "./lib/server-config.js";
+import { checkForUpdates } from "./lib/update-notifier.js";
 
 const pkgVersion = packageJson.version;
 
-async function main(argv: readonly string[] = process.argv): Promise<number> {
+export interface CliMainResult {
+  exitCode: number;
+  didRunCommand: boolean;
+}
+
+export interface CliEntrypointDependencies {
+  checkForUpdates?: (currentVersion: string) => void;
+}
+
+export async function main(
+  argv: readonly string[] = process.argv,
+): Promise<CliMainResult> {
   const program = addGlobalOptions(
     new Command()
       .name("mcpjam")
@@ -45,17 +59,26 @@ async function main(argv: readonly string[] = process.argv): Promise<number> {
 
   if (argv.length <= 2) {
     program.outputHelp();
-    return 0;
+    return {
+      exitCode: 0,
+      didRunCommand: false,
+    };
   }
 
   try {
     await program.parseAsync(argv as string[]);
     const exitCode = process.exitCode;
     if (typeof exitCode === "number") {
-      return exitCode;
+      return {
+        exitCode,
+        didRunCommand: true,
+      };
     }
 
-    return Number(exitCode ?? 0) || 0;
+    return {
+      exitCode: Number(exitCode ?? 0) || 0,
+      didRunCommand: true,
+    };
   } catch (error) {
     const format = detectOutputFormatFromArgv(argv);
 
@@ -64,19 +87,63 @@ async function main(argv: readonly string[] = process.argv): Promise<number> {
         error.code === "commander.helpDisplayed" ||
         error.code === "commander.version"
       ) {
-        return 0;
+        return {
+          exitCode: 0,
+          didRunCommand: false,
+        };
       }
 
       writeError(usageError(error.message), format);
-      return 2;
+      return {
+        exitCode: 2,
+        didRunCommand: false,
+      };
     }
 
     const normalizedError = normalizeCliError(error);
     writeError(normalizedError, format);
-    return normalizedError.exitCode;
+    return {
+      exitCode: normalizedError.exitCode,
+      didRunCommand: false,
+    };
   }
 }
 
-void main().then((exitCode) => {
-  process.exitCode = exitCode;
-});
+export async function runCliEntrypoint(
+  argv: readonly string[] = process.argv,
+  dependencies: CliEntrypointDependencies = {},
+): Promise<CliMainResult> {
+  const result = await main(argv);
+  process.exitCode = result.exitCode;
+
+  if (result.exitCode === 0 && result.didRunCommand) {
+    (dependencies.checkForUpdates ?? checkForUpdates)(pkgVersion);
+  }
+
+  return result;
+}
+
+export function isDirectRun(
+  importMetaUrl: string,
+  argv: readonly string[] = process.argv,
+): boolean {
+  const entrypoint = argv[1];
+  if (!entrypoint) {
+    return false;
+  }
+
+  const entrypointUrl = pathToFileURL(entrypoint).href;
+  if (importMetaUrl === entrypointUrl) {
+    return true;
+  }
+
+  try {
+    return importMetaUrl === pathToFileURL(realpathSync(entrypoint)).href;
+  } catch {
+    return false;
+  }
+}
+
+if (isDirectRun(import.meta.url)) {
+  void runCliEntrypoint();
+}
