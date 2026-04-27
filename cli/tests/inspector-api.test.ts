@@ -15,6 +15,8 @@ import {
 } from "../src/lib/inspector-api.js";
 
 const previousDisableBrowserOpen = process.env.MCPJAM_CLI_DISABLE_BROWSER_OPEN;
+const INSPECTOR_FRONTEND_HTML =
+  '<!doctype html><meta name="mcpjam-inspector" content="true"><title>MCPJam Inspector</title><div id="root"></div>';
 
 before(() => {
   process.env.MCPJAM_CLI_DISABLE_BROWSER_OPEN = "1";
@@ -86,6 +88,7 @@ async function withServerOnAvailablePort(
     } catch (error) {
       lastError = error;
       await new Promise<void>((resolve) => {
+        // EADDRINUSE means listen never completed; close reports ERR_SERVER_NOT_RUNNING, which is safe to swallow here.
         server.close(() => resolve());
       });
       if ((error as NodeJS.ErrnoException).code !== "EADDRINUSE") {
@@ -315,10 +318,10 @@ test("normalizeInspectorBaseUrl reads MCPJAM_INSPECTOR_URL lazily", () => {
   }
 });
 
-test("normalizeInspectorBaseUrl canonicalizes localhost to 127.0.0.1", () => {
+test("normalizeInspectorBaseUrl preserves explicit localhost hosts", () => {
   assert.equal(
     normalizeInspectorBaseUrl("http://localhost:6274/"),
-    "http://127.0.0.1:6274",
+    "http://localhost:6274",
   );
 });
 
@@ -359,9 +362,7 @@ test("ensureInspector reports the frontend URL from Inspector health", async () 
     (frontendRequest, frontendResponse) => {
       if (frontendRequest.method === "GET" && frontendRequest.url === "/") {
         frontendResponse.writeHead(200, { "Content-Type": "text/html" });
-        frontendResponse.end(
-          '<!doctype html><title>MCPJam Inspector</title><div id="root"></div>',
-        );
+        frontendResponse.end(INSPECTOR_FRONTEND_HTML);
         return;
       }
 
@@ -406,6 +407,48 @@ test("ensureInspector reports the frontend URL from Inspector health", async () 
   );
 });
 
+test("ensureInspector allows active attach when health frontend is stale", async () => {
+  const staleFrontendUrl = "http://127.0.0.1:9";
+
+  await withServer(
+    (request, response) => {
+      if (request.method === "GET" && request.url === "/health") {
+        response.writeHead(200, { "Content-Type": "application/json" });
+        response.end(
+          JSON.stringify({
+            status: "ok",
+            hasActiveClient: true,
+            frontend: staleFrontendUrl,
+          }),
+        );
+        return;
+      }
+
+      if (request.method === "GET" && request.url === "/api/session-token") {
+        response.writeHead(200, { "Content-Type": "application/json" });
+        response.end(JSON.stringify({ token: "ok" }));
+        return;
+      }
+
+      response.writeHead(404);
+      response.end();
+    },
+    async (baseUrl) => {
+      const result = await ensureInspector({
+        baseUrl,
+        openBrowser: false,
+        startIfNeeded: false,
+        tab: "app-builder",
+      });
+
+      assert.equal(result.hasActiveClient, true);
+      assert.equal(result.frontendUrl, staleFrontendUrl);
+      assert.equal(result.url, `${staleFrontendUrl}/#app-builder`);
+      assert.equal(result.started, false);
+    },
+  );
+});
+
 test("resolveInspectorBrowserBaseUrl discovers nearby dev frontend when health is stale", async () => {
   await withServer(
     (request, response) => {
@@ -424,9 +467,7 @@ test("resolveInspectorBrowserBaseUrl discovers nearby dev frontend when health i
         (request, response) => {
           if (request.method === "GET" && request.url === "/") {
             response.writeHead(200, { "Content-Type": "text/html" });
-            response.end(
-              '<!doctype html><title>MCPJam Inspector</title><div id="root"></div>',
-            );
+            response.end(INSPECTOR_FRONTEND_HTML);
             return;
           }
 
@@ -435,11 +476,68 @@ test("resolveInspectorBrowserBaseUrl discovers nearby dev frontend when health i
         },
         async (frontendUrl) => {
           const frontendPort = Number(new URL(frontendUrl).port);
+          // One-port stale hint depends on the resolver's frontend probe window.
           const staleFrontendUrl = `http://127.0.0.1:${frontendPort - 1}`;
 
           assert.equal(
             await resolveInspectorBrowserBaseUrl(baseUrl, staleFrontendUrl),
             frontendUrl,
+          );
+        },
+      );
+    },
+  );
+});
+
+test("resolveInspectorBrowserBaseUrl reports advertised frontend rejected by backend", async () => {
+  await withServer(
+    (frontendRequest, frontendResponse) => {
+      if (frontendRequest.method === "GET" && frontendRequest.url === "/") {
+        frontendResponse.writeHead(200, { "Content-Type": "text/html" });
+        frontendResponse.end(INSPECTOR_FRONTEND_HTML);
+        return;
+      }
+
+      frontendResponse.writeHead(404);
+      frontendResponse.end();
+    },
+    async (frontendUrl) => {
+      await withServer(
+        (request, response) => {
+          if (
+            request.method === "GET" &&
+            request.url === "/api/session-token"
+          ) {
+            response.writeHead(403, { "Content-Type": "application/json" });
+            response.end(
+              JSON.stringify({
+                error: "Forbidden",
+                message: "Request origin not allowed.",
+              }),
+            );
+            return;
+          }
+
+          response.writeHead(404);
+          response.end();
+        },
+        async (baseUrl) => {
+          await assert.rejects(
+            () => resolveInspectorBrowserBaseUrl(baseUrl, frontendUrl),
+            (error: unknown) => {
+              assert.ok(error instanceof Error);
+              assert.match(error.message, /frontend .* is reachable/i);
+              assert.doesNotMatch(
+                error.message,
+                /no Inspector frontend responded/i,
+              );
+              assert.equal(
+                (error as { details?: Record<string, unknown> }).details
+                  ?.rejectedFrontendUrl,
+                frontendUrl,
+              );
+              return true;
+            },
           );
         },
       );
@@ -453,9 +551,7 @@ test("resolveInspectorBrowserBaseUrl rejects discovered frontend when backend re
     (frontendRequest, frontendResponse) => {
       if (frontendRequest.method === "GET" && frontendRequest.url === "/") {
         frontendResponse.writeHead(200, { "Content-Type": "text/html" });
-        frontendResponse.end(
-          '<!doctype html><title>MCPJam Inspector</title><div id="root"></div>',
-        );
+        frontendResponse.end(INSPECTOR_FRONTEND_HTML);
         return;
       }
 
@@ -464,11 +560,15 @@ test("resolveInspectorBrowserBaseUrl rejects discovered frontend when backend re
     },
     async (frontendUrl) => {
       const frontendPort = Number(new URL(frontendUrl).port);
+      // One-port stale hint depends on the resolver's frontend probe window.
       const advertisedUrl = `http://127.0.0.1:${frontendPort - 1}`;
 
       await withServer(
         (request, response) => {
-          if (request.method === "GET" && request.url === "/api/session-token") {
+          if (
+            request.method === "GET" &&
+            request.url === "/api/session-token"
+          ) {
             const origin = request.headers.origin;
             if (origin === advertisedUrl) {
               response.writeHead(200, { "Content-Type": "application/json" });
@@ -506,6 +606,12 @@ test("resolveInspectorBrowserBaseUrl rejects discovered frontend when backend re
                 (error as { details?: Record<string, unknown> }).details
                   ?.rejectedFrontendUrl,
                 frontendUrl,
+              );
+              assert.notEqual(
+                (error as { details?: Record<string, unknown> }).details
+                  ?.advertisedFrontendUrl,
+                (error as { details?: Record<string, unknown> }).details
+                  ?.rejectedFrontendUrl,
               );
               return true;
             },

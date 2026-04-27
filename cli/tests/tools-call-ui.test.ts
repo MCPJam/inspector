@@ -15,6 +15,8 @@ const CLI_DIR = process.cwd().endsWith(`${path.sep}cli`)
 const requireFromCli = createRequire(path.join(CLI_DIR, "package.json"));
 const TSX_CLI_PATH = requireFromCli.resolve("tsx/cli");
 const CLI_ENTRY_PATH = path.join(CLI_DIR, "src", "index.ts");
+const INSPECTOR_FRONTEND_HTML =
+  '<!doctype html><meta name="mcpjam-inspector" content="true"><title>MCPJam Inspector</title><div id="root"></div>';
 
 async function runCli(args: string[]): Promise<{
   exitCode: number;
@@ -63,7 +65,20 @@ async function runCli(args: string[]): Promise<{
 }
 
 function lastJsonLine(stdout: string): string {
-  return stdout.trim().split(/\r?\n/).at(-1) ?? "";
+  const lines = stdout.trim().split(/\r?\n/);
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    const line = lines[i].trim();
+    if (!line) {
+      continue;
+    }
+    try {
+      JSON.parse(line);
+      return line;
+    } catch {
+      // Keep scanning for the final JSON envelope.
+    }
+  }
+  return "";
 }
 
 async function readJsonBody(
@@ -83,15 +98,14 @@ async function startMockServer(options: {
   failRender?: boolean;
 }) {
   const requests: Array<{ method?: string; url?: string; body?: unknown }> = [];
-  const toolResult =
-    options.toolResult ?? { content: [{ type: "text", text: "view created" }] };
+  const toolResult = options.toolResult ?? {
+    content: [{ type: "text", text: "view created" }],
+  };
 
   const server = http.createServer(async (request, response) => {
     if (request.method === "GET" && request.url === "/") {
       response.writeHead(200, { "Content-Type": "text/html" });
-      response.end(
-        '<!doctype html><title>MCPJam Inspector</title><div id="root"></div>',
-      );
+      response.end(INSPECTOR_FRONTEND_HTML);
       return;
     }
 
@@ -99,10 +113,10 @@ async function startMockServer(options: {
       response.writeHead(200, { "Content-Type": "application/json" });
       response.end(
         JSON.stringify({
-              status: "ok",
-              hasActiveClient: options.hasActiveClient ?? true,
-              frontend: `http://${request.headers.host}/`,
-            }),
+          status: "ok",
+          hasActiveClient: options.hasActiveClient ?? true,
+          frontend: `http://${request.headers.host}/`,
+        }),
       );
       return;
     }
@@ -379,7 +393,10 @@ test("tools call --ui in JSON mode does not open or wait without an active Inspe
       any
     >;
     assert.equal(payload.success, false);
-    assert.equal(payload.inspectorBrowserUrl, `http://127.0.0.1:${server.port}/#app-builder`);
+    assert.equal(
+      payload.inspectorBrowserUrl,
+      `http://127.0.0.1:${server.port}/#app-builder`,
+    );
     assert.equal(payload.inspectorRender.browserOpenRequested, undefined);
     assert.equal(payload.error.code, "OPERATIONAL_ERROR");
     assert.match(payload.error.message, /no active browser client/i);
@@ -602,7 +619,10 @@ test("tools call --ui rejects attach-only with open", async () => {
   ]);
 
   assert.equal(result.exitCode, 2);
-  assert.match(result.stderr, /--attach-only cannot be used together with --open/);
+  assert.match(
+    result.stderr,
+    /--attach-only cannot be used together with --open/,
+  );
 });
 
 test("tools call --ui validates render flags before executing the tool", async () => {

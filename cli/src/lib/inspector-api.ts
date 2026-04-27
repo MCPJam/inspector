@@ -81,9 +81,6 @@ export function normalizeInspectorBaseUrl(baseUrl: string | undefined): string {
     const parsed = new URL(value);
     parsed.hash = "";
     parsed.search = "";
-    if (parsed.hostname === "localhost") {
-      parsed.hostname = "127.0.0.1";
-    }
     return parsed.href.replace(/\/$/, "");
   } catch (error) {
     throw operationalError(
@@ -216,8 +213,18 @@ export async function resolveInspectorBrowserBaseUrl(
     (candidate) => candidate.source === "advertised",
   );
   const rejectedLiveCandidate = candidates.find(
-    (candidate) => candidate.isFrontend && candidate.originStatus === "rejected",
+    (candidate) =>
+      candidate !== advertisedCandidate &&
+      candidate.isFrontend &&
+      candidate.originStatus === "rejected",
   );
+
+  if (
+    advertisedCandidate?.isFrontend &&
+    advertisedCandidate.originStatus === "rejected"
+  ) {
+    throw frontendMismatchError(undefined, advertisedCandidate);
+  }
 
   if (
     advertisedCandidate &&
@@ -232,6 +239,26 @@ export async function resolveInspectorBrowserBaseUrl(
   }
 
   return normalizedFrontendUrl ?? baseUrl;
+}
+
+async function resolveInspectorBrowserBaseUrlForHealth(
+  baseUrl: string,
+  frontendUrl: string | undefined,
+  options: { hasActiveClient: boolean; openBrowser: boolean },
+): Promise<string> {
+  try {
+    return await resolveInspectorBrowserBaseUrl(baseUrl, frontendUrl);
+  } catch (error) {
+    if (options.hasActiveClient && !options.openBrowser) {
+      return (
+        canonicalizeInspectorFrontendUrl(
+          baseUrl,
+          normalizeInspectorFrontendUrl(frontendUrl),
+        ) ?? baseUrl
+      );
+    }
+    throw error;
+  }
 }
 
 export interface EnsureInspectorResult {
@@ -249,9 +276,13 @@ export async function ensureInspector(
 
   const health = await getInspectorHealth(baseUrl);
   if (health.healthy) {
-    const browserBaseUrl = await resolveInspectorBrowserBaseUrl(
+    const browserBaseUrl = await resolveInspectorBrowserBaseUrlForHealth(
       baseUrl,
       health.frontendUrl,
+      {
+        hasActiveClient: health.hasActiveClient,
+        openBrowser: options.openBrowser === true,
+      },
     );
     const url = buildInspectorUrl(browserBaseUrl, options.tab);
     if (options.openBrowser && !health.hasActiveClient) {
@@ -276,9 +307,13 @@ export async function ensureInspector(
   clearInspectorSessionTokenCache(baseUrl);
 
   const startedHealth = await getInspectorHealth(baseUrl);
-  const browserBaseUrl = await resolveInspectorBrowserBaseUrl(
+  const browserBaseUrl = await resolveInspectorBrowserBaseUrlForHealth(
     baseUrl,
     startedHealth.frontendUrl,
+    {
+      hasActiveClient: startedHealth.hasActiveClient,
+      openBrowser: options.openBrowser === true,
+    },
   );
   const url = buildInspectorUrl(browserBaseUrl, options.tab);
 
@@ -643,6 +678,7 @@ async function isInspectorFrontendUrl(baseUrl: string): Promise<boolean> {
 
     const body = await response.text();
     return (
+      hasInspectorFrontendMarker(body) ||
       /<title>\s*MCPJam Inspector\s*<\/title>/i.test(body) ||
       body.includes("/mcp_jam.svg") ||
       body.includes("__MCP_SESSION_TOKEN__")
@@ -650,6 +686,10 @@ async function isInspectorFrontendUrl(baseUrl: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+function hasInspectorFrontendMarker(body: string): boolean {
+  return /<meta\b(?=[^>]*\bname=["']mcpjam-inspector["'])[^>]*>/i.test(body);
 }
 
 async function inspectInspectorFrontendCandidate(
@@ -727,7 +767,9 @@ function frontendMismatchError(
   }
 
   return operationalError(
-    `Inspector frontend ${rejectedLiveCandidate?.url ?? "URL"} is reachable, but the Inspector backend rejects that origin. Restart Inspector with matching frontend/backend ports.`,
+    `Inspector frontend ${
+      rejectedLiveCandidate?.url ?? "URL"
+    } is reachable, but the Inspector backend rejects that origin. Restart Inspector with matching frontend/backend ports.`,
     details,
   );
 }
@@ -741,27 +783,25 @@ async function discoverLocalInspectorFrontendCandidates(
     return [];
   }
 
-  const candidates: InspectorFrontendCandidate[] = [];
   const protocol =
     getUrlProtocol(frontendUrl) ?? getUrlProtocol(baseUrl) ?? "http:";
+  const targets: string[] = [];
   for (const port of getFrontendProbePorts(frontendUrl)) {
     for (const host of hosts) {
       const candidate = `${protocol}//${formatUrlHostname(host)}:${port}`;
       if (candidate === frontendUrl || candidate === baseUrl) {
         continue;
       }
-      const inspectedCandidate = await inspectInspectorFrontendCandidate(
-        baseUrl,
-        candidate,
-        "discovered",
-      );
-      if (inspectedCandidate.isFrontend) {
-        candidates.push(inspectedCandidate);
-      }
+      targets.push(candidate);
     }
   }
 
-  return candidates;
+  const inspectedCandidates = await Promise.all(
+    targets.map((candidate) =>
+      inspectInspectorFrontendCandidate(baseUrl, candidate, "discovered"),
+    ),
+  );
+  return inspectedCandidates.filter((candidate) => candidate.isFrontend);
 }
 
 function getLocalInspectorCandidateHosts(

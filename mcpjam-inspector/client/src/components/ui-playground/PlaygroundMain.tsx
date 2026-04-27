@@ -714,6 +714,8 @@ export function PlaygroundMain({
     if (!pendingExecution) return;
     if (isMultiModelMode) {
       const requestId = Date.now();
+      const toolCallId =
+        pendingExecution.toolCallId ?? `playground-tool-${requestId}`;
       setDeterministicExecutionRequest({
         id: requestId,
         toolName: pendingExecution.toolName,
@@ -723,11 +725,10 @@ export function PlaygroundMain({
         state: pendingExecution.state,
         errorText: pendingExecution.errorText,
         renderOverride: pendingExecution.renderOverride,
-        toolCallId:
-          pendingExecution.toolCallId ?? `playground-tool-${requestId}`,
+        toolCallId,
         replaceExisting: pendingExecution.replaceExisting,
       });
-      onExecutionInjected();
+      onExecutionInjected(toolCallId);
       return;
     }
 

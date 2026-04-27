@@ -151,7 +151,8 @@ mcpjam tools call --url https://your-server.com/mcp --access-token $TOKEN \
 mcpjam apps conformance --url https://your-server.com/mcp --access-token $TOKEN
 
 # 6. Render one UI-capable tool result in Inspector's App Builder
-# Open http://127.0.0.1:6274/#app-builder in your browser automation first.
+# Open http://127.0.0.1:6274/#app-builder in your browser automation first
+# (or pass --open for an interactive run).
 mcpjam tools call --url https://your-server.com/mcp --access-token $TOKEN \
   --tool-name my_app_tool --tool-args @params.json --ui --quiet --format json
 ```

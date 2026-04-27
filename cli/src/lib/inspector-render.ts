@@ -48,14 +48,17 @@ export async function runUiRender(options: {
   const openBrowser = options.openBrowser === true;
   const ensureResult = await client.ensure({
     openBrowser,
-    startIfNeeded: options.startIfNeeded ?? true,
+    startIfNeeded: options.startIfNeeded ?? openBrowser,
     tab: "app-builder",
     timeoutMs: options.timeoutMs,
   });
 
   if (!ensureResult.hasActiveClient && !openBrowser) {
+    const startedNote = ensureResult.started
+      ? " Inspector was just started by the CLI and is still running."
+      : "";
     throw operationalError(
-      "Inspector has no active browser client. Open the Inspector App Builder URL in your browser, then rerun `tools call --ui`; or pass `--open` to let the CLI open a system browser.",
+      `Inspector has no active browser client.${startedNote} Open the Inspector App Builder URL in your browser, then rerun \`tools call --ui\`; or pass \`--open\` to let the CLI open a system browser.`,
       {
         inspectorBrowserUrl: ensureResult.url,
         inspectorStarted: ensureResult.started,

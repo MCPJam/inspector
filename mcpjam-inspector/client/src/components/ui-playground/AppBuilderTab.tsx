@@ -112,6 +112,7 @@ const APP_BUILDER_FIRST_RUN_PROMPT = "Draw me an MCP architecture diagram";
 const SIDEBAR_EASE: [number, number, number, number] = [0.4, 0, 0.2, 1];
 
 type ExecutionInjectionWaiter = {
+  expectedToolCallId?: string;
   reject: (error: unknown) => void;
   resolve: (toolCallId?: string) => void;
   timeoutId: ReturnType<typeof setTimeout>;
@@ -243,57 +244,75 @@ export function AppBuilderTab({
 
   const executionInjectionWaitersRef = useRef<ExecutionInjectionWaiter[]>([]);
 
-  const waitForExecutionInjection = useCallback((timeoutMs?: number) => {
-    let waiter: ExecutionInjectionWaiter | undefined;
-    const effectiveTimeoutMs = Math.min(
-      timeoutMs ?? EXECUTION_INJECTION_TIMEOUT_MS,
-      EXECUTION_INJECTION_TIMEOUT_MS,
-    );
+  const waitForExecutionInjection = useCallback(
+    (expectedToolCallId: string | undefined, timeoutMs?: number) => {
+      let waiter: ExecutionInjectionWaiter | undefined;
+      const effectiveTimeoutMs =
+        typeof timeoutMs === "number" && timeoutMs > 0
+          ? timeoutMs
+          : EXECUTION_INJECTION_TIMEOUT_MS;
 
-    const removeWaiter = () => {
-      if (!waiter) return;
-      executionInjectionWaitersRef.current =
-        executionInjectionWaitersRef.current.filter((entry) => entry !== waiter);
-    };
-
-    const promise = new Promise<string | undefined>((resolve, reject) => {
-      const timeoutId = setTimeout(() => {
-        removeWaiter();
-        reject(
-          createInspectorCommandClientError(
-            "timeout",
-            `Tool result was not rendered in App Builder within ${effectiveTimeoutMs}ms.`,
-          ),
-        );
-      }, effectiveTimeoutMs);
-
-      waiter = {
-        reject,
-        resolve: (toolCallId?: string) => {
-          clearTimeout(timeoutId);
-          removeWaiter();
-          resolve(toolCallId);
-        },
-        timeoutId,
-      };
-      executionInjectionWaitersRef.current.push(waiter);
-    });
-
-    return {
-      cancel: () => {
+      const removeWaiter = () => {
         if (!waiter) return;
-        clearTimeout(waiter.timeoutId);
-        removeWaiter();
-      },
-      promise,
-    };
-  }, []);
+        executionInjectionWaitersRef.current =
+          executionInjectionWaitersRef.current.filter(
+            (entry) => entry !== waiter,
+          );
+      };
+
+      const promise = new Promise<string | undefined>((resolve, reject) => {
+        const timeoutId = setTimeout(() => {
+          removeWaiter();
+          reject(
+            createInspectorCommandClientError(
+              "timeout",
+              `Tool result was not rendered in App Builder within ${effectiveTimeoutMs}ms.`,
+            ),
+          );
+        }, effectiveTimeoutMs);
+
+        waiter = {
+          ...(expectedToolCallId ? { expectedToolCallId } : {}),
+          reject,
+          resolve: (toolCallId?: string) => {
+            clearTimeout(timeoutId);
+            removeWaiter();
+            resolve(toolCallId);
+          },
+          timeoutId,
+        };
+        executionInjectionWaitersRef.current.push(waiter);
+      });
+
+      return {
+        cancel: () => {
+          if (!waiter) return;
+          clearTimeout(waiter.timeoutId);
+          removeWaiter();
+        },
+        promise,
+      };
+    },
+    [],
+  );
 
   const handleExecutionInjected = useCallback(
     (toolCallId?: string) => {
       clearPendingExecution();
-      const waiters = executionInjectionWaitersRef.current.splice(0);
-      for (const waiter of waiters) {
+      const resolvedWaiters: ExecutionInjectionWaiter[] = [];
+      const pendingWaiters: ExecutionInjectionWaiter[] = [];
+      for (const waiter of executionInjectionWaitersRef.current) {
+        if (
+          !waiter.expectedToolCallId ||
+          waiter.expectedToolCallId === toolCallId
+        ) {
+          resolvedWaiters.push(waiter);
+        } else {
+          pendingWaiters.push(waiter);
+        }
+      }
+      executionInjectionWaitersRef.current = pendingWaiters;
+      for (const waiter of resolvedWaiters) {
         waiter.resolve(toolCallId);
       }
     },
@@ -685,13 +704,17 @@ export function AppBuilderTab({
       async (rawCommand) => {
         const command = rawCommand as RenderToolResultInspectorCommand;
         const selection = await selectToolForCommand(command);
-        const injection = waitForExecutionInjection(command.timeoutMs);
+        const injection = waitForExecutionInjection(
+          command.id,
+          command.timeoutMs,
+        );
         let outcome: Awaited<ReturnType<typeof injectToolResult>>;
         try {
           outcome = await injectToolResult({
             toolName: command.payload.toolName,
             parameters: selection.parameters,
             result: command.payload.result,
+            toolCallId: command.id,
           });
           await injection.promise;
         } finally {

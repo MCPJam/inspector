@@ -27,6 +27,7 @@ export interface PendingExecution {
   params: Record<string, unknown>;
   result: unknown;
   toolMeta: Record<string, unknown> | undefined;
+  toolCallId?: string;
 }
 
 export interface UseToolExecutionOptions {
@@ -61,6 +62,7 @@ export interface InjectToolResultOptions {
   toolName: string;
   parameters: Record<string, unknown>;
   result: unknown;
+  toolCallId?: string;
 }
 
 export type CompletedToolInvocationResult = {
@@ -122,6 +124,7 @@ export function useToolExecution({
       effectiveToolName: string,
       params: Record<string, unknown>,
       result: unknown,
+      toolCallId?: string,
     ) => {
       // Store raw output for inspector
       setToolOutput(result);
@@ -145,6 +148,7 @@ export function useToolExecution({
         params,
         result,
         toolMeta: mergedMeta,
+        ...(toolCallId ? { toolCallId } : {}),
       });
     },
     [setToolOutput, setToolResponseMetadata, toolsMetadata],
@@ -283,9 +287,10 @@ export function useToolExecution({
       toolName,
       parameters,
       result,
+      toolCallId,
     }: InjectToolResultOptions): Promise<CompletedToolInvocationResult> => {
       setExecutionError(null);
-      storeCompletedToolResult(toolName, parameters, result);
+      storeCompletedToolResult(toolName, parameters, result, toolCallId);
 
       return {
         ok: true,

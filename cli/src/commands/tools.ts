@@ -290,24 +290,27 @@ export function registerToolsCommands(program: Command): void {
         typeof options.serverName === "string" && options.serverName.trim()
           ? options.serverName.trim()
           : buildInspectorServerName(options);
+      const openBrowser = resolveInspectorOpenBrowser(options, globalOptions);
       let uiResult: Record<string, unknown>;
 
       try {
         uiResult = await runUiRender({
           baseUrl: options.inspectorUrl,
           config,
-          openBrowser: resolveInspectorOpenBrowser(options, globalOptions),
+          openBrowser,
           params,
           renderContext: renderContext!,
           serverName,
-          startIfNeeded: options.attachOnly !== true,
+          startIfNeeded: options.attachOnly === true ? false : undefined,
           timeoutMs: globalOptions.timeout,
           toolName,
           toolResult: result,
         });
         inspectorRenderError = findInspectorRenderError(uiResult);
       } catch (error) {
-        inspectorRenderError = toStructuredError(normalizeCliError(error)).error;
+        inspectorRenderError = toStructuredError(
+          normalizeCliError(error),
+        ).error;
         uiResult = {
           status: "error",
           error: inspectorRenderError,
@@ -352,15 +355,15 @@ export function registerToolsCommands(program: Command): void {
       },
       target: targetSummary,
       outcome: inspectorRenderError
-          ? {
-              status: "error",
-              error: inspectorRenderError,
-              result: debugOutputPayload,
-            }
-          : {
-              status: "success",
-              result: debugOutputPayload,
-            },
+        ? {
+            status: "error",
+            error: inspectorRenderError,
+            result: debugOutputPayload,
+          }
+        : {
+            status: "success",
+            result: debugOutputPayload,
+          },
       snapshot: options.debugOut
         ? {
             input: {
@@ -438,17 +441,11 @@ function extractInspectorRenderErrorUrls(error: {
 function buildCompactInspectorRender(
   uiResult: Record<string, unknown>,
 ): Record<string, unknown> {
-  const commandNames = [
-    "openAppBuilder",
-    "setAppContext",
-    "renderToolResult",
-    "snapshot",
-  ];
   const commands: Record<string, unknown> = {};
   let hasCommandError = false;
 
-  for (const commandName of commandNames) {
-    const response = compactInspectorCommandResponse(uiResult[commandName]);
+  for (const [commandName, commandValue] of Object.entries(uiResult)) {
+    const response = compactInspectorCommandResponse(commandValue);
     if (!response) {
       continue;
     }
@@ -464,10 +461,15 @@ function buildCompactInspectorRender(
       : {};
 
   return {
-    status: hasCommandError || uiResult.status === "error" ? "error" : "rendered",
+    status:
+      hasCommandError || uiResult.status === "error" ? "error" : "rendered",
+    // Contract metadata: renders target the active client and fresh tabs do not
+    // hydrate this injected state.
     mode: "active-client",
     urlHydratesRender: false,
-    ...(typeof uiResult.baseUrl === "string" ? { baseUrl: uiResult.baseUrl } : {}),
+    ...(typeof uiResult.baseUrl === "string"
+      ? { baseUrl: uiResult.baseUrl }
+      : {}),
     ...(typeof uiResult.browserUrl === "string"
       ? { browserUrl: uiResult.browserUrl }
       : {}),
@@ -488,10 +490,12 @@ function buildCompactInspectorRender(
   };
 }
 
+type CompactInspectorCommandStatus = "success" | "error";
+
 function compactInspectorCommandResponse(
   value: unknown,
-): { status: string; error?: unknown } | undefined {
-  if (!isRecord(value) || typeof value.status !== "string") {
+): { status: CompactInspectorCommandStatus; error?: unknown } | undefined {
+  if (!isRecord(value) || !isCompactInspectorCommandStatus(value.status)) {
     return undefined;
   }
   return {
@@ -500,6 +504,12 @@ function compactInspectorCommandResponse(
       ? { error: value.error }
       : {}),
   };
+}
+
+function isCompactInspectorCommandStatus(
+  value: unknown,
+): value is CompactInspectorCommandStatus {
+  return value === "success" || value === "error";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
