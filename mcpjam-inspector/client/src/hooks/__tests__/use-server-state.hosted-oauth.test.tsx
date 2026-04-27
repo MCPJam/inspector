@@ -324,6 +324,71 @@ describe("useServerState hosted OAuth callback guards", () => {
     });
   });
 
+  it("forwards the OAuth callback state parameter to completeHostedOAuthCallback", async () => {
+    window.history.replaceState(
+      {},
+      "",
+      "/?code=oauth-code&state=expected-state-token",
+    );
+    writeHostedOAuthPendingMarker({
+      surface: "workspace",
+      workspaceId: "ws_1",
+      serverId: "srv_asana",
+      serverName: "asana",
+      serverUrl: "https://mcp.asana.com/sse",
+      accessScope: "workspace_member",
+      returnHash: "#servers",
+    });
+    localStorage.setItem("mcp-oauth-pending", "asana");
+    localStorage.setItem("mcp-serverUrl-asana", "https://mcp.asana.com/sse");
+    mockHandleOAuthCallback.mockResolvedValue({
+      success: true,
+      serverName: "asana",
+      serverConfig: {
+        url: "https://mcp.asana.com/sse",
+        requestInit: { headers: {} },
+      },
+    });
+
+    renderHook(() =>
+      useServerState({
+        appState: {
+          servers: {},
+          selectedMultipleServers: [],
+        } as any,
+        dispatch: vi.fn(),
+        isLoading: false,
+        isAuthenticated: true,
+        isAuthLoading: false,
+        isLoadingWorkspaces: false,
+        useLocalFallback: false,
+        effectiveWorkspaces: {} as any,
+        effectiveActiveWorkspaceId: "ws_1",
+        activeWorkspaceServersFlat: [],
+        logger: {
+          info: vi.fn(),
+          warn: vi.fn(),
+          error: vi.fn(),
+          debug: vi.fn(),
+        },
+      }),
+    );
+
+    await waitFor(() => {
+      expect(mockHandleOAuthCallback).toHaveBeenCalledWith(
+        expect.objectContaining({
+          surface: "workspace",
+          serverName: "asana",
+        }),
+        "oauth-code",
+        expect.objectContaining({
+          callbackState: "expected-state-token",
+          onTraceUpdate: expect.any(Function),
+        }),
+      );
+    });
+  });
+
   it("reuses hosted stored OAuth credentials on reconnect before falling back to interactive OAuth", async () => {
     const workspaceClientConfig = {
       version: 1 as const,
