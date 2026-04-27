@@ -169,7 +169,7 @@ mcpjam apps conformance \
 
 Use `tools list` to find UI-capable tools. A tool has interactive UI when its metadata includes `_meta.ui.resourceUri`, deprecated `_meta["ui/resourceUri"]`, or `openai/outputTemplate` in `toolsMetadata`.
 
-Then use `tools call --ui` when you need to inspect the output of one UI-capable tool call. The CLI starts or attaches to the local Inspector backend, connects the target server, focuses App Builder in the active Inspector browser client, injects the already-completed tool result, and requests a UI snapshot. JSON/quiet invocations do not open a system browser by default, but they may start Inspector; pass `--open` for interactive use, use `--attach-only` to disallow startup, or open `http://127.0.0.1:6274/#app-builder` with browser automation before running the command.
+Then use `tools call --ui` when you need to inspect the output of one UI-capable tool call. The CLI starts or attaches to the local Inspector backend, connects the target server, focuses App Builder in the active Inspector browser client, injects the already-completed tool result, and requests a UI snapshot. `--inspector-url` is the Inspector backend/API URL; `--frontend-url` is the browser/client URL and skips frontend discovery. JSON/quiet invocations do not open a system browser or scan local frontend ports by default, but they may start Inspector; pass `--open` for interactive use and local dev frontend discovery, use `--attach-only` to disallow startup, browser opening, and discovery, or open `http://127.0.0.1:6274/#app-builder` with browser automation before running the command.
 
 ```bash
 mcpjam tools call \

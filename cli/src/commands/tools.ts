@@ -53,6 +53,7 @@ interface ToolsCallOptions extends SharedServerTargetOptions {
   open?: boolean;
   attachOnly?: boolean;
   inspectorUrl?: string;
+  frontendUrl?: string;
   serverName?: string;
   protocol?: string;
   device?: string;
@@ -145,6 +146,10 @@ export function registerToolsCommands(program: Command): void {
         "Require an already-running Inspector browser client; do not start or open Inspector",
       )
       .option("--inspector-url <url>", "Local Inspector base URL (with --ui)")
+      .option(
+        "--frontend-url <url>",
+        "Inspector frontend URL (with --ui; overrides health-advertised frontend and skips discovery)",
+      )
       .option(
         "--server-name <name>",
         "Server name inside Inspector (with --ui)",
@@ -291,15 +296,21 @@ export function registerToolsCommands(program: Command): void {
           ? options.serverName.trim()
           : buildInspectorServerName(options);
       const openBrowser = resolveInspectorOpenBrowser(options, globalOptions);
+      const skipDiscovery = resolveInspectorSkipDiscovery(
+        options,
+        globalOptions,
+      );
       let uiResult: Record<string, unknown>;
 
       try {
         uiResult = await runUiRender({
           baseUrl: options.inspectorUrl,
           config,
+          frontendUrl: options.frontendUrl,
           openBrowser,
           params,
           renderContext: renderContext!,
+          skipDiscovery,
           serverName,
           startIfNeeded: resolveInspectorStartIfNeeded(options),
           timeoutMs: globalOptions.timeout,
@@ -418,6 +429,28 @@ function resolveInspectorOpenBrowser(
     return options.open;
   }
   return globalOptions.format === "human" && !globalOptions.quiet;
+}
+
+export function resolveInspectorSkipDiscovery(
+  options: Pick<ToolsCallOptions, "attachOnly" | "frontendUrl" | "open">,
+  globalOptions: GlobalOptions,
+): boolean {
+  if (typeof options.frontendUrl === "string" && options.frontendUrl.trim()) {
+    return true;
+  }
+  if (options.attachOnly) {
+    return true;
+  }
+  if (
+    (globalOptions.format === "json" || globalOptions.quiet) &&
+    options.open !== true
+  ) {
+    return true;
+  }
+  if (options.open === true) {
+    return false;
+  }
+  return false;
 }
 
 export function resolveInspectorStartIfNeeded(options: {

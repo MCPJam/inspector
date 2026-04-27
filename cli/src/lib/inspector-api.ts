@@ -33,7 +33,9 @@ type InspectorRequestInit = Omit<RequestInit, "body"> & {
 };
 
 export interface EnsureInspectorOptions extends InspectorApiClientOptions {
+  frontendUrl?: string;
   openBrowser?: boolean;
+  skipDiscovery?: boolean;
   startIfNeeded?: boolean;
   tab?: string;
   timeoutMs?: number;
@@ -115,6 +117,14 @@ export function normalizeInspectorFrontendUrl(
   }
 }
 
+function normalizeExplicitInspectorFrontendUrl(frontendUrl: string): string {
+  const normalized = normalizeInspectorFrontendUrl(frontendUrl);
+  if (!normalized) {
+    throw operationalError(`Invalid Inspector frontend URL "${frontendUrl}".`);
+  }
+  return normalized;
+}
+
 function canonicalizeInspectorFrontendUrl(
   baseUrl: string,
   frontendUrl: string | undefined,
@@ -165,42 +175,25 @@ export function buildInspectorBrowserUrl(
 export async function resolveInspectorBrowserBaseUrl(
   baseUrl: string,
   frontendUrl?: string,
+  options: { skipDiscovery?: boolean } = {},
 ): Promise<string> {
-  const normalizedFrontendUrl = canonicalizeInspectorFrontendUrl(
+  const fastResolution = await resolveInspectorBrowserBaseUrlFast(
     baseUrl,
-    normalizeInspectorFrontendUrl(frontendUrl),
+    frontendUrl,
   );
-  const candidates: InspectorFrontendCandidate[] = [];
-
-  if (normalizedFrontendUrl) {
-    const advertisedCandidate = await inspectInspectorFrontendCandidate(
-      baseUrl,
-      normalizedFrontendUrl,
-      "advertised",
-    );
-    candidates.push(advertisedCandidate);
-
-    if (isUsableInspectorFrontendCandidate(advertisedCandidate)) {
-      return advertisedCandidate.url;
-    }
+  if (fastResolution.browserBaseUrl) {
+    return fastResolution.browserBaseUrl;
   }
 
-  const baseCandidate = await inspectInspectorFrontendCandidate(
-    baseUrl,
-    baseUrl,
-    "base",
-  );
-  candidates.push(baseCandidate);
-
-  if (isUsableInspectorFrontendCandidate(baseCandidate)) {
-    return baseCandidate.url;
+  if (options.skipDiscovery) {
+    assertFastFrontendMismatch(fastResolution.candidates);
+    return fastResolution.normalizedFrontendUrl ?? baseUrl;
   }
 
   const discoveredCandidates = await discoverLocalInspectorFrontendCandidates(
     baseUrl,
-    normalizedFrontendUrl,
+    fastResolution.normalizedFrontendUrl,
   );
-  candidates.push(...discoveredCandidates);
 
   const usableDiscoveredCandidate = discoveredCandidates.find(
     isUsableInspectorFrontendCandidate,
@@ -209,6 +202,103 @@ export async function resolveInspectorBrowserBaseUrl(
     return usableDiscoveredCandidate.url;
   }
 
+  const candidates = [...fastResolution.candidates, ...discoveredCandidates];
+  assertFullFrontendMismatch(candidates);
+
+  return fastResolution.normalizedFrontendUrl ?? baseUrl;
+}
+
+interface InspectorBrowserBaseUrlFastResolution {
+  browserBaseUrl?: string;
+  candidates: InspectorFrontendCandidate[];
+  normalizedFrontendUrl?: string;
+}
+
+async function resolveInspectorBrowserBaseUrlFast(
+  baseUrl: string,
+  frontendUrl?: string,
+): Promise<InspectorBrowserBaseUrlFastResolution> {
+  const normalizedFrontendUrl = canonicalizeInspectorFrontendUrl(
+    baseUrl,
+    normalizeInspectorFrontendUrl(frontendUrl),
+  );
+  const targets: Array<{
+    source: InspectorFrontendCandidate["source"];
+    url: string;
+  }> = [];
+
+  if (normalizedFrontendUrl) {
+    targets.push({ source: "advertised", url: normalizedFrontendUrl });
+  }
+  if (!targets.some((target) => target.url === baseUrl)) {
+    targets.push({ source: "base", url: baseUrl });
+  }
+
+  const candidates = await inspectInspectorFrontendCandidates(
+    baseUrl,
+    targets,
+  );
+  const usableCandidate = candidates.find(isUsableInspectorFrontendCandidate);
+
+  return {
+    ...(usableCandidate
+      ? { browserBaseUrl: usableCandidate.url }
+      : {}),
+    candidates,
+    ...(normalizedFrontendUrl ? { normalizedFrontendUrl } : {}),
+  };
+}
+
+async function inspectInspectorFrontendCandidates(
+  apiBaseUrl: string,
+  targets: ReadonlyArray<{
+    source: InspectorFrontendCandidate["source"];
+    url: string;
+  }>,
+): Promise<InspectorFrontendCandidate[]> {
+  const settled = await Promise.allSettled(
+    targets.map((target) =>
+      inspectInspectorFrontendCandidate(apiBaseUrl, target.url, target.source),
+    ),
+  );
+
+  return settled.map((result, index) => {
+    if (result.status === "fulfilled") {
+      return result.value;
+    }
+    const target = targets[index]!;
+    return {
+      isFrontend: false,
+      originStatus: "unknown",
+      source: target.source,
+      url: target.url,
+    };
+  });
+}
+
+function assertFastFrontendMismatch(
+  candidates: InspectorFrontendCandidate[],
+): void {
+  const advertisedCandidate = candidates.find(
+    (candidate) => candidate.source === "advertised",
+  );
+  const rejectedLiveCandidate = candidates.find(
+    (candidate) => candidate.isFrontend && candidate.originStatus === "rejected",
+  );
+
+  if (!rejectedLiveCandidate) {
+    return;
+  }
+
+  if (advertisedCandidate === rejectedLiveCandidate) {
+    throw frontendMismatchError(undefined, rejectedLiveCandidate);
+  }
+  throw frontendMismatchError(advertisedCandidate, rejectedLiveCandidate);
+}
+
+function assertFullFrontendMismatch(
+  candidates: InspectorFrontendCandidate[],
+): void {
   const advertisedCandidate = candidates.find(
     (candidate) => candidate.source === "advertised",
   );
@@ -237,17 +327,21 @@ export async function resolveInspectorBrowserBaseUrl(
   if (rejectedLiveCandidate) {
     throw frontendMismatchError(advertisedCandidate, rejectedLiveCandidate);
   }
-
-  return normalizedFrontendUrl ?? baseUrl;
 }
 
 async function resolveInspectorBrowserBaseUrlForHealth(
   baseUrl: string,
   frontendUrl: string | undefined,
-  options: { hasActiveClient: boolean; openBrowser: boolean },
+  options: {
+    hasActiveClient: boolean;
+    openBrowser: boolean;
+    skipDiscovery?: boolean;
+  },
 ): Promise<string> {
   try {
-    return await resolveInspectorBrowserBaseUrl(baseUrl, frontendUrl);
+    return await resolveInspectorBrowserBaseUrl(baseUrl, frontendUrl, {
+      skipDiscovery: options.skipDiscovery,
+    });
   } catch (error) {
     if (options.hasActiveClient && !options.openBrowser) {
       return (
@@ -273,17 +367,20 @@ export async function ensureInspector(
   options: EnsureInspectorOptions = {},
 ): Promise<EnsureInspectorResult> {
   const baseUrl = normalizeInspectorBaseUrl(options.baseUrl);
+  const explicitFrontendUrl =
+    options.frontendUrl !== undefined
+      ? normalizeExplicitInspectorFrontendUrl(options.frontendUrl)
+      : undefined;
 
   const health = await getInspectorHealth(baseUrl);
   if (health.healthy) {
-    const browserBaseUrl = await resolveInspectorBrowserBaseUrlForHealth(
-      baseUrl,
-      health.frontendUrl,
-      {
+    const browserBaseUrl =
+      explicitFrontendUrl ??
+      (await resolveInspectorBrowserBaseUrlForHealth(baseUrl, health.frontendUrl, {
         hasActiveClient: health.hasActiveClient,
         openBrowser: options.openBrowser === true,
-      },
-    );
+        skipDiscovery: options.skipDiscovery,
+      }));
     const url = buildInspectorUrl(browserBaseUrl, options.tab);
     if (options.openBrowser && !health.hasActiveClient) {
       openUrl(url);
@@ -307,14 +404,17 @@ export async function ensureInspector(
   clearInspectorSessionTokenCache(baseUrl);
 
   const startedHealth = await getInspectorHealth(baseUrl);
-  const browserBaseUrl = await resolveInspectorBrowserBaseUrlForHealth(
-    baseUrl,
-    startedHealth.frontendUrl,
-    {
-      hasActiveClient: startedHealth.hasActiveClient,
-      openBrowser: options.openBrowser === true,
-    },
-  );
+  const browserBaseUrl =
+    explicitFrontendUrl ??
+    (await resolveInspectorBrowserBaseUrlForHealth(
+      baseUrl,
+      startedHealth.frontendUrl,
+      {
+        hasActiveClient: startedHealth.hasActiveClient,
+        openBrowser: options.openBrowser === true,
+        skipDiscovery: options.skipDiscovery,
+      },
+    ));
   const url = buildInspectorUrl(browserBaseUrl, options.tab);
 
   if (options.openBrowser) {
@@ -796,10 +896,12 @@ async function discoverLocalInspectorFrontendCandidates(
     }
   }
 
-  const inspectedCandidates = await Promise.all(
-    targets.map((candidate) =>
-      inspectInspectorFrontendCandidate(baseUrl, candidate, "discovered"),
-    ),
+  const inspectedCandidates = await inspectInspectorFrontendCandidates(
+    baseUrl,
+    targets.map((candidate) => ({
+      source: "discovered" as const,
+      url: candidate,
+    })),
   );
   return inspectedCandidates.filter((candidate) => candidate.isFrontend);
 }

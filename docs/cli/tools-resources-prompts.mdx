@@ -45,9 +45,9 @@ mcpjam tools call --url https://your-server.com/mcp --access-token $TOKEN \
   --quiet --format json
 ```
 
-Without `--ui`, `tools call` returns the raw tool result. With `--ui`, it returns an envelope containing the raw `result`, `inspectorBrowserUrl`, and `inspectorRender` evidence. Browser automation should open `inspectorBrowserUrl`; `--inspector-url` is the local Inspector API base URL.
+Without `--ui`, `tools call` returns the raw tool result. With `--ui`, it returns an envelope containing the raw `result`, `inspectorBrowserUrl`, and `inspectorRender` evidence. Browser automation should open `inspectorBrowserUrl`; `--inspector-url` is the local Inspector backend/API base URL. If you already know the Inspector browser/client URL, pass `--frontend-url <url>` to use it directly and skip health-advertised frontend checks and local dev port discovery.
 
-For agent/browser automation, open `http://127.0.0.1:6274/#app-builder` in the automation browser first, then run `tools call --ui --quiet --format json`. JSON/quiet `--ui` will not open a system browser unless you pass `--open`, but it may start Inspector; add `--attach-only` when startup should be disallowed. The normal JSON output is compact; pass `--debug-out <path>` for the full render envelope.
+For agent/browser automation, open `http://127.0.0.1:6274/#app-builder` in the automation browser first, then run `tools call --ui --quiet --format json`. JSON/quiet `--ui` will not open a system browser or scan local frontend ports unless you pass `--open`, but it may start Inspector; add `--attach-only` when startup, browser opening, and discovery should be disallowed. Human TTY and `--open` flows may discover local dev frontends. The normal JSON output is compact; pass `--debug-out <path>` for the full render envelope.
 
 For a local stdio server:
 
