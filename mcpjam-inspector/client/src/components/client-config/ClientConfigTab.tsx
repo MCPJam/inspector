@@ -12,11 +12,11 @@ import {
 import { useWorkspaceClientConfigSyncPending } from "@/hooks/use-workspace-client-config-sync-pending";
 import { useClientConfigStore } from "@/stores/client-config-store";
 
-/** Toolbar (~34px) + status bar (~28px) + a bit of breathing room. */
-const JSON_EDITOR_TOOLBAR_STATUS_PX = 72;
+/** Toolbar + status bar chrome around the editable JSON body. */
+const JSON_EDITOR_TOOLBAR_STATUS_PX = 64;
 const JSON_LINE_PX = 20;
-/** Extra vertical padding so the last line isn't hidden behind the status bar. */
-const JSON_TEXTAREA_VERTICAL_PAD_PX = 44;
+/** Minimal body padding so compact JSON doesn't leave a large blank editor well. */
+const JSON_TEXTAREA_VERTICAL_PAD_PX = 16;
 
 function useContentSizedJsonHeight(
   text: string,
@@ -91,13 +91,13 @@ export function ClientConfigTab({
 
   const connectionDefaultsHeight = useContentSizedJsonHeight(
     connectionDefaultsText,
-    7.5,
+    5.5,
     32,
     0.45,
   );
   const clientCapabilitiesHeight = useContentSizedJsonHeight(
     clientCapabilitiesText,
-    7.5,
+    5.5,
     36,
     0.5,
   );
@@ -160,7 +160,7 @@ export function ClientConfigTab({
   ];
 
   return (
-    <div className="h-full overflow-auto">
+    <div className="max-h-[88vh] overflow-auto">
       <div className="flex w-full min-w-0 flex-col gap-4 px-4 py-3 sm:px-5 sm:py-4">
         {/* Header — pr-8 keeps buttons clear of the dialog close ✕ */}
         <div className="flex items-center justify-between gap-4 pr-8">
@@ -195,9 +195,9 @@ export function ClientConfigTab({
         {reconnectServers.length > 0 && (
           <div className="flex items-center gap-2 rounded border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
             <AlertTriangle className="h-3 w-3 shrink-0" />
-            Capabilities changed for{" "}
-            {reconnectServers.map((s) => s.name).join(", ")} — reconnect to
-            apply.
+            Connection settings changed for{" "}
+            {reconnectServers.map((s) => s.name).join(", ")}. Turn the
+            connection off and on to apply.
           </div>
         )}
 
