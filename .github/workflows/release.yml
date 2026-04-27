@@ -71,7 +71,7 @@ jobs:
         run: npm ci --legacy-peer-deps
 
       - name: Verify workspace
-        if: inputs.skip_verify != 'true'
+        if: ${{ !fromJSON(inputs.skip_verify) }}
         run: npm run verify
 
       - name: Require green staging smoke for candidate SHA
@@ -327,7 +327,7 @@ jobs:
     needs:
       - preflight
       - publish-packages
-    if: inputs.deploy_backend_prod == 'true'
+    if: ${{ fromJSON(inputs.deploy_backend_prod) }}
     runs-on: ubuntu-latest
     environment: backend-production
     steps:
@@ -397,11 +397,11 @@ jobs:
       - deploy-backend-prod
     if: |
       always() &&
-      inputs.promote_production == 'true' &&
+      fromJSON(inputs.promote_production) &&
       needs.preflight.result == 'success' &&
       needs.publish-packages.result == 'success' &&
       (
-        inputs.deploy_backend_prod != 'true' ||
+        !fromJSON(inputs.deploy_backend_prod) ||
         needs.deploy-backend-prod.result == 'success'
       )
     runs-on: ubuntu-latest
