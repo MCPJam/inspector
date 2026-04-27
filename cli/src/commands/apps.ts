@@ -11,6 +11,7 @@ import {
 import {
   buildChatGptWidgetContent,
   buildMcpWidgetContent,
+  parseTheme,
 } from "../lib/apps.js";
 import { loadAppsSuiteConfig } from "../lib/config-file.js";
 import {
@@ -31,12 +32,8 @@ import {
   parseServerConfig,
   type SharedServerTargetOptions,
 } from "../lib/server-config.js";
-import {
-  setProcessExitCode,
-  usageError,
-  writeResult,
-} from "../lib/output.js";
-import { parseTheme, registerAppsDebugCommand } from "./apps-debug.js";
+import { setProcessExitCode, usageError, writeResult } from "../lib/output.js";
+import { registerAppsDebugCommand } from "./apps-debug.js";
 
 const APPS_CHECK_IDS_BY_CATEGORY: Record<
   MCPAppsCheckCategory,
@@ -72,7 +69,10 @@ function getConformanceGlobals(command: Command): {
   };
 
   return {
-    format: resolveConformanceOutputFormat(options.format, process.stdout.isTTY),
+    format: resolveConformanceOutputFormat(
+      options.format,
+      process.stdout.isTTY,
+    ),
     timeout: options.timeout ?? 30_000,
     rpc: options.rpc ?? false,
   };
@@ -122,7 +122,11 @@ export function registerAppsCommands(program: Command): void {
 
     writeConformanceOutput(
       renderConformanceResult(
-        withRpcLogsIfRequested(result, collector, globalOptions) as typeof result,
+        withRpcLogsIfRequested(
+          result,
+          collector,
+          globalOptions,
+        ) as typeof result,
         globalOptions.format,
       ),
     );
@@ -153,7 +157,11 @@ export function registerAppsCommands(program: Command): void {
 
       writeConformanceOutput(
         renderConformanceResult(
-          withRpcLogsIfRequested(result, collector, globalOptions) as typeof result,
+          withRpcLogsIfRequested(
+            result,
+            collector,
+            globalOptions,
+          ) as typeof result,
           globalOptions.format,
         ),
       );
@@ -369,7 +377,9 @@ export function buildAppsConformanceConfig(
   const invalidCheckIds = collectInvalidEntries(checkIds, MCP_APPS_CHECK_IDS);
   if (invalidCheckIds.length > 0) {
     throw usageError(
-      `Unknown check id${invalidCheckIds.length === 1 ? "" : "s"}: ${invalidCheckIds.join(", ")}`,
+      `Unknown check id${
+        invalidCheckIds.length === 1 ? "" : "s"
+      }: ${invalidCheckIds.join(", ")}`,
     );
   }
 
@@ -377,15 +387,15 @@ export function buildAppsConformanceConfig(
     checkIds && checkIds.length > 0
       ? checkIds
       : categories && categories.length > 0
-        ? Array.from(
-            new Set(
-              categories.flatMap(
-                (category) =>
-                  APPS_CHECK_IDS_BY_CATEGORY[category as MCPAppsCheckCategory],
-              ),
+      ? Array.from(
+          new Set(
+            categories.flatMap(
+              (category) =>
+                APPS_CHECK_IDS_BY_CATEGORY[category as MCPAppsCheckCategory],
             ),
-          )
-        : undefined;
+          ),
+        )
+      : undefined;
 
   return {
     ...serverConfig,

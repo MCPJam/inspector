@@ -6,6 +6,7 @@ import {
   INSPECTOR_COMMAND_DEFAULT_TIMEOUT_MS,
   buildInspectorCommandError,
 } from "@/shared/inspector-command.js";
+import { logger } from "../utils/logger.js";
 
 type Subscriber = {
   clientId: string;
@@ -19,6 +20,14 @@ type PendingCommand = {
   timeout: NodeJS.Timeout;
 };
 
+/**
+ * Maintains a single active Inspector SSE subscriber.
+ *
+ * @note `registerSubscriber` evicts the previous subscriber, records evicted
+ * client ids in `supersededClientIds`, and rejects `pending` commands when the
+ * active subscriber disconnects. Callers are expected to send `supersede()`
+ * before `close()` so the browser can observe the replacement protocol.
+ */
 export class InspectorCommandBus {
   private subscriber: Subscriber | null = null;
   private pending = new Map<string, PendingCommand>();
@@ -30,20 +39,36 @@ export class InspectorCommandBus {
 
   registerSubscriber(subscriber: Subscriber): () => void {
     if (this.supersededClientIds.has(subscriber.clientId)) {
-      subscriber.supersede();
-      subscriber.close();
-      return () => {};
+      if (this.subscriber?.clientId !== subscriber.clientId) {
+        subscriber.supersede();
+        subscriber.close();
+        return () => {};
+      }
+      this.supersededClientIds.delete(subscriber.clientId);
     }
 
     if (this.subscriber) {
-      console.debug(
-        "[inspector-command-bus] Evicting previous subscriber — only one active client is supported.",
+      const previousSubscriber = this.subscriber;
+      logger.debug(
+        "[inspector-command-bus] Evicting previous subscriber; only one active client is supported.",
+        {
+          clientId: previousSubscriber.clientId,
+          sameClientReconnect:
+            previousSubscriber.clientId === subscriber.clientId,
+        },
       );
-      this.markSuperseded(this.subscriber.clientId);
+      if (previousSubscriber.clientId !== subscriber.clientId) {
+        this.markSuperseded(previousSubscriber.clientId);
+      }
       try {
-        this.subscriber.supersede();
-        this.subscriber.close();
-      } catch {}
+        previousSubscriber.supersede();
+        previousSubscriber.close();
+      } catch (error) {
+        logger.debug("[inspector-command-bus] Subscriber eviction threw", {
+          clientId: previousSubscriber.clientId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
     }
 
     this.subscriber = subscriber;
@@ -52,11 +77,8 @@ export class InspectorCommandBus {
       if (this.subscriber !== subscriber) return;
       this.subscriber = null;
       this.rejectAll(
-        this.createErrorResponse(
-          "",
-          "no_active_client",
-          "The active Inspector client disconnected before the command completed.",
-        ),
+        "no_active_client",
+        "The active Inspector client disconnected before the command completed.",
       );
     };
   }
@@ -115,11 +137,14 @@ export class InspectorCommandBus {
     return true;
   }
 
-  private rejectAll(response: InspectorCommandResponse): void {
+  private rejectAll(
+    code: Parameters<typeof buildInspectorCommandError>[0],
+    message: string,
+  ): void {
     for (const [id, pending] of this.pending.entries()) {
       clearTimeout(pending.timeout);
       this.pending.delete(id);
-      pending.resolve({ ...response, id });
+      pending.resolve(this.createErrorResponse(id, code, message));
     }
   }
 

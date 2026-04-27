@@ -12,6 +12,9 @@ subscribe.get("/", async (c) => {
 
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
+      let closed = false;
+      let unregistered = false;
+      let unregister = () => {};
       const send = (command: InspectorCommand) => {
         controller.enqueue(
           encoder.encode(`data: ${JSON.stringify(command)}\n\n`),
@@ -25,6 +28,8 @@ subscribe.get("/", async (c) => {
       }, 15_000);
 
       const close = () => {
+        if (closed) return;
+        closed = true;
         clearInterval(keepAlive);
         try {
           controller.close();
@@ -32,23 +37,42 @@ subscribe.get("/", async (c) => {
       };
 
       const supersede = () => {
+        if (closed) return;
         try {
           controller.enqueue(encoder.encode("event: superseded\ndata: {}\n\n"));
         } catch {}
       };
 
+      const unregisterOnce = () => {
+        if (unregistered) return;
+        unregistered = true;
+        unregister();
+      };
+
+      const onAbort = () => {
+        unregisterOnce();
+        close();
+      };
+
       controller.enqueue(encoder.encode("retry: 1500\n\n"));
-      const unregister = inspectorCommandBus.registerSubscriber({
+      if (c.req.raw.signal.aborted) {
+        close();
+        return;
+      }
+
+      unregister = inspectorCommandBus.registerSubscriber({
         clientId,
         send,
         supersede,
         close,
       });
 
-      c.req.raw.signal.addEventListener("abort", () => {
-        unregister();
-        close();
-      });
+      if (c.req.raw.signal.aborted) {
+        onAbort();
+        return;
+      }
+
+      c.req.raw.signal.addEventListener("abort", onAbort, { once: true });
     },
   });
 

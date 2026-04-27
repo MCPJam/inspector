@@ -105,6 +105,7 @@ import {
   createInspectorCommandClientError,
   registerInspectorCommandHandler,
 } from "./lib/inspector-command-handlers";
+import { waitForUiCommit } from "./lib/wait-for-ui-commit";
 import { subscribeToOAuthDebuggerRequests } from "./lib/oauth/oauth-debugger-navigation";
 import {
   clearBillingSignInReturnPath,
@@ -195,7 +196,7 @@ function getHostedOAuthCallbackErrorMessage(): string {
 
   return sanitizeHostedOAuthErrorMessage(
     description || error,
-    "Authorization could not be completed. Try again."
+    "Authorization could not be completed. Try again.",
   );
 }
 
@@ -227,12 +228,6 @@ function clearHostedCallbackRetryState() {
   }
 }
 
-async function waitForUiCommit(): Promise<void> {
-  await new Promise<void>((resolve) => {
-    window.setTimeout(resolve, 0);
-  });
-}
-
 function BillingHandoffLoading({ overlay = false }: { overlay?: boolean }) {
   return (
     <div
@@ -254,10 +249,10 @@ function BillingHandoffLoading({ overlay = false }: { overlay?: boolean }) {
 }
 
 function resolveDeletedOrganizationFallbackId(
-  organizations: ReadonlyArray<{ _id: string; myRole?: string }>
+  organizations: ReadonlyArray<{ _id: string; myRole?: string }>,
 ): string | undefined {
   const firstOwnedOrganization = organizations.find(
-    (organization) => organization.myRole === "owner"
+    (organization) => organization.myRole === "owner",
   );
   return firstOwnedOrganization?._id ?? organizations[0]?._id;
 }
@@ -331,10 +326,10 @@ export default function App() {
   const [billingPathSync, setBillingPathSync] = useState(0);
   const posthog = usePostHog();
   const [evaluateRunsFlagsLoaded, setEvaluateRunsFlagsLoaded] = useState(
-    () => posthog.featureFlags?.hasLoadedFlags === true
+    () => posthog.featureFlags?.hasLoadedFlags === true,
   );
   const billingEntitlementsUiEnabled = useFeatureFlagEnabled(
-    "billing-entitlements-ui"
+    "billing-entitlements-ui",
   );
   const learningEnabled = useFeatureFlagEnabled("mcpjam-learning");
   const registryEnabled = useFeatureFlagEnabled("registry-enabled");
@@ -423,7 +418,7 @@ export default function App() {
   const currentHash = window.location.hash || "#servers";
   const currentHashRoute = useMemo(
     () => resolveHostedNavigation(currentHash, HOSTED_MODE),
-    [currentHash]
+    [currentHash],
   );
   const { sortedOrganizations, isLoading: isLoadingOrganizations } =
     useOrganizationQueries({ isAuthenticated });
@@ -434,11 +429,11 @@ export default function App() {
 
     setOptimisticallyDeletedOrganizationIds((currentIds) => {
       const nextIds = currentIds.filter((organizationId) =>
-        sortedOrganizations.some((org) => org._id === organizationId)
+        sortedOrganizations.some((org) => org._id === organizationId),
       );
       return nextIds.length === currentIds.length &&
         nextIds.every(
-          (organizationId, index) => organizationId === currentIds[index]
+          (organizationId, index) => organizationId === currentIds[index],
         )
         ? currentIds
         : nextIds;
@@ -448,13 +443,13 @@ export default function App() {
     () =>
       sortedOrganizations.filter(
         (organization) =>
-          !optimisticallyDeletedOrganizationIds.includes(organization._id)
+          !optimisticallyDeletedOrganizationIds.includes(organization._id),
       ),
-    [optimisticallyDeletedOrganizationIds, sortedOrganizations]
+    [optimisticallyDeletedOrganizationIds, sortedOrganizations],
   );
   const hasRouteOrganization = !!currentHashRoute.organizationId
     ? effectiveOrganizations.some(
-        (org) => org._id === currentHashRoute.organizationId
+        (org) => org._id === currentHashRoute.organizationId,
       )
     : false;
 
@@ -557,16 +552,16 @@ export default function App() {
         finalizeHostedOAuth(
           sanitizeHostedOAuthErrorMessage(
             result.error,
-            "Authorization could not be completed. Try again."
-          )
+            "Authorization could not be completed. Try again.",
+          ),
         );
       })
       .catch((callbackError) => {
         finalizeHostedOAuth(
           sanitizeHostedOAuthErrorMessage(
             callbackError,
-            "Authorization could not be completed. Try again."
-          )
+            "Authorization could not be completed. Try again.",
+          ),
         );
       })
       .finally(() => {
@@ -605,7 +600,7 @@ export default function App() {
   useEnsureDbUser();
 
   const isDebugCallback = window.location.pathname.startsWith(
-    "/oauth/callback/debug"
+    "/oauth/callback/debug",
   );
   const isOAuthCallback = window.location.pathname === "/callback";
 
@@ -647,7 +642,7 @@ export default function App() {
       window.history.replaceState(
         {},
         "",
-        chatboxReturnPath ?? sharedReturnPath ?? billingReturnPath ?? "/"
+        chatboxReturnPath ?? sharedReturnPath ?? billingReturnPath ?? "/",
       );
       setCallbackCompleted(true);
       setCallbackRecoveryExpired(false);
@@ -737,21 +732,18 @@ export default function App() {
   workspaceServersRef.current = workspaceServers;
   const selectedServerRef = useRef(appState.selectedServer);
   selectedServerRef.current = appState.selectedServer;
-  const getInspectorServerState = useCallback(
-    (serverName: string) => {
-      const runtimeServer = oauthDebuggerServersRef.current[serverName];
-      const workspaceServer = workspaceServersRef.current[serverName];
-      const server = runtimeServer ?? workspaceServer;
-      return server ? { runtimeServer, workspaceServer, server } : null;
-    },
-    [],
-  );
+  const getInspectorServerState = useCallback((serverName: string) => {
+    const runtimeServer = oauthDebuggerServersRef.current[serverName];
+    const workspaceServer = workspaceServersRef.current[serverName];
+    const server = runtimeServer ?? workspaceServer;
+    return server ? { runtimeServer, workspaceServer, server } : null;
+  }, []);
   useEffect(() => {
     return subscribeToOAuthDebuggerRequests(({ serverName }) => {
       const matchedServerName = Object.entries(
-        oauthDebuggerServersRef.current
+        oauthDebuggerServersRef.current,
       ).find(
-        ([name, server]) => name === serverName || server.name === serverName
+        ([name, server]) => name === serverName || server.name === serverName,
       )?.[0];
 
       if (
@@ -763,7 +755,7 @@ export default function App() {
     });
   }, [setSelectedServer]);
   const activeOrganizationName = effectiveOrganizations.find(
-    (org) => org._id === activeOrganizationId
+    (org) => org._id === activeOrganizationId,
   )?.name;
   const hasAnyWorkspaceServers = Object.keys(workspaceServers).length > 0;
   const hostedShellGateState = resolveHostedShellGateState({
@@ -846,13 +838,13 @@ export default function App() {
     const connectedServers = new Set(
       Object.entries<ServerWithName>(appState.servers)
         .filter(([, server]) => server.connectionStatus === "connected")
-        .map(([name]) => name)
+        .map(([name]) => name),
     );
 
     const previousConnectedServers = previousConnectedServersRef.current;
     const newlyConnectedServers = getNewlyConnectedServers(
       previousConnectedServers,
-      connectedServers
+      connectedServers,
     );
 
     if (activeTab === "servers") {
@@ -870,7 +862,7 @@ export default function App() {
         try {
           localStorage.setItem(
             `testing-auto-opened:${firstVisitServer}`,
-            "true"
+            "true",
           );
         } catch {
           // Ignore localStorage failures and still select the server.
@@ -895,7 +887,7 @@ export default function App() {
     if (!needsServer || selectedMCPConfig) return;
 
     const firstConnected = Object.entries(workspaceServers).find(
-      ([, server]) => (server as any).connectionStatus === "connected"
+      ([, server]) => (server as any).connectionStatus === "connected",
     );
     if (firstConnected) {
       setSelectedServer(firstConnected[0]);
@@ -909,7 +901,7 @@ export default function App() {
       workspaces,
       activeWorkspaceId,
     }),
-    [appState, workspaces, activeWorkspaceId]
+    [appState, workspaces, activeWorkspaceId],
   );
 
   // Get the Convex workspace ID from the active workspace
@@ -917,7 +909,7 @@ export default function App() {
   const isClientConfigSyncPending =
     useWorkspaceClientConfigSyncPending(activeWorkspaceId);
   const hostedClientCapabilities = getEffectiveWorkspaceClientCapabilities(
-    activeWorkspace?.clientConfig
+    activeWorkspace?.clientConfig,
   ) as Record<string, unknown>;
   const convexWorkspaceId = activeWorkspace?.sharedWorkspaceId ?? null;
   const routeScopedOrganizationId = hasRouteOrganization
@@ -982,7 +974,7 @@ export default function App() {
   const activeTabBillingFeature = getRequiredBillingFeatureForTab(activeTab);
   const upgradePlanForActiveTab = getUpgradePlanForDeniedGate(
     navPremiumness,
-    activeTabGate
+    activeTabGate,
   );
   const workspaceCreationGate = resolveBillingGateState({
     billingUiEnabled,
@@ -1069,37 +1061,37 @@ export default function App() {
   const hostedServerIdsByName = useMemo(
     () =>
       Object.fromEntries(
-        Array.from(serversById.entries()).map(([id, name]) => [name, id])
+        Array.from(serversById.entries()).map(([id, name]) => [name, id]),
       ),
-    [serversById]
+    [serversById],
   );
   const oauthTokensByServerId = useMemo(
     () =>
       buildOAuthTokensByServerId(
         Object.keys(hostedServerIdsByName),
         (name) => hostedServerIdsByName[name],
-        (name) => appState.servers[name]?.oauthTokens?.access_token
+        (name) => appState.servers[name]?.oauthTokens?.access_token,
       ),
-    [hostedServerIdsByName, appState.servers]
+    [hostedServerIdsByName, appState.servers],
   );
   // Extract MCPServerConfig objects for guest mode (keyed by server name)
   const guestServerConfigs = useMemo(
     () =>
       Object.fromEntries(
         Object.entries<ServerWithName>(appState.servers).map(
-          ([name, server]) => [name, server.config]
-        )
+          ([name, server]) => [name, server.config],
+        ),
       ),
-    [appState.servers]
+    [appState.servers],
   );
   const guestOauthTokensByServerName = useMemo(
     () =>
       Object.fromEntries(
         Object.entries<ServerWithName>(appState.servers)
           .filter(([, server]) => !!server.oauthTokens?.access_token)
-          .map(([name, server]) => [name, server.oauthTokens!.access_token])
+          .map(([name, server]) => [name, server.oauthTokens!.access_token]),
       ),
-    [appState.servers]
+    [appState.servers],
   );
 
   useHostedApiContext({
@@ -1134,7 +1126,7 @@ export default function App() {
         updateHash?: boolean;
         enforceCanonicalHash?: boolean;
         preserveCurrentOrganizationOnNonOrgTarget?: boolean;
-      }
+      },
     ) => {
       if (isSharedChatRoute) {
         const storedSession = readSharedServerSession();
@@ -1161,14 +1153,14 @@ export default function App() {
       const resolved = resolveHostedNavigation(target, HOSTED_MODE);
       const currentResolved = resolveHostedNavigation(
         window.location.hash || "#servers",
-        HOSTED_MODE
+        HOSTED_MODE,
       );
       const shouldPreserveCurrentRouteOrganization =
         options?.preserveCurrentOrganizationOnNonOrgTarget !== false &&
         !resolved.organizationId &&
         !!currentResolved.organizationId &&
         effectiveOrganizations.some(
-          (organization) => organization._id === currentResolved.organizationId
+          (organization) => organization._id === currentResolved.organizationId,
         );
 
       if (
@@ -1183,7 +1175,7 @@ export default function App() {
 
       if (resolved.isBlocked) {
         toast.error(
-          `${resolved.normalizedTab} is not available in hosted mode.`
+          `${resolved.normalizedTab} is not available in hosted mode.`,
         );
         setActiveOrganizationId(undefined);
         setActiveTab("servers");
@@ -1220,10 +1212,10 @@ export default function App() {
       isChatboxChatRoute,
       isSharedChatRoute,
       setSelectedMultipleServersToAllServers,
-    ]
+    ],
   );
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (HOSTED_MODE) {
       return;
     }
@@ -1259,15 +1251,23 @@ export default function App() {
           );
         }
 
+        const connectionStatus =
+          serverState.runtimeServer?.connectionStatus ??
+          serverState.workspaceServer?.connectionStatus ??
+          "disconnected";
+        if (connectionStatus !== "connected") {
+          throw createInspectorCommandClientError(
+            "disconnected_server",
+            `Server "${command.payload.serverName}" is ${connectionStatus}.`,
+          );
+        }
+
         setSelectedServer(command.payload.serverName);
         await waitForUiCommit();
 
         return {
           selectedServer: command.payload.serverName,
-          connectionStatus:
-            serverState.runtimeServer?.connectionStatus ??
-            serverState.workspaceServer?.connectionStatus ??
-            "disconnected",
+          connectionStatus,
         };
       },
     );
@@ -1301,7 +1301,7 @@ export default function App() {
         return {
           activeTab: "app-builder",
           selectedServer:
-            command.payload.serverName || appState.selectedServer || "none",
+            command.payload.serverName || selectedServerRef.current || "none",
         };
       },
     );
@@ -1312,7 +1312,6 @@ export default function App() {
       unregisterOpenAppBuilder();
     };
   }, [
-    appState.selectedServer,
     applyNavigation,
     getInspectorServerState,
     setSelectedServer,
@@ -1347,7 +1346,7 @@ export default function App() {
       isFirstRunEligible(
         hasAnyWorkspaceServers,
         window.location.hash,
-        isAuthenticated
+        isAuthenticated,
       )
     ) {
       applyNavigation("app-builder", { updateHash: true });
@@ -1437,7 +1436,7 @@ export default function App() {
         window.history.replaceState(
           {},
           "",
-          `${window.location.origin}/${window.location.hash}`
+          `${window.location.origin}/${window.location.hash}`,
         );
         setBillingPathSync((n) => n + 1);
       }
@@ -1459,7 +1458,7 @@ export default function App() {
     const orgId = resolveCheckoutOrganizationId(
       effectiveOrganizations,
       activeOrganizationId,
-      workspaceOrgId
+      workspaceOrgId,
     );
 
     if (!orgId) {
@@ -1512,10 +1511,10 @@ export default function App() {
     if (activeTabBillingLocked && activeTabBillingFeature) {
       toast.error(
         `${formatBillingFeatureName(
-          activeTabBillingFeature
+          activeTabBillingFeature,
         )} is not included in the ${formatPlanName(
-          shellBillingStatus?.plan
-        )} plan. Upgrade the organization to continue.`
+          shellBillingStatus?.plan,
+        )} plan. Upgrade the organization to continue.`,
       );
       applyNavigation("servers", { updateHash: true });
     } else if (activeTab === "registry" && registryEnabled !== true) {
@@ -1551,7 +1550,7 @@ export default function App() {
   const handleSidebarSwitchOrganization = useCallback(
     (
       organizationId: string,
-      section: OrganizationRouteSection = "overview"
+      section: OrganizationRouteSection = "overview",
     ) => {
       setActiveOrganizationId(organizationId);
       setActiveOrganizationSection(section);
@@ -1559,10 +1558,10 @@ export default function App() {
         section === "billing"
           ? `organizations/${organizationId}/billing`
           : `organizations/${organizationId}`,
-        { updateHash: true }
+        { updateHash: true },
       );
     },
-    [applyNavigation, setActiveOrganizationId]
+    [applyNavigation, setActiveOrganizationId],
   );
 
   const handleContinueEvalInChat = useCallback(
@@ -1574,7 +1573,7 @@ export default function App() {
       });
       applyNavigation("chat-v2", { updateHash: true });
     },
-    [applyNavigation, setSelectedMCPConfigs]
+    [applyNavigation, setSelectedMCPConfigs],
   );
 
   useEffect(() => {
@@ -1610,14 +1609,14 @@ export default function App() {
       setOptimisticallyDeletedOrganizationIds((currentIds) =>
         currentIds.includes(deletedOrganizationId)
           ? currentIds
-          : [...currentIds, deletedOrganizationId]
+          : [...currentIds, deletedOrganizationId],
       );
 
       const remainingOrganizations = effectiveOrganizations.filter(
-        (organization) => organization._id !== deletedOrganizationId
+        (organization) => organization._id !== deletedOrganizationId,
       );
       const fallbackOrganizationId = resolveDeletedOrganizationFallbackId(
-        remainingOrganizations
+        remainingOrganizations,
       );
       const isDeletedCurrentOrganization =
         activeOrganizationId === deletedOrganizationId ||
@@ -1626,7 +1625,7 @@ export default function App() {
 
       clearLocalFallbackWorkspaceSelection(
         deletedOrganizationId,
-        fallbackOrganizationId
+        fallbackOrganizationId,
       );
 
       if (
@@ -1657,7 +1656,7 @@ export default function App() {
       currentHashRoute.organizationId,
       effectiveOrganizations,
       setActiveOrganizationId,
-    ]
+    ],
   );
 
   const handleSidebarSwitchWorkspace = useCallback(
@@ -1680,7 +1679,7 @@ export default function App() {
       applyNavigation,
       handleSwitchWorkspace,
       workspaces,
-    ]
+    ],
   );
 
   const isBillingEntryHandoff =
@@ -1939,7 +1938,7 @@ export default function App() {
                   if (billingOrganizationId) {
                     applyNavigation(
                       `organizations/${billingOrganizationId}/billing`,
-                      { updateHash: true }
+                      { updateHash: true },
                     );
                   }
                 }}
@@ -1980,7 +1979,7 @@ export default function App() {
                     if (billingOrganizationId) {
                       applyNavigation(
                         `organizations/${billingOrganizationId}/billing`,
-                        { updateHash: true }
+                        { updateHash: true },
                       );
                     }
                   }}
@@ -2019,7 +2018,7 @@ export default function App() {
                   if (billingOrganizationId) {
                     applyNavigation(
                       `organizations/${billingOrganizationId}/billing`,
-                      { updateHash: true }
+                      { updateHash: true },
                     );
                   }
                 }}
@@ -2124,7 +2123,7 @@ export default function App() {
               evalChatHandoff={evalChatHandoff}
               onEvalChatHandoffConsumed={(id) =>
                 setEvalChatHandoff((current) =>
-                  current?.id === id ? null : current
+                  current?.id === id ? null : current,
                 )
               }
             />
@@ -2224,7 +2223,7 @@ export default function App() {
                 if (billingOrganizationId) {
                   applyNavigation(
                     `organizations/${billingOrganizationId}/billing`,
-                    { updateHash: true }
+                    { updateHash: true },
                   );
                 }
               }}

@@ -8,6 +8,7 @@ import {
   delay,
   type InspectorCommandResponse,
 } from "../lib/inspector-api.js";
+import { parseTheme } from "../lib/apps.js";
 import { listToolsWithMetadata } from "../lib/server-ops.js";
 import { writeJsonArtifact } from "../lib/reporting.js";
 import {
@@ -44,18 +45,6 @@ type AppRenderContext = {
   timeZone?: string;
 };
 
-export function parseTheme(
-  value: string | undefined,
-): "light" | "dark" | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-  if (value === "light" || value === "dark") {
-    return value;
-  }
-  throw usageError(`Invalid theme "${value}". Use "light" or "dark".`);
-}
-
 export function registerAppsDebugCommand(parent: Command): void {
   addRetryOptions(
     addSharedServerOptions(
@@ -90,17 +79,17 @@ export function registerAppsDebugCommand(parent: Command): void {
         )
         .option("--locale <locale>", "Render locale (with --ui)")
         .option("--time-zone <iana>", "Render IANA timezone (with --ui)")
-        .option(
-          "--out <path>",
-          "Write the full debug artifact to a JSON file",
-        ),
+        .option("--out <path>", "Write the full debug artifact to a JSON file"),
     ),
   ).action(async (options: AppsDebugOptions, command) => {
     const globalOptions = getGlobalOptions(command);
     const retryPolicy = parseRetryPolicy(options);
     const target = describeTarget(options);
     const toolName = options.toolName as string;
-    const params = await parseJsonRecordOrFile(options.params, "Tool parameters");
+    const params = await parseJsonRecordOrFile(
+      options.params,
+      "Tool parameters",
+    );
     const serverName =
       typeof options.serverName === "string" && options.serverName.trim()
         ? options.serverName.trim()
@@ -140,9 +129,10 @@ export function registerAppsDebugCommand(parent: Command): void {
     const inspectorRenderError = uiResult
       ? findInspectorRenderError(uiResult)
       : undefined;
+    const sdkExecutionError = normalizeSdkExecutionError(sdkResult.execution);
 
     const payload = {
-      success: !inspectorRenderError,
+      success: !inspectorRenderError && !sdkExecutionError,
       command: "apps debug",
       inspectorUi: Boolean(options.ui),
       target,
@@ -150,10 +140,14 @@ export function registerAppsDebugCommand(parent: Command): void {
       params,
       ...sdkResult,
       ...(uiResult ? { inspectorRender: uiResult } : {}),
-      ...(inspectorRenderError ? { error: inspectorRenderError } : {}),
+      ...(inspectorRenderError
+        ? { error: inspectorRenderError }
+        : sdkExecutionError
+        ? { error: sdkExecutionError }
+        : {}),
     };
 
-    if (inspectorRenderError) {
+    if (inspectorRenderError || sdkExecutionError) {
       setProcessExitCode(1);
     }
 
@@ -338,7 +332,9 @@ async function executeInspectorCommandWithClient(
   request: Parameters<InspectorApiClient["executeCommand"]>[0],
 ): Promise<InspectorCommandResponse> {
   const startedAt = Date.now();
-  const deadline = startedAt + Math.min(options.timeoutMs, 10_000);
+  // The global CLI --timeout is the retry budget here. The default is bounded,
+  // and explicit larger values are honored for slower Inspector sessions.
+  const deadline = startedAt + options.timeoutMs;
 
   do {
     const response = await options.client.executeCommand(request);
@@ -360,10 +356,20 @@ async function executeInspectorCommandWithClient(
   } while (true);
 }
 
+// Prefer downstream render errors first because they carry the most specific
+// user-facing failure, even if an earlier setup step also reports an error.
 function findInspectorRenderError(
   renderResult: Record<string, unknown>,
 ): Extract<InspectorCommandResponse, { status: "error" }>["error"] | undefined {
-  for (const value of Object.values(renderResult)) {
+  const priority = [
+    "renderToolResult",
+    "setAppContext",
+    "openAppBuilder",
+    "snapshot",
+    "snapshotApp",
+  ];
+  for (const key of priority) {
+    const value = renderResult[key];
     if (
       value &&
       typeof value === "object" &&
@@ -376,15 +382,65 @@ function findInspectorRenderError(
   return undefined;
 }
 
+function normalizeSdkExecutionError(
+  execution: unknown,
+): { code: string; message: string; details?: unknown } | undefined {
+  if (!execution || typeof execution !== "object") {
+    return undefined;
+  }
+
+  const record = execution as Record<string, unknown>;
+  const result =
+    record.result && typeof record.result === "object"
+      ? (record.result as Record<string, unknown>)
+      : record;
+  if (result.isError !== true) {
+    return undefined;
+  }
+
+  const message = extractSdkErrorMessage(result) ?? "Tool execution failed.";
+  return {
+    code: "tool_execution_failed",
+    message,
+    details: execution,
+  };
+}
+
+function extractSdkErrorMessage(
+  result: Record<string, unknown>,
+): string | undefined {
+  if (typeof result.error === "string") {
+    return result.error;
+  }
+  if (typeof result.message === "string") {
+    return result.message;
+  }
+
+  const content = result.content;
+  if (!Array.isArray(content)) {
+    return undefined;
+  }
+
+  const text = content
+    .map((entry) =>
+      entry &&
+      typeof entry === "object" &&
+      typeof (entry as Record<string, unknown>).text === "string"
+        ? ((entry as Record<string, unknown>).text as string)
+        : undefined,
+    )
+    .filter((entry): entry is string => Boolean(entry?.trim()))
+    .join("\n");
+  return text || undefined;
+}
+
 function buildAppsDebugResult(options: {
   execution: unknown;
   toolsData: unknown;
   toolName: string;
 }) {
   const toolsData = normalizeToolsData(options.toolsData);
-  const tool = toolsData.tools.find(
-    (entry) => entry.name === options.toolName,
-  );
+  const tool = toolsData.tools.find((entry) => entry.name === options.toolName);
   const toolMetadata = toolsData.toolsMetadata[options.toolName] ?? {};
   const ui = extractToolUiMetadata(toolMetadata);
 
@@ -444,10 +500,10 @@ function extractToolUiMetadata(meta: Record<string, unknown>) {
       typeof mcpAppsResourceUri === "string"
         ? mcpAppsResourceUri
         : typeof legacyResourceUri === "string"
-          ? legacyResourceUri
-          : typeof openAiOutputTemplate === "string"
-            ? openAiOutputTemplate
-            : null,
+        ? legacyResourceUri
+        : typeof openAiOutputTemplate === "string"
+        ? openAiOutputTemplate
+        : null,
     mcpAppsResourceUri:
       typeof mcpAppsResourceUri === "string" ? mcpAppsResourceUri : null,
     legacyResourceUri:

@@ -30,9 +30,16 @@ async function runCli(args: string[]): Promise<{
       (error, stdout, stderr) => {
         if (
           error &&
+          (error as NodeJS.ErrnoException).code !== undefined &&
           typeof (error as NodeJS.ErrnoException).code !== "number"
         ) {
-          reject(error);
+          reject(
+            new Error(
+              `Failed to execute CLI: ${
+                error instanceof Error ? error.message : String(error)
+              }`,
+            ),
+          );
           return;
         }
         resolve({
@@ -105,6 +112,104 @@ test("apps debug rejects removed --name alias", async () => {
   ]);
 
   assert.notEqual(result.exitCode, 0);
+});
+
+test("apps debug exits non-zero when MCP tool result reports isError", async () => {
+  const server = http.createServer(async (request, response) => {
+    if (request.method === "POST" && request.url === "/mcp") {
+      const body = await readJsonBody(request);
+      const method = body.method as string;
+      const id = body.id;
+
+      if (method === "initialize") {
+        response.writeHead(200, { "Content-Type": "application/json" });
+        response.end(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id,
+            result: {
+              protocolVersion: "2025-03-26",
+              capabilities: { tools: {} },
+              serverInfo: { name: "test-server", version: "1.0.0" },
+            },
+          }),
+        );
+        return;
+      }
+
+      if (method === "tools/list") {
+        response.writeHead(200, { "Content-Type": "application/json" });
+        response.end(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id,
+            result: {
+              tools: [{ name: "fail_view", inputSchema: { type: "object" } }],
+            },
+          }),
+        );
+        return;
+      }
+
+      if (method === "tools/call") {
+        response.writeHead(200, { "Content-Type": "application/json" });
+        response.end(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id,
+            result: {
+              isError: true,
+              content: [{ type: "text", text: "tool failed" }],
+            },
+          }),
+        );
+        return;
+      }
+
+      if (method === "notifications/initialized") {
+        response.writeHead(200, { "Content-Type": "application/json" });
+        response.end(JSON.stringify({ jsonrpc: "2.0" }));
+        return;
+      }
+
+      response.writeHead(200, { "Content-Type": "application/json" });
+      response.end(JSON.stringify({ jsonrpc: "2.0", id, result: {} }));
+      return;
+    }
+
+    response.writeHead(404);
+    response.end();
+  });
+
+  await new Promise<void>((resolve) => {
+    server.listen(0, "127.0.0.1", () => resolve());
+  });
+  const { port } = server.address() as AddressInfo;
+
+  try {
+    const result = await runCli([
+      "--format",
+      "json",
+      "apps",
+      "debug",
+      "--url",
+      `http://127.0.0.1:${port}/mcp`,
+      "--tool-name",
+      "fail_view",
+      "--params",
+      "{}",
+    ]);
+
+    assert.equal(result.exitCode, 1, result.stderr);
+    const payload = JSON.parse(result.stdout) as Record<string, any>;
+    assert.equal(payload.success, false);
+    assert.equal(payload.error.code, "tool_execution_failed");
+    assert.match(payload.error.message, /tool failed/);
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => (error ? reject(error) : resolve()));
+    });
+  }
 });
 
 test("apps debug --ui starts Inspector and drives command bus render", async () => {
@@ -246,9 +351,18 @@ test("apps debug --ui starts Inspector and drives command bus render", async () 
     const commandRequests = requests.filter(
       (entry) => entry.url === "/api/mcp/command",
     );
-    assert.deepEqual(
-      commandRequests.map((entry) => (entry.body as { type?: string }).type),
-      ["openAppBuilder", "renderToolResult", "snapshotApp"],
+    const commandTypes = commandRequests.map(
+      (entry) => (entry.body as { type?: string }).type,
+    );
+    assert.equal(commandTypes[0], "openAppBuilder");
+    assert.deepEqual(commandTypes.slice(-2), [
+      "renderToolResult",
+      "snapshotApp",
+    ]);
+    assert.ok(
+      commandTypes.length === 3 ||
+        (commandTypes.length === 4 && commandTypes[1] === "setAppContext"),
+      `Unexpected command sequence: ${commandTypes.join(", ")}`,
     );
   } finally {
     await new Promise<void>((resolve, reject) => {

@@ -7,9 +7,10 @@ import {
   type InspectorCommandResponse,
 } from "@/shared/inspector-command.js";
 import { inspectorCommandBus } from "../../services/inspector-command-bus.js";
+import { logger } from "../../utils/logger.js";
 
 const command = new Hono();
-type CommandHttpStatus = 200 | 400 | 404 | 409 | 500 | 504;
+type CommandHttpStatus = 200 | 400 | 404 | 409 | 422 | 500 | 504;
 
 function buildCommandId(): string {
   return `cmd_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
@@ -82,21 +83,19 @@ command.post("/", async (c) => {
     return c.json(response.body, response.status);
   }
 
+  logger.debug("[inspector-command] Forwarding command to active client", {
+    id,
+    type,
+    payload: "[redacted]",
+  });
+  // Trust boundary: payload is forwarded unchecked here; each browser-side
+  // handler re-validates the command-specific payload before acting on it.
   const response = await inspectorCommandBus.submit(
     { id, type, payload, timeoutMs } as InspectorCommand,
     timeoutMs,
   );
 
-  const status: CommandHttpStatus =
-    response.status === "success"
-      ? 200
-      : response.error.code === "no_active_client"
-        ? 409
-        : response.error.code === "timeout"
-          ? 504
-          : response.error.code === "invalid_request"
-            ? 400
-            : 500;
+  const status = getCommandHttpStatus(response);
 
   return c.json(response, status);
 });
@@ -131,7 +130,7 @@ command.post("/result", async (c) => {
   if (!completed) {
     const response = errorResponse(
       body.id,
-      "invalid_request",
+      "unknown_command_id",
       `No pending Inspector command found for id "${body.id}".`,
       404,
     );
@@ -140,5 +139,32 @@ command.post("/result", async (c) => {
 
   return c.json({ ok: true });
 });
+
+function getCommandHttpStatus(
+  response: InspectorCommandResponse,
+): CommandHttpStatus {
+  if (response.status === "success") {
+    return 200;
+  }
+
+  switch (response.error.code) {
+    case "invalid_request":
+      return 400;
+    case "unknown_server":
+    case "disconnected_server":
+    case "unknown_tool":
+    case "unknown_command_id":
+      return 404;
+    case "no_active_client":
+      return 409;
+    case "unsupported_in_mode":
+      return 422;
+    case "timeout":
+      return 504;
+    case "execution_failed":
+    default:
+      return 500;
+  }
+}
 
 export default command;

@@ -11,6 +11,24 @@ const setStatus = (
   patch: Partial<ServerWithName> = {},
 ): ServerWithName => ({ ...server, connectionStatus: status, ...patch });
 
+const buildWorkspaceServerProjection = (
+  server: ServerWithName,
+): ServerWithName => ({
+  name: server.name,
+  config: server.config,
+  lastConnectionTime: server.lastConnectionTime,
+  connectionStatus: "disconnected",
+  retryCount: 0,
+  enabled: server.enabled ?? true,
+  ...(server.initializationInfo
+    ? { initializationInfo: server.initializationInfo }
+    : {}),
+  ...(server.useOAuth === undefined ? {} : { useOAuth: server.useOAuth }),
+  ...(server.oauthFlowProfile
+    ? { oauthFlowProfile: server.oauthFlowProfile }
+    : {}),
+});
+
 export function appReducer(state: AppState, action: AppAction): AppState {
   switch (action.type) {
     case "HYDRATE_STATE":
@@ -231,7 +249,9 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         }
 
         if (!workspaceServers[agentInfo.id]) {
-          workspaceServers[agentInfo.id] = updated[agentInfo.id];
+          workspaceServers[agentInfo.id] = buildWorkspaceServerProjection(
+            updated[agentInfo.id],
+          );
           shouldUpdateWorkspace = true;
         }
       }

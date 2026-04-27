@@ -47,4 +47,41 @@ describe("InspectorCommandBus", () => {
       status: "success",
     });
   });
+
+  it("allows same-client reconnects without poisoning the active client id", async () => {
+    const bus = new InspectorCommandBus();
+    const first = createSubscriber("same-tab");
+    const reconnect = createSubscriber("same-tab");
+    const secondReconnect = createSubscriber("same-tab");
+
+    bus.registerSubscriber(first);
+    bus.registerSubscriber(reconnect);
+
+    expect(first.supersede).toHaveBeenCalledTimes(1);
+    expect(first.close).toHaveBeenCalledTimes(1);
+    expect(reconnect.supersede).not.toHaveBeenCalled();
+    expect(reconnect.close).not.toHaveBeenCalled();
+
+    bus.registerSubscriber(secondReconnect);
+
+    expect(reconnect.supersede).toHaveBeenCalledTimes(1);
+    expect(reconnect.close).toHaveBeenCalledTimes(1);
+    expect(secondReconnect.supersede).not.toHaveBeenCalled();
+    expect(secondReconnect.close).not.toHaveBeenCalled();
+
+    const command: InspectorCommand = {
+      id: "cmd-2",
+      type: "navigate",
+      payload: { target: "app-builder" },
+    };
+    const pending = bus.submit(command, 1_000);
+
+    expect(secondReconnect.send).toHaveBeenCalledWith(command);
+
+    bus.complete({ id: "cmd-2", status: "success" });
+    await expect(pending).resolves.toEqual({
+      id: "cmd-2",
+      status: "success",
+    });
+  });
 });

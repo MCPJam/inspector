@@ -37,6 +37,7 @@ import {
 import type { MCPServerConfig } from "@mcpjam/sdk/browser";
 import type { WorkspaceHostContextDraft } from "@/lib/client-config";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
+import { waitForUiCommit } from "@/lib/wait-for-ui-commit";
 import { usePostHog } from "posthog-js/react";
 import { motion, useReducedMotion } from "framer-motion";
 
@@ -108,12 +109,6 @@ const SERVER_SYNC_TIMEOUT_MS = 10000;
 const APP_BUILDER_FIRST_RUN_PROMPT = "Draw me an MCP architecture diagram";
 
 const SIDEBAR_EASE: [number, number, number, number] = [0.4, 0, 0.2, 1];
-
-async function waitForUiCommit(): Promise<void> {
-  await new Promise<void>((resolve) => {
-    window.setTimeout(resolve, 0);
-  });
-}
 
 export function AppBuilderTab({
   activeWorkspaceId = null,
@@ -195,11 +190,7 @@ export function AppBuilderTab({
     } else {
       setSidebarVisible(true);
     }
-  }, [
-    onboarding.phase,
-    onboarding.isGuidedPostConnect,
-    setSidebarVisible,
-  ]);
+  }, [onboarding.phase, onboarding.isGuidedPostConnect, setSidebarVisible]);
 
   useLayoutEffect(() => {
     return () => {
@@ -306,6 +297,8 @@ export function AppBuilderTab({
         const aggregatedTools = { ...tools };
         const aggregatedMetadata = { ...toolsMetadata };
         let cursor: string | undefined;
+        let pages = 0;
+        const maxPages = 25;
 
         do {
           const data = await listTools({ serverId: serverName, cursor });
@@ -317,6 +310,21 @@ export function AppBuilderTab({
           Object.assign(aggregatedTools, dictionary);
           Object.assign(aggregatedMetadata, data.toolsMetadata ?? {});
           cursor = data.nextCursor;
+          pages += 1;
+
+          if (
+            toolName &&
+            !aggregatedTools[toolName] &&
+            cursor &&
+            pages >= maxPages
+          ) {
+            const message = `Stopped fetching tools after ${maxPages} pages without finding "${toolName}".`;
+            setExecutionError(message);
+            throw createInspectorCommandClientError(
+              "execution_failed",
+              message,
+            );
+          }
 
           if (!toolName || aggregatedTools[toolName] || !cursor) {
             break;
@@ -382,11 +390,7 @@ export function AppBuilderTab({
     if (serverConfig && serverName && serverConnectionStatus === "connected") {
       // Skip re-fetch when tools are already loaded and only the object
       // reference changed (e.g. a SYNC_AGENT_STATUS that didn't change status).
-      if (
-        !serverChanged &&
-        !statusChanged &&
-        Object.keys(tools).length > 0
-      ) {
+      if (!serverChanged && !statusChanged && Object.keys(tools).length > 0) {
         return;
       }
       fetchTools();
@@ -394,7 +398,14 @@ export function AppBuilderTab({
       reset();
       setToolsMetadata({});
     }
-  }, [serverConfig, serverName, serverConnectionStatus, fetchTools, reset, tools]);
+  }, [
+    serverConfig,
+    serverName,
+    serverConnectionStatus,
+    fetchTools,
+    reset,
+    tools,
+  ]);
 
   // Update form fields when tool is selected
   useEffect(() => {
@@ -459,7 +470,7 @@ export function AppBuilderTab({
         command.payload.serverName !== serverName
       ) {
         throw createInspectorCommandClientError(
-          "disconnected_server",
+          "unknown_server",
           `App Builder is focused on "${serverName}", not "${command.payload.serverName}".`,
         );
       }
@@ -487,8 +498,6 @@ export function AppBuilderTab({
 
       if (shouldSwitchTool) {
         setSelectedTool(command.payload.toolName);
-        await waitForUiCommit();
-        setFormFields(nextFormFields);
         await waitForUiCommit();
       } else if (currentState.formFields.length === 0) {
         setFormFields(nextFormFields);
@@ -698,10 +707,7 @@ export function AppBuilderTab({
   useEffect(() => {
     setSyncTimedOut(false);
     if (!isServerSyncing) return;
-    const id = setTimeout(
-      () => setSyncTimedOut(true),
-      SERVER_SYNC_TIMEOUT_MS,
-    );
+    const id = setTimeout(() => setSyncTimedOut(true), SERVER_SYNC_TIMEOUT_MS);
     return () => clearTimeout(id);
   }, [serverName, isServerSyncing]);
 

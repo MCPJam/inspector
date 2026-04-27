@@ -386,6 +386,14 @@ app.get("/api/session-token", (c) => {
   return c.json({ token: getSessionToken() });
 });
 
+// Protected by sessionAuthMiddleware mounted above; the CLI supplies the session token.
+app.post("/api/shutdown", (c) => {
+  setTimeout(() => {
+    void shutdown();
+  }, 25);
+  return c.json({ ok: true });
+});
+
 // API endpoint to get MCP CLI config (for development mode)
 app.get("/api/mcp-cli-config", (c) => {
   const mcpConfig = getMCPConfigFromEnv();
@@ -447,7 +455,9 @@ if (process.env.NODE_ENV === "production") {
       // Inject MCP server config if provided via CLI
       const mcpConfig = getMCPConfigFromEnv();
       if (mcpConfig) {
-        const configScript = `<script>window.MCP_CLI_CONFIG = ${JSON.stringify(mcpConfig)};</script>`;
+        const configScript = `<script>window.MCP_CLI_CONFIG = ${JSON.stringify(
+          mcpConfig,
+        )};</script>`;
         htmlContent = htmlContent.replace("</head>", `${configScript}</head>`);
       }
 

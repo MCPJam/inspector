@@ -305,7 +305,7 @@ export function useToolExecution({
       const isExecuteShortcut = (e.metaKey || e.ctrlKey) && e.key === "Enter";
       if (isExecuteShortcut && selectedTool) {
         e.preventDefault();
-        executeTool();
+        void executeTool();
       }
     };
     window.addEventListener("keydown", handleKeyDown);

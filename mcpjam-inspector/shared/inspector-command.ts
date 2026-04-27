@@ -9,6 +9,7 @@ export type InspectorCommandErrorCode =
   | "unknown_server"
   | "disconnected_server"
   | "unknown_tool"
+  | "unknown_command_id"
   | "timeout"
   | "unsupported_in_mode"
   | "invalid_request"
@@ -23,6 +24,17 @@ export type InspectorCommandType =
   | "executeTool"
   | "renderToolResult"
   | "snapshotApp";
+
+export const KNOWN_INSPECTOR_COMMAND_TYPES = [
+  "navigate",
+  "selectServer",
+  "openAppBuilder",
+  "setAppContext",
+  "selectTool",
+  "executeTool",
+  "renderToolResult",
+  "snapshotApp",
+] as const satisfies readonly InspectorCommandType[];
 
 export interface InspectorCommandError {
   code: InspectorCommandErrorCode;
@@ -65,27 +77,24 @@ export interface SetAppContextInspectorCommand {
   timeoutMs?: number;
 }
 
+export interface ToolInvocationPayload {
+  surface: "tools" | "app-builder";
+  serverName?: string;
+  toolName: string;
+  parameters?: Record<string, unknown>;
+}
+
 export interface SelectToolInspectorCommand {
   id: string;
   type: "selectTool";
-  payload: {
-    surface: "tools" | "app-builder";
-    serverName?: string;
-    toolName: string;
-    parameters?: Record<string, unknown>;
-  };
+  payload: ToolInvocationPayload;
   timeoutMs?: number;
 }
 
 export interface ExecuteToolInspectorCommand {
   id: string;
   type: "executeTool";
-  payload: {
-    surface: "tools" | "app-builder";
-    serverName?: string;
-    toolName: string;
-    parameters?: Record<string, unknown>;
-  };
+  payload: ToolInvocationPayload;
   timeoutMs?: number;
 }
 
@@ -139,14 +148,8 @@ export function isInspectorCommandType(
   value: unknown,
 ): value is InspectorCommandType {
   return (
-    value === "navigate" ||
-    value === "selectServer" ||
-    value === "openAppBuilder" ||
-    value === "setAppContext" ||
-    value === "selectTool" ||
-    value === "executeTool" ||
-    value === "renderToolResult" ||
-    value === "snapshotApp"
+    typeof value === "string" &&
+    (KNOWN_INSPECTOR_COMMAND_TYPES as readonly string[]).includes(value)
   );
 }
 

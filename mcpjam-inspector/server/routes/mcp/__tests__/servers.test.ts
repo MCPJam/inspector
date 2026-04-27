@@ -25,7 +25,7 @@ const createMockMcpClientManager = (overrides: Record<string, any> = {}) => ({
     },
   ]),
   getConnectionStatus: vi.fn().mockReturnValue("connected"),
-  pingServer: vi.fn().mockReturnValue("connected"),
+  pingServer: vi.fn().mockResolvedValue({ ok: true }),
   getInitializationInfo: vi.fn().mockReturnValue({
     protocolVersion: "2024-11-05",
     capabilities: { tools: {}, resources: {} },
