@@ -8,11 +8,23 @@ import {
   injectScripts,
   type WidgetCspMeta,
 } from "@mcpjam/sdk";
-import { cliError } from "./output.js";
+import { cliError, usageError } from "./output.js";
 
 type Manager = MCPClientManager;
 
 type CspMode = "permissive" | "widget-declared";
+
+export function parseTheme(
+  value: string | undefined,
+): "light" | "dark" | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === "light" || value === "dark") {
+    return value;
+  }
+  throw usageError(`Invalid theme "${value}". Use "light" or "dark".`);
+}
 
 export interface McpWidgetOptions {
   resourceUri: string;
@@ -46,10 +58,7 @@ export async function buildMcpWidgetContent(
   options: McpWidgetOptions,
 ) {
   if (options.template && !options.template.startsWith("ui://")) {
-    throw cliError(
-      "VALIDATION_ERROR",
-      "Template must use ui:// protocol",
-    );
+    throw cliError("VALIDATION_ERROR", "Template must use ui:// protocol");
   }
 
   const resolvedResourceUri = options.template || options.resourceUri;
@@ -122,7 +131,9 @@ export async function buildChatGptWidgetContent(
     throw cliError("NOT_FOUND", "No HTML content found");
   }
 
-  const resourceMeta = firstContent?._meta as Record<string, unknown> | undefined;
+  const resourceMeta = firstContent?._meta as
+    | Record<string, unknown>
+    | undefined;
   const widgetCspRaw = resourceMeta?.["openai/widgetCSP"] as
     | WidgetCspMeta
     | undefined;
@@ -149,7 +160,10 @@ export async function buildChatGptWidgetContent(
   let cspMetaTag = "";
   if (cspConfig.headerString) {
     const metaCspContent = buildCspMetaContent(cspConfig.headerString);
-    cspMetaTag = `<meta http-equiv="Content-Security-Policy" content="${metaCspContent.replace(/"/g, "&quot;")}">`;
+    cspMetaTag = `<meta http-equiv="Content-Security-Policy" content="${metaCspContent.replace(
+      /"/g,
+      "&quot;",
+    )}">`;
   }
 
   return {

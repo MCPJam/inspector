@@ -88,6 +88,15 @@ If a higher-priority surface contradicts a lower-priority summary, trust the hig
   - host display modes, host context changes, or postMessage bridge behavior
 - Treat a pass as evidence that the server advertises an MCP Apps surface with plausible resource wiring. Do not describe it as full SEP-1865 conformance.
 
+### `apps debug`
+
+- This is a connected, single-tool MCP Apps debug command.
+- The command executes the tool once through the SDK and reports that result under `execution`.
+- With `--ui`, the CLI starts or attaches to the local Inspector, connects the server, opens App Builder, injects the already-completed tool result through `renderToolResult`, and then requests a snapshot.
+- `inspectorRender` is UI command-bus evidence, not a second server-side tool call. A render failure can coexist with a successful `execution`.
+- `success: false` with an `error` from `inspectorRender` means the Inspector render path failed. Check the individual `openAppBuilder`, `setAppContext`, `renderToolResult`, and `snapshot` responses before blaming the MCP server.
+- Large tool results can appear in multiple places, such as `execution`, `inspectorRender.renderToolResult.result`, and `inspectorRender.snapshot.result.toolOutput`. Prefer `--out <path>` for handoff artifacts and summarize large duplicated payloads.
+
 ### `tools list`
 
 - The command returns:
