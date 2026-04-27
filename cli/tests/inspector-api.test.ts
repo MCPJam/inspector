@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import http from "node:http";
-import test from "node:test";
+import test, { after, before } from "node:test";
 import type { AddressInfo } from "node:net";
 import {
   InspectorApiClient,
@@ -10,8 +10,23 @@ import {
   getNpxExecutable,
   normalizeInspectorFrontendUrl,
   normalizeInspectorBaseUrl,
+  resolveInspectorBrowserBaseUrl,
   stopInspector,
 } from "../src/lib/inspector-api.js";
+
+const previousDisableBrowserOpen = process.env.MCPJAM_CLI_DISABLE_BROWSER_OPEN;
+
+before(() => {
+  process.env.MCPJAM_CLI_DISABLE_BROWSER_OPEN = "1";
+});
+
+after(() => {
+  if (previousDisableBrowserOpen === undefined) {
+    delete process.env.MCPJAM_CLI_DISABLE_BROWSER_OPEN;
+  } else {
+    process.env.MCPJAM_CLI_DISABLE_BROWSER_OPEN = previousDisableBrowserOpen;
+  }
+});
 
 async function readJsonBody(
   request: http.IncomingMessage,
@@ -40,6 +55,48 @@ async function withServer(
       server.close((error) => (error ? reject(error) : resolve()));
     });
   }
+}
+
+async function withServerOnAvailablePort(
+  ports: number[],
+  handler: http.RequestListener,
+  fn: (baseUrl: string) => Promise<void>,
+): Promise<void> {
+  let lastError: unknown;
+
+  for (const port of ports) {
+    const server = http.createServer(handler);
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(port, "127.0.0.1", () => {
+          server.off("error", reject);
+          resolve();
+        });
+      });
+
+      try {
+        await fn(`http://127.0.0.1:${port}`);
+      } finally {
+        await new Promise<void>((resolve, reject) => {
+          server.close((error) => (error ? reject(error) : resolve()));
+        });
+      }
+      return;
+    } catch (error) {
+      lastError = error;
+      await new Promise<void>((resolve) => {
+        server.close(() => resolve());
+      });
+      if ((error as NodeJS.ErrnoException).code !== "EADDRINUSE") {
+        throw error;
+      }
+    }
+  }
+
+  throw lastError instanceof Error
+    ? lastError
+    : new Error("No available port for test server.");
 }
 
 test("InspectorApiClient sends session token auth and supported endpoint payloads", async () => {
@@ -284,16 +341,61 @@ test("buildInspectorBrowserUrl prefers health frontend URL for UI tabs", () => {
 
 test("ensureInspector reports the frontend URL from Inspector health", async () => {
   await withServer(
+    (frontendRequest, frontendResponse) => {
+      if (frontendRequest.method === "GET" && frontendRequest.url === "/") {
+        frontendResponse.writeHead(200, { "Content-Type": "text/html" });
+        frontendResponse.end(
+          '<!doctype html><title>MCPJam Inspector</title><div id="root"></div>',
+        );
+        return;
+      }
+
+      frontendResponse.writeHead(404);
+      frontendResponse.end();
+    },
+    async (frontendUrl) => {
+      await withServer(
+        (request, response) => {
+          if (request.method === "GET" && request.url === "/health") {
+            response.writeHead(200, { "Content-Type": "application/json" });
+            response.end(
+              JSON.stringify({
+                status: "ok",
+                hasActiveClient: true,
+                frontend: `${frontendUrl}/`,
+              }),
+            );
+            return;
+          }
+
+          response.writeHead(404);
+          response.end();
+        },
+        async (baseUrl) => {
+          const result = await ensureInspector({
+            baseUrl,
+            openBrowser: true,
+            tab: "app-builder",
+          });
+
+          assert.deepEqual(result, {
+            baseUrl,
+            frontendUrl,
+            url: `${frontendUrl}/#app-builder`,
+            started: false,
+          });
+        },
+      );
+    },
+  );
+});
+
+test("resolveInspectorBrowserBaseUrl discovers nearby dev frontend when health is stale", async () => {
+  await withServer(
     (request, response) => {
       if (request.method === "GET" && request.url === "/health") {
         response.writeHead(200, { "Content-Type": "application/json" });
-        response.end(
-          JSON.stringify({
-            status: "ok",
-            hasActiveClient: true,
-            frontend: "http://localhost:5173/",
-          }),
-        );
+        response.end(JSON.stringify({ status: "ok" }));
         return;
       }
 
@@ -301,18 +403,99 @@ test("ensureInspector reports the frontend URL from Inspector health", async () 
       response.end();
     },
     async (baseUrl) => {
-      const result = await ensureInspector({
-        baseUrl,
-        openBrowser: true,
-        tab: "app-builder",
-      });
+      await withServerOnAvailablePort(
+        [5181, 5182, 5183, 5184, 5185],
+        (request, response) => {
+          if (request.method === "GET" && request.url === "/") {
+            response.writeHead(200, { "Content-Type": "text/html" });
+            response.end(
+              '<!doctype html><title>MCPJam Inspector</title><div id="root"></div>',
+            );
+            return;
+          }
 
-      assert.deepEqual(result, {
-        baseUrl,
-        frontendUrl: "http://localhost:5173",
-        url: "http://localhost:5173/#app-builder",
-        started: false,
-      });
+          response.writeHead(404);
+          response.end();
+        },
+        async (frontendUrl) => {
+          const frontendPort = Number(new URL(frontendUrl).port);
+          const staleFrontendUrl = `http://127.0.0.1:${frontendPort - 1}`;
+
+          assert.equal(
+            await resolveInspectorBrowserBaseUrl(baseUrl, staleFrontendUrl),
+            frontendUrl,
+          );
+        },
+      );
+    },
+  );
+});
+
+test("resolveInspectorBrowserBaseUrl rejects discovered frontend when backend rejects its origin", async () => {
+  await withServerOnAvailablePort(
+    [5181, 5182, 5183, 5184, 5185],
+    (frontendRequest, frontendResponse) => {
+      if (frontendRequest.method === "GET" && frontendRequest.url === "/") {
+        frontendResponse.writeHead(200, { "Content-Type": "text/html" });
+        frontendResponse.end(
+          '<!doctype html><title>MCPJam Inspector</title><div id="root"></div>',
+        );
+        return;
+      }
+
+      frontendResponse.writeHead(404);
+      frontendResponse.end();
+    },
+    async (frontendUrl) => {
+      const frontendPort = Number(new URL(frontendUrl).port);
+      const advertisedUrl = `http://127.0.0.1:${frontendPort - 1}`;
+
+      await withServer(
+        (request, response) => {
+          if (request.method === "GET" && request.url === "/api/session-token") {
+            const origin = request.headers.origin;
+            if (origin === advertisedUrl) {
+              response.writeHead(200, { "Content-Type": "application/json" });
+              response.end(JSON.stringify({ token: "ok" }));
+              return;
+            }
+
+            response.writeHead(403, { "Content-Type": "application/json" });
+            response.end(
+              JSON.stringify({
+                error: "Forbidden",
+                message: "Request origin not allowed.",
+              }),
+            );
+            return;
+          }
+
+          response.writeHead(404);
+          response.end();
+        },
+        async (baseUrl) => {
+          await assert.rejects(
+            () => resolveInspectorBrowserBaseUrl(baseUrl, advertisedUrl),
+            (error: unknown) => {
+              assert.ok(error instanceof Error);
+              assert.match(error.message, /Inspector backend advertises /);
+              assert.match(error.message, /frontend was found at /);
+              assert.match(error.message, /rejects that origin/);
+              assert.equal(
+                (error as { details?: Record<string, unknown> }).details
+                  ?.advertisedFrontendUrl,
+                advertisedUrl,
+              );
+              assert.equal(
+                (error as { details?: Record<string, unknown> }).details
+                  ?.rejectedFrontendUrl,
+                frontendUrl,
+              );
+              return true;
+            },
+          );
+        },
+      );
     },
   );
 });

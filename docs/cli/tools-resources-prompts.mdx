@@ -45,7 +45,7 @@ mcpjam tools call --url https://your-server.com/mcp --access-token $TOKEN \
   --quiet --format json
 ```
 
-Without `--ui`, `tools call` returns the raw tool result. With `--ui`, it returns an envelope containing the raw `result` and `inspectorRender` evidence.
+Without `--ui`, `tools call` returns the raw tool result. With `--ui`, it returns an envelope containing the raw `result`, `inspectorBrowserUrl`, and `inspectorRender` evidence. Browser automation should open `inspectorBrowserUrl`; `--inspector-url` is the local Inspector API base URL.
 
 For a local stdio server:
 

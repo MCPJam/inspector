@@ -300,6 +300,12 @@ export function registerToolsCommands(program: Command): void {
         success: !inspectorRenderError && !validationFailed && !toolResultError,
         command: "tools call",
         inspectorUi: true,
+        ...(typeof uiResult.browserUrl === "string"
+          ? { inspectorBrowserUrl: uiResult.browserUrl }
+          : {}),
+        ...(typeof uiResult.frontendUrl === "string"
+          ? { inspectorFrontendUrl: uiResult.frontendUrl }
+          : {}),
         target,
         toolName,
         params,

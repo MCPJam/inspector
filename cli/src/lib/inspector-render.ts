@@ -23,6 +23,13 @@ type InspectorAppRenderResult = {
   snapshot?: InspectorCommandResponse;
 };
 
+type InspectorUiRenderResult = InspectorAppRenderResult & {
+  baseUrl: string;
+  browserUrl: string;
+  frontendUrl?: string;
+  inspectorStarted: boolean;
+};
+
 export async function runUiRender(options: {
   baseUrl?: string;
   config: MCPServerConfig;
@@ -32,7 +39,7 @@ export async function runUiRender(options: {
   timeoutMs: number;
   toolName: string;
   toolResult: unknown;
-}) {
+}): Promise<InspectorUiRenderResult> {
   const client = new InspectorApiClient({ baseUrl: options.baseUrl });
   const ensureResult = await client.ensure({
     openBrowser: true,
@@ -57,6 +64,10 @@ export async function runUiRender(options: {
 
   return {
     baseUrl: ensureResult.baseUrl,
+    browserUrl: ensureResult.url,
+    ...(ensureResult.frontendUrl
+      ? { frontendUrl: ensureResult.frontendUrl }
+      : {}),
     inspectorStarted: ensureResult.started,
     ...renderResult,
   };

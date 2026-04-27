@@ -80,10 +80,21 @@ async function startMockServer(options: {
     options.toolResult ?? { content: [{ type: "text", text: "view created" }] };
 
   const server = http.createServer(async (request, response) => {
+    if (request.method === "GET" && request.url === "/") {
+      response.writeHead(200, { "Content-Type": "text/html" });
+      response.end(
+        '<!doctype html><title>MCPJam Inspector</title><div id="root"></div>',
+      );
+      return;
+    }
+
     if (request.method === "GET" && request.url === "/health") {
       response.writeHead(200, { "Content-Type": "application/json" });
       response.end(
-        JSON.stringify({ status: "ok", frontend: "http://localhost:5173/" }),
+        JSON.stringify({
+          status: "ok",
+          frontend: `http://${request.headers.host}/`,
+        }),
       );
       return;
     }
@@ -242,8 +253,16 @@ test("tools call --ui executes once and sends the raw result to Inspector", asyn
     assert.equal(payload.success, true);
     assert.equal(payload.command, "tools call");
     assert.equal(payload.inspectorUi, true);
+    assert.equal(
+      payload.inspectorBrowserUrl,
+      `http://127.0.0.1:${server.port}/#app-builder`,
+    );
     assert.deepEqual(payload.result, toolResult);
     assert.ok(payload.inspectorRender);
+    assert.equal(
+      payload.inspectorRender.browserUrl,
+      `http://127.0.0.1:${server.port}/#app-builder`,
+    );
 
     const mcpMethods = server.requests
       .filter((entry) => entry.url === "/mcp")

@@ -116,7 +116,7 @@ Uses shared connection flags.
 
 Plus shared connection flags.
 
-Without `--ui`, `tools call` returns the raw tool result. With `--ui`, it returns an envelope with `result` and `inspectorRender`. The Inspector path injects the completed tool result through `renderToolResult`; it does not call the tool a second time. `--ui` cannot be combined with `--reporter`.
+Without `--ui`, `tools call` returns the raw tool result. With `--ui`, it returns an envelope with `result`, `inspectorBrowserUrl`, and `inspectorRender`. Open `inspectorBrowserUrl` in a browser; `--inspector-url` is the local Inspector API base URL. The Inspector path injects the completed tool result through `renderToolResult`; it does not call the tool a second time. `--ui` cannot be combined with `--reporter`.
 
 ---
 
