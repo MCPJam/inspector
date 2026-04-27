@@ -135,20 +135,20 @@ you provided instead of silently inferring the transport.
 # Start with doctor
 mcpjam server doctor --url https://unknown-server.com/mcp
 
-# If it returns oauth_required, login and save credentials
-mcpjam oauth login --url https://unknown-server.com/mcp --credentials-out creds.json
-
-# Then re-run with the credentials file
-mcpjam server doctor --url https://unknown-server.com/mcp --credentials-file creds.json
-```
-
-You can also pass tokens directly if you prefer not to use a credentials file:
-
-```bash
+# If it returns oauth_required, login first
 mcpjam oauth login --url https://unknown-server.com/mcp \
   --protocol-version 2025-11-25 --registration dcr
 
+# Then re-run with the token
 mcpjam server doctor --url https://unknown-server.com/mcp --oauth-access-token $TOKEN
+```
+
+For multi-command sessions, save credentials to a file to avoid re-extracting the token:
+
+```bash
+mcpjam oauth login --url https://unknown-server.com/mcp --credentials-out creds.json
+mcpjam server doctor --url https://unknown-server.com/mcp --credentials-file creds.json
+mcpjam tools list --url https://unknown-server.com/mcp --credentials-file creds.json
 ```
 
 ### Compare before/after a deploy

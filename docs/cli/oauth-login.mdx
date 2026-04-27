@@ -125,7 +125,9 @@ Same as `oauth proxy` but routes through the debug proxy path. Use when testing 
 
 ## Using tokens from login
 
-The recommended approach is to save credentials to a file and reuse them:
+### Credentials file (interactive & agent workflows)
+
+For interactive or agent workflows where you login once and run multiple commands, save credentials to a file:
 
 ```bash
 # Login and save credentials
@@ -143,15 +145,23 @@ The credentials file includes the server URL, access token, refresh token, and c
   `--credentials-file` cannot be combined with `--access-token`, `--oauth-access-token`, `--refresh-token`, `--client-id`, or `--client-secret`. The CLI rejects conflicting auth sources upfront.
 </Note>
 
-Alternatively, you can extract the token manually:
+### Direct token passing (CI/CD & M2M)
+
+When you already have a token from an environment variable, a secret store, or a `client_credentials` flow, pass it directly:
 
 ```bash
-# Capture the token
+# From an environment variable or secret store
+mcpjam tools list --url https://your-server.com/mcp --access-token "$TOKEN"
+mcpjam server doctor --url https://your-server.com/mcp --oauth-access-token "$TOKEN"
+
+# M2M: preregistered client_credentials — token comes back on stdout
 TOKEN=$(mcpjam oauth login --url https://your-server.com/mcp \
-  --protocol-version 2025-11-25 --registration dcr \
+  --protocol-version 2025-11-25 --registration preregistered \
+  --auth-mode client_credentials \
+  --client-id "$CLIENT_ID" --client-secret "$CLIENT_SECRET" \
   --format json | jq -r '.credentials.accessToken')
 
-# Use it
-mcpjam server doctor --url https://your-server.com/mcp --oauth-access-token "$TOKEN"
 mcpjam tools list --url https://your-server.com/mcp --access-token "$TOKEN"
 ```
+
+You can also use `--refresh-token` with `--client-id` (and optionally `--client-secret`) for commands that support automatic token refresh.

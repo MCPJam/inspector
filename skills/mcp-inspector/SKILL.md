@@ -24,7 +24,7 @@ Use this skill when analyzing MCP server behavior from `mcpjam-cli` output. The 
 
 1. Start with the narrowest command that actually proves the claim.
 2. If the command may fail, you want a reusable handoff artifact, or CI should retain evidence, add `--debug-out <path>` to `server probe`, `server validate`, `tools call`, or `oauth login`.
-3. If the probe shows `oauth_required` and the task is to inspect the server surface, continue with `oauth login --credentials-out <path>` to obtain and persist reusable credentials, then pass `--credentials-file <path>` to subsequent commands instead of manually extracting tokens.
+3. If the probe shows `oauth_required` and the task is to inspect the server surface, continue with `oauth login` or another supported auth flow to obtain reusable credentials before judging post-auth behavior. For multi-command sessions, use `--credentials-out <path>` to persist tokens and `--credentials-file <path>` on subsequent commands. When a token is already available (CI, M2M, env var), pass `--access-token` or `--oauth-access-token` directly.
 4. After successful auth, inspect the connected surface with direct commands such as `server info`, `server capabilities`, `tools list`, `resources list/read/templates`, and `prompts list/get`.
 5. Use `server doctor --out <path>` when you need one breadth-first snapshot instead of several single-purpose command outputs.
 6. If the output came from `server doctor` or a `--debug-out` artifact, split it into primary command evidence, probe evidence, and connected-sweep evidence.
