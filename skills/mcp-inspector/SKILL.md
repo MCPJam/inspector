@@ -24,7 +24,7 @@ Use this skill when analyzing MCP server behavior from `mcpjam-cli` output. The 
 
 1. Start with the narrowest command that actually proves the claim.
 2. If the command may fail, you want a reusable handoff artifact, or CI should retain evidence, add `--debug-out <path>` to `server probe`, `server validate`, `tools call`, or `oauth login`.
-3. If the probe shows `oauth_required` and the task is to inspect the server surface, continue with `oauth login` or another supported auth flow to obtain reusable credentials before judging post-auth behavior.
+3. If the probe shows `oauth_required` and the task is to inspect the server surface, continue with `oauth login --credentials-out <path>` to obtain and persist reusable credentials, then pass `--credentials-file <path>` to subsequent commands instead of manually extracting tokens.
 4. After successful auth, inspect the connected surface with direct commands such as `server info`, `server capabilities`, `tools list`, `resources list/read/templates`, and `prompts list/get`.
 5. Use `server doctor --out <path>` when you need one breadth-first snapshot instead of several single-purpose command outputs.
 6. If the output came from `server doctor` or a `--debug-out` artifact, split it into primary command evidence, probe evidence, and connected-sweep evidence.
@@ -103,7 +103,7 @@ Use `pending` instead of manufacturing a `medium` or `high` security severity fr
 - `server probe`: HTTP transport reachability, initialize behavior, and OAuth discovery hints.
 - `server doctor`: combined triage artifact for probe plus connected behavior. Good for breadth, not always sufficient to prove wire-level behavior by itself.
 - `oauth metadata`, `oauth proxy`, `oauth debug-proxy`: exact endpoint and metadata inspection when conformance output looks surprising.
-- `oauth login`: obtain reusable credentials and verify the authenticated MCP path. Use this when the goal is to inspect a server that requires OAuth, then follow it with connected commands rather than stopping at the login result.
+- `oauth login`: obtain reusable credentials and verify the authenticated MCP path. Use `--credentials-out <path>` to save tokens to disk (mode 0600) so subsequent commands can use `--credentials-file <path>` without manual token extraction. Use this when the goal is to inspect a server that requires OAuth, then follow it with connected commands rather than stopping at the login result.
 - `oauth conformance`, `oauth conformance-suite`: flow-level auth checks. Treat these as targeted probes, not a complete security review. When `--conformance-checks` is enabled, the command can directly probe DCR non-loopback `http://` redirects, invalid client rejection, authorization-endpoint redirect mismatch handling, invalid bearer-token rejection at the MCP server, and token-endpoint redirect mismatch handling.
 - `apps conformance`: server-side MCP Apps checks for `_meta.ui.resourceUri`, `ui://` resources, `resources/read`, HTML MIME and payload shape, and `_meta.ui` metadata. Use this for MCP Apps surface triage.
 - `apps debug`: one MCP App tool execution plus optional Inspector App Builder rendering. With `--ui`, treat `execution` as the tool result and `inspectorRender` as UI command/render evidence; render errors are not automatically tool execution errors.

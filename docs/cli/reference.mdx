@@ -32,6 +32,7 @@ All server commands accept the shared connection flags below, plus command-speci
 | `--refresh-token <token>` | OAuth refresh token |
 | `--client-id <id>` | OAuth client ID (with `--refresh-token`) |
 | `--client-secret <secret>` | OAuth client secret (with `--refresh-token`) |
+| `--credentials-file <path>` | Load OAuth credentials from a file created by `oauth login --credentials-out` |
 | `--header <header>` | HTTP header `Key: Value` (repeatable) |
 | `--client-capabilities <json>` | Client capabilities JSON object |
 | `--command <command>` | Stdio server command |
@@ -47,6 +48,10 @@ explicit validation step.
 For stdio targets, child processes inherit the parent shell environment by
 default. `-e/--env` adds or overrides child env values, and structured debug
 artifacts only record the explicit env keys you passed on the command line.
+
+`--credentials-file` cannot be combined with individual token flags
+(`--access-token`, `--oauth-access-token`, `--refresh-token`, `--client-id`,
+`--client-secret`). The CLI rejects conflicting auth sources upfront.
 
 ### `server probe`
 
@@ -158,6 +163,7 @@ Plus shared connection flags.
 | `--step-timeout <ms>` | No | `30000` | Per-step timeout |
 | `--verify-tools` | No | | After login, list tools |
 | `--verify-call-tool <name>` | No | | Also call the named tool |
+| `--credentials-out <path>` | No | | Write OAuth credentials to file (mode 0600); stdout has secrets redacted |
 | `--debug-out <path>` | No | | Write debug artifact to file |
 
 ### `oauth conformance`
@@ -213,6 +219,7 @@ Plus shared connection flags.
 |------|----------|---------|-------------|
 | `--url <url>` | Yes | | MCP server URL |
 | `--access-token <token>` | No | | Bearer access token |
+| `--credentials-file <path>` | No | | Load OAuth credentials from a file created by `oauth login --credentials-out` |
 | `--header <header>` | No | | HTTP header `Key: Value` (repeatable) |
 | `--check-timeout <ms>` | No | `15000` | Per-check timeout in milliseconds |
 | `--category <category>` | No | all | Restrict checks to one or more categories |
@@ -242,6 +249,7 @@ Supports `--format json`, `--format human`, and `--format junit-xml`.
 | `--refresh-token <token>` | OAuth refresh token |
 | `--client-id <id>` | OAuth client ID (with `--refresh-token`) |
 | `--client-secret <secret>` | OAuth client secret (with `--refresh-token`) |
+| `--credentials-file <path>` | Load OAuth credentials from a file created by `oauth login --credentials-out` |
 | `--header <header>` | HTTP header `Key: Value` (repeatable) |
 | `--client-capabilities <json>` | Client capabilities JSON object |
 | `--command <command>` | Stdio server command |

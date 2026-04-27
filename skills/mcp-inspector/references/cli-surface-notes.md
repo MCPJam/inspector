@@ -33,6 +33,13 @@ If a higher-priority surface contradicts a lower-priority summary, trust the hig
 - `status: oauth_required` can be decided from the probe before any connected sweep runs.
 - `status: partial` usually means some sub-surfaces failed while the connection itself still succeeded.
 
+### `--credentials-out` / `--credentials-file`
+
+- `--credentials-out` is supported on `oauth login`. Writes OAuth credentials (access token, refresh token, client ID) to a JSON file with `0600` permissions. Stdout output has secret fields redacted to `[SAVED_TO_FILE]`.
+- `--credentials-file` is supported on `server` commands (including `server probe`), `tools` commands, `resources` commands, `prompts` commands, `protocol conformance`, and `apps` commands. Reads credentials from a file created by `--credentials-out`.
+- The CLI validates that the credential file's server URL matches the target URL, checks token expiry (with a 60ms skew buffer), and rejects conflicts with individual token flags.
+- Credentials files are not debug artifacts — they contain live secrets. Do not confuse with `--debug-out` artifacts that redact secrets.
+
 ### `--debug-out`
 
 - Supported on `server probe`, `server validate`, `tools call`, and `oauth login`.

@@ -48,6 +48,17 @@ mcpjam oauth login --url https://your-server.com/mcp \
   to shell history and process listings.
 </Warning>
 
+The `--credentials-out <path>` flag saves OAuth credentials (access token, refresh token, client ID) to a file with `0600` permissions. Secret fields are redacted from stdout output. Use the saved file with `--credentials-file` on other commands.
+
+```bash
+mcpjam oauth login --url https://your-server.com/mcp \
+  --credentials-out creds.json
+
+# Then reuse across commands
+mcpjam tools list --url https://your-server.com/mcp --credentials-file creds.json
+mcpjam server doctor --url https://your-server.com/mcp --credentials-file creds.json
+```
+
 The `--debug-out <path>` flag captures a structured debug artifact with full HTTP traces — useful for filing bug reports or handing off to another engineer.
 
 ```bash
@@ -103,6 +114,7 @@ Same as `oauth proxy` but routes through the debug proxy path. Use when testing 
 | `--step-timeout <ms>` | No | `30000` | Per-step timeout |
 | `--verify-tools` | No | | After login, connect and list tools |
 | `--verify-call-tool <name>` | No | | After listing, also call a named tool |
+| `--credentials-out <path>` | No | | Write OAuth credentials to file (mode 0600); stdout output has secret fields redacted |
 | `--debug-out <path>` | No | | Write debug artifact to file |
 
 <Note>
@@ -113,7 +125,25 @@ Same as `oauth proxy` but routes through the debug proxy path. Use when testing 
 
 ## Using tokens from login
 
-After a successful `oauth login`, use the printed access token with other commands:
+The recommended approach is to save credentials to a file and reuse them:
+
+```bash
+# Login and save credentials
+mcpjam oauth login --url https://your-server.com/mcp --credentials-out creds.json
+
+# Reuse across commands — the CLI resolves tokens from the file automatically
+mcpjam tools list --url https://your-server.com/mcp --credentials-file creds.json
+mcpjam server doctor --url https://your-server.com/mcp --credentials-file creds.json
+mcpjam protocol conformance --url https://your-server.com/mcp --credentials-file creds.json
+```
+
+The credentials file includes the server URL, access token, refresh token, and client ID. The CLI validates that the file's server URL matches the target and checks token expiry before use.
+
+<Note>
+  `--credentials-file` cannot be combined with `--access-token`, `--oauth-access-token`, `--refresh-token`, `--client-id`, or `--client-secret`. The CLI rejects conflicting auth sources upfront.
+</Note>
+
+Alternatively, you can extract the token manually:
 
 ```bash
 # Capture the token
