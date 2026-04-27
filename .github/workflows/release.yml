@@ -22,6 +22,11 @@ on:
         required: false
         default: false
         type: boolean
+      skip_verify:
+        description: "Skip npm run verify during preflight"
+        required: false
+        default: false
+        type: boolean
 
 env:
   NODE_VERSION: "24.14.0"
@@ -66,6 +71,7 @@ jobs:
         run: npm ci --legacy-peer-deps
 
       - name: Verify workspace
+        if: ${{ !inputs.skip_verify }}
         run: npm run verify
 
       - name: Require green staging smoke for candidate SHA

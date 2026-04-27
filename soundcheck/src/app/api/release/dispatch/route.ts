@@ -51,6 +51,7 @@ interface DispatchBody {
   deploy_backend_prod: boolean;
   promote_production: boolean;
   deploy_mcp_production: boolean;
+  skip_verify: boolean;
 }
 
 function isScope(value: unknown): value is Scope {
@@ -69,11 +70,18 @@ function parseBody(raw: unknown): DispatchBody | null {
   if (typeof body.deploy_backend_prod !== "boolean") return null;
   if (typeof body.promote_production !== "boolean") return null;
   if (typeof body.deploy_mcp_production !== "boolean") return null;
+  if (
+    body.skip_verify !== undefined &&
+    typeof body.skip_verify !== "boolean"
+  ) {
+    return null;
+  }
   return {
     scope: body.scope,
     deploy_backend_prod: body.deploy_backend_prod,
     promote_production: body.promote_production,
-    deploy_mcp_production: body.deploy_mcp_production
+    deploy_mcp_production: body.deploy_mcp_production,
+    skip_verify: body.skip_verify ?? false
   };
 }
 
@@ -121,7 +129,7 @@ export async function POST(request: Request) {
     return NextResponse.json(
       {
         error:
-          "Expected { scope, deploy_backend_prod, promote_production, deploy_mcp_production } with valid values"
+          "Expected { scope, deploy_backend_prod, promote_production, deploy_mcp_production } with optional boolean skip_verify"
       },
       { status: 400 }
     );
@@ -129,6 +137,7 @@ export async function POST(request: Request) {
 
   const runsRelease = parsed.scope !== "none";
   const runsMcp = parsed.deploy_mcp_production;
+  const effectiveSkipVerify = runsRelease && parsed.skip_verify;
   if (!runsRelease && !runsMcp) {
     return NextResponse.json(
       {
@@ -172,6 +181,7 @@ export async function POST(request: Request) {
       deploy_backend_prod: parsed.deploy_backend_prod,
       promote_production: parsed.promote_production,
       deploy_mcp_production: parsed.deploy_mcp_production,
+      skip_verify: effectiveSkipVerify,
       workflows_attempted: attemptedWorkflows
     })
   );
@@ -194,7 +204,8 @@ export async function POST(request: Request) {
           scope: parsed.scope,
           // Workflow dispatch inputs go over the wire as strings.
           deploy_backend_prod: String(parsed.deploy_backend_prod),
-          promote_production: String(parsed.promote_production)
+          promote_production: String(parsed.promote_production),
+          skip_verify: String(effectiveSkipVerify)
         },
         writeToken
       );
@@ -251,6 +262,7 @@ export async function POST(request: Request) {
       deploy_backend_prod: parsed.deploy_backend_prod,
       promote_production: parsed.promote_production,
       deploy_mcp_production: parsed.deploy_mcp_production,
+      skip_verify: effectiveSkipVerify,
       workflows_attempted: attemptedWorkflows,
       workflows_succeeded: succeeded.map((r) => r.workflow),
       workflows_failed: failed.map((r) => r.workflow)

@@ -1,0 +1,85 @@
+---
+title: "CLI Telemetry"
+description: "Anonymous command-level telemetry, opt-outs, and debug mode"
+icon: "activity"
+---
+
+`mcpjam` collects anonymous command-level telemetry so we can understand CLI usage and reliability. Telemetry is designed for aggregate product insight, not user or server inspection.
+
+Telemetry is enabled by default. The first command invocation that is not opted out writes `telemetry.json` with `enabled: true` and a random install UUID.
+
+## What's collected
+
+The CLI emits one `cli_command` event after a command action starts. Event properties are limited to:
+
+| Property | Description |
+|----------|-------------|
+| `platform` | Always `cli` |
+| `command` | Command and subcommand names only, such as `server probe` |
+| `success` | Whether the command exited successfully |
+| `exit_code` | CLI exit code |
+| `duration_ms` | Command duration in milliseconds |
+| `error_code` | Normalized error code, not the error message |
+| `cli_version` | Installed CLI version |
+| `os` | Operating system, such as `darwin`, `linux`, or `win32` |
+| `arch` | CPU architecture |
+| `node_version` | Node.js version |
+| `transport` | `http` or `stdio`, inferred from flag presence |
+| `is_ci` | Whether the command appears to be running in CI |
+| `ci_name` | Coarse CI provider enum, such as `github_actions`, only when in CI |
+
+## What's not collected
+
+Telemetry does not collect raw argv, URLs, hostnames, ports, tokens, headers, environment values, working directories, file paths, tool names, resource names, prompt names, error messages, stack traces, repository names, branch names, workflow names, or CI job IDs.
+
+## Install ID
+
+Telemetry uses a random install UUID as the event `distinct_id`. The UUID is stored in the same platform cache directory used by update checks, in a `telemetry.json` file:
+
+| Platform | Cache directory |
+|----------|-----------------|
+| macOS | `~/Library/Caches/mcpjam` |
+| Linux | `$XDG_CACHE_HOME/mcpjam` or `~/.cache/mcpjam` |
+| Windows | `%LOCALAPPDATA%\\mcpjam\\Cache` |
+
+The install ID is created on the first real telemetry capture or when you run `mcpjam telemetry enable`. Running `mcpjam telemetry disable` before an ID exists does not create one.
+
+## Opt out
+
+Disable telemetry for one invocation:
+
+```bash
+mcpjam --no-telemetry server doctor --url https://your-server.com/mcp
+```
+
+Disable telemetry persistently:
+
+```bash
+mcpjam telemetry disable
+```
+
+Check or re-enable telemetry:
+
+```bash
+mcpjam telemetry status
+mcpjam telemetry enable
+```
+
+Environment opt-outs:
+
+| Variable | Effect |
+|----------|--------|
+| `DO_NOT_TRACK=1` | Disable telemetry |
+| `MCPJAM_TELEMETRY_DISABLED=1` | Disable telemetry |
+
+`--no-telemetry` overrides environment and persisted state for the current invocation. Disable environment variables override persisted state.
+
+## Debug mode
+
+Set `MCPJAM_TELEMETRY_DEBUG=1` to print the exact sanitized payload to stderr instead of sending it:
+
+```bash
+MCPJAM_TELEMETRY_DEBUG=1 mcpjam server probe --url https://your-server.com/mcp
+```
+
+Debug mode only logs when telemetry is otherwise enabled. If `--no-telemetry`, `DO_NOT_TRACK=1`, `MCPJAM_TELEMETRY_DISABLED=1`, or persisted disabled state applies, no payload is logged or sent.

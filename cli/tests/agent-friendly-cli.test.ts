@@ -19,7 +19,11 @@ async function runCli(
   return await new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [TSX_CLI_PATH, CLI_ENTRY_PATH, ...args], {
       cwd: CLI_DIR,
-      env: { ...process.env, MCPJAM_CLI_DISABLE_BROWSER_OPEN: "1" },
+      env: {
+        ...process.env,
+        MCPJAM_CLI_DISABLE_BROWSER_OPEN: "1",
+        MCPJAM_TELEMETRY_DISABLED: "1",
+      },
       stdio: ["pipe", "pipe", "pipe"],
     });
     let stdout = "";
