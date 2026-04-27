@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtemp, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 import { Command } from "commander";
 import {
@@ -10,6 +13,13 @@ import {
   resolveAliasedStringOption,
 } from "../src/lib/server-config.js";
 import { CliError } from "../src/lib/output.js";
+
+async function writeCredentialsJson(contents: object): Promise<string> {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "mcpjam-server-config-"));
+  const filePath = path.join(directory, "credentials.json");
+  await writeFile(filePath, `${JSON.stringify(contents)}\n`, "utf8");
+  return filePath;
+}
 
 test("parseServerConfig builds an HTTP config with access token and headers", () => {
   const config = parseServerConfig({
@@ -57,6 +67,119 @@ test("parseServerConfig accepts refresh-token auth for HTTP servers", () => {
   assert.equal(config.refreshToken, "refresh-token");
   assert.equal(config.clientId, "client-id");
   assert.equal(config.clientSecret, "client-secret");
+});
+
+test("parseServerConfig loads access-token auth from a credentials file", async () => {
+  const credentialsFile = await writeCredentialsJson({
+    version: 1,
+    serverUrl: "https://example.com/mcp",
+    accessToken: "file-access-token",
+    refreshToken: "file-refresh-token",
+    clientId: "file-client-id",
+    expiresAt: "2999-01-01T00:00:00.000Z",
+  });
+
+  const config = parseServerConfig({
+    url: "https://example.com/mcp",
+    credentialsFile,
+  });
+
+  assert.equal("url" in config, true);
+  assert.equal(config.accessToken, "file-access-token");
+  assert.equal(config.refreshToken, undefined);
+});
+
+test("parseServerConfig falls back to refresh-token auth for expired credentials file access tokens", async () => {
+  const credentialsFile = await writeCredentialsJson({
+    version: 1,
+    serverUrl: "https://example.com/mcp",
+    accessToken: "expired-access-token",
+    refreshToken: "file-refresh-token",
+    clientId: "file-client-id",
+    clientSecret: "file-client-secret",
+    expiresAt: "2000-01-01T00:00:00.000Z",
+  });
+
+  const config = parseServerConfig({
+    url: "https://example.com/mcp",
+    credentialsFile,
+  });
+
+  assert.equal("url" in config, true);
+  assert.equal(config.accessToken, undefined);
+  assert.equal(config.refreshToken, "file-refresh-token");
+  assert.equal(config.clientId, "file-client-id");
+  assert.equal(config.clientSecret, "file-client-secret");
+});
+
+test("parseServerConfig ignores blank explicit auth when loading credentials file", async () => {
+  const accessCredentialsFile = await writeCredentialsJson({
+    version: 1,
+    serverUrl: "https://example.com/mcp",
+    accessToken: "file-access-token",
+  });
+
+  const accessConfig = parseServerConfig({
+    url: "https://example.com/mcp",
+    credentialsFile: accessCredentialsFile,
+    accessToken: " ",
+    oauthAccessToken: "\t",
+  });
+
+  assert.equal("url" in accessConfig, true);
+  assert.equal(accessConfig.accessToken, "file-access-token");
+
+  const refreshCredentialsFile = await writeCredentialsJson({
+    version: 1,
+    serverUrl: "https://example.com/mcp",
+    refreshToken: "file-refresh-token",
+    clientId: "file-client-id",
+    clientSecret: "file-client-secret",
+  });
+
+  const refreshConfig = parseServerConfig({
+    url: "https://example.com/mcp",
+    credentialsFile: refreshCredentialsFile,
+    refreshToken: " ",
+    clientId: "\t",
+    clientSecret: "",
+  });
+
+  assert.equal("url" in refreshConfig, true);
+  assert.equal(refreshConfig.refreshToken, "file-refresh-token");
+  assert.equal(refreshConfig.clientId, "file-client-id");
+  assert.equal(refreshConfig.clientSecret, "file-client-secret");
+});
+
+test("parseServerConfig rejects credentials-file auth conflicts and mismatches", async () => {
+  const credentialsFile = await writeCredentialsJson({
+    version: 1,
+    serverUrl: "https://example.com/mcp",
+    accessToken: "file-access-token",
+  });
+
+  assert.throws(
+    () =>
+      parseServerConfig({
+        url: "https://example.com/mcp",
+        credentialsFile,
+        accessToken: "explicit-token",
+      }),
+    (error) =>
+      error instanceof CliError &&
+      error.message.includes("--credentials-file cannot be used together"),
+  );
+
+  assert.throws(
+    () =>
+      parseServerConfig({
+        url: "https://other.example.com/mcp",
+        credentialsFile,
+      }),
+    (error) =>
+      error instanceof CliError &&
+      error.message.includes("was issued for"),
+  );
 });
 
 test("parseServerConfig builds a stdio config with args and env", () => {
@@ -158,7 +281,7 @@ test("parseServerConfig rejects missing and mixed targets", () => {
       error instanceof CliError &&
       error.exitCode === 2 &&
       error.message.includes(
-        "--access-token, --oauth-access-token, --refresh-token, --client-id, --client-secret, and --header can only be used together with --url.",
+        "--access-token, --oauth-access-token, --refresh-token, --client-id, --client-secret, --credentials-file, and --header can only be used together with --url.",
       ),
   );
 
@@ -258,6 +381,19 @@ test("parseServerConfig rejects stdio-only flags on HTTP targets", () => {
   );
 });
 
+test("parseServerConfig rejects credentials-file with stdio targets", () => {
+  assert.throws(
+    () =>
+      parseServerConfig({
+        command: "node",
+        credentialsFile: "/tmp/credentials.json",
+      }),
+    (error) =>
+      error instanceof CliError &&
+      error.message.includes("--credentials-file"),
+  );
+});
+
 test("addSharedServerOptions parses modern stdio aliases", () => {
   const command = addSharedServerOptions(
     new Command().exitOverride().allowExcessArguments(false),
@@ -282,6 +418,8 @@ test("addSharedServerOptions parses modern stdio aliases", () => {
     "BAR=baz",
     "--cwd",
     "/tmp/stdin-server",
+    "--credentials-file",
+    "/tmp/creds.json",
   ]);
 
   const options = command.opts();
@@ -291,6 +429,7 @@ test("addSharedServerOptions parses modern stdio aliases", () => {
   assert.deepEqual(options.commandArgs, ["mcp", "start"]);
   assert.deepEqual(options.env, ["FOO=bar", "BAR=baz"]);
   assert.equal(options.cwd, "/tmp/stdin-server");
+  assert.equal(options.credentialsFile, "/tmp/creds.json");
 });
 
 test("parseJsonRecord rejects non-object JSON", () => {

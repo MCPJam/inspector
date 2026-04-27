@@ -32,7 +32,12 @@ import {
   parseServerConfig,
   parsePositiveInteger,
   resolveHttpAccessToken,
+  type SharedServerTargetOptions,
 } from "../lib/server-config.js";
+import {
+  assertNoCredentialsFileAuthConflicts,
+  resolveCredentialsFileAccessToken,
+} from "../lib/credentials-file.js";
 import {
   parseReporterFormat,
   writeJsonArtifact,
@@ -61,6 +66,10 @@ export function registerServerCommands(program: Command): void {
       .option(
         "--oauth-access-token <token>",
         "OAuth bearer access token for HTTP servers",
+      )
+      .option(
+        "--credentials-file <path>",
+        "Load OAuth access token from a file created by oauth login --credentials-out",
       )
       .option(
         "--header <header>",
@@ -93,8 +102,12 @@ export function registerServerCommands(program: Command): void {
         | "2025-03-26"
         | "2025-06-18"
         | "2025-11-25";
+      const accessToken = resolveServerProbeAccessToken(options);
       const config = parseServerConfig({
         ...options,
+        ...(options.credentialsFile
+          ? { accessToken, credentialsFile: undefined }
+          : {}),
         timeout: options.timeout ?? globalOptions.timeout,
       });
       const target = describeTarget(options);
@@ -126,7 +139,7 @@ export function registerServerCommands(program: Command): void {
           url: probeUrl,
           protocolVersion,
           headers: parseHeadersOption(options.header),
-          accessToken: resolveHttpAccessToken(options),
+          accessToken,
           clientCapabilities:
             "clientCapabilities" in config
               ? config.clientCapabilities
@@ -611,6 +624,26 @@ export function registerServerCommands(program: Command): void {
       setProcessExitCode(1);
     }
   });
+}
+
+export function resolveServerProbeAccessToken(
+  options: Pick<
+    SharedServerTargetOptions,
+    "url" | "accessToken" | "oauthAccessToken" | "credentialsFile"
+  >,
+): string | undefined {
+  assertNoCredentialsFileAuthConflicts(options);
+
+  if (options.credentialsFile) {
+    const url = options.url?.trim();
+    if (!url) {
+      throw usageError("--credentials-file requires --url.");
+    }
+
+    return resolveCredentialsFileAccessToken(options.credentialsFile, url);
+  }
+
+  return resolveHttpAccessToken(options);
 }
 
 function hasServerTargetOptions(options: Record<string, unknown>): boolean {

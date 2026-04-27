@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   buildOAuthConformanceConfig,
+  buildOAuthLoginDebugOutcome,
   buildOAuthLoginConfig,
   buildOAuthLoginSnapshotConfig,
   summarizeOAuthLoginCommandInput,
@@ -148,6 +149,25 @@ test("buildOAuthLoginConfig defaults login flows to automatic protocol and regis
   assert.equal(config.protocolVersion, undefined);
   assert.equal(config.registrationStrategy, undefined);
   assert.equal(config.auth?.mode, "interactive");
+});
+
+test("buildOAuthLoginDebugOutcome records credential file write failures", () => {
+  const result = {
+    completed: true,
+  } as any;
+  const error = new Error("credential path is not writable");
+
+  const outcome = buildOAuthLoginDebugOutcome({
+    result,
+    credentialsFileError: error,
+  });
+
+  assert.equal(outcome.status, "error");
+  if (outcome.status !== "error") {
+    assert.fail("Expected error outcome");
+  }
+  assert.equal(outcome.result, result);
+  assert.equal(outcome.error, error);
 });
 
 test("buildOAuthConformanceConfig sets openUrl for print-url in interactive mode", () => {
