@@ -211,7 +211,7 @@ export async function ensureInspector(
       health.frontendUrl,
     );
     const url = buildInspectorUrl(browserBaseUrl, options.tab);
-    if (options.openBrowser) {
+    if (options.openBrowser && !health.hasActiveClient) {
       openUrl(url);
     }
     return {
