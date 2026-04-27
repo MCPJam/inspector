@@ -455,8 +455,8 @@ export function ServerInfoContent({
       ) : null}
       {needsReconnect ? (
         <div className="rounded-md border border-amber-500/30 bg-amber-500/5 p-3 text-sm text-muted-foreground">
-          Saved client capabilities differ from this server's last initialize
-          payload. Reconnect the server to apply the workspace client profile.
+          Connection settings differ from this server's last initialize payload.
+          Turn the connection off and on to apply the new connection settings.
         </div>
       ) : null}
       {serverName && (

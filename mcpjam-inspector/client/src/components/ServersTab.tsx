@@ -1546,12 +1546,12 @@ export function ServersTab({
       {/* Client Config Dialog */}
       {clientConfigEnabled === true && onSaveClientConfig ? (
         <Dialog open={isClientConfigOpen} onOpenChange={setIsClientConfigOpen}>
-          <DialogContent className="flex h-[88vh] w-[min(96vw,88rem)] max-w-[88rem] flex-col gap-0 overflow-hidden p-0 sm:max-w-[88rem]">
+          <DialogContent className="flex max-h-[88vh] w-[min(96vw,88rem)] max-w-[88rem] flex-col gap-0 overflow-hidden p-0 sm:max-w-[88rem]">
             <DialogTitle className="sr-only">Connection Settings</DialogTitle>
             <DialogDescription className="sr-only">
               Edit workspace connection settings and client capabilities.
             </DialogDescription>
-            <div className="min-h-0 flex-1 overflow-hidden">
+            <div className="min-h-0 overflow-hidden">
               <ClientConfigTab
                 activeWorkspaceId={activeWorkspaceId}
                 workspace={selectedWorkspace}
