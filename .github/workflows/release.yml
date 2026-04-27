@@ -211,7 +211,7 @@ jobs:
 
   build-mac:
     needs: preflight
-    if: needs.preflight.outputs.build_inspector_artifacts == 'true'
+    if: ${{ fromJSON(needs.preflight.outputs.build_inspector_artifacts) }}
     uses: ./.github/workflows/mac-release.yml
     with:
       version: ${{ needs.preflight.outputs.inspector_version }}
@@ -220,7 +220,7 @@ jobs:
 
   build-windows:
     needs: preflight
-    if: needs.preflight.outputs.build_inspector_artifacts == 'true'
+    if: ${{ fromJSON(needs.preflight.outputs.build_inspector_artifacts) }}
     uses: ./.github/workflows/windows-release.yml
     with:
       version: ${{ needs.preflight.outputs.inspector_version }}
@@ -260,7 +260,7 @@ jobs:
     needs:
       - preflight
       - artifact-gate
-    if: needs.preflight.outputs.publish_any == 'true'
+    if: ${{ fromJSON(needs.preflight.outputs.publish_any) }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -286,21 +286,21 @@ jobs:
 
       - name: Build SDK
         if: |
-          needs.preflight.outputs.publish_sdk == 'true' ||
-          needs.preflight.outputs.publish_cli == 'true' ||
-          needs.preflight.outputs.publish_inspector == 'true'
+          fromJSON(needs.preflight.outputs.publish_sdk) ||
+          fromJSON(needs.preflight.outputs.publish_cli) ||
+          fromJSON(needs.preflight.outputs.publish_inspector)
         run: npm run build -w @mcpjam/sdk
 
       - name: Build CLI
-        if: needs.preflight.outputs.publish_cli == 'true'
+        if: fromJSON(needs.preflight.outputs.publish_cli)
         run: npm run build -w @mcpjam/cli
 
       - name: Build Inspector package
-        if: needs.preflight.outputs.publish_inspector == 'true'
+        if: fromJSON(needs.preflight.outputs.publish_inspector)
         run: npm run build -w @mcpjam/inspector
 
       - name: Inject SDK sourcemap debug ids
-        if: needs.preflight.outputs.publish_sdk == 'true'
+        if: fromJSON(needs.preflight.outputs.publish_sdk)
         run: npx @sentry/cli sourcemaps inject ./sdk/dist
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
@@ -311,7 +311,7 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Upload SDK sourcemaps
-        if: needs.preflight.outputs.publish_sdk == 'true'
+        if: fromJSON(needs.preflight.outputs.publish_sdk)
         continue-on-error: true
         run: |
           version=$(node -p "require('./sdk/package.json').version")
@@ -484,14 +484,14 @@ jobs:
           git push origin "${{ needs.preflight.outputs.release_tag }}"
 
       - name: Download macOS artifacts
-        if: needs.preflight.outputs.build_inspector_artifacts == 'true'
+        if: ${{ fromJSON(needs.preflight.outputs.build_inspector_artifacts) }}
         uses: actions/download-artifact@v4
         with:
           name: inspector-macos-${{ needs.preflight.outputs.inspector_version }}
           path: .release-assets/macos
 
       - name: Download Windows artifacts
-        if: needs.preflight.outputs.build_inspector_artifacts == 'true'
+        if: ${{ fromJSON(needs.preflight.outputs.build_inspector_artifacts) }}
         uses: actions/download-artifact@v4
         with:
           name: inspector-windows-${{ needs.preflight.outputs.inspector_version }}
