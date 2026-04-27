@@ -38,7 +38,7 @@ import {
 import { JsonImportModal } from "./connection/JsonImportModal";
 import { ServerFormData } from "@/shared/types.js";
 import { MCPIcon } from "./ui/mcp-icon";
-import { usePostHog, useFeatureFlagEnabled } from "posthog-js/react";
+import { usePostHog } from "posthog-js/react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -537,7 +537,6 @@ export function ServersTab({
   onSaveClientConfig,
 }: ServersTabProps) {
   const posthog = usePostHog();
-  const clientConfigEnabled = useFeatureFlagEnabled("client-config-enabled");
   const { isAuthenticated } = useConvexAuth();
   const [pendingQuickConnect, setPendingQuickConnect] =
     useState<PendingQuickConnectState | null>(() => readPendingQuickConnect());
@@ -1132,7 +1131,7 @@ export function ServersTab({
 
   const renderServerActionsMenu = () => (
     <>
-      {clientConfigEnabled === true && onSaveClientConfig ? (
+      {onSaveClientConfig ? (
         <Button
           size="sm"
           variant="outline"
