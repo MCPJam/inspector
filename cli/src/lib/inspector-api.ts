@@ -224,10 +224,15 @@ export class InspectorApiClient {
     return ensureInspector({ ...options, baseUrl: this.baseUrl });
   }
 
-  async connectServer(serverId: string, serverConfig: unknown) {
+  async connectServer(
+    serverId: string,
+    serverConfig: unknown,
+    options: { timeoutMs?: number } = {},
+  ) {
     return this.request("/api/mcp/connect", {
       method: "POST",
       body: { serverId, serverConfig },
+      timeoutMs: options.timeoutMs,
     });
   }
 

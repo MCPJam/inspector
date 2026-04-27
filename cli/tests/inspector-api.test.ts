@@ -123,6 +123,44 @@ test("InspectorApiClient sends session token auth and supported endpoint payload
   );
 });
 
+test("InspectorApiClient applies explicit timeout to connectServer", async () => {
+  await withServer(
+    (request, response) => {
+      if (request.method === "GET" && request.url === "/api/session-token") {
+        response.writeHead(200, { "Content-Type": "application/json" });
+        response.end(JSON.stringify({ token: "connect-timeout-token" }));
+        return;
+      }
+
+      if (request.method === "POST" && request.url === "/api/mcp/connect") {
+        setTimeout(() => {
+          response.writeHead(200, { "Content-Type": "application/json" });
+          response.end(JSON.stringify({ success: true, status: "connected" }));
+        }, 200);
+        return;
+      }
+
+      response.writeHead(404);
+      response.end();
+    },
+    async (baseUrl) => {
+      const client = new InspectorApiClient({ baseUrl });
+      const startedAt = Date.now();
+
+      await assert.rejects(
+        () =>
+          client.connectServer(
+            "slow",
+            { url: "http://example.test/mcp" },
+            { timeoutMs: 25 },
+          ),
+        /Failed to contact Inspector/,
+      );
+      assert.ok(Date.now() - startedAt < 1_000);
+    },
+  );
+});
+
 test("InspectorApiClient caches session tokens per base URL", async () => {
   let tokenRequests = 0;
 

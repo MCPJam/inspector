@@ -41,7 +41,9 @@ export async function runUiRender(options: {
     timeoutMs: options.timeoutMs,
   });
 
-  await client.connectServer(options.serverName, options.config);
+  await client.connectServer(options.serverName, options.config, {
+    timeoutMs: options.timeoutMs,
+  });
 
   const renderResult = await runInspectorAppRender({
     client,
