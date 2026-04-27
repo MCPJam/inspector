@@ -3,6 +3,7 @@ import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { createRequire } from "node:module";
 import { main } from "../src/index.js";
 import {
   getTelemetryStatus,
@@ -11,6 +12,9 @@ import {
   type TelemetryClient,
   type TelemetryOptions,
 } from "../src/lib/telemetry.js";
+
+const require = createRequire(import.meta.url);
+const CLI_VERSION: string = require("../package.json").version;
 
 const UUID_A = "11111111-1111-4111-8111-111111111111";
 const UUID_B = "22222222-2222-4222-8222-222222222222";
@@ -331,7 +335,7 @@ test("successful command emits one allowlisted CLI event with CI tags", async ()
     success: true,
     exit_code: 0,
     duration_ms: event.properties.duration_ms,
-    cli_version: "3.0.0",
+    cli_version: CLI_VERSION,
     os: process.platform,
     arch: process.arch,
     node_version: process.version,
