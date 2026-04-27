@@ -5,7 +5,6 @@ import {
   type OAuthConformanceSuiteResult,
 } from "@mcpjam/sdk";
 import {
-  rejectReporterFormatAsOutputFormat,
   usageError,
   type OutputFormat,
 } from "./output.js";
@@ -16,8 +15,6 @@ export function parseOAuthOutputFormat(value: string): OAuthOutputFormat {
   if (value === "json" || value === "human") {
     return value;
   }
-
-  rejectReporterFormatAsOutputFormat(value);
 
   throw usageError(
     `Invalid output format "${value}". Use "json" or "human".`,

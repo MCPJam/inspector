@@ -159,6 +159,32 @@ test("conformance commands reject unknown formats before reporter output", async
   assert.match(apps.stderr, /xml/);
 });
 
+test("OAuth raw commands reject reporter formats without suggesting unsupported reporter", async () => {
+  const metadata = await runCli([
+    "--format",
+    "junit-xml",
+    "oauth",
+    "metadata",
+    "--url",
+    "https://example.com/.well-known/oauth-protected-resource",
+  ]);
+  assert.equal(metadata.exitCode, 2);
+  assert.match(metadata.stderr, /Use \\"json\\" or \\"human\\"/);
+  assert.doesNotMatch(metadata.stderr, /--reporter/);
+
+  const proxy = await runCli([
+    "--format",
+    "json-summary",
+    "oauth",
+    "proxy",
+    "--url",
+    "https://example.com/token",
+  ]);
+  assert.equal(proxy.exitCode, 2);
+  assert.match(proxy.stderr, /Use \\"json\\" or \\"human\\"/);
+  assert.doesNotMatch(proxy.stderr, /--reporter/);
+});
+
 test("JSON options accept stdin and reject duplicate stdin consumers", async () => {
   const valid = await runCli(
     [

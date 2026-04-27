@@ -78,18 +78,18 @@ test("resolveOAuthOutputFormat defaults to human on TTY and json otherwise", () 
   assert.equal(resolveOAuthOutputFormat("human", false), "human");
 });
 
-test("parseOAuthOutputFormat rejects junit-xml and points to reporter", () => {
+test("parseOAuthOutputFormat rejects reporter formats as unsupported raw output", () => {
   assert.throws(
     () => parseOAuthOutputFormat("junit-xml"),
     (error) =>
       error instanceof CliError &&
-      error.message.includes("Use --reporter junit-xml"),
+      error.message.includes('Use "json" or "human"'),
   );
   assert.throws(
     () => parseOAuthOutputFormat("json-summary"),
     (error) =>
       error instanceof CliError &&
-      error.message.includes("Use --reporter json-summary"),
+      error.message.includes('Use "json" or "human"'),
   );
 });
 

@@ -61,17 +61,21 @@ const DYNAMIC_CLIENT_SECRET_PLACEHOLDER = "__dynamic_registration_secret__";
 
 function getOAuthFormat(
   command: Command,
-  reporter?: ReporterFormat,
 ): OAuthOutputFormat {
   const opts = command.optsWithGlobals() as { format?: string };
-  if (reporter) {
-    return resolveConformanceOutputFormatForCli(
-      opts.format,
-      process.stdout.isTTY,
-      reporter,
-    );
-  }
   return resolveOAuthOutputFormat(opts.format, process.stdout.isTTY);
+}
+
+function getOAuthConformanceFormat(
+  command: Command,
+  reporter: ReporterFormat | undefined,
+): OAuthOutputFormat {
+  const opts = command.optsWithGlobals() as { format?: string };
+  return resolveConformanceOutputFormatForCli(
+    opts.format,
+    process.stdout.isTTY,
+    reporter,
+  );
 }
 
 function writeOAuthOutput(output: string): void {
@@ -363,7 +367,7 @@ export function registerOAuthCommands(program: Command): void {
     )
     .action(async (options, command) => {
       const reporter = parseReporterFormat(options.reporter as string | undefined);
-      const format = getOAuthFormat(command, reporter);
+      const format = getOAuthConformanceFormat(command, reporter);
       const config = buildOAuthConformanceConfig(options as OAuthCommandOptions);
       const result = await new OAuthConformanceTest(config).run();
 
@@ -397,7 +401,7 @@ export function registerOAuthCommands(program: Command): void {
     )
     .action(async (options, command) => {
       const reporter = parseReporterFormat(options.reporter as string | undefined);
-      const format = getOAuthFormat(command, reporter);
+      const format = getOAuthConformanceFormat(command, reporter);
       const config = loadOAuthSuiteConfig(options.config as string);
 
       if (options.verifyTools || options.verifyCallTool) {
@@ -435,8 +439,9 @@ export function registerOAuthCommands(program: Command): void {
     .description("Fetch OAuth metadata from a URL")
     .requiredOption("--url <url>", "OAuth metadata URL")
     .action(async (options, command) => {
+      const format = getOAuthFormat(command);
       const result = await runOAuthMetadata(options.url as string);
-      writeResult(result, getOAuthFormat(command));
+      writeResult(result, format);
     });
 
   oauth
@@ -455,8 +460,9 @@ export function registerOAuthCommands(program: Command): void {
       "Request body as JSON, raw string, @path, or - for stdin",
     )
     .action(async (options, command) => {
+      const format = getOAuthFormat(command);
       const result = await runOAuthProxy(options as OAuthProxyCommandOptions);
-      writeResult(result, getOAuthFormat(command));
+      writeResult(result, format);
     });
 
   oauth
@@ -475,10 +481,11 @@ export function registerOAuthCommands(program: Command): void {
       "Request body as JSON, raw string, @path, or - for stdin",
     )
     .action(async (options, command) => {
+      const format = getOAuthFormat(command);
       const result = await runOAuthDebugProxy(
         options as OAuthProxyCommandOptions,
       );
-      writeResult(result, getOAuthFormat(command));
+      writeResult(result, format);
     });
 }
 
