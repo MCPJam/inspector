@@ -27,6 +27,7 @@ Options:
   -v, --version      output the CLI version
   --timeout <ms>     Request timeout in milliseconds (default: 30000)
   --rpc              Include RPC logs in JSON output
+  --quiet            Suppress non-result progress output
   --format <format>  Output format
   -h, --help         display help for command
 
@@ -58,7 +59,7 @@ mcpjam apps conformance --url https://your-server.com/mcp --access-token $TOKEN
 
 # MCP Apps render debugging in Inspector
 mcpjam apps debug --url https://your-server.com/mcp --access-token $TOKEN \
-  --tool-name create_view --params '{"projectId":"demo"}' --ui --format json
+  --tool-name create_view --params @params.json --ui --quiet --format json
 
 # List tools with full schemas
 mcpjam tools list --url https://your-server.com/mcp --access-token $TOKEN --format json
@@ -94,7 +95,7 @@ diff <(jq -S . before.json) <(jq -S . after.json)
 Cover the full registration × protocol version × auth mode matrix from a single config file. Outputs JUnit XML.
 
 ```bash
-mcpjam oauth conformance-suite --config ./oauth-matrix.json --format junit-xml > report.xml
+mcpjam oauth conformance-suite --config ./oauth-matrix.json --reporter junit-xml > report.xml
 ```
 
 ### Verify tokens work end-to-end
@@ -145,6 +146,20 @@ Pipe the full schema inventory into your own linter, review it in a PR, or check
 mcpjam tools list --url $URL --access-token $TOKEN --format json \
   | jq '.tools[] | {name, description, inputSchema}'
 ```
+
+### JSON input ergonomics
+
+JSON-valued flags accept inline JSON, `@path`, or `-` for stdin:
+
+```bash
+mcpjam tools call --url $URL --access-token $TOKEN \
+  --tool-name search_docs --tool-args @params.json --quiet --format json
+
+echo '{"query":"setup guide"}' | mcpjam tools call --url $URL --access-token $TOKEN \
+  --tool-name search_docs --tool-args - --quiet --format json
+```
+
+Use `--format json|human` for the raw command result. Use `--reporter json-summary|junit-xml` on conformance and diff commands when CI needs a report artifact. `server validate` uses `--debug-out` for validation artifacts.
 
 ## GitHub Actions
 

@@ -1,0 +1,243 @@
+import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import { createRequire } from "node:module";
+import path from "node:path";
+import test from "node:test";
+import { startMockStreamableHttpServer } from "../../sdk/tests/mock-servers/index.js";
+
+const CLI_DIR = process.cwd().endsWith(`${path.sep}cli`)
+  ? process.cwd()
+  : path.join(process.cwd(), "cli");
+const requireFromCli = createRequire(path.join(CLI_DIR, "package.json"));
+const TSX_CLI_PATH = requireFromCli.resolve("tsx/cli");
+const CLI_ENTRY_PATH = path.join(CLI_DIR, "src", "index.ts");
+
+async function runCli(
+  args: string[],
+  input?: string,
+): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+  return await new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [TSX_CLI_PATH, CLI_ENTRY_PATH, ...args], {
+      cwd: CLI_DIR,
+      env: { ...process.env, MCPJAM_CLI_DISABLE_BROWSER_OPEN: "1" },
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+    });
+    child.on("error", reject);
+    child.on("close", (code, signal) => {
+      if (code === null) {
+        reject(new Error(`CLI terminated by signal ${signal}`));
+        return;
+      }
+      resolve({ exitCode: code, stdout, stderr });
+    });
+
+    child.stdin.end(input ?? "");
+  });
+}
+
+test("--format junit-xml is rejected for conformance commands", async () => {
+  const protocol = await runCli([
+    "--format",
+    "junit-xml",
+    "protocol",
+    "conformance",
+    "--url",
+    "https://example.com/mcp",
+  ]);
+  assert.equal(protocol.exitCode, 2);
+  assert.match(protocol.stderr, /--reporter junit-xml/);
+
+  const oauth = await runCli([
+    "--format",
+    "junit-xml",
+    "oauth",
+    "conformance",
+    "--url",
+    "https://example.com/mcp",
+    "--protocol-version",
+    "2025-11-25",
+    "--registration",
+    "dcr",
+  ]);
+  assert.equal(oauth.exitCode, 2);
+  assert.match(oauth.stderr, /--reporter junit-xml/);
+
+  const apps = await runCli([
+    "--format",
+    "junit-xml",
+    "apps",
+    "conformance",
+    "--url",
+    "https://example.com/mcp",
+  ]);
+  assert.equal(apps.exitCode, 2);
+  assert.match(apps.stderr, /--reporter junit-xml/);
+});
+
+test("protocol conformance supports junit reporter output", async () => {
+  const server = await startMockStreamableHttpServer();
+
+  try {
+    const result = await runCli([
+      "--format",
+      "junit-xml",
+      "protocol",
+      "conformance",
+      "--url",
+      server.url,
+      "--check-id",
+      "ping",
+      "--reporter",
+      "junit-xml",
+    ]);
+
+    assert.notEqual(result.exitCode, 2, result.stderr);
+    assert.match(result.stdout, /^<\?xml version="1\.0"/);
+    assert.match(result.stdout, /<testsuites/);
+    assert.doesNotMatch(result.stdout, /^\{/);
+  } finally {
+    await server.stop();
+  }
+});
+
+test("conformance commands reject unknown formats before reporter output", async () => {
+  const protocol = await runCli([
+    "--format",
+    "xml",
+    "protocol",
+    "conformance",
+    "--url",
+    "https://example.com/mcp",
+    "--reporter",
+    "junit-xml",
+  ]);
+  assert.equal(protocol.exitCode, 2);
+  assert.match(protocol.stderr, /Invalid output format/);
+  assert.match(protocol.stderr, /xml/);
+
+  const oauth = await runCli([
+    "--format",
+    "xml",
+    "oauth",
+    "conformance",
+    "--url",
+    "https://example.com/mcp",
+    "--protocol-version",
+    "2025-11-25",
+    "--registration",
+    "dcr",
+    "--reporter",
+    "junit-xml",
+  ]);
+  assert.equal(oauth.exitCode, 2);
+  assert.match(oauth.stderr, /Invalid output format/);
+  assert.match(oauth.stderr, /xml/);
+
+  const apps = await runCli([
+    "--format",
+    "xml",
+    "apps",
+    "conformance",
+    "--url",
+    "https://example.com/mcp",
+    "--reporter",
+    "junit-xml",
+  ]);
+  assert.equal(apps.exitCode, 2);
+  assert.match(apps.stderr, /Invalid output format/);
+  assert.match(apps.stderr, /xml/);
+});
+
+test("OAuth raw commands reject reporter formats without suggesting unsupported reporter", async () => {
+  const metadata = await runCli([
+    "--format",
+    "junit-xml",
+    "oauth",
+    "metadata",
+    "--url",
+    "https://example.com/.well-known/oauth-protected-resource",
+  ]);
+  assert.equal(metadata.exitCode, 2);
+  assert.match(metadata.stderr, /Use \\"json\\" or \\"human\\"/);
+  assert.doesNotMatch(metadata.stderr, /--reporter/);
+
+  const proxy = await runCli([
+    "--format",
+    "json-summary",
+    "oauth",
+    "proxy",
+    "--url",
+    "https://example.com/token",
+  ]);
+  assert.equal(proxy.exitCode, 2);
+  assert.match(proxy.stderr, /Use \\"json\\" or \\"human\\"/);
+  assert.doesNotMatch(proxy.stderr, /--reporter/);
+});
+
+test("JSON options accept stdin and reject duplicate stdin consumers", async () => {
+  const valid = await runCli(
+    [
+      "--format",
+      "json",
+      "server",
+      "probe",
+      "--url",
+      "http://127.0.0.1:9/mcp",
+      "--timeout",
+      "1",
+      "--client-capabilities",
+      "-",
+    ],
+    '{"sampling":{}}\n',
+  );
+  assert.notEqual(valid.exitCode, 2);
+
+  const invalid = await runCli(
+    [
+      "--format",
+      "json",
+      "server",
+      "probe",
+      "--url",
+      "http://127.0.0.1:9/mcp",
+      "--timeout",
+      "1",
+      "--client-capabilities",
+      "-",
+    ],
+    "{",
+  );
+  assert.equal(invalid.exitCode, 2);
+  assert.match(invalid.stderr, /Client capabilities must be valid JSON/);
+
+  const duplicate = await runCli(
+    [
+      "--format",
+      "json",
+      "tools",
+      "call",
+      "--command",
+      "node",
+      "--client-capabilities",
+      "-",
+      "--tool-name",
+      "echo",
+      "--tool-args",
+      "-",
+    ],
+    '{"sampling":{}}\n',
+  );
+  assert.equal(duplicate.exitCode, 2);
+  assert.match(duplicate.stderr, /stdin was already consumed/);
+});

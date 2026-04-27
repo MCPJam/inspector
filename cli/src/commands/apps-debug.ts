@@ -1,5 +1,4 @@
 import { Command } from "commander";
-import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { type MCPServerConfig, type RetryPolicy } from "@mcpjam/sdk";
 import { withEphemeralManager } from "../lib/ephemeral.js";
@@ -53,8 +52,8 @@ export function registerAppsDebugCommand(parent: Command): void {
         .description("Debug an MCP App tool call from the CLI")
         .requiredOption("--tool-name <name>", "Tool name to execute")
         .option(
-          "--params <json|@file>",
-          "Tool parameters as JSON or @path to a JSON file",
+          "--params <json>",
+          "Tool parameters as JSON, @path, or - for stdin",
         )
         .option(
           "--ui",
@@ -86,10 +85,7 @@ export function registerAppsDebugCommand(parent: Command): void {
     const retryPolicy = parseRetryPolicy(options);
     const target = describeTarget(options);
     const toolName = options.toolName as string;
-    const params = await parseJsonRecordOrFile(
-      options.params,
-      "Tool parameters",
-    );
+    const params = parseJsonRecord(options.params, "Tool parameters") ?? {};
     const serverName =
       typeof options.serverName === "string" && options.serverName.trim()
         ? options.serverName.trim()
@@ -164,35 +160,6 @@ export function registerAppsDebugCommand(parent: Command): void {
 // ---------------------------------------------------------------------------
 // Internals
 // ---------------------------------------------------------------------------
-
-async function parseJsonRecordOrFile(
-  value: string | undefined,
-  label: string,
-): Promise<Record<string, unknown>> {
-  if (value === undefined) {
-    return {};
-  }
-
-  if (!value.startsWith("@")) {
-    return parseJsonRecord(value, label) ?? {};
-  }
-
-  const filePath = value.slice(1);
-  if (!filePath) {
-    throw usageError(`${label} file path is required after @.`);
-  }
-
-  let content: string;
-  try {
-    content = await readFile(filePath, "utf8");
-  } catch (error) {
-    throw usageError(`Failed to read ${label} file "${filePath}".`, {
-      source: error instanceof Error ? error.message : String(error),
-    });
-  }
-
-  return parseJsonRecord(content, label) ?? {};
-}
 
 async function runSdkAppsDebug(options: {
   config: MCPServerConfig;

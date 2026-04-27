@@ -52,7 +52,8 @@ These flags apply to every command.
 |------|---------|-------------|
 | `--timeout <ms>` | `30000` | Request timeout in milliseconds |
 | `--rpc` | off | Include raw JSON-RPC request/response logs in JSON output under `_rpcLogs` |
-| `--format <format>` | `human` on TTY, `json` when piped | Output format (`json` or `human`; `junit-xml` is available on protocol, OAuth, and apps conformance commands) |
+| `--quiet` | off | Suppress non-result progress output on stderr |
+| `--format <format>` | `human` on TTY, `json` when piped | Raw output format (`json` or `human`) |
 | `-v, --version` | | Print the CLI version |
 
 ## Output formats
@@ -61,10 +62,17 @@ The CLI auto-detects whether stdout is a terminal:
 
 - **Interactive terminal** — defaults to `--format human`. For most commands this is pretty-printed JSON; `server doctor` and the OAuth conformance commands provide dedicated human-readable summaries.
 - **Piped or redirected** (CI, `| jq`, agent invocation) — defaults to `--format json`, the full structured result.
-- **Conformance in CI** — `protocol conformance`, `protocol conformance-suite`, `oauth conformance`, `oauth conformance-suite`, `apps conformance`, and `apps conformance-suite` also support `--format junit-xml`.
+- **Conformance in CI** — `protocol conformance`, `protocol conformance-suite`, `oauth conformance`, `oauth conformance-suite`, `apps conformance`, and `apps conformance-suite` support `--reporter junit-xml` and `--reporter json-summary`.
 - **Explicit `--format`** always wins over the auto-detected default.
 
-**For agents**: raw JSON is the source of truth. Human format is a lossy presentation layer. If you're parsing output programmatically, always pass `--format json`.
+**For agents**: raw JSON is the source of truth. Human format is a lossy presentation layer. If you're parsing output programmatically, pass `--quiet --format json`.
+
+JSON-valued flags accept inline JSON, `@path`, or `-` for stdin. Use files or stdin for large payloads to avoid shell escaping issues:
+
+```bash
+echo '{"key":"value"}' | mcpjam tools call --url $URL --access-token $TOKEN \
+  --tool-name my_tool --tool-args - --quiet --format json
+```
 
 ## Connecting to servers
 
@@ -135,14 +143,14 @@ mcpjam server doctor --url https://your-server.com/mcp --oauth-access-token $TOK
 # 4. Exercise tools directly
 mcpjam tools list --url https://your-server.com/mcp --access-token $TOKEN
 mcpjam tools call --url https://your-server.com/mcp --access-token $TOKEN \
-  --tool-name my_tool --tool-args '{"key": "value"}'
+  --tool-name my_tool --tool-args @params.json --quiet --format json
 
 # 5. If the server exposes MCP Apps, validate the ui:// surface
 mcpjam apps conformance --url https://your-server.com/mcp --access-token $TOKEN
 
 # 6. Reproduce one MCP App tool result in Inspector's App Builder
 mcpjam apps debug --url https://your-server.com/mcp --access-token $TOKEN \
-  --tool-name my_app_tool --params '{"key":"value"}' --ui --format json
+  --tool-name my_app_tool --params @params.json --ui --quiet --format json
 ```
 
 ## What's next

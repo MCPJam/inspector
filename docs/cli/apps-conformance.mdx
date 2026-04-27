@@ -32,7 +32,7 @@ You can emit CI-friendly JUnit XML from either the single-run or suite command:
 ```bash
 mcpjam apps conformance \
   --url https://your-server.com/mcp \
-  --format junit-xml > apps-report.xml
+  --reporter junit-xml > apps-report.xml
 ```
 
 To reproduce one tool result in the local Inspector:
@@ -41,8 +41,9 @@ To reproduce one tool result in the local Inspector:
 mcpjam apps debug \
   --url https://your-server.com/mcp \
   --tool-name create_view \
-  --params '{"projectId":"demo"}' \
+  --params @params.json \
   --ui \
+  --quiet \
   --format json
 ```
 
@@ -119,7 +120,7 @@ Run it with:
 ```bash
 mcpjam apps conformance-suite \
   --config ./apps-conformance.json \
-  --format junit-xml > apps-report.xml
+  --reporter junit-xml > apps-report.xml
 ```
 
 `target` uses the same shared server shape as the rest of the CLI, so it can point at either:
@@ -213,7 +214,7 @@ Large tool results can appear in `execution`, the render command result, and the
 | `--client-id <id>` | OAuth client ID (with `--refresh-token`) |
 | `--client-secret <secret>` | OAuth client secret (with `--refresh-token`) |
 | `--header <header>` | HTTP header in `Key: Value` format (repeatable) |
-| `--client-capabilities <json>` | Client capabilities JSON object |
+| `--client-capabilities <json>` | Client capabilities as inline JSON, `@path`, or `-` for stdin |
 | `--command <command>` | Command for a stdio server |
 | `--args <arg...>` | Preferred stdio command arguments |
 | `--command-args <arg>` | Legacy stdio command argument (repeatable) |

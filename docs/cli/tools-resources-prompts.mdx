@@ -21,10 +21,10 @@ Returns every tool the server exposes, including names, descriptions, and input 
 ```bash
 mcpjam tools call --url https://your-server.com/mcp --access-token $TOKEN \
   --tool-name search_docs \
-  --tool-args '{"query": "authentication"}'
+  --tool-args @params.json --quiet --format json
 ```
 
-Tool arguments are passed as a JSON string. The result includes the tool's response content.
+Tool arguments can be inline JSON, `@path`, or `-` for stdin. The result includes the tool's response content.
 
 <Note>
   `tools call` supports `--debug-out <path>` to capture the full request/response
@@ -104,8 +104,16 @@ mcpjam tools list --url $URL --access-token $TOKEN --format json \
 # Call it
 mcpjam tools call --url $URL --access-token $TOKEN \
   --tool-name search_docs \
-  --tool-args '{"query": "setup guide"}' \
+  --tool-args @params.json \
+  --quiet \
   --format json
+```
+
+For generated payloads, pipe JSON through stdin:
+
+```bash
+echo '{"query":"setup guide"}' | mcpjam tools call --url $URL --access-token $TOKEN \
+  --tool-name search_docs --tool-args - --quiet --format json
 ```
 
 ### Using a credentials file
@@ -120,7 +128,7 @@ mcpjam oauth login --url https://your-server.com/mcp --credentials-out creds.jso
 mcpjam tools list --url https://your-server.com/mcp --credentials-file creds.json
 mcpjam resources list --url https://your-server.com/mcp --credentials-file creds.json
 mcpjam tools call --url https://your-server.com/mcp --credentials-file creds.json \
-  --tool-name search_docs --tool-args '{"query": "setup guide"}'
+  --tool-name search_docs --tool-args @params.json --quiet --format json
 ```
 
 ### No-auth servers

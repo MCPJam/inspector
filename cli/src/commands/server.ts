@@ -79,7 +79,7 @@ export function registerServerCommands(program: Command): void {
       )
       .option(
         "--client-capabilities <json>",
-        "Client capabilities advertised in the initialize probe as a JSON object",
+        "Client capabilities as JSON, @path, or - for stdin",
       )
       .option(
         "--protocol-version <version>",
@@ -154,6 +154,7 @@ export function registerServerCommands(program: Command): void {
       await writeCommandDebugArtifact({
         outputPath: options.debugOut as string | undefined,
         format: globalOptions.format,
+        quiet: globalOptions.quiet,
         commandName: "server probe",
         commandInput: {
           protocolVersion,
@@ -357,6 +358,7 @@ export function registerServerCommands(program: Command): void {
       await writeCommandDebugArtifact({
         outputPath: options.debugOut as string | undefined,
         format: globalOptions.format,
+        quiet: globalOptions.quiet,
         commandName: "server validate",
         commandInput: {},
         target: targetSummary,

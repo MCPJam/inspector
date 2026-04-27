@@ -12,6 +12,7 @@ import {
 } from "@mcpjam/sdk";
 import { Command } from "commander";
 import {
+  getGlobalOptions,
   parseHeadersOption,
   parsePositiveInteger,
 } from "../lib/server-config.js";
@@ -34,6 +35,12 @@ import {
   type OAuthOutputFormat,
 } from "../lib/oauth-output.js";
 import {
+  renderConformanceReporterResult,
+  resolveConformanceOutputFormatForCli,
+} from "../lib/conformance-output.js";
+import { readInputSource } from "../lib/json-input.js";
+import { parseReporterFormat, type ReporterFormat } from "../lib/reporting.js";
+import {
   buildCommandArtifactError,
   type DebugArtifactOutcome,
   writeCommandDebugArtifact,
@@ -52,19 +59,23 @@ import type { MCPServerConfig, OAuthLoginResult } from "@mcpjam/sdk";
 const DYNAMIC_CLIENT_ID_PLACEHOLDER = "__dynamic_registration_client__";
 const DYNAMIC_CLIENT_SECRET_PLACEHOLDER = "__dynamic_registration_secret__";
 
-function getOAuthFormat(command: Command): OAuthOutputFormat {
+function getOAuthFormat(
+  command: Command,
+): OAuthOutputFormat {
   const opts = command.optsWithGlobals() as { format?: string };
   return resolveOAuthOutputFormat(opts.format, process.stdout.isTTY);
 }
 
-function getStructuredOAuthFormat(command: Command): "json" | "human" {
-  const format = getOAuthFormat(command);
-  if (format === "junit-xml") {
-    throw usageError(
-      'The oauth metadata/proxy commands only support --format "json" or "human".',
-    );
-  }
-  return format;
+function getOAuthConformanceFormat(
+  command: Command,
+  reporter: ReporterFormat | undefined,
+): OAuthOutputFormat {
+  const opts = command.optsWithGlobals() as { format?: string };
+  return resolveConformanceOutputFormatForCli(
+    opts.format,
+    process.stdout.isTTY,
+    reporter,
+  );
 }
 
 function writeOAuthOutput(output: string): void {
@@ -193,7 +204,8 @@ export function registerOAuthCommands(program: Command): void {
       "Write OAuth credentials to <path> (mode 0600); stdout output has secret fields redacted to [SAVED_TO_FILE]",
     )
     .action(async (options, command) => {
-      const format = getStructuredOAuthFormat(command);
+      const globalOptions = getGlobalOptions(command);
+      const format = getOAuthFormat(command);
       const config = buildOAuthLoginConfig(
         options as OAuthCommandOptions,
         {
@@ -203,7 +215,7 @@ export function registerOAuthCommands(program: Command): void {
       const snapshotCollector = options.debugOut
         ? createCliRpcLogCollector({ __cli__: config.serverUrl })
         : undefined;
-      const isTTY = process.stderr.isTTY;
+      const isTTY = process.stderr.isTTY && !globalOptions.quiet;
       if (isTTY) {
         config.onProgress = (message: string) => {
           process.stderr.write(`\r\x1b[K${message}`);
@@ -250,6 +262,7 @@ export function registerOAuthCommands(program: Command): void {
       await writeCommandDebugArtifact({
         outputPath: options.debugOut as string | undefined,
         format,
+        quiet: globalOptions.quiet,
         commandName: "oauth login",
         commandInput: summarizeOAuthLoginCommandInput(
           options as OAuthCommandOptions,
@@ -348,12 +361,21 @@ export function registerOAuthCommands(program: Command): void {
       "--print-url",
       "In interactive mode, print the consent URL to stderr instead of launching a browser",
     )
+    .option(
+      "--reporter <reporter>",
+      "Structured reporter output: json-summary or junit-xml",
+    )
     .action(async (options, command) => {
-      const format = getOAuthFormat(command);
+      const reporter = parseReporterFormat(options.reporter as string | undefined);
+      const format = getOAuthConformanceFormat(command, reporter);
       const config = buildOAuthConformanceConfig(options as OAuthCommandOptions);
       const result = await new OAuthConformanceTest(config).run();
 
-      writeOAuthOutput(renderOAuthConformanceResult(result, format));
+      writeOAuthOutput(
+        reporter
+          ? renderConformanceReporterResult(result, reporter)
+          : renderOAuthConformanceResult(result, format),
+      );
       if (!result.passed) {
         setProcessExitCode(1);
       }
@@ -373,8 +395,13 @@ export function registerOAuthCommands(program: Command): void {
       "--verify-call-tool <name>",
       "Also call the named tool after listing",
     )
+    .option(
+      "--reporter <reporter>",
+      "Structured reporter output: json-summary or junit-xml",
+    )
     .action(async (options, command) => {
-      const format = getOAuthFormat(command);
+      const reporter = parseReporterFormat(options.reporter as string | undefined);
+      const format = getOAuthConformanceFormat(command, reporter);
       const config = loadOAuthSuiteConfig(options.config as string);
 
       if (options.verifyTools || options.verifyCallTool) {
@@ -397,7 +424,11 @@ export function registerOAuthCommands(program: Command): void {
       const suite = new OAuthConformanceSuite(config);
       const result = await suite.run();
 
-      writeOAuthOutput(renderOAuthConformanceSuiteResult(result, format));
+      writeOAuthOutput(
+        reporter
+          ? renderConformanceReporterResult(result, reporter)
+          : renderOAuthConformanceSuiteResult(result, format),
+      );
       if (!result.passed) {
         setProcessExitCode(1);
       }
@@ -408,8 +439,9 @@ export function registerOAuthCommands(program: Command): void {
     .description("Fetch OAuth metadata from a URL")
     .requiredOption("--url <url>", "OAuth metadata URL")
     .action(async (options, command) => {
+      const format = getOAuthFormat(command);
       const result = await runOAuthMetadata(options.url as string);
-      writeResult(result, getStructuredOAuthFormat(command));
+      writeResult(result, format);
     });
 
   oauth
@@ -423,10 +455,14 @@ export function registerOAuthCommands(program: Command): void {
       (value: string, previous: string[] = []) => [...previous, value],
       [],
     )
-    .option("--body <value>", "Request body as JSON or raw string")
+    .option(
+      "--body <value>",
+      "Request body as JSON, raw string, @path, or - for stdin",
+    )
     .action(async (options, command) => {
+      const format = getOAuthFormat(command);
       const result = await runOAuthProxy(options as OAuthProxyCommandOptions);
-      writeResult(result, getStructuredOAuthFormat(command));
+      writeResult(result, format);
     });
 
   oauth
@@ -440,12 +476,16 @@ export function registerOAuthCommands(program: Command): void {
       (value: string, previous: string[] = []) => [...previous, value],
       [],
     )
-    .option("--body <value>", "Request body as JSON or raw string")
+    .option(
+      "--body <value>",
+      "Request body as JSON, raw string, @path, or - for stdin",
+    )
     .action(async (options, command) => {
+      const format = getOAuthFormat(command);
       const result = await runOAuthDebugProxy(
         options as OAuthProxyCommandOptions,
       );
-      writeResult(result, getStructuredOAuthFormat(command));
+      writeResult(result, format);
     });
 }
 
@@ -906,10 +946,12 @@ export function parseProxyBody(value: string | undefined): unknown {
     return undefined;
   }
 
+  const source = readInputSource(value, "Request body");
+
   try {
-    return JSON.parse(value);
+    return JSON.parse(source);
   } catch {
-    return value;
+    return source;
   }
 }
 
