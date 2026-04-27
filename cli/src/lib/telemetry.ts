@@ -64,7 +64,7 @@ export interface TelemetryEvent {
 
 export interface TelemetryClient {
   capture(event: TelemetryEvent): void | Promise<void>;
-  flush(): Promise<void>;
+  flush(timeoutMs?: number): Promise<void>;
 }
 
 export interface TelemetryOptions extends CachePathOptions {
@@ -213,9 +213,10 @@ export function initTelemetry(
       }
 
       try {
+        const timeoutMs = options.flushTimeoutMs ?? DEFAULT_FLUSH_TIMEOUT_MS;
         await withTimeout(
-          flushClient(run, client),
-          options.flushTimeoutMs ?? DEFAULT_FLUSH_TIMEOUT_MS,
+          flushClient(run, client, timeoutMs),
+          timeoutMs,
         );
       } catch {
         // Telemetry is best-effort and must never affect CLI behavior.
@@ -227,13 +228,14 @@ export function initTelemetry(
 async function flushClient(
   run: ActiveTelemetryRun,
   client: TelemetryClient,
+  timeoutMs: number,
 ): Promise<void> {
   const pendingCaptures = run.pendingCaptures.splice(0);
   if (pendingCaptures.length > 0) {
     await Promise.allSettled(pendingCaptures);
   }
 
-  await client.flush();
+  await client.flush(timeoutMs);
 }
 
 export function captureCommandEvent(
@@ -383,8 +385,8 @@ class PostHogTelemetryClient implements TelemetryClient {
     return this.client.captureImmediate(event);
   }
 
-  async flush(): Promise<void> {
-    await this.client.flush();
+  async flush(timeoutMs: number = DEFAULT_FLUSH_TIMEOUT_MS): Promise<void> {
+    await this.client.shutdown(timeoutMs);
   }
 }
 

@@ -346,6 +346,7 @@ test("telemetry flush waits for async client captures", async () => {
   const statePath = await createStatePath();
   const events: CapturedEvent[] = [];
   let flushCount = 0;
+  let flushTimeoutMs: number | undefined;
 
   const run = await captureProcessOutput(() =>
     main(
@@ -373,8 +374,9 @@ test("telemetry flush waits for async client captures", async () => {
                 }, 25);
               });
             },
-            async flush() {
+            async flush(timeoutMs) {
               flushCount += 1;
+              flushTimeoutMs = timeoutMs;
             },
           }),
         },
@@ -385,6 +387,7 @@ test("telemetry flush waits for async client captures", async () => {
   assert.equal(run.result.exitCode, 0, run.stderr);
   assert.equal(events.length, 1);
   assert.equal(flushCount, 1);
+  assert.equal(flushTimeoutMs, 3_000);
 });
 
 test("non-CI command omits ci_name", async () => {
