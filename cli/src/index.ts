@@ -9,6 +9,7 @@ import { registerPromptCommands } from "./commands/prompts.js";
 import { registerResourcesCommands } from "./commands/resources.js";
 import { registerServerCommands } from "./commands/server.js";
 import { registerToolsCommands } from "./commands/tools.js";
+import { registerInspectorCommands } from "./commands/inspector.js";
 import {
   detectOutputFormatFromArgv,
   normalizeCliError,
@@ -56,6 +57,7 @@ export async function main(
   registerAppsCommands(program);
   registerOAuthCommands(program);
   registerProtocolCommands(program);
+  registerInspectorCommands(program);
 
   if (argv.length <= 2) {
     program.outputHelp();

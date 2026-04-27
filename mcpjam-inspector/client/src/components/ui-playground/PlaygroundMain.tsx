@@ -712,7 +712,6 @@ export function PlaygroundMain({
   // Handle deterministic execution injection
   useEffect(() => {
     if (!pendingExecution) return;
-
     if (isMultiModelMode) {
       const requestId = Date.now();
       setDeterministicExecutionRequest({

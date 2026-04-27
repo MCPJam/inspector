@@ -108,6 +108,21 @@ mcpjam tools call --url $URL --access-token $TOKEN \
   --format json
 ```
 
+### Using a credentials file
+
+Instead of passing `--access-token` to every command, save credentials once and reuse the file:
+
+```bash
+# Login and save
+mcpjam oauth login --url https://your-server.com/mcp --credentials-out creds.json
+
+# Reuse everywhere
+mcpjam tools list --url https://your-server.com/mcp --credentials-file creds.json
+mcpjam resources list --url https://your-server.com/mcp --credentials-file creds.json
+mcpjam tools call --url https://your-server.com/mcp --credentials-file creds.json \
+  --tool-name search_docs --tool-args '{"query": "setup guide"}'
+```
+
 ### No-auth servers
 
 For servers that don't require authentication (like `mcp.excalidraw.com/mcp`), simply omit the auth flags:

@@ -17,6 +17,10 @@ import {
   parsePositiveInteger,
 } from "../lib/server-config.js";
 import {
+  assertNoCredentialsFileAuthConflicts,
+  resolveCredentialsFileAccessToken,
+} from "../lib/credentials-file.js";
+import {
   setProcessExitCode,
   usageError,
 } from "../lib/output.js";
@@ -24,6 +28,7 @@ import {
 export interface ProtocolConformanceOptions {
   url: string;
   accessToken?: string;
+  credentialsFile?: string;
   header?: string[];
   checkTimeout?: number;
   category?: string[];
@@ -40,6 +45,10 @@ export function registerProtocolCommands(program: Command): void {
     .description("Run MCP protocol conformance checks against an HTTP server")
     .requiredOption("--url <url>", "MCP server URL")
     .option("--access-token <token>", "Bearer access token for HTTP servers")
+    .option(
+      "--credentials-file <path>",
+      "Load OAuth access token from a file created by oauth login --credentials-out",
+    )
     .option(
       "--header <header>",
       'HTTP header in "Key: Value" format. Repeat to send multiple headers.',
@@ -124,6 +133,10 @@ export function buildConfig(
   }
 
   const customHeaders = parseHeadersOption(options.header);
+  assertNoCredentialsFileAuthConflicts(options);
+  const accessToken = options.credentialsFile
+    ? resolveCredentialsFileAccessToken(options.credentialsFile, serverUrl)
+    : options.accessToken;
   const categories = options.category?.filter(Boolean);
   const invalidCategories = collectInvalidEntries(
     categories,
@@ -147,7 +160,7 @@ export function buildConfig(
 
   return {
     serverUrl,
-    accessToken: options.accessToken,
+    accessToken,
     customHeaders,
     checkTimeout: options.checkTimeout ?? 15_000,
     ...(categories && categories.length > 0

@@ -11,6 +11,7 @@ import {
 import {
   buildChatGptWidgetContent,
   buildMcpWidgetContent,
+  parseTheme,
 } from "../lib/apps.js";
 import { loadAppsSuiteConfig } from "../lib/config-file.js";
 import {
@@ -29,14 +30,10 @@ import {
   parseJsonRecord,
   parseRetryPolicy,
   parseServerConfig,
-  resolveAliasedStringOption,
   type SharedServerTargetOptions,
 } from "../lib/server-config.js";
-import {
-  setProcessExitCode,
-  usageError,
-  writeResult,
-} from "../lib/output.js";
+import { setProcessExitCode, usageError, writeResult } from "../lib/output.js";
+import { registerAppsDebugCommand } from "./apps-debug.js";
 
 const APPS_CHECK_IDS_BY_CATEGORY: Record<
   MCPAppsCheckCategory,
@@ -72,7 +69,10 @@ function getConformanceGlobals(command: Command): {
   };
 
   return {
-    format: resolveConformanceOutputFormat(options.format, process.stdout.isTTY),
+    format: resolveConformanceOutputFormat(
+      options.format,
+      process.stdout.isTTY,
+    ),
     timeout: options.timeout ?? 30_000,
     rpc: options.rpc ?? false,
   };
@@ -122,7 +122,11 @@ export function registerAppsCommands(program: Command): void {
 
     writeConformanceOutput(
       renderConformanceResult(
-        withRpcLogsIfRequested(result, collector, globalOptions) as typeof result,
+        withRpcLogsIfRequested(
+          result,
+          collector,
+          globalOptions,
+        ) as typeof result,
         globalOptions.format,
       ),
     );
@@ -153,7 +157,11 @@ export function registerAppsCommands(program: Command): void {
 
       writeConformanceOutput(
         renderConformanceResult(
-          withRpcLogsIfRequested(result, collector, globalOptions) as typeof result,
+          withRpcLogsIfRequested(
+            result,
+            collector,
+            globalOptions,
+          ) as typeof result,
           globalOptions.format,
         ),
       );
@@ -162,13 +170,14 @@ export function registerAppsCommands(program: Command): void {
       }
     });
 
+  registerAppsDebugCommand(apps);
+
   addRetryOptions(
     addSharedServerOptions(
       apps
         .command("mcp-widget")
         .description("Fetch hosted-style MCP App widget content")
-        .option("--resource-uri <uri>", "Widget resource URI")
-        .option("--uri <uri>", "Alias for --resource-uri")
+        .requiredOption("--resource-uri <uri>", "Widget resource URI")
         .requiredOption(
           "--tool-id <id>",
           "Tool call id used for runtime injection",
@@ -192,15 +201,6 @@ export function registerAppsCommands(program: Command): void {
     const collector = globalOptions.rpc
       ? createCliRpcLogCollector({ __cli__: target })
       : undefined;
-    const resourceUri = resolveAliasedStringOption(
-      options as Record<string, unknown>,
-      [
-        { key: "resourceUri", flag: "--resource-uri" },
-        { key: "uri", flag: "--uri" },
-      ],
-      "Widget resource URI",
-      { required: true },
-    ) as string;
     const config = parseServerConfig({
       ...options,
       timeout: globalOptions.timeout,
@@ -210,7 +210,7 @@ export function registerAppsCommands(program: Command): void {
       config,
       (manager, serverId) =>
         buildMcpWidgetContent(manager, serverId, {
-          resourceUri,
+          resourceUri: options.resourceUri as string,
           toolId: options.toolId as string,
           toolName: options.toolName as string,
           toolInput: parseJsonRecord(options.toolInput, "Tool input") ?? {},
@@ -239,8 +239,7 @@ export function registerAppsCommands(program: Command): void {
       apps
         .command("chatgpt-widget")
         .description("Fetch hosted-style ChatGPT App widget content")
-        .option("--resource-uri <uri>", "Widget resource URI")
-        .option("--uri <uri>", "Alias for --resource-uri")
+        .requiredOption("--resource-uri <uri>", "Widget resource URI")
         .requiredOption(
           "--tool-id <id>",
           "Tool call id used for runtime injection",
@@ -270,15 +269,6 @@ export function registerAppsCommands(program: Command): void {
     const collector = globalOptions.rpc
       ? createCliRpcLogCollector({ __cli__: target })
       : undefined;
-    const resourceUri = resolveAliasedStringOption(
-      options as Record<string, unknown>,
-      [
-        { key: "resourceUri", flag: "--resource-uri" },
-        { key: "uri", flag: "--uri" },
-      ],
-      "Widget resource URI",
-      { required: true },
-    ) as string;
     const config = parseServerConfig({
       ...options,
       timeout: globalOptions.timeout,
@@ -288,7 +278,7 @@ export function registerAppsCommands(program: Command): void {
       config,
       (manager, serverId) =>
         buildChatGptWidgetContent(manager, serverId, {
-          uri: resourceUri,
+          uri: options.resourceUri as string,
           toolId: options.toolId as string,
           toolName: options.toolName as string,
           toolInput: parseJsonRecord(options.toolInput, "Tool input") ?? {},
@@ -329,16 +319,6 @@ function parseJsonValue(value: string | undefined): unknown {
       source: error instanceof Error ? error.message : String(error),
     });
   }
-}
-
-function parseTheme(value: string | undefined): "light" | "dark" | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-  if (value === "light" || value === "dark") {
-    return value;
-  }
-  throw usageError(`Invalid theme "${value}". Use "light" or "dark".`);
 }
 
 function parseCspMode(
@@ -397,7 +377,9 @@ export function buildAppsConformanceConfig(
   const invalidCheckIds = collectInvalidEntries(checkIds, MCP_APPS_CHECK_IDS);
   if (invalidCheckIds.length > 0) {
     throw usageError(
-      `Unknown check id${invalidCheckIds.length === 1 ? "" : "s"}: ${invalidCheckIds.join(", ")}`,
+      `Unknown check id${
+        invalidCheckIds.length === 1 ? "" : "s"
+      }: ${invalidCheckIds.join(", ")}`,
     );
   }
 
@@ -405,15 +387,15 @@ export function buildAppsConformanceConfig(
     checkIds && checkIds.length > 0
       ? checkIds
       : categories && categories.length > 0
-        ? Array.from(
-            new Set(
-              categories.flatMap(
-                (category) =>
-                  APPS_CHECK_IDS_BY_CATEGORY[category as MCPAppsCheckCategory],
-              ),
+      ? Array.from(
+          new Set(
+            categories.flatMap(
+              (category) =>
+                APPS_CHECK_IDS_BY_CATEGORY[category as MCPAppsCheckCategory],
             ),
-          )
-        : undefined;
+          ),
+        )
+      : undefined;
 
   return {
     ...serverConfig,

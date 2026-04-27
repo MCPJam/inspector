@@ -143,9 +143,10 @@ export function PlaygroundLeft({
 
   const shouldRenderUiTypeOverrideSelector = useMemo(() => {
     if (!selectedToolName) return false;
+    const tool = tools[selectedToolName];
+    if (!tool) return false;
     return (
-      detectUiTypeFromTool(tools[selectedToolName!]) ===
-      UIType.OPENAI_SDK_AND_MCP_APPS
+      detectUiTypeFromTool(tool) === UIType.OPENAI_SDK_AND_MCP_APPS
     );
   }, [selectedToolName, tools]);
 

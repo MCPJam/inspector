@@ -294,11 +294,11 @@ function buildResolvedOAuthProfile(input: {
     clientId:
       existingProfile?.clientId ?? storedClientCredentials.clientId ?? "",
     clientSecret:
-      existingProfile?.clientSecret ?? storedClientCredentials.clientSecret ?? "",
-    scopes:
-      existingProfile?.scopes ??
-      storedOAuthConfig.scopes?.join(",") ??
+      existingProfile?.clientSecret ??
+      storedClientCredentials.clientSecret ??
       "",
+    scopes:
+      existingProfile?.scopes ?? storedOAuthConfig.scopes?.join(",") ?? "",
     customHeaders,
     protocolVersion,
     registrationStrategy,
@@ -319,8 +319,8 @@ function requiresFreshOAuthAuthorization(error: unknown): boolean {
     typeof error === "string"
       ? error
       : error instanceof Error
-        ? error.message
-        : "";
+      ? error.message
+      : "";
 
   if (!errorMessage) {
     return false;
@@ -376,7 +376,11 @@ export interface ServerUpdateResult {
   serverName: string;
 }
 
-type EnsureServerConnectionStatus = "connected" | "failed" | "missing" | "reauth";
+type EnsureServerConnectionStatus =
+  | "connected"
+  | "failed"
+  | "missing"
+  | "reauth";
 
 interface EnsureServerConnectionResult {
   status: EnsureServerConnectionStatus;
@@ -543,11 +547,13 @@ export function useServerState({
     latestEffectiveServersRef.current = effectiveServers;
   }, [effectiveServers]);
 
-  const isClientConfigSyncPending =
-    useWorkspaceClientConfigSyncPending(effectiveActiveWorkspaceId);
+  const isClientConfigSyncPending = useWorkspaceClientConfigSyncPending(
+    effectiveActiveWorkspaceId,
+  );
 
   const workspaceConnectionDefaults = useMemo(
-    () => getEffectiveWorkspaceConnectionDefaults(activeWorkspace?.clientConfig),
+    () =>
+      getEffectiveWorkspaceConnectionDefaults(activeWorkspace?.clientConfig),
     [activeWorkspace?.clientConfig],
   );
 
@@ -585,7 +591,8 @@ export function useServerState({
         ...("url" in serverConfig && nextRequestInit
           ? { requestInit: nextRequestInit }
           : {}),
-        timeout: serverConfig.timeout ?? workspaceConnectionDefaults.requestTimeout,
+        timeout:
+          serverConfig.timeout ?? workspaceConnectionDefaults.requestTimeout,
         capabilities: effectiveClientCapabilities,
         clientCapabilities: effectiveClientCapabilities,
       };
@@ -992,7 +999,8 @@ export function useServerState({
             result.serverConfig,
           );
           const storedOAuthConfig = readStoredOAuthConfig(serverName);
-          const storedClientCredentials = readStoredClientCredentials(serverName);
+          const storedClientCredentials =
+            readStoredClientCredentials(serverName);
           const resolvedOAuthProfile = buildResolvedOAuthProfile({
             serverName,
             serverUrl:
@@ -1050,18 +1058,18 @@ export function useServerState({
               serverName,
             );
             if (connectionResult.success) {
-                dispatch({
-                  type: "CONNECT_SUCCESS",
-                  name: serverName,
-                  config: mergedServerConfig,
-                  tokens: isHostedWorkspaceCallback
-                    ? undefined
-                    : getStoredTokens(serverName),
-                  useOAuth: true,
-                  oauthTrace: result.oauthTrace,
-                });
-                logger.info("OAuth connection successful", { serverName });
-                toast.success(
+              dispatch({
+                type: "CONNECT_SUCCESS",
+                name: serverName,
+                config: mergedServerConfig,
+                tokens: isHostedWorkspaceCallback
+                  ? undefined
+                  : getStoredTokens(serverName),
+                useOAuth: true,
+                oauthTrace: result.oauthTrace,
+              });
+              logger.info("OAuth connection successful", { serverName });
+              toast.success(
                 `OAuth connection successful! Connected to ${serverName}.`,
               );
               storeInitInfo(serverName, connectionResult.initInfo).catch(
@@ -1118,16 +1126,16 @@ export function useServerState({
           error instanceof Error
             ? error.message
             : typeof error === "object" &&
-                error !== null &&
-                "message" in error &&
-                typeof (error as { message?: unknown }).message === "string"
-              ? ((error as { message: string }).message)
-              : "Unknown error";
+              error !== null &&
+              "message" in error &&
+              typeof (error as { message?: unknown }).message === "string"
+            ? (error as { message: string }).message
+            : "Unknown error";
         toast.error(`Error completing OAuth flow: ${errorMessage}`);
         logger.error("OAuth callback failed", { error: errorMessage });
         const oauthTrace =
           typeof error === "object" && error !== null && "oauthTrace" in error
-            ? ((error as { oauthTrace?: OAuthTrace }).oauthTrace)
+            ? (error as { oauthTrace?: OAuthTrace }).oauthTrace
             : undefined;
         const failedServerName =
           failPendingOAuthConnection(errorMessage, oauthTrace) ??
@@ -1593,7 +1601,7 @@ export function useServerState({
       const existingServer = appState.servers[serverName];
       const mcpConfig = toMCPConfig(formData);
       const nextOAuthProfile = formData.useOAuth
-        ? (options?.oauthProfile ?? existingServer?.oauthFlowProfile)
+        ? options?.oauthProfile ?? existingServer?.oauthFlowProfile
         : undefined;
 
       const serverEntry: ServerWithName = {
@@ -2027,8 +2035,7 @@ export function useServerState({
           ) {
             resolve({
               status: "failed",
-              error:
-                server.lastError || `Failed to reconnect to ${serverName}`,
+              error: server.lastError || `Failed to reconnect to ${serverName}`,
             });
             return;
           }
@@ -2201,9 +2208,7 @@ export function useServerState({
             return {
               status: "failed",
               error:
-                error instanceof Error
-                  ? error.message
-                  : "OAuth flow failed",
+                error instanceof Error ? error.message : "OAuth flow failed",
             };
           }
           const errorMessage =
@@ -2348,8 +2353,7 @@ export function useServerState({
           if (isStaleOp(serverName, token)) {
             return {
               status: "failed",
-              error:
-                error instanceof Error ? error.message : "Unknown error",
+              error: error instanceof Error ? error.message : "Unknown error",
             };
           }
 
@@ -2630,15 +2634,16 @@ export function useServerState({
       );
 
       const outcomeByKey = new Map(outcomesByKey);
-      const outcomes: ReadonlyArray<readonly [string, EnsureServerConnectionResult]> =
-        uniqueServerNames.map((serverName) => {
-          const resolvedKey = resolveToWorkspaceServerKey(serverName);
-          const outcome = outcomeByKey.get(resolvedKey) ?? {
-            status: "missing",
-            error: `Server ${serverName} not found`,
-          };
-          return [serverName, outcome] as const;
-        });
+      const outcomes: ReadonlyArray<
+        readonly [string, EnsureServerConnectionResult]
+      > = uniqueServerNames.map((serverName) => {
+        const resolvedKey = resolveToWorkspaceServerKey(serverName);
+        const outcome = outcomeByKey.get(resolvedKey) ?? {
+          status: "missing",
+          error: `Server ${serverName} not found`,
+        };
+        return [serverName, outcome] as const;
+      });
 
       const readyServerNames: string[] = [];
       const missingServerNames: string[] = [];
@@ -2677,22 +2682,29 @@ export function useServerState({
     ],
   );
 
+  const syncAgentStatus = useCallback(async () => {
+    try {
+      const result = await listServers();
+      if (result?.success && Array.isArray(result.servers)) {
+        dispatch({ type: "SYNC_AGENT_STATUS", servers: result.servers });
+      }
+      return result;
+    } catch (error) {
+      logger.debug("Failed to sync server status", {
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
+      throw error;
+    }
+  }, [logger, dispatch]);
+
   useEffect(() => {
     if (isLoading) return;
-    const syncServerStatus = async () => {
-      try {
-        const result = await listServers();
-        if (result?.success && result.servers) {
-          dispatch({ type: "SYNC_AGENT_STATUS", servers: result.servers });
-        }
-      } catch (error) {
-        logger.debug("Failed to sync server status on startup", {
-          error: error instanceof Error ? error.message : "Unknown error",
-        });
-      }
-    };
-    syncServerStatus();
-  }, [isLoading, logger, dispatch]);
+    void syncAgentStatus().catch((error) => {
+      logger.debug("Startup server status sync failed", {
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
+    });
+  }, [isLoading, logger, syncAgentStatus]);
 
   const setSelectedServer = useCallback(
     (serverName: string) => {
@@ -2917,6 +2929,7 @@ export function useServerState({
     handleDisconnect,
     handleReconnect,
     ensureServersReady,
+    syncAgentStatus,
     handleUpdate,
     handleRemoveServer,
     setSelectedServer,

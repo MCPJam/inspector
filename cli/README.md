@@ -38,6 +38,7 @@ Commands:
   apps               MCP Apps utilities, widget extraction, and conformance checks
   oauth              Run MCP OAuth login, proxy, and conformance flows
   protocol           MCP protocol inspection and conformance checks
+  inspector          Start or attach to the local MCPJam Inspector
 ```
 
 ## Quick start
@@ -54,6 +55,10 @@ mcpjam oauth login --url https://your-server.com/mcp --protocol-version 2025-11-
 
 # MCP Apps conformance
 mcpjam apps conformance --url https://your-server.com/mcp --access-token $TOKEN
+
+# MCP Apps render debugging in Inspector
+mcpjam apps debug --url https://your-server.com/mcp --access-token $TOKEN \
+  --tool-name create_view --params '{"projectId":"demo"}' --ui --format json
 
 # List tools with full schemas
 mcpjam tools list --url https://your-server.com/mcp --access-token $TOKEN --format json

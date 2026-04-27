@@ -17,6 +17,7 @@ import { MCPClientManager } from "@mcpjam/sdk";
 import { initElicitationCallback } from "./routes/mcp/elicitation.js";
 import { rpcLogBus } from "./services/rpc-log-bus.js";
 import { progressStore } from "./services/progress-store.js";
+import { inspectorCommandBus } from "./services/inspector-command-bus.js";
 import { CORS_ORIGINS, HOSTED_MODE, ALLOWED_HOSTS } from "./config.js";
 import { inAppBrowserMiddleware } from "./middleware/in-app-browser.js";
 import path from "path";
@@ -226,7 +227,11 @@ export function createHonoApp() {
 
   // Health check
   app.get("/health", (c) => {
-    return c.json({ status: "ok", timestamp: new Date().toISOString() });
+    return c.json({
+      status: "ok",
+      timestamp: new Date().toISOString(),
+      hasActiveClient: inspectorCommandBus.hasActiveClient(),
+    });
   });
 
   // Guest JWT JWKS compatibility endpoint — public, no auth required.
