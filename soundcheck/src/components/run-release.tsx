@@ -57,6 +57,7 @@ export function RunRelease() {
   const [deployBackend, setDeployBackend] = useState(false);
   const [promoteProd, setPromoteProd] = useState(false);
   const [deployMcp, setDeployMcp] = useState(false);
+  const [skipVerify, setSkipVerify] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [feedback, setFeedback] = useState<
     | { kind: "idle" }
@@ -69,6 +70,7 @@ export function RunRelease() {
   const runsRelease = scope !== "none";
   const impactsProd = deployBackend || promoteProd || deployMcp;
   const hasAnyTarget = runsRelease || deployMcp;
+  const effectiveSkipVerify = runsRelease && skipVerify;
 
   // Reset gated flags when scope changes so a stale `true` can't slip into
   // the confirmation modal or the dispatch payload. The checkbox disabling
@@ -77,6 +79,7 @@ export function RunRelease() {
     setScope(next);
     if (next !== "full") setDeployBackend(false);
     if (next === "packages-only" || next === "none") setPromoteProd(false);
+    if (next === "none") setSkipVerify(false);
     setFeedback({ kind: "idle" });
   }
 
@@ -90,6 +93,10 @@ export function RunRelease() {
   }
   function changeDeployMcp(v: boolean) {
     setDeployMcp(v);
+    setFeedback({ kind: "idle" });
+  }
+  function changeSkipVerify(v: boolean) {
+    setSkipVerify(v);
     setFeedback({ kind: "idle" });
   }
 
@@ -109,7 +116,8 @@ export function RunRelease() {
             scope,
             deploy_backend_prod: deployBackend,
             promote_production: promoteProd,
-            deploy_mcp_production: deployMcp
+            deploy_mcp_production: deployMcp,
+            skip_verify: effectiveSkipVerify
           })
         });
         const json = (await res.json()) as {
@@ -201,6 +209,20 @@ export function RunRelease() {
 
         <fieldset className="space-y-2">
           <legend className="mb-2 text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+            Preflight
+          </legend>
+          <FlagRow
+            id="skip-verify"
+            name="skip_verify"
+            checked={skipVerify}
+            onChange={changeSkipVerify}
+            disabled={!runsRelease}
+            description="Recovery-only: skip npm run verify; staging and Changesets gates still run."
+          />
+        </fieldset>
+
+        <fieldset className="space-y-2">
+          <legend className="mb-2 text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
             Production flags
           </legend>
           <div className="space-y-2">
@@ -235,6 +257,13 @@ export function RunRelease() {
           <div className="rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning">
             <span className="font-medium">Heads up —</span> this run will touch
             production.
+          </div>
+        ) : null}
+
+        {effectiveSkipVerify ? (
+          <div className="rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning">
+            <span className="font-medium">Recovery mode:</span>{" "}
+            <span className="font-mono">npm run verify</span> will be skipped.
           </div>
         ) : null}
 
@@ -283,6 +312,7 @@ export function RunRelease() {
         deployBackend={deployBackend}
         promoteProd={promoteProd}
         deployMcp={deployMcp}
+        skipVerify={effectiveSkipVerify}
       />
     </Tile>
   );
@@ -336,7 +366,8 @@ function ConfirmModal({
   scope,
   deployBackend,
   promoteProd,
-  deployMcp
+  deployMcp,
+  skipVerify
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
@@ -346,6 +377,7 @@ function ConfirmModal({
   deployBackend: boolean;
   promoteProd: boolean;
   deployMcp: boolean;
+  skipVerify: boolean;
 }) {
   const impactsProd = deployBackend || promoteProd || deployMcp;
   const runsRelease = scope !== "none";
@@ -392,6 +424,19 @@ function ConfirmModal({
               }
             >
               {String(deployBackend)}
+            </dd>
+          </div>
+          <div className="flex gap-3">
+            <dt className="w-44 font-mono text-xs text-muted-foreground">
+              skip_verify
+            </dt>
+            <dd
+              className={
+                "font-mono text-xs " +
+                (skipVerify ? "text-warning" : "text-muted-foreground")
+              }
+            >
+              {String(runsRelease && skipVerify)}
             </dd>
           </div>
           <div className="flex gap-3">
