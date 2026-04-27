@@ -96,15 +96,6 @@ If a higher-priority surface contradicts a lower-priority summary, trust the hig
   - host display modes, host context changes, or postMessage bridge behavior
 - Treat a pass as evidence that the server advertises an MCP Apps surface with plausible resource wiring. Do not describe it as full SEP-1865 conformance.
 
-### `apps debug`
-
-- This is a connected, single-tool MCP Apps debug command.
-- The command executes the tool once through the SDK and reports that result under `execution`.
-- With `--ui`, the CLI starts or attaches to the local Inspector, connects the server, opens App Builder, injects the already-completed tool result through `renderToolResult`, and then requests a snapshot.
-- `inspectorRender` is UI command-bus evidence, not a second server-side tool call. A render failure can coexist with a successful `execution`.
-- `success: false` with an `error` from `inspectorRender` means the Inspector render path failed. Check the individual `openAppBuilder`, `setAppContext`, `renderToolResult`, and `snapshot` responses before blaming the MCP server.
-- Large tool results can appear in multiple places, such as `execution`, `inspectorRender.renderToolResult.result`, and `inspectorRender.snapshot.result.toolOutput`. Prefer `--out <path>` for handoff artifacts and summarize large duplicated payloads.
-
 ### `tools list`
 
 - The command returns:
@@ -113,10 +104,16 @@ If a higher-priority surface contradicts a lower-priority summary, trust the hig
   - `tokenCount`: optional local estimate when `--model-id` is supplied
 - Only `tools` should be treated as server output by default.
 - `toolsMetadata: {}` means the local cache is empty. It does not mean the server violated MCP.
+- Tools with `_meta.ui.resourceUri`, deprecated `_meta["ui/resourceUri"]`, or `openai/outputTemplate` in `toolsMetadata` have interactive UI. Use `tools call --ui` to render those tool results in Inspector.
 
 ### `tools call`
 
 - Good for checking argument validation, result shape, and execution failures.
+- Without `--ui`, the command returns the raw tool result.
+- With `--ui`, the command executes the tool once, starts or attaches to the local Inspector, connects the server, opens App Builder, injects the already-completed tool result through `renderToolResult`, and then requests a snapshot.
+- `inspectorRender` is UI command-bus evidence, not a second server-side tool call. A render failure can coexist with a successful `result`.
+- `success: false` with an `error` from `inspectorRender` means the Inspector render path failed. Check the individual `openAppBuilder`, `setAppContext`, `renderToolResult`, and `snapshot` responses before blaming the MCP server.
+- Large tool results can appear in multiple places, such as `result`, `inspectorRender.renderToolResult.result`, and `inspectorRender.snapshot.result.toolOutput`. Summarize large duplicated payloads.
 - Distinguish:
   - JSON-RPC request errors such as invalid params or unknown method
   - tool execution failures returned in the tool result

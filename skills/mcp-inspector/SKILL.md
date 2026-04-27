@@ -1,6 +1,6 @@
 ---
 name: mcp-inspector
-description: Interpret `mcpjam` probe, doctor, OAuth, apps conformance/debug, tools, resources, and prompts output conservatively against MCP 2025-11-25. Use when triaging MCP server findings, performing security reviews, deciding whether a CLI finding is real or overstated, or turning inspection output into an engineer-facing report with severity and confidence.
+description: Interpret and use `mcpjam` probe, doctor, OAuth, apps conformance, tools, resources, and prompts output conservatively against MCP 2025-11-25. Use when interacting with MCP servers, executing tools, triaging findings, performing security reviews, deciding whether a CLI finding is real or overstated, or turning inspection output into an engineer-facing report with severity and confidence.
 ---
 
 # MCPJam CLI Investigation
@@ -12,6 +12,19 @@ Use this skill when analyzing MCP server behavior from `mcpjam` output. The goal
 - implementation polish
 - mcpjam or SDK artifacts
 
+## Interactive use
+
+When the user wants to connect to a server and use it:
+
+1. Discover tools: `tools list --url <url> --quiet --format json`.
+   - Tools with `_meta.ui.resourceUri`, deprecated `_meta["ui/resourceUri"]`, or `openai/outputTemplate` in `toolsMetadata` have interactive UI.
+2. Execute a tool: `tools call --url <url> --tool-name <name> --tool-args <json>`.
+3. Execute with UI: `tools call --url <url> --tool-name <name> --tool-args <json> --ui`.
+   - `--ui` starts Inspector and renders the completed result in App Builder.
+   - Use `--ui` only when the tool has UI metadata or the user explicitly asks to see UI.
+
+When the user asks to investigate, audit, or triage, use the Investigation workflow below.
+
 ## Default stance
 
 - Treat raw request/response evidence as higher trust than normalized CLI convenience output.
@@ -20,7 +33,7 @@ Use this skill when analyzing MCP server behavior from `mcpjam` output. The goal
 - Do not label a security finding `high` unless you can support a concrete attacker benefit or clear breakage path.
 - When evidence is ambiguous, lower confidence or use `pending` before overstating the conclusion.
 
-## Quick workflow
+## Investigation workflow
 
 1. Start with the narrowest command that actually proves the claim.
 2. If the command may fail, you want a reusable handoff artifact, or CI should retain evidence, add `--debug-out <path>` to `server probe`, `server validate`, `tools call`, or `oauth login`.
@@ -29,7 +42,7 @@ Use this skill when analyzing MCP server behavior from `mcpjam` output. The goal
 5. Use `server doctor --out <path>` when you need one breadth-first snapshot instead of several single-purpose command outputs.
 6. If the output came from `server doctor` or a `--debug-out` artifact, split it into primary command evidence, probe evidence, and connected-sweep evidence.
 7. If the claim is specifically about MCP Apps tool metadata or `ui://` resources, start with `apps conformance --quiet --format json` before dropping to `tools list` or `resources read`.
-8. If the claim is about an MCP App tool result rendering in Inspector, use `apps debug --tool-name <name> --params <json|@file|-> --ui --quiet --format json`. Prefer `--out <path>` when the tool result or snapshot may be large.
+8. If the claim is about a tool result rendering in Inspector, use `tools call --tool-name <name> --tool-args <json|@file|-> --ui --quiet --format json`.
 9. If a field may be CLI-added or SDK-normalized, read `references/cli-surface-notes.md` before concluding anything.
 10. If the claim depends on MCP semantics, read `references/mcp-2025-11-25-interpretation.md`.
 11. If the task involves security review, read `references/security-best-practices.md` for the full checklist and follow the security review workflow below.
@@ -106,9 +119,8 @@ Use `pending` instead of manufacturing a `medium` or `high` security severity fr
 - `oauth login`: obtain reusable credentials and verify the authenticated MCP path. Use `--credentials-out <path>` to save tokens to disk (mode 0600) so later connected commands can use `--credentials-file <path>` without manual token extraction; check `references/cli-surface-notes.md` for commands that require a non-expired access token. Use this when the goal is to inspect a server that requires OAuth, then follow it with connected commands rather than stopping at the login result.
 - `oauth conformance`, `oauth conformance-suite`: flow-level auth checks. Treat these as targeted probes, not a complete security review. When `--conformance-checks` is enabled, the command can directly probe DCR non-loopback `http://` redirects, invalid client rejection, authorization-endpoint redirect mismatch handling, invalid bearer-token rejection at the MCP server, and token-endpoint redirect mismatch handling.
 - `apps conformance`: server-side MCP Apps checks for `_meta.ui.resourceUri`, `ui://` resources, `resources/read`, HTML MIME and payload shape, and `_meta.ui` metadata. Use this for MCP Apps surface triage.
-- `apps debug`: one MCP App tool execution plus optional Inspector App Builder rendering. With `--ui`, treat `execution` as the tool result and `inspectorRender` as UI command/render evidence; render errors are not automatically tool execution errors.
 - `server info`, `server capabilities`, `server validate`, `server ping`, `server export`: connected behavior after initialization and auth.
-- `tools list` and `tools call`, `resources list/read/templates`, `prompts list/get/list-multi`: direct post-connect capability checks.
+- `tools list` and `tools call`, `resources list/read/templates`, `prompts list/get/list-multi`: direct post-connect capability checks. With `--ui`, `tools call` renders the completed tool result in Inspector and reports `inspectorRender` as UI command/render evidence.
 - Prefer `--quiet --format json`. Add `--rpc` when available if you need request and response evidence rather than a summary. Add `--debug-out` when you need a failure-safe artifact, not as a replacement for raw evidence.
 - Use `--reporter junit-xml` or `--reporter json-summary` for CI report artifacts on conformance and diff commands. `server validate` does not accept `--reporter`; use `--debug-out` for validation artifacts. Do not use `--format junit-xml`; `--format` is only for raw `json` or `human` output.
 - For JSON-valued options, prefer `@path` or `-` stdin over shell-escaped inline JSON when payloads are generated or contain quotes. For example: `mcpjam tools call --url <target> --tool-name <name> --tool-args @params.json --quiet --format json`.
@@ -142,6 +154,9 @@ For each claimed security-review finding, return:
 ## Hard rules
 
 - Never call `toolsMetadata` an MCP server field.
+- Never use removed app/widget commands for UI rendering. Use `tools call --ui`; use `resources read --resource-uri ui://...` for raw resource HTML.
+- Never manually orchestrate Inspector API calls when `tools call --ui` can drive the render.
+- Never skip `tools list` discovery when the user names a server but not a specific tool.
 - Never infer prompt support from an empty prompts list unless you have raw RPC evidence that `prompts/list` was actually sent and answered by the server.
 - Never stop at `oauth_required` when the user asked to inspect the authenticated server surface and the CLI can complete login. Authenticate and continue with post-login commands when feasible.
 - Never treat a passing `apps conformance` result as full SEP-1865 conformance. The current command is server-side only and does not prove host lifecycle, sandbox proxy, or postMessage bridge behavior.

@@ -1,6 +1,5 @@
 import { Command } from "commander";
 import {
-  buildInspectorUrl,
   ensureInspector,
   normalizeInspectorBaseUrl,
   stopInspector,
@@ -49,7 +48,8 @@ export function registerInspectorCommands(program: Command): void {
           success: true,
           started: result.started,
           baseUrl: result.baseUrl,
-          url: buildInspectorUrl(result.baseUrl, tab),
+          ...(result.frontendUrl ? { frontendUrl: result.frontendUrl } : {}),
+          url: result.url,
           ...(tab ? { tab } : {}),
         },
         globalOptions.format,

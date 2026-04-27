@@ -189,6 +189,24 @@ function getMCPConfigFromEnv() {
   };
 }
 
+function getInspectorFrontendUrl() {
+  const explicitFrontendUrl =
+    process.env.MCPJAM_INSPECTOR_FRONTEND_URL?.trim() ||
+    process.env.FRONTEND_URL?.trim();
+  if (explicitFrontendUrl) {
+    return explicitFrontendUrl;
+  }
+
+  if (process.env.NODE_ENV === "production") {
+    return (
+      process.env.BASE_URL?.trim() ||
+      `http://${SERVER_HOSTNAME}:${SERVER_PORT}`
+    );
+  }
+
+  return `http://localhost:${process.env.CLIENT_PORT || "5173"}`;
+}
+
 // Ensure PATH is initialized from the user's shell so spawned processes can find binaries (e.g., npx)
 try {
   fixPath();
@@ -361,6 +379,7 @@ app.get("/health", (c) => {
     status: "ok",
     timestamp: new Date().toISOString(),
     hasActiveClient: inspectorCommandBus.hasActiveClient(),
+    frontend: getInspectorFrontendUrl(),
   });
 });
 
@@ -474,7 +493,7 @@ if (process.env.NODE_ENV === "production") {
     return c.json({
       message: "MCPJam API Server",
       environment: "development",
-      frontend: `http://localhost:${SERVER_PORT}`,
+      frontend: getInspectorFrontendUrl(),
     });
   });
 }

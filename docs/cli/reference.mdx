@@ -101,10 +101,22 @@ Uses shared connection flags.
 | `--name <name>` | Legacy alias for `--tool-name` |
 | `--tool-args <json>` | Tool arguments as inline JSON, `@path`, or `-` for stdin |
 | `--params <json>` | Legacy alias for `--tool-args` |
+| `--validate-response` | Validate the MCP tool-call envelope returned by the server |
+| `--expect-success` | Fail when the tool result reports `isError` |
 | `--reporter <reporter>` | `json-summary` or `junit-xml` validation report output |
 | `--debug-out <path>` | Write debug artifact to file |
+| `--ui` | Start or attach to Inspector and render the completed tool result in App Builder |
+| `--inspector-url <url>` | Local Inspector base URL |
+| `--server-name <name>` | Server name to use inside Inspector |
+| `--protocol <protocol>` | Render protocol: `mcp-apps` or `openai-sdk` |
+| `--device <device>` | Render device: `mobile`, `tablet`, `desktop`, or `custom` |
+| `--theme <theme>` | Render theme: `light` or `dark` |
+| `--locale <locale>` | Render locale |
+| `--time-zone <iana>` | Render IANA timezone |
 
 Plus shared connection flags.
+
+Without `--ui`, `tools call` returns the raw tool result. With `--ui`, it returns an envelope with `result` and `inspectorRender`. The Inspector path injects the completed tool result through `renderToolResult`; it does not call the tool a second time. `--ui` cannot be combined with `--reporter`.
 
 ---
 
@@ -286,68 +298,6 @@ Use `--format json|human` for raw output and `--reporter json-summary|junit-xml`
 |------|----------|---------|-------------|
 | `--config <path>` | Yes | | Path to JSON config file |
 | `--reporter <reporter>` | No | | `json-summary` or `junit-xml` CI report output |
-
-### `apps debug`
-
-Execute one MCP App tool and optionally render the result in the local Inspector App Builder.
-
-| Flag | Required | Description |
-|------|----------|-------------|
-| `--tool-name <name>` | Yes | Tool name to execute |
-| `--params <json>` | No | Tool parameters as inline JSON, `@path`, or `-` for stdin |
-| `--ui` | No | Start or attach to Inspector and render the result in App Builder |
-| `--inspector-url <url>` | No | Local Inspector base URL |
-| `--server-name <name>` | No | Server name to use inside Inspector |
-| `--protocol <protocol>` | No | Render protocol: `mcp-apps` or `openai-sdk` |
-| `--device <device>` | No | Render device: `mobile`, `tablet`, `desktop`, or `custom` |
-| `--theme <theme>` | No | Render theme: `light` or `dark` |
-| `--locale <locale>` | No | Render locale |
-| `--time-zone <iana>` | No | Render IANA timezone |
-| `--out <path>` | No | Write the full debug artifact to a JSON file |
-| `--retries <count>` | No | Retry transient failures this many times |
-| `--retry-delay-ms <ms>` | No | Fixed delay between retries in milliseconds |
-
-Plus shared connection flags.
-
-With `--ui`, `execution` is the server tool result and `inspectorRender` is UI render evidence. The UI path injects the completed tool result and does not call the tool a second time.
-
-### `apps mcp-widget`
-
-Fetch hosted-style MCP App widget content.
-
-| Flag | Required | Description |
-|------|----------|-------------|
-| `--resource-uri <uri>` | Yes | Widget resource URI |
-| `--tool-id <id>` | Yes | Tool call ID used for runtime injection |
-| `--tool-name <name>` | Yes | Tool name used for runtime injection |
-| `--tool-input <json>` | No | Tool input payload as inline JSON, `@path`, or `-` for stdin |
-| `--tool-output <json>` | No | Tool output payload as inline JSON, `@path`, or `-` for stdin |
-| `--theme <theme>` | No | Widget theme: `light` or `dark` |
-| `--csp-mode <mode>` | No | CSP mode: `permissive` or `widget-declared` |
-| `--template <uri>` | No | Optional `ui://` template override |
-| `--view-mode <mode>` | No | Widget view mode |
-| `--view-params <json>` | No | Widget view params as inline JSON, `@path`, or `-` for stdin |
-
-Plus shared connection flags.
-
-### `apps chatgpt-widget`
-
-Fetch hosted-style ChatGPT App widget content.
-
-| Flag | Required | Description |
-|------|----------|-------------|
-| `--resource-uri <uri>` | Yes | Widget resource URI |
-| `--tool-id <id>` | Yes | Tool call ID used for runtime injection |
-| `--tool-name <name>` | Yes | Tool name used for runtime injection |
-| `--tool-input <json>` | No | Tool input payload as inline JSON, `@path`, or `-` for stdin |
-| `--tool-output <json>` | No | Tool output payload as inline JSON, `@path`, or `-` for stdin |
-| `--tool-response-metadata <json>` | No | Tool response metadata as inline JSON, `@path`, or `-` for stdin |
-| `--theme <theme>` | No | Widget theme: `light` or `dark` |
-| `--csp-mode <mode>` | No | CSP mode: `permissive` or `widget-declared` |
-| `--locale <locale>` | No | Locale override |
-| `--device-type <type>` | No | Device type: `mobile`, `tablet`, or `desktop` |
-
-Plus shared connection flags.
 
 ---
 

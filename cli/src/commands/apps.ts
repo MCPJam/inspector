@@ -8,34 +8,22 @@ import {
   type MCPAppsCheckId,
   type MCPAppsConformanceConfig,
 } from "@mcpjam/sdk";
-import {
-  buildChatGptWidgetContent,
-  buildMcpWidgetContent,
-  parseTheme,
-} from "../lib/apps.js";
 import { loadAppsSuiteConfig } from "../lib/config-file.js";
 import {
   renderConformanceForCli,
   resolveConformanceOutputFormatForCli,
   type ConformanceOutputFormat,
 } from "../lib/conformance-output.js";
-import { parseJsonInputValue } from "../lib/json-input.js";
 import { parseReporterFormat, type ReporterFormat } from "../lib/reporting.js";
-import { withEphemeralManager } from "../lib/ephemeral.js";
 import { createCliRpcLogCollector } from "../lib/rpc-logs.js";
 import { withRpcLogsIfRequested } from "../lib/rpc-helpers.js";
 import {
-  addRetryOptions,
   addSharedServerOptions,
   describeTarget,
-  getGlobalOptions,
-  parseJsonRecord,
-  parseRetryPolicy,
   parseServerConfig,
   type SharedServerTargetOptions,
 } from "../lib/server-config.js";
-import { setProcessExitCode, usageError, writeResult } from "../lib/output.js";
-import { registerAppsDebugCommand } from "./apps-debug.js";
+import { setProcessExitCode, usageError } from "../lib/output.js";
 
 const APPS_CHECK_IDS_BY_CATEGORY: Record<
   MCPAppsCheckCategory,
@@ -91,9 +79,7 @@ function writeConformanceOutput(output: string): void {
 export function registerAppsCommands(program: Command): void {
   const apps = program
     .command("apps")
-    .description(
-      "MCP Apps utilities, widget extraction, and conformance checks",
-    );
+    .description("Validate MCP Apps metadata and resource wiring");
 
   addSharedServerOptions(
     apps
@@ -185,185 +171,6 @@ export function registerAppsCommands(program: Command): void {
         setProcessExitCode(1);
       }
     });
-
-  registerAppsDebugCommand(apps);
-
-  addRetryOptions(
-    addSharedServerOptions(
-      apps
-        .command("mcp-widget")
-        .description("Fetch hosted-style MCP App widget content")
-        .requiredOption("--resource-uri <uri>", "Widget resource URI")
-        .requiredOption(
-          "--tool-id <id>",
-          "Tool call id used for runtime injection",
-        )
-        .requiredOption(
-          "--tool-name <name>",
-          "Tool name used for runtime injection",
-        )
-        .option(
-          "--tool-input <json>",
-          "Tool input payload as JSON, @path, or - for stdin",
-        )
-        .option(
-          "--tool-output <json>",
-          "Tool output payload as JSON, @path, or - for stdin",
-        )
-        .option("--theme <theme>", "Widget theme: light or dark")
-        .option("--csp-mode <mode>", "CSP mode: permissive or widget-declared")
-        .option("--template <uri>", "Optional ui:// template override")
-        .option("--view-mode <mode>", "Widget view mode")
-        .option(
-          "--view-params <json>",
-          "Widget view params as JSON, @path, or - for stdin",
-        ),
-    ),
-  ).action(async (options, command) => {
-    const globalOptions = getGlobalOptions(command);
-    const retryPolicy = parseRetryPolicy(options);
-    const target = describeTarget(options);
-    const collector = globalOptions.rpc
-      ? createCliRpcLogCollector({ __cli__: target })
-      : undefined;
-    const config = parseServerConfig({
-      ...options,
-      timeout: globalOptions.timeout,
-    });
-
-    const result = await withEphemeralManager(
-      config,
-      (manager, serverId) =>
-        buildMcpWidgetContent(manager, serverId, {
-          resourceUri: options.resourceUri as string,
-          toolId: options.toolId as string,
-          toolName: options.toolName as string,
-          toolInput: parseJsonRecord(options.toolInput, "Tool input") ?? {},
-          toolOutput: parseJsonInputValue(options.toolOutput, "Tool output"),
-          theme: parseTheme(options.theme),
-          cspMode: parseCspMode(options.cspMode),
-          template: options.template as string | undefined,
-          viewMode: options.viewMode as string | undefined,
-          viewParams: parseJsonRecord(options.viewParams, "View params"),
-        }),
-      {
-        timeout: globalOptions.timeout,
-        rpcLogger: collector?.rpcLogger,
-        retryPolicy,
-      },
-    );
-
-    writeResult(
-      withRpcLogsIfRequested(result, collector, globalOptions),
-      globalOptions.format,
-    );
-  });
-
-  addRetryOptions(
-    addSharedServerOptions(
-      apps
-        .command("chatgpt-widget")
-        .description("Fetch hosted-style ChatGPT App widget content")
-        .requiredOption("--resource-uri <uri>", "Widget resource URI")
-        .requiredOption(
-          "--tool-id <id>",
-          "Tool call id used for runtime injection",
-        )
-        .requiredOption(
-          "--tool-name <name>",
-          "Tool name used for runtime injection",
-        )
-        .option(
-          "--tool-input <json>",
-          "Tool input payload as JSON, @path, or - for stdin",
-        )
-        .option(
-          "--tool-output <json>",
-          "Tool output payload as JSON, @path, or - for stdin",
-        )
-        .option(
-          "--tool-response-metadata <json>",
-          "Tool response metadata as JSON, @path, or - for stdin",
-        )
-        .option("--theme <theme>", "Widget theme: light or dark")
-        .option("--csp-mode <mode>", "CSP mode: permissive or widget-declared")
-        .option("--locale <locale>", "Locale override")
-        .option(
-          "--device-type <type>",
-          "Device type: mobile, tablet, or desktop",
-        ),
-    ),
-  ).action(async (options, command) => {
-    const globalOptions = getGlobalOptions(command);
-    const retryPolicy = parseRetryPolicy(options);
-    const target = describeTarget(options);
-    const collector = globalOptions.rpc
-      ? createCliRpcLogCollector({ __cli__: target })
-      : undefined;
-    const config = parseServerConfig({
-      ...options,
-      timeout: globalOptions.timeout,
-    });
-
-    const result = await withEphemeralManager(
-      config,
-      (manager, serverId) =>
-        buildChatGptWidgetContent(manager, serverId, {
-          uri: options.resourceUri as string,
-          toolId: options.toolId as string,
-          toolName: options.toolName as string,
-          toolInput: parseJsonRecord(options.toolInput, "Tool input") ?? {},
-          toolOutput: parseJsonInputValue(options.toolOutput, "Tool output"),
-          toolResponseMetadata:
-            parseJsonRecord(
-              options.toolResponseMetadata,
-              "Tool response metadata",
-            ) ?? null,
-          theme: parseTheme(options.theme),
-          cspMode: parseCspMode(options.cspMode),
-          locale: options.locale as string | undefined,
-          deviceType: parseDeviceType(options.deviceType),
-        }),
-      {
-        timeout: globalOptions.timeout,
-        rpcLogger: collector?.rpcLogger,
-        retryPolicy,
-      },
-    );
-
-    writeResult(
-      withRpcLogsIfRequested(result, collector, globalOptions),
-      globalOptions.format,
-    );
-  });
-}
-
-function parseCspMode(
-  value: string | undefined,
-): "permissive" | "widget-declared" | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-  if (value === "permissive" || value === "widget-declared") {
-    return value;
-  }
-  throw usageError(
-    `Invalid CSP mode "${value}". Use "permissive" or "widget-declared".`,
-  );
-}
-
-function parseDeviceType(
-  value: string | undefined,
-): "mobile" | "tablet" | "desktop" | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-  if (value === "mobile" || value === "tablet" || value === "desktop") {
-    return value;
-  }
-  throw usageError(
-    `Invalid device type "${value}". Use "mobile", "tablet", or "desktop".`,
-  );
 }
 
 function collectInvalidEntries(

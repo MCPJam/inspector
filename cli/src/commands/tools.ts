@@ -6,6 +6,15 @@ import {
 } from "@mcpjam/sdk";
 import { writeCommandDebugArtifact } from "../lib/debug-artifact.js";
 import { withEphemeralManager } from "../lib/ephemeral.js";
+import {
+  buildInspectorServerName,
+  findInspectorRenderError,
+  parseRenderDevice,
+  parseRenderProtocol,
+  parseRenderTheme,
+  runUiRender,
+  trimOptional,
+} from "../lib/inspector-render.js";
 import { parseReporterFormat, writeReporterResult } from "../lib/reporting.js";
 import { createCliRpcLogCollector } from "../lib/rpc-logs.js";
 import { withRpcLogsIfRequested } from "../lib/rpc-helpers.js";
@@ -20,8 +29,34 @@ import {
   parseRetryPolicy,
   parseServerConfig,
   resolveAliasedStringOption,
+  type SharedServerTargetOptions,
 } from "../lib/server-config.js";
-import { setProcessExitCode, usageError, writeResult } from "../lib/output.js";
+import {
+  normalizeCliError,
+  setProcessExitCode,
+  toStructuredError,
+  usageError,
+  writeResult,
+} from "../lib/output.js";
+
+interface ToolsCallOptions extends SharedServerTargetOptions {
+  toolName?: string;
+  name?: string;
+  toolArgs?: string;
+  params?: string;
+  validateResponse?: boolean;
+  expectSuccess?: boolean;
+  reporter?: string;
+  debugOut?: string;
+  ui?: boolean;
+  inspectorUrl?: string;
+  serverName?: string;
+  protocol?: string;
+  device?: string;
+  theme?: string;
+  locale?: string;
+  timeZone?: string;
+}
 
 export function registerToolsCommands(program: Command): void {
   const tools = program
@@ -95,8 +130,25 @@ export function registerToolsCommands(program: Command): void {
       .option(
         "--debug-out <path>",
         "Write a structured debug artifact to a file",
-      ),
-  ).action(async (options, command) => {
+      )
+      .option("--ui", "Open Inspector and render the tool result")
+      .option("--inspector-url <url>", "Local Inspector base URL (with --ui)")
+      .option(
+        "--server-name <name>",
+        "Server name inside Inspector (with --ui)",
+      )
+      .option(
+        "--protocol <protocol>",
+        'Render protocol: "mcp-apps" or "openai-sdk" (with --ui)',
+      )
+      .option(
+        "--device <device>",
+        'Render device: "mobile", "tablet", "desktop", or "custom" (with --ui)',
+      )
+      .option("--theme <theme>", 'Render theme: "light" or "dark" (with --ui)')
+      .option("--locale <locale>", "Render locale (with --ui)")
+      .option("--time-zone <iana>", "Render IANA timezone (with --ui)"),
+  ).action(async (options: ToolsCallOptions, command) => {
     const globalOptions = getGlobalOptions(command);
     const target = describeTarget(options);
     const primaryCollector =
@@ -110,9 +162,7 @@ export function registerToolsCommands(program: Command): void {
       ...options,
       timeout: globalOptions.timeout,
     });
-    const reporter = parseReporterFormat(
-      options.reporter as string | undefined,
-    );
+    const reporter = parseReporterFormat(options.reporter);
     const toolName = resolveAliasedStringOption(
       options as Record<string, unknown>,
       [
@@ -134,6 +184,10 @@ export function registerToolsCommands(program: Command): void {
     const targetSummary = summarizeServerDoctorTarget(target, config);
     const shouldValidateResponse = options.validateResponse === true;
     const shouldExpectSuccess = options.expectSuccess === true;
+
+    if (options.ui && reporter) {
+      throw usageError("--ui cannot be used together with --reporter.");
+    }
 
     if (reporter && !shouldValidateResponse && !shouldExpectSuccess) {
       throw usageError(
@@ -158,8 +212,101 @@ export function registerToolsCommands(program: Command): void {
       commandError = error;
     }
 
+    if (commandError) {
+      await writeCommandDebugArtifact({
+        outputPath: options.debugOut,
+        format: globalOptions.format,
+        quiet: globalOptions.quiet,
+        commandName: "tools call",
+        commandInput: {
+          toolName,
+          params,
+        },
+        target: targetSummary,
+        outcome: {
+          status: "error",
+          error: commandError,
+        },
+        snapshot: options.debugOut
+          ? {
+              input: {
+                config,
+                target: targetSummary,
+                timeout: globalOptions.timeout,
+              },
+              collector: snapshotCollector,
+            }
+          : undefined,
+        collectors: [primaryCollector],
+      });
+      throw commandError;
+    }
+
+    const validationResult =
+      shouldValidateResponse || shouldExpectSuccess
+        ? validateToolCallResult(result, {
+            envelope: shouldValidateResponse,
+            outcome: shouldExpectSuccess ? { failOnIsError: true } : undefined,
+          })
+        : undefined;
+    const validationFailed = Boolean(
+      validationResult && !validationResult.passed,
+    );
+    const toolResultError = isCallToolResultError(result);
+
+    let outputPayload = result;
+    let inspectorRenderError:
+      | { code: string; message: string; details?: unknown }
+      | undefined;
+
+    if (options.ui) {
+      const serverName =
+        typeof options.serverName === "string" && options.serverName.trim()
+          ? options.serverName.trim()
+          : buildInspectorServerName(options);
+      let uiResult: Record<string, unknown>;
+
+      try {
+        uiResult = await runUiRender({
+          baseUrl: options.inspectorUrl,
+          config,
+          params,
+          renderContext: {
+            protocol: parseRenderProtocol(options.protocol),
+            deviceType: parseRenderDevice(options.device),
+            theme: parseRenderTheme(options.theme),
+            locale: trimOptional(options.locale),
+            timeZone: trimOptional(options.timeZone),
+          },
+          serverName,
+          timeoutMs: globalOptions.timeout,
+          toolName,
+          toolResult: result,
+        });
+        inspectorRenderError = findInspectorRenderError(uiResult);
+      } catch (error) {
+        inspectorRenderError = toStructuredError(normalizeCliError(error)).error;
+        uiResult = {
+          status: "error",
+          error: inspectorRenderError,
+        };
+      }
+
+      outputPayload = {
+        success: !inspectorRenderError && !validationFailed && !toolResultError,
+        command: "tools call",
+        inspectorUi: true,
+        target,
+        toolName,
+        params,
+        result,
+        inspectorRender: uiResult,
+        ...(inspectorRenderError ? { error: inspectorRenderError } : {}),
+      };
+    }
+
     await writeCommandDebugArtifact({
-      outputPath: options.debugOut as string | undefined,
+      outputPath: options.debugOut,
       format: globalOptions.format,
       quiet: globalOptions.quiet,
       commandName: "tools call",
@@ -168,14 +315,15 @@ export function registerToolsCommands(program: Command): void {
         params,
       },
       target: targetSummary,
-      outcome: commandError
+      outcome: inspectorRenderError
         ? {
             status: "error",
-            error: commandError,
+            error: inspectorRenderError,
+            result: outputPayload,
           }
         : {
             status: "success",
-            result,
+            result: outputPayload,
           },
       snapshot: options.debugOut
         ? {
@@ -190,18 +338,6 @@ export function registerToolsCommands(program: Command): void {
       collectors: [primaryCollector],
     });
 
-    if (commandError) {
-      throw commandError;
-    }
-
-    const validationResult =
-      shouldValidateResponse || shouldExpectSuccess
-        ? validateToolCallResult(result, {
-            envelope: shouldValidateResponse,
-            outcome: shouldExpectSuccess ? { failOnIsError: true } : undefined,
-          })
-        : undefined;
-
     if (reporter) {
       writeReporterResult(
         reporter,
@@ -215,7 +351,7 @@ export function registerToolsCommands(program: Command): void {
       );
     } else {
       writeResult(
-        withRpcLogsIfRequested(result, primaryCollector, globalOptions),
+        withRpcLogsIfRequested(outputPayload, primaryCollector, globalOptions),
         globalOptions.format,
       );
     }
@@ -223,7 +359,10 @@ export function registerToolsCommands(program: Command): void {
     if (validationResult && !validationResult.passed) {
       setProcessExitCode(1);
     }
-    if (isCallToolResultError(result)) {
+    if (toolResultError) {
+      setProcessExitCode(1);
+    }
+    if (inspectorRenderError) {
       setProcessExitCode(1);
     }
   });

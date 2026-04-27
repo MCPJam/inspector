@@ -1,12 +1,12 @@
 ---
-title: "MCP Apps Conformance & Debugging"
-description: "Validate MCP Apps tool metadata, ui:// resources, and App Builder rendering from the CLI"
+title: "MCP Apps Conformance"
+description: "Validate MCP Apps tool metadata and ui:// resource wiring from the CLI"
 icon: "app-window"
 ---
 
 The `apps conformance` command validates the server-side MCP Apps surface your server exposes through tools and `ui://` resources.
 
-The `apps debug` command executes one app tool and can drive the local Inspector App Builder to render the resulting UI. Together, these commands cover MCP Apps triage, CI checks, fast regression detection, and local render reproduction.
+Use `tools call --ui` when you want to execute one UI-capable tool and render the completed result in the local Inspector App Builder.
 
 <Note>
   This is currently **server-side** MCP Apps conformance only. A passing run does
@@ -38,10 +38,10 @@ mcpjam apps conformance \
 To reproduce one tool result in the local Inspector:
 
 ```bash
-mcpjam apps debug \
+mcpjam tools call \
   --url https://your-server.com/mcp \
   --tool-name create_view \
-  --params @params.json \
+  --tool-args @params.json \
   --ui \
   --quiet \
   --format json
@@ -165,44 +165,45 @@ mcpjam apps conformance \
   selection wins.
 </Note>
 
-## Debug one app render
+## Render one app result
 
-Use `apps debug` when a conformance result is not enough and you need to inspect the output of one MCP App tool call.
+Use `tools list` to find UI-capable tools. A tool has interactive UI when its metadata includes `_meta.ui.resourceUri`, deprecated `_meta["ui/resourceUri"]`, or `openai/outputTemplate` in `toolsMetadata`.
 
-Without `--ui`, the command executes the tool through the SDK and returns structured JSON with:
-
-- `tools`: how many tools were listed and whether the requested tool was found
-- `toolMetadata` and `ui`: the metadata used to identify MCP Apps or OpenAI Apps UI resources
-- `execution`: the actual tool result
-
-With `--ui`, the CLI starts or attaches to the local Inspector, connects the target server, opens App Builder, injects the already-completed tool result, and requests a UI snapshot.
+Then use `tools call --ui` when you need to inspect the output of one UI-capable tool call. The CLI starts or attaches to the local Inspector, connects the target server, opens App Builder, injects the already-completed tool result, and requests a UI snapshot.
 
 ```bash
-mcpjam apps debug \
+mcpjam tools call \
   --command node --args server.js --cwd /path/to/project \
   --tool-name create_view \
-  --params @params.json \
+  --tool-args @params.json \
   --ui \
   --protocol mcp-apps \
   --device desktop \
   --theme light \
-  --out app-debug.json \
   --format json
 ```
 
 <Note>
-  `apps debug --ui` executes the server tool once. Inspector receives the
+  `tools call --ui` executes the server tool once. Inspector receives the
   completed result through `renderToolResult`, so the UI render path does not
   call the tool a second time.
 </Note>
 
-If the command returns `success: false` with an `error`, check whether the failure came from `execution` or from `inspectorRender`. A render failure can coexist with a successful tool execution.
+If the command returns `success: false` with an `error`, check whether the failure came from `result` or from `inspectorRender`. A render failure can coexist with a successful tool execution.
 
-Large tool results can appear in `execution`, the render command result, and the final snapshot. Use `--out <path>` when sharing artifacts with agents, issue trackers, or CI logs.
+Raw `ui://` resource HTML can be inspected directly:
+
+```bash
+mcpjam resources read \
+  --url https://your-server.com/mcp \
+  --resource-uri ui://widget/app.html \
+  --quiet \
+  --format json
+```
 
 ## Shared connection flags
 
-`apps conformance` and `apps debug` use the same shared target flags as the rest of the CLI:
+`apps conformance` uses the same shared target flags as the rest of the CLI:
 
 | Flag | Description |
 |------|-------------|

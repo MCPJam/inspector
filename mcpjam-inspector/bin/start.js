@@ -214,6 +214,45 @@ async function checkOllamaInstalled() {
   }
 }
 
+function normalizeBrowserBaseUrl(value) {
+  if (!value || typeof value !== "string" || !value.trim()) {
+    return null;
+  }
+
+  try {
+    const parsed = new URL(value.trim());
+    parsed.hash = "";
+    parsed.search = "";
+    return parsed.href.replace(/\/$/, "");
+  } catch {
+    return null;
+  }
+}
+
+async function resolveBrowserBaseUrl(apiBaseUrl) {
+  const explicitFrontendUrl =
+    normalizeBrowserBaseUrl(process.env.MCPJAM_INSPECTOR_FRONTEND_URL) ||
+    normalizeBrowserBaseUrl(process.env.FRONTEND_URL);
+  if (explicitFrontendUrl) {
+    return explicitFrontendUrl;
+  }
+
+  try {
+    const response = await fetch(`${apiBaseUrl}/health`, {
+      signal: AbortSignal.timeout(2000),
+    });
+    if (response.ok) {
+      const body = await response.json();
+      const healthFrontendUrl = normalizeBrowserBaseUrl(body?.frontend);
+      if (healthFrontendUrl) {
+        return healthFrontendUrl;
+      }
+    }
+  } catch {}
+
+  return apiBaseUrl;
+}
+
 function getTerminalCommand() {
   const platform = process.platform;
 
@@ -367,6 +406,7 @@ async function main() {
   let initialTab = null;
   let bearerToken = null;
   let useOAuth = false;
+  let openBrowser = process.env.MCPJAM_INSPECTOR_SUPPRESS_AUTO_OPEN !== "1";
   const customHeaders = [];
   let verboseLogs = false;
 
@@ -457,6 +497,14 @@ async function main() {
     // New: --oauth flag to trigger OAuth flow
     if (parsingFlags && arg === "--oauth") {
       useOAuth = true;
+      continue;
+    }
+
+    if (
+      parsingFlags &&
+      (arg === "--no-open" || arg === "--no-browser")
+    ) {
+      openBrowser = false;
       continue;
     }
 
@@ -784,16 +832,18 @@ async function main() {
       const defaultHost =
         process.env.ENVIRONMENT === "dev" ? "localhost" : "127.0.0.1";
       const host = process.env.HOST || defaultHost;
-      let url = process.env.BASE_URL || `http://${host}:${PORT}`;
+      const apiBaseUrl = process.env.BASE_URL || `http://${host}:${PORT}`;
 
       // Wait until the server is actually accepting connections
       const ready = await waitForServerReady(parseInt(PORT, 10), host, 30000);
 
       if (!ready) {
         logWarning(
-          `Server did not become ready within 30s. Please visit ${url} manually.`,
+          `Server did not become ready within 30s. Please visit ${apiBaseUrl} manually.`,
         );
-      } else if (!cancelled) {
+      } else if (!cancelled && openBrowser) {
+        let url = await resolveBrowserBaseUrl(apiBaseUrl);
+
         // Append initial tab hash if specified
         if (initialTab) {
           url = `${url}#${initialTab}`;

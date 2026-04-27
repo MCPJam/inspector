@@ -33,6 +33,20 @@ Tool arguments can be inline JSON, `@path`, or `-` for stdin. The result include
   not enumerated.
 </Note>
 
+### Render a tool result in Inspector
+
+If `tools list` shows `_meta.ui.resourceUri`, deprecated `_meta["ui/resourceUri"]`, or `openai/outputTemplate` in `toolsMetadata`, the tool has interactive UI. Add `--ui` to execute it once and render the completed result in Inspector's App Builder:
+
+```bash
+mcpjam tools call --url https://your-server.com/mcp --access-token $TOKEN \
+  --tool-name create_view \
+  --tool-args @params.json \
+  --ui \
+  --quiet --format json
+```
+
+Without `--ui`, `tools call` returns the raw tool result. With `--ui`, it returns an envelope containing the raw `result` and `inspectorRender` evidence.
+
 For a local stdio server:
 
 ```bash
@@ -57,6 +71,8 @@ mcpjam resources list --url https://your-server.com/mcp --access-token $TOKEN
 mcpjam resources read --url https://your-server.com/mcp --access-token $TOKEN \
   --resource-uri "file:///docs/readme.md"
 ```
+
+Use `resources read --resource-uri ui://...` when you need to inspect raw widget HTML or other UI resources directly.
 
 ### List resource templates
 

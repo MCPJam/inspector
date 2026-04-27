@@ -37,7 +37,7 @@ npx -y @mcpjam/cli@latest --help
 |-------|---------|-------------|
 | [`server`](/cli/server-inspection) | Triage connectivity and capabilities | `probe`, `doctor`, `info`, `validate`, `ping`, `capabilities`, `export` |
 | [`oauth`](/cli/oauth-conformance) | Test OAuth flows and conformance | `conformance`, `conformance-suite`, `login`, `metadata`, `proxy` |
-| [`apps`](/cli/apps-conformance) | Validate MCP Apps metadata, debug app renders, and fetch widgets | `conformance`, `conformance-suite`, `debug`, `mcp-widget`, `chatgpt-widget` |
+| [`apps`](/cli/apps-conformance) | Validate MCP Apps metadata and resource wiring | `conformance`, `conformance-suite` |
 | [`inspector`](/cli/reference#inspector-commands) | Start, open, or stop the local Inspector from the CLI | `open`, `start`, `stop` |
 | [`tools`](/cli/tools-resources-prompts) | Exercise the tool surface | `list`, `call` |
 | [`resources`](/cli/tools-resources-prompts) | Read resources and templates | `list`, `read`, `templates` |
@@ -150,9 +150,9 @@ mcpjam tools call --url https://your-server.com/mcp --access-token $TOKEN \
 # 5. If the server exposes MCP Apps, validate the ui:// surface
 mcpjam apps conformance --url https://your-server.com/mcp --access-token $TOKEN
 
-# 6. Reproduce one MCP App tool result in Inspector's App Builder
-mcpjam apps debug --url https://your-server.com/mcp --access-token $TOKEN \
-  --tool-name my_app_tool --params @params.json --ui --quiet --format json
+# 6. Render one UI-capable tool result in Inspector's App Builder
+mcpjam tools call --url https://your-server.com/mcp --access-token $TOKEN \
+  --tool-name my_app_tool --tool-args @params.json --ui --quiet --format json
 ```
 
 ## What's next
@@ -160,6 +160,6 @@ mcpjam apps debug --url https://your-server.com/mcp --access-token $TOKEN \
 - [Server inspection](/cli/server-inspection) — probe, doctor, and diagnostics
 - [OAuth conformance](/cli/oauth-conformance) — test your OAuth implementation
 - [OAuth login](/cli/oauth-login) — authenticate and debug OAuth flows
-- [MCP Apps conformance](/cli/apps-conformance) — validate `_meta.ui.resourceUri`, debug App Builder rendering, and inspect `ui://` resources
+- [MCP Apps conformance](/cli/apps-conformance) — validate `_meta.ui.resourceUri` and `ui://` resource wiring
 - [Tools, resources & prompts](/cli/tools-resources-prompts) — exercise the connected surface
 - [Full command reference](/cli/reference) — every flag for every command
