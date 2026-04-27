@@ -35,7 +35,7 @@ describe("formatErrorMessage", () => {
     expect(result).toEqual({
       code: "mcpjam_rate_limit",
       message:
-        "Add your own API key under LLM Providers in Settings to continue now, or try again in 75 minutes.",
+        "Add your own API key in Settings > LLM Providers to keep chatting now, or try again in 1 hour 15 minutes.",
       isRetryable: false,
       isMCPJamPlatformError: true,
     });
@@ -52,7 +52,25 @@ describe("formatErrorMessage", () => {
     expect(result).toEqual({
       code: "mcpjam_rate_limit",
       message:
-        "Add your own API key under LLM Providers in Settings to continue now, or try again in 75 minutes.",
+        "Add your own API key in Settings > LLM Providers to keep chatting now, or try again in 1 hour 15 minutes.",
+      isRetryable: false,
+      isMCPJamPlatformError: true,
+    });
+  });
+
+  it("turns large minute counts into readable reset copy", () => {
+    const result = formatErrorMessage(
+      JSON.stringify({
+        message:
+          "Daily MCPJam model limit reached. Use BYOK or try again tomorrow.",
+        details: "Try again in 1390 minutes.",
+      }),
+    );
+
+    expect(result).toEqual({
+      code: "mcpjam_rate_limit",
+      message:
+        "Add your own API key in Settings > LLM Providers to keep chatting now, or try again tomorrow.",
       isRetryable: false,
       isMCPJamPlatformError: true,
     });
@@ -66,7 +84,7 @@ describe("formatErrorMessage", () => {
     expect(result).toEqual({
       code: "mcpjam_rate_limit",
       message:
-        "Add your own API key under LLM Providers in Settings to continue now, or try again tomorrow.",
+        "Add your own API key in Settings > LLM Providers to keep chatting now, or try again tomorrow.",
       isRetryable: false,
       isMCPJamPlatformError: true,
     });

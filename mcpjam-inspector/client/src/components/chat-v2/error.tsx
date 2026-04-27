@@ -49,7 +49,8 @@ export function ErrorBox({
   const [isErrorDetailsOpen, setIsErrorDetailsOpen] = useState(false);
   const errorDetailsJson = parseErrorDetails(errorDetails);
 
-  const isMCPJamModelLimit = code === "mcpjam_rate_limit";
+  const isMCPJamModelLimit =
+    code === "mcpjam_rate_limit" || /mcpjam[\w\s-]*model limit/i.test(message);
 
   // Platform and quota errors use warning styling to indicate recoverable state.
   const isPlatformError = isMCPJamPlatformError === true || isMCPJamModelLimit;
@@ -75,35 +76,42 @@ export function ErrorBox({
   const isAuthError = code === "auth_error";
 
   const errorLabel = isMCPJamModelLimit
-    ? "MCPJam model limit reached"
+    ? "Daily MCPJam model limit reached"
     : isPlatformError
-    ? "MCPJam platform issue"
-    : "An error occurred";
+      ? "MCPJam platform issue"
+      : "An error occurred";
   const errorPrefix = isMCPJamModelLimit ? `${errorLabel}.` : `${errorLabel}:`;
 
   return (
     <div
       className={cn("flex flex-col gap-3 border rounded p-4", containerClasses)}
     >
-      <div className="flex items-center gap-3">
+      <div className="flex items-start gap-3">
         <CircleAlert className={cn("h-6 w-6 flex-shrink-0", iconClasses)} />
-        <div className="flex-1">
-          <p className="text-sm leading-6">
-            {isAuthError ? (
-              message
-            ) : (
-              <>
-                <span className="font-medium">{errorPrefix}</span> {message}
-              </>
-            )}
-          </p>
+        <div className="min-w-0 flex-1">
+          {isMCPJamModelLimit && !isAuthError ? (
+            <>
+              <p className="text-sm font-medium leading-6">{errorLabel}</p>
+              <p className="text-sm leading-6 opacity-90">{message}</p>
+            </>
+          ) : (
+            <p className="text-sm leading-6">
+              {isAuthError ? (
+                message
+              ) : (
+                <>
+                  <span className="font-medium">{errorPrefix}</span> {message}
+                </>
+              )}
+            </p>
+          )}
           {isPlatformError && !isMCPJamModelLimit && (
             <p className="text-xs opacity-75 mt-0.5">
               This is a temporary issue on our end.
             </p>
           )}
         </div>
-        <div className="flex items-center gap-2 ml-auto flex-shrink-0">
+        <div className="ml-auto flex flex-shrink-0 flex-wrap items-center gap-2">
           {isRetryable && onRetry && (
             <Button
               type="button"
