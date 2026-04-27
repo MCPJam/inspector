@@ -342,6 +342,51 @@ test("successful command emits one allowlisted CLI event with CI tags", async ()
   assert.doesNotMatch(JSON.stringify(event), /sensitive-workflow/);
 });
 
+test("telemetry flush waits for async client captures", async () => {
+  const statePath = await createStatePath();
+  const events: CapturedEvent[] = [];
+  let flushCount = 0;
+
+  const run = await captureProcessOutput(() =>
+    main(
+      [
+        "node",
+        "mcpjam",
+        "--format",
+        "json",
+        "inspector",
+        "stop",
+        "--inspector-url",
+        "http://127.0.0.1:1",
+      ],
+      {
+        telemetry: {
+          statePath,
+          env: cleanTelemetryEnv(),
+          createId: () => UUID_A,
+          createClient: () => ({
+            capture(event) {
+              return new Promise<void>((resolve) => {
+                setTimeout(() => {
+                  events.push(event);
+                  resolve();
+                }, 25);
+              });
+            },
+            async flush() {
+              flushCount += 1;
+            },
+          }),
+        },
+      },
+    ),
+  );
+
+  assert.equal(run.result.exitCode, 0, run.stderr);
+  assert.equal(events.length, 1);
+  assert.equal(flushCount, 1);
+});
+
 test("non-CI command omits ci_name", async () => {
   const statePath = await createStatePath();
   const recorder = createRecordingClient();

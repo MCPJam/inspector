@@ -56,12 +56,14 @@ export interface TelemetryStatus {
   disableReason: TelemetryDisableReason | null;
 }
 
+export interface TelemetryEvent {
+  distinctId: string;
+  event: string;
+  properties: Record<string, unknown>;
+}
+
 export interface TelemetryClient {
-  capture(event: {
-    distinctId: string;
-    event: string;
-    properties: Record<string, unknown>;
-  }): void;
+  capture(event: TelemetryEvent): void | Promise<void>;
   flush(): Promise<void>;
 }
 
@@ -96,6 +98,7 @@ interface ActiveTelemetryRun {
   transport?: TelemetryTransport;
   shouldCapture: boolean;
   captured: boolean;
+  pendingCaptures: Promise<void>[];
   client?: TelemetryClient;
   fallbackInstallId?: string;
 }
@@ -184,6 +187,7 @@ export function initTelemetry(
     commandOptOut: false,
     shouldCapture: false,
     captured: false,
+    pendingCaptures: [],
   };
   activeRun = run;
 
@@ -210,7 +214,7 @@ export function initTelemetry(
 
       try {
         await withTimeout(
-          client.flush(),
+          flushClient(run, client),
           options.flushTimeoutMs ?? DEFAULT_FLUSH_TIMEOUT_MS,
         );
       } catch {
@@ -218,6 +222,18 @@ export function initTelemetry(
       }
     },
   };
+}
+
+async function flushClient(
+  run: ActiveTelemetryRun,
+  client: TelemetryClient,
+): Promise<void> {
+  const pendingCaptures = run.pendingCaptures.splice(0);
+  if (pendingCaptures.length > 0) {
+    await Promise.allSettled(pendingCaptures);
+  }
+
+  await client.flush();
 }
 
 export function captureCommandEvent(
@@ -282,11 +298,14 @@ export function captureCommandEvent(
     }
 
     const client = getOrCreateClient(run);
-    client.capture({
+    const pendingCapture = client.capture({
       distinctId,
       event: TELEMETRY_EVENT_NAME,
       properties,
     });
+    if (pendingCapture) {
+      run.pendingCaptures.push(pendingCapture.catch(() => {}));
+    }
   } catch {
     // Telemetry is best-effort and must never affect CLI behavior.
   }
@@ -349,10 +368,24 @@ function resolveInstallId(
 function getOrCreateClient(run: ActiveTelemetryRun): TelemetryClient {
   run.client ??=
     run.options.createClient?.() ??
-    (new PostHog(POSTHOG_KEY, {
-      host: POSTHOG_HOST,
-    }) as TelemetryClient);
+    new PostHogTelemetryClient(
+      new PostHog(POSTHOG_KEY, {
+        host: POSTHOG_HOST,
+      }),
+    );
   return run.client;
+}
+
+class PostHogTelemetryClient implements TelemetryClient {
+  constructor(private readonly client: PostHog) {}
+
+  capture(event: TelemetryEvent): Promise<void> {
+    return this.client.captureImmediate(event);
+  }
+
+  async flush(): Promise<void> {
+    await this.client.flush();
+  }
 }
 
 function writeDebugPayload(
