@@ -244,7 +244,7 @@ vi.mock("../connection/ServerConnectionCard", () => ({
       <button onClick={() => void onReconnect?.(server.name)}>
         Reconnect {server.name}
       </button>
-      {needsReconnect ? <span>Needs reconnect</span> : null}
+      {needsReconnect ? <span aria-label="Reconnect needed" /> : null}
       <div data-testid={`server-card-${server.name}`}>
         {server.name}:{server.connectionStatus}
       </div>
@@ -876,6 +876,7 @@ describe("ServersTab shared detail modal", () => {
     );
 
     expect(screen.queryByText("Needs reconnect")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Reconnect needed")).not.toBeInTheDocument();
 
     rerender(
       <ServersTab
@@ -911,7 +912,8 @@ describe("ServersTab shared detail modal", () => {
       />
     );
 
-    expect(screen.getByText("Needs reconnect")).toBeInTheDocument();
+    expect(screen.queryByText("Needs reconnect")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Reconnect needed")).toBeInTheDocument();
   });
 
   it("does not surface reconnect warnings when server capability overrides already match initialize payload", () => {
@@ -958,6 +960,7 @@ describe("ServersTab shared detail modal", () => {
     );
 
     expect(screen.queryByText("Needs reconnect")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Reconnect needed")).not.toBeInTheDocument();
   });
 
   it("renders Quick Connect module helper copy and Browse Registry in the section header", () => {

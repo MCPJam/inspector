@@ -16,6 +16,11 @@ import {
   DropdownMenuTrigger,
 } from "@mcpjam/design-system/dropdown-menu";
 import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@mcpjam/design-system/tooltip";
+import {
   MoreVertical,
   Link2Off,
   RefreshCw,
@@ -447,11 +452,6 @@ export function ServerConnectionCard({
                 <h3 className="truncate text-sm font-semibold text-foreground">
                   {server.name}
                 </h3>
-                {needsReconnect ? (
-                  <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-300">
-                    Needs reconnect
-                  </span>
-                ) : null}
                 {version && (
                   <span className="text-xs text-muted-foreground">
                     v{version}
@@ -495,6 +495,20 @@ export function ServerConnectionCard({
                       ? `${connectionStatusLabel} (${server.retryCount})`
                       : connectionStatusLabel}
                   </span>
+                  {needsReconnect ? (
+                    <Tooltip>
+                      <TooltipTrigger
+                        type="button"
+                        aria-label="Reconnect needed"
+                        className="inline-flex h-4 w-4 items-center justify-center rounded-full text-amber-600 outline-none transition-colors hover:text-amber-700 focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:ring-offset-2 focus-visible:ring-offset-background dark:text-amber-300 dark:hover:text-amber-200"
+                      >
+                        <RefreshCw className="h-3 w-3" />
+                      </TooltipTrigger>
+                      <TooltipContent side="top" variant="muted">
+                        Reconnect to apply the current workspace client profile.
+                      </TooltipContent>
+                    </Tooltip>
+                  ) : null}
                 </span>
 
                 <Switch
