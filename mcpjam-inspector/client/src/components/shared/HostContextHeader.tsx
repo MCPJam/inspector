@@ -21,6 +21,7 @@ import {
   Moon,
   MousePointer2,
   Palette,
+  Settings2,
   Shield,
   Sun,
 } from "lucide-react";
@@ -37,9 +38,7 @@ import {
 } from "@mcpjam/design-system/tooltip";
 import type { WorkspaceHostContextDraft } from "@/lib/client-config";
 import {
-  extractEffectiveHostDisplayMode,
   extractHostDeviceCapabilities,
-  extractHostDisplayModes,
   extractHostLocale,
   extractHostTheme,
   extractHostTimeZone,
@@ -69,12 +68,6 @@ export { PRESET_DEVICE_CONFIGS } from "@/components/shared/host-context-constant
 const CUSTOM_DEVICE_BASE = {
   label: "Custom",
 };
-
-const DISPLAY_MODE_LABELS = {
-  inline: "Inline",
-  pip: "PiP",
-  fullscreen: "Fullscreen",
-} as const;
 
 export interface HostContextHeaderProps {
   activeWorkspaceId: string | null;
@@ -169,8 +162,6 @@ export function HostContextHeader({
   const timeZone = extractHostTimeZone(draftHostContext, fallbackTimeZone);
   const capabilities = extractHostDeviceCapabilities(draftHostContext);
   const effectiveThemeMode = extractHostTheme(draftHostContext) ?? themeMode;
-  const displayMode = extractEffectiveHostDisplayMode(draftHostContext);
-  const availableDisplayModes = extractHostDisplayModes(draftHostContext);
 
   const handleCapabilityToggle = useCallback(
     (key: "hover" | "touch") => {
@@ -190,8 +181,8 @@ export function HostContextHeader({
   }, [effectiveThemeMode, patchHostContext]);
 
   return (
-    <div className={className}>
-      <div className="flex items-center gap-4">
+    <div className={cn("min-w-0 max-w-full", className)}>
+      <div className="flex min-w-0 max-w-full items-center gap-3 overflow-x-auto overflow-y-hidden overscroll-x-contain [scrollbar-width:none] @max-[860px]/playground-header:gap-2 [&::-webkit-scrollbar]:hidden">
         <Popover open={devicePopoverOpen} onOpenChange={setDevicePopoverOpen}>
           <Tooltip>
             <TooltipTrigger asChild>
@@ -199,11 +190,11 @@ export function HostContextHeader({
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="h-7 gap-1.5 border bg-background px-2 text-xs shadow-xs"
+                  className="h-7 shrink-0 gap-1.5 border bg-background px-2 text-xs shadow-xs"
                 >
                   {DeviceIcon ? <DeviceIcon className="h-3.5 w-3.5" /> : null}
-                  <span>{deviceConfig.label}</span>
-                  <span className="text-[10px] text-muted-foreground">
+                  <span className="whitespace-nowrap">{deviceConfig.label}</span>
+                  <span className="text-[10px] text-muted-foreground @max-[1020px]/playground-header:hidden">
                     {deviceConfig.width}x{deviceConfig.height}
                   </span>
                 </Button>
@@ -233,10 +224,12 @@ export function HostContextHeader({
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="h-7 gap-1.5 border bg-background px-2 text-xs shadow-xs"
+                  className="h-7 shrink-0 gap-1.5 border bg-background px-2 text-xs shadow-xs"
                 >
                   <Globe className="h-3.5 w-3.5" />
-                  <span>{locale}</span>
+                  <span className="whitespace-nowrap @max-[800px]/playground-header:sr-only">
+                    {locale}
+                  </span>
                 </Button>
               </PopoverTrigger>
             </TooltipTrigger>
@@ -260,10 +253,10 @@ export function HostContextHeader({
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="h-7 gap-1.5 border bg-background px-2 text-xs shadow-xs"
+                  className="h-7 shrink-0 gap-1.5 border bg-background px-2 text-xs shadow-xs"
                 >
                   <Clock className="h-3.5 w-3.5" />
-                  <span>
+                  <span className="whitespace-nowrap @max-[920px]/playground-header:sr-only">
                     {TIMEZONE_OPTIONS.find((option) => option.zone === timeZone)
                       ?.label || timeZone}
                   </span>
@@ -283,23 +276,6 @@ export function HostContextHeader({
           </PopoverContent>
         </Popover>
 
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <div className="flex items-center gap-1 rounded-md border bg-background px-2 py-1 shadow-xs">
-              <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                Display
-              </span>
-              <span className="text-xs">{DISPLAY_MODE_LABELS[displayMode]}</span>
-            </div>
-          </TooltipTrigger>
-          <TooltipContent>
-            Available:{" "}
-            {availableDisplayModes
-              .map((mode) => DISPLAY_MODE_LABELS[mode])
-              .join(", ")}
-          </TooltipContent>
-        </Tooltip>
-
         <Popover open={cspPopoverOpen} onOpenChange={setCspPopoverOpen}>
           <Tooltip>
             <TooltipTrigger asChild>
@@ -308,7 +284,7 @@ export function HostContextHeader({
                   variant="ghost"
                   size="sm"
                   className={cn(
-                    "h-7 gap-1.5 border bg-background px-2 text-xs shadow-xs",
+                    "h-7 shrink-0 gap-1.5 border bg-background px-2 text-xs shadow-xs",
                     shouldBlink &&
                       activeCspMode === "widget-declared" &&
                       "animate-csp-alert-blink",
@@ -316,7 +292,9 @@ export function HostContextHeader({
                   onAnimationEnd={() => setShouldBlink(false)}
                 >
                   <Shield className="h-3.5 w-3.5" />
-                  <span>{activeCspMode === "permissive" ? "Permissive" : "Strict"}</span>
+                  <span className="whitespace-nowrap @max-[760px]/playground-header:sr-only">
+                    {activeCspMode === "permissive" ? "Permissive" : "Strict"}
+                  </span>
                 </Button>
               </PopoverTrigger>
             </TooltipTrigger>
@@ -333,7 +311,7 @@ export function HostContextHeader({
           </PopoverContent>
         </Popover>
 
-        <div className="flex items-center gap-0.5 rounded-md border bg-background p-0.5 shadow-xs">
+        <div className="flex shrink-0 items-center gap-0.5 rounded-md border bg-background p-0.5 shadow-xs">
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
@@ -375,7 +353,7 @@ export function HostContextHeader({
 
         <Tooltip>
           <TooltipTrigger asChild>
-            <div className="rounded-md border bg-background p-0.5 shadow-xs">
+            <div className="shrink-0 rounded-md border bg-background p-0.5 shadow-xs">
               <SafeAreaEditor />
             </div>
           </TooltipTrigger>
@@ -389,13 +367,16 @@ export function HostContextHeader({
             <Button
               variant="ghost"
               size="sm"
-              className="h-7 gap-1.5 border bg-background px-2 text-xs shadow-xs"
+              className="h-7 shrink-0 gap-1.5 border bg-background px-2 text-xs shadow-xs"
               data-testid="host-context-trigger"
               onClick={() => setHostContextDialogOpen(true)}
             >
-              <span>Host Context</span>
+              <Settings2 className="h-3.5 w-3.5" />
+              <span className="whitespace-nowrap @max-[700px]/playground-header:sr-only">
+                Host Context
+              </span>
               {hostContextDirty ? (
-                <span className="text-[10px] text-amber-600 dark:text-amber-400">
+                <span className="whitespace-nowrap text-[10px] text-amber-600 @max-[700px]/playground-header:sr-only dark:text-amber-400">
                   Unsaved
                 </span>
               ) : null}
@@ -411,8 +392,8 @@ export function HostContextHeader({
 
         <Tooltip>
           <TooltipTrigger asChild>
-            <div className="flex items-center gap-0.5 rounded-md border bg-background p-0.5 shadow-xs">
-              <div className="flex h-6 w-6 items-center justify-center">
+            <div className="flex shrink-0 items-center gap-0.5 rounded-md border bg-background p-0.5 shadow-xs">
+              <div className="flex h-6 w-6 items-center justify-center @max-[820px]/playground-header:hidden">
                 <Palette className="h-3.5 w-3.5 text-muted-foreground" />
               </div>
               {listHostStyles().map((host) => (
@@ -443,7 +424,7 @@ export function HostContextHeader({
                 size="icon"
                 onClick={handleThemeChange}
                 data-testid="host-context-theme-toggle"
-                className="h-7 w-7 border bg-background shadow-xs"
+                className="h-7 w-7 shrink-0 border bg-background shadow-xs"
               >
                 {effectiveThemeMode === "dark" ? (
                   <Sun className="h-3.5 w-3.5" />
