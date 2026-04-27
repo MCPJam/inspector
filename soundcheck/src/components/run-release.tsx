@@ -217,7 +217,7 @@ export function RunRelease() {
             checked={skipVerify}
             onChange={changeSkipVerify}
             disabled={!runsRelease}
-            description="Recovery-only: skip npm run verify; staging and Changesets gates still run."
+            description="Recovery-only: skips typechecks, tests, and inspector build; staging and Changesets gates still run."
           />
         </fieldset>
 
