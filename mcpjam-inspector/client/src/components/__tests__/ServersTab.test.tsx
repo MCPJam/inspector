@@ -122,7 +122,6 @@ function createDualTypeCatalogCard(): EnrichedRegistryCatalogCard {
 let mockIsAuthenticated = false;
 let mockCatalogCards: EnrichedRegistryCatalogCard[] = [];
 let mockRegistryLoading = false;
-let mockClientConfigFlagEnabled: boolean | undefined = false;
 let mockJsonRpcPanelVisible = false;
 const mockConnectRegistry = vi.fn();
 const mockLoggerView = vi.fn();
@@ -133,8 +132,7 @@ vi.mock("posthog-js/react", () => ({
   usePostHog: () => ({
     capture: vi.fn(),
   }),
-  useFeatureFlagEnabled: (flag: string) =>
-    flag === "client-config-enabled" ? mockClientConfigFlagEnabled : false,
+  useFeatureFlagEnabled: () => false,
 }));
 
 vi.mock("../client-config/ClientConfigTab", () => ({
@@ -463,7 +461,6 @@ describe("ServersTab shared detail modal", () => {
     mockIsAuthenticated = false;
     mockCatalogCards = [];
     mockRegistryLoading = false;
-    mockClientConfigFlagEnabled = false;
     mockJsonRpcPanelVisible = false;
     mockLoggerView.mockReset();
     mockUseWorkspaceBillingGate.mockImplementation(
@@ -1419,19 +1416,7 @@ describe("ServersTab shared detail modal", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("hides the Connection Settings button when the flag is disabled", () => {
-    mockClientConfigFlagEnabled = false;
-
-    render(<ServersTab {...defaultProps} />);
-
-    expect(
-      screen.queryByRole("button", { name: /connection settings/i })
-    ).not.toBeInTheDocument();
-  });
-
-  it("shows the Connection Settings button and opens the dialog when the flag is enabled", () => {
-    mockClientConfigFlagEnabled = true;
-
+  it("shows the Connection Settings button and opens the dialog", () => {
     render(<ServersTab {...defaultProps} />);
 
     const button = screen.getByRole("button", { name: /connection settings/i });
@@ -1448,8 +1433,6 @@ describe("ServersTab shared detail modal", () => {
   });
 
   it("hides the Connection Settings button when no save handler is provided", () => {
-    mockClientConfigFlagEnabled = true;
-
     render(<ServersTab {...defaultProps} onSaveClientConfig={undefined} />);
 
     expect(

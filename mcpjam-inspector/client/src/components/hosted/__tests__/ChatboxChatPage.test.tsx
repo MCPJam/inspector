@@ -1,4 +1,4 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ChatboxChatPage } from "../ChatboxChatPage";
@@ -498,14 +498,16 @@ describe("ChatboxChatPage", () => {
         name: "Sign in",
       })
     ).toBeInTheDocument();
-    expect(mockPosthogCapture).toHaveBeenCalledWith(
-      "interactive_signin_required",
-      expect.objectContaining({
-        surface: "chatbox",
-        auth_mode: "guest",
-        status: "required",
-        error_kind: "guest_blocked",
-      })
+    await waitFor(() =>
+      expect(mockPosthogCapture).toHaveBeenCalledWith(
+        "interactive_signin_required",
+        expect.objectContaining({
+          surface: "chatbox",
+          auth_mode: "guest",
+          status: "required",
+          error_kind: "guest_blocked",
+        })
+      )
     );
   });
 
