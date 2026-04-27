@@ -5,6 +5,10 @@ import {
   type OutputFormat,
   usageError,
 } from "./output.js";
+import {
+  assertNoCredentialsFileAuthConflicts,
+  resolveCredentialsFileAuth,
+} from "./credentials-file.js";
 
 export interface GlobalOptions {
   format: OutputFormat;
@@ -22,6 +26,7 @@ export interface SharedServerTargetOptions {
   refreshToken?: string;
   clientId?: string;
   clientSecret?: string;
+  credentialsFile?: string;
   header?: string[];
   clientCapabilities?: string | Record<string, unknown>;
   command?: string;
@@ -60,6 +65,10 @@ export function addSharedServerOptions(command: Command): Command {
     .option(
       "--client-secret <secret>",
       "OAuth client secret used with --refresh-token",
+    )
+    .option(
+      "--credentials-file <path>",
+      "Load OAuth credentials from a file created by oauth login --credentials-out",
     )
     .option(
       "--header <header>",
@@ -293,10 +302,17 @@ export function parseServerConfig(
     }
 
     const headers = parseHeadersOption(options.header);
-    const accessToken = resolveHttpAccessToken(options);
-    const refreshToken = options.refreshToken?.trim();
-    const clientId = options.clientId?.trim();
-    const clientSecret = options.clientSecret?.trim();
+    assertNoCredentialsFileAuthConflicts(options);
+    const fileCredentials = options.credentialsFile
+      ? resolveCredentialsFileAuth(options.credentialsFile, url)
+      : undefined;
+    const accessToken =
+      resolveHttpAccessToken(options) ?? fileCredentials?.accessToken;
+    const refreshToken =
+      options.refreshToken?.trim() ?? fileCredentials?.refreshToken;
+    const clientId = options.clientId?.trim() ?? fileCredentials?.clientId;
+    const clientSecret =
+      options.clientSecret?.trim() ?? fileCredentials?.clientSecret;
 
     if (refreshToken && accessToken) {
       throw usageError(
@@ -336,10 +352,11 @@ export function parseServerConfig(
     options.refreshToken ||
     options.clientId ||
     options.clientSecret ||
+    options.credentialsFile ||
     (options.header?.length ?? 0) > 0
   ) {
     throw usageError(
-      "--access-token, --oauth-access-token, --refresh-token, --client-id, --client-secret, and --header can only be used together with --url.",
+      "--access-token, --oauth-access-token, --refresh-token, --client-id, --client-secret, --credentials-file, and --header can only be used together with --url.",
     );
   }
 

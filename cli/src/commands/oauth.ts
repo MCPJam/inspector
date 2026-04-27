@@ -38,6 +38,11 @@ import {
   writeCommandDebugArtifact,
 } from "../lib/debug-artifact.js";
 import {
+  hasCredentialsToSave,
+  redactCredentialsFromResult,
+  writeCredentialsFile,
+} from "../lib/credentials-file.js";
+import {
   createCliRpcLogCollector,
 } from "../lib/rpc-logs.js";
 import { summarizeServerDoctorTarget } from "../lib/server-doctor.js";
@@ -81,6 +86,7 @@ export interface OAuthCommandOptions {
   verifyCallTool?: string;
   conformanceChecks?: boolean;
   printUrl?: boolean;
+  credentialsOut?: string;
 }
 
 interface OAuthProxyCommandOptions {
@@ -143,6 +149,10 @@ export function registerOAuthCommands(program: Command): void {
     .option(
       "--debug-out <path>",
       "Write a structured debug artifact to a file",
+    )
+    .option(
+      "--credentials-out <path>",
+      "Save OAuth credentials to a file instead of printing them",
     )
     .action(async (options, command) => {
       const format = getStructuredOAuthFormat(command);
@@ -226,7 +236,17 @@ export function registerOAuthCommands(program: Command): void {
         throw cliError("INTERNAL_ERROR", "OAuth login did not return a result.");
       }
 
-      writeResult(result, format);
+      if (options.credentialsOut) {
+        const credentialsFilePath = hasCredentialsToSave(result)
+          ? await writeCredentialsFile(options.credentialsOut as string, result)
+          : undefined;
+        writeResult(
+          redactCredentialsFromResult(result, credentialsFilePath),
+          format,
+        );
+      } else {
+        writeResult(result, format);
+      }
       if (!result.completed) {
         setProcessExitCode(1);
       }
