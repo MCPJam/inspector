@@ -35,6 +35,7 @@ import {
 } from "../lib/oauth-output.js";
 import {
   buildCommandArtifactError,
+  type DebugArtifactOutcome,
   writeCommandDebugArtifact,
 } from "../lib/debug-artifact.js";
 import {
@@ -68,6 +69,43 @@ function getStructuredOAuthFormat(command: Command): "json" | "human" {
 
 function writeOAuthOutput(output: string): void {
   process.stdout.write(output.endsWith("\n") ? output : `${output}\n`);
+}
+
+export function buildOAuthLoginDebugOutcome(options: {
+  commandError?: unknown;
+  result?: OAuthLoginResult;
+  credentialsFileError?: unknown;
+}): DebugArtifactOutcome {
+  if (options.commandError !== undefined) {
+    return {
+      status: "error",
+      error: options.commandError,
+    };
+  }
+
+  if (options.credentialsFileError !== undefined) {
+    return {
+      status: "error",
+      result: options.result,
+      error: options.credentialsFileError,
+    };
+  }
+
+  if (options.result?.completed) {
+    return {
+      status: "success",
+      result: options.result,
+    };
+  }
+
+  return {
+    status: "error",
+    result: options.result,
+    error: buildCommandArtifactError(
+      "OAUTH_LOGIN_INCOMPLETE",
+      options.result?.error?.message ?? "OAuth login did not complete.",
+    ),
+  };
 }
 
 export interface OAuthCommandOptions {
@@ -191,6 +229,24 @@ export function registerOAuthCommands(program: Command): void {
         snapshotConfig,
       );
 
+      let credentialsFilePath: string | undefined;
+      let credentialsFileError: unknown;
+      if (
+        commandError === undefined &&
+        result &&
+        options.credentialsOut &&
+        hasCredentialsToSave(result)
+      ) {
+        try {
+          credentialsFilePath = await writeCredentialsFile(
+            options.credentialsOut as string,
+            result,
+          );
+        } catch (error) {
+          credentialsFileError = error;
+        }
+      }
+
       await writeCommandDebugArtifact({
         outputPath: options.debugOut as string | undefined,
         format,
@@ -199,24 +255,11 @@ export function registerOAuthCommands(program: Command): void {
           options as OAuthCommandOptions,
         ),
         target,
-        outcome: commandError
-          ? {
-              status: "error",
-              error: commandError,
-            }
-          : result?.completed
-            ? {
-                status: "success",
-                result,
-              }
-            : {
-                status: "error",
-                result,
-                error: buildCommandArtifactError(
-                  "OAUTH_LOGIN_INCOMPLETE",
-                  result?.error?.message ?? "OAuth login did not complete.",
-                ),
-              },
+        outcome: buildOAuthLoginDebugOutcome({
+          commandError,
+          result,
+          credentialsFileError,
+        }),
         snapshot: options.debugOut
           ? {
               input: {
@@ -237,18 +280,6 @@ export function registerOAuthCommands(program: Command): void {
       }
 
       if (options.credentialsOut) {
-        let credentialsFilePath: string | undefined;
-        let credentialsFileError: unknown;
-        if (hasCredentialsToSave(result)) {
-          try {
-            credentialsFilePath = await writeCredentialsFile(
-              options.credentialsOut as string,
-              result,
-            );
-          } catch (error) {
-            credentialsFileError = error;
-          }
-        }
         writeResult(
           redactCredentialsFromResult(result, credentialsFilePath),
           format,

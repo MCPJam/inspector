@@ -309,10 +309,13 @@ export function parseServerConfig(
     const accessToken =
       resolveHttpAccessToken(options) ?? fileCredentials?.accessToken;
     const refreshToken =
-      options.refreshToken?.trim() ?? fileCredentials?.refreshToken;
-    const clientId = options.clientId?.trim() ?? fileCredentials?.clientId;
+      normalizeOptionalAuthValue(options.refreshToken) ??
+      fileCredentials?.refreshToken;
+    const clientId =
+      normalizeOptionalAuthValue(options.clientId) ?? fileCredentials?.clientId;
     const clientSecret =
-      options.clientSecret?.trim() ?? fileCredentials?.clientSecret;
+      normalizeOptionalAuthValue(options.clientSecret) ??
+      fileCredentials?.clientSecret;
 
     if (refreshToken && accessToken) {
       throw usageError(
@@ -519,8 +522,8 @@ function resolveTransportOption(
 export function resolveHttpAccessToken(
   options: Pick<SharedServerTargetOptions, "accessToken" | "oauthAccessToken">,
 ): string | undefined {
-  const accessToken = options.accessToken?.trim();
-  const oauthAccessToken = options.oauthAccessToken?.trim();
+  const accessToken = normalizeOptionalAuthValue(options.accessToken);
+  const oauthAccessToken = normalizeOptionalAuthValue(options.oauthAccessToken);
 
   if (accessToken && oauthAccessToken && accessToken !== oauthAccessToken) {
     throw usageError(
@@ -529,4 +532,11 @@ export function resolveHttpAccessToken(
   }
 
   return accessToken ?? oauthAccessToken;
+}
+
+function normalizeOptionalAuthValue(
+  value: string | undefined,
+): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : undefined;
 }

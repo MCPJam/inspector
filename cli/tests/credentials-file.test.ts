@@ -85,6 +85,41 @@ test("writeCredentialsFile writes versioned JSON with secret-safe permissions", 
   });
 });
 
+test("writeCredentialsFile validates generated contents before writing", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "mcpjam-creds-test-"));
+
+  const missingClientId = createOAuthLoginResult();
+  delete (missingClientId.credentials as { accessToken?: string }).accessToken;
+  delete (missingClientId.credentials as { clientId?: string }).clientId;
+
+  await assert.rejects(
+    () =>
+      writeCredentialsFile(
+        path.join(directory, "missing-client-id.json"),
+        missingClientId,
+        NOW,
+      ),
+    (error) =>
+      error instanceof CliError &&
+      error.message.includes("with refreshToken requires clientId"),
+  );
+
+  const invalidServerUrl = createOAuthLoginResult();
+  invalidServerUrl.serverUrl = "file:///tmp/mcp";
+
+  await assert.rejects(
+    () =>
+      writeCredentialsFile(
+        path.join(directory, "invalid-server-url.json"),
+        invalidServerUrl,
+        NOW,
+      ),
+    (error) =>
+      error instanceof CliError &&
+      error.message.includes("serverUrl must use http or https"),
+  );
+});
+
 test("readCredentialsFile validates required shape", async () => {
   const validPath = await writeCredentialsJson({
     version: 1,

@@ -112,6 +112,45 @@ test("parseServerConfig falls back to refresh-token auth for expired credentials
   assert.equal(config.clientSecret, "file-client-secret");
 });
 
+test("parseServerConfig ignores blank explicit auth when loading credentials file", async () => {
+  const accessCredentialsFile = await writeCredentialsJson({
+    version: 1,
+    serverUrl: "https://example.com/mcp",
+    accessToken: "file-access-token",
+  });
+
+  const accessConfig = parseServerConfig({
+    url: "https://example.com/mcp",
+    credentialsFile: accessCredentialsFile,
+    accessToken: " ",
+    oauthAccessToken: "\t",
+  });
+
+  assert.equal("url" in accessConfig, true);
+  assert.equal(accessConfig.accessToken, "file-access-token");
+
+  const refreshCredentialsFile = await writeCredentialsJson({
+    version: 1,
+    serverUrl: "https://example.com/mcp",
+    refreshToken: "file-refresh-token",
+    clientId: "file-client-id",
+    clientSecret: "file-client-secret",
+  });
+
+  const refreshConfig = parseServerConfig({
+    url: "https://example.com/mcp",
+    credentialsFile: refreshCredentialsFile,
+    refreshToken: " ",
+    clientId: "\t",
+    clientSecret: "",
+  });
+
+  assert.equal("url" in refreshConfig, true);
+  assert.equal(refreshConfig.refreshToken, "file-refresh-token");
+  assert.equal(refreshConfig.clientId, "file-client-id");
+  assert.equal(refreshConfig.clientSecret, "file-client-secret");
+});
+
 test("parseServerConfig rejects credentials-file auth conflicts and mismatches", async () => {
   const credentialsFile = await writeCredentialsJson({
     version: 1,

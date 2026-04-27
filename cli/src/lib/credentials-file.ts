@@ -40,8 +40,11 @@ export async function writeCredentialsFile(
   result: OAuthLoginResult,
   now = new Date(),
 ): Promise<string> {
-  const contents = buildCredentialsFileContents(result, now);
   const resolvedPath = path.resolve(process.cwd(), outputPath);
+  const contents = validateCredentialsFileContents(
+    { ...buildCredentialsFileContents(result, now) },
+    resolvedPath,
+  );
   const outputDirectory = path.dirname(resolvedPath);
   const temporaryPath = path.join(
     outputDirectory,
