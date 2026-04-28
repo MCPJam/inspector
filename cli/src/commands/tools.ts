@@ -18,6 +18,7 @@ import {
 import { parseReporterFormat, writeReporterResult } from "../lib/reporting.js";
 import { createCliRpcLogCollector } from "../lib/rpc-logs.js";
 import { withRpcLogsIfRequested } from "../lib/rpc-helpers.js";
+import { normalizeInspectorFrontendUrl } from "../lib/inspector-api.js";
 import { listToolsWithMetadata } from "../lib/server-ops.js";
 import { summarizeServerDoctorTarget } from "../lib/server-doctor.js";
 import {
@@ -53,6 +54,7 @@ interface ToolsCallOptions extends SharedServerTargetOptions {
   open?: boolean;
   attachOnly?: boolean;
   inspectorUrl?: string;
+  frontendUrl?: string;
   serverName?: string;
   protocol?: string;
   device?: string;
@@ -146,6 +148,10 @@ export function registerToolsCommands(program: Command): void {
       )
       .option("--inspector-url <url>", "Local Inspector base URL (with --ui)")
       .option(
+        "--frontend-url <url>",
+        "Inspector frontend URL (with --ui; overrides health-advertised frontend and skips discovery)",
+      )
+      .option(
         "--server-name <name>",
         "Server name inside Inspector (with --ui)",
       )
@@ -219,6 +225,9 @@ export function registerToolsCommands(program: Command): void {
           timeZone: trimOptional(options.timeZone),
         }
       : undefined;
+    const frontendUrl = options.ui
+      ? parseInspectorFrontendUrl(options.frontendUrl)
+      : undefined;
 
     let result: unknown;
     let commandError: unknown;
@@ -291,15 +300,21 @@ export function registerToolsCommands(program: Command): void {
           ? options.serverName.trim()
           : buildInspectorServerName(options);
       const openBrowser = resolveInspectorOpenBrowser(options, globalOptions);
+      const skipDiscovery = resolveInspectorSkipDiscovery(
+        options,
+        globalOptions,
+      );
       let uiResult: Record<string, unknown>;
 
       try {
         uiResult = await runUiRender({
           baseUrl: options.inspectorUrl,
           config,
+          frontendUrl,
           openBrowser,
           params,
           renderContext: renderContext!,
+          skipDiscovery,
           serverName,
           startIfNeeded: resolveInspectorStartIfNeeded(options),
           timeoutMs: globalOptions.timeout,
@@ -418,6 +433,42 @@ function resolveInspectorOpenBrowser(
     return options.open;
   }
   return globalOptions.format === "human" && !globalOptions.quiet;
+}
+
+function parseInspectorFrontendUrl(
+  value: string | undefined,
+): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  const frontendUrl = normalizeInspectorFrontendUrl(value);
+  if (!frontendUrl) {
+    throw usageError(`Invalid --frontend-url "${value}".`);
+  }
+  return frontendUrl;
+}
+
+export function resolveInspectorSkipDiscovery(
+  options: Pick<ToolsCallOptions, "attachOnly" | "frontendUrl" | "open">,
+  globalOptions: GlobalOptions,
+): boolean {
+  if (typeof options.frontendUrl === "string" && options.frontendUrl.trim()) {
+    return true;
+  }
+  if (options.attachOnly) {
+    return true;
+  }
+  if (
+    (globalOptions.format === "json" || globalOptions.quiet) &&
+    options.open !== true
+  ) {
+    return true;
+  }
+  if (options.open === true) {
+    return false;
+  }
+  return false;
 }
 
 export function resolveInspectorStartIfNeeded(options: {

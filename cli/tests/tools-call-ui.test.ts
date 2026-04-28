@@ -7,7 +7,10 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import type { AddressInfo } from "node:net";
-import { resolveInspectorStartIfNeeded } from "../src/commands/tools.js";
+import {
+  resolveInspectorSkipDiscovery,
+  resolveInspectorStartIfNeeded,
+} from "../src/commands/tools.js";
 import { buildInspectorServerName } from "../src/lib/inspector-render.js";
 
 const CLI_DIR = process.cwd().endsWith(`${path.sep}cli`)
@@ -93,7 +96,9 @@ async function readJsonBody(
 }
 
 async function startMockServer(options: {
+  frontendUrl?: string;
   hasActiveClient?: boolean;
+  serveFrontend?: boolean;
   toolResult?: unknown;
   toolRpcError?: { code: number; message: string };
   failRender?: boolean;
@@ -105,6 +110,12 @@ async function startMockServer(options: {
 
   const server = http.createServer(async (request, response) => {
     if (request.method === "GET" && request.url === "/") {
+      requests.push({ method: request.method, url: request.url });
+      if (options.serveFrontend === false) {
+        response.writeHead(404);
+        response.end();
+        return;
+      }
       response.writeHead(200, { "Content-Type": "text/html" });
       response.end(INSPECTOR_FRONTEND_HTML);
       return;
@@ -116,7 +127,7 @@ async function startMockServer(options: {
         JSON.stringify({
           status: "ok",
           hasActiveClient: options.hasActiveClient ?? true,
-          frontend: `http://${request.headers.host}/`,
+          frontend: options.frontendUrl ?? `http://${request.headers.host}/`,
         }),
       );
       return;
@@ -245,6 +256,59 @@ async function startMockServer(options: {
   };
 }
 
+async function startFrontendServerOnAvailablePort(ports: number[]) {
+  let lastError: unknown;
+
+  for (const port of ports) {
+    let rootRequests = 0;
+    const server = http.createServer((request, response) => {
+      if (request.method === "GET" && request.url === "/") {
+        rootRequests += 1;
+        response.writeHead(200, { "Content-Type": "text/html" });
+        response.end(INSPECTOR_FRONTEND_HTML);
+        return;
+      }
+
+      response.writeHead(404);
+      response.end();
+    });
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(port, "127.0.0.1", () => {
+          server.off("error", reject);
+          resolve();
+        });
+      });
+
+      return {
+        get rootRequests() {
+          return rootRequests;
+        },
+        url: `http://127.0.0.1:${port}`,
+        stop: async () => {
+          await new Promise<void>((resolve, reject) => {
+            server.close((error) => (error ? reject(error) : resolve()));
+          });
+        },
+      };
+    } catch (error) {
+      lastError = error;
+      await new Promise<void>((resolve) => {
+        server.close(() => resolve());
+      });
+      if ((error as NodeJS.ErrnoException).code !== "EADDRINUSE") {
+        throw error;
+      }
+    }
+  }
+
+  throw lastError instanceof Error
+    ? lastError
+    : new Error("No available port for frontend test server.");
+}
+
 test("tools call --ui executes once and sends the raw result to Inspector", async () => {
   const toolResult = {
     content: [{ type: "text", text: "view created" }],
@@ -338,6 +402,58 @@ test("tools call --ui executes once and sends the raw result to Inspector", asyn
   }
 });
 
+test("tools call --ui --frontend-url uses the explicit browser URL without probing frontend candidates", async () => {
+  const toolResult = { content: [{ type: "text", text: "view created" }] };
+  const server = await startMockServer({ toolResult });
+
+  try {
+    const explicitFrontendUrl = `http://localhost:${server.port}/inspector/?debug=1#old`;
+    const result = await runCli([
+      "--format",
+      "json",
+      "tools",
+      "call",
+      "--ui",
+      "--frontend-url",
+      explicitFrontendUrl,
+      "--inspector-url",
+      `http://127.0.0.1:${server.port}`,
+      "--url",
+      `http://127.0.0.1:${server.port}/mcp`,
+      "--tool-name",
+      "create_view",
+      "--tool-args",
+      "{}",
+    ]);
+
+    assert.equal(result.exitCode, 0, result.stderr);
+    const payload = JSON.parse(lastJsonLine(result.stdout)) as Record<
+      string,
+      any
+    >;
+    assert.equal(payload.success, true);
+    assert.equal(
+      payload.inspectorBrowserUrl,
+      `http://localhost:${server.port}/inspector/#app-builder`,
+    );
+    assert.equal(
+      payload.inspectorFrontendUrl,
+      `http://localhost:${server.port}/inspector`,
+    );
+    assert.equal(
+      payload.inspectorRender.browserUrl,
+      `http://localhost:${server.port}/inspector/#app-builder`,
+    );
+    assert.equal(payload.inspectorRender.browserOpenRequested, false);
+    assert.equal(
+      server.requests.some((entry) => entry.method === "GET" && entry.url === "/"),
+      false,
+    );
+  } finally {
+    await server.stop();
+  }
+});
+
 test("tools call without --ui preserves raw output and does not contact Inspector", async () => {
   const toolResult = { content: [{ type: "text", text: "plain result" }] };
   const server = await startMockServer({ toolResult });
@@ -410,6 +526,56 @@ test("tools call --ui in JSON mode does not open or wait without an active Inspe
   }
 });
 
+test("tools call --ui --quiet --format json does not scan nearby frontend ports", async () => {
+  const frontend = await startFrontendServerOnAvailablePort([
+    5181, 5182, 5183, 5184, 5185,
+  ]);
+  const frontendPort = Number(new URL(frontend.url).port);
+  const staleFrontendUrl = `http://127.0.0.1:${frontendPort - 1}`;
+  const toolResult = { content: [{ type: "text", text: "view created" }] };
+  const server = await startMockServer({
+    frontendUrl: staleFrontendUrl,
+    hasActiveClient: false,
+    serveFrontend: false,
+    toolResult,
+  });
+
+  try {
+    const result = await runCli([
+      "--format",
+      "json",
+      "--quiet",
+      "tools",
+      "call",
+      "--ui",
+      "--inspector-url",
+      `http://127.0.0.1:${server.port}`,
+      "--url",
+      `http://127.0.0.1:${server.port}/mcp`,
+      "--tool-name",
+      "create_view",
+      "--tool-args",
+      "{}",
+    ]);
+
+    assert.equal(result.exitCode, 1, result.stderr);
+    assert.equal(frontend.rootRequests, 0);
+    const payload = JSON.parse(lastJsonLine(result.stdout)) as Record<
+      string,
+      any
+    >;
+    assert.equal(payload.success, false);
+    assert.equal(
+      payload.inspectorBrowserUrl,
+      `${staleFrontendUrl}/#app-builder`,
+    );
+    assert.match(payload.error.message, /no active browser client/i);
+  } finally {
+    await server.stop();
+    await frontend.stop();
+  }
+});
+
 test("tools call --ui --open may render while waiting for a browser client", async () => {
   const toolResult = { content: [{ type: "text", text: "view created" }] };
   const server = await startMockServer({ hasActiveClient: false, toolResult });
@@ -447,6 +613,54 @@ test("tools call --ui --open may render while waiting for a browser client", asy
     );
   } finally {
     await server.stop();
+  }
+});
+
+test("tools call --ui --open can discover a nearby dev frontend", async () => {
+  const frontend = await startFrontendServerOnAvailablePort([
+    5181, 5182, 5183, 5184, 5185,
+  ]);
+  const frontendPort = Number(new URL(frontend.url).port);
+  const staleFrontendUrl = `http://127.0.0.1:${frontendPort - 1}`;
+  const toolResult = { content: [{ type: "text", text: "view created" }] };
+  const server = await startMockServer({
+    frontendUrl: staleFrontendUrl,
+    hasActiveClient: false,
+    serveFrontend: false,
+    toolResult,
+  });
+
+  try {
+    const result = await runCli([
+      "--format",
+      "json",
+      "tools",
+      "call",
+      "--ui",
+      "--open",
+      "--inspector-url",
+      `http://127.0.0.1:${server.port}`,
+      "--url",
+      `http://127.0.0.1:${server.port}/mcp`,
+      "--tool-name",
+      "create_view",
+      "--tool-args",
+      "{}",
+    ]);
+
+    assert.equal(result.exitCode, 0, result.stderr);
+    assert.ok(frontend.rootRequests > 0);
+    const payload = JSON.parse(lastJsonLine(result.stdout)) as Record<
+      string,
+      any
+    >;
+    assert.equal(payload.success, true);
+    assert.equal(payload.inspectorBrowserUrl, `${frontend.url}/#app-builder`);
+    assert.equal(payload.inspectorFrontendUrl, frontend.url);
+    assert.equal(payload.inspectorRender.browserOpenRequested, true);
+  } finally {
+    await server.stop();
+    await frontend.stop();
   }
 });
 
@@ -602,6 +816,13 @@ test("tools call --ui rejects reporter output", async () => {
   assert.match(result.stderr, /--ui cannot be used together with --reporter/);
 });
 
+test("tools call help lists frontend-url", async () => {
+  const result = await runCli(["tools", "call", "--help"]);
+
+  assert.equal(result.exitCode, 0, result.stderr);
+  assert.match(result.stdout, /--frontend-url <url>/);
+});
+
 test("tools call --ui rejects attach-only with open", async () => {
   const result = await runCli([
     "--format",
@@ -626,11 +847,80 @@ test("tools call --ui rejects attach-only with open", async () => {
   );
 });
 
+test("tools call --ui accepts frontend-url with open", async () => {
+  const toolResult = { content: [{ type: "text", text: "view created" }] };
+  const server = await startMockServer({
+    hasActiveClient: false,
+    serveFrontend: false,
+    toolResult,
+  });
+
+  try {
+    const result = await runCli([
+      "--format",
+      "json",
+      "tools",
+      "call",
+      "--ui",
+      "--open",
+      "--frontend-url",
+      `http://localhost:${server.port}/client`,
+      "--inspector-url",
+      `http://127.0.0.1:${server.port}`,
+      "--url",
+      `http://127.0.0.1:${server.port}/mcp`,
+      "--tool-name",
+      "create_view",
+      "--tool-args",
+      "{}",
+    ]);
+
+    assert.equal(result.exitCode, 0, result.stderr);
+    const payload = JSON.parse(lastJsonLine(result.stdout)) as Record<
+      string,
+      any
+    >;
+    assert.equal(payload.success, true);
+    assert.equal(
+      payload.inspectorBrowserUrl,
+      `http://localhost:${server.port}/client/#app-builder`,
+    );
+    assert.equal(payload.inspectorRender.browserOpenRequested, true);
+  } finally {
+    await server.stop();
+  }
+});
+
 test("tools call --ui treats no-open as startable but attach-only as strict attach", () => {
   assert.equal(resolveInspectorStartIfNeeded({}), true);
   assert.equal(resolveInspectorStartIfNeeded({ open: false }), true);
   assert.equal(resolveInspectorStartIfNeeded({ open: true }), true);
   assert.equal(resolveInspectorStartIfNeeded({ attachOnly: true }), false);
+});
+
+test("tools call --ui resolves discovery policy from output mode", () => {
+  const humanOptions = {
+    format: "human" as const,
+    quiet: false,
+    rpc: false,
+    telemetry: true,
+    timeout: 30_000,
+  };
+  const jsonOptions = { ...humanOptions, format: "json" as const };
+  const quietOptions = { ...humanOptions, quiet: true };
+
+  assert.equal(resolveInspectorSkipDiscovery({}, humanOptions), false);
+  assert.equal(resolveInspectorSkipDiscovery({ open: true }, jsonOptions), false);
+  assert.equal(resolveInspectorSkipDiscovery({}, jsonOptions), true);
+  assert.equal(resolveInspectorSkipDiscovery({}, quietOptions), true);
+  assert.equal(resolveInspectorSkipDiscovery({ attachOnly: true }, humanOptions), true);
+  assert.equal(
+    resolveInspectorSkipDiscovery(
+      { frontendUrl: "http://localhost:5173", open: true },
+      humanOptions,
+    ),
+    true,
+  );
 });
 
 test("tools call --ui validates render flags before executing the tool", async () => {
@@ -660,6 +950,40 @@ test("tools call --ui validates render flags before executing the tool", async (
       (JSON.parse(result.stderr) as { error?: { message?: string } }).error
         ?.message ?? "",
       /Invalid theme "blue"/,
+    );
+    assert.deepEqual(server.requests, []);
+  } finally {
+    await server.stop();
+  }
+});
+
+test("tools call --ui validates frontend-url before executing the tool", async () => {
+  const server = await startMockServer({});
+
+  try {
+    const result = await runCli([
+      "--format",
+      "json",
+      "tools",
+      "call",
+      "--ui",
+      "--frontend-url",
+      "not a url",
+      "--inspector-url",
+      `http://127.0.0.1:${server.port}`,
+      "--url",
+      `http://127.0.0.1:${server.port}/mcp`,
+      "--tool-name",
+      "create_view",
+      "--tool-args",
+      "{}",
+    ]);
+
+    assert.equal(result.exitCode, 2);
+    assert.match(
+      (JSON.parse(result.stderr) as { error?: { message?: string } }).error
+        ?.message ?? "",
+      /Invalid --frontend-url "not a url"/,
     );
     assert.deepEqual(server.requests, []);
   } finally {

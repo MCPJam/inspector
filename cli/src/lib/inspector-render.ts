@@ -35,9 +35,11 @@ type InspectorUiRenderResult = InspectorAppRenderResult & {
 export async function runUiRender(options: {
   baseUrl?: string;
   config: MCPServerConfig;
+  frontendUrl?: string;
   openBrowser?: boolean;
   params: Record<string, unknown>;
   renderContext: AppRenderContext;
+  skipDiscovery?: boolean;
   serverName: string;
   startIfNeeded?: boolean;
   timeoutMs: number;
@@ -47,7 +49,9 @@ export async function runUiRender(options: {
   const client = new InspectorApiClient({ baseUrl: options.baseUrl });
   const openBrowser = options.openBrowser === true;
   const ensureResult = await client.ensure({
+    frontendUrl: options.frontendUrl,
     openBrowser,
+    skipDiscovery: options.skipDiscovery,
     startIfNeeded: options.startIfNeeded ?? true,
     tab: "app-builder",
     timeoutMs: options.timeoutMs,
