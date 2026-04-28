@@ -215,7 +215,7 @@ export async function convertMCPToolsToVercelTools(
   const tools: ToolSet = {};
 
   for (const toolDescription of listToolsResult.tools) {
-    const { name, description, inputSchema } = toolDescription;
+    const { name, description, inputSchema, outputSchema } = toolDescription;
     const toolMeta = toolDescription._meta as
       | Record<string, unknown>
       | undefined;
@@ -257,6 +257,7 @@ export async function convertMCPToolsToVercelTools(
         description,
         inputSchema: jsonSchema(normalizedInputSchema),
         execute,
+        ...(outputSchema ? { outputSchema: jsonSchema(outputSchema as any) } : {}),
         ...(toModelOutput ? { toModelOutput } : {}),
         ...(needsApproval != null ? { needsApproval } : {}),
       });

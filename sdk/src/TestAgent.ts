@@ -89,6 +89,7 @@ function convertToToolSet(tools: Tool[]): ToolSet {
     const converted = dynamicTool({
       description: tool.description,
       inputSchema: jsonSchema(ensureJsonSchemaObject(tool.inputSchema)),
+      ...(tool.outputSchema ? { outputSchema: jsonSchema(tool.outputSchema as any) } : {}),
       execute: async (args, options) => {
         options?.abortSignal?.throwIfAborted?.();
         const result = await tool.execute(args as Record<string, unknown>);
