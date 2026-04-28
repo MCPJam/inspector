@@ -294,7 +294,7 @@
     background-size: 240% 100%;
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
-    animation: agents-cta-text-shimmer 4.2s cubic-bezier(0.22, 1, 0.36, 1)
+    animation: agents-cta-text-shimmer 32s cubic-bezier(0.22, 1, 0.36, 1)
       infinite;
   }
 
@@ -312,7 +312,7 @@
 
 @keyframes agents-cta-text-shimmer {
   0%,
-  42% {
+  92% {
     background-position: 140% 0;
   }
 

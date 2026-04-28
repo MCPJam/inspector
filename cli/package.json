@@ -1,6 +1,6 @@
 {
   "name": "@mcpjam/cli",
-  "version": "3.2.0",
+  "version": "3.2.1",
   "description": "Test, debug, and validate MCP servers — health checks, OAuth conformance, tool-surface diffing, and structured triage from the terminal or CI",
   "type": "module",
   "main": "dist/index.js",
