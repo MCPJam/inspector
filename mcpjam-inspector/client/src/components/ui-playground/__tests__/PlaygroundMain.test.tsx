@@ -312,6 +312,8 @@ vi.mock("@/components/evals/trace-viewer", () => ({
     trace?: unknown;
     displayMode?: "inline" | "pip" | "fullscreen";
     onDisplayModeChange?: (mode: "inline" | "pip" | "fullscreen") => void;
+    traceStartedAtMs?: number | null;
+    traceEndedAtMs?: number | null;
   }) => {
     mockTraceViewer(props);
     return (
@@ -514,6 +516,8 @@ vi.mock("@/lib/utils", () => ({
 
 const sampleLiveTraceEnvelope = {
   traceVersion: 1 as const,
+  traceStartedAtMs: 1_700_000_000_000,
+  traceEndedAtMs: 1_700_000_000_120,
   messages: [
     { role: "user", content: "Draw the diagram" },
     { role: "assistant", content: "Here is the diagram." },
@@ -969,6 +973,39 @@ describe("PlaygroundMain", () => {
       const props = mockTraceViewer.mock.calls.at(-1)?.[0];
       expect(props.displayMode).toBe("inline");
       expect(props.onDisplayModeChange).toEqual(expect.any(Function));
+    });
+
+    it("forwards live trace start/end timestamps into the trace viewer for timeline and raw modes", () => {
+      mockUseChatSession.messages = [
+        { id: "1", role: "user", parts: [{ type: "text", text: "Hello" }] },
+      ];
+      mockUseChatSession.traceViewsSupported = true;
+      mockUseChatSession.hasTraceSnapshot = true;
+      mockUseChatSession.hasLiveTimelineContent = true;
+      mockUseChatSession.liveTraceEnvelope = sampleLiveTraceEnvelope;
+
+      render(<PlaygroundMain {...defaultProps} enableTraceViews={true} />);
+
+      fireEvent.click(screen.getByRole("button", { name: "Trace" }));
+
+      const timelineProps = mockTraceViewer.mock.calls.at(-1)?.[0];
+      expect(timelineProps.traceStartedAtMs).toBe(
+        sampleLiveTraceEnvelope.traceStartedAtMs,
+      );
+      expect(timelineProps.traceEndedAtMs).toBe(
+        sampleLiveTraceEnvelope.traceEndedAtMs,
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "Raw" }));
+
+      const rawProps = mockTraceViewer.mock.calls.at(-1)?.[0];
+      expect(rawProps.forcedViewMode).toBe("raw");
+      expect(rawProps.traceStartedAtMs).toBe(
+        sampleLiveTraceEnvelope.traceStartedAtMs,
+      );
+      expect(rawProps.traceEndedAtMs).toBe(
+        sampleLiveTraceEnvelope.traceEndedAtMs,
+      );
     });
 
     it("prefers the streamed live trace over the prelude trace once a snapshot exists", async () => {

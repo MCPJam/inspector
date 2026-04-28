@@ -90,10 +90,8 @@ import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
 import type { ExecutionConfig } from "@/lib/chat-execution-config";
 import type { HostedRuntimeContext } from "@/lib/hosted-runtime-context";
 import { useModelSelectorLayoutLock } from "@/hooks/use-model-selector-layout-lock";
-import { LiveTraceTimelineEmptyState } from "@/components/evals/live-trace-timeline-empty";
-import { LiveTraceRawEmptyState } from "@/components/evals/live-trace-raw-empty";
-import { TraceViewer } from "@/components/evals/trace-viewer";
 import { ChatTraceViewModeHeaderBar } from "@/components/evals/trace-view-mode-tabs";
+import { SingleModelTraceDiagnosticsBody } from "@/components/evals/single-model-trace-diagnostics-body";
 import {
   type BroadcastChatTurnRequest,
   MultiModelChatCard,
@@ -2225,85 +2223,40 @@ export function ChatTabV2({
                 {(showLiveTraceDiagnostics || revealedInChat) &&
                   !minimalMode && (
                     <div className="flex flex-1 min-h-0 flex-col">
-                      {activeTraceViewMode === "raw" ? (
-                        <StickToBottom
-                          className="flex flex-1 min-h-0 flex-col overflow-hidden"
-                          resize="smooth"
-                          initial="smooth"
-                        >
-                          <div className="relative flex flex-1 min-h-0 overflow-hidden">
-                            <StickToBottom.Content className="flex min-h-0 flex-1 flex-col overflow-y-auto px-4 pt-4">
-                              <div className="mx-auto flex min-h-0 w-full max-w-6xl flex-1 flex-col">
-                                {isThreadEmpty ? (
-                                  <LiveTraceRawEmptyState testId="chat-live-raw-pending" />
-                                ) : (
-                                  <TraceViewer
-                                    trace={traceViewerTrace}
-                                    model={selectedModel}
-                                    toolsMetadata={toolsMetadata}
-                                    toolServerMap={toolServerMap}
-                                    traceStartedAtMs={
-                                      liveTraceEnvelope?.traceStartedAtMs ??
-                                      null
-                                    }
-                                    traceEndedAtMs={
-                                      liveTraceEnvelope?.traceEndedAtMs ?? null
-                                    }
-                                    forcedViewMode={activeTraceViewMode}
-                                    hideToolbar
-                                    fillContent
-                                    onRevealNavigateToChat={() => {
-                                      setTraceViewMode("chat");
-                                      setRevealedInChat(true);
-                                    }}
-                                    onFullscreenChange={setIsWidgetFullscreen}
-                                    rawGrowWithContent
-                                    rawRequestPayloadHistory={{
-                                      entries: requestPayloadHistory,
-                                      hasUiMessages: !isThreadEmpty,
-                                    }}
-                                  />
-                                )}
-                              </div>
-                            </StickToBottom.Content>
-                            <ScrollToBottomButton />
-                          </div>
-                        </StickToBottom>
-                      ) : (
-                        <div className="flex min-h-64 flex-1 flex-col overflow-hidden px-4 py-4">
-                          <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-col">
-                            {activeTraceViewMode === "timeline" &&
-                            !hasLiveTimelineContent ? (
-                              <LiveTraceTimelineEmptyState testId="chat-live-trace-pending" />
-                            ) : (
-                              <TraceViewer
-                                trace={traceViewerTrace}
-                                model={selectedModel}
-                                toolsMetadata={toolsMetadata}
-                                toolServerMap={toolServerMap}
-                                traceStartedAtMs={
-                                  liveTraceEnvelope?.traceStartedAtMs ?? null
-                                }
-                                traceEndedAtMs={
-                                  liveTraceEnvelope?.traceEndedAtMs ?? null
-                                }
-                                forcedViewMode={activeTraceViewMode}
-                                hideToolbar
-                                fillContent
-                                onRevealNavigateToChat={() => {
-                                  setTraceViewMode("chat");
-                                  setRevealedInChat(true);
-                                }}
-                                onFullscreenChange={setIsWidgetFullscreen}
-                                rawRequestPayloadHistory={{
-                                  entries: requestPayloadHistory,
-                                  hasUiMessages: !isThreadEmpty,
-                                }}
-                              />
-                            )}
-                          </div>
-                        </div>
-                      )}
+                      <SingleModelTraceDiagnosticsBody
+                        activeTraceViewMode={activeTraceViewMode}
+                        isThreadEmpty={isThreadEmpty}
+                        showLiveTracePending={
+                          activeTraceViewMode === "timeline" &&
+                          !hasLiveTimelineContent
+                        }
+                        trace={traceViewerTrace}
+                        model={selectedModel}
+                        toolsMetadata={toolsMetadata}
+                        toolServerMap={toolServerMap}
+                        traceStartedAtMs={
+                          liveTraceEnvelope?.traceStartedAtMs ?? null
+                        }
+                        traceEndedAtMs={
+                          liveTraceEnvelope?.traceEndedAtMs ?? null
+                        }
+                        onRevealNavigateToChat={() => {
+                          setTraceViewMode("chat");
+                          setRevealedInChat(true);
+                        }}
+                        sendFollowUpMessage={
+                          activeTraceViewMode === "chat" && revealedInChat
+                            ? handleSendFollowUp
+                            : undefined
+                        }
+                        onFullscreenChange={setIsWidgetFullscreen}
+                        rawRequestPayloadHistory={{
+                          entries: requestPayloadHistory,
+                          hasUiMessages: !isThreadEmpty,
+                        }}
+                        rawEmptyTestId="chat-live-raw-pending"
+                        timelineEmptyTestId="chat-live-trace-pending"
+                      />
 
                       <div className="bg-background/80 backdrop-blur-sm border-t border-border flex-shrink-0">
                         {errorMessage && (
