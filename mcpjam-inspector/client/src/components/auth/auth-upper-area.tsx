@@ -60,8 +60,8 @@ export function AuthUpperArea({
             href="https://docs.mcpjam.com/cli/overview"
             target="_blank"
             rel="noreferrer"
-            aria-label="Open MCPJam for Agents documentation"
-            title="MCPJam for Agents"
+            aria-label="Open MCPJam CLI documentation"
+            title="MCPJam CLI"
             onClick={() => {
               posthog.capture("agents_cta_clicked", {
                 location: "header",
@@ -70,7 +70,7 @@ export function AuthUpperArea({
               });
             }}
           >
-            <span>MCPJam for Agents</span>
+            <span>MCPJam CLI</span>
           </a>
         </Button>
         {communityLinks}
