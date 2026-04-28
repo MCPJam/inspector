@@ -1,6 +1,6 @@
 {
   "name": "@mcpjam/cli",
-  "version": "3.3.1",
+  "version": "3.3.2",
   "description": "Test, debug, and validate MCP servers — health checks, OAuth conformance, tool-surface diffing, and structured triage from the terminal or CI",
   "type": "module",
   "main": "dist/index.js",
@@ -13,7 +13,8 @@
   "scripts": {
     "build": "tsup",
     "test": "tsx --test tests/**/*.test.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
   },
   "dependencies": {
     "@mcpjam/sdk": "^1.2.0",
