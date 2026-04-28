@@ -6,6 +6,7 @@ import { MCPSidebar } from "@/components/mcp-sidebar";
 const mockUseConvexAuth = vi.fn();
 const mockUseAuth = vi.fn();
 const mockShareWorkspaceDialog = vi.fn();
+const mockFeatureFlags: Record<string, boolean | undefined> = {};
 
 vi.mock("convex/react", () => ({
   useConvexAuth: (...args: unknown[]) => mockUseConvexAuth(...args),
@@ -19,7 +20,7 @@ vi.mock("posthog-js/react", () => ({
   usePostHog: () => ({
     capture: vi.fn(),
   }),
-  useFeatureFlagEnabled: () => false,
+  useFeatureFlagEnabled: (flag: string) => mockFeatureFlags[flag] ?? false,
 }));
 
 vi.mock("@/stores/preferences/preferences-provider", () => ({
@@ -85,8 +86,12 @@ vi.mock("@/components/ui/sidebar", () => ({
   SidebarMenuButton: ({
     children,
     tooltip: _tooltip,
+    isActive: _isActive,
     ...props
-  }: ButtonHTMLAttributes<HTMLButtonElement> & { tooltip?: string }) => (
+  }: ButtonHTMLAttributes<HTMLButtonElement> & {
+    isActive?: boolean;
+    tooltip?: string;
+  }) => (
     <button type="button" {...props}>
       {children}
     </button>
@@ -96,8 +101,9 @@ vi.mock("@/components/ui/sidebar", () => ({
   ),
   SidebarMenuSubButton: ({
     children,
+    isActive: _isActive,
     ...props
-  }: ButtonHTMLAttributes<HTMLButtonElement>) => (
+  }: ButtonHTMLAttributes<HTMLButtonElement> & { isActive?: boolean }) => (
     <button type="button" {...props}>
       {children}
     </button>
@@ -153,6 +159,9 @@ function renderSidebar(overrides: Partial<React.ComponentProps<typeof MCPSidebar
 describe("sidebar invite CTA", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    Object.keys(mockFeatureFlags).forEach((flag) => {
+      delete mockFeatureFlags[flag];
+    });
     mockUseConvexAuth.mockReturnValue({
       isAuthenticated: true,
       isLoading: false,
@@ -231,5 +240,49 @@ describe("sidebar invite CTA", () => {
     expect(
       screen.getByRole("button", { name: "Invite team members" }),
     ).toBeInTheDocument();
+  });
+
+  it("shows disabled Playground with a beta tooltip when the flag is off", () => {
+    mockFeatureFlags["playground-enabled"] = false;
+    window.location.hash = "#servers";
+
+    renderSidebar();
+
+    expect(screen.getByRole("button", { name: "Evaluate" })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+    const playground = screen.getByRole("button", { name: "Playground" });
+    expect(playground).toHaveAttribute("aria-disabled", "true");
+    expect(playground).toHaveClass("cursor-not-allowed");
+    expect(
+      screen.getByText("Coming soon. Playground is in beta."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Beta")).not.toBeInTheDocument();
+
+    fireEvent.click(playground);
+
+    expect(window.location.hash).toBe("#servers");
+  });
+
+  it("enables Playground and shows the beta badge when the flag is on", () => {
+    mockFeatureFlags["playground-enabled"] = true;
+
+    renderSidebar();
+
+    const playground = screen
+      .getByText("Playground")
+      .closest("button") as HTMLButtonElement;
+    expect(playground).toBeInTheDocument();
+    expect(playground).not.toHaveAttribute("aria-disabled");
+    expect(screen.getByText("Beta")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "This tab is a work in progress, data may not be persisted.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("Coming soon. Playground is in beta."),
+    ).not.toBeInTheDocument();
   });
 });
