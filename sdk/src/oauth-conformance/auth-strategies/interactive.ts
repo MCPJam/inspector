@@ -484,7 +484,13 @@ export async function createInteractiveAuthorizationSession(options?: {
       }
       pendingReject?.(new Error("Interactive authorization session closed"));
       clearPending();
-      await closeServer(server);
+      // Stop accepting new connections, then drain idle keep-alive sockets
+      // so server.close() can resolve promptly. closeIdleConnections() is
+      // preferred over closeAllConnections() to avoid terminating any
+      // in-flight callback request mid-response.
+      const closed = closeServer(server);
+      server.closeIdleConnections?.();
+      await closed;
     },
   };
 }
