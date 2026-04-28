@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import type { ProbeMcpServerResult, ServerDoctorResult } from "@mcpjam/sdk";
 import { writeDebugArtifact } from "../src/lib/debug-artifact.js";
+import { redactSensitiveValue } from "../src/lib/redaction.js";
 import {
   formatServerDoctorHuman,
   summarizeServerDoctorTarget,
@@ -235,4 +236,36 @@ test("formatServerDoctorHuman renders a concise summary and artifact path", () =
   assert.match(rendered, /^Status: oauth_required/m);
   assert.match(rendered, /^OAuth: required \(dcr, cimd\)$/m);
   assert.match(rendered, /^Artifact: \/tmp\/doctor\.json$/m);
+});
+
+test("server doctor JSON payload redacts probe Authorization headers", () => {
+  const probe = createProbeResult({
+    transport: {
+      selected: "streamable-http",
+      attempts: [
+        {
+          name: "streamable_initialize",
+          request: {
+            method: "POST",
+            url: "https://example.com/mcp",
+            headers: {
+              Authorization: "Bearer super-secret-token",
+              Accept: "application/json",
+            },
+          },
+          response: {
+            status: 200,
+            statusText: "OK",
+            headers: { "content-type": "application/json" },
+          },
+          durationMs: 12,
+        },
+      ],
+    },
+  });
+
+  const redacted = redactSensitiveValue({ probe }) as { probe: typeof probe };
+  const attempt = redacted.probe.transport.attempts[0]!;
+  assert.equal(attempt.request.headers.Authorization, "[REDACTED]");
+  assert.equal(attempt.request.headers.Accept, "application/json");
 });
