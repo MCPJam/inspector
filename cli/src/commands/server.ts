@@ -38,6 +38,7 @@ import {
   assertNoCredentialsFileAuthConflicts,
   resolveCredentialsFileAccessToken,
 } from "../lib/credentials-file.js";
+import { redactSensitiveValue } from "../lib/redaction.js";
 import {
   parseReporterFormat,
   writeJsonArtifact,
@@ -201,7 +202,10 @@ export function registerServerCommands(program: Command): void {
         throw operationalError("Probe did not return a result.");
       }
 
-      writeResult(result, globalOptions.format);
+      writeResult(
+        redactSensitiveValue(result) as typeof result,
+        globalOptions.format,
+      );
       if (result.status === "error") {
         setProcessExitCode(1);
       }
@@ -235,9 +239,10 @@ export function registerServerCommands(program: Command): void {
       retryPolicy,
     });
 
-    const jsonPayload = globalOptions.rpc
+    const rawPayload = globalOptions.rpc
       ? attachCliRpcLogs(result, collector)
       : result;
+    const jsonPayload = redactSensitiveValue(rawPayload) as typeof rawPayload;
     const artifactPath = options.out
       ? await writeDebugArtifact(options.out as string, jsonPayload)
       : undefined;
