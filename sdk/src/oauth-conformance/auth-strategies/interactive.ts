@@ -484,6 +484,9 @@ export async function createInteractiveAuthorizationSession(options?: {
       }
       pendingReject?.(new Error("Interactive authorization session closed"));
       clearPending();
+      // server.close() waits for keep-alive sockets to drain. Force-close
+      // any lingering browser callback connections so the process can exit.
+      server.closeAllConnections?.();
       await closeServer(server);
     },
   };
