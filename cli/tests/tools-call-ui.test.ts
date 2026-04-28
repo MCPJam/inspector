@@ -957,6 +957,40 @@ test("tools call --ui validates render flags before executing the tool", async (
   }
 });
 
+test("tools call --ui validates frontend-url before executing the tool", async () => {
+  const server = await startMockServer({});
+
+  try {
+    const result = await runCli([
+      "--format",
+      "json",
+      "tools",
+      "call",
+      "--ui",
+      "--frontend-url",
+      "not a url",
+      "--inspector-url",
+      `http://127.0.0.1:${server.port}`,
+      "--url",
+      `http://127.0.0.1:${server.port}/mcp`,
+      "--tool-name",
+      "create_view",
+      "--tool-args",
+      "{}",
+    ]);
+
+    assert.equal(result.exitCode, 2);
+    assert.match(
+      (JSON.parse(result.stderr) as { error?: { message?: string } }).error
+        ?.message ?? "",
+      /Invalid --frontend-url "not a url"/,
+    );
+    assert.deepEqual(server.requests, []);
+  } finally {
+    await server.stop();
+  }
+});
+
 test("tools call --ui applies expect-success to the raw tool result", async () => {
   const errorToolResult = {
     isError: true,

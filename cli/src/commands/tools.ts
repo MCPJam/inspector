@@ -18,6 +18,7 @@ import {
 import { parseReporterFormat, writeReporterResult } from "../lib/reporting.js";
 import { createCliRpcLogCollector } from "../lib/rpc-logs.js";
 import { withRpcLogsIfRequested } from "../lib/rpc-helpers.js";
+import { normalizeInspectorFrontendUrl } from "../lib/inspector-api.js";
 import { listToolsWithMetadata } from "../lib/server-ops.js";
 import { summarizeServerDoctorTarget } from "../lib/server-doctor.js";
 import {
@@ -224,6 +225,9 @@ export function registerToolsCommands(program: Command): void {
           timeZone: trimOptional(options.timeZone),
         }
       : undefined;
+    const frontendUrl = options.ui
+      ? parseInspectorFrontendUrl(options.frontendUrl)
+      : undefined;
 
     let result: unknown;
     let commandError: unknown;
@@ -306,7 +310,7 @@ export function registerToolsCommands(program: Command): void {
         uiResult = await runUiRender({
           baseUrl: options.inspectorUrl,
           config,
-          frontendUrl: options.frontendUrl,
+          frontendUrl,
           openBrowser,
           params,
           renderContext: renderContext!,
@@ -429,6 +433,20 @@ function resolveInspectorOpenBrowser(
     return options.open;
   }
   return globalOptions.format === "human" && !globalOptions.quiet;
+}
+
+function parseInspectorFrontendUrl(
+  value: string | undefined,
+): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  const frontendUrl = normalizeInspectorFrontendUrl(value);
+  if (!frontendUrl) {
+    throw usageError(`Invalid --frontend-url "${value}".`);
+  }
+  return frontendUrl;
 }
 
 export function resolveInspectorSkipDiscovery(
