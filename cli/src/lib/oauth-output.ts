@@ -44,11 +44,13 @@ export function renderOAuthConformanceResult(
   format: OAuthOutputFormat,
   options: OAuthConformanceRenderOptions = {},
 ): string {
+  const redactedResult = redactOAuthConformanceResult(result, options);
+
   switch (format) {
     case "human":
-      return formatOAuthConformanceHuman(result);
+      return formatOAuthConformanceHuman(redactedResult);
     case "json":
-      return JSON.stringify(redactOAuthConformanceResult(result, options));
+      return JSON.stringify(redactedResult);
   }
 }
 
@@ -57,29 +59,36 @@ export function renderOAuthConformanceSuiteResult(
   format: OAuthOutputFormat,
   options: OAuthConformanceSuiteRenderOptions = {},
 ): string {
+  const redactedResult = redactOAuthConformanceSuiteResult(result, options);
+
   switch (format) {
     case "human":
-      return formatOAuthConformanceSuiteHuman(result);
+      return formatOAuthConformanceSuiteHuman(redactedResult);
     case "json":
-      return JSON.stringify(redactOAuthConformanceSuiteResult(result, options));
+      return JSON.stringify(redactedResult);
   }
 }
 
 function redactOAuthConformanceResult(
   result: ConformanceResult,
   options: OAuthConformanceRenderOptions,
-): object {
+): ConformanceResult & { credentialsFile?: string } {
   if (options.credentialsFilePath && result.credentials) {
-    return redactCredentialsFromResult(result, options.credentialsFilePath);
+    return redactCredentialsFromResult(
+      result,
+      options.credentialsFilePath,
+    ) as ConformanceResult & { credentialsFile?: string };
   }
 
-  return redactSensitiveValue(result) as object;
+  return redactSensitiveValue(result) as ConformanceResult & {
+    credentialsFile?: string;
+  };
 }
 
 function redactOAuthConformanceSuiteResult(
   result: OAuthConformanceSuiteResult,
   options: OAuthConformanceSuiteRenderOptions,
-): object {
+): OAuthConformanceSuiteResult & { credentialsFile?: string } {
   const redacted = redactSensitiveValue(result) as OAuthConformanceSuiteResult & {
     credentialsFile?: string;
   };

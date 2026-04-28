@@ -1,8 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  formatOAuthConformanceHuman,
-  formatOAuthConformanceSuiteHuman,
   type ConformanceResult,
   type OAuthConformanceSuiteResult,
 } from "@mcpjam/sdk";
@@ -130,12 +128,15 @@ test("parseOAuthOutputFormat rejects reporter formats as unsupported raw output"
   );
 });
 
-test("renderOAuthConformanceResult uses the SDK human formatter for human output", () => {
+test("renderOAuthConformanceResult redacts sensitive human output", () => {
   const result = createSingleResult();
+  const output = renderOAuthConformanceResult(result, "human");
 
-  assert.equal(
-    renderOAuthConformanceResult(result, "human"),
-    formatOAuthConformanceHuman(result),
+  assert.match(output, /OAuth conformance: FAILED/);
+  assert.match(output, /\[REDACTED\]/);
+  assert.doesNotMatch(
+    output,
+    /result-access-token|result-refresh-token|result-client-secret|nested-access-token|nested-refresh-token|nested-id-token|attempt-access-token|attempt-refresh-token|attempt-id-token|attempt-client-secret|error-token/,
   );
 });
 
@@ -177,12 +178,15 @@ test("renderOAuthConformanceResult marks credentials saved to file", () => {
   assert.equal(payload.steps[0].http.response.body.access_token, "[REDACTED]");
 });
 
-test("renderOAuthConformanceSuiteResult uses the SDK human formatter for human output", () => {
+test("renderOAuthConformanceSuiteResult redacts sensitive human output", () => {
   const result = createSuiteResult();
+  const output = renderOAuthConformanceSuiteResult(result, "human");
 
-  assert.equal(
-    renderOAuthConformanceSuiteResult(result, "human"),
-    formatOAuthConformanceSuiteHuman(result),
+  assert.match(output, /OAuth conformance suite: FAILED/);
+  assert.match(output, /\[REDACTED\]/);
+  assert.doesNotMatch(
+    output,
+    /result-access-token|result-refresh-token|result-client-secret|nested-access-token|nested-refresh-token|nested-id-token|attempt-access-token|attempt-refresh-token|attempt-id-token|attempt-client-secret|error-token/,
   );
 });
 
