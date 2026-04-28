@@ -249,7 +249,7 @@ export function registerServerCommands(program: Command): void {
 
     if (globalOptions.format === "human") {
       process.stdout.write(
-        `${formatServerDoctorHuman(result, { artifactPath })}\n`,
+        `${formatServerDoctorHuman(jsonPayload, { artifactPath })}\n`,
       );
     } else {
       writeResult(jsonPayload, globalOptions.format);
