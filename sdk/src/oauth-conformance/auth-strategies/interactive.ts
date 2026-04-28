@@ -379,7 +379,9 @@ export async function createInteractiveAuthorizationSession(options?: {
 
     const state = requestUrl.searchParams.get("state") ?? undefined;
     if (activeExpectedState !== undefined && state !== activeExpectedState) {
-      const message = `Authorization state mismatch. Expected ${activeExpectedState}, received ${state ?? "missing"}`;
+      const message = `Authorization state mismatch. Expected ${activeExpectedState}, received ${
+        state ?? "missing"
+      }`;
       res.statusCode = 400;
       res.setHeader("Content-Type", "text/html; charset=utf-8");
       res.end(
@@ -394,6 +396,24 @@ export async function createInteractiveAuthorizationSession(options?: {
       failPending(new Error(message));
       return;
     }
+
+    if (!pendingResolve) {
+      res.statusCode = 410;
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      res.end(
+        renderCallbackPage({
+          tone: "error",
+          title: "Authorization session expired",
+          message: "Restart the OAuth login flow from the terminal.",
+          detail:
+            "The CLI is no longer waiting for this browser callback. Authorization codes are single-use, so start a new login attempt.",
+          caption: "You can close this window.",
+        })
+      );
+      return;
+    }
+
+    const resolveAuthorization = pendingResolve;
 
     res.statusCode = 200;
     res.setHeader("Content-Type", "text/html; charset=utf-8");
@@ -411,7 +431,7 @@ export async function createInteractiveAuthorizationSession(options?: {
       timeoutHandle = undefined;
     }
 
-    pendingResolve?.({ code, state });
+    resolveAuthorization({ code, state });
     clearPending();
   });
 
@@ -484,6 +504,9 @@ export async function createInteractiveAuthorizationSession(options?: {
       }
       pendingReject?.(new Error("Interactive authorization session closed"));
       clearPending();
+      // server.close() waits for keep-alive sockets to drain. Force-close
+      // any lingering browser callback connections so the process can exit.
+      server.closeAllConnections?.();
       await closeServer(server);
     },
   };

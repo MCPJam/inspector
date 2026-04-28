@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { chmod, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
   runServerDoctor,
@@ -64,7 +64,7 @@ export async function writeCommandDebugArtifact<TTarget = unknown>(
   options: CommandDebugArtifactOptions<TTarget>,
   dependencies: {
     runDoctor?: typeof runServerDoctor;
-  } = {},
+  } = {}
 ): Promise<string | undefined> {
   if (!options.outputPath) {
     return undefined;
@@ -81,10 +81,7 @@ export async function writeCommandDebugArtifact<TTarget = unknown>(
     outcome: options.outcome,
     snapshot: snapshotResult.snapshot,
     snapshotError: snapshotResult.snapshotError,
-    collectors: [
-      ...(options.collectors ?? []),
-      options.snapshot?.collector,
-    ],
+    collectors: [...(options.collectors ?? []), options.snapshot?.collector],
   });
   const artifactPath = await writeDebugArtifact(options.outputPath, payload);
 
@@ -131,7 +128,7 @@ export function buildDebugArtifactEnvelope<TTarget = unknown>(options: {
 export function buildCommandArtifactError(
   code: string,
   message: string,
-  details?: unknown,
+  details?: unknown
 ): StructuredCommandError {
   return {
     code,
@@ -142,7 +139,7 @@ export function buildCommandArtifactError(
 
 export async function writeDebugArtifact(
   outputPath: string,
-  payload: unknown,
+  payload: unknown
 ): Promise<string> {
   const resolvedPath = path.resolve(process.cwd(), outputPath);
   const redactedPayload = redactSensitiveValue(payload);
@@ -152,26 +149,33 @@ export async function writeDebugArtifact(
     await writeFile(
       resolvedPath,
       `${JSON.stringify(redactedPayload, null, 2)}\n`,
-      "utf8",
+      {
+        encoding: "utf8",
+        mode: 0o600,
+      }
     );
+    await chmod(resolvedPath, 0o600);
   } catch (error) {
     throw operationalError(
       `Failed to write debug artifact to "${resolvedPath}".`,
       {
         source: error instanceof Error ? error.message : String(error),
-      },
+      }
     );
   }
 
   return resolvedPath;
 }
 
-async function collectDoctorSnapshot<TTarget = unknown>(options: {
-  input: RunServerDoctorInput<TTarget>;
-  collector?: CliRpcLogCollector;
-}, dependencies: {
-  runDoctor?: typeof runServerDoctor;
-} = {}): Promise<{
+async function collectDoctorSnapshot<TTarget = unknown>(
+  options: {
+    input: RunServerDoctorInput<TTarget>;
+    collector?: CliRpcLogCollector;
+  },
+  dependencies: {
+    runDoctor?: typeof runServerDoctor;
+  } = {}
+): Promise<{
   snapshot: ServerDoctorResult<TTarget> | null;
   snapshotError: StructuredCommandError | null;
 }> {

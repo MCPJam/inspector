@@ -313,7 +313,7 @@ oauth-conformance:
 | `--redirect-url <url>` | No | Auto-generated | OAuth redirect URL |
 | `--scopes <scopes>` | No | | Space-separated scope string |
 | `--header <header>` | No | | HTTP header `Key: Value` (repeatable) |
-| `--step-timeout <ms>` | No | `30000` | Per-step timeout |
+| `--step-timeout <ms>` | No | `120000` | Per-step timeout |
 | `--verify-tools` | No | | After OAuth, connect and list tools |
 | `--verify-call-tool <name>` | No | | Also call the named tool (implies `--verify-tools`) |
 | `--conformance-checks` | No | | Run additional negative OAuth checks after the main flow |
@@ -325,6 +325,12 @@ oauth-conformance:
   For interactive conformance runs, a custom `--redirect-url` must still be an
   `http://localhost` or `http://127.0.0.1` loopback URL. Custom callback paths
   are supported.
+</Note>
+
+<Note>
+  If an interactive login times out or you return to an old callback tab,
+  restart the OAuth flow. Authorization codes are single-use, and stale
+  callbacks will not complete the current run.
 </Note>
 
 ### `oauth conformance-suite`

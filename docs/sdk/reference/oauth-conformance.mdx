@@ -51,7 +51,7 @@ console.log(result.steps);    // Step-by-step results with HTTP traces
 | `customHeaders` | `Record<string, string>` | No | | Extra HTTP headers |
 | `redirectUrl` | `string` | No | Auto-generated | OAuth redirect URL |
 | `fetchFn` | `typeof fetch` | No | `fetch` | Custom fetch for recording/replay |
-| `stepTimeout` | `number` | No | `30000` | Per-step timeout in ms |
+| `stepTimeout` | `number` | No | `120000` | Per-step timeout in ms |
 | `oauthConformanceChecks` | `boolean` | No | `false` | Run 6 additional negative checks post-flow |
 
 ### OAuthConformanceAuthConfig

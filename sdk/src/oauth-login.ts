@@ -25,9 +25,7 @@ import {
   createInteractiveAuthorizationSession,
   type InteractiveAuthorizationSession,
 } from "./oauth-conformance/auth-strategies/interactive.js";
-import {
-  normalizeOAuthConformanceConfig,
-} from "./oauth-conformance/validation.js";
+import { normalizeOAuthConformanceConfig } from "./oauth-conformance/validation.js";
 import type {
   ClientCredentialsResult,
   NormalizedOAuthConformanceConfig,
@@ -89,7 +87,7 @@ export interface OAuthLoginDependencies {
   createDefaultRedirectUrl?: () => string;
 }
 
-const DEFAULT_OAUTH_LOGIN_STEP_TIMEOUT_MS = 30_000;
+const DEFAULT_OAUTH_LOGIN_STEP_TIMEOUT_MS = 120_000;
 
 function cloneEmptyFlowState(): OAuthFlowState {
   return {
@@ -111,13 +109,90 @@ function normalizeResponseHeaders(headers: Headers): Record<string, string> {
   return normalized;
 }
 
+async function parseSseResponseBody(response: Response): Promise<unknown> {
+  const reader = response.body?.getReader();
+  if (!reader) {
+    return { transport: "sse", events: [], mcpResponse: null };
+  }
+
+  const decoder = new TextDecoder();
+  const events: Array<{ event?: string; data?: unknown; id?: string }> = [];
+  let currentEvent: Record<string, unknown> = {};
+  let buffer = "";
+  const maxReadTime = 5000;
+  const startTime = Date.now();
+
+  try {
+    while (Date.now() - startTime < maxReadTime) {
+      const { done, value } = await Promise.race([
+        reader.read(),
+        new Promise<{ done: boolean; value: undefined }>((_, reject) =>
+          setTimeout(() => reject(new Error("Read timeout")), 1000)
+        ),
+      ]);
+
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split(/\r?\n/);
+      buffer = lines.pop() || "";
+
+      for (const line of lines) {
+        if (line.startsWith("event:")) {
+          currentEvent.event = line.substring(6).trim();
+        } else if (line.startsWith("data:")) {
+          const data = line.substring(5).trim();
+          try {
+            currentEvent.data = JSON.parse(data);
+          } catch {
+            currentEvent.data = data;
+          }
+        } else if (line.startsWith("id:")) {
+          currentEvent.id = line.substring(3).trim();
+        } else if (line === "") {
+          if (Object.keys(currentEvent).length > 0) {
+            events.push({ ...currentEvent });
+            currentEvent = {};
+          }
+        }
+      }
+
+      if (events.length >= 1) break;
+    }
+  } catch {
+    // Read timeout or stream error — return whatever we collected
+  } finally {
+    try {
+      await reader.cancel();
+    } catch {
+      // ignore cancel errors
+    }
+  }
+
+  return {
+    transport: "sse",
+    events,
+    isOldTransport: events[0]?.event === "endpoint",
+    endpoint: events[0]?.event === "endpoint" ? events[0].data : null,
+    mcpResponse:
+      events.find((event) => event.event === "message" || !event.event)
+        ?.data ?? null,
+    rawBuffer: buffer,
+  };
+}
+
 async function parseResponseBody(response: Response): Promise<unknown> {
+  const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
+
+  if (contentType.includes("text/event-stream")) {
+    return parseSseResponseBody(response);
+  }
+
   const text = await response.text();
   if (!text) {
     return undefined;
   }
 
-  const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
   if (
     contentType.includes("application/json") ||
     contentType.includes("+json")
@@ -142,7 +217,7 @@ async function parseResponseBody(response: Response): Promise<unknown> {
 
 function serializeRequestBody(
   body: OAuthHttpRequest["body"],
-  headers: Record<string, string>,
+  headers: Record<string, string>
 ): BodyInit | undefined {
   if (body === undefined || body === null) {
     return undefined;
@@ -154,7 +229,7 @@ function serializeRequestBody(
 
   const contentType =
     Object.entries(headers).find(
-      ([key]) => key.toLowerCase() === "content-type",
+      ([key]) => key.toLowerCase() === "content-type"
     )?.[1] ?? "";
 
   if (contentType.includes("application/x-www-form-urlencoded")) {
@@ -162,7 +237,7 @@ function serializeRequestBody(
       Object.entries(body as Record<string, string>).map(([key, value]) => [
         key,
         String(value),
-      ]),
+      ])
     ).toString();
   }
 
@@ -170,19 +245,19 @@ function serializeRequestBody(
 }
 
 function normalizeLoginAuthConfig(
-  auth: OAuthLoginConfig["auth"],
-) : NonNullable<OAuthConformanceConfig["auth"]> {
+  auth: OAuthLoginConfig["auth"]
+): NonNullable<OAuthConformanceConfig["auth"]> {
   return auth ?? { mode: "interactive" };
 }
 
 function normalizeLoginClientConfig(
-  client: OAuthLoginConfig["client"],
+  client: OAuthLoginConfig["client"]
 ): NonNullable<OAuthConformanceConfig["client"]> {
   return client ?? {};
 }
 
 function resolveRequestedProtocolMode(
-  input: Pick<OAuthLoginConfig, "protocolMode" | "protocolVersion">,
+  input: Pick<OAuthLoginConfig, "protocolMode" | "protocolVersion">
 ): OAuthProtocolMode {
   if (input.protocolMode) {
     return input.protocolMode;
@@ -192,7 +267,7 @@ function resolveRequestedProtocolMode(
 }
 
 function resolveRequestedRegistrationMode(
-  input: Pick<OAuthLoginConfig, "registrationMode" | "registrationStrategy">,
+  input: Pick<OAuthLoginConfig, "registrationMode" | "registrationStrategy">
 ): OAuthRegistrationMode {
   if (input.registrationMode) {
     return input.registrationMode;
@@ -202,7 +277,7 @@ function resolveRequestedRegistrationMode(
 }
 
 function toAuthorizationPlanInput(
-  input: OAuthLoginConfig,
+  input: OAuthLoginConfig
 ): Parameters<typeof resolveAuthorizationPlan>[0] {
   const auth = normalizeLoginAuthConfig(input.auth);
   const client = normalizeLoginClientConfig(input.client);
@@ -221,7 +296,7 @@ function toAuthorizationPlanInput(
 }
 
 async function resolveOAuthLoginAuthorizationPlan(
-  input: OAuthLoginConfig,
+  input: OAuthLoginConfig
 ): Promise<ResolvedAuthorizationPlan> {
   const basePlan = resolveAuthorizationPlan(toAuthorizationPlanInput(input));
 
@@ -245,7 +320,7 @@ async function resolveOAuthLoginAuthorizationPlan(
 
 function mergeDynamicRegistration(
   config: NormalizedOAuthConformanceConfig,
-  redirectUrl: string,
+  redirectUrl: string
 ): NormalizedOAuthConformanceConfig["client"]["dynamicRegistration"] {
   const defaults =
     config.auth.mode === "client_credentials"
@@ -264,9 +339,8 @@ function mergeDynamicRegistration(
     merged.redirect_uris = config.client.dynamicRegistration?.redirect_uris ?? [
       redirectUrl,
     ];
-    merged.response_types = config.client.dynamicRegistration?.response_types ?? [
-      "code",
-    ];
+    merged.response_types = config.client.dynamicRegistration
+      ?.response_types ?? ["code"];
   }
 
   return merged;
@@ -275,7 +349,7 @@ function mergeDynamicRegistration(
 async function runVerification(
   config: NormalizedOAuthConformanceConfig,
   state: OAuthFlowState,
-  verificationConfig: OAuthVerificationConfig,
+  verificationConfig: OAuthVerificationConfig
 ): Promise<VerificationResult | undefined> {
   if (!verificationConfig.listTools || !state.accessToken) {
     return undefined;
@@ -321,7 +395,7 @@ async function runVerification(
           await manager.executeTool(
             serverId,
             verificationConfig.callTool.name,
-            verificationConfig.callTool.params ?? {},
+            verificationConfig.callTool.params ?? {}
           );
           result.callTool = {
             passed: true,
@@ -339,7 +413,7 @@ async function runVerification(
       },
       {
         timeout: verificationConfig.timeout ?? 30_000,
-      },
+      }
     );
   } catch (error) {
     if (!result.listTools) {
@@ -360,7 +434,7 @@ function buildResult(
   redirectUrl: string,
   state: OAuthFlowState,
   verification?: VerificationResult,
-  error?: string,
+  error?: string
 ): OAuthLoginResult {
   return {
     completed: state.currentStep === "complete" && !error,
@@ -391,7 +465,7 @@ function buildResult(
 function buildBlockedPlanResult(
   input: OAuthLoginConfig,
   authorizationPlan: ResolvedAuthorizationPlan,
-  state: OAuthFlowState,
+  state: OAuthFlowState
 ): OAuthLoginResult {
   const auth = normalizeLoginAuthConfig(input.auth);
 
@@ -408,8 +482,7 @@ function buildBlockedPlanResult(
     authorizationPlan,
     credentials: {},
     error: {
-      message:
-        authorizationPlan.blockers[0] ?? authorizationPlan.summary,
+      message: authorizationPlan.blockers[0] ?? authorizationPlan.summary,
     },
     state,
   };
@@ -417,7 +490,7 @@ function buildBlockedPlanResult(
 
 export async function runOAuthLogin(
   input: OAuthLoginConfig,
-  deps: OAuthLoginDependencies = {},
+  deps: OAuthLoginDependencies = {}
 ): Promise<OAuthLoginResult> {
   let state = cloneEmptyFlowState();
   let redirectUrl =
@@ -461,15 +534,16 @@ export async function runOAuthLogin(
       });
     }
 
-    redirectUrl =
-      interactiveSession?.redirectUrl ??
-      redirectUrl;
+    redirectUrl = interactiveSession?.redirectUrl ?? redirectUrl;
+    if (config.auth.mode === "interactive" && interactiveSession) {
+      config.onProgress(`Listening for OAuth callback at ${redirectUrl}...`);
+    }
 
     const trackedRequest: TrackedRequestFn = async (request, options = {}) => {
       const controller = new AbortController();
       const timeoutHandle = setTimeout(
         () => controller.abort(),
-        config.stepTimeout,
+        config.stepTimeout
       );
 
       try {
@@ -525,9 +599,12 @@ export async function runOAuthLogin(
       const flowResult = await runOAuthStateMachine({
         ...machineConfig,
         maxSteps: 40,
-        onAuthorizationRequest: async ({ authorizationUrl, state: flowState }) => {
+        onAuthorizationRequest: async ({
+          authorizationUrl,
+          state: flowState,
+        }) => {
           try {
-            config.onProgress("Opening browser for authorization...");
+            config.onProgress("Opening authorization URL...");
             const authorizationResult =
               config.auth.mode === "interactive"
                 ? await interactiveSession!.authorize({
@@ -578,21 +655,21 @@ export async function runOAuthLogin(
           redirectUrl,
           resultState,
           undefined,
-          flowResult.error.message,
+          flowResult.error.message
         );
       }
 
       const verification = await runVerification(
         config,
         flowResult.state,
-        config.verification,
+        config.verification
       );
       return buildResult(
         config,
         authorizationPlan,
         redirectUrl,
         flowResult.state,
-        verification,
+        verification
       );
     }
 
@@ -613,7 +690,7 @@ export async function runOAuthLogin(
             redirectUrl,
             state,
             undefined,
-            "Missing token endpoint for client_credentials flow.",
+            "Missing token endpoint for client_credentials flow."
           );
         }
 
@@ -627,14 +704,13 @@ export async function runOAuthLogin(
             redirectUrl,
             state,
             undefined,
-            "Dynamic registration produced a public client and cannot be used for client_credentials.",
+            "Dynamic registration produced a public client and cannot be used for client_credentials."
           );
         }
 
         try {
           const tokenResult: ClientCredentialsResult = await (
-            deps.performClientCredentialsGrant ??
-            performClientCredentialsGrant
+            deps.performClientCredentialsGrant ?? performClientCredentialsGrant
           )({
             tokenEndpoint: state.authorizationServerMetadata.token_endpoint,
             clientId: state.clientId || config.auth.clientId,
@@ -667,7 +743,7 @@ export async function runOAuthLogin(
             redirectUrl,
             state,
             undefined,
-            error instanceof Error ? error.message : String(error),
+            error instanceof Error ? error.message : String(error)
           );
         }
       }
@@ -682,7 +758,7 @@ export async function runOAuthLogin(
           redirectUrl,
           state,
           undefined,
-          error instanceof Error ? error.message : String(error),
+          error instanceof Error ? error.message : String(error)
         );
       }
 
@@ -693,7 +769,7 @@ export async function runOAuthLogin(
           redirectUrl,
           state,
           undefined,
-          state.error || `Step ${startStep} did not advance.`,
+          state.error || `Step ${startStep} did not advance.`
         );
       }
     }
@@ -705,7 +781,7 @@ export async function runOAuthLogin(
         redirectUrl,
         state,
         undefined,
-        "OAuth login exceeded its step guard.",
+        "OAuth login exceeded its step guard."
       );
     }
 
@@ -715,14 +791,14 @@ export async function runOAuthLogin(
     const verification = await runVerification(
       config,
       state,
-      config.verification,
+      config.verification
     );
     return buildResult(
       config,
       authorizationPlan,
       redirectUrl,
       state,
-      verification,
+      verification
     );
   } finally {
     await interactiveSession?.stop().catch(() => undefined);

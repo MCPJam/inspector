@@ -44,6 +44,36 @@ describe("interactive authorization session", () => {
     }
   });
 
+  it("does not show success when the callback arrives after timeout", async () => {
+    const session = await createInteractiveAuthorizationSession();
+
+    try {
+      const resultPromise = session.authorize({
+        authorizationUrl: "https://auth.example.com/authorize",
+        expectedState: "expected-state",
+        timeoutMs: 10,
+        openUrl: async () => undefined,
+      });
+
+      await expect(resultPromise).rejects.toThrow(
+        /Interactive authorization timed out/
+      );
+
+      const response = await fetch(
+        `${session.redirectUrl}?code=late-code&state=expected-state`
+      );
+      expect(response.status).toBe(410);
+      expect(response.headers.get("content-type")).toContain("text/html");
+
+      const html = await response.text();
+      expect(html).toContain("Authorization session expired");
+      expect(html).toContain("Authorization codes are single-use");
+      expect(html).not.toContain("Authorization complete");
+    } finally {
+      await session.stop().catch(() => undefined);
+    }
+  });
+
   it("accepts custom loopback callback paths", async () => {
     const session = await createInteractiveAuthorizationSession({
       redirectUrl: "http://127.0.0.1:0/oauth/custom-callback",
@@ -58,7 +88,7 @@ describe("interactive authorization session", () => {
         timeoutMs: 2_000,
         openUrl: async () => {
           await fetch(
-            `${session.redirectUrl}?code=test-code&state=expected-state`,
+            `${session.redirectUrl}?code=test-code&state=expected-state`
           );
         },
       });

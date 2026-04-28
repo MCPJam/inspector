@@ -18,6 +18,7 @@ test("buildOAuthConformanceConfig defaults to interactive auth", () => {
 
   assert.equal(config.auth?.mode, "interactive");
   assert.equal(config.registrationStrategy, "cimd");
+  assert.equal(config.stepTimeout, 120_000);
 });
 
 test("buildOAuthConformanceConfig can default login flows to interactive auth", () => {
@@ -29,7 +30,7 @@ test("buildOAuthConformanceConfig can default login flows to interactive auth", 
     },
     {
       defaultAuthMode: "interactive",
-    },
+    }
   );
 
   assert.equal(config.auth?.mode, "interactive");
@@ -149,6 +150,7 @@ test("buildOAuthLoginConfig defaults login flows to automatic protocol and regis
   assert.equal(config.protocolVersion, undefined);
   assert.equal(config.registrationStrategy, undefined);
   assert.equal(config.auth?.mode, "interactive");
+  assert.equal(config.stepTimeout, 120_000);
 });
 
 test("buildOAuthLoginDebugOutcome records credential file write failures", () => {
@@ -183,6 +185,17 @@ test("buildOAuthConformanceConfig sets openUrl for print-url in interactive mode
   assert.equal(typeof (config.auth as any).openUrl, "function");
 });
 
+test("buildOAuthLoginConfig sets openUrl for print-url in interactive mode", () => {
+  const config = buildOAuthLoginConfig({
+    url: "https://example.com/mcp",
+    authMode: "interactive",
+    printUrl: true,
+  });
+
+  assert.equal(config.auth?.mode, "interactive");
+  assert.equal(typeof (config.auth as any).openUrl, "function");
+});
+
 test("buildOAuthConformanceConfig rejects print-url with headless mode", () => {
   assert.throws(
     () =>
@@ -195,7 +208,25 @@ test("buildOAuthConformanceConfig rejects print-url with headless mode", () => {
       }),
     (error) =>
       error instanceof CliError &&
-      error.message.includes("--print-url only applies to --auth-mode interactive"),
+      error.message.includes(
+        "--print-url only applies to --auth-mode interactive"
+      )
+  );
+});
+
+test("buildOAuthLoginConfig rejects print-url with headless mode", () => {
+  assert.throws(
+    () =>
+      buildOAuthLoginConfig({
+        url: "https://example.com/mcp",
+        authMode: "headless",
+        printUrl: true,
+      }),
+    (error) =>
+      error instanceof CliError &&
+      error.message.includes(
+        "--print-url only applies to --auth-mode interactive"
+      )
   );
 });
 
@@ -213,7 +244,9 @@ test("buildOAuthConformanceConfig rejects print-url with client_credentials mode
       }),
     (error) =>
       error instanceof CliError &&
-      error.message.includes("--print-url only applies to --auth-mode interactive"),
+      error.message.includes(
+        "--print-url only applies to --auth-mode interactive"
+      )
   );
 });
 
@@ -227,7 +260,7 @@ test("buildOAuthConformanceConfig rejects unsupported combinations", () => {
       }),
     (error) =>
       error instanceof CliError &&
-      error.message.includes("CIMD registration is not supported"),
+      error.message.includes("CIMD registration is not supported")
   );
 
   assert.throws(
@@ -240,9 +273,15 @@ test("buildOAuthConformanceConfig rejects unsupported combinations", () => {
       }),
     (error) =>
       error instanceof CliError &&
-      error.message.includes("--auth-mode client_credentials cannot be used with --registration cimd") &&
-      error.message.includes("only works with --auth-mode headless or --auth-mode interactive") &&
-      error.message.includes("use --registration dcr or --registration preregistered"),
+      error.message.includes(
+        "--auth-mode client_credentials cannot be used with --registration cimd"
+      ) &&
+      error.message.includes(
+        "only works with --auth-mode headless or --auth-mode interactive"
+      ) &&
+      error.message.includes(
+        "use --registration dcr or --registration preregistered"
+      )
   );
 
   assert.throws(
@@ -256,7 +295,7 @@ test("buildOAuthConformanceConfig rejects unsupported combinations", () => {
       }),
     (error) =>
       error instanceof CliError &&
-      error.message.includes("--client-secret is required"),
+      error.message.includes("--client-secret is required")
   );
 });
 
@@ -271,7 +310,7 @@ test("buildOAuthConformanceConfig rejects an invalid redirectUrl", () => {
       }),
     (error) =>
       error instanceof CliError &&
-      error.message.includes("Invalid redirect URL"),
+      error.message.includes("Invalid redirect URL")
   );
 });
 
@@ -332,7 +371,8 @@ test("buildOAuthLoginSnapshotConfig prefers access tokens over refresh tokens", 
         supportsDcr: true,
       },
       canonicalResource: "https://example.com/mcp",
-      summary: "Automatic discovery resolved to Dynamic Client Registration (DCR).",
+      summary:
+        "Automatic discovery resolved to Dynamic Client Registration (DCR).",
     },
     credentials: {
       accessToken: "access-token",

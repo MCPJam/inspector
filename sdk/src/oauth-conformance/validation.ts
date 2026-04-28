@@ -20,21 +20,18 @@ function deriveServerName(serverUrl: string): string {
 }
 
 function normalizeAuthConfig(
-  auth: OAuthConformanceConfig["auth"],
+  auth: OAuthConformanceConfig["auth"]
 ): OAuthConformanceAuthConfig {
   return auth ?? { mode: "interactive" };
 }
 
 function normalizeClientConfig(
   client: OAuthConformanceConfig["client"],
-  registrationStrategy: OAuthConformanceConfig["registrationStrategy"],
+  registrationStrategy: OAuthConformanceConfig["registrationStrategy"]
 ): OAuthConformanceClientConfig {
   const normalized = client ?? {};
 
-  if (
-    registrationStrategy === "cimd" &&
-    !normalized.clientIdMetadataUrl
-  ) {
+  if (registrationStrategy === "cimd" && !normalized.clientIdMetadataUrl) {
     return {
       ...normalized,
       clientIdMetadataUrl: DEFAULT_MCPJAM_CLIENT_ID_METADATA_URL,
@@ -45,7 +42,7 @@ function normalizeClientConfig(
 }
 
 export function normalizeOAuthConformanceConfig(
-  config: OAuthConformanceConfig,
+  config: OAuthConformanceConfig
 ): NormalizedOAuthConformanceConfig {
   const serverUrl = config.serverUrl.trim();
   if (!serverUrl) {
@@ -55,7 +52,7 @@ export function normalizeOAuthConformanceConfig(
   const auth = normalizeAuthConfig(config.auth);
   const client = normalizeClientConfig(
     config.client,
-    config.registrationStrategy,
+    config.registrationStrategy
   );
 
   if (
@@ -63,7 +60,7 @@ export function normalizeOAuthConformanceConfig(
     config.registrationStrategy === "cimd"
   ) {
     throw new Error(
-      `CIMD registration is not supported for protocol version ${config.protocolVersion}`,
+      `CIMD registration is not supported for protocol version ${config.protocolVersion}`
     );
   }
 
@@ -72,7 +69,7 @@ export function normalizeOAuthConformanceConfig(
     config.registrationStrategy === "cimd"
   ) {
     throw new Error(
-      "client_credentials cannot be used with the cimd registration strategy",
+      "client_credentials cannot be used with the cimd registration strategy"
     );
   }
 
@@ -81,7 +78,7 @@ export function normalizeOAuthConformanceConfig(
     !client.preregistered?.clientId
   ) {
     throw new Error(
-      "client.preregistered.clientId is required for preregistered registration",
+      "client.preregistered.clientId is required for preregistered registration"
     );
   }
 
@@ -91,16 +88,13 @@ export function normalizeOAuthConformanceConfig(
     !client.preregistered?.clientSecret
   ) {
     throw new Error(
-      "client.preregistered.clientSecret is required for preregistered client_credentials runs",
+      "client.preregistered.clientSecret is required for preregistered client_credentials runs"
     );
   }
 
-  if (
-    config.registrationStrategy === "cimd" &&
-    !client.clientIdMetadataUrl
-  ) {
+  if (config.registrationStrategy === "cimd" && !client.clientIdMetadataUrl) {
     throw new Error(
-      "client.clientIdMetadataUrl is required for CIMD registration",
+      "client.clientIdMetadataUrl is required for CIMD registration"
     );
   }
 
@@ -115,9 +109,10 @@ export function normalizeOAuthConformanceConfig(
     customHeaders: config.customHeaders,
     redirectUrl: config.redirectUrl,
     fetchFn: config.fetchFn ?? fetch,
-    stepTimeout: config.stepTimeout ?? 30_000,
+    stepTimeout: config.stepTimeout ?? 120_000,
     verification: {
-      listTools: config.verification?.listTools ?? !!config.verification?.callTool,
+      listTools:
+        config.verification?.listTools ?? !!config.verification?.callTool,
       callTool: config.verification?.callTool,
       timeout: config.verification?.timeout ?? 30_000,
     },

@@ -179,11 +179,12 @@ Plus shared connection flags.
 | `--redirect-url <url>` | No | Auto-generated | OAuth redirect URL |
 | `--scopes <scopes>` | No | | Space-separated scope string |
 | `--header <header>` | No | | HTTP header `Key: Value` (repeatable) |
-| `--step-timeout <ms>` | No | `30000` | Per-step timeout |
+| `--step-timeout <ms>` | No | `120000` | Per-step timeout |
 | `--verify-tools` | No | | After login, list tools |
 | `--verify-call-tool <name>` | No | | Also call the named tool |
 | `--credentials-out <path>` | No | | Write OAuth credentials to file (mode 0600); stdout has secrets redacted |
 | `--debug-out <path>` | No | | Write debug artifact to file |
+| `--print-url` | No | | Print consent URL to stderr (interactive only) |
 
 ### `oauth conformance`
 
@@ -199,7 +200,7 @@ Plus shared connection flags.
 | `--redirect-url <url>` | No | Auto-generated | OAuth redirect URL |
 | `--scopes <scopes>` | No | | Space-separated scope string |
 | `--header <header>` | No | | HTTP header `Key: Value` (repeatable) |
-| `--step-timeout <ms>` | No | `30000` | Per-step timeout |
+| `--step-timeout <ms>` | No | `120000` | Per-step timeout |
 | `--verify-tools` | No | | After OAuth, list tools |
 | `--verify-call-tool <name>` | No | | Also call the named tool |
 | `--conformance-checks` | No | | Run additional negative OAuth checks, including DCR redirect URI policy and redirect-mismatch probes |

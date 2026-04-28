@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdtemp, readFile, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -11,7 +11,9 @@ import {
 } from "../src/lib/debug-artifact.js";
 import { createCliRpcLogCollector } from "../src/lib/rpc-logs.js";
 
-function createDoctorResult<TTarget>(target: TTarget): ServerDoctorResult<TTarget> {
+function createDoctorResult<TTarget>(
+  target: TTarget
+): ServerDoctorResult<TTarget> {
   return {
     generatedAt: "2026-04-11T00:00:00.000Z",
     status: "ready" as const,
@@ -43,7 +45,7 @@ function createDoctorResult<TTarget>(target: TTarget): ServerDoctorResult<TTarge
 }
 
 test("buildDebugArtifactEnvelope merges rpc logs and redacts payloads", () => {
-  const primaryCollector = createCliRpcLogCollector({ "__cli__": "example" });
+  const primaryCollector = createCliRpcLogCollector({ __cli__: "example" });
   primaryCollector.rpcLogger({
     serverId: "__cli__",
     direction: "send",
@@ -54,7 +56,7 @@ test("buildDebugArtifactEnvelope merges rpc logs and redacts payloads", () => {
     },
   } as any);
 
-  const snapshotCollector = createCliRpcLogCollector({ "__cli__": "example" });
+  const snapshotCollector = createCliRpcLogCollector({ __cli__: "example" });
   snapshotCollector.rpcLogger({
     serverId: "__cli__",
     direction: "receive",
@@ -109,7 +111,9 @@ test("buildDebugArtifactEnvelope merges rpc logs and redacts payloads", () => {
 });
 
 test("writeCommandDebugArtifact writes a snapshot artifact and emits a human notice", async () => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "mcpjam-debug-artifact-"));
+  const directory = await mkdtemp(
+    path.join(os.tmpdir(), "mcpjam-debug-artifact-")
+  );
   const artifactPath = path.join(directory, "artifact.json");
   const originalWrite = process.stderr.write.bind(process.stderr);
   let stderr = "";
@@ -155,7 +159,7 @@ test("writeCommandDebugArtifact writes a snapshot artifact and emits a human not
             kind: "http",
             label: "https://example.com/mcp",
           } as TTarget),
-      },
+      }
     );
 
     const contents = JSON.parse(await readFile(writtenPath!, "utf8"));
@@ -163,6 +167,7 @@ test("writeCommandDebugArtifact writes a snapshot artifact and emits a human not
     assert.equal(contents.command.name, "server validate");
     assert.equal(contents.outcome.status, "success");
     assert.equal(contents.snapshot.status, "ready");
+    assert.equal((await stat(writtenPath!)).mode & 0o777, 0o600);
     assert.match(stderr, /Debug artifact:/);
     assert.match(stderr, /artifact\.json/);
   } finally {
@@ -171,7 +176,9 @@ test("writeCommandDebugArtifact writes a snapshot artifact and emits a human not
 });
 
 test("writeCommandDebugArtifact suppresses human notice when quiet", async () => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "mcpjam-debug-artifact-"));
+  const directory = await mkdtemp(
+    path.join(os.tmpdir(), "mcpjam-debug-artifact-")
+  );
   const artifactPath = path.join(directory, "quiet.json");
   const originalWrite = process.stderr.write.bind(process.stderr);
   let stderr = "";
@@ -201,7 +208,9 @@ test("writeCommandDebugArtifact suppresses human notice when quiet", async () =>
 });
 
 test("writeCommandDebugArtifact preserves command failure and records snapshot errors", async () => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "mcpjam-debug-artifact-"));
+  const directory = await mkdtemp(
+    path.join(os.tmpdir(), "mcpjam-debug-artifact-")
+  );
   const artifactPath = path.join(directory, "failure.json");
 
   const writtenPath = await writeCommandDebugArtifact(
@@ -243,7 +252,7 @@ test("writeCommandDebugArtifact preserves command failure and records snapshot e
       runDoctor: async () => {
         throw new Error("snapshot timed out");
       },
-    },
+    }
   );
 
   const contents = JSON.parse(await readFile(writtenPath!, "utf8"));
