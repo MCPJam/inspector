@@ -50,6 +50,7 @@ import { SidebarUser } from "@/components/sidebar/sidebar-user";
 import { SidebarWorkspaceSelector } from "@/components/sidebar/sidebar-workspace-selector";
 import { ShareWorkspaceDialog } from "@/components/workspace/ShareWorkspaceDialog";
 import { useUpdateNotification } from "@/hooks/useUpdateNotification";
+import { Badge } from "@mcpjam/design-system/badge";
 import { Button } from "@mcpjam/design-system/button";
 import {
   Tooltip,
@@ -201,7 +202,6 @@ const navigationSections: NavSection[] = [
         icon: FlaskConical,
         billingFeature: "evals",
         evalsSubnav: true,
-        featureFlag: "evals-enabled",
       },
     ],
   },
@@ -364,6 +364,7 @@ type EvalsSubnavItem = {
   icon: typeof Puzzle | typeof GitBranch;
   isActive: (activeTab?: string) => boolean;
   onClick: () => void;
+  beta?: boolean;
 };
 
 export function getEvalsSubnavItems(options: {
@@ -376,6 +377,7 @@ export function getEvalsSubnavItems(options: {
       icon: Puzzle,
       isActive: (activeTab) => activeTab === "evals",
       onClick: navigateToEvalsExploreList,
+      beta: true,
     },
   ];
 
@@ -399,6 +401,8 @@ export function SidebarEvalsNavGroup({
   disabledTooltip,
   activeTab,
   showRuns = true,
+  showPlaygroundBeta = false,
+  playgroundEnabled = false,
 }: {
   title: string;
   Icon: React.ComponentType<{ className?: string }>;
@@ -406,8 +410,11 @@ export function SidebarEvalsNavGroup({
   disabledTooltip?: string;
   activeTab?: string;
   showRuns?: boolean;
+  showPlaygroundBeta?: boolean;
+  playgroundEnabled?: boolean;
 }) {
   const isEvalsFamily = activeTab === "evals" || activeTab === "ci-evals";
+  const isPlaygroundLocked = !playgroundEnabled;
   const subnavItems = getEvalsSubnavItems({
     evaluateRunsEnabled: showRuns,
   });
@@ -415,15 +422,15 @@ export function SidebarEvalsNavGroup({
   const parentButton = (
     <SidebarMenuButton
       tooltip={title}
-      isActive={!disabled && isEvalsFamily}
+      isActive={!disabled && !isPlaygroundLocked && isEvalsFamily}
       onClick={() => {
-        if (disabled) return;
+        if (disabled || isPlaygroundLocked) return;
         navigateToEvalsExploreList();
       }}
-      aria-disabled={disabled || undefined}
+      aria-disabled={disabled || isPlaygroundLocked || undefined}
       tabIndex={disabled ? -1 : undefined}
       className={
-        disabled
+        disabled || isPlaygroundLocked
           ? "cursor-not-allowed text-muted-foreground opacity-50 hover:bg-transparent hover:text-muted-foreground active:bg-transparent active:text-muted-foreground"
           : isEvalsFamily
             ? "[&[data-active=true]]:bg-accent cursor-pointer"
@@ -462,25 +469,67 @@ export function SidebarEvalsNavGroup({
             <SidebarMenuSub>
               {subnavItems.map((item) => {
                 const ItemIcon = item.icon;
+                const isItemPlaygroundLocked = item.beta && isPlaygroundLocked;
+                const isItemDisabled = disabled || isItemPlaygroundLocked;
+
+                const subnavButton = (
+                  <SidebarMenuSubButton
+                    isActive={!isItemDisabled && item.isActive(activeTab)}
+                    href={item.href}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      if (isItemDisabled) return;
+                      item.onClick();
+                    }}
+                    aria-disabled={isItemDisabled || undefined}
+                    className={cn(
+                      isItemDisabled &&
+                        "cursor-not-allowed text-muted-foreground opacity-50 hover:bg-transparent hover:text-muted-foreground active:bg-transparent active:text-muted-foreground",
+                      isItemPlaygroundLocked &&
+                        "aria-disabled:pointer-events-auto",
+                      disabled && "pointer-events-none",
+                    )}
+                  >
+                    <ItemIcon className="h-4 w-4" />
+                    <span className="min-w-0 truncate">{item.title}</span>
+                    {item.beta && showPlaygroundBeta ? (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Badge
+                            className="ml-auto rounded-full px-1.5 py-0 text-[10px] font-semibold leading-tight uppercase tracking-wider"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                            }}
+                          >
+                            Beta
+                          </Badge>
+                        </TooltipTrigger>
+                        <TooltipContent
+                          side="right"
+                          sideOffset={6}
+                          className="max-w-[200px]"
+                        >
+                          This tab is a work in progress, data may not be
+                          persisted.
+                        </TooltipContent>
+                      </Tooltip>
+                    ) : null}
+                  </SidebarMenuSubButton>
+                );
 
                 return (
                   <SidebarMenuSubItem key={item.title}>
-                    <SidebarMenuSubButton
-                      isActive={item.isActive(activeTab)}
-                      href={item.href}
-                      onClick={(e) => {
-                        e.preventDefault();
-                        if (disabled) return;
-                        item.onClick();
-                      }}
-                      aria-disabled={disabled || undefined}
-                      className={
-                        disabled ? "pointer-events-none opacity-50" : undefined
-                      }
-                    >
-                      <ItemIcon className="h-4 w-4" />
-                      <span>{item.title}</span>
-                    </SidebarMenuSubButton>
+                    {isItemPlaygroundLocked ? (
+                      <Tooltip>
+                        <TooltipTrigger asChild>{subnavButton}</TooltipTrigger>
+                        <TooltipContent side="right" sideOffset={6}>
+                          Coming soon. Playground is in beta.
+                        </TooltipContent>
+                      </Tooltip>
+                    ) : (
+                      subnavButton
+                    )}
                   </SidebarMenuSubItem>
                 );
               })}
@@ -516,8 +565,8 @@ export function MCPSidebar({
   const learningFlagEnabled = useFeatureFlagEnabled("mcpjam-learning");
   const sandboxesEnabled = useFeatureFlagEnabled("sandboxes-enabled");
   const registryEnabled = useFeatureFlagEnabled("registry-enabled");
-  const evalsEnabled = useFeatureFlagEnabled("evals-enabled");
   const evaluateRunsEnabled = useFeatureFlagEnabled("evaluate-runs");
+  const playgroundEnabled = useFeatureFlagEnabled("playground-enabled");
   const xaaEnabled = useFeatureFlagEnabled("xaa");
   const learnMoreEnabled = useFeatureFlagEnabled("learn-more-enabled");
   const conformanceEnabled = useFeatureFlagEnabled("mcpjam-conformance");
@@ -561,7 +610,6 @@ export function MCPSidebar({
       "mcpjam-learning": !!learningEnabled,
       "sandboxes-enabled": !!sandboxesEnabled && isAuthenticated,
       "registry-enabled": registryEnabled === true,
-      "evals-enabled": !!evalsEnabled,
       "mcpjam-conformance": conformanceEnabled === true,
       xaa: xaaEnabled === true,
     }),
@@ -569,7 +617,6 @@ export function MCPSidebar({
       learningEnabled,
       sandboxesEnabled,
       registryEnabled,
-      evalsEnabled,
       conformanceEnabled,
       xaaEnabled,
       isAuthenticated,
@@ -704,6 +751,8 @@ export function MCPSidebar({
                     disabledTooltip={evalsEntry.disabledTooltip}
                     activeTab={activeTab}
                     showRuns={evaluateRunsEnabled === true}
+                    showPlaygroundBeta={playgroundEnabled === true}
+                    playgroundEnabled={playgroundEnabled === true}
                   />
                 ) : null}
                 {/* Add subtle divider between sections (except after the last section) */}
