@@ -57,6 +57,8 @@ The `--out <path>` flag writes the full JSON artifact to a file — useful for h
 For stdio targets, those artifacts only record the explicit env keys you passed
 via `-e/--env`; inherited shell variables are not enumerated.
 
+Sensitive fields such as `Authorization` headers are automatically redacted to `[REDACTED]` in all printed output and written artifacts, including RPC logs attached via `--rpc`.
+
 ### `server info`
 
 Get initialization info for a connected server.
