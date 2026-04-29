@@ -1,8 +1,7 @@
 ---
-
-## name: mcp-inspector
-
+name: mcp-inspector
 description: Interpret and use `mcpjam` probe, doctor, OAuth, apps conformance, tools, resources, and prompts output conservatively against MCP 2025-11-25. Use when interacting with MCP servers, executing tools, triaging findings, performing security reviews, deciding whether a CLI finding is real or overstated, or turning inspection output into an engineer-facing report with severity and confidence.
+---
 
 # MCPJam CLI Investigation
 
@@ -191,8 +190,8 @@ For each claimed security-review finding, return:
 ## Reference map
 
 - `references/cli-surface-notes.md`
-Use for command-specific caveats, artifact shapes, local enrichments, merged errors, and normalized empty arrays.
+  Use for command-specific caveats, artifact shapes, local enrichments, merged errors, and normalized empty arrays.
 - `references/mcp-2025-11-25-interpretation.md`
-Use for capability, lifecycle, transport, authorization, tools, resources, and prompts interpretation against the latest MCP spec.
+  Use for capability, lifecycle, transport, authorization, tools, resources, and prompts interpretation against the latest MCP spec.
 - `references/security-best-practices.md`
-Use for security review checks mapped to CLI commands. Covers SSRF, confused deputy, PKCE, token passthrough, scope minimization, auth-posture checks, and session security. Source: [https://modelcontextprotocol.io/docs/tutorials/security/security_best_practices](https://modelcontextprotocol.io/docs/tutorials/security/security_best_practices)
+  Use for security review checks mapped to CLI commands. Covers SSRF, confused deputy, PKCE, token passthrough, scope minimization, auth-posture checks, and session security. Source: https://modelcontextprotocol.io/docs/tutorials/security/security_best_practices
