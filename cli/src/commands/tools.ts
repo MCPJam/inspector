@@ -45,6 +45,7 @@ interface ToolsCallOptions extends SharedServerTargetOptions {
   toolName?: string;
   name?: string;
   toolArgs?: string;
+  toolArgsStdin?: boolean;
   params?: string;
   validateResponse?: boolean;
   expectSuccess?: boolean;
@@ -120,6 +121,7 @@ export function registerToolsCommands(program: Command): void {
         "Tool parameter object as JSON, @path, or - for stdin",
       )
       .option("--params <json>", "Alias for --tool-args")
+      .option("--tool-args-stdin", "Read tool parameter JSON from stdin")
       .option(
         "--validate-response",
         "Validate the MCP tool-call envelope returned by the server",
@@ -136,8 +138,14 @@ export function registerToolsCommands(program: Command): void {
         "--debug-out <path>",
         "Write a structured debug artifact to a file",
       )
-      .option("--ui", "Render the tool result in Inspector App Builder")
-      .option("--open", "Open Inspector in the system browser before rendering")
+      .option(
+        "--ui",
+        "Render the tool result in Inspector App Builder; opens a browser by default",
+      )
+      .option(
+        "--open",
+        "Open Inspector in the system browser before rendering (default with --ui)",
+      )
       .option(
         "--no-open",
         "Start/use Inspector without opening a system browser",
@@ -190,7 +198,7 @@ export function registerToolsCommands(program: Command): void {
       "Tool name",
       { required: true },
     ) as string;
-    const paramsInput = resolveAliasedStringOption(
+    const resolvedParamsInput = resolveAliasedStringOption(
       options as Record<string, unknown>,
       [
         { key: "toolArgs", flag: "--tool-args" },
@@ -198,6 +206,12 @@ export function registerToolsCommands(program: Command): void {
       ],
       "Tool parameters",
     );
+    if (options.toolArgsStdin && resolvedParamsInput !== undefined) {
+      throw usageError(
+        "--tool-args-stdin cannot be used together with --tool-args or --params.",
+      );
+    }
+    const paramsInput = options.toolArgsStdin ? "-" : resolvedParamsInput;
     const params = parseJsonRecord(paramsInput, "Tool parameters") ?? {};
     const targetSummary = summarizeServerDoctorTarget(target, config);
     const shouldValidateResponse = options.validateResponse === true;
@@ -293,6 +307,7 @@ export function registerToolsCommands(program: Command): void {
     let inspectorRenderError:
       | { code: string; message: string; details?: unknown }
       | undefined;
+    let inspectorRenderSkipped = false;
 
     if (options.ui) {
       const serverName =
@@ -311,6 +326,9 @@ export function registerToolsCommands(program: Command): void {
           baseUrl: options.inspectorUrl,
           config,
           frontendUrl,
+          onProgress: createInspectorUiProgressReporter({
+            enabled: openBrowser && !globalOptions.quiet,
+          }),
           openBrowser,
           params,
           renderContext: renderContext!,
@@ -333,9 +351,16 @@ export function registerToolsCommands(program: Command): void {
         };
       }
 
-      const compactInspectorRender = buildCompactInspectorRender(uiResult);
+      inspectorRenderSkipped =
+        isSkippableInspectorRenderError(inspectorRenderError);
+      const compactInspectorRender = buildCompactInspectorRender(uiResult, {
+        skipped: inspectorRenderSkipped,
+      });
       const compactOutputPayload = {
-        success: !inspectorRenderError && !validationFailed && !toolResultError,
+        success:
+          (!inspectorRenderError || inspectorRenderSkipped) &&
+          !validationFailed &&
+          !toolResultError,
         command: "tools call",
         inspectorUi: true,
         ...(typeof compactInspectorRender.browserUrl === "string"
@@ -349,7 +374,11 @@ export function registerToolsCommands(program: Command): void {
         parameterKeys: Object.keys(params),
         result,
         inspectorRender: compactInspectorRender,
-        ...(inspectorRenderError ? { error: inspectorRenderError } : {}),
+        ...(inspectorRenderError
+          ? inspectorRenderSkipped
+            ? { warning: inspectorRenderError }
+            : { error: inspectorRenderError }
+          : {}),
       };
       outputPayload = compactOutputPayload;
       debugOutputPayload = {
@@ -357,6 +386,13 @@ export function registerToolsCommands(program: Command): void {
         params,
         inspectorRender: uiResult,
       };
+
+      writeInspectorRenderWarning({
+        error: inspectorRenderError,
+        globalOptions,
+        render: compactInspectorRender,
+        skipped: inspectorRenderSkipped,
+      });
     }
 
     await writeCommandDebugArtifact({
@@ -369,7 +405,7 @@ export function registerToolsCommands(program: Command): void {
         params,
       },
       target: targetSummary,
-      outcome: inspectorRenderError
+      outcome: inspectorRenderError && !inspectorRenderSkipped
         ? {
             status: "error",
             error: inspectorRenderError,
@@ -416,7 +452,7 @@ export function registerToolsCommands(program: Command): void {
     if (toolResultError) {
       setProcessExitCode(1);
     }
-    if (inspectorRenderError) {
+    if (inspectorRenderError && !inspectorRenderSkipped) {
       setProcessExitCode(1);
     }
   });
@@ -424,7 +460,7 @@ export function registerToolsCommands(program: Command): void {
 
 function resolveInspectorOpenBrowser(
   options: Pick<ToolsCallOptions, "attachOnly" | "open">,
-  globalOptions: GlobalOptions,
+  _globalOptions: GlobalOptions,
 ): boolean {
   if (options.attachOnly) {
     return false;
@@ -432,7 +468,7 @@ function resolveInspectorOpenBrowser(
   if (options.open !== undefined) {
     return options.open;
   }
-  return globalOptions.format === "human" && !globalOptions.quiet;
+  return true;
 }
 
 function parseInspectorFrontendUrl(
@@ -459,14 +495,11 @@ export function resolveInspectorSkipDiscovery(
   if (options.attachOnly) {
     return true;
   }
-  if (
-    (globalOptions.format === "json" || globalOptions.quiet) &&
-    options.open !== true
-  ) {
-    return true;
-  }
-  if (options.open === true) {
+  if (options.open !== false) {
     return false;
+  }
+  if (globalOptions.format === "json" || globalOptions.quiet) {
+    return true;
   }
   return false;
 }
@@ -493,11 +526,93 @@ function extractInspectorRenderErrorUrls(error: {
     ...(typeof details.inspectorFrontendUrl === "string"
       ? { frontendUrl: details.inspectorFrontendUrl }
       : {}),
+    ...(typeof details.inspectorStarted === "boolean"
+      ? { inspectorStarted: details.inspectorStarted }
+      : {}),
+    ...(typeof details.hasActiveClient === "boolean"
+      ? { hasActiveClient: details.hasActiveClient }
+      : {}),
   };
+}
+
+function createInspectorUiProgressReporter(options: {
+  enabled: boolean;
+}): ((message: string) => void) | undefined {
+  if (!options.enabled) {
+    return undefined;
+  }
+
+  let lastMessage = "";
+  return (message: string) => {
+    if (!message || message === lastMessage) {
+      return;
+    }
+    lastMessage = message;
+    process.stderr.write(`${message}\n`);
+  };
+}
+
+function writeInspectorRenderWarning(options: {
+  error: { code: string; message: string } | undefined;
+  globalOptions: Pick<GlobalOptions, "quiet">;
+  render: Record<string, unknown>;
+  skipped: boolean;
+}): void {
+  if (!options.skipped || !options.error || options.globalOptions.quiet) {
+    return;
+  }
+
+  process.stderr.write(
+    `Warning: Inspector UI render skipped: ${options.error.message}\n`,
+  );
+
+  if (!isNoActiveClientMessage(options.error)) {
+    return;
+  }
+
+  const browserUrl =
+    typeof options.render.browserUrl === "string"
+      ? options.render.browserUrl
+      : undefined;
+  process.stderr.write(
+    `Tip: open the Inspector App Builder${browserUrl ? ` at ${browserUrl}` : ""}, or rerun without --no-open or with --open to launch a browser automatically.\n`,
+  );
+}
+
+function isSkippableInspectorRenderError(
+  error: { code: string; message: string } | undefined,
+): boolean {
+  if (!error) {
+    return false;
+  }
+
+  const code = error.code.toLowerCase();
+  if (
+    code === "no_active_client" ||
+    code === "timeout" ||
+    code === "disconnected_server" ||
+    code === "unsupported_in_mode"
+  ) {
+    return true;
+  }
+
+  if (code === "operational_error") {
+    return /no active (browser )?client/i.test(error.message);
+  }
+
+  return false;
+}
+
+function isNoActiveClientMessage(error: { code: string; message: string }) {
+  return (
+    error.code.toLowerCase() === "no_active_client" ||
+    /no active (browser )?client/i.test(error.message)
+  );
 }
 
 function buildCompactInspectorRender(
   uiResult: Record<string, unknown>,
+  options: { skipped?: boolean } = {},
 ): Record<string, unknown> {
   const commands: Record<string, unknown> = {};
   let hasCommandError = false;
@@ -515,12 +630,18 @@ function buildCompactInspectorRender(
 
   const topLevelError =
     uiResult.status === "error" && isRecord(uiResult.error)
-      ? { error: uiResult.error }
+      ? options.skipped
+        ? { warning: uiResult.error }
+        : { error: uiResult.error }
       : {};
 
   return {
     status:
-      hasCommandError || uiResult.status === "error" ? "error" : "rendered",
+      options.skipped
+        ? "skipped"
+        : hasCommandError || uiResult.status === "error"
+          ? "error"
+          : "rendered",
     // Contract metadata: renders target the active client and fresh tabs do not
     // hydrate this injected state.
     mode: "active-client",

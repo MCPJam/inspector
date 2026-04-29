@@ -32,10 +32,13 @@ type InspectorUiRenderResult = InspectorAppRenderResult & {
   inspectorStarted: boolean;
 };
 
+type InspectorUiProgressReporter = (message: string) => void;
+
 export async function runUiRender(options: {
   baseUrl?: string;
   config: MCPServerConfig;
   frontendUrl?: string;
+  onProgress?: InspectorUiProgressReporter;
   openBrowser?: boolean;
   params: Record<string, unknown>;
   renderContext: AppRenderContext;
@@ -57,6 +60,15 @@ export async function runUiRender(options: {
     timeoutMs: options.timeoutMs,
   });
 
+  if (openBrowser) {
+    options.onProgress?.(`Inspector App Builder URL: ${ensureResult.url}`);
+    if (!ensureResult.hasActiveClient) {
+      options.onProgress?.(
+        "Waiting for Inspector browser client to connect...",
+      );
+    }
+  }
+
   if (!ensureResult.hasActiveClient && !openBrowser) {
     const startedNote = ensureResult.started
       ? " Inspector was just started by the CLI and is still running."
@@ -64,6 +76,7 @@ export async function runUiRender(options: {
     throw operationalError(
       `Inspector has no active browser client.${startedNote} Open the Inspector App Builder URL in your browser, then rerun \`tools call --ui\`; or pass \`--open\` to let the CLI open a system browser.`,
       {
+        hasActiveClient: ensureResult.hasActiveClient,
         inspectorBrowserUrl: ensureResult.url,
         inspectorStarted: ensureResult.started,
       },
@@ -76,6 +89,7 @@ export async function runUiRender(options: {
 
   const renderResult = await runInspectorAppRender({
     client,
+    onProgress: options.onProgress,
     params: options.params,
     renderContext: options.renderContext,
     serverName: options.serverName,
@@ -99,6 +113,7 @@ export async function runUiRender(options: {
 
 async function runInspectorAppRender(options: {
   client: InspectorApiClient;
+  onProgress?: InspectorUiProgressReporter;
   params: Record<string, unknown>;
   renderContext: AppRenderContext;
   serverName: string;
@@ -164,16 +179,39 @@ async function runInspectorAppRender(options: {
 async function executeInspectorCommandWithClient(
   options: {
     client: InspectorApiClient;
+    onProgress?: InspectorUiProgressReporter;
     timeoutMs: number;
   },
   request: Parameters<InspectorApiClient["executeCommand"]>[0],
 ): Promise<InspectorCommandResponse> {
   const startedAt = Date.now();
   const deadline = startedAt + options.timeoutMs;
+  let lastProgressAt = 0;
   let lastResponse: InspectorCommandResponse | undefined;
 
+  const emitWaitingProgress = (force = false) => {
+    if (!options.onProgress) {
+      return;
+    }
+
+    const now = Date.now();
+    if (!force && now - lastProgressAt < 2_000) {
+      return;
+    }
+
+    lastProgressAt = now;
+    const elapsedSeconds = Math.max(0, Math.floor((now - startedAt) / 1_000));
+    options.onProgress(
+      `Waiting for Inspector browser client to handle ${request.type}... (${elapsedSeconds}s)`,
+    );
+  };
+
   do {
-    const response = await options.client.executeCommand(request);
+    const response = await executeCommandWithProgress(
+      options.client.executeCommand(request),
+      emitWaitingProgress,
+      Boolean(options.onProgress),
+    );
     lastResponse = response;
     const retryable =
       response.status === "error" &&
@@ -184,6 +222,7 @@ async function executeInspectorCommandWithClient(
       return response;
     }
 
+    emitWaitingProgress(true);
     const remaining = deadline - Date.now();
     if (remaining <= 0) {
       return response;
@@ -195,6 +234,24 @@ async function executeInspectorCommandWithClient(
     throw new Error("Inspector command was not executed.");
   }
   return lastResponse;
+}
+
+async function executeCommandWithProgress<T>(
+  pending: Promise<T>,
+  onProgress: () => void,
+  enabled: boolean,
+): Promise<T> {
+  if (!enabled) {
+    return await pending;
+  }
+
+  const interval = setInterval(onProgress, 2_000);
+  interval.unref?.();
+  try {
+    return await pending;
+  } finally {
+    clearInterval(interval);
+  }
 }
 
 export function findInspectorRenderError(

@@ -245,3 +245,51 @@ test("JSON options accept stdin and reject duplicate stdin consumers", async () 
   assert.equal(duplicate.exitCode, 2);
   assert.match(duplicate.stderr, /stdin was already consumed/);
 });
+
+test("tools call accepts --tool-args-stdin shorthand", async () => {
+  const server = await startMockStreamableHttpServer();
+
+  try {
+    const result = await runCli(
+      [
+        "--format",
+        "json",
+        "tools",
+        "call",
+        "--url",
+        server.url,
+        "--tool-name",
+        "echo",
+        "--tool-args-stdin",
+      ],
+      '{"message":"from stdin shorthand"}\n',
+    );
+
+    assert.equal(result.exitCode, 0, result.stderr);
+    const payload = JSON.parse(result.stdout) as {
+      content?: Array<{ type?: string; text?: string }>;
+    };
+    assert.equal(payload.content?.[0]?.text, "Echo: from stdin shorthand");
+  } finally {
+    await server.stop();
+  }
+
+  const conflict = await runCli(
+    [
+      "--format",
+      "json",
+      "tools",
+      "call",
+      "--command",
+      "node",
+      "--tool-name",
+      "echo",
+      "--tool-args",
+      "{}",
+      "--tool-args-stdin",
+    ],
+    "{}\n",
+  );
+  assert.equal(conflict.exitCode, 2);
+  assert.match(conflict.stderr, /--tool-args-stdin cannot be used/);
+});

@@ -101,12 +101,13 @@ Uses shared connection flags.
 | `--name <name>` | Legacy alias for `--tool-name` |
 | `--tool-args <json>` | Tool arguments as inline JSON, `@path`, or `-` for stdin |
 | `--params <json>` | Legacy alias for `--tool-args` |
+| `--tool-args-stdin` | Read tool arguments JSON from stdin |
 | `--validate-response` | Validate the MCP tool-call envelope returned by the server |
 | `--expect-success` | Fail when the tool result reports `isError` |
 | `--reporter <reporter>` | `json-summary` or `junit-xml` validation report output |
 | `--debug-out <path>` | Write debug artifact to file |
-| `--ui` | Attach to Inspector and render the completed tool result in App Builder |
-| `--open` | Open Inspector in the system browser before rendering |
+| `--ui` | Attach to Inspector and render the completed tool result in App Builder; opens a browser by default |
+| `--open` | Open Inspector in the system browser before rendering (default with `--ui`) |
 | `--no-open` | Start/use Inspector without opening a system browser |
 | `--attach-only` | Require an already-running Inspector browser client; do not start or open Inspector |
 | `--inspector-url <url>` | Local Inspector backend/API base URL |
@@ -120,7 +121,7 @@ Uses shared connection flags.
 
 Plus shared connection flags.
 
-Without `--ui`, `tools call` returns the raw tool result. With `--ui`, it returns a compact envelope with `result`, `inspectorBrowserUrl`, and `inspectorRender` status. `--inspector-url` points to the Inspector backend/API; pass `--frontend-url` when you already know the browser/client URL and want to skip health-advertised frontend checks and local dev port discovery. JSON/quiet invocations do not open a system browser or scan local frontend ports by default, but they may start Inspector; use `--attach-only` when startup, browser opening, and discovery should all be disallowed. Open `inspectorBrowserUrl` first with your browser automation, then rerun the command, or pass `--open` for interactive use. Human TTY and `--open` flows may discover local dev frontends. The Inspector path injects the completed tool result through `renderToolResult`; it does not call the tool a second time. Fresh tabs do not hydrate the injected render state; use the active Inspector client that received the render. Use `--debug-out` for the full render envelope including params and command responses. `--ui` cannot be combined with `--reporter`.
+Without `--ui`, `tools call` returns the raw tool result. With `--ui`, it opens Inspector by default and returns a compact envelope with `result`, `inspectorBrowserUrl`, and `inspectorRender` status. `inspectorRender.status` is `rendered` when Inspector accepted the render, `skipped` when the tool succeeded but Inspector had no active browser client, an unsatisfied render precondition, or a render timeout, and `error` for non-recoverable render command failures. Skipped renders are emitted as top-level `warning` fields and do not change the tool-call exit code; when not quiet, the CLI also prints a short stderr warning and browser tip. Tool failures, validation failures, and render command errors still exit nonzero. `--inspector-url` points to the Inspector backend/API; pass `--frontend-url` when you already know the browser/client URL and want to skip health-advertised frontend checks and local dev port discovery. Use `--no-open` when browser automation already opened `inspectorBrowserUrl`; use `--attach-only` when startup, browser opening, and discovery should all be disallowed. Human and default `--ui` flows may discover local dev frontends and print browser-client wait progress on stderr unless `--quiet` is set. The Inspector path injects the completed tool result through `renderToolResult`; it does not call the tool a second time. Fresh tabs do not hydrate the injected render state; use the active Inspector client that received the render. Use `--debug-out` for the full render envelope including params and command responses. `--ui` cannot be combined with `--reporter`.
 
 ---
 

@@ -102,6 +102,9 @@ async function startMockServer(options: {
   toolResult?: unknown;
   toolRpcError?: { code: number; message: string };
   failRender?: boolean;
+  commandErrors?: Partial<
+    Record<string, { code: string; message: string; status?: number }>
+  >;
 }) {
   const requests: Array<{ method?: string; url?: string; body?: unknown }> = [];
   const toolResult = options.toolResult ?? {
@@ -210,6 +213,24 @@ async function startMockServer(options: {
 
       if (request.url === "/api/mcp/command") {
         const type = body.type as string | undefined;
+        const commandError = type ? options.commandErrors?.[type] : undefined;
+        if (commandError) {
+          response.writeHead(commandError.status ?? 500, {
+            "Content-Type": "application/json",
+          });
+          response.end(
+            JSON.stringify({
+              id: (body.id as string | undefined) ?? "cmd",
+              status: "error",
+              error: {
+                code: commandError.code,
+                message: commandError.message,
+              },
+            }),
+          );
+          return;
+        }
+
         const isRender = type === "renderToolResult";
         response.writeHead(options.failRender && isRender ? 500 : 200, {
           "Content-Type": "application/json",
@@ -444,7 +465,7 @@ test("tools call --ui --frontend-url uses the explicit browser URL without probi
       payload.inspectorRender.browserUrl,
       `http://localhost:${server.port}/inspector/#app-builder`,
     );
-    assert.equal(payload.inspectorRender.browserOpenRequested, false);
+    assert.equal(payload.inspectorRender.browserOpenRequested, true);
     assert.equal(
       server.requests.some((entry) => entry.method === "GET" && entry.url === "/"),
       false,
@@ -483,7 +504,7 @@ test("tools call without --ui preserves raw output and does not contact Inspecto
   }
 });
 
-test("tools call --ui in JSON mode does not open or wait without an active Inspector client", async () => {
+test("tools call --ui --no-open in JSON mode skips render without an active Inspector client", async () => {
   const toolResult = { content: [{ type: "text", text: "view created" }] };
   const server = await startMockServer({ hasActiveClient: false, toolResult });
 
@@ -494,6 +515,7 @@ test("tools call --ui in JSON mode does not open or wait without an active Inspe
       "tools",
       "call",
       "--ui",
+      "--no-open",
       "--inspector-url",
       `http://127.0.0.1:${server.port}`,
       "--url",
@@ -504,19 +526,26 @@ test("tools call --ui in JSON mode does not open or wait without an active Inspe
       "{}",
     ]);
 
-    assert.equal(result.exitCode, 1, result.stderr);
+    assert.equal(result.exitCode, 0, result.stderr);
+    assert.match(result.stderr, /Warning: Inspector UI render skipped/);
+    assert.match(result.stderr, /Tip: open the Inspector App Builder/);
     const payload = JSON.parse(lastJsonLine(result.stdout)) as Record<
       string,
       any
     >;
-    assert.equal(payload.success, false);
+    assert.equal(payload.success, true);
     assert.equal(
       payload.inspectorBrowserUrl,
       `http://127.0.0.1:${server.port}/#app-builder`,
     );
+    assert.equal(payload.inspectorRender.status, "skipped");
+    assert.equal(payload.inspectorRender.hasActiveClient, false);
+    assert.equal(payload.inspectorRender.inspectorStarted, false);
     assert.equal(payload.inspectorRender.browserOpenRequested, undefined);
-    assert.equal(payload.error.code, "OPERATIONAL_ERROR");
-    assert.match(payload.error.message, /no active browser client/i);
+    assert.equal(payload.error, undefined);
+    assert.equal(payload.warning.code, "OPERATIONAL_ERROR");
+    assert.match(payload.warning.message, /no active browser client/i);
+    assert.equal(payload.inspectorRender.warning.code, "OPERATIONAL_ERROR");
     assert.equal(
       server.requests.some((entry) => entry.url === "/api/mcp/command"),
       false,
@@ -526,7 +555,7 @@ test("tools call --ui in JSON mode does not open or wait without an active Inspe
   }
 });
 
-test("tools call --ui --quiet --format json does not scan nearby frontend ports", async () => {
+test("tools call --ui --no-open --quiet --format json does not scan nearby frontend ports", async () => {
   const frontend = await startFrontendServerOnAvailablePort([
     5181, 5182, 5183, 5184, 5185,
   ]);
@@ -548,6 +577,7 @@ test("tools call --ui --quiet --format json does not scan nearby frontend ports"
       "tools",
       "call",
       "--ui",
+      "--no-open",
       "--inspector-url",
       `http://127.0.0.1:${server.port}`,
       "--url",
@@ -558,27 +588,81 @@ test("tools call --ui --quiet --format json does not scan nearby frontend ports"
       "{}",
     ]);
 
-    assert.equal(result.exitCode, 1, result.stderr);
+    assert.equal(result.exitCode, 0, result.stderr);
     assert.equal(frontend.rootRequests, 0);
     const payload = JSON.parse(lastJsonLine(result.stdout)) as Record<
       string,
       any
     >;
-    assert.equal(payload.success, false);
+    assert.equal(payload.success, true);
     assert.equal(
       payload.inspectorBrowserUrl,
       `${staleFrontendUrl}/#app-builder`,
     );
-    assert.match(payload.error.message, /no active browser client/i);
+    assert.equal(payload.inspectorRender.status, "skipped");
+    assert.equal(payload.inspectorRender.hasActiveClient, false);
+    assert.equal(payload.inspectorRender.inspectorStarted, false);
+    assert.equal(payload.error, undefined);
+    assert.match(payload.warning.message, /no active browser client/i);
   } finally {
     await server.stop();
     await frontend.stop();
   }
 });
 
-test("tools call --ui --open may render while waiting for a browser client", async () => {
+test("tools call --ui opens by default and may render while waiting for a browser client", async () => {
   const toolResult = { content: [{ type: "text", text: "view created" }] };
   const server = await startMockServer({ hasActiveClient: false, toolResult });
+
+  try {
+    const result = await runCli([
+      "--format",
+      "json",
+      "tools",
+      "call",
+      "--ui",
+      "--inspector-url",
+      `http://127.0.0.1:${server.port}`,
+      "--url",
+      `http://127.0.0.1:${server.port}/mcp`,
+      "--tool-name",
+      "create_view",
+      "--tool-args",
+      "{}",
+    ]);
+
+    assert.equal(result.exitCode, 0, result.stderr);
+    assert.match(result.stderr, /Inspector App Builder URL:/);
+    assert.match(result.stderr, /Waiting for Inspector browser client/);
+    const payload = JSON.parse(lastJsonLine(result.stdout)) as Record<
+      string,
+      any
+    >;
+    assert.equal(payload.success, true);
+    assert.equal(payload.inspectorRender.browserOpenRequested, true);
+    assert.deepEqual(
+      server.requests
+        .filter((entry) => entry.url === "/api/mcp/command")
+        .map((entry) => (entry.body as { type?: string }).type),
+      ["openAppBuilder", "renderToolResult", "snapshotApp"],
+    );
+  } finally {
+    await server.stop();
+  }
+});
+
+test("tools call --ui --open treats Inspector command timeouts as render skips", async () => {
+  const toolResult = { content: [{ type: "text", text: "view created" }] };
+  const server = await startMockServer({
+    commandErrors: {
+      openAppBuilder: {
+        code: "timeout",
+        message: "Inspector command timed out after 30000ms.",
+        status: 504,
+      },
+    },
+    toolResult,
+  });
 
   try {
     const result = await runCli([
@@ -599,17 +683,24 @@ test("tools call --ui --open may render while waiting for a browser client", asy
     ]);
 
     assert.equal(result.exitCode, 0, result.stderr);
+    assert.match(result.stderr, /Inspector App Builder URL:/);
     const payload = JSON.parse(lastJsonLine(result.stdout)) as Record<
       string,
       any
     >;
     assert.equal(payload.success, true);
-    assert.equal(payload.inspectorRender.browserOpenRequested, true);
+    assert.equal(payload.error, undefined);
+    assert.equal(payload.warning.code, "timeout");
+    assert.equal(payload.inspectorRender.status, "skipped");
+    assert.equal(
+      payload.inspectorRender.commands.openAppBuilder.error.code,
+      "timeout",
+    );
     assert.deepEqual(
       server.requests
         .filter((entry) => entry.url === "/api/mcp/command")
         .map((entry) => (entry.body as { type?: string }).type),
-      ["openAppBuilder", "renderToolResult", "snapshotApp"],
+      ["openAppBuilder"],
     );
   } finally {
     await server.stop();
@@ -820,7 +911,9 @@ test("tools call help lists frontend-url", async () => {
   const result = await runCli(["tools", "call", "--help"]);
 
   assert.equal(result.exitCode, 0, result.stderr);
+  assert.match(result.stdout, /--tool-args-stdin/);
   assert.match(result.stdout, /--frontend-url <url>/);
+  assert.match(result.stdout, /default with --ui/);
 });
 
 test("tools call --ui rejects attach-only with open", async () => {
@@ -911,8 +1004,10 @@ test("tools call --ui resolves discovery policy from output mode", () => {
 
   assert.equal(resolveInspectorSkipDiscovery({}, humanOptions), false);
   assert.equal(resolveInspectorSkipDiscovery({ open: true }, jsonOptions), false);
-  assert.equal(resolveInspectorSkipDiscovery({}, jsonOptions), true);
-  assert.equal(resolveInspectorSkipDiscovery({}, quietOptions), true);
+  assert.equal(resolveInspectorSkipDiscovery({}, jsonOptions), false);
+  assert.equal(resolveInspectorSkipDiscovery({}, quietOptions), false);
+  assert.equal(resolveInspectorSkipDiscovery({ open: false }, jsonOptions), true);
+  assert.equal(resolveInspectorSkipDiscovery({ open: false }, quietOptions), true);
   assert.equal(resolveInspectorSkipDiscovery({ attachOnly: true }, humanOptions), true);
   assert.equal(
     resolveInspectorSkipDiscovery(
