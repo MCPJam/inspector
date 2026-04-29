@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/sidebar";
 import { getInitials } from "@/lib/utils";
 import {
+  LogIn,
   Building2,
   ChevronsUpDown,
   CircleUser,
@@ -31,7 +32,6 @@ import { useProfilePicture } from "@/hooks/useProfilePicture";
 import { useOrganizationQueries } from "@/hooks/useOrganizations";
 import { CreateOrganizationDialog } from "@/components/organization/CreateOrganizationDialog";
 import { HOSTED_MODE } from "@/lib/config";
-import { Button } from "@mcpjam/design-system/button";
 import type { OrganizationRouteSection } from "@/lib/hosted-navigation";
 
 export function SidebarUser({
@@ -99,9 +99,16 @@ export function SidebarUser({
       return (
         <SidebarMenu>
           <SidebarMenuItem>
-            <Button variant="outline" size="sm" onClick={() => signIn()}>
-              Sign in
-            </Button>
+            <SidebarMenuButton
+              size="lg"
+              onClick={() => signIn()}
+              className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
+            >
+              <LogIn className="size-4" />
+              <span className="truncate group-data-[collapsible=icon]:hidden">
+                Sign in
+              </span>
+            </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
       );

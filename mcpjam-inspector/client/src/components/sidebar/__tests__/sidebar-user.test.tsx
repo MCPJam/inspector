@@ -45,6 +45,9 @@ describe("SidebarUser", () => {
   it("renders sign-in button when unauthenticated in hosted mode", () => {
     render(<SidebarUser />);
     expect(screen.getByText("Sign in")).toBeDefined();
+    expect(screen.getByRole("button", { name: "Sign in" }).className).toContain(
+      "data-[state=open]:bg-sidebar-accent",
+    );
   });
 
   it("calls signIn when button is clicked", () => {
