@@ -5,10 +5,7 @@
  *
  * Token delivery methods:
  * 1. Header: X-MCP-Session-Auth: Bearer <token> (preferred for fetch API)
- * 2. Query param: ?_token=<token> (required for SSE/EventSource)
- *
- * The query parameter fallback is necessary because the EventSource API
- * does not support custom headers.
+ * 2. Cookie: mcp_session_auth=<token> (used for same-origin SSE/EventSource)
  *
  * SECURITY NOTE: When adding new routes, consider whether they should be protected.
  * Only add routes to UNPROTECTED_* if they:
@@ -47,13 +44,13 @@ const UNPROTECTED_PREFIXES = [
 
 /**
  * Scrub sensitive tokens from URLs for safe logging.
- * Replaces _token query parameter values with [REDACTED].
+ * Replaces legacy _token query parameter values with [REDACTED].
  */
 export function scrubTokenFromUrl(url: string): string {
   return url.replace(/([?&])_token=[^&]*/g, "$1_token=[REDACTED]");
 }
 
-// Routes that typically use query param auth (SSE endpoints)
+// Routes that typically use EventSource/SSE auth
 const SSE_ROUTES = [
   "/api/mcp/servers/rpc/stream",
   "/api/mcp/elicitation/stream",
@@ -70,7 +67,7 @@ function isSSERoute(path: string): boolean {
 
 /**
  * Session authentication middleware.
- * Validates the session token from header or query parameter.
+ * Validates the session token from header or same-origin cookie.
  */
 export async function sessionAuthMiddleware(
   c: Context,
@@ -113,9 +110,16 @@ export async function sessionAuthMiddleware(
     token = authHeader.substring(7);
   }
 
-  // Fall back to query parameter (required for SSE/EventSource)
+  // Fall back to a same-origin cookie for SSE/EventSource, which cannot set
+  // custom headers. Avoid accepting tokens in URLs because query parameters
+  // are commonly captured by browser history, referrer headers, and logs.
   if (!token) {
-    token = c.req.query("_token") ?? undefined;
+    token = c.req
+      .header("Cookie")
+      ?.split(";")
+      .map((part) => part.trim())
+      .find((part) => part.startsWith("mcp_session_auth="))
+      ?.substring("mcp_session_auth=".length);
   }
 
   // No token provided
@@ -125,7 +129,7 @@ export async function sessionAuthMiddleware(
         error: "Unauthorized",
         message: "Session token required.",
         hint: isSSERoute(path)
-          ? "SSE endpoints require ?_token=<token> query parameter"
+          ? "SSE endpoints require the mcp_session_auth cookie"
           : "Include X-MCP-Session-Auth: Bearer <token> header",
       },
       401,

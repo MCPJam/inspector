@@ -104,24 +104,26 @@ describe("session-token module", () => {
       (window as any).__MCP_SESSION_TOKEN__ = "url-token";
     });
 
-    it("adds token to URL without query params", () => {
+    it("returns URL without adding token query params", () => {
       const result = sessionToken.addTokenToUrl("/api/mcp/stream");
 
-      expect(result).toBe("/api/mcp/stream?_token=url-token");
+      expect(result).toBe("/api/mcp/stream");
     });
 
-    it("adds token to URL with existing query params", () => {
+    it("preserves existing query params without adding token", () => {
       const result = sessionToken.addTokenToUrl("/api/mcp/stream?serverId=foo");
 
-      expect(result).toBe("/api/mcp/stream?serverId=foo&_token=url-token");
+      expect(result).toBe("/api/mcp/stream?serverId=foo");
     });
 
-    it("returns same-origin URLs as relative paths", () => {
-      const result = sessionToken.addTokenToUrl(
-        `${window.location.origin}/api/mcp/stream`,
-      );
+    it("sets EventSource auth cookie", () => {
+      const cookieSpy = vi.spyOn(document, "cookie", "set");
 
-      expect(result).toBe("/api/mcp/stream?_token=url-token");
+      sessionToken.addTokenToUrl("/api/mcp/stream");
+
+      expect(cookieSpy).toHaveBeenCalledWith(
+        "mcp_session_auth=url-token; Path=/api/; SameSite=Strict",
+      );
     });
 
     it("returns original URL when no token is available", async () => {
@@ -145,7 +147,7 @@ describe("session-token module", () => {
       sessionToken.addTokenToUrl("/api/mcp/stream");
 
       expect(warnSpy).toHaveBeenCalledWith(
-        "[Auth] Session token not available for URL",
+        "[Auth] Session token not available for EventSource",
       );
     });
   });

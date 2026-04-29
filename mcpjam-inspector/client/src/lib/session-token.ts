@@ -9,7 +9,7 @@
  * This module provides utilities to:
  * - Initialize the token before any API calls
  * - Get auth headers for fetch requests
- * - Add token to URLs for SSE/EventSource (which can't use headers)
+ * - Set a same-origin cookie for SSE/EventSource (which can't use headers)
  */
 
 import { HOSTED_MODE } from "@/lib/config";
@@ -108,6 +108,7 @@ export async function initializeSessionToken(): Promise<string> {
   // Check for injected token (production)
   if (window.__MCP_SESSION_TOKEN__) {
     cachedToken = window.__MCP_SESSION_TOKEN__;
+    setEventSourceAuthCookie(cachedToken);
     return cachedToken;
   }
 
@@ -120,6 +121,7 @@ export async function initializeSessionToken(): Promise<string> {
         }
         const data = await response.json();
         cachedToken = data.token;
+        setEventSourceAuthCookie(cachedToken);
         return cachedToken!;
       })
       .catch((error) => {
@@ -143,6 +145,7 @@ export function getSessionToken(): string {
   }
   if (window.__MCP_SESSION_TOKEN__) {
     cachedToken = window.__MCP_SESSION_TOKEN__;
+    setEventSourceAuthCookie(cachedToken);
     return cachedToken;
   }
   return "";
@@ -176,11 +179,27 @@ export function getAuthHeaders(): HeadersInit {
 }
 
 /**
- * Add token to URL as query parameter.
- * Required for SSE/EventSource which doesn't support custom headers.
+ * Set the same-origin cookie used by SSE/EventSource authentication.
+ * EventSource cannot send custom headers, and placing session tokens in URLs
+ * leaks them to browser history, referrer headers, and access logs.
+ */
+export function setEventSourceAuthCookie(token: string): void {
+  if (HOSTED_MODE || !token || typeof document === "undefined") {
+    return;
+  }
+
+  const secure = window.location.protocol === "https:" ? "; Secure" : "";
+  document.cookie = `mcp_session_auth=${encodeURIComponent(
+    token,
+  )}; Path=/api/; SameSite=Strict${secure}`;
+}
+
+/**
+ * Prepare a URL for SSE/EventSource without embedding credentials.
+ * Authentication is provided by the same-origin mcp_session_auth cookie.
  *
- * @param url - The URL to add token to (can be relative or absolute)
- * @returns URL with token as query parameter
+ * @param url - The EventSource URL
+ * @returns The original URL without a session token query parameter
  */
 export function addTokenToUrl(url: string): string {
   if (HOSTED_MODE) {
@@ -189,28 +208,12 @@ export function addTokenToUrl(url: string): string {
 
   const token = getSessionToken();
   if (!token) {
-    console.warn("[Auth] Session token not available for URL");
+    console.warn("[Auth] Session token not available for EventSource");
     return url;
   }
 
-  try {
-    // Parse URL (uses origin as base for relative URLs)
-    const parsed = new URL(url, window.location.origin);
-    parsed.searchParams.set("_token", token);
-
-    // Check if this is a same-origin URL
-    if (parsed.origin === window.location.origin) {
-      // Same-origin: return relative path (pathname + search)
-      return parsed.pathname + parsed.search;
-    } else {
-      // Cross-origin: preserve the full absolute URL
-      return parsed.href;
-    }
-  } catch {
-    // Fallback for unusual URL formats
-    const separator = url.includes("?") ? "&" : "?";
-    return `${url}${separator}_token=${encodeURIComponent(token)}`;
-  }
+  setEventSourceAuthCookie(token);
+  return url;
 }
 
 /**

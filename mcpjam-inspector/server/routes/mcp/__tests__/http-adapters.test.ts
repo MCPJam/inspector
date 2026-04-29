@@ -117,13 +117,11 @@ describe("HTTP Adapters Security", () => {
           expect(res.status).toBe(200);
         });
 
-        it("also accepts GET (SSE) with valid token in query param", async () => {
-          const res = await app.request(
-            `/api/mcp/${prefix}/test-server?_token=${validToken}`,
-            {
-              method: "GET",
-            },
-          );
+        it("also accepts GET (SSE) with valid token in cookie", async () => {
+          const res = await app.request(`/api/mcp/${prefix}/test-server`, {
+            method: "GET",
+            headers: { Cookie: `mcp_session_auth=${validToken}` },
+          });
 
           // SSE returns 200 with streaming response
           expect(res.status).toBe(200);
@@ -252,15 +250,13 @@ describe("HTTP Adapters Security", () => {
         });
 
         it("does not return Access-Control-Allow-Origin: * on GET (SSE) response", async () => {
-          const res = await app.request(
-            `/api/mcp/${prefix}/test-server?_token=${validToken}`,
-            {
-              method: "GET",
-              headers: {
-                Origin: "http://localhost:5173",
-              },
+          const res = await app.request(`/api/mcp/${prefix}/test-server`, {
+            method: "GET",
+            headers: {
+              Origin: "http://localhost:5173",
+              Cookie: `mcp_session_auth=${validToken}`,
             },
-          );
+          });
 
           expect(res.status).toBe(200);
 
