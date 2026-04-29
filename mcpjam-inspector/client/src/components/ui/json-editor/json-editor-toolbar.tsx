@@ -106,7 +106,7 @@ export function JsonEditorToolbar({
   return (
     <div
       className={cn(
-        "flex items-center justify-between px-3 py-1.5 bg-muted/30",
+        "flex items-center justify-between border-b border-border/50 px-3 py-1.5 bg-muted/50",
         className,
       )}
     >

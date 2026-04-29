@@ -56,8 +56,16 @@ export function HostContextDialog({
     }
   };
 
+  const handleOpenChange = (nextOpen: boolean) => {
+    if (!nextOpen && !isSaving && !syncPending) {
+      resetToBaseline();
+    }
+
+    onOpenChange(nextOpen);
+  };
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="flex h-[80vh] w-[min(96vw,60rem)] max-w-[60rem] flex-col gap-0 overflow-hidden p-0">
         <DialogHeader className="border-b px-5 py-4">
           <DialogTitle>Host Context</DialogTitle>
