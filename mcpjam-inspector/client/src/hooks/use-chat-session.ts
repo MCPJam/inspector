@@ -880,6 +880,18 @@ function shouldForkChatSession(
   );
 }
 
+function areAuthHeadersEqual(
+  a: Record<string, string> | undefined,
+  b: Record<string, string> | undefined
+): boolean {
+  if (a === b) return true;
+  if (!a || !b) return !a && !b;
+  const aKeys = Object.keys(a);
+  const bKeys = Object.keys(b);
+  if (aKeys.length !== bKeys.length) return false;
+  return aKeys.every((key) => a[key] === b[key]);
+}
+
 function isAuthDeniedError(error: unknown): boolean {
   if (!error || typeof error !== "object") return false;
   const withStatus = error as { status?: unknown; message?: unknown };
@@ -984,6 +996,10 @@ export function useChatSession({
     !!(hostedShareToken || hostedChatboxToken);
   const guestMode = directGuestMode || sharedGuestMode;
   const skipNextForkDetectionRef = useRef(false);
+  const hasResolvedAuthHeadersRef = useRef(false);
+  const lastResolvedAuthHeadersRef = useRef<
+    Record<string, string> | undefined
+  >(undefined);
   const pendingSessionHydrationRef = useRef<PendingSessionHydration | null>(
     null
   );
@@ -1707,12 +1723,14 @@ export function useChatSession({
     setIsSessionBootstrapComplete(false);
     (async () => {
       let resolved = false;
+      let resolvedAuthHeaders: Record<string, string> | undefined;
 
       try {
         const token = await getAccessToken?.();
         if (!active) return;
         if (token) {
-          setAuthHeaders({ Authorization: `Bearer ${token}` });
+          resolvedAuthHeaders = { Authorization: `Bearer ${token}` };
+          setAuthHeaders(resolvedAuthHeaders);
           resolved = true;
         }
       } catch {
@@ -1727,9 +1745,11 @@ export function useChatSession({
         const guestToken = await getGuestBearerToken();
         if (!active) return;
         if (guestToken) {
-          setAuthHeaders({ Authorization: `Bearer ${guestToken}` });
+          resolvedAuthHeaders = { Authorization: `Bearer ${guestToken}` };
+          setAuthHeaders(resolvedAuthHeaders);
           resolved = true;
         } else {
+          resolvedAuthHeaders = undefined;
           setAuthHeaders(undefined);
         }
       } else if (
@@ -1742,25 +1762,46 @@ export function useChatSession({
         const guestToken = await getGuestBearerToken();
         if (!active) return;
         if (guestToken) {
-          setAuthHeaders({ Authorization: `Bearer ${guestToken}` });
+          resolvedAuthHeaders = { Authorization: `Bearer ${guestToken}` };
+          setAuthHeaders(resolvedAuthHeaders);
           resolved = true;
         } else {
+          resolvedAuthHeaders = undefined;
           setAuthHeaders(undefined);
         }
       } else if (!resolved && active) {
+        resolvedAuthHeaders = undefined;
         setAuthHeaders(undefined);
       }
 
-      // Reset chat to force new session with updated auth headers
+      // Only reset chat state when the resolved auth headers actually changed.
+      // The first bootstrap pass always transitions undefined → resolved, but
+      // there is no prior session to invalidate (chatSessionId is freshly
+      // generated, messages are empty, no hydration has run). Resetting here
+      // would race with state injected during the async resolution — for
+      // example CLI `tools call --ui` commands that arrive while the guest
+      // bearer fetch is still in flight, whose injected messages would be
+      // wiped by setMessages([]).
       if (active) {
-        skipNextForkDetectionRef.current = true;
-        clearPendingSessionHydration();
-        setChatSessionId(generateId());
-        setMessages([]);
-        setPersistedSnapshotToolCallIds([]);
-        syncResumedVersion(null);
-        syncRestoredToolRenderOverrides({});
-        onResetRef.current?.("auth-bootstrap");
+        const previousAuthHeaders = lastResolvedAuthHeadersRef.current;
+        const hasResolvedBefore = hasResolvedAuthHeadersRef.current;
+        const authHeadersChanged =
+          hasResolvedBefore &&
+          !areAuthHeadersEqual(previousAuthHeaders, resolvedAuthHeaders);
+
+        if (authHeadersChanged) {
+          skipNextForkDetectionRef.current = true;
+          clearPendingSessionHydration();
+          setChatSessionId(generateId());
+          setMessages([]);
+          setPersistedSnapshotToolCallIds([]);
+          syncResumedVersion(null);
+          syncRestoredToolRenderOverrides({});
+          onResetRef.current?.("auth-bootstrap");
+        }
+
+        hasResolvedAuthHeadersRef.current = true;
+        lastResolvedAuthHeadersRef.current = resolvedAuthHeaders;
         setIsSessionBootstrapComplete(true);
       }
     })();
