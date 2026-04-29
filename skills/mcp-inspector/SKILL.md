@@ -1,7 +1,8 @@
 ---
-name: mcp-inspector
+
+## name: mcp-inspector
+
 description: Interpret and use `mcpjam` probe, doctor, OAuth, apps conformance, tools, resources, and prompts output conservatively against MCP 2025-11-25. Use when interacting with MCP servers, executing tools, triaging findings, performing security reviews, deciding whether a CLI finding is real or overstated, or turning inspection output into an engineer-facing report with severity and confidence.
----
 
 # MCPJam CLI Investigation
 
@@ -17,14 +18,19 @@ Use this skill when analyzing MCP server behavior from `mcpjam` or MCP Inspector
 When the user wants to connect to a server and use it:
 
 1. Probe the server first: `server probe --url <url> --quiet --format json`.
-   - Use the probe to learn auth posture, resource metadata, authorization-server metadata, and registration strategies before assuming the connected surface is public.
+  - Use the probe to learn auth posture, resource metadata, authorization-server metadata, and registration strategies before assuming the connected surface is public.
 2. If the probe shows `oauth_required`, authenticate with `oauth login --credentials-out <path>` or run `oauth conformance --credentials-out <path>` when the task is specifically to test the OAuth flow.
 3. Discover tools: `tools list --url <url> --credentials-file <path> --quiet --format json`.
-   - Tools with `_meta.ui.resourceUri`, deprecated `_meta["ui/resourceUri"]`, or `openai/outputTemplate` in `toolsMetadata` have interactive UI.
+  - Tools with `_meta.ui.resourceUri`, deprecated `_meta["ui/resourceUri"]`, or `openai/outputTemplate` in `toolsMetadata` have interactive UI.
 4. Execute a tool: `tools call --url <url> --tool-name <name> --tool-args <json> --credentials-file <path>`.
 5. Execute with UI: `tools call --url <url> --tool-name <name> --tool-args <json> --credentials-file <path> --ui`.
-   - `--ui` starts Inspector and renders the completed result in App Builder.
-   - Use `--ui` only when the tool has UI metadata or the user explicitly asks to see UI.
+  - `--ui` starts or attaches to the local Inspector backend and renders the completed result in App Builder.
+  - In non-TTY, agent, and CI runs, `--ui` does not open a browser by default. Pass `--open` when the CLI should open App Builder itself.
+  - Use `--no-open` when browser automation already opened Inspector App Builder. Use `--attach-only` when startup, browser opening, and discovery must all be disallowed.
+  - `no_active_client` means the Inspector backend may be running but no browser client is attached. If manual recovery is needed, use `mcpjam inspector open`, not `mcpjam inspector start`.
+  - Treat UI success as `inspectorRender.status === "rendered"`, not exit code `0` alone. If the render is `skipped`, branch on `inspectorRender.remediation` or the stable root `warning.code`.
+  - Use `--require-render` when the UI render itself is the deliverable and a skipped render should fail the command.
+  - Use `--ui` only when the tool has UI metadata or the user explicitly asks to see UI.
 
 When the user asks to investigate, audit, or triage, use the Investigation workflow below.
 
@@ -46,6 +52,10 @@ When the user asks to investigate, audit, or triage, use the Investigation workf
 6. If the output came from `server doctor` or a `--debug-out` artifact, split it into primary command evidence, probe evidence, and connected-sweep evidence.
 7. If the claim is specifically about MCP Apps tool metadata or `ui://` resources, start with `apps conformance --quiet --format json` before dropping to `tools list` or `resources read`.
 8. If the claim is about a tool result rendering in Inspector, use `tools call --tool-name <name> --tool-args <json|@file|-> --ui --quiet --format json`.
+  - In non-TTY runs, add `--open` if no Inspector browser client is already attached.
+  - If browser automation already opened `http://127.0.0.1:6274/#app-builder`, add `--no-open`.
+  - Confirm UI delivery with `inspectorRender.status === "rendered"`. Treat `inspectorRender.remediation` and stable skipped-render `warning.code` values as recovery hints, not MCP tool failures.
+  - Use `--require-render` when a skipped render should become a hard error instead of a warning.
 9. If a field may be CLI-added or SDK-normalized, read `references/cli-surface-notes.md` before concluding anything.
 10. If the claim depends on MCP semantics, read `references/mcp-2025-11-25-interpretation.md`.
 11. If the task involves security review, read `references/security-best-practices.md` for the full checklist and follow the security review workflow below.
@@ -181,8 +191,8 @@ For each claimed security-review finding, return:
 ## Reference map
 
 - `references/cli-surface-notes.md`
-  Use for command-specific caveats, artifact shapes, local enrichments, merged errors, and normalized empty arrays.
+Use for command-specific caveats, artifact shapes, local enrichments, merged errors, and normalized empty arrays.
 - `references/mcp-2025-11-25-interpretation.md`
-  Use for capability, lifecycle, transport, authorization, tools, resources, and prompts interpretation against the latest MCP spec.
+Use for capability, lifecycle, transport, authorization, tools, resources, and prompts interpretation against the latest MCP spec.
 - `references/security-best-practices.md`
-  Use for security review checks mapped to CLI commands. Covers SSRF, confused deputy, PKCE, token passthrough, scope minimization, auth-posture checks, and session security. Source: https://modelcontextprotocol.io/docs/tutorials/security/security_best_practices
+Use for security review checks mapped to CLI commands. Covers SSRF, confused deputy, PKCE, token passthrough, scope minimization, auth-posture checks, and session security. Source: [https://modelcontextprotocol.io/docs/tutorials/security/security_best_practices](https://modelcontextprotocol.io/docs/tutorials/security/security_best_practices)
