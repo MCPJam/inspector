@@ -1,3 +1,4 @@
+import type { IframeHTMLAttributes } from "react";
 import {
   UIActionResult,
   UIResourceRenderer,
@@ -65,10 +66,16 @@ export function MCPUIResourcePart({
             borderRadius: "4px",
             minHeight: "400px",
           },
+          // permissions-policy must be delegated from the top frame down through every
+          // iframe; we forward camera/mic so embedded apps (e.g. video chat) work.
+          // `allow` is a valid iframe attribute but @mcp-ui/client types it via
+          // HTMLAttributes (which omits iframe-specific props), so we cast.
           iframeProps: {
             title: "Custom MCP Resource",
             className: "mcp-resource-frame",
-          },
+            allow:
+              "camera *; microphone *; fullscreen *; display-capture *; autoplay *; clipboard-write *",
+          } as IframeHTMLAttributes<HTMLIFrameElement>,
         }}
         remoteDomProps={{
           library: basicComponentLibrary,

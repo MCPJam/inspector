@@ -62,10 +62,11 @@
       const inner = document.createElement("iframe");
       inner.style.cssText = "width:100%; height:100%; border:none;";
       inner.setAttribute("sandbox", DEFAULT_SANDBOX);
-      // Permissions Policy matching ChatGPT's actual implementation
+      // permissions-policy must be delegated from the top frame down through every
+      // iframe; we forward camera/mic so embedded apps (e.g. video chat) work.
       inner.setAttribute(
         "allow",
-        "local-network-access *; microphone *; midi *",
+        "local-network-access *; microphone *; midi *; camera *; fullscreen *; display-capture *; autoplay *; clipboard-write *",
       );
       document.body.appendChild(inner);
 

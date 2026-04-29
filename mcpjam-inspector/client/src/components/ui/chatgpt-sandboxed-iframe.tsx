@@ -216,11 +216,13 @@ export const ChatGPTSandboxedIframe = forwardRef<
   </style>
 </head>
 <body>
+  <!-- permissions-policy must be delegated from the top frame down through every
+       iframe; we forward camera/mic so embedded apps (e.g. video chat) work. -->
   <iframe
     id="middle"
     src="${sandboxProxyUrl}"
     sandbox="allow-scripts allow-same-origin allow-forms"
-    allow="local-network-access *; microphone *; midi *"
+    allow="local-network-access *; microphone *; midi *; camera *; fullscreen *; display-capture *; autoplay *; clipboard-write *"
   ></iframe>
   <iframe
     id="measurement"
@@ -294,12 +296,13 @@ export const ChatGPTSandboxedIframe = forwardRef<
   }, [url]);
 
   return (
+    // permissions-policy must be delegated from the top frame down through every
+    // iframe; we forward camera/mic so embedded apps (e.g. video chat) work.
     <iframe
       ref={outerIframeRef}
       src="about:blank"
       sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-forms"
-      // Permissions Policy matching ChatGPT's actual implementation
-      allow="local-network-access *; microphone *; midi *"
+      allow="local-network-access *; microphone *; midi *; camera *; fullscreen *; display-capture *; autoplay *; clipboard-write *"
       title={title}
       className={className}
       style={style}

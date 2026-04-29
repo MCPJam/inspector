@@ -73,15 +73,21 @@
        *
        * Note: For srcdoc iframes, we use '*' allowlist since they don't have a defined origin.
        * This allows the sandboxed content to request these permissions.
+       *
+       * permissions-policy must be delegated from the top frame down through every
+       * iframe; we forward camera/mic so embedded apps (e.g. video chat) work.
        */
       function buildAllowAttribute(permissions) {
-        if (!permissions) return "";
-
-        const allowList = [];
-        if (permissions.camera) allowList.push("camera *");
-        if (permissions.microphone) allowList.push("microphone *");
-        if (permissions.geolocation) allowList.push("geolocation *");
-        if (permissions.clipboardWrite) allowList.push("clipboard-write *");
+        const allowList = [
+          "camera *",
+          "microphone *",
+          "fullscreen *",
+          "display-capture *",
+          "autoplay *",
+          "clipboard-write *",
+        ];
+        if (permissions && permissions.geolocation)
+          allowList.push("geolocation *");
 
         return allowList.join("; ");
       }
@@ -249,6 +255,9 @@ document.addEventListener('securitypolicyviolation', function(e) {
         "sandbox",
         "allow-scripts allow-same-origin allow-forms",
       );
+      // permissions-policy must be delegated from the top frame down through every
+      // iframe; we forward camera/mic so embedded apps (e.g. video chat) work.
+      inner.setAttribute("allow", buildAllowAttribute());
       document.body.appendChild(inner);
 
       // Handle messages from parent (host) and inner (guest UI)

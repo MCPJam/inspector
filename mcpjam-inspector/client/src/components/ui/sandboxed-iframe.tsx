@@ -179,13 +179,21 @@ export const SandboxedIframe = forwardRef<
     return () => window.removeEventListener("message", handleMessage);
   }, [handleMessage]);
 
-  // Build allow attribute for outer iframe based on requested permissions
+  // Build allow attribute for outer iframe based on requested permissions.
+  // permissions-policy must be delegated from the top frame down through every
+  // iframe; we forward camera/mic so embedded apps (e.g. video chat) work.
   const outerAllowAttribute = useMemo(() => {
-    const allowList = ["local-network-access *", "midi *"];
-    if (permissions?.camera) allowList.push("camera *");
-    if (permissions?.microphone) allowList.push("microphone *");
+    const allowList = [
+      "local-network-access *",
+      "midi *",
+      "camera *",
+      "microphone *",
+      "fullscreen *",
+      "display-capture *",
+      "autoplay *",
+      "clipboard-write *",
+    ];
     if (permissions?.geolocation) allowList.push("geolocation *");
-    if (permissions?.clipboardWrite) allowList.push("clipboard-write *");
     return allowList.join("; ");
   }, [permissions]);
 
