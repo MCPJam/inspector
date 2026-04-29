@@ -38,6 +38,7 @@ export async function runUiRender(options: {
   baseUrl?: string;
   config: MCPServerConfig;
   frontendUrl?: string;
+  heartbeatEnabled?: boolean;
   onProgress?: InspectorUiProgressReporter;
   openBrowser?: boolean;
   params: Record<string, unknown>;
@@ -89,6 +90,7 @@ export async function runUiRender(options: {
 
   const renderResult = await runInspectorAppRender({
     client,
+    heartbeatEnabled: options.heartbeatEnabled,
     onProgress: options.onProgress,
     params: options.params,
     renderContext: options.renderContext,
@@ -113,6 +115,7 @@ export async function runUiRender(options: {
 
 async function runInspectorAppRender(options: {
   client: InspectorApiClient;
+  heartbeatEnabled?: boolean;
   onProgress?: InspectorUiProgressReporter;
   params: Record<string, unknown>;
   renderContext: AppRenderContext;
@@ -179,6 +182,7 @@ async function runInspectorAppRender(options: {
 async function executeInspectorCommandWithClient(
   options: {
     client: InspectorApiClient;
+    heartbeatEnabled?: boolean;
     onProgress?: InspectorUiProgressReporter;
     timeoutMs: number;
   },
@@ -190,7 +194,7 @@ async function executeInspectorCommandWithClient(
   let lastResponse: InspectorCommandResponse | undefined;
 
   const emitWaitingProgress = (force = false) => {
-    if (!options.onProgress) {
+    if (!options.onProgress || !options.heartbeatEnabled) {
       return;
     }
 
@@ -210,7 +214,7 @@ async function executeInspectorCommandWithClient(
     const response = await executeCommandWithProgress(
       options.client.executeCommand(request),
       emitWaitingProgress,
-      Boolean(options.onProgress),
+      Boolean(options.onProgress && options.heartbeatEnabled),
     );
     lastResponse = response;
     const retryable =

@@ -106,8 +106,9 @@ Uses shared connection flags.
 | `--expect-success` | Fail when the tool result reports `isError` |
 | `--reporter <reporter>` | `json-summary` or `junit-xml` validation report output |
 | `--debug-out <path>` | Write debug artifact to file |
-| `--ui` | Attach to Inspector and render the completed tool result in App Builder; opens a browser by default |
-| `--open` | Open Inspector in the system browser before rendering (default with `--ui`) |
+| `--ui` | Attach to Inspector and render the completed tool result in App Builder; opens a browser by default in a TTY |
+| `--require-render` | Treat skipped Inspector renders as errors (requires `--ui`) |
+| `--open` | Open Inspector in the system browser before rendering (default with `--ui` in a TTY) |
 | `--no-open` | Start/use Inspector without opening a system browser |
 | `--attach-only` | Require an already-running Inspector browser client; do not start or open Inspector |
 | `--inspector-url <url>` | Local Inspector backend/API base URL |
@@ -121,7 +122,48 @@ Uses shared connection flags.
 
 Plus shared connection flags.
 
-Without `--ui`, `tools call` returns the raw tool result. With `--ui`, it opens Inspector by default and returns a compact envelope with `result`, `inspectorBrowserUrl`, and `inspectorRender` status. `inspectorRender.status` is `rendered` when Inspector accepted the render, `skipped` when the tool succeeded but Inspector had no active browser client, an unsatisfied render precondition, or a render timeout, and `error` for non-recoverable render command failures. Skipped renders are emitted as top-level `warning` fields and do not change the tool-call exit code; when not quiet, the CLI also prints a short stderr warning and browser tip. Tool failures, validation failures, and render command errors still exit nonzero. `--inspector-url` points to the Inspector backend/API; pass `--frontend-url` when you already know the browser/client URL and want to skip health-advertised frontend checks and local dev port discovery. Use `--no-open` when browser automation already opened `inspectorBrowserUrl`; use `--attach-only` when startup, browser opening, and discovery should all be disallowed. Human and default `--ui` flows may discover local dev frontends and print browser-client wait progress on stderr unless `--quiet` is set. The Inspector path injects the completed tool result through `renderToolResult`; it does not call the tool a second time. Fresh tabs do not hydrate the injected render state; use the active Inspector client that received the render. Use `--debug-out` for the full render envelope including params and command responses. `--ui` cannot be combined with `--reporter`.
+Without `--ui`, `tools call` returns the raw tool result. With `--ui`, it opens Inspector by default in a TTY and returns a compact envelope with `result`, `inspectorBrowserUrl`, and `inspectorRender` status. `inspectorRender.status` is `rendered` when Inspector accepted the render, `skipped` when the tool succeeded but Inspector had no active browser client, an unsatisfied render precondition, or a render timeout, and `error` for non-recoverable render command failures. `inspectorRender.remediation` is always present and is one of `open_browser`, `retry`, `reconnect_server`, or `none`. Skipped renders are emitted as a stable root `warning` plus `inspectorRender.warning`, both with the shape `{ code, message, remediation, browserUrl?, hasActiveClient?, inspectorStarted? }`. Stable skipped-render codes are `no_active_client`, `timeout`, `disconnected_server`, and `unsupported_in_mode`. Skipped renders keep the tool-call exit code unless `--require-render` is set; tool failures, validation failures, non-skippable render command errors, and `--require-render` skipped renders all exit nonzero. `--inspector-url` points to the Inspector backend/API; pass `--frontend-url` when you already know the browser/client URL and want to skip health-advertised frontend checks and local dev port discovery. Use `--no-open` when browser automation already opened `inspectorBrowserUrl`; use `--attach-only` when startup, browser opening, and discovery should all be disallowed. Default non-TTY `--ui` runs do not open a browser unless `--open` is passed. TTY stderr runs print the App Builder URL and initial browser-client wait progress unless `--quiet` is set; the elapsed-seconds heartbeat only appears when stderr is a TTY. The Inspector path injects the completed tool result through `renderToolResult`; it does not call the tool a second time. Fresh tabs do not hydrate the injected render state; use the active Inspector client that received the render. Use `--debug-out` for the full render envelope including params and command responses. `--ui` cannot be combined with `--reporter`.
+
+### Reading `tools call --ui` output as an agent
+
+Treat the tool result and the Inspector render as separate outcomes. An exit code of `0` means the tool call succeeded and no hard render error occurred; it does not, by itself, prove the UI rendered. Confirm UI delivery with `inspectorRender.status === "rendered"`. If `inspectorRender.status === "skipped"`, branch on `inspectorRender.remediation` or the stable root `warning.code`. If `--require-render` is set, the same skipped-render issue moves from root `warning` to root `error` and the command exits with code `1`.
+
+```json
+{
+  "success": true,
+  "command": "tools call",
+  "inspectorUi": true,
+  "inspectorBrowserUrl": "http://127.0.0.1:6274/#app-builder",
+  "result": {
+    "content": [{ "type": "text", "text": "view created" }]
+  },
+  "inspectorRender": {
+    "status": "skipped",
+    "remediation": "open_browser",
+    "mode": "active-client",
+    "urlHydratesRender": false,
+    "browserUrl": "http://127.0.0.1:6274/#app-builder",
+    "hasActiveClient": false,
+    "inspectorStarted": false,
+    "warning": {
+      "code": "no_active_client",
+      "message": "Inspector has no active browser client. Open the Inspector App Builder URL in your browser, then rerun `tools call --ui`; or pass `--open` to let the CLI open a system browser.",
+      "remediation": "open_browser",
+      "browserUrl": "http://127.0.0.1:6274/#app-builder",
+      "hasActiveClient": false,
+      "inspectorStarted": false
+    }
+  },
+  "warning": {
+    "code": "no_active_client",
+    "message": "Inspector has no active browser client. Open the Inspector App Builder URL in your browser, then rerun `tools call --ui`; or pass `--open` to let the CLI open a system browser.",
+    "remediation": "open_browser",
+    "browserUrl": "http://127.0.0.1:6274/#app-builder",
+    "hasActiveClient": false,
+    "inspectorStarted": false
+  }
+}
+```
 
 ---
 
