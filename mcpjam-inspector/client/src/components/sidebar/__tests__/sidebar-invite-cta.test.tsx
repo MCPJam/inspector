@@ -265,7 +265,7 @@ describe("sidebar invite CTA", () => {
     expect(window.location.hash).toBe("#servers");
   });
 
-  it("enables Playground and shows the beta badge when the flag is on", () => {
+  it("enables Playground without a beta badge when the flag is on", () => {
     mockFeatureFlags["playground-enabled"] = true;
 
     renderSidebar();
@@ -275,12 +275,7 @@ describe("sidebar invite CTA", () => {
       .closest("button") as HTMLButtonElement;
     expect(playground).toBeInTheDocument();
     expect(playground).not.toHaveAttribute("aria-disabled");
-    expect(screen.getByText("Beta")).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        "This tab is a work in progress, data may not be persisted.",
-      ),
-    ).toBeInTheDocument();
+    expect(screen.queryByText("Beta")).not.toBeInTheDocument();
     expect(
       screen.queryByText("Coming soon. Playground is in beta."),
     ).not.toBeInTheDocument();

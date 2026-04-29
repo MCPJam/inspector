@@ -364,7 +364,6 @@ type EvalsSubnavItem = {
   icon: typeof Puzzle | typeof GitBranch;
   isActive: (activeTab?: string) => boolean;
   onClick: () => void;
-  beta?: boolean;
 };
 
 export function getEvalsSubnavItems(options: {
@@ -377,7 +376,6 @@ export function getEvalsSubnavItems(options: {
       icon: Puzzle,
       isActive: (activeTab) => activeTab === "evals",
       onClick: navigateToEvalsExploreList,
-      beta: true,
     },
   ];
 
@@ -401,7 +399,6 @@ export function SidebarEvalsNavGroup({
   disabledTooltip,
   activeTab,
   showRuns = true,
-  showPlaygroundBeta = false,
   playgroundEnabled = false,
 }: {
   title: string;
@@ -410,7 +407,6 @@ export function SidebarEvalsNavGroup({
   disabledTooltip?: string;
   activeTab?: string;
   showRuns?: boolean;
-  showPlaygroundBeta?: boolean;
   playgroundEnabled?: boolean;
 }) {
   const isEvalsFamily = activeTab === "evals" || activeTab === "ci-evals";
@@ -469,7 +465,8 @@ export function SidebarEvalsNavGroup({
             <SidebarMenuSub>
               {subnavItems.map((item) => {
                 const ItemIcon = item.icon;
-                const isItemPlaygroundLocked = item.beta && isPlaygroundLocked;
+                const isItemPlaygroundLocked =
+                  item.title === "Playground" && isPlaygroundLocked;
                 const isItemDisabled = disabled || isItemPlaygroundLocked;
 
                 const subnavButton = (
@@ -492,29 +489,6 @@ export function SidebarEvalsNavGroup({
                   >
                     <ItemIcon className="h-4 w-4" />
                     <span className="min-w-0 truncate">{item.title}</span>
-                    {item.beta && showPlaygroundBeta ? (
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Badge
-                            className="ml-auto rounded-full px-1.5 py-0 text-[10px] font-semibold leading-tight uppercase tracking-wider"
-                            onClick={(e) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                            }}
-                          >
-                            Beta
-                          </Badge>
-                        </TooltipTrigger>
-                        <TooltipContent
-                          side="right"
-                          sideOffset={6}
-                          className="max-w-[200px]"
-                        >
-                          This tab is a work in progress, data may not be
-                          persisted.
-                        </TooltipContent>
-                      </Tooltip>
-                    ) : null}
                   </SidebarMenuSubButton>
                 );
 
@@ -751,7 +725,6 @@ export function MCPSidebar({
                     disabledTooltip={evalsEntry.disabledTooltip}
                     activeTab={activeTab}
                     showRuns={evaluateRunsEnabled === true}
-                    showPlaygroundBeta={playgroundEnabled === true}
                     playgroundEnabled={playgroundEnabled === true}
                   />
                 ) : null}
