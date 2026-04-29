@@ -45,7 +45,9 @@ describe("SidebarUser", () => {
   it("renders sign-in button when unauthenticated in hosted mode", () => {
     render(<SidebarUser />);
     expect(screen.getByText("Sign in")).toBeDefined();
-    expect(screen.getByRole("button", { name: "Sign in" }).className).toContain(
+    const signInButton = screen.getByRole("button", { name: "Sign in" });
+    expect(signInButton).toHaveAttribute("aria-label", "Sign in");
+    expect(signInButton.className).toContain(
       "data-[state=open]:bg-sidebar-accent",
     );
   });

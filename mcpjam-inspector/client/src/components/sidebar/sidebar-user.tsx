@@ -102,6 +102,7 @@ export function SidebarUser({
             <SidebarMenuButton
               size="lg"
               onClick={() => signIn()}
+              aria-label="Sign in"
               className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
             >
               <LogIn className="size-4" />
