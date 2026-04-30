@@ -3,6 +3,7 @@ import { useMutation } from "convex/react";
 import { usePostHog } from "posthog-js/react";
 import { ArrowRight, Check, Loader2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
+import { Input } from "@mcpjam/design-system/input";
 import { standardEventProps } from "@/lib/PosthogUtils";
 import { cn } from "@/lib/utils";
 
@@ -12,9 +13,7 @@ const OCCUPATION_SUGGESTIONS = [
   "Engineering Manager",
   "Platform Engineer",
   "Other",
-] as const;
-
-type Occupation = (typeof OCCUPATION_SUGGESTIONS)[number];
+];
 
 interface OccupationGateProps {
   userId?: string | null;
@@ -24,16 +23,17 @@ interface OccupationGateProps {
 export function OccupationGate({ userId, email }: OccupationGateProps) {
   const posthog = usePostHog();
   const updateOccupation = useMutation("users:updateOccupation" as any);
-  const [selected, setSelected] = useState<Occupation | null>(null);
+  const [occupation, setOccupation] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const canSubmit = selected !== null && !isSubmitting;
+  const trimmedOccupation = occupation.trim();
+  const canSubmit = trimmedOccupation.length > 0 && !isSubmitting;
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!selected) {
-      setError("Pick a role to continue.");
+    if (!trimmedOccupation) {
+      setError("Enter your role to continue.");
       return;
     }
 
@@ -41,13 +41,13 @@ export function OccupationGate({ userId, email }: OccupationGateProps) {
     setError(null);
 
     try {
-      await updateOccupation({ occupation: selected });
-      posthog.setPersonProperties({ occupation: selected });
+      await updateOccupation({ occupation: trimmedOccupation });
+      posthog.setPersonProperties({ occupation: trimmedOccupation });
       posthog.capture("signup_occupation_submitted", {
         ...standardEventProps("signup_occupation_gate"),
-        occupation: selected,
+        occupation: trimmedOccupation,
       });
-      posthog.register({ occupation: selected });
+      posthog.register({ occupation: trimmedOccupation });
     } catch (err) {
       console.error("[signup] Failed to save occupation", err);
       setError("Could not save your occupation. Please try again.");
@@ -70,19 +70,32 @@ export function OccupationGate({ userId, email }: OccupationGateProps) {
         </div>
 
         <form onSubmit={handleSubmit}>
+          <Input
+            value={occupation}
+            onChange={(event) => {
+              setOccupation(event.target.value);
+              if (error) setError(null);
+            }}
+            placeholder="Type your role"
+            autoComplete="organization-title"
+            className="mb-4 h-11 text-base md:text-sm"
+            autoFocus
+          />
+
           <p className="mb-3 text-xs font-semibold uppercase tracking-widest text-muted-foreground">
-            Select one
+            Suggestions
           </p>
 
           <div className="flex flex-wrap gap-2">
             {OCCUPATION_SUGGESTIONS.map((suggestion) => {
-              const isSelected = selected === suggestion;
+              const isSelected =
+                occupation.trim().toLowerCase() === suggestion.toLowerCase();
               return (
                 <button
                   key={suggestion}
                   type="button"
                   onClick={() => {
-                    setSelected(suggestion);
+                    setOccupation(suggestion);
                     if (error) setError(null);
                   }}
                   className={cn(
