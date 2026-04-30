@@ -1,24 +1,10 @@
-import { useEffect } from "react";
 import { act, render, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it } from "vitest";
 import { WorkspaceClientConfigSync } from "../WorkspaceClientConfigSync";
 import { useClientConfigStore } from "@/stores/client-config-store";
 import { useHostContextStore } from "@/stores/host-context-store";
-import {
-  PreferencesStoreProvider,
-  usePreferencesStore,
-} from "@/stores/preferences/preferences-provider";
+import { PreferencesStoreProvider } from "@/stores/preferences/preferences-provider";
 import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
-
-function ThemeModeUpdater({ themeMode }: { themeMode: "light" | "dark" }) {
-  const setThemeMode = usePreferencesStore((state) => state.setThemeMode);
-
-  useEffect(() => {
-    setThemeMode(themeMode);
-  }, [setThemeMode, themeMode]);
-
-  return null;
-}
 
 describe("WorkspaceClientConfigSync", () => {
   beforeEach(() => {
@@ -54,10 +40,9 @@ describe("WorkspaceClientConfigSync", () => {
     useUIPlaygroundStore.getState().reset();
   });
 
-  it("refreshes unsaved workspace defaults when theme and playground context change", async () => {
+  it("refreshes unsaved workspace defaults when playground context changes", async () => {
     const view = render(
       <PreferencesStoreProvider themeMode="light" themePreset="default">
-        <ThemeModeUpdater themeMode="light" />
         <WorkspaceClientConfigSync activeWorkspaceId="ws-1" />
       </PreferencesStoreProvider>,
     );
@@ -71,9 +56,11 @@ describe("WorkspaceClientConfigSync", () => {
         },
       });
       expect(useHostContextStore.getState().defaultHostContext).toMatchObject({
-        theme: "light",
         displayMode: "inline",
       });
+      expect(
+        useHostContextStore.getState().defaultHostContext,
+      ).not.toHaveProperty("theme");
     });
 
     act(() => {
@@ -96,7 +83,6 @@ describe("WorkspaceClientConfigSync", () => {
 
     view.rerender(
       <PreferencesStoreProvider themeMode="light" themePreset="default">
-        <ThemeModeUpdater themeMode="dark" />
         <WorkspaceClientConfigSync activeWorkspaceId="ws-1" />
       </PreferencesStoreProvider>,
     );
@@ -104,7 +90,6 @@ describe("WorkspaceClientConfigSync", () => {
     await waitFor(() => {
       expect(useHostContextStore.getState().defaultHostContext).toEqual(
         expect.objectContaining({
-          theme: "dark",
           displayMode: "fullscreen",
           locale: "fr-CA",
           timeZone: "America/Toronto",
@@ -120,6 +105,9 @@ describe("WorkspaceClientConfigSync", () => {
           },
         }),
       );
+      expect(
+        useHostContextStore.getState().defaultHostContext,
+      ).not.toHaveProperty("theme");
       expect(useHostContextStore.getState().draftHostContext).toEqual(
         useHostContextStore.getState().defaultHostContext,
       );

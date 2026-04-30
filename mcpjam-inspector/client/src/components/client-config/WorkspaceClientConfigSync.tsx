@@ -8,7 +8,6 @@ import {
 } from "@/lib/client-config";
 import { useClientConfigStore } from "@/stores/client-config-store";
 import { useHostContextStore } from "@/stores/host-context-store";
-import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
 
 interface WorkspaceClientConfigSyncProps {
@@ -20,7 +19,6 @@ export function WorkspaceClientConfigSync({
   activeWorkspaceId,
   savedClientConfig,
 }: WorkspaceClientConfigSyncProps) {
-  const themeMode = usePreferencesStore((state) => state.themeMode);
   const displayMode = useUIPlaygroundStore(
     (state) => state.globals.displayMode,
   );
@@ -42,7 +40,6 @@ export function WorkspaceClientConfigSync({
   useEffect(() => {
     const defaultConnectionConfig = buildDefaultWorkspaceConnectionConfig();
     const defaultHostContext = buildDefaultWorkspaceHostContext({
-      theme: themeMode,
       displayMode,
       locale,
       timeZone,
@@ -72,7 +69,6 @@ export function WorkspaceClientConfigSync({
   }, [
     activeWorkspaceId,
     savedClientConfig,
-    themeMode,
     displayMode,
     locale,
     timeZone,

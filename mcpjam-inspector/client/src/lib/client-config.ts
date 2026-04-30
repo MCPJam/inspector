@@ -81,7 +81,6 @@ export function buildDefaultWorkspaceConnectionConfig(): WorkspaceConnectionConf
 }
 
 export function buildDefaultWorkspaceHostContext(args: {
-  theme: "light" | "dark";
   displayMode: HostDisplayMode;
   locale: string;
   timeZone: string;
@@ -89,7 +88,6 @@ export function buildDefaultWorkspaceHostContext(args: {
   safeAreaInsets: HostSafeAreaInsets;
 }): WorkspaceHostContextDraft {
   return {
-    theme: args.theme,
     displayMode: args.displayMode,
     availableDisplayModes: DEFAULT_HOST_DISPLAY_MODES,
     locale: args.locale,
@@ -102,7 +100,6 @@ export function buildDefaultWorkspaceHostContext(args: {
 export const buildDefaultHostContext = buildDefaultWorkspaceHostContext;
 
 export function buildDefaultWorkspaceClientConfig(args: {
-  theme: "light" | "dark";
   displayMode: HostDisplayMode;
   locale: string;
   timeZone: string;
