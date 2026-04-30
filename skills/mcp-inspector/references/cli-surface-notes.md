@@ -113,8 +113,20 @@ If a higher-priority surface contradicts a lower-priority summary, trust the hig
 
 - Good for checking argument validation, result shape, and execution failures.
 - Without `--ui`, the command returns the raw tool result.
-- With `--ui`, the command executes the tool once, starts or attaches to the local Inspector, connects the server, opens App Builder, injects the already-completed tool result through `renderToolResult`, and then requests a snapshot.
+- With `--ui`, the command executes the tool once, starts or attaches to the local Inspector backend, connects the server, opens App Builder when a browser client is available or `--open` is passed, injects the already-completed tool result through `renderToolResult`, and then requests a snapshot.
+- In non-TTY runs, `--ui` does not open a browser by default. Add `--open` when the CLI should open App Builder itself.
+- `--open` can start Inspector if needed and then open the browser. The manual recovery command for "bring up Inspector and App Builder" is `mcpjam inspector open`; `mcpjam inspector start` starts only the backend process.
+- `no_active_client` means no Inspector browser client is attached. It does not necessarily mean the Inspector backend is down.
 - `inspectorRender` is UI command-bus evidence, not a second server-side tool call. A render failure can coexist with a successful `result`.
+- Treat UI success as `inspectorRender.status === "rendered"`, not exit code `0` alone.
+- `inspectorRender.status: "skipped"` means the tool succeeded but the UI render did not complete. The envelope includes a stable root `warning` plus `inspectorRender.warning` with shape `{ code, message, remediation, browserUrl?, hasActiveClient?, inspectorStarted? }`.
+- Stable skipped-render codes are `no_active_client`, `timeout`, `disconnected_server`, and `unsupported_in_mode`.
+- Stable skipped-render remediations are:
+  - `open_browser` for `no_active_client`
+  - `retry` for `timeout`
+  - `reconnect_server` for `disconnected_server`
+  - `none` for `unsupported_in_mode`
+- Use `--require-render` when the UI render itself is the deliverable and skipped renders should fail the command.
 - `success: false` with an `error` from `inspectorRender` means the Inspector render path failed. Check the individual `openAppBuilder`, `setAppContext`, `renderToolResult`, and `snapshot` responses before blaming the MCP server.
 - Large tool results can appear in multiple places, such as `result`, `inspectorRender.renderToolResult.result`, and `inspectorRender.snapshot.result.toolOutput`. Summarize large duplicated payloads.
 - Distinguish:
