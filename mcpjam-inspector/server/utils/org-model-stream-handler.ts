@@ -33,6 +33,20 @@ export interface OrgModelHandlerOptions {
   onStreamWriterReady?: (writer: {
     write: (chunk: UIMessageChunk) => void;
   }) => void;
+  /**
+   * The end user's Authorization header from the inbound request. Forwarded
+   * to /stream/org so Convex can re-authorize the user against the workspace.
+   * Without this, /stream/org can only authenticate the inspector backend
+   * (via the service token) and will reject the request as unauthenticated.
+   */
+  authHeader?: string;
+  /**
+   * Hosted share/chatbox tokens for guest chat sessions. Forwarded to
+   * /stream/org so Convex can authorize the guest against the workspace via
+   * the existing authorizeGuestServerAccessBatch query.
+   */
+  shareToken?: string;
+  chatboxToken?: string;
 }
 
 export async function handleHostedOrgChatModel(
@@ -53,6 +67,8 @@ export async function handleHostedOrgChatModel(
     temperature: options.temperature,
     tools: options.tools,
     workspaceId: options.workspaceId,
+    authHeader: options.authHeader,
+    chatboxToken: options.chatboxToken,
     mcpClientManager: options.mcpClientManager,
     selectedServers: options.selectedServers,
     requireToolApproval: options.requireToolApproval,
@@ -65,6 +81,11 @@ export async function handleHostedOrgChatModel(
     },
     extraBodyFields: {
       providerKey: options.providerKey,
+      ...(options.shareToken ? { shareToken: options.shareToken } : {}),
+      // chatboxToken is set on the body by handleMCPJamFreeChatModel itself.
+      ...(options.selectedServers && options.selectedServers.length > 0
+        ? { serverIds: options.selectedServers }
+        : {}),
     },
   });
 }

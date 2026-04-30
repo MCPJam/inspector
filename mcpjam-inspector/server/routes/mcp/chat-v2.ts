@@ -621,6 +621,7 @@ chatV2.post("/", async (c) => {
         systemPrompt: enhancedSystemPrompt,
         temperature: resolvedTemperature,
         tools: allTools as ToolSet,
+        authHeader: c.req.header("authorization"),
         mcpClientManager,
         selectedServers,
         requireToolApproval,
