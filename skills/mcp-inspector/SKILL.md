@@ -21,14 +21,17 @@ When the user wants to connect to a server and use it:
 2. If the probe shows `oauth_required`, authenticate with `oauth login --credentials-out <path>` or run `oauth conformance --credentials-out <path>` when the task is specifically to test the OAuth flow.
 3. Discover tools: `tools list --url <url> --credentials-file <path> --quiet --format json`.
   - Tools with `_meta.ui.resourceUri`, deprecated `_meta["ui/resourceUri"]`, or `openai/outputTemplate` in `toolsMetadata` have interactive UI.
+  - For a specific tool, check `toolsMetadata.<toolName>._meta.ui.resourceUri`, `toolsMetadata.<toolName>._meta["ui/resourceUri"]`, or `toolsMetadata.<toolName>["openai/outputTemplate"]`.
 4. Execute a tool: `tools call --url <url> --tool-name <name> --tool-args <json> --credentials-file <path>`.
 5. Execute with UI: `tools call --url <url> --tool-name <name> --tool-args <json> --credentials-file <path> --ui`.
   - `--ui` starts or attaches to the local Inspector backend and renders the completed result in App Builder.
   - In non-TTY, agent, and CI runs, `--ui` does not open a browser by default. Pass `--open` when the CLI should open App Builder itself.
-  - Use `--no-open` when browser automation already opened Inspector App Builder. Use `--attach-only` when startup, browser opening, and discovery must all be disallowed.
+  - `--open` opens a system browser URL; it does not attach an already-controlled automation browser or make fresh tabs hydrate an injected render. Use `--no-open` when browser automation already opened Inspector App Builder. Use `--attach-only` when startup, browser opening, and discovery must all be disallowed.
   - `no_active_client` means the Inspector backend may be running but no browser client is attached. If manual recovery is needed, use `mcpjam inspector open`, not `mcpjam inspector start`.
+  - `unknown_server` in the root `error.code` or an `inspectorRender.commands.*.error.code` means Inspector could not match the requested server. If the message says App Builder is focused on another server, retry with `--server-name <focused-name>`.
   - Treat UI success as `inspectorRender.status === "rendered"`, not exit code `0` alone. If the render is `skipped`, branch on `inspectorRender.remediation` or the stable root `warning.code`.
   - Use `--require-render` when the UI render itself is the deliverable and a skipped render should fail the command.
+  - Do not require external screenshots as proof of render success; iframe/canvas content can defeat browser snapshot tools. Prefer `inspectorRender.status`, command responses, and snapshot evidence.
   - Use `--ui` only when the tool has UI metadata or the user explicitly asks to see UI.
 
 When the user asks to investigate, audit, or triage, use the Investigation workflow below.
@@ -52,8 +55,9 @@ When the user asks to investigate, audit, or triage, use the Investigation workf
 7. If the claim is specifically about MCP Apps tool metadata or `ui://` resources, start with `apps conformance --quiet --format json` before dropping to `tools list` or `resources read`.
 8. If the claim is about a tool result rendering in Inspector, use `tools call --tool-name <name> --tool-args <json|@file|-> --ui --quiet --format json`.
   - In non-TTY runs, add `--open` if no Inspector browser client is already attached.
-  - If browser automation already opened `http://127.0.0.1:6274/#app-builder`, add `--no-open`.
+  - If browser automation already opened `http://127.0.0.1:6274/#app-builder`, add `--no-open`; `--open` launches a system browser and may not target the automation-controlled client.
   - Confirm UI delivery with `inspectorRender.status === "rendered"`. Treat `inspectorRender.remediation` and stable skipped-render `warning.code` values as recovery hints, not MCP tool failures.
+  - If `unknown_server` appears in the root error or command errors and the message names the focused server, retry with `--server-name <focused-name>`.
   - Use `--require-render` when a skipped render should become a hard error instead of a warning.
 9. If a field may be CLI-added or SDK-normalized, read `references/cli-surface-notes.md` before concluding anything.
 10. If the claim depends on MCP semantics, read `references/mcp-2025-11-25-interpretation.md`.

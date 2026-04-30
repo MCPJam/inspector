@@ -108,6 +108,7 @@ If a higher-priority surface contradicts a lower-priority summary, trust the hig
 - Only `tools` should be treated as server output by default.
 - `toolsMetadata: {}` means the local cache is empty. It does not mean the server violated MCP.
 - Tools with `_meta.ui.resourceUri`, deprecated `_meta["ui/resourceUri"]`, or `openai/outputTemplate` in `toolsMetadata` have interactive UI. Use `tools call --ui` to render those tool results in Inspector.
+- For a specific tool, inspect metadata at `toolsMetadata.<toolName>`. UI-capable metadata can appear at `toolsMetadata.<toolName>._meta.ui.resourceUri`, deprecated `toolsMetadata.<toolName>._meta["ui/resourceUri"]`, or `toolsMetadata.<toolName>["openai/outputTemplate"]`.
 
 ### `tools call`
 
@@ -115,10 +116,12 @@ If a higher-priority surface contradicts a lower-priority summary, trust the hig
 - Without `--ui`, the command returns the raw tool result.
 - With `--ui`, the command executes the tool once, starts or attaches to the local Inspector backend, connects the server, opens App Builder when a browser client is available or `--open` is passed, injects the already-completed tool result through `renderToolResult`, and then requests a snapshot.
 - In non-TTY runs, `--ui` does not open a browser by default. Add `--open` when the CLI should open App Builder itself.
-- `--open` can start Inspector if needed and then open the browser. The manual recovery command for "bring up Inspector and App Builder" is `mcpjam inspector open`; `mcpjam inspector start` starts only the backend process.
+- `--open` can start Inspector if needed and then open a system browser. It does not attach an external automation browser or hydrate fresh tabs with an already injected render. If browser automation owns the client, open App Builder there first and pass `--no-open`. The manual recovery command for "bring up Inspector and App Builder" is `mcpjam inspector open`; `mcpjam inspector start` starts only the backend process.
 - `no_active_client` means no Inspector browser client is attached. It does not necessarily mean the Inspector backend is down.
+- `unknown_server` in the root error or an `inspectorRender.commands.*.error.code` is a hard render failure. If the message says App Builder is focused on another server, retry with `--server-name <focused-name>` so the CLI request matches the active Inspector server name.
 - `inspectorRender` is UI command-bus evidence, not a second server-side tool call. A render failure can coexist with a successful `result`.
 - Treat UI success as `inspectorRender.status === "rendered"`, not exit code `0` alone.
+- External browser screenshot tools are optional verification only. Inspector UI content may be inside iframe/canvas surfaces that generic snapshots cannot capture; prefer `inspectorRender.status`, command responses, and the returned `snapshot` evidence.
 - `inspectorRender.status: "skipped"` means the tool succeeded but the UI render did not complete. The envelope includes a stable root `warning` plus `inspectorRender.warning` with shape `{ code, message, remediation, browserUrl?, hasActiveClient?, inspectorStarted? }`.
 - Stable skipped-render codes are `no_active_client`, `timeout`, `disconnected_server`, and `unsupported_in_mode`.
 - Stable skipped-render remediations are:
