@@ -29,6 +29,19 @@ import {
   writeChatboxSession,
 } from "../lib/chatbox-session";
 
+const existingConvexUser = {
+  _id: "user-1",
+  externalId: "workos-user-1",
+  email: "user@example.com",
+  name: "Test User",
+  imageUrl: "",
+  plan: "free",
+  entitlements: {},
+  hasCompletedOnboarding: true,
+  createdAt: 1,
+  updatedAt: 1,
+};
+
 const {
   createAppStateMock,
   mockAppBuilderTabMounts,
@@ -146,7 +159,13 @@ const {
 
 vi.mock("convex/react", () => ({
   useConvexAuth: (...args: unknown[]) => mockUseConvexAuth(...args),
-  useQuery: mockUseQuery,
+  useQuery: (ref: string, ...args: unknown[]) => {
+    const result = mockUseQuery(ref, ...args);
+    if (ref === "users:getCurrentUser" && result === undefined) {
+      return existingConvexUser;
+    }
+    return result;
+  },
   useMutation: () => vi.fn(),
   useAction: () => vi.fn(),
 }));
@@ -384,7 +403,7 @@ describe("App hosted OAuth callback handling", () => {
     mockUseFeatureFlagEnabled.mockReturnValue(false);
     mockUseQuery.mockReset();
     mockUseQuery.mockImplementation((ref: string) =>
-      ref === "users:getCurrentUser" ? null : undefined
+      ref === "users:getCurrentUser" ? existingConvexUser : undefined
     );
     mockHostedShellGateState.value = "ready";
     mockConvexAuthState.isAuthenticated = true;
@@ -749,7 +768,7 @@ describe("App hosted OAuth callback handling", () => {
     }));
     mockUseQuery.mockImplementation((name: string) => {
       if (name === "users:getCurrentUser") {
-        return null;
+        return existingConvexUser;
       }
 
       if (name === "organizations:getMyOrganizations") {
@@ -801,7 +820,7 @@ describe("App hosted OAuth callback handling", () => {
     }));
     mockUseQuery.mockImplementation((name: string) => {
       if (name === "users:getCurrentUser") {
-        return null;
+        return existingConvexUser;
       }
 
       if (name === "organizations:getMyOrganizations") {
@@ -1690,7 +1709,7 @@ describe("App hosted OAuth callback handling", () => {
     }));
     mockUseQuery.mockImplementation((name: string) => {
       if (name === "users:getCurrentUser") {
-        return null;
+        return existingConvexUser;
       }
 
       if (name === "organizations:getMyOrganizations") {
@@ -1765,7 +1784,7 @@ describe("App hosted OAuth callback handling", () => {
     }));
     mockUseQuery.mockImplementation((name: string) => {
       if (name === "users:getCurrentUser") {
-        return null;
+        return existingConvexUser;
       }
 
       if (name === "organizations:getMyOrganizations") {
@@ -1850,7 +1869,7 @@ describe("App hosted OAuth callback handling", () => {
     }));
     mockUseQuery.mockImplementation((name: string) => {
       if (name === "users:getCurrentUser") {
-        return null;
+        return existingConvexUser;
       }
 
       if (name === "organizations:getMyOrganizations") {
@@ -1945,7 +1964,7 @@ describe("App hosted OAuth callback handling", () => {
     }));
     mockUseQuery.mockImplementation((name: string) => {
       if (name === "users:getCurrentUser") {
-        return null;
+        return existingConvexUser;
       }
 
       if (name === "organizations:getMyOrganizations") {
@@ -2537,7 +2556,7 @@ describe("App hosted OAuth callback handling", () => {
     );
     mockUseQuery.mockImplementation((name: string) => {
       if (name === "users:getCurrentUser") {
-        return null;
+        return existingConvexUser;
       }
 
       if (name === "organizations:getMyOrganizations") {

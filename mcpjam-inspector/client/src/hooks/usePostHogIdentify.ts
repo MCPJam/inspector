@@ -32,8 +32,12 @@ export function usePostHogIdentify() {
         last_name: user.lastName,
       };
 
-      if (convexUser?.occupation) {
-        personProperties.occupation = convexUser.occupation;
+      const trimmedOccupation =
+        typeof convexUser?.occupation === "string"
+          ? convexUser.occupation.trim()
+          : "";
+      if (trimmedOccupation) {
+        personProperties.occupation = trimmedOccupation;
       }
 
       // Identify the user with their WorkOS ID

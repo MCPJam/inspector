@@ -42,12 +42,19 @@ export function OccupationGate({ userId, email }: OccupationGateProps) {
 
     try {
       await updateOccupation({ occupation: trimmedOccupation });
-      posthog.setPersonProperties({ occupation: trimmedOccupation });
-      posthog.capture("signup_occupation_submitted", {
-        ...standardEventProps("signup_occupation_gate"),
-        occupation: trimmedOccupation,
-      });
-      posthog.register({ occupation: trimmedOccupation });
+      try {
+        posthog.setPersonProperties({ occupation: trimmedOccupation });
+        posthog.capture("signup_occupation_submitted", {
+          ...standardEventProps("signup_occupation_gate"),
+          occupation: trimmedOccupation,
+        });
+        posthog.register({ occupation: trimmedOccupation });
+      } catch (analyticsError) {
+        console.error(
+          "[signup] Failed to track occupation submission",
+          analyticsError,
+        );
+      }
     } catch (err) {
       console.error("[signup] Failed to save occupation", err);
       setError("Could not save your occupation. Please try again.");
@@ -69,15 +76,25 @@ export function OccupationGate({ userId, email }: OccupationGateProps) {
           </p>
         </div>
 
-        <form onSubmit={handleSubmit}>
+        <form onSubmit={handleSubmit} aria-busy={isSubmitting}>
+          <label htmlFor="occupation" className="sr-only">
+            Role
+          </label>
           <Input
+            id="occupation"
+            name="occupation"
             value={occupation}
             onChange={(event) => {
+              if (isSubmitting) return;
               setOccupation(event.target.value);
               if (error) setError(null);
             }}
             placeholder="Type your role"
             autoComplete="organization-title"
+            required
+            aria-invalid={error ? true : undefined}
+            aria-describedby={error ? "occupation-error" : undefined}
+            disabled={isSubmitting}
             className="mb-4 h-11 text-base md:text-sm"
             autoFocus
           />
@@ -94,7 +111,9 @@ export function OccupationGate({ userId, email }: OccupationGateProps) {
                 <button
                   key={suggestion}
                   type="button"
+                  disabled={isSubmitting}
                   onClick={() => {
+                    if (isSubmitting) return;
                     setOccupation(suggestion);
                     if (error) setError(null);
                   }}
@@ -113,7 +132,13 @@ export function OccupationGate({ userId, email }: OccupationGateProps) {
           </div>
 
           {error ? (
-            <p className="mt-3 text-sm text-destructive">{error}</p>
+            <p
+              id="occupation-error"
+              role="alert"
+              className="mt-3 text-sm text-destructive"
+            >
+              {error}
+            </p>
           ) : null}
 
           <hr className="my-6 border-border" />

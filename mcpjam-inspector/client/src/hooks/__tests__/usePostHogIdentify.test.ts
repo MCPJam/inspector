@@ -118,7 +118,7 @@ describe("usePostHogIdentify", () => {
     expect(mockState.posthog.identify).not.toHaveBeenCalled();
   });
 
-  it("adds occupation when the Convex user has one", () => {
+  it("adds trimmed occupation when the Convex user has one", () => {
     mockState.auth.user = {
       id: "user_123",
       email: "user@example.com",
@@ -126,7 +126,7 @@ describe("usePostHogIdentify", () => {
       lastName: "Smith",
     };
     mockState.convexAuth.isAuthenticated = true;
-    mockState.convexUser = { occupation: "Platform Engineer" };
+    mockState.convexUser = { occupation: "  Platform Engineer  " };
 
     renderHook(() => usePostHogIdentify());
 
@@ -136,6 +136,26 @@ describe("usePostHogIdentify", () => {
       first_name: "Taylor",
       last_name: "Smith",
       occupation: "Platform Engineer",
+    });
+  });
+
+  it("omits whitespace-only occupation", () => {
+    mockState.auth.user = {
+      id: "user_123",
+      email: "user@example.com",
+      firstName: "Taylor",
+      lastName: "Smith",
+    };
+    mockState.convexAuth.isAuthenticated = true;
+    mockState.convexUser = { occupation: "   " };
+
+    renderHook(() => usePostHogIdentify());
+
+    expect(mockState.posthog.identify).toHaveBeenCalledWith("user_123", {
+      email: "user@example.com",
+      name: "Taylor Smith",
+      first_name: "Taylor",
+      last_name: "Smith",
     });
   });
 });
