@@ -108,6 +108,7 @@ import {
 import { cn } from "@/lib/utils";
 import { compareQuickConnectCatalogCards } from "@/lib/quick-connect-catalog-sort";
 import { toast } from "sonner";
+import { useClientConfigStore } from "@/stores/client-config-store";
 
 const ORDER_STORAGE_KEY = "mcp-server-order";
 const LOGGER_FOCUS_STORAGE_KEY = "mcp-server-logger-focus";
@@ -1129,6 +1130,20 @@ export function ServersTab({
     setIsClientConfigOpen(true);
   };
 
+  const handleClientConfigOpenChange = (open: boolean) => {
+    if (!open) {
+      const clientConfigState = useClientConfigStore.getState();
+      if (
+        !clientConfigState.isSaving &&
+        !clientConfigState.isAwaitingRemoteEcho
+      ) {
+        clientConfigState.resetToBaseline();
+      }
+    }
+
+    setIsClientConfigOpen(open);
+  };
+
   const renderServerActionsMenu = () => (
     <>
       {onSaveClientConfig ? (
@@ -1544,7 +1559,10 @@ export function ServersTab({
 
       {/* Client Config Dialog */}
       {onSaveClientConfig ? (
-        <Dialog open={isClientConfigOpen} onOpenChange={setIsClientConfigOpen}>
+        <Dialog
+          open={isClientConfigOpen}
+          onOpenChange={handleClientConfigOpenChange}
+        >
           <DialogContent className="flex max-h-[88vh] w-[min(96vw,88rem)] max-w-[88rem] flex-col gap-0 overflow-hidden p-0 sm:max-w-[88rem]">
             <DialogTitle className="sr-only">Connection Settings</DialogTitle>
             <DialogDescription className="sr-only">
