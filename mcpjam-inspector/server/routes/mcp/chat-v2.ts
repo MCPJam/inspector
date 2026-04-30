@@ -18,9 +18,8 @@ import { getProductionGuestAuthHeader } from "../../utils/guest-auth.js";
 import { logger } from "../../utils/logger";
 import { handleMCPJamFreeChatModel } from "../../utils/mcpjam-stream-handler";
 import { handleHostedOrgChatModel } from "../../utils/org-model-stream-handler.js";
-import { deriveOrgProviderKey as deriveOrgProviderKeyResult } from "../../utils/org-model-config.js";
+import { deriveOrgProviderKey } from "../../utils/org-model-config.js";
 import { HOSTED_MODE } from "../../config";
-import type { ModelDefinition } from "@/shared/types";
 import {
   persistChatSessionToConvex,
   pickEnrichmentHeaders,
@@ -445,12 +444,6 @@ function streamDirectChatWithLiveTrace(options: {
   return createUIMessageStreamResponse({ stream });
 }
 
-function deriveOrgProviderKey(modelDefinition: ModelDefinition): string {
-  const result = deriveOrgProviderKeyResult(modelDefinition);
-  if (!result.ok) throw new Error(result.error);
-  return result.key;
-}
-
 const chatV2 = new Hono();
 
 chatV2.post("/", async (c) => {
@@ -606,15 +599,21 @@ chatV2.post("/", async (c) => {
       typeof body.workspaceId === "string" &&
       body.workspaceId
     ) {
-      const providerKey = deriveOrgProviderKey(modelDefinition);
-      const modelMessages = await convertToModelMessages(messages);
+      const providerKeyResult = deriveOrgProviderKey(modelDefinition);
+      if (!providerKeyResult.ok) {
+        return c.json({ error: providerKeyResult.error }, 400);
+      }
+      const providerKey = providerKeyResult.key;
+      const modelMessages = scrubMessages(
+        (await convertToModelMessages(messages)) as ModelMessage[],
+      );
       const sessionStartedAt = Date.now();
       const chatSessionId = body.chatSessionId;
       return handleHostedOrgChatModel({
         workspaceId: body.workspaceId,
         providerKey,
         modelId: String(modelDefinition.id),
-        messages: modelMessages as ModelMessage[],
+        messages: modelMessages,
         systemPrompt: enhancedSystemPrompt,
         temperature: resolvedTemperature,
         tools: allTools as ToolSet,

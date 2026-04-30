@@ -9,10 +9,15 @@ import {
   Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
+import { Badge } from "@mcpjam/design-system/badge";
+import { Button } from "@mcpjam/design-system/button";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "@mcpjam/design-system/card";
+import { Input } from "@mcpjam/design-system/input";
 import {
   Dialog,
   DialogContent,
@@ -20,7 +25,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
+} from "@mcpjam/design-system/dialog";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -30,14 +35,14 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
+} from "@mcpjam/design-system/alert-dialog";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
+} from "@mcpjam/design-system/select";
 import {
   useOrgModelConfig,
   type OrgModelProvider,
