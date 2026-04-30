@@ -157,6 +157,8 @@ export function JsonImportModal({
               showToolbar={true}
               height="200px"
               onValidationError={handleValidationError}
+              error={validationResult?.error ?? null}
+              showValidationErrorInStatusBar={false}
             />
           </div>
 

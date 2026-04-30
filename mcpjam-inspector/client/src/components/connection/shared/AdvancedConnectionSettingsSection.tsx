@@ -176,6 +176,7 @@ export function AdvancedConnectionSettingsSection({
                       height="160px"
                       wrapLongLinesInEdit={false}
                       showLineNumbers
+                      showValidationErrorInStatusBar={false}
                     />
                   </div>
                 </>

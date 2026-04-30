@@ -24,7 +24,7 @@ mcpjam tools call --url https://your-server.com/mcp --access-token $TOKEN \
   --tool-args @params.json --quiet --format json
 ```
 
-Tool arguments can be inline JSON, `@path`, or `-` for stdin. The result includes the tool's response content.
+Tool arguments can be inline JSON, `@path`, `-` for stdin, or `--tool-args-stdin` as a shorthand for stdin. The result includes the tool's response content.
 
 <Note>
   `tools call` supports `--debug-out <path>` to capture the full request/response
@@ -45,9 +45,9 @@ mcpjam tools call --url https://your-server.com/mcp --access-token $TOKEN \
   --quiet --format json
 ```
 
-Without `--ui`, `tools call` returns the raw tool result. With `--ui`, it returns an envelope containing the raw `result`, `inspectorBrowserUrl`, and `inspectorRender` evidence. Browser automation should open `inspectorBrowserUrl`; `--inspector-url` is the local Inspector backend/API base URL. If you already know the Inspector browser/client URL, pass `--frontend-url <url>` to use it directly and skip health-advertised frontend checks and local dev port discovery.
+Without `--ui`, `tools call` returns the raw tool result. With `--ui`, it opens Inspector by default in a TTY and returns an envelope containing the raw `result`, `inspectorBrowserUrl`, and compact `inspectorRender` evidence. `inspectorRender.status` is the UI signal: `rendered` means Inspector accepted the render, `skipped` means the tool succeeded but the active browser client, a render precondition, or the render wait was missing, and `error` means a non-recoverable Inspector render command failed. `inspectorRender.remediation` is always present and is one of `open_browser`, `retry`, `reconnect_server`, or `none`. Skipped renders emit a stable root `warning` plus `inspectorRender.warning` with `code`, `message`, `remediation`, and optional `browserUrl`, `hasActiveClient`, and `inspectorStarted` fields. Stable skipped-render codes are `no_active_client`, `timeout`, `disconnected_server`, and `unsupported_in_mode`. Pass `--require-render` when a skipped render should become a hard error instead of a warning. Browser automation can open `inspectorBrowserUrl` itself and pass `--no-open`; `--inspector-url` is the local Inspector backend/API base URL. If you already know the Inspector browser/client URL, pass `--frontend-url <url>` to use it directly and skip health-advertised frontend checks and local dev port discovery.
 
-For agent/browser automation, open `http://127.0.0.1:6274/#app-builder` in the automation browser first, then run `tools call --ui --quiet --format json`. JSON/quiet `--ui` will not open a system browser or scan local frontend ports unless you pass `--open`, but it may start Inspector; add `--attach-only` when startup, browser opening, and discovery should be disallowed. Human TTY and `--open` flows may discover local dev frontends. The normal JSON output is compact; pass `--debug-out <path>` for the full render envelope.
+For agent/browser automation, either let `--ui` open Inspector automatically in a TTY, or open `http://127.0.0.1:6274/#app-builder` in the automation browser first and run `tools call --ui --no-open --quiet --format json`. Add `--attach-only` when startup, browser opening, and discovery should be disallowed. Agents should confirm `inspectorRender.status === "rendered"` before assuming the UI is visible, and use `inspectorRender.remediation` to recover from skipped renders. Default non-TTY `--ui` runs do not open a browser unless `--open` is passed. TTY stderr runs print the App Builder URL and initial wait message unless `--quiet` is set; the elapsed-seconds heartbeat only appears when stderr is a TTY. The normal JSON output is compact; pass `--debug-out <path>` for the full render envelope.
 
 For a local stdio server:
 
@@ -132,6 +132,13 @@ For generated payloads, pipe JSON through stdin:
 ```bash
 echo '{"query":"setup guide"}' | mcpjam tools call --url $URL --access-token $TOKEN \
   --tool-name search_docs --tool-args - --quiet --format json
+```
+
+`--tool-args-stdin` is equivalent to `--tool-args -`:
+
+```bash
+generate-params | mcpjam tools call --url $URL --access-token $TOKEN \
+  --tool-name search_docs --tool-args-stdin --quiet --format json
 ```
 
 ### Using a credentials file

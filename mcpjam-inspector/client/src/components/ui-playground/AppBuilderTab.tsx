@@ -523,6 +523,7 @@ export function AppBuilderTab({
     // If a specific tool is selected, detect its protocol
     if (selectedTool) {
       const tool = tools[selectedTool];
+      if (!tool) return;
       const uiType = detectUiTypeFromTool(tool);
       if (uiType === UIType.OPENAI_SDK_AND_MCP_APPS) {
         // Tool supports both protocols - only set default if no stored preference

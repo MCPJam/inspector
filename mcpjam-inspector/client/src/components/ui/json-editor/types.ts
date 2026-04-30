@@ -53,6 +53,15 @@ export interface JsonEditorProps {
   // Custom toolbar content
   toolbarLeftContent?: ReactNode;
   toolbarRightContent?: ReactNode;
+
+  // External error message to surface in the toolbar (e.g. JSON parse error
+  // from the consumer's own validation pipeline).
+  error?: string | null;
+
+  // Whether the editor's built-in validation error should also render in the
+  // bottom status bar. Disable this when the parent already renders the same
+  // validation message elsewhere to avoid duplicates.
+  showValidationErrorInStatusBar?: boolean;
 }
 
 export interface CursorPosition {
