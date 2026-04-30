@@ -214,6 +214,10 @@ function isLoopbackHostname(hostname: string): boolean {
   );
 }
 
+// The session token is a single-process secret for the local CLI/Inspector
+// build; only attach it to loopback `/api/*` calls. Non-hosted Inspector is
+// not supported behind a public origin — relaxing this would expose the token
+// to any reachable client.
 function shouldAttachSessionHeaders(input: RequestInfo | URL): boolean {
   if (HOSTED_MODE) {
     return false;

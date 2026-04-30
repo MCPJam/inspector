@@ -947,7 +947,8 @@ export function useServerState({
           return "noop";
         }
 
-        runtime = resolveRuntime();
+        runtime =
+          appStateServersRef.current[serverName] ?? runtimeServerOverride;
         if (!runtime || runtime.connectionStatus !== "connected") {
           clearDedupeKey();
           return "noop";
