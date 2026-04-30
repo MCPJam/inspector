@@ -588,16 +588,20 @@ chatV2.post("/", async (c) => {
       });
     }
 
-    // Hosted org BYOK: only in hosted mode, and only when Convex is reachable
-    // and the request carries a workspaceId. We route the LLM call through
-    // Convex (/stream/org) so the org's vault-resolved provider keys never
-    // leave Convex. Local-mode BYOK (CLI / no Convex) falls through to
-    // createLlmModel + streamText below.
+    // Hosted org BYOK: only in hosted mode, only when Convex is reachable,
+    // only when the request carries a workspaceId, and only when the caller
+    // hasn't supplied a client-side apiKey. A client-supplied apiKey is the
+    // strongest signal that the caller wants direct BYOK, so it wins —
+    // matches the precedence used in the eval flows (modelApiKeys ?? org).
+    // Otherwise we route the LLM call through Convex (/stream/org) so the
+    // org's vault-resolved provider keys never leave Convex. Local-mode BYOK
+    // (CLI / no Convex) falls through to createLlmModel + streamText below.
     if (
       HOSTED_MODE &&
       process.env.CONVEX_HTTP_URL &&
       typeof body.workspaceId === "string" &&
-      body.workspaceId
+      body.workspaceId &&
+      !apiKey
     ) {
       const providerKeyResult = deriveOrgProviderKey(modelDefinition);
       if (!providerKeyResult.ok) {
