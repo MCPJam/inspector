@@ -857,7 +857,7 @@ export function useServerState({
         initialWorkspaceKey && initialWorkspaceKey !== "none"
           ? initialWorkspaceKey
           : null;
-      const dedupeKey = `${frozenWorkspaceId ?? "pending"}:${serverName}`;
+      let dedupeKey = `${frozenWorkspaceId ?? "pending"}:${serverName}`;
 
       if (persistRuntimeDedupeKeysRef.current.has(dedupeKey)) {
         return "pending";
@@ -867,6 +867,21 @@ export function useServerState({
 
       const clearDedupeKey = () => {
         persistRuntimeDedupeKeysRef.current.delete(dedupeKey);
+      };
+
+      const rekeyDedupe = (resolvedWorkspaceId: string): boolean => {
+        const nextKey = `${resolvedWorkspaceId}:${serverName}`;
+        if (nextKey === dedupeKey) {
+          return true;
+        }
+        if (persistRuntimeDedupeKeysRef.current.has(nextKey)) {
+          persistRuntimeDedupeKeysRef.current.delete(dedupeKey);
+          return false;
+        }
+        persistRuntimeDedupeKeysRef.current.delete(dedupeKey);
+        persistRuntimeDedupeKeysRef.current.add(nextKey);
+        dedupeKey = nextKey;
+        return true;
       };
 
       let workspaceId: string | null = null;
@@ -895,6 +910,9 @@ export function useServerState({
             ) {
               clearDedupeKey();
               return "noop";
+            }
+            if (!rekeyDedupe(latestWorkspaceId)) {
+              return "pending";
             }
             workspaceId = latestWorkspaceId;
             break;
@@ -947,11 +965,12 @@ export function useServerState({
           return "noop";
         }
 
-        runtime = resolveRuntime();
-        if (!runtime || runtime.connectionStatus !== "connected") {
+        const liveRuntime = appStateServersRef.current[serverName];
+        if (!liveRuntime || liveRuntime.connectionStatus !== "connected") {
           clearDedupeKey();
           return "noop";
         }
+        runtime = liveRuntime;
 
         if (flatAfterWait.some((s) => s.name === serverName)) {
           logger.warn(
