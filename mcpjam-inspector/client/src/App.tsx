@@ -1,4 +1,4 @@
-import { useConvexAuth } from "convex/react";
+import { useConvexAuth, useQuery } from "convex/react";
 import {
   useCallback,
   useEffect,
@@ -81,6 +81,7 @@ import {
 } from "./lib/theme-utils";
 import CompletingSignInLoading from "./components/CompletingSignInLoading";
 import LoadingScreen from "./components/LoadingScreen";
+import { OccupationGate } from "./components/signup/OccupationGate";
 import { Header } from "./components/Header";
 import { ThemePreset } from "./types/preferences/theme";
 import type {
@@ -185,6 +186,8 @@ import type {
   SelectServerInspectorCommand,
 } from "@/shared/inspector-command.js";
 
+const OCCUPATION_GATE_ROLLOUT_MS = Date.parse("2026-04-29T00:00:00.000Z");
+
 function getHostedOAuthCallbackErrorMessage(): string {
   const params = new URLSearchParams(window.location.search);
   const error = params.get("error");
@@ -244,6 +247,29 @@ function BillingHandoffLoading({ overlay = false }: { overlay?: boolean }) {
         <Loader2 className="mx-auto size-12 animate-spin text-muted-foreground" />
         <p className="mt-4 text-muted-foreground">Preparing checkout...</p>
       </div>
+    </div>
+  );
+}
+
+function UserSetupError() {
+  return (
+    <div
+      className="flex min-h-screen flex-col items-center justify-center gap-4 p-6 text-center"
+      data-testid="user-setup-error"
+    >
+      <div className="max-w-md space-y-2">
+        <h1 className="text-xl font-semibold">Could not finish setup</h1>
+        <p className="text-sm text-muted-foreground">
+          We could not create your MCPJam user record. Refresh and try again.
+        </p>
+      </div>
+      <button
+        type="button"
+        className="rounded bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
+        onClick={() => window.location.reload()}
+      >
+        Refresh
+      </button>
     </div>
   );
 }
@@ -344,6 +370,10 @@ export default function App() {
     isLoading: isWorkOsLoading,
   } = useAuth();
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
+  const currentUser = useQuery(
+    "users:getCurrentUser" as any,
+    isAuthenticated ? ({} as any) : "skip",
+  );
   const [hostedOAuthHandling, setHostedOAuthHandling] = useState(() => {
     if (!HOSTED_MODE) {
       return false;
@@ -596,7 +626,7 @@ export default function App() {
   // Set up Electron OAuth callback handling
   useElectronOAuth();
   // Ensure a `users` row exists after Convex auth
-  useEnsureDbUser();
+  const { isEnsuringUser } = useEnsureDbUser();
 
   const isDebugCallback = window.location.pathname.startsWith(
     "/oauth/callback/debug",
@@ -1790,6 +1820,33 @@ export default function App() {
 
   if (shouldHoldHostedDefaultRouteForAuth) {
     return <LoadingScreen />;
+  }
+
+  if (
+    !isHostedChatRoute &&
+    isAuthenticated &&
+    (currentUser === undefined || (currentUser === null && isEnsuringUser))
+  ) {
+    return <LoadingScreen />;
+  }
+
+  if (!isHostedChatRoute && isAuthenticated && currentUser === null) {
+    return <UserSetupError />;
+  }
+
+  if (
+    !isHostedChatRoute &&
+    isAuthenticated &&
+    typeof currentUser?.createdAt === "number" &&
+    currentUser.createdAt >= OCCUPATION_GATE_ROLLOUT_MS &&
+    !currentUser?.occupation?.trim()
+  ) {
+    return (
+      <OccupationGate
+        userId={workOsUser?.id ?? null}
+        email={workOsUser?.email}
+      />
+    );
   }
 
   const shouldShowActiveServerSelector =
