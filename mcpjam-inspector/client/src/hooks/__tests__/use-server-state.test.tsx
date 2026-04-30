@@ -184,6 +184,93 @@ function renderUseServerState(
   );
 }
 
+describe("useServerState effective server projection", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+    window.history.replaceState({}, "", "/");
+  });
+
+  it("surfaces connected or connecting runtime-only servers", () => {
+    const appState = createAppState();
+    const persistedServer: ServerWithName = {
+      name: "persisted-server",
+      config: {
+        type: "http",
+        url: "https://persisted.example.com/mcp",
+      } as any,
+      lastConnectionTime: new Date(),
+      connectionStatus: "disconnected",
+      retryCount: 0,
+      enabled: true,
+    };
+    const runtimeConnected: ServerWithName = {
+      name: "runtime-connected",
+      config: {
+        type: "http",
+        url: "https://runtime-connected.example.com/mcp",
+      } as any,
+      lastConnectionTime: new Date(),
+      connectionStatus: "connected",
+      retryCount: 0,
+      enabled: true,
+    };
+    const runtimeConnecting: ServerWithName = {
+      name: "runtime-connecting",
+      config: {
+        type: "http",
+        url: "https://runtime-connecting.example.com/mcp",
+      } as any,
+      lastConnectionTime: new Date(),
+      connectionStatus: "connecting",
+      retryCount: 0,
+      enabled: true,
+    };
+    const runtimeFailed: ServerWithName = {
+      name: "runtime-failed",
+      config: {
+        type: "http",
+        url: "https://runtime-failed.example.com/mcp",
+      } as any,
+      lastConnectionTime: new Date(),
+      connectionStatus: "failed",
+      retryCount: 0,
+      enabled: true,
+    };
+
+    appState.workspaces.default.servers = {
+      "persisted-server": persistedServer,
+    };
+    appState.servers = {
+      "runtime-connected": runtimeConnected,
+      "runtime-connecting": runtimeConnecting,
+      "runtime-failed": runtimeFailed,
+    };
+    appState.selectedServer = "runtime-connected";
+
+    const dispatch = vi.fn();
+    const { result } = renderUseServerState(dispatch, appState);
+
+    expect(result.current.workspaceServers).toEqual(
+      expect.objectContaining({
+        "persisted-server": expect.any(Object),
+        "runtime-connected": runtimeConnected,
+        "runtime-connecting": runtimeConnecting,
+      }),
+    );
+    expect(result.current.workspaceServers).not.toHaveProperty(
+      "runtime-failed",
+    );
+    expect(result.current.selectedMCPConfig).toBe(runtimeConnected.config);
+    expect(result.current.connectedOrConnectingServerConfigs).toEqual(
+      expect.objectContaining({
+        "runtime-connected": runtimeConnected,
+        "runtime-connecting": runtimeConnecting,
+      }),
+    );
+  });
+});
+
 describe("useServerState OAuth callback failures", () => {
   beforeEach(() => {
     vi.clearAllMocks();

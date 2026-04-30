@@ -573,6 +573,23 @@ export function useServerState({
       };
     }
 
+    // Surface runtime-only servers (e.g. registered via the CLI's
+    // /api/mcp/connect before they have been persisted to a workspace) so they
+    // participate in selection, status display, and command routing. Without
+    // this, the App.tsx auto-select effect would override an explicit
+    // setSelectedServer because effectiveServers[<runtime-only>]?.config is
+    // undefined.
+    for (const [name, runtime] of Object.entries(appState.servers)) {
+      if (serversWithRuntime[name]) continue;
+      if (
+        runtime.connectionStatus !== "connected" &&
+        runtime.connectionStatus !== "connecting"
+      ) {
+        continue;
+      }
+      serversWithRuntime[name] = runtime;
+    }
+
     return { ...workspace, servers: serversWithRuntime };
   }, [effectiveWorkspaces, effectiveActiveWorkspaceId, appState.servers]);
 
