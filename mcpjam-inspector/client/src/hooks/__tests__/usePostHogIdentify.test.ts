@@ -19,6 +19,7 @@ const mockState = vi.hoisted(() => ({
   convexAuth: {
     isAuthenticated: false,
   },
+  convexUser: null as { occupation?: string } | null,
   detectPlatform: vi.fn(() => "mac"),
 }));
 
@@ -32,6 +33,7 @@ vi.mock("@workos-inc/authkit-react", () => ({
 
 vi.mock("convex/react", () => ({
   useConvexAuth: () => mockState.convexAuth,
+  useQuery: () => mockState.convexUser,
 }));
 
 vi.mock("@/lib/PosthogUtils", () => ({
@@ -44,6 +46,7 @@ describe("usePostHogIdentify", () => {
     vi.stubGlobal("__APP_VERSION__", "2.0.13-test");
     mockState.auth.user = null;
     mockState.convexAuth.isAuthenticated = false;
+    mockState.convexUser = null;
     mockState.detectPlatform.mockReturnValue("mac");
   });
 
@@ -113,5 +116,26 @@ describe("usePostHogIdentify", () => {
       version: "2.0.13-test",
     });
     expect(mockState.posthog.identify).not.toHaveBeenCalled();
+  });
+
+  it("adds occupation when the Convex user has one", () => {
+    mockState.auth.user = {
+      id: "user_123",
+      email: "user@example.com",
+      firstName: "Taylor",
+      lastName: "Smith",
+    };
+    mockState.convexAuth.isAuthenticated = true;
+    mockState.convexUser = { occupation: "Platform Engineer" };
+
+    renderHook(() => usePostHogIdentify());
+
+    expect(mockState.posthog.identify).toHaveBeenCalledWith("user_123", {
+      email: "user@example.com",
+      name: "Taylor Smith",
+      first_name: "Taylor",
+      last_name: "Smith",
+      occupation: "Platform Engineer",
+    });
   });
 });

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useConvexAuth } from "convex/react";
 import { useAuth } from "@workos-inc/authkit-react";
 import * as Sentry from "@sentry/react";
@@ -13,25 +13,35 @@ export function useEnsureDbUser() {
   const { isAuthenticated, isLoading } = useConvexAuth();
   const ensureUser = useMutation("users:ensureUser" as any);
   const lastEnsuredUserIdRef = useRef<string | null>(null);
+  const [isEnsuringUser, setIsEnsuringUser] = useState(false);
 
   // Reset cache on logout so we re-run for the next login in the same session
   useEffect(() => {
     if (!isAuthenticated) {
       lastEnsuredUserIdRef.current = null;
+      setIsEnsuringUser(false);
       Sentry.setUser(null); // Clear Sentry user on logout
     }
   }, [isAuthenticated]);
 
   useEffect(() => {
-    if (isLoading) return;
+    if (isLoading) {
+      return;
+    }
     // WorkOS user hydration can briefly lead Convex auth. This is expected
     // during callback completion; wait for isAuthenticated instead of throwing.
-    if (!isAuthenticated) return;
-    if (!user) return;
+    if (!isAuthenticated || !user) {
+      setIsEnsuringUser(false);
+      return;
+    }
 
     // Only (re)ensure when the authenticated WorkOS user changes.
-    if (lastEnsuredUserIdRef.current === user.id) return;
+    if (lastEnsuredUserIdRef.current === user.id) {
+      setIsEnsuringUser(false);
+      return;
+    }
 
+    setIsEnsuringUser(true);
     ensureUser()
       .then((id: string | null) => {
         // eslint-disable-next-line no-console
@@ -44,6 +54,11 @@ export function useEnsureDbUser() {
         console.error("[auth] ensureUser failed", err);
         // allow retry next effect pass
         lastEnsuredUserIdRef.current = null;
+      })
+      .finally(() => {
+        setIsEnsuringUser(false);
       });
   }, [isAuthenticated, isLoading, user, ensureUser]);
+
+  return { isEnsuringUser };
 }

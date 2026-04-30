@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { usePostHog } from "posthog-js/react";
 import { useAuth } from "@workos-inc/authkit-react";
-import { useConvexAuth } from "convex/react";
+import { useConvexAuth, useQuery } from "convex/react";
 import { detectPlatform } from "@/lib/PosthogUtils";
 
 /**
@@ -12,14 +12,17 @@ export function usePostHogIdentify() {
   const posthog = usePostHog();
   const { user } = useAuth();
   const { isAuthenticated } = useConvexAuth();
+  const convexUser = useQuery(
+    "users:getCurrentUser" as any,
+    isAuthenticated ? ({} as any) : "skip"
+  );
 
   useEffect(() => {
     if (!posthog) return;
 
     // User is authenticated - identify them
     if (isAuthenticated && user) {
-      // Identify the user with their WorkOS ID
-      posthog.identify(user.id, {
+      const personProperties: Record<string, string | null | undefined> = {
         email: user.email,
         name:
           user.firstName && user.lastName
@@ -27,8 +30,14 @@ export function usePostHogIdentify() {
             : user.email,
         first_name: user.firstName,
         last_name: user.lastName,
-        // Add any other user properties you want to track
-      });
+      };
+
+      if (convexUser?.occupation) {
+        personProperties.occupation = convexUser.occupation;
+      }
+
+      // Identify the user with their WorkOS ID
+      posthog.identify(user.id, personProperties);
 
       posthog.register({
         user_id: user.id,
@@ -43,5 +52,5 @@ export function usePostHogIdentify() {
         version: __APP_VERSION__,
       });
     }
-  }, [posthog, isAuthenticated, user]);
+  }, [posthog, isAuthenticated, user, convexUser]);
 }

@@ -1,4 +1,4 @@
-import { useConvexAuth } from "convex/react";
+import { useConvexAuth, useQuery } from "convex/react";
 import {
   useCallback,
   useEffect,
@@ -81,6 +81,7 @@ import {
 } from "./lib/theme-utils";
 import CompletingSignInLoading from "./components/CompletingSignInLoading";
 import LoadingScreen from "./components/LoadingScreen";
+import { OccupationGate } from "./components/signup/OccupationGate";
 import { Header } from "./components/Header";
 import { ThemePreset } from "./types/preferences/theme";
 import type {
@@ -344,6 +345,10 @@ export default function App() {
     isLoading: isWorkOsLoading,
   } = useAuth();
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
+  const currentUser = useQuery(
+    "users:getCurrentUser" as any,
+    isAuthenticated ? ({} as any) : "skip",
+  );
   const [hostedOAuthHandling, setHostedOAuthHandling] = useState(() => {
     if (!HOSTED_MODE) {
       return false;
@@ -596,7 +601,7 @@ export default function App() {
   // Set up Electron OAuth callback handling
   useElectronOAuth();
   // Ensure a `users` row exists after Convex auth
-  useEnsureDbUser();
+  const { isEnsuringUser } = useEnsureDbUser();
 
   const isDebugCallback = window.location.pathname.startsWith(
     "/oauth/callback/debug",
@@ -1790,6 +1795,28 @@ export default function App() {
 
   if (shouldHoldHostedDefaultRouteForAuth) {
     return <LoadingScreen />;
+  }
+
+  if (
+    !isHostedChatRoute &&
+    isAuthenticated &&
+    (currentUser === undefined || currentUser === null || isEnsuringUser)
+  ) {
+    return <LoadingScreen />;
+  }
+
+  if (
+    !isHostedChatRoute &&
+    isAuthenticated &&
+    currentUser?.occupationRequired === true &&
+    !currentUser?.occupation?.trim()
+  ) {
+    return (
+      <OccupationGate
+        userId={workOsUser?.id ?? null}
+        email={workOsUser?.email}
+      />
+    );
   }
 
   const shouldShowActiveServerSelector =
