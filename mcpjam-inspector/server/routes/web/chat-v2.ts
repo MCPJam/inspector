@@ -6,6 +6,7 @@ import { isMCPAuthError, MCPClientManager } from "@mcpjam/sdk";
 import type { HttpServerConfig } from "@mcpjam/sdk";
 import { handleMCPJamFreeChatModel } from "../../utils/mcpjam-stream-handler.js";
 import { handleHostedOrgChatModel } from "../../utils/org-model-stream-handler.js";
+import { deriveOrgProviderKey as deriveOrgProviderKeyResult } from "../../utils/org-model-config.js";
 import {
   isMCPJamGuestAllowedModel,
   isMCPJamProvidedModel,
@@ -36,24 +37,12 @@ import {
 } from "./hosted-rpc-logs.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "../../utils/mcp-retry-policy.js";
 
-/**
- * Map a ModelDefinition to the providerKey used by the org-managed model
- * provider config (matches convex/organizationModelProviders.ts). Custom
- * providers prefix with "custom:<displayName>" because that's how the
- * inspector's org admin UI registers them.
- */
 function deriveOrgProviderKey(modelDefinition: ModelDefinition): string {
-  if (modelDefinition.provider === "custom") {
-    if (!modelDefinition.customProviderName) {
-      throw new WebRouteError(
-        400,
-        ErrorCode.VALIDATION_ERROR,
-        "Custom model is missing customProviderName",
-      );
-    }
-    return `custom:${modelDefinition.customProviderName}`;
+  const result = deriveOrgProviderKeyResult(modelDefinition);
+  if (!result.ok) {
+    throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, result.error);
   }
-  return modelDefinition.provider;
+  return result.key;
 }
 
 const chatV2 = new Hono();

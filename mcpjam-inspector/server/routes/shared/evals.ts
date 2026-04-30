@@ -535,17 +535,43 @@ export async function runEvalsWithManager(
     }
   }
 
-  // Resolve model API keys: prefer client-sent keys, fall back to org config
-  let resolvedModelApiKeys = modelApiKeys;
-  if (!resolvedModelApiKeys && workspaceId) {
-    try {
-      const orgConfig = await resolveOrgModelConfig({ workspaceId });
-      resolvedModelApiKeys = buildModelApiKeysFromOrgConfig(orgConfig);
-    } catch (error) {
-      logger.warn("[evals] Failed to resolve org model config", {
-        workspaceId,
-        error: error instanceof Error ? error.message : String(error),
-      });
+  // Resolve model API keys: prefer client-sent keys, fall back to org config.
+  // Treat an empty client-provided map as "no keys" so org fallback still runs.
+  // For reruns, workspaceId may not be in the request — derive it from the
+  // suite record so org BYOK keeps working.
+  const hasClientKeys =
+    !!modelApiKeys && Object.keys(modelApiKeys).length > 0;
+  let resolvedModelApiKeys = hasClientKeys ? modelApiKeys : undefined;
+  if (!resolvedModelApiKeys) {
+    let workspaceIdForOrgConfig: string | undefined = workspaceId;
+    if (!workspaceIdForOrgConfig && resolvedSuiteId) {
+      try {
+        const suite = await convexClient.query(
+          "testSuites:getTestSuite" as any,
+          { suiteId: resolvedSuiteId },
+        );
+        if (suite?.workspaceId) {
+          workspaceIdForOrgConfig = String(suite.workspaceId);
+        }
+      } catch (error) {
+        logger.warn("[evals] Failed to load suite for workspaceId fallback", {
+          suiteId: resolvedSuiteId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+    if (workspaceIdForOrgConfig) {
+      try {
+        const orgConfig = await resolveOrgModelConfig({
+          workspaceId: workspaceIdForOrgConfig,
+        });
+        resolvedModelApiKeys = buildModelApiKeysFromOrgConfig(orgConfig);
+      } catch (error) {
+        logger.warn("[evals] Failed to resolve org model config", {
+          workspaceId: workspaceIdForOrgConfig,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
     }
   }
 
@@ -622,8 +648,11 @@ export async function runEvalTestCaseWithManager(
     testCaseId: testCase._id,
   };
 
-  // Resolve model API keys: prefer client-sent keys, fall back to org config
-  let resolvedModelApiKeys = modelApiKeys;
+  // Resolve model API keys: prefer client-sent keys, fall back to org config.
+  // Treat an empty client-provided map as "no keys".
+  const hasClientKeysForCase =
+    !!modelApiKeys && Object.keys(modelApiKeys).length > 0;
+  let resolvedModelApiKeys = hasClientKeysForCase ? modelApiKeys : undefined;
   if (!resolvedModelApiKeys && testCase.workspaceId) {
     try {
       const orgConfig = await resolveOrgModelConfig({
@@ -827,8 +856,13 @@ export async function streamEvalTestCaseWithManager(
     testCaseId: testCase._id,
   };
 
-  // Resolve model API keys: prefer client-sent keys, fall back to org config
-  let resolvedStreamModelApiKeys = modelApiKeys;
+  // Resolve model API keys: prefer client-sent keys, fall back to org config.
+  // Treat an empty client-provided map as "no keys".
+  const hasClientStreamKeys =
+    !!modelApiKeys && Object.keys(modelApiKeys).length > 0;
+  let resolvedStreamModelApiKeys = hasClientStreamKeys
+    ? modelApiKeys
+    : undefined;
   if (!resolvedStreamModelApiKeys && testCase.workspaceId) {
     try {
       const orgConfig = await resolveOrgModelConfig({

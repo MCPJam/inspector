@@ -1,6 +1,4 @@
 import type { ModelDefinition } from "@/shared/types";
-import type { BaseUrls, CustomProviderConfig } from "./chat-helpers";
-import { logger } from "./logger";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -79,55 +77,30 @@ export async function resolveOrgModelConfig(
 }
 
 // ---------------------------------------------------------------------------
-// Convert resolved config to what createLlmModel() expects
+// Map a ModelDefinition to the providerKey used by the org-managed
+// model provider config. Custom providers prefix with "custom:<name>"
+// to match convex/organizationModelProviders.ts's isCustomProviderKey.
+// Returns a discriminated result so callers can wrap the error type they
+// need (e.g. WebRouteError vs plain Error) without duplicating the logic.
 // ---------------------------------------------------------------------------
 
-export function resolveProviderForModel(
-  config: ResolvedOrgModelConfig,
+export type DeriveOrgProviderKeyResult =
+  | { ok: true; key: string }
+  | { ok: false; error: string };
+
+export function deriveOrgProviderKey(
   modelDefinition: ModelDefinition,
-): { apiKey: string; baseUrls: BaseUrls; customProviders: CustomProviderConfig[] } {
-  const { provider, customProviderName } = modelDefinition;
-
-  // Build custom providers list from org config
-  const customProviders: CustomProviderConfig[] = config.providers
-    .filter((p) => p.providerKey.startsWith("custom:"))
-    .map((p) => ({
-      name: p.displayName ?? p.providerKey.replace(/^custom:/, ""),
-      protocol: p.protocol ?? "openai-compatible",
-      baseUrl: p.baseUrl ?? "",
-      modelIds: p.modelIds ?? [],
-      apiKey: p.apiKey,
-    }));
-
-  // For custom providers, the apiKey comes from the custom provider config itself
-  if (provider === "custom" && customProviderName) {
-    const cp = customProviders.find((p) => p.name === customProviderName);
-    return {
-      apiKey: cp?.apiKey ?? "",
-      baseUrls: buildBaseUrls(config),
-      customProviders,
-    };
+): DeriveOrgProviderKeyResult {
+  if (modelDefinition.provider === "custom") {
+    if (!modelDefinition.customProviderName) {
+      return {
+        ok: false,
+        error: "Custom model is missing customProviderName",
+      };
+    }
+    return { ok: true, key: `custom:${modelDefinition.customProviderName}` };
   }
-
-  // For built-in providers, find the matching provider config
-  const providerConfig = config.providers.find(
-    (p) => p.providerKey === provider,
-  );
-
-  return {
-    apiKey: providerConfig?.apiKey ?? "",
-    baseUrls: buildBaseUrls(config),
-    customProviders,
-  };
-}
-
-function buildBaseUrls(config: ResolvedOrgModelConfig): BaseUrls {
-  const ollama = config.providers.find((p) => p.providerKey === "ollama");
-  const azure = config.providers.find((p) => p.providerKey === "azure");
-  return {
-    ollama: ollama?.baseUrl,
-    azure: azure?.baseUrl,
-  };
+  return { ok: true, key: modelDefinition.provider };
 }
 
 // ---------------------------------------------------------------------------
@@ -139,14 +112,13 @@ export function buildModelApiKeysFromOrgConfig(
 ): Record<string, string> {
   const keys: Record<string, string> = {};
   for (const p of config.providers) {
-    if (p.apiKey) {
-      // Strip "custom:" prefix for custom providers — the eval runner
-      // looks up by provider name (e.g. "anthropic", "openai")
-      const key = p.providerKey.startsWith("custom:")
-        ? p.providerKey
-        : p.providerKey;
-      keys[key] = p.apiKey;
-    }
+    if (!p.apiKey) continue;
+    // The eval runner looks up keys by built-in provider name
+    // (e.g. "openai", "anthropic"). Custom providers' API keys are
+    // resolved separately through resolveProviderForModel's
+    // customProviders array, so skip them here.
+    if (p.providerKey.startsWith("custom:")) continue;
+    keys[p.providerKey] = p.apiKey;
   }
   return keys;
 }

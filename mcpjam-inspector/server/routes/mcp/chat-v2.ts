@@ -18,6 +18,8 @@ import { getProductionGuestAuthHeader } from "../../utils/guest-auth.js";
 import { logger } from "../../utils/logger";
 import { handleMCPJamFreeChatModel } from "../../utils/mcpjam-stream-handler";
 import { handleHostedOrgChatModel } from "../../utils/org-model-stream-handler.js";
+import { deriveOrgProviderKey as deriveOrgProviderKeyResult } from "../../utils/org-model-config.js";
+import { HOSTED_MODE } from "../../config";
 import type { ModelDefinition } from "@/shared/types";
 import {
   persistChatSessionToConvex,
@@ -443,20 +445,10 @@ function streamDirectChatWithLiveTrace(options: {
   return createUIMessageStreamResponse({ stream });
 }
 
-/**
- * Map a ModelDefinition to the providerKey used by the org-managed model
- * provider config (matches convex/organizationModelProviders.ts). Custom
- * providers prefix with "custom:<displayName>" because that's how the
- * inspector's org admin UI registers them.
- */
 function deriveOrgProviderKey(modelDefinition: ModelDefinition): string {
-  if (modelDefinition.provider === "custom") {
-    if (!modelDefinition.customProviderName) {
-      throw new Error("Custom model is missing customProviderName");
-    }
-    return `custom:${modelDefinition.customProviderName}`;
-  }
-  return modelDefinition.provider;
+  const result = deriveOrgProviderKeyResult(modelDefinition);
+  if (!result.ok) throw new Error(result.error);
+  return result.key;
 }
 
 const chatV2 = new Hono();
@@ -603,12 +595,13 @@ chatV2.post("/", async (c) => {
       });
     }
 
-    // Hosted org BYOK: when CONVEX_HTTP_URL is set and the request carries
-    // a workspaceId, we route the LLM call through Convex (/stream/org) so
-    // the org's vault-resolved provider keys never leave Convex. Falling
-    // through to local createLlmModel + streamText below covers local-mode
-    // BYOK (CLI / no Convex).
+    // Hosted org BYOK: only in hosted mode, and only when Convex is reachable
+    // and the request carries a workspaceId. We route the LLM call through
+    // Convex (/stream/org) so the org's vault-resolved provider keys never
+    // leave Convex. Local-mode BYOK (CLI / no Convex) falls through to
+    // createLlmModel + streamText below.
     if (
+      HOSTED_MODE &&
       process.env.CONVEX_HTTP_URL &&
       typeof body.workspaceId === "string" &&
       body.workspaceId

@@ -507,7 +507,7 @@ function KnownProviderConfigDialog({
       case "api-key-only":
         return !!secret.trim() || existing?.hasSecret;
       case "azure":
-        return !!baseUrl.trim();
+        return (!!secret.trim() || existing?.hasSecret) && !!baseUrl.trim();
       case "ollama":
         return !!baseUrl.trim();
       case "openrouter":
@@ -703,10 +703,11 @@ function OrgCustomProviderDialog({
       return;
     }
 
-    // Use lowercase name as providerKey for new providers, keep existing key for edits
+    // Use lowercase name as providerKey for new providers, keep existing key for edits.
+    // The backend's isCustomProviderKey requires the "custom:" prefix.
     const providerKey = editProvider
       ? editProvider.providerKey
-      : `custom-${trimmedName.toLowerCase().replace(/\s+/g, "-")}`;
+      : `custom:${trimmedName.toLowerCase().replace(/\s+/g, "-")}`;
 
     const args: Parameters<typeof onSave>[0] = {
       providerKey,
