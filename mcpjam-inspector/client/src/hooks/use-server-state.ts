@@ -362,6 +362,8 @@ interface UseServerStateParams {
   dispatch: Dispatch<AppAction>;
   isLoading: boolean;
   isAuthenticated: boolean;
+  /** True when a signed-in WorkOS user is present (not guest Convex-only auth). */
+  hasSignedInUser: boolean;
   isAuthLoading: boolean;
   isLoadingWorkspaces: boolean;
   useLocalFallback: boolean;
@@ -370,6 +372,19 @@ interface UseServerStateParams {
   activeWorkspaceServersFlat: RemoteServer[] | undefined;
   logger: LoggerLike;
 }
+
+export type PersistRuntimeServerResult =
+  | "noop"
+  | "pending"
+  | "persisted"
+  | "skipped_existing_name"
+  | "skipped_workspace_servers_unresolved"
+  | "failed";
+
+const WORKSPACE_SERVERS_SNAPSHOT_WAIT_MS = 10_000;
+/** Must stay below Vitest's default 30s test timeout so callers can finish after a full wait + margin. */
+const WORKSPACE_SERVER_ECHO_WAIT_MS = 25_000;
+const WORKSPACE_SERVERS_POLL_MS = 100;
 
 export interface ServerUpdateResult {
   ok: boolean;
@@ -406,6 +421,7 @@ export function useServerState({
   dispatch,
   isLoading,
   isAuthenticated,
+  hasSignedInUser,
   isAuthLoading,
   isLoadingWorkspaces,
   useLocalFallback,
@@ -420,6 +436,28 @@ export function useServerState({
     updateServer: convexUpdateServer,
     deleteServer: convexDeleteServer,
   } = useServerMutations();
+
+  const hasSignedInUserRef = useRef(hasSignedInUser);
+  hasSignedInUserRef.current = hasSignedInUser;
+  const isAuthenticatedRef = useRef(isAuthenticated);
+  isAuthenticatedRef.current = isAuthenticated;
+  const isAuthLoadingRef = useRef(isAuthLoading);
+  isAuthLoadingRef.current = isAuthLoading;
+  const isLoadingWorkspacesRef = useRef(isLoadingWorkspaces);
+  isLoadingWorkspacesRef.current = isLoadingWorkspaces;
+  const useLocalFallbackRef = useRef(useLocalFallback);
+  useLocalFallbackRef.current = useLocalFallback;
+  const effectiveActiveWorkspaceIdRef = useRef(effectiveActiveWorkspaceId);
+  effectiveActiveWorkspaceIdRef.current = effectiveActiveWorkspaceId;
+  const appStateServersRef = useRef(appState.servers);
+  appStateServersRef.current = appState.servers;
+  const activeWorkspaceServersFlatRef = useRef(activeWorkspaceServersFlat);
+  activeWorkspaceServersFlatRef.current = activeWorkspaceServersFlat;
+  const persistRuntimeDedupeKeysRef = useRef<Set<string>>(new Set());
+
+  async function sleep(ms: number): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, ms));
+  }
 
   const oauthCallbackHandledRef = useRef(false);
   const opTokenRef = useRef<Map<string, number>>(new Map());
@@ -678,11 +716,22 @@ export function useServerState({
       serverName: string,
       serverEntry: ServerWithName,
     ): Promise<string | undefined> => {
-      if (useLocalFallback || !isAuthenticated || !effectiveActiveWorkspaceId) {
+      const latestUseLocalFallback = useLocalFallbackRef.current;
+      const latestIsAuthenticated = isAuthenticatedRef.current;
+      const latestWorkspaceId = effectiveActiveWorkspaceIdRef.current;
+      if (
+        latestUseLocalFallback ||
+        !latestIsAuthenticated ||
+        !latestWorkspaceId ||
+        latestWorkspaceId === "none"
+      ) {
         return undefined;
       }
 
-      const existingServer = activeWorkspaceServersFlat?.find(
+      const flatSnapshot =
+        activeWorkspaceServersFlatRef.current ?? activeWorkspaceServersFlat;
+
+      const existingServer = flatSnapshot?.find(
         (s) => s.name === serverName,
       );
 
@@ -710,7 +759,7 @@ export function useServerState({
         clientId: serverEntry.oauthFlowProfile?.clientId,
         oauthResourceUrl:
           serverEntry.oauthFlowProfile?.resourceUrl ||
-          storedOAuthConfig.resourceUrl,
+          storedOAuthConfig?.resourceUrl,
       } as const;
 
       try {
@@ -723,7 +772,7 @@ export function useServerState({
         }
 
         const newId = await convexCreateServer({
-          workspaceId: effectiveActiveWorkspaceId,
+          workspaceId: latestWorkspaceId,
           ...payload,
         });
         return newId as string | undefined;
@@ -733,12 +782,14 @@ export function useServerState({
         try {
           if (existingServer) {
             const newId = await convexCreateServer({
-              workspaceId: effectiveActiveWorkspaceId,
+              workspaceId: latestWorkspaceId,
               ...payload,
             });
             return newId as string | undefined;
           }
-          const retryExisting = activeWorkspaceServersFlat?.find(
+          const flatRetry =
+            activeWorkspaceServersFlatRef.current ?? activeWorkspaceServersFlat;
+          const retryExisting = flatRetry?.find(
             (s) => s.name === serverName,
           );
           if (retryExisting) {
@@ -774,12 +825,196 @@ export function useServerState({
       }
     },
     [
-      useLocalFallback,
-      isAuthenticated,
-      effectiveActiveWorkspaceId,
       activeWorkspaceServersFlat,
       convexUpdateServer,
       convexCreateServer,
+      logger,
+    ],
+  );
+
+  const persistRuntimeServerToWorkspaceIfNeeded = useCallback(
+    async (
+      serverName: string,
+      runtimeServerOverride?: ServerWithName,
+    ): Promise<PersistRuntimeServerResult> => {
+      if (HOSTED_MODE) {
+        return "noop";
+      }
+      const resolveRuntime = (): ServerWithName | undefined =>
+        runtimeServerOverride ?? appStateServersRef.current[serverName];
+
+      let runtime = resolveRuntime();
+      if (!runtime) {
+        return "noop";
+      }
+      if (runtime.connectionStatus !== "connected") {
+        return "noop";
+      }
+
+      const initialWorkspaceKey =
+        effectiveActiveWorkspaceIdRef.current ?? effectiveActiveWorkspaceId;
+      const dedupeKey = `${initialWorkspaceKey ?? "pending"}:${serverName}`;
+
+      if (persistRuntimeDedupeKeysRef.current.has(dedupeKey)) {
+        return "pending";
+      }
+
+      persistRuntimeDedupeKeysRef.current.add(dedupeKey);
+
+      const clearDedupeKey = () => {
+        persistRuntimeDedupeKeysRef.current.delete(dedupeKey);
+      };
+
+      try {
+        let workspaceId: string | null = null;
+        const readyStarted = Date.now();
+        while (Date.now() - readyStarted < WORKSPACE_SERVERS_SNAPSHOT_WAIT_MS) {
+          if (isAuthLoadingRef.current || isLoadingWorkspacesRef.current) {
+            await sleep(WORKSPACE_SERVERS_POLL_MS);
+            continue;
+          }
+
+          if (
+            !hasSignedInUserRef.current ||
+            !isAuthenticatedRef.current ||
+            useLocalFallbackRef.current
+          ) {
+            clearDedupeKey();
+            return "noop";
+          }
+
+          const latestWorkspaceId = effectiveActiveWorkspaceIdRef.current;
+          if (latestWorkspaceId && latestWorkspaceId !== "none") {
+            workspaceId = latestWorkspaceId;
+            break;
+          }
+
+          await sleep(WORKSPACE_SERVERS_POLL_MS);
+        }
+
+        if (!workspaceId) {
+          if (
+            !hasSignedInUserRef.current ||
+            !isAuthenticatedRef.current ||
+            useLocalFallbackRef.current
+          ) {
+            clearDedupeKey();
+            return "noop";
+          }
+          logger.warn(
+            "persistRuntimeServerToWorkspaceIfNeeded: auth/workspace state did not become ready in time; skipping Convex write",
+            { serverName },
+          );
+          clearDedupeKey();
+          return "skipped_workspace_servers_unresolved";
+        }
+
+        const startedWait = Date.now();
+        while (Date.now() - startedWait < WORKSPACE_SERVERS_SNAPSHOT_WAIT_MS) {
+          const flat = activeWorkspaceServersFlatRef.current;
+          if (flat !== undefined) {
+            break;
+          }
+          await sleep(WORKSPACE_SERVERS_POLL_MS);
+        }
+
+        const flatAfterWait = activeWorkspaceServersFlatRef.current;
+        if (flatAfterWait === undefined) {
+          logger.warn(
+            "persistRuntimeServerToWorkspaceIfNeeded: workspace server snapshot still unresolved; skipping Convex write",
+            { serverName, workspaceId },
+          );
+          clearDedupeKey();
+          return "skipped_workspace_servers_unresolved";
+        }
+
+        runtime = resolveRuntime();
+        if (!runtime || runtime.connectionStatus !== "connected") {
+          clearDedupeKey();
+          return "noop";
+        }
+
+        if (flatAfterWait.some((s) => s.name === serverName)) {
+          logger.warn(
+            "persistRuntimeServerToWorkspaceIfNeeded: runtime server not persisted because a saved server with the same name already exists",
+            { serverName, workspaceId },
+          );
+          clearDedupeKey();
+          return "skipped_existing_name";
+        }
+
+        let convexResult: string | undefined;
+        try {
+          convexResult = await syncServerToConvex(serverName, runtime);
+        } catch (syncError) {
+          logger.error(
+            "persistRuntimeServerToWorkspaceIfNeeded: syncServerToConvex threw",
+            {
+              serverName,
+              workspaceId,
+              phase: "syncServerToConvex",
+              error:
+                syncError instanceof Error
+                  ? syncError.message
+                  : "Unknown error",
+            },
+          );
+          clearDedupeKey();
+          return "failed";
+        }
+
+        if (convexResult === undefined) {
+          logger.error(
+            "persistRuntimeServerToWorkspaceIfNeeded: syncServerToConvex returned no server id",
+            {
+              serverName,
+              workspaceId,
+              phase: "after_syncServerToConvex",
+            },
+          );
+          clearDedupeKey();
+          return "failed";
+        }
+
+        const echoStarted = Date.now();
+        let echoed = false;
+        while (Date.now() - echoStarted < WORKSPACE_SERVER_ECHO_WAIT_MS) {
+          const flatEcho = activeWorkspaceServersFlatRef.current;
+          if (flatEcho?.some((s) => s.name === serverName)) {
+            echoed = true;
+            break;
+          }
+          await sleep(WORKSPACE_SERVERS_POLL_MS);
+        }
+
+        if (!echoed) {
+          logger.warn(
+            "persistRuntimeServerToWorkspaceIfNeeded: timed out waiting for workspace server echo after persist",
+            { serverName, workspaceId },
+          );
+        }
+
+        clearDedupeKey();
+        return "persisted";
+      } catch (unexpected) {
+        logger.error(
+          "persistRuntimeServerToWorkspaceIfNeeded: unexpected error",
+          {
+            serverName,
+            workspaceId,
+            error:
+              unexpected instanceof Error
+                ? unexpected.message
+                : "Unknown error",
+          },
+        );
+        clearDedupeKey();
+        return "failed";
+      }
+    },
+    [
+      effectiveActiveWorkspaceId,
+      syncServerToConvex,
       logger,
     ],
   );
@@ -1209,7 +1444,9 @@ export function useServerState({
         hostedOAuthCallbackContext?.serverName ??
         localStorage.getItem("mcp-oauth-pending");
       if (earlyPendingName) {
-        const earlyServer = effectiveServers[earlyPendingName];
+        const earlyServer =
+          latestEffectiveServersRef.current[earlyPendingName] ??
+          effectiveServers[earlyPendingName];
         if (earlyServer) {
           dispatch({
             type: "CONNECT_REQUEST",
@@ -2945,5 +3182,6 @@ export function useServerState({
     saveServerConfigWithoutConnecting,
     handleConnectWithTokensFromOAuthFlow,
     handleRefreshTokensFromOAuthFlow,
+    persistRuntimeServerToWorkspaceIfNeeded,
   };
 }

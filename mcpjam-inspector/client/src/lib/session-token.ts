@@ -102,10 +102,13 @@ function hasAuthorizationHeader(headers?: HeadersInit): boolean {
 }
 
 function buildAuthFetchInit(
+  input: RequestInfo | URL,
   init: RequestInit | undefined,
   hostedAuthorizationHeader: string | null
 ): RequestInit {
-  const sessionHeaders = getAuthHeaders();
+  const sessionHeaders = shouldAttachSessionHeaders(input)
+    ? getAuthHeaders()
+    : undefined;
   const hostedHeaders = hostedAuthorizationHeader
     ? ({ Authorization: hostedAuthorizationHeader } as HeadersInit)
     : undefined;
@@ -202,6 +205,37 @@ export function getAuthHeaders(): HeadersInit {
   return { "X-MCP-Session-Auth": `Bearer ${token}` };
 }
 
+function isLoopbackHostname(hostname: string): boolean {
+  return (
+    hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    hostname === "::1" ||
+    hostname === "[::1]"
+  );
+}
+
+function shouldAttachSessionHeaders(input: RequestInfo | URL): boolean {
+  if (HOSTED_MODE) {
+    return false;
+  }
+
+  const baseOrigin =
+    typeof window !== "undefined" ? window.location.origin : "http://localhost";
+
+  try {
+    const parsed =
+      input instanceof URL
+        ? input
+        : typeof Request !== "undefined" && input instanceof Request
+          ? new URL(input.url, baseOrigin)
+          : new URL(String(input), baseOrigin);
+
+    return isLoopbackHostname(parsed.hostname) && parsed.pathname.startsWith("/api/");
+  } catch {
+    return typeof input === "string" && input.startsWith("/api/");
+  }
+}
+
 /**
  * Add token to URL as query parameter.
  * Required for SSE/EventSource which doesn't support custom headers.
@@ -242,7 +276,8 @@ export function addTokenToUrl(url: string): string {
 
 /**
  * Authenticated fetch wrapper.
- * Automatically adds session auth headers to all requests.
+ * Adds local session auth only for loopback `/api/*` requests and hosted auth
+ * where applicable.
  * Use this instead of native fetch for API calls.
  *
  * @param input - URL or Request object
@@ -256,7 +291,7 @@ export async function authFetch(
   const surface = resolveAuthFetchSurface(input);
   const hostedAuthHeader = await getHostedAuthorizationHeader();
   const callerProvidedAuthorization = hasAuthorizationHeader(init?.headers);
-  const mergedInit = buildAuthFetchInit(init, hostedAuthHeader);
+  const mergedInit = buildAuthFetchInit(input, init, hostedAuthHeader);
   const response = await fetch(input, mergedInit);
 
   if (
@@ -292,6 +327,10 @@ export async function authFetch(
     });
   }
 
-  const retryInit = buildAuthFetchInit(init, `Bearer ${refreshedGuestToken}`);
+  const retryInit = buildAuthFetchInit(
+    input,
+    init,
+    `Bearer ${refreshedGuestToken}`,
+  );
   return fetch(input, retryInit);
 }

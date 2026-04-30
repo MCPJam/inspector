@@ -892,6 +892,23 @@ function areAuthHeadersEqual(
   return aKeys.every((key) => a[key] === b[key]);
 }
 
+type HostedSessionScope = {
+  workspaceId?: string;
+  shareToken?: string;
+  chatboxToken?: string;
+};
+
+function areHostedSessionScopesEqual(
+  a: HostedSessionScope,
+  b: HostedSessionScope
+): boolean {
+  return (
+    a.workspaceId === b.workspaceId &&
+    a.shareToken === b.shareToken &&
+    a.chatboxToken === b.chatboxToken
+  );
+}
+
 function isAuthDeniedError(error: unknown): boolean {
   if (!error || typeof error !== "object") return false;
   const withStatus = error as { status?: unknown; message?: unknown };
@@ -1000,6 +1017,11 @@ export function useChatSession({
   const lastResolvedAuthHeadersRef = useRef<
     Record<string, string> | undefined
   >(undefined);
+  const lastResolvedHostedScopeRef = useRef<HostedSessionScope>({
+    workspaceId: undefined,
+    shareToken: undefined,
+    chatboxToken: undefined,
+  });
   const pendingSessionHydrationRef = useRef<PendingSessionHydration | null>(
     null
   );
@@ -1784,12 +1806,21 @@ export function useChatSession({
       // wiped by setMessages([]).
       if (active) {
         const previousAuthHeaders = lastResolvedAuthHeadersRef.current;
+        const previousHostedScope = lastResolvedHostedScopeRef.current;
+        const currentHostedScope = {
+          workspaceId: hostedWorkspaceId,
+          shareToken: hostedShareToken,
+          chatboxToken: hostedChatboxToken,
+        };
         const hasResolvedBefore = hasResolvedAuthHeadersRef.current;
         const authHeadersChanged =
           hasResolvedBefore &&
           !areAuthHeadersEqual(previousAuthHeaders, resolvedAuthHeaders);
+        const hostedScopeChanged =
+          hasResolvedBefore &&
+          !areHostedSessionScopesEqual(previousHostedScope, currentHostedScope);
 
-        if (authHeadersChanged) {
+        if (authHeadersChanged || hostedScopeChanged) {
           skipNextForkDetectionRef.current = true;
           clearPendingSessionHydration();
           setChatSessionId(generateId());
@@ -1802,6 +1833,7 @@ export function useChatSession({
 
         hasResolvedAuthHeadersRef.current = true;
         lastResolvedAuthHeadersRef.current = resolvedAuthHeaders;
+        lastResolvedHostedScopeRef.current = currentHostedScope;
         setIsSessionBootstrapComplete(true);
       }
     })();
