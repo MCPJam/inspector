@@ -1799,6 +1799,10 @@ describe("persistRuntimeServerToWorkspaceIfNeeded", () => {
       }),
     );
 
+    flushSync(() => {
+      rerender();
+    });
+
     mockCreateServer.mockImplementation(async () => {
       flatRef.current = [{ _id: "late_srv", name: "rt-server" }];
       flushSync(() => {
