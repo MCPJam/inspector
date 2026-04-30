@@ -186,6 +186,8 @@ import type {
   SelectServerInspectorCommand,
 } from "@/shared/inspector-command.js";
 
+const OCCUPATION_GATE_ROLLOUT_MS = Date.parse("2026-04-29T00:00:00.000Z");
+
 function getHostedOAuthCallbackErrorMessage(): string {
   const params = new URLSearchParams(window.location.search);
   const error = params.get("error");
@@ -1835,7 +1837,8 @@ export default function App() {
   if (
     !isHostedChatRoute &&
     isAuthenticated &&
-    currentUser?.occupationRequired === true &&
+    typeof currentUser?.createdAt === "number" &&
+    currentUser.createdAt >= OCCUPATION_GATE_ROLLOUT_MS &&
     !currentUser?.occupation?.trim()
   ) {
     return (
