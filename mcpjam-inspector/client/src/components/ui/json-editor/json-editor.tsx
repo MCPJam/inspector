@@ -7,6 +7,7 @@ import { expandJsonStringsInValue, useJsonEditor } from "./use-json-editor";
 import { JsonEditorView } from "./json-editor-view";
 import { JsonEditorEdit } from "./json-editor-edit";
 import { JsonEditorToolbar } from "./json-editor-toolbar";
+import { JsonEditorStatusBar } from "./json-editor-status-bar";
 import type { JsonEditorProps, JsonEditorMode } from "./types";
 
 function stringifyValue(value: unknown): string {
@@ -58,6 +59,8 @@ export function JsonEditor({
   showLineNumbers = true,
   toolbarLeftContent,
   toolbarRightContent,
+  error,
+  showValidationErrorInStatusBar = true,
 }: JsonEditorProps) {
   // Determine if we're in raw mode (string content) vs parsed mode
   const isRawMode = rawContent !== undefined;
@@ -234,6 +237,7 @@ export function JsonEditor({
             isValid={editor.isValid}
             leftContent={toolbarLeftContent}
             rightContent={toolbarRightContent}
+            error={error}
           />
         )}
 
@@ -268,6 +272,17 @@ export function JsonEditor({
             />
           )}
         </div>
+
+        {/* Status bar (only in edit mode) */}
+        {mode === "edit" && (
+          <JsonEditorStatusBar
+            cursorPosition={editor.cursorPosition}
+            characterCount={editor.content.length}
+            validationError={
+              showValidationErrorInStatusBar ? editor.validationError : null
+            }
+          />
+        )}
       </div>
     </ErrorBoundary>
   );

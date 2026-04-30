@@ -218,12 +218,6 @@ export function ClientConfigTab({
                   Reset
                 </button>
               </div>
-              {section.error && (
-                <div className="mb-1.5 flex items-center gap-1.5 text-xs text-destructive">
-                  <AlertTriangle className="h-3 w-3 shrink-0" />
-                  {section.error}
-                </div>
-              )}
               <div className="min-w-0 overflow-hidden rounded-md border border-border/70 bg-background">
                 <JsonEditor
                   rawContent={section.text}
@@ -235,6 +229,8 @@ export function ClientConfigTab({
                   height={section.height}
                   wrapLongLinesInEdit={false}
                   showLineNumbers
+                  error={section.error}
+                  showValidationErrorInStatusBar={false}
                 />
               </div>
             </section>

@@ -3,6 +3,15 @@ import { describe, it, expect, vi } from "vitest";
 import { JsonEditor } from "../json-editor";
 import { buildLineLayouts } from "../json-editor-edit";
 
+function getParseErrorMessage(source: string): string {
+  try {
+    JSON.parse(source);
+    throw new Error("Expected invalid JSON for this test helper");
+  } catch (error) {
+    return error instanceof Error ? error.message : "Invalid JSON";
+  }
+}
+
 describe("JsonEditor", () => {
   describe("autoFormatOnEdit", () => {
     it("formats valid raw content when entering edit mode", async () => {
@@ -144,6 +153,52 @@ describe("JsonEditor", () => {
       const treeRoot = container.querySelector(".overflow-auto.pl-7");
       expect(treeRoot).toBeTruthy();
       expect((treeRoot as HTMLElement).style.height).toBe("100%");
+    });
+  });
+
+  describe("error prop", () => {
+    it("renders the error message inside the toolbar", () => {
+      render(
+        <JsonEditor
+          height="100%"
+          rawContent='{"a":1}'
+          mode="edit"
+          error="Unexpected token at line 3"
+        />,
+      );
+
+      expect(screen.getByText("Unexpected token at line 3")).toBeInTheDocument();
+    });
+
+    it("renders the built-in validation error in the status bar by default", () => {
+      const syntaxErrorMessage = getParseErrorMessage("{invalid");
+
+      render(
+        <JsonEditor
+          height="100%"
+          rawContent="{invalid"
+          mode="edit"
+        />,
+      );
+
+      expect(screen.getByText(syntaxErrorMessage)).toBeInTheDocument();
+    });
+
+    it("can suppress the bottom validation error when a parent renders one elsewhere", () => {
+      const syntaxErrorMessage = getParseErrorMessage("{invalid");
+
+      render(
+        <JsonEditor
+          height="100%"
+          rawContent="{invalid"
+          mode="edit"
+          error="Top-level validation error"
+          showValidationErrorInStatusBar={false}
+        />,
+      );
+
+      expect(screen.getByText("Top-level validation error")).toBeInTheDocument();
+      expect(screen.queryByText(syntaxErrorMessage)).not.toBeInTheDocument();
     });
   });
 

@@ -1,5 +1,5 @@
 import { toast } from "sonner";
-import { AlertTriangle, RotateCcw, Save } from "lucide-react";
+import { RotateCcw, Save } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import {
   Dialog,
@@ -76,13 +76,6 @@ export function HostContextDialog({
         </DialogHeader>
 
         <div className="flex min-h-0 flex-1 flex-col gap-3 px-5 py-4">
-          {hostContextError && (
-            <div className="flex items-center gap-1.5 text-xs text-destructive">
-              <AlertTriangle className="h-3 w-3 shrink-0" />
-              {hostContextError}
-            </div>
-          )}
-
           <div className="min-h-0 min-w-0 flex-1 overflow-hidden rounded-md border border-border/70 bg-background">
             <JsonEditor
               rawContent={hostContextText}
@@ -94,6 +87,8 @@ export function HostContextDialog({
               height="100%"
               wrapLongLinesInEdit={false}
               showLineNumbers
+              error={hostContextError}
+              showValidationErrorInStatusBar={false}
             />
           </div>
         </div>
