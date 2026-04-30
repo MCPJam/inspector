@@ -338,7 +338,12 @@ chatV2.post("/", async (c) => {
         throw error;
       }
 
-      const { allTools, enhancedSystemPrompt, resolvedTemperature } = prepared;
+      const {
+        allTools,
+        enhancedSystemPrompt,
+        resolvedTemperature,
+        scrubMessages,
+      } = prepared;
       const hostedChatSessionId = body.chatSessionId;
 
       if (!process.env.CONVEX_HTTP_URL) {
@@ -357,13 +362,14 @@ chatV2.post("/", async (c) => {
       if (!isMCPJam) {
         // Hosted org BYOK: vault-resolved provider keys live in Convex; the
         // inspector forwards messages and tool definitions to /stream/org and
-        // drives the agentic loop locally.
+        // drives the agentic loop locally. Scrub messages for parity with
+        // the direct BYOK path in mcp/chat-v2.ts.
         const providerKey = deriveOrgProviderKey(modelDefinition);
         return handleHostedOrgChatModel({
           workspaceId: hostedBody.workspaceId,
           providerKey,
           modelId: String(modelDefinition.id),
-          messages: modelMessages as ModelMessage[],
+          messages: scrubMessages(modelMessages as ModelMessage[]),
           systemPrompt: enhancedSystemPrompt,
           temperature: resolvedTemperature,
           tools: allTools as ToolSet,
