@@ -853,7 +853,11 @@ export function useServerState({
 
       const initialWorkspaceKey =
         effectiveActiveWorkspaceIdRef.current ?? effectiveActiveWorkspaceId;
-      const dedupeKey = `${initialWorkspaceKey ?? "pending"}:${serverName}`;
+      const frozenWorkspaceId =
+        initialWorkspaceKey && initialWorkspaceKey !== "none"
+          ? initialWorkspaceKey
+          : null;
+      const dedupeKey = `${frozenWorkspaceId ?? "pending"}:${serverName}`;
 
       if (persistRuntimeDedupeKeysRef.current.has(dedupeKey)) {
         return "pending";
@@ -885,6 +889,13 @@ export function useServerState({
 
           const latestWorkspaceId = effectiveActiveWorkspaceIdRef.current;
           if (latestWorkspaceId && latestWorkspaceId !== "none") {
+            if (
+              frozenWorkspaceId &&
+              latestWorkspaceId !== frozenWorkspaceId
+            ) {
+              clearDedupeKey();
+              return "noop";
+            }
             workspaceId = latestWorkspaceId;
             break;
           }
@@ -926,6 +937,14 @@ export function useServerState({
           );
           clearDedupeKey();
           return "skipped_workspace_servers_unresolved";
+        }
+
+        if (
+          effectiveActiveWorkspaceIdRef.current &&
+          effectiveActiveWorkspaceIdRef.current !== workspaceId
+        ) {
+          clearDedupeKey();
+          return "noop";
         }
 
         runtime = resolveRuntime();

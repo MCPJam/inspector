@@ -134,7 +134,7 @@ echo '{"query":"setup guide"}' | mcpjam tools call --url $URL --access-token $TO
   --tool-name search_docs --tool-args - --quiet --format json
 ```
 
-`--tool-args-stdin` is equivalent to `--tool-args -`:
+`--tool-args-stdin` is equivalent to `--tool-args -` and cannot be combined with `--tool-args` or `--params` in the same command:
 
 ```bash
 generate-params | mcpjam tools call --url $URL --access-token $TOKEN \

@@ -317,6 +317,7 @@ export function registerToolsCommands(program: Command): void {
       | undefined;
     let inspectorRenderSkipped = false;
     let inspectorRenderIssue: InspectorRenderIssue | undefined;
+    const requireRender = options.requireRender === true;
 
     if (options.ui) {
       const serverName =
@@ -380,7 +381,6 @@ export function registerToolsCommands(program: Command): void {
         remediation: inspectorRenderClassification.remediation,
         issue: inspectorRenderIssue,
       });
-      const requireRender = options.requireRender === true;
       const renderFailure =
         inspectorRenderError &&
         (!inspectorRenderSkipped || requireRender);
@@ -424,7 +424,23 @@ export function registerToolsCommands(program: Command): void {
       });
     }
 
-    const requireRender = options.requireRender === true;
+    const renderIsFailure = Boolean(
+      inspectorRenderError && (!inspectorRenderSkipped || requireRender),
+    );
+    const debugOutcomeError = renderIsFailure
+      ? (inspectorRenderIssue ?? inspectorRenderError)
+      : validationFailed
+        ? {
+            code: "validation_failed",
+            message: "Tool call validation failed.",
+            details: validationResult,
+          }
+        : toolResultError
+          ? {
+              code: "tool_result_error",
+              message: "Tool returned an error result.",
+            }
+          : undefined;
 
     await writeCommandDebugArtifact({
       outputPath: options.debugOut,
@@ -436,18 +452,16 @@ export function registerToolsCommands(program: Command): void {
         params,
       },
       target: targetSummary,
-      outcome:
-        inspectorRenderError &&
-        (!inspectorRenderSkipped || requireRender)
-          ? {
-              status: "error",
-              error: inspectorRenderIssue ?? inspectorRenderError,
-              result: debugOutputPayload,
-            }
-          : {
-              status: "success",
-              result: debugOutputPayload,
-            },
+      outcome: debugOutcomeError
+        ? {
+            status: "error",
+            error: debugOutcomeError,
+            result: debugOutputPayload,
+          }
+        : {
+            status: "success",
+            result: debugOutputPayload,
+          },
       snapshot: options.debugOut
         ? {
             input: {

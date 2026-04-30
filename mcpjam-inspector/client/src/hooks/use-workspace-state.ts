@@ -438,28 +438,36 @@ export function useWorkspaceState({
   }, [useLocalFallback, appState.workspaces, scopedLocalWorkspaces]);
 
   const authenticatedMergedWorkspaces = useMemo((): Record<string, Workspace> => {
+    const activeLocalProjection =
+      scopedLocalWorkspaces[appState.activeWorkspaceId];
+    const activeProjectionRemoteId =
+      activeLocalProjection?.sharedWorkspaceId ?? null;
+
     const mergedConvexWorkspaces = Object.fromEntries(
       Object.entries(convexWorkspaces).map(([workspaceId, workspace]) => {
-        const localProjection = Object.values(scopedLocalWorkspaces).find(
-          (candidate) => candidate.sharedWorkspaceId === workspaceId,
-        );
-        if (!localProjection) {
+        if (
+          !activeLocalProjection ||
+          activeProjectionRemoteId !== workspaceId
+        ) {
           return [workspaceId, workspace];
         }
 
         const projectedServers = Object.fromEntries(
-          Object.entries(localProjection.servers).filter(([serverName]) => {
-            if (workspace.servers[serverName]) {
-              return false;
-            }
+          Object.entries(activeLocalProjection.servers).filter(
+            ([serverName]) => {
+              if (workspace.servers[serverName]) {
+                return false;
+              }
 
-            const runtimeStatus = appState.servers[serverName]?.connectionStatus;
-            return (
-              runtimeStatus === "connected" ||
-              runtimeStatus === "connecting" ||
-              runtimeStatus === "oauth-flow"
-            );
-          }),
+              const runtimeStatus =
+                appState.servers[serverName]?.connectionStatus;
+              return (
+                runtimeStatus === "connected" ||
+                runtimeStatus === "connecting" ||
+                runtimeStatus === "oauth-flow"
+              );
+            },
+          ),
         );
 
         if (Object.keys(projectedServers).length === 0) {
@@ -500,7 +508,12 @@ export function useWorkspaceState({
       ...mergedConvexWorkspaces,
       ...workspacesWithoutRemoteMatch,
     };
-  }, [appState.servers, convexWorkspaces, scopedLocalWorkspaces]);
+  }, [
+    appState.activeWorkspaceId,
+    appState.servers,
+    convexWorkspaces,
+    scopedLocalWorkspaces,
+  ]);
 
   const activeScopedLocalWorkspace = useMemo(
     () => scopedLocalWorkspaces[appState.activeWorkspaceId],

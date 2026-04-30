@@ -220,7 +220,6 @@ async function executeInspectorCommandWithClient(
     const retryable =
       response.status === "error" &&
       (response.error.code === "no_active_client" ||
-        response.error.code === "unsupported_in_mode" ||
         response.error.code === "disconnected_server");
     if (!retryable) {
       return response;
