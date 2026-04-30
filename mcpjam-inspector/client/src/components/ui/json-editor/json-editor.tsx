@@ -59,6 +59,8 @@ export function JsonEditor({
   showLineNumbers = true,
   toolbarLeftContent,
   toolbarRightContent,
+  error,
+  showValidationErrorInStatusBar = true,
 }: JsonEditorProps) {
   // Determine if we're in raw mode (string content) vs parsed mode
   const isRawMode = rawContent !== undefined;
@@ -235,6 +237,7 @@ export function JsonEditor({
             isValid={editor.isValid}
             leftContent={toolbarLeftContent}
             rightContent={toolbarRightContent}
+            error={error}
           />
         )}
 
@@ -274,9 +277,10 @@ export function JsonEditor({
         {mode === "edit" && (
           <JsonEditorStatusBar
             cursorPosition={editor.cursorPosition}
-            isValid={editor.isValid}
-            validationError={editor.validationError}
             characterCount={editor.content.length}
+            validationError={
+              showValidationErrorInStatusBar ? editor.validationError : null
+            }
           />
         )}
       </div>

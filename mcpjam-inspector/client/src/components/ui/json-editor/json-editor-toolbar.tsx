@@ -3,6 +3,7 @@ import {
   Eye,
   Pencil,
   AlignLeft,
+  AlertTriangle,
   Copy,
   Undo2,
   Redo2,
@@ -40,6 +41,8 @@ interface JsonEditorToolbarProps {
   leftContent?: ReactNode;
   /** Custom content to render on the right side (after built-in actions) */
   rightContent?: ReactNode;
+  /** Inline error message rendered between left content and right actions */
+  error?: string | null;
 }
 
 const modeOptions = [
@@ -69,6 +72,7 @@ export function JsonEditorToolbar({
   className,
   leftContent,
   rightContent,
+  error,
 }: JsonEditorToolbarProps) {
   const [copied, setCopied] = useState(false);
   const copyResetTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
@@ -106,12 +110,12 @@ export function JsonEditorToolbar({
   return (
     <div
       className={cn(
-        "flex items-center justify-between px-3 py-1.5 bg-muted/30",
+        "flex items-center justify-between border-b border-border/50 px-3 py-1.5 bg-muted/50",
         className,
       )}
     >
       {/* Left side: custom content or mode toggle */}
-      <div className="flex items-center gap-2">
+      <div className="flex shrink-0 items-center gap-2">
         {leftContent}
         {showModeToggle && !readOnly && onModeChange && (
           <SegmentedControl
@@ -122,8 +126,26 @@ export function JsonEditorToolbar({
         )}
       </div>
 
+      {/* Inline error message (e.g. JSON parse error) */}
+      {error ? (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <div className="mx-3 flex min-w-0 flex-1 cursor-default items-center gap-1.5 text-xs text-destructive">
+              <AlertTriangle className="h-3 w-3 shrink-0" />
+              <span className="truncate">{error}</span>
+            </div>
+          </TooltipTrigger>
+          <TooltipContent
+            side="bottom"
+            className="max-w-[min(40rem,calc(100vw-2rem))] break-words"
+          >
+            <p>{error}</p>
+          </TooltipContent>
+        </Tooltip>
+      ) : null}
+
       {/* Right side: actions + custom content */}
-      <div className="flex items-center gap-1">
+      <div className="flex shrink-0 items-center gap-1">
         {mode === "edit" && (
           <>
             <Tooltip>

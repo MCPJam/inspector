@@ -13,6 +13,7 @@ import {
 import { writePendingQuickConnect } from "@/lib/quick-connect-pending";
 import type { EnrichedRegistryCatalogCard } from "@/hooks/useRegistryServers";
 import { getRegistryServerName } from "@/hooks/useRegistryServers";
+import { useClientConfigStore } from "@/stores/client-config-store";
 
 function createLinearCatalogCard(): EnrichedRegistryCatalogCard {
   const server = {
@@ -458,6 +459,10 @@ describe("ServersTab shared detail modal", () => {
     vi.clearAllMocks();
     localStorage.clear();
     sessionStorage.clear();
+    useClientConfigStore.setState(
+      useClientConfigStore.getInitialState(),
+      true,
+    );
     mockIsAuthenticated = false;
     mockCatalogCards = [];
     mockRegistryLoading = false;
@@ -1430,6 +1435,43 @@ describe("ServersTab shared detail modal", () => {
     expect(screen.getByTestId("client-config-tab-stub")).toHaveTextContent(
       "ClientConfigTab:workspace-1"
     );
+  });
+
+  it("discards unsaved connection settings when the dialog is closed", () => {
+    const defaultConfig = {
+      version: 1 as const,
+      connectionDefaults: {
+        headers: {},
+        requestTimeout: 10000,
+      },
+      clientCapabilities: getDefaultClientCapabilities() as Record<
+        string,
+        unknown
+      >,
+    };
+    useClientConfigStore.getState().loadWorkspaceConfig({
+      workspaceId: "workspace-1",
+      defaultConfig,
+      savedConfig: undefined,
+    });
+    useClientConfigStore.getState().setSectionText(
+      "connectionDefaults",
+      '{ "headers": { "x-test": "1" }, "requestTimeout": 1234 }',
+    );
+
+    expect(useClientConfigStore.getState().isDirty).toBe(true);
+
+    render(<ServersTab {...defaultProps} />);
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /connection settings/i }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /close/i }));
+
+    expect(useClientConfigStore.getState().isDirty).toBe(false);
+    expect(
+      useClientConfigStore.getState().draftConfig?.connectionDefaults,
+    ).toEqual(defaultConfig.connectionDefaults);
   });
 
   it("hides the Connection Settings button when no save handler is provided", () => {
