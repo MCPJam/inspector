@@ -869,8 +869,8 @@ export function useServerState({
         persistRuntimeDedupeKeysRef.current.delete(dedupeKey);
       };
 
+      let workspaceId: string | null = null;
       try {
-        let workspaceId: string | null = null;
         const readyStarted = Date.now();
         while (Date.now() - readyStarted < WORKSPACE_SERVERS_SNAPSHOT_WAIT_MS) {
           if (isAuthLoadingRef.current || isLoadingWorkspacesRef.current) {
