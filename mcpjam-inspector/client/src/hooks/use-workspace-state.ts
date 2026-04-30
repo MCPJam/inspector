@@ -438,15 +438,64 @@ export function useWorkspaceState({
   }, [useLocalFallback, appState.workspaces, scopedLocalWorkspaces]);
 
   const authenticatedMergedWorkspaces = useMemo((): Record<string, Workspace> => {
+    const activeLocalProjection =
+      scopedLocalWorkspaces[appState.activeWorkspaceId];
+    const activeProjectionRemoteId =
+      activeLocalProjection?.sharedWorkspaceId ?? null;
+
+    const mergedConvexWorkspaces = Object.fromEntries(
+      Object.entries(convexWorkspaces).map(([workspaceId, workspace]) => {
+        if (
+          !activeLocalProjection ||
+          activeProjectionRemoteId !== workspaceId
+        ) {
+          return [workspaceId, workspace];
+        }
+
+        const projectedServers = Object.fromEntries(
+          Object.entries(activeLocalProjection.servers).filter(
+            ([serverName]) => {
+              if (workspace.servers[serverName]) {
+                return false;
+              }
+
+              const runtimeStatus =
+                appState.servers[serverName]?.connectionStatus;
+              return (
+                runtimeStatus === "connected" ||
+                runtimeStatus === "connecting" ||
+                runtimeStatus === "oauth-flow"
+              );
+            },
+          ),
+        );
+
+        if (Object.keys(projectedServers).length === 0) {
+          return [workspaceId, workspace];
+        }
+
+        return [
+          workspaceId,
+          {
+            ...workspace,
+            servers: {
+              ...workspace.servers,
+              ...projectedServers,
+            },
+          },
+        ];
+      }),
+    );
+
     const workspacesWithoutRemoteMatch = Object.fromEntries(
       Object.entries(scopedLocalWorkspaces).filter(([localWorkspaceId, workspace]) => {
-        if (convexWorkspaces[localWorkspaceId]) {
+        if (mergedConvexWorkspaces[localWorkspaceId]) {
           return false;
         }
 
         if (
           workspace.sharedWorkspaceId &&
-          convexWorkspaces[workspace.sharedWorkspaceId]
+          mergedConvexWorkspaces[workspace.sharedWorkspaceId]
         ) {
           return false;
         }
@@ -456,10 +505,15 @@ export function useWorkspaceState({
     );
 
     return {
-      ...convexWorkspaces,
+      ...mergedConvexWorkspaces,
       ...workspacesWithoutRemoteMatch,
     };
-  }, [convexWorkspaces, scopedLocalWorkspaces]);
+  }, [
+    appState.activeWorkspaceId,
+    appState.servers,
+    convexWorkspaces,
+    scopedLocalWorkspaces,
+  ]);
 
   const activeScopedLocalWorkspace = useMemo(
     () => scopedLocalWorkspaces[appState.activeWorkspaceId],

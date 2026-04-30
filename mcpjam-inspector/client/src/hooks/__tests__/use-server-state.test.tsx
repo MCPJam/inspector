@@ -1,6 +1,7 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
+import { flushSync } from "react-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { AppState, AppAction } from "@/state/app-types";
+import type { AppState, AppAction, ServerWithName } from "@/state/app-types";
 import { CLIENT_CONFIG_SYNC_PENDING_ERROR_MESSAGE } from "@/lib/client-config";
 import type { WorkspaceClientConfig } from "@/lib/client-config";
 import { useClientConfigStore } from "@/stores/client-config-store";
@@ -18,6 +19,8 @@ const {
   readStoredOAuthConfigMock,
   testConnectionMock,
   mockConvexQuery,
+  mockCreateServer,
+  mockUpdateServer,
 } = vi.hoisted(() => ({
   toastError: vi.fn(),
   toastSuccess: vi.fn(),
@@ -29,6 +32,8 @@ const {
   readStoredOAuthConfigMock: vi.fn(),
   testConnectionMock: vi.fn(),
   mockConvexQuery: vi.fn(),
+  mockCreateServer: vi.fn(),
+  mockUpdateServer: vi.fn(),
 }));
 
 vi.mock("sonner", () => ({
@@ -85,8 +90,8 @@ vi.mock("@/stores/ui-playground-store", () => ({
 
 vi.mock("../useWorkspaces", () => ({
   useServerMutations: () => ({
-    createServer: vi.fn(),
-    updateServer: vi.fn(),
+    createServer: mockCreateServer,
+    updateServer: mockUpdateServer,
     deleteServer: vi.fn(),
   }),
 }));
@@ -147,6 +152,7 @@ function renderUseServerState(
   dispatch: (action: AppAction) => void,
   appState = createAppState(),
   options?: {
+    hasSignedInUser?: boolean;
     isAuthenticated?: boolean;
     useLocalFallback?: boolean;
     effectiveWorkspaces?: AppState["workspaces"];
@@ -160,6 +166,7 @@ function renderUseServerState(
       dispatch,
       isLoading: false,
       isAuthenticated: options?.isAuthenticated ?? false,
+      hasSignedInUser: options?.hasSignedInUser ?? false,
       isAuthLoading: false,
       isLoadingWorkspaces: false,
       useLocalFallback: options?.useLocalFallback ?? true,
@@ -176,6 +183,93 @@ function renderUseServerState(
     }),
   );
 }
+
+describe("useServerState effective server projection", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+    window.history.replaceState({}, "", "/");
+  });
+
+  it("surfaces connected or connecting runtime-only servers", () => {
+    const appState = createAppState();
+    const persistedServer: ServerWithName = {
+      name: "persisted-server",
+      config: {
+        type: "http",
+        url: "https://persisted.example.com/mcp",
+      } as any,
+      lastConnectionTime: new Date(),
+      connectionStatus: "disconnected",
+      retryCount: 0,
+      enabled: true,
+    };
+    const runtimeConnected: ServerWithName = {
+      name: "runtime-connected",
+      config: {
+        type: "http",
+        url: "https://runtime-connected.example.com/mcp",
+      } as any,
+      lastConnectionTime: new Date(),
+      connectionStatus: "connected",
+      retryCount: 0,
+      enabled: true,
+    };
+    const runtimeConnecting: ServerWithName = {
+      name: "runtime-connecting",
+      config: {
+        type: "http",
+        url: "https://runtime-connecting.example.com/mcp",
+      } as any,
+      lastConnectionTime: new Date(),
+      connectionStatus: "connecting",
+      retryCount: 0,
+      enabled: true,
+    };
+    const runtimeFailed: ServerWithName = {
+      name: "runtime-failed",
+      config: {
+        type: "http",
+        url: "https://runtime-failed.example.com/mcp",
+      } as any,
+      lastConnectionTime: new Date(),
+      connectionStatus: "failed",
+      retryCount: 0,
+      enabled: true,
+    };
+
+    appState.workspaces.default.servers = {
+      "persisted-server": persistedServer,
+    };
+    appState.servers = {
+      "runtime-connected": runtimeConnected,
+      "runtime-connecting": runtimeConnecting,
+      "runtime-failed": runtimeFailed,
+    };
+    appState.selectedServer = "runtime-connected";
+
+    const dispatch = vi.fn();
+    const { result } = renderUseServerState(dispatch, appState);
+
+    expect(result.current.workspaceServers).toEqual(
+      expect.objectContaining({
+        "persisted-server": expect.any(Object),
+        "runtime-connected": runtimeConnected,
+        "runtime-connecting": runtimeConnecting,
+      }),
+    );
+    expect(result.current.workspaceServers).not.toHaveProperty(
+      "runtime-failed",
+    );
+    expect(result.current.selectedMCPConfig).toBe(runtimeConnected.config);
+    expect(result.current.connectedOrConnectingServerConfigs).toEqual(
+      expect.objectContaining({
+        "runtime-connected": runtimeConnected,
+        "runtime-connecting": runtimeConnecting,
+      }),
+    );
+  });
+});
 
 describe("useServerState OAuth callback failures", () => {
   beforeEach(() => {
@@ -226,6 +320,8 @@ describe("useServerState OAuth callback failures", () => {
       useRegistryOAuthProxy: false,
     });
     mockConvexQuery.mockResolvedValue(null);
+    mockCreateServer.mockReset();
+    mockUpdateServer.mockReset();
   });
 
   it("marks the pending server as failed when authorization is denied", async () => {
@@ -1153,6 +1249,53 @@ describe("useServerState OAuth callback in-flight dispatch", () => {
     vi.clearAllMocks();
     localStorage.clear();
     window.history.replaceState({}, "", "/");
+    useClientConfigStore.setState({
+      activeWorkspaceId: null,
+      defaultConfig: null,
+      savedConfig: undefined,
+      draftConfig: null,
+      connectionDefaultsText: "{}",
+      clientCapabilitiesText: "{}",
+      clientCapabilitiesError: null,
+      connectionDefaultsError: null,
+      isSaving: false,
+      isDirty: false,
+      pendingWorkspaceId: null,
+      pendingSavedConfig: undefined,
+      isAwaitingRemoteEcho: false,
+    });
+    useHostContextStore.setState({
+      activeWorkspaceId: null,
+      defaultHostContext: {},
+      savedHostContext: undefined,
+      draftHostContext: {},
+      hostContextText: "{}",
+      hostContextError: null,
+      isSaving: false,
+      isDirty: false,
+      pendingWorkspaceId: null,
+      pendingSavedHostContext: undefined,
+      isAwaitingRemoteEcho: false,
+    });
+    // This block is not nested under "OAuth callback failures"; restore defaults
+    // so readStoredOAuthConfig is not a bare vi.fn() returning undefined.
+    getStoredTokensMock.mockReturnValue(undefined);
+    testConnectionMock.mockResolvedValue({
+      success: true,
+      initInfo: null,
+    });
+    readStoredOAuthConfigMock.mockReturnValue({
+      registryServerId: undefined,
+      useRegistryOAuthProxy: false,
+    });
+    completeHostedOAuthCallbackMock.mockReset();
+    completeHostedOAuthCallbackMock.mockResolvedValue({
+      success: false,
+      error: "Hosted OAuth callback should be mocked per test",
+    });
+    mockConvexQuery.mockResolvedValue(null);
+    mockCreateServer.mockReset();
+    mockUpdateServer.mockReset();
   });
 
   it("dispatches CONNECT_REQUEST for the pending server before token exchange completes", async () => {
@@ -1207,5 +1350,573 @@ describe("useServerState OAuth callback in-flight dispatch", () => {
         }),
       );
     });
+  });
+});
+
+describe("persistRuntimeServerToWorkspaceIfNeeded", () => {
+  function buildCloudPersistState(
+    connectionStatus: ServerWithName["connectionStatus"] = "connected",
+  ): AppState {
+    const workspaces: AppState["workspaces"] = {
+      ws_cloud: {
+        id: "ws_cloud",
+        name: "Cloud",
+        servers: {},
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        isDefault: true,
+      },
+    };
+    return {
+      workspaces,
+      activeWorkspaceId: "ws_cloud",
+      servers: {
+        "rt-server": {
+          name: "rt-server",
+          config: { url: "https://runtime.example/mcp" } as any,
+          lastConnectionTime: new Date(),
+          connectionStatus,
+          retryCount: 0,
+          enabled: true,
+          useOAuth: false,
+        },
+      },
+      selectedServer: "rt-server",
+      selectedMultipleServers: [],
+      isMultiSelectMode: false,
+    };
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockCreateServer.mockReset();
+    mockUpdateServer.mockReset();
+    useClientConfigStore.setState({
+      activeWorkspaceId: null,
+      defaultConfig: null,
+      savedConfig: undefined,
+      draftConfig: null,
+      connectionDefaultsText: "{}",
+      clientCapabilitiesText: "{}",
+      clientCapabilitiesError: null,
+      connectionDefaultsError: null,
+      isSaving: false,
+      isDirty: false,
+      pendingWorkspaceId: null,
+      pendingSavedConfig: undefined,
+      isAwaitingRemoteEcho: false,
+    });
+    useHostContextStore.setState({
+      activeWorkspaceId: null,
+      defaultHostContext: {},
+      savedHostContext: undefined,
+      draftHostContext: {},
+      hostContextText: "{}",
+      hostContextError: null,
+      isSaving: false,
+      isDirty: false,
+      pendingWorkspaceId: null,
+      pendingSavedHostContext: undefined,
+      isAwaitingRemoteEcho: false,
+    });
+    mockConvexQuery.mockResolvedValue(null);
+  });
+
+  it("persists selected runtime-only connected server", async () => {
+    const dispatch = vi.fn();
+    const appState = buildCloudPersistState("connected");
+    const flatRef: { current: { _id: string; name: string }[] | undefined } = {
+      current: [],
+    };
+
+    const { result, rerender } = renderHook(() =>
+      useServerState({
+        appState,
+        dispatch,
+        isLoading: false,
+        isAuthenticated: true,
+        hasSignedInUser: true,
+        isAuthLoading: false,
+        isLoadingWorkspaces: false,
+        useLocalFallback: false,
+        effectiveWorkspaces: appState.workspaces,
+        effectiveActiveWorkspaceId: "ws_cloud",
+        activeWorkspaceServersFlat: flatRef.current,
+        logger: {
+          info: vi.fn(),
+          warn: vi.fn(),
+          error: vi.fn(),
+          debug: vi.fn(),
+        },
+      }),
+    );
+
+    mockCreateServer.mockImplementation(async () => {
+      flatRef.current = [{ _id: "new_srv_id", name: "rt-server" }];
+      flushSync(() => {
+        rerender();
+      });
+      return "new_srv_id";
+    });
+
+    await act(async () => {
+      const out =
+        await result.current.persistRuntimeServerToWorkspaceIfNeeded("rt-server");
+      expect(out).toBe("persisted");
+    });
+
+    expect(mockCreateServer).toHaveBeenCalledTimes(1);
+    expect(mockUpdateServer).not.toHaveBeenCalled();
+  });
+
+  it("does nothing for guest-like or unsigned state", async () => {
+    mockCreateServer.mockResolvedValue("id");
+    const dispatch = vi.fn();
+    const appState = buildCloudPersistState();
+    const { result } = renderUseServerState(dispatch, appState, {
+      hasSignedInUser: false,
+      isAuthenticated: true,
+      useLocalFallback: false,
+      effectiveWorkspaces: appState.workspaces,
+      effectiveActiveWorkspaceId: "ws_cloud",
+      activeWorkspaceServersFlat: [],
+    });
+
+    await act(async () => {
+      expect(
+        await result.current.persistRuntimeServerToWorkspaceIfNeeded(
+          "rt-server",
+        ),
+      ).toBe("noop");
+    });
+
+    const { result: r2 } = renderUseServerState(dispatch, appState, {
+      hasSignedInUser: true,
+      isAuthenticated: false,
+      useLocalFallback: false,
+      effectiveWorkspaces: appState.workspaces,
+      effectiveActiveWorkspaceId: "ws_cloud",
+      activeWorkspaceServersFlat: [],
+    });
+    await act(async () => {
+      expect(
+        await r2.current.persistRuntimeServerToWorkspaceIfNeeded("rt-server"),
+      ).toBe("noop");
+    });
+
+    const { result: r3 } = renderUseServerState(dispatch, appState, {
+      hasSignedInUser: true,
+      isAuthenticated: true,
+      useLocalFallback: true,
+      effectiveWorkspaces: appState.workspaces,
+      effectiveActiveWorkspaceId: "ws_cloud",
+      activeWorkspaceServersFlat: [],
+    });
+    await act(async () => {
+      expect(
+        await r3.current.persistRuntimeServerToWorkspaceIfNeeded("rt-server"),
+      ).toBe("noop");
+    });
+
+    expect(mockCreateServer).not.toHaveBeenCalled();
+  });
+
+  it("does nothing for missing or non-connected runtime server", async () => {
+    mockCreateServer.mockResolvedValue("id");
+    const dispatch = vi.fn();
+    const appState = buildCloudPersistState("connecting");
+    const { result } = renderUseServerState(dispatch, appState, {
+      hasSignedInUser: true,
+      isAuthenticated: true,
+      useLocalFallback: false,
+      effectiveWorkspaces: appState.workspaces,
+      effectiveActiveWorkspaceId: "ws_cloud",
+      activeWorkspaceServersFlat: [],
+    });
+
+    await act(async () => {
+      expect(
+        await result.current.persistRuntimeServerToWorkspaceIfNeeded(
+          "rt-server",
+        ),
+      ).toBe("noop");
+    });
+
+    for (const status of ["failed", "disconnected", "oauth-flow"] as const) {
+      const st = buildCloudPersistState(status);
+      const { result: r } = renderUseServerState(dispatch, st, {
+        hasSignedInUser: true,
+        isAuthenticated: true,
+        useLocalFallback: false,
+        effectiveWorkspaces: st.workspaces,
+        effectiveActiveWorkspaceId: "ws_cloud",
+        activeWorkspaceServersFlat: [],
+      });
+      await act(async () => {
+        expect(
+          await r.current.persistRuntimeServerToWorkspaceIfNeeded("rt-server"),
+        ).toBe("noop");
+      });
+    }
+
+    const missing = buildCloudPersistState();
+    const { result: rm } = renderUseServerState(dispatch, missing, {
+      hasSignedInUser: true,
+      isAuthenticated: true,
+      useLocalFallback: false,
+      effectiveWorkspaces: missing.workspaces,
+      effectiveActiveWorkspaceId: "ws_cloud",
+      activeWorkspaceServersFlat: [],
+    });
+    await act(async () => {
+      expect(
+        await rm.current.persistRuntimeServerToWorkspaceIfNeeded("nope"),
+      ).toBe("noop");
+    });
+
+    expect(mockCreateServer).not.toHaveBeenCalled();
+  });
+
+  it("waits for workspace server snapshot before deciding collision", async () => {
+    const dispatch = vi.fn();
+    const appState = buildCloudPersistState();
+    const flatRef: { current: { _id: string; name: string }[] | undefined } = {
+      current: undefined,
+    };
+
+    mockCreateServer.mockImplementation(async () => {
+      flatRef.current = [{ _id: "new", name: "rt-server" }];
+      flushSync(() => {
+        rerender();
+      });
+      return "new";
+    });
+
+    const { result, rerender } = renderHook(() =>
+      useServerState({
+        appState,
+        dispatch,
+        isLoading: false,
+        isAuthenticated: true,
+        hasSignedInUser: true,
+        isAuthLoading: false,
+        isLoadingWorkspaces: false,
+        useLocalFallback: false,
+        effectiveWorkspaces: appState.workspaces,
+        effectiveActiveWorkspaceId: "ws_cloud",
+        activeWorkspaceServersFlat: flatRef.current,
+        logger: {
+          info: vi.fn(),
+          warn: vi.fn(),
+          error: vi.fn(),
+          debug: vi.fn(),
+        },
+      }),
+    );
+
+    const done = act(async () => {
+      await result.current.persistRuntimeServerToWorkspaceIfNeeded("rt-server");
+    });
+
+    expect(mockCreateServer).not.toHaveBeenCalled();
+
+    flatRef.current = [];
+    flushSync(() => {
+      rerender();
+    });
+
+    await done;
+
+    expect(mockCreateServer).toHaveBeenCalledTimes(1);
+  });
+
+  it("skips write when same-name saved server appears after waiting", async () => {
+    const dispatch = vi.fn();
+    const appState = buildCloudPersistState();
+    const flatRef: { current: { _id: string; name: string }[] | undefined } = {
+      current: undefined,
+    };
+
+    const { result, rerender } = renderHook(() =>
+      useServerState({
+        appState,
+        dispatch,
+        isLoading: false,
+        isAuthenticated: true,
+        hasSignedInUser: true,
+        isAuthLoading: false,
+        isLoadingWorkspaces: false,
+        useLocalFallback: false,
+        effectiveWorkspaces: appState.workspaces,
+        effectiveActiveWorkspaceId: "ws_cloud",
+        activeWorkspaceServersFlat: flatRef.current,
+        logger: {
+          info: vi.fn(),
+          warn: vi.fn(),
+          error: vi.fn(),
+          debug: vi.fn(),
+        },
+      }),
+    );
+
+    const done = act(async () => {
+      const out =
+        await result.current.persistRuntimeServerToWorkspaceIfNeeded("rt-server");
+      expect(out).toBe("skipped_existing_name");
+    });
+
+    flatRef.current = [{ _id: "existing", name: "rt-server" }];
+    flushSync(() => {
+      rerender();
+    });
+
+    await done;
+    expect(mockCreateServer).not.toHaveBeenCalled();
+  });
+
+  it("clears pending key on failed mutation", async () => {
+    const dispatch = vi.fn();
+    const appState = buildCloudPersistState();
+    const flatRef: { current: { _id: string; name: string }[] | undefined } = {
+      current: [],
+    };
+
+    mockCreateServer.mockResolvedValueOnce(undefined);
+
+    const { result, rerender } = renderHook(() =>
+      useServerState({
+        appState,
+        dispatch,
+        isLoading: false,
+        isAuthenticated: true,
+        hasSignedInUser: true,
+        isAuthLoading: false,
+        isLoadingWorkspaces: false,
+        useLocalFallback: false,
+        effectiveWorkspaces: appState.workspaces,
+        effectiveActiveWorkspaceId: "ws_cloud",
+        activeWorkspaceServersFlat: flatRef.current,
+        logger: {
+          info: vi.fn(),
+          warn: vi.fn(),
+          error: vi.fn(),
+          debug: vi.fn(),
+        },
+      }),
+    );
+
+    await act(async () => {
+      expect(
+        await result.current.persistRuntimeServerToWorkspaceIfNeeded("rt-server"),
+      ).toBe("failed");
+    });
+
+    mockCreateServer.mockReset();
+    mockCreateServer.mockImplementation(async () => {
+      flatRef.current = [{ _id: "n2", name: "rt-server" }];
+      flushSync(() => {
+        rerender();
+      });
+      return "n2";
+    });
+
+    await act(async () => {
+      expect(
+        await result.current.persistRuntimeServerToWorkspaceIfNeeded("rt-server"),
+      ).toBe("persisted");
+    });
+
+    expect(mockCreateServer).toHaveBeenCalledTimes(1);
+  });
+
+  it("clears pending key when Convex echo lands", async () => {
+    const dispatch = vi.fn();
+    const appState = buildCloudPersistState();
+    const flatRef: { current: { _id: string; name: string }[] | undefined } = {
+      current: [],
+    };
+
+    const { result, rerender } = renderHook(() =>
+      useServerState({
+        appState,
+        dispatch,
+        isLoading: false,
+        isAuthenticated: true,
+        hasSignedInUser: true,
+        isAuthLoading: false,
+        isLoadingWorkspaces: false,
+        useLocalFallback: false,
+        effectiveWorkspaces: appState.workspaces,
+        effectiveActiveWorkspaceId: "ws_cloud",
+        activeWorkspaceServersFlat: flatRef.current,
+        logger: {
+          info: vi.fn(),
+          warn: vi.fn(),
+          error: vi.fn(),
+          debug: vi.fn(),
+        },
+      }),
+    );
+
+    mockCreateServer.mockImplementation(async () => {
+      flatRef.current = [{ _id: "echo", name: "rt-server" }];
+      flushSync(() => {
+        rerender();
+      });
+      return "echo";
+    });
+
+    await act(async () => {
+      expect(
+        await result.current.persistRuntimeServerToWorkspaceIfNeeded("rt-server"),
+      ).toBe("persisted");
+    });
+
+    await act(async () => {
+      const followUp =
+        await result.current.persistRuntimeServerToWorkspaceIfNeeded("rt-server");
+      expect(followUp).toBe("skipped_existing_name");
+    });
+  });
+
+  it("dedupes repeated calls while first persist is in flight", async () => {
+    const dispatch = vi.fn();
+    const appState = buildCloudPersistState();
+    const flatRef: { current: { _id: string; name: string }[] | undefined } = {
+      current: [],
+    };
+    let resolveCreate!: (v: string) => void;
+    mockCreateServer.mockImplementation(
+      () =>
+        new Promise<string>((resolve) => {
+          resolveCreate = resolve;
+        }),
+    );
+
+    const { result, rerender } = renderHook(() =>
+      useServerState({
+        appState,
+        dispatch,
+        isLoading: false,
+        isAuthenticated: true,
+        hasSignedInUser: true,
+        isAuthLoading: false,
+        isLoadingWorkspaces: false,
+        useLocalFallback: false,
+        effectiveWorkspaces: appState.workspaces,
+        effectiveActiveWorkspaceId: "ws_cloud",
+        activeWorkspaceServersFlat: flatRef.current,
+        logger: {
+          info: vi.fn(),
+          warn: vi.fn(),
+          error: vi.fn(),
+          debug: vi.fn(),
+        },
+      }),
+    );
+
+    const p1 = act(async () =>
+      result.current.persistRuntimeServerToWorkspaceIfNeeded("rt-server"),
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      const second =
+        await result.current.persistRuntimeServerToWorkspaceIfNeeded("rt-server");
+      expect(second).toBe("pending");
+    });
+
+    expect(mockCreateServer).toHaveBeenCalledTimes(1);
+
+    resolveCreate!("srv1");
+    flatRef.current = [{ _id: "srv1", name: "rt-server" }];
+    flushSync(() => {
+      rerender();
+    });
+
+    await act(async () => {
+      await p1;
+    });
+    await act(async () => {
+      const again =
+        await result.current.persistRuntimeServerToWorkspaceIfNeeded("rt-server");
+      expect(again).toBe("skipped_existing_name");
+    });
+    expect(mockCreateServer).toHaveBeenCalledTimes(1);
+  });
+
+  it("waits for auth and workspace readiness before persisting", async () => {
+    const dispatch = vi.fn();
+    const appState = buildCloudPersistState();
+    const flatRef: { current: { _id: string; name: string }[] | undefined } = {
+      current: undefined,
+    };
+
+    const readiness = {
+      isAuthenticated: false,
+      hasSignedInUser: true,
+      isAuthLoading: true,
+      isLoadingWorkspaces: true,
+      useLocalFallback: false,
+      effectiveActiveWorkspaceId: "none",
+    };
+
+    const { result, rerender } = renderHook(() =>
+      useServerState({
+        appState,
+        dispatch,
+        isLoading: false,
+        isAuthenticated: readiness.isAuthenticated,
+        hasSignedInUser: readiness.hasSignedInUser,
+        isAuthLoading: readiness.isAuthLoading,
+        isLoadingWorkspaces: readiness.isLoadingWorkspaces,
+        useLocalFallback: readiness.useLocalFallback,
+        effectiveWorkspaces: appState.workspaces,
+        effectiveActiveWorkspaceId: readiness.effectiveActiveWorkspaceId,
+        activeWorkspaceServersFlat: flatRef.current,
+        logger: {
+          info: vi.fn(),
+          warn: vi.fn(),
+          error: vi.fn(),
+          debug: vi.fn(),
+        },
+      }),
+    );
+
+    flushSync(() => {
+      rerender();
+    });
+
+    mockCreateServer.mockImplementation(async () => {
+      flatRef.current = [{ _id: "late_srv", name: "rt-server" }];
+      flushSync(() => {
+        rerender();
+      });
+      return "late_srv";
+    });
+
+    const done = act(async () => {
+      const out =
+        await result.current.persistRuntimeServerToWorkspaceIfNeeded("rt-server");
+      expect(out).toBe("persisted");
+    });
+
+    expect(mockCreateServer).not.toHaveBeenCalled();
+
+    readiness.isAuthenticated = true;
+    readiness.isAuthLoading = false;
+    readiness.isLoadingWorkspaces = false;
+    readiness.effectiveActiveWorkspaceId = "ws_cloud";
+    flatRef.current = [];
+    flushSync(() => {
+      rerender();
+    });
+
+    await done;
+
+    expect(mockCreateServer).toHaveBeenCalledTimes(1);
   });
 });

@@ -18,6 +18,7 @@ const {
   updateWorkspaceMock,
   deleteWorkspaceMock,
   workspaceQueryState,
+  workspaceServersQueryState,
   organizationBillingStatusState,
   useOrganizationBillingStatusMock,
   serializeServersForSharingMock,
@@ -30,6 +31,10 @@ const {
   workspaceQueryState: {
     allWorkspaces: undefined as any,
     workspaces: undefined as any,
+    isLoading: false,
+  },
+  workspaceServersQueryState: {
+    servers: undefined as any,
     isLoading: false,
   },
   organizationBillingStatusState: {
@@ -61,8 +66,8 @@ vi.mock("../useWorkspaces", () => ({
     deleteWorkspace: deleteWorkspaceMock,
   }),
   useWorkspaceServers: () => ({
-    servers: undefined,
-    isLoading: false,
+    servers: workspaceServersQueryState.servers,
+    isLoading: workspaceServersQueryState.isLoading,
   }),
 }));
 
@@ -208,6 +213,8 @@ describe("useWorkspaceState automatic workspace creation", () => {
     workspaceQueryState.allWorkspaces = [];
     workspaceQueryState.workspaces = [];
     workspaceQueryState.isLoading = false;
+    workspaceServersQueryState.servers = undefined;
+    workspaceServersQueryState.isLoading = false;
     organizationBillingStatusState.value = undefined;
     useOrganizationBillingStatusMock.mockImplementation(
       () => organizationBillingStatusState.value,
@@ -1752,6 +1759,62 @@ describe("useWorkspaceState automatic workspace creation", () => {
     expect(result.current.effectiveActiveWorkspaceId).toBe("convex-workspace-a");
     expect(result.current.effectiveWorkspaces["workspace-a"]).toBeUndefined();
     expect(result.current.effectiveWorkspaces["convex-workspace-a"]).toBeDefined();
+  });
+
+  it("merges non-terminal runtime-only local server projections into the matched remote workspace", () => {
+    const runtimeOnlyServer = {
+      name: "excalidraw",
+      config: { url: "https://mcp.excalidraw.com/" } as any,
+      lastConnectionTime: new Date("2026-01-01T00:00:00.000Z"),
+      connectionStatus: "connected" as const,
+      retryCount: 0,
+      enabled: true,
+    };
+
+    workspaceQueryState.allWorkspaces = [
+      {
+        _id: "convex-workspace-a",
+        name: "Workspace A",
+        servers: {},
+        ownerId: "user-1",
+        organizationId: "org-owner",
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ];
+    workspaceQueryState.workspaces = [...workspaceQueryState.allWorkspaces];
+    workspaceServersQueryState.servers = [];
+
+    const appState = {
+      ...createAppState({
+        "workspace-a": createLocalWorkspace("workspace-a", {
+          name: "Workspace A",
+          organizationId: "org-owner",
+          sharedWorkspaceId: "convex-workspace-a",
+          servers: {
+            excalidraw: runtimeOnlyServer,
+          },
+        }),
+      }),
+      activeWorkspaceId: "workspace-a",
+      servers: {
+        excalidraw: runtimeOnlyServer,
+      },
+      selectedServer: "excalidraw",
+    };
+
+    const { result } = renderUseWorkspaceState({
+      appState,
+      activeOrganizationId: "org-owner",
+    });
+
+    expect(result.current.useLocalFallback).toBe(false);
+    expect(result.current.effectiveActiveWorkspaceId).toBe("convex-workspace-a");
+    expect(
+      result.current.effectiveWorkspaces["convex-workspace-a"]?.servers[
+        "excalidraw"
+      ],
+    ).toEqual(runtimeOnlyServer);
   });
 
   it("rejects authenticated client-config saves when the hook unmounts mid-sync", async () => {

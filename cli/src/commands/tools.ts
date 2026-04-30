@@ -317,6 +317,7 @@ export function registerToolsCommands(program: Command): void {
       | undefined;
     let inspectorRenderSkipped = false;
     let inspectorRenderIssue: InspectorRenderIssue | undefined;
+    const requireRender = options.requireRender === true;
 
     if (options.ui) {
       const serverName =
@@ -363,8 +364,12 @@ export function registerToolsCommands(program: Command): void {
         };
       }
 
-      const inspectorRenderClassification =
-        classifyInspectorRenderError(inspectorRenderError);
+      const inspectorRenderClassification = classifyInspectorRenderError(
+        inspectorRenderError,
+        {
+          noActiveClientIsSkippable: options.attachOnly !== true,
+        },
+      );
       inspectorRenderSkipped = inspectorRenderClassification.skippable;
       inspectorRenderIssue = buildInspectorRenderIssue(
         inspectorRenderError,
@@ -376,7 +381,6 @@ export function registerToolsCommands(program: Command): void {
         remediation: inspectorRenderClassification.remediation,
         issue: inspectorRenderIssue,
       });
-      const requireRender = options.requireRender === true;
       const renderFailure =
         inspectorRenderError &&
         (!inspectorRenderSkipped || requireRender);
@@ -401,9 +405,7 @@ export function registerToolsCommands(program: Command): void {
         ...(inspectorRenderError
           ? inspectorRenderSkipped && !requireRender
             ? { warning: inspectorRenderIssue ?? inspectorRenderError }
-            : inspectorRenderSkipped
-              ? { error: inspectorRenderIssue ?? inspectorRenderError }
-              : { error: inspectorRenderError }
+            : { error: inspectorRenderIssue ?? inspectorRenderError }
           : {}),
       };
       outputPayload = compactOutputPayload;
@@ -422,7 +424,23 @@ export function registerToolsCommands(program: Command): void {
       });
     }
 
-    const requireRender = options.requireRender === true;
+    const renderIsFailure = Boolean(
+      inspectorRenderError && (!inspectorRenderSkipped || requireRender),
+    );
+    const debugOutcomeError = renderIsFailure
+      ? (inspectorRenderIssue ?? inspectorRenderError)
+      : validationFailed
+        ? {
+            code: "validation_failed",
+            message: "Tool call validation failed.",
+            details: validationResult,
+          }
+        : toolResultError
+          ? {
+              code: "tool_result_error",
+              message: "Tool returned an error result.",
+            }
+          : undefined;
 
     await writeCommandDebugArtifact({
       outputPath: options.debugOut,
@@ -434,21 +452,16 @@ export function registerToolsCommands(program: Command): void {
         params,
       },
       target: targetSummary,
-      outcome:
-        inspectorRenderError &&
-        (!inspectorRenderSkipped || requireRender)
-          ? {
-              status: "error",
-              error:
-                inspectorRenderSkipped && requireRender
-                  ? inspectorRenderIssue ?? inspectorRenderError
-                  : inspectorRenderError,
-              result: debugOutputPayload,
-            }
-          : {
-              status: "success",
-              result: debugOutputPayload,
-            },
+      outcome: debugOutcomeError
+        ? {
+            status: "error",
+            error: debugOutcomeError,
+            result: debugOutputPayload,
+          }
+        : {
+            status: "success",
+            result: debugOutputPayload,
+          },
       snapshot: options.debugOut
         ? {
             input: {
@@ -514,15 +527,11 @@ type InspectorRenderIssue = {
 };
 
 type InspectorRenderErrorClassification =
-  | {
-      skippable: true;
-      code: InspectorRenderSkippableCode;
-      remediation: InspectorRenderRemediation;
-    }
-  | {
-      skippable: false;
-      remediation: InspectorRenderRemediation;
-    };
+  {
+    skippable: boolean;
+    remediation: InspectorRenderRemediation;
+    code?: InspectorRenderSkippableCode;
+  };
 
 function parseInspectorUiTtyOverride(name: string): boolean | undefined {
   const value = process.env[name]?.trim().toLowerCase();
@@ -678,15 +687,17 @@ function writeInspectorRenderWarning(options: {
 
 function classifyInspectorRenderError(
   error: { code: string; message: string } | undefined,
+  options: { noActiveClientIsSkippable?: boolean } = {},
 ): InspectorRenderErrorClassification {
   if (!error) {
     return { skippable: false, remediation: "none" };
   }
 
+  const noActiveClientIsSkippable = options.noActiveClientIsSkippable ?? true;
   const code = error.code.toLowerCase();
   if (code === "no_active_client" || isNoActiveClientMessage(error)) {
     return {
-      skippable: true,
+      skippable: noActiveClientIsSkippable,
       code: "no_active_client",
       remediation: "open_browser",
     };
@@ -721,7 +732,7 @@ function buildInspectorRenderIssue(
   render: Record<string, unknown>,
   classification: InspectorRenderErrorClassification,
 ): InspectorRenderIssue | undefined {
-  if (!error || !classification.skippable) {
+  if (!error || !classification.code) {
     return undefined;
   }
 
@@ -776,9 +787,11 @@ function buildCompactInspectorRender(
       : uiResult.status === "error" && isRecord(uiResult.error)
         ? { warning: uiResult.error }
         : {}
-    : uiResult.status === "error" && isRecord(uiResult.error)
-      ? { error: uiResult.error }
-      : {};
+    : options.issue
+      ? { error: options.issue }
+      : uiResult.status === "error" && isRecord(uiResult.error)
+        ? { error: uiResult.error }
+        : {};
 
   return {
     status:

@@ -27,6 +27,7 @@ export type { ServerWithName } from "@/state/app-types";
 export type {
   EnsureServersReadyResult,
   ServerUpdateResult,
+  PersistRuntimeServerResult,
 } from "./use-server-state";
 
 export interface PendingDashboardOAuthState {
@@ -441,6 +442,7 @@ export function useAppState({
     dispatch,
     isLoading,
     isAuthenticated,
+    hasSignedInUser: currentUserId != null,
     isAuthLoading,
     isLoadingWorkspaces: workspaceState.isLoadingWorkspaces,
     useLocalFallback: workspaceState.useLocalFallback,
@@ -652,6 +654,8 @@ export function useAppState({
       serverState.handleConnectWithTokensFromOAuthFlow,
     handleRefreshTokensFromOAuthFlow:
       serverState.handleRefreshTokensFromOAuthFlow,
+    persistRuntimeServerToWorkspaceIfNeeded:
+      serverState.persistRuntimeServerToWorkspaceIfNeeded,
 
     handleSwitchWorkspace,
     handleCreateWorkspace: workspaceState.handleCreateWorkspace,

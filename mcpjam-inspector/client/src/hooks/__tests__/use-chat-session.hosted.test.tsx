@@ -1,4 +1,5 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
+import { generateId } from "ai";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useChatSession } from "../use-chat-session";
 import { useTrafficLogStore } from "@/stores/traffic-log-store";
@@ -258,6 +259,7 @@ describe("useChatSession hosted mode", () => {
     mockState.convexAuth.isLoading = false;
     mockState.authFetch.mockReset();
     mockState.authFetch.mockResolvedValue(new Response(null, { status: 200 }));
+    mockState.setMessages.mockReset();
     mockState.buildHostedServerRequest.mockReset();
     mockState.getAccessToken.mockReset();
     mockState.getAccessToken.mockResolvedValue("access-token");
@@ -265,6 +267,8 @@ describe("useChatSession hosted mode", () => {
     mockState.getGuestBearerToken.mockResolvedValue("guest-token");
     mockState.selectedModelId = "anthropic/claude-haiku-4.5";
     mockState.latestOnData = undefined;
+    vi.mocked(generateId).mockReset();
+    vi.mocked(generateId).mockReturnValue("chat-session-id");
     useTrafficLogStore.getState().clear();
   });
 
@@ -341,6 +345,63 @@ describe("useChatSession hosted mode", () => {
       surface: "preview",
     });
     unmount();
+  });
+
+  it("resets the thread when the hosted scope changes under the same auth header", async () => {
+    vi.mocked(generateId)
+      .mockImplementationOnce(() => "chat-session-id")
+      .mockImplementation(() => "chat-session-id-2");
+    const onReset = vi.fn();
+
+    const { result, rerender } = renderHook(
+      ({
+        hostedContext,
+      }: {
+        hostedContext: {
+          workspaceId: string;
+          selectedServerIds: string[];
+          shareToken: string;
+        };
+      }) =>
+        useChatSession({
+          selectedServers: ["server-1"],
+          hostedContext,
+          onReset,
+        }),
+      {
+        initialProps: {
+          hostedContext: {
+            workspaceId: "workspace-1",
+            selectedServerIds: ["server-id-1"],
+            shareToken: "share-token-1",
+          },
+        },
+      }
+    );
+
+    await waitFor(() => {
+      expect(result.current.isSessionBootstrapComplete).toBe(true);
+    });
+
+    expect(result.current.chatSessionId).toBe("chat-session-id");
+
+    mockState.setMessages.mockClear();
+    onReset.mockClear();
+
+    rerender({
+      hostedContext: {
+        workspaceId: "workspace-2",
+        selectedServerIds: ["server-id-2"],
+        shareToken: "share-token-2",
+      },
+    });
+
+    await waitFor(() => {
+      expect(result.current.chatSessionId).toBe("chat-session-id-2");
+    });
+
+    expect(mockState.setMessages).toHaveBeenCalledTimes(1);
+    expect(onReset).toHaveBeenCalledWith("auth-bootstrap");
   });
 
   it("marks session bootstrap complete only after auth setup finishes", async () => {

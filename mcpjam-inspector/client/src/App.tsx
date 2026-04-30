@@ -745,6 +745,7 @@ export default function App() {
     clearLocalFallbackWorkspaceSelection,
     pendingDashboardOAuth,
     isCloudSyncActive,
+    persistRuntimeServerToWorkspaceIfNeeded,
   } = useAppState({
     currentUserId: workOsUser?.id ?? null,
     hasOrganizations: effectiveOrganizations.length > 0,
@@ -761,6 +762,11 @@ export default function App() {
   workspaceServersRef.current = workspaceServers;
   const selectedServerRef = useRef(appState.selectedServer);
   selectedServerRef.current = appState.selectedServer;
+  const persistRuntimeServerToWorkspaceRef = useRef(
+    persistRuntimeServerToWorkspaceIfNeeded,
+  );
+  persistRuntimeServerToWorkspaceRef.current =
+    persistRuntimeServerToWorkspaceIfNeeded;
   const getInspectorServerState = useCallback((serverName: string) => {
     const runtimeServer = oauthDebuggerServersRef.current[serverName];
     const workspaceServer = workspaceServersRef.current[serverName];
@@ -1318,6 +1324,13 @@ export default function App() {
           }
 
           setSelectedServer(command.payload.serverName);
+          const runtimeForPersist = serverState.runtimeServer;
+          if (runtimeForPersist?.connectionStatus === "connected") {
+            void persistRuntimeServerToWorkspaceRef.current(
+              command.payload.serverName,
+              runtimeForPersist,
+            );
+          }
         }
 
         applyNavigation("app-builder", { updateHash: true });

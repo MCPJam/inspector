@@ -35,6 +35,41 @@ type InspectorCommandHandler = (
 ) => Promise<unknown> | unknown;
 
 const handlers = new Map<InspectorCommandType, InspectorCommandHandler[]>();
+const handlerWaiters = new Map<InspectorCommandType, Set<() => void>>();
+
+const HANDLER_REGISTRATION_WAIT_MS = 2_000;
+
+function notifyHandlerWaiters(type: InspectorCommandType): void {
+  const waiters = handlerWaiters.get(type);
+  if (!waiters || waiters.size === 0) return;
+  handlerWaiters.delete(type);
+  for (const notify of waiters) {
+    notify();
+  }
+}
+
+function waitForHandlerRegistration(
+  type: InspectorCommandType,
+  timeoutMs: number,
+): Promise<boolean> {
+  return new Promise((resolve) => {
+    const waiters = handlerWaiters.get(type) ?? new Set<() => void>();
+    handlerWaiters.set(type, waiters);
+
+    const timeout = setTimeout(() => {
+      waiters.delete(notify);
+      if (waiters.size === 0) handlerWaiters.delete(type);
+      resolve(false);
+    }, timeoutMs);
+
+    const notify = () => {
+      clearTimeout(timeout);
+      resolve(true);
+    };
+
+    waiters.add(notify);
+  });
+}
 
 export function registerInspectorCommandHandler(
   type: InspectorCommandType,
@@ -42,6 +77,7 @@ export function registerInspectorCommandHandler(
 ): () => void {
   const existingHandlers = handlers.get(type) ?? [];
   handlers.set(type, [...existingHandlers, handler]);
+  notifyHandlerWaiters(type);
 
   return () => {
     const nextHandlers =
@@ -59,7 +95,16 @@ export function registerInspectorCommandHandler(
 export async function executeInspectorCommand(
   command: InspectorCommand,
 ): Promise<InspectorCommandResponse> {
-  const typeHandlers = handlers.get(command.type) ?? [];
+  let typeHandlers = handlers.get(command.type) ?? [];
+  if (typeHandlers.length === 0) {
+    const registered = await waitForHandlerRegistration(
+      command.type,
+      HANDLER_REGISTRATION_WAIT_MS,
+    );
+    if (registered) {
+      typeHandlers = handlers.get(command.type) ?? [];
+    }
+  }
   if (typeHandlers.length === 0) {
     return {
       id: command.id,

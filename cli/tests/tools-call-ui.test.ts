@@ -1213,6 +1213,48 @@ test("tools call --ui rejects attach-only with open", async () => {
   );
 });
 
+test("tools call --ui --attach-only keeps missing browser clients as hard errors", async () => {
+  const toolResult = { content: [{ type: "text", text: "view created" }] };
+  const server = await startMockServer({ hasActiveClient: false, toolResult });
+
+  try {
+    const result = await runCli([
+      "--format",
+      "json",
+      "tools",
+      "call",
+      "--ui",
+      "--attach-only",
+      "--inspector-url",
+      `http://127.0.0.1:${server.port}`,
+      "--url",
+      `http://127.0.0.1:${server.port}/mcp`,
+      "--tool-name",
+      "create_view",
+      "--tool-args",
+      "{}",
+    ]);
+
+    assert.equal(result.exitCode, 1, result.stderr);
+    const payload = JSON.parse(lastJsonLine(result.stdout)) as Record<
+      string,
+      any
+    >;
+    assert.equal(payload.success, false);
+    assert.equal(payload.warning, undefined);
+    assert.equal(payload.error.code, "no_active_client");
+    assert.equal(payload.error.remediation, "open_browser");
+    assert.equal(payload.inspectorRender.status, "error");
+    assert.equal(payload.inspectorRender.error.code, "no_active_client");
+    assert.equal(
+      server.requests.some((entry) => entry.url === "/api/mcp/command"),
+      false,
+    );
+  } finally {
+    await server.stop();
+  }
+});
+
 test("tools call --ui accepts frontend-url with open", async () => {
   const toolResult = { content: [{ type: "text", text: "view created" }] };
   const server = await startMockServer({
