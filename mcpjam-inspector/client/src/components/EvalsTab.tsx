@@ -10,6 +10,7 @@ import { useWorkspaceServers } from "@/hooks/useViews";
 import { useEvalsRoute } from "@/lib/evals-router";
 import { useEvalTabContext } from "@/hooks/use-eval-tab-context";
 import { useIsDirectGuest } from "@/hooks/use-is-direct-guest";
+import { useSharedAppState } from "@/state/app-state-context";
 import { aggregateSuite } from "./evals/helpers";
 import { EvalTabGate } from "./evals/EvalTabGate";
 import {
@@ -33,12 +34,15 @@ import { usePlaygroundWorkspaceExecutions } from "./evals/use-playground-workspa
 import type { EvalIteration } from "./evals/types";
 import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
 import type { EnsureServersReadyResult } from "@/hooks/use-app-state";
-import { EXPLORE_SUITE_TAG, isExploreSuite } from "./evals/constants";
+import { isExploreSuite } from "./evals/constants";
 import { generateAndPersistEvalTests } from "@/lib/evals/generate-and-persist-tests";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 
 const FIRST_SUITE_EMPTY_DESCRIPTION =
   "A suite groups eval cases with the MCP servers they use. Create one, then generate cases or import a chat transcript.";
+
+const workspaceServerKey = (workspaceId: string, serverName: string) =>
+  `${workspaceId}::${serverName}`;
 
 // Module-scoped so an in-flight explore-suite create still blocks duplicate
 // creates if the EvalsTab unmounts and remounts before the create finishes.
@@ -62,8 +66,11 @@ export function EvalsTab({
   const convex = useConvex();
   const { user, getAccessToken } = useAuth();
   const route = useEvalsRoute();
+  const appState = useSharedAppState();
   const [workspaceBrowse, setWorkspaceBrowse] =
     useState<PlaygroundWorkspaceBrowse>("suites");
+  const [locallySuppressedServerKeys, setLocallySuppressedServerKeys] =
+    useState<string[]>([]);
   const isDirectGuest = useIsDirectGuest({ workspaceId });
   const {
     connectedServerNames,
@@ -260,9 +267,10 @@ export function EvalsTab({
   }, [overviewQueries.isOverviewLoading, route.type, selectedSuiteEntry, selectedSuiteId]);
 
   // ---------------------------------------------------------------------------
-  // Auto-create an explore suite for each connected server that doesn't have one
+  // Auto-create a Playground suite for each connected server that doesn't have
+  // one, unless that server's auto-suite has been explicitly deleted.
   // ---------------------------------------------------------------------------
-  const createTestSuiteMutation = mutations.createTestSuiteMutation;
+  const ensureAutoEvalSuiteMutation = mutations.ensureAutoEvalSuiteMutation;
   const createTestCaseMutation = mutations.createTestCaseMutation;
 
   useEffect(() => {
@@ -283,11 +291,15 @@ export function EvalsTab({
     );
 
     const inFlightKeyFor = (serverName: string) =>
-      `${workspaceId}::${serverName}`;
+      workspaceServerKey(workspaceId, serverName);
 
     const serversNeedingSuite = [...connectedServerNames].filter(
       (name) =>
         !serversWithExploreSuite.has(name) &&
+        appState.servers[name]?.autoEvalSuiteSuppressedAt === undefined &&
+        !locallySuppressedServerKeys.includes(
+          workspaceServerKey(workspaceId, name),
+        ) &&
         !explorePrefetchInFlight.has(inFlightKeyFor(name)),
     );
 
@@ -301,27 +313,32 @@ export function EvalsTab({
 
       void (async () => {
         try {
-          // Pass tags atomically in the initial create. A second mutation to
-          // tag would risk an orphan untagged suite if it failed, which would
-          // bypass `isExploreSuite` and let the next pass create a duplicate.
-          const createdSuite = await createTestSuiteMutation({
+          const result = await ensureAutoEvalSuiteMutation({
             workspaceId,
-            name: serverName,
-            description: `Explore cases for ${serverName}`,
-            environment: { servers: [serverName] },
-            tags: [EXPLORE_SUITE_TAG],
+            serverName,
+            mode: "auto",
           });
 
-          if (!createdSuite?._id) return;
+          if (result.status === "suppressed") {
+            setLocallySuppressedServerKeys((previous) =>
+              previous.includes(workspaceServerKey(workspaceId, serverName))
+                ? previous
+                : [...previous, workspaceServerKey(workspaceId, serverName)],
+            );
+            return;
+          }
+
+          if (result.status !== "created") {
+            return;
+          }
 
           const outcome = await generateAndPersistEvalTests({
             convex,
             getAccessToken,
             workspaceId,
-            suiteId: createdSuite._id,
+            suiteId: result.suite._id,
             serverIds: [serverName],
             createTestCase: createTestCaseMutation,
-            skipIfExistingCases: true,
           });
 
           if (outcome.createdCount > 0) {
@@ -331,7 +348,7 @@ export function EvalsTab({
               environment: detectEnvironment(),
               workspace_id: workspaceId,
               server_name: serverName,
-              suite_id: createdSuite._id,
+              suite_id: result.suite._id,
               generated_count: outcome.createdCount,
             });
           }
@@ -345,12 +362,14 @@ export function EvalsTab({
   }, [
     isAuthenticated,
     workspaceId,
+    appState.servers,
     connectedServerNames,
+    locallySuppressedServerKeys,
     visibleSuites,
     overviewQueries.isOverviewLoading,
     convex,
     getAccessToken,
-    createTestSuiteMutation,
+    ensureAutoEvalSuiteMutation,
     createTestCaseMutation,
   ]);
 
@@ -378,6 +397,77 @@ export function EvalsTab({
       }
 
       try {
+        const singleServerName =
+          payload.selectedServers.length === 1
+            ? payload.selectedServers[0]
+            : null;
+        const isSuppressedAutoSuiteRecreate = Boolean(
+          singleServerName &&
+            (appState.servers[singleServerName]?.autoEvalSuiteSuppressedAt !==
+              undefined ||
+              locallySuppressedServerKeys.includes(
+                workspaceServerKey(workspaceId, singleServerName),
+              )),
+        );
+
+        if (singleServerName && isSuppressedAutoSuiteRecreate) {
+          const result = await mutations.ensureAutoEvalSuiteMutation({
+            workspaceId,
+            serverName: singleServerName,
+            mode: "manual",
+          });
+
+          const nextDescription = payload.description ?? "";
+          const suiteUpdates: {
+            suiteId: string;
+            name?: string;
+            description?: string;
+          } = {
+            suiteId: result.suite._id,
+          };
+
+          if (payload.name !== result.suite.name) {
+            suiteUpdates.name = payload.name;
+          }
+          if (nextDescription !== (result.suite.description ?? "")) {
+            suiteUpdates.description = nextDescription;
+          }
+          if (
+            suiteUpdates.name !== undefined ||
+            suiteUpdates.description !== undefined
+          ) {
+            await mutations.updateTestSuiteMutation(suiteUpdates);
+          }
+
+          if (
+            result.status === "created" &&
+            connectedServerNames.has(singleServerName)
+          ) {
+            await generateAndPersistEvalTests({
+              convex,
+              getAccessToken,
+              workspaceId,
+              suiteId: result.suite._id,
+              serverIds: [singleServerName],
+              createTestCase: createTestCaseMutation,
+            });
+          }
+
+          setLocallySuppressedServerKeys((previous) =>
+            previous.filter(
+              (serverKey) =>
+                serverKey !== workspaceServerKey(workspaceId, singleServerName),
+            ),
+          );
+
+          toast.success("Suite created");
+          navigatePlaygroundEvalsRoute({
+            type: "suite-overview",
+            suiteId: result.suite._id,
+          });
+          return;
+        }
+
         const createdSuite = await mutations.createTestSuiteMutation({
           workspaceId,
           name: payload.name,
@@ -401,7 +491,18 @@ export function EvalsTab({
         throw error;
       }
     },
-    [mutations.createTestSuiteMutation, workspaceId],
+    [
+      appState.servers,
+      connectedServerNames,
+      convex,
+      createTestCaseMutation,
+      getAccessToken,
+      locallySuppressedServerKeys,
+      mutations.createTestSuiteMutation,
+      mutations.ensureAutoEvalSuiteMutation,
+      mutations.updateTestSuiteMutation,
+      workspaceId,
+    ],
   );
 
   const handleWorkspaceBrowseChange = useCallback(

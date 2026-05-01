@@ -21,6 +21,9 @@ export function useEvalMutations({
   const convexCreateTestSuite = useMutation(
     "testSuites:createTestSuite" as any
   );
+  const ensureAutoEvalSuiteMutation = useMutation(
+    "testSuites:ensureAutoEvalSuiteForServer" as any,
+  );
   const updateTestSuiteMutation = useMutation(
     "testSuites:updateTestSuite" as any,
   );
@@ -36,6 +39,7 @@ export function useEvalMutations({
         deleteTestCaseMutation: convexDeleteTestCase,
         duplicateTestCaseMutation: convexDuplicateTestCase,
         createTestSuiteMutation: convexCreateTestSuite,
+        ensureAutoEvalSuiteMutation,
         updateTestSuiteMutation,
       };
     }
@@ -53,6 +57,7 @@ export function useEvalMutations({
       deleteTestCaseMutation: convexDeleteTestCase,
       duplicateTestCaseMutation: guestUnsupported,
       createTestSuiteMutation: convexCreateTestSuite,
+      ensureAutoEvalSuiteMutation: guestUnsupported,
       updateTestSuiteMutation,
     };
   }, [
@@ -65,6 +70,7 @@ export function useEvalMutations({
     convexDeleteTestCase,
     convexDuplicateTestCase,
     convexCreateTestSuite,
+    ensureAutoEvalSuiteMutation,
     updateTestSuiteMutation,
   ]);
 
