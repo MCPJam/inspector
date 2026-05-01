@@ -20,6 +20,7 @@ import { useSharedAppState } from "@/state/app-state-context";
 import { ViewsListSidebar } from "./views/ViewsListSidebar";
 import { ViewEditorPanel } from "./views/ViewEditorPanel";
 import { executeToolApi } from "@/lib/apis/mcp-tools-api";
+import type { WorkspaceHostContextDraft } from "@/lib/client-config";
 import {
   useCurrentDisplayContext,
   areDisplayContextsEqual,
@@ -32,6 +33,11 @@ import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-over
 import { buildPersistedExecutionReplay } from "@/components/chat-v2/thread/persisted-execution-replay";
 
 interface ViewsTabProps {
+  activeWorkspaceId?: string | null;
+  onSaveHostContext?: (
+    workspaceId: string,
+    hostContext: WorkspaceHostContextDraft,
+  ) => Promise<void>;
   selectedServer?: string;
 }
 
@@ -49,7 +55,11 @@ function safeSerializeForCompare(value: unknown): string {
   }
 }
 
-export function ViewsTab({ selectedServer }: ViewsTabProps) {
+export function ViewsTab({
+  activeWorkspaceId = null,
+  onSaveHostContext,
+  selectedServer,
+}: ViewsTabProps) {
   const { isAuthenticated, isLoading } = useConvexAuth();
   const posthog = usePostHog();
   const appState = useSharedAppState();
@@ -1116,8 +1126,10 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
             </div>
           ) : (
             <PlaygroundMain
+              activeWorkspaceId={activeWorkspaceId}
               key={selectedView._id}
               serverName={serversById.get(selectedView.serverId) || ""}
+              onSaveHostContext={onSaveHostContext}
               pendingExecution={pendingExecution}
               onExecutionInjected={handleExecutionInjected}
               isExecuting={false}

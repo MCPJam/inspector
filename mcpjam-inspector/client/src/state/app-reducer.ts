@@ -3,7 +3,6 @@ import {
   AppState,
   ConnectionStatus,
   ServerWithName,
-  Workspace,
 } from "./app-types";
 
 const setStatus = (
@@ -11,6 +10,24 @@ const setStatus = (
   status: ConnectionStatus,
   patch: Partial<ServerWithName> = {},
 ): ServerWithName => ({ ...server, connectionStatus: status, ...patch });
+
+const buildWorkspaceServerProjection = (
+  server: ServerWithName,
+): ServerWithName => ({
+  name: server.name,
+  config: server.config,
+  lastConnectionTime: server.lastConnectionTime,
+  connectionStatus: "disconnected",
+  retryCount: 0,
+  enabled: server.enabled ?? true,
+  ...(server.initializationInfo
+    ? { initializationInfo: server.initializationInfo }
+    : {}),
+  ...(server.useOAuth === undefined ? {} : { useOAuth: server.useOAuth }),
+  ...(server.oauthFlowProfile
+    ? { oauthFlowProfile: server.oauthFlowProfile }
+    : {}),
+});
 
 export function appReducer(state: AppState, action: AppAction): AppState {
   switch (action.type) {
@@ -192,7 +209,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
     }
 
     case "SYNC_AGENT_STATUS": {
-      const map = new Map(action.servers.map((s) => [s.id, s.status]));
+      const map = new Map(action.servers.map((s) => [s.id, s]));
       const updated: AppState["servers"] = {};
       for (const [name, server] of Object.entries(state.servers)) {
         const inFlight = server.connectionStatus === "connecting";
@@ -200,14 +217,61 @@ export function appReducer(state: AppState, action: AppAction): AppState {
           updated[name] = server;
           continue;
         }
-        const agentStatus = map.get(name);
-        if (agentStatus) {
-          updated[name] = { ...server, connectionStatus: agentStatus };
+        const agentInfo = map.get(name);
+        if (agentInfo) {
+          updated[name] = {
+            ...server,
+            connectionStatus: agentInfo.status,
+            ...(agentInfo.config ? { config: agentInfo.config } : {}),
+          };
         } else {
           updated[name] = { ...server, connectionStatus: "disconnected" };
         }
       }
-      return { ...state, servers: updated };
+
+      const activeWorkspace = state.workspaces[state.activeWorkspaceId];
+      const workspaceServers = { ...(activeWorkspace?.servers ?? {}) };
+      let shouldUpdateWorkspace = false;
+      for (const agentInfo of action.servers) {
+        if (!agentInfo.config) {
+          continue;
+        }
+
+        if (!updated[agentInfo.id]) {
+          updated[agentInfo.id] = {
+            name: agentInfo.id,
+            config: agentInfo.config,
+            lastConnectionTime: new Date(),
+            connectionStatus: agentInfo.status,
+            retryCount: 0,
+            enabled: true,
+          };
+        }
+
+        if (!workspaceServers[agentInfo.id]) {
+          workspaceServers[agentInfo.id] = buildWorkspaceServerProjection(
+            updated[agentInfo.id],
+          );
+          shouldUpdateWorkspace = true;
+        }
+      }
+
+      return {
+        ...state,
+        servers: updated,
+        ...(activeWorkspace && shouldUpdateWorkspace
+          ? {
+              workspaces: {
+                ...state.workspaces,
+                [state.activeWorkspaceId]: {
+                  ...activeWorkspace,
+                  servers: workspaceServers,
+                  updatedAt: new Date(),
+                },
+              },
+            }
+          : {}),
+      };
     }
 
     case "SELECT_SERVER":

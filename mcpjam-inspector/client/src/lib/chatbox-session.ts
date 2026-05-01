@@ -1,5 +1,9 @@
 import { getShareableAppOrigin, slugify } from "@/lib/shared-server-session";
-import type { ChatboxHostStyle } from "@/lib/chatbox-host-style";
+import {
+  normalizeChatboxHostStyleId,
+  type ChatboxHostStyle,
+} from "@/lib/chatbox-host-style";
+import { DEFAULT_HOST_STYLE } from "@/lib/host-styles";
 
 export type ChatboxShareMode = "any_signed_in_with_link" | "invited_only";
 
@@ -105,11 +109,8 @@ function normalizeChatboxSession(
   const token = typeof parsed.token === "string" ? parsed.token.trim() : "";
   const payload = parsed.payload;
   const hostStyle =
-    payload?.hostStyle === "claude" || payload?.hostStyle === "chatgpt"
-      ? payload.hostStyle
-      : payload?.hostStyle == null
-        ? "claude"
-        : null;
+    normalizeChatboxHostStyleId(payload?.hostStyle) ??
+    (payload?.hostStyle == null ? DEFAULT_HOST_STYLE.id : null);
 
   if (
     !token ||

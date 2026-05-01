@@ -24,7 +24,10 @@ import {
   readHostedOAuthResumeMarker,
   sanitizeHostedOAuthErrorMessage,
 } from "@/lib/hosted-oauth-resume";
-import { validateHostedServer } from "@/lib/apis/web/servers-api";
+import {
+  validateHostedServer,
+  type HostedServerValidateContext,
+} from "@/lib/apis/web/servers-api";
 import { slugify } from "@/lib/shared-server-session";
 import { ingestOAuthTraceLogs } from "@/stores/traffic-log-store";
 
@@ -55,15 +58,18 @@ export interface HostedOAuthServerDescriptor {
 function buildHostedOAuthStateMap(
   oauthServers: HostedOAuthServerDescriptor[],
   surface: HostedOAuthSurface,
-  isAuthenticated: boolean,
-  previous: Record<string, HostedOAuthState> = {},
+  isVaultBacked: boolean,
+  verifyVaultCredentialOnLoad: boolean,
+  previous: Record<string, HostedOAuthState> = {}
 ): Record<string, HostedOAuthState> {
   const resumeMarker = readHostedOAuthResumeMarker(surface);
   const nextState: Record<string, HostedOAuthState> = {};
 
   for (const server of oauthServers) {
     const existing = previous[server.serverId];
-    const hasToken = !!getStoredTokens(server.serverName)?.access_token;
+    const hasToken = isVaultBacked
+      ? false
+      : !!getStoredTokens(server.serverName)?.access_token;
     const matchesResume =
       resumeMarker != null &&
       matchesHostedOAuthServerIdentity(
@@ -74,7 +80,7 @@ function buildHostedOAuthStateMap(
         {
           serverName: server.serverName,
           serverUrl: server.serverUrl,
-        },
+        }
       );
     const serverUrl = server.serverUrl ?? existing?.serverUrl ?? null;
 
@@ -88,13 +94,16 @@ function buildHostedOAuthStateMap(
       status = "error";
       errorMessage = resumeMarker.errorMessage;
     } else if (matchesResume) {
-      status = hasToken || isAuthenticated ? "verifying" : "resuming";
+      status = hasToken || isVaultBacked ? "verifying" : "resuming";
       errorMessage = null;
     } else if (hasToken) {
       status = existing?.status === "ready" ? "ready" : "verifying";
       errorMessage = null;
-    } else if (isAuthenticated) {
+    } else if (isVaultBacked && verifyVaultCredentialOnLoad) {
       status = existing?.status === "ready" ? "ready" : "verifying";
+      errorMessage = null;
+    } else if (existing?.status === "ready") {
+      status = "ready";
       errorMessage = null;
     } else if (existing?.status === "error") {
       status = "error";
@@ -117,7 +126,7 @@ function setStoredOAuthTokenState(
   serverName: string,
   nextState: HostedOAuthState,
   setState: Dispatch<SetStateAction<Record<string, HostedOAuthState>>>,
-  serverId: string,
+  serverId: string
 ) {
   setState((previous) => ({
     ...previous,
@@ -134,7 +143,7 @@ function setStoredOAuthTokenState(
 
 async function waitForStoredAccessToken(
   serverName: string,
-  attempts: number,
+  attempts: number
 ): Promise<string | null> {
   for (let attempt = 0; attempt < attempts; attempt++) {
     const accessToken = getStoredTokens(serverName)?.access_token;
@@ -151,18 +160,24 @@ async function waitForStoredAccessToken(
 async function validateWithRetry(
   serverId: string,
   oauthAccessToken?: string,
+  hostedContext?: HostedServerValidateContext
 ): Promise<{ ok: true } | { ok: false; error: unknown }> {
   let lastError: unknown = null;
 
   for (let attempt = 1; attempt <= VALIDATION_RETRY_ATTEMPTS; attempt++) {
     try {
-      await validateHostedServer(serverId, oauthAccessToken);
+      await validateHostedServer(
+        serverId,
+        oauthAccessToken,
+        undefined,
+        hostedContext
+      );
       return { ok: true };
     } catch (error) {
       lastError = error;
       if (attempt < VALIDATION_RETRY_ATTEMPTS) {
         await new Promise((resolve) =>
-          window.setTimeout(resolve, VALIDATION_RETRY_MS),
+          window.setTimeout(resolve, VALIDATION_RETRY_MS)
         );
       }
     }
@@ -203,11 +218,20 @@ export function useHostedOAuthGate({
 }: UseHostedOAuthGateOptions): UseHostedOAuthGateResult {
   const oauthServers = useMemo(
     () => servers.filter((server) => server.useOAuth),
-    [servers],
+    [servers]
   );
+  const isVaultBacked = isAuthenticated || !!chatboxToken;
+  const verifyVaultCredentialOnLoad = isAuthenticated;
   const [oauthStateByServerId, setOAuthStateByServerId] = useState<
     Record<string, HostedOAuthState>
-  >(() => buildHostedOAuthStateMap(oauthServers, surface, isAuthenticated));
+  >(() =>
+    buildHostedOAuthStateMap(
+      oauthServers,
+      surface,
+      isVaultBacked,
+      verifyVaultCredentialOnLoad
+    )
+  );
   const oauthStateByServerIdRef = useRef(oauthStateByServerId);
   const processingServerIdsRef = useRef<Set<string>>(new Set());
   const isUnmountedRef = useRef(false);
@@ -228,11 +252,12 @@ export function useHostedOAuthGate({
       buildHostedOAuthStateMap(
         oauthServers,
         surface,
-        isAuthenticated,
-        previous,
-      ),
+        isVaultBacked,
+        verifyVaultCredentialOnLoad,
+        previous
+      )
     );
-  }, [oauthServers, surface, isAuthenticated]);
+  }, [oauthServers, surface, isVaultBacked, verifyVaultCredentialOnLoad]);
 
   useEffect(() => {
     if (oauthServers.length === 0) {
@@ -241,7 +266,7 @@ export function useHostedOAuthGate({
 
     const processServer = async (
       server: HostedOAuthServerDescriptor,
-      status: HostedOAuthStatus,
+      status: HostedOAuthStatus
     ) => {
       if (processingServerIdsRef.current.has(server.serverId)) {
         return;
@@ -250,16 +275,18 @@ export function useHostedOAuthGate({
       processingServerIdsRef.current.add(server.serverId);
       try {
         const isResume = status === "resuming";
-        const accessToken = isResume
+        const accessToken = isVaultBacked
+          ? null
+          : isResume
           ? await waitForStoredAccessToken(
               server.serverName,
-              RESUME_TOKEN_POLL_ATTEMPTS,
+              RESUME_TOKEN_POLL_ATTEMPTS
             )
-          : (getStoredTokens(server.serverName)?.access_token ?? null);
+          : getStoredTokens(server.serverName)?.access_token ?? null;
 
         if (isUnmountedRef.current) return;
 
-        if (!accessToken && !isAuthenticated) {
+        if (!accessToken && !isVaultBacked) {
           clearHostedOAuthResumeMarker();
           setStoredOAuthTokenState(
             server.serverName,
@@ -271,7 +298,7 @@ export function useHostedOAuthGate({
                 server.serverUrl,
             },
             setOAuthStateByServerId,
-            server.serverId,
+            server.serverId
           );
           return;
         }
@@ -290,7 +317,19 @@ export function useHostedOAuthGate({
           }));
         }
 
-        const validation = await validateWithRetry(server.serverId, accessToken);
+        const validation = await validateWithRetry(
+          server.serverId,
+          accessToken ?? undefined,
+          chatboxToken && workspaceId
+            ? {
+                workspaceId,
+                serverId: server.serverId,
+                serverName: server.serverName,
+                accessScope: "chat_v2",
+                chatboxToken,
+              }
+            : undefined
+        );
         if (isUnmountedRef.current) return;
 
         if (validation.ok) {
@@ -322,14 +361,14 @@ export function useHostedOAuthGate({
             status: "error",
             errorMessage: sanitizeHostedOAuthErrorMessage(
               validation.error,
-              VALIDATION_ERROR,
+              VALIDATION_ERROR
             ),
             serverUrl:
               oauthStateByServerIdRef.current[server.serverId]?.serverUrl ??
               server.serverUrl,
           },
           setOAuthStateByServerId,
-          server.serverId,
+          server.serverId
         );
       } finally {
         processingServerIdsRef.current.delete(server.serverId);
@@ -342,7 +381,14 @@ export function useHostedOAuthGate({
         void processServer(server, currentStatus);
       }
     }
-  }, [oauthServers, oauthStateByServerId, surface, isAuthenticated]);
+  }, [
+    oauthServers,
+    oauthStateByServerId,
+    surface,
+    isVaultBacked,
+    chatboxToken,
+    workspaceId,
+  ]);
 
   const authorizeServer = useCallback(
     async (server: HostedOAuthServerDescriptor) => {
@@ -379,7 +425,12 @@ export function useHostedOAuthGate({
         serverId: server.serverId,
         serverName: server.serverName,
         serverUrl: server.serverUrl,
-        accessScope: isAuthenticated ? "chat_v2" : undefined,
+        accessScope:
+          shareToken || chatboxToken
+            ? "chat_v2"
+            : isAuthenticated
+            ? "workspace_member"
+            : undefined,
         shareToken,
         chatboxToken,
         returnHash,
@@ -412,7 +463,7 @@ export function useHostedOAuthGate({
             status: "error",
             errorMessage: sanitizeHostedOAuthErrorMessage(
               result.error,
-              "Authorization could not be started. Try again.",
+              "Authorization could not be started. Try again."
             ),
             serverUrl:
               previous[server.serverId]?.serverUrl ?? server.serverUrl ?? null,
@@ -421,10 +472,12 @@ export function useHostedOAuthGate({
         return;
       }
 
-      const accessToken = await waitForStoredAccessToken(
-        server.serverName,
-        INLINE_TOKEN_POLL_ATTEMPTS,
-      );
+      const accessToken = isVaultBacked
+        ? null
+        : await waitForStoredAccessToken(
+            server.serverName,
+            INLINE_TOKEN_POLL_ATTEMPTS
+          );
 
       if (accessToken) {
         clearHostedOAuthPendingState();
@@ -436,14 +489,22 @@ export function useHostedOAuthGate({
       setOAuthStateByServerId((previous) => ({
         ...previous,
         [server.serverId]: {
-          status: accessToken || isAuthenticated ? "verifying" : "resuming",
+          status: accessToken || isVaultBacked ? "verifying" : "resuming",
           errorMessage: null,
           serverUrl:
             previous[server.serverId]?.serverUrl ?? server.serverUrl ?? null,
         },
       }));
     },
-    [isAuthenticated, pendingKey, chatboxToken, shareToken, surface, workspaceId],
+    [
+      isAuthenticated,
+      isVaultBacked,
+      pendingKey,
+      chatboxToken,
+      shareToken,
+      surface,
+      workspaceId,
+    ]
   );
 
   const markOAuthRequired = useCallback(
@@ -467,14 +528,14 @@ export function useHostedOAuthGate({
           matchingServers.length > 0
             ? null
             : oauthServers.length === 1
-              ? oauthServers[0]
-              : null;
+            ? oauthServers[0]
+            : null;
         const targetServers =
           matchingServers.length > 0
             ? matchingServers
             : fallbackServer
-              ? [fallbackServer]
-              : oauthServers;
+            ? [fallbackServer]
+            : oauthServers;
 
         for (const server of targetServers) {
           localStorage.removeItem(`mcp-tokens-${server.serverName}`);
@@ -492,7 +553,7 @@ export function useHostedOAuthGate({
         return nextState;
       });
     },
-    [oauthServers],
+    [oauthServers]
   );
 
   const pendingOAuthServers = useMemo(
@@ -509,11 +570,11 @@ export function useHostedOAuthGate({
             } satisfies HostedOAuthState),
         }))
         .filter(({ state }) => state.status !== "ready"),
-    [oauthServers, oauthStateByServerId],
+    [oauthServers, oauthStateByServerId]
   );
 
   const hasBusyOAuth = pendingOAuthServers.some(({ state }) =>
-    isHostedOAuthBusy(state.status),
+    isHostedOAuthBusy(state.status)
   );
 
   return {

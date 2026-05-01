@@ -1,7 +1,13 @@
 import { useEffect } from "react";
 import type { Workspace } from "@/state/app-types";
-import { buildDefaultWorkspaceClientConfig } from "@/lib/client-config";
+import {
+  buildDefaultWorkspaceConnectionConfig,
+  buildDefaultWorkspaceHostContext,
+  pickWorkspaceConnectionConfig,
+  pickWorkspaceHostContext,
+} from "@/lib/client-config";
 import { useClientConfigStore } from "@/stores/client-config-store";
+import { useHostContextStore } from "@/stores/host-context-store";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
 
@@ -34,22 +40,34 @@ export function WorkspaceClientConfigSync({
   );
 
   useEffect(() => {
+    const defaultConnectionConfig = buildDefaultWorkspaceConnectionConfig();
+    const defaultHostContext = buildDefaultWorkspaceHostContext({
+      theme: themeMode,
+      displayMode,
+      locale,
+      timeZone,
+      deviceCapabilities: { hover, touch },
+      safeAreaInsets: {
+        top: safeAreaTop,
+        right: safeAreaRight,
+        bottom: safeAreaBottom,
+        left: safeAreaLeft,
+      },
+    });
+
     useClientConfigStore.getState().loadWorkspaceConfig({
       workspaceId: activeWorkspaceId,
-      defaultConfig: buildDefaultWorkspaceClientConfig({
-        theme: themeMode,
-        displayMode,
-        locale,
-        timeZone,
-        deviceCapabilities: { hover, touch },
-        safeAreaInsets: {
-          top: safeAreaTop,
-          right: safeAreaRight,
-          bottom: safeAreaBottom,
-          left: safeAreaLeft,
-        },
-      }),
-      savedConfig: savedClientConfig,
+      defaultConfig: defaultConnectionConfig,
+      savedConfig: savedClientConfig
+        ? pickWorkspaceConnectionConfig(savedClientConfig)
+        : undefined,
+    });
+    useHostContextStore.getState().loadWorkspaceHostContext({
+      workspaceId: activeWorkspaceId,
+      defaultHostContext,
+      savedHostContext: savedClientConfig
+        ? pickWorkspaceHostContext(savedClientConfig)
+        : undefined,
     });
   }, [
     activeWorkspaceId,

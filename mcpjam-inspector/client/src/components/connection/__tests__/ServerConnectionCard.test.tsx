@@ -203,6 +203,34 @@ describe("ServerConnectionCard", () => {
 
       expect(screen.getByText("Failed (3)")).toBeInTheDocument();
     });
+
+    it("shows a connection settings indicator without reconnect badge copy", () => {
+      const server = createServer({ connectionStatus: "connected" });
+      render(
+        <ServerConnectionCard
+          server={server}
+          {...defaultProps}
+          needsReconnect
+        />,
+      );
+
+      expect(screen.queryByText("Needs reconnect")).not.toBeInTheDocument();
+      expect(
+        screen.queryByLabelText("Reconnect needed"),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.getByLabelText("Connection settings changed"),
+      ).toBeInTheDocument();
+    });
+
+    it("does not show the connection settings indicator when settings match", () => {
+      const server = createServer({ connectionStatus: "connected" });
+      render(<ServerConnectionCard server={server} {...defaultProps} />);
+
+      expect(
+        screen.queryByLabelText("Connection settings changed"),
+      ).not.toBeInTheDocument();
+    });
   });
 
   describe("toggle switch", () => {
@@ -255,6 +283,28 @@ describe("ServerConnectionCard", () => {
 
       expect(onReconnect).toHaveBeenCalledWith("test-server", {
         allowInteractiveOAuthFlow: false,
+      });
+    });
+
+    it("forces a fresh OAuth flow when toggling on an OAuth server without tokens", () => {
+      const server = createServer({
+        connectionStatus: "disconnected",
+        useOAuth: true,
+        config: { url: "https://example.com/mcp" } as any,
+      });
+      const onReconnect = vi.fn().mockResolvedValue(undefined);
+      render(
+        <ServerConnectionCard
+          server={server}
+          {...defaultProps}
+          onReconnect={onReconnect}
+        />,
+      );
+
+      fireEvent.click(screen.getByRole("switch"));
+
+      expect(onReconnect).toHaveBeenCalledWith("test-server", {
+        forceOAuthFlow: true,
       });
     });
 

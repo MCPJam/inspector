@@ -27,6 +27,8 @@ export function serializeServersForSharing(
         config.args = (server.config as any).args;
       if ((server.config as any).timeout)
         config.timeout = (server.config as any).timeout;
+      if ((server.config as any).clientCapabilities)
+        config.clientCapabilities = (server.config as any).clientCapabilities;
 
       if ((server.config as any).requestInit) {
         const requestInit: Record<string, unknown> = {};
@@ -50,6 +52,7 @@ export function serializeServersForSharing(
     if (server.useOAuth && server.oauthFlowProfile) {
       serializedServer.oauthFlowProfile = {
         serverUrl: server.oauthFlowProfile.serverUrl,
+        resourceUrl: server.oauthFlowProfile.resourceUrl,
         protocolVersion: server.oauthFlowProfile.protocolVersion,
         registrationStrategy: server.oauthFlowProfile.registrationStrategy,
         scopes: server.oauthFlowProfile.scopes,
@@ -90,6 +93,9 @@ export function deserializeServersFromConvex(
     if (serverData.args) config.args = serverData.args;
     if (serverData.env) config.env = serverData.env;
     if (serverData.timeout) config.timeout = serverData.timeout;
+    if (serverData.clientCapabilities) {
+      config.clientCapabilities = serverData.clientCapabilities;
+    }
     if (serverData.headers) {
       config.requestInit = { headers: serverData.headers };
     }
@@ -107,6 +113,8 @@ export function deserializeServersFromConvex(
       if (serverData.config.args) config.args = serverData.config.args;
       if (serverData.config.env) config.env = serverData.config.env;
       if (serverData.config.timeout) config.timeout = serverData.config.timeout;
+      if (serverData.config.clientCapabilities)
+        config.clientCapabilities = serverData.config.clientCapabilities;
       if (serverData.config.requestInit)
         config.requestInit = serverData.config.requestInit;
     }
@@ -128,7 +136,7 @@ export function deserializeServersFromConvex(
 
     // NEW: Handle flat oauthScopes/clientId from servers table
     // Convert oauthScopes array to comma-separated string for OAuthTestProfile.scopes
-    if (serverData.oauthScopes || serverData.clientId) {
+    if (serverData.oauthScopes || serverData.clientId || serverData.oauthResourceUrl) {
       const existingProfile = (server.oauthFlowProfile as any) || {};
       server.oauthFlowProfile = {
         ...existingProfile,
@@ -136,6 +144,8 @@ export function deserializeServersFromConvex(
           ? serverData.oauthScopes.join(",")
           : existingProfile.scopes || "",
         clientId: serverData.clientId || existingProfile.clientId || "",
+        resourceUrl:
+          serverData.oauthResourceUrl || existingProfile.resourceUrl || "",
       } as typeof server.oauthFlowProfile;
     }
 
@@ -194,6 +204,14 @@ export function serversHaveChanged(
     const remoteTimeout = remoteServer.timeout || remoteServer.config?.timeout;
     if ((localServer.config as any)?.timeout !== remoteTimeout) return true;
 
+    const remoteClientCapabilities =
+      remoteServer.clientCapabilities || remoteServer.config?.clientCapabilities;
+    if (
+      JSON.stringify((localServer.config as any)?.clientCapabilities) !==
+      JSON.stringify(remoteClientCapabilities)
+    )
+      return true;
+
     // Get remote requestInit/headers (flat headers or nested config.requestInit)
     const remoteRequestInit = remoteServer.headers
       ? { headers: remoteServer.headers }
@@ -215,12 +233,18 @@ export function serversHaveChanged(
     // Check OAuth profile (handle both flat and nested structures)
     // For flat structure, convert oauthScopes array to comma-separated string for comparison
     const remoteOAuthProfile =
-      remoteServer.oauthScopes || remoteServer.clientId
+      remoteServer.oauthScopes ||
+      remoteServer.clientId ||
+      remoteServer.oauthResourceUrl
         ? {
+            ...(remoteServer.oauthFlowProfile ?? {}),
             scopes: Array.isArray(remoteServer.oauthScopes)
               ? remoteServer.oauthScopes.join(",")
               : remoteServer.oauthScopes,
             clientId: remoteServer.clientId,
+            resourceUrl:
+              remoteServer.oauthResourceUrl ??
+              remoteServer.oauthFlowProfile?.resourceUrl,
           }
         : remoteServer.oauthFlowProfile;
     if (

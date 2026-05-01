@@ -1,4 +1,4 @@
-import { useConvexAuth } from "convex/react";
+import { useConvexAuth, useQuery } from "convex/react";
 import {
   useCallback,
   useEffect,
@@ -44,7 +44,11 @@ import { RegistryTab } from "./components/RegistryTab";
 import OAuthDebugCallback from "./components/oauth/OAuthDebugCallback";
 import { MCPSidebar } from "./components/mcp-sidebar";
 import { SidebarInset, SidebarProvider } from "./components/ui/sidebar";
-import { Alert, AlertDescription, AlertTitle } from "@mcpjam/design-system/alert";
+import {
+  Alert,
+  AlertDescription,
+  AlertTitle,
+} from "@mcpjam/design-system/alert";
 import { Button } from "@mcpjam/design-system/button";
 import {
   Dialog,
@@ -77,6 +81,7 @@ import {
 } from "./lib/theme-utils";
 import CompletingSignInLoading from "./components/CompletingSignInLoading";
 import LoadingScreen from "./components/LoadingScreen";
+import { OccupationGate } from "./components/signup/OccupationGate";
 import { Header } from "./components/Header";
 import { ThemePreset } from "./types/preferences/theme";
 import type {
@@ -95,7 +100,13 @@ import {
   getChatboxPathTokenFromLocation,
 } from "./components/hosted/ChatboxChatPage";
 import { useHostedApiContext } from "./hooks/hosted/use-hosted-api-context";
+import { useInspectorCommandBus } from "./hooks/use-inspector-command-bus";
 import { HOSTED_MODE, NON_PROD_LOCKDOWN } from "./lib/config";
+import {
+  createInspectorCommandClientError,
+  registerInspectorCommandHandler,
+} from "./lib/inspector-command-handlers";
+import { waitForUiCommit } from "./lib/wait-for-ui-commit";
 import { subscribeToOAuthDebuggerRequests } from "./lib/oauth/oauth-debugger-navigation";
 import {
   clearBillingSignInReturnPath,
@@ -166,9 +177,16 @@ import {
 import { getEffectiveWorkspaceClientCapabilities } from "./lib/client-config";
 import { buildEvalsHash } from "./lib/evals-router";
 import { withTestingSurface } from "./lib/testing-surface";
-import { useClientConfigStore } from "./stores/client-config-store";
+import { useWorkspaceClientConfigSyncPending } from "./hooks/use-workspace-client-config-sync-pending";
 import { ingestOAuthTraceLogs } from "./stores/traffic-log-store";
-import { clearGuestSession } from "./lib/guest-session";
+import { clearGuestSession, getGuestBearerToken } from "./lib/guest-session";
+import type {
+  NavigateInspectorCommand,
+  OpenAppBuilderInspectorCommand,
+  SelectServerInspectorCommand,
+} from "@/shared/inspector-command.js";
+
+const OCCUPATION_GATE_ROLLOUT_MS = Date.parse("2026-04-29T00:00:00.000Z");
 
 function getHostedOAuthCallbackErrorMessage(): string {
   const params = new URLSearchParams(window.location.search);
@@ -229,6 +247,29 @@ function BillingHandoffLoading({ overlay = false }: { overlay?: boolean }) {
         <Loader2 className="mx-auto size-12 animate-spin text-muted-foreground" />
         <p className="mt-4 text-muted-foreground">Preparing checkout...</p>
       </div>
+    </div>
+  );
+}
+
+function UserSetupError() {
+  return (
+    <div
+      className="flex min-h-screen flex-col items-center justify-center gap-4 p-6 text-center"
+      data-testid="user-setup-error"
+    >
+      <div className="max-w-md space-y-2">
+        <h1 className="text-xl font-semibold">Could not finish setup</h1>
+        <p className="text-sm text-muted-foreground">
+          We could not create your MCPJam user record. Refresh and try again.
+        </p>
+      </div>
+      <button
+        type="button"
+        className="rounded bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
+        onClick={() => window.location.reload()}
+      >
+        Refresh
+      </button>
     </div>
   );
 }
@@ -299,7 +340,6 @@ export default function App() {
     optimisticallyDeletedOrganizationIds,
     setOptimisticallyDeletedOrganizationIds,
   ] = useState<string[]>([]);
-  const [chatHasMessages, setChatHasMessages] = useState(false);
   const [appBuilderOnboarding, setAppBuilderOnboarding] = useState(false);
   const [callbackCompleted, setCallbackCompleted] = useState(false);
   const [callbackRecoveryExpired, setCallbackRecoveryExpired] = useState(false);
@@ -330,6 +370,10 @@ export default function App() {
     isLoading: isWorkOsLoading,
   } = useAuth();
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
+  const currentUser = useQuery(
+    "users:getCurrentUser" as any,
+    isAuthenticated ? ({} as any) : "skip",
+  );
   const [hostedOAuthHandling, setHostedOAuthHandling] = useState(() => {
     if (!HOSTED_MODE) {
       return false;
@@ -492,15 +536,40 @@ export default function App() {
       });
     };
 
-    const completeCallback =
-      isAuthenticated
-        ? completeHostedOAuthCallback(callbackContext, code, {
+    const hasHostedServerContext =
+      !!callbackContext.workspaceId && !!callbackContext.serverId;
+    const isGuestChatboxSessionCallback =
+      !isAuthenticated &&
+      !!callbackContext.chatboxToken &&
+      !!callbackContext.sessionId;
+    const shouldUseHostedCompletion =
+      hasHostedServerContext &&
+      (isAuthenticated || isGuestChatboxSessionCallback);
+
+    const completeCallback = shouldUseHostedCompletion
+      ? (async () => {
+          let authorizationHeader: string | undefined;
+          if (isGuestChatboxSessionCallback) {
+            const guestBearerToken = await getGuestBearerToken();
+            if (!guestBearerToken) {
+              return {
+                success: false,
+                error:
+                  "Your guest session expired. Reopen the chatbox link and try again.",
+              };
+            }
+            authorizationHeader = `Bearer ${guestBearerToken}`;
+          }
+
+          return completeHostedOAuthCallback(callbackContext, code, {
             callbackState: state,
             onTraceUpdate: handleLiveOAuthTrace,
-          })
-        : handleOAuthCallback(code, {
-            onTraceUpdate: handleLiveOAuthTrace,
+            authorizationHeader,
           });
+        })()
+      : handleOAuthCallback(code, {
+          onTraceUpdate: handleLiveOAuthTrace,
+        });
 
     completeCallback
       .then((result) => {
@@ -557,7 +626,7 @@ export default function App() {
   // Set up Electron OAuth callback handling
   useElectronOAuth();
   // Ensure a `users` row exists after Convex auth
-  useEnsureDbUser();
+  const { isEnsuringUser } = useEnsureDbUser();
 
   const isDebugCallback = window.location.pathname.startsWith(
     "/oauth/callback/debug",
@@ -650,6 +719,7 @@ export default function App() {
     handleDisconnect,
     handleReconnect,
     ensureServersReady,
+    syncAgentStatus,
     handleUpdate,
     handleRemoveServer,
     setSelectedServer,
@@ -663,6 +733,7 @@ export default function App() {
     handleLeaveWorkspace,
     handleUpdateWorkspace,
     handleUpdateClientConfig,
+    handleUpdateHostContext,
     handleDeleteWorkspace,
     handleWorkspaceShared,
     saveServerConfigWithoutConnecting,
@@ -674,6 +745,7 @@ export default function App() {
     clearLocalFallbackWorkspaceSelection,
     pendingDashboardOAuth,
     isCloudSyncActive,
+    persistRuntimeServerToWorkspaceIfNeeded,
   } = useAppState({
     currentUserId: workOsUser?.id ?? null,
     hasOrganizations: effectiveOrganizations.length > 0,
@@ -683,10 +755,24 @@ export default function App() {
       ? currentHashRoute.organizationId
       : undefined,
   });
+  useInspectorCommandBus();
   const oauthDebuggerServersRef = useRef(appState.servers);
   oauthDebuggerServersRef.current = appState.servers;
+  const workspaceServersRef = useRef(workspaceServers);
+  workspaceServersRef.current = workspaceServers;
   const selectedServerRef = useRef(appState.selectedServer);
   selectedServerRef.current = appState.selectedServer;
+  const persistRuntimeServerToWorkspaceRef = useRef(
+    persistRuntimeServerToWorkspaceIfNeeded,
+  );
+  persistRuntimeServerToWorkspaceRef.current =
+    persistRuntimeServerToWorkspaceIfNeeded;
+  const getInspectorServerState = useCallback((serverName: string) => {
+    const runtimeServer = oauthDebuggerServersRef.current[serverName];
+    const workspaceServer = workspaceServersRef.current[serverName];
+    const server = runtimeServer ?? workspaceServer;
+    return server ? { runtimeServer, workspaceServer, server } : null;
+  }, []);
   useEffect(() => {
     return subscribeToOAuthDebuggerRequests(({ serverName }) => {
       const matchedServerName = Object.entries(
@@ -695,7 +781,10 @@ export default function App() {
         ([name, server]) => name === serverName || server.name === serverName,
       )?.[0];
 
-      if (matchedServerName && matchedServerName !== selectedServerRef.current) {
+      if (
+        matchedServerName &&
+        matchedServerName !== selectedServerRef.current
+      ) {
         setSelectedServer(matchedServerName);
       }
     });
@@ -852,17 +941,14 @@ export default function App() {
 
   // Get the Convex workspace ID from the active workspace
   const activeWorkspace = workspaces[activeWorkspaceId];
-  const isClientConfigSyncPending = useClientConfigStore(
-    (state) =>
-      state.isAwaitingRemoteEcho &&
-      state.pendingWorkspaceId === activeWorkspaceId,
-  );
+  const isClientConfigSyncPending =
+    useWorkspaceClientConfigSyncPending(activeWorkspaceId);
   const hostedClientCapabilities = getEffectiveWorkspaceClientCapabilities(
     activeWorkspace?.clientConfig,
   ) as Record<string, unknown>;
   const convexWorkspaceId = activeWorkspace?.sharedWorkspaceId ?? null;
   const routeScopedOrganizationId = hasRouteOrganization
-    ? (currentHashRoute.organizationId ?? null)
+    ? currentHashRoute.organizationId ?? null
     : null;
   const rawBillingOrganizationId =
     routeScopedOrganizationId ??
@@ -954,8 +1040,8 @@ export default function App() {
   const createWorkspaceDisabledReason = guestWorkspaceLimitReached
     ? "Sign in to create more workspaces"
     : noOrganizationsAvailable
-      ? "Create or join an organization to create workspaces"
-      : (workspaceCreationGate.denialMessage ?? undefined);
+    ? "Create or join an organization to create workspaces"
+    : workspaceCreationGate.denialMessage ?? undefined;
   const [trialModalDismissedForOrg, setTrialModalDismissedForOrg] = useState<
     string | null
   >(null);
@@ -1027,10 +1113,9 @@ export default function App() {
   const guestServerConfigs = useMemo(
     () =>
       Object.fromEntries(
-        Object.entries<ServerWithName>(appState.servers).map(([name, server]) => [
-          name,
-          server.config,
-        ]),
+        Object.entries<ServerWithName>(appState.servers).map(
+          ([name, server]) => [name, server.config],
+        ),
       ),
     [appState.servers],
   );
@@ -1129,7 +1214,6 @@ export default function App() {
         );
         setActiveOrganizationId(undefined);
         setActiveTab("servers");
-        setChatHasMessages(false);
         if (window.location.hash !== "#servers") {
           window.location.hash = "servers";
         }
@@ -1149,9 +1233,6 @@ export default function App() {
       if (resolved.shouldSelectAllServers) {
         setSelectedMultipleServersToAllServers();
       }
-      if (resolved.shouldClearChatMessages) {
-        setChatHasMessages(false);
-      }
       if (options?.updateHash) {
         window.location.hash = resolved.normalizedSection;
       }
@@ -1164,6 +1245,116 @@ export default function App() {
       setSelectedMultipleServersToAllServers,
     ],
   );
+
+  useLayoutEffect(() => {
+    if (HOSTED_MODE) {
+      return;
+    }
+
+    const unregisterNavigate = registerInspectorCommandHandler(
+      "navigate",
+      async (rawCommand) => {
+        const command = rawCommand as NavigateInspectorCommand;
+        const resolved = resolveHostedNavigation(command.payload.target, false);
+
+        applyNavigation(command.payload.target, { updateHash: true });
+        await waitForUiCommit();
+
+        return { activeTab: resolved.normalizedTab };
+      },
+    );
+
+    const unregisterSelectServer = registerInspectorCommandHandler(
+      "selectServer",
+      async (rawCommand) => {
+        const command = rawCommand as SelectServerInspectorCommand;
+        let serverState = getInspectorServerState(command.payload.serverName);
+        if (!serverState) {
+          await syncAgentStatus();
+          await waitForUiCommit();
+          serverState = getInspectorServerState(command.payload.serverName);
+        }
+
+        if (!serverState) {
+          throw createInspectorCommandClientError(
+            "unknown_server",
+            `Unknown server "${command.payload.serverName}".`,
+          );
+        }
+
+        const connectionStatus =
+          serverState.runtimeServer?.connectionStatus ??
+          serverState.workspaceServer?.connectionStatus ??
+          "disconnected";
+        if (connectionStatus !== "connected") {
+          throw createInspectorCommandClientError(
+            "disconnected_server",
+            `Server "${command.payload.serverName}" is ${connectionStatus}.`,
+          );
+        }
+
+        setSelectedServer(command.payload.serverName);
+        await waitForUiCommit();
+
+        return {
+          selectedServer: command.payload.serverName,
+          connectionStatus,
+        };
+      },
+    );
+
+    const unregisterOpenAppBuilder = registerInspectorCommandHandler(
+      "openAppBuilder",
+      async (rawCommand) => {
+        const command = rawCommand as OpenAppBuilderInspectorCommand;
+
+        if (command.payload.serverName) {
+          let serverState = getInspectorServerState(command.payload.serverName);
+          if (!serverState) {
+            await syncAgentStatus();
+            await waitForUiCommit();
+            serverState = getInspectorServerState(command.payload.serverName);
+          }
+
+          if (!serverState) {
+            throw createInspectorCommandClientError(
+              "unknown_server",
+              `Unknown server "${command.payload.serverName}".`,
+            );
+          }
+
+          setSelectedServer(command.payload.serverName);
+          const runtimeForPersist = serverState.runtimeServer;
+          if (runtimeForPersist?.connectionStatus === "connected") {
+            void persistRuntimeServerToWorkspaceRef.current(
+              command.payload.serverName,
+              runtimeForPersist,
+            );
+          }
+        }
+
+        applyNavigation("app-builder", { updateHash: true });
+        await waitForUiCommit();
+
+        return {
+          activeTab: "app-builder",
+          selectedServer:
+            command.payload.serverName || selectedServerRef.current || "none",
+        };
+      },
+    );
+
+    return () => {
+      unregisterNavigate();
+      unregisterSelectServer();
+      unregisterOpenAppBuilder();
+    };
+  }, [
+    applyNavigation,
+    getInspectorServerState,
+    setSelectedServer,
+    syncAgentStatus,
+  ]);
 
   // Sync tab with hash on mount and when hash changes
   useLayoutEffect(() => {
@@ -1357,7 +1548,9 @@ export default function App() {
 
     if (activeTabBillingLocked && activeTabBillingFeature) {
       toast.error(
-        `${formatBillingFeatureName(activeTabBillingFeature)} is not included in the ${formatPlanName(
+        `${formatBillingFeatureName(
+          activeTabBillingFeature,
+        )} is not included in the ${formatPlanName(
           shellBillingStatus?.plan,
         )} plan. Upgrade the organization to continue.`,
       );
@@ -1642,6 +1835,33 @@ export default function App() {
     return <LoadingScreen />;
   }
 
+  if (
+    !isHostedChatRoute &&
+    isAuthenticated &&
+    (currentUser === undefined || (currentUser === null && isEnsuringUser))
+  ) {
+    return <LoadingScreen />;
+  }
+
+  if (!isHostedChatRoute && isAuthenticated && currentUser === null) {
+    return <UserSetupError />;
+  }
+
+  if (
+    !isHostedChatRoute &&
+    isAuthenticated &&
+    typeof currentUser?.createdAt === "number" &&
+    currentUser.createdAt >= OCCUPATION_GATE_ROLLOUT_MS &&
+    !currentUser?.occupation?.trim()
+  ) {
+    return (
+      <OccupationGate
+        userId={workOsUser?.id ?? null}
+        email={workOsUser?.email}
+      />
+    );
+  }
+
   const shouldShowActiveServerSelector =
     activeTab === "tools" ||
     activeTab === "resources" ||
@@ -1656,11 +1876,7 @@ export default function App() {
   const activeServerSelectorProps: ActiveServerSelectorProps | undefined =
     shouldShowActiveServerSelector
       ? {
-          serverConfigs:
-            activeTab === "oauth-flow" ||
-            (activeTab === "xaa-flow" && xaaEnabled === true)
-              ? appState.servers
-              : workspaceServers,
+          serverConfigs: workspaceServers,
           selectedServer: appState.selectedServer,
           onServerChange: setSelectedServer,
           onConnect: handleConnect,
@@ -1668,7 +1884,12 @@ export default function App() {
           isMultiSelectEnabled: activeTab === "chat",
           onMultiServerToggle: toggleServerSelection,
           selectedMultipleServers: appState.selectedMultipleServers,
-          showOnlyOAuthServers: false,
+          showOnlyOAuthServers:
+            activeTab === "oauth-flow" ||
+            (activeTab === "xaa-flow" && xaaEnabled === true),
+          autoSelectFilteredServer:
+            activeTab !== "oauth-flow" &&
+            !(activeTab === "xaa-flow" && xaaEnabled === true),
           showOnlyServersWithViews: activeTab === "views",
           serversWithViews: serversWithViews,
           hasMessages: false,
@@ -1836,7 +2057,11 @@ export default function App() {
               )
             ) : null)}
           {activeTab === "views" && (
-            <ViewsTab selectedServer={appState.selectedServer} />
+            <ViewsTab
+              selectedServer={appState.selectedServer}
+              activeWorkspaceId={activeWorkspaceId}
+              onSaveHostContext={handleUpdateHostContext}
+            />
           )}
           {activeTab === "conformance" && (
             <ConformanceTab server={selectedServerEntry ?? null} />
@@ -1943,7 +2168,6 @@ export default function App() {
               <XAAFlowTab
                 serverConfigs={appState.servers}
                 selectedServerName={appState.selectedServer}
-                onSelectServer={setSelectedServer}
               />
             </ErrorBoundary>
           )}
@@ -1958,7 +2182,6 @@ export default function App() {
               onReconnectServer={handleReconnect}
               onAddServer={handleConnect}
               onSelectedServerNamesChange={setSelectedMCPConfigs}
-              onHasMessagesChange={setChatHasMessages}
               enableMultiModelChat
               showHostStyleSelector
               evalChatHandoff={evalChatHandoff}
@@ -1975,10 +2198,12 @@ export default function App() {
               serverConfig={selectedMCPConfig}
               serverName={appState.selectedServer}
               servers={workspaceServers}
+              activeWorkspaceId={activeWorkspaceId}
               isAuthenticated={isAuthenticated}
               isAuthLoading={isAuthLoading}
               isServerSyncing={isSelectedServerSyncing}
               onConnect={handleConnect}
+              onSaveHostContext={handleUpdateHostContext}
               ensureServersReady={ensureServersReady}
               onOnboardingChange={setAppBuilderOnboarding}
               playgroundServerSelectorProps={playgroundServerSelectorProps}

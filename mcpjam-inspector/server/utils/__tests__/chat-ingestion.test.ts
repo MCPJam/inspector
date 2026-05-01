@@ -1,13 +1,41 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { Context } from "hono";
 import { persistChatSessionToConvex } from "../chat-ingestion";
+import type { RequestLogContext } from "../log-events";
 
 const mockLogger = vi.hoisted(() => ({
   warn: vi.fn(),
+  event: vi.fn(),
 }));
 
 vi.mock("../logger", () => ({
   logger: mockLogger,
 }));
+
+// Mirror the production envelope populated by requestLogContextMiddleware.
+// Without this, getRequestLogger throws — the strict-throw was added in the
+// typed-event foundation to surface wiring bugs, so test fixtures must reflect
+// real production wiring.
+function makeTestContext(): Context {
+  const baseContext: RequestLogContext = {
+    event: "http.request.completed",
+    timestamp: "2024-01-01T00:00:00.000Z",
+    environment: "test",
+    release: null,
+    component: "http",
+    requestId: "test-req",
+    route: "/api/web/test",
+    method: "POST",
+    authType: "unknown",
+  };
+  const vars: Record<string, unknown> = { requestLogContext: baseContext };
+  return {
+    var: new Proxy(vars, { get: (t, p) => t[p as string] }),
+    set: vi.fn((key: string, value: unknown) => {
+      vars[key] = value;
+    }),
+  } as unknown as Context;
+}
 
 describe("chat-ingestion", () => {
   const originalFetch = global.fetch;
@@ -200,6 +228,125 @@ describe("chat-ingestion", () => {
         responsePreview: expect.stringContaining("VERSION_CONFLICT"),
       }),
     );
+  });
+
+  it("emits chat.session.persist.failed(version_conflict) via typed event when c is provided", async () => {
+    global.fetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ code: "VERSION_CONFLICT" }), {
+        status: 409,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    const c = makeTestContext();
+
+    await persistChatSessionToConvex(
+      {
+        chatSessionId: "evt-1",
+        modelId: "m",
+        modelSource: "mcpjam",
+        authHeader: "Bearer t",
+        startedAt: 1,
+        sourceType: "chatbox",
+      },
+      c,
+    );
+
+    expect(mockLogger.event).toHaveBeenCalledWith(
+      "chat.session.persist.failed",
+      expect.any(Object),
+      expect.objectContaining({ failureKind: "version_conflict" }),
+      undefined,
+    );
+    expect(mockLogger.warn).not.toHaveBeenCalled();
+  });
+
+  it("emits chat.session.persist.failed(http_error) via typed event when c is provided", async () => {
+    global.fetch = vi.fn().mockResolvedValue(
+      new Response("Server Error", { status: 503 }),
+    );
+    const c = makeTestContext();
+
+    await persistChatSessionToConvex(
+      {
+        chatSessionId: "evt-2",
+        modelId: "m",
+        modelSource: "mcpjam",
+        authHeader: "Bearer t",
+        startedAt: 1,
+        sourceType: "direct",
+      },
+      c,
+    );
+
+    expect(mockLogger.event).toHaveBeenCalledWith(
+      "chat.session.persist.failed",
+      expect.any(Object),
+      expect.objectContaining({ failureKind: "http_error", statusCode: 503 }),
+      undefined,
+    );
+    expect(mockLogger.warn).not.toHaveBeenCalled();
+  });
+
+  it("emits chat.session.persist.failed(timeout) via typed event when c is provided", async () => {
+    vi.useFakeTimers();
+    global.fetch = vi.fn().mockImplementation(
+      async (_input, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          const signal = init?.signal;
+          if (signal instanceof AbortSignal) {
+            signal.addEventListener("abort", () => {
+              reject(Object.assign(new Error("aborted"), { name: "AbortError" }));
+            });
+          }
+        }),
+    ) as typeof fetch;
+    const c = makeTestContext();
+
+    const p = persistChatSessionToConvex(
+      {
+        chatSessionId: "evt-3",
+        modelId: "m",
+        modelSource: "mcpjam",
+        authHeader: "Bearer t",
+        startedAt: 1,
+        timeoutMs: 50,
+      },
+      c,
+    );
+    await vi.advanceTimersByTimeAsync(50);
+    await p;
+
+    expect(mockLogger.event).toHaveBeenCalledWith(
+      "chat.session.persist.failed",
+      expect.any(Object),
+      expect.objectContaining({ failureKind: "timeout" }),
+      undefined,
+    );
+    expect(mockLogger.warn).not.toHaveBeenCalled();
+  });
+
+  it("emits chat.session.persist.failed(exception) via typed event when c is provided", async () => {
+    global.fetch = vi.fn().mockRejectedValue(new Error("network failure"));
+    const c = makeTestContext();
+
+    await persistChatSessionToConvex(
+      {
+        chatSessionId: "evt-4",
+        modelId: "m",
+        modelSource: "mcpjam",
+        authHeader: "Bearer t",
+        startedAt: 1,
+      },
+      c,
+    );
+
+    expect(mockLogger.event).toHaveBeenCalledWith(
+      "chat.session.persist.failed",
+      expect.any(Object),
+      expect.objectContaining({ failureKind: "exception" }),
+      expect.objectContaining({ error: expect.any(Error) }),
+    );
+    expect(mockLogger.warn).not.toHaveBeenCalled();
   });
 
   it("includes directVisibility when persisting a direct chat", async () => {

@@ -152,6 +152,31 @@ describe("chatbox-session", () => {
     });
   });
 
+  it("preserves extensible hostStyle ids before a host definition is registered", () => {
+    sessionStorage.setItem(
+      "mcpjam_chatbox_session_v1",
+      JSON.stringify({
+        token: "chatbox-token",
+        payload: {
+          workspaceId: "ws_1",
+          chatboxId: "sbx_1",
+          name: "Codex Chatbox",
+          hostStyle: "codex",
+          mode: "invited_only",
+          allowGuestAccess: false,
+          viewerIsWorkspaceMember: true,
+          systemPrompt: "You are helpful.",
+          modelId: "openai/gpt-5-mini",
+          temperature: 0.4,
+          requireToolApproval: true,
+          servers: [],
+        },
+      }),
+    );
+
+    expect(readChatboxSession()?.payload.hostStyle).toBe("codex");
+  });
+
   it("preserves preview surface when explicitly stored", () => {
     writeChatboxSession({
       token: "chatbox-token",

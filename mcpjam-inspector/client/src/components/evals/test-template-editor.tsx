@@ -2588,12 +2588,18 @@ function RunColumn({
         ? advancedConfig.temperature
         : undefined;
 
+    const requireToolApproval =
+      typeof advancedConfig?.requireToolApproval === "boolean"
+        ? advancedConfig.requireToolApproval
+        : undefined;
+
     return {
       messages: adaptedTrace.messages,
       serverNames,
       modelId: record.model,
       systemPrompt,
       temperature,
+      requireToolApproval,
     } satisfies Omit<EvalChatHandoff, "id">;
   }, [
     connectedServerIds,

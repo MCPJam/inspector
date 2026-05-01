@@ -54,6 +54,7 @@ servers.post("/check-oauth", async (c) =>
     const bearerToken = assertBearerToken(c);
     const body = parseWithSchema(workspaceServerSchema, rawBody);
     const auth = await authorizeServer(
+      c,
       bearerToken,
       body.workspaceId,
       body.serverId,
@@ -151,6 +152,7 @@ async function runGuestDoctor(
     config: {
       url: canonicalUrl,
       capabilities: guestInput.clientCapabilities,
+      clientCapabilities: guestInput.clientCapabilities,
       requestInit: { headers },
       timeout: timeoutMs,
     },
@@ -174,6 +176,7 @@ async function runHostedDoctor(
   const bearerToken = assertBearerToken(c);
   const body = parseWithSchema(workspaceServerSchema, rawBody);
   const auth = await authorizeServer(
+    c,
     bearerToken,
     body.workspaceId,
     body.serverId,

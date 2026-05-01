@@ -20,6 +20,8 @@ import {
 import { useChatSession } from "@/hooks/use-chat-session";
 import { getChatComposerInteractivity } from "@/hooks/use-chat-stop-controls";
 import type { ModelDefinition } from "@/shared/types";
+import type { ExecutionConfig } from "@/lib/chat-execution-config";
+import type { HostedRuntimeContext } from "@/lib/hosted-runtime-context";
 
 type ChatTraceViewMode = "chat" | "timeline" | "raw";
 
@@ -44,15 +46,8 @@ interface MultiModelChatCardProps {
   stopRequestId: number;
   placeholder: string;
   reasoningDisplayMode: ReasoningDisplayMode;
-  initialSystemPrompt: string;
-  initialTemperature: number;
-  initialRequireToolApproval: boolean;
-  hostedWorkspaceId?: string | null;
-  hostedSelectedServerIds?: string[];
-  hostedOAuthTokens?: Record<string, string>;
-  hostedShareToken?: string;
-  hostedChatboxToken?: string;
-  hostedChatboxSurface?: "preview" | "share_link";
+  executionConfig: ExecutionConfig;
+  hostedContext?: HostedRuntimeContext;
   onSummaryChange: (summary: MultiModelCardSummary) => void;
   onHasMessagesChange?: (modelId: string, hasMessages: boolean) => void;
   onOAuthRequired?: (details?: HostedOAuthRequiredDetails) => void;
@@ -75,15 +70,8 @@ export function MultiModelChatCard({
   stopRequestId,
   placeholder,
   reasoningDisplayMode,
-  initialSystemPrompt,
-  initialTemperature,
-  initialRequireToolApproval,
-  hostedWorkspaceId,
-  hostedSelectedServerIds,
-  hostedOAuthTokens,
-  hostedShareToken,
-  hostedChatboxToken,
-  hostedChatboxSurface,
+  executionConfig,
+  hostedContext,
   onSummaryChange,
   onHasMessagesChange,
   onOAuthRequired,
@@ -133,16 +121,11 @@ export function MultiModelChatCard({
     startChatWithMessages,
   } = useChatSession({
     selectedServers,
-    hostedWorkspaceId,
-    hostedSelectedServerIds,
-    hostedOAuthTokens,
-    hostedShareToken,
-    hostedChatboxToken,
-    hostedChatboxSurface,
-    initialModelId: String(model.id),
-    initialSystemPrompt,
-    initialTemperature,
-    initialRequireToolApproval,
+    hostedContext,
+    executionConfig: {
+      ...executionConfig,
+      modelId: String(model.id),
+    },
     onReset: () => {
       setWidgetStateQueue([]);
       setModelContextQueue([]);

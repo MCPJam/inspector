@@ -13,6 +13,7 @@ import {
 import { writePendingQuickConnect } from "@/lib/quick-connect-pending";
 import type { EnrichedRegistryCatalogCard } from "@/hooks/useRegistryServers";
 import { getRegistryServerName } from "@/hooks/useRegistryServers";
+import { useClientConfigStore } from "@/stores/client-config-store";
 
 function createLinearCatalogCard(): EnrichedRegistryCatalogCard {
   const server = {
@@ -122,7 +123,6 @@ function createDualTypeCatalogCard(): EnrichedRegistryCatalogCard {
 let mockIsAuthenticated = false;
 let mockCatalogCards: EnrichedRegistryCatalogCard[] = [];
 let mockRegistryLoading = false;
-let mockClientConfigFlagEnabled: boolean | undefined = false;
 let mockJsonRpcPanelVisible = false;
 const mockConnectRegistry = vi.fn();
 const mockLoggerView = vi.fn();
@@ -133,8 +133,7 @@ vi.mock("posthog-js/react", () => ({
   usePostHog: () => ({
     capture: vi.fn(),
   }),
-  useFeatureFlagEnabled: (flag: string) =>
-    flag === "client-config-enabled" ? mockClientConfigFlagEnabled : false,
+  useFeatureFlagEnabled: () => false,
 }));
 
 vi.mock("../client-config/ClientConfigTab", () => ({
@@ -244,7 +243,9 @@ vi.mock("../connection/ServerConnectionCard", () => ({
       <button onClick={() => void onReconnect?.(server.name)}>
         Reconnect {server.name}
       </button>
-      {needsReconnect ? <span>Needs reconnect</span> : null}
+      {needsReconnect ? (
+        <span aria-label="Connection settings changed" />
+      ) : null}
       <div data-testid={`server-card-${server.name}`}>
         {server.name}:{server.connectionStatus}
       </div>
@@ -458,10 +459,13 @@ describe("ServersTab shared detail modal", () => {
     vi.clearAllMocks();
     localStorage.clear();
     sessionStorage.clear();
+    useClientConfigStore.setState(
+      useClientConfigStore.getInitialState(),
+      true,
+    );
     mockIsAuthenticated = false;
     mockCatalogCards = [];
     mockRegistryLoading = false;
-    mockClientConfigFlagEnabled = false;
     mockJsonRpcPanelVisible = false;
     mockLoggerView.mockReset();
     mockUseWorkspaceBillingGate.mockImplementation(
@@ -847,7 +851,7 @@ describe("ServersTab shared detail modal", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
-  it("surfaces reconnect warnings when workspace client capabilities changed", () => {
+  it("surfaces connection settings update indicators when workspace client capabilities changed", () => {
     const initializedCapabilities = getDefaultClientCapabilities() as Record<
       string,
       unknown
@@ -876,6 +880,9 @@ describe("ServersTab shared detail modal", () => {
     );
 
     expect(screen.queryByText("Needs reconnect")).not.toBeInTheDocument();
+    expect(
+      screen.queryByLabelText("Connection settings changed")
+    ).not.toBeInTheDocument();
 
     rerender(
       <ServersTab
@@ -911,10 +918,13 @@ describe("ServersTab shared detail modal", () => {
       />
     );
 
-    expect(screen.getByText("Needs reconnect")).toBeInTheDocument();
+    expect(screen.queryByText("Needs reconnect")).not.toBeInTheDocument();
+    expect(
+      screen.getByLabelText("Connection settings changed")
+    ).toBeInTheDocument();
   });
 
-  it("does not surface reconnect warnings when server capability overrides already match initialize payload", () => {
+  it("does not surface connection settings update indicators when server capability overrides already match initialize payload", () => {
     const serverCapabilities = {
       experimental: {
         serverOverride: { enabled: true },
@@ -958,6 +968,9 @@ describe("ServersTab shared detail modal", () => {
     );
 
     expect(screen.queryByText("Needs reconnect")).not.toBeInTheDocument();
+    expect(
+      screen.queryByLabelText("Connection settings changed")
+    ).not.toBeInTheDocument();
   });
 
   it("renders Quick Connect module helper copy and Browse Registry in the section header", () => {
@@ -1408,22 +1421,10 @@ describe("ServersTab shared detail modal", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("hides the Client Config button when the flag is disabled", () => {
-    mockClientConfigFlagEnabled = false;
-
+  it("shows the Connection Settings button and opens the dialog", () => {
     render(<ServersTab {...defaultProps} />);
 
-    expect(
-      screen.queryByRole("button", { name: /client config/i })
-    ).not.toBeInTheDocument();
-  });
-
-  it("shows the Client Config button and opens the dialog when the flag is enabled", () => {
-    mockClientConfigFlagEnabled = true;
-
-    render(<ServersTab {...defaultProps} />);
-
-    const button = screen.getByRole("button", { name: /client config/i });
+    const button = screen.getByRole("button", { name: /connection settings/i });
     expect(button).toBeInTheDocument();
     expect(
       screen.queryByTestId("client-config-tab-stub")
@@ -1436,13 +1437,48 @@ describe("ServersTab shared detail modal", () => {
     );
   });
 
-  it("hides the Client Config button when no save handler is provided", () => {
-    mockClientConfigFlagEnabled = true;
+  it("discards unsaved connection settings when the dialog is closed", () => {
+    const defaultConfig = {
+      version: 1 as const,
+      connectionDefaults: {
+        headers: {},
+        requestTimeout: 10000,
+      },
+      clientCapabilities: getDefaultClientCapabilities() as Record<
+        string,
+        unknown
+      >,
+    };
+    useClientConfigStore.getState().loadWorkspaceConfig({
+      workspaceId: "workspace-1",
+      defaultConfig,
+      savedConfig: undefined,
+    });
+    useClientConfigStore.getState().setSectionText(
+      "connectionDefaults",
+      '{ "headers": { "x-test": "1" }, "requestTimeout": 1234 }',
+    );
 
+    expect(useClientConfigStore.getState().isDirty).toBe(true);
+
+    render(<ServersTab {...defaultProps} />);
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /connection settings/i }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /close/i }));
+
+    expect(useClientConfigStore.getState().isDirty).toBe(false);
+    expect(
+      useClientConfigStore.getState().draftConfig?.connectionDefaults,
+    ).toEqual(defaultConfig.connectionDefaults);
+  });
+
+  it("hides the Connection Settings button when no save handler is provided", () => {
     render(<ServersTab {...defaultProps} onSaveClientConfig={undefined} />);
 
     expect(
-      screen.queryByRole("button", { name: /client config/i })
+      screen.queryByRole("button", { name: /connection settings/i })
     ).not.toBeInTheDocument();
   });
 

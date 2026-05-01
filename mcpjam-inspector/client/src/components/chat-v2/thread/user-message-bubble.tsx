@@ -10,6 +10,7 @@ import {
   useChatboxHostTheme,
 } from "@/contexts/chatbox-host-style-context";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
+import { getChatboxHostFamily } from "@/lib/chatbox-host-style";
 import { cn } from "@/lib/utils";
 
 interface UserMessageBubbleProps {
@@ -26,15 +27,16 @@ export function UserMessageBubble({
   const globalThemeMode = usePreferencesStore((s) => s.themeMode);
   const resolvedThemeMode = chatboxHostTheme ?? globalThemeMode;
   const isDarkChatboxTheme = resolvedThemeMode === "dark";
+  const chatboxHostFamily = getChatboxHostFamily(chatboxHostStyle);
   const bubbleClasses =
-    chatboxHostStyle === "chatgpt"
+    chatboxHostFamily === "chatgpt"
       ? cn(
           "chatbox-host-user-bubble rounded-[1.5rem] border-transparent shadow-none",
           isDarkChatboxTheme
             ? "bg-[#303030] text-[#DFDFDF]"
             : "bg-[#f4f4f4] text-[#1f1f1f]",
         )
-      : chatboxHostStyle === "claude"
+      : chatboxHostFamily === "claude"
         ? cn(
             "chatbox-host-user-bubble rounded-xl shadow-none",
             isDarkChatboxTheme

@@ -174,6 +174,19 @@ export type {
 } from "./response-validation.js";
 export { redactSensitiveValue } from "./redaction.js";
 export {
+  resolveAuthorizationPlan,
+  resolveRegistrationStrategies,
+} from "./oauth/authorization-plan.js";
+export type {
+  AuthorizationDiscoverySnapshot,
+  AuthorizationPlanCapabilities,
+  AuthorizationPlanInput,
+  OAuthProtocolMode,
+  OAuthRegistrationMode,
+  OAuthRegistrationStrategy,
+  ResolvedAuthorizationPlan,
+} from "./oauth/authorization-plan.js";
+export {
   summarizeStructuredCases,
   renderStructuredRunJson,
   renderStructuredRunJUnitXml,

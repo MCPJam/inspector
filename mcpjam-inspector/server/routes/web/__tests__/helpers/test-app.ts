@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { vi } from "vitest";
 import webRoutes from "../../index.js";
+import { requestLogContextMiddleware } from "../../../../middleware/request-log-context.js";
 
 /**
  * Minimal mock for hosted-mode MCPClientManager.
@@ -14,6 +15,11 @@ export function createWebTestApp(options?: {
   bearerToken?: string;
 }) {
   const app = new Hono();
+
+  // Mirror production wiring: requestLogContextMiddleware must run before any
+  // route that calls getRequestLogger (which throws when context is missing).
+  // Mounted at /api/* in production via server/app.ts.
+  app.use("/api/*", requestLogContextMiddleware);
 
   // Inject a no-op mcpClientManager (web routes create their own)
   app.use("*", async (c, next) => {

@@ -8,8 +8,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@mcpjam/design-system/select";
+import { resolveAuthorizationPlan } from "@mcpjam/sdk/browser";
+import type {
+  ServerFormOAuthProtocolMode,
+  ServerFormOAuthRegistrationMode,
+} from "@/shared/types.js";
 
 interface AuthenticationSectionProps {
+  serverUrl?: string;
   authType: "oauth" | "bearer" | "none";
   onAuthTypeChange: (value: "oauth" | "bearer" | "none") => void;
   showAuthSettings: boolean;
@@ -17,6 +23,12 @@ interface AuthenticationSectionProps {
   onBearerTokenChange: (value: string) => void;
   oauthScopesInput: string;
   onOauthScopesChange: (value: string) => void;
+  oauthProtocolMode: ServerFormOAuthProtocolMode;
+  onOauthProtocolModeChange: (value: ServerFormOAuthProtocolMode) => void;
+  oauthRegistrationMode: ServerFormOAuthRegistrationMode;
+  onOauthRegistrationModeChange: (
+    value: ServerFormOAuthRegistrationMode,
+  ) => void;
   useCustomClientId: boolean;
   onUseCustomClientIdChange: (value: boolean) => void;
   clientId: string;
@@ -27,7 +39,27 @@ interface AuthenticationSectionProps {
   clientSecretError: string | null;
 }
 
+const PROTOCOL_OPTIONS: Array<{
+  value: ServerFormOAuthProtocolMode;
+  label: string;
+}> = [
+  { value: "2025-11-25", label: "2025-11-25 (Latest)" },
+  { value: "2025-06-18", label: "2025-06-18" },
+  { value: "2025-03-26", label: "2025-03-26 (Legacy)" },
+];
+
+const REGISTRATION_OPTIONS: Array<{
+  value: ServerFormOAuthRegistrationMode;
+  label: string;
+}> = [
+  { value: "auto", label: "Automatic" },
+  { value: "preregistered", label: "Preregistration (Client Credentials)" },
+  { value: "cimd", label: "Client ID Metadata Documents (CIMD)" },
+  { value: "dcr", label: "Dynamic Client Registration (DCR)" },
+];
+
 export function AuthenticationSection({
+  serverUrl,
   authType,
   onAuthTypeChange,
   showAuthSettings,
@@ -35,6 +67,10 @@ export function AuthenticationSection({
   onBearerTokenChange,
   oauthScopesInput,
   onOauthScopesChange,
+  oauthProtocolMode,
+  onOauthProtocolModeChange,
+  oauthRegistrationMode,
+  onOauthRegistrationModeChange,
   useCustomClientId,
   onUseCustomClientIdChange,
   clientId,
@@ -45,6 +81,36 @@ export function AuthenticationSection({
   clientSecretError,
 }: AuthenticationSectionProps) {
   const [showAdvancedOAuth, setShowAdvancedOAuth] = useState(false);
+  const showClientCredentials =
+    oauthRegistrationMode === "preregistered" || useCustomClientId;
+  const effectiveOauthProtocolMode =
+    oauthProtocolMode === "auto" ? "2025-11-25" : oauthProtocolMode;
+  const oauthPlan =
+    authType === "oauth"
+      ? resolveAuthorizationPlan({
+          serverUrl,
+          protocolMode: effectiveOauthProtocolMode,
+          registrationMode: oauthRegistrationMode,
+          clientId: showClientCredentials ? clientId : undefined,
+          clientSecret: showClientCredentials ? clientSecret : undefined,
+          authMode: "interactive",
+        })
+      : null;
+
+  const oauthPlanVisibleBlockers =
+    oauthPlan?.status === "blocked"
+      ? (oauthPlan.blockerDetails ?? []).filter(
+          (blocker) =>
+            !(
+              oauthRegistrationMode === "preregistered" &&
+              clientId.trim() === "" &&
+              blocker.code === "PREREGISTERED_MISSING_CLIENT_ID"
+            ),
+        )
+      : [];
+  const showOauthPlanBanner =
+    oauthPlan != null &&
+    (oauthPlanVisibleBlockers.length > 0 || oauthPlan.warnings.length > 0);
 
   return (
     <div className="space-y-4">
@@ -92,6 +158,21 @@ export function AuthenticationSection({
         {/* OAuth Settings */}
         {showAuthSettings && authType === "oauth" && (
           <div className="border-t border-border bg-muted/30">
+            {oauthPlan && showOauthPlanBanner && (
+              <div className="px-3 py-3 space-y-2 border-b border-border bg-background/60">
+                {oauthPlanVisibleBlockers.length > 0 && (
+                  <p className="text-sm text-destructive">
+                    {oauthPlanVisibleBlockers[0]?.message}
+                  </p>
+                )}
+                {oauthPlan.warnings.length > 0 && (
+                  <p className="text-xs text-amber-700">
+                    {oauthPlan.warnings[0]}
+                  </p>
+                )}
+              </div>
+            )}
+
             <button
               type="button"
               onClick={() => setShowAdvancedOAuth(!showAdvancedOAuth)}
@@ -103,60 +184,104 @@ export function AuthenticationSection({
                 <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
               )}
               <span className="text-xs font-medium text-muted-foreground">
-                Advanced
+                Advanced Settings
               </span>
             </button>
 
             {showAdvancedOAuth && (
               <div className="px-3 pb-3 space-y-3">
+                <div className="grid gap-3 md:grid-cols-2">
+                  <div className="space-y-2">
+                    <label className="block text-sm font-medium text-foreground">
+                      Protocol
+                    </label>
+                    <Select
+                      value={effectiveOauthProtocolMode}
+                      onValueChange={(value: ServerFormOAuthProtocolMode) =>
+                        onOauthProtocolModeChange(value)
+                      }
+                    >
+                      <SelectTrigger className="w-full h-10">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {PROTOCOL_OPTIONS.map((option) => (
+                          <SelectItem key={option.value} value={option.value}>
+                            {option.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="block text-sm font-medium text-foreground">
+                      Registration Strategy
+                    </label>
+                    <Select
+                      value={oauthRegistrationMode}
+                      onValueChange={(
+                        value: ServerFormOAuthRegistrationMode,
+                      ) => {
+                        onOauthRegistrationModeChange(value);
+                        onUseCustomClientIdChange(
+                          value === "preregistered",
+                        );
+                      }}
+                    >
+                      <SelectTrigger className="w-full h-10">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {REGISTRATION_OPTIONS.map((option) => (
+                          <SelectItem key={option.value} value={option.value}>
+                            {option.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {oauthRegistrationMode === "cimd" &&
+                      oauthPlan?.clientIdMetadataUrl && (
+                        <p className="text-xs text-muted-foreground break-all">
+                          SDK client metadata URL:{" "}
+                          {oauthPlan.clientIdMetadataUrl}
+                        </p>
+                      )}
+                  </div>
+                </div>
+
                 <div className="space-y-2">
                   <label className="block text-sm font-medium text-foreground">
-                    OAuth Scopes
+                    Scope Override
                   </label>
                   <Input
                     value={oauthScopesInput}
                     onChange={(e) => onOauthScopesChange(e.target.value)}
-                    placeholder="mcp:* or custom scopes separated by spaces"
+                    placeholder="Optional scopes separated by spaces"
                     className="h-10"
                   />
-                  <p className="text-xs text-muted-foreground">
-                    Default: mcp:* (space-separated for multiple scopes)
-                  </p>
                 </div>
 
-                <div className="space-y-2">
-                  <div className="flex items-center space-x-2">
-                    <input
-                      type="checkbox"
-                      id="useCustomClientId"
-                      checked={useCustomClientId}
-                      onChange={(e) =>
-                        onUseCustomClientIdChange(e.target.checked)
-                      }
-                      className="rounded"
-                    />
-                    <label
-                      htmlFor="useCustomClientId"
-                      className="text-sm font-medium text-foreground"
-                    >
-                      Use custom OAuth credentials
-                    </label>
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    Leave unchecked to use the server's default OAuth flow
-                  </p>
-                </div>
-
-                {useCustomClientId && (
+                {showClientCredentials && (
                   <div className="space-y-3">
                     <div className="space-y-2">
                       <label className="block text-sm font-medium text-foreground">
                         Client ID
+                        {oauthRegistrationMode === "preregistered" ? (
+                          <span className="text-destructive" aria-hidden="true">
+                            {" *"}
+                          </span>
+                        ) : null}
                       </label>
                       <Input
                         value={clientId}
                         onChange={(e) => onClientIdChange(e.target.value)}
                         placeholder="Your OAuth Client ID"
+                        aria-required={
+                          oauthRegistrationMode === "preregistered"
+                            ? true
+                            : undefined
+                        }
                         className={`h-10 ${clientIdError ? "border-red-500" : ""}`}
                       />
                       {clientIdError && (

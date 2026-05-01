@@ -22,6 +22,8 @@ import { LiveTraceTimelineEmptyState } from "@/components/evals/live-trace-timel
 import { TraceViewer } from "@/components/evals/trace-viewer";
 import { useChatSession } from "@/hooks/use-chat-session";
 import { getChatComposerInteractivity } from "@/hooks/use-chat-stop-controls";
+import type { ExecutionConfig } from "@/lib/chat-execution-config";
+import type { HostedRuntimeContext } from "@/lib/hosted-runtime-context";
 import { createDeterministicToolMessages } from "@/components/ui-playground/playground-helpers";
 import {
   buildPreludeTraceEnvelope,
@@ -31,10 +33,11 @@ import {
   ChatboxHostStyleProvider,
   ChatboxHostThemeProvider,
 } from "@/contexts/chatbox-host-style-context";
-import { CHATGPT_CHAT_BACKGROUND } from "@/config/chatgpt-host-context";
-import { CLAUDE_DESKTOP_CHAT_BACKGROUND } from "@/config/claude-desktop-host-context";
 import type { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
-import type { ChatboxHostStyle } from "@/lib/chatbox-host-style";
+import {
+  getChatboxChatBackground,
+  type ChatboxHostStyle,
+} from "@/lib/chatbox-host-style";
 import type { DeviceType, DisplayMode } from "@/stores/ui-playground-store";
 import type { BroadcastChatTurnRequest } from "@/components/chat-v2/multi-model-chat-card";
 
@@ -87,12 +90,8 @@ interface MultiModelPlaygroundCardProps {
   deterministicExecutionRequest: PlaygroundDeterministicExecutionRequest | null;
   stopRequestId: number;
   reasoningDisplayMode?: ReasoningDisplayMode;
-  initialSystemPrompt: string;
-  initialTemperature: number;
-  initialRequireToolApproval: boolean;
-  hostedWorkspaceId?: string | null;
-  hostedSelectedServerIds?: string[];
-  hostedOAuthTokens?: Record<string, string>;
+  executionConfig: ExecutionConfig;
+  hostedContext?: HostedRuntimeContext;
   displayMode: DisplayMode;
   onDisplayModeChange: (mode: DisplayMode) => void;
   hostStyle: ChatboxHostStyle;
@@ -125,12 +124,8 @@ export function MultiModelPlaygroundCard({
   deterministicExecutionRequest,
   stopRequestId,
   reasoningDisplayMode = "inline",
-  initialSystemPrompt,
-  initialTemperature,
-  initialRequireToolApproval,
-  hostedWorkspaceId,
-  hostedSelectedServerIds,
-  hostedOAuthTokens,
+  executionConfig,
+  hostedContext,
   displayMode,
   onDisplayModeChange,
   hostStyle,
@@ -196,13 +191,11 @@ export function MultiModelPlaygroundCard({
     startChatWithMessages,
   } = useChatSession({
     selectedServers,
-    hostedWorkspaceId,
-    hostedSelectedServerIds,
-    hostedOAuthTokens,
-    initialModelId: String(model.id),
-    initialSystemPrompt,
-    initialTemperature,
-    initialRequireToolApproval,
+    hostedContext,
+    executionConfig: {
+      ...executionConfig,
+      modelId: String(model.id),
+    },
     onReset: () => {
       setModelContextQueue([]);
       setPreludeTraceExecutions([]);
@@ -312,11 +305,8 @@ export function MultiModelPlaygroundCard({
     }),
     [injectedToolRenderOverrides, toolRenderOverrides],
   );
-  const chatBg =
-    hostStyle === "chatgpt"
-      ? CHATGPT_CHAT_BACKGROUND
-      : CLAUDE_DESKTOP_CHAT_BACKGROUND;
-  const hostBackgroundColor = chatBg[effectiveThreadTheme];
+  const hostBackgroundColor =
+    getChatboxChatBackground(hostStyle, effectiveThreadTheme) ?? "transparent";
   const isMobileFullTakeover =
     deviceType === "mobile" &&
     (displayMode === "fullscreen" || displayMode === "pip");

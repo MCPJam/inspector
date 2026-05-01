@@ -8,14 +8,19 @@ import {
 import { Command } from "commander";
 import { loadProtocolSuiteConfig } from "../lib/config-file.js";
 import {
-  renderConformanceResult,
-  resolveConformanceOutputFormat,
+  renderConformanceForCli,
+  resolveConformanceOutputFormatForCli,
   type ConformanceOutputFormat,
 } from "../lib/conformance-output.js";
+import { parseReporterFormat } from "../lib/reporting.js";
 import {
   parseHeadersOption,
   parsePositiveInteger,
 } from "../lib/server-config.js";
+import {
+  assertNoCredentialsFileAuthConflicts,
+  resolveCredentialsFileAccessToken,
+} from "../lib/credentials-file.js";
 import {
   setProcessExitCode,
   usageError,
@@ -24,6 +29,7 @@ import {
 export interface ProtocolConformanceOptions {
   url: string;
   accessToken?: string;
+  credentialsFile?: string;
   header?: string[];
   checkTimeout?: number;
   category?: string[];
@@ -40,6 +46,10 @@ export function registerProtocolCommands(program: Command): void {
     .description("Run MCP protocol conformance checks against an HTTP server")
     .requiredOption("--url <url>", "MCP server URL")
     .option("--access-token <token>", "Bearer access token for HTTP servers")
+    .option(
+      "--credentials-file <path>",
+      "Load OAuth access token from a file created by oauth login or oauth conformance --credentials-out",
+    )
     .option(
       "--header <header>",
       'HTTP header in "Key: Value" format. Repeat to send multiple headers.',
@@ -64,12 +74,17 @@ export function registerProtocolCommands(program: Command): void {
       (value: string, previous: string[] = []) => [...previous, value],
       [],
     )
+    .option(
+      "--reporter <reporter>",
+      "Structured reporter output: json-summary or junit-xml",
+    )
     .action(async (options, command) => {
-      const format = getFormat(command);
+      const reporter = parseReporterFormat(options.reporter as string | undefined);
+      const format = getFormat(command, reporter);
       const config = buildConfig(options as ProtocolConformanceOptions);
       const result = await new MCPConformanceTest(config).run();
 
-      writeConformanceOutput(renderConformanceResult(result, format));
+      writeConformanceOutput(renderConformanceForCli(result, reporter, format));
       if (!result.passed) {
         setProcessExitCode(1);
       }
@@ -81,21 +96,33 @@ export function registerProtocolCommands(program: Command): void {
       "Run a matrix of MCP protocol conformance checks from a JSON config file",
     )
     .requiredOption("--config <path>", "Path to JSON config file")
+    .option(
+      "--reporter <reporter>",
+      "Structured reporter output: json-summary or junit-xml",
+    )
     .action(async (options, command) => {
-      const format = getFormat(command);
+      const reporter = parseReporterFormat(options.reporter as string | undefined);
+      const format = getFormat(command, reporter);
       const config = loadProtocolSuiteConfig(options.config as string);
       const result = await new MCPConformanceSuite(config).run();
 
-      writeConformanceOutput(renderConformanceResult(result, format));
+      writeConformanceOutput(renderConformanceForCli(result, reporter, format));
       if (!result.passed) {
         setProcessExitCode(1);
       }
     });
 }
 
-function getFormat(command: Command): ConformanceOutputFormat {
+function getFormat(
+  command: Command,
+  reporter: ReturnType<typeof parseReporterFormat>,
+): ConformanceOutputFormat {
   const opts = command.optsWithGlobals() as { format?: string };
-  return resolveConformanceOutputFormat(opts.format, process.stdout.isTTY);
+  return resolveConformanceOutputFormatForCli(
+    opts.format,
+    process.stdout.isTTY,
+    reporter,
+  );
 }
 
 function writeConformanceOutput(output: string): void {
@@ -124,6 +151,10 @@ export function buildConfig(
   }
 
   const customHeaders = parseHeadersOption(options.header);
+  assertNoCredentialsFileAuthConflicts(options);
+  const accessToken = options.credentialsFile
+    ? resolveCredentialsFileAccessToken(options.credentialsFile, serverUrl)
+    : options.accessToken;
   const categories = options.category?.filter(Boolean);
   const invalidCategories = collectInvalidEntries(
     categories,
@@ -147,7 +178,7 @@ export function buildConfig(
 
   return {
     serverUrl,
-    accessToken: options.accessToken,
+    accessToken,
     customHeaders,
     checkTimeout: options.checkTimeout ?? 15_000,
     ...(categories && categories.length > 0

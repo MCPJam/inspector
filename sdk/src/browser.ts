@@ -84,6 +84,19 @@ export {
   MCPJAM_LOGO_URI,
   getBrowserDebugDynamicRegistrationMetadata,
 } from "./oauth/client-identity.js";
+export {
+  resolveAuthorizationPlan,
+  resolveRegistrationStrategies,
+} from "./oauth/authorization-plan.js";
+export type {
+  AuthorizationDiscoverySnapshot,
+  AuthorizationPlanCapabilities,
+  AuthorizationPlanInput,
+  OAuthProtocolMode,
+  OAuthRegistrationMode,
+  OAuthRegistrationStrategy,
+  ResolvedAuthorizationPlan,
+} from "./oauth/authorization-plan.js";
 export { buildOAuthSequenceActions } from "./oauth/sequence-actions.js";
 export {
   createOAuthStateMachine,
@@ -91,6 +104,14 @@ export {
   getDefaultRegistrationStrategy,
   getSupportedRegistrationStrategies,
 } from "./oauth/state-machines/factory.js";
+export type {
+  ProbeHttpAttempt,
+  ProbeInitializeInfo,
+  ProbeMcpServerConfig,
+  ProbeMcpServerResult,
+  ProbeOAuthDetails,
+  ProbeTransportResult,
+} from "./server-probe.js";
 export { runOAuthStateMachine } from "./oauth/state-machines/runner.js";
 export type {
   OAuthAuthorizationRequestResult,

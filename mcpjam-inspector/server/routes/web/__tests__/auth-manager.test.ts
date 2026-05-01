@@ -17,8 +17,14 @@ vi.mock("@mcpjam/sdk", async () => {
   };
 });
 
+import type { Context } from "hono";
 import { createAuthorizedManager } from "../auth.js";
 import { WebRouteError } from "../errors.js";
+
+const mockContext = {
+  var: { requestLogContext: undefined },
+  set: vi.fn(),
+} as unknown as Context;
 
 describe("web auth manager batching", () => {
   const originalFetch = global.fetch;
@@ -66,6 +72,7 @@ describe("web auth manager batching", () => {
 
     await expect(
       createAuthorizedManager(
+        mockContext,
         "bearer-token",
         "workspace-1",
         ["server-b", "server-a"],
@@ -107,6 +114,7 @@ describe("web auth manager batching", () => {
     }) as typeof fetch;
 
     const result = await createAuthorizedManager(
+      mockContext,
       "bearer-token",
       "workspace-1",
       ["server-1"],
@@ -163,6 +171,7 @@ describe("web auth manager batching", () => {
 
     await expect(
       createAuthorizedManager(
+        mockContext,
         "bearer-token",
         "workspace-1",
         ["server-1"],

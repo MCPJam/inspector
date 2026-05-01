@@ -70,7 +70,10 @@ import {
   PopoverTrigger,
 } from "@mcpjam/design-system/popover";
 import { HostStylePillSelector } from "@/components/shared/HostStylePillSelector";
-import type { ChatboxHostStyle } from "@/lib/chatbox-host-style";
+import {
+  getChatboxHostFamily,
+  type ChatboxHostStyle,
+} from "@/lib/chatbox-host-style";
 
 interface ChatInputProps {
   value: string;
@@ -442,15 +445,16 @@ export function ChatInput({
     );
   };
 
+  const chatboxHostFamily = getChatboxHostFamily(chatboxHostStyle);
   const composerClasses =
-    chatboxHostStyle === "chatgpt"
+    chatboxHostFamily === "chatgpt"
       ? cn(
           "chatbox-host-composer rounded-[1.75rem]",
           isDarkChatboxTheme
             ? "border border-white/10 bg-[#303030] shadow-[0_1px_2px_rgba(0,0,0,0.28),0_4px_24px_rgba(130,130,130,0.14)]"
             : "border border-neutral-200/90 bg-white shadow-[0_1px_2px_rgba(0,0,0,0.04),0_4px_22px_rgba(100,100,100,0.08)]",
         )
-      : chatboxHostStyle === "claude"
+      : chatboxHostFamily === "claude"
         ? cn(
             "chatbox-host-composer rounded-[1.35rem]",
             isDarkChatboxTheme
@@ -459,21 +463,21 @@ export function ChatInput({
           )
         : "rounded-3xl border border-border/40 bg-muted/70";
   const activeSubmitButtonClasses =
-    chatboxHostStyle === "chatgpt"
+    chatboxHostFamily === "chatgpt"
       ? isDarkChatboxTheme
         ? "bg-[#f4f4f4] text-[#1f1f1f] hover:bg-[#e8e8e8]"
         : "bg-[#1f1f1f] text-white hover:bg-[#303030]"
-      : chatboxHostStyle === "claude"
+      : chatboxHostFamily === "claude"
         ? isDarkChatboxTheme
           ? "bg-[#d07b53] text-[#fff7f0] hover:bg-[#c06f49]"
           : "bg-[#e27d47] text-white hover:bg-[#d16f3d]"
         : "bg-primary text-primary-foreground hover:bg-primary/90";
   const inactiveSubmitButtonClasses =
-    chatboxHostStyle === "chatgpt"
+    chatboxHostFamily === "chatgpt"
       ? isDarkChatboxTheme
         ? "bg-[#3a3a3a] text-[#8a8a8a] cursor-not-allowed"
         : "bg-[#e7e7e7] text-[#9b9b9b] cursor-not-allowed"
-      : chatboxHostStyle === "claude"
+      : chatboxHostFamily === "claude"
         ? isDarkChatboxTheme
           ? "bg-[#45413b] text-[#8d857a] cursor-not-allowed"
           : "bg-[#ebe5dc] text-[#b6ada0] cursor-not-allowed"

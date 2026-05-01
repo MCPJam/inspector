@@ -41,6 +41,7 @@ function isGuestRequest(body: Record<string, unknown>): boolean {
 
 /** Resolve HTTP server URL and headers for conformance from authorized config. */
 async function resolveHostedHttpConfig(
+  c: any,
   bearerToken: string,
   body: Record<string, unknown>,
 ): Promise<{
@@ -77,6 +78,7 @@ async function resolveHostedHttpConfig(
   // Workspace: authorize via Convex
   const wsBody = parseWithSchema(workspaceServerSchema, body);
   const auth = await authorizeServer(
+    c,
     bearerToken,
     wsBody.workspaceId,
     wsBody.serverId,
@@ -123,6 +125,7 @@ async function resolveHostedHttpConfig(
 
 /** Resolve any-transport server config for Apps conformance on hosted. */
 async function resolveHostedServerConfig(
+  c: any,
   bearerToken: string,
   body: Record<string, unknown>,
 ): Promise<MCPAppsConformanceConfig> {
@@ -160,6 +163,7 @@ async function resolveHostedServerConfig(
   // Workspace: authorize via Convex
   const wsBody = parseWithSchema(workspaceServerSchema, body);
   const auth = await authorizeServer(
+    c,
     bearerToken,
     wsBody.workspaceId,
     wsBody.serverId,
@@ -210,7 +214,7 @@ conformanceWeb.post("/protocol", async (c) =>
   handleRoute(c, async () => {
     const bearerToken = assertBearerToken(c);
     const body = await readJsonBody<Record<string, unknown>>(c);
-    const resolved = await resolveHostedHttpConfig(bearerToken, body);
+    const resolved = await resolveHostedHttpConfig(c, bearerToken, body);
 
     try {
       const { result } = await runProtocolConformance(resolved);
@@ -227,7 +231,7 @@ conformanceWeb.post("/apps", async (c) =>
   handleRoute(c, async () => {
     const bearerToken = assertBearerToken(c);
     const body = await readJsonBody<Record<string, unknown>>(c);
-    const config = await resolveHostedServerConfig(bearerToken, body);
+    const config = await resolveHostedServerConfig(c, bearerToken, body);
 
     try {
       const { result } = await runAppsConformance(config);
@@ -252,7 +256,7 @@ conformanceWeb.post("/oauth/start", async (c) =>
   handleRoute(c, async () => {
     const bearerToken = assertBearerToken(c);
     const body = await readJsonBody<Record<string, unknown>>(c);
-    const resolved = await resolveHostedHttpConfig(bearerToken, body);
+    const resolved = await resolveHostedHttpConfig(c, bearerToken, body);
     const parsed = parseWithSchema(oauthStartSchema, body);
 
     if (!parsed.callbackOrigin) {

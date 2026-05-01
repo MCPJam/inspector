@@ -48,15 +48,9 @@ import type {
   ContentBlock,
 } from "@modelcontextprotocol/client";
 import {
-  getClaudeDesktopStyleVariables,
-  CLAUDE_DESKTOP_FONT_CSS,
-  CLAUDE_DESKTOP_PLATFORM,
-} from "@/config/claude-desktop-host-context";
-import {
-  getChatGPTStyleVariables,
-  CHATGPT_FONT_CSS,
-  CHATGPT_PLATFORM,
-} from "@/config/chatgpt-host-context";
+  DEFAULT_HOST_STYLE,
+  getHostStyleOrDefault,
+} from "@/lib/host-styles";
 import { isVisibleToModelOnly } from "@/lib/mcp-ui/mcp-apps-utils";
 import { LoggingTransport } from "./mcp-apps-logging-transport";
 import { McpAppsModal } from "./mcp-apps-modal";
@@ -69,8 +63,11 @@ import { fetchMcpAppsWidgetContent } from "./fetch-widget-content";
 import type { CheckoutSession } from "@/shared/acp-types";
 import { listResources, readResource } from "@/lib/apis/mcp-resources-api";
 import { listPrompts } from "@/lib/apis/mcp-prompts-api";
-import { useChatboxHostStyle } from "@/contexts/chatbox-host-style-context";
-import { useClientConfigStore } from "@/stores/client-config-store";
+import {
+  useChatboxHostStyle,
+  useChatboxHostTheme,
+} from "@/contexts/chatbox-host-style-context";
+import { useHostContextStore } from "@/stores/host-context-store";
 import {
   clampDisplayModeToAvailableModes,
   extractHostDisplayMode,
@@ -88,6 +85,41 @@ const SUPPRESSED_UI_LOG_METHODS = new Set(["ui/notifications/size-changed"]);
 const PIP_MAX_HEIGHT = "min(40vh, 600px)";
 
 type DisplayMode = "inline" | "pip" | "fullscreen";
+type HostStyleVariables = NonNullable<
+  NonNullable<McpUiHostContext["styles"]>["variables"]
+>;
+
+// SEP-1865 fixes the set of style variable keys ui/initialize accepts. Every
+// HostStyleDefinition returns McpUiStyles from resolveStyleVariables, so a
+// legitimate built-in's key set is exactly the SEP enum; pinning the allowlist
+// to it both honors the protocol and strips any extra keys a runtime-registered
+// host might smuggle in via `as any`, which the SDK would reject downstream.
+const SEP_HOST_STYLE_VARIABLE_KEYS: ReadonlySet<string> = new Set([
+  ...Object.keys(DEFAULT_HOST_STYLE.resolveStyleVariables("light")),
+  ...Object.keys(DEFAULT_HOST_STYLE.resolveStyleVariables("dark")),
+]);
+
+function sanitizeHostStyleVariables(
+  variables: unknown,
+): HostStyleVariables | undefined {
+  if (!variables || typeof variables !== "object" || Array.isArray(variables)) {
+    return undefined;
+  }
+
+  const sanitized: Record<string, string | undefined> = {};
+  for (const [key, value] of Object.entries(variables)) {
+    if (!SEP_HOST_STYLE_VARIABLE_KEYS.has(key)) {
+      continue;
+    }
+    if (typeof value === "string" || value === undefined) {
+      sanitized[key] = value;
+    }
+  }
+
+  return Object.keys(sanitized).length > 0
+    ? (sanitized as HostStyleVariables)
+    : undefined;
+}
 
 // CSP and permissions metadata types are now imported from SDK
 
@@ -180,9 +212,8 @@ export function MCPAppsRenderer({
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const sharedHostStyle = usePreferencesStore((s) => s.hostStyle);
   const chatboxHostStyle = useChatboxHostStyle();
-  const draftHostContext = useClientConfigStore(
-    (s) => s.draftConfig?.hostContext,
-  );
+  const chatboxHostTheme = useChatboxHostTheme();
+  const draftHostContext = useHostContextStore((s) => s.draftHostContext);
   const baseHostContext = useMemo(
     () =>
       draftHostContext &&
@@ -192,10 +223,13 @@ export function MCPAppsRenderer({
         : {},
     [draftHostContext],
   );
-  const resolvedTheme = extractHostTheme(baseHostContext) ?? themeMode;
 
   // Get CSP mode and host style from playground store when in playground
   const isPlaygroundActive = useUIPlaygroundStore((s) => s.isPlaygroundActive);
+  const configuredHostTheme = extractHostTheme(baseHostContext);
+  const resolvedTheme = isPlaygroundActive
+    ? configuredHostTheme ?? chatboxHostTheme ?? themeMode
+    : chatboxHostTheme ?? themeMode;
   const playgroundCspMode = useUIPlaygroundStore((s) => s.mcpAppsCspMode);
   const cspMode: CspMode = isPlaygroundActive
     ? playgroundCspMode
@@ -752,15 +786,46 @@ export function MCPAppsRenderer({
   // These are sent via hostContext.styles.variables - the SDK should pass them through
   const effectiveHostStyle = isPlaygroundActive
     ? sharedHostStyle
-    : (chatboxHostStyle ?? "claude");
-  const useChatGPTStyle = effectiveHostStyle === "chatgpt";
+    : chatboxHostStyle;
+  const hostStyleDefinition = getHostStyleOrDefault(effectiveHostStyle);
   themeModeRef.current = resolvedTheme;
   const styleVariables = useMemo(
-    () =>
-      useChatGPTStyle
-        ? getChatGPTStyleVariables(resolvedTheme)
-        : getClaudeDesktopStyleVariables(resolvedTheme),
-    [resolvedTheme, useChatGPTStyle],
+    () => hostStyleDefinition.resolveStyleVariables(resolvedTheme),
+    [resolvedTheme, hostStyleDefinition],
+  );
+  const defaultFontCss = hostStyleDefinition.fontCss;
+  const configuredStyles =
+    baseHostContext.styles &&
+    typeof baseHostContext.styles === "object" &&
+    !Array.isArray(baseHostContext.styles)
+      ? (baseHostContext.styles as McpUiHostContext["styles"])
+      : undefined;
+  // The SDK validates styles.variables against the SEP key enum, so strip
+  // host-specific custom properties before they enter ui/initialize. The
+  // allowlist is fixed to the SEP enum (see SEP_HOST_STYLE_VARIABLE_KEYS),
+  // so this memo only depends on the inbound configured variables.
+  const configuredStyleVariables = useMemo(
+    () => sanitizeHostStyleVariables(configuredStyles?.variables),
+    [configuredStyles?.variables],
+  );
+  const mergedStyleVariables = useMemo(() => {
+    return {
+      ...(configuredStyleVariables &&
+      Object.keys(configuredStyleVariables).length > 0
+        ? configuredStyleVariables
+        : styleVariables),
+    };
+  }, [configuredStyleVariables, styleVariables]);
+  const mergedStyles = useMemo<McpUiHostContext["styles"]>(
+    () => ({
+      ...configuredStyles,
+      variables: mergedStyleVariables,
+      css: {
+        ...configuredStyles?.css,
+        fonts: configuredStyles?.css?.fonts ?? defaultFontCss,
+      },
+    }),
+    [configuredStyles, defaultFontCss, mergedStyleVariables],
   );
 
   // containerDimensions (maxWidth/maxHeight) was previously sent here but
@@ -768,10 +833,7 @@ export function MCPAppsRenderer({
   const hostContext = useMemo<McpUiHostContext>(
     () => ({
       ...baseHostContext,
-      theme:
-        baseHostContext.theme === "light" || baseHostContext.theme === "dark"
-          ? baseHostContext.theme
-          : resolvedTheme,
+      theme: resolvedTheme,
       displayMode: effectiveDisplayMode,
       availableDisplayModes: configuredAvailableDisplayModes,
       locale,
@@ -781,27 +843,11 @@ export function MCPAppsRenderer({
         baseHostContext.platform === "desktop" ||
         baseHostContext.platform === "mobile"
           ? baseHostContext.platform
-          : useChatGPTStyle
-            ? CHATGPT_PLATFORM
-            : CLAUDE_DESKTOP_PLATFORM,
+          : hostStyleDefinition.platform,
       userAgent: navigator.userAgent,
       deviceCapabilities,
       safeAreaInsets,
-      styles:
-        baseHostContext.styles &&
-        typeof baseHostContext.styles === "object" &&
-        !Array.isArray(baseHostContext.styles) &&
-        Object.keys(baseHostContext.styles as Record<string, unknown>).length >
-          0
-          ? (baseHostContext.styles as McpUiHostContext["styles"])
-          : {
-              variables: styleVariables,
-              css: {
-                fonts: useChatGPTStyle
-                  ? CHATGPT_FONT_CSS
-                  : CLAUDE_DESKTOP_FONT_CSS,
-              },
-            },
+      styles: mergedStyles,
       toolInfo: {
         id: toolCallId,
         tool: {
@@ -825,8 +871,8 @@ export function MCPAppsRenderer({
       timeZone,
       deviceCapabilities,
       safeAreaInsets,
-      styleVariables,
-      useChatGPTStyle,
+      mergedStyles,
+      hostStyleDefinition,
       toolCallId,
       toolName,
       toolMetadata,
@@ -1405,11 +1451,7 @@ export function MCPAppsRenderer({
   }
 
   if (!widgetHtml) {
-    return (
-      <div className="border border-border/40 rounded-md bg-muted/30 text-xs text-muted-foreground px-3 py-2">
-        Preparing MCP App widget...
-      </div>
-    );
+    return null;
   }
 
   const isPip = effectiveDisplayMode === "pip";
@@ -1449,6 +1491,9 @@ export function MCPAppsRenderer({
     return "mt-3 space-y-2 relative group";
   })();
 
+  const canTransitionHeight =
+    !isFullscreen &&
+    effectiveDisplayModeRef.current === effectiveDisplayMode;
   const iframeStyle: CSSProperties = {
     height: isFullscreen
       ? "100%"
@@ -1457,26 +1502,21 @@ export function MCPAppsRenderer({
         : lastInlineHeightRef.current,
     width: "100%",
     maxWidth: "100%",
-    // Width transition was previously included here ("width 300ms ease-out").
-    transition:
-      isFullscreen || effectiveDisplayModeRef.current !== effectiveDisplayMode
-        ? undefined
-        : "height 300ms ease-out",
-    // Hide iframe visually while not ready to display
+    opacity: showWidget ? 1 : 0,
+    transition: [
+      "opacity 150ms ease-in",
+      canTransitionHeight ? "height 300ms ease-out" : "",
+    ]
+      .filter(Boolean)
+      .join(", "),
+    // Keep iframe in the layout but invisible while not ready
     ...(!showWidget
-      ? { visibility: "hidden" as const, position: "absolute" as const }
+      ? { position: "absolute" as const, pointerEvents: "none" as const }
       : {}),
   };
 
   return (
     <div className={containerClassName}>
-      {!showWidget && (
-        <div className="border border-border/40 rounded-md bg-muted/30 text-xs text-muted-foreground px-3 py-2">
-          {toolState === "input-streaming"
-            ? "Streaming tool arguments..."
-            : "Preparing MCP App widget..."}
-        </div>
-      )}
 
       {((isFullscreen && isContainedFullscreenMode) ||
         (isPip && isMobilePlaygroundMode)) && (
@@ -1554,11 +1594,6 @@ export function MCPAppsRenderer({
         style={iframeStyle}
       />
 
-      {!minimalMode && (
-        <div className="text-[11px] text-muted-foreground/70">
-          MCP App: <code>{resourceUri}</code>
-        </div>
-      )}
 
       <McpAppsModal
         open={modalOpen}

@@ -73,7 +73,11 @@ export interface AppState {
   isMultiSelectMode: boolean;
 }
 
-export type AgentServerInfo = { id: string; status: ConnectionStatus };
+export type AgentServerInfo = {
+  id: string;
+  status: ConnectionStatus;
+  config?: MCPServerConfig;
+};
 
 export type AppAction =
   | { type: "HYDRATE_STATE"; payload: AppState }

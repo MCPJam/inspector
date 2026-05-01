@@ -24,7 +24,7 @@ const {
   mockWritePlaygroundSession: vi.fn(),
   mockBuildPlaygroundChatboxLink: vi.fn(
     (token: string, _name: string, playgroundId: string) =>
-      `https://example.com/chatbox/${token}?playground=1&playgroundId=${playgroundId}`,
+      `https://example.com/chatbox/${token}?playground=1&playgroundId=${playgroundId}`
   ),
   mockPreviewMount: vi.fn(),
   mockAuthorizeServer: vi.fn(),
@@ -36,6 +36,10 @@ vi.mock("sonner", () => ({
     success: vi.fn(),
     error: vi.fn(),
   },
+}));
+
+vi.mock("convex/react", () => ({
+  useConvexAuth: () => ({ isAuthenticated: true }),
 }));
 
 vi.mock("@/hooks/useChatboxes", () => ({
@@ -93,7 +97,7 @@ vi.mock("@mcpjam/design-system/sheet", () => ({
 
 vi.mock("@/lib/chatbox-session", async () => {
   const actual = await vi.importActual<typeof import("@/lib/chatbox-session")>(
-    "@/lib/chatbox-session",
+    "@/lib/chatbox-session"
   );
   return {
     ...actual,
@@ -106,11 +110,13 @@ vi.mock("@/components/ChatTabV2", async () => {
   const React = await vi.importActual<typeof import("react")>("react");
   return {
     ChatTabV2: (props: {
-      hostedChatboxSurface?: string;
-      initialModelId?: string;
-      initialSystemPrompt?: string;
-      initialTemperature?: number;
-      initialRequireToolApproval?: boolean;
+      hostedContext?: { chatboxSurface?: string };
+      executionConfig?: {
+        modelId?: string;
+        systemPrompt?: string;
+        temperature?: number;
+        requireToolApproval?: boolean;
+      };
       loadingIndicatorVariant?: string;
     }) => {
       React.useEffect(() => {
@@ -177,7 +183,7 @@ describe("ChatboxEditor preview", () => {
         observe() {}
         unobserve() {}
         disconnect() {}
-      },
+      }
     );
   });
 
@@ -193,7 +199,7 @@ describe("ChatboxEditor preview", () => {
         workspaceId="ws_1"
         workspaceServers={workspaceServers}
         onBack={() => {}}
-      />,
+      />
     );
 
     expect(screen.getByRole("button", { name: "Preview" })).toBeDisabled();
@@ -206,7 +212,7 @@ describe("ChatboxEditor preview", () => {
         workspaceId="ws_1"
         workspaceServers={workspaceServers}
         onBack={() => {}}
-      />,
+      />
     );
 
     expect(mockWritePlaygroundSession).toHaveBeenCalledWith(
@@ -219,23 +225,27 @@ describe("ChatboxEditor preview", () => {
           systemPrompt: "You are helpful.",
         }),
         playgroundId: expect.any(String),
-      }),
+      })
     );
 
     await userEvent.click(screen.getByRole("button", { name: "Preview" }));
 
     expect(
-      await screen.findByTestId("chatbox-preview-chat"),
+      await screen.findByTestId("chatbox-preview-chat")
     ).toBeInTheDocument();
     expect(mockPreviewMount).toHaveBeenCalledWith(
       expect.objectContaining({
-        hostedChatboxSurface: "preview",
-        initialModelId: "openai/gpt-5-mini",
-        initialSystemPrompt: "You are helpful.",
-        initialTemperature: 0.4,
-        initialRequireToolApproval: true,
+        hostedContext: expect.objectContaining({
+          chatboxSurface: "preview",
+        }),
+        executionConfig: expect.objectContaining({
+          modelId: "openai/gpt-5-mini",
+          systemPrompt: "You are helpful.",
+          temperature: 0.4,
+          requireToolApproval: true,
+        }),
         loadingIndicatorVariant: "claude-mark",
-      }),
+      })
     );
   });
 
@@ -246,12 +256,12 @@ describe("ChatboxEditor preview", () => {
         workspaceId="ws_1"
         workspaceServers={workspaceServers}
         onBack={() => {}}
-      />,
+      />
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Preview" }));
     expect(
-      await screen.findByTestId("chatbox-preview-chat"),
+      await screen.findByTestId("chatbox-preview-chat")
     ).toBeInTheDocument();
     expect(mockPreviewMount).toHaveBeenCalledTimes(1);
 

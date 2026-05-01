@@ -102,6 +102,32 @@ describe("ServerConnectionCard hosted reconnect guard", () => {
     expect(onReconnect).not.toHaveBeenCalled();
   });
 
+  it("allows interactive OAuth reconnect for OAuth servers without tokens", () => {
+    const onReconnect = vi.fn().mockResolvedValue(undefined);
+    const server = createServer({
+      name: "oauth-server",
+      useOAuth: true,
+      config: {
+        transportType: "streamableHttp",
+        url: "https://example.com/mcp",
+      },
+    });
+
+    render(
+      <ServerConnectionCard
+        server={server}
+        onDisconnect={vi.fn()}
+        onReconnect={onReconnect}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("switch"));
+
+    expect(onReconnect).toHaveBeenCalledWith("oauth-server", {
+      allowInteractiveOAuthFlow: true,
+    });
+  });
+
   it("hides the share CTA even for share-eligible hosted servers", () => {
     const server = createServer({
       name: "shareable-server",

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useConvexAuth } from "convex/react";
 import {
   ArrowLeft,
   Check,
@@ -69,12 +70,8 @@ import { useHostedOAuthGate } from "@/hooks/hosted/use-hosted-oauth-gate";
 import { useIsMobile } from "@/hooks/use-mobile";
 import type { HostedOAuthRequiredDetails } from "@/lib/hosted-oauth-required";
 import { isHostedOAuthBusy } from "@/lib/hosted-oauth-resume";
-import { getStoredTokens } from "@/lib/oauth/mcp-oauth";
-import {
-  getChatboxHostLabel,
-  getChatboxHostLogo,
-  type ChatboxHostStyle,
-} from "@/lib/chatbox-host-style";
+import type { ChatboxHostStyle } from "@/lib/chatbox-host-style";
+import { DEFAULT_HOST_STYLE, listHostStyles } from "@/lib/host-styles";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import {
   CHATBOX_OAUTH_PENDING_KEY,
@@ -121,7 +118,6 @@ interface ChatboxEditorProps {
 }
 
 const DEFAULT_SYSTEM_PROMPT = "You are a helpful assistant.";
-const HOST_STYLE_OPTIONS: ChatboxHostStyle[] = ["claude", "chatgpt"];
 
 function createPlaygroundId(): string {
   if (
@@ -143,6 +139,7 @@ export function ChatboxEditor({
   onSaved,
   onDeleted,
 }: ChatboxEditorProps) {
+  const { isAuthenticated } = useConvexAuth();
   const { createChatbox, updateChatbox, deleteChatbox, setChatboxMode } =
     useChatboxMutations();
   const { createServer } = useServerMutations();
@@ -152,38 +149,38 @@ export function ChatboxEditor({
   const hostedModels = useMemo(
     () =>
       SUPPORTED_MODELS.filter((model) =>
-        isMCPJamProvidedModel(String(model.id)),
+        isMCPJamProvidedModel(String(model.id))
       ),
-    [],
+    []
   );
 
   const [name, setName] = useState(chatbox?.name ?? "");
   const [description, setDescription] = useState(chatbox?.description ?? "");
   const [hostStyle, setHostStyle] = useState<ChatboxHostStyle>(
-    chatbox?.hostStyle ?? "claude",
+    chatbox?.hostStyle ?? DEFAULT_HOST_STYLE.id
   );
   const [systemPrompt, setSystemPrompt] = useState(
-    chatbox?.systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
+    chatbox?.systemPrompt ?? DEFAULT_SYSTEM_PROMPT
   );
   const [modelId, setModelId] = useState(
-    chatbox?.modelId ?? hostedModels[0]?.id?.toString() ?? "openai/gpt-5-mini",
+    chatbox?.modelId ?? hostedModels[0]?.id?.toString() ?? "openai/gpt-5-mini"
   );
   const [temperature, setTemperature] = useState(chatbox?.temperature ?? 0.7);
   const [requireToolApproval, setRequireToolApproval] = useState(
-    chatbox?.requireToolApproval ?? false,
+    chatbox?.requireToolApproval ?? false
   );
   const [allowGuestAccess, setAllowGuestAccess] = useState(
-    chatbox?.allowGuestAccess ?? true,
+    chatbox?.allowGuestAccess ?? true
   );
   const [mode, setMode] = useState<ChatboxMode>(
-    chatbox?.mode ?? "any_signed_in_with_link",
+    chatbox?.mode ?? "any_signed_in_with_link"
   );
   const [selectedServerIds, setSelectedServerIds] = useState<string[]>(
-    chatbox?.servers.map((s) => s.serverId) ?? [],
+    chatbox?.servers.map((s) => s.serverId) ?? []
   );
   const [optionalServerIds, setOptionalServerIds] = useState<string[]>(
     () =>
-      chatbox?.servers.filter((s) => s.optional).map((s) => s.serverId) ?? [],
+      chatbox?.servers.filter((s) => s.optional).map((s) => s.serverId) ?? []
   );
   const [isSaving, setIsSaving] = useState(false);
   const [isEditingTitle, setIsEditingTitle] = useState(isCreateMode);
@@ -194,7 +191,7 @@ export function ChatboxEditor({
   const [isDeletingChatbox, setIsDeletingChatbox] = useState(false);
   const [previewChatKey, setPreviewChatKey] = useState(0);
   const [previewPlaygroundId, setPreviewPlaygroundId] = useState(() =>
-    createPlaygroundId(),
+    createPlaygroundId()
   );
   const previewHasOpenedRef = useRef(false);
   const previewPendingRestartRef = useRef(false);
@@ -209,7 +206,7 @@ export function ChatboxEditor({
     if (!chatbox) {
       setName("");
       setDescription("");
-      setHostStyle("claude");
+      setHostStyle(DEFAULT_HOST_STYLE.id);
       setSystemPrompt(DEFAULT_SYSTEM_PROMPT);
       setModelId(hostedModels[0]?.id?.toString() ?? "openai/gpt-5-mini");
       setTemperature(0.7);
@@ -240,7 +237,7 @@ export function ChatboxEditor({
     setMode(chatbox.mode);
     setSelectedServerIds(chatbox.servers.map((s) => s.serverId));
     setOptionalServerIds(
-      chatbox.servers.filter((s) => s.optional).map((s) => s.serverId),
+      chatbox.servers.filter((s) => s.optional).map((s) => s.serverId)
     );
     setIsEditingTitle(false);
     setIsPreviewOpen(false);
@@ -262,7 +259,7 @@ export function ChatboxEditor({
     if (!chatbox?.chatboxId) return;
     try {
       const raw = sessionStorage.getItem(
-        chatboxPreviewEnabledOptionalStorageKey(chatbox.chatboxId),
+        chatboxPreviewEnabledOptionalStorageKey(chatbox.chatboxId)
       );
       if (!raw) {
         setPreviewEnabledOptionalIds((prev) => (prev.length === 0 ? prev : []));
@@ -272,7 +269,7 @@ export function ChatboxEditor({
       if (!Array.isArray(parsed)) return;
       const optionalSet = new Set(optionalServerIds);
       const next = parsed.filter(
-        (id): id is string => typeof id === "string" && optionalSet.has(id),
+        (id): id is string => typeof id === "string" && optionalSet.has(id)
       );
       setPreviewEnabledOptionalIds((prev) => {
         if (
@@ -292,7 +289,7 @@ export function ChatboxEditor({
     if (!chatbox?.chatboxId) return;
     try {
       const storageKey = chatboxPreviewEnabledOptionalStorageKey(
-        chatbox.chatboxId,
+        chatbox.chatboxId
       );
       const serialized = JSON.stringify(previewEnabledOptionalIds);
       if (sessionStorage.getItem(storageKey) === serialized) return;
@@ -304,13 +301,13 @@ export function ChatboxEditor({
 
   const availableServers = useMemo(
     () => workspaceServers.filter((s) => s.transportType === "http"),
-    [workspaceServers],
+    [workspaceServers]
   );
 
   const workspaceAccessLabel = workspaceName?.trim() || "Workspace";
   const accessPreset = useMemo(
     () => chatboxAccessPresetFromSettings(mode, allowGuestAccess),
-    [mode, allowGuestAccess],
+    [mode, allowGuestAccess]
   );
 
   const applyCreateAccessPreset = (preset: ChatboxAccessPreset) => {
@@ -338,17 +335,17 @@ export function ChatboxEditor({
       requireToolApproval,
       selectedServerIds,
       temperature,
-    ],
+    ]
   );
   const selectedPreviewServers = useMemo(() => {
     const savedServersById = new Map(
-      (chatbox?.servers ?? []).map((server) => [server.serverId, server]),
+      (chatbox?.servers ?? []).map((server) => [server.serverId, server])
     );
 
     return selectedServerIds
       .map((serverId) => {
         const workspaceServer = availableServers.find(
-          (server) => server._id === serverId,
+          (server) => server._id === serverId
         );
         if (workspaceServer) {
           return {
@@ -395,13 +392,13 @@ export function ChatboxEditor({
 
   const requiredPreviewServers = useMemo(
     () => selectedPreviewServers.filter((s) => !s.optional),
-    [selectedPreviewServers],
+    [selectedPreviewServers]
   );
 
   const activePreviewServers = useMemo(() => {
     const enabled = new Set(previewEnabledOptionalIds);
     const optionalOn = selectedPreviewServers.filter(
-      (s) => s.optional && enabled.has(s.serverId),
+      (s) => s.optional && enabled.has(s.serverId)
     );
     return [...requiredPreviewServers, ...optionalOn];
   }, [
@@ -424,17 +421,16 @@ export function ChatboxEditor({
           retryCount: 0,
           enabled: true,
         } satisfies ServerWithName,
-      ]),
+      ])
     );
   }, [activePreviewServers]);
 
   const previewOAuthGateServers = useMemo(
     () => activePreviewServers.map(bootstrapServerToHostedOAuthDescriptor),
-    [activePreviewServers],
+    [activePreviewServers]
   );
 
   const {
-    oauthStateByServerId,
     pendingOAuthServers,
     authorizeServer,
     markOAuthRequired,
@@ -443,19 +439,10 @@ export function ChatboxEditor({
     surface: "chatbox",
     pendingKey: CHATBOX_OAUTH_PENDING_KEY,
     servers: previewOAuthGateServers,
+    workspaceId: chatbox?.workspaceId ?? workspaceId,
+    chatboxToken: previewToken ?? undefined,
+    isAuthenticated,
   });
-  const previewOAuthTokens = useMemo(() => {
-    const entries = activePreviewServers
-      .map((server) => {
-        const token = getStoredTokens(server.serverName)?.access_token;
-        return token ? ([server.serverId, token] as const) : null;
-      })
-      .filter((entry): entry is readonly [string, string] =>
-        Array.isArray(entry),
-      );
-
-    return entries.length > 0 ? Object.fromEntries(entries) : undefined;
-  }, [oauthStateByServerId, activePreviewServers]);
   const isFinishingPreviewOAuth =
     pendingOAuthServers.length > 0 &&
     pendingOAuthServers.every(({ state }) => isHostedOAuthBusy(state.status));
@@ -518,7 +505,7 @@ export function ChatboxEditor({
     });
     if (!checked) {
       setOptionalServerIds((current) =>
-        current.filter((id) => id !== serverId),
+        current.filter((id) => id !== serverId)
       );
     }
   };
@@ -758,10 +745,10 @@ export function ChatboxEditor({
       buildPlaygroundChatboxLink(
         previewToken,
         previewName,
-        previewPlaygroundId,
+        previewPlaygroundId
       ),
       "_blank",
-      "noopener,noreferrer",
+      "noopener,noreferrer"
     );
   }, [previewName, previewPlaygroundId, previewToken]);
 
@@ -769,7 +756,7 @@ export function ChatboxEditor({
     (details?: HostedOAuthRequiredDetails) => {
       markOAuthRequired(details);
     },
-    [markOAuthRequired],
+    [markOAuthRequired]
   );
 
   return (
@@ -849,29 +836,25 @@ export function ChatboxEditor({
             Host style
           </Label>
           <div className="mt-1.5 grid gap-2 sm:grid-cols-2">
-            {HOST_STYLE_OPTIONS.map((option) => {
-              const isSelected = hostStyle === option;
+            {listHostStyles().map((host) => {
+              const isSelected = hostStyle === host.id;
               return (
                 <Button
-                  key={option}
+                  key={host.id}
                   type="button"
                   variant={isSelected ? "secondary" : "ghost"}
                   className="h-auto justify-start gap-3 rounded-xl border border-border/50 px-3 py-3"
-                  onClick={() => setHostStyle(option)}
+                  onClick={() => setHostStyle(host.id)}
                 >
                   <img
-                    src={getChatboxHostLogo(option)}
-                    alt={getChatboxHostLabel(option)}
+                    src={host.logoSrc}
+                    alt={host.label}
                     className="h-5 w-5 object-contain"
                   />
                   <div className="flex min-w-0 flex-col items-start">
-                    <span className="text-sm font-medium">
-                      {getChatboxHostLabel(option)}
-                    </span>
+                    <span className="text-sm font-medium">{host.label}</span>
                     <span className="text-xs text-muted-foreground">
-                      {option === "chatgpt"
-                        ? "OpenAI-style chatbox chrome"
-                        : "Claude-style chatbox chrome"}
+                      {host.pickerDescription}
                     </span>
                   </div>
                 </Button>
@@ -1023,8 +1006,8 @@ export function ChatboxEditor({
                       {accessPreset === "workspace"
                         ? workspaceAccessLabel
                         : accessPreset === "link_guests"
-                          ? "Anyone with the link (guests included)"
-                          : "Invited users only"}
+                        ? "Anyone with the link (guests included)"
+                        : "Invited users only"}
                       <ChevronDown className="size-3.5 text-muted-foreground" />
                     </button>
                   </PopoverTrigger>
@@ -1082,8 +1065,8 @@ export function ChatboxEditor({
                   {accessPreset === "workspace"
                     ? "Signed-in members of this workspace can open the chatbox with the link."
                     : accessPreset === "link_guests"
-                      ? "Anyone with the link can open this chatbox, including guests."
-                      : "Only people you invite by email can open this chatbox."}
+                    ? "Anyone with the link can open this chatbox, including guests."
+                    : "Only people you invite by email can open this chatbox."}
                 </p>
               </div>
             </div>
@@ -1186,23 +1169,26 @@ export function ChatboxEditor({
                       key={previewChatKey}
                       connectedOrConnectingServerConfigs={previewServerConfigs}
                       selectedServerNames={activePreviewServers.map(
-                        (server) => server.serverName,
+                        (server) => server.serverName
                       )}
                       minimalMode
                       reasoningDisplayMode="hidden"
                       hostedWorkspaceIdOverride={chatbox.workspaceId}
                       hostedSelectedServerIdsOverride={activePreviewServers.map(
-                        (server) => server.serverId,
+                        (server) => server.serverId
                       )}
-                      hostedOAuthTokensOverride={previewOAuthTokens}
-                      hostedChatboxToken={previewToken}
-                      hostedChatboxSurface="preview"
-                      initialModelId={modelId}
-                      initialSystemPrompt={normalizedSystemPrompt}
-                      initialTemperature={temperature}
-                      initialRequireToolApproval={requireToolApproval}
+                      hostedContext={{
+                        chatboxToken: previewToken,
+                        chatboxSurface: "preview",
+                      }}
+                      executionConfig={{
+                        modelId,
+                        systemPrompt: normalizedSystemPrompt,
+                        temperature,
+                        requireToolApproval,
+                      }}
                       loadingIndicatorVariant={getLoadingIndicatorVariantForHostStyle(
-                        hostStyle,
+                        hostStyle
                       )}
                       onOAuthRequired={handlePreviewOAuthRequired}
                       chatboxComposerBlocked={introGate.composerBlocked}
@@ -1211,7 +1197,7 @@ export function ChatboxEditor({
                         .filter(
                           (s) =>
                             s.optional &&
-                            !previewEnabledOptionalIds.includes(s.serverId),
+                            !previewEnabledOptionalIds.includes(s.serverId)
                         )
                         .map((s) => ({
                           serverId: s.serverId,
@@ -1220,7 +1206,7 @@ export function ChatboxEditor({
                         }))}
                       onEnableChatboxOptionalServer={(id) => {
                         setPreviewEnabledOptionalIds((prev) =>
-                          prev.includes(id) ? prev : [...prev, id],
+                          prev.includes(id) ? prev : [...prev, id]
                         );
                       }}
                     />

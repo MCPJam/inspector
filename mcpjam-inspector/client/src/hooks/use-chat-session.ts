@@ -92,36 +92,22 @@ import {
 } from "@/shared/live-chat-trace-preview";
 import { isHostedRpcLogDataPart } from "@/shared/hosted-rpc-log";
 import { ingestHostedRpcLogsFromResponse } from "@/lib/apis/web/rpc-logs";
+import type { ExecutionConfig } from "@/lib/chat-execution-config";
+import type { HostedRuntimeContext } from "@/lib/hosted-runtime-context";
 
 export interface UseChatSessionOptions {
   /** Server names to connect to */
   selectedServers: string[];
   /** Visibility to apply when persisting a new direct chat */
   directVisibility?: "private" | "workspace";
-  /** Active Convex workspace ID when running in hosted mode */
-  hostedWorkspaceId?: string | null;
   /** Sanitized organization provider config for hosted org-backed workspaces */
   hostedOrgModelConfig?: OrgVisibleConfig;
-  /** Hosted server IDs mapped from selected server names */
-  hostedSelectedServerIds?: string[];
-  /** OAuth tokens for hosted servers keyed by server ID */
-  hostedOAuthTokens?: Record<string, string>;
-  /** Optional server-share token for hosted shared chat sessions */
-  hostedShareToken?: string;
-  /** Optional chatbox token for hosted chatbox chat sessions */
-  hostedChatboxToken?: string;
-  /** Surface classification for hosted chatbox chat sessions */
-  hostedChatboxSurface?: "preview" | "share_link";
+  /** Hosted runtime context (workspace, server IDs, OAuth tokens, share/chatbox scope) */
+  hostedContext?: HostedRuntimeContext;
   /** Minimal UI mode for shared chat (hides diagnostics surfaces only) */
   minimalMode?: boolean;
-  /** Fixed initial model for hosted chatbox sessions */
-  initialModelId?: string;
-  /** Initial system prompt (defaults to DEFAULT_SYSTEM_PROMPT) */
-  initialSystemPrompt?: string;
-  /** Initial temperature (defaults to 0.7) */
-  initialTemperature?: number;
-  /** Initial tool approval mode for hosted chatbox sessions */
-  initialRequireToolApproval?: boolean;
+  /** Execution configuration (model, system prompt, temperature, tool approval) */
+  executionConfig?: ExecutionConfig;
   /** Callback when chat is reset */
   onReset?: (reason?: ChatSessionResetReason) => void;
 }
@@ -207,7 +193,7 @@ export interface UseChatSessionReturn {
     options?: {
       resetReason?: ChatSessionResetReason;
       toolRenderOverrides?: Record<string, ToolRenderOverride>;
-    },
+    }
   ) => void;
   loadChatSession: (
     session: {
@@ -247,7 +233,7 @@ export interface UseChatSessionReturn {
     options?: {
       shouldRestoreResumeConfig?: () => boolean;
       shouldApply?: () => boolean;
-    },
+    }
   ) => Promise<void>;
   syncResumedVersion: (version: number | null) => void;
 
@@ -408,7 +394,7 @@ async function resolveHydratedTurnTraces(
         spansBlobUrl?: string | null;
         modelId?: string;
       }>
-    | undefined,
+    | undefined
 ): Promise<HydratedTurnTrace[] | undefined> {
   // Preserve the `undefined` sentinel so `queueSessionHydration` can tell
   // "caller didn't provide traces — leave existing state alone" apart from
@@ -439,7 +425,7 @@ async function resolveHydratedTurnTraces(
           // numbers in the trace viewer.
           console.warn(
             `[useChatSession] Failed to fetch spans for turn ${trace.turnId}:`,
-            err,
+            err
           );
         }
       }
@@ -453,13 +439,13 @@ async function resolveHydratedTurnTraces(
         spans,
         modelId: trace.modelId,
       };
-    }),
+    })
   );
   return results;
 }
 
 async function resolveHydratedWidgetSnapshots(
-  raw: PersistedWidgetSnapshot[] | undefined,
+  raw: PersistedWidgetSnapshot[] | undefined
 ): Promise<PersistedWidgetSnapshot[] | undefined> {
   if (raw === undefined) {
     return undefined;
@@ -487,23 +473,23 @@ async function resolveHydratedWidgetSnapshots(
       } catch (err) {
         console.warn(
           `[useChatSession] Failed to fetch tool output for snapshot ${snapshot.toolCallId}:`,
-          err,
+          err
         );
         return snapshot;
       }
-    }),
+    })
   );
 }
 
 function buildLiveTraceStateFromTurnTraces(
-  traces: HydratedTurnTrace[],
+  traces: HydratedTurnTrace[]
 ): LiveTraceAccumulatorState {
   if (traces.length === 0) {
     return createEmptyLiveTraceState();
   }
 
   const ordered = [...traces].sort(
-    (left, right) => left.promptIndex - right.promptIndex,
+    (left, right) => left.promptIndex - right.promptIndex
   );
   const turnOrder: string[] = [];
   const turns: Record<string, LiveTraceTurnState> = {};
@@ -535,7 +521,7 @@ function buildLiveTraceStateFromTurnTraces(
 }
 
 function isTraceEventDataPart(
-  value: unknown,
+  value: unknown
 ): value is { type: "data-trace-event"; data: LiveChatTraceEvent } {
   if (!value || typeof value !== "object") {
     return false;
@@ -546,7 +532,7 @@ function isTraceEventDataPart(
 }
 
 function dedupeTraceToolCalls(
-  toolCalls: LiveChatTraceToolCall[] | null | undefined,
+  toolCalls: LiveChatTraceToolCall[] | null | undefined
 ): LiveChatTraceToolCall[] {
   if (!Array.isArray(toolCalls) || toolCalls.length === 0) {
     return [];
@@ -578,12 +564,12 @@ function dedupeTraceToolCalls(
 
 function upsertRequestPayloadEntry(
   entries: LiveChatTraceRequestPayloadEntry[],
-  nextEntry: LiveChatTraceRequestPayloadEntry,
+  nextEntry: LiveChatTraceRequestPayloadEntry
 ): LiveChatTraceRequestPayloadEntry[] {
   const existingIndex = entries.findIndex(
     (entry) =>
       entry.turnId === nextEntry.turnId &&
-      entry.stepIndex === nextEntry.stepIndex,
+      entry.stepIndex === nextEntry.stepIndex
   );
 
   if (existingIndex < 0) {
@@ -591,13 +577,13 @@ function upsertRequestPayloadEntry(
   }
 
   return entries.map((entry, index) =>
-    index === existingIndex ? nextEntry : entry,
+    index === existingIndex ? nextEntry : entry
   );
 }
 
 function applyLiveTraceEvent(
   state: LiveTraceAccumulatorState,
-  event: LiveChatTraceEvent,
+  event: LiveChatTraceEvent
 ): LiveTraceAccumulatorState {
   const nextEvents = [...state.events, event];
   const baseState: LiveTraceAccumulatorState = {
@@ -610,7 +596,7 @@ function applyLiveTraceEvent(
 
   const ensureTurnState = (
     turnId: string,
-    promptIndex: number,
+    promptIndex: number
   ): LiveTraceTurnState =>
     baseState.turns[turnId] ?? {
       turnId,
@@ -665,14 +651,14 @@ function applyLiveTraceEvent(
             promptIndex: event.promptIndex,
             stepIndex: event.stepIndex,
             payload: event.payload,
-          },
+          }
         ),
       };
     }
     case "trace_snapshot": {
       const turnState = ensureTurnState(
         event.turnId,
-        event.snapshot.promptIndex,
+        event.snapshot.promptIndex
       );
       const turnExists = baseState.turnOrder.includes(event.turnId);
       return {
@@ -690,7 +676,7 @@ function applyLiveTraceEvent(
               : [],
             usage: event.snapshot.usage,
             actualToolCalls: dedupeTraceToolCalls(
-              event.snapshot.actualToolCalls,
+              event.snapshot.actualToolCalls
             ),
           },
         },
@@ -738,7 +724,7 @@ function applyLiveTraceEvent(
 }
 
 function buildLiveTraceEnvelope(
-  state: LiveTraceAccumulatorState,
+  state: LiveTraceAccumulatorState
 ): LiveChatTraceEnvelope | null {
   if (state.events.length === 0 && !state.anySnapshotSeen) {
     return null;
@@ -822,7 +808,7 @@ function mergePreviewSpansIntoLiveEnvelope(
   envelope: LiveChatTraceEnvelope,
   state: LiveTraceAccumulatorState,
   previewWallElapsedMs: number | undefined,
-  transcriptFromUi: ModelMessage[] | null,
+  transcriptFromUi: ModelMessage[] | null
 ): LiveChatTraceEnvelope {
   if (!state.activeTurnId || state.activeTurnHasSnapshot) {
     return envelope;
@@ -843,7 +829,7 @@ function mergePreviewSpansIntoLiveEnvelope(
   });
   const previewIndexed = applyPreviewSpansUserMessageIndices(
     preview,
-    transcript,
+    transcript
   );
 
   const existing = envelope.spans ?? [];
@@ -880,7 +866,7 @@ function isTransientMessage(message: UIMessage): boolean {
 
 function shouldForkChatSession(
   previousMessages: UIMessage[],
-  nextMessages: UIMessage[],
+  nextMessages: UIMessage[]
 ): boolean {
   const previousPersistentIds = previousMessages
     .filter((message) => !isTransientMessage(message))
@@ -894,7 +880,36 @@ function shouldForkChatSession(
   }
 
   return nextPersistentIds.every(
-    (messageId, index) => messageId === previousPersistentIds[index],
+    (messageId, index) => messageId === previousPersistentIds[index]
+  );
+}
+
+function areAuthHeadersEqual(
+  a: Record<string, string> | undefined,
+  b: Record<string, string> | undefined
+): boolean {
+  if (a === b) return true;
+  if (!a || !b) return !a && !b;
+  const aKeys = Object.keys(a);
+  const bKeys = Object.keys(b);
+  if (aKeys.length !== bKeys.length) return false;
+  return aKeys.every((key) => a[key] === b[key]);
+}
+
+type HostedSessionScope = {
+  workspaceId?: string;
+  shareToken?: string;
+  chatboxToken?: string;
+};
+
+function areHostedSessionScopesEqual(
+  a: HostedSessionScope,
+  b: HostedSessionScope
+): boolean {
+  return (
+    a.workspaceId === b.workspaceId &&
+    a.shareToken === b.shareToken &&
+    a.chatboxToken === b.chatboxToken
   );
 }
 
@@ -909,20 +924,24 @@ function isAuthDeniedError(error: unknown): boolean {
 export function useChatSession({
   selectedServers,
   directVisibility = "private",
-  hostedWorkspaceId,
   hostedOrgModelConfig,
-  hostedSelectedServerIds = [],
-  hostedOAuthTokens,
-  hostedShareToken,
-  hostedChatboxToken,
-  hostedChatboxSurface,
+  hostedContext,
   minimalMode: _minimalMode = false,
-  initialModelId,
-  initialSystemPrompt = DEFAULT_SYSTEM_PROMPT,
-  initialTemperature = 0.7,
-  initialRequireToolApproval = false,
+  executionConfig,
   onReset,
 }: UseChatSessionOptions): UseChatSessionReturn {
+  const hostedWorkspaceId = hostedContext?.workspaceId;
+  const hostedSelectedServerIds = hostedContext?.selectedServerIds ?? [];
+  const hostedOAuthTokens = hostedContext?.oauthTokens;
+  const hostedShareToken = hostedContext?.shareToken;
+  const hostedChatboxToken = hostedContext?.chatboxToken;
+  const hostedChatboxSurface = hostedContext?.chatboxSurface;
+  const initialModelId = executionConfig?.modelId;
+  const initialSystemPrompt =
+    executionConfig?.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
+  const initialTemperature = executionConfig?.temperature ?? 0.7;
+  const initialRequireToolApproval =
+    executionConfig?.requireToolApproval ?? false;
   const { getAccessToken } = useAuth();
 
   // Store onReset in a ref to avoid triggering effects when the callback changes identity
@@ -981,7 +1000,7 @@ export function useChatSession({
   const [systemPromptTokenCountLoading, setSystemPromptTokenCountLoading] =
     useState(false);
   const [requireToolApproval, setRequireToolApproval] = useState(
-    initialRequireToolApproval,
+    initialRequireToolApproval
   );
   const requireToolApprovalRef = useRef(requireToolApproval);
   requireToolApprovalRef.current = requireToolApproval;
@@ -999,19 +1018,28 @@ export function useChatSession({
     !!(hostedShareToken || hostedChatboxToken);
   const guestMode = directGuestMode || sharedGuestMode;
   const skipNextForkDetectionRef = useRef(false);
+  const hasResolvedAuthHeadersRef = useRef(false);
+  const lastResolvedAuthHeadersRef = useRef<
+    Record<string, string> | undefined
+  >(undefined);
+  const lastResolvedHostedScopeRef = useRef<HostedSessionScope>({
+    workspaceId: undefined,
+    shareToken: undefined,
+    chatboxToken: undefined,
+  });
   const pendingSessionHydrationRef = useRef<PendingSessionHydration | null>(
-    null,
+    null
   );
   const pendingLiveTraceStateRef = useRef<LiveTraceAccumulatorState | null>(
-    null,
+    null
   );
   const selectedServersSignature = useMemo(
     () => selectedServers.join("\u0000"),
-    [selectedServers],
+    [selectedServers]
   );
   const liveTraceEnvelopeBase = useMemo(
     () => buildLiveTraceEnvelope(liveTraceState),
-    [liveTraceState],
+    [liveTraceState]
   );
   const hasTraceSnapshot = liveTraceState.activeTurnId
     ? liveTraceState.activeTurnHasSnapshot
@@ -1049,7 +1077,7 @@ export function useChatSession({
       restoredToolRenderOverridesRef.current = overrides;
       setRestoredToolRenderOverrides(overrides);
     },
-    [],
+    []
   );
   const clearPendingSessionHydration = useCallback(() => {
     // Drop any queued trace state so a subsequent resetChat / fork does not
@@ -1115,7 +1143,7 @@ export function useChatSession({
           : orgModels;
       }
       return visibleModels.filter((model) =>
-        isMCPJamProvidedModel(String(model.id)),
+        isMCPJamProvidedModel(String(model.id))
       );
     }
     return visibleModels;
@@ -1141,11 +1169,11 @@ export function useChatSession({
   } = usePersistedModel();
   const selectableModels = useMemo(
     () => availableModels.filter((model) => !model.disabled),
-    [availableModels],
+    [availableModels]
   );
   const selectedModel = useMemo<ModelDefinition>(() => {
     const fallback = getDefaultModel(
-      selectableModels.length > 0 ? selectableModels : availableModels,
+      selectableModels.length > 0 ? selectableModels : availableModels
     );
     const resolveAvailableModel = (modelId?: string | null) => {
       if (!modelId) {
@@ -1163,7 +1191,7 @@ export function useChatSession({
 
       return (
         availableModels.find(
-          (model) => String(model.id) === modelId && !model.disabled,
+          (model) => String(model.id) === modelId && !model.disabled
         ) ?? null
       );
     };
@@ -1185,7 +1213,7 @@ export function useChatSession({
       }
       setSelectedModelId(String(model.id));
     },
-    [initialModelId, setSelectedModelId],
+    [initialModelId, setSelectedModelId]
   );
 
   const isMcpJamModel = useMemo(() => {
@@ -1203,7 +1231,7 @@ export function useChatSession({
       }
       return response;
     },
-    [],
+    []
   );
 
   // Create transport
@@ -1230,8 +1258,8 @@ export function useChatSession({
     const transportHeaders = HOSTED_MODE
       ? undefined
       : Object.keys(mergedHeaders).length > 0
-        ? mergedHeaders
-        : undefined;
+      ? mergedHeaders
+      : undefined;
 
     const chatApi = HOSTED_MODE ? "/api/web/chat-v2" : "/api/mcp/chat-v2";
 
@@ -1266,7 +1294,9 @@ export function useChatSession({
         ...(hostedChatboxToken && hostedChatboxSurface
           ? { surface: hostedChatboxSurface }
           : {}),
-        ...(hostedOAuthTokens && Object.keys(hostedOAuthTokens).length > 0
+        ...(!hostedChatboxToken &&
+        hostedOAuthTokens &&
+        Object.keys(hostedOAuthTokens).length > 0
           ? { oauthTokens: hostedOAuthTokens }
           : {}),
       };
@@ -1332,7 +1362,7 @@ export function useChatSession({
       reconnectToStream: (options) =>
         latestTransportRef.current.reconnectToStream(options),
     }),
-    [],
+    []
   );
 
   // useChat hook
@@ -1377,7 +1407,7 @@ export function useChatSession({
         syncResumedVersion(hydration.resumedVersion);
         syncRestoredToolRenderOverrides(hydration.toolRenderOverrides ?? {});
         setPersistedSnapshotToolCallIds(
-          hydration.persistedSnapshotToolCallIds ?? [],
+          hydration.persistedSnapshotToolCallIds ?? []
         );
         if (hydratedTraceState !== null) {
           setLiveTraceState(hydratedTraceState);
@@ -1396,7 +1426,7 @@ export function useChatSession({
         setChatSessionId(hydration.sessionId);
       });
     },
-    [clearPendingSessionHydration, baseSetMessages, syncResumedVersion],
+    [clearPendingSessionHydration, baseSetMessages, syncResumedVersion]
   );
 
   const [traceTranscriptFromUi, setTraceTranscriptFromUi] = useState<
@@ -1405,7 +1435,7 @@ export function useChatSession({
 
   useEffect(() => {
     const persistent = messages.filter(
-      (message) => !isTransientMessage(message),
+      (message) => !isTransientMessage(message)
     );
     if (persistent.length === 0) {
       setTraceTranscriptFromUi(null);
@@ -1416,7 +1446,7 @@ export function useChatSession({
       persistent.map(({ id: _omitId, ...rest }) => rest) as Parameters<
         typeof convertToModelMessages
       >[0],
-      { ignoreIncompleteToolCalls: true },
+      { ignoreIncompleteToolCalls: true }
     ).then((modelMessages) => {
       if (!cancelled) {
         setTraceTranscriptFromUi(modelMessages);
@@ -1438,7 +1468,7 @@ export function useChatSession({
     }
     const id = window.setInterval(
       () => setPreviewWallTick((previous) => previous + 1),
-      400,
+      400
     );
     return () => clearInterval(id);
   }, [
@@ -1473,7 +1503,7 @@ export function useChatSession({
       liveTraceEnvelopeBase,
       liveTraceState,
       previewWallElapsedMs,
-      traceTranscriptFromUi,
+      traceTranscriptFromUi
     );
   }, [
     liveTraceEnvelopeBase,
@@ -1539,7 +1569,7 @@ export function useChatSession({
         return nextMessages;
       });
     },
-    [baseSetMessages],
+    [baseSetMessages]
   );
 
   useLayoutEffect(() => {
@@ -1554,7 +1584,7 @@ export function useChatSession({
     syncResumedVersion(pendingHydration.resumedVersion);
     syncRestoredToolRenderOverrides(pendingHydration.toolRenderOverrides ?? {});
     setPersistedSnapshotToolCallIds(
-      pendingHydration.persistedSnapshotToolCallIds ?? [],
+      pendingHydration.persistedSnapshotToolCallIds ?? []
     );
     // Force a React state update so that useSyncExternalStore re-reads the
     // messages snapshot that was just written to the Chat store above.
@@ -1589,7 +1619,7 @@ export function useChatSession({
         baseSendMessage({ text });
       }
     },
-    [baseSendMessage],
+    [baseSendMessage]
   );
 
   // Reset chat
@@ -1615,7 +1645,7 @@ export function useChatSession({
       options?: {
         resetReason?: ChatSessionResetReason;
         toolRenderOverrides?: Record<string, ToolRenderOverride>;
-      },
+      }
     ) => {
       skipNextForkDetectionRef.current = true;
       void queueSessionHydration({
@@ -1627,7 +1657,7 @@ export function useChatSession({
       });
       onResetRef.current?.(options?.resetReason ?? "fork");
     },
-    [queueSessionHydration],
+    [queueSessionHydration]
   );
 
   const loadChatSession = useCallback(
@@ -1657,7 +1687,7 @@ export function useChatSession({
       options?: {
         shouldRestoreResumeConfig?: () => boolean;
         shouldApply?: () => boolean;
-      },
+      }
     ) => {
       let uiMessages: UIMessage[] = [];
 
@@ -1665,7 +1695,7 @@ export function useChatSession({
         const response = await fetch(session.messagesBlobUrl);
         if (!response.ok) {
           throw new Error(
-            `Failed to fetch chat transcript (${response.status})`,
+            `Failed to fetch chat transcript (${response.status})`
           );
         }
         const transcript = await response.json();
@@ -1675,19 +1705,19 @@ export function useChatSession({
       // Build toolRenderOverrides from widget snapshots if available
       let overrides: Record<string, ToolRenderOverride> = {};
       const hydratedWidgetSnapshots = await resolveHydratedWidgetSnapshots(
-        session.widgetSnapshots,
+        session.widgetSnapshots
       );
       const persistedSnapshotToolCallIds =
         hydratedWidgetSnapshots?.map((snapshot) => snapshot.toolCallId) ?? [];
       if (hydratedWidgetSnapshots && hydratedWidgetSnapshots.length > 0) {
         const traceSnapshots = snapshotsToTraceWidgetSnapshots(
-          hydratedWidgetSnapshots,
+          hydratedWidgetSnapshots
         );
         overrides = buildToolRenderOverridesFromSnapshots(traceSnapshots);
       }
 
       const hydratedTurnTraces = await resolveHydratedTurnTraces(
-        session.turnTraces,
+        session.turnTraces
       );
 
       if (options?.shouldApply && !options.shouldApply()) {
@@ -1721,7 +1751,7 @@ export function useChatSession({
       });
       onResetRef.current?.("hydrate");
     },
-    [queueSessionHydration],
+    [queueSessionHydration]
   );
 
   useEffect(() => {
@@ -1742,12 +1772,14 @@ export function useChatSession({
     setIsSessionBootstrapComplete(false);
     (async () => {
       let resolved = false;
+      let resolvedAuthHeaders: Record<string, string> | undefined;
 
       try {
         const token = await getAccessToken?.();
         if (!active) return;
         if (token) {
-          setAuthHeaders({ Authorization: `Bearer ${token}` });
+          resolvedAuthHeaders = { Authorization: `Bearer ${token}` };
+          setAuthHeaders(resolvedAuthHeaders);
           resolved = true;
         }
       } catch {
@@ -1762,9 +1794,11 @@ export function useChatSession({
         const guestToken = await getGuestBearerToken();
         if (!active) return;
         if (guestToken) {
-          setAuthHeaders({ Authorization: `Bearer ${guestToken}` });
+          resolvedAuthHeaders = { Authorization: `Bearer ${guestToken}` };
+          setAuthHeaders(resolvedAuthHeaders);
           resolved = true;
         } else {
+          resolvedAuthHeaders = undefined;
           setAuthHeaders(undefined);
         }
       } else if (
@@ -1777,25 +1811,56 @@ export function useChatSession({
         const guestToken = await getGuestBearerToken();
         if (!active) return;
         if (guestToken) {
-          setAuthHeaders({ Authorization: `Bearer ${guestToken}` });
+          resolvedAuthHeaders = { Authorization: `Bearer ${guestToken}` };
+          setAuthHeaders(resolvedAuthHeaders);
           resolved = true;
         } else {
+          resolvedAuthHeaders = undefined;
           setAuthHeaders(undefined);
         }
       } else if (!resolved && active) {
+        resolvedAuthHeaders = undefined;
         setAuthHeaders(undefined);
       }
 
-      // Reset chat to force new session with updated auth headers
+      // Only reset chat state when the resolved auth headers actually changed.
+      // The first bootstrap pass always transitions undefined → resolved, but
+      // there is no prior session to invalidate (chatSessionId is freshly
+      // generated, messages are empty, no hydration has run). Resetting here
+      // would race with state injected during the async resolution — for
+      // example CLI `tools call --ui` commands that arrive while the guest
+      // bearer fetch is still in flight, whose injected messages would be
+      // wiped by setMessages([]).
       if (active) {
-        skipNextForkDetectionRef.current = true;
-        clearPendingSessionHydration();
-        setChatSessionId(generateId());
-        setMessages([]);
-        setPersistedSnapshotToolCallIds([]);
-        syncResumedVersion(null);
-        syncRestoredToolRenderOverrides({});
-        onResetRef.current?.("auth-bootstrap");
+        const previousAuthHeaders = lastResolvedAuthHeadersRef.current;
+        const previousHostedScope = lastResolvedHostedScopeRef.current;
+        const currentHostedScope = {
+          workspaceId: hostedWorkspaceId,
+          shareToken: hostedShareToken,
+          chatboxToken: hostedChatboxToken,
+        };
+        const hasResolvedBefore = hasResolvedAuthHeadersRef.current;
+        const authHeadersChanged =
+          hasResolvedBefore &&
+          !areAuthHeadersEqual(previousAuthHeaders, resolvedAuthHeaders);
+        const hostedScopeChanged =
+          hasResolvedBefore &&
+          !areHostedSessionScopesEqual(previousHostedScope, currentHostedScope);
+
+        if (authHeadersChanged || hostedScopeChanged) {
+          skipNextForkDetectionRef.current = true;
+          clearPendingSessionHydration();
+          setChatSessionId(generateId());
+          setMessages([]);
+          setPersistedSnapshotToolCallIds([]);
+          syncResumedVersion(null);
+          syncRestoredToolRenderOverrides({});
+          onResetRef.current?.("auth-bootstrap");
+        }
+
+        hasResolvedAuthHeadersRef.current = true;
+        lastResolvedAuthHeadersRef.current = resolvedAuthHeaders;
+        lastResolvedHostedScopeRef.current = currentHostedScope;
         setIsSessionBootstrapComplete(true);
       }
     })();
@@ -1823,8 +1888,9 @@ export function useChatSession({
     }
 
     const checkOllama = async () => {
-      const { isRunning, availableModels } =
-        await detectOllamaModels(getOllamaBaseUrl());
+      const { isRunning, availableModels } = await detectOllamaModels(
+        getOllamaBaseUrl()
+      );
       setIsOllamaRunning(isRunning);
 
       const toolCapable = isRunning
@@ -1840,7 +1906,7 @@ export function useChatSession({
           disabledReason: toolCapableSet.has(modelName)
             ? undefined
             : "Model does not support tool calling",
-        }),
+        })
       );
       setOllamaModels(ollamaDefs);
     };
@@ -1854,16 +1920,16 @@ export function useChatSession({
     const fetchToolsMetadata = async () => {
       if (selectedServers.length === 0) {
         setToolsMetadata((previous) =>
-          Object.keys(previous).length > 0 ? {} : previous,
+          Object.keys(previous).length > 0 ? {} : previous
         );
         setToolServerMap((previous) =>
-          Object.keys(previous).length > 0 ? {} : previous,
+          Object.keys(previous).length > 0 ? {} : previous
         );
         setMcpToolsTokenCount((previous) =>
-          previous !== null ? null : previous,
+          previous !== null ? null : previous
         );
         setMcpToolsTokenCountLoading((previous) =>
-          previous ? false : previous,
+          previous ? false : previous
         );
         return;
       }
@@ -1880,14 +1946,14 @@ export function useChatSession({
       try {
         const { metadata, toolServerMap, tokenCounts } = await getToolsMetadata(
           selectedServers,
-          modelIdForTokens,
+          modelIdForTokens
         );
         setToolsMetadata(metadata);
         setToolServerMap(toolServerMap);
         setMcpToolsTokenCount(
           tokenCounts && Object.keys(tokenCounts).length > 0
             ? tokenCounts
-            : null,
+            : null
         );
       } catch (error) {
         if (
@@ -1898,7 +1964,7 @@ export function useChatSession({
         ) {
           console.warn(
             "[useChatSession] Failed to fetch tools metadata:",
-            error,
+            error
           );
         }
         setToolsMetadata({});
@@ -1942,7 +2008,7 @@ export function useChatSession({
         ) {
           console.warn(
             "[useChatSession] Failed to count system prompt tokens:",
-            error,
+            error
           );
         }
         setSystemPromptTokenCount(null);

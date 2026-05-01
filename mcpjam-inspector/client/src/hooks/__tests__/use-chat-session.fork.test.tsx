@@ -210,8 +210,10 @@ describe("useChatSession fork preservation", () => {
     const { result } = renderHook(() =>
       useChatSession({
         selectedServers,
-        hostedWorkspaceId: "workspace-1",
-        hostedSelectedServerIds,
+        hostedContext: {
+          workspaceId: "workspace-1",
+          selectedServerIds: hostedSelectedServerIds,
+        },
       }),
     );
     const initialChatSessionId = result.current.chatSessionId;
@@ -257,8 +259,10 @@ describe("useChatSession fork preservation", () => {
     const { result } = renderHook(() =>
       useChatSession({
         selectedServers,
-        hostedWorkspaceId: "workspace-1",
-        hostedSelectedServerIds,
+        hostedContext: {
+          workspaceId: "workspace-1",
+          selectedServerIds: hostedSelectedServerIds,
+        },
       }),
     );
     const initialChatSessionId = result.current.chatSessionId;
@@ -292,8 +296,10 @@ describe("useChatSession fork preservation", () => {
     const { result } = renderHook(() =>
       useChatSession({
         selectedServers,
-        hostedWorkspaceId: "workspace-1",
-        hostedSelectedServerIds,
+        hostedContext: {
+          workspaceId: "workspace-1",
+          selectedServerIds: hostedSelectedServerIds,
+        },
       }),
     );
     const initialChatSessionId = result.current.chatSessionId;
@@ -324,8 +330,10 @@ describe("useChatSession fork preservation", () => {
     const { result } = renderHook(() =>
       useChatSession({
         selectedServers: [],
-        hostedWorkspaceId: "workspace-1",
-        hostedSelectedServerIds: [],
+        hostedContext: {
+          workspaceId: "workspace-1",
+          selectedServerIds: [],
+        },
       }),
     );
     const initialChatSessionId = result.current.chatSessionId;
@@ -396,8 +404,10 @@ describe("useChatSession fork preservation", () => {
     const { result } = renderHook(() =>
       useChatSession({
         selectedServers: [],
-        hostedWorkspaceId: "workspace-1",
-        hostedSelectedServerIds: [],
+        hostedContext: {
+          workspaceId: "workspace-1",
+          selectedServerIds: [],
+        },
       }),
     );
 
@@ -468,8 +478,10 @@ describe("useChatSession fork preservation", () => {
       ({ selectedServers }: { selectedServers: string[] }) =>
         useChatSession({
           selectedServers,
-          hostedWorkspaceId: "workspace-1",
-          hostedSelectedServerIds: [],
+          hostedContext: {
+            workspaceId: "workspace-1",
+            selectedServerIds: [],
+          },
         }),
       {
         initialProps: {
@@ -515,8 +527,10 @@ describe("useChatSession fork preservation", () => {
       ({ selectedServers }: { selectedServers: string[] }) =>
         useChatSession({
           selectedServers,
-          hostedWorkspaceId: "workspace-1",
-          hostedSelectedServerIds: [],
+          hostedContext: {
+            workspaceId: "workspace-1",
+            selectedServerIds: [],
+          },
           onReset,
         }),
       {
@@ -557,8 +571,10 @@ describe("useChatSession fork preservation", () => {
     const { result } = renderHook(() =>
       useChatSession({
         selectedServers: [],
-        hostedWorkspaceId: "workspace-1",
-        hostedSelectedServerIds: [],
+        hostedContext: {
+          workspaceId: "workspace-1",
+          selectedServerIds: [],
+        },
       }),
     );
 

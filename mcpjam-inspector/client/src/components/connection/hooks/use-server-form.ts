@@ -1,6 +1,12 @@
 import { useState, useEffect, useRef } from "react";
-import { ServerFormData } from "@/shared/types.js";
+import {
+  ServerFormData,
+  type ServerFormOAuthProtocolMode,
+  type ServerFormOAuthRegistrationMode,
+} from "@/shared/types.js";
 import { ServerWithName } from "@/hooks/use-app-state";
+import type { WorkspaceClientConfig } from "@/lib/client-config";
+import { getEffectiveWorkspaceConnectionDefaults } from "@/lib/client-config";
 import { hasOAuthConfig, getStoredTokens } from "@/lib/oauth/mcp-oauth";
 import { HOSTED_MODE } from "@/lib/config";
 
@@ -12,17 +18,91 @@ interface InitialFormValues {
   authType: "oauth" | "bearer" | "none";
   bearerToken: string;
   oauthScopesInput: string;
+  oauthProtocolMode: ServerFormOAuthProtocolMode;
+  oauthRegistrationMode: ServerFormOAuthRegistrationMode;
   useCustomClientId: boolean;
   clientId: string;
   clientSecret: string;
   envVars: Array<{ key: string; value: string }>;
   customHeaders: Array<{ key: string; value: string }>;
   requestTimeout: string;
+  clientCapabilitiesOverrideEnabled: boolean;
+  clientCapabilitiesOverrideText: string;
+}
+
+const DEFAULT_OAUTH_PROTOCOL_MODE: ServerFormOAuthProtocolMode = "2025-11-25";
+const DEFAULT_OAUTH_REGISTRATION_MODE: ServerFormOAuthRegistrationMode = "auto";
+
+interface HeaderEntry {
+  id?: string;
+  key: string;
+  value: string;
+}
+
+function normalizeOauthProtocolMode(
+  value?: string,
+): ServerFormOAuthProtocolMode {
+  return value === "2025-03-26" ||
+    value === "2025-06-18" ||
+    value === "2025-11-25"
+    ? value
+    : DEFAULT_OAUTH_PROTOCOL_MODE;
+}
+
+function normalizeOauthRegistrationMode(
+  value?: string,
+): ServerFormOAuthRegistrationMode | undefined {
+  return value === "auto" ||
+    value === "cimd" ||
+    value === "dcr" ||
+    value === "preregistered"
+    ? value
+    : undefined;
+}
+
+function createHeaderEntry(key = "", value = ""): HeaderEntry {
+  return {
+    id:
+      typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    key,
+    value,
+  };
+}
+
+function isAuthorizationHeader(key: string): boolean {
+  return key.trim().toLowerCase() === "authorization";
+}
+
+function getAuthorizationHeaderValue(
+  headers?: Record<string, unknown>,
+): string | undefined {
+  if (!headers) {
+    return undefined;
+  }
+
+  for (const [key, value] of Object.entries(headers)) {
+    if (isAuthorizationHeader(key) && typeof value === "string") {
+      return value;
+    }
+  }
+
+  return undefined;
+}
+
+function toComparableHeaders(
+  headers: Array<{ key: string; value: string }>,
+): Array<{ key: string; value: string }> {
+  return headers.map(({ key, value }) => ({ key, value }));
 }
 
 export function useServerForm(
   server?: ServerWithName,
-  options?: { requireHttps?: boolean },
+  options?: {
+    requireHttps?: boolean;
+    workspaceClientConfig?: WorkspaceClientConfig;
+  },
 ) {
   const [name, setName] = useState("");
   const [type, setType] = useState<"stdio" | "http">("http");
@@ -30,6 +110,10 @@ export function useServerForm(
   const [url, setUrl] = useState("");
 
   const [oauthScopesInput, setOauthScopesInput] = useState("");
+  const [oauthProtocolMode, setOauthProtocolMode] =
+    useState<ServerFormOAuthProtocolMode>(DEFAULT_OAUTH_PROTOCOL_MODE);
+  const [oauthRegistrationMode, setOauthRegistrationMode] =
+    useState<ServerFormOAuthRegistrationMode>(DEFAULT_OAUTH_REGISTRATION_MODE);
   const [clientId, setClientId] = useState("");
   const [clientSecret, setClientSecret] = useState("");
   const [bearerToken, setBearerToken] = useState("");
@@ -44,16 +128,33 @@ export function useServerForm(
   const [envVars, setEnvVars] = useState<Array<{ key: string; value: string }>>(
     [],
   );
-  const [customHeaders, setCustomHeaders] = useState<
-    Array<{ key: string; value: string }>
-  >([]);
-  const [requestTimeout, setRequestTimeout] = useState<string>("10000");
+  const [customHeaders, setCustomHeaders] = useState<HeaderEntry[]>([]);
+  const [requestTimeout, setRequestTimeout] = useState<string>("");
+  const [clientCapabilitiesOverrideEnabled, setClientCapabilitiesOverrideEnabled] =
+    useState(false);
+  const [clientCapabilitiesOverrideText, setClientCapabilitiesOverrideText] =
+    useState("{}");
+  const [clientCapabilitiesOverrideError, setClientCapabilitiesOverrideError] =
+    useState<string | null>(null);
 
   const [showConfiguration, setShowConfiguration] = useState<boolean>(false);
   const [showEnvVars, setShowEnvVars] = useState<boolean>(false);
   const [showAuthSettings, setShowAuthSettings] = useState<boolean>(false);
 
   const initialValues = useRef<InitialFormValues | null>(null);
+  const workspaceConnectionDefaults = getEffectiveWorkspaceConnectionDefaults(
+    options?.workspaceClientConfig,
+  );
+
+  const parseCapabilitiesOverride = (
+    value: string,
+  ): Record<string, unknown> => {
+    const parsed = JSON.parse(value) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("Client capabilities override must be a JSON object");
+    }
+    return parsed as Record<string, unknown>;
+  };
 
   // Initialize form with server data (for edit mode)
   useEffect(() => {
@@ -64,8 +165,14 @@ export function useServerForm(
       // For HTTP servers, check OAuth from multiple sources like the original
       let hasOAuth = false;
       let scopes: string[] = [];
+      let protocolModeValue: ServerFormOAuthProtocolMode =
+        DEFAULT_OAUTH_PROTOCOL_MODE;
+      let registrationModeValue: ServerFormOAuthRegistrationMode =
+        DEFAULT_OAUTH_REGISTRATION_MODE;
       let clientIdValue = "";
       let clientSecretValue = "";
+      let shouldShowClientCredentials = false;
+      let clientCapabilitiesOverrideValue: Record<string, unknown> | undefined;
 
       if (isHttpServer) {
         // Check if OAuth is configured by looking at multiple sources:
@@ -73,7 +180,11 @@ export function useServerForm(
         // 2. Check if there's stored OAuth data
         const hasOAuthTokens = server.oauthTokens != null;
         const hasStoredOAuthConfig = hasOAuthConfig(server.name);
-        hasOAuth = hasOAuthTokens || hasStoredOAuthConfig;
+        hasOAuth =
+          server.useOAuth === true ||
+          hasOAuthTokens ||
+          hasStoredOAuthConfig ||
+          server.oauthFlowProfile != null;
 
         const storedOAuthConfig = localStorage.getItem(
           `mcp-oauth-config-${server.name}`,
@@ -87,18 +198,55 @@ export function useServerForm(
         const oauthConfig = storedOAuthConfig
           ? JSON.parse(storedOAuthConfig)
           : {};
+        const fallbackScopes =
+          typeof server.oauthFlowProfile?.scopes === "string"
+            ? server.oauthFlowProfile.scopes
+                .split(/[,\s]+/)
+                .filter((scope) => scope.length > 0)
+            : [];
 
         // Retrieve scopes from multiple sources (prioritize stored tokens/storage)
         scopes =
           server.oauthTokens?.scope?.split(" ") ||
           storedTokens?.scope?.split(" ") ||
           oauthConfig.scopes ||
-          [];
+          fallbackScopes;
 
-        // Get client ID and secret from multiple sources (prioritize stored)
-        clientIdValue = storedTokens?.client_id || clientInfo?.client_id || "";
+        const savedClientId =
+          clientInfo?.client_id || server.oauthFlowProfile?.clientId || "";
+        const savedClientSecret =
+          clientInfo?.client_secret ||
+          server.oauthFlowProfile?.clientSecret ||
+          "";
 
-        clientSecretValue = clientInfo?.client_secret || "";
+        // Keep runtime token metadata available for preregistered reconnects,
+        // but only surface credential fields from saved client configuration.
+        clientIdValue = storedTokens?.client_id || savedClientId;
+        clientSecretValue = savedClientSecret;
+
+        protocolModeValue = normalizeOauthProtocolMode(
+          typeof oauthConfig.protocolMode === "string"
+            ? oauthConfig.protocolMode
+            : typeof server.oauthFlowProfile?.protocolVersion === "string"
+              ? server.oauthFlowProfile.protocolVersion
+              : typeof oauthConfig.protocolVersion === "string"
+                ? oauthConfig.protocolVersion
+                : undefined,
+        );
+
+        registrationModeValue =
+          normalizeOauthRegistrationMode(oauthConfig.registrationMode) ??
+          normalizeOauthRegistrationMode(
+            server.oauthFlowProfile?.registrationStrategy,
+          ) ??
+          normalizeOauthRegistrationMode(oauthConfig.registrationStrategy) ??
+          ((savedClientId || savedClientSecret)
+            ? "preregistered"
+            : DEFAULT_OAUTH_REGISTRATION_MODE);
+
+        shouldShowClientCredentials =
+          registrationModeValue === "preregistered" ||
+          Boolean(savedClientId || savedClientSecret);
       }
 
       // Derive local values used for both state initialization and snapshot
@@ -111,24 +259,29 @@ export function useServerForm(
             .filter(Boolean)
             .join(" ")
         : "";
+      const authorizationHeader = isHttpServer
+        ? getAuthorizationHeaderValue(
+            config.requestInit?.headers as Record<string, unknown> | undefined,
+          )
+        : undefined;
       const hasBearer =
-        isHttpServer &&
-        config.requestInit?.headers &&
-        typeof config.requestInit.headers === "object" &&
-        "Authorization" in config.requestInit.headers &&
-        typeof config.requestInit.headers.Authorization === "string" &&
-        config.requestInit.headers.Authorization.startsWith("Bearer ");
+        typeof authorizationHeader === "string" &&
+        authorizationHeader.startsWith("Bearer ");
       const bearerTokenValue = hasBearer
-        ? (
-            config.requestInit!.headers as Record<string, string>
-          ).Authorization.replace("Bearer ", "")
+        ? authorizationHeader.replace("Bearer ", "")
         : "";
       const resolvedAuthType: "oauth" | "bearer" | "none" = hasOAuth
         ? "oauth"
         : hasBearer
           ? "bearer"
           : "none";
-      const timeoutValue = String(config.timeout || 10000);
+      const timeoutValue =
+        typeof config.timeout === "number" && Number.isFinite(config.timeout)
+          ? String(config.timeout)
+          : "";
+      clientCapabilitiesOverrideValue =
+        (config.clientCapabilities as Record<string, unknown> | undefined) ??
+        (config.capabilities as Record<string, unknown> | undefined);
 
       setName(server.name);
       setType(serverType);
@@ -138,7 +291,16 @@ export function useServerForm(
       // Don't set a default scope for existing servers - use what's configured
       // Only set default for new servers
       setOauthScopesInput(scopes.join(" "));
+      setOauthProtocolMode(protocolModeValue);
+      setOauthRegistrationMode(registrationModeValue);
       setRequestTimeout(timeoutValue);
+      setClientCapabilitiesOverrideEnabled(
+        clientCapabilitiesOverrideValue != null,
+      );
+      setClientCapabilitiesOverrideText(
+        JSON.stringify(clientCapabilitiesOverrideValue ?? {}, null, 2),
+      );
+      setClientCapabilitiesOverrideError(null);
 
       // Set auth type based on multiple OAuth detection sources
       if (resolvedAuthType === "oauth") {
@@ -154,10 +316,14 @@ export function useServerForm(
       }
 
       // Set custom OAuth credentials if present (from any source)
-      if (clientIdValue) {
+      if (shouldShowClientCredentials) {
         setUseCustomClientId(true);
         setClientId(clientIdValue);
         setClientSecret(clientSecretValue);
+      } else {
+        setUseCustomClientId(false);
+        setClientId("");
+        setClientSecret("");
       }
 
       // Initialize env vars for STDIO servers
@@ -171,17 +337,22 @@ export function useServerForm(
       setEnvVars(envArray);
 
       // Initialize custom headers for HTTP servers (excluding Authorization)
-      let headersArray: Array<{ key: string; value: string }> = [];
+      let headersArray: HeaderEntry[] = [];
       if (
         isHttpServer &&
         config.requestInit?.headers &&
         typeof config.requestInit.headers === "object"
       ) {
         headersArray = Object.entries(config.requestInit.headers)
-          .filter(([key]) => key !== "Authorization")
-          .map(([key, value]) => ({ key, value: String(value) }));
+          .filter(([key]) => !isAuthorizationHeader(key))
+          .map(([key, value]) => createHeaderEntry(key, String(value)));
       }
       setCustomHeaders(headersArray);
+      setShowConfiguration(
+        headersArray.length > 0 ||
+          timeoutValue.trim() !== "" ||
+          clientCapabilitiesOverrideValue != null,
+      );
 
       // Capture initial values for change detection (deep copy arrays to avoid aliasing)
       initialValues.current = {
@@ -192,12 +363,21 @@ export function useServerForm(
         authType: resolvedAuthType,
         bearerToken: bearerTokenValue,
         oauthScopesInput: scopes.join(" "),
-        useCustomClientId: !!clientIdValue,
+        oauthProtocolMode: protocolModeValue,
+        oauthRegistrationMode: registrationModeValue,
+        useCustomClientId: shouldShowClientCredentials,
         clientId: clientIdValue,
         clientSecret: clientSecretValue,
         envVars: envArray.map(({ key, value }) => ({ key, value })),
         customHeaders: headersArray.map(({ key, value }) => ({ key, value })),
         requestTimeout: timeoutValue,
+        clientCapabilitiesOverrideEnabled:
+          clientCapabilitiesOverrideValue != null,
+        clientCapabilitiesOverrideText: JSON.stringify(
+          clientCapabilitiesOverrideValue ?? {},
+          null,
+          2,
+        ),
       };
     }
   }, [server]);
@@ -250,6 +430,13 @@ export function useServerForm(
       }
     }
 
+    if (
+      clientCapabilitiesOverrideEnabled &&
+      clientCapabilitiesOverrideError != null
+    ) {
+      return clientCapabilitiesOverrideError;
+    }
+
     return null;
   };
 
@@ -274,7 +461,7 @@ export function useServerForm(
   };
 
   const addCustomHeader = () => {
-    setCustomHeaders([...customHeaders, { key: "", value: "" }]);
+    setCustomHeaders([...customHeaders, createHeaderEntry()]);
   };
 
   const removeCustomHeader = (index: number) => {
@@ -287,12 +474,33 @@ export function useServerForm(
     value: string,
   ) => {
     const updated = [...customHeaders];
-    updated[index][field] = value;
+    updated[index] = {
+      ...updated[index],
+      [field]: value,
+    };
     setCustomHeaders(updated);
   };
 
+  const updateClientCapabilitiesOverride = (value: string) => {
+    setClientCapabilitiesOverrideText(value);
+    try {
+      parseCapabilitiesOverride(value);
+      setClientCapabilitiesOverrideError(null);
+    } catch (error) {
+      setClientCapabilitiesOverrideError(
+        error instanceof Error ? error.message : "Invalid JSON",
+      );
+    }
+  };
+
   const buildFormData = (): ServerFormData => {
-    const reqTimeout = parseInt(requestTimeout) || 10000;
+    const parsedTimeout = Number.parseInt(requestTimeout.trim(), 10);
+    const reqTimeout = Number.isFinite(parsedTimeout) ? parsedTimeout : undefined;
+    const clientCapabilities =
+      clientCapabilitiesOverrideEnabled &&
+      clientCapabilitiesOverrideError == null
+        ? parseCapabilitiesOverride(clientCapabilitiesOverrideText)
+        : undefined;
 
     // Handle stdio-specific data
     if (type === "stdio") {
@@ -319,6 +527,7 @@ export function useServerForm(
         args,
         env,
         requestTimeout: reqTimeout,
+        clientCapabilities,
       };
     }
 
@@ -331,30 +540,40 @@ export function useServerForm(
         headers[key.trim()] = value;
       }
     });
-
     // Parse OAuth scopes from input
     const scopes = oauthScopesInput
       .trim()
       .split(/\s+/)
       .filter((s) => s.length > 0);
+    const shouldUsePreregisteredCredentials =
+      authType === "oauth" && oauthRegistrationMode === "preregistered";
 
     // Handle authentication
     let useOAuth = false;
-    if (authType === "bearer" && bearerToken) {
+    if (authType === "bearer" && bearerToken.trim()) {
       headers["Authorization"] = `Bearer ${bearerToken.trim()}`;
     } else if (authType === "oauth") {
       useOAuth = true;
     }
+    const explicitHeaders =
+      Object.keys(headers).length > 0 ? headers : undefined;
 
     return {
       name: name.trim(),
       type: "http",
       url: url.trim(),
-      headers,
+      headers: explicitHeaders,
+      clientCapabilities,
       useOAuth,
+      oauthProtocolMode: useOAuth ? oauthProtocolMode : undefined,
+      oauthRegistrationMode: useOAuth ? oauthRegistrationMode : undefined,
       oauthScopes: scopes.length > 0 ? scopes : undefined,
-      clientId: clientId.trim() || undefined,
-      clientSecret: clientSecret.trim() || undefined,
+      clientId: shouldUsePreregisteredCredentials
+        ? clientId.trim() || undefined
+        : undefined,
+      clientSecret: shouldUsePreregisteredCredentials
+        ? clientSecret.trim() || undefined
+        : undefined,
       requestTimeout: reqTimeout,
     };
   };
@@ -365,6 +584,8 @@ export function useServerForm(
     setCommandInput("");
     setUrl("");
     setOauthScopesInput("");
+    setOauthProtocolMode(DEFAULT_OAUTH_PROTOCOL_MODE);
+    setOauthRegistrationMode(DEFAULT_OAUTH_REGISTRATION_MODE);
     setClientId("");
     setClientSecret("");
     setBearerToken("");
@@ -374,7 +595,10 @@ export function useServerForm(
     setClientSecretError(null);
     setEnvVars([]);
     setCustomHeaders([]);
-    setRequestTimeout("10000");
+    setRequestTimeout("");
+    setClientCapabilitiesOverrideEnabled(false);
+    setClientCapabilitiesOverrideText("{}");
+    setClientCapabilitiesOverrideError(null);
     setShowConfiguration(false);
     setShowEnvVars(false);
     setShowAuthSettings(false);
@@ -392,18 +616,31 @@ export function useServerForm(
       authType !== iv.authType ||
       bearerToken !== iv.bearerToken ||
       oauthScopesInput !== iv.oauthScopesInput ||
+      oauthProtocolMode !== iv.oauthProtocolMode ||
+      oauthRegistrationMode !== iv.oauthRegistrationMode ||
       useCustomClientId !== iv.useCustomClientId ||
       clientId !== iv.clientId ||
       clientSecret !== iv.clientSecret ||
       requestTimeout !== iv.requestTimeout ||
+      clientCapabilitiesOverrideEnabled !==
+        iv.clientCapabilitiesOverrideEnabled ||
+      clientCapabilitiesOverrideText !== iv.clientCapabilitiesOverrideText ||
       JSON.stringify(envVars) !== JSON.stringify(iv.envVars) ||
-      JSON.stringify(customHeaders) !== JSON.stringify(iv.customHeaders)
+      JSON.stringify(toComparableHeaders(customHeaders)) !==
+        JSON.stringify(iv.customHeaders)
     );
   })();
+
+  const preregisteredOauthBlocksSubmit =
+    type === "http" &&
+    authType === "oauth" &&
+    oauthRegistrationMode === "preregistered" &&
+    validateClientId(clientId) !== null;
 
   return {
     // Change detection
     hasChanges,
+    preregisteredOauthBlocksSubmit,
 
     // Form data
     name,
@@ -418,6 +655,10 @@ export function useServerForm(
     // Auth states
     oauthScopesInput,
     setOauthScopesInput,
+    oauthProtocolMode,
+    setOauthProtocolMode,
+    oauthRegistrationMode,
+    setOauthRegistrationMode,
     clientId,
     setClientId,
     clientSecret,
@@ -430,6 +671,13 @@ export function useServerForm(
     setUseCustomClientId,
     requestTimeout,
     setRequestTimeout,
+    inheritedRequestTimeout: workspaceConnectionDefaults.requestTimeout,
+    clientCapabilitiesOverrideEnabled,
+    setClientCapabilitiesOverrideEnabled,
+    clientCapabilitiesOverrideText,
+    setClientCapabilitiesOverrideText: updateClientCapabilitiesOverride,
+    clientCapabilitiesOverrideError,
+    setClientCapabilitiesOverrideError,
 
     // Validation states
     clientIdError,
@@ -461,6 +709,7 @@ export function useServerForm(
     addCustomHeader,
     removeCustomHeader,
     updateCustomHeader,
+    updateClientCapabilitiesOverride,
     buildFormData,
     resetForm,
   };

@@ -7,4 +7,5 @@ export type EvalChatHandoff = {
   modelId?: string;
   systemPrompt?: string;
   temperature?: number;
+  requireToolApproval?: boolean;
 };

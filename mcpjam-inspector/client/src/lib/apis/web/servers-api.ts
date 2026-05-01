@@ -1,6 +1,15 @@
 import { webPost } from "./base";
 import { buildHostedServerRequest } from "./context";
 
+export type HostedServerValidateContext = {
+  workspaceId: string;
+  serverId: string;
+  serverName?: string;
+  accessScope?: "workspace_member" | "chat_v2";
+  shareToken?: string;
+  chatboxToken?: string;
+};
+
 export interface HostedServerValidateResponse {
   success: boolean;
   status?: string;
@@ -13,12 +22,12 @@ export interface HostedServerOAuthRequirementResponse {
 }
 
 export async function checkHostedServerOAuthRequirement(
-  serverNameOrId: string,
+  serverNameOrId: string
 ): Promise<HostedServerOAuthRequirementResponse> {
   const request = buildHostedServerRequest(serverNameOrId);
   return webPost<typeof request, HostedServerOAuthRequirementResponse>(
     "/api/web/servers/check-oauth",
-    request,
+    request
   );
 }
 
@@ -26,8 +35,26 @@ export async function validateHostedServer(
   serverNameOrId: string,
   oauthAccessToken?: string,
   clientCapabilities?: Record<string, unknown>,
+  hostedContext?: HostedServerValidateContext
 ): Promise<HostedServerValidateResponse> {
-  const request = buildHostedServerRequest(serverNameOrId);
+  const request: Record<string, unknown> = hostedContext
+    ? {
+        workspaceId: hostedContext.workspaceId,
+        serverId: hostedContext.serverId,
+        ...(hostedContext.serverName
+          ? { serverName: hostedContext.serverName }
+          : {}),
+        ...(hostedContext.accessScope
+          ? { accessScope: hostedContext.accessScope }
+          : {}),
+        ...(hostedContext.shareToken
+          ? { shareToken: hostedContext.shareToken }
+          : {}),
+        ...(hostedContext.chatboxToken
+          ? { chatboxToken: hostedContext.chatboxToken }
+          : {}),
+      }
+    : buildHostedServerRequest(serverNameOrId);
   // Prefer an explicit OAuth token (e.g. freshly obtained from the OAuth flow)
   // over the one stored in the hosted API context, which may be stale.
   if (oauthAccessToken) {
@@ -38,6 +65,6 @@ export async function validateHostedServer(
   }
   return webPost<typeof request, HostedServerValidateResponse>(
     "/api/web/servers/validate",
-    request,
+    request
   );
 }

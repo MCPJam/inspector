@@ -486,7 +486,7 @@ export function SharedServerChatPage({
           hostedWorkspaceIdOverride={session.payload.workspaceId}
           hostedSelectedServerIdsOverride={[session.payload.serverId]}
           hostedOAuthTokensOverride={oauthTokensForChat}
-          hostedShareToken={session.token}
+          hostedContext={{ shareToken: session.token }}
           onOAuthRequired={handleOAuthRequired}
         />
       </div>

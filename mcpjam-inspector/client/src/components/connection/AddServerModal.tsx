@@ -10,16 +10,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@mcpjam/design-system/select";
-import { ChevronDown, ChevronRight } from "lucide-react";
 import { ServerFormData } from "@/shared/types.js";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { HOSTED_MODE } from "@/lib/config";
 import { usePostHog } from "posthog-js/react";
 import { useServerForm } from "./hooks/use-server-form";
+import { AdvancedConnectionSettingsSection } from "./shared/AdvancedConnectionSettingsSection";
 import { AuthenticationSection } from "./shared/AuthenticationSection";
-import { CustomHeadersSection } from "./shared/CustomHeadersSection";
 import { EnvVarsSection } from "./shared/EnvVarsSection";
 import { HostedConnectionTypeControl } from "./shared/HostedConnectionTypeControl";
+import type { Workspace } from "@/state/app-types";
 
 interface AddServerModalProps {
   isOpen: boolean;
@@ -27,6 +27,59 @@ interface AddServerModalProps {
   onSubmit: (formData: ServerFormData) => void;
   initialData?: Partial<ServerFormData>;
   requireHttps?: boolean;
+  workspaceClientConfig?: Workspace["clientConfig"];
+}
+
+function normalizeOauthProtocolMode(
+  value?: ServerFormData["oauthProtocolMode"],
+): ServerFormData["oauthProtocolMode"] {
+  return value === "2025-03-26" ||
+    value === "2025-06-18" ||
+    value === "2025-11-25"
+    ? value
+    : "2025-11-25";
+}
+
+function normalizeOauthRegistrationMode(
+  value?: ServerFormData["oauthRegistrationMode"],
+): ServerFormData["oauthRegistrationMode"] | undefined {
+  return value === "auto" ||
+    value === "cimd" ||
+    value === "dcr" ||
+    value === "preregistered"
+    ? value
+    : undefined;
+}
+
+function isAuthorizationHeader(key: string): boolean {
+  return key.trim().toLowerCase() === "authorization";
+}
+
+function getAuthorizationHeaderValue(
+  headers?: Record<string, string>,
+): string | undefined {
+  if (!headers) {
+    return undefined;
+  }
+
+  for (const [key, value] of Object.entries(headers)) {
+    if (isAuthorizationHeader(key)) {
+      return value;
+    }
+  }
+
+  return undefined;
+}
+
+function createHeaderEntry(key: string, value: string) {
+  return {
+    id:
+      typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    key,
+    value,
+  };
 }
 
 export function AddServerModal({
@@ -35,9 +88,13 @@ export function AddServerModal({
   onSubmit,
   initialData,
   requireHttps,
+  workspaceClientConfig,
 }: AddServerModalProps) {
   const posthog = usePostHog();
-  const formState = useServerForm(undefined, { requireHttps });
+  const formState = useServerForm(undefined, {
+    requireHttps,
+    workspaceClientConfig,
+  });
   const hostedUrlPlaceholder = "https://example.com/mcp";
 
   // Initialize form with initial data if provided
@@ -75,14 +132,69 @@ export function AddServerModal({
       if (initialData.useOAuth) {
         formState.setAuthType("oauth");
         formState.setShowAuthSettings(true);
-      } else if (
-        initialData.headers &&
-        initialData.headers["Authorization"] !== undefined
+        if (initialData.oauthProtocolMode) {
+          formState.setOauthProtocolMode(
+            normalizeOauthProtocolMode(initialData.oauthProtocolMode),
+          );
+        }
+        if (initialData.oauthRegistrationMode) {
+          formState.setOauthRegistrationMode(
+            normalizeOauthRegistrationMode(initialData.oauthRegistrationMode) ??
+              "auto",
+          );
+          formState.setUseCustomClientId(
+            initialData.oauthRegistrationMode === "preregistered",
+          );
+        }
+        if (initialData.oauthScopes && initialData.oauthScopes.length > 0) {
+          formState.setOauthScopesInput(initialData.oauthScopes.join(" "));
+        }
+        if (initialData.clientId) {
+          formState.setUseCustomClientId(true);
+          formState.setOauthRegistrationMode("preregistered");
+          formState.setClientId(initialData.clientId);
+        }
+        if (initialData.clientSecret) {
+          formState.setClientSecret(initialData.clientSecret);
+        }
+      } else if (initialData.headers) {
+        const authorizationHeader = getAuthorizationHeaderValue(
+          initialData.headers,
+        );
+
+        if (authorizationHeader !== undefined) {
+          // Has Authorization header - set up bearer token
+          formState.setAuthType("bearer");
+          formState.setShowAuthSettings(true);
+          formState.setBearerToken(
+            authorizationHeader.startsWith("Bearer ")
+              ? authorizationHeader.replace("Bearer ", "")
+              : authorizationHeader,
+          );
+        }
+      }
+      if (initialData.headers) {
+        const headersArray = Object.entries(initialData.headers)
+          .filter(([key]) => !isAuthorizationHeader(key))
+          .map(([key, value]) => createHeaderEntry(key, value));
+        if (headersArray.length > 0) {
+          formState.setCustomHeaders(headersArray);
+          formState.setShowConfiguration(true);
+        }
+      }
+      if (
+        typeof initialData.requestTimeout === "number" &&
+        Number.isFinite(initialData.requestTimeout)
       ) {
-        // Has Authorization header - set up bearer token
-        formState.setAuthType("bearer");
-        formState.setShowAuthSettings(true);
-        formState.setBearerToken(initialData.headers["Authorization"] || "");
+        formState.setRequestTimeout(String(initialData.requestTimeout));
+        formState.setShowConfiguration(true);
+      }
+      if (initialData.clientCapabilities) {
+        formState.setClientCapabilitiesOverrideEnabled(true);
+        formState.setClientCapabilitiesOverrideText(
+          JSON.stringify(initialData.clientCapabilities, null, 2),
+        );
+        formState.setShowConfiguration(true);
       }
     }
   }, [initialData, isOpen]);
@@ -96,7 +208,10 @@ export function AddServerModal({
     e.preventDefault();
 
     // Validate Client ID if using custom configuration
-    if (formState.authType === "oauth" && formState.useCustomClientId) {
+    if (
+      formState.authType === "oauth" &&
+      formState.oauthRegistrationMode === "preregistered"
+    ) {
       const clientIdError = formState.validateClientId(formState.clientId);
       if (clientIdError) {
         toast.error(clientIdError);
@@ -261,6 +376,7 @@ export function AddServerModal({
           {/* HTTP: Authentication */}
           {formState.type === "http" && (
             <AuthenticationSection
+              serverUrl={formState.url}
               authType={formState.authType}
               onAuthTypeChange={(value) => {
                 formState.setAuthType(value);
@@ -271,6 +387,12 @@ export function AddServerModal({
               onBearerTokenChange={formState.setBearerToken}
               oauthScopesInput={formState.oauthScopesInput}
               onOauthScopesChange={formState.setOauthScopesInput}
+              oauthProtocolMode={formState.oauthProtocolMode}
+              onOauthProtocolModeChange={formState.setOauthProtocolMode}
+              oauthRegistrationMode={formState.oauthRegistrationMode}
+              onOauthRegistrationModeChange={
+                formState.setOauthRegistrationMode
+              }
               useCustomClientId={formState.useCustomClientId}
               onUseCustomClientIdChange={(checked) => {
                 formState.setUseCustomClientId(checked);
@@ -298,62 +420,41 @@ export function AddServerModal({
             />
           )}
 
-          {/* HTTP: Custom Headers */}
-          {formState.type === "http" && (
-            <CustomHeadersSection
-              customHeaders={formState.customHeaders}
-              onAdd={formState.addCustomHeader}
-              onRemove={formState.removeCustomHeader}
-              onUpdate={formState.updateCustomHeader}
-            />
-          )}
-
-          {/* Configuration Section */}
-          <div className="border border-border rounded-lg overflow-hidden">
-            <button
-              type="button"
-              onClick={() =>
-                formState.setShowConfiguration(!formState.showConfiguration)
+          <AdvancedConnectionSettingsSection
+            showConfiguration={formState.showConfiguration}
+            onToggle={() =>
+              formState.setShowConfiguration(!formState.showConfiguration)
+            }
+            requestTimeout={formState.requestTimeout}
+            onRequestTimeoutChange={formState.setRequestTimeout}
+            inheritedRequestTimeout={formState.inheritedRequestTimeout}
+            clientCapabilitiesOverrideEnabled={
+              formState.clientCapabilitiesOverrideEnabled
+            }
+            onClientCapabilitiesOverrideEnabledChange={(enabled) => {
+              formState.setClientCapabilitiesOverrideEnabled(enabled);
+              if (!enabled) {
+                formState.setClientCapabilitiesOverrideError(null);
               }
-              className="w-full flex items-center justify-between p-3 hover:bg-muted/50 transition-colors cursor-pointer"
-            >
-              <div className="flex items-center gap-2">
-                {formState.showConfiguration ? (
-                  <ChevronDown className="h-4 w-4 text-muted-foreground" />
-                ) : (
-                  <ChevronRight className="h-4 w-4 text-muted-foreground" />
-                )}
-                <span className="text-sm font-medium text-foreground">
-                  Additional Configuration
-                </span>
-              </div>
-            </button>
-
-            {formState.showConfiguration && (
-              <div className="p-4 space-y-4 border-t border-border bg-muted/30">
-                <div className="space-y-2">
-                  <label className="block text-sm font-medium text-foreground">
-                    Request Timeout
-                  </label>
-                  <Input
-                    type="number"
-                    value={formState.requestTimeout}
-                    onChange={(e) =>
-                      formState.setRequestTimeout(e.target.value)
-                    }
-                    placeholder="10000"
-                    className="h-10"
-                    min="1000"
-                    max="600000"
-                    step="1000"
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Timeout in ms (default: 10000ms, min: 1000ms, max: 600000ms)
-                  </p>
-                </div>
-              </div>
-            )}
-          </div>
+            }}
+            clientCapabilitiesOverrideText={
+              formState.clientCapabilitiesOverrideText
+            }
+            onClientCapabilitiesOverrideTextChange={
+              formState.setClientCapabilitiesOverrideText
+            }
+            clientCapabilitiesOverrideError={
+              formState.clientCapabilitiesOverrideError
+            }
+            {...(formState.type === "http"
+              ? {
+                  customHeaders: formState.customHeaders,
+                  onAddHeader: formState.addCustomHeader,
+                  onRemoveHeader: formState.removeCustomHeader,
+                  onUpdateHeader: formState.updateCustomHeader,
+                }
+              : {})}
+          />
 
           {/* Action Buttons */}
           <div className="flex justify-end space-x-2 pt-4">
@@ -374,6 +475,7 @@ export function AddServerModal({
             </Button>
             <Button
               type="submit"
+              disabled={formState.preregisteredOauthBlocksSubmit}
               onClick={() => {
                 posthog.capture("add_server_button_clicked", {
                   location: "add_server_modal",

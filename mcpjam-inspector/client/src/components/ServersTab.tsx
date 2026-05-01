@@ -29,7 +29,7 @@ import {
   DialogDescription,
   DialogTitle,
 } from "@mcpjam/design-system/dialog";
-import type { WorkspaceClientConfig } from "@/lib/client-config";
+import type { WorkspaceConnectionConfigDraft } from "@/lib/client-config";
 import {
   ServerDetailModal,
   type ServerDetailTab,
@@ -38,7 +38,7 @@ import {
 import { JsonImportModal } from "./connection/JsonImportModal";
 import { ServerFormData } from "@/shared/types.js";
 import { MCPIcon } from "./ui/mcp-icon";
-import { usePostHog, useFeatureFlagEnabled } from "posthog-js/react";
+import { usePostHog } from "posthog-js/react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -68,6 +68,7 @@ import { CollapsedPanelStrip } from "./ui/collapsed-panel-strip";
 import { LoggerView } from "./logger-view";
 import { useJsonRpcPanelVisibility } from "@/hooks/use-json-rpc-panel";
 import { Skeleton } from "@mcpjam/design-system/skeleton";
+import { ServersLoadingSkeleton } from "@mcpjam/design-system/servers-loading-skeleton";
 import { useConvexAuth } from "convex/react";
 import { Workspace } from "@/state/app-types";
 import {
@@ -107,6 +108,7 @@ import {
 import { cn } from "@/lib/utils";
 import { compareQuickConnectCatalogCards } from "@/lib/quick-connect-catalog-sort";
 import { toast } from "sonner";
+import { useClientConfigStore } from "@/stores/client-config-store";
 
 const ORDER_STORAGE_KEY = "mcp-server-order";
 const LOGGER_FOCUS_STORAGE_KEY = "mcp-server-logger-focus";
@@ -513,7 +515,7 @@ interface ServersTabProps {
   onNavigateToRegistry?: () => void;
   onSaveClientConfig?: (
     workspaceId: string,
-    clientConfig: WorkspaceClientConfig | undefined
+    clientConfig: WorkspaceConnectionConfigDraft | undefined
   ) => Promise<void>;
 }
 
@@ -536,7 +538,6 @@ export function ServersTab({
   onSaveClientConfig,
 }: ServersTabProps) {
   const posthog = usePostHog();
-  const clientConfigEnabled = useFeatureFlagEnabled("client-config-enabled");
   const { isAuthenticated } = useConvexAuth();
   const [pendingQuickConnect, setPendingQuickConnect] =
     useState<PendingQuickConnectState | null>(() => readPendingQuickConnect());
@@ -847,11 +848,15 @@ export function ServersTab({
 
   const activeWorkspace = workspaces[activeWorkspaceId];
   const sharedWorkspaceId = activeWorkspace?.sharedWorkspaceId;
+  const hostedWorkspaceId = sharedWorkspaceId ?? activeWorkspaceId;
   const { serversRecord: sharedWorkspaceServersRecord } =
     useRemoteWorkspaceServers({
       workspaceId: sharedWorkspaceId ?? null,
       isAuthenticated,
     });
+  const detailModalHostedServerId = detailModalServer
+    ? sharedWorkspaceServersRecord[detailModalServer.name]?._id
+    : undefined;
   const handleOpenDetailModal = useCallback(
     (server: ServerWithName, defaultTab: ServerDetailTab) => {
       setDetailModalState((prev) => ({
@@ -1125,9 +1130,23 @@ export function ServersTab({
     setIsClientConfigOpen(true);
   };
 
+  const handleClientConfigOpenChange = (open: boolean) => {
+    if (!open) {
+      const clientConfigState = useClientConfigStore.getState();
+      if (
+        !clientConfigState.isSaving &&
+        !clientConfigState.isAwaitingRemoteEcho
+      ) {
+        clientConfigState.resetToBaseline();
+      }
+    }
+
+    setIsClientConfigOpen(open);
+  };
+
   const renderServerActionsMenu = () => (
     <>
-      {clientConfigEnabled === true && onSaveClientConfig ? (
+      {onSaveClientConfig ? (
         <Button
           size="sm"
           variant="outline"
@@ -1135,7 +1154,7 @@ export function ServersTab({
           className="cursor-pointer"
         >
           <Settings className="h-4 w-4 mr-2" />
-          Client Config
+          Connection Settings
         </Button>
       ) : null}
       <HoverCard
@@ -1481,14 +1500,7 @@ export function ServersTab({
     </div>
   );
 
-  const renderLoadingContent = () => (
-    <div className="flex-1 p-6">
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-        <Skeleton className="h-48 w-full rounded-lg" />
-        <Skeleton className="h-48 w-full rounded-lg" />
-      </div>
-    </div>
-  );
+  const renderLoadingContent = () => <ServersLoadingSkeleton />;
 
   const renderNoWorkspaceContent = () => (
     <div className="space-y-6 p-8 h-full overflow-auto">
@@ -1535,6 +1547,7 @@ export function ServersTab({
           });
           handleConnectServer(formData);
         }}
+        workspaceClientConfig={selectedWorkspace?.clientConfig}
       />
 
       {/* JSON Import Modal */}
@@ -1545,14 +1558,17 @@ export function ServersTab({
       />
 
       {/* Client Config Dialog */}
-      {clientConfigEnabled === true && onSaveClientConfig ? (
-        <Dialog open={isClientConfigOpen} onOpenChange={setIsClientConfigOpen}>
-          <DialogContent className="max-w-6xl w-[95vw] h-[85vh] p-0 overflow-hidden flex flex-col gap-0 sm:max-w-6xl">
-            <DialogTitle className="sr-only">Client Config</DialogTitle>
+      {onSaveClientConfig ? (
+        <Dialog
+          open={isClientConfigOpen}
+          onOpenChange={handleClientConfigOpenChange}
+        >
+          <DialogContent className="flex max-h-[88vh] w-[min(96vw,88rem)] max-w-[88rem] flex-col gap-0 overflow-hidden p-0 sm:max-w-[88rem]">
+            <DialogTitle className="sr-only">Connection Settings</DialogTitle>
             <DialogDescription className="sr-only">
-              Edit workspace client capabilities and host context.
+              Edit workspace connection settings and client capabilities.
             </DialogDescription>
-            <div className="min-h-0 flex-1 overflow-hidden">
+            <div className="min-h-0 overflow-hidden">
               <ClientConfigTab
                 activeWorkspaceId={activeWorkspaceId}
                 workspace={selectedWorkspace}
@@ -1575,6 +1591,9 @@ export function ServersTab({
           onDisconnect={onDisconnect}
           onReconnect={handleReconnectServer}
           existingServerNames={Object.keys(workspaceServers)}
+          workspaceClientConfig={selectedWorkspace?.clientConfig}
+          workspaceId={hostedWorkspaceId}
+          hostedServerId={detailModalHostedServerId}
         />
       )}
     </div>

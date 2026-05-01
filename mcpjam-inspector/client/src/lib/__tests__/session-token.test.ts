@@ -299,6 +299,41 @@ describe("session-token module", () => {
       });
     });
 
+    it("keeps session auth on absolute loopback API URLs", async () => {
+      await sessionToken.authFetch("http://127.0.0.1:6274/api/test");
+
+      expect(global.fetch).toHaveBeenCalledWith(
+        "http://127.0.0.1:6274/api/test",
+        {
+          headers: {
+            "X-MCP-Session-Auth": "Bearer fetch-token",
+          },
+        },
+      );
+    });
+
+    it("does not add session auth to cross-origin Convex HTTP requests", async () => {
+      await sessionToken.authFetch(
+        "https://outstanding-fennec-304.convex.site/web/registry/catalog",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+        },
+      );
+
+      expect(global.fetch).toHaveBeenCalledWith(
+        "https://outstanding-fennec-304.convex.site/web/registry/catalog",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+        },
+      );
+    });
+
     it("user-provided headers override auth headers", async () => {
       await sessionToken.authFetch("/api/test", {
         headers: {

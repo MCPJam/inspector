@@ -1,4 +1,6 @@
+import type { Context } from "hono";
 import { logger } from "./logger";
+import { getRequestLogger } from "./request-logger";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 import type { LiveChatTraceUsage } from "@/shared/live-chat-trace";
 
@@ -122,6 +124,7 @@ async function readResponsePreview(response: Response): Promise<string> {
 
 export async function persistChatSessionToConvex(
   options: PersistChatSessionOptions,
+  c?: Context,
 ): Promise<void> {
   const convexUrl = process.env.CONVEX_HTTP_URL;
   if (!convexUrl || !options.authHeader || !options.chatSessionId) {
@@ -188,29 +191,75 @@ export async function persistChatSessionToConvex(
 
     if (!response.ok) {
       const responsePreview = await readResponsePreview(response);
-      const logMessage =
-        response.status === 409 && responsePreview.includes("VERSION_CONFLICT")
-          ? "[chat-session-persistence] Chat session version conflict"
-          : `[chat-session-persistence] Failed to persist chat session (${response.status}): ${responsePreview}`;
-      logger.warn(logMessage, {
-        status: response.status,
-        responsePreview,
-      });
+      const isVersionConflict =
+        response.status === 409 &&
+        (response.headers.get("content-type")?.includes("application/json")
+          ? false
+          : responsePreview.includes("VERSION_CONFLICT"));
+      let failureKind: "version_conflict" | "http_error" = "http_error";
+
+      if (response.status === 409) {
+        let jsonCode: string | undefined;
+        try {
+          const cloned = response.clone();
+          const json = (await cloned.json()) as { code?: string };
+          jsonCode = json?.code;
+        } catch {
+          // ignored — use text fallback
+        }
+        if (
+          jsonCode === "VERSION_CONFLICT" ||
+          isVersionConflict ||
+          responsePreview.includes("VERSION_CONFLICT")
+        ) {
+          failureKind = "version_conflict";
+        }
+      }
+
+      if (c) {
+        const reqLogger = getRequestLogger(c, "utils.chat-ingestion");
+        reqLogger.event("chat.session.persist.failed", {
+          failureKind,
+          statusCode: response.status,
+          sourceType: options.sourceType,
+        });
+      } else {
+        const logMessage =
+          failureKind === "version_conflict"
+            ? "[chat-session-persistence] Chat session version conflict"
+            : `[chat-session-persistence] Failed to persist chat session (${response.status}): ${responsePreview}`;
+        logger.warn(logMessage, { status: response.status, responsePreview });
+      }
     }
   } catch (error) {
     if (isAbortError(error)) {
-      logger.warn(
-        "[chat-session-persistence] Timed out persisting chat session",
-        {
-          timeoutMs,
-        },
-      );
+      if (c) {
+        const reqLogger = getRequestLogger(c, "utils.chat-ingestion");
+        reqLogger.event("chat.session.persist.failed", {
+          failureKind: "timeout",
+          sourceType: options.sourceType,
+        });
+      } else {
+        logger.warn(
+          "[chat-session-persistence] Timed out persisting chat session",
+          { timeoutMs },
+        );
+      }
       return;
     }
 
-    logger.warn("[chat-session-persistence] Error persisting chat session", {
-      error: error instanceof Error ? error.message : String(error),
-    });
+    if (c) {
+      const reqLogger = getRequestLogger(c, "utils.chat-ingestion");
+      reqLogger.event(
+        "chat.session.persist.failed",
+        { failureKind: "exception", sourceType: options.sourceType },
+        { error: error instanceof Error ? error : undefined },
+      );
+    } else {
+      logger.warn("[chat-session-persistence] Error persisting chat session", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   } finally {
     clearTimeout(timeoutId);
   }

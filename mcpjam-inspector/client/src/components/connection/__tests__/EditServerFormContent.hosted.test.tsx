@@ -16,8 +16,17 @@ vi.mock("@/components/connection/shared/AuthenticationSection", () => ({
   AuthenticationSection: () => <div data-testid="auth-section" />,
 }));
 
+vi.mock(
+  "@/components/connection/shared/AdvancedConnectionSettingsSection",
+  () => ({
+    AdvancedConnectionSettingsSection: () => (
+      <div data-testid="advanced-settings-section" />
+    ),
+  }),
+);
+
 vi.mock("@/components/connection/shared/CustomHeadersSection", () => ({
-  CustomHeadersSection: () => <div data-testid="headers-section" />,
+  CustomHeadersSection: () => <div data-testid="custom-headers-section" />,
 }));
 
 vi.mock("@/components/connection/shared/EnvVarsSection", () => ({
@@ -43,6 +52,10 @@ function createFormState(overrides: Record<string, unknown> = {}) {
     setBearerToken: vi.fn(),
     oauthScopesInput: "",
     setOauthScopesInput: vi.fn(),
+    oauthProtocolMode: "2025-11-25",
+    setOauthProtocolMode: vi.fn(),
+    oauthRegistrationMode: "auto",
+    setOauthRegistrationMode: vi.fn(),
     useCustomClientId: false,
     setUseCustomClientId: vi.fn(),
     clientId: "",
@@ -65,8 +78,17 @@ function createFormState(overrides: Record<string, unknown> = {}) {
     addCustomHeader: vi.fn(),
     removeCustomHeader: vi.fn(),
     updateCustomHeader: vi.fn(),
-    requestTimeout: "10000",
+    requestTimeout: "",
     setRequestTimeout: vi.fn(),
+    inheritedRequestTimeout: 10000,
+    clientCapabilitiesOverrideEnabled: false,
+    setClientCapabilitiesOverrideEnabled: vi.fn(),
+    clientCapabilitiesOverrideText: "{}",
+    setClientCapabilitiesOverrideText: vi.fn(),
+    clientCapabilitiesOverrideError: null,
+    setClientCapabilitiesOverrideError: vi.fn(),
+    showConfiguration: false,
+    setShowConfiguration: vi.fn(),
     ...overrides,
   };
 }

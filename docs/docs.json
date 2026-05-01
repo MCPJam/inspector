@@ -49,6 +49,7 @@
           "cli/apps-conformance",
           "cli/tools-resources-prompts",
           "cli/ci",
+          "cli/telemetry",
           "cli/reference"
         ]
       },

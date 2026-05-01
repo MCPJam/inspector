@@ -13,6 +13,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@mcpjam/design-system/
 import { Switch } from "@mcpjam/design-system/switch";
 import { Loader2 } from "lucide-react";
 import { ServerWithName, type ServerUpdateResult } from "@/hooks/use-app-state";
+import type { Workspace } from "@/state/app-types";
 import {
   listTools,
   type ListToolsResultWithMetadata,
@@ -25,6 +26,7 @@ import {
   isOpenAIApp,
   isOpenAIAppAndMCPApp,
 } from "@/lib/mcp-ui/mcp-apps-utils";
+import { HOSTED_MODE } from "@/lib/config";
 import { getConnectionStatusMeta } from "./server-card-utils";
 import { useServerForm } from "./hooks/use-server-form";
 import { ServerInfoContent } from "./ServerInfoContent";
@@ -52,6 +54,9 @@ interface ServerDetailModalProps {
     },
   ) => Promise<void>;
   existingServerNames: string[];
+  workspaceClientConfig?: Workspace["clientConfig"];
+  workspaceId?: string | null;
+  hostedServerId?: string | null;
 }
 
 export function ServerDetailModal({
@@ -64,6 +69,9 @@ export function ServerDetailModal({
   onDisconnect,
   onReconnect,
   existingServerNames,
+  workspaceClientConfig,
+  workspaceId = null,
+  hostedServerId = null,
 }: ServerDetailModalProps) {
   const posthog = usePostHog();
   const [activeTab, setActiveTab] = useState<ServerDetailTab>(defaultTab);
@@ -82,7 +90,7 @@ export function ServerDetailModal({
   const hasWidgetMetadata =
     isMCPAppServer || isOpenAIAppServer || isOpenAIAppAndMCPAppServer;
 
-  const formState = useServerForm(server);
+  const formState = useServerForm(server, { workspaceClientConfig });
   const trimmedName = formState.name.trim();
   const isDuplicateServerName =
     trimmedName !== "" &&
@@ -152,7 +160,10 @@ export function ServerDetailModal({
     }
 
     // Validate Client ID if using custom configuration
-    if (formState.authType === "oauth" && formState.useCustomClientId) {
+    if (
+      formState.authType === "oauth" &&
+      formState.oauthRegistrationMode === "preregistered"
+    ) {
       const clientIdError = formState.validateClientId(formState.clientId);
       if (clientIdError) {
         toast.error(clientIdError);
@@ -204,6 +215,16 @@ export function ServerDetailModal({
     } finally {
       setIsReconnecting(false);
     }
+  };
+
+  const getSwitchReconnectOptions = () => {
+    if (server.useOAuth === true && !server.oauthTokens) {
+      return HOSTED_MODE
+        ? { allowInteractiveOAuthFlow: true }
+        : { forceOAuthFlow: true };
+    }
+
+    return { allowInteractiveOAuthFlow: false };
   };
 
   const handleDisconnect = () => {
@@ -307,9 +328,7 @@ export function ServerDetailModal({
                   if (!checked) {
                     handleDisconnect();
                   } else {
-                    void handleConnect({
-                      allowInteractiveOAuthFlow: false,
-                    });
+                    void handleConnect(getSwitchReconnectOptions());
                   }
                 }}
                 className="cursor-pointer scale-75"
@@ -362,7 +381,10 @@ export function ServerDetailModal({
                 <Button
                   type="submit"
                   disabled={
-                    isDuplicateServerName || isSaving || !formState.hasChanges
+                    isDuplicateServerName ||
+                    isSaving ||
+                    !formState.hasChanges ||
+                    formState.preregisteredOauthBlocksSubmit
                   }
                   size="sm"
                 >
@@ -393,6 +415,8 @@ export function ServerDetailModal({
                     <ServerInfoContent
                       server={server}
                       needsReconnect={needsReconnect}
+                      workspaceId={workspaceId}
+                      hostedServerId={hostedServerId}
                     />
                   )}
                 </div>

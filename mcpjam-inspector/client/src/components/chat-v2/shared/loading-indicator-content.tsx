@@ -1,5 +1,8 @@
 import { useChatboxHostStyle } from "@/contexts/chatbox-host-style-context";
-import type { ChatboxHostStyle } from "@/lib/chatbox-host-style";
+import {
+  getChatboxHostFamily,
+  type ChatboxHostStyle,
+} from "@/lib/chatbox-host-style";
 import { cn } from "@/lib/utils";
 import { ClaudeLoadingIndicator } from "./claude-loading-indicator";
 
@@ -8,11 +11,12 @@ export type LoadingIndicatorVariant = "default" | "chatgpt-dot" | "claude-mark";
 export function getLoadingIndicatorVariantForHostStyle(
   hostStyle: ChatboxHostStyle | null | undefined,
 ): LoadingIndicatorVariant {
-  if (hostStyle === "chatgpt") {
+  const hostFamily = getChatboxHostFamily(hostStyle);
+  if (hostFamily === "chatgpt") {
     return "chatgpt-dot";
   }
 
-  if (hostStyle === "claude") {
+  if (hostFamily === "claude") {
     return "claude-mark";
   }
 
