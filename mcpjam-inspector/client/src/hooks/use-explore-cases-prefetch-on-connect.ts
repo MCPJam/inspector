@@ -6,7 +6,7 @@ import type { ServerWithName } from "@/hooks/use-app-state";
  * existing call sites can remain unchanged until they are cleaned up independently.
  */
 export function useExploreCasesPrefetchOnConnect(
-  _workspaceId: string | null | undefined,
+  _projectId: string | null | undefined,
   _server: ServerWithName,
   _hostedServerId?: string | null,
 ) {}

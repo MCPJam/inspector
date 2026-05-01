@@ -2,10 +2,10 @@ import { webPost } from "./base";
 import { buildHostedServerRequest } from "./context";
 
 export type HostedServerValidateContext = {
-  workspaceId: string;
+  projectId: string;
   serverId: string;
   serverName?: string;
-  accessScope?: "workspace_member" | "chat_v2";
+  accessScope?: "project_member" | "chat_v2";
   shareToken?: string;
   chatboxToken?: string;
 };
@@ -39,7 +39,7 @@ export async function validateHostedServer(
 ): Promise<HostedServerValidateResponse> {
   const request: Record<string, unknown> = hostedContext
     ? {
-        workspaceId: hostedContext.workspaceId,
+        projectId: hostedContext.projectId,
         serverId: hostedContext.serverId,
         ...(hostedContext.serverName
           ? { serverName: hostedContext.serverName }

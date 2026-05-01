@@ -10,22 +10,22 @@ import {
   DialogTitle,
 } from "@mcpjam/design-system/dialog";
 import { JsonEditor } from "@/components/ui/json-editor";
-import type { WorkspaceHostContextDraft } from "@/lib/client-config";
-import { useWorkspaceClientConfigSyncPending } from "@/hooks/use-workspace-client-config-sync-pending";
+import type { ProjectHostContextDraft } from "@/lib/client-config";
+import { useProjectClientConfigSyncPending } from "@/hooks/use-project-client-config-sync-pending";
 import { useHostContextStore } from "@/stores/host-context-store";
 
 interface HostContextDialogProps {
-  activeWorkspaceId: string | null;
+  activeProjectId: string | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSaveHostContext?: (
-    workspaceId: string,
-    hostContext: WorkspaceHostContextDraft,
+    projectId: string,
+    hostContext: ProjectHostContextDraft,
   ) => Promise<void>;
 }
 
 export function HostContextDialog({
-  activeWorkspaceId,
+  activeProjectId,
   open,
   onOpenChange,
   onSaveHostContext,
@@ -40,15 +40,15 @@ export function HostContextDialog({
   );
   const resetToBaseline = useHostContextStore((state) => state.resetToBaseline);
   const failSave = useHostContextStore((state) => state.failSave);
-  const syncPending = useWorkspaceClientConfigSyncPending(activeWorkspaceId);
+  const syncPending = useProjectClientConfigSyncPending(activeProjectId);
 
   const handleSave = async () => {
-    if (!activeWorkspaceId || !onSaveHostContext || hostContextError) {
+    if (!activeProjectId || !onSaveHostContext || hostContextError) {
       return;
     }
 
     try {
-      await onSaveHostContext(activeWorkspaceId, draftHostContext);
+      await onSaveHostContext(activeProjectId, draftHostContext);
       toast.success("Host context saved.");
       onOpenChange(false);
     } catch {
@@ -105,7 +105,7 @@ export function HostContextDialog({
           <Button
             onClick={() => void handleSave()}
             disabled={
-              !activeWorkspaceId ||
+              !activeProjectId ||
               !onSaveHostContext ||
               !isDirty ||
               !!hostContextError ||

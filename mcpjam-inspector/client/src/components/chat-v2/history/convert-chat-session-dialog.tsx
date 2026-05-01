@@ -32,7 +32,7 @@ import {
   normalizeServerNames,
 } from "@/components/evals/suite-environment-utils";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
-import { useWorkspaceServers } from "@/hooks/useViews";
+import { useProjectServers } from "@/hooks/useViews";
 import { deriveSessionServerDisplay } from "./session-server-display";
 import { cn } from "@/lib/utils";
 
@@ -40,7 +40,7 @@ type ConvertChatSessionDialogProps = {
   open: boolean;
   session: ChatHistorySession | null;
   isAuthenticated: boolean;
-  workspaceId: string | null;
+  projectId: string | null;
   requestHeaders?: HeadersInit;
   onOpenChange: (open: boolean) => void;
   onImported: (result: { suiteId: string; testCaseId: string }) => void;
@@ -63,16 +63,16 @@ export function ConvertChatSessionDialog({
   open,
   session,
   isAuthenticated,
-  workspaceId,
+  projectId,
   requestHeaders,
   onOpenChange,
   onImported,
 }: ConvertChatSessionDialogProps) {
-  const effectiveWorkspaceId = session?.workspaceId ?? workspaceId ?? null;
-  const { servers, serversById, isLoading: workspaceServersLoading } =
-    useWorkspaceServers({
+  const effectiveProjectId = session?.projectId ?? projectId ?? null;
+  const { servers, serversById, isLoading: projectServersLoading } =
+    useProjectServers({
       isAuthenticated,
-      workspaceId: effectiveWorkspaceId,
+      projectId: effectiveProjectId,
     });
   const knownServerNames = useMemo(
     () => (servers ?? []).map((s) => s.name),
@@ -80,8 +80,8 @@ export function ConvertChatSessionDialog({
   );
   const suitesOverview = useQuery(
     "testSuites:getTestSuitesOverview" as any,
-    open && effectiveWorkspaceId
-      ? ({ workspaceId: effectiveWorkspaceId } as any)
+    open && effectiveProjectId
+      ? ({ projectId: effectiveProjectId } as any)
       : "skip",
   ) as EvalSuiteOverviewEntry[] | undefined;
   const importChatSession = useAction(
@@ -186,7 +186,7 @@ export function ConvertChatSessionDialog({
           {
             sessionId: session._id,
             chatSessionId: session.chatSessionId,
-            workspaceId: effectiveWorkspaceId ?? undefined,
+            projectId: effectiveProjectId ?? undefined,
           },
           {
             headers: requestHeaders,
@@ -219,7 +219,7 @@ export function ConvertChatSessionDialog({
     return () => {
       cancelled = true;
     };
-  }, [effectiveWorkspaceId, open, requestHeaders, session]);
+  }, [effectiveProjectId, open, requestHeaders, session]);
 
   useEffect(() => {
     if (!open) {
@@ -260,7 +260,7 @@ export function ConvertChatSessionDialog({
 
   const canSubmit =
     Boolean(session) &&
-    Boolean(effectiveWorkspaceId) &&
+    Boolean(effectiveProjectId) &&
     !detailLoading &&
     !detailError &&
     caseTitle.trim().length > 0 &&
@@ -271,7 +271,7 @@ export function ConvertChatSessionDialog({
         (missingServers.length === 0 || updateSuiteEnvironment));
 
   const handleSubmit = async () => {
-    if (!session || !effectiveWorkspaceId || !canSubmit) {
+    if (!session || !effectiveProjectId || !canSubmit) {
       return;
     }
 
@@ -279,7 +279,7 @@ export function ConvertChatSessionDialog({
     try {
       const result = (await importChatSession({
         sessionId: session._id,
-        workspaceId: effectiveWorkspaceId,
+        projectId: effectiveProjectId,
         ...(destinationMode === "existing"
           ? {
               destinationSuiteId: selectedSuiteId,
@@ -352,12 +352,12 @@ export function ConvertChatSessionDialog({
                 <AlertTitle>Import unavailable</AlertTitle>
                 <AlertDescription>{detailError}</AlertDescription>
               </Alert>
-            ) : !effectiveWorkspaceId ? (
+            ) : !effectiveProjectId ? (
               <Alert variant="destructive">
                 <AlertTriangle className="h-4 w-4" />
                 <AlertTitle>Import unavailable</AlertTitle>
                 <AlertDescription>
-                  This chat session is not linked to a shared workspace yet, so
+                  This chat session is not linked to a shared project yet, so
                   it cannot be promoted to a suite-backed test case.
                 </AlertDescription>
               </Alert>
@@ -384,10 +384,10 @@ export function ConvertChatSessionDialog({
                     </span>
                   )}
                 </div>
-                {!workspaceServersLoading &&
+                {!projectServersLoading &&
                 sessionServerDisplay.unresolvedCount > 0 ? (
                   <p className="text-xs text-muted-foreground leading-relaxed">
-                    Some servers could not be resolved to current workspace
+                    Some servers could not be resolved to current project
                     names, so raw ids are shown.
                   </p>
                 ) : null}

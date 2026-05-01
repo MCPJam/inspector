@@ -2,58 +2,58 @@ import { useState } from "react";
 import { Avatar, AvatarFallback, AvatarImage } from "@mcpjam/design-system/avatar";
 import { getInitials } from "@/lib/utils";
 import { Users } from "lucide-react";
-import { ShareWorkspaceDialog } from "./ShareWorkspaceDialog";
-import { useWorkspaceMembers } from "@/hooks/useWorkspaces";
+import { ShareProjectDialog } from "./ShareProjectDialog";
+import { useProjectMembers } from "@/hooks/useProjects";
 import { useProfilePicture } from "@/hooks/useProfilePicture";
 import { cn } from "@/lib/utils";
 import { User } from "@workos-inc/authkit-js";
 import { usePostHog } from "posthog-js/react";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
-import type { WorkspaceVisibility } from "@/state/app-types";
+import type { ProjectVisibility } from "@/state/app-types";
 
-interface WorkspaceMembersFacepileProps {
-  workspaceName: string;
-  workspaceServers: Record<string, any>;
+interface ProjectMembersFacepileProps {
+  projectName: string;
+  projectServers: Record<string, any>;
   currentUser: User;
-  sharedWorkspaceId?: string | null;
+  sharedProjectId?: string | null;
   organizationId?: string;
-  visibility?: WorkspaceVisibility;
+  visibility?: ProjectVisibility;
   organizationName?: string;
-  onWorkspaceShared?: (
-    sharedWorkspaceId: string,
-    sourceWorkspaceId?: string,
+  onProjectShared?: (
+    sharedProjectId: string,
+    sourceProjectId?: string,
   ) => void;
 }
 
-export function WorkspaceMembersFacepile({
-  workspaceName,
-  workspaceServers,
+export function ProjectMembersFacepile({
+  projectName,
+  projectServers,
   currentUser,
-  sharedWorkspaceId,
+  sharedProjectId,
   organizationId,
   visibility,
   organizationName,
-  onWorkspaceShared,
-}: WorkspaceMembersFacepileProps) {
+  onProjectShared,
+}: ProjectMembersFacepileProps) {
   const { profilePictureUrl } = useProfilePicture();
   const posthog = usePostHog();
   const [isShareDialogOpen, setIsShareDialogOpen] = useState(false);
 
   const handleFacepileClick = () => {
-    posthog.capture("workspace_members_facepile_clicked", {
-      workspace_name: workspaceName,
+    posthog.capture("project_members_facepile_clicked", {
+      project_name: projectName,
       platform: detectPlatform(),
       environment: detectEnvironment(),
     });
     setIsShareDialogOpen(true);
   };
 
-  const { activeMembers, isLoading } = useWorkspaceMembers({
+  const { activeMembers, isLoading } = useProjectMembers({
     isAuthenticated: true,
-    workspaceId: sharedWorkspaceId ?? null,
+    projectId: sharedProjectId ?? null,
   });
 
-  if (!sharedWorkspaceId) {
+  if (!sharedProjectId) {
     const displayName = [currentUser.firstName, currentUser.lastName]
       .filter(Boolean)
       .join(" ");
@@ -73,17 +73,17 @@ export function WorkspaceMembersFacepile({
             <Users className="size-3.5 text-muted-foreground" />
           </div>
         </button>
-        <ShareWorkspaceDialog
+        <ShareProjectDialog
           isOpen={isShareDialogOpen}
           onClose={() => setIsShareDialogOpen(false)}
-          workspaceName={workspaceName}
-          workspaceServers={workspaceServers}
-          sharedWorkspaceId={sharedWorkspaceId}
+          projectName={projectName}
+          projectServers={projectServers}
+          sharedProjectId={sharedProjectId}
           organizationId={organizationId}
           visibility={visibility}
           organizationName={organizationName}
           currentUser={currentUser}
-          onWorkspaceShared={onWorkspaceShared}
+          onProjectShared={onProjectShared}
         />
       </div>
     );
@@ -141,16 +141,16 @@ export function WorkspaceMembersFacepile({
         </div>
       </button>
 
-      <ShareWorkspaceDialog
+      <ShareProjectDialog
         isOpen={isShareDialogOpen}
         onClose={() => setIsShareDialogOpen(false)}
-        workspaceName={workspaceName}
-        workspaceServers={workspaceServers}
-        sharedWorkspaceId={sharedWorkspaceId}
+        projectName={projectName}
+        projectServers={projectServers}
+        sharedProjectId={sharedProjectId}
         organizationId={organizationId}
         visibility={visibility}
         currentUser={currentUser}
-        onWorkspaceShared={onWorkspaceShared}
+        onProjectShared={onProjectShared}
       />
     </div>
   );

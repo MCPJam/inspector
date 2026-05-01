@@ -241,7 +241,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
           serverBindings: [
             {
               serverName: "server-1",
-              workspaceServerId: "srv-1",
+              projectServerId: "srv-1",
             },
           ],
         },
@@ -281,7 +281,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
           serverBindings: [
             {
               serverName: "server-1",
-              workspaceServerId: "srv-1",
+              projectServerId: "srv-1",
             },
           ],
         },

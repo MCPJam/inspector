@@ -46,9 +46,9 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
-interface WorkspaceIconPickerProps {
+interface ProjectIconPickerProps {
   currentIcon?: string;
-  workspaceName: string;
+  projectName: string;
   onSelect: (iconName: string) => void;
   onRemove: () => void;
   size?: "sm" | "lg";
@@ -97,22 +97,22 @@ const ICON_MAP: Record<string, LucideIcon> = Object.fromEntries(
   ICONS.map((i) => [i.name, i.icon]),
 );
 
-export function resolveWorkspaceIcon(iconName: string): LucideIcon | null {
+export function resolveProjectIcon(iconName: string): LucideIcon | null {
   return ICON_MAP[iconName] ?? null;
 }
 
-export function WorkspaceIconPicker({
+export function ProjectIconPicker({
   currentIcon,
-  workspaceName,
+  projectName,
   onSelect,
   onRemove,
   size = "lg",
-}: WorkspaceIconPickerProps) {
+}: ProjectIconPickerProps) {
   const [open, setOpen] = useState(false);
-  const initial = workspaceName.charAt(0).toUpperCase() || "W";
+  const initial = projectName.charAt(0).toUpperCase() || "W";
   const hasIcon = currentIcon && currentIcon !== "";
   const CurrentIconComponent = hasIcon
-    ? resolveWorkspaceIcon(currentIcon)
+    ? resolveProjectIcon(currentIcon)
     : null;
 
   const isLarge = size === "lg";

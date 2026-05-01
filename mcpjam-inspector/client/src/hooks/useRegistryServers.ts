@@ -74,7 +74,7 @@ const MOCK_REGISTRY_SERVERS: RegistryServer[] = [
     name: "com.notion.mcp",
     displayName: "Notion",
     description:
-      "Access and manage Notion pages, databases, and content. Search, create, and update your workspace.",
+      "Access and manage Notion pages, databases, and content. Search, create, and update your project.",
     publisher: "MCPJam",
     publishStatus: "verified",
     category: "Productivity",
@@ -209,7 +209,7 @@ export interface EnrichedRegistryServer extends RegistryServer {
 }
 
 /**
- * Consolidated registry card from the HTTP catalog API, enriched with workspace connection state.
+ * Consolidated registry card from the HTTP catalog API, enriched with project connection state.
  */
 export interface EnrichedRegistryCatalogCard {
   registryCardKey: string;
@@ -303,7 +303,7 @@ function enrichCatalogCards(
 ): EnrichedRegistryCatalogCard[] {
   return cards.map((card) => {
     const mapped: EnrichedRegistryServer[] = card.variants.map((server) => {
-      const isAddedToWorkspace = connectedRegistryIds.has(server._id);
+      const isAddedToProject = connectedRegistryIds.has(server._id);
       const liveServer = liveServers?.[getRegistryServerName(server)];
       let connectionStatus: RegistryConnectionStatus = "not_connected";
 
@@ -311,7 +311,7 @@ function enrichCatalogCards(
         connectionStatus = "connected";
       } else if (liveServer?.connectionStatus === "connecting") {
         connectionStatus = "connecting";
-      } else if (isAddedToWorkspace) {
+      } else if (isAddedToProject) {
         connectionStatus = "added";
       }
 
@@ -348,28 +348,28 @@ function buildMockCatalogCards(): RegistryCatalogCard[] {
   }));
 }
 
-function isMissingWorkspaceConnectionError(error: unknown): boolean {
+function isMissingProjectConnectionError(error: unknown): boolean {
   return (
     error instanceof Error &&
-    error.message.includes("Registry server is not connected to this workspace")
+    error.message.includes("Registry server is not connected to this project")
   );
 }
 
 /**
  * Hook for fetching registry servers and managing connections.
  *
- * Pattern follows useWorkspaceMutations / useServerMutations in useWorkspaces.ts.
+ * Pattern follows useProjectMutations / useServerMutations in useProjects.ts.
  */
 export function useRegistryServers({
   enabled = true,
-  workspaceId,
+  projectId,
   isAuthenticated,
   liveServers,
   onConnect,
   onDisconnect,
 }: {
   enabled?: boolean;
-  workspaceId: string | null;
+  projectId: string | null;
   isAuthenticated: boolean;
   liveServers?: Record<string, { connectionStatus: string }>;
   onConnect: (formData: ServerFormData) => void;
@@ -433,9 +433,9 @@ export function useRegistryServers({
   }, [enabled, isAuthenticated, loadCatalog]);
 
   const connections = useQuery(
-    "registryServers:getWorkspaceRegistryConnections" as any,
-    enabled && !DEV_MOCK_REGISTRY && isAuthenticated && workspaceId
-      ? ({ workspaceId } as any)
+    "registryServers:getProjectRegistryConnections" as any,
+    enabled && !DEV_MOCK_REGISTRY && isAuthenticated && projectId
+      ? ({ projectId } as any)
       : "skip",
   ) as RegistryServerConnection[] | undefined;
 
@@ -479,7 +479,7 @@ export function useRegistryServers({
 
   useEffect(() => {
     if (!enabled) return;
-    if (!isAuthenticated || !workspaceId || DEV_MOCK_REGISTRY) return;
+    if (!isAuthenticated || !projectId || DEV_MOCK_REGISTRY) return;
     for (const [registryServerId, serverName] of pendingServerIds) {
       if (connectedRegistryIds.has(registryServerId)) {
         setPendingServerIds((prev) => {
@@ -499,7 +499,7 @@ export function useRegistryServers({
         });
         connectMutation({
           registryServerId,
-          workspaceId,
+          projectId,
         } as any);
       }
     }
@@ -507,7 +507,7 @@ export function useRegistryServers({
     liveServers,
     pendingServerIds,
     isAuthenticated,
-    workspaceId,
+    projectId,
     enabled,
     connectMutation,
     connectedRegistryIds,
@@ -517,7 +517,7 @@ export function useRegistryServers({
     enabled &&
     !DEV_MOCK_REGISTRY &&
     isAuthenticated &&
-    !!workspaceId &&
+    !!projectId &&
     connections === undefined;
 
   const isLoading =
@@ -617,14 +617,14 @@ export function useRegistryServers({
     const serverName = getRegistryServerName(server);
     let disconnectError: unknown;
 
-    if (!DEV_MOCK_REGISTRY && isAuthenticated && workspaceId) {
+    if (!DEV_MOCK_REGISTRY && isAuthenticated && projectId) {
       try {
         await disconnectMutation({
           registryServerId: server._id,
-          workspaceId,
+          projectId,
         } as any);
       } catch (error) {
-        if (!isMissingWorkspaceConnectionError(error)) {
+        if (!isMissingProjectConnectionError(error)) {
           disconnectError = error;
         }
       }

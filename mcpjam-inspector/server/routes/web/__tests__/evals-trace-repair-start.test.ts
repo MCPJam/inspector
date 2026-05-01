@@ -55,7 +55,7 @@ function stubAuthorizeOk() {
         JSON.stringify({
           authorized: true,
           role: "member",
-          accessLevel: "workspace_member",
+          accessLevel: "project_member",
           permissions: { chatOnly: false },
           serverConfig: {
             transportType: "http",

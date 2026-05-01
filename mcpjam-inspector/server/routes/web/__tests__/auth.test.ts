@@ -11,7 +11,7 @@ describe("web routes — auth enforcement", () => {
 
   it("returns 401 for tools/list without bearer token", async () => {
     const res = await postJson(app, "/api/web/tools/list", {
-      workspaceId: "ws-1",
+      projectId: "ws-1",
       serverId: "srv-1",
     });
     const { status, data } = await expectJson<{ code: string }>(res);
@@ -21,7 +21,7 @@ describe("web routes — auth enforcement", () => {
 
   it("returns 401 for tools/execute without bearer token", async () => {
     const res = await postJson(app, "/api/web/tools/execute", {
-      workspaceId: "ws-1",
+      projectId: "ws-1",
       serverId: "srv-1",
       toolName: "echo",
     });
@@ -32,7 +32,7 @@ describe("web routes — auth enforcement", () => {
 
   it("returns 401 for resources/list without bearer token", async () => {
     const res = await postJson(app, "/api/web/resources/list", {
-      workspaceId: "ws-1",
+      projectId: "ws-1",
       serverId: "srv-1",
     });
     const { status, data } = await expectJson<{ code: string }>(res);
@@ -42,7 +42,7 @@ describe("web routes — auth enforcement", () => {
 
   it("returns 401 for resources/read without bearer token", async () => {
     const res = await postJson(app, "/api/web/resources/read", {
-      workspaceId: "ws-1",
+      projectId: "ws-1",
       serverId: "srv-1",
       uri: "file:///test.txt",
     });
@@ -53,7 +53,7 @@ describe("web routes — auth enforcement", () => {
 
   it("returns 401 for prompts/list without bearer token", async () => {
     const res = await postJson(app, "/api/web/prompts/list", {
-      workspaceId: "ws-1",
+      projectId: "ws-1",
       serverId: "srv-1",
     });
     const { status, data } = await expectJson<{ code: string }>(res);
@@ -63,7 +63,7 @@ describe("web routes — auth enforcement", () => {
 
   it("returns 401 for export/server without bearer token", async () => {
     const res = await postJson(app, "/api/web/export/server", {
-      workspaceId: "ws-1",
+      projectId: "ws-1",
       serverId: "srv-1",
     });
     const { status, data } = await expectJson<{ code: string }>(res);
@@ -73,7 +73,7 @@ describe("web routes — auth enforcement", () => {
 
   it("returns 401 for servers/doctor without bearer token", async () => {
     const res = await postJson(app, "/api/web/servers/doctor", {
-      workspaceId: "ws-1",
+      projectId: "ws-1",
       serverId: "srv-1",
     });
     const { status, data } = await expectJson<{ code: string }>(res);
@@ -83,7 +83,7 @@ describe("web routes — auth enforcement", () => {
 
   it("returns 401 for chat-v2 without bearer token", async () => {
     const res = await postJson(app, "/api/web/chat-v2", {
-      workspaceId: "ws-1",
+      projectId: "ws-1",
       selectedServerIds: ["srv-1"],
       messages: [{ role: "user", content: "hi" }],
     });
@@ -94,7 +94,7 @@ describe("web routes — auth enforcement", () => {
 
   it("returns 401 for mcp-apps/widget-content without bearer token", async () => {
     const res = await postJson(app, "/api/web/apps/mcp-apps/widget-content", {
-      workspaceId: "ws-1",
+      projectId: "ws-1",
       serverId: "srv-1",
       resourceUri: "ui://widget/index.html",
       toolInput: {},
@@ -111,7 +111,7 @@ describe("web routes — auth enforcement", () => {
       app,
       "/api/web/apps/chatgpt-apps/widget-content",
       {
-        workspaceId: "ws-1",
+        projectId: "ws-1",
         serverId: "srv-1",
         uri: "ui://widget/index.html",
         toolInput: {},
@@ -135,7 +135,7 @@ describe("web routes — auth enforcement", () => {
     const res = await postJson(
       app,
       "/api/web/tools/list",
-      { workspaceId: "ws-1" }, // missing serverId
+      { projectId: "ws-1" }, // missing serverId
       token,
     );
     const { status, data } = await expectJson<{ code: string }>(res);
@@ -147,7 +147,7 @@ describe("web routes — auth enforcement", () => {
     const res = await postJson(
       app,
       "/api/web/export/server",
-      { workspaceId: "ws-1" }, // missing serverId
+      { projectId: "ws-1" }, // missing serverId
       token,
     );
     const { status, data } = await expectJson<{ code: string }>(res);
@@ -160,7 +160,7 @@ describe("web routes — auth enforcement", () => {
       app,
       "/api/web/chat-v2",
       {
-        workspaceId: "ws-1",
+        projectId: "ws-1",
         selectedServerIds: ["srv-1"],
         messages: [],
         model: { id: "claude-sonnet-4-5", provider: "anthropic" },

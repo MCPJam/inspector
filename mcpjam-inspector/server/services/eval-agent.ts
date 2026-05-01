@@ -58,10 +58,10 @@ Negative test cases are prompts where the AI assistant should NOT use any tools.
 5. **Test Titles**: Write clear, descriptive titles WITHOUT difficulty prefixes
 6. **Tool descriptions are authoritative**: If a tool description implies another tool must be called first or before first use, include that prerequisite in expectedToolCalls
 7. **No heuristic cleanup**: Do not drop discovery or prerequisite steps unless the tool metadata makes them unnecessary
-8. **Attributable cases over synthetic fixtures**: Do not write long tests that rely on fake names, ids, places, premium-only assumptions, or other unestablished workspace fixtures
-9. **Discovery-backed cases**: Prefer shorter tests that first resolve the live entity they act on, or switch to a safer capability variant that does not depend on brittle workspace state
+8. **Attributable cases over synthetic fixtures**: Do not write long tests that rely on fake names, ids, places, premium-only assumptions, or other unestablished project fixtures
+9. **Discovery-backed cases**: Prefer shorter tests that first resolve the live entity they act on, or switch to a safer capability variant that does not depend on brittle project state
 10. **Preserve stable sequences**: If the capability naturally requires a recurring discovery or bootstrap pattern, keep that stable sequence in expectedToolCalls instead of simplifying it away
-11. **Rewrite brittle workflows**: If a candidate workflow would only pass with unverified workspace fixtures, replace it with a substantially different but still relevant case that can cleanly attribute future failures to the MCP server
+11. **Rewrite brittle workflows**: If a candidate workflow would only pass with unverified project fixtures, replace it with a substantially different but still relevant case that can cleanly attribute future failures to the MCP server
 12. **Include multi-turn examples**: At least 2 normal tests must use promptTurns with 2-3 user turns
 13. **Make turn 1 actionable**: For multi-turn tests, the first turn should already trigger at least one tool so the case remains attributable and easy to summarize
 14. **Turn-level assertions**: In multi-turn tests, keep expected tool calls on the specific turn where they should happen instead of collapsing everything onto the last turn
@@ -217,7 +217,7 @@ ${toolsContext}
    - ${NEGATIVE_TEST_CASE_COUNT} negative tests: 1 meta/doc question, 1 ambiguous or clearly non-actionable prompt
 2. Write realistic user queries that sound natural
 3. Include scenario and expectedOutput for ALL tests
-4. Prefer short, discovery-backed cases over long synthetic workflows with invented workspace entities
+4. Prefer short, discovery-backed cases over long synthetic workflows with invented project entities
 5. Include at least 2 multi-turn tests using promptTurns with 2-3 turns
 6. In multi-turn tests, make the first turn actionable and keep top-level query/expectedToolCalls aligned with turn 1
 7. For negative tests, use keywords from tools only in non-actionable contexts

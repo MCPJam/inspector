@@ -1,18 +1,18 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { ShareWorkspaceDialog } from "../ShareWorkspaceDialog";
+import { ShareProjectDialog } from "../ShareProjectDialog";
 
 const mockCapture = vi.fn();
 let mockBillingUiFlag = false;
-const mockUseWorkspaceMembers = vi.fn();
+const mockUseProjectMembers = vi.fn();
 const mockUseOrganizationBilling = vi.fn();
 const mockResolveBillingGateState = vi.fn();
-const mockCreateWorkspace = vi.fn();
-const mockInviteWorkspaceMember = vi.fn();
-const mockRemoveWorkspaceMember = vi.fn();
-const mockUpdateWorkspaceMemberRole = vi.fn();
-const mockUpdateWorkspaceInviteRole = vi.fn();
+const mockCreateProject = vi.fn();
+const mockInviteProjectMember = vi.fn();
+const mockRemoveProjectMember = vi.fn();
+const mockUpdateProjectMemberRole = vi.fn();
+const mockUpdateProjectInviteRole = vi.fn();
 const mockToastSuccess = vi.fn();
 const mockToastError = vi.fn();
 
@@ -64,21 +64,21 @@ vi.mock("@/lib/billing-gates", async () => {
   };
 });
 
-vi.mock("@/hooks/useWorkspaces", async () => {
-  const actual = await vi.importActual<typeof import("@/hooks/useWorkspaces")>(
-    "@/hooks/useWorkspaces",
+vi.mock("@/hooks/useProjects", async () => {
+  const actual = await vi.importActual<typeof import("@/hooks/useProjects")>(
+    "@/hooks/useProjects",
   );
 
   return {
     ...actual,
-    useWorkspaceMembers: (...args: unknown[]) =>
-      mockUseWorkspaceMembers(...args),
-    useWorkspaceMutations: () => ({
-      createWorkspace: mockCreateWorkspace,
-      inviteWorkspaceMember: mockInviteWorkspaceMember,
-      removeWorkspaceMember: mockRemoveWorkspaceMember,
-      updateWorkspaceMemberRole: mockUpdateWorkspaceMemberRole,
-      updateWorkspaceInviteRole: mockUpdateWorkspaceInviteRole,
+    useProjectMembers: (...args: unknown[]) =>
+      mockUseProjectMembers(...args),
+    useProjectMutations: () => ({
+      createProject: mockCreateProject,
+      inviteProjectMember: mockInviteProjectMember,
+      removeProjectMember: mockRemoveProjectMember,
+      updateProjectMemberRole: mockUpdateProjectMemberRole,
+      updateProjectInviteRole: mockUpdateProjectInviteRole,
     }),
   };
 });
@@ -89,29 +89,29 @@ function createMember({
   accessSource = "organization",
   canRemove = false,
   canChangeRole = false,
-  workspaceRole,
+  projectRole,
   isPending = false,
 }: {
   email: string;
   role?: "owner" | "admin" | "member" | "guest";
-  accessSource?: "organization" | "workspace" | "invite";
+  accessSource?: "organization" | "project" | "invite";
   canRemove?: boolean;
   canChangeRole?: boolean;
-  workspaceRole?: "admin" | "editor";
+  projectRole?: "admin" | "editor";
   isPending?: boolean;
 }) {
   const isOrgPrivileged = role === "owner" || role === "admin";
-  const resolvedWorkspaceRole =
-    workspaceRole ?? (isOrgPrivileged ? "admin" : "editor");
+  const resolvedProjectRole =
+    projectRole ?? (isOrgPrivileged ? "admin" : "editor");
 
   return {
     _id: `${isPending ? "pending" : "member"}-${email}`,
-    workspaceId: "ws-1",
+    projectId: "ws-1",
     organizationId: "org-1",
     userId: isPending ? undefined : `user-${email}`,
     email,
     role,
-    workspaceRole: resolvedWorkspaceRole,
+    projectRole: resolvedProjectRole,
     canChangeRole,
     addedBy: "user-owner",
     addedAt: 1,
@@ -132,18 +132,18 @@ function createMember({
 }
 
 function renderDialog(
-  overrides: Partial<React.ComponentProps<typeof ShareWorkspaceDialog>> = {},
+  overrides: Partial<React.ComponentProps<typeof ShareProjectDialog>> = {},
 ) {
   const onClose = vi.fn();
-  const onWorkspaceShared = vi.fn();
+  const onProjectShared = vi.fn();
 
   const renderResult = render(
-    <ShareWorkspaceDialog
+    <ShareProjectDialog
       isOpen
       onClose={onClose}
-      workspaceName="Acme"
-      workspaceServers={{}}
-      sharedWorkspaceId="ws-1"
+      projectName="Acme"
+      projectServers={{}}
+      sharedProjectId="ws-1"
       organizationId="org-1"
       visibility="public"
       currentUser={
@@ -153,7 +153,7 @@ function renderDialog(
           lastName: "Example",
         } as any
       }
-      onWorkspaceShared={onWorkspaceShared}
+      onProjectShared={onProjectShared}
       {...overrides}
     />,
   );
@@ -161,20 +161,20 @@ function renderDialog(
   return {
     ...renderResult,
     onClose,
-    onWorkspaceShared,
+    onProjectShared,
   };
 }
 
-describe("ShareWorkspaceDialog", () => {
+describe("ShareProjectDialog", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     window.location.hash = "";
     mockBillingUiFlag = false;
 
-    mockCreateWorkspace.mockResolvedValue("ws-created");
-    mockInviteWorkspaceMember.mockResolvedValue({
+    mockCreateProject.mockResolvedValue("ws-created");
+    mockInviteProjectMember.mockResolvedValue({
       changed: true,
-      kind: "workspace_invite_pending",
+      kind: "project_invite_pending",
       isPending: true,
     });
     mockUseOrganizationBilling.mockReturnValue({
@@ -191,12 +191,12 @@ describe("ShareWorkspaceDialog", () => {
       upgradePlan: null,
       organizationId: "org-1",
     });
-    mockRemoveWorkspaceMember.mockResolvedValue({
+    mockRemoveProjectMember.mockResolvedValue({
       success: true,
       changed: true,
-      removed: "workspace_access",
+      removed: "project_access",
     });
-    mockUseWorkspaceMembers.mockReturnValue({
+    mockUseProjectMembers.mockReturnValue({
       members: [
         createMember({
           email: "owner@example.com",
@@ -216,7 +216,7 @@ describe("ShareWorkspaceDialog", () => {
     });
   });
 
-  it("shows invite form on public workspace without description text", () => {
+  it("shows invite form on public project without description text", () => {
     renderDialog({
       visibility: "public",
     });
@@ -233,8 +233,8 @@ describe("ShareWorkspaceDialog", () => {
     expect(screen.getByRole("button", { name: "Invite" })).toBeInTheDocument();
   });
 
-  it("shows private workspace with pending invites and role dropdowns", () => {
-    mockUseWorkspaceMembers.mockReturnValue({
+  it("shows private project with pending invites and role dropdowns", () => {
+    mockUseProjectMembers.mockReturnValue({
       members: [
         createMember({
           email: "owner@example.com",
@@ -243,7 +243,7 @@ describe("ShareWorkspaceDialog", () => {
         createMember({
           email: "member@example.com",
           role: "member",
-          accessSource: "workspace",
+          accessSource: "project",
           canRemove: true,
           canChangeRole: true,
         }),
@@ -263,7 +263,7 @@ describe("ShareWorkspaceDialog", () => {
         createMember({
           email: "member@example.com",
           role: "member",
-          accessSource: "workspace",
+          accessSource: "project",
           canRemove: true,
           canChangeRole: true,
         }),
@@ -302,7 +302,7 @@ describe("ShareWorkspaceDialog", () => {
   });
 
   it("shows a read-only private dialog for non-admin members", () => {
-    mockUseWorkspaceMembers.mockReturnValue({
+    mockUseProjectMembers.mockReturnValue({
       members: [
         createMember({
           email: "member@example.com",
@@ -339,7 +339,7 @@ describe("ShareWorkspaceDialog", () => {
     });
 
     expect(
-      screen.getByText("Only workspace admins can invite people."),
+      screen.getByText("Only project admins can invite people."),
     ).toBeInTheDocument();
     expect(screen.queryByText("Invite with email")).not.toBeInTheDocument();
     expect(
@@ -347,9 +347,9 @@ describe("ShareWorkspaceDialog", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("creates the workspace before inviting on the first share flow", async () => {
-    const { onWorkspaceShared } = renderDialog({
-      sharedWorkspaceId: null,
+  it("creates the project before inviting on the first share flow", async () => {
+    const { onProjectShared } = renderDialog({
+      sharedProjectId: null,
       visibility: "private",
     });
 
@@ -359,51 +359,51 @@ describe("ShareWorkspaceDialog", () => {
     fireEvent.click(screen.getByRole("button", { name: "Invite" }));
 
     await waitFor(() => {
-      expect(mockCreateWorkspace).toHaveBeenCalledWith({
+      expect(mockCreateProject).toHaveBeenCalledWith({
         organizationId: "org-1",
         name: "Acme",
         servers: {},
         visibility: "private",
       });
     });
-    expect(onWorkspaceShared).toHaveBeenCalledWith("ws-created");
-    expect(mockInviteWorkspaceMember).toHaveBeenCalledWith({
-      workspaceId: "ws-created",
+    expect(onProjectShared).toHaveBeenCalledWith("ws-created");
+    expect(mockInviteProjectMember).toHaveBeenCalledWith({
+      projectId: "ws-created",
       email: "invitee@example.com",
       role: "editor",
     });
     expect(mockToastSuccess).toHaveBeenCalledWith(
-      "Invitation sent to invitee@example.com. They'll get workspace access once they join the organization.",
+      "Invitation sent to invitee@example.com. They'll get project access once they join the organization.",
     );
   });
 
-  it("shows a workspace picker only when multiple workspaces are available", () => {
+  it("shows a project picker only when multiple projects are available", () => {
     renderDialog({
-      availableWorkspaces: {
-        "workspace-a": {
-          id: "workspace-a",
+      availableProjects: {
+        "project-a": {
+          id: "project-a",
           name: "Acme",
           servers: {},
           createdAt: new Date(),
           updatedAt: new Date(),
-          sharedWorkspaceId: "ws-1",
+          sharedProjectId: "ws-1",
           organizationId: "org-1",
           visibility: "public",
         },
       },
-      activeWorkspaceId: "workspace-a",
+      activeProjectId: "project-a",
     });
 
     expect(
-      screen.queryByRole("button", { name: "Select workspace" }),
+      screen.queryByRole("button", { name: "Select project" }),
     ).not.toBeInTheDocument();
   });
 
-  it("lets multi-workspace users switch invite targets inside the dialog", async () => {
-    mockUseWorkspaceMembers.mockImplementation(
-      ({ workspaceId }: { workspaceId: string | null }) => {
+  it("lets multi-project users switch invite targets inside the dialog", async () => {
+    mockUseProjectMembers.mockImplementation(
+      ({ projectId }: { projectId: string | null }) => {
         const memberEmail =
-          workspaceId === "ws-2"
+          projectId === "ws-2"
             ? "beta-member@example.com"
             : "alpha-member@example.com";
 
@@ -437,54 +437,54 @@ describe("ShareWorkspaceDialog", () => {
     );
 
     renderDialog({
-      availableWorkspaces: {
-        "workspace-a": {
-          id: "workspace-a",
+      availableProjects: {
+        "project-a": {
+          id: "project-a",
           name: "Acme",
           servers: {},
           createdAt: new Date(),
           updatedAt: new Date(),
-          sharedWorkspaceId: "ws-1",
+          sharedProjectId: "ws-1",
           organizationId: "org-1",
           visibility: "public",
         },
-        "workspace-b": {
-          id: "workspace-b",
+        "project-b": {
+          id: "project-b",
           name: "Beta",
           servers: {},
           createdAt: new Date(),
           updatedAt: new Date(),
-          sharedWorkspaceId: "ws-2",
+          sharedProjectId: "ws-2",
           organizationId: "org-1",
           visibility: "private",
         },
-        "workspace-c": {
-          id: "workspace-c",
+        "project-c": {
+          id: "project-c",
           name: "Gamma",
           servers: {},
           createdAt: new Date(),
           updatedAt: new Date(),
-          sharedWorkspaceId: "ws-3",
+          sharedProjectId: "ws-3",
           organizationId: "org-1",
           visibility: "public",
         },
       },
-      activeWorkspaceId: "workspace-a",
+      activeProjectId: "project-a",
     });
 
     expect(
-      screen.getByRole("heading", { name: 'Share "Acme" Workspace' }),
+      screen.getByRole("heading", { name: 'Share "Acme" Project' }),
     ).toBeInTheDocument();
     expect(
       screen.getAllByText("alpha-member@example.com").length,
     ).toBeGreaterThan(0);
 
     const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: "Select workspace" }));
+    await user.click(screen.getByRole("button", { name: "Select project" }));
     await user.click(screen.getByRole("menuitemradio", { name: /Beta/ }));
 
     expect(
-      screen.getByRole("heading", { name: 'Share "Beta" Workspace' }),
+      screen.getByRole("heading", { name: 'Share "Beta" Project' }),
     ).toBeInTheDocument();
     expect(
       screen.getAllByText("beta-member@example.com").length,
@@ -493,104 +493,104 @@ describe("ShareWorkspaceDialog", () => {
     expect(screen.queryAllByText("alpha-member@example.com")).toHaveLength(0);
   });
 
-  it("keeps the chosen workspace selected when workspaces refresh while open", async () => {
+  it("keeps the chosen project selected when projects refresh while open", async () => {
     const currentUser = {
       email: "owner@example.com",
       firstName: "Owner",
       lastName: "Example",
     } as any;
-    const availableWorkspaces = {
-      "workspace-a": {
-        id: "workspace-a",
+    const availableProjects = {
+      "project-a": {
+        id: "project-a",
         name: "Acme",
         servers: {},
         createdAt: new Date("2026-04-01T00:00:00Z"),
         updatedAt: new Date("2026-04-01T00:00:00Z"),
-        sharedWorkspaceId: "ws-1",
+        sharedProjectId: "ws-1",
         organizationId: "org-1",
         visibility: "public" as const,
       },
-      "workspace-b": {
-        id: "workspace-b",
+      "project-b": {
+        id: "project-b",
         name: "Beta",
         servers: {},
         createdAt: new Date("2026-04-02T00:00:00Z"),
         updatedAt: new Date("2026-04-02T00:00:00Z"),
-        sharedWorkspaceId: "ws-2",
+        sharedProjectId: "ws-2",
         organizationId: "org-1",
         visibility: "private" as const,
       },
     };
 
     const { rerender } = render(
-      <ShareWorkspaceDialog
+      <ShareProjectDialog
         isOpen
         onClose={vi.fn()}
-        workspaceName="Acme"
-        workspaceServers={{}}
-        sharedWorkspaceId="ws-1"
+        projectName="Acme"
+        projectServers={{}}
+        sharedProjectId="ws-1"
         organizationId="org-1"
         visibility="public"
         currentUser={currentUser}
-        onWorkspaceShared={vi.fn()}
-        availableWorkspaces={availableWorkspaces}
-        activeWorkspaceId="workspace-a"
+        onProjectShared={vi.fn()}
+        availableProjects={availableProjects}
+        activeProjectId="project-a"
       />,
     );
 
     const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: "Select workspace" }));
+    await user.click(screen.getByRole("button", { name: "Select project" }));
     await user.click(screen.getByRole("menuitemradio", { name: /Beta/ }));
 
     expect(
-      screen.getByRole("heading", { name: 'Share "Beta" Workspace' }),
+      screen.getByRole("heading", { name: 'Share "Beta" Project' }),
     ).toBeInTheDocument();
 
     rerender(
-      <ShareWorkspaceDialog
+      <ShareProjectDialog
         isOpen
         onClose={vi.fn()}
-        workspaceName="Acme"
-        workspaceServers={{}}
-        sharedWorkspaceId="ws-1"
+        projectName="Acme"
+        projectServers={{}}
+        sharedProjectId="ws-1"
         organizationId="org-1"
         visibility="public"
         currentUser={currentUser}
-        onWorkspaceShared={vi.fn()}
-        availableWorkspaces={{
-          "workspace-a": {
-            ...availableWorkspaces["workspace-a"],
+        onProjectShared={vi.fn()}
+        availableProjects={{
+          "project-a": {
+            ...availableProjects["project-a"],
             updatedAt: new Date("2026-04-03T00:00:00Z"),
           },
-          "workspace-b": {
-            ...availableWorkspaces["workspace-b"],
+          "project-b": {
+            ...availableProjects["project-b"],
             updatedAt: new Date("2026-04-04T00:00:00Z"),
           },
         }}
-        activeWorkspaceId="workspace-a"
+        activeProjectId="project-a"
       />,
     );
 
     expect(
-      screen.getByRole("heading", { name: 'Share "Beta" Workspace' }),
+      screen.getByRole("heading", { name: 'Share "Beta" Project' }),
     ).toBeInTheDocument();
   });
 
-  it("creates and shares the selected workspace when inviting from the picker", async () => {
-    const { onWorkspaceShared } = renderDialog({
-      availableWorkspaces: {
-        "workspace-a": {
-          id: "workspace-a",
+  it("creates and shares the selected project when inviting from the picker", async () => {
+    const { onProjectShared } = renderDialog({
+      availableProjects: {
+        "project-a": {
+          id: "project-a",
           name: "Acme",
           servers: {},
           createdAt: new Date(),
           updatedAt: new Date(),
-          sharedWorkspaceId: "ws-1",
+          sharedProjectId: "ws-1",
           organizationId: "org-1",
           visibility: "public",
         },
-        "workspace-b": {
-          id: "workspace-b",
+        "project-b": {
+          id: "project-b",
           name: "Beta",
           servers: {
             "beta-server": {
@@ -603,11 +603,11 @@ describe("ShareWorkspaceDialog", () => {
           visibility: "private",
         },
       },
-      activeWorkspaceId: "workspace-a",
+      activeProjectId: "project-a",
     });
 
     const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: "Select workspace" }));
+    await user.click(screen.getByRole("button", { name: "Select project" }));
     await user.click(screen.getByRole("menuitemradio", { name: /Beta/ }));
 
     fireEvent.change(screen.getByPlaceholderText("Add people, emails..."), {
@@ -616,7 +616,7 @@ describe("ShareWorkspaceDialog", () => {
     fireEvent.click(screen.getByRole("button", { name: "Invite" }));
 
     await waitFor(() => {
-      expect(mockCreateWorkspace).toHaveBeenCalledWith(
+      expect(mockCreateProject).toHaveBeenCalledWith(
         expect.objectContaining({
           organizationId: "org-1",
           name: "Beta",
@@ -624,9 +624,9 @@ describe("ShareWorkspaceDialog", () => {
         }),
       );
     });
-    expect(onWorkspaceShared).toHaveBeenCalledWith("ws-created", "workspace-b");
-    expect(mockInviteWorkspaceMember).toHaveBeenCalledWith({
-      workspaceId: "ws-created",
+    expect(onProjectShared).toHaveBeenCalledWith("ws-created", "project-b");
+    expect(mockInviteProjectMember).toHaveBeenCalledWith({
+      projectId: "ws-created",
       email: "invitee@example.com",
       role: "editor",
     });
@@ -682,12 +682,12 @@ describe("ShareWorkspaceDialog", () => {
     });
 
     rerender(
-      <ShareWorkspaceDialog
+      <ShareProjectDialog
         isOpen
         onClose={vi.fn()}
-        workspaceName="Acme"
-        workspaceServers={{}}
-        sharedWorkspaceId="ws-1"
+        projectName="Acme"
+        projectServers={{}}
+        sharedProjectId="ws-1"
         organizationId="org-1"
         visibility="public"
         currentUser={
@@ -697,7 +697,7 @@ describe("ShareWorkspaceDialog", () => {
             lastName: "Example",
           } as any
         }
-        onWorkspaceShared={vi.fn()}
+        onProjectShared={vi.fn()}
       />,
     );
 
@@ -707,8 +707,8 @@ describe("ShareWorkspaceDialog", () => {
     expect(screen.getByRole("button", { name: "Invite" })).toBeEnabled();
   });
 
-  it("calls the workspace-scoped removal mutation via role dropdown", async () => {
-    mockUseWorkspaceMembers.mockReturnValue({
+  it("calls the project-scoped removal mutation via role dropdown", async () => {
+    mockUseProjectMembers.mockReturnValue({
       members: [
         createMember({
           email: "owner@example.com",
@@ -717,7 +717,7 @@ describe("ShareWorkspaceDialog", () => {
         createMember({
           email: "member@example.com",
           role: "member",
-          accessSource: "workspace",
+          accessSource: "project",
           canRemove: true,
           canChangeRole: true,
         }),
@@ -730,7 +730,7 @@ describe("ShareWorkspaceDialog", () => {
         createMember({
           email: "member@example.com",
           role: "member",
-          accessSource: "workspace",
+          accessSource: "project",
           canRemove: true,
           canChangeRole: true,
         }),
@@ -750,16 +750,16 @@ describe("ShareWorkspaceDialog", () => {
     const editorButtons = screen.getAllByRole("button", { name: /Editor/ });
     await user.click(editorButtons[editorButtons.length - 1]);
 
-    // Click "Remove from workspace" in the dropdown
-    const removeItem = await screen.findByText("Remove from workspace");
+    // Click "Remove from project" in the dropdown
+    const removeItem = await screen.findByText("Remove from project");
     await user.click(removeItem);
 
     await waitFor(() => {
-      expect(mockRemoveWorkspaceMember).toHaveBeenCalledWith({
-        workspaceId: "ws-1",
+      expect(mockRemoveProjectMember).toHaveBeenCalledWith({
+        projectId: "ws-1",
         email: "member@example.com",
       });
     });
-    expect(mockToastSuccess).toHaveBeenCalledWith("Workspace access removed");
+    expect(mockToastSuccess).toHaveBeenCalledWith("Project access removed");
   });
 });

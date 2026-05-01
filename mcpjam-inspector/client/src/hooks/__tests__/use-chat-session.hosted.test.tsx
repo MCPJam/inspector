@@ -288,7 +288,7 @@ describe("useChatSession hosted mode", () => {
       useChatSession({
         selectedServers: ["server-1"],
         hostedContext: {
-          workspaceId: "workspace-1",
+          projectId: "project-1",
           selectedServerIds: ["server-id-1"],
           shareToken: "share-token",
         },
@@ -298,7 +298,7 @@ describe("useChatSession hosted mode", () => {
     const body = lastTransportOptions.body();
     expect(result.current.chatSessionId).toBe("chat-session-id");
     expect(body).toMatchObject({
-      workspaceId: "workspace-1",
+      projectId: "project-1",
       chatSessionId: "chat-session-id",
       selectedServerIds: ["server-id-1"],
       selectedServerNames: ["server-1"],
@@ -313,7 +313,7 @@ describe("useChatSession hosted mode", () => {
       useChatSession({
         selectedServers: ["server-1"],
         hostedContext: {
-          workspaceId: "workspace-1",
+          projectId: "project-1",
           selectedServerIds: ["server-id-1"],
           chatboxToken: "chatbox-token",
           oauthTokens: {
@@ -326,7 +326,7 @@ describe("useChatSession hosted mode", () => {
     const body = lastTransportOptions.body();
     expect(result.current.chatSessionId).toBe("chat-session-id");
     expect(body).toMatchObject({
-      workspaceId: "workspace-1",
+      projectId: "project-1",
       chatSessionId: "chat-session-id",
       selectedServerIds: ["server-id-1"],
       selectedServerNames: ["server-1"],
@@ -342,7 +342,7 @@ describe("useChatSession hosted mode", () => {
       useChatSession({
         selectedServers: ["server-1"],
         hostedContext: {
-          workspaceId: "workspace-1",
+          projectId: "project-1",
           selectedServerIds: ["server-id-1"],
           chatboxToken: "chatbox-token",
           chatboxSurface: "preview",
@@ -401,7 +401,7 @@ describe("useChatSession hosted mode", () => {
         hostedContext,
       }: {
         hostedContext: {
-          workspaceId: string;
+          projectId: string;
           selectedServerIds: string[];
           shareToken: string;
         };
@@ -414,7 +414,7 @@ describe("useChatSession hosted mode", () => {
       {
         initialProps: {
           hostedContext: {
-            workspaceId: "workspace-1",
+            projectId: "project-1",
             selectedServerIds: ["server-id-1"],
             shareToken: "share-token-1",
           },
@@ -433,7 +433,7 @@ describe("useChatSession hosted mode", () => {
 
     rerender({
       hostedContext: {
-        workspaceId: "workspace-2",
+        projectId: "project-2",
         selectedServerIds: ["server-id-2"],
         shareToken: "share-token-2",
       },
@@ -460,7 +460,7 @@ describe("useChatSession hosted mode", () => {
       useChatSession({
         selectedServers: ["server-1"],
         hostedContext: {
-          workspaceId: "workspace-1",
+          projectId: "project-1",
           selectedServerIds: ["server-id-1"],
         },
       })
@@ -520,7 +520,7 @@ describe("useChatSession hosted mode", () => {
         useChatSession({
           selectedServers,
           hostedContext: {
-            workspaceId: "workspace-1",
+            projectId: "project-1",
             selectedServerIds: hostedSelectedServerIds,
           },
         }),
@@ -741,7 +741,7 @@ describe("useChatSession hosted mode", () => {
       useChatSession({
         selectedServers: ["server-1"],
         hostedContext: {
-          workspaceId: "workspace-1",
+          projectId: "project-1",
           selectedServerIds: ["server-id-1"],
         },
       })
@@ -773,7 +773,7 @@ describe("useChatSession hosted mode", () => {
       useChatSession({
         selectedServers: ["server-1"],
         hostedContext: {
-          workspaceId: "workspace-1",
+          projectId: "project-1",
           selectedServerIds: ["server-id-1"],
         },
       })
@@ -816,7 +816,7 @@ describe("useChatSession hosted mode", () => {
       useChatSession({
         selectedServers: ["server-1"],
         hostedContext: {
-          workspaceId: "workspace-1",
+          projectId: "project-1",
           selectedServerIds: ["server-id-1"],
           shareToken: "share-token",
         },
@@ -886,7 +886,7 @@ describe("useChatSession hosted mode", () => {
       useChatSession({
         selectedServers: ["server-1"],
         hostedContext: {
-          workspaceId: "workspace-1",
+          projectId: "project-1",
           selectedServerIds: ["server-id-1"],
           shareToken: "share-token",
         },
@@ -908,7 +908,7 @@ describe("useChatSession hosted mode", () => {
       useChatSession({
         selectedServers: ["server-1"],
         hostedContext: {
-          workspaceId: "workspace-1",
+          projectId: "project-1",
           selectedServerIds: ["server-id-1"],
           shareToken: "share-token",
         },
@@ -938,7 +938,7 @@ describe("useChatSession hosted mode", () => {
       useChatSession({
         selectedServers: ["server-1"],
         hostedContext: {
-          workspaceId: "workspace-1",
+          projectId: "project-1",
           selectedServerIds: ["server-id-1"],
         },
       })
@@ -998,7 +998,7 @@ describe("useChatSession hosted mode", () => {
       useChatSession({
         selectedServers: ["server-1"],
         hostedContext: {
-          workspaceId: "workspace-1",
+          projectId: "project-1",
           selectedServerIds: ["server-id-1"],
         },
       })
@@ -1043,7 +1043,7 @@ describe("useChatSession hosted mode", () => {
       useChatSession({
         selectedServers: ["server-1"],
         hostedContext: {
-          workspaceId: "workspace-1",
+          projectId: "project-1",
           selectedServerIds: ["server-id-1"],
           shareToken: "share-token",
         },

@@ -629,7 +629,7 @@ describe("mcp-oauth", () => {
         serverName: "test-server",
         serverUrl: "https://example.com/mcp",
         customHeaders: {
-          "X-Tenant": "workspace-123",
+          "X-Tenant": "project-123",
         },
       });
 
@@ -645,7 +645,7 @@ describe("mcp-oauth", () => {
       });
       expect(
         new Headers(metadataCall?.[1]?.headers as HeadersInit).get("X-Tenant"),
-      ).toBe("workspace-123");
+      ).toBe("project-123");
     });
 
     it("replays the initial MCP initialize through the proxy when browser transport fails", async () => {

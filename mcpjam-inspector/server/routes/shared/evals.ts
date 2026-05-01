@@ -47,7 +47,7 @@ const promptTurnSchema = z.object({
 });
 
 export const RunEvalsRequestSchema = z.object({
-  workspaceId: z.string().optional(),
+  projectId: z.string().optional(),
   suiteId: z.string().optional(),
   suiteName: z.string().optional(),
   suiteDescription: z.string().optional(),
@@ -265,7 +265,7 @@ function buildPersistedSuiteEnvironment(args: {
     args.serverNames.length === args.resolvedServerIds.length
       ? args.serverNames.map((serverName, index) => ({
           serverName,
-          workspaceServerId: args.resolvedServerIds[index],
+          projectServerId: args.resolvedServerIds[index],
         }))
       : undefined;
 
@@ -281,7 +281,7 @@ export async function runEvalsWithManager(
 ) {
   const {
     suiteId,
-    workspaceId,
+    projectId,
     suiteName,
     suiteDescription,
     tests,
@@ -304,11 +304,11 @@ export async function runEvalsWithManager(
       "Provide suiteId or suiteName",
     );
   }
-  if (!suiteId && !workspaceId) {
+  if (!suiteId && !projectId) {
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
-      "workspaceId is required when creating a new eval suite",
+      "projectId is required when creating a new eval suite",
     );
   }
 
@@ -488,7 +488,7 @@ export async function runEvalsWithManager(
     const createdSuite = await convexClient.mutation(
       "testSuites:createTestSuite" as any,
       {
-        workspaceId,
+        projectId,
         name: suiteName!,
         description: suiteDescription,
         environment: persistedEnvironment,

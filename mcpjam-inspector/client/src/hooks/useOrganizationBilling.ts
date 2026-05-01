@@ -14,9 +14,9 @@ export type BillingFeatureName =
   | "prioritySupport";
 export type BillingLimitName =
   | "maxMembers"
-  | "maxWorkspaces"
-  | "maxServersPerWorkspace"
-  | "maxChatboxesPerWorkspace"
+  | "maxProjects"
+  | "maxServersPerProject"
+  | "maxChatboxesPerProject"
   | "maxEvalRunsPerMonth";
 
 /** Mirrors backend premiumness gate keys exactly. */
@@ -26,9 +26,9 @@ export type PremiumnessGateKey =
   | "cicd"
   | "auditLog"
   | "maxMembers"
-  | "maxWorkspaces"
-  | "maxServersPerWorkspace"
-  | "maxChatboxesPerWorkspace"
+  | "maxProjects"
+  | "maxServersPerProject"
+  | "maxChatboxesPerProject"
   | "maxEvalRunsPerMonth";
 
 export type BillingEnforcementState =
@@ -39,7 +39,7 @@ export type BillingEnforcementState =
 export interface GateDecision {
   gateKey: PremiumnessGateKey;
   kind: "feature" | "limit";
-  scope: "organization" | "workspace";
+  scope: "organization" | "project";
   canAccess: boolean;
   shouldShowUpsell: boolean;
   upgradePlan: OrganizationPlan | null;
@@ -165,7 +165,7 @@ export function isPaidPlan(plan: OrganizationPlan): boolean {
 }
 
 export interface UseOrganizationBillingOptions {
-  workspaceId?: string | null;
+  projectId?: string | null;
   enabled?: boolean;
 }
 
@@ -193,10 +193,10 @@ export function useOrganizationBilling(
   organizationId: string | null,
   options?: UseOrganizationBillingOptions,
 ) {
-  const workspaceId = options?.workspaceId ?? null;
+  const projectId = options?.projectId ?? null;
   const enabled = options?.enabled ?? true;
   const shouldQueryOrganization = enabled && !!organizationId;
-  const shouldQueryWorkspace = shouldQueryOrganization && !!workspaceId;
+  const shouldQueryProject = shouldQueryOrganization && !!projectId;
 
   const billingStatus = useOrganizationBillingStatus(organizationId, {
     enabled,
@@ -212,9 +212,9 @@ export function useOrganizationBilling(
     shouldQueryOrganization ? ({ organizationId } as any) : "skip",
   ) as PremiumnessState | undefined;
 
-  const workspacePremiumness = useQuery(
-    "billing:getWorkspacePremiumness" as any,
-    shouldQueryWorkspace ? ({ organizationId, workspaceId } as any) : "skip",
+  const projectPremiumness = useQuery(
+    "billing:getProjectPremiumness" as any,
+    shouldQueryProject ? ({ organizationId, projectId } as any) : "skip",
   ) as PremiumnessState | undefined;
 
   const planCatalog = useQuery(
@@ -400,20 +400,20 @@ export function useOrganizationBilling(
 
   const isLoadingOrganizationPremiumness =
     shouldQueryOrganization && organizationPremiumness === undefined;
-  const isLoadingWorkspacePremiumness =
-    shouldQueryWorkspace && workspacePremiumness === undefined;
+  const isLoadingProjectPremiumness =
+    shouldQueryProject && projectPremiumness === undefined;
 
   return {
     billingStatus,
     organizationPremiumness,
-    workspacePremiumness,
+    projectPremiumness,
     entitlements,
     planCatalog,
     isLoadingBilling: shouldQueryOrganization && billingStatus === undefined,
     isLoadingEntitlements:
       shouldQueryOrganization && entitlements === undefined,
     isLoadingOrganizationPremiumness,
-    isLoadingWorkspacePremiumness,
+    isLoadingProjectPremiumness,
     isLoadingPlanCatalog: shouldQueryOrganization && planCatalog === undefined,
     isStartingPlanChange,
     pendingPlanChangeTarget,

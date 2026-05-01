@@ -76,12 +76,12 @@ describe("getBillingErrorMessage", () => {
     );
   });
 
-  it("formats backend limit payloads for workspace chatboxes", () => {
+  it("formats backend limit payloads for project chatboxes", () => {
     const message = getBillingErrorMessage(
       new Error(
         JSON.stringify({
           code: "billing_limit_reached",
-          limit: "maxChatboxesPerWorkspace",
+          limit: "maxChatboxesPerProject",
           allowedValue: 5,
         }),
       ),
@@ -89,7 +89,7 @@ describe("getBillingErrorMessage", () => {
     );
 
     expect(message).toBe(
-      "This workspace has reached its chatbox limit (5). Upgrade to continue.",
+      "This project has reached its chatbox limit (5). Upgrade to continue.",
     );
   });
 
@@ -128,12 +128,12 @@ describe("getBillingErrorMessage", () => {
     );
   });
 
-  it("formats backend limit payloads for workspaces", () => {
+  it("formats backend limit payloads for projects", () => {
     const message = getBillingErrorMessage(
       new Error(
         JSON.stringify({
           code: "billing_limit_reached",
-          limit: "maxWorkspaces",
+          limit: "maxProjects",
           allowedValue: 1,
         }),
       ),
@@ -141,16 +141,16 @@ describe("getBillingErrorMessage", () => {
     );
 
     expect(message).toBe(
-      "This organization has reached its workspace limit (1). Upgrade to create more workspaces.",
+      "This organization has reached its project limit (1). Upgrade to create more projects.",
     );
   });
 
-  it("formats workspace-limit payloads for non-billing-admin users", () => {
+  it("formats project-limit payloads for non-billing-admin users", () => {
     const message = getBillingErrorMessage(
       new Error(
         JSON.stringify({
           code: "billing_limit_reached",
-          limit: "maxWorkspaces",
+          limit: "maxProjects",
           allowedValue: 1,
         }),
       ),
@@ -159,7 +159,7 @@ describe("getBillingErrorMessage", () => {
     );
 
     expect(message).toBe(
-      "This organization has reached its workspace limit (1). Ask an organization owner to upgrade.",
+      "This organization has reached its project limit (1). Ask an organization owner to upgrade.",
     );
   });
 
@@ -223,7 +223,7 @@ describe("isGateAccessDenied", () => {
             {
               gateKey: "evals",
               kind: "feature",
-              scope: "workspace",
+              scope: "project",
               canAccess: false,
               shouldShowUpsell: true,
               upgradePlan: "starter",
@@ -244,7 +244,7 @@ describe("isGateAccessDenied", () => {
             {
               gateKey: "evals",
               kind: "feature",
-              scope: "workspace",
+              scope: "project",
               canAccess: false,
               shouldShowUpsell: true,
               upgradePlan: "starter",
@@ -257,13 +257,13 @@ describe("isGateAccessDenied", () => {
     ).toBe(true);
   });
 
-  it("denies maxWorkspaces when a free organization is already at cap", () => {
+  it("denies maxProjects when a free organization is already at cap", () => {
     expect(
       isGateAccessDenied(
         premiumness({
           gates: [
             {
-              gateKey: "maxWorkspaces",
+              gateKey: "maxProjects",
               kind: "limit",
               scope: "organization",
               canAccess: false,
@@ -275,7 +275,7 @@ describe("isGateAccessDenied", () => {
             },
           ],
         }),
-        "maxWorkspaces",
+        "maxProjects",
       ),
     ).toBe(true);
   });
@@ -300,17 +300,17 @@ describe("getDisplayPriceCentsForPlan", () => {
 });
 
 describe("isPremiumnessGateDeniedForShell", () => {
-  it("prefers workspace premiumness when a workspace exists", () => {
+  it("prefers project premiumness when a project exists", () => {
     const denied = isPremiumnessGateDeniedForShell({
       billingUiEnabled: true,
-      hasWorkspace: true,
+      hasProject: true,
       gateKey: "evals",
-      workspacePremiumness: premiumness({
+      projectPremiumness: premiumness({
         gates: [
           {
             gateKey: "evals",
             kind: "feature",
-            scope: "workspace",
+            scope: "project",
             canAccess: false,
             shouldShowUpsell: true,
             upgradePlan: "starter",
@@ -323,7 +323,7 @@ describe("isPremiumnessGateDeniedForShell", () => {
           {
             gateKey: "evals",
             kind: "feature",
-            scope: "workspace",
+            scope: "project",
             canAccess: true,
             shouldShowUpsell: false,
             upgradePlan: null,

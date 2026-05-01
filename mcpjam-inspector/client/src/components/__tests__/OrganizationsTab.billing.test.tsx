@@ -61,9 +61,9 @@ function createPlanCatalog() {
         },
         limits: {
           maxMembers: 1,
-          maxWorkspaces: 1,
-          maxServersPerWorkspace: 3,
-          maxChatboxesPerWorkspace: 0,
+          maxProjects: 1,
+          maxServersPerProject: 3,
+          maxChatboxesPerProject: 0,
           maxEvalRunsPerMonth: 5,
         },
         includedSeats: null,
@@ -87,9 +87,9 @@ function createPlanCatalog() {
         },
         limits: {
           maxMembers: 3,
-          maxWorkspaces: 2,
-          maxServersPerWorkspace: 10,
-          maxChatboxesPerWorkspace: 1,
+          maxProjects: 2,
+          maxServersPerProject: 10,
+          maxChatboxesPerProject: 1,
           maxEvalRunsPerMonth: 500,
         },
         includedSeats: 3,
@@ -116,9 +116,9 @@ function createPlanCatalog() {
         },
         limits: {
           maxMembers: 100,
-          maxWorkspaces: 10,
-          maxServersPerWorkspace: null,
-          maxChatboxesPerWorkspace: 3,
+          maxProjects: 10,
+          maxServersPerProject: null,
+          maxChatboxesPerProject: 3,
           maxEvalRunsPerMonth: 5000,
         },
         includedSeats: null,
@@ -145,9 +145,9 @@ function createPlanCatalog() {
         },
         limits: {
           maxMembers: null,
-          maxWorkspaces: null,
-          maxServersPerWorkspace: null,
-          maxChatboxesPerWorkspace: null,
+          maxProjects: null,
+          maxServersPerProject: null,
+          maxChatboxesPerProject: null,
           maxEvalRunsPerMonth: null,
         },
         includedSeats: null,
@@ -199,12 +199,12 @@ function createBillingHookState(overrides: Record<string, unknown>) {
     billingStatus: undefined,
     entitlements: undefined,
     organizationPremiumness: undefined,
-    workspacePremiumness: undefined,
+    projectPremiumness: undefined,
     planCatalog: createPlanCatalog(),
     isLoadingBilling: false,
     isLoadingEntitlements: false,
     isLoadingOrganizationPremiumness: false,
-    isLoadingWorkspacePremiumness: false,
+    isLoadingProjectPremiumness: false,
     isLoadingPlanCatalog: false,
     isStartingPlanChange: false,
     pendingPlanChangeTarget: null,
@@ -974,7 +974,7 @@ describe("OrganizationsTab billing", () => {
     ).toBeInTheDocument();
     expect(
       screen.getByText(
-        "Starter includes up to 3 members and 2 workspaces for $61/mo flat.",
+        "Starter includes up to 3 members and 2 projects for $61/mo flat.",
       ),
     ).toBeInTheDocument();
     expect(

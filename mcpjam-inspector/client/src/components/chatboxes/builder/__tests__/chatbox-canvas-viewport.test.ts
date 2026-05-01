@@ -9,7 +9,7 @@ import type { ChatboxBuilderContext } from "../types";
 
 function minimalContext(
   overrides: Partial<ChatboxBuilderContext["draft"]> & {
-    workspaceServers?: ChatboxBuilderContext["workspaceServers"];
+    projectServers?: ChatboxBuilderContext["projectServers"];
   } = {},
 ): ChatboxBuilderContext {
   const draft = {
@@ -31,7 +31,7 @@ function minimalContext(
   return {
     chatbox: null,
     draft,
-    workspaceServers: overrides.workspaceServers ?? [],
+    projectServers: overrides.projectServers ?? [],
   };
 }
 

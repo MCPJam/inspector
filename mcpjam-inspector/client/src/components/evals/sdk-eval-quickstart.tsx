@@ -48,7 +48,7 @@ export function buildShellEnvSnippet(
 ): string {
   const line = mcpjamApiKeyPlaintext
     ? `export MCPJAM_API_KEY="${escapeDoubleQuotes(mcpjamApiKeyPlaintext)}"`
-    : "export MCPJAM_API_KEY=<workspace-api-key>";
+    : "export MCPJAM_API_KEY=<project-api-key>";
   return `${line}\n${ENV_TAIL_SHELL}`;
 }
 
@@ -58,14 +58,14 @@ export function buildDotEnvSnippet(
 ): string {
   const line = mcpjamApiKeyPlaintext
     ? `MCPJAM_API_KEY="${escapeDoubleQuotes(mcpjamApiKeyPlaintext)}"`
-    : "MCPJAM_API_KEY=<workspace-api-key>";
+    : "MCPJAM_API_KEY=<project-api-key>";
   return `${line}\n${ENV_TAIL_DOTENV}`;
 }
 
 /** Snippet strings exported for tests and consistency with copy targets. */
 export const SDK_EVAL_QUICKSTART_INSTALL = "npm install @mcpjam/sdk";
 
-/** Placeholder shell env (no workspace key injected). */
+/** Placeholder shell env (no project key injected). */
 export const SDK_EVAL_QUICKSTART_ENV = buildShellEnvSnippet(null);
 
 export const SDK_EVAL_QUICKSTART_RUN = `import { describe, it, expect, beforeAll, afterAll } from "vitest";
@@ -158,7 +158,7 @@ function StepCard({
 
 type ApiKeyListEntry = {
   _id: string;
-  workspaceId?: string;
+  projectId?: string;
   name: string;
   prefix: string;
   createdAt: number;
@@ -169,7 +169,7 @@ type ApiKeyListEntry = {
 function ApiKeyRow({
   isAuthLoading,
   isAuthenticated,
-  workspaceId,
+  projectId,
   maybeApiKey,
   existingKey,
   plaintextKey,
@@ -183,7 +183,7 @@ function ApiKeyRow({
 }: {
   isAuthLoading: boolean;
   isAuthenticated: boolean;
-  workspaceId: string | null;
+  projectId: string | null;
   maybeApiKey: ApiKeyListEntry[] | undefined;
   existingKey: ApiKeyListEntry | null;
   plaintextKey: string | null;
@@ -223,14 +223,14 @@ function ApiKeyRow({
     );
   }
 
-  if (!workspaceId) {
+  if (!projectId) {
     return (
       <div className="flex items-center justify-between rounded-lg border border-border/60 bg-muted/40 px-3 py-2">
         <span className="text-xs font-medium text-muted-foreground">
           MCPJAM_API_KEY
         </span>
         <span className="text-xs text-muted-foreground">
-          Select a workspace first
+          Select a project first
         </span>
       </div>
     );
@@ -257,7 +257,7 @@ function ApiKeyRow({
               readOnly
               value={plaintextKey}
               className="h-8 truncate pr-9 font-mono text-xs"
-              aria-label="Workspace API key"
+              aria-label="Project API key"
             />
             <Tooltip>
               <TooltipTrigger asChild>
@@ -333,7 +333,7 @@ function ApiKeyRow({
         </AlertDialogTrigger>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Regenerate workspace API key?</AlertDialogTitle>
+            <AlertDialogTitle>Regenerate project API key?</AlertDialogTitle>
             <AlertDialogDescription>
               This invalidates your current key immediately. Integrations using
               the old key will stop working. This cannot be undone.
@@ -374,11 +374,11 @@ export type SdkEvalQuickstartStepId = "install" | "configure" | "run";
 /* ------------------------------------------------------------------ */
 
 export type SdkEvalQuickstartProps = {
-  workspaceId?: string | null;
+  projectId?: string | null;
 };
 
 export function SdkEvalQuickstart({
-  workspaceId = null,
+  projectId = null,
 }: SdkEvalQuickstartProps) {
   const [plaintextKey, setPlaintextKey] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -391,22 +391,22 @@ export function SdkEvalQuickstart({
 
   const maybeApiKey = useQuery(
     "apiKeys:list" as any,
-    workspaceId ? ({ workspaceId } as any) : "skip",
+    projectId ? ({ projectId } as any) : "skip",
   ) as ApiKeyListEntry[] | undefined;
 
   const regenerateAndGet = useMutation(
     "apiKeys:regenerateAndGet" as any,
-  ) as unknown as (args: { workspaceId?: string }) => Promise<{
+  ) as unknown as (args: { projectId?: string }) => Promise<{
     apiKey: string;
     key: ApiKeyListEntry;
   }>;
 
   const runGenerate = useCallback(async () => {
-    if (!isAuthenticated || !workspaceId) return false;
+    if (!isAuthenticated || !projectId) return false;
     try {
       setIsGenerating(true);
       setHeaderCopied(false);
-      const result = await regenerateAndGet({ workspaceId });
+      const result = await regenerateAndGet({ projectId });
       setPlaintextKey(result.apiKey);
       toast.success(
         "API key ready -- copy it now; the full value won't be shown again.",
@@ -415,13 +415,13 @@ export function SdkEvalQuickstart({
     } catch (err) {
       console.error("Failed to generate key", err);
       toast.error(
-        "Could not create API key. Try again or use workspace settings.",
+        "Could not create API key. Try again or use project settings.",
       );
       return false;
     } finally {
       setIsGenerating(false);
     }
-  }, [isAuthenticated, workspaceId, regenerateAndGet]);
+  }, [isAuthenticated, projectId, regenerateAndGet]);
 
   const handleCopyHeaderKey = useCallback(async () => {
     if (!plaintextKey) return;
@@ -456,7 +456,7 @@ export function SdkEvalQuickstart({
         <ApiKeyRow
           isAuthLoading={isAuthLoading}
           isAuthenticated={isAuthenticated}
-          workspaceId={workspaceId}
+          projectId={projectId}
           maybeApiKey={maybeApiKey}
           existingKey={existingKey}
           plaintextKey={plaintextKey}

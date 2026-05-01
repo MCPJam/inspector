@@ -572,7 +572,7 @@ chatV2.post("/", async (c) => {
                 sessionMessages: fullHistory,
                 startedAt: sessionStartedAt,
                 lastActivityAt: Date.now(),
-                ...(body.workspaceId ? { workspaceId: body.workspaceId } : {}),
+                ...(body.projectId ? { projectId: body.projectId } : {}),
                 resumeConfig: {
                   systemPrompt,
                   temperature,
@@ -589,7 +589,7 @@ chatV2.post("/", async (c) => {
     }
 
     // Hosted org BYOK: only in hosted mode, only when Convex is reachable,
-    // only when the request carries a workspaceId, and only when the caller
+    // only when the request carries a projectId, and only when the caller
     // hasn't supplied a client-side apiKey. A client-supplied apiKey is the
     // strongest signal that the caller wants direct BYOK, so it wins —
     // matches the precedence used in the eval flows (modelApiKeys ?? org).
@@ -600,8 +600,8 @@ chatV2.post("/", async (c) => {
       HOSTED_MODE &&
       process.env.CONVEX_HTTP_URL &&
       process.env.INSPECTOR_SERVICE_TOKEN &&
-      typeof body.workspaceId === "string" &&
-      body.workspaceId &&
+      typeof body.projectId === "string" &&
+      body.projectId &&
       !apiKey
     ) {
       const providerKeyResult = deriveOrgProviderKey(modelDefinition);
@@ -615,7 +615,7 @@ chatV2.post("/", async (c) => {
       const sessionStartedAt = Date.now();
       const chatSessionId = body.chatSessionId;
       return handleHostedOrgChatModel({
-        workspaceId: body.workspaceId,
+        projectId: body.projectId,
         providerKey,
         modelId: String(modelDefinition.id),
         messages: modelMessages,
@@ -638,7 +638,7 @@ chatV2.post("/", async (c) => {
                 sessionMessages: fullHistory,
                 startedAt: sessionStartedAt,
                 lastActivityAt: Date.now(),
-                workspaceId: body.workspaceId,
+                projectId: body.projectId,
                 resumeConfig: {
                   systemPrompt,
                   temperature,
@@ -711,7 +711,7 @@ chatV2.post("/", async (c) => {
               authHeader,
               startedAt: streamStartedAt,
               lastActivityAt: Date.now(),
-              ...(body.workspaceId ? { workspaceId: body.workspaceId } : {}),
+              ...(body.projectId ? { projectId: body.projectId } : {}),
               resumeConfig: {
                 systemPrompt,
                 temperature,

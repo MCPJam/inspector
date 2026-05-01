@@ -6,7 +6,7 @@ import type {
   AppAction,
   AppState,
   ServerWithName,
-  Workspace,
+  Project,
 } from "@/state/app-types";
 import {
   testConnection,
@@ -42,22 +42,22 @@ import {
 } from "@/lib/apis/web/context";
 import type { OAuthTestProfile } from "@/lib/oauth/profile";
 import { authFetch } from "@/lib/session-token";
-import { useWorkspaceClientConfigSyncPending } from "./use-workspace-client-config-sync-pending";
+import { useProjectClientConfigSyncPending } from "./use-project-client-config-sync-pending";
 import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
-import { useServerMutations, type RemoteServer } from "./useWorkspaces";
+import { useServerMutations, type RemoteServer } from "./useProjects";
 import {
   CLIENT_CONFIG_SYNC_PENDING_ERROR_MESSAGE,
   getEffectiveServerClientCapabilities,
-  getEffectiveWorkspaceConnectionDefaults,
-  mergeWorkspaceConnectionHeaders,
-  normalizeWorkspaceClientCapabilities,
+  getEffectiveProjectConnectionDefaults,
+  mergeProjectConnectionHeaders,
+  normalizeProjectClientCapabilities,
 } from "@/lib/client-config";
 import { EXCALIDRAW_SERVER_NAME } from "@/lib/excalidraw-quick-connect";
 import { readOnboardingState } from "@/lib/onboarding-state";
 
 /** Skip noisy connect toast while first-run App Builder onboarding is in progress. */
 function shouldSuppressExcalidrawConnectToastForOnboarding(
-  serverName: string,
+  serverName: string
 ): boolean {
   if (serverName !== EXCALIDRAW_SERVER_NAME) return false;
   const status = readOnboardingState()?.status;
@@ -65,7 +65,7 @@ function shouldSuppressExcalidrawConnectToastForOnboarding(
 }
 
 function extractRequestHeaders(
-  requestInit: RequestInit | undefined,
+  requestInit: RequestInit | undefined
 ): Record<string, string> | undefined {
   const headers = requestInit?.headers;
   if (!headers || typeof headers !== "object" || Array.isArray(headers)) {
@@ -77,12 +77,12 @@ function extractRequestHeaders(
   }
 
   return Object.fromEntries(
-    Object.entries(headers).filter(([, value]) => typeof value === "string"),
+    Object.entries(headers).filter(([, value]) => typeof value === "string")
   ) as Record<string, string>;
 }
 
 function omitAuthorizationHeader(
-  headers?: Record<string, string>,
+  headers?: Record<string, string>
 ): Record<string, string> | undefined {
   if (!headers) {
     return undefined;
@@ -91,8 +91,8 @@ function omitAuthorizationHeader(
   const sanitized = Object.fromEntries(
     Object.entries(headers).filter(
       ([key, value]) =>
-        key.toLowerCase() !== "authorization" && typeof value === "string",
-    ),
+        key.toLowerCase() !== "authorization" && typeof value === "string"
+    )
   );
 
   return Object.keys(sanitized).length > 0 ? sanitized : undefined;
@@ -100,13 +100,13 @@ function omitAuthorizationHeader(
 
 function mergeOAuthCallbackServerConfig(
   existingConfig: MCPServerConfig | undefined,
-  callbackConfig: HttpServerConfig,
+  callbackConfig: HttpServerConfig
 ): HttpServerConfig {
   const existingHttpConfig =
     existingConfig && "url" in existingConfig ? existingConfig : undefined;
   const mergedHeaders = {
     ...(omitAuthorizationHeader(
-      extractRequestHeaders(existingHttpConfig?.requestInit),
+      extractRequestHeaders(existingHttpConfig?.requestInit)
     ) ?? {}),
     ...(extractRequestHeaders(callbackConfig.requestInit) ?? {}),
   };
@@ -177,7 +177,7 @@ function saveOAuthConfigToLocalStorage(formData: ServerFormData): void {
   if (Object.keys(oauthConfig).length > 0) {
     localStorage.setItem(
       `mcp-oauth-config-${formData.name}`,
-      JSON.stringify(oauthConfig),
+      JSON.stringify(oauthConfig)
     );
   }
 
@@ -191,7 +191,7 @@ function saveOAuthConfigToLocalStorage(formData: ServerFormData): void {
     }
     localStorage.setItem(
       `mcp-client-${formData.name}`,
-      JSON.stringify(clientInfo),
+      JSON.stringify(clientInfo)
     );
   } else {
     localStorage.removeItem(`mcp-client-${formData.name}`);
@@ -234,7 +234,7 @@ function parseOAuthScopes(scopes?: string): string[] | undefined {
 }
 
 function profileHeadersToRecord(
-  headers?: Array<{ key: string; value: string }>,
+  headers?: Array<{ key: string; value: string }>
 ): Record<string, string> | undefined {
   const entries = headers
     ?.map(({ key, value }) => [key.trim(), value] as const)
@@ -281,7 +281,7 @@ function buildResolvedOAuthProfile(input: {
         ([key, value]) => ({
           key,
           value,
-        }),
+        })
       );
 
   return {
@@ -307,7 +307,7 @@ function buildResolvedOAuthProfile(input: {
 
 function restorePathAfterOAuthCallback(
   currentPathname: string,
-  savedHash: string,
+  savedHash: string
 ): string {
   const basePath =
     currentPathname === "/oauth/callback" ? "/" : currentPathname;
@@ -330,7 +330,7 @@ function requiresFreshOAuthAuthorization(error: unknown): boolean {
   return (
     normalized.includes("requires oauth authentication") ||
     normalized.includes(
-      "stored hosted oauth credential is missing refresh_token",
+      "stored hosted oauth credential is missing refresh_token"
     ) ||
     (normalized.includes("authentication failed") &&
       normalized.includes("invalid_token"))
@@ -365,11 +365,11 @@ interface UseServerStateParams {
   /** True when a signed-in WorkOS user is present (not guest Convex-only auth). */
   hasSignedInUser: boolean;
   isAuthLoading: boolean;
-  isLoadingWorkspaces: boolean;
+  isLoadingProjects: boolean;
   useLocalFallback: boolean;
-  effectiveWorkspaces: Record<string, Workspace>;
-  effectiveActiveWorkspaceId: string;
-  activeWorkspaceServersFlat: RemoteServer[] | undefined;
+  effectiveProjects: Record<string, Project>;
+  effectiveActiveProjectId: string;
+  activeProjectServersFlat: RemoteServer[] | undefined;
   logger: LoggerLike;
 }
 
@@ -378,13 +378,13 @@ export type PersistRuntimeServerResult =
   | "pending"
   | "persisted"
   | "skipped_existing_name"
-  | "skipped_workspace_servers_unresolved"
+  | "skipped_project_servers_unresolved"
   | "failed";
 
-const WORKSPACE_SERVERS_SNAPSHOT_WAIT_MS = 10_000;
+const PROJECT_SERVERS_SNAPSHOT_WAIT_MS = 10_000;
 /** Must stay below Vitest's default 30s test timeout so callers can finish after a full wait + margin. */
-const WORKSPACE_SERVER_ECHO_WAIT_MS = 25_000;
-const WORKSPACE_SERVERS_POLL_MS = 100;
+const PROJECT_SERVER_ECHO_WAIT_MS = 25_000;
+const PROJECT_SERVERS_POLL_MS = 100;
 
 export interface ServerUpdateResult {
   ok: boolean;
@@ -423,11 +423,11 @@ export function useServerState({
   isAuthenticated,
   hasSignedInUser,
   isAuthLoading,
-  isLoadingWorkspaces,
+  isLoadingProjects,
   useLocalFallback,
-  effectiveWorkspaces,
-  effectiveActiveWorkspaceId,
-  activeWorkspaceServersFlat,
+  effectiveProjects,
+  effectiveActiveProjectId,
+  activeProjectServersFlat,
   logger,
 }: UseServerStateParams) {
   const convex = useConvex();
@@ -443,16 +443,16 @@ export function useServerState({
   isAuthenticatedRef.current = isAuthenticated;
   const isAuthLoadingRef = useRef(isAuthLoading);
   isAuthLoadingRef.current = isAuthLoading;
-  const isLoadingWorkspacesRef = useRef(isLoadingWorkspaces);
-  isLoadingWorkspacesRef.current = isLoadingWorkspaces;
+  const isLoadingProjectsRef = useRef(isLoadingProjects);
+  isLoadingProjectsRef.current = isLoadingProjects;
   const useLocalFallbackRef = useRef(useLocalFallback);
   useLocalFallbackRef.current = useLocalFallback;
-  const effectiveActiveWorkspaceIdRef = useRef(effectiveActiveWorkspaceId);
-  effectiveActiveWorkspaceIdRef.current = effectiveActiveWorkspaceId;
+  const effectiveActiveProjectIdRef = useRef(effectiveActiveProjectId);
+  effectiveActiveProjectIdRef.current = effectiveActiveProjectId;
   const appStateServersRef = useRef(appState.servers);
   appStateServersRef.current = appState.servers;
-  const activeWorkspaceServersFlatRef = useRef(activeWorkspaceServersFlat);
-  activeWorkspaceServersFlatRef.current = activeWorkspaceServersFlat;
+  const activeProjectServersFlatRef = useRef(activeProjectServersFlat);
+  activeProjectServersFlatRef.current = activeProjectServersFlat;
   const persistRuntimeDedupeKeysRef = useRef<Set<string>>(new Set());
 
   async function sleep(ms: number): Promise<void> {
@@ -486,7 +486,7 @@ export function useServerState({
 
       return pendingServerName;
     },
-    [dispatch],
+    [dispatch]
   );
   const updateServerOAuthTrace = useCallback(
     (serverName: string, oauthTrace: OAuthTrace) => {
@@ -496,12 +496,12 @@ export function useServerState({
         oauthTrace,
       });
     },
-    [dispatch],
+    [dispatch]
   );
   const isStaleOp = (name: string, token: number) =>
     (opTokenRef.current.get(name) ?? 0) !== token;
 
-  const prepareHostedWorkspaceOAuthRedirect = useCallback(
+  const prepareHostedProjectOAuthRedirect = useCallback(
     (params: {
       serverId?: string | null;
       serverName: string;
@@ -510,7 +510,7 @@ export function useServerState({
       if (
         !HOSTED_MODE ||
         !isAuthenticated ||
-        !effectiveActiveWorkspaceId ||
+        !effectiveActiveProjectId ||
         !params.serverId ||
         !params.serverUrl
       ) {
@@ -520,28 +520,28 @@ export function useServerState({
       const returnHash = window.location.hash || "#servers";
       clearHostedOAuthPendingState();
       writeHostedOAuthPendingMarker({
-        surface: "workspace",
-        workspaceId: effectiveActiveWorkspaceId,
+        surface: "project",
+        projectId: effectiveActiveProjectId,
         serverId: params.serverId,
         serverName: params.serverName,
         serverUrl: params.serverUrl,
-        accessScope: "workspace_member",
+        accessScope: "project_member",
         returnHash,
       });
       localStorage.setItem("mcp-oauth-return-hash", returnHash);
       return true;
     },
-    [effectiveActiveWorkspaceId, isAuthenticated],
+    [effectiveActiveProjectId, isAuthenticated]
   );
 
-  const activeWorkspace = useMemo(() => {
-    const workspace = effectiveWorkspaces[effectiveActiveWorkspaceId];
-    if (!workspace) {
+  const activeProject = useMemo(() => {
+    const project = effectiveProjects[effectiveActiveProjectId];
+    if (!project) {
       return undefined;
     }
 
     const serversWithRuntime: Record<string, ServerWithName> = {};
-    for (const [name, server] of Object.entries(workspace.servers)) {
+    for (const [name, server] of Object.entries(project.servers)) {
       const runtimeState = appState.servers[name];
 
       let envFromStorage: Record<string, string> | undefined;
@@ -574,7 +574,7 @@ export function useServerState({
     }
 
     // Surface runtime-only servers (e.g. registered via the CLI's
-    // /api/mcp/connect before they have been persisted to a workspace) so they
+    // /api/mcp/connect before they have been persisted to a project) so they
     // participate in selection, status display, and command routing. Without
     // this, the App.tsx auto-select effect would override an explicit
     // setSelectedServer because effectiveServers[<runtime-only>]?.config is
@@ -590,37 +590,36 @@ export function useServerState({
       serversWithRuntime[name] = runtime;
     }
 
-    return { ...workspace, servers: serversWithRuntime };
-  }, [effectiveWorkspaces, effectiveActiveWorkspaceId, appState.servers]);
+    return { ...project, servers: serversWithRuntime };
+  }, [effectiveProjects, effectiveActiveProjectId, appState.servers]);
 
   const effectiveServers = useMemo(() => {
-    return activeWorkspace?.servers || {};
-  }, [activeWorkspace]);
+    return activeProject?.servers || {};
+  }, [activeProject]);
   const latestEffectiveServersRef = useRef(effectiveServers);
 
   useEffect(() => {
     latestEffectiveServersRef.current = effectiveServers;
   }, [effectiveServers]);
 
-  const isClientConfigSyncPending = useWorkspaceClientConfigSyncPending(
-    effectiveActiveWorkspaceId,
+  const isClientConfigSyncPending = useProjectClientConfigSyncPending(
+    effectiveActiveProjectId
   );
 
-  const workspaceConnectionDefaults = useMemo(
-    () =>
-      getEffectiveWorkspaceConnectionDefaults(activeWorkspace?.clientConfig),
-    [activeWorkspace?.clientConfig],
+  const projectConnectionDefaults = useMemo(
+    () => getEffectiveProjectConnectionDefaults(activeProject?.clientConfig),
+    [activeProject?.clientConfig]
   );
 
-  const withWorkspaceConnectionDefaults = useCallback(
+  const withProjectConnectionDefaults = useCallback(
     (serverConfig: MCPServerConfig): MCPServerConfig => {
       const explicitClientCapabilities = serverConfig.clientCapabilities as
         | Record<string, unknown>
         | undefined;
       const effectiveClientCapabilities = explicitClientCapabilities
-        ? normalizeWorkspaceClientCapabilities(explicitClientCapabilities)
+        ? normalizeProjectClientCapabilities(explicitClientCapabilities)
         : getEffectiveServerClientCapabilities({
-            workspaceClientConfig: activeWorkspace?.clientConfig,
+            projectClientConfig: activeProject?.clientConfig,
             serverCapabilities: serverConfig.capabilities as
               | Record<string, unknown>
               | undefined,
@@ -628,9 +627,9 @@ export function useServerState({
 
       let nextRequestInit = serverConfig.requestInit;
       if ("url" in serverConfig) {
-        const mergedHeaders = mergeWorkspaceConnectionHeaders(
-          workspaceConnectionDefaults.headers,
-          extractRequestHeaders(serverConfig.requestInit),
+        const mergedHeaders = mergeProjectConnectionHeaders(
+          projectConnectionDefaults.headers,
+          extractRequestHeaders(serverConfig.requestInit)
         );
 
         if (Object.keys(mergedHeaders).length > 0) {
@@ -647,23 +646,23 @@ export function useServerState({
           ? { requestInit: nextRequestInit }
           : {}),
         timeout:
-          serverConfig.timeout ?? workspaceConnectionDefaults.requestTimeout,
+          serverConfig.timeout ?? projectConnectionDefaults.requestTimeout,
         capabilities: effectiveClientCapabilities,
         clientCapabilities: effectiveClientCapabilities,
       };
     },
-    [activeWorkspace?.clientConfig, workspaceConnectionDefaults],
+    [activeProject?.clientConfig, projectConnectionDefaults]
   );
 
-  const mergeWithWorkspaceHeaders = useCallback(
+  const mergeWithProjectHeaders = useCallback(
     (headers?: Record<string, string>) => {
-      const merged = mergeWorkspaceConnectionHeaders(
-        workspaceConnectionDefaults.headers,
-        omitAuthorizationHeader(headers),
+      const merged = mergeProjectConnectionHeaders(
+        projectConnectionDefaults.headers,
+        omitAuthorizationHeader(headers)
       );
       return Object.keys(merged).length > 0 ? merged : undefined;
     },
-    [workspaceConnectionDefaults.headers],
+    [projectConnectionDefaults.headers]
   );
 
   const assertClientConfigSynced = useCallback(() => {
@@ -688,7 +687,7 @@ export function useServerState({
       assertClientConfigSynced();
       return testConnection(serverConfig, serverName);
     },
-    [assertClientConfigSynced],
+    [assertClientConfigSynced]
   );
 
   const guardedReconnectServer = useCallback(
@@ -696,7 +695,7 @@ export function useServerState({
       assertClientConfigSynced();
       return reconnectServer(serverName, serverConfig);
     },
-    [assertClientConfigSynced],
+    [assertClientConfigSynced]
   );
 
   const validateForm = (formData: ServerFormData): string | null => {
@@ -731,26 +730,24 @@ export function useServerState({
   const syncServerToConvex = useCallback(
     async (
       serverName: string,
-      serverEntry: ServerWithName,
+      serverEntry: ServerWithName
     ): Promise<string | undefined> => {
       const latestUseLocalFallback = useLocalFallbackRef.current;
       const latestIsAuthenticated = isAuthenticatedRef.current;
-      const latestWorkspaceId = effectiveActiveWorkspaceIdRef.current;
+      const latestProjectId = effectiveActiveProjectIdRef.current;
       if (
         latestUseLocalFallback ||
         !latestIsAuthenticated ||
-        !latestWorkspaceId ||
-        latestWorkspaceId === "none"
+        !latestProjectId ||
+        latestProjectId === "none"
       ) {
         return undefined;
       }
 
       const flatSnapshot =
-        activeWorkspaceServersFlatRef.current ?? activeWorkspaceServersFlat;
+        activeProjectServersFlatRef.current ?? activeProjectServersFlat;
 
-      const existingServer = flatSnapshot?.find(
-        (s) => s.name === serverName,
-      );
+      const existingServer = flatSnapshot?.find((s) => s.name === serverName);
 
       const config = serverEntry.config as any;
       const transportType = config?.command ? "stdio" : "http";
@@ -776,7 +773,7 @@ export function useServerState({
         clientId: serverEntry.oauthFlowProfile?.clientId,
         oauthResourceUrl:
           serverEntry.oauthFlowProfile?.resourceUrl ||
-          storedOAuthConfig?.resourceUrl,
+          storedOAuthConfig.resourceUrl,
       } as const;
 
       try {
@@ -789,7 +786,7 @@ export function useServerState({
         }
 
         const newId = await convexCreateServer({
-          workspaceId: latestWorkspaceId,
+          projectId: latestProjectId,
           ...payload,
         });
         return newId as string | undefined;
@@ -799,16 +796,14 @@ export function useServerState({
         try {
           if (existingServer) {
             const newId = await convexCreateServer({
-              workspaceId: latestWorkspaceId,
+              projectId: latestProjectId,
               ...payload,
             });
             return newId as string | undefined;
           }
           const flatRetry =
-            activeWorkspaceServersFlatRef.current ?? activeWorkspaceServersFlat;
-          const retryExisting = flatRetry?.find(
-            (s) => s.name === serverName,
-          );
+            activeProjectServersFlatRef.current ?? activeProjectServersFlat;
+          const retryExisting = flatRetry?.find((s) => s.name === serverName);
           if (retryExisting) {
             await convexUpdateServer({
               serverId: retryExisting._id,
@@ -841,18 +836,13 @@ export function useServerState({
         return undefined;
       }
     },
-    [
-      activeWorkspaceServersFlat,
-      convexUpdateServer,
-      convexCreateServer,
-      logger,
-    ],
+    [activeProjectServersFlat, convexUpdateServer, convexCreateServer, logger]
   );
 
-  const persistRuntimeServerToWorkspaceIfNeeded = useCallback(
+  const persistRuntimeServerToProjectIfNeeded = useCallback(
     async (
       serverName: string,
-      runtimeServerOverride?: ServerWithName,
+      runtimeServerOverride?: ServerWithName
     ): Promise<PersistRuntimeServerResult> => {
       if (HOSTED_MODE) {
         return "noop";
@@ -868,13 +858,13 @@ export function useServerState({
         return "noop";
       }
 
-      const initialWorkspaceKey =
-        effectiveActiveWorkspaceIdRef.current ?? effectiveActiveWorkspaceId;
-      const frozenWorkspaceId =
-        initialWorkspaceKey && initialWorkspaceKey !== "none"
-          ? initialWorkspaceKey
+      const initialProjectKey =
+        effectiveActiveProjectIdRef.current ?? effectiveActiveProjectId;
+      const frozenProjectId =
+        initialProjectKey && initialProjectKey !== "none"
+          ? initialProjectKey
           : null;
-      let dedupeKey = `${frozenWorkspaceId ?? "pending"}:${serverName}`;
+      let dedupeKey = `${frozenProjectId ?? "pending"}:${serverName}`;
 
       if (persistRuntimeDedupeKeysRef.current.has(dedupeKey)) {
         return "pending";
@@ -886,8 +876,8 @@ export function useServerState({
         persistRuntimeDedupeKeysRef.current.delete(dedupeKey);
       };
 
-      const rekeyDedupe = (resolvedWorkspaceId: string): boolean => {
-        const nextKey = `${resolvedWorkspaceId}:${serverName}`;
+      const rekeyDedupe = (resolvedProjectId: string): boolean => {
+        const nextKey = `${resolvedProjectId}:${serverName}`;
         if (nextKey === dedupeKey) {
           return true;
         }
@@ -901,12 +891,12 @@ export function useServerState({
         return true;
       };
 
-      let workspaceId: string | null = null;
+      let projectId: string | null = null;
       try {
         const readyStarted = Date.now();
-        while (Date.now() - readyStarted < WORKSPACE_SERVERS_SNAPSHOT_WAIT_MS) {
-          if (isAuthLoadingRef.current || isLoadingWorkspacesRef.current) {
-            await sleep(WORKSPACE_SERVERS_POLL_MS);
+        while (Date.now() - readyStarted < PROJECT_SERVERS_SNAPSHOT_WAIT_MS) {
+          if (isAuthLoadingRef.current || isLoadingProjectsRef.current) {
+            await sleep(PROJECT_SERVERS_POLL_MS);
             continue;
           }
 
@@ -919,26 +909,23 @@ export function useServerState({
             return "noop";
           }
 
-          const latestWorkspaceId = effectiveActiveWorkspaceIdRef.current;
-          if (latestWorkspaceId && latestWorkspaceId !== "none") {
-            if (
-              frozenWorkspaceId &&
-              latestWorkspaceId !== frozenWorkspaceId
-            ) {
+          const latestProjectId = effectiveActiveProjectIdRef.current;
+          if (latestProjectId && latestProjectId !== "none") {
+            if (frozenProjectId && latestProjectId !== frozenProjectId) {
               clearDedupeKey();
               return "noop";
             }
-            if (!rekeyDedupe(latestWorkspaceId)) {
+            if (!rekeyDedupe(latestProjectId)) {
               return "pending";
             }
-            workspaceId = latestWorkspaceId;
+            projectId = latestProjectId;
             break;
           }
 
-          await sleep(WORKSPACE_SERVERS_POLL_MS);
+          await sleep(PROJECT_SERVERS_POLL_MS);
         }
 
-        if (!workspaceId) {
+        if (!projectId) {
           if (
             !hasSignedInUserRef.current ||
             !isAuthenticatedRef.current ||
@@ -948,35 +935,35 @@ export function useServerState({
             return "noop";
           }
           logger.warn(
-            "persistRuntimeServerToWorkspaceIfNeeded: auth/workspace state did not become ready in time; skipping Convex write",
-            { serverName },
+            "persistRuntimeServerToProjectIfNeeded: auth/project state did not become ready in time; skipping Convex write",
+            { serverName }
           );
           clearDedupeKey();
-          return "skipped_workspace_servers_unresolved";
+          return "skipped_project_servers_unresolved";
         }
 
         const startedWait = Date.now();
-        while (Date.now() - startedWait < WORKSPACE_SERVERS_SNAPSHOT_WAIT_MS) {
-          const flat = activeWorkspaceServersFlatRef.current;
+        while (Date.now() - startedWait < PROJECT_SERVERS_SNAPSHOT_WAIT_MS) {
+          const flat = activeProjectServersFlatRef.current;
           if (flat !== undefined) {
             break;
           }
-          await sleep(WORKSPACE_SERVERS_POLL_MS);
+          await sleep(PROJECT_SERVERS_POLL_MS);
         }
 
-        const flatAfterWait = activeWorkspaceServersFlatRef.current;
+        const flatAfterWait = activeProjectServersFlatRef.current;
         if (flatAfterWait === undefined) {
           logger.warn(
-            "persistRuntimeServerToWorkspaceIfNeeded: workspace server snapshot still unresolved; skipping Convex write",
-            { serverName, workspaceId },
+            "persistRuntimeServerToProjectIfNeeded: project server snapshot still unresolved; skipping Convex write",
+            { serverName, projectId }
           );
           clearDedupeKey();
-          return "skipped_workspace_servers_unresolved";
+          return "skipped_project_servers_unresolved";
         }
 
         if (
-          effectiveActiveWorkspaceIdRef.current &&
-          effectiveActiveWorkspaceIdRef.current !== workspaceId
+          effectiveActiveProjectIdRef.current &&
+          effectiveActiveProjectIdRef.current !== projectId
         ) {
           clearDedupeKey();
           return "noop";
@@ -991,8 +978,8 @@ export function useServerState({
 
         if (flatAfterWait.some((s) => s.name === serverName)) {
           logger.warn(
-            "persistRuntimeServerToWorkspaceIfNeeded: runtime server not persisted because a saved server with the same name already exists",
-            { serverName, workspaceId },
+            "persistRuntimeServerToProjectIfNeeded: runtime server not persisted because a saved server with the same name already exists",
+            { serverName, projectId }
           );
           clearDedupeKey();
           return "skipped_existing_name";
@@ -1003,16 +990,16 @@ export function useServerState({
           convexResult = await syncServerToConvex(serverName, runtime);
         } catch (syncError) {
           logger.error(
-            "persistRuntimeServerToWorkspaceIfNeeded: syncServerToConvex threw",
+            "persistRuntimeServerToProjectIfNeeded: syncServerToConvex threw",
             {
               serverName,
-              workspaceId,
+              projectId,
               phase: "syncServerToConvex",
               error:
                 syncError instanceof Error
                   ? syncError.message
                   : "Unknown error",
-            },
+            }
           );
           clearDedupeKey();
           return "failed";
@@ -1020,12 +1007,12 @@ export function useServerState({
 
         if (convexResult === undefined) {
           logger.error(
-            "persistRuntimeServerToWorkspaceIfNeeded: syncServerToConvex returned no server id",
+            "persistRuntimeServerToProjectIfNeeded: syncServerToConvex returned no server id",
             {
               serverName,
-              workspaceId,
+              projectId,
               phase: "after_syncServerToConvex",
-            },
+            }
           );
           clearDedupeKey();
           return "failed";
@@ -1033,19 +1020,19 @@ export function useServerState({
 
         const echoStarted = Date.now();
         let echoed = false;
-        while (Date.now() - echoStarted < WORKSPACE_SERVER_ECHO_WAIT_MS) {
-          const flatEcho = activeWorkspaceServersFlatRef.current;
+        while (Date.now() - echoStarted < PROJECT_SERVER_ECHO_WAIT_MS) {
+          const flatEcho = activeProjectServersFlatRef.current;
           if (flatEcho?.some((s) => s.name === serverName)) {
             echoed = true;
             break;
           }
-          await sleep(WORKSPACE_SERVERS_POLL_MS);
+          await sleep(PROJECT_SERVERS_POLL_MS);
         }
 
         if (!echoed) {
           logger.warn(
-            "persistRuntimeServerToWorkspaceIfNeeded: timed out waiting for workspace server echo after persist",
-            { serverName, workspaceId },
+            "persistRuntimeServerToProjectIfNeeded: timed out waiting for project server echo after persist",
+            { serverName, projectId }
           );
         }
 
@@ -1053,35 +1040,31 @@ export function useServerState({
         return "persisted";
       } catch (unexpected) {
         logger.error(
-          "persistRuntimeServerToWorkspaceIfNeeded: unexpected error",
+          "persistRuntimeServerToProjectIfNeeded: unexpected error",
           {
             serverName,
-            workspaceId,
+            projectId,
             error:
               unexpected instanceof Error
                 ? unexpected.message
                 : "Unknown error",
-          },
+          }
         );
         clearDedupeKey();
         return "failed";
       }
     },
-    [
-      effectiveActiveWorkspaceId,
-      syncServerToConvex,
-      logger,
-    ],
+    [effectiveActiveProjectId, syncServerToConvex, logger]
   );
 
   const removeServerFromConvex = useCallback(
     async (serverName: string) => {
-      if (useLocalFallback || !isAuthenticated || !effectiveActiveWorkspaceId) {
+      if (useLocalFallback || !isAuthenticated || !effectiveActiveProjectId) {
         return;
       }
 
-      const existingServer = activeWorkspaceServersFlat?.find(
-        (s) => s.name === serverName,
+      const existingServer = activeProjectServersFlat?.find(
+        (s) => s.name === serverName
       );
 
       if (!existingServer) {
@@ -1103,36 +1086,36 @@ export function useServerState({
     [
       useLocalFallback,
       isAuthenticated,
-      effectiveActiveWorkspaceId,
-      activeWorkspaceServersFlat,
+      effectiveActiveProjectId,
+      activeProjectServersFlat,
       convexDeleteServer,
       logger,
-    ],
+    ]
   );
 
-  const persistServerToLocalWorkspace = useCallback(
+  const persistServerToLocalProject = useCallback(
     (
       serverName: string,
       serverEntry: ServerWithName,
-      options?: { originalServerName?: string },
+      options?: { originalServerName?: string }
     ) => {
-      const targetWorkspaceId =
-        effectiveActiveWorkspaceId !== "none"
-          ? effectiveActiveWorkspaceId
-          : appState.activeWorkspaceId;
+      const targetProjectId =
+        effectiveActiveProjectId !== "none"
+          ? effectiveActiveProjectId
+          : appState.activeProjectId;
 
-      if (!targetWorkspaceId || targetWorkspaceId === "none") {
+      if (!targetProjectId || targetProjectId === "none") {
         return;
       }
 
-      const workspace =
-        effectiveWorkspaces[targetWorkspaceId] ??
-        appState.workspaces[targetWorkspaceId];
-      if (!workspace) {
+      const project =
+        effectiveProjects[targetProjectId] ??
+        appState.projects[targetProjectId];
+      if (!project) {
         return;
       }
 
-      const nextServers = { ...workspace.servers };
+      const nextServers = { ...project.servers };
       if (
         options?.originalServerName &&
         options.originalServerName !== serverName
@@ -1143,17 +1126,17 @@ export function useServerState({
 
       dispatch({
         type: "UPDATE_WORKSPACE",
-        workspaceId: targetWorkspaceId,
+        projectId: targetProjectId,
         updates: { servers: nextServers },
       });
     },
     [
-      effectiveActiveWorkspaceId,
-      effectiveWorkspaces,
-      appState.activeWorkspaceId,
-      appState.workspaces,
+      effectiveActiveProjectId,
+      effectiveProjects,
+      appState.activeProjectId,
+      appState.projects,
       dispatch,
-    ],
+    ]
   );
 
   const fetchAndStoreInitInfo = useCallback(
@@ -1174,7 +1157,7 @@ export function useServerState({
         });
       }
     },
-    [dispatch],
+    [dispatch]
   );
 
   /**
@@ -1185,7 +1168,7 @@ export function useServerState({
   const storeInitInfo = useCallback(
     async (
       serverName: string,
-      initInfo: Record<string, unknown> | null | undefined,
+      initInfo: Record<string, unknown> | null | undefined
     ) => {
       if (initInfo) {
         dispatch({
@@ -1197,12 +1180,12 @@ export function useServerState({
         await fetchAndStoreInitInfo(serverName);
       }
     },
-    [dispatch, fetchAndStoreInitInfo],
+    [dispatch, fetchAndStoreInitInfo]
   );
 
   const resolveOAuthInitiationInputs = useCallback(
     async (
-      formData: ServerFormData,
+      formData: ServerFormData
     ): Promise<ResolvedOAuthInitiationInputs> => {
       let registryOAuthConfig: RegistryOAuthConfigResponse | null = null;
 
@@ -1210,13 +1193,13 @@ export function useServerState({
         try {
           registryOAuthConfig = (await convex.query(
             "registryServers:getRegistryServerOAuthConfig" as any,
-            { registryServerId: formData.registryServerId } as any,
+            { registryServerId: formData.registryServerId } as any
           )) as RegistryOAuthConfigResponse | null;
         } catch (error) {
           const errorMessage =
             error instanceof Error ? error.message : "Unknown error";
           throw new Error(
-            `Failed to resolve registry OAuth config: ${errorMessage}`,
+            `Failed to resolve registry OAuth config: ${errorMessage}`
           );
         }
       }
@@ -1229,7 +1212,7 @@ export function useServerState({
       const scopes =
         Array.isArray(registryOAuthConfig?.scopes) &&
         registryOAuthConfig.scopes.every(
-          (scope): scope is string => typeof scope === "string",
+          (scope): scope is string => typeof scope === "string"
         )
           ? registryOAuthConfig.scopes
           : formData.oauthScopes;
@@ -1242,20 +1225,20 @@ export function useServerState({
         useRegistryOAuthProxy: Boolean(clientId && formData.registryServerId),
       };
     },
-    [convex],
+    [convex]
   );
 
   const handleOAuthCallbackComplete = useCallback(
     async (
       code: string,
       state: string | null,
-      hostedCallbackContext: ReturnType<typeof getHostedOAuthCallbackContext>,
+      hostedCallbackContext: ReturnType<typeof getHostedOAuthCallbackContext>
     ) => {
       const pendingServerName = localStorage.getItem("mcp-oauth-pending");
-      const isHostedWorkspaceCallback =
+      const isHostedProjectCallback =
         HOSTED_MODE &&
         isAuthenticated &&
-        hostedCallbackContext?.surface === "workspace";
+        hostedCallbackContext?.surface === "project";
       const handleLiveOAuthTrace = (oauthTrace: OAuthTrace) => {
         const traceServerName =
           oauthTrace.serverName ??
@@ -1268,7 +1251,7 @@ export function useServerState({
       };
 
       try {
-        const result = isHostedWorkspaceCallback
+        const result = isHostedProjectCallback
           ? await completeHostedOAuthCallback(hostedCallbackContext, code, {
               callbackState: state,
               onTraceUpdate: handleLiveOAuthTrace,
@@ -1278,7 +1261,7 @@ export function useServerState({
             });
 
         localStorage.removeItem("mcp-oauth-return-hash");
-        if (isHostedWorkspaceCallback) {
+        if (isHostedProjectCallback) {
           clearHostedOAuthPendingState();
           localStorage.removeItem("mcp-oauth-pending");
         }
@@ -1288,7 +1271,7 @@ export function useServerState({
           const existingServer = latestEffectiveServersRef.current[serverName];
           const mergedServerConfig = mergeOAuthCallbackServerConfig(
             existingServer?.config,
-            result.serverConfig,
+            result.serverConfig
           );
           const storedOAuthConfig = readStoredOAuthConfig(serverName);
           const storedClientCredentials =
@@ -1327,13 +1310,13 @@ export function useServerState({
             server: oauthServerEntry,
           });
           if (!isAuthenticated || useLocalFallback) {
-            persistServerToLocalWorkspace(serverName, oauthServerEntry);
+            persistServerToLocalProject(serverName, oauthServerEntry);
           } else {
             syncServerToConvex(serverName, oauthServerEntry).catch((error) =>
               logger.warn("Failed to sync OAuth profile to Convex", {
                 serverName,
                 error,
-              }),
+              })
             );
           }
 
@@ -1346,15 +1329,15 @@ export function useServerState({
 
           try {
             const connectionResult = await guardedTestConnection(
-              withWorkspaceConnectionDefaults(mergedServerConfig),
-              serverName,
+              withProjectConnectionDefaults(mergedServerConfig),
+              serverName
             );
             if (connectionResult.success) {
               dispatch({
                 type: "CONNECT_SUCCESS",
                 name: serverName,
                 config: mergedServerConfig,
-                tokens: isHostedWorkspaceCallback
+                tokens: isHostedProjectCallback
                   ? undefined
                   : getStoredTokens(serverName),
                 useOAuth: true,
@@ -1362,14 +1345,14 @@ export function useServerState({
               });
               logger.info("OAuth connection successful", { serverName });
               toast.success(
-                `OAuth connection successful! Connected to ${serverName}.`,
+                `OAuth connection successful! Connected to ${serverName}.`
               );
               storeInitInfo(serverName, connectionResult.initInfo).catch(
                 (err) =>
                   logger.warn("Failed to fetch init info", {
                     serverName,
                     err,
-                  }),
+                  })
               );
             } else {
               dispatch({
@@ -1385,7 +1368,7 @@ export function useServerState({
                 error: connectionResult.error,
               });
               toast.error(
-                `OAuth succeeded but connection test failed: ${connectionResult.error}`,
+                `OAuth succeeded but connection test failed: ${connectionResult.error}`
               );
             }
           } catch (connectionError) {
@@ -1404,7 +1387,7 @@ export function useServerState({
               error: errorMessage,
             });
             toast.error(
-              `OAuth succeeded but connection test failed: ${errorMessage}`,
+              `OAuth succeeded but connection test failed: ${errorMessage}`
             );
           }
         } else {
@@ -1445,14 +1428,14 @@ export function useServerState({
       failPendingOAuthConnection,
       isAuthenticated,
       logger,
-      persistServerToLocalWorkspace,
+      persistServerToLocalProject,
       storeInitInfo,
       guardedTestConnection,
       syncServerToConvex,
       updateServerOAuthTrace,
       useLocalFallback,
-      withWorkspaceConnectionDefaults,
-    ],
+      withProjectConnectionDefaults,
+    ]
   );
 
   useEffect(() => {
@@ -1466,7 +1449,7 @@ export function useServerState({
     if (
       isAuthenticated &&
       !useLocalFallback &&
-      (isLoadingWorkspaces || !effectiveActiveWorkspaceId)
+      (isLoadingProjects || !effectiveActiveProjectId)
     ) {
       return;
     }
@@ -1479,10 +1462,10 @@ export function useServerState({
     const hostedOAuthCallbackContext = HOSTED_MODE
       ? getHostedOAuthCallbackContext()
       : null;
-    const isHostedWorkspaceCallback =
-      hostedOAuthCallbackContext?.surface === "workspace";
+    const isHostedProjectCallback =
+      hostedOAuthCallbackContext?.surface === "project";
     if (code) {
-      if (hostedOAuthCallbackContext && !isHostedWorkspaceCallback) {
+      if (hostedOAuthCallbackContext && !isHostedProjectCallback) {
         return; // Handled by App.tsx hosted OAuth interception
       }
       if (oauthCallbackHandledRef.current) {
@@ -1499,9 +1482,7 @@ export function useServerState({
         hostedOAuthCallbackContext?.serverName ??
         localStorage.getItem("mcp-oauth-pending");
       if (earlyPendingName) {
-        const earlyServer =
-          latestEffectiveServersRef.current[earlyPendingName] ??
-          effectiveServers[earlyPendingName];
+        const earlyServer = effectiveServers[earlyPendingName];
         if (earlyServer) {
           dispatch({
             type: "CONNECT_REQUEST",
@@ -1516,16 +1497,16 @@ export function useServerState({
       window.history.replaceState(
         {},
         document.title,
-        restorePathAfterOAuthCallback(window.location.pathname, savedHash),
+        restorePathAfterOAuthCallback(window.location.pathname, savedHash)
       );
 
       handleOAuthCallbackComplete(
         code,
         state,
-        isHostedWorkspaceCallback ? hostedOAuthCallbackContext : null,
+        isHostedProjectCallback ? hostedOAuthCallbackContext : null
       );
     } else if (error) {
-      if (hostedOAuthCallbackContext && !isHostedWorkspaceCallback) {
+      if (hostedOAuthCallbackContext && !isHostedProjectCallback) {
         return; // Handled by App.tsx hosted OAuth interception
       }
       const errorMessage = errorDescription
@@ -1544,7 +1525,7 @@ export function useServerState({
       window.history.replaceState(
         {},
         document.title,
-        restorePathAfterOAuthCallback(window.location.pathname, savedHash),
+        restorePathAfterOAuthCallback(window.location.pathname, savedHash)
       );
     }
   }, [
@@ -1552,8 +1533,8 @@ export function useServerState({
     isAuthLoading,
     isAuthenticated,
     useLocalFallback,
-    isLoadingWorkspaces,
-    effectiveActiveWorkspaceId,
+    isLoadingProjects,
+    effectiveActiveProjectId,
     failPendingOAuthConnection,
     handleOAuthCallbackComplete,
     logger,
@@ -1594,7 +1575,7 @@ export function useServerState({
         try {
           const serverId = await syncServerToConvex(
             formData.name,
-            serverEntryForSave,
+            serverEntryForSave
           );
           if (serverId) {
             hostedServerId = serverId;
@@ -1611,18 +1592,18 @@ export function useServerState({
           logger.warn("Background sync to Convex failed (pre-connection)", {
             serverName: formData.name,
             err,
-          }),
+          })
         );
       }
       if (!isAuthenticated) {
-        const workspace = appState.workspaces[appState.activeWorkspaceId];
-        if (workspace) {
+        const project = appState.projects[appState.activeProjectId];
+        if (project) {
           dispatch({
             type: "UPDATE_WORKSPACE",
-            workspaceId: appState.activeWorkspaceId,
+            projectId: appState.activeProjectId,
             updates: {
               servers: {
-                ...workspace.servers,
+                ...project.servers,
                 [formData.name]: serverEntryForSave,
               },
             },
@@ -1649,8 +1630,8 @@ export function useServerState({
               },
             } satisfies HttpServerConfig;
             const connectionResult = await guardedTestConnection(
-              withWorkspaceConnectionDefaults(serverConfig),
-              formData.name,
+              withProjectConnectionDefaults(serverConfig),
+              formData.name
             );
             if (isStaleOp(formData.name, token)) return;
             if (connectionResult.success) {
@@ -1662,14 +1643,14 @@ export function useServerState({
                 useOAuth: true,
               });
               toast.success(
-                "Connected successfully with existing OAuth tokens!",
+                "Connected successfully with existing OAuth tokens!"
               );
               storeInitInfo(formData.name, connectionResult.initInfo).catch(
                 (err) =>
                   logger.warn("Failed to fetch init info", {
                     serverName: formData.name,
                     err,
-                  }),
+                  })
               );
               return;
             }
@@ -1711,7 +1692,7 @@ export function useServerState({
             clientSecret: oauthInputs.clientSecret,
             registryServerId: oauthInputs.registryServerId,
             useRegistryOAuthProxy: oauthInputs.useRegistryOAuthProxy,
-            customHeaders: mergeWithWorkspaceHeaders(formData.headers),
+            customHeaders: mergeWithProjectHeaders(formData.headers),
             protocolMode,
             registrationMode,
             protocolVersion:
@@ -1729,7 +1710,7 @@ export function useServerState({
           if (oauthInputs.scopes && oauthInputs.scopes.length > 0) {
             oauthOptions.scopes = oauthInputs.scopes;
           }
-          prepareHostedWorkspaceOAuthRedirect({
+          prepareHostedProjectOAuthRedirect({
             serverId: hostedServerId,
             serverName: formData.name,
             serverUrl: formData.url,
@@ -1738,8 +1719,8 @@ export function useServerState({
           if (oauthResult.success) {
             if (oauthResult.serverConfig) {
               const connectionResult = await guardedTestConnection(
-                withWorkspaceConnectionDefaults(oauthResult.serverConfig),
-                formData.name,
+                withProjectConnectionDefaults(oauthResult.serverConfig),
+                formData.name
               );
               if (isStaleOp(formData.name, token)) return;
               if (connectionResult.success) {
@@ -1760,7 +1741,7 @@ export function useServerState({
                     logger.warn("Failed to fetch init info", {
                       serverName: formData.name,
                       err,
-                    }),
+                    })
                 );
               } else {
                 dispatch({
@@ -1771,12 +1752,12 @@ export function useServerState({
                   oauthTrace: oauthResult.oauthTrace,
                 });
                 toast.error(
-                  `OAuth succeeded but connection failed: ${connectionResult.error}`,
+                  `OAuth succeeded but connection failed: ${connectionResult.error}`
                 );
               }
             } else {
               toast.success(
-                "OAuth flow initiated. You will be redirected to authorize access.",
+                "OAuth flow initiated. You will be redirected to authorize access."
               );
             }
             return;
@@ -1794,15 +1775,15 @@ export function useServerState({
         }
 
         const hasPendingCallback = new URLSearchParams(
-          window.location.search,
+          window.location.search
         ).has("code");
         if (!hasPendingCallback) {
           clearOAuthData(formData.name);
         }
-        const effectiveConfig = withWorkspaceConnectionDefaults(mcpConfig);
+        const effectiveConfig = withProjectConnectionDefaults(mcpConfig);
         const result = await guardedTestConnection(
           effectiveConfig,
-          formData.name,
+          formData.name
         );
         if (isStaleOp(formData.name, token)) return;
         if (result.success) {
@@ -1816,7 +1797,7 @@ export function useServerState({
           if (env && Object.keys(env).length > 0) {
             localStorage.setItem(
               `mcp-env-${formData.name}`,
-              JSON.stringify(env),
+              JSON.stringify(env)
             );
           }
           logger.info("Connection successful", { serverName: formData.name });
@@ -1829,7 +1810,7 @@ export function useServerState({
             logger.warn("Failed to fetch init info", {
               serverName: formData.name,
               err,
-            }),
+            })
           );
         } else {
           dispatch({
@@ -1863,24 +1844,24 @@ export function useServerState({
       dispatch,
       isAuthenticated,
       appState.servers,
-      appState.workspaces,
-      appState.activeWorkspaceId,
+      appState.projects,
+      appState.activeProjectId,
       notifyIfClientConfigSyncPending,
-      prepareHostedWorkspaceOAuthRedirect,
+      prepareHostedProjectOAuthRedirect,
       resolveOAuthInitiationInputs,
       syncServerToConvex,
       logger,
       storeInitInfo,
       guardedTestConnection,
       updateServerOAuthTrace,
-      withWorkspaceConnectionDefaults,
-    ],
+      withProjectConnectionDefaults,
+    ]
   );
 
   const saveServerConfigWithoutConnecting = useCallback(
     async (
       formData: ServerFormData,
-      options?: { oauthProfile?: OAuthTestProfile },
+      options?: { oauthProfile?: OAuthTestProfile }
     ) => {
       const validationError = validateForm(formData);
       if (validationError) {
@@ -1913,7 +1894,7 @@ export function useServerState({
       } as ServerWithName;
 
       const hasPendingOAuthCallback = new URLSearchParams(
-        window.location.search,
+        window.location.search
       ).has("code");
       if (!formData.useOAuth && !hasPendingOAuthCallback) {
         clearOAuthData(serverName);
@@ -1930,8 +1911,8 @@ export function useServerState({
       if (
         isAuthenticated &&
         !useLocalFallback &&
-        effectiveActiveWorkspaceId &&
-        effectiveActiveWorkspaceId !== "none"
+        effectiveActiveProjectId &&
+        effectiveActiveProjectId !== "none"
       ) {
         try {
           await syncServerToConvex(serverName, serverEntry);
@@ -1941,7 +1922,7 @@ export function useServerState({
           });
         }
       } else {
-        persistServerToLocalWorkspace(serverName, serverEntry);
+        persistServerToLocalProject(serverName, serverEntry);
       }
 
       logger.info("Saved server configuration without connecting", {
@@ -1950,17 +1931,17 @@ export function useServerState({
       toast.success(`Saved configuration for ${serverName}`);
     },
     [
-      appState.activeWorkspaceId,
+      appState.activeProjectId,
       appState.servers,
-      appState.workspaces,
+      appState.projects,
       logger,
       dispatch,
       isAuthenticated,
       useLocalFallback,
-      effectiveActiveWorkspaceId,
+      effectiveActiveProjectId,
       syncServerToConvex,
-      persistServerToLocalWorkspace,
-    ],
+      persistServerToLocalProject,
+    ]
   );
 
   const applyTokensFromOAuthFlow = useCallback(
@@ -1974,7 +1955,7 @@ export function useServerState({
         clientId?: string;
         clientSecret?: string;
       },
-      serverUrl: string,
+      serverUrl: string
     ): Promise<{ success: boolean; error?: string }> => {
       const tokenData = {
         access_token: tokens.accessToken,
@@ -1984,7 +1965,7 @@ export function useServerState({
       };
       localStorage.setItem(
         `mcp-tokens-${serverName}`,
-        JSON.stringify(tokenData),
+        JSON.stringify(tokenData)
       );
 
       if (tokens.clientId) {
@@ -1993,7 +1974,7 @@ export function useServerState({
           JSON.stringify({
             client_id: tokens.clientId,
             client_secret: tokens.clientSecret,
-          }),
+          })
         );
       }
 
@@ -2018,7 +1999,7 @@ export function useServerState({
       try {
         const result = await guardedReconnectServer(
           serverName,
-          withWorkspaceConnectionDefaults(serverConfig),
+          withProjectConnectionDefaults(serverConfig)
         );
         if (isStaleOp(serverName, token)) {
           return { success: false, error: "Operation cancelled" };
@@ -2058,8 +2039,8 @@ export function useServerState({
       dispatch,
       storeInitInfo,
       guardedReconnectServer,
-      withWorkspaceConnectionDefaults,
-    ],
+      withProjectConnectionDefaults,
+    ]
   );
 
   const handleConnectWithTokensFromOAuthFlow = useCallback(
@@ -2073,7 +2054,7 @@ export function useServerState({
         clientId?: string;
         clientSecret?: string;
       },
-      serverUrl: string,
+      serverUrl: string
     ) => {
       if (notifyIfClientConfigSyncPending()) {
         return;
@@ -2082,7 +2063,7 @@ export function useServerState({
       const result = await applyTokensFromOAuthFlow(
         serverName,
         tokens,
-        serverUrl,
+        serverUrl
       );
       if (result.success) {
         toast.success(`Connected to ${serverName}!`);
@@ -2090,7 +2071,7 @@ export function useServerState({
         toast.error(`Connection failed: ${result.error}`);
       }
     },
-    [applyTokensFromOAuthFlow, notifyIfClientConfigSyncPending],
+    [applyTokensFromOAuthFlow, notifyIfClientConfigSyncPending]
   );
 
   const handleRefreshTokensFromOAuthFlow = useCallback(
@@ -2104,7 +2085,7 @@ export function useServerState({
         clientId?: string;
         clientSecret?: string;
       },
-      serverUrl: string,
+      serverUrl: string
     ) => {
       if (notifyIfClientConfigSyncPending()) {
         return;
@@ -2113,7 +2094,7 @@ export function useServerState({
       const result = await applyTokensFromOAuthFlow(
         serverName,
         tokens,
-        serverUrl,
+        serverUrl
       );
       if (result.success) {
         toast.success(`Tokens refreshed for ${serverName}!`);
@@ -2121,7 +2102,7 @@ export function useServerState({
         toast.error(`Token refresh failed: ${result.error}`);
       }
     },
-    [applyTokensFromOAuthFlow, notifyIfClientConfigSyncPending],
+    [applyTokensFromOAuthFlow, notifyIfClientConfigSyncPending]
   );
 
   const cliConfigProcessedRef = useRef<boolean>(false);
@@ -2160,7 +2141,7 @@ export function useServerState({
                   serverCount: cliConfig.servers.length,
                   autoConnectServer: autoConnectServer || "all",
                   cliConfig: cliConfig,
-                },
+                }
               );
 
               cliConfig.servers.forEach((server: any) => {
@@ -2243,7 +2224,7 @@ export function useServerState({
       if (!server?.oauthTokens) return null;
       return server.oauthTokens.access_token || null;
     },
-    [appState.servers],
+    [appState.servers]
   );
 
   const handleDisconnect = useCallback(
@@ -2267,7 +2248,7 @@ export function useServerState({
         });
       }
     },
-    [dispatch, logger],
+    [dispatch, logger]
   );
 
   const cleanupServerLocalArtifacts = useCallback((serverName: string) => {
@@ -2281,7 +2262,7 @@ export function useServerState({
       dispatch({ type: "REMOVE_SERVER", name: serverName });
       await removeServerFromConvex(serverName);
     },
-    [cleanupServerLocalArtifacts, dispatch, removeServerFromConvex],
+    [cleanupServerLocalArtifacts, dispatch, removeServerFromConvex]
   );
 
   const handleRemoveServer = useCallback(
@@ -2290,13 +2271,13 @@ export function useServerState({
       await handleDisconnect(serverName);
       await removeServerFromStateAndCloud(serverName);
     },
-    [logger, handleDisconnect, removeServerFromStateAndCloud],
+    [logger, handleDisconnect, removeServerFromStateAndCloud]
   );
 
   const waitForServerReconnectOutcome = useCallback(
     async (
       serverName: string,
-      timeoutMs = 15_000,
+      timeoutMs = 15_000
     ): Promise<EnsureServerConnectionResult> =>
       await new Promise<EnsureServerConnectionResult>((resolve) => {
         const startedAt = Date.now();
@@ -2349,13 +2330,13 @@ export function useServerState({
 
         check();
       }),
-    [],
+    []
   );
 
   const reconnectServerInternal = useCallback(
     async (
       serverName: string,
-      options?: ReconnectServerInternalOptions,
+      options?: ReconnectServerInternalOptions
     ): Promise<EnsureServerConnectionResult> => {
       const select = options?.select ?? true;
       const suppressErrors = options?.suppressErrors ?? false;
@@ -2402,8 +2383,8 @@ export function useServerState({
         select,
       });
       const token = nextOpToken(serverName);
-      const hostedWorkspaceServerId = activeWorkspaceServersFlat?.find(
-        (remoteServer) => remoteServer.name === serverName,
+      const hostedProjectServerId = activeProjectServersFlat?.find(
+        (remoteServer) => remoteServer.name === serverName
       )?._id;
 
       if (options?.forceOAuthFlow) {
@@ -2426,7 +2407,7 @@ export function useServerState({
         const storedClientCredentials = readStoredClientCredentials(serverName);
         const profileScopes = parseOAuthScopes(server.oauthFlowProfile?.scopes);
         const profileHeaders = profileHeadersToRecord(
-          server.oauthFlowProfile?.customHeaders,
+          server.oauthFlowProfile?.customHeaders
         );
         const protocolMode =
           server.oauthFlowProfile?.protocolVersion ??
@@ -2451,12 +2432,12 @@ export function useServerState({
             server.oauthTokens?.client_secret ??
             server.oauthFlowProfile?.clientSecret ??
             storedClientCredentials.clientSecret,
-          customHeaders: mergeWithWorkspaceHeaders(
+          customHeaders: mergeWithProjectHeaders(
             profileHeaders ??
               ("requestInit" in server.config
                 ? extractRequestHeaders(server.config.requestInit)
                 : undefined) ??
-              storedOAuthConfig.customHeaders,
+              storedOAuthConfig.customHeaders
           ),
           registryServerId: storedOAuthConfig.registryServerId,
           useRegistryOAuthProxy: storedOAuthConfig.useRegistryOAuthProxy,
@@ -2493,8 +2474,8 @@ export function useServerState({
         try {
           await deleteServer(serverName);
 
-          prepareHostedWorkspaceOAuthRedirect({
-            serverId: hostedWorkspaceServerId,
+          prepareHostedProjectOAuthRedirect({
+            serverId: hostedProjectServerId,
             serverName,
             serverUrl,
           });
@@ -2551,7 +2532,7 @@ export function useServerState({
         }
         const result = await guardedReconnectServer(
           serverName,
-          withWorkspaceConnectionDefaults(oauthResult.serverConfig!),
+          withProjectConnectionDefaults(oauthResult.serverConfig!)
         );
         if (isStaleOp(serverName, token)) {
           return {
@@ -2575,7 +2556,7 @@ export function useServerState({
             serverName,
           });
           storeInitInfo(serverName, result.initInfo).catch((err) =>
-            logger.warn("Failed to fetch init info", { serverName, err }),
+            logger.warn("Failed to fetch init info", { serverName, err })
           );
           return { status: "connected" };
         }
@@ -2594,13 +2575,13 @@ export function useServerState({
       }
 
       if (HOSTED_MODE && isAuthenticated && server.useOAuth === true) {
-        const hostedReconnectConfig = withWorkspaceConnectionDefaults(
-          server.config,
+        const hostedReconnectConfig = withProjectConnectionDefaults(
+          server.config
         );
         try {
           const result = await guardedReconnectServer(
             serverName,
-            hostedReconnectConfig,
+            hostedReconnectConfig
           );
           if (isStaleOp(serverName, token)) {
             return {
@@ -2621,7 +2602,7 @@ export function useServerState({
               result,
             });
             storeInitInfo(serverName, result.initInfo).catch((err) =>
-              logger.warn("Failed to fetch init info", { serverName, err }),
+              logger.warn("Failed to fetch init info", { serverName, err })
             );
             return { status: "connected" };
           }
@@ -2643,7 +2624,7 @@ export function useServerState({
 
           logger.info(
             "Hosted reconnect requires a fresh OAuth flow after stored credential lookup",
-            { serverName, error: result.error },
+            { serverName, error: result.error }
           );
         } catch (error) {
           if (isStaleOp(serverName, token)) {
@@ -2675,7 +2656,7 @@ export function useServerState({
 
           logger.info(
             "Hosted reconnect requires a fresh OAuth flow after stored credential lookup",
-            { serverName, error: errorMessage },
+            { serverName, error: errorMessage }
           );
         }
       }
@@ -2685,8 +2666,8 @@ export function useServerState({
           server,
           {
             beforeRedirect: (oauthOptions) => {
-              prepareHostedWorkspaceOAuthRedirect({
-                serverId: hostedWorkspaceServerId,
+              prepareHostedProjectOAuthRedirect({
+                serverId: hostedProjectServerId,
                 serverName,
                 serverUrl: oauthOptions.serverUrl,
               });
@@ -2695,7 +2676,7 @@ export function useServerState({
               updateServerOAuthTrace(serverName, oauthTrace);
             },
             allowInteractiveOAuthFlow: options?.allowInteractiveOAuthFlow,
-          },
+          }
         );
         if (authResult.kind === "redirect") {
           return {
@@ -2743,7 +2724,7 @@ export function useServerState({
         }
         const result = await guardedReconnectServer(
           serverName,
-          withWorkspaceConnectionDefaults(authResult.serverConfig),
+          withProjectConnectionDefaults(authResult.serverConfig)
         );
         if (isStaleOp(serverName, token)) {
           return {
@@ -2762,7 +2743,7 @@ export function useServerState({
           });
           logger.info("Reconnection successful", { serverName, result });
           storeInitInfo(serverName, result.initInfo).catch((err) =>
-            logger.warn("Failed to fetch init info", { serverName, err }),
+            logger.warn("Failed to fetch init info", { serverName, err })
           );
           return { status: "connected" };
         }
@@ -2805,18 +2786,18 @@ export function useServerState({
       }
     },
     [
-      activeWorkspaceServersFlat,
+      activeProjectServersFlat,
       isAuthenticated,
       isClientConfigSyncPending,
       storeInitInfo,
       logger,
       dispatch,
-      prepareHostedWorkspaceOAuthRedirect,
+      prepareHostedProjectOAuthRedirect,
       guardedReconnectServer,
-      mergeWithWorkspaceHeaders,
+      mergeWithProjectHeaders,
       updateServerOAuthTrace,
-      withWorkspaceConnectionDefaults,
-    ],
+      withProjectConnectionDefaults,
+    ]
   );
 
   const handleReconnect = useCallback(
@@ -2825,7 +2806,7 @@ export function useServerState({
       options?: {
         forceOAuthFlow?: boolean;
         allowInteractiveOAuthFlow?: boolean;
-      },
+      }
     ) => {
       await reconnectServerInternal(serverName, {
         forceOAuthFlow: options?.forceOAuthFlow,
@@ -2833,24 +2814,24 @@ export function useServerState({
         select: true,
       });
     },
-    [reconnectServerInternal],
+    [reconnectServerInternal]
   );
 
   const ensureServersReady = useCallback(
     async (serverNames: string[]): Promise<EnsureServersReadyResult> => {
       const uniqueServerNames = [...new Set(serverNames.filter(Boolean))];
 
-      const resolveToWorkspaceServerKey = (serverRef: string): string => {
+      const resolveToProjectServerKey = (serverRef: string): string => {
         const effective = latestEffectiveServersRef.current;
         if (effective[serverRef]) {
           return serverRef;
         }
 
-        const fromWorkspace = activeWorkspaceServersFlat?.find(
-          (s) => s._id === serverRef,
+        const fromProject = activeProjectServersFlat?.find(
+          (s) => s._id === serverRef
         );
-        if (fromWorkspace) {
-          return fromWorkspace.name;
+        if (fromProject) {
+          return fromProject.name;
         }
 
         if (HOSTED_MODE) {
@@ -2864,13 +2845,13 @@ export function useServerState({
       };
 
       // Multiple refs (e.g. hosted id and display name) can collapse to the
-      // same workspace server. Group by resolved key so we only kick off one
+      // same project server. Group by resolved key so we only kick off one
       // reconnect per real server and avoid spurious "stale op" failures.
       type RefGroup = { resolvedKey: string; refs: string[] };
       const groupsByKey = new Map<string, RefGroup>();
       const orderedKeys: string[] = [];
       for (const serverName of uniqueServerNames) {
-        const resolvedKey = resolveToWorkspaceServerKey(serverName);
+        const resolvedKey = resolveToProjectServerKey(serverName);
         const existing = groupsByKey.get(resolvedKey);
         if (existing) {
           existing.refs.push(serverName);
@@ -2883,7 +2864,7 @@ export function useServerState({
       const outcomesByKey = await Promise.all(
         orderedKeys.map(
           async (
-            resolvedKey,
+            resolvedKey
           ): Promise<readonly [string, EnsureServerConnectionResult]> => {
             const server = latestEffectiveServersRef.current[resolvedKey];
             if (!server) {
@@ -2925,15 +2906,15 @@ export function useServerState({
                 suppressErrors: true,
               }),
             ] as const;
-          },
-        ),
+          }
+        )
       );
 
       const outcomeByKey = new Map(outcomesByKey);
       const outcomes: ReadonlyArray<
         readonly [string, EnsureServerConnectionResult]
       > = uniqueServerNames.map((serverName) => {
-        const resolvedKey = resolveToWorkspaceServerKey(serverName);
+        const resolvedKey = resolveToProjectServerKey(serverName);
         const outcome = outcomeByKey.get(resolvedKey) ?? {
           status: "missing",
           error: `Server ${serverName} not found`,
@@ -2972,10 +2953,10 @@ export function useServerState({
       };
     },
     [
-      activeWorkspaceServersFlat,
+      activeProjectServersFlat,
       reconnectServerInternal,
       waitForServerReconnectOutcome,
-    ],
+    ]
   );
 
   const syncAgentStatus = useCallback(async () => {
@@ -3006,21 +2987,21 @@ export function useServerState({
     (serverName: string) => {
       dispatch({ type: "SELECT_SERVER", name: serverName });
     },
-    [dispatch],
+    [dispatch]
   );
 
   const setSelectedMCPConfigs = useCallback(
     (serverNames: string[]) => {
       dispatch({ type: "SET_MULTI_SELECTED", names: serverNames });
     },
-    [dispatch],
+    [dispatch]
   );
 
   const toggleMultiSelectMode = useCallback(
     (enabled: boolean) => {
       dispatch({ type: "SET_MULTI_MODE", enabled });
     },
-    [dispatch],
+    [dispatch]
   );
 
   const toggleServerSelection = useCallback(
@@ -3031,14 +3012,14 @@ export function useServerState({
         : [...current, serverName];
       dispatch({ type: "SET_MULTI_SELECTED", names: next });
     },
-    [appState.selectedMultipleServers, dispatch],
+    [appState.selectedMultipleServers, dispatch]
   );
 
   const handleUpdate = useCallback(
     async (
       originalServerName: string,
       formData: ServerFormData,
-      skipAutoConnect?: boolean,
+      skipAutoConnect?: boolean
     ): Promise<ServerUpdateResult> => {
       const nextServerName = formData.name.trim();
       if (!nextServerName) {
@@ -3046,11 +3027,11 @@ export function useServerState({
         return { ok: false, serverName: originalServerName };
       }
       const isRename = nextServerName !== originalServerName;
-      const activeWorkspaceServers =
-        effectiveWorkspaces[effectiveActiveWorkspaceId]?.servers ?? {};
-      if (isRename && activeWorkspaceServers[nextServerName]) {
+      const activeProjectServers =
+        effectiveProjects[effectiveActiveProjectId]?.servers ?? {};
+      if (isRename && activeProjectServers[nextServerName]) {
         toast.error(
-          `A server named "${nextServerName}" already exists. Choose a different name.`,
+          `A server named "${nextServerName}" already exists. Choose a different name.`
         );
         return { ok: false, serverName: originalServerName };
       }
@@ -3089,7 +3070,7 @@ export function useServerState({
         });
 
         if (!isAuthenticated || useLocalFallback) {
-          persistServerToLocalWorkspace(nextServerName, updatedServer, {
+          persistServerToLocalProject(nextServerName, updatedServer, {
             originalServerName: isRename ? originalServerName : undefined,
           });
         } else {
@@ -3126,8 +3107,8 @@ export function useServerState({
         saveOAuthConfigToLocalStorage(formData);
         try {
           const result = await guardedTestConnection(
-            withWorkspaceConnectionDefaults(originalServer.config),
-            originalServerName,
+            withProjectConnectionDefaults(originalServer.config),
+            originalServerName
           );
           if (result.success) {
             dispatch({
@@ -3141,12 +3122,12 @@ export function useServerState({
             return { ok: true, serverName: originalServerName };
           }
           console.warn(
-            "OAuth connection test failed, falling back to full reconnect",
+            "OAuth connection test failed, falling back to full reconnect"
           );
         } catch (error) {
           console.warn(
             "OAuth connection test error, falling back to full reconnect",
-            error,
+            error
           );
         }
       }
@@ -3174,12 +3155,12 @@ export function useServerState({
     },
     [
       appState.servers,
-      appState.activeWorkspaceId,
-      appState.workspaces,
+      appState.activeProjectId,
+      appState.projects,
       appState.selectedServer,
       dispatch,
-      effectiveWorkspaces,
-      effectiveActiveWorkspaceId,
+      effectiveProjects,
+      effectiveActiveProjectId,
       effectiveServers,
       storeInitInfo,
       handleDisconnect,
@@ -3189,22 +3170,22 @@ export function useServerState({
       setSelectedServer,
       syncServerToConvex,
       useLocalFallback,
-      persistServerToLocalWorkspace,
+      persistServerToLocalProject,
       notifyIfClientConfigSyncPending,
       guardedTestConnection,
-    ],
+    ]
   );
 
   return {
-    activeWorkspace,
+    activeProject,
     effectiveServers,
-    workspaceServers: effectiveServers,
+    projectServers: effectiveServers,
     connectedOrConnectingServerConfigs: Object.fromEntries(
       Object.entries(effectiveServers).filter(
         ([, server]) =>
           server.connectionStatus === "connected" ||
-          server.connectionStatus === "connecting",
-      ),
+          server.connectionStatus === "connecting"
+      )
     ),
     selectedServerEntry: effectiveServers[appState.selectedServer],
     selectedMCPConfig: effectiveServers[appState.selectedServer]?.config,
@@ -3218,7 +3199,7 @@ export function useServerState({
         }
         return acc;
       },
-      {} as Record<string, MCPServerConfig>,
+      {} as Record<string, MCPServerConfig>
     ),
     isMultiSelectMode: appState.isMultiSelectMode,
     handleConnect,
@@ -3237,6 +3218,6 @@ export function useServerState({
     saveServerConfigWithoutConnecting,
     handleConnectWithTokensFromOAuthFlow,
     handleRefreshTokensFromOAuthFlow,
-    persistRuntimeServerToWorkspaceIfNeeded,
+    persistRuntimeServerToProjectIfNeeded,
   };
 }

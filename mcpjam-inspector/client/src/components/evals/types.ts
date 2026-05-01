@@ -24,7 +24,7 @@ export type EvalSuiteConfigTest = {
 export type EvalSuite = {
   _id: string;
   createdBy: string;
-  workspaceId?: string;
+  projectId?: string;
   name: string;
   description: string;
   configRevision: string;
@@ -32,7 +32,7 @@ export type EvalSuite = {
     servers: string[];
     serverBindings?: Array<{
       serverName: string;
-      workspaceServerId?: string;
+      projectServerId?: string;
     }>;
   };
   createdAt: number;
@@ -51,7 +51,7 @@ export type EvalCase = {
   _id: string;
   testSuiteId: string;
   createdBy: string;
-  workspaceId?: string;
+  projectId?: string;
   caseKey?: string;
   title: string;
   query: string;
@@ -76,7 +76,7 @@ export type EvalCase = {
 export type EvalIteration = {
   _id: string;
   testCaseId?: string;
-  workspaceId?: string;
+  projectId?: string;
   testCaseSnapshot?: {
     caseKey?: string;
     title: string;
@@ -186,7 +186,7 @@ export type EvalSuiteRun = {
   _id: string;
   suiteId: string;
   createdBy: string;
-  workspaceId?: string;
+  projectId?: string;
   runNumber: number;
   configRevision: string;
   configSnapshot: {
@@ -195,7 +195,7 @@ export type EvalSuiteRun = {
       servers: string[];
       serverBindings?: Array<{
         serverName: string;
-        workspaceServerId?: string;
+        projectServerId?: string;
       }>;
     };
   };

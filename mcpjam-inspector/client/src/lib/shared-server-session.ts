@@ -1,11 +1,11 @@
 export type SharedServerShareMode = "any_signed_in_with_link" | "invited_only";
 
 export interface SharedServerBootstrapPayload {
-  workspaceId: string;
+  projectId: string;
   serverId: string;
   serverName: string;
   mode: SharedServerShareMode;
-  viewerIsWorkspaceMember: boolean;
+  viewerIsProjectMember: boolean;
   useOAuth: boolean;
   serverUrl: string | null;
   clientId: string | null;
@@ -76,12 +76,12 @@ export function readSharedServerSession(): SharedServerSession | null {
     if (
       !token ||
       !payload ||
-      typeof payload.workspaceId !== "string" ||
+      typeof payload.projectId !== "string" ||
       typeof payload.serverId !== "string" ||
       typeof payload.serverName !== "string" ||
       (payload.mode !== "any_signed_in_with_link" &&
         payload.mode !== "invited_only") ||
-      typeof payload.viewerIsWorkspaceMember !== "boolean"
+      typeof payload.viewerIsProjectMember !== "boolean"
     ) {
       return null;
     }
@@ -89,11 +89,11 @@ export function readSharedServerSession(): SharedServerSession | null {
     return {
       token,
       payload: {
-        workspaceId: payload.workspaceId,
+        projectId: payload.projectId,
         serverId: payload.serverId,
         serverName: payload.serverName,
         mode: payload.mode,
-        viewerIsWorkspaceMember: payload.viewerIsWorkspaceMember,
+        viewerIsProjectMember: payload.viewerIsProjectMember,
         useOAuth:
           typeof payload.useOAuth === "boolean" ? payload.useOAuth : false,
         serverUrl:

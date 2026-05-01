@@ -20,7 +20,7 @@ import {
   type WidgetCspMeta,
 } from "../../utils/widget-helpers.js";
 import {
-  workspaceServerSchema,
+  projectServerSchema,
   withEphemeralConnection,
   handleRoute,
   assertBearerToken,
@@ -62,7 +62,7 @@ function extractHtmlFromResourceContent(content: unknown): string {
 
 // ── Schemas ─────────────────────────────────────────────────────────
 
-const mcpAppsWidgetContentSchema = workspaceServerSchema.extend({
+const mcpAppsWidgetContentSchema = projectServerSchema.extend({
   resourceUri: z.string().min(1),
   toolInput: z.record(z.string(), z.unknown()).default({}),
   toolOutput: z.unknown().optional(),
@@ -75,7 +75,7 @@ const mcpAppsWidgetContentSchema = workspaceServerSchema.extend({
   viewParams: z.record(z.string(), z.unknown()).optional(),
 });
 
-const chatgptAppsWidgetContentSchema = workspaceServerSchema.extend({
+const chatgptAppsWidgetContentSchema = projectServerSchema.extend({
   uri: z.string().min(1),
   toolInput: z.record(z.string(), z.unknown()).default({}),
   toolOutput: z.unknown().optional(),
@@ -94,7 +94,7 @@ const chatgptAppsWidgetContentSchema = workspaceServerSchema.extend({
  * Hosted auth exception:
  * These sandbox-proxy HTML routes intentionally do not require bearer auth.
  * They are bootstrap documents for sandboxed iframe runtimes and contain no
- * workspace/user data by themselves. All data-bearing widget routes remain
+ * project/user data by themselves. All data-bearing widget routes remain
  * authenticated POST APIs.
  */
 apps.get("/mcp-apps/sandbox-proxy", (c) => {

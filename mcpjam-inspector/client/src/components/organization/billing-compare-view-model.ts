@@ -76,7 +76,7 @@ function formatDeployments(
   if (plan === "enterprise") {
     return t("Custom", true);
   }
-  const value = entry.limits.maxChatboxesPerWorkspace;
+  const value = entry.limits.maxChatboxesPerProject;
   if (value == null) {
     return t("Unlimited", plan === "team");
   }
@@ -107,32 +107,32 @@ export function buildComparePlanSectionsFromCatalog(
               getEntry(planCatalog, "enterprise"),
             ),
           };
-        case "Workspaces":
+        case "Projects":
           return {
             ...row,
             free: formatLimitValue(
-              getEntry(planCatalog, "free").limits.maxWorkspaces,
+              getEntry(planCatalog, "free").limits.maxProjects,
             ),
             starter: formatLimitValue(
-              getEntry(planCatalog, "starter").limits.maxWorkspaces,
+              getEntry(planCatalog, "starter").limits.maxProjects,
             ),
             team: formatLimitValue(
-              getEntry(planCatalog, "team").limits.maxWorkspaces,
+              getEntry(planCatalog, "team").limits.maxProjects,
               true,
             ),
             enterprise: t("Custom", true),
           };
-        case "Servers per workspace":
+        case "Servers per project":
           return {
             ...row,
             free: formatLimitValue(
-              getEntry(planCatalog, "free").limits.maxServersPerWorkspace,
+              getEntry(planCatalog, "free").limits.maxServersPerProject,
             ),
             starter: formatLimitValue(
-              getEntry(planCatalog, "starter").limits.maxServersPerWorkspace,
+              getEntry(planCatalog, "starter").limits.maxServersPerProject,
             ),
             team: formatLimitValue(
-              getEntry(planCatalog, "team").limits.maxServersPerWorkspace,
+              getEntry(planCatalog, "team").limits.maxServersPerProject,
               true,
             ),
             enterprise: t("Unlimited", true),

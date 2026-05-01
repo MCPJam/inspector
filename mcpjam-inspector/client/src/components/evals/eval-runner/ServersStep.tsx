@@ -45,7 +45,7 @@ export function ServersStep({
             No connected servers yet
           </p>
           <p className="mt-2">
-            Launch a server from the Workspaces tab to make it available here.
+            Launch a server from the Projects tab to make it available here.
             Once connected, it will appear instantly.
           </p>
           <Button
@@ -57,7 +57,7 @@ export function ServersStep({
               window.location.hash = "servers";
             }}
           >
-            Go to Workspaces tab
+            Go to Projects tab
           </Button>
         </div>
       )}

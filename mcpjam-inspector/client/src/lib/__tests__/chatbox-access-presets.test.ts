@@ -11,10 +11,10 @@ describe("chatboxAccessPresetFromSettings", () => {
     ).toBe("invited_only");
   });
 
-  it("maps link mode without guests to workspace preset", () => {
+  it("maps link mode without guests to project preset", () => {
     expect(
       chatboxAccessPresetFromSettings("any_signed_in_with_link", false),
-    ).toBe("workspace");
+    ).toBe("project");
   });
 
   it("maps link mode with guests to link_guests preset", () => {
@@ -26,7 +26,7 @@ describe("chatboxAccessPresetFromSettings", () => {
 
 describe("settingsFromChatboxAccessPreset", () => {
   it("round-trips with fromSettings for normal cases", () => {
-    const presets = ["workspace", "invited_only", "link_guests"] as const;
+    const presets = ["project", "invited_only", "link_guests"] as const;
     for (const preset of presets) {
       const s = settingsFromChatboxAccessPreset(preset);
       expect(chatboxAccessPresetFromSettings(s.mode, s.allowGuestAccess)).toBe(

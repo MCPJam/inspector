@@ -71,8 +71,8 @@ const {
       selectedMultipleServers: [],
     },
     isLoading: false,
-    isLoadingRemoteWorkspaces: false,
-    workspaceServers: {},
+    isLoadingRemoteProjects: false,
+    projectServers: {},
     connectedOrConnectingServerConfigs: {},
     selectedMCPConfig: null,
     handleConnect: vi.fn(),
@@ -86,21 +86,21 @@ const {
     setSelectedServer: vi.fn(),
     toggleServerSelection: vi.fn(),
     setSelectedMultipleServersToAllServers: vi.fn(),
-    workspaces: {},
-    activeWorkspaceId: "ws_local",
-    handleSwitchWorkspace: vi.fn(),
-    handleCreateWorkspace: vi.fn(),
-    handleUpdateWorkspace: vi.fn(),
-    handleDeleteWorkspace: vi.fn(),
-    handleLeaveWorkspace: vi.fn(),
-    handleWorkspaceShared: vi.fn(),
+    projects: {},
+    activeProjectId: "ws_local",
+    handleSwitchProject: vi.fn(),
+    handleCreateProject: vi.fn(),
+    handleUpdateProject: vi.fn(),
+    handleDeleteProject: vi.fn(),
+    handleLeaveProject: vi.fn(),
+    handleProjectShared: vi.fn(),
     saveServerConfigWithoutConnecting: vi.fn(),
     handleConnectWithTokensFromOAuthFlow: vi.fn(),
     handleRefreshTokensFromOAuthFlow: vi.fn(),
     activeOrganizationId: undefined,
     setActiveOrganizationId: vi.fn(),
-    clearConvexActiveWorkspaceSelection: vi.fn(),
-    clearLocalFallbackWorkspaceSelection: vi.fn(),
+    clearConvexActiveProjectSelection: vi.fn(),
+    clearLocalFallbackProjectSelection: vi.fn(),
     isCloudSyncActive: false,
   });
 
@@ -117,7 +117,7 @@ const {
       value: "ready" as
         | "ready"
         | "auth-loading"
-        | "workspace-loading"
+        | "project-loading"
         | "logged-out",
     },
     mockMCPSidebar: vi.fn(() => <div />),
@@ -197,7 +197,7 @@ vi.mock("../hooks/use-app-state", () => ({
 
 vi.mock("../hooks/useViews", () => ({
   useViewQueries: () => ({ viewsByServer: new Map() }),
-  useWorkspaceServers: () => ({ serversById: new Map() }),
+  useProjectServers: () => ({ serversById: new Map() }),
 }));
 
 vi.mock("../hooks/hosted/use-hosted-api-context", () => ({
@@ -279,8 +279,8 @@ vi.mock("../components/ChatboxesTab", () => ({
 vi.mock("../components/SettingsTab", () => ({
   SettingsTab: () => <div />,
 }));
-vi.mock("../components/client-config/WorkspaceClientConfigSync", () => ({
-  WorkspaceClientConfigSync: () => null,
+vi.mock("../components/client-config/ProjectClientConfigSync", () => ({
+  ProjectClientConfigSync: () => null,
 }));
 vi.mock("../components/TracingTab", () => ({
   TracingTab: () => <div />,
@@ -438,14 +438,14 @@ describe("App hosted OAuth callback handling", () => {
     writeChatboxSession({
       token: "chatbox-token",
       payload: {
-        workspaceId: "ws_1",
+        projectId: "ws_1",
         chatboxId: "sbx_1",
         name: "Asaan",
         description: "Hosted chatbox",
         hostStyle: "claude",
         mode: "invited_only",
         allowGuestAccess: false,
-        viewerIsWorkspaceMember: true,
+        viewerIsProjectMember: true,
         systemPrompt: "You are helpful.",
         modelId: "openai/gpt-5-mini",
         temperature: 0.4,
@@ -464,7 +464,7 @@ describe("App hosted OAuth callback handling", () => {
     });
     writeHostedOAuthPendingMarker({
       surface: "chatbox",
-      workspaceId: "ws_1",
+      projectId: "ws_1",
       serverId: "srv_asana",
       sessionId: "hosted-session-1",
       accessScope: "chat_v2",
@@ -512,7 +512,7 @@ describe("App hosted OAuth callback handling", () => {
       expect(mockCompleteHostedOAuthCallback).toHaveBeenCalledWith(
         expect.objectContaining({
           surface: "chatbox",
-          workspaceId: "ws_1",
+          projectId: "ws_1",
           serverId: "srv_asana",
           sessionId: "hosted-session-1",
           chatboxToken: "chatbox-token",
@@ -530,7 +530,7 @@ describe("App hosted OAuth callback handling", () => {
     clearHostedOAuthPendingState();
     writeHostedOAuthPendingMarker({
       surface: "chatbox",
-      workspaceId: "ws_1",
+      projectId: "ws_1",
       serverId: "srv_asana",
       accessScope: "chat_v2",
       chatboxToken: "chatbox-token",
@@ -548,7 +548,7 @@ describe("App hosted OAuth callback handling", () => {
       expect(mockCompleteHostedOAuthCallback).toHaveBeenCalledWith(
         expect.objectContaining({
           surface: "chatbox",
-          workspaceId: "ws_1",
+          projectId: "ws_1",
           serverId: "srv_asana",
           sessionId: null,
           chatboxToken: "chatbox-token",
@@ -577,16 +577,16 @@ describe("App hosted OAuth callback handling", () => {
     expect(mockHandleOAuthCallback).not.toHaveBeenCalled();
   });
 
-  it("does not keep the hosted loading screen for workspace OAuth callbacks", async () => {
+  it("does not keep the hosted loading screen for project OAuth callbacks", async () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
     writeHostedOAuthPendingMarker({
-      surface: "workspace",
-      workspaceId: "ws_1",
+      surface: "project",
+      projectId: "ws_1",
       serverId: "srv_asana",
       serverName: "asana",
       serverUrl: "https://mcp.asana.com/sse",
-      accessScope: "workspace_member",
+      accessScope: "project_member",
       returnHash: "#servers",
     });
     localStorage.setItem("mcp-oauth-pending", "asana");
@@ -656,16 +656,16 @@ describe("App hosted OAuth callback handling", () => {
         })
       );
       writeHostedOAuthPendingMarker({
-        surface: "workspace",
-        workspaceId: "ws_1",
+        surface: "project",
+        projectId: "ws_1",
         serverId: "srv_asana",
         serverName: "asana",
         serverUrl: "https://mcp.asana.com/sse",
-        accessScope: "workspace_member",
+        accessScope: "project_member",
         returnHash: "#servers",
       });
       writeHostedOAuthResumeMarker({
-        surface: "workspace",
+        surface: "project",
         serverName: "asana",
         serverUrl: "https://mcp.asana.com/sse",
         errorMessage: "stale",
@@ -717,7 +717,7 @@ describe("App hosted OAuth callback handling", () => {
       ([name]) => name === "billing:getOrganizationPremiumness"
     );
     const wsPremiumnessCall = mockUseQuery.mock.calls.find(
-      ([name]) => name === "billing:getWorkspacePremiumness"
+      ([name]) => name === "billing:getProjectPremiumness"
     );
 
     expect(entitlementsCall?.[1]).toBe("skip");
@@ -725,14 +725,14 @@ describe("App hosted OAuth callback handling", () => {
     expect(wsPremiumnessCall?.[1]).toBe("skip");
   });
 
-  it("skips billing queries while a workspace org id is still unvalidated", () => {
+  it("skips billing queries while a project org id is still unvalidated", () => {
     mockUseAppState.mockImplementation(() => ({
       ...createAppStateMock(),
-      workspaces: {
+      projects: {
         ws_local: {
           id: "ws_local",
-          name: "Shared workspace",
-          organizationId: "workspace-org",
+          name: "Shared project",
+          organizationId: "project-org",
           servers: {},
           createdAt: new Date(),
           updatedAt: new Date(),
@@ -749,7 +749,7 @@ describe("App hosted OAuth callback handling", () => {
       ([name]) => name === "billing:getOrganizationPremiumness"
     );
     const wsPremiumnessCall = mockUseQuery.mock.calls.find(
-      ([name]) => name === "billing:getWorkspacePremiumness"
+      ([name]) => name === "billing:getProjectPremiumness"
     );
 
     expect(entitlementsCall?.[1]).toBe("skip");
@@ -757,14 +757,14 @@ describe("App hosted OAuth callback handling", () => {
     expect(wsPremiumnessCall?.[1]).toBe("skip");
   });
 
-  it("skips workspace billing and clears stale synced selection when the active workspace is missing", async () => {
-    const clearConvexActiveWorkspaceSelection = vi.fn();
+  it("skips project billing and clears stale synced selection when the active project is missing", async () => {
+    const clearConvexActiveProjectSelection = vi.fn();
     mockUseAppState.mockImplementation(() => ({
       ...createAppStateMock(),
       isCloudSyncActive: true,
       activeOrganizationId: "org-1",
-      activeWorkspaceId: "ws-missing",
-      clearConvexActiveWorkspaceSelection,
+      activeProjectId: "ws-missing",
+      clearConvexActiveProjectSelection,
     }));
     mockUseQuery.mockImplementation((name: string) => {
       if (name === "users:getCurrentUser") {
@@ -790,27 +790,27 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
 
     const wsPremiumnessCall = mockUseQuery.mock.calls.find(
-      ([name]) => name === "billing:getWorkspacePremiumness"
+      ([name]) => name === "billing:getProjectPremiumness"
     );
 
     expect(wsPremiumnessCall?.[1]).toBe("skip");
     await waitFor(() => {
-      expect(clearConvexActiveWorkspaceSelection).toHaveBeenCalled();
+      expect(clearConvexActiveProjectSelection).toHaveBeenCalled();
     });
   });
 
-  it("skips workspace billing and clears synced selection when the active workspace org no longer matches the current org", async () => {
-    const clearConvexActiveWorkspaceSelection = vi.fn();
+  it("skips project billing and clears synced selection when the active project org no longer matches the current org", async () => {
+    const clearConvexActiveProjectSelection = vi.fn();
     mockUseAppState.mockImplementation(() => ({
       ...createAppStateMock(),
       isCloudSyncActive: true,
       activeOrganizationId: "org-1",
-      clearConvexActiveWorkspaceSelection,
-      workspaces: {
+      clearConvexActiveProjectSelection,
+      projects: {
         ws_local: {
           id: "ws_local",
-          name: "Workspace Two",
-          sharedWorkspaceId: "shared-ws-2",
+          name: "Project Two",
+          sharedProjectId: "shared-ws-2",
           organizationId: "org-2",
           servers: {},
           createdAt: new Date(),
@@ -850,16 +850,16 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
 
     const wsPremiumnessCall = mockUseQuery.mock.calls.find(
-      ([name]) => name === "billing:getWorkspacePremiumness"
+      ([name]) => name === "billing:getProjectPremiumness"
     );
 
     expect(wsPremiumnessCall?.[1]).toBe("skip");
     await waitFor(() => {
-      expect(clearConvexActiveWorkspaceSelection).toHaveBeenCalled();
+      expect(clearConvexActiveProjectSelection).toHaveBeenCalled();
     });
   });
 
-  it("passes a billing-safe workspace id to the chatboxes tab", async () => {
+  it("passes a billing-safe project id to the chatboxes tab", async () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
     window.history.replaceState({}, "", "/#chatboxes");
@@ -867,11 +867,11 @@ describe("App hosted OAuth callback handling", () => {
     mockUseAppState.mockImplementation(() => ({
       ...createAppStateMock(),
       isCloudSyncActive: false,
-      workspaces: {
+      projects: {
         ws_local: {
           id: "ws_local",
-          name: "Workspace One",
-          sharedWorkspaceId: "shared-ws-1",
+          name: "Project One",
+          sharedProjectId: "shared-ws-1",
           organizationId: "org-1",
           servers: {},
           createdAt: new Date(),
@@ -905,7 +905,7 @@ describe("App hosted OAuth callback handling", () => {
     const lastCall =
       mockChatboxesTab.mock.calls[mockChatboxesTab.mock.calls.length - 1];
     expect(lastCall?.[0]).toMatchObject({
-      workspaceId: null,
+      projectId: null,
       organizationId: "org-1",
       isBillingContextPending: false,
     });
@@ -958,7 +958,7 @@ describe("App hosted OAuth callback handling", () => {
     expect(setActiveOrganizationId).not.toHaveBeenCalled();
   });
 
-  it("passes the valid organization route into app state for workspace actions", async () => {
+  it("passes the valid organization route into app state for project actions", async () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
     window.history.replaceState({}, "", "/#organizations/org-3");
@@ -1152,7 +1152,7 @@ describe("App hosted OAuth callback handling", () => {
     });
   });
 
-  it("disables sidebar workspace creation when the routed org is free and at cap", async () => {
+  it("disables sidebar project creation when the routed org is free and at cap", async () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
     window.history.replaceState({}, "", "/#organizations/org-3");
@@ -1224,7 +1224,7 @@ describe("App hosted OAuth callback handling", () => {
           decisionRequired: false,
           gates: [
             {
-              gateKey: "maxWorkspaces",
+              gateKey: "maxProjects",
               kind: "limit",
               scope: "organization",
               canAccess: false,
@@ -1250,9 +1250,9 @@ describe("App hosted OAuth callback handling", () => {
     const lastCall =
       mockMCPSidebar.mock.calls[mockMCPSidebar.mock.calls.length - 1];
     expect(lastCall?.[0]).toMatchObject({
-      isCreateWorkspaceDisabled: true,
-      createWorkspaceDisabledReason:
-        "This organization has reached its workspace limit (1). Upgrade to create more workspaces.",
+      isCreateProjectDisabled: true,
+      createProjectDisabledReason:
+        "This organization has reached its project limit (1). Upgrade to create more projects.",
     });
   });
 
@@ -1687,19 +1687,19 @@ describe("App hosted OAuth callback handling", () => {
     window.history.replaceState({}, "", "/#organizations/org-deleted");
 
     const setActiveOrganizationId = vi.fn();
-    const clearConvexActiveWorkspaceSelection = vi.fn();
-    const clearLocalFallbackWorkspaceSelection = vi.fn();
+    const clearConvexActiveProjectSelection = vi.fn();
+    const clearLocalFallbackProjectSelection = vi.fn();
     mockUseAppState.mockImplementation(() => ({
       ...createAppStateMock(),
       activeOrganizationId: "org-deleted",
       setActiveOrganizationId,
-      clearConvexActiveWorkspaceSelection,
-      clearLocalFallbackWorkspaceSelection,
-      workspaces: {
+      clearConvexActiveProjectSelection,
+      clearLocalFallbackProjectSelection,
+      projects: {
         ws_local: {
           id: "ws_local",
-          name: "Deleted Workspace",
-          sharedWorkspaceId: "shared-ws-deleted",
+          name: "Deleted Project",
+          sharedProjectId: "shared-ws-deleted",
           organizationId: "org-deleted",
           servers: {},
           createdAt: new Date(),
@@ -1763,8 +1763,8 @@ describe("App hosted OAuth callback handling", () => {
       expect(setActiveOrganizationId).toHaveBeenLastCalledWith("org-owned");
     });
 
-    expect(clearConvexActiveWorkspaceSelection).toHaveBeenCalled();
-    expect(clearLocalFallbackWorkspaceSelection).toHaveBeenCalledWith(
+    expect(clearConvexActiveProjectSelection).toHaveBeenCalled();
+    expect(clearLocalFallbackProjectSelection).toHaveBeenCalledWith(
       "org-deleted",
       "org-owned"
     );
@@ -1847,19 +1847,19 @@ describe("App hosted OAuth callback handling", () => {
     window.history.replaceState({}, "", "/#organizations/org-member");
 
     const setActiveOrganizationId = vi.fn();
-    const clearConvexActiveWorkspaceSelection = vi.fn();
-    const clearLocalFallbackWorkspaceSelection = vi.fn();
+    const clearConvexActiveProjectSelection = vi.fn();
+    const clearLocalFallbackProjectSelection = vi.fn();
     mockUseAppState.mockImplementation(() => ({
       ...createAppStateMock(),
       activeOrganizationId: "org-member",
       setActiveOrganizationId,
-      clearConvexActiveWorkspaceSelection,
-      clearLocalFallbackWorkspaceSelection,
-      workspaces: {
+      clearConvexActiveProjectSelection,
+      clearLocalFallbackProjectSelection,
+      projects: {
         ws_local: {
           id: "ws_local",
-          name: "Active Workspace",
-          sharedWorkspaceId: "shared-ws-active",
+          name: "Active Project",
+          sharedProjectId: "shared-ws-active",
           organizationId: "org-member",
           servers: {},
           createdAt: new Date(),
@@ -1922,7 +1922,7 @@ describe("App hosted OAuth callback handling", () => {
     fireEvent.click(await screen.findByTestId("delete-non-current-org"));
 
     await waitFor(() => {
-      expect(clearLocalFallbackWorkspaceSelection).toHaveBeenCalledWith(
+      expect(clearLocalFallbackProjectSelection).toHaveBeenCalledWith(
         "org-deleted",
         "org-owner"
       );
@@ -1932,29 +1932,29 @@ describe("App hosted OAuth callback handling", () => {
       activeOrgCallsBeforeDelete
     );
     expect(postDeleteCalls).not.toContainEqual(["org-owner"]);
-    expect(clearConvexActiveWorkspaceSelection).not.toHaveBeenCalled();
+    expect(clearConvexActiveProjectSelection).not.toHaveBeenCalled();
     expect(window.location.hash).toBe("#organizations/org-member");
   });
 
-  it("clears org and synced workspace selection when deleting the last org", async () => {
+  it("clears org and synced project selection when deleting the last org", async () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
     window.history.replaceState({}, "", "/#organizations/org-deleted");
 
     const setActiveOrganizationId = vi.fn();
-    const clearConvexActiveWorkspaceSelection = vi.fn();
-    const clearLocalFallbackWorkspaceSelection = vi.fn();
+    const clearConvexActiveProjectSelection = vi.fn();
+    const clearLocalFallbackProjectSelection = vi.fn();
     mockUseAppState.mockImplementation(() => ({
       ...createAppStateMock(),
       activeOrganizationId: "org-deleted",
       setActiveOrganizationId,
-      clearConvexActiveWorkspaceSelection,
-      clearLocalFallbackWorkspaceSelection,
-      workspaces: {
+      clearConvexActiveProjectSelection,
+      clearLocalFallbackProjectSelection,
+      projects: {
         ws_local: {
           id: "ws_local",
-          name: "Deleted Workspace",
-          sharedWorkspaceId: "shared-ws-deleted",
+          name: "Deleted Project",
+          sharedProjectId: "shared-ws-deleted",
           organizationId: "org-deleted",
           servers: {},
           createdAt: new Date(),
@@ -2002,26 +2002,26 @@ describe("App hosted OAuth callback handling", () => {
       expect(setActiveOrganizationId).toHaveBeenLastCalledWith(undefined);
     });
 
-    expect(clearConvexActiveWorkspaceSelection).toHaveBeenCalled();
-    expect(clearLocalFallbackWorkspaceSelection).toHaveBeenCalledWith(
+    expect(clearConvexActiveProjectSelection).toHaveBeenCalled();
+    expect(clearLocalFallbackProjectSelection).toHaveBeenCalledWith(
       "org-deleted",
       undefined
     );
     expect(window.location.hash).toBe("#servers");
   });
 
-  it("still renders the chatboxes tab when workspace premiumness denies chatbox creation", async () => {
+  it("still renders the chatboxes tab when project premiumness denies chatbox creation", async () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
     window.history.replaceState({}, "", "/#chatboxes");
     mockUseAppState.mockImplementation(() => ({
       ...createAppStateMock(),
       isCloudSyncActive: true,
-      workspaces: {
+      projects: {
         ws_local: {
           id: "ws_local",
-          name: "Workspace One",
-          sharedWorkspaceId: "shared-ws-1",
+          name: "Project One",
+          sharedProjectId: "shared-ws-1",
           organizationId: "org-1",
           servers: {},
           createdAt: new Date(),
@@ -2046,7 +2046,7 @@ describe("App hosted OAuth callback handling", () => {
         ];
       }
 
-      if (name === "billing:getWorkspacePremiumness") {
+      if (name === "billing:getProjectPremiumness") {
         return {
           plan: "free",
           enforcementState: "active",
@@ -2074,12 +2074,12 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
 
     const wsPremiumnessCall = mockUseQuery.mock.calls.find(
-      ([name]) => name === "billing:getWorkspacePremiumness"
+      ([name]) => name === "billing:getProjectPremiumness"
     );
 
     expect(wsPremiumnessCall?.[1]).toEqual({
       organizationId: "org-1",
-      workspaceId: "shared-ws-1",
+      projectId: "shared-ws-1",
     });
 
     // Chatboxes tab is NOT blocked at tab level — creation is gated inline
@@ -2093,7 +2093,7 @@ describe("App hosted OAuth callback handling", () => {
     clearChatboxSession();
     writeHostedOAuthPendingMarker({
       surface: "chatbox",
-      workspaceId: "ws_1",
+      projectId: "ws_1",
       serverId: "srv_asana",
       sessionId: "hosted-session-chatboxes",
       accessScope: "chat_v2",
@@ -2187,7 +2187,7 @@ describe("App hosted OAuth callback handling", () => {
     mockHandleOAuthCallback.mockReset();
     mockUseAppState.mockImplementation(() => ({
       ...createAppStateMock(),
-      workspaceServers: {
+      projectServers: {
         savedServer: {
           name: "savedServer",
           connectionStatus: "disconnected",
@@ -2401,7 +2401,7 @@ describe("App hosted OAuth callback handling", () => {
     expect(screen.queryByText("Servers Tab")).not.toBeInTheDocument();
   });
 
-  it("passes OAuth-only workspace server selector props on the XAA Debugger tab", async () => {
+  it("passes OAuth-only project server selector props on the XAA Debugger tab", async () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
     window.history.replaceState({}, "", "/#xaa-flow");
@@ -2410,9 +2410,9 @@ describe("App hosted OAuth callback handling", () => {
       flag === "xaa" ? true : false
     );
     const appStateMock = createAppStateMock();
-    const currentWorkspaceServers = {
-      "current-workspace-xaa-oauth": {
-        name: "current-workspace-xaa-oauth",
+    const currentProjectServers = {
+      "current-project-xaa-oauth": {
+        name: "current-project-xaa-oauth",
         config: { url: "https://current-xaa.example/mcp" },
         connectionStatus: "connected",
         enabled: true,
@@ -2421,11 +2421,11 @@ describe("App hosted OAuth callback handling", () => {
         lastConnectionTime: new Date("2024-01-01"),
       },
     };
-    appStateMock.workspaceServers = currentWorkspaceServers;
+    appStateMock.projectServers = currentProjectServers;
     appStateMock.appState.servers = {
-      ...currentWorkspaceServers,
-      "other-workspace-xaa-oauth": {
-        name: "other-workspace-xaa-oauth",
+      ...currentProjectServers,
+      "other-project-xaa-oauth": {
+        name: "other-project-xaa-oauth",
         config: { url: "https://other-xaa.example/mcp" },
         connectionStatus: "connected",
         enabled: true,
@@ -2453,7 +2453,7 @@ describe("App hosted OAuth callback handling", () => {
       activeServerSelectorProps?: { serverConfigs?: unknown };
     };
     expect(latestProps.activeServerSelectorProps?.serverConfigs).toBe(
-      currentWorkspaceServers
+      currentProjectServers
     );
   });
 
@@ -2463,9 +2463,9 @@ describe("App hosted OAuth callback handling", () => {
     window.history.replaceState({}, "", "/#oauth-flow");
     mockHandleOAuthCallback.mockReset();
     const appStateMock = createAppStateMock();
-    const currentWorkspaceServers = {
-      "current-workspace-oauth": {
-        name: "current-workspace-oauth",
+    const currentProjectServers = {
+      "current-project-oauth": {
+        name: "current-project-oauth",
         config: { url: "https://current.example/mcp" },
         connectionStatus: "connected",
         enabled: true,
@@ -2474,11 +2474,11 @@ describe("App hosted OAuth callback handling", () => {
         lastConnectionTime: new Date("2024-01-01"),
       },
     };
-    appStateMock.workspaceServers = currentWorkspaceServers;
+    appStateMock.projectServers = currentProjectServers;
     appStateMock.appState.servers = {
-      ...currentWorkspaceServers,
-      "other-workspace-oauth": {
-        name: "other-workspace-oauth",
+      ...currentProjectServers,
+      "other-project-oauth": {
+        name: "other-project-oauth",
         config: { url: "https://other.example/mcp" },
         connectionStatus: "connected",
         enabled: true,
@@ -2506,7 +2506,7 @@ describe("App hosted OAuth callback handling", () => {
       activeServerSelectorProps?: { serverConfigs?: unknown };
     };
     expect(latestProps.activeServerSelectorProps?.serverConfigs).toBe(
-      currentWorkspaceServers
+      currentProjectServers
     );
   });
 
@@ -2538,11 +2538,11 @@ describe("App hosted OAuth callback handling", () => {
     mockUseAppState.mockImplementation(() => ({
       ...createAppStateMock(),
       isCloudSyncActive: true,
-      workspaces: {
+      projects: {
         ws_local: {
           id: "ws_local",
-          name: "Workspace One",
-          sharedWorkspaceId: "shared-ws-1",
+          name: "Project One",
+          sharedProjectId: "shared-ws-1",
           organizationId: "org-1",
           servers: {},
           createdAt: new Date(),
@@ -2572,7 +2572,7 @@ describe("App hosted OAuth callback handling", () => {
         ];
       }
 
-      if (name === "billing:getWorkspacePremiumness") {
+      if (name === "billing:getProjectPremiumness") {
         return {
           plan: "free",
           enforcementState: "active",
@@ -2600,12 +2600,12 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
 
     const wsPremiumnessCall = mockUseQuery.mock.calls.find(
-      ([name]) => name === "billing:getWorkspacePremiumness"
+      ([name]) => name === "billing:getProjectPremiumness"
     );
 
     expect(wsPremiumnessCall?.[1]).toEqual({
       organizationId: "org-1",
-      workspaceId: "shared-ws-1",
+      projectId: "shared-ws-1",
     });
 
     await waitFor(() => {

@@ -15,7 +15,8 @@ import type { PersistedTurnTrace } from "./chat-ingestion";
 import { handleMCPJamFreeChatModel } from "./mcpjam-stream-handler.js";
 
 export interface OrgModelHandlerOptions {
-  workspaceId: string;
+  projectId: string;
+  workspaceId?: string;
   providerKey: string;
   modelId: string;
   chatSessionId?: string;
@@ -37,14 +38,14 @@ export interface OrgModelHandlerOptions {
   }) => void;
   /**
    * The end user's Authorization header from the inbound request. Forwarded
-   * to /stream/org so Convex can re-authorize the user against the workspace.
+   * to /stream/org so Convex can re-authorize the user against the project.
    * Without this, /stream/org can only authenticate the inspector backend
    * (via the service token) and will reject the request as unauthenticated.
    */
   authHeader?: string;
   /**
    * Hosted share/chatbox tokens for guest chat sessions. Forwarded to
-   * /stream/org so Convex can authorize the guest against the workspace via
+   * /stream/org so Convex can authorize the guest against the project via
    * the existing authorizeGuestServerAccessBatch query.
    */
   shareToken?: string;
@@ -70,7 +71,7 @@ export async function handleHostedOrgChatModel(
     systemPrompt: options.systemPrompt,
     temperature: options.temperature,
     tools: options.tools,
-    workspaceId: options.workspaceId,
+    projectId: options.projectId,
     authHeader: options.authHeader,
     chatboxToken: options.chatboxToken,
     mcpClientManager: options.mcpClientManager,
@@ -85,6 +86,7 @@ export async function handleHostedOrgChatModel(
     },
     extraBodyFields: {
       providerKey: options.providerKey,
+      ...(options.workspaceId ? { workspaceId: options.workspaceId } : {}),
       ...(options.shareToken ? { shareToken: options.shareToken } : {}),
       // chatboxToken is set on the body by handleMCPJamFreeChatModel itself.
       ...(options.selectedServers && options.selectedServers.length > 0

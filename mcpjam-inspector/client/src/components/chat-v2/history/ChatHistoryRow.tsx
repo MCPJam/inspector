@@ -21,7 +21,7 @@ import {
 import type { ChatHistorySession } from "@/lib/apis/web/chat-history-api";
 import { getModelById } from "@/shared/types";
 import { getInitials } from "@/lib/utils";
-import type { WorkspaceThreadOwnerAvatar } from "./workspace-thread-owner-avatar";
+import type { ProjectThreadOwnerAvatar } from "./project-thread-owner-avatar";
 import {
   getChatboxHostFamily,
   type ChatboxHostStyle,
@@ -80,8 +80,8 @@ interface ChatHistoryRowProps {
   }) => void | Promise<void>;
   canConvertToTestCase?: boolean;
   onConvertToTestCase?: (session: ChatHistorySession) => void;
-  /** Workspace list only: avatar for another member's shared thread. */
-  workspaceThreadOwner?: WorkspaceThreadOwnerAvatar;
+  /** Project list only: avatar for another member's shared thread. */
+  projectThreadOwner?: ProjectThreadOwnerAvatar;
   actions: {
     rename: (sessionId: string, customTitle: string) => Promise<void>;
     archive: (sessionId: string) => Promise<void>;
@@ -104,7 +104,7 @@ export function ChatHistoryRow({
   onActionComplete,
   canConvertToTestCase = false,
   onConvertToTestCase,
-  workspaceThreadOwner,
+  projectThreadOwner,
   actions,
 }: ChatHistoryRowProps) {
   const [relativeTime, setRelativeTime] = useState(
@@ -138,16 +138,16 @@ export function ChatHistoryRow({
   const modelLabel = formatChatHistoryModelLabel(session);
 
   const ownerAvatarTooltip =
-    workspaceThreadOwner?.status === "show"
-      ? workspaceThreadOwner.displayName
-      : workspaceThreadOwner?.status === "generic"
-        ? "Workspace member"
+    projectThreadOwner?.status === "show"
+      ? projectThreadOwner.displayName
+      : projectThreadOwner?.status === "generic"
+        ? "Project member"
         : null;
 
-  const hasWorkspaceOwner = workspaceThreadOwner != null;
+  const hasProjectOwner = projectThreadOwner != null;
 
   const ownerAvatar =
-    workspaceThreadOwner != null ? (
+    projectThreadOwner != null ? (
       <Tooltip>
         <TooltipTrigger asChild>
           <div
@@ -155,14 +155,14 @@ export function ChatHistoryRow({
             data-testid="chat-history-owner-avatar"
           >
             <Avatar className="size-4 border border-border/50">
-              {workspaceThreadOwner.status === "show" ? (
+              {projectThreadOwner.status === "show" ? (
                 <>
                   <AvatarImage
-                    src={workspaceThreadOwner.imageUrl}
-                    alt={workspaceThreadOwner.displayName}
+                    src={projectThreadOwner.imageUrl}
+                    alt={projectThreadOwner.displayName}
                   />
                   <AvatarFallback className="text-[8px] leading-none">
-                    {getInitials(workspaceThreadOwner.displayName)}
+                    {getInitials(projectThreadOwner.displayName)}
                   </AvatarFallback>
                 </>
               ) : (
@@ -200,7 +200,7 @@ export function ChatHistoryRow({
     if (isStreaming || isRenaming) return;
     onSelect(session);
   };
-  const canManageWorkspaceSharing = isAuthenticated && sharedThreadsEnabled;
+  const canManageProjectSharing = isAuthenticated && sharedThreadsEnabled;
 
   if (isRenaming) {
     const renameField = (
@@ -219,7 +219,7 @@ export function ChatHistoryRow({
       </div>
     );
 
-    return hasWorkspaceOwner ? (
+    return hasProjectOwner ? (
       <div className="flex w-full max-w-full min-w-0 items-center gap-1">
         <div className="flex size-4 shrink-0 items-center justify-center">
           {ownerAvatar}
@@ -240,7 +240,7 @@ export function ChatHistoryRow({
       } ${isStreaming ? "opacity-50 cursor-not-allowed" : ""}`}
       onClick={handleClick}
     >
-      {hasWorkspaceOwner ? (
+      {hasProjectOwner ? (
         session.isPinned ? (
           <span className="relative inline-flex size-4 shrink-0 items-center justify-center">
             <span className="opacity-100 transition-opacity duration-150 group-hover:pointer-events-none group-hover:opacity-0 group-focus-within:pointer-events-none group-focus-within:opacity-0">
@@ -343,12 +343,12 @@ export function ChatHistoryRow({
                 {session.isPinned ? "Unpin" : "Pin"}
               </DropdownMenuItem>
 
-              {canManageWorkspaceSharing && (
+              {canManageProjectSharing && (
                 <>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem
                     onClick={async () =>
-                      session.directVisibility === "workspace"
+                      session.directVisibility === "project"
                         ? await runAction("unshare", () =>
                             actions.unshare(session._id),
                           )
@@ -357,9 +357,9 @@ export function ChatHistoryRow({
                           )
                     }
                   >
-                    {session.directVisibility === "workspace"
+                    {session.directVisibility === "project"
                       ? "Unshare"
-                      : "Share to workspace"}
+                      : "Share to project"}
                   </DropdownMenuItem>
                 </>
               )}

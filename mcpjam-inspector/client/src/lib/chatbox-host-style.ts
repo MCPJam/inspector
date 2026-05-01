@@ -9,7 +9,7 @@ import {
 
 /**
  * Identifier of a chatbox host style. Today the registry contains "claude"
- * and "chatgpt" built-ins; workspace-defined custom hosts will widen this
+ * and "chatgpt" built-ins; project-defined custom hosts will widen this
  * at the value level without changing this string-based type.
  */
 export type ChatboxHostStyle = HostStyleId;

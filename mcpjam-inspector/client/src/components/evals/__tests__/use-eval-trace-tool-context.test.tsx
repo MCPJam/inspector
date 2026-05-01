@@ -8,17 +8,17 @@ const mockState = vi.hoisted(() => ({
     isAuthenticated: false,
     isLoading: false,
   },
-  workspaceServers: {
+  projectServers: {
     serversByName: new Map<string, string>(),
     isLoading: false,
   },
   appState: {
-    activeWorkspaceId: "workspace-1",
-    workspaces: {
-      "workspace-1": {
-        id: "workspace-1",
-        name: "Workspace",
-        sharedWorkspaceId: "shared-workspace-1",
+    activeProjectId: "project-1",
+    projects: {
+      "project-1": {
+        id: "project-1",
+        name: "Project",
+        sharedProjectId: "shared-project-1",
         servers: {},
       },
     },
@@ -32,7 +32,7 @@ const mockState = vi.hoisted(() => ({
   },
   clientConfigStore: {
     isAwaitingRemoteEcho: false,
-    pendingWorkspaceId: null,
+    pendingProjectId: null,
   },
   listTools: vi.fn(),
 }));
@@ -48,7 +48,7 @@ vi.mock("convex/react", () => ({
 }));
 
 vi.mock("@/hooks/useViews", () => ({
-  useWorkspaceServers: () => mockState.workspaceServers,
+  useProjectServers: () => mockState.projectServers,
 }));
 
 vi.mock("@/state/app-state-context", () => ({
@@ -69,13 +69,13 @@ describe("useEvalTraceToolContext", () => {
     mockState.hostedMode = false;
     mockState.convexAuth.isAuthenticated = false;
     mockState.convexAuth.isLoading = false;
-    mockState.workspaceServers = {
+    mockState.projectServers = {
       serversByName: new Map(),
       isLoading: false,
     };
     mockState.clientConfigStore = {
       isAwaitingRemoteEcho: false,
-      pendingWorkspaceId: null,
+      pendingProjectId: null,
     };
     mockState.listTools.mockReset();
   });
@@ -109,7 +109,7 @@ describe("useEvalTraceToolContext", () => {
     mockState.hostedMode = true;
     mockState.convexAuth.isAuthenticated = false;
     mockState.convexAuth.isLoading = true;
-    mockState.workspaceServers = {
+    mockState.projectServers = {
       serversByName: new Map(),
       isLoading: true,
     };
@@ -126,7 +126,7 @@ describe("useEvalTraceToolContext", () => {
       ({ retryKey }) =>
         useEvalTraceToolContext({
           serverNames: ["alpha"],
-          workspaceId: "shared-workspace-1",
+          projectId: "shared-project-1",
           retryKey,
         }),
       {
@@ -139,7 +139,7 @@ describe("useEvalTraceToolContext", () => {
 
     mockState.convexAuth.isAuthenticated = true;
     mockState.convexAuth.isLoading = false;
-    mockState.workspaceServers = {
+    mockState.projectServers = {
       serversByName: new Map([["alpha", "server-alpha"]]),
       isLoading: false,
     };
@@ -166,7 +166,7 @@ describe("useEvalTraceToolContext", () => {
     mockState.hostedMode = true;
     mockState.convexAuth.isAuthenticated = true;
     mockState.convexAuth.isLoading = false;
-    mockState.workspaceServers = {
+    mockState.projectServers = {
       serversByName: new Map([["alpha", "server-alpha"]]),
       isLoading: false,
     };
@@ -185,7 +185,7 @@ describe("useEvalTraceToolContext", () => {
       ({ retryKey }) =>
         useEvalTraceToolContext({
           serverNames: ["alpha"],
-          workspaceId: "shared-workspace-1",
+          projectId: "shared-project-1",
           retryKey,
         }),
       {

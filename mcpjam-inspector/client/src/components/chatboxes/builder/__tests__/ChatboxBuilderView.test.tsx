@@ -26,7 +26,7 @@ vi.mock("@/hooks/useChatboxes", () => ({
   }),
 }));
 
-vi.mock("@/hooks/useWorkspaces", () => ({
+vi.mock("@/hooks/useProjects", () => ({
   useServerMutations: () => ({ createServer: vi.fn() }),
 }));
 
@@ -84,7 +84,7 @@ vi.mock("@/components/chatboxes/ChatboxUsagePanel", () => ({
 
 const httpsServer = {
   _id: "srv-1",
-  workspaceId: "ws-1",
+  projectId: "ws-1",
   name: "Test MCP",
   enabled: true,
   transportType: "http" as const,
@@ -96,7 +96,7 @@ const httpsServer = {
 function createSavedChatbox(hostStyle: "claude" | "chatgpt"): ChatboxSettings {
   return {
     chatboxId: `sbx-${hostStyle}`,
-    workspaceId: "ws-1",
+    projectId: "ws-1",
     name: `${hostStyle} chatbox`,
     description: "",
     hostStyle,
@@ -140,8 +140,8 @@ describe("ChatboxBuilderView", () => {
     };
     render(
       <ChatboxBuilderView
-        workspaceId="ws-1"
-        workspaceServers={[httpsServer]}
+        projectId="ws-1"
+        projectServers={[httpsServer]}
         chatboxId={chatbox.chatboxId}
         draft={dirtyDraft}
         onBack={() => {}}
@@ -161,8 +161,8 @@ describe("ChatboxBuilderView", () => {
     );
     render(
       <ChatboxBuilderView
-        workspaceId="ws-1"
-        workspaceServers={[httpsServer]}
+        projectId="ws-1"
+        projectServers={[httpsServer]}
         draft={draft}
         onBack={() => {}}
         onSavedDraft={() => {}}
@@ -180,8 +180,8 @@ describe("ChatboxBuilderView", () => {
     );
     render(
       <ChatboxBuilderView
-        workspaceId="ws-1"
-        workspaceServers={[httpsServer]}
+        projectId="ws-1"
+        projectServers={[httpsServer]}
         draft={draft}
         onBack={() => {}}
         onSavedDraft={() => {}}
@@ -204,8 +204,8 @@ describe("ChatboxBuilderView", () => {
     };
     render(
       <ChatboxBuilderView
-        workspaceId="ws-1"
-        workspaceServers={[httpsServer]}
+        projectId="ws-1"
+        projectServers={[httpsServer]}
         draft={draft}
         onBack={() => {}}
         onSavedDraft={() => {}}
@@ -224,8 +224,8 @@ describe("ChatboxBuilderView", () => {
     );
     render(
       <ChatboxBuilderView
-        workspaceId="ws-1"
-        workspaceServers={[httpsServer]}
+        projectId="ws-1"
+        projectServers={[httpsServer]}
         draft={draft}
         onBack={() => {}}
         onSavedDraft={() => {}}
@@ -243,8 +243,8 @@ describe("ChatboxBuilderView", () => {
 
     render(
       <ChatboxBuilderView
-        workspaceId="ws-1"
-        workspaceServers={[httpsServer]}
+        projectId="ws-1"
+        projectServers={[httpsServer]}
         chatboxId={chatbox.chatboxId}
         initialViewMode="usage"
         onBack={() => {}}
@@ -264,8 +264,8 @@ describe("ChatboxBuilderView", () => {
 
     render(
       <ChatboxBuilderView
-        workspaceId="ws-1"
-        workspaceServers={[httpsServer]}
+        projectId="ws-1"
+        projectServers={[httpsServer]}
         chatboxId={chatbox.chatboxId}
         initialViewMode="insights"
         onBack={() => {}}
@@ -285,8 +285,8 @@ describe("ChatboxBuilderView", () => {
     );
     render(
       <ChatboxBuilderView
-        workspaceId="ws-1"
-        workspaceServers={[httpsServer]}
+        projectId="ws-1"
+        projectServers={[httpsServer]}
         draft={draft}
         onBack={() => {}}
         onSavedDraft={() => {}}
@@ -303,8 +303,8 @@ describe("ChatboxBuilderView", () => {
 
     render(
       <ChatboxBuilderView
-        workspaceId="ws-1"
-        workspaceServers={[httpsServer]}
+        projectId="ws-1"
+        projectServers={[httpsServer]}
         chatboxId={chatbox.chatboxId}
         initialViewMode="preview"
         onBack={() => {}}
@@ -330,8 +330,8 @@ describe("ChatboxBuilderView", () => {
 
     render(
       <ChatboxBuilderView
-        workspaceId="ws-1"
-        workspaceServers={[httpsServer]}
+        projectId="ws-1"
+        projectServers={[httpsServer]}
         chatboxId={chatbox.chatboxId}
         initialViewMode="preview"
         onBack={() => {}}
@@ -353,8 +353,8 @@ describe("ChatboxBuilderView", () => {
 
     render(
       <ChatboxBuilderView
-        workspaceId="ws-1"
-        workspaceServers={[httpsServer]}
+        projectId="ws-1"
+        projectServers={[httpsServer]}
         chatboxId={chatbox.chatboxId}
         initialViewMode="preview"
         onBack={() => {}}

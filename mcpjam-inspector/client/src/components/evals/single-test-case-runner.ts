@@ -17,7 +17,7 @@ type TestCaseRunOverridesWithTurns = TestCaseRunOverrides & {
 };
 
 interface PrepareSingleTestCaseRunParams {
-  workspaceId: string | null;
+  projectId: string | null;
   suite: Pick<EvalSuite, "environment">;
   testCase: Pick<EvalCase, "_id" | "models">;
   getAccessToken: () => Promise<string | null>;
@@ -142,7 +142,7 @@ export function resolveSelectedTestCaseModelValue(params: {
 }
 
 export async function prepareSingleTestCaseRun({
-  workspaceId,
+  projectId,
   suite,
   testCase,
   getAccessToken,
@@ -184,7 +184,7 @@ export async function prepareSingleTestCaseRun({
   return {
     modelValue,
     request: {
-      workspaceId,
+      projectId,
       testCaseId: testCase._id,
       model,
       provider,

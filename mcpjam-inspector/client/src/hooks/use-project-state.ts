@@ -1,0 +1,1535 @@
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type Dispatch,
+} from "react";
+import { toast } from "sonner";
+import type { AppAction, AppState, Project } from "@/state/app-types";
+import {
+  useProjectMutations,
+  useProjectQueries,
+  useProjectServers,
+} from "./useProjects";
+import {
+  deserializeServersFromConvex,
+  serializeServersForSharing,
+} from "@/lib/project-serialization";
+import {
+  composeProjectClientConfig,
+  pickProjectConnectionConfig,
+  pickProjectHostContext,
+  stableStringifyJson,
+  type ProjectClientConfig,
+  type ProjectConnectionConfigDraft,
+  type ProjectHostContextDraft,
+} from "@/lib/client-config";
+import { getBillingErrorMessage } from "@/lib/billing-entitlements";
+import { useClientConfigStore } from "@/stores/client-config-store";
+import { useHostContextStore } from "@/stores/host-context-store";
+import { useOrganizationBillingStatus } from "./useOrganizationBilling";
+
+const CLIENT_CONFIG_SYNC_ECHO_TIMEOUT_MS = 10000;
+
+function stringifyProjectClientConfig(
+  clientConfig: ProjectClientConfig | undefined,
+) {
+  return stableStringifyJson(clientConfig ?? null);
+}
+
+function buildLocalProjectId() {
+  return `project_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+}
+
+interface PendingClientConfigSync {
+  id: string;
+  projectId: string;
+  expectedSerializedConfig: string;
+  resolve: () => void;
+  reject: (error: Error) => void;
+  timeoutId: ReturnType<typeof setTimeout>;
+}
+
+const WORKSPACE_CLIENT_CONFIG_SYNC_INTERRUPTED_ERROR_MESSAGE =
+  "Project client config sync was interrupted.";
+const WORKSPACE_CLIENT_CONFIG_SYNC_TIMEOUT_ERROR_MESSAGE =
+  "Timed out waiting for project client config to sync.";
+const WORKSPACE_CLIENT_CONFIG_SYNC_SUPERSEDED_ERROR_MESSAGE =
+  "Project client config sync was superseded by a newer save.";
+
+interface ClientConfigSaveController<T> {
+  beginSave: (input: {
+    projectId: string;
+    savedConfig: T | undefined;
+    awaitRemoteEcho: boolean;
+  }) => void;
+  markSaved: (input: {
+    projectId: string;
+    savedConfig: T | undefined;
+    awaitRemoteEcho: boolean;
+  }) => void;
+  failSave: (input: {
+    projectId: string;
+    savedConfig: T | undefined;
+    awaitRemoteEcho: boolean;
+  }) => void;
+}
+
+interface LoggerLike {
+  info: (message: string, meta?: Record<string, unknown>) => void;
+  warn: (message: string, meta?: Record<string, unknown>) => void;
+  error: (message: string, meta?: Record<string, unknown>) => void;
+}
+
+function isSyntheticDefaultProject(project: Project) {
+  return (
+    project.id === "default" &&
+    project.isDefault === true &&
+    project.sharedProjectId === undefined &&
+    project.organizationId === undefined &&
+    project.name === "Default" &&
+    project.description === "Default project" &&
+    Object.keys(project.servers).length === 0
+  );
+}
+
+function doesStoreSliceBelongToProject(
+  activeProjectId: string | null,
+  projectId: string,
+) {
+  return activeProjectId === projectId;
+}
+
+function canApplyStoreSaveState(
+  activeProjectId: string | null,
+  projectId: string,
+) {
+  return activeProjectId === null || activeProjectId === projectId;
+}
+
+function isSupersededClientConfigSyncError(error: unknown) {
+  return (
+    error instanceof Error &&
+    error.message === WORKSPACE_CLIENT_CONFIG_SYNC_SUPERSEDED_ERROR_MESSAGE
+  );
+}
+
+export interface UseProjectStateParams {
+  appState: AppState;
+  dispatch: Dispatch<AppAction>;
+  isAuthenticated: boolean;
+  isAuthLoading: boolean;
+  hasOrganizations: boolean;
+  isLoadingOrganizations: boolean;
+  validOrganizationIds: string[];
+  activeOrganizationId?: string;
+  routeOrganizationId?: string;
+  logger: LoggerLike;
+}
+
+export function useProjectState({
+  appState,
+  dispatch,
+  isAuthenticated,
+  isAuthLoading,
+  hasOrganizations,
+  isLoadingOrganizations,
+  validOrganizationIds,
+  activeOrganizationId,
+  routeOrganizationId,
+  logger,
+}: UseProjectStateParams) {
+  const projectOrganizationId = routeOrganizationId ?? activeOrganizationId;
+  const hasResolvedProjectOrganizationSelection =
+    !isLoadingOrganizations && projectOrganizationId !== undefined;
+  const shouldScopeLocalFallbackByOrganization =
+    isAuthenticated &&
+    hasResolvedProjectOrganizationSelection &&
+    projectOrganizationId !== undefined;
+  const billingOrganizationId = routeOrganizationId
+    ? routeOrganizationId
+    : !isLoadingOrganizations &&
+        activeOrganizationId &&
+        validOrganizationIds.includes(activeOrganizationId)
+      ? activeOrganizationId
+      : undefined;
+  const {
+    allProjects: allRemoteProjects,
+    projects: remoteProjects,
+    isLoading: isLoadingProjects,
+  } = useProjectQueries({
+    isAuthenticated,
+    organizationId: projectOrganizationId,
+  });
+  const {
+    createProject: convexCreateProject,
+    ensureDefaultProject: convexEnsureDefaultProject,
+    updateProject: convexUpdateProject,
+    updateClientConfig: convexUpdateClientConfig,
+    deleteProject: convexDeleteProject,
+  } = useProjectMutations();
+  const billingStatus = useOrganizationBillingStatus(
+    billingOrganizationId ?? null,
+    { enabled: isAuthenticated },
+  );
+
+  const [convexActiveProjectId, setConvexActiveProjectId] = useState<
+    string | null
+  >(() => {
+    if (typeof window !== "undefined") {
+      return localStorage.getItem("convex-active-project-id");
+    }
+    return null;
+  });
+
+  const migrationInFlightRef = useRef(new Set<string>());
+  const ensureDefaultInFlightRef = useRef(new Set<string>());
+  const ensureDefaultCompletedRef = useRef(new Set<string>());
+  const migrationErrorNotifiedRef = useRef(new Set<string>());
+  const [useLocalFallback, setUseLocalFallback] = useState(false);
+  const convexTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const pendingClientConfigSyncRef = useRef<
+    Map<string, PendingClientConfigSync>
+  >(new Map());
+  const pendingClientConfigSyncIdRef = useRef(0);
+  const pendingClientConfigSyncByProjectRef = useRef<Map<string, string>>(
+    new Map(),
+  );
+  const CONVEX_TIMEOUT_MS = 10000;
+  const shouldTreatRemoteProjectsAsEmpty =
+    isAuthenticated &&
+    !isLoadingOrganizations &&
+    !hasOrganizations &&
+    !routeOrganizationId &&
+    !activeOrganizationId;
+
+  const clearConvexActiveProjectSelection = useCallback(() => {
+    setConvexActiveProjectId(null);
+    if (typeof window !== "undefined") {
+      localStorage.removeItem("convex-active-project-id");
+    }
+  }, []);
+
+  const { servers: activeProjectServersFlat, isLoading: isLoadingServers } =
+    useProjectServers({
+      projectId: shouldTreatRemoteProjectsAsEmpty
+        ? null
+        : convexActiveProjectId,
+      isAuthenticated,
+    });
+
+  const clearPendingClientConfigSync = useCallback(
+    (pendingId: string, error?: Error) => {
+      const pending = pendingClientConfigSyncRef.current.get(pendingId);
+      if (!pending) {
+        return;
+      }
+
+      clearTimeout(pending.timeoutId);
+      pendingClientConfigSyncRef.current.delete(pendingId);
+      if (
+        pendingClientConfigSyncByProjectRef.current.get(pending.projectId) ===
+        pendingId
+      ) {
+        pendingClientConfigSyncByProjectRef.current.delete(
+          pending.projectId,
+        );
+      }
+
+      if (error) {
+        pending.reject(error);
+      }
+    },
+    [],
+  );
+
+  const clearAllPendingClientConfigSyncs = useCallback((error?: Error) => {
+    const pendingIds = Array.from(
+      pendingClientConfigSyncRef.current.keys(),
+    );
+    if (pendingIds.length === 0) {
+      return;
+    }
+
+    for (const pendingId of pendingIds) {
+      clearPendingClientConfigSync(pendingId, error);
+    }
+  }, [clearPendingClientConfigSync]);
+
+  useEffect(() => {
+    if (!isAuthenticated) {
+      setUseLocalFallback(false);
+      if (convexTimeoutRef.current) {
+        clearTimeout(convexTimeoutRef.current);
+        convexTimeoutRef.current = null;
+      }
+      return;
+    }
+
+    if (shouldTreatRemoteProjectsAsEmpty) {
+      setUseLocalFallback(false);
+      if (convexTimeoutRef.current) {
+        clearTimeout(convexTimeoutRef.current);
+        convexTimeoutRef.current = null;
+      }
+      return;
+    }
+
+    if (remoteProjects !== undefined) {
+      setUseLocalFallback(false);
+      if (convexTimeoutRef.current) {
+        clearTimeout(convexTimeoutRef.current);
+        convexTimeoutRef.current = null;
+      }
+      return;
+    }
+
+    if (!convexTimeoutRef.current && !useLocalFallback) {
+      convexTimeoutRef.current = setTimeout(() => {
+        logger.warn(
+          "Convex connection timed out, falling back to local storage",
+        );
+        toast.warning("Cloud sync unavailable - using local data", {
+          description: "Your changes will be saved locally",
+        });
+        setUseLocalFallback(true);
+        convexTimeoutRef.current = null;
+      }, CONVEX_TIMEOUT_MS);
+    }
+
+    return () => {
+      if (convexTimeoutRef.current) {
+        clearTimeout(convexTimeoutRef.current);
+        convexTimeoutRef.current = null;
+      }
+    };
+  }, [
+    isAuthenticated,
+    remoteProjects,
+    shouldTreatRemoteProjectsAsEmpty,
+    useLocalFallback,
+    logger,
+  ]);
+
+  useEffect(() => {
+    if (
+      isAuthenticated &&
+      !useLocalFallback &&
+      !shouldTreatRemoteProjectsAsEmpty
+    ) {
+      return;
+    }
+
+    clearAllPendingClientConfigSyncs(
+      new Error(WORKSPACE_CLIENT_CONFIG_SYNC_INTERRUPTED_ERROR_MESSAGE),
+    );
+  }, [
+    clearAllPendingClientConfigSyncs,
+    isAuthenticated,
+    shouldTreatRemoteProjectsAsEmpty,
+    useLocalFallback,
+  ]);
+
+  useEffect(() => {
+    return () => {
+      clearAllPendingClientConfigSyncs(
+        new Error(WORKSPACE_CLIENT_CONFIG_SYNC_INTERRUPTED_ERROR_MESSAGE),
+      );
+    };
+  }, [clearAllPendingClientConfigSyncs]);
+
+  useEffect(() => {
+    if (!shouldTreatRemoteProjectsAsEmpty || !convexActiveProjectId) {
+      return;
+    }
+
+    clearConvexActiveProjectSelection();
+  }, [
+    shouldTreatRemoteProjectsAsEmpty,
+    convexActiveProjectId,
+    clearConvexActiveProjectSelection,
+  ]);
+
+  const isLoadingRemoteProjects =
+    (!shouldTreatRemoteProjectsAsEmpty &&
+      isAuthenticated &&
+      !useLocalFallback &&
+      (remoteProjects === undefined || isLoadingServers)) ||
+    (isAuthLoading && !!convexActiveProjectId);
+
+  const convexProjects = useMemo((): Record<string, Project> => {
+    if (!remoteProjects) return {};
+    return Object.fromEntries(
+      remoteProjects.map((rw) => {
+        let deserializedServers: Project["servers"] = {};
+
+        if (
+          rw._id === convexActiveProjectId &&
+          activeProjectServersFlat !== undefined
+        ) {
+          deserializedServers = deserializeServersFromConvex(
+            activeProjectServersFlat,
+          );
+        } else if (rw.servers) {
+          deserializedServers = deserializeServersFromConvex(rw.servers);
+        }
+
+        return [
+          rw._id,
+          {
+            id: rw._id,
+            name: rw.name,
+            description: rw.description,
+            icon: rw.icon,
+            clientConfig: rw.clientConfig,
+            servers: deserializedServers,
+            createdAt: new Date(rw.createdAt),
+            updatedAt: new Date(rw.updatedAt),
+            canDeleteProject: rw.canDeleteProject,
+            sharedProjectId: rw._id,
+            organizationId: rw.organizationId,
+            visibility: rw.visibility,
+          } as Project,
+        ];
+      }),
+    );
+  }, [remoteProjects, convexActiveProjectId, activeProjectServersFlat]);
+
+  useEffect(() => {
+    if (pendingClientConfigSyncRef.current.size === 0) {
+      return;
+    }
+
+    for (const [pendingId, pending] of pendingClientConfigSyncRef.current) {
+      const syncedClientConfig =
+        convexProjects[pending.projectId]?.clientConfig;
+      if (
+        stringifyProjectClientConfig(syncedClientConfig) !==
+        pending.expectedSerializedConfig
+      ) {
+        continue;
+      }
+
+      clearPendingClientConfigSync(pendingId);
+      pending.resolve();
+    }
+  }, [clearPendingClientConfigSync, convexProjects]);
+
+  const scopedLocalProjects = useMemo((): Record<string, Project> => {
+    if (!shouldScopeLocalFallbackByOrganization) {
+      return appState.projects;
+    }
+
+    return Object.fromEntries(
+      Object.entries(appState.projects).filter(
+        ([, project]) => project.organizationId === projectOrganizationId,
+      ),
+    );
+  }, [appState.projects, shouldScopeLocalFallbackByOrganization, projectOrganizationId]);
+
+  const localFallbackProjects = useMemo((): Record<string, Project> => {
+    if (!useLocalFallback) {
+      return appState.projects;
+    }
+
+    return scopedLocalProjects;
+  }, [useLocalFallback, appState.projects, scopedLocalProjects]);
+
+  const authenticatedMergedProjects = useMemo((): Record<string, Project> => {
+    const projectsWithoutRemoteMatch = Object.fromEntries(
+      Object.entries(scopedLocalProjects).filter(([localProjectId, project]) => {
+        if (convexProjects[localProjectId]) {
+          return false;
+        }
+
+        if (
+          project.sharedProjectId &&
+          convexProjects[project.sharedProjectId]
+        ) {
+          return false;
+        }
+
+        return true;
+      }),
+    );
+
+    return {
+      ...convexProjects,
+      ...projectsWithoutRemoteMatch,
+    };
+  }, [convexProjects, scopedLocalProjects]);
+
+  const activeScopedLocalProject = useMemo(
+    () => scopedLocalProjects[appState.activeProjectId],
+    [scopedLocalProjects, appState.activeProjectId],
+  );
+
+  const activeScopedRemoteProjectId =
+    activeScopedLocalProject?.sharedProjectId ?? null;
+
+  const shouldKeepLocalActiveProject = Boolean(
+    activeScopedLocalProject &&
+      (!activeScopedRemoteProjectId ||
+        !convexProjects[activeScopedRemoteProjectId]),
+  );
+
+  const effectiveProjects = useMemo((): Record<string, Project> => {
+    if (shouldTreatRemoteProjectsAsEmpty) {
+      return {};
+    }
+    if (useLocalFallback) {
+      return localFallbackProjects;
+    }
+    if (isAuthenticated && remoteProjects !== undefined) {
+      return authenticatedMergedProjects;
+    }
+    if (isAuthenticated) {
+      return {};
+    }
+    if (isAuthLoading && convexActiveProjectId) {
+      return {};
+    }
+    return appState.projects;
+  }, [
+    useLocalFallback,
+    localFallbackProjects,
+    isAuthenticated,
+    remoteProjects,
+    authenticatedMergedProjects,
+    isAuthLoading,
+    convexActiveProjectId,
+    shouldTreatRemoteProjectsAsEmpty,
+  ]);
+
+  const effectiveActiveProjectId = useMemo(() => {
+    if (shouldTreatRemoteProjectsAsEmpty) {
+      return "none";
+    }
+    if (useLocalFallback) {
+      if (localFallbackProjects[appState.activeProjectId]) {
+        return appState.activeProjectId;
+      }
+      const defaultProjectId = Object.entries(localFallbackProjects).find(
+        ([, project]) => project.isDefault,
+      )?.[0];
+      return (
+        defaultProjectId ?? Object.keys(localFallbackProjects)[0] ?? "none"
+      );
+    }
+    if (isAuthenticated && remoteProjects !== undefined) {
+      if (
+        shouldKeepLocalActiveProject &&
+        effectiveProjects[appState.activeProjectId]
+      ) {
+        return appState.activeProjectId;
+      }
+
+      if (
+        activeScopedRemoteProjectId &&
+        effectiveProjects[activeScopedRemoteProjectId]
+      ) {
+        return activeScopedRemoteProjectId;
+      }
+
+      if (
+        convexActiveProjectId &&
+        effectiveProjects[convexActiveProjectId]
+      ) {
+        return convexActiveProjectId;
+      }
+      const firstId = Object.keys(effectiveProjects)[0];
+      return firstId || "none";
+    }
+    return appState.activeProjectId;
+  }, [
+    useLocalFallback,
+    appState.activeProjectId,
+    localFallbackProjects,
+    scopedLocalProjects,
+    isAuthenticated,
+    remoteProjects,
+    convexActiveProjectId,
+    effectiveProjects,
+    activeScopedRemoteProjectId,
+    shouldKeepLocalActiveProject,
+    shouldTreatRemoteProjectsAsEmpty,
+  ]);
+
+  const migratableLocalProjects = useMemo(
+    () =>
+      Object.values(appState.projects).filter(
+        (project) =>
+          !project.sharedProjectId &&
+          (!shouldScopeLocalFallbackByOrganization ||
+            project.organizationId === projectOrganizationId) &&
+          !isSyntheticDefaultProject(project),
+      ),
+    [
+      appState.projects,
+      shouldScopeLocalFallbackByOrganization,
+      projectOrganizationId,
+    ],
+  );
+  const migratableLocalProjectCount = migratableLocalProjects.length;
+  const hasAnyRemoteProjects = (allRemoteProjects?.length ?? 0) > 0;
+  const hasCurrentOrganizationProjects = (remoteProjects?.length ?? 0) > 0;
+  const canManageBillingForProjectActions = projectOrganizationId
+    ? (billingStatus?.canManageBilling ?? false)
+    : true;
+
+  useEffect(() => {
+    if (shouldTreatRemoteProjectsAsEmpty) {
+      return;
+    }
+
+    if (isAuthenticated && remoteProjects && remoteProjects.length > 0) {
+      if (shouldKeepLocalActiveProject) {
+        if (convexActiveProjectId) {
+          clearConvexActiveProjectSelection();
+        }
+        return;
+      }
+
+      if (
+        !convexActiveProjectId ||
+        !convexProjects[convexActiveProjectId]
+      ) {
+        if (
+          activeScopedRemoteProjectId &&
+          convexProjects[activeScopedRemoteProjectId]
+        ) {
+          setConvexActiveProjectId(activeScopedRemoteProjectId);
+          return;
+        }
+
+        const savedActiveId = localStorage.getItem("convex-active-project-id");
+        if (savedActiveId && convexProjects[savedActiveId]) {
+          setConvexActiveProjectId(savedActiveId);
+          return;
+        }
+
+        setConvexActiveProjectId(remoteProjects[0]._id);
+      }
+    }
+  }, [
+    isAuthenticated,
+    remoteProjects,
+    convexActiveProjectId,
+    convexProjects,
+    activeScopedRemoteProjectId,
+    shouldKeepLocalActiveProject,
+    clearConvexActiveProjectSelection,
+    shouldTreatRemoteProjectsAsEmpty,
+  ]);
+
+  useEffect(() => {
+    if (convexActiveProjectId) {
+      localStorage.setItem(
+        "convex-active-project-id",
+        convexActiveProjectId,
+      );
+    } else {
+      localStorage.removeItem("convex-active-project-id");
+    }
+  }, [convexActiveProjectId]);
+
+  useEffect(() => {
+    if (!isAuthenticated || useLocalFallback) {
+      migrationInFlightRef.current.clear();
+      ensureDefaultInFlightRef.current.clear();
+      // Intentionally NOT clearing ensureDefaultCompletedRef here — it must
+      // survive transient auth-state flickers so that a project that was
+      // already successfully created isn't re-created when the Convex
+      // subscription briefly returns an empty result during reconnection.
+      migrationErrorNotifiedRef.current.clear();
+    }
+  }, [isAuthenticated, useLocalFallback]);
+
+  useEffect(() => {
+    if (
+      !isAuthenticated ||
+      useLocalFallback ||
+      allRemoteProjects === undefined ||
+      allRemoteProjects.length > 0 ||
+      migratableLocalProjectCount === 0
+    ) {
+      migrationErrorNotifiedRef.current.clear();
+    }
+  }, [
+    isAuthenticated,
+    useLocalFallback,
+    allRemoteProjects,
+    migratableLocalProjectCount,
+  ]);
+
+  useEffect(() => {
+    if (!isAuthenticated) {
+      return;
+    }
+    if (shouldTreatRemoteProjectsAsEmpty) return;
+    if (useLocalFallback) return;
+    if (!hasResolvedProjectOrganizationSelection) return;
+    if (allRemoteProjects === undefined) return;
+    if (allRemoteProjects.length > 0) return;
+    if (migratableLocalProjectCount === 0) return;
+
+    const organizationId = projectOrganizationId;
+    if (organizationId === undefined) return;
+
+    logger.info("Migrating local projects to Convex", {
+      count: migratableLocalProjectCount,
+    });
+
+    const migrateProject = async (project: Project) => {
+      if (migrationInFlightRef.current.has(project.id)) {
+        return;
+      }
+
+      migrationInFlightRef.current.add(project.id);
+
+      try {
+        const serializedServers = serializeServersForSharing(project.servers);
+        const projectId = await convexCreateProject({
+          name: project.name,
+          description: project.description,
+          clientConfig: project.clientConfig,
+          servers: serializedServers,
+          organizationId,
+        });
+        dispatch({
+          type: "UPDATE_WORKSPACE",
+          projectId: project.id,
+          updates: {
+            sharedProjectId: projectId as string,
+            organizationId,
+          },
+        });
+        logger.info("Migrated project to Convex", { name: project.name });
+      } catch (error) {
+        migrationInFlightRef.current.delete(project.id);
+        const requestKey = organizationId;
+        if (!migrationErrorNotifiedRef.current.has(requestKey)) {
+          migrationErrorNotifiedRef.current.add(requestKey);
+          toast.error(
+            getBillingErrorMessage(
+              error,
+              "Some local projects could not be migrated",
+              canManageBillingForProjectActions,
+            ),
+          );
+        }
+        logger.error("Failed to migrate project", {
+          name: project.name,
+          error: error instanceof Error ? error.message : "Unknown error",
+        });
+      }
+    };
+
+    Promise.all(migratableLocalProjects.map(migrateProject));
+  }, [
+    isAuthenticated,
+    useLocalFallback,
+    allRemoteProjects,
+    migratableLocalProjects,
+    migratableLocalProjectCount,
+    convexCreateProject,
+    dispatch,
+    logger,
+    projectOrganizationId,
+    hasResolvedProjectOrganizationSelection,
+    canManageBillingForProjectActions,
+    shouldTreatRemoteProjectsAsEmpty,
+  ]);
+
+  useEffect(() => {
+    if (!isAuthenticated) {
+      return;
+    }
+    if (shouldTreatRemoteProjectsAsEmpty) return;
+    if (useLocalFallback) return;
+    if (!hasResolvedProjectOrganizationSelection) return;
+    if (remoteProjects === undefined) return;
+    if (hasCurrentOrganizationProjects) return;
+    if (!hasAnyRemoteProjects && migratableLocalProjectCount > 0) return;
+
+    const organizationId = projectOrganizationId;
+    if (organizationId === undefined) return;
+
+    const requestKey = organizationId;
+    if (ensureDefaultInFlightRef.current.has(requestKey)) {
+      return;
+    }
+    if (ensureDefaultCompletedRef.current.has(requestKey)) {
+      return;
+    }
+
+    ensureDefaultInFlightRef.current.add(requestKey);
+
+    convexEnsureDefaultProject({ organizationId })
+      .then((projectId) => {
+        ensureDefaultCompletedRef.current.add(requestKey);
+      })
+      .catch((error) => {
+        ensureDefaultInFlightRef.current.delete(requestKey);
+        logger.error("Failed to ensure default project", {
+          organizationId,
+          error: error instanceof Error ? error.message : "Unknown error",
+        });
+      });
+  }, [
+    isAuthenticated,
+    useLocalFallback,
+    remoteProjects,
+    hasCurrentOrganizationProjects,
+    hasAnyRemoteProjects,
+    migratableLocalProjectCount,
+    convexEnsureDefaultProject,
+    projectOrganizationId,
+    hasResolvedProjectOrganizationSelection,
+    logger,
+    shouldTreatRemoteProjectsAsEmpty,
+  ]);
+
+  const handleCreateProject = useCallback(
+    async (name: string, switchTo: boolean = false) => {
+      if (isAuthenticated && !useLocalFallback) {
+        const organizationId = projectOrganizationId;
+        if (
+          shouldTreatRemoteProjectsAsEmpty ||
+          !hasResolvedProjectOrganizationSelection ||
+          organizationId === undefined
+        ) {
+          toast.error("Create or join an organization to create projects.");
+          return "";
+        }
+        try {
+          const projectId = await convexCreateProject({
+            name,
+            clientConfig: undefined,
+            servers: {},
+            organizationId,
+          });
+          if (switchTo && projectId) {
+            setConvexActiveProjectId(projectId as string);
+          }
+          toast.success(`Project "${name}" created`);
+          return projectId as string;
+        } catch (error) {
+          toast.error(
+            getBillingErrorMessage(
+              error,
+              "Failed to create project",
+              canManageBillingForProjectActions,
+            ),
+          );
+          return "";
+        }
+      }
+
+      if (
+        isAuthenticated &&
+        (!hasResolvedProjectOrganizationSelection ||
+          projectOrganizationId === undefined)
+      ) {
+        toast.error("Create or join an organization to create projects.");
+        return "";
+      }
+
+      const newProject: Project = {
+        id: buildLocalProjectId(),
+        name,
+        servers: {},
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        organizationId: isAuthenticated ? projectOrganizationId : undefined,
+      };
+      dispatch({ type: "CREATE_WORKSPACE", project: newProject });
+
+      if (switchTo) {
+        dispatch({ type: "SWITCH_WORKSPACE", projectId: newProject.id });
+      }
+
+      toast.success(`Project "${name}" created`);
+      return newProject.id;
+    },
+    [
+      isAuthenticated,
+      useLocalFallback,
+      shouldTreatRemoteProjectsAsEmpty,
+      convexCreateProject,
+      dispatch,
+      projectOrganizationId,
+      hasResolvedProjectOrganizationSelection,
+      canManageBillingForProjectActions,
+    ],
+  );
+
+  const handleUpdateProject = useCallback(
+    async (projectId: string, updates: Partial<Project>): Promise<void> => {
+      if (isAuthenticated && !useLocalFallback) {
+        try {
+          const updateData: any = { projectId };
+          if (updates.name !== undefined) updateData.name = updates.name;
+          if (updates.description !== undefined) {
+            updateData.description = updates.description;
+          }
+          if (updates.icon !== undefined) updateData.icon = updates.icon;
+          if (updates.visibility !== undefined) {
+            updateData.visibility = updates.visibility;
+          }
+          if (updates.servers !== undefined) {
+            logger.warn(
+              "Ignoring servers in handleUpdateProject for authenticated user - use individual server operations",
+            );
+          }
+          await convexUpdateProject(updateData);
+        } catch (error) {
+          const errorMessage =
+            error instanceof Error ? error.message : "Unknown error";
+          logger.error("Failed to update project", {
+            error: errorMessage,
+          });
+          toast.error(errorMessage);
+          throw error instanceof Error ? error : new Error(errorMessage);
+        }
+      } else {
+        dispatch({ type: "UPDATE_WORKSPACE", projectId, updates });
+      }
+    },
+    [
+      isAuthenticated,
+      useLocalFallback,
+      convexUpdateProject,
+      logger,
+      dispatch,
+    ],
+  );
+
+  const persistProjectClientConfig = useCallback(
+    async <T,>({
+      projectId,
+      clientConfig,
+      savedSlice,
+      controller,
+    }: {
+      projectId: string;
+      clientConfig: ProjectClientConfig | undefined;
+      savedSlice: T | undefined;
+      controller: ClientConfigSaveController<T>;
+    }): Promise<void> => {
+      const awaitRemoteEcho = isAuthenticated && !useLocalFallback;
+
+      controller.beginSave({
+        projectId,
+        savedConfig: savedSlice,
+        awaitRemoteEcho,
+      });
+
+      if (awaitRemoteEcho) {
+        const pendingSyncId = `project-client-config-sync-${pendingClientConfigSyncIdRef.current++}`;
+        const remoteEchoPromise = new Promise<void>((resolve, reject) => {
+          const supersededPendingId =
+            pendingClientConfigSyncByProjectRef.current.get(projectId);
+          if (supersededPendingId) {
+            clearPendingClientConfigSync(
+              supersededPendingId,
+              new Error(WORKSPACE_CLIENT_CONFIG_SYNC_SUPERSEDED_ERROR_MESSAGE),
+            );
+          }
+
+          const timeoutId = setTimeout(() => {
+            pendingClientConfigSyncRef.current.delete(pendingSyncId);
+            if (
+              pendingClientConfigSyncByProjectRef.current.get(projectId) ===
+              pendingSyncId
+            ) {
+              pendingClientConfigSyncByProjectRef.current.delete(projectId);
+            }
+            reject(new Error(WORKSPACE_CLIENT_CONFIG_SYNC_TIMEOUT_ERROR_MESSAGE));
+          }, CLIENT_CONFIG_SYNC_ECHO_TIMEOUT_MS);
+
+          pendingClientConfigSyncByProjectRef.current.set(
+            projectId,
+            pendingSyncId,
+          );
+          pendingClientConfigSyncRef.current.set(pendingSyncId, {
+            id: pendingSyncId,
+            projectId,
+            expectedSerializedConfig:
+              stringifyProjectClientConfig(clientConfig),
+            resolve,
+            reject,
+            timeoutId,
+          });
+        });
+
+        try {
+          await convexUpdateClientConfig({
+            projectId,
+            clientConfig,
+          });
+          await remoteEchoPromise;
+        } catch (error) {
+          clearPendingClientConfigSync(pendingSyncId);
+          controller.failSave({
+            projectId,
+            savedConfig: savedSlice,
+            awaitRemoteEcho,
+          });
+          const errorMessage =
+            error instanceof Error ? error.message : "Unknown error";
+          if (!isSupersededClientConfigSyncError(error)) {
+            logger.error("Failed to update project client config", {
+              error: errorMessage,
+              projectId,
+            });
+            toast.error(errorMessage);
+          }
+          throw error instanceof Error ? error : new Error(errorMessage);
+        }
+        return;
+      }
+
+      dispatch({
+        type: "UPDATE_WORKSPACE",
+        projectId,
+        updates: { clientConfig },
+      });
+      controller.markSaved({
+        projectId,
+        savedConfig: savedSlice,
+        awaitRemoteEcho,
+      });
+    },
+    [
+      isAuthenticated,
+      useLocalFallback,
+      clearPendingClientConfigSync,
+      convexUpdateClientConfig,
+      logger,
+      dispatch,
+    ],
+  );
+
+  const resolvePersistedConnectionConfig = useCallback(
+    (projectId: string): ProjectConnectionConfigDraft => {
+      const clientConfigStore = useClientConfigStore.getState();
+      const projectClientConfig = effectiveProjects[projectId]?.clientConfig;
+      const scopedStoreConfig = doesStoreSliceBelongToProject(
+        clientConfigStore.activeProjectId,
+        projectId,
+      )
+        ? clientConfigStore.savedConfig ?? clientConfigStore.defaultConfig
+        : undefined;
+
+      return scopedStoreConfig ?? pickProjectConnectionConfig(projectClientConfig);
+    },
+    [effectiveProjects],
+  );
+
+  const resolvePersistedHostContext = useCallback(
+    (projectId: string): ProjectHostContextDraft => {
+      const hostContextStore = useHostContextStore.getState();
+      const projectClientConfig = effectiveProjects[projectId]?.clientConfig;
+      const scopedStoreHostContext = doesStoreSliceBelongToProject(
+        hostContextStore.activeProjectId,
+        projectId,
+      )
+        ? hostContextStore.savedHostContext ?? hostContextStore.defaultHostContext
+        : undefined;
+
+      return scopedStoreHostContext ?? pickProjectHostContext(projectClientConfig);
+    },
+    [effectiveProjects],
+  );
+
+  const connectionConfigSaveController = useMemo<
+    ClientConfigSaveController<ProjectConnectionConfigDraft>
+  >(
+    () => ({
+      beginSave: ({ projectId, savedConfig, awaitRemoteEcho }) => {
+        const state = useClientConfigStore.getState();
+        if (!canApplyStoreSaveState(state.activeProjectId, projectId)) {
+          return;
+        }
+
+        useClientConfigStore.getState().beginSave({
+          projectId,
+          savedConfig,
+          awaitRemoteEcho,
+        });
+      },
+      markSaved: ({ projectId, savedConfig, awaitRemoteEcho }) => {
+        const state = useClientConfigStore.getState();
+        if (!canApplyStoreSaveState(state.activeProjectId, projectId)) {
+          return;
+        }
+        if (
+          awaitRemoteEcho &&
+          (state.pendingProjectId !== projectId ||
+            stableStringifyJson(state.pendingSavedConfig) !==
+              stableStringifyJson(savedConfig))
+        ) {
+          return;
+        }
+
+        useClientConfigStore.getState().markSaved(savedConfig);
+      },
+      failSave: ({ projectId, savedConfig, awaitRemoteEcho }) => {
+        const state = useClientConfigStore.getState();
+        if (!canApplyStoreSaveState(state.activeProjectId, projectId)) {
+          return;
+        }
+        if (
+          awaitRemoteEcho &&
+          (state.pendingProjectId !== projectId ||
+            stableStringifyJson(state.pendingSavedConfig) !==
+              stableStringifyJson(savedConfig))
+        ) {
+          return;
+        }
+
+        useClientConfigStore.getState().failSave();
+      },
+    }),
+    [],
+  );
+
+  const hostContextSaveController = useMemo<
+    ClientConfigSaveController<ProjectHostContextDraft>
+  >(
+    () => ({
+      beginSave: ({ projectId, savedConfig, awaitRemoteEcho }) => {
+        const state = useHostContextStore.getState();
+        if (!canApplyStoreSaveState(state.activeProjectId, projectId)) {
+          return;
+        }
+
+        useHostContextStore.getState().beginSave({
+          projectId,
+          savedHostContext: savedConfig,
+          awaitRemoteEcho,
+        });
+      },
+      markSaved: ({ projectId, savedConfig, awaitRemoteEcho }) => {
+        const state = useHostContextStore.getState();
+        if (!canApplyStoreSaveState(state.activeProjectId, projectId)) {
+          return;
+        }
+        if (
+          awaitRemoteEcho &&
+          (state.pendingProjectId !== projectId ||
+            stableStringifyJson(state.pendingSavedHostContext) !==
+              stableStringifyJson(savedConfig))
+        ) {
+          return;
+        }
+
+        useHostContextStore.getState().markSaved(savedConfig);
+      },
+      failSave: ({ projectId, savedConfig, awaitRemoteEcho }) => {
+        const state = useHostContextStore.getState();
+        if (!canApplyStoreSaveState(state.activeProjectId, projectId)) {
+          return;
+        }
+        if (
+          awaitRemoteEcho &&
+          (state.pendingProjectId !== projectId ||
+            stableStringifyJson(state.pendingSavedHostContext) !==
+              stableStringifyJson(savedConfig))
+        ) {
+          return;
+        }
+
+        useHostContextStore.getState().failSave();
+      },
+    }),
+    [],
+  );
+
+  const handleUpdateClientConfig = useCallback(
+    async (
+      projectId: string,
+      connectionConfig: ProjectConnectionConfigDraft | undefined,
+    ): Promise<void> => {
+      const clientConfigStore = useClientConfigStore.getState();
+      const projectClientConfig = effectiveProjects[projectId]?.clientConfig;
+      const scopedDraftConfig = doesStoreSliceBelongToProject(
+        clientConfigStore.activeProjectId,
+        projectId,
+      )
+        ? clientConfigStore.draftConfig
+        : undefined;
+      const connectionConfigToPersist =
+        connectionConfig ??
+        scopedDraftConfig ??
+        resolvePersistedConnectionConfig(projectId);
+      const clientConfig = composeProjectClientConfig({
+        connectionConfig: connectionConfigToPersist,
+        hostContext: resolvePersistedHostContext(projectId),
+        fallback: projectClientConfig ?? null,
+      });
+
+      await persistProjectClientConfig({
+        projectId,
+        clientConfig,
+        savedSlice: connectionConfigToPersist,
+        controller: connectionConfigSaveController,
+      });
+    },
+    [
+      effectiveProjects,
+      connectionConfigSaveController,
+      persistProjectClientConfig,
+      resolvePersistedConnectionConfig,
+      resolvePersistedHostContext,
+    ],
+  );
+
+  const handleUpdateHostContext = useCallback(
+    async (
+      projectId: string,
+      hostContext: ProjectHostContextDraft | undefined,
+    ): Promise<void> => {
+      const hostContextStore = useHostContextStore.getState();
+      const projectClientConfig = effectiveProjects[projectId]?.clientConfig;
+      const scopedDraftHostContext = doesStoreSliceBelongToProject(
+        hostContextStore.activeProjectId,
+        projectId,
+      )
+        ? hostContextStore.draftHostContext
+        : undefined;
+      const hostContextToPersist =
+        hostContext ??
+        scopedDraftHostContext ??
+        resolvePersistedHostContext(projectId);
+      const clientConfig = composeProjectClientConfig({
+        connectionConfig: resolvePersistedConnectionConfig(projectId),
+        hostContext: hostContextToPersist,
+        fallback: projectClientConfig ?? null,
+      });
+
+      await persistProjectClientConfig({
+        projectId,
+        clientConfig,
+        savedSlice: hostContextToPersist,
+        controller: hostContextSaveController,
+      });
+    },
+    [
+      effectiveProjects,
+      hostContextSaveController,
+      persistProjectClientConfig,
+      resolvePersistedConnectionConfig,
+      resolvePersistedHostContext,
+    ],
+  );
+
+  const handleDeleteProject = useCallback(
+    async (projectId: string): Promise<boolean> => {
+      // If deleting the active project, switch to another first
+      if (projectId === effectiveActiveProjectId) {
+        const otherProjectIds = Object.keys(effectiveProjects).filter(
+          (id) => id !== projectId,
+        );
+        const defaultProject = otherProjectIds.find(
+          (id) => effectiveProjects[id].isDefault,
+        );
+        const targetProjectId = defaultProject || otherProjectIds[0];
+
+        if (!targetProjectId) {
+          toast.error("Cannot delete the only project");
+          return false;
+        }
+
+        if (isAuthenticated && !useLocalFallback) {
+          setConvexActiveProjectId(targetProjectId);
+        } else {
+          dispatch({
+            type: "SWITCH_WORKSPACE",
+            projectId: targetProjectId,
+          });
+        }
+      }
+
+      if (isAuthenticated && !useLocalFallback) {
+        try {
+          await convexDeleteProject({ projectId });
+        } catch (error) {
+          let errorMessage = "Failed to delete project";
+          if (
+            error &&
+            typeof error === "object" &&
+            "data" in error &&
+            typeof (error as { data: unknown }).data === "string"
+          ) {
+            errorMessage = (error as { data: string }).data;
+          } else if (error instanceof Error) {
+            const match = error.message.match(/Uncaught Error: (.+?)(?:\n|$)/);
+            errorMessage = match ? match[1] : error.message;
+          }
+          logger.error("Failed to delete project from Convex", {
+            error: errorMessage,
+          });
+          toast.error(errorMessage);
+          return false;
+        }
+        toast.success("Project deleted");
+      } else {
+        dispatch({ type: "DELETE_WORKSPACE", projectId });
+        toast.success("Project deleted");
+      }
+      return true;
+    },
+    [
+      effectiveActiveProjectId,
+      effectiveProjects,
+      isAuthenticated,
+      useLocalFallback,
+      convexDeleteProject,
+      setConvexActiveProjectId,
+      logger,
+      dispatch,
+    ],
+  );
+
+  const handleDuplicateProject = useCallback(
+    async (projectId: string, newName: string) => {
+      const sourceProject = effectiveProjects[projectId];
+      if (!sourceProject) {
+        toast.error("Project not found");
+        return;
+      }
+
+      if (isAuthenticated && !useLocalFallback) {
+        const organizationId = projectOrganizationId;
+        if (
+          shouldTreatRemoteProjectsAsEmpty ||
+          !hasResolvedProjectOrganizationSelection ||
+          organizationId === undefined
+        ) {
+          toast.error("Create or join an organization to create projects.");
+          return;
+        }
+        try {
+          const serializedServers = serializeServersForSharing(
+            sourceProject.servers,
+          );
+          await convexCreateProject({
+            name: newName,
+            description: sourceProject.description,
+            clientConfig: sourceProject.clientConfig,
+            servers: serializedServers,
+            organizationId,
+          });
+          toast.success(`Project duplicated as "${newName}"`);
+        } catch (error) {
+          toast.error(
+            getBillingErrorMessage(
+              error,
+              "Failed to duplicate project",
+              canManageBillingForProjectActions,
+            ),
+          );
+        }
+      } else {
+        if (
+          isAuthenticated &&
+          (!hasResolvedProjectOrganizationSelection ||
+            projectOrganizationId === undefined)
+        ) {
+          toast.error("Create or join an organization to create projects.");
+          return;
+        }
+
+        const duplicatedProject: Project = {
+          ...sourceProject,
+          id: buildLocalProjectId(),
+          name: newName,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          isDefault: false,
+          organizationId: isAuthenticated
+            ? projectOrganizationId
+            : sourceProject.organizationId,
+        };
+        dispatch({ type: "CREATE_WORKSPACE", project: duplicatedProject });
+        toast.success(`Project duplicated as "${newName}"`);
+      }
+    },
+    [
+      effectiveProjects,
+      isAuthenticated,
+      useLocalFallback,
+      shouldTreatRemoteProjectsAsEmpty,
+      convexCreateProject,
+      dispatch,
+      projectOrganizationId,
+      hasResolvedProjectOrganizationSelection,
+      canManageBillingForProjectActions,
+    ],
+  );
+
+  const handleSetDefaultProject = useCallback(
+    (projectId: string) => {
+      dispatch({ type: "SET_DEFAULT_WORKSPACE", projectId });
+      toast.success("Default project updated");
+    },
+    [dispatch],
+  );
+
+  const handleProjectShared = useCallback(
+    (convexProjectId: string, sourceProjectId?: string) => {
+      const resolvedSourceProjectId =
+        sourceProjectId ?? appState.activeProjectId;
+      const shouldKeepActiveProject =
+        resolvedSourceProjectId === appState.activeProjectId;
+
+      if (isAuthenticated) {
+        if (appState.projects[resolvedSourceProjectId]) {
+          dispatch({
+            type: "UPDATE_WORKSPACE",
+            projectId: resolvedSourceProjectId,
+            updates: { sharedProjectId: convexProjectId },
+          });
+        }
+
+        if (shouldKeepActiveProject) {
+          setConvexActiveProjectId(convexProjectId);
+        }
+
+        logger.info("Project shared", {
+          convexProjectId,
+          sourceProjectId,
+          switchedActiveProject: shouldKeepActiveProject,
+        });
+      } else {
+        dispatch({
+          type: "UPDATE_WORKSPACE",
+          projectId: resolvedSourceProjectId,
+          updates: { sharedProjectId: convexProjectId },
+        });
+      }
+    },
+    [
+      isAuthenticated,
+      logger,
+      dispatch,
+      appState.activeProjectId,
+      appState.projects,
+    ],
+  );
+
+  const handleExportProject = useCallback(
+    (projectId: string) => {
+      const project = effectiveProjects[projectId];
+      if (!project) {
+        toast.error("Project not found");
+        return;
+      }
+
+      const dataStr = JSON.stringify(project, null, 2);
+      const dataBlob = new Blob([dataStr], { type: "application/json" });
+      const url = URL.createObjectURL(dataBlob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${project.name.replace(/\s+/g, "_")}_project.json`;
+      link.click();
+      URL.revokeObjectURL(url);
+      toast.success("Project exported");
+    },
+    [effectiveProjects],
+  );
+
+  const handleImportProject = useCallback(
+    async (projectData: Project) => {
+      if (isAuthenticated && !useLocalFallback) {
+        const organizationId = projectOrganizationId;
+        if (
+          shouldTreatRemoteProjectsAsEmpty ||
+          !hasResolvedProjectOrganizationSelection ||
+          organizationId === undefined
+        ) {
+          toast.error("Create or join an organization to create projects.");
+          return;
+        }
+        try {
+          const serializedServers = serializeServersForSharing(
+            projectData.servers || {},
+          );
+          await convexCreateProject({
+            name: projectData.name,
+            description: projectData.description,
+            clientConfig: projectData.clientConfig,
+            servers: serializedServers,
+            organizationId,
+          });
+          toast.success(`Project "${projectData.name}" imported`);
+        } catch (error) {
+          toast.error(
+            getBillingErrorMessage(
+              error,
+              "Failed to import project",
+              canManageBillingForProjectActions,
+            ),
+          );
+        }
+      } else {
+        if (
+          isAuthenticated &&
+          (!hasResolvedProjectOrganizationSelection ||
+            projectOrganizationId === undefined)
+        ) {
+          toast.error("Create or join an organization to create projects.");
+          return;
+        }
+        const importedProject: Project = {
+          ...projectData,
+          id: buildLocalProjectId(),
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          isDefault: false,
+          organizationId: isAuthenticated
+            ? projectOrganizationId
+            : projectData.organizationId,
+        };
+        dispatch({ type: "IMPORT_WORKSPACE", project: importedProject });
+        toast.success(`Project "${importedProject.name}" imported`);
+      }
+    },
+    [
+      isAuthenticated,
+      useLocalFallback,
+      shouldTreatRemoteProjectsAsEmpty,
+      convexCreateProject,
+      dispatch,
+      projectOrganizationId,
+      hasResolvedProjectOrganizationSelection,
+      canManageBillingForProjectActions,
+    ],
+  );
+
+  return {
+    remoteProjects,
+    isLoadingProjects,
+    activeProjectServersFlat,
+    useLocalFallback,
+    setConvexActiveProjectId,
+    clearConvexActiveProjectSelection,
+    isLoadingRemoteProjects,
+    effectiveProjects,
+    effectiveActiveProjectId,
+    handleCreateProject,
+    handleUpdateProject,
+    handleUpdateClientConfig,
+    handleUpdateHostContext,
+    handleDeleteProject,
+    handleDuplicateProject,
+    handleSetDefaultProject,
+    handleProjectShared,
+    handleExportProject,
+    handleImportProject,
+  };
+}

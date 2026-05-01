@@ -2,10 +2,10 @@ import { useConvexAuth } from "convex/react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { EditableText } from "./ui/editable-text";
 import { AccountApiKeySection } from "./setting/AccountApiKeySection";
-import { WorkspaceSlackIntegrationSection } from "./setting/WorkspaceSlackIntegrationSection";
-import { WorkspaceMembersFacepile } from "./workspace/WorkspaceMembersFacepile";
-import { WorkspaceShareButton } from "./workspace/WorkspaceShareButton";
-import { WorkspaceIconPicker } from "./workspace/WorkspaceEmojiPicker";
+import { ProjectSlackIntegrationSection } from "./setting/ProjectSlackIntegrationSection";
+import { ProjectMembersFacepile } from "./project/ProjectMembersFacepile";
+import { ProjectShareButton } from "./project/ProjectShareButton";
+import { ProjectIconPicker } from "./project/ProjectEmojiPicker";
 
 import { Button } from "@mcpjam/design-system/button";
 import {
@@ -19,94 +19,94 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@mcpjam/design-system/alert-dialog";
-import type { Workspace } from "@/state/app-types";
+import type { Project } from "@/state/app-types";
 import type { ServerWithName } from "@/hooks/use-app-state";
-import { useWorkspaceMembers } from "@/hooks/useWorkspaces";
+import { useProjectMembers } from "@/hooks/useProjects";
 
-interface WorkspaceSettingsTabProps {
-  activeWorkspaceId: string;
-  workspace: Workspace | undefined;
-  convexWorkspaceId: string | null;
-  workspaceServers: Record<string, ServerWithName>;
+interface ProjectSettingsTabProps {
+  activeProjectId: string;
+  project: Project | undefined;
+  convexProjectId: string | null;
+  projectServers: Record<string, ServerWithName>;
   organizationName?: string;
-  onUpdateWorkspace: (
-    workspaceId: string,
-    updates: Partial<Workspace>,
+  onUpdateProject: (
+    projectId: string,
+    updates: Partial<Project>,
   ) => Promise<void>;
-  onDeleteWorkspace: (workspaceId: string) => Promise<boolean>;
-  onWorkspaceShared: (
-    sharedWorkspaceId: string,
-    sourceWorkspaceId?: string,
+  onDeleteProject: (projectId: string) => Promise<boolean>;
+  onProjectShared: (
+    sharedProjectId: string,
+    sourceProjectId?: string,
   ) => void;
   onNavigateAway: () => void;
 }
 
-export function WorkspaceSettingsTab({
-  activeWorkspaceId,
-  workspace,
-  convexWorkspaceId,
-  workspaceServers,
+export function ProjectSettingsTab({
+  activeProjectId,
+  project,
+  convexProjectId,
+  projectServers,
   organizationName,
-  onUpdateWorkspace,
-  onDeleteWorkspace,
-  onWorkspaceShared,
+  onUpdateProject,
+  onDeleteProject,
+  onProjectShared,
   onNavigateAway,
-}: WorkspaceSettingsTabProps) {
+}: ProjectSettingsTabProps) {
   const { isAuthenticated } = useConvexAuth();
   const { user } = useAuth();
-  const { activeMembers, canManageMembers } = useWorkspaceMembers({
+  const { activeMembers, canManageMembers } = useProjectMembers({
     isAuthenticated,
-    workspaceId: convexWorkspaceId,
+    projectId: convexProjectId,
   });
 
-  const workspaceName = workspace?.name ?? "";
-  const workspaceDescription = workspace?.description ?? "";
-  const isDefault = workspace?.isDefault ?? false;
+  const projectName = project?.name ?? "";
+  const projectDescription = project?.description ?? "";
+  const isDefault = project?.isDefault ?? false;
   const currentMember = activeMembers.find(
     (member) => member.email.toLowerCase() === user?.email?.toLowerCase(),
   );
-  const canManageWorkspaceSettings =
-    !isAuthenticated || !convexWorkspaceId ? true : canManageMembers;
-  const canDeleteWorkspace =
-    workspace?.canDeleteWorkspace ??
-    (!isAuthenticated || !convexWorkspaceId
+  const canManageProjectSettings =
+    !isAuthenticated || !convexProjectId ? true : canManageMembers;
+  const canDeleteProject =
+    project?.canDeleteProject ??
+    (!isAuthenticated || !convexProjectId
       ? true
       : currentMember?.role === "owner" ||
         currentMember?.role === "admin" ||
-        currentMember?.workspaceRole === "admin");
+        currentMember?.projectRole === "admin");
 
   return (
     <div className="h-full overflow-y-auto">
       <div className="p-8 max-w-4xl space-y-8">
         {/* Hero — Asana-style header */}
         <div className="flex items-start gap-6">
-          <WorkspaceIconPicker
-            currentIcon={workspace?.icon}
-            workspaceName={workspaceName}
+          <ProjectIconPicker
+            currentIcon={project?.icon}
+            projectName={projectName}
             onSelect={(iconName) =>
-              onUpdateWorkspace(activeWorkspaceId, { icon: iconName })
+              onUpdateProject(activeProjectId, { icon: iconName })
             }
-            onRemove={() => onUpdateWorkspace(activeWorkspaceId, { icon: "" })}
+            onRemove={() => onUpdateProject(activeProjectId, { icon: "" })}
             size="lg"
           />
           <div className="flex flex-1 flex-col items-stretch gap-1 pt-2">
             <EditableText
-              value={workspaceName}
+              value={projectName}
               onSave={(newName) =>
-                onUpdateWorkspace(activeWorkspaceId, { name: newName })
+                onUpdateProject(activeProjectId, { name: newName })
               }
-              disabled={!canManageWorkspaceSettings}
+              disabled={!canManageProjectSettings}
               className="w-full text-3xl font-semibold -ml-2"
-              placeholder="Workspace name"
+              placeholder="Project name"
             />
             <EditableText
-              value={workspaceDescription}
+              value={projectDescription}
               onSave={(newDesc) =>
-                onUpdateWorkspace(activeWorkspaceId, {
+                onUpdateProject(activeProjectId, {
                   description: newDesc,
                 })
               }
-              disabled={!canManageWorkspaceSettings}
+              disabled={!canManageProjectSettings}
               className="w-full text-muted-foreground -ml-2"
               placeholder="Add a description..."
             />
@@ -121,25 +121,25 @@ export function WorkspaceSettingsTab({
             </h2>
             <div className="flex items-center gap-2 px-4 py-3 rounded-md border border-border/40">
               {user && (
-                <WorkspaceMembersFacepile
-                  workspaceName={workspaceName}
-                  workspaceServers={workspaceServers}
+                <ProjectMembersFacepile
+                  projectName={projectName}
+                  projectServers={projectServers}
                   currentUser={user}
-                  sharedWorkspaceId={workspace?.sharedWorkspaceId}
-                  organizationId={workspace?.organizationId}
-                  visibility={workspace?.visibility}
+                  sharedProjectId={project?.sharedProjectId}
+                  organizationId={project?.organizationId}
+                  visibility={project?.visibility}
                   organizationName={organizationName}
-                  onWorkspaceShared={onWorkspaceShared}
+                  onProjectShared={onProjectShared}
                 />
               )}
-              <WorkspaceShareButton
-                workspaceName={workspaceName}
-                workspaceServers={workspaceServers}
-                sharedWorkspaceId={workspace?.sharedWorkspaceId}
-                organizationId={workspace?.organizationId}
-                visibility={workspace?.visibility}
+              <ProjectShareButton
+                projectName={projectName}
+                projectServers={projectServers}
+                sharedProjectId={project?.sharedProjectId}
+                organizationId={project?.organizationId}
+                visibility={project?.visibility}
                 organizationName={organizationName}
-                onWorkspaceShared={onWorkspaceShared}
+                onProjectShared={onProjectShared}
               />
             </div>
           </div>
@@ -149,8 +149,8 @@ export function WorkspaceSettingsTab({
         <div className="space-y-2">
           <h2 className="text-sm font-medium text-muted-foreground">API Key</h2>
           <AccountApiKeySection
-            workspaceId={convexWorkspaceId}
-            workspaceName={workspaceName || null}
+            projectId={convexProjectId}
+            projectName={projectName || null}
           />
         </div>
 
@@ -159,10 +159,10 @@ export function WorkspaceSettingsTab({
           <h2 className="text-sm font-medium text-muted-foreground">
             Integrations
           </h2>
-          <WorkspaceSlackIntegrationSection
-            workspaceId={convexWorkspaceId}
-            workspaceName={workspaceName || null}
-            organizationId={workspace?.organizationId}
+          <ProjectSlackIntegrationSection
+            projectId={convexProjectId}
+            projectName={projectName || null}
+            organizationId={project?.organizationId}
             canManageIntegration={canManageMembers}
           />
         </div>
@@ -174,13 +174,13 @@ export function WorkspaceSettingsTab({
           </h2>
           <div className="flex items-center justify-between px-4 py-3 rounded-md border border-destructive/30">
             <div className="flex flex-col">
-              <span className="text-sm font-medium">Delete workspace</span>
+              <span className="text-sm font-medium">Delete project</span>
               <span className="text-xs text-muted-foreground">
                 {isDefault
-                  ? "Switch to another workspace first"
-                  : !canDeleteWorkspace
-                    ? "Only workspace admins can delete this workspace"
-                    : "Permanently delete this workspace and all its data"}
+                  ? "Switch to another project first"
+                  : !canDeleteProject
+                    ? "Only project admins can delete this project"
+                    : "Permanently delete this project and all its data"}
               </span>
             </div>
             <AlertDialog>
@@ -188,16 +188,16 @@ export function WorkspaceSettingsTab({
                 <Button
                   variant="destructive"
                   size="sm"
-                  disabled={isDefault || !canDeleteWorkspace}
+                  disabled={isDefault || !canDeleteProject}
                 >
                   Delete
                 </Button>
               </AlertDialogTrigger>
               <AlertDialogContent>
                 <AlertDialogHeader>
-                  <AlertDialogTitle>Delete workspace?</AlertDialogTitle>
+                  <AlertDialogTitle>Delete project?</AlertDialogTitle>
                   <AlertDialogDescription>
-                    This will permanently delete &ldquo;{workspaceName}
+                    This will permanently delete &ldquo;{projectName}
                     &rdquo; and all its servers. This action cannot be undone.
                   </AlertDialogDescription>
                 </AlertDialogHeader>
@@ -206,7 +206,7 @@ export function WorkspaceSettingsTab({
                   <AlertDialogAction
                     onClick={async () => {
                       const success =
-                        await onDeleteWorkspace(activeWorkspaceId);
+                        await onDeleteProject(activeProjectId);
                       if (success) {
                         onNavigateAway();
                       }

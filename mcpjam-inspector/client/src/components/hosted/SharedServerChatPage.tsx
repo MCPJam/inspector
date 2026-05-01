@@ -142,7 +142,7 @@ export function SharedServerChatPage({
     surface: "shared",
     pendingKey: SHARED_OAUTH_PENDING_KEY,
     servers: oauthServers,
-    workspaceId: session?.payload.workspaceId ?? null,
+    projectId: session?.payload.projectId ?? null,
     shareToken: session?.token,
     isAuthenticated,
   });
@@ -156,7 +156,7 @@ export function SharedServerChatPage({
   }, [session, oauthStateByServerId]);
 
   useHostedApiContext({
-    workspaceId: session?.payload.workspaceId ?? null,
+    projectId: session?.payload.projectId ?? null,
     serverIdsByName: hostedServerIdsByName,
     getAccessToken,
     oauthTokensByServerId: oauthTokensForChat,
@@ -298,7 +298,7 @@ export function SharedServerChatPage({
           console.error(
             "[SharedServerChatPage] OAuth requirement check failed",
             {
-              workspaceId: session.payload.workspaceId,
+              projectId: session.payload.projectId,
               serverId: session.payload.serverId,
               error,
             },
@@ -483,7 +483,7 @@ export function SharedServerChatPage({
           connectedOrConnectingServerConfigs={sharedServerConfigs}
           selectedServerNames={[selectedServerName]}
           minimalMode
-          hostedWorkspaceIdOverride={session.payload.workspaceId}
+          hostedProjectIdOverride={session.payload.projectId}
           hostedSelectedServerIdsOverride={[session.payload.serverId]}
           hostedOAuthTokensOverride={oauthTokensForChat}
           hostedContext={{ shareToken: session.token }}

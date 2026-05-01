@@ -93,7 +93,7 @@ describe("web servers/doctor", () => {
           JSON.stringify({
             authorized: true,
             role: "member",
-            accessLevel: "workspace_member",
+            accessLevel: "project_member",
             permissions: { chatOnly: false },
             serverConfig: {
               transportType: "http",
@@ -134,7 +134,7 @@ describe("web servers/doctor", () => {
       app,
       "/api/web/servers/doctor",
       {
-        workspaceId: "workspace-1",
+        projectId: "project-1",
         serverId: "srv-1",
         serverName: "Example",
         oauthAccessToken: "oauth-token",
@@ -161,7 +161,7 @@ describe("web servers/doctor", () => {
         }),
         target: expect.objectContaining({
           scope: "hosted",
-          workspaceId: "workspace-1",
+          projectId: "project-1",
           serverId: "srv-1",
           label: "Example",
           url: "https://server.example.com/mcp",
@@ -177,7 +177,7 @@ describe("web servers/doctor", () => {
           JSON.stringify({
             authorized: true,
             role: "member",
-            accessLevel: "workspace_member",
+            accessLevel: "project_member",
             oauthAccessToken: "durable-token",
             permissions: { chatOnly: false },
             serverConfig: {
@@ -208,7 +208,7 @@ describe("web servers/doctor", () => {
       app,
       "/api/web/servers/doctor",
       {
-        workspaceId: "workspace-1",
+        projectId: "project-1",
         serverId: "srv-1",
         serverName: "Example",
       },

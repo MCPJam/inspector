@@ -1,7 +1,7 @@
 /**
  * Marketing compare-plans table: product rows mirror `mcpjam_pricing_page.html`;
- * tier caps and org/workspace limits follow the internal tier-limits spec (workspaces,
- * members, servers, audit retention, workspace modes, SSO, custom roles).
+ * tier caps and org/project limits follow the internal tier-limits spec (projects,
+ * members, servers, audit retention, project modes, SSO, custom roles).
  */
 
 export type ComparePlanCell =
@@ -30,10 +30,10 @@ function t(text: string, emphasize?: boolean): ComparePlanCell {
   return { kind: "text", text, emphasize };
 }
 
-/** Section order: organization & workspaces, standard features, evaluations, chatboxes, LLM usage, security, platform, support. */
+/** Section order: organization & projects, standard features, evaluations, chatboxes, LLM usage, security, platform, support. */
 export const COMPARE_PLAN_MARKETING_SECTIONS: ComparePlanSection[] = [
   {
-    title: "Organization & workspaces",
+    title: "Organization & projects",
     rows: [
       {
         label: "Seat limit",
@@ -43,21 +43,21 @@ export const COMPARE_PLAN_MARKETING_SECTIONS: ComparePlanSection[] = [
         enterprise: t("Custom", true),
       },
       {
-        label: "Workspaces",
+        label: "Projects",
         free: t("1"),
         starter: t("2"),
         team: t("10", true),
         enterprise: t("Custom", true),
       },
       {
-        label: "Workspace access levels",
+        label: "Project access levels",
         free: x,
         starter: c,
         team: c,
         enterprise: c,
       },
       {
-        label: "Servers per workspace",
+        label: "Servers per project",
         free: t("3"),
         starter: t("5"),
         team: t("Unlimited", true),

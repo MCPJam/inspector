@@ -771,7 +771,7 @@ export interface ServerFormData {
   /** True for registry servers that use backend-managed preregistered OAuth credentials */
   useRegistryOAuthProxy?: boolean;
   requestTimeout?: number;
-  /** Convex _id of the registry server for workspace/registry bookkeeping */
+  /** Convex _id of the registry server for project/registry bookkeeping */
   registryServerId?: string;
 }
 

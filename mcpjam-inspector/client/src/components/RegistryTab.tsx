@@ -46,7 +46,7 @@ import {
 const REGISTRY_PENDING_OAUTH_STALE_MS = 45 * 60 * 1000;
 
 interface RegistryTabProps {
-  workspaceId: string | null;
+  projectId: string | null;
   isAuthenticated: boolean;
   onConnect: (formData: ServerFormData) => void;
   onDisconnect?: (serverName: string) => void;
@@ -55,7 +55,7 @@ interface RegistryTabProps {
 }
 
 export function RegistryTab({
-  workspaceId,
+  projectId,
   isAuthenticated,
   onConnect,
   onDisconnect,
@@ -70,7 +70,7 @@ export function RegistryTab({
 
   const { catalogCards, isLoading, connect, disconnect, toggleStar } =
     useRegistryServers({
-      workspaceId,
+      projectId,
       isAuthenticated,
       liveServers: servers,
       onConnect,
@@ -387,7 +387,7 @@ function DualTypeAction({
             size="sm"
             className="h-7 text-xs"
             onClick={() => onConnect(activeVariant)}
-            title="Server is in your workspace — click to connect"
+            title="Server is in your project — click to connect"
           >
             Connect
           </Button>
@@ -534,7 +534,7 @@ function TopRightAction({
             size="sm"
             className="h-7 text-xs"
             onClick={onConnect}
-            title="Server is in your workspace — click to connect"
+            title="Server is in your project — click to connect"
           >
             Connect
           </Button>

@@ -2,16 +2,17 @@ import {
   AppState,
   initialAppState,
   ServerWithName,
-  Workspace,
+  Project,
 } from "./app-types";
-import { isWorkspaceClientConfig } from "@/lib/client-config";
+import { isProjectClientConfig } from "@/lib/client-config";
 import { clearPersistedOAuthTraces } from "@/lib/oauth/oauth-trace";
 
 const STORAGE_KEY = "mcp-inspector-state";
-const WORKSPACES_STORAGE_KEY = "mcp-inspector-workspaces";
+const PROJECTS_STORAGE_KEY = "mcp-inspector-projects";
+const LEGACY_WORKSPACES_STORAGE_KEY = "mcp-inspector-workspaces";
 
 function omitLiveOAuthTrace<T extends { lastOAuthTrace?: unknown }>(
-  server: T,
+  server: T
 ): Omit<T, "lastOAuthTrace"> {
   const persistedServer = { ...server };
   delete persistedServer.lastOAuthTrace;
@@ -58,43 +59,55 @@ export function loadAppState(): AppState {
   try {
     clearPersistedOAuthTraces();
     const raw = localStorage.getItem(STORAGE_KEY);
-    const workspacesRaw = localStorage.getItem(WORKSPACES_STORAGE_KEY);
+    const currentProjectsRaw = localStorage.getItem(PROJECTS_STORAGE_KEY);
+    const legacyWorkspacesRaw = localStorage.getItem(
+      LEGACY_WORKSPACES_STORAGE_KEY
+    );
+    const projectsRaw = currentProjectsRaw ?? legacyWorkspacesRaw;
 
-    // Load workspaces
-    let workspaces: Record<string, Workspace> = {};
-    let activeWorkspaceId = "default";
+    // Load projects
+    let projects: Record<string, Project> = {};
+    let activeProjectId = "default";
 
-    if (workspacesRaw) {
+    if (projectsRaw) {
       try {
-        const parsedWorkspaces = JSON.parse(workspacesRaw);
-        workspaces = Object.fromEntries(
-          Object.entries(parsedWorkspaces.workspaces || {}).map(
-            ([id, workspace]: [string, any]) => [
-              id,
-              {
-                ...workspace,
-                clientConfig: isWorkspaceClientConfig(workspace.clientConfig)
-                  ? workspace.clientConfig
-                  : undefined,
-                servers: Object.fromEntries(
-                  Object.entries(workspace.servers || {}).map(
-                    ([name, server]) => [name, reviveServer(name, server)],
-                  ),
-                ),
-                createdAt: new Date(workspace.createdAt),
-                updatedAt: new Date(workspace.updatedAt),
-              },
-            ],
-          ),
+        const parsedProjects = JSON.parse(projectsRaw);
+        const rawProjects =
+          parsedProjects.projects ?? parsedProjects.workspaces ?? {};
+        projects = Object.fromEntries(
+          Object.entries(rawProjects).map(([id, project]: [string, any]) => [
+            id,
+            {
+              ...project,
+              canDeleteProject:
+                project.canDeleteProject ?? project.canDeleteWorkspace,
+              sharedProjectId:
+                project.sharedProjectId ?? project.sharedWorkspaceId,
+              clientConfig: isProjectClientConfig(project.clientConfig)
+                ? project.clientConfig
+                : undefined,
+              servers: Object.fromEntries(
+                Object.entries(project.servers || {}).map(([name, server]) => [
+                  name,
+                  reviveServer(name, server),
+                ])
+              ),
+              createdAt: new Date(project.createdAt),
+              updatedAt: new Date(project.updatedAt),
+            },
+          ])
         );
-        activeWorkspaceId = parsedWorkspaces.activeWorkspaceId || "default";
+        activeProjectId =
+          parsedProjects.activeProjectId ??
+          parsedProjects.activeWorkspaceId ??
+          "default";
       } catch (e) {
-        console.error("Failed to parse workspaces from storage", e);
+        console.error("Failed to parse projects from storage", e);
       }
     }
 
-    // If no workspaces exist or default is missing, create it
-    if (Object.keys(workspaces).length === 0 || !workspaces.default) {
+    // If no projects exist or default is missing, create it
+    if (Object.keys(projects).length === 0 || !projects.default) {
       // Try to migrate from old storage format
       let migratedServers: Record<string, ServerWithName> = {};
       if (raw) {
@@ -104,34 +117,34 @@ export function loadAppState(): AppState {
             Object.entries(parsed.servers || {}).map(([name, server]) => [
               name,
               reviveServer(name, server),
-            ]),
+            ])
           );
         } catch (e) {
           console.error("Failed to migrate old state", e);
         }
       }
 
-      workspaces = {
+      projects = {
         default: {
           id: "default",
           name: "Default",
-          description: "Default workspace",
+          description: "Default project",
           servers: migratedServers,
           createdAt: new Date(),
           updatedAt: new Date(),
           isDefault: true,
         },
       };
-      activeWorkspaceId = "default";
+      activeProjectId = "default";
     }
 
-    const activeWorkspace = workspaces[activeWorkspaceId];
+    const activeProject = projects[activeProjectId];
     const parsed = raw ? JSON.parse(raw) : {};
 
     return {
-      workspaces,
-      activeWorkspaceId,
-      servers: activeWorkspace?.servers || {},
+      projects,
+      activeProjectId,
+      servers: activeProject?.servers || {},
       selectedServer: parsed.selectedServer || "none",
       selectedMultipleServers: parsed.selectedMultipleServers || [],
       isMultiSelectMode: parsed.isMultiSelectMode || false,
@@ -144,29 +157,26 @@ export function loadAppState(): AppState {
 
 export function saveAppState(state: AppState) {
   try {
-    // Save workspaces separately
-    const workspacesData = {
-      activeWorkspaceId: state.activeWorkspaceId,
-      workspaces: Object.fromEntries(
-        Object.entries(state.workspaces).map(([id, workspace]) => [
+    // Save projects separately
+    const projectsData = {
+      activeProjectId: state.activeProjectId,
+      projects: Object.fromEntries(
+        Object.entries(state.projects).map(([id, project]) => [
           id,
           {
-            ...workspace,
+            ...project,
             servers: Object.fromEntries(
-              Object.entries(workspace.servers).map(([name, server]) => {
+              Object.entries(project.servers).map(([name, server]) => {
                 return [name, serializeServerForStorage(server)];
-              }),
+              })
             ),
           },
-        ]),
+        ])
       ),
     };
-    localStorage.setItem(
-      WORKSPACES_STORAGE_KEY,
-      JSON.stringify(workspacesData),
-    );
+    localStorage.setItem(PROJECTS_STORAGE_KEY, JSON.stringify(projectsData));
 
-    // Save the rest of state (for backward compatibility and non-workspace data)
+    // Save the rest of state (for backward compatibility and non-project data)
     const serializable = {
       selectedServer: state.selectedServer,
       selectedMultipleServers: state.selectedMultipleServers,
@@ -174,7 +184,7 @@ export function saveAppState(state: AppState) {
       servers: Object.fromEntries(
         Object.entries(state.servers).map(([name, server]) => {
           return [name, serializeServerForStorage(server)];
-        }),
+        })
       ),
     };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(serializable));

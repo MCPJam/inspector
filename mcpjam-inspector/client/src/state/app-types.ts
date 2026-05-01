@@ -1,7 +1,7 @@
 import type { MCPServerConfig } from "@mcpjam/sdk/browser";
 import { OauthTokens } from "@/shared/types.js";
 import type { OAuthTestProfile } from "@/lib/oauth/profile";
-import type { WorkspaceClientConfig } from "@/lib/client-config";
+import type { ProjectClientConfig } from "@/lib/client-config";
 import type { OAuthTrace } from "@/lib/oauth/oauth-trace";
 
 export type ConnectionStatus =
@@ -11,7 +11,7 @@ export type ConnectionStatus =
   | "disconnected"
   | "oauth-flow";
 
-export type WorkspaceVisibility = "public" | "private";
+export type ProjectVisibility = "public" | "private";
 
 export interface InitializationInfo {
   protocolVersion?: string;
@@ -48,25 +48,25 @@ export interface ServerWithName {
   useOAuth?: boolean;
 }
 
-export interface Workspace {
+export interface Project {
   id: string;
   name: string;
   description?: string;
   icon?: string;
-  clientConfig?: WorkspaceClientConfig;
+  clientConfig?: ProjectClientConfig;
   servers: Record<string, ServerWithName>;
   createdAt: Date;
   updatedAt: Date;
-  canDeleteWorkspace?: boolean;
+  canDeleteProject?: boolean;
   isDefault?: boolean;
-  sharedWorkspaceId?: string;
+  sharedProjectId?: string;
   organizationId?: string;
-  visibility?: WorkspaceVisibility;
+  visibility?: ProjectVisibility;
 }
 
 export interface AppState {
-  workspaces: Record<string, Workspace>;
-  activeWorkspaceId: string;
+  projects: Record<string, Project>;
+  activeProjectId: string;
   servers: Record<string, ServerWithName>;
   selectedServer: string;
   selectedMultipleServers: string[];
@@ -124,31 +124,31 @@ export type AppAction =
       name: string;
       oauthTrace?: OAuthTrace;
     }
-  | { type: "CREATE_WORKSPACE"; workspace: Workspace }
+  | { type: "CREATE_WORKSPACE"; project: Project }
   | {
       type: "UPDATE_WORKSPACE";
-      workspaceId: string;
-      updates: Partial<Workspace>;
+      projectId: string;
+      updates: Partial<Project>;
     }
-  | { type: "DELETE_WORKSPACE"; workspaceId: string }
-  | { type: "SWITCH_WORKSPACE"; workspaceId: string }
-  | { type: "SET_DEFAULT_WORKSPACE"; workspaceId: string }
-  | { type: "IMPORT_WORKSPACE"; workspace: Workspace }
-  | { type: "DUPLICATE_WORKSPACE"; workspaceId: string; newName: string };
+  | { type: "DELETE_WORKSPACE"; projectId: string }
+  | { type: "SWITCH_WORKSPACE"; projectId: string }
+  | { type: "SET_DEFAULT_WORKSPACE"; projectId: string }
+  | { type: "IMPORT_WORKSPACE"; project: Project }
+  | { type: "DUPLICATE_WORKSPACE"; projectId: string; newName: string };
 
 export const initialAppState: AppState = {
-  workspaces: {
+  projects: {
     default: {
       id: "default",
       name: "Default",
-      description: "Default workspace",
+      description: "Default project",
       servers: {},
       createdAt: new Date(),
       updatedAt: new Date(),
       isDefault: true,
     },
   },
-  activeWorkspaceId: "default",
+  activeProjectId: "default",
   servers: {},
   selectedServer: "none",
   selectedMultipleServers: [],

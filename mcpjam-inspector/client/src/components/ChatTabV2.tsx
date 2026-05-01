@@ -82,7 +82,7 @@ import {
   type ChatHistoryTurnTrace,
   type ChatHistoryWidgetSnapshot,
 } from "@/lib/apis/web/chat-history-api";
-import { useWorkspaceServers } from "@/hooks/useViews";
+import { useProjectServers } from "@/hooks/useViews";
 import { HOSTED_MODE } from "@/lib/config";
 import { buildOAuthTokensByServerId } from "@/lib/oauth/oauth-tokens";
 import type { OrgModelProvider } from "@/hooks/use-org-model-config";
@@ -112,7 +112,7 @@ import type { ChatboxHostStyle } from "@/lib/chatbox-host-style";
 interface ChatTabProps {
   connectedOrConnectingServerConfigs: Record<string, ServerWithName>;
   selectedServerNames: string[];
-  /** All workspace servers (for the "+" dropdown server toggles). */
+  /** All project servers (for the "+" dropdown server toggles). */
   allServerConfigs?: Record<string, ServerWithName>;
   /** Toggle a server on/off for multi-select. */
   onServerToggle?: (serverName: string) => void;
@@ -124,7 +124,7 @@ interface ChatTabProps {
   onHasMessagesChange?: (hasMessages: boolean) => void;
   enableMultiModelChat?: boolean;
   minimalMode?: boolean;
-  hostedWorkspaceIdOverride?: string;
+  hostedProjectIdOverride?: string;
   hostedSelectedServerIdsOverride?: string[];
   hostedOAuthTokensOverride?: Record<string, string>;
   hostedContext?: HostedRuntimeContext;
@@ -163,7 +163,7 @@ export function ChatTabV2({
   onHasMessagesChange,
   enableMultiModelChat = false,
   minimalMode = false,
-  hostedWorkspaceIdOverride,
+  hostedProjectIdOverride,
   hostedSelectedServerIdsOverride,
   hostedOAuthTokensOverride,
   hostedContext,
@@ -245,7 +245,7 @@ export function ChatTabV2({
     string | null
   >(null);
   const [pendingDirectVisibility, setPendingDirectVisibility] = useState<
-    "private" | "workspace"
+    "private" | "project"
   >("private");
   const historyRefreshSignal = 0;
 
@@ -290,18 +290,18 @@ export function ChatTabV2({
       ),
     [selectedServerNames, connectedOrConnectingServerConfigs]
   );
-  const activeWorkspace = appState.workspaces[appState.activeWorkspaceId];
-  const convexWorkspaceId = activeWorkspace?.sharedWorkspaceId ?? null;
-  const organizationId = activeWorkspace?.organizationId ?? null;
+  const activeProject = appState.projects[appState.activeProjectId];
+  const convexProjectId = activeProject?.sharedProjectId ?? null;
+  const organizationId = activeProject?.organizationId ?? null;
   const hostedOrgModelConfig = useQuery(
     "organizationModelProviders:getVisibleConfig" as any,
     HOSTED_MODE && isConvexAuthenticated && organizationId
       ? ({ organizationId } as any)
       : "skip",
   ) as { providers: OrgModelProvider[] } | undefined;
-  const { serversById, serversByName } = useWorkspaceServers({
+  const { serversById, serversByName } = useProjectServers({
     isAuthenticated: isConvexAuthenticated,
-    workspaceId: convexWorkspaceId,
+    projectId: convexProjectId,
   });
   const hostedSelectedServerIds = useMemo(
     () =>
@@ -322,8 +322,8 @@ export function ChatTabV2({
   const hostedShareToken = hostedContext?.shareToken;
   const hostedChatboxToken = hostedContext?.chatboxToken;
   const hostedChatboxSurface = hostedContext?.chatboxSurface;
-  const effectiveHostedWorkspaceId =
-    hostedWorkspaceIdOverride ?? convexWorkspaceId;
+  const effectiveHostedProjectId =
+    hostedProjectIdOverride ?? convexProjectId;
   const effectiveHostedSelectedServerIds =
     hostedSelectedServerIdsOverride ?? hostedSelectedServerIds;
   const effectiveHostedOAuthTokens = hostedChatboxToken
@@ -332,7 +332,7 @@ export function ChatTabV2({
   const isHostedDirectGuest =
     HOSTED_MODE &&
     !isConvexAuthenticated &&
-    !effectiveHostedWorkspaceId &&
+    !effectiveHostedProjectId &&
     !hostedShareToken &&
     !hostedChatboxToken;
 
@@ -388,7 +388,7 @@ export function ChatTabV2({
     hostedOrgModelConfig,
     hostedContext: {
       ...hostedContext,
-      workspaceId: effectiveHostedWorkspaceId,
+      projectId: effectiveHostedProjectId,
       selectedServerIds: effectiveHostedSelectedServerIds,
       oauthTokens: effectiveHostedOAuthTokens,
     },
@@ -424,7 +424,7 @@ export function ChatTabV2({
     widgetSnapshots: reactiveHistoryWidgetSnapshots,
   } = useDirectChatSessionSubscription({
     sessionId: activeHistorySessionId,
-    workspaceId: effectiveHostedWorkspaceId,
+    projectId: effectiveHostedProjectId,
     enabled:
       showHistoryRail &&
       isConvexAuthenticated &&
@@ -644,7 +644,7 @@ export function ChatTabV2({
           const detail = await getChatHistoryDetail({
             sessionId: activeHistorySessionId ?? undefined,
             chatSessionId,
-            workspaceId: effectiveHostedWorkspaceId ?? undefined,
+            projectId: effectiveHostedProjectId ?? undefined,
           });
           setActiveHistorySessionId(detail.session._id);
           syncResumedVersion(detail.session.version);
@@ -672,7 +672,7 @@ export function ChatTabV2({
     [
       activeHistorySessionId,
       chatSessionId,
-      effectiveHostedWorkspaceId,
+      effectiveHostedProjectId,
       hasConversationMessages,
       markHistorySessionRead,
       showHistoryRail,
@@ -830,7 +830,7 @@ export function ChatTabV2({
         const detail = await getChatHistoryDetail({
           sessionId: session._id,
           chatSessionId: session.chatSessionId,
-          workspaceId: effectiveHostedWorkspaceId ?? undefined,
+          projectId: effectiveHostedProjectId ?? undefined,
         });
 
         if (historySelectionRequestIdRef.current !== selectionRequestId) {
@@ -887,7 +887,7 @@ export function ChatTabV2({
       appState.servers,
       clearComposerDraft,
       ensureDiscardDraftConfirmed,
-      effectiveHostedWorkspaceId,
+      effectiveHostedProjectId,
       hasUnsavedDraft,
       isHostedDirectGuest,
       isStreaming,
@@ -912,7 +912,7 @@ export function ChatTabV2({
       cancelPendingHistorySelection();
       syncResumedVersion(null);
       baseResetChat();
-      setPendingDirectVisibility(options?.shared ? "workspace" : "private");
+      setPendingDirectVisibility(options?.shared ? "project" : "private");
     },
     [
       baseResetChat,
@@ -1953,7 +1953,7 @@ export function ChatTabV2({
                 isAuthenticated={isConvexAuthenticated}
                 isStreaming={historyRailStreaming}
                 sharedThreadsEnabled={sharedThreadsEnabled}
-                workspaceId={effectiveHostedWorkspaceId}
+                projectId={effectiveHostedProjectId}
                 enabled={isSessionBootstrapComplete}
                 refreshSignal={historyRefreshSignal}
                 onSelectThread={handleSelectThread}
@@ -2179,7 +2179,7 @@ export function ChatTabV2({
                           }}
                           hostedContext={{
                             ...hostedContext,
-                            workspaceId: effectiveHostedWorkspaceId,
+                            projectId: effectiveHostedProjectId,
                             selectedServerIds: effectiveHostedSelectedServerIds,
                             oauthTokens: effectiveHostedOAuthTokens,
                           }}

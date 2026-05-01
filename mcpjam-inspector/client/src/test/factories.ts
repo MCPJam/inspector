@@ -4,7 +4,7 @@
  */
 import type {
   ServerWithName,
-  Workspace,
+  Project,
   ConnectionStatus,
 } from "@/state/app-types";
 import type { MCPServerConfig } from "@mcpjam/sdk/browser";
@@ -98,13 +98,13 @@ export function createOAuthServer(
 }
 
 /**
- * Creates a Workspace object with sensible defaults
+ * Creates a Project object with sensible defaults
  */
-export function createWorkspace(overrides: Partial<Workspace> = {}): Workspace {
-  const id = overrides.id || uniqueId("workspace");
+export function createProject(overrides: Partial<Project> = {}): Project {
+  const id = overrides.id || uniqueId("project");
   return {
     id,
-    name: overrides.name || `Workspace ${id}`,
+    name: overrides.name || `Project ${id}`,
     description: "",
     servers: {},
     createdAt: new Date(),
@@ -115,18 +115,18 @@ export function createWorkspace(overrides: Partial<Workspace> = {}): Workspace {
 }
 
 /**
- * Creates a workspace with servers
+ * Creates a project with servers
  */
-export function createWorkspaceWithServers(
+export function createProjectWithServers(
   serverCount: number,
-  overrides: Partial<Workspace> = {},
-): Workspace {
+  overrides: Partial<Project> = {},
+): Project {
   const servers: Record<string, ServerWithName> = {};
   for (let i = 0; i < serverCount; i++) {
     const server = createServer();
     servers[server.name] = server;
   }
-  return createWorkspace({ servers, ...overrides });
+  return createProject({ servers, ...overrides });
 }
 
 /**

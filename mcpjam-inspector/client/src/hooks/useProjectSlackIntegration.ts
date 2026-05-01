@@ -1,41 +1,41 @@
 import { useAction, useQuery } from "convex/react";
 import { useCallback, useState } from "react";
 
-export type WorkspaceSlackTestStatus = "success" | "failure";
+export type ProjectSlackTestStatus = "success" | "failure";
 
-export interface WorkspaceSlackIntegrationStatus {
-  workspaceId: string;
+export interface ProjectSlackIntegrationStatus {
+  projectId: string;
   connected: boolean;
   lastTestedAt: number | null;
-  lastTestStatus: WorkspaceSlackTestStatus | null;
+  lastTestStatus: ProjectSlackTestStatus | null;
   lastTestError: string | null;
   updatedAt: number | null;
 }
 
-export function useWorkspaceSlackIntegration({
+export function useProjectSlackIntegration({
   isAuthenticated,
-  workspaceId,
+  projectId,
   canManageIntegration,
 }: {
   isAuthenticated: boolean;
-  workspaceId: string | null;
+  projectId: string | null;
   canManageIntegration: boolean;
 }) {
-  const shouldQuery = isAuthenticated && !!workspaceId && canManageIntegration;
+  const shouldQuery = isAuthenticated && !!projectId && canManageIntegration;
 
   const status = useQuery(
-    "workspaceSlackIntegrations:getStatus" as any,
-    shouldQuery ? ({ workspaceId } as any) : "skip",
-  ) as WorkspaceSlackIntegrationStatus | undefined;
+    "projectSlackIntegrations:getStatus" as any,
+    shouldQuery ? ({ projectId } as any) : "skip",
+  ) as ProjectSlackIntegrationStatus | undefined;
 
   const connectAction = useAction(
-    "workspaceSlackIntegrations:connectIncomingWebhook" as any,
+    "projectSlackIntegrations:connectIncomingWebhook" as any,
   );
   const sendTestAction = useAction(
-    "workspaceSlackIntegrations:sendTestMessage" as any,
+    "projectSlackIntegrations:sendTestMessage" as any,
   );
   const disconnectAction = useAction(
-    "workspaceSlackIntegrations:disconnect" as any,
+    "projectSlackIntegrations:disconnect" as any,
   );
 
   const [isConnecting, setIsConnecting] = useState(false);
@@ -45,17 +45,17 @@ export function useWorkspaceSlackIntegration({
 
   const connectWebhook = useCallback(
     async (webhookUrl: string) => {
-      if (!workspaceId) {
-        throw new Error("Workspace is required");
+      if (!projectId) {
+        throw new Error("Project is required");
       }
 
       setIsConnecting(true);
       setError(null);
       try {
         return (await connectAction({
-          workspaceId,
+          projectId,
           webhookUrl,
-        })) as WorkspaceSlackIntegrationStatus;
+        })) as ProjectSlackIntegrationStatus;
       } catch (err) {
         const message =
           err instanceof Error ? err.message : "Failed to connect Slack";
@@ -65,20 +65,20 @@ export function useWorkspaceSlackIntegration({
         setIsConnecting(false);
       }
     },
-    [connectAction, workspaceId],
+    [connectAction, projectId],
   );
 
   const sendTestMessage = useCallback(async () => {
-    if (!workspaceId) {
-      throw new Error("Workspace is required");
+    if (!projectId) {
+      throw new Error("Project is required");
     }
 
     setIsSendingTest(true);
     setError(null);
     try {
       return (await sendTestAction({
-        workspaceId,
-      })) as WorkspaceSlackIntegrationStatus;
+        projectId,
+      })) as ProjectSlackIntegrationStatus;
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "Failed to send Slack test";
@@ -87,19 +87,19 @@ export function useWorkspaceSlackIntegration({
     } finally {
       setIsSendingTest(false);
     }
-  }, [sendTestAction, workspaceId]);
+  }, [sendTestAction, projectId]);
 
   const disconnect = useCallback(async () => {
-    if (!workspaceId) {
-      throw new Error("Workspace is required");
+    if (!projectId) {
+      throw new Error("Project is required");
     }
 
     setIsDisconnecting(true);
     setError(null);
     try {
       return (await disconnectAction({
-        workspaceId,
-      })) as WorkspaceSlackIntegrationStatus;
+        projectId,
+      })) as ProjectSlackIntegrationStatus;
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "Failed to disconnect Slack";
@@ -108,7 +108,7 @@ export function useWorkspaceSlackIntegration({
     } finally {
       setIsDisconnecting(false);
     }
-  }, [disconnectAction, workspaceId]);
+  }, [disconnectAction, projectId]);
 
   return {
     status,

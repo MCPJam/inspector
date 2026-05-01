@@ -251,7 +251,7 @@ export function hashMatchesOrganizationBilling(
 export function resolveCheckoutOrganizationId(
   sortedOrganizations: readonly { _id: string }[],
   activeOrganizationId: string | undefined,
-  workspaceOrganizationId: string | undefined,
+  projectOrganizationId: string | undefined,
 ): string | null {
   if (sortedOrganizations.length === 0) {
     return null;
@@ -263,8 +263,8 @@ export function resolveCheckoutOrganizationId(
   if (activeOrganizationId && ids.has(activeOrganizationId)) {
     return activeOrganizationId;
   }
-  if (workspaceOrganizationId && ids.has(workspaceOrganizationId)) {
-    return workspaceOrganizationId;
+  if (projectOrganizationId && ids.has(projectOrganizationId)) {
+    return projectOrganizationId;
   }
   return sortedOrganizations[0]._id;
 }
