@@ -14,6 +14,10 @@ import {
 } from "./route-helpers.js";
 import { executeSuiteReplayFromRun } from "./replay-suite-run.js";
 import { sanitizeForConvexTransport } from "./convex-sanitize.js";
+import {
+  resolveOrgModelConfig,
+  type ResolvedOrgModelConfig,
+} from "../../utils/org-model-config.js";
 
 const LEASE_MS = 30_000;
 const HEARTBEAT_MS = 10_000;
@@ -256,6 +260,7 @@ export type TraceRepairRunnerParams = {
   convexAuthToken: string;
   jobId: string;
   modelApiKeys?: Record<string, string>;
+  orgModelConfig?: ResolvedOrgModelConfig;
 };
 
 export async function captureTraceRepairJobToolSnapshot(args: {
@@ -301,7 +306,38 @@ export async function runTraceRepairJob(
   params: TraceRepairRunnerParams,
 ): Promise<void> {
   const { convexClient, convexAuthToken, jobId } = params;
-  const modelApiKeys = params.modelApiKeys;
+  const modelApiKeys =
+    params.modelApiKeys && Object.keys(params.modelApiKeys).length > 0
+      ? params.modelApiKeys
+      : undefined;
+  let orgModelConfig = params.orgModelConfig;
+
+  // Resolve org model config if client-sent keys were not provided.
+  if (!modelApiKeys && !orgModelConfig) {
+    try {
+      const job = await convexClient.query(
+        "traceRepair:getTraceRepairJob" as any,
+        { jobId },
+      );
+      if (job?.workspaceId) {
+        const orgConfig = await resolveOrgModelConfig(
+          {
+            workspaceId: job.workspaceId,
+          },
+          {
+            bearerToken: convexAuthToken,
+          },
+        );
+        orgModelConfig = orgConfig;
+      }
+    } catch (error) {
+      logger.warn("[trace-repair] Failed to resolve org model config", {
+        jobId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
   const leaseOwner = crypto.randomUUID();
 
   await convexClient.mutation("traceRepair:claimTraceRepairJobLease" as any, {
@@ -662,6 +698,7 @@ export async function runTraceRepairJob(
                   provider: step.provider,
                   serverIds: replayServerIds,
                   modelApiKeys: mergedApiKeys,
+                  orgModelConfig,
                   convexAuthToken,
                   testCaseOverrides: {
                     query: step.query,
@@ -848,6 +885,7 @@ export async function runTraceRepairJob(
       convexAuthToken,
       sourceRunId: job.sourceRunId,
       modelApiKeys,
+      orgModelConfig,
       useCurrentSuiteConfig: true,
     });
 

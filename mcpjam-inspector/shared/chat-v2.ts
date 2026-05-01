@@ -28,7 +28,10 @@ export interface ChatV2Request {
   selectedServers?: string[];
   selectedServerNames?: string[];
   requireToolApproval?: boolean;
-  /** Workspace ID for direct-chat history persistence */
+  /**
+   * Workspace ID for direct-chat history persistence and, when set, the server
+   * resolves model-provider config from the org backing this workspace.
+   */
   workspaceId?: string;
   /** Version for optimistic concurrency on resumed threads */
   expectedVersion?: number;

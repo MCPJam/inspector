@@ -3,7 +3,7 @@ import {
   normalizeHostedHashTab,
 } from "./hosted-tab-policy";
 
-export type OrganizationRouteSection = "overview" | "billing";
+export type OrganizationRouteSection = "overview" | "billing" | "models";
 
 export interface HostedNavigationResolution {
   normalizedParts: string[];
@@ -66,7 +66,9 @@ export function getInvalidOrganizationRouteNavigationTarget({
 function normalizeOrganizationSection(
   section: string | undefined,
 ): OrganizationRouteSection {
-  return section === "billing" ? "billing" : "overview";
+  if (section === "billing") return "billing";
+  if (section === "models") return "models";
+  return "overview";
 }
 
 export function getNormalizedHashParts(hashValue: string): string[] {
@@ -78,9 +80,10 @@ export function getNormalizedHashParts(hashValue: string): string[] {
 
   if (hashParts[0] === "organizations" && hashParts[1]) {
     const section = normalizeOrganizationSection(hashParts[2]);
-    return section === "billing"
-      ? ["organizations", hashParts[1], "billing"]
-      : ["organizations", hashParts[1]];
+    if (section === "billing" || section === "models") {
+      return ["organizations", hashParts[1], section];
+    }
+    return ["organizations", hashParts[1]];
   }
 
   return hashParts;
