@@ -81,6 +81,7 @@ export interface StoredOAuthConfig {
   scopes?: string[];
   customHeaders?: Record<string, string>;
   resourceUrl?: string;
+  useDirectCallbackExchange?: boolean;
   registryServerId?: string;
   useRegistryOAuthProxy?: boolean;
   protocolMode?: OAuthProtocolMode;
@@ -986,6 +987,7 @@ export function readStoredOAuthConfig(
         parsed.resourceUrl.trim() !== ""
           ? parsed.resourceUrl
           : undefined,
+      useDirectCallbackExchange: parsed?.useDirectCallbackExchange === true,
       protocolMode:
         parsed?.protocolMode === "auto" ||
         parsed?.protocolMode === "2025-03-26" ||
@@ -1050,6 +1052,7 @@ export function buildStoredOAuthConfig(
     | "useRegistryOAuthProxy"
     | "customHeaders"
     | "resourceUrl"
+    | "useDirectCallbackExchange"
     | "protocolMode"
     | "protocolVersion"
     | "registrationMode"
@@ -1075,6 +1078,10 @@ export function buildStoredOAuthConfig(
 
   if (options.resourceUrl?.trim()) {
     config.resourceUrl = options.resourceUrl.trim();
+  }
+
+  if (options.useDirectCallbackExchange === true) {
+    config.useDirectCallbackExchange = true;
   }
 
   return config;
@@ -1442,6 +1449,8 @@ export interface MCPOAuthOptions {
   scopes?: string[];
   customHeaders?: Record<string, string>;
   resourceUrl?: string;
+  /** Complete callback with token exchange only instead of resuming the debug state machine. */
+  useDirectCallbackExchange?: boolean;
   clientId?: string;
   clientSecret?: string;
   /** Registry record identifier for bookkeeping and optional Convex token exchange */
@@ -1548,6 +1557,48 @@ function resolveOAuthResourceUrl(input: {
   }
 
   return canonicalizeOAuthResourceUrl(input.serverUrl);
+}
+
+async function resolveAuthorizationRequestForDirectCallback(input: {
+  serverUrl: string;
+  provider: MCPOAuthProvider;
+  state: OAuthFlowState;
+  authorizationUrl: string;
+  configuredResourceUrl?: string;
+  enabled?: boolean;
+}): Promise<{ authorizationUrl: string; oauthResourceUrl: string }> {
+  let authorizationUrl = input.authorizationUrl;
+  let oauthResourceUrl = resolveOAuthResourceUrl({
+    serverUrl: input.serverUrl,
+    authorizationUrl,
+    configuredResourceUrl: input.configuredResourceUrl,
+  });
+
+  if (!input.enabled) {
+    return { authorizationUrl, oauthResourceUrl };
+  }
+
+  const selectedResource = await selectResourceURL(
+    input.serverUrl,
+    input.provider,
+    input.state.resourceMetadata,
+  ).catch(() => undefined);
+
+  if (!selectedResource) {
+    return { authorizationUrl, oauthResourceUrl };
+  }
+
+  oauthResourceUrl = selectedResource.toString();
+
+  try {
+    const rewritten = new URL(authorizationUrl);
+    rewritten.searchParams.set("resource", oauthResourceUrl);
+    authorizationUrl = rewritten.toString();
+  } catch {
+    // Keep the state-machine URL if it cannot be parsed.
+  }
+
+  return { authorizationUrl, oauthResourceUrl };
 }
 
 function writeStoredOAuthConfig(
@@ -2094,11 +2145,22 @@ export async function initiateOAuth(
         emitTraceSnapshot(snapshot);
       },
       onAuthorizationRequest: async ({ authorizationUrl }) => {
-        const oauthResourceUrl = resolveOAuthResourceUrl({
-          serverUrl: options.serverUrl,
-          authorizationUrl,
-          configuredResourceUrl: options.resourceUrl,
-        });
+        const authorizationRequest =
+          await resolveAuthorizationRequestForDirectCallback({
+            serverUrl: options.serverUrl,
+            provider,
+            state: getState(),
+            authorizationUrl,
+            configuredResourceUrl: options.resourceUrl,
+            enabled: options.useDirectCallbackExchange === true,
+          });
+        if (authorizationRequest.authorizationUrl !== authorizationUrl) {
+          updateState({
+            authorizationUrl: authorizationRequest.authorizationUrl,
+          });
+        }
+        const oauthResourceUrl = authorizationRequest.oauthResourceUrl;
+        const redirectAuthorizationUrl = authorizationRequest.authorizationUrl;
         writeStoredOAuthConfig(options.serverName, {
           resourceUrl: oauthResourceUrl,
         });
@@ -2107,7 +2169,7 @@ export async function initiateOAuth(
           serverUrl: options.serverUrl,
           redirectUrl: provider.redirectUrl,
           state: getState(),
-          authorizationUrl,
+          authorizationUrl: redirectAuthorizationUrl,
           configuredResourceUrl: oauthResourceUrl,
         });
         await persistOAuthStateArtifacts(provider, getState());
@@ -2119,7 +2181,9 @@ export async function initiateOAuth(
         });
         const preRedirectTrace = emitTraceFromState(getState());
         saveOAuthTraceToSession(options.serverName, preRedirectTrace);
-        await provider.redirectToAuthorization(new URL(authorizationUrl));
+        await provider.redirectToAuthorization(
+          new URL(redirectAuthorizationUrl)
+        );
         return { type: "redirect" };
       },
     });
@@ -2575,7 +2639,7 @@ export async function handleOAuthCallback(
     previousTrace = loadOAuthTraceFromSession(serverName);
     clearOAuthTraceSession(serverName);
 
-    if (storedSession) {
+    if (storedSession && !oauthConfig.useDirectCallbackExchange) {
       let state = cloneFlowState(storedSession.state);
       const updateState = (updates: Partial<OAuthFlowState>) => {
         state = { ...state, ...updates };

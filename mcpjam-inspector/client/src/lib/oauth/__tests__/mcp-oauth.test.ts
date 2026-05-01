@@ -1138,6 +1138,48 @@ describe("mcp-oauth", () => {
       expect(mockExchangeAuthorization).toHaveBeenCalledTimes(1);
     });
 
+    it("can complete stored guest callbacks without resuming the debug state machine", async () => {
+      mockDiscoverOAuthServerInfo.mockResolvedValueOnce(createDiscoveryState());
+      mockStartAuthorization.mockResolvedValueOnce({
+        authorizationUrl: new URL("https://auth.example.com/authorize"),
+        codeVerifier: "code-verifier",
+      });
+      mockSelectResourceURL.mockResolvedValue(new URL("https://example.com"));
+      mockExchangeAuthorization.mockResolvedValueOnce({
+        access_token: "guest-access-token",
+        refresh_token: "guest-refresh-token",
+        token_type: "Bearer",
+      });
+
+      const { handleOAuthCallback, initiateOAuth } = await import(
+        "../mcp-oauth"
+      );
+
+      const initiateResult = await initiateOAuth({
+        serverName: "notion",
+        serverUrl: "https://mcp.notion.com/mcp",
+        useDirectCallbackExchange: true,
+      });
+      expect(initiateResult.success).toBe(true);
+
+      mockRunOAuthStateMachine.mockClear();
+      const callbackResult = await handleOAuthCallback("oauth-code");
+
+      expect(callbackResult.success).toBe(true);
+      expect(callbackResult.serverName).toBe("notion");
+      expect(callbackResult.serverConfig?.requestInit?.headers).toEqual({
+        Authorization: "Bearer guest-access-token",
+      });
+      expect(mockRunOAuthStateMachine).not.toHaveBeenCalled();
+      expect(mockExchangeAuthorization).toHaveBeenCalledWith(
+        "https://auth.example.com",
+        expect.objectContaining({
+          authorizationCode: "oauth-code",
+          resource: new URL("https://example.com"),
+        })
+      );
+    });
+
     it("treats malformed stored token data as invalid instead of throwing", async () => {
       const { getStoredTokens, getStoredTokensState } = await import(
         "../mcp-oauth"

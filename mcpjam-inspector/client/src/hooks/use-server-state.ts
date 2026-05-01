@@ -1712,6 +1712,7 @@ export function useServerState({
             registryServerId: oauthInputs.registryServerId,
             useRegistryOAuthProxy: oauthInputs.useRegistryOAuthProxy,
             customHeaders: mergeWithWorkspaceHeaders(formData.headers),
+            useDirectCallbackExchange: HOSTED_MODE && !isAuthenticated,
             protocolMode,
             registrationMode,
             protocolVersion:
@@ -2460,6 +2461,7 @@ export function useServerState({
           ),
           registryServerId: storedOAuthConfig.registryServerId,
           useRegistryOAuthProxy: storedOAuthConfig.useRegistryOAuthProxy,
+          useDirectCallbackExchange: HOSTED_MODE && !isAuthenticated,
           protocolMode,
           registrationMode,
           protocolVersion:
