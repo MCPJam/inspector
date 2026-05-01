@@ -51,6 +51,7 @@ const {
   mockHeader,
   mockHostedShellGateState,
   mockMCPSidebar,
+  mockOAuthFlowTabState,
   mockOrganizationsTab,
   mockPosthogCapture,
   mockPosthogState,
@@ -121,6 +122,10 @@ const {
         | "logged-out",
     },
     mockMCPSidebar: vi.fn(() => <div />),
+    mockOAuthFlowTabState: {
+      shouldThrow: false,
+      error: new Error("OAuth debugger failed"),
+    },
     mockOrganizationsTab: vi.fn(() => <div />),
     mockPosthogCapture: vi.fn(),
     mockPosthogState: {
@@ -289,7 +294,12 @@ vi.mock("../components/AuthTab", () => ({
   AuthTab: () => <div />,
 }));
 vi.mock("../components/OAuthFlowTab", () => ({
-  OAuthFlowTab: () => <div />,
+  OAuthFlowTab: () => {
+    if (mockOAuthFlowTabState.shouldThrow) {
+      throw mockOAuthFlowTabState.error;
+    }
+    return <div data-testid="oauth-flow-tab" />;
+  },
 }));
 vi.mock("../components/xaa/XAAFlowTab", () => ({
   XAAFlowTab: () => <div data-testid="xaa-flow-tab">XAA Debugger Tab</div>,
@@ -426,6 +436,8 @@ describe("App hosted OAuth callback handling", () => {
     ));
     mockMCPSidebar.mockReset();
     mockMCPSidebar.mockImplementation(() => <div data-testid="mcp-sidebar" />);
+    mockOAuthFlowTabState.shouldThrow = false;
+    mockOAuthFlowTabState.error = new Error("OAuth debugger failed");
     mockPosthogCapture.mockReset();
     mockAppBuilderTabMounts.mockReset();
     mockCompleteHostedOAuthCallback.mockImplementation(
@@ -500,6 +512,45 @@ describe("App hosted OAuth callback handling", () => {
         })
       );
     });
+  });
+
+  it("captures and copies sanitized OAuth Debugger boundary errors", async () => {
+    clearHostedOAuthPendingState();
+    clearChatboxSession();
+    localStorage.clear();
+    sessionStorage.clear();
+    window.history.replaceState({}, "", "/#oauth-flow");
+    mockOAuthFlowTabState.shouldThrow = true;
+    mockOAuthFlowTabState.error = new Error(
+      "token exchange failed client_secret=super-secret Bearer access-token",
+    );
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("navigator", {
+      ...window.navigator,
+      clipboard: { writeText },
+    });
+
+    render(<App />);
+
+    expect(await screen.findByText("OAuth Debugger crashed")).toBeInTheDocument();
+    expect(mockPosthogCapture).toHaveBeenCalledWith(
+      "oauth_debugger_error_boundary",
+      expect.objectContaining({
+        message: expect.stringContaining("[redacted]"),
+      }),
+    );
+    expect(
+      JSON.stringify(mockPosthogCapture.mock.calls),
+    ).not.toContain("super-secret");
+
+    fireEvent.click(screen.getByRole("button", { name: /copy details/i }));
+
+    await waitFor(() => {
+      expect(writeText).toHaveBeenCalledWith(
+        expect.not.stringContaining("super-secret"),
+      );
+    });
+    expect(writeText.mock.calls[0]?.[0]).toContain("[redacted]");
   });
 
   it("uses hosted completion for guest chatbox session callbacks", async () => {

@@ -127,6 +127,7 @@ export function deserializeServersFromConvex(
       retryCount: 0,
       enabled: serverData.enabled ?? false,
       useOAuth: serverData.useOAuth ?? false,
+      hasClientSecret: serverData.hasClientSecret === true,
     };
 
     // Handle oauthFlowProfile from legacy nested structure
@@ -136,7 +137,12 @@ export function deserializeServersFromConvex(
 
     // NEW: Handle flat oauthScopes/clientId from servers table
     // Convert oauthScopes array to comma-separated string for OAuthTestProfile.scopes
-    if (serverData.oauthScopes || serverData.clientId || serverData.oauthResourceUrl) {
+    if (
+      serverData.oauthScopes ||
+      serverData.clientId ||
+      serverData.hasClientSecret ||
+      serverData.oauthResourceUrl
+    ) {
       const existingProfile = (server.oauthFlowProfile as any) || {};
       server.oauthFlowProfile = {
         ...existingProfile,
@@ -144,6 +150,10 @@ export function deserializeServersFromConvex(
           ? serverData.oauthScopes.join(",")
           : existingProfile.scopes || "",
         clientId: serverData.clientId || existingProfile.clientId || "",
+        clientSecret:
+          serverData.hasClientSecret === true
+            ? ""
+            : existingProfile.clientSecret || "",
         resourceUrl:
           serverData.oauthResourceUrl || existingProfile.resourceUrl || "",
       } as typeof server.oauthFlowProfile;
@@ -235,6 +245,7 @@ export function serversHaveChanged(
     const remoteOAuthProfile =
       remoteServer.oauthScopes ||
       remoteServer.clientId ||
+      remoteServer.hasClientSecret ||
       remoteServer.oauthResourceUrl
         ? {
             ...(remoteServer.oauthFlowProfile ?? {}),
@@ -242,6 +253,10 @@ export function serversHaveChanged(
               ? remoteServer.oauthScopes.join(",")
               : remoteServer.oauthScopes,
             clientId: remoteServer.clientId,
+            clientSecret:
+              remoteServer.hasClientSecret === true
+                ? ""
+                : remoteServer.oauthFlowProfile?.clientSecret,
             resourceUrl:
               remoteServer.oauthResourceUrl ??
               remoteServer.oauthFlowProfile?.resourceUrl,

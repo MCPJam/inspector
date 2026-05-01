@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { useQuery, useMutation } from "convex/react";
+import { useQuery, useMutation, useAction } from "convex/react";
 import type { WorkspaceVisibility } from "@/state/app-types";
 import type { WorkspaceClientConfig } from "@/lib/client-config";
 
@@ -46,6 +46,7 @@ export interface RemoteServer {
   useOAuth?: boolean;
   oauthScopes?: string[];
   clientId?: string;
+  hasClientSecret?: boolean;
   oauthResourceUrl?: string;
   createdAt: number;
   updatedAt: number;
@@ -234,10 +235,18 @@ export function useServerMutations() {
   const createServer = useMutation("servers:createServer" as any);
   const updateServer = useMutation("servers:updateServer" as any);
   const deleteServer = useMutation("servers:deleteServer" as any);
+  const createServerWithClientSecret = useAction(
+    "servers:createServerWithClientSecret" as any,
+  );
+  const updateServerWithClientSecret = useAction(
+    "servers:updateServerWithClientSecret" as any,
+  );
 
   return {
     createServer,
     updateServer,
+    createServerWithClientSecret,
+    updateServerWithClientSecret,
     deleteServer,
   };
 }

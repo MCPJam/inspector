@@ -157,6 +157,9 @@ export function AddServerModal({
         if (initialData.clientSecret) {
           formState.setClientSecret(initialData.clientSecret);
         }
+        if (initialData.hasClientSecret) {
+          formState.setHasStoredClientSecret(true);
+        }
       } else if (initialData.headers) {
         const authorizationHeader = getAuthorizationHeaderValue(
           initialData.headers,
@@ -399,6 +402,9 @@ export function AddServerModal({
                 if (!checked) {
                   formState.setClientId("");
                   formState.setClientSecret("");
+                  if (formState.hasStoredClientSecret) {
+                    formState.setClearClientSecret(true);
+                  }
                   formState.setClientIdError(null);
                   formState.setClientSecretError(null);
                 }
@@ -412,9 +418,18 @@ export function AddServerModal({
               clientSecret={formState.clientSecret}
               onClientSecretChange={(value) => {
                 formState.setClientSecret(value);
+                if (value.trim()) {
+                  formState.setClearClientSecret(false);
+                }
                 const error = formState.validateClientSecret(value);
                 formState.setClientSecretError(error);
               }}
+              hasStoredClientSecret={formState.hasStoredClientSecret}
+              clearClientSecret={formState.clearClientSecret}
+              onClearClientSecret={() => formState.setClearClientSecret(true)}
+              onUndoClearClientSecret={() =>
+                formState.setClearClientSecret(false)
+              }
               clientIdError={formState.clientIdError}
               clientSecretError={formState.clientSecretError}
             />
@@ -452,6 +467,7 @@ export function AddServerModal({
                   onAddHeader: formState.addCustomHeader,
                   onRemoveHeader: formState.removeCustomHeader,
                   onUpdateHeader: formState.updateCustomHeader,
+                  headersWarning: formState.oauthAuthorizationHeaderWarning,
                 }
               : {})}
           />

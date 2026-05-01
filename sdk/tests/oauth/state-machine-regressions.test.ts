@@ -1,5 +1,6 @@
 import { createOAuthStateMachine } from "../../src/oauth/state-machines/factory.js";
 import { EMPTY_OAUTH_FLOW_STATE } from "../../src/oauth/state-machines/types.js";
+import type { OAuthProtocolVersion } from "../../src/oauth/state-machines/types.js";
 
 const REDIRECT_URI = "http://127.0.0.1:3333/callback";
 const SERVER_URL = "https://mcp.example.com/mcp";
@@ -304,8 +305,97 @@ describe("OAuth state machine regressions", () => {
     expect(state.currentStep).toBe("received_client_credentials");
     expect(state.clientId).toBe("configured-client-id");
     expect(state.clientSecret).toBe("configured-secret");
-    expect(state.tokenEndpointAuthMethod).toBe("client_secret_post");
+    expect(state.tokenEndpointAuthMethod).toBe("client_secret_basic");
     expect(state.error).toBeUndefined();
     expect(state.isInitiatingAuth).toBe(false);
+  });
+
+  it.each<OAuthProtocolVersion>([
+    "2025-03-26",
+    "2025-06-18",
+    "2025-11-25",
+  ])(
+    "blocks preregistered %s before redirect when no secret is available",
+    async (protocolVersion) => {
+      let state = {
+        ...EMPTY_OAUTH_FLOW_STATE,
+        currentStep: "received_authorization_server_metadata" as const,
+        authorizationServerMetadata: {
+          issuer: "https://auth.example.com",
+          authorization_endpoint: "https://auth.example.com/authorize",
+          token_endpoint: "https://auth.example.com/token",
+          response_types_supported: ["code"],
+        } as any,
+        infoLogs: [],
+        isInitiatingAuth: true,
+      };
+
+      const machine = createOAuthStateMachine({
+        protocolVersion,
+        registrationStrategy: "preregistered" as any,
+        state,
+        getState: () => state,
+        updateState: (updates) => {
+          state = { ...state, ...updates };
+        },
+        serverUrl: SERVER_URL,
+        serverName: "Test Server",
+        redirectUrl: REDIRECT_URI,
+        requestExecutor: jest.fn(),
+        loadPreregisteredCredentials: jest.fn().mockResolvedValue({
+          clientId: "configured-client-id",
+        }),
+      });
+
+      await machine.proceedToNextStep();
+
+      expect(state.currentStep).toBe("received_authorization_server_metadata");
+      expect(state.authorizationUrl).toBeUndefined();
+      expect(state.error).toContain("requires a client secret");
+    },
+  );
+
+  it.each<OAuthProtocolVersion>([
+    "2025-03-26",
+    "2025-06-18",
+    "2025-11-25",
+  ])("allows preregistered %s public clients when none is supported", async (protocolVersion) => {
+    let state = {
+      ...EMPTY_OAUTH_FLOW_STATE,
+      currentStep: "received_authorization_server_metadata" as const,
+      authorizationServerMetadata: {
+        issuer: "https://auth.example.com",
+        authorization_endpoint: "https://auth.example.com/authorize",
+        token_endpoint: "https://auth.example.com/token",
+        response_types_supported: ["code"],
+        token_endpoint_auth_methods_supported: ["none"],
+      } as any,
+      infoLogs: [],
+      isInitiatingAuth: true,
+    };
+
+    const machine = createOAuthStateMachine({
+      protocolVersion,
+      registrationStrategy: "preregistered" as any,
+      state,
+      getState: () => state,
+      updateState: (updates) => {
+        state = { ...state, ...updates };
+      },
+      serverUrl: SERVER_URL,
+      serverName: "Test Server",
+      redirectUrl: REDIRECT_URI,
+      requestExecutor: jest.fn(),
+      loadPreregisteredCredentials: jest.fn().mockResolvedValue({
+        clientId: "configured-client-id",
+      }),
+    });
+
+    await machine.proceedToNextStep();
+
+    expect(state.currentStep).toBe("received_client_credentials");
+    expect(state.clientId).toBe("configured-client-id");
+    expect(state.tokenEndpointAuthMethod).toBe("none");
+    expect(state.error).toBeUndefined();
   });
 });

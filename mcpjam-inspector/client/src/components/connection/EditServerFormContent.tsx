@@ -155,6 +155,9 @@ export function EditServerFormContent({
               if (!checked) {
                 formState.setClientId("");
                 formState.setClientSecret("");
+                if (formState.hasStoredClientSecret) {
+                  formState.setClearClientSecret(true);
+                }
                 formState.setClientIdError(null);
                 formState.setClientSecretError(null);
               }
@@ -168,9 +171,18 @@ export function EditServerFormContent({
             clientSecret={formState.clientSecret}
             onClientSecretChange={(value) => {
               formState.setClientSecret(value);
+              if (value.trim()) {
+                formState.setClearClientSecret(false);
+              }
               const error = formState.validateClientSecret(value);
               formState.setClientSecretError(error);
             }}
+            hasStoredClientSecret={formState.hasStoredClientSecret}
+            clearClientSecret={formState.clearClientSecret}
+            onClearClientSecret={() => formState.setClearClientSecret(true)}
+            onUndoClearClientSecret={() =>
+              formState.setClearClientSecret(false)
+            }
             clientIdError={formState.clientIdError}
             clientSecretError={formState.clientSecretError}
           />
@@ -220,6 +232,7 @@ export function EditServerFormContent({
               onAddHeader: formState.addCustomHeader,
               onRemoveHeader: formState.removeCustomHeader,
               onUpdateHeader: formState.updateCustomHeader,
+              headersWarning: formState.oauthAuthorizationHeaderWarning,
             }
           : {})}
       />

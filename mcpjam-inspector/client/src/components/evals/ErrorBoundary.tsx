@@ -5,7 +5,9 @@ import { EmptyState } from "@/components/ui/empty-state";
 
 interface ErrorBoundaryProps {
   children: React.ReactNode;
-  fallback?: React.ReactNode;
+  fallback?:
+    | React.ReactNode
+    | ((input: { error: Error | null; reset: () => void }) => React.ReactNode);
   onError?: (error: Error, errorInfo: React.ErrorInfo) => void;
 }
 
@@ -39,6 +41,12 @@ export class ErrorBoundary extends React.Component<
   render() {
     if (this.state.hasError) {
       if (this.props.fallback) {
+        if (typeof this.props.fallback === "function") {
+          return this.props.fallback({
+            error: this.state.error,
+            reset: this.handleReset,
+          });
+        }
         return this.props.fallback;
       }
 

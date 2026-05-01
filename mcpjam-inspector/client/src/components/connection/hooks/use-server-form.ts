@@ -23,6 +23,8 @@ interface InitialFormValues {
   useCustomClientId: boolean;
   clientId: string;
   clientSecret: string;
+  hasStoredClientSecret: boolean;
+  clearClientSecret: boolean;
   envVars: Array<{ key: string; value: string }>;
   customHeaders: Array<{ key: string; value: string }>;
   requestTimeout: string;
@@ -116,6 +118,8 @@ export function useServerForm(
     useState<ServerFormOAuthRegistrationMode>(DEFAULT_OAUTH_REGISTRATION_MODE);
   const [clientId, setClientId] = useState("");
   const [clientSecret, setClientSecret] = useState("");
+  const [hasStoredClientSecret, setHasStoredClientSecret] = useState(false);
+  const [clearClientSecret, setClearClientSecret] = useState(false);
   const [bearerToken, setBearerToken] = useState("");
   const [authType, setAuthType] = useState<"oauth" | "bearer" | "none">("none");
   const [useCustomClientId, setUseCustomClientId] = useState(false);
@@ -171,6 +175,7 @@ export function useServerForm(
         DEFAULT_OAUTH_REGISTRATION_MODE;
       let clientIdValue = "";
       let clientSecretValue = "";
+      let hasStoredClientSecretValue = false;
       let shouldShowClientCredentials = false;
       let clientCapabilitiesOverrideValue: Record<string, unknown> | undefined;
 
@@ -218,11 +223,12 @@ export function useServerForm(
           clientInfo?.client_secret ||
           server.oauthFlowProfile?.clientSecret ||
           "";
+        hasStoredClientSecretValue = server.hasClientSecret === true;
 
         // Keep runtime token metadata available for preregistered reconnects,
         // but only surface credential fields from saved client configuration.
         clientIdValue = storedTokens?.client_id || savedClientId;
-        clientSecretValue = savedClientSecret;
+        clientSecretValue = hasStoredClientSecretValue ? "" : savedClientSecret;
 
         protocolModeValue = normalizeOauthProtocolMode(
           typeof oauthConfig.protocolMode === "string"
@@ -240,13 +246,13 @@ export function useServerForm(
             server.oauthFlowProfile?.registrationStrategy,
           ) ??
           normalizeOauthRegistrationMode(oauthConfig.registrationStrategy) ??
-          ((savedClientId || savedClientSecret)
+          ((savedClientId || savedClientSecret || hasStoredClientSecretValue)
             ? "preregistered"
             : DEFAULT_OAUTH_REGISTRATION_MODE);
 
         shouldShowClientCredentials =
           registrationModeValue === "preregistered" ||
-          Boolean(savedClientId || savedClientSecret);
+          Boolean(savedClientId || savedClientSecret || hasStoredClientSecretValue);
       }
 
       // Derive local values used for both state initialization and snapshot
@@ -293,6 +299,8 @@ export function useServerForm(
       setOauthScopesInput(scopes.join(" "));
       setOauthProtocolMode(protocolModeValue);
       setOauthRegistrationMode(registrationModeValue);
+      setHasStoredClientSecret(hasStoredClientSecretValue);
+      setClearClientSecret(false);
       setRequestTimeout(timeoutValue);
       setClientCapabilitiesOverrideEnabled(
         clientCapabilitiesOverrideValue != null,
@@ -368,6 +376,8 @@ export function useServerForm(
         useCustomClientId: shouldShowClientCredentials,
         clientId: clientIdValue,
         clientSecret: clientSecretValue,
+        hasStoredClientSecret: hasStoredClientSecretValue,
+        clearClientSecret: false,
         envVars: envArray.map(({ key, value }) => ({ key, value })),
         customHeaders: headersArray.map(({ key, value }) => ({ key, value })),
         requestTimeout: timeoutValue,
@@ -547,6 +557,11 @@ export function useServerForm(
       .filter((s) => s.length > 0);
     const shouldUsePreregisteredCredentials =
       authType === "oauth" && oauthRegistrationMode === "preregistered";
+    const normalizedClientSecret = clientSecret.trim();
+    const nextHasClientSecret =
+      shouldUsePreregisteredCredentials &&
+      !clearClientSecret &&
+      (hasStoredClientSecret || normalizedClientSecret.length > 0);
 
     // Handle authentication
     let useOAuth = false;
@@ -572,7 +587,13 @@ export function useServerForm(
         ? clientId.trim() || undefined
         : undefined,
       clientSecret: shouldUsePreregisteredCredentials
-        ? clientSecret.trim() || undefined
+        ? normalizedClientSecret || undefined
+        : undefined,
+      hasClientSecret: shouldUsePreregisteredCredentials
+        ? nextHasClientSecret
+        : undefined,
+      clearClientSecret: shouldUsePreregisteredCredentials
+        ? clearClientSecret
         : undefined,
       requestTimeout: reqTimeout,
     };
@@ -588,6 +609,8 @@ export function useServerForm(
     setOauthRegistrationMode(DEFAULT_OAUTH_REGISTRATION_MODE);
     setClientId("");
     setClientSecret("");
+    setHasStoredClientSecret(false);
+    setClearClientSecret(false);
     setBearerToken("");
     setAuthType("none");
     setUseCustomClientId(false);
@@ -621,6 +644,8 @@ export function useServerForm(
       useCustomClientId !== iv.useCustomClientId ||
       clientId !== iv.clientId ||
       clientSecret !== iv.clientSecret ||
+      hasStoredClientSecret !== iv.hasStoredClientSecret ||
+      clearClientSecret !== iv.clearClientSecret ||
       requestTimeout !== iv.requestTimeout ||
       clientCapabilitiesOverrideEnabled !==
         iv.clientCapabilitiesOverrideEnabled ||
@@ -636,6 +661,12 @@ export function useServerForm(
     authType === "oauth" &&
     oauthRegistrationMode === "preregistered" &&
     validateClientId(clientId) !== null;
+  const oauthAuthorizationHeaderWarning =
+    type === "http" &&
+    authType === "oauth" &&
+    customHeaders.some((header) => isAuthorizationHeader(header.key))
+      ? "OAuth is enabled and custom headers include Authorization. OAuth token headers may override or conflict with this value."
+      : undefined;
 
   return {
     // Change detection
@@ -663,6 +694,10 @@ export function useServerForm(
     setClientId,
     clientSecret,
     setClientSecret,
+    hasStoredClientSecret,
+    setHasStoredClientSecret,
+    clearClientSecret,
+    setClearClientSecret,
     bearerToken,
     setBearerToken,
     authType,
@@ -698,6 +733,7 @@ export function useServerForm(
     setShowEnvVars,
     showAuthSettings,
     setShowAuthSettings,
+    oauthAuthorizationHeaderWarning,
 
     // Functions
     validateClientId,

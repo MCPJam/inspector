@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import {
@@ -35,6 +36,10 @@ interface AuthenticationSectionProps {
   onClientIdChange: (value: string) => void;
   clientSecret: string;
   onClientSecretChange: (value: string) => void;
+  hasStoredClientSecret?: boolean;
+  clearClientSecret?: boolean;
+  onClearClientSecret?: () => void;
+  onUndoClearClientSecret?: () => void;
   clientIdError: string | null;
   clientSecretError: string | null;
 }
@@ -77,6 +82,10 @@ export function AuthenticationSection({
   onClientIdChange,
   clientSecret,
   onClientSecretChange,
+  hasStoredClientSecret = false,
+  clearClientSecret = false,
+  onClearClientSecret,
+  onUndoClearClientSecret,
   clientIdError,
   clientSecretError,
 }: AuthenticationSectionProps) {
@@ -93,6 +102,9 @@ export function AuthenticationSection({
           registrationMode: oauthRegistrationMode,
           clientId: showClientCredentials ? clientId : undefined,
           clientSecret: showClientCredentials ? clientSecret : undefined,
+          hasClientSecret: showClientCredentials
+            ? hasStoredClientSecret
+            : undefined,
           authMode: "interactive",
         })
       : null;
@@ -290,14 +302,42 @@ export function AuthenticationSection({
                     </div>
 
                     <div className="space-y-2">
-                      <label className="block text-sm font-medium text-foreground">
-                        Client Secret (Optional)
-                      </label>
+                      <div className="flex items-center justify-between gap-3">
+                        <label className="block text-sm font-medium text-foreground">
+                          Client Secret (Optional)
+                        </label>
+                        {hasStoredClientSecret && !clearClientSecret && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="h-8 px-2 text-xs"
+                            onClick={onClearClientSecret}
+                          >
+                            Clear
+                          </Button>
+                        )}
+                        {hasStoredClientSecret && clearClientSecret && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="h-8 px-2 text-xs"
+                            onClick={onUndoClearClientSecret}
+                          >
+                            Undo
+                          </Button>
+                        )}
+                      </div>
                       <Input
                         type="password"
                         value={clientSecret}
                         onChange={(e) => onClientSecretChange(e.target.value)}
-                        placeholder="Your OAuth Client Secret"
+                        placeholder={
+                          hasStoredClientSecret
+                            ? "Saved in workspace Vault. Enter a new value to replace."
+                            : "Your OAuth Client Secret"
+                        }
                         className={`h-10 ${clientSecretError ? "border-red-500" : ""}`}
                       />
                       {clientSecretError && (
@@ -306,7 +346,11 @@ export function AuthenticationSection({
                         </p>
                       )}
                       <p className="text-xs text-muted-foreground">
-                        Optional for public clients using PKCE
+                        {hasStoredClientSecret && clearClientSecret
+                          ? "Saved client secret will be removed when you save."
+                          : hasStoredClientSecret
+                            ? "Saved in workspace Vault. Enter a new value to replace it."
+                            : "Optional for public clients using PKCE"}
                       </p>
                     </div>
                   </div>

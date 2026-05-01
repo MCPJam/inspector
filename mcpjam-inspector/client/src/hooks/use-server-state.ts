@@ -181,12 +181,12 @@ function saveOAuthConfigToLocalStorage(formData: ServerFormData): void {
     );
   }
 
-  if (formData.clientId || formData.clientSecret) {
+  if (formData.clientId || (!HOSTED_MODE && formData.clientSecret)) {
     const clientInfo: Record<string, string> = {};
     if (formData.clientId) {
       clientInfo.client_id = formData.clientId;
     }
-    if (formData.clientSecret) {
+    if (!HOSTED_MODE && formData.clientSecret) {
       clientInfo.client_secret = formData.clientSecret;
     }
     localStorage.setItem(
@@ -215,6 +215,7 @@ function readStoredClientCredentials(serverName: string): {
           ? parsed.client_id
           : undefined,
       clientSecret:
+        !HOSTED_MODE &&
         typeof parsed?.client_secret === "string" &&
         parsed.client_secret.trim() !== ""
           ? parsed.client_secret
@@ -305,6 +306,44 @@ function buildResolvedOAuthProfile(input: {
   };
 }
 
+function buildOAuthProfileFromFormData(
+  formData: ServerFormData,
+  existingProfile?: OAuthTestProfile,
+): OAuthTestProfile | undefined {
+  if (formData.type !== "http" || !formData.useOAuth || !formData.url) {
+    return undefined;
+  }
+
+  const protocolVersion =
+    formData.oauthProtocolMode && formData.oauthProtocolMode !== "auto"
+      ? formData.oauthProtocolMode
+      : existingProfile?.protocolVersion ?? "2025-11-25";
+  const registrationStrategy =
+    formData.oauthRegistrationMode &&
+    formData.oauthRegistrationMode !== "auto"
+      ? formData.oauthRegistrationMode
+      : existingProfile?.registrationStrategy ??
+        (formData.clientId || formData.clientSecret || formData.hasClientSecret
+          ? "preregistered"
+          : "dcr");
+  const customHeaders = Object.entries(formData.headers ?? {})
+    .filter(([key, value]) => key.trim() && value)
+    .map(([key, value]) => ({ key, value }));
+
+  return {
+    serverUrl: formData.url,
+    resourceUrl: existingProfile?.resourceUrl ?? "",
+    clientId: formData.clientId ?? existingProfile?.clientId ?? "",
+    clientSecret: HOSTED_MODE
+      ? ""
+      : formData.clientSecret ?? existingProfile?.clientSecret ?? "",
+    scopes: formData.oauthScopes?.join(",") ?? existingProfile?.scopes ?? "",
+    customHeaders,
+    protocolVersion,
+    registrationStrategy,
+  };
+}
+
 function restorePathAfterOAuthCallback(
   currentPathname: string,
   savedHash: string,
@@ -352,6 +391,7 @@ interface RegistryOAuthConfigResponse {
 interface ResolvedOAuthInitiationInputs {
   clientId?: string;
   clientSecret?: string;
+  hasClientSecret: boolean;
   registryServerId?: string;
   scopes?: string[];
   useRegistryOAuthProxy: boolean;
@@ -434,6 +474,8 @@ export function useServerState({
   const {
     createServer: convexCreateServer,
     updateServer: convexUpdateServer,
+    createServerWithClientSecret: convexCreateServerWithClientSecret,
+    updateServerWithClientSecret: convexUpdateServerWithClientSecret,
     deleteServer: convexDeleteServer,
   } = useServerMutations();
 
@@ -732,6 +774,7 @@ export function useServerState({
     async (
       serverName: string,
       serverEntry: ServerWithName,
+      secretOptions?: { clientSecret?: string; clearClientSecret?: boolean },
     ): Promise<string | undefined> => {
       const latestUseLocalFallback = useLocalFallbackRef.current;
       const latestIsAuthenticated = isAuthenticatedRef.current;
@@ -747,6 +790,15 @@ export function useServerState({
 
       const flatSnapshot =
         activeWorkspaceServersFlatRef.current ?? activeWorkspaceServersFlat;
+
+      const clientSecret = secretOptions?.clientSecret?.trim();
+      const clearClientSecret = secretOptions?.clearClientSecret === true;
+      if (clientSecret && clearClientSecret) {
+        throw new Error(
+          "Cannot replace and clear the OAuth client secret in the same save.",
+        );
+      }
+      const hasSecretOperation = Boolean(clientSecret || clearClientSecret);
 
       const existingServer = flatSnapshot?.find(
         (s) => s.name === serverName,
@@ -781,27 +833,42 @@ export function useServerState({
 
       try {
         if (existingServer) {
-          await convexUpdateServer({
+          const updatePayload = {
             serverId: existingServer._id,
             ...payload,
-          });
+            ...(clientSecret ? { clientSecret } : {}),
+            ...(clearClientSecret ? { clearClientSecret: true } : {}),
+          };
+          if (hasSecretOperation) {
+            await convexUpdateServerWithClientSecret(updatePayload);
+          } else {
+            await convexUpdateServer(updatePayload);
+          }
           return existingServer._id;
         }
 
-        const newId = await convexCreateServer({
+        const createPayload = {
           workspaceId: latestWorkspaceId,
           ...payload,
-        });
+          ...(clientSecret ? { clientSecret } : {}),
+        };
+        const newId = clientSecret
+          ? await convexCreateServerWithClientSecret(createPayload)
+          : await convexCreateServer(createPayload);
         return newId as string | undefined;
       } catch (primaryError) {
         // Best-effort fallback for stale query snapshots:
         // if update failed, try create; if create failed, try update when possible.
         try {
           if (existingServer) {
-            const newId = await convexCreateServer({
+            const createPayload = {
               workspaceId: latestWorkspaceId,
               ...payload,
-            });
+              ...(clientSecret ? { clientSecret } : {}),
+            };
+            const newId = clientSecret
+              ? await convexCreateServerWithClientSecret(createPayload)
+              : await convexCreateServer(createPayload);
             return newId as string | undefined;
           }
           const flatRetry =
@@ -810,10 +877,17 @@ export function useServerState({
             (s) => s.name === serverName,
           );
           if (retryExisting) {
-            await convexUpdateServer({
+            const updatePayload = {
               serverId: retryExisting._id,
               ...payload,
-            });
+              ...(clientSecret ? { clientSecret } : {}),
+              ...(clearClientSecret ? { clearClientSecret: true } : {}),
+            };
+            if (hasSecretOperation) {
+              await convexUpdateServerWithClientSecret(updatePayload);
+            } else {
+              await convexUpdateServer(updatePayload);
+            }
             return retryExisting._id;
           }
         } catch (fallbackError) {
@@ -845,6 +919,8 @@ export function useServerState({
       activeWorkspaceServersFlat,
       convexUpdateServer,
       convexCreateServer,
+      convexUpdateServerWithClientSecret,
+      convexCreateServerWithClientSecret,
       logger,
     ],
   );
@@ -1237,6 +1313,7 @@ export function useServerState({
       return {
         clientId,
         clientSecret: formData.clientSecret,
+        hasClientSecret: Boolean(formData.clientSecret || formData.hasClientSecret),
         registryServerId: formData.registryServerId,
         scopes,
         useRegistryOAuthProxy: Boolean(clientId && formData.registryServerId),
@@ -1316,6 +1393,7 @@ export function useServerState({
             enabled: existingServer?.enabled ?? true,
             oauthTokens: existingServer?.oauthTokens,
             oauthFlowProfile: resolvedOAuthProfile,
+            hasClientSecret: existingServer?.hasClientSecret,
             initializationInfo: existingServer?.initializationInfo,
             useOAuth: true,
             lastOAuthTrace: result.oauthTrace,
@@ -1580,6 +1658,23 @@ export function useServerState({
       });
       const token = nextOpToken(formData.name);
       let hostedServerId: string | undefined;
+      const existingServerForSave = appState.servers[formData.name];
+      const formOAuthProfile = buildOAuthProfileFromFormData(
+        formData,
+        existingServerForSave?.oauthFlowProfile,
+      );
+      const nextHasClientSecret =
+        formData.useOAuth && !formData.clearClientSecret
+          ? Boolean(
+              formData.clientSecret ||
+                formData.hasClientSecret ||
+                existingServerForSave?.hasClientSecret,
+            )
+          : false;
+      const clientSecretSyncOptions = {
+        ...(formData.clientSecret ? { clientSecret: formData.clientSecret } : {}),
+        ...(formData.clearClientSecret ? { clearClientSecret: true } : {}),
+      };
 
       const serverEntryForSave: ServerWithName = {
         name: formData.name,
@@ -1589,12 +1684,15 @@ export function useServerState({
         retryCount: 0,
         enabled: true,
         useOAuth: formData.useOAuth ?? false,
+        oauthFlowProfile: formOAuthProfile,
+        hasClientSecret: nextHasClientSecret,
       };
       if (HOSTED_MODE) {
         try {
           const serverId = await syncServerToConvex(
             formData.name,
             serverEntryForSave,
+            clientSecretSyncOptions,
           );
           if (serverId) {
             hostedServerId = serverId;
@@ -1607,7 +1705,11 @@ export function useServerState({
           });
         }
       } else {
-        syncServerToConvex(formData.name, serverEntryForSave).catch((err) =>
+        syncServerToConvex(
+          formData.name,
+          serverEntryForSave,
+          clientSecretSyncOptions,
+        ).catch((err) =>
           logger.warn("Background sync to Convex failed (pre-connection)", {
             serverName: formData.name,
             err,
@@ -1683,11 +1785,8 @@ export function useServerState({
             type: "UPSERT_SERVER",
             name: formData.name,
             server: {
-              name: formData.name,
-              config: mcpConfig,
-              lastConnectionTime: new Date(),
+              ...serverEntryForSave,
               connectionStatus: "oauth-flow",
-              retryCount: 0,
               enabled: true,
               useOAuth: true,
             } as ServerWithName,
@@ -1709,6 +1808,7 @@ export function useServerState({
             serverUrl: formData.url,
             clientId: oauthInputs.clientId,
             clientSecret: oauthInputs.clientSecret,
+            hasClientSecret: oauthInputs.hasClientSecret,
             registryServerId: oauthInputs.registryServerId,
             useRegistryOAuthProxy: oauthInputs.useRegistryOAuthProxy,
             customHeaders: mergeWithWorkspaceHeaders(formData.headers),
@@ -1897,8 +1997,21 @@ export function useServerState({
       const existingServer = appState.servers[serverName];
       const mcpConfig = toMCPConfig(formData);
       const nextOAuthProfile = formData.useOAuth
-        ? options?.oauthProfile ?? existingServer?.oauthFlowProfile
+        ? options?.oauthProfile ??
+          buildOAuthProfileFromFormData(
+            formData,
+            existingServer?.oauthFlowProfile,
+          ) ??
+          existingServer?.oauthFlowProfile
         : undefined;
+      const nextHasClientSecret =
+        formData.useOAuth && !formData.clearClientSecret
+          ? Boolean(
+              formData.clientSecret ||
+                formData.hasClientSecret ||
+                existingServer?.hasClientSecret,
+            )
+          : false;
 
       const serverEntry: ServerWithName = {
         ...(existingServer ?? {}),
@@ -1910,6 +2023,7 @@ export function useServerState({
         enabled: existingServer?.enabled ?? false,
         oauthFlowProfile: nextOAuthProfile,
         useOAuth: formData.useOAuth ?? false,
+        hasClientSecret: nextHasClientSecret,
       } as ServerWithName;
 
       const hasPendingOAuthCallback = new URLSearchParams(
@@ -1934,7 +2048,12 @@ export function useServerState({
         effectiveActiveWorkspaceId !== "none"
       ) {
         try {
-          await syncServerToConvex(serverName, serverEntry);
+          await syncServerToConvex(serverName, serverEntry, {
+            ...(formData.clientSecret
+              ? { clientSecret: formData.clientSecret }
+              : {}),
+            ...(formData.clearClientSecret ? { clearClientSecret: true } : {}),
+          });
         } catch (error) {
           logger.error("Failed to sync server to Convex", {
             error: error instanceof Error ? error.message : "Unknown error",
@@ -2451,6 +2570,12 @@ export function useServerState({
             server.oauthTokens?.client_secret ??
             server.oauthFlowProfile?.clientSecret ??
             storedClientCredentials.clientSecret,
+          hasClientSecret: Boolean(
+            server.oauthTokens?.client_secret ??
+              server.oauthFlowProfile?.clientSecret ??
+              storedClientCredentials.clientSecret ??
+              server.hasClientSecret,
+          ),
           customHeaders: mergeWithWorkspaceHeaders(
             profileHeaders ??
               ("requestInit" in server.config
