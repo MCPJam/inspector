@@ -40,6 +40,8 @@ import {
 import { cn } from "@/lib/utils";
 import { buildComparePlanSectionsFromCatalog } from "@/components/organization/billing-compare-view-model";
 import { type ComparePlanCell } from "@/components/organization/compare-plan-marketing";
+import { CreditBalanceCard } from "@/components/billing/CreditBalanceCard";
+import { ErrorBoundary } from "@/components/ui/error-boundary";
 
 const PLAN_ORDER: OrganizationPlan[] = [
   "free",
@@ -53,10 +55,6 @@ const POPULAR_PLAN: OrganizationPlan = "team";
 
 /** Defines org as the billed scope for plans and limits (vs workspaces). */
 const ORG_COMPARE_PLANS_NOTE = "Your organization is the billed unit.";
-
-const LLM_USAGE_SECTION_TITLE = "LLM Usage";
-const LLM_USAGE_SECTION_TOOLTIP =
-  "LLM usage billing isn’t live yet, so models are currently free. For paid plans, the table reflects the intended $5 per user per day rate limit and may change before billing launches.";
 
 function getPlanRank(plan: OrganizationPlan): number {
   return PLAN_ORDER.indexOf(plan);
@@ -697,6 +695,10 @@ export function OrganizationBillingSection({
         ) : null}
       </Dialog>
 
+      <ErrorBoundary fallback={null}>
+        <CreditBalanceCard />
+      </ErrorBoundary>
+
       {checkoutIntent ? (
         <div
           className="flex items-center gap-2 rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-sm text-muted-foreground"
@@ -917,31 +919,7 @@ export function OrganizationBillingSection({
                             colSpan={PLAN_ORDER.length + 1}
                           >
                             <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                              {section.title === LLM_USAGE_SECTION_TITLE ? (
-                                <span className="inline-flex items-center gap-1.5">
-                                  <span>{section.title}</span>
-                                  <Tooltip>
-                                    <TooltipTrigger asChild>
-                                      <button
-                                        type="button"
-                                        className="inline-flex shrink-0 rounded-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                                        aria-label="LLM usage pricing note"
-                                      >
-                                        <Info className="size-3.5" />
-                                      </button>
-                                    </TooltipTrigger>
-                                    <TooltipContent
-                                      side="right"
-                                      sideOffset={6}
-                                      className="max-w-[22rem] text-balance"
-                                    >
-                                      {LLM_USAGE_SECTION_TOOLTIP}
-                                    </TooltipContent>
-                                  </Tooltip>
-                                </span>
-                              ) : (
-                                section.title
-                              )}
+                              {section.title}
                             </div>
                           </TableCell>
                         </TableRow>
