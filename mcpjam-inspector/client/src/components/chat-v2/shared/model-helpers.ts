@@ -155,13 +155,18 @@ export function buildAvailableModelsFromOrgConfig(
   for (const p of orgConfig.providers) {
     if (!p.providerKey.startsWith("custom:")) continue;
     if (!p.enabled || !p.hasSecret) continue;
-    const customName = p.displayName || p.providerKey.replace(/^custom:/, "");
+    // customProviderName must be the slug from the providerKey so that the
+    // server's deriveOrgProviderKey can rebuild "custom:<slug>" and look it
+    // up against the persisted org config. The human-readable displayName
+    // is only used for the model's UI label.
+    const customSlug = p.providerKey.replace(/^custom:/, "");
+    const displayLabel = p.displayName || customSlug;
     for (const modelId of p.modelIds ?? []) {
       models.push({
-        id: `custom:${customName}:${modelId}`,
-        name: modelId,
+        id: `custom:${customSlug}:${modelId}`,
+        name: `${displayLabel} / ${modelId}`,
         provider: "custom" as const,
-        customProviderName: customName,
+        customProviderName: customSlug,
       });
     }
   }

@@ -346,20 +346,19 @@ chatV2.post("/", async (c) => {
       } = prepared;
       const hostedChatSessionId = body.chatSessionId;
 
-      if (!process.env.CONVEX_HTTP_URL) {
-        throw new WebRouteError(
-          500,
-          ErrorCode.INTERNAL_ERROR,
-          "Server missing CONVEX_HTTP_URL configuration",
-        );
-      }
-
       const modelMessages = await convertToModelMessages(messages);
       const isMCPJam =
         Boolean(modelDefinition.id) &&
         isMCPJamProvidedModel(String(modelDefinition.id));
 
       if (!isMCPJam) {
+        if (!process.env.CONVEX_HTTP_URL) {
+          throw new WebRouteError(
+            500,
+            ErrorCode.INTERNAL_ERROR,
+            "Server missing CONVEX_HTTP_URL configuration",
+          );
+        }
         // Hosted org BYOK: vault-resolved provider keys live in Convex; the
         // inspector forwards messages and tool definitions to /stream/org and
         // drives the agentic loop locally. Scrub messages for parity with
