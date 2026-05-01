@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { copyToClipboard } from "@/lib/clipboard";
-import { ErrorBoundary } from "@/components/evals/ErrorBoundary";
+import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { expandJsonStringsInValue, useJsonEditor } from "./use-json-editor";
 import { JsonEditorView } from "./json-editor-view";
 import { JsonEditorEdit } from "./json-editor-edit";

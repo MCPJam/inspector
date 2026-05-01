@@ -24,6 +24,8 @@ interface ErrorBoxProps {
   isRetryable?: boolean;
   isMCPJamPlatformError?: boolean;
   onRetry?: () => void;
+  canTopUp?: boolean;
+  onTopUp?: () => void;
 }
 
 const parseErrorDetails = (details: string | undefined) => {
@@ -45,6 +47,8 @@ export function ErrorBox({
   isRetryable,
   isMCPJamPlatformError,
   onRetry,
+  canTopUp,
+  onTopUp,
 }: ErrorBoxProps) {
   const [isErrorDetailsOpen, setIsErrorDetailsOpen] = useState(false);
   const errorDetailsJson = parseErrorDetails(errorDetails);
@@ -114,6 +118,11 @@ export function ErrorBox({
           )}
         </div>
         <div className="ml-auto flex flex-shrink-0 flex-wrap items-center gap-2">
+          {canTopUp && onTopUp && (
+            <Button type="button" onClick={onTopUp}>
+              Top up to keep chatting
+            </Button>
+          )}
           {isRetryable && onRetry && (
             <Button
               type="button"
