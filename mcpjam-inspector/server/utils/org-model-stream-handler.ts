@@ -18,6 +18,8 @@ export interface OrgModelHandlerOptions {
   workspaceId: string;
   providerKey: string;
   modelId: string;
+  chatSessionId?: string;
+  sourceType?: string;
   messages: ModelMessage[];
   systemPrompt: string;
   temperature?: number;
@@ -27,7 +29,7 @@ export interface OrgModelHandlerOptions {
   requireToolApproval?: boolean;
   onConversationComplete?: (
     fullHistory: ModelMessage[],
-    turnTrace: PersistedTurnTrace,
+    turnTrace: PersistedTurnTrace
   ) => Promise<void> | void;
   onStreamComplete?: () => Promise<void> | void;
   onStreamWriterReady?: (writer: {
@@ -50,7 +52,7 @@ export interface OrgModelHandlerOptions {
 }
 
 export async function handleHostedOrgChatModel(
-  options: OrgModelHandlerOptions,
+  options: OrgModelHandlerOptions
 ): Promise<Response> {
   if (!process.env.CONVEX_HTTP_URL) {
     throw new Error("CONVEX_HTTP_URL is not set");
@@ -63,6 +65,8 @@ export async function handleHostedOrgChatModel(
   return handleMCPJamFreeChatModel({
     messages: options.messages,
     modelId: options.modelId,
+    chatSessionId: options.chatSessionId,
+    sourceType: options.sourceType,
     systemPrompt: options.systemPrompt,
     temperature: options.temperature,
     tools: options.tools,

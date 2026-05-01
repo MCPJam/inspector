@@ -29,21 +29,83 @@ export interface OrgModelConfigResult {
   error: string | null;
 }
 
-export function useOrgModelConfig(
+export interface OrgModelUsageAggregate {
+  key: string;
+  requestCount: number;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  knownCostUsd: number;
+  knownCostRequests: number;
+  unknownCostRequests: number;
+}
+
+export interface OrgModelUsageSummary {
+  startAt: number;
+  endAt: number;
+  rangeDays: number;
+  total: OrgModelUsageAggregate;
+  byDate: OrgModelUsageAggregate[];
+  byProvider: OrgModelUsageAggregate[];
+  byModel: OrgModelUsageAggregate[];
+  byWorkspace: OrgModelUsageAggregate[];
+  byUser: OrgModelUsageAggregate[];
+  recentRecords: Array<{
+    id: string;
+    createdAt: number;
+    providerKey?: string;
+    modelId: string;
+    workspaceId?: string;
+    userId?: string;
+    guestExternalId?: string;
+    inputTokens?: number;
+    outputTokens?: number;
+    totalTokens?: number;
+    costStatus?: "not_reported" | "provider_reported" | "estimated";
+    costUsd?: number;
+    requestId?: string;
+    providerResponseId?: string;
+  }>;
+}
+
+export function useOrgModelUsageSummary(
   organizationId: string | null,
+  options: { enabled?: boolean; rangeDays?: number } = {}
+): { summary: OrgModelUsageSummary | undefined; isLoading: boolean } {
+  const enabled = options.enabled ?? true;
+  const shouldQuery = !!organizationId && enabled;
+
+  const summary = useQuery(
+    "organizationModelProviders:getUsageSummary" as any,
+    shouldQuery
+      ? ({
+          organizationId,
+          rangeDays: options.rangeDays ?? 30,
+        } as any)
+      : "skip"
+  ) as OrgModelUsageSummary | undefined;
+
+  return {
+    summary,
+    isLoading: shouldQuery && summary === undefined,
+  };
+}
+
+export function useOrgModelConfig(
+  organizationId: string | null
 ): OrgModelConfigResult {
   const shouldQuery = !!organizationId;
 
   const config = useQuery(
     "organizationModelProviders:getVisibleConfig" as any,
-    shouldQuery ? ({ organizationId } as any) : "skip",
+    shouldQuery ? ({ organizationId } as any) : "skip"
   ) as { providers: OrgModelProvider[] } | undefined;
 
   const upsertProviderAction = useAction(
-    "organizationModelProviders:upsertProvider" as any,
+    "organizationModelProviders:upsertProvider" as any
   );
   const deleteProviderAction = useAction(
-    "organizationModelProviders:deleteProvider" as any,
+    "organizationModelProviders:deleteProvider" as any
   );
 
   const [isSaving, setIsSaving] = useState(false);
@@ -77,7 +139,7 @@ export function useOrgModelConfig(
         setIsSaving(false);
       }
     },
-    [organizationId, upsertProviderAction],
+    [organizationId, upsertProviderAction]
   );
 
   const deleteProvider = useCallback(
@@ -100,7 +162,7 @@ export function useOrgModelConfig(
         setIsSaving(false);
       }
     },
-    [organizationId, deleteProviderAction],
+    [organizationId, deleteProviderAction]
   );
 
   return {

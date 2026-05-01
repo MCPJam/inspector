@@ -44,7 +44,9 @@ import { useCustomProviders } from "@/hooks/use-custom-providers";
 import { usePersistedModel } from "@/hooks/use-persisted-model";
 import {
   buildAvailableModels,
+  buildAvailableModelsFromOrgConfig,
   getDefaultModel,
+  type OrgVisibleConfig,
 } from "@/components/chat-v2/shared/model-helpers";
 import {
   isMCPJamGuestAllowedModel,
@@ -98,6 +100,8 @@ export interface UseChatSessionOptions {
   directVisibility?: "private" | "workspace";
   /** Active Convex workspace ID when running in hosted mode */
   hostedWorkspaceId?: string | null;
+  /** Sanitized organization provider config for hosted org-backed workspaces */
+  hostedOrgModelConfig?: OrgVisibleConfig;
   /** Hosted server IDs mapped from selected server names */
   hostedSelectedServerIds?: string[];
   /** OAuth tokens for hosted servers keyed by server ID */
@@ -906,6 +910,7 @@ export function useChatSession({
   selectedServers,
   directVisibility = "private",
   hostedWorkspaceId,
+  hostedOrgModelConfig,
   hostedSelectedServerIds = [],
   hostedOAuthTokens,
   hostedShareToken,
@@ -1088,6 +1093,27 @@ export function useChatSession({
         })
       : models;
     if (HOSTED_MODE) {
+      if (hostedOrgModelConfig) {
+        const orgModels =
+          buildAvailableModelsFromOrgConfig(hostedOrgModelConfig);
+        return !isAuthenticated
+          ? orgModels.map((model) => {
+              const modelId = String(model.id);
+              if (
+                !isMCPJamProvidedModel(modelId) ||
+                isMCPJamGuestAllowedModel(modelId)
+              ) {
+                return model;
+              }
+
+              return {
+                ...model,
+                disabled: true,
+                disabledReason: GUEST_LOCKED_MODEL_REASON,
+              };
+            })
+          : orgModels;
+      }
       return visibleModels.filter((model) =>
         isMCPJamProvidedModel(String(model.id)),
       );
@@ -1101,6 +1127,7 @@ export function useChatSession({
     getAzureBaseUrl,
     isAuthenticated,
     customProviders,
+    hostedOrgModelConfig,
   ]);
 
   // Model selection with persistence

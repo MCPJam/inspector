@@ -70,7 +70,7 @@ chatV2.post("/", async (c) => {
         throw new WebRouteError(
           401,
           ErrorCode.UNAUTHORIZED,
-          "Valid guest token required. Please refresh the page to obtain a new session.",
+          "Valid guest token required. Please refresh the page to obtain a new session."
         );
       }
 
@@ -93,7 +93,7 @@ chatV2.post("/", async (c) => {
         throw new WebRouteError(
           400,
           ErrorCode.VALIDATION_ERROR,
-          "messages are required",
+          "messages are required"
         );
       }
 
@@ -102,7 +102,7 @@ chatV2.post("/", async (c) => {
         throw new WebRouteError(
           400,
           ErrorCode.VALIDATION_ERROR,
-          "model is not supported",
+          "model is not supported"
         );
       }
 
@@ -111,21 +111,21 @@ chatV2.post("/", async (c) => {
           throw new WebRouteError(
             403,
             ErrorCode.FORBIDDEN,
-            "This MCPJam model is not available for guest access. Sign in to continue.",
+            "This MCPJam model is not available for guest access. Sign in to continue."
           );
         }
         if (!process.env.CONVEX_HTTP_URL) {
           throw new WebRouteError(
             500,
             ErrorCode.INTERNAL_ERROR,
-            "Server missing CONVEX_HTTP_URL configuration",
+            "Server missing CONVEX_HTTP_URL configuration"
           );
         }
       } else {
         throw new WebRouteError(
           400,
           ErrorCode.FEATURE_NOT_SUPPORTED,
-          "Only MCPJam hosted models are supported in hosted mode",
+          "Only MCPJam hosted models are supported in hosted mode"
         );
       }
 
@@ -144,7 +144,7 @@ chatV2.post("/", async (c) => {
             throw new WebRouteError(
               err.status,
               ErrorCode.VALIDATION_ERROR,
-              err.message,
+              err.message
             );
           }
           throw err;
@@ -170,7 +170,7 @@ chatV2.post("/", async (c) => {
             defaultTimeout: WEB_STREAM_TIMEOUT_MS,
             rpcLogger: rpcCollector.rpcLogger,
             retryPolicy: INSPECTOR_MCP_RETRY_POLICY,
-          },
+          }
         );
       } else {
         // Guest without servers — empty manager for plain LLM chat
@@ -180,7 +180,7 @@ chatV2.post("/", async (c) => {
             defaultTimeout: WEB_STREAM_TIMEOUT_MS,
             rpcLogger: rpcCollector.rpcLogger,
             retryPolicy: INSPECTOR_MCP_RETRY_POLICY,
-          },
+          }
         );
       }
 
@@ -218,6 +218,8 @@ chatV2.post("/", async (c) => {
         return handleMCPJamFreeChatModel({
           messages: scrubMessages(modelMessages as ModelMessage[]),
           modelId: String(modelDefinition.id),
+          chatSessionId: directChatSessionId,
+          sourceType: "direct",
           systemPrompt: enhancedSystemPrompt,
           temperature: resolvedTemperature,
           tools: allTools as ToolSet,
@@ -287,7 +289,7 @@ chatV2.post("/", async (c) => {
       throw new WebRouteError(
         400,
         ErrorCode.VALIDATION_ERROR,
-        "messages are required",
+        "messages are required"
       );
     }
 
@@ -296,7 +298,7 @@ chatV2.post("/", async (c) => {
       throw new WebRouteError(
         400,
         ErrorCode.VALIDATION_ERROR,
-        "model is not supported",
+        "model is not supported"
       );
     }
 
@@ -313,7 +315,7 @@ chatV2.post("/", async (c) => {
         chatboxToken,
         rpcLogger: rpcCollector.rpcLogger,
         serverNames: selectedServerNames,
-      },
+      }
     );
     oauthServerUrls = urls;
 
@@ -350,7 +352,7 @@ chatV2.post("/", async (c) => {
         throw new WebRouteError(
           500,
           ErrorCode.INTERNAL_ERROR,
-          "Server missing CONVEX_HTTP_URL configuration",
+          "Server missing CONVEX_HTTP_URL configuration"
         );
       }
 
@@ -369,6 +371,12 @@ chatV2.post("/", async (c) => {
           workspaceId: hostedBody.workspaceId,
           providerKey,
           modelId: String(modelDefinition.id),
+          chatSessionId: hostedChatSessionId,
+          sourceType: shareToken
+            ? "serverShare"
+            : chatboxToken
+            ? "chatbox"
+            : "direct",
           messages: scrubMessages(modelMessages as ModelMessage[]),
           systemPrompt: enhancedSystemPrompt,
           temperature: resolvedTemperature,
@@ -390,8 +398,8 @@ chatV2.post("/", async (c) => {
                   sourceType: shareToken
                     ? "serverShare"
                     : chatboxToken
-                      ? "chatbox"
-                      : "direct",
+                    ? "chatbox"
+                    : "direct",
                   ...(chatboxToken && surface ? { surface } : {}),
                   shareToken,
                   chatboxToken,
@@ -432,6 +440,12 @@ chatV2.post("/", async (c) => {
       return handleMCPJamFreeChatModel({
         messages: modelMessages as ModelMessage[],
         modelId: String(modelDefinition.id),
+        chatSessionId: hostedChatSessionId,
+        sourceType: shareToken
+          ? "serverShare"
+          : chatboxToken
+          ? "chatbox"
+          : "direct",
         systemPrompt: enhancedSystemPrompt,
         temperature: resolvedTemperature,
         tools: allTools as ToolSet,
@@ -452,8 +466,8 @@ chatV2.post("/", async (c) => {
                 sourceType: shareToken
                   ? "serverShare"
                   : chatboxToken
-                    ? "chatbox"
-                    : "direct",
+                  ? "chatbox"
+                  : "direct",
                 ...(chatboxToken && surface ? { surface } : {}),
                 shareToken,
                 chatboxToken,
@@ -473,7 +487,8 @@ chatV2.post("/", async (c) => {
                         requireToolApproval,
                         selectedServers:
                           Array.isArray(selectedServerNames) &&
-                          selectedServerNames.length === selectedServerIds.length
+                          selectedServerNames.length ===
+                            selectedServerIds.length
                             ? selectedServerNames
                             : selectedServerIds,
                       },
@@ -506,7 +521,7 @@ chatV2.post("/", async (c) => {
           oauthRequired: true,
           serverUrl: firstUrl,
         },
-        rpcCollector?.buildEnvelope(),
+        rpcCollector?.buildEnvelope()
       );
     }
     const routeError = mapRuntimeError(error);
@@ -516,7 +531,7 @@ chatV2.post("/", async (c) => {
       routeError.code,
       routeError.message,
       routeError.details,
-      rpcCollector?.buildEnvelope(),
+      rpcCollector?.buildEnvelope()
     );
   }
 });

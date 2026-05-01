@@ -66,6 +66,11 @@ const allowedOpenAiModel = {
   name: "GPT-4o Mini",
   provider: "openai" as const,
 };
+const orgOpenAiModel = {
+  id: "gpt-4o-mini",
+  name: "GPT-4o Mini",
+  provider: "openai" as const,
+};
 const gatedOpenAiModel = {
   id: "openai/gpt-5.4-pro",
   name: "GPT-5.4 Pro",
@@ -86,6 +91,12 @@ vi.mock("@/components/chat-v2/shared/model-helpers", () => ({
     gatedAnthropicModel,
     gatedGoogleModel,
     gatedOpenAiModel,
+    allowedHostedModel,
+    allowedOpenAiModel,
+    guestModel,
+  ]),
+  buildAvailableModelsFromOrgConfig: vi.fn(() => [
+    orgOpenAiModel,
     allowedHostedModel,
     allowedOpenAiModel,
     guestModel,
@@ -330,6 +341,36 @@ describe("useChatSession hosted mode", () => {
       chatboxToken: "chatbox-token",
       surface: "preview",
     });
+    unmount();
+  });
+
+  it("uses organization provider config to expose BYOK hosted models", async () => {
+    mockState.selectedModelId = "gpt-4o-mini";
+
+    const { result, unmount } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        hostedWorkspaceId: "workspace-1",
+        hostedOrgModelConfig: {
+          providers: [
+            {
+              providerKey: "openai",
+              enabled: true,
+              hasSecret: true,
+            },
+          ],
+        },
+        hostedSelectedServerIds: ["server-id-1"],
+      }),
+    );
+
+    await waitFor(() => {
+      expect(result.current.availableModels.map((model) => model.id)).toContain(
+        "gpt-4o-mini",
+      );
+    });
+    expect(result.current.selectedModel.id).toBe("gpt-4o-mini");
+    expect(result.current.isMcpJamModel).toBe(false);
     unmount();
   });
 

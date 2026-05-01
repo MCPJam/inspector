@@ -10,7 +10,7 @@ import {
 import type { UIMessage } from "ai";
 import { ScrollToBottomButton } from "@/components/chat-v2/shared/scroll-to-bottom-button";
 import { useAuth } from "@workos-inc/authkit-react";
-import { useConvexAuth } from "convex/react";
+import { useConvexAuth, useQuery } from "convex/react";
 import type { ContentBlock } from "@modelcontextprotocol/client";
 import { toast } from "sonner";
 import { ModelDefinition } from "@/shared/types";
@@ -85,6 +85,7 @@ import {
 import { useWorkspaceServers } from "@/hooks/useViews";
 import { HOSTED_MODE } from "@/lib/config";
 import { buildOAuthTokensByServerId } from "@/lib/oauth/oauth-tokens";
+import type { OrgModelProvider } from "@/hooks/use-org-model-config";
 import type { HostedOAuthRequiredDetails } from "@/lib/hosted-oauth-required";
 import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
 import { useModelSelectorLayoutLock } from "@/hooks/use-model-selector-layout-lock";
@@ -301,6 +302,13 @@ export function ChatTabV2({
   );
   const activeWorkspace = appState.workspaces[appState.activeWorkspaceId];
   const convexWorkspaceId = activeWorkspace?.sharedWorkspaceId ?? null;
+  const organizationId = activeWorkspace?.organizationId ?? null;
+  const hostedOrgModelConfig = useQuery(
+    "organizationModelProviders:getVisibleConfig" as any,
+    HOSTED_MODE && isConvexAuthenticated && organizationId
+      ? ({ organizationId } as any)
+      : "skip",
+  ) as { providers: OrgModelProvider[] } | undefined;
   const { serversById, serversByName } = useWorkspaceServers({
     isAuthenticated: isConvexAuthenticated,
     workspaceId: convexWorkspaceId,
@@ -384,6 +392,7 @@ export function ChatTabV2({
     selectedServers: selectedConnectedServerNames,
     directVisibility: pendingDirectVisibility,
     hostedWorkspaceId: effectiveHostedWorkspaceId,
+    hostedOrgModelConfig,
     hostedSelectedServerIds: effectiveHostedSelectedServerIds,
     hostedOAuthTokens: effectiveHostedOAuthTokens,
     hostedShareToken,

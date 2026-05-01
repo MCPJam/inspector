@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import {
+  BarChart3,
   CheckCircle2,
   Circle,
   Loader2,
@@ -45,6 +46,9 @@ import {
 } from "@mcpjam/design-system/select";
 import {
   useOrgModelConfig,
+  useOrgModelUsageSummary,
+  type OrgModelUsageAggregate,
+  type OrgModelUsageSummary,
   type OrgModelProvider,
 } from "@/hooks/use-org-model-config";
 
@@ -67,19 +71,75 @@ interface ProviderCatalogEntry {
 }
 
 const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
-  { key: "openai", name: "OpenAI", kind: "api-key-only", logo: "/openai_logo.svg" },
-  { key: "anthropic", name: "Anthropic", kind: "api-key-only", logo: "/anthropic_logo.svg" },
-  { key: "google", name: "Google", kind: "api-key-only", logo: "/google_logo.svg" },
-  { key: "deepseek", name: "DeepSeek", kind: "api-key-only", logo: "/deepseek_logo.svg" },
-  { key: "mistral", name: "Mistral", kind: "api-key-only", logo: "/mistral_logo.svg" },
+  {
+    key: "openai",
+    name: "OpenAI",
+    kind: "api-key-only",
+    logo: "/openai_logo.svg",
+  },
+  {
+    key: "anthropic",
+    name: "Anthropic",
+    kind: "api-key-only",
+    logo: "/anthropic_logo.svg",
+  },
+  {
+    key: "google",
+    name: "Google",
+    kind: "api-key-only",
+    logo: "/google_logo.svg",
+  },
+  {
+    key: "deepseek",
+    name: "DeepSeek",
+    kind: "api-key-only",
+    logo: "/deepseek_logo.svg",
+  },
+  {
+    key: "mistral",
+    name: "Mistral",
+    kind: "api-key-only",
+    logo: "/mistral_logo.svg",
+  },
   { key: "xai", name: "xAI", kind: "api-key-only", logo: "/xai_logo.svg" },
-  { key: "azure", name: "Azure OpenAI", kind: "azure", logo: "/azure_logo.png" },
+  {
+    key: "azure",
+    name: "Azure OpenAI",
+    kind: "azure",
+    logo: "/azure_logo.png",
+  },
   { key: "ollama", name: "Ollama", kind: "ollama", logo: "/ollama_logo.svg" },
-  { key: "openrouter", name: "OpenRouter", kind: "openrouter", logo: "/openrouter_logo.png" },
+  {
+    key: "openrouter",
+    name: "OpenRouter",
+    kind: "openrouter",
+    logo: "/openrouter_logo.png",
+  },
 ];
 
 function findCatalogEntry(key: string): ProviderCatalogEntry | undefined {
   return PROVIDER_CATALOG.find((p) => p.key === key);
+}
+
+function formatCount(value: number | undefined): string {
+  return new Intl.NumberFormat("en-US").format(value ?? 0);
+}
+
+function formatCost(value: number | undefined): string {
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 4,
+  }).format(value ?? 0);
+}
+
+function providerDisplayName(key: string): string {
+  const catalogEntry = findCatalogEntry(key);
+  if (catalogEntry) return catalogEntry.name;
+  if (key.startsWith("custom:")) {
+    return key.slice("custom:".length);
+  }
+  return key;
 }
 
 // ---------------------------------------------------------------------------
@@ -101,6 +161,11 @@ export function OrganizationModelsSection({
 }: OrganizationModelsSectionProps) {
   const { providers, isLoading, upsertProvider, deleteProvider, isSaving } =
     useOrgModelConfig(organizationId);
+  const { summary: usageSummary, isLoading: isUsageLoading } =
+    useOrgModelUsageSummary(organizationId, {
+      enabled: isAdmin,
+      rangeDays: 30,
+    });
 
   // Dialog state
   const [configDialogOpen, setConfigDialogOpen] = useState(false);
@@ -117,7 +182,7 @@ export function OrganizationModelsSection({
   } | null>(null);
   const [customDialogOpen, setCustomDialogOpen] = useState(false);
   const [editingCustom, setEditingCustom] = useState<OrgModelProvider | null>(
-    null,
+    null
   );
 
   // -----------------------------------------------------------------------
@@ -126,7 +191,7 @@ export function OrganizationModelsSection({
 
   const openConfigDialog = (
     entry: ProviderCatalogEntry,
-    existing?: OrgModelProvider,
+    existing?: OrgModelProvider
   ) => {
     setConfigTarget({
       providerKey: entry.key,
@@ -149,7 +214,7 @@ export function OrganizationModelsSection({
       toast.success(`${deleteTarget.name} removed`);
     } catch (err) {
       toast.error(
-        err instanceof Error ? err.message : "Failed to remove provider",
+        err instanceof Error ? err.message : "Failed to remove provider"
       );
     } finally {
       setDeleteConfirmOpen(false);
@@ -234,7 +299,7 @@ export function OrganizationModelsSection({
                   onRemove={() =>
                     openDeleteConfirm(
                       cp.providerKey,
-                      cp.displayName || cp.providerKey,
+                      cp.displayName || cp.providerKey
                     )
                   }
                 />
@@ -242,11 +307,7 @@ export function OrganizationModelsSection({
 
               {isAdmin ? (
                 <div className="pt-3">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={openAddCustom}
-                  >
+                  <Button variant="outline" size="sm" onClick={openAddCustom}>
                     <Plus className="mr-2 size-4" />
                     Add Custom Provider
                   </Button>
@@ -256,6 +317,10 @@ export function OrganizationModelsSection({
           )}
         </CardContent>
       </Card>
+
+      {isAdmin ? (
+        <UsageSummaryCard summary={usageSummary} isLoading={isUsageLoading} />
+      ) : null}
 
       {/* Config dialog for known providers */}
       {configTarget ? (
@@ -275,9 +340,7 @@ export function OrganizationModelsSection({
               setConfigTarget(null);
             } catch (err) {
               toast.error(
-                err instanceof Error
-                  ? err.message
-                  : "Failed to save provider",
+                err instanceof Error ? err.message : "Failed to save provider"
               );
             }
           }}
@@ -300,7 +363,7 @@ export function OrganizationModelsSection({
             toast.success(
               editingCustom
                 ? "Custom provider updated"
-                : "Custom provider added",
+                : "Custom provider added"
             );
             setCustomDialogOpen(false);
             setEditingCustom(null);
@@ -308,7 +371,7 @@ export function OrganizationModelsSection({
             toast.error(
               err instanceof Error
                 ? err.message
-                : "Failed to save custom provider",
+                : "Failed to save custom provider"
             );
           }
         }}
@@ -413,7 +476,10 @@ function ProviderRow({
             Configured
           </Badge>
         ) : (
-          <Badge variant="outline" className="gap-1 text-xs text-muted-foreground">
+          <Badge
+            variant="outline"
+            className="gap-1 text-xs text-muted-foreground"
+          >
             <Circle className="size-3" />
             Not configured
           </Badge>
@@ -443,6 +509,132 @@ function ProviderRow({
             ) : null}
           </>
         ) : null}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// UsageSummaryCard
+// ---------------------------------------------------------------------------
+
+function UsageSummaryCard({
+  summary,
+  isLoading,
+}: {
+  summary: OrgModelUsageSummary | undefined;
+  isLoading: boolean;
+}) {
+  const total = summary?.total;
+  const hasKnownCost = (total?.knownCostRequests ?? 0) > 0;
+  const hasUsage = (total?.requestCount ?? 0) > 0;
+  const topProviders = summary?.byProvider.slice(0, 4) ?? [];
+  const topModels = summary?.byModel.slice(0, 4) ?? [];
+
+  return (
+    <Card className="border-border/60">
+      <CardHeader className="pb-2">
+        <CardTitle className="flex items-center gap-2 text-xl">
+          <BarChart3 className="size-4 text-muted-foreground" />
+          Usage
+        </CardTitle>
+        <p className="text-sm text-muted-foreground">
+          Organization-managed model requests recorded over the last 30 days.
+        </p>
+      </CardHeader>
+
+      <CardContent className="space-y-4 pt-0">
+        {isLoading ? (
+          <div className="flex items-center gap-2 py-4 text-muted-foreground">
+            <Loader2 className="size-4 animate-spin" />
+            Loading usage...
+          </div>
+        ) : !hasUsage ? (
+          <div className="rounded-md border border-dashed border-border/60 px-3 py-4 text-sm text-muted-foreground">
+            No BYOK model requests have been recorded in this period.
+          </div>
+        ) : (
+          <>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <UsageStat
+                label="Requests"
+                value={formatCount(total?.requestCount)}
+              />
+              <UsageStat
+                label="Tokens"
+                value={formatCount(total?.totalTokens)}
+              />
+              <UsageStat
+                label="Input"
+                value={formatCount(total?.inputTokens)}
+              />
+              <UsageStat
+                label="Output"
+                value={formatCount(total?.outputTokens)}
+              />
+            </div>
+
+            {hasKnownCost ? (
+              <div className="rounded-md border border-border/40 px-3 py-2">
+                <div className="text-xs text-muted-foreground">
+                  Provider-reported cost
+                </div>
+                <div className="text-base font-semibold">
+                  {formatCost(total?.knownCostUsd)}
+                </div>
+              </div>
+            ) : (
+              <div className="text-xs text-muted-foreground">
+                Provider cost is not reported for these requests yet.
+              </div>
+            )}
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <UsageBreakdown title="By Provider" rows={topProviders} />
+              <UsageBreakdown title="By Model" rows={topModels} />
+            </div>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function UsageStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-md border border-border/40 px-3 py-2">
+      <div className="text-xs text-muted-foreground">{label}</div>
+      <div className="text-base font-semibold">{value}</div>
+    </div>
+  );
+}
+
+function UsageBreakdown({
+  title,
+  rows,
+}: {
+  title: string;
+  rows: OrgModelUsageAggregate[];
+}) {
+  return (
+    <div className="space-y-2">
+      <div className="text-xs font-medium uppercase text-muted-foreground">
+        {title}
+      </div>
+      <div className="space-y-1">
+        {rows.map((row) => (
+          <div
+            key={row.key}
+            className="flex items-center justify-between gap-3 rounded-md border border-border/40 px-3 py-2 text-sm"
+          >
+            <span className="min-w-0 truncate">
+              {title === "By Provider" ? providerDisplayName(row.key) : row.key}
+            </span>
+            <span className="shrink-0 text-muted-foreground">
+              {formatCount(row.requestCount)} req
+            </span>
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -516,7 +708,9 @@ function KnownProviderConfigDialog({
       case "ollama":
         return !!baseUrl.trim();
       case "openrouter":
-        return (!!secret.trim() || existing?.hasSecret) && !!selectedModels.trim();
+        return (
+          (!!secret.trim() || existing?.hasSecret) && !!selectedModels.trim()
+        );
       default:
         return false;
     }
@@ -551,7 +745,10 @@ function KnownProviderConfigDialog({
           {/* API key field -- all except ollama */}
           {kind !== "ollama" ? (
             <div>
-              <label htmlFor="org-provider-secret" className="text-sm font-medium">
+              <label
+                htmlFor="org-provider-secret"
+                className="text-sm font-medium"
+              >
                 API Key
                 {existing?.hasSecret ? (
                   <span className="text-muted-foreground font-normal ml-1">
@@ -571,7 +768,7 @@ function KnownProviderConfigDialog({
           ) : null}
 
           {/* Base URL field -- azure, ollama */}
-          {(kind === "azure" || kind === "ollama") ? (
+          {kind === "azure" || kind === "ollama" ? (
             <div>
               <label htmlFor="org-provider-url" className="text-sm font-medium">
                 Base URL
@@ -801,7 +998,9 @@ function OrgCustomProviderDialog({
             <label htmlFor="org-cp-secret" className="text-sm font-medium">
               API Key{" "}
               <span className="text-muted-foreground font-normal">
-                (optional{editProvider?.hasSecret ? ", leave blank to keep current" : ""})
+                (optional
+                {editProvider?.hasSecret ? ", leave blank to keep current" : ""}
+                )
               </span>
             </label>
             <Input
@@ -844,8 +1043,8 @@ function OrgCustomProviderDialog({
             {isSaving
               ? "Saving..."
               : editProvider
-                ? "Save Changes"
-                : "Add Provider"}
+              ? "Save Changes"
+              : "Add Provider"}
           </Button>
         </DialogFooter>
       </DialogContent>

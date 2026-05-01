@@ -79,12 +79,14 @@ export interface MCPJamHandlerOptions {
   authHeader?: string;
   chatboxToken?: string;
   workspaceId?: string;
+  chatSessionId?: string;
+  sourceType?: string;
   mcpClientManager: MCPClientManager;
   selectedServers?: string[];
   requireToolApproval?: boolean;
   onConversationComplete?: (
     fullHistory: ModelMessage[],
-    turnTrace: PersistedTurnTrace,
+    turnTrace: PersistedTurnTrace
   ) => Promise<void> | void;
   onStreamComplete?: () => Promise<void> | void;
   onStreamWriterReady?: (writer: {
@@ -119,6 +121,8 @@ interface StepContext {
   authHeader?: string;
   chatboxToken?: string;
   workspaceId?: string;
+  chatSessionId?: string;
+  sourceType?: string;
   modelId: string;
   systemPrompt: string;
   temperature?: number;
@@ -194,7 +198,7 @@ function collectUsedToolCallIds(messages: ModelMessage[]): Set<string> {
 
 function generateUniqueToolCallId(
   usedToolCallIds: Set<string>,
-  prefix = "tc",
+  prefix = "tc"
 ): string {
   const MAX_ATTEMPTS = 100;
   for (let i = 0; i < MAX_ATTEMPTS; i++) {
@@ -212,7 +216,7 @@ function generateUniqueToolCallId(
 
 function createToolCallIdNormalizer(
   usedToolCallIds: Set<string>,
-  stepIndex: number,
+  stepIndex: number
 ): (rawToolCallId?: string) => string {
   const perStepMap = new Map<string, string>();
   let collisionCounter = 0;
@@ -250,7 +254,7 @@ function getLatestUserMessageIndex(messageHistory: ModelMessage[]): number {
 
 function getPromptAssistantStepBaseIndex(
   messageHistory: ModelMessage[],
-  promptMessageStartIndex: number,
+  promptMessageStartIndex: number
 ): number {
   let assistantCount = 0;
   for (
@@ -266,7 +270,7 @@ function getPromptAssistantStepBaseIndex(
 }
 
 function readUsageFromFinishChunk(
-  finishChunk: UIMessageChunk | null,
+  finishChunk: UIMessageChunk | null
 ): LiveChatTraceUsage | undefined {
   if (!finishChunk || finishChunk.type !== "finish") {
     return undefined;
@@ -311,7 +315,7 @@ function setStepSpanMessageRanges(
   promptIndex: number,
   stepIndex: number,
   messageStartIndex: number | undefined,
-  messageEndIndex: number | undefined,
+  messageEndIndex: number | undefined
 ): void {
   if (
     typeof messageStartIndex !== "number" ||
@@ -345,7 +349,7 @@ function scrubMessagesForBackend(
   messages: ModelMessage[],
   tools: ToolSet,
   mcpClientManager: MCPClientManager,
-  selectedServers?: string[],
+  selectedServers?: string[]
 ): ModelMessage[] {
   const pruned = pruneMessages({
     messages,
@@ -358,7 +362,7 @@ function scrubMessagesForBackend(
       const assistantMsg = msg as AssistantModelMessage;
       if (!Array.isArray(assistantMsg.content)) return msg;
       const filtered = assistantMsg.content.filter(
-        (part) => part.type !== "tool-approval-request",
+        (part) => part.type !== "tool-approval-request"
       );
       if (filtered.length === assistantMsg.content.length) return msg;
       return { ...msg, content: filtered } as ModelMessage;
@@ -367,7 +371,7 @@ function scrubMessagesForBackend(
     if (msg.role === "tool") {
       const toolMsg = msg as ToolModelMessage;
       const filtered = toolMsg.content.filter(
-        (part) => part.type !== "tool-approval-response",
+        (part) => part.type !== "tool-approval-response"
       );
       if (filtered.length === toolMsg.content.length) return msg;
       return { ...msg, content: filtered } as ModelMessage;
@@ -378,17 +382,17 @@ function scrubMessagesForBackend(
 
   const withoutUnavailableToolHistory = scrubUnavailableToolHistoryForBackend(
     stripped,
-    Object.keys(tools as Record<string, unknown>),
+    Object.keys(tools as Record<string, unknown>)
   );
 
   const scrubbed = scrubChatGPTAppsToolResultsForBackend(
     scrubMcpAppsToolResultsForBackend(
       withoutUnavailableToolHistory,
       mcpClientManager,
-      selectedServers,
+      selectedServers
     ),
     mcpClientManager,
-    selectedServers,
+    selectedServers
   );
   return normalizeModelMessagesForConvex(scrubbed);
 }
@@ -404,7 +408,7 @@ async function processStream(
   traceTurn: LiveTraceTurnContext,
   stepIndex: number,
   tools: ToolSet,
-  requireToolApproval?: boolean,
+  requireToolApproval?: boolean
 ): Promise<StreamResult> {
   const contentParts: PersistedAssistantPart[] = [];
   let pendingText = "";
@@ -599,7 +603,7 @@ function emitToolResults(
   mcpClientManager: MCPClientManager,
   newMessages: ModelMessage[],
   traceTurn?: LiveTraceTurnContext,
-  stepIndex?: number,
+  stepIndex?: number
 ) {
   for (const msg of newMessages) {
     if (msg?.role === "tool") {
@@ -627,8 +631,7 @@ function emitToolResults(
                 : {};
             const toolMeta =
               serverId && toolName
-                ? (mcpClientManager.getAllToolsMetadata(serverId)[toolName] ??
-                  {})
+                ? mcpClientManager.getAllToolsMetadata(serverId)[toolName] ?? {}
                 : {};
 
             // Include descriptor metadata in streamed output so shared/minimal chat
@@ -681,7 +684,7 @@ function emitToolResults(
 function emitInheritedToolCalls(
   writer: StepContext["writer"],
   messageHistory: ModelMessage[],
-  beforeStepLength: number,
+  beforeStepLength: number
 ) {
   // Collect existing tool result IDs
   const existingResultIds = new Set<string>();
@@ -732,7 +735,7 @@ async function handlePendingApprovals(
   tools: ToolSet,
   mcpClientManager: MCPClientManager,
   traceTurn?: LiveTraceTurnContext,
-  stepIndex?: number,
+  stepIndex?: number
 ): Promise<boolean> {
   // Build approvalId → toolCallId map, toolCallId → toolName map,
   // and toolCallId → assistant message index map from assistant messages
@@ -867,7 +870,7 @@ async function handlePendingApprovals(
   // executeToolCallsFromMessages skips tool-call IDs that already have results
   // (via existingToolResultIds), so the denied results prevent double-execution.
   const needsExecution = [...approvedToolCallIds].some(
-    (id) => !existingResultIds.has(id),
+    (id) => !existingResultIds.has(id)
   );
 
   if (needsExecution) {
@@ -880,7 +883,7 @@ async function handlePendingApprovals(
       mcpClientManager,
       newMessages,
       traceTurn,
-      stepIndex,
+      stepIndex
     );
     didHandle = true;
   }
@@ -893,7 +896,7 @@ async function handlePendingApprovals(
  * Calls Convex, streams the response, and executes tools if needed.
  */
 async function processOneStep(
-  ctx: StepContext,
+  ctx: StepContext
 ): Promise<{ shouldContinue: boolean; didEmitFinish: boolean }> {
   const {
     writer,
@@ -923,12 +926,12 @@ async function processOneStep(
     messageHistory,
     tools,
     mcpClientManager,
-    selectedServers,
+    selectedServers
   );
 
   const normalizeToolCallId = createToolCallIdNormalizer(
     usedToolCallIds,
-    stepIndex,
+    stepIndex
   );
 
   emitRequestPayload(writer, {
@@ -945,7 +948,13 @@ async function processOneStep(
   // Call the Convex streaming endpoint. The default endpoint is /stream
   // (MCPJam-provided models); org BYOK chat targets /stream/org and adds
   // a service-token header via extraHeaders.
-  const { endpointPath, extraHeaders, extraBodyFields } = ctx;
+  const {
+    endpointPath,
+    extraHeaders,
+    extraBodyFields,
+    chatSessionId,
+    sourceType,
+  } = ctx;
   const res = await fetch(`${process.env.CONVEX_HTTP_URL}${endpointPath}`, {
     method: "POST",
     headers: {
@@ -965,6 +974,11 @@ async function processOneStep(
       tools: toolDefs,
       ...(chatboxToken ? { chatboxToken } : {}),
       ...(workspaceId ? { workspaceId } : {}),
+      ...(chatSessionId ? { chatSessionId } : {}),
+      ...(sourceType ? { sourceType } : {}),
+      turnId: traceTurn.turnId,
+      promptIndex: traceTurn.promptIndex,
+      stepIndex,
       ...(extraBodyFields ?? {}),
     }),
   });
@@ -991,7 +1005,7 @@ async function processOneStep(
             ? traceTurn.promptMessageStartIndex
             : undefined,
         messageEndIndex: stepMessageEndIndex,
-      },
+      }
     );
     setStepSpanMessageRanges(
       traceTurn.turnSpans,
@@ -1000,7 +1014,7 @@ async function processOneStep(
       stepMessageEndIndex != null
         ? traceTurn.promptMessageStartIndex
         : undefined,
-      stepMessageEndIndex,
+      stepMessageEndIndex
     );
     emitTraceSnapshot(writer, messageHistory, tools, traceTurn);
     writeTraceEvent(writer, {
@@ -1022,12 +1036,12 @@ async function processOneStep(
     traceTurn,
     stepIndex,
     tools,
-    requireToolApproval,
+    requireToolApproval
   );
   const llmEndAbs = Date.now();
   traceTurn.turnUsage = mergeLiveChatTraceUsage(
     traceTurn.turnUsage,
-    readUsageFromFinishChunk(finishChunk),
+    readUsageFromFinishChunk(finishChunk)
   );
 
   // Update message history with assistant response
@@ -1067,14 +1081,14 @@ async function processOneStep(
           messageStartIndex: stepMessageStartIndex,
           messageEndIndex: stepMessageEndIndex,
           status: "ok",
-        },
+        }
       );
       setStepSpanMessageRanges(
         traceTurn.turnSpans,
         traceTurn.promptIndex,
         stepIndex,
         stepMessageStartIndex,
-        stepMessageEndIndex,
+        stepMessageEndIndex
       );
       emitTraceSnapshot(writer, messageHistory, tools, traceTurn);
       if (finishChunk) {
@@ -1095,7 +1109,7 @@ async function processOneStep(
           promptIndex: traceTurn.promptIndex,
           stepIndex,
           spans: traceTurn.turnSpans,
-        },
+        }
       );
 
       // Execute tools locally
@@ -1124,7 +1138,7 @@ async function processOneStep(
         messageHistory,
         traceTurn.promptIndex,
         stepIndex,
-        newToolCallIds,
+        newToolCallIds
       );
       const stepMessageEndIndexAfterTools =
         messageHistory.length > traceTurn.promptMessageStartIndex
@@ -1155,14 +1169,14 @@ async function processOneStep(
           messageStartIndex: stepMessageStartIndexAfterTools,
           messageEndIndex: stepMessageEndIndexAfterTools,
           status: "ok",
-        },
+        }
       );
       setStepSpanMessageRanges(
         traceTurn.turnSpans,
         traceTurn.promptIndex,
         stepIndex,
         stepMessageStartIndexAfterTools,
-        stepMessageEndIndexAfterTools,
+        stepMessageEndIndexAfterTools
       );
 
       // Emit results for newly executed tools
@@ -1171,7 +1185,7 @@ async function processOneStep(
         mcpClientManager,
         newMessages,
         traceTurn,
-        stepIndex,
+        stepIndex
       );
       emitTraceSnapshot(writer, messageHistory, tools, traceTurn);
     } catch (error) {
@@ -1193,14 +1207,14 @@ async function processOneStep(
           messageStartIndex: stepMessageStartIndex,
           messageEndIndex: stepMessageEndIndex,
           pushAggregateSpan: false,
-        },
+        }
       );
       setStepSpanMessageRanges(
         traceTurn.turnSpans,
         traceTurn.promptIndex,
         stepIndex,
         stepMessageStartIndex,
-        stepMessageEndIndex,
+        stepMessageEndIndex
       );
       emitTraceSnapshot(writer, messageHistory, tools, traceTurn);
 
@@ -1235,14 +1249,14 @@ async function processOneStep(
       messageStartIndex: stepMessageStartIndex,
       messageEndIndex: stepMessageEndIndex,
       status: "ok",
-    },
+    }
   );
   setStepSpanMessageRanges(
     traceTurn.turnSpans,
     traceTurn.promptIndex,
     stepIndex,
     stepMessageStartIndex,
-    stepMessageEndIndex,
+    stepMessageEndIndex
   );
   emitTraceSnapshot(writer, messageHistory, tools, traceTurn);
 
@@ -1261,7 +1275,7 @@ async function processOneStep(
  * Orchestrates the agentic loop between Convex (LLM) and local tool execution.
  */
 export async function handleMCPJamFreeChatModel(
-  options: MCPJamHandlerOptions,
+  options: MCPJamHandlerOptions
 ): Promise<Response> {
   const {
     messages,
@@ -1281,6 +1295,8 @@ export async function handleMCPJamFreeChatModel(
     endpointPath,
     extraHeaders,
     extraBodyFields,
+    chatSessionId,
+    sourceType,
   } = options;
   const resolvedEndpointPath = endpointPath ?? "/stream";
 
@@ -1296,7 +1312,7 @@ export async function handleMCPJamFreeChatModel(
   };
   const promptStepBaseIndex = getPromptAssistantStepBaseIndex(
     messageHistory,
-    traceTurn.promptMessageStartIndex,
+    traceTurn.promptMessageStartIndex
   );
   let steps = 0;
   let runSucceeded = false;
@@ -1323,7 +1339,7 @@ export async function handleMCPJamFreeChatModel(
             tools,
             mcpClientManager,
             traceTurn,
-            promptStepBaseIndex + steps,
+            promptStepBaseIndex + steps
           );
           if (handled) {
             // Approvals were processed — if there are still unresolved tool
@@ -1341,6 +1357,8 @@ export async function handleMCPJamFreeChatModel(
             authHeader,
             chatboxToken,
             workspaceId,
+            chatSessionId,
+            sourceType,
             modelId,
             systemPrompt,
             temperature,
@@ -1394,7 +1412,7 @@ export async function handleMCPJamFreeChatModel(
           traceTurn.turnStartedAt,
           traceTurn.turnStartedAt,
           failAbs,
-          traceTurn.promptIndex,
+          traceTurn.promptIndex
         );
         emitTraceSnapshot(writer, messageHistory, tools, traceTurn);
         writeTraceEvent(writer, {
@@ -1432,7 +1450,7 @@ export async function handleMCPJamFreeChatModel(
           } catch (persistenceError) {
             logger.error(
               "[mcpjam-stream-handler] Error while persisting conversation",
-              persistenceError,
+              persistenceError
             );
           }
         }
@@ -1442,7 +1460,7 @@ export async function handleMCPJamFreeChatModel(
         } catch (cleanupError) {
           logger.error(
             "[mcpjam-stream-handler] Error while running stream cleanup",
-            cleanupError,
+            cleanupError
           );
         }
       }
