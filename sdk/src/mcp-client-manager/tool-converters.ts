@@ -17,6 +17,8 @@ import {
 } from "ai";
 import { assertCallToolResult } from "./result-guards.js";
 
+export const MCP_OUTPUT_SCHEMA_PROPERTY = "_mcpOutputSchema";
+
 /**
  * Normalizes a schema to a valid JSON Schema object.
  * Many MCP tools omit the top-level type; Anthropic requires an object schema.
@@ -55,6 +57,43 @@ export function ensureJsonSchemaObject(schema: unknown): JSONSchema7 {
     properties: {},
     additionalProperties: false,
   } satisfies JSONSchema7;
+}
+
+function stringifyJsonSchema(schema: unknown): string | undefined {
+  if (!schema || typeof schema !== "object") {
+    return undefined;
+  }
+
+  try {
+    return JSON.stringify(schema);
+  } catch {
+    return undefined;
+  }
+}
+
+export function withMcpOutputSchemaDescription(
+  description: string | undefined,
+  outputSchema: unknown
+): string | undefined {
+  const outputSchemaText = stringifyJsonSchema(outputSchema);
+  if (!outputSchemaText) {
+    return description;
+  }
+
+  const descriptionText = description?.trim();
+  const schemaHint = `MCP output schema for structuredContent: ${outputSchemaText}`;
+
+  return descriptionText ? `${descriptionText}\n\n${schemaHint}` : schemaHint;
+}
+
+export function attachMcpOutputSchemaMetadata(
+  tool: Tool,
+  outputSchema: unknown
+): void {
+  if (outputSchema !== undefined) {
+    (tool as Record<string, unknown>)[MCP_OUTPUT_SCHEMA_PROPERTY] =
+      outputSchema;
+  }
 }
 
 /**
@@ -215,7 +254,11 @@ export async function convertMCPToolsToVercelTools(
   const tools: ToolSet = {};
 
   for (const toolDescription of listToolsResult.tools) {
-    const { name, description, inputSchema } = toolDescription;
+    const { name, description, inputSchema, outputSchema } = toolDescription;
+    const descriptionWithOutputSchema = withMcpOutputSchemaDescription(
+      description,
+      outputSchema
+    );
     const toolMeta = toolDescription._meta as
       | Record<string, unknown>
       | undefined;
@@ -254,7 +297,7 @@ export async function convertMCPToolsToVercelTools(
       // Automatic mode: normalize the schema and create a dynamic tool
       const normalizedInputSchema = ensureJsonSchemaObject(inputSchema);
       vercelTool = dynamicTool({
-        description,
+        description: descriptionWithOutputSchema,
         inputSchema: jsonSchema(normalizedInputSchema),
         execute,
         ...(toModelOutput ? { toModelOutput } : {}),
@@ -267,7 +310,7 @@ export async function convertMCPToolsToVercelTools(
         continue;
       }
       vercelTool = defineTool<unknown, CallToolResult>({
-        description,
+        description: descriptionWithOutputSchema,
         inputSchema: overrides[name].inputSchema,
         execute,
         ...(toModelOutput ? { toModelOutput } : {}),
@@ -275,6 +318,7 @@ export async function convertMCPToolsToVercelTools(
       });
     }
 
+    attachMcpOutputSchemaMetadata(vercelTool, outputSchema);
     tools[name] = vercelTool;
   }
 

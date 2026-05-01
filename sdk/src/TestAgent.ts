@@ -28,7 +28,11 @@ import type {
   EvalWidgetSnapshotInput,
   MCPServerReplayConfig,
 } from "./eval-reporting-types.js";
-import { ensureJsonSchemaObject } from "./mcp-client-manager/tool-converters.js";
+import {
+  attachMcpOutputSchemaMetadata,
+  ensureJsonSchemaObject,
+  withMcpOutputSchemaDescription,
+} from "./mcp-client-manager/tool-converters.js";
 import { assertCallToolResult } from "./mcp-client-manager/result-guards.js";
 import { buildMcpAppWidgetSnapshot } from "./widget-snapshots.js";
 import { injectOpenAICompat } from "./widget-helpers.js";
@@ -87,7 +91,10 @@ function convertToToolSet(tools: Tool[]): ToolSet {
     }
 
     const converted = dynamicTool({
-      description: tool.description,
+      description: withMcpOutputSchemaDescription(
+        tool.description,
+        tool.outputSchema
+      ),
       inputSchema: jsonSchema(ensureJsonSchemaObject(tool.inputSchema)),
       execute: async (args, options) => {
         options?.abortSignal?.throwIfAborted?.();
@@ -95,6 +102,7 @@ function convertToToolSet(tools: Tool[]): ToolSet {
         return assertCallToolResult(result, `Tool "${tool.name}" result`);
       },
     });
+    attachMcpOutputSchemaMetadata(converted, tool.outputSchema);
 
     // Preserve _serverId like getToolsForAiSdk() does
     if (tool._meta?._serverId) {

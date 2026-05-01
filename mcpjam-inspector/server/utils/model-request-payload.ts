@@ -25,6 +25,28 @@ function serializeToolSchema(schema: unknown): Record<string, unknown> {
   }
 }
 
+function serializeOptionalJsonSchema(
+  schema: unknown
+): Record<string, unknown> | undefined {
+  if (!schema) {
+    return undefined;
+  }
+
+  if (typeof schema === "object" && schema !== null && "jsonSchema" in schema) {
+    return (schema as { jsonSchema: Record<string, unknown> }).jsonSchema;
+  }
+
+  if (typeof schema === "object" && schema !== null && !Array.isArray(schema)) {
+    return schema as Record<string, unknown>;
+  }
+
+  try {
+    return z.toJSONSchema(schema as z.ZodType) as Record<string, unknown>;
+  } catch {
+    return undefined;
+  }
+}
+
 export function buildResolvedModelRequestPayload(options: {
   systemPrompt: string;
   tools: ToolSet;
@@ -39,11 +61,15 @@ export function buildResolvedModelRequestPayload(options: {
 
     const toolRecord = tool as Record<string, unknown>;
     const schema = toolRecord.parameters ?? toolRecord.inputSchema;
+    const outputSchema = serializeOptionalJsonSchema(
+      toolRecord.outputSchema ?? toolRecord._mcpOutputSchema
+    );
 
     serializedTools[name] = {
       name,
       description: toolRecord.description as string | undefined,
       inputSchema: serializeToolSchema(schema),
+      ...(outputSchema ? { outputSchema } : {}),
     };
   }
 
