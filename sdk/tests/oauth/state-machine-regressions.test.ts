@@ -121,6 +121,62 @@ describe("OAuth state machine regressions", () => {
     expect(state.isInitiatingAuth).toBe(false);
   });
 
+  it("uses the protected-resource metadata resource for 2025-11-25 resource indicators", async () => {
+    let state = {
+      ...EMPTY_OAUTH_FLOW_STATE,
+      currentStep: "received_client_credentials" as const,
+      serverUrl: SERVER_URL,
+      resourceMetadata: {
+        resource: "https://mcp.example.com",
+      },
+      authorizationServerMetadata: {
+        authorization_endpoint: "https://auth.example.com/authorize",
+        token_endpoint: "https://auth.example.com/token",
+      },
+      clientId: "client-id",
+      infoLogs: [],
+      httpHistory: [],
+    };
+
+    const machine = createOAuthStateMachine({
+      protocolVersion: "2025-11-25",
+      registrationStrategy: "dcr",
+      state,
+      getState: () => state,
+      updateState: (updates) => {
+        state = { ...state, ...updates };
+      },
+      serverUrl: SERVER_URL,
+      serverName: "Test Server",
+      redirectUrl: REDIRECT_URI,
+      requestExecutor: jest.fn(),
+      dynamicRegistration: {
+        client_name: "Test Client",
+      },
+    });
+
+    await machine.proceedToNextStep();
+    await machine.proceedToNextStep();
+
+    expect(state.currentStep).toBe("authorization_request");
+    expect(
+      new URL(state.authorizationUrl ?? "").searchParams.get("resource")
+    ).toBe("https://mcp.example.com");
+
+    state = {
+      ...state,
+      currentStep: "received_authorization_code" as const,
+      authorizationCode: "auth-code",
+    };
+
+    await machine.proceedToNextStep();
+
+    expect(state.currentStep).toBe("token_request");
+    expect((state.lastRequest?.body as Record<string, string>).resource).toBe(
+      "https://mcp.example.com"
+    );
+  });
+
   it("clears isInitiatingAuth when strict DCR fails with a transport error in 2025-11-25", async () => {
     let state = {
       ...EMPTY_OAUTH_FLOW_STATE,
@@ -235,7 +291,7 @@ describe("OAuth state machine regressions", () => {
     expect(state.currentStep).toBe("request_client_registration");
     expect(state.clientId).toBeUndefined();
     expect(state.error).toBe(
-      "Dynamic Client Registration failed (400). Configure a pre-registered client or enable DCR on the authorization server.",
+      "Dynamic Client Registration failed (400). Configure a pre-registered client or enable DCR on the authorization server."
     );
     expect(state.isInitiatingAuth).toBe(false);
   });
