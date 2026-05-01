@@ -1,7 +1,6 @@
 import React from "react";
 import { AlertTriangle } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
-import { EmptyState } from "@/components/ui/empty-state";
 
 interface ErrorBoundaryProps {
   children: React.ReactNode;
@@ -14,6 +13,17 @@ interface ErrorBoundaryState {
   error: Error | null;
 }
 
+/**
+ * Domain-agnostic error boundary primitive.
+ *
+ * Fallback semantics:
+ * - `fallback={null}` → render nothing on error (intentional silence; e.g.
+ *   gracefully hiding an experimental tile when its query throws).
+ * - `fallback={<X />}` → render that fallback.
+ * - omitted OR `fallback={undefined}` → fall through to the default UI
+ *   (TS `?: ReactNode` treats `undefined` as "absent", which is what we
+ *   honor here via `!== undefined`).
+ */
 export class ErrorBoundary extends React.Component<
   ErrorBoundaryProps,
   ErrorBoundaryState
@@ -38,7 +48,7 @@ export class ErrorBoundary extends React.Component<
 
   render() {
     if (this.state.hasError) {
-      if (this.props.fallback) {
+      if (this.props.fallback !== undefined) {
         return this.props.fallback;
       }
 
@@ -60,28 +70,4 @@ export class ErrorBoundary extends React.Component<
 
     return this.props.children;
   }
-}
-
-/**
- * Error boundary specifically for evals tab
- */
-export function EvalsErrorBoundary({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
-  return (
-    <ErrorBoundary
-      fallback={
-        <EmptyState
-          icon={AlertTriangle}
-          title="Something went wrong"
-          description="An error occurred while loading the evals tab. Please refresh the page."
-          className="h-[calc(100vh-200px)]"
-        />
-      }
-    >
-      {children}
-    </ErrorBoundary>
-  );
 }
