@@ -61,7 +61,10 @@ import {
   authFetch,
   getAuthHeaders as getSessionAuthHeaders,
 } from "@/lib/session-token";
-import { notifyGuestLimitErrorFromResponse } from "@/lib/guest-limit";
+import {
+  notifyGuestLimitError,
+  notifyGuestLimitErrorFromResponse,
+} from "@/lib/guest-limit";
 import { getGuestBearerToken } from "@/lib/guest-session";
 import { HOSTED_MODE } from "@/lib/config";
 import { transcriptToUIMessages } from "@/lib/transcript-to-ui-messages";
@@ -1213,6 +1216,10 @@ export function useChatSession({
     []
   );
 
+  const handleChatError = useCallback((chatError: Error) => {
+    notifyGuestLimitError({ message: chatError.message });
+  }, []);
+
   // Create transport
   const transport = useMemo(() => {
     let apiKey: string;
@@ -1357,6 +1364,7 @@ export function useChatSession({
     id: chatSessionId,
     transport: proxyTransport,
     onData: handleStreamDataPart,
+    onError: handleChatError,
     sendAutomaticallyWhen: requireToolApproval
       ? lastAssistantMessageIsCompleteWithApprovalResponses
       : undefined,

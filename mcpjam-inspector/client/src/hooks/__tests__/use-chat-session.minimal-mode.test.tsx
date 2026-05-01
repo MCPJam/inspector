@@ -28,6 +28,7 @@ const mockTransportInstances: Array<{
   sendMessages: ReturnType<typeof vi.fn>;
   requests: any[];
 }> = [];
+const mockUseChatErrorHandlers: Array<(error: Error) => void> = [];
 
 const baseModel = {
   id: "gpt-4",
@@ -158,14 +159,20 @@ vi.mock("@ai-sdk/react", async () => {
       ({
         id,
         transport,
+        onError,
       }: {
         id: string;
         transport: {
           sendMessages: (options: any) => Promise<unknown>;
         };
+        onError?: (error: Error) => void;
       }) => {
         const latchedIdRef = React.useRef(id);
         const latchedTransportRef = React.useRef(transport);
+
+        if (onError) {
+          mockUseChatErrorHandlers.push(onError);
+        }
 
         if (latchedIdRef.current !== id) {
           latchedIdRef.current = id;
@@ -261,6 +268,7 @@ describe("useChatSession minimal mode parity", () => {
       isOpen: false,
     });
     mockTransportInstances.length = 0;
+    mockUseChatErrorHandlers.length = 0;
     mockGetToolsMetadata.mockResolvedValue({
       metadata: { create_view: { title: "Create view" } },
       toolServerMap: { create_view: "server-1" },
@@ -431,6 +439,32 @@ describe("useChatSession minimal mode parity", () => {
       expect(useGuestLimitDialogStore.getState().isOpen).toBe(true);
     });
     expect(mockAuthFetch).not.toHaveBeenCalled();
+  });
+
+  it("opens the guest-limit dialog for chat-v2 stream limit errors", async () => {
+    renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        minimalMode: true,
+        executionConfig: {
+          systemPrompt: "Prompt",
+        },
+      }),
+    );
+
+    await waitFor(() => {
+      expect(mockUseChatErrorHandlers.length).toBeGreaterThan(0);
+    });
+
+    act(() => {
+      mockUseChatErrorHandlers.at(-1)?.(
+        new Error(
+          "Daily MCPJam model limit reached. Use BYOK or try again tomorrow.",
+        ),
+      );
+    });
+
+    expect(useGuestLimitDialogStore.getState().isOpen).toBe(true);
   });
 
   it("keeps only the three premium MCPJam models gated on the unauthenticated non-hosted path", async () => {
