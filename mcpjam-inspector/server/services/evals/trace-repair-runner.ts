@@ -16,7 +16,7 @@ import { executeSuiteReplayFromRun } from "./replay-suite-run.js";
 import { sanitizeForConvexTransport } from "./convex-sanitize.js";
 import {
   resolveOrgModelConfig,
-  buildModelApiKeysFromOrgConfig,
+  type ResolvedOrgModelConfig,
 } from "../../utils/org-model-config.js";
 
 const LEASE_MS = 30_000;
@@ -260,6 +260,7 @@ export type TraceRepairRunnerParams = {
   convexAuthToken: string;
   jobId: string;
   modelApiKeys?: Record<string, string>;
+  orgModelConfig?: ResolvedOrgModelConfig;
 };
 
 export async function captureTraceRepairJobToolSnapshot(args: {
@@ -305,10 +306,14 @@ export async function runTraceRepairJob(
   params: TraceRepairRunnerParams,
 ): Promise<void> {
   const { convexClient, convexAuthToken, jobId } = params;
-  let modelApiKeys = params.modelApiKeys;
+  const modelApiKeys =
+    params.modelApiKeys && Object.keys(params.modelApiKeys).length > 0
+      ? params.modelApiKeys
+      : undefined;
+  let orgModelConfig = params.orgModelConfig;
 
-  // Resolve model API keys from org config if not provided
-  if (!modelApiKeys) {
+  // Resolve org model config if client-sent keys were not provided.
+  if (!modelApiKeys && !orgModelConfig) {
     try {
       const job = await convexClient.query(
         "traceRepair:getTraceRepairJob" as any,
@@ -323,7 +328,7 @@ export async function runTraceRepairJob(
             bearerToken: convexAuthToken,
           },
         );
-        modelApiKeys = buildModelApiKeysFromOrgConfig(orgConfig);
+        orgModelConfig = orgConfig;
       }
     } catch (error) {
       logger.warn("[trace-repair] Failed to resolve org model config", {
@@ -693,6 +698,7 @@ export async function runTraceRepairJob(
                   provider: step.provider,
                   serverIds: replayServerIds,
                   modelApiKeys: mergedApiKeys,
+                  orgModelConfig,
                   convexAuthToken,
                   testCaseOverrides: {
                     query: step.query,
@@ -879,6 +885,7 @@ export async function runTraceRepairJob(
       convexAuthToken,
       sourceRunId: job.sourceRunId,
       modelApiKeys,
+      orgModelConfig,
       useCurrentSuiteConfig: true,
     });
 

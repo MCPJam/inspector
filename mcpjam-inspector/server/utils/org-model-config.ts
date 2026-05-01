@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { ModelDefinition } from "@/shared/types";
+import type { BaseUrls, CustomProviderConfig } from "./chat-helpers";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -213,4 +214,51 @@ export function buildModelApiKeysFromOrgConfig(
     keys[p.providerKey] = p.apiKey;
   }
   return keys;
+}
+
+export type OrgLlmRuntimeConfig = {
+  modelApiKeys: Record<string, string>;
+  baseUrls: BaseUrls;
+  customProviders: CustomProviderConfig[];
+};
+
+export function buildLlmRuntimeConfigFromOrgConfig(
+  config: ResolvedOrgModelConfig,
+): OrgLlmRuntimeConfig {
+  const runtime: OrgLlmRuntimeConfig = {
+    modelApiKeys: buildModelApiKeysFromOrgConfig(config),
+    baseUrls: {},
+    customProviders: [],
+  };
+
+  for (const provider of config.providers) {
+    if (provider.providerKey === "ollama" && provider.baseUrl) {
+      runtime.baseUrls.ollama = provider.baseUrl;
+      continue;
+    }
+
+    if (provider.providerKey === "azure" && provider.baseUrl) {
+      runtime.baseUrls.azure = provider.baseUrl;
+      continue;
+    }
+
+    if (
+      provider.providerKey.startsWith("custom:") &&
+      provider.baseUrl &&
+      provider.modelIds
+    ) {
+      const name = provider.providerKey.replace(/^custom:/, "");
+      if (!name) continue;
+
+      runtime.customProviders.push({
+        name,
+        protocol: provider.protocol || "openai-compatible",
+        baseUrl: provider.baseUrl,
+        modelIds: provider.modelIds,
+        ...(provider.apiKey ? { apiKey: provider.apiKey } : {}),
+      });
+    }
+  }
+
+  return runtime;
 }

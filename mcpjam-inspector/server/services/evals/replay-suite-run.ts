@@ -12,7 +12,7 @@ import {
 import { logger } from "../../utils/logger.js";
 import {
   resolveOrgModelConfig,
-  buildModelApiKeysFromOrgConfig,
+  type ResolvedOrgModelConfig,
 } from "../../utils/org-model-config.js";
 
 export type ExecuteSuiteReplayFromRunParams = {
@@ -20,6 +20,7 @@ export type ExecuteSuiteReplayFromRunParams = {
   convexAuthToken: string;
   sourceRunId: string;
   modelApiKeys?: Record<string, string>;
+  orgModelConfig?: ResolvedOrgModelConfig;
   notes?: string;
   passCriteria?: { minimumPassRate: number };
   useCurrentSuiteConfig?: boolean;
@@ -44,6 +45,7 @@ export async function executeSuiteReplayFromRun(
     convexAuthToken,
     sourceRunId,
     modelApiKeys,
+    orgModelConfig,
     notes,
     passCriteria,
     useCurrentSuiteConfig,
@@ -101,11 +103,18 @@ export async function executeSuiteReplayFromRun(
       }
     }
 
-    // Resolve model API keys: prefer client-sent keys, fall back to org config
-    let resolvedModelApiKeys = modelApiKeys;
-    if (!resolvedModelApiKeys && replayMetadata.workspaceId) {
+    // Resolve org model config: prefer client-sent keys, fall back to org config.
+    const hasClientKeys =
+      !!modelApiKeys && Object.keys(modelApiKeys).length > 0;
+    const resolvedModelApiKeys = hasClientKeys ? modelApiKeys : undefined;
+    let resolvedOrgModelConfig = orgModelConfig;
+    if (
+      !resolvedModelApiKeys &&
+      !resolvedOrgModelConfig &&
+      replayMetadata.workspaceId
+    ) {
       try {
-        const orgConfig = await resolveOrgModelConfig(
+        resolvedOrgModelConfig = await resolveOrgModelConfig(
           {
             workspaceId: replayMetadata.workspaceId,
           },
@@ -114,7 +123,6 @@ export async function executeSuiteReplayFromRun(
             serverIds: replayServerIds,
           },
         );
-        resolvedModelApiKeys = buildModelApiKeysFromOrgConfig(orgConfig);
       } catch (error) {
         logger.warn("[evals] Failed to resolve org model config for replay", {
           sourceRunId,
@@ -128,6 +136,7 @@ export async function executeSuiteReplayFromRun(
       runId,
       config,
       modelApiKeys: resolvedModelApiKeys ?? undefined,
+      orgModelConfig: resolvedOrgModelConfig,
       convexClient,
       convexHttpUrl,
       convexAuthToken,
