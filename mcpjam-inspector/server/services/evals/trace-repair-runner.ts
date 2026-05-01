@@ -315,9 +315,14 @@ export async function runTraceRepairJob(
         { jobId },
       );
       if (job?.workspaceId) {
-        const orgConfig = await resolveOrgModelConfig({
-          workspaceId: job.workspaceId,
-        });
+        const orgConfig = await resolveOrgModelConfig(
+          {
+            workspaceId: job.workspaceId,
+          },
+          {
+            bearerToken: convexAuthToken,
+          },
+        );
         modelApiKeys = buildModelApiKeysFromOrgConfig(orgConfig);
       }
     } catch (error) {

@@ -102,6 +102,9 @@ export function isOrgProviderAvailable(
     if (!p.enabled) return false;
     // Ollama only needs baseUrl, not a secret
     if (p.providerKey === "ollama") return Boolean(p.baseUrl);
+    if (p.providerKey.startsWith("custom:")) {
+      return Boolean(p.baseUrl && p.modelIds && p.modelIds.length > 0);
+    }
     return p.hasSecret;
   });
 }
@@ -154,7 +157,8 @@ export function buildAvailableModelsFromOrgConfig(
   // Custom providers (providerKey starts with "custom:")
   for (const p of orgConfig.providers) {
     if (!p.providerKey.startsWith("custom:")) continue;
-    if (!p.enabled || !p.hasSecret) continue;
+    if (!p.enabled || !p.baseUrl || !p.modelIds || p.modelIds.length === 0)
+      continue;
     // customProviderName must be the slug from the providerKey so that the
     // server's deriveOrgProviderKey can rebuild "custom:<slug>" and look it
     // up against the persisted org config. The human-readable displayName

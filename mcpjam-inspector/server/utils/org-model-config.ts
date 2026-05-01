@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { ModelDefinition } from "@/shared/types";
 
 // ---------------------------------------------------------------------------
@@ -18,6 +19,18 @@ export type ResolvedOrgModelConfig = {
   providers: ResolvedProviderConfig[];
 };
 
+export type ResolveOrgModelConfigTarget =
+  | { workspaceId: string }
+  | { organizationId: string };
+
+export type ResolveOrgModelConfigAuth = {
+  authHeader?: string;
+  bearerToken?: string;
+  shareToken?: string;
+  chatboxToken?: string;
+  serverIds?: string[];
+};
+
 // ---------------------------------------------------------------------------
 // Resolution — call the Convex HTTP endpoint
 // ---------------------------------------------------------------------------
@@ -36,8 +49,53 @@ const resolveCache = new Map<
   { result: ResolvedOrgModelConfig; expiresAt: number }
 >();
 
+function normalizeAuthHeader(
+  auth: ResolveOrgModelConfigAuth | undefined,
+): string | undefined {
+  const header = auth?.authHeader?.trim();
+  if (header) return header;
+
+  const bearerToken = auth?.bearerToken?.trim();
+  if (!bearerToken) return undefined;
+  return /^Bearer\s+/i.test(bearerToken)
+    ? bearerToken
+    : `Bearer ${bearerToken}`;
+}
+
+function normalizeServerIds(serverIds: string[] | undefined): string[] {
+  return Array.from(
+    new Set(
+      (serverIds ?? [])
+        .map((serverId) => serverId.trim())
+        .filter((serverId) => serverId.length > 0),
+    ),
+  ).sort();
+}
+
+function buildCacheKey(
+  params: ResolveOrgModelConfigTarget,
+  auth: ResolveOrgModelConfigAuth | undefined,
+): string {
+  const target =
+    "workspaceId" in params
+      ? `ws:${params.workspaceId}`
+      : `org:${params.organizationId}`;
+  const authHash = createHash("sha256")
+    .update(
+      JSON.stringify({
+        authorization: normalizeAuthHeader(auth) ?? "",
+        shareToken: auth?.shareToken?.trim() ?? "",
+        chatboxToken: auth?.chatboxToken?.trim() ?? "",
+        serverIds: normalizeServerIds(auth?.serverIds),
+      }),
+    )
+    .digest("hex");
+  return `${target}:auth:${authHash}`;
+}
+
 export async function resolveOrgModelConfig(
-  params: { workspaceId: string } | { organizationId: string },
+  params: ResolveOrgModelConfigTarget,
+  auth?: ResolveOrgModelConfigAuth,
 ): Promise<ResolvedOrgModelConfig> {
   const convexHttpUrl = process.env.CONVEX_HTTP_URL;
   if (!convexHttpUrl) {
@@ -49,8 +107,9 @@ export async function resolveOrgModelConfig(
     throw new Error("INSPECTOR_SERVICE_TOKEN is not set");
   }
 
-  const cacheKey =
-    "workspaceId" in params ? `ws:${params.workspaceId}` : `org:${params.organizationId}`;
+  const authHeader = normalizeAuthHeader(auth);
+  const serverIds = normalizeServerIds(auth?.serverIds);
+  const cacheKey = buildCacheKey(params, auth);
   const cached = resolveCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) {
     return cached.result;
@@ -66,8 +125,18 @@ export async function resolveOrgModelConfig(
       headers: {
         "Content-Type": "application/json",
         [INSPECTOR_SERVICE_TOKEN_HEADER]: inspectorServiceToken,
+        ...(authHeader ? { Authorization: authHeader } : {}),
       },
-      body: JSON.stringify(params),
+      body: JSON.stringify({
+        ...params,
+        ...(auth?.shareToken?.trim()
+          ? { shareToken: auth.shareToken.trim() }
+          : {}),
+        ...(auth?.chatboxToken?.trim()
+          ? { chatboxToken: auth.chatboxToken.trim() }
+          : {}),
+        ...(serverIds.length > 0 ? { serverIds } : {}),
+      }),
       signal: controller.signal,
     });
 
@@ -89,7 +158,10 @@ export async function resolveOrgModelConfig(
     }
 
     const result: ResolvedOrgModelConfig = { providers: data.providers ?? [] };
-    resolveCache.set(cacheKey, { result, expiresAt: Date.now() + CACHE_TTL_MS });
+    resolveCache.set(cacheKey, {
+      result,
+      expiresAt: Date.now() + CACHE_TTL_MS,
+    });
     return result;
   } finally {
     clearTimeout(timeout);

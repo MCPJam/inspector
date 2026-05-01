@@ -82,6 +82,8 @@ export const RunEvalsRequestSchema = z.object({
     .array(z.string())
     .min(1, { message: "At least one server must be selected" }),
   serverNames: z.array(z.string()).optional(),
+  shareToken: z.string().optional(),
+  chatboxToken: z.string().optional(),
   storageServerIds: z.array(z.string()).optional(),
   modelApiKeys: z.record(z.string(), z.string()).optional(),
   convexAuthToken: z.string(),
@@ -104,6 +106,8 @@ export const RunTestCaseRequestSchema = z.object({
   serverIds: z
     .array(z.string())
     .min(1, { message: "At least one server must be selected" }),
+  shareToken: z.string().optional(),
+  chatboxToken: z.string().optional(),
   modelApiKeys: z.record(z.string(), z.string()).optional(),
   convexAuthToken: z.string(),
   testCaseOverrides: z
@@ -277,6 +281,8 @@ export async function runEvalsWithManager(
     tests,
     serverIds,
     serverNames,
+    shareToken,
+    chatboxToken,
     storageServerIds,
     modelApiKeys,
     convexAuthToken,
@@ -562,9 +568,17 @@ export async function runEvalsWithManager(
     }
     if (workspaceIdForOrgConfig) {
       try {
-        const orgConfig = await resolveOrgModelConfig({
-          workspaceId: workspaceIdForOrgConfig,
-        });
+        const orgConfig = await resolveOrgModelConfig(
+          {
+            workspaceId: workspaceIdForOrgConfig,
+          },
+          {
+            bearerToken: convexAuthToken,
+            shareToken,
+            chatboxToken,
+            serverIds: resolvedServerIds,
+          },
+        );
         resolvedModelApiKeys = buildModelApiKeysFromOrgConfig(orgConfig);
       } catch (error) {
         logger.warn("[evals] Failed to resolve org model config", {
@@ -611,6 +625,8 @@ export async function runEvalTestCaseWithManager(
     provider,
     compareRunId,
     serverIds,
+    shareToken,
+    chatboxToken,
     skipLastMessageRunUpdate,
     modelApiKeys,
     convexAuthToken,
@@ -655,9 +671,17 @@ export async function runEvalTestCaseWithManager(
   let resolvedModelApiKeys = hasClientKeysForCase ? modelApiKeys : undefined;
   if (!resolvedModelApiKeys && testCase.workspaceId) {
     try {
-      const orgConfig = await resolveOrgModelConfig({
-        workspaceId: testCase.workspaceId,
-      });
+      const orgConfig = await resolveOrgModelConfig(
+        {
+          workspaceId: testCase.workspaceId,
+        },
+        {
+          bearerToken: convexAuthToken,
+          shareToken,
+          chatboxToken,
+          serverIds: resolvedServerIds,
+        },
+      );
       resolvedModelApiKeys = buildModelApiKeysFromOrgConfig(orgConfig);
     } catch (error) {
       logger.warn("[evals] Failed to resolve org model config for test case", {
@@ -819,6 +843,8 @@ export async function streamEvalTestCaseWithManager(
     provider,
     compareRunId,
     serverIds,
+    shareToken,
+    chatboxToken,
     skipLastMessageRunUpdate,
     modelApiKeys,
     convexAuthToken,
@@ -865,9 +891,17 @@ export async function streamEvalTestCaseWithManager(
     : undefined;
   if (!resolvedStreamModelApiKeys && testCase.workspaceId) {
     try {
-      const orgConfig = await resolveOrgModelConfig({
-        workspaceId: testCase.workspaceId,
-      });
+      const orgConfig = await resolveOrgModelConfig(
+        {
+          workspaceId: testCase.workspaceId,
+        },
+        {
+          bearerToken: convexAuthToken,
+          shareToken,
+          chatboxToken,
+          serverIds: resolvedServerIds,
+        },
+      );
       resolvedStreamModelApiKeys = buildModelApiKeysFromOrgConfig(orgConfig);
     } catch (error) {
       logger.warn(

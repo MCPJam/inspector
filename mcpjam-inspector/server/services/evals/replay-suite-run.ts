@@ -105,9 +105,15 @@ export async function executeSuiteReplayFromRun(
     let resolvedModelApiKeys = modelApiKeys;
     if (!resolvedModelApiKeys && replayMetadata.workspaceId) {
       try {
-        const orgConfig = await resolveOrgModelConfig({
-          workspaceId: replayMetadata.workspaceId,
-        });
+        const orgConfig = await resolveOrgModelConfig(
+          {
+            workspaceId: replayMetadata.workspaceId,
+          },
+          {
+            bearerToken: convexAuthToken,
+            serverIds: replayServerIds,
+          },
+        );
         resolvedModelApiKeys = buildModelApiKeysFromOrgConfig(orgConfig);
       } catch (error) {
         logger.warn("[evals] Failed to resolve org model config for replay", {
