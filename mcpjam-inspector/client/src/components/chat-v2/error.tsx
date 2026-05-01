@@ -11,7 +11,9 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@mcpjam/design-system/collapsible";
+import { useAuth } from "@workos-inc/authkit-react";
 import { JsonEditor } from "@/components/ui/json-editor";
+import { isMCPJamModelLimitError } from "@/lib/guest-limit";
 import { cn } from "@/lib/utils";
 
 interface ErrorBoxProps {
@@ -49,8 +51,18 @@ export function ErrorBox({
   const [isErrorDetailsOpen, setIsErrorDetailsOpen] = useState(false);
   const errorDetailsJson = parseErrorDetails(errorDetails);
 
-  const isMCPJamModelLimit =
-    code === "mcpjam_rate_limit" || /mcpjam[\w\s-]*model limit/i.test(message);
+  const { user, isLoading } = useAuth();
+
+  const isMCPJamModelLimit = isMCPJamModelLimitError({
+    code,
+    details: errorDetails,
+    message,
+  });
+  const isGuest = !isLoading && !user;
+
+  if (isMCPJamModelLimit && isGuest) {
+    return null;
+  }
 
   // Platform and quota errors use warning styling to indicate recoverable state.
   const isPlatformError = isMCPJamPlatformError === true || isMCPJamModelLimit;

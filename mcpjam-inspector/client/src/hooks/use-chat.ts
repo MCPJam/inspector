@@ -19,6 +19,7 @@ import {
 import { SSEvent } from "@/shared/sse";
 import { parseSSEStream } from "@/lib/sse";
 import { authFetch } from "@/lib/session-token";
+import { notifyGuestLimitError } from "@/lib/guest-limit";
 
 interface ElicitationRequest {
   requestId: string;
@@ -472,13 +473,36 @@ export function useChat(options: UseChatOptions = {}) {
 
         if (!response.ok) {
           const errorText = await response.text();
-          let errorData;
+          let errorData: unknown;
           try {
             errorData = JSON.parse(errorText);
           } catch {
+            notifyGuestLimitError({ message: errorText });
             throw new Error(`Chat request failed: ${response.status}`);
           }
-          throw new Error(errorData.error || "Chat request failed");
+          const errorRecord =
+            errorData && typeof errorData === "object"
+              ? (errorData as {
+                  code?: unknown;
+                  error?: unknown;
+                  message?: unknown;
+                })
+              : null;
+          const errorMessage =
+            typeof errorRecord?.error === "string"
+              ? errorRecord.error
+              : typeof errorRecord?.message === "string"
+                ? errorRecord.message
+              : "Chat request failed";
+          notifyGuestLimitError({
+            code:
+              typeof errorRecord?.code === "string"
+                ? errorRecord.code
+                : undefined,
+            details: errorData,
+            message: errorMessage,
+          });
+          throw new Error(errorMessage);
         }
 
         // Handle streaming response via parser

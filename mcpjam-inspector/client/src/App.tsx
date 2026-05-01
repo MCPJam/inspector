@@ -11,6 +11,7 @@ import {
 import { useAuth } from "@workos-inc/authkit-react";
 import { AlertTriangle, Construction, Loader2 } from "lucide-react";
 import { toast } from "sonner";
+import { GuestLimitDialog } from "./components/guest-limit-dialog";
 import { ServersTab } from "./components/ServersTab";
 import { ToolsTab } from "./components/ToolsTab";
 import { ResourcesTab } from "./components/ResourcesTab";
@@ -2311,6 +2312,7 @@ export default function App() {
       />
       <AppStateProvider appState={effectiveAppState}>
         <Toaster />
+        <GuestLimitDialog />
         <div
           aria-hidden={shouldShowBillingHandoffOverlay || undefined}
           className={

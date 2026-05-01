@@ -61,6 +61,7 @@ import {
   authFetch,
   getAuthHeaders as getSessionAuthHeaders,
 } from "@/lib/session-token";
+import { notifyGuestLimitErrorFromResponse } from "@/lib/guest-limit";
 import { getGuestBearerToken } from "@/lib/guest-session";
 import { HOSTED_MODE } from "@/lib/config";
 import { transcriptToUIMessages } from "@/lib/transcript-to-ui-messages";
@@ -1196,11 +1197,16 @@ export function useChatSession({
   }, [selectedModel]);
   const traceViewsSupported = HOSTED_MODE ? isMcpJamModel : true;
 
-  const hostedChatFetch = useCallback(
+  const chatFetch = useCallback(
     async (input: RequestInfo | URL, init?: RequestInit) => {
-      const response = await authFetch(input, init);
+      const response = HOSTED_MODE
+        ? await authFetch(input, init)
+        : await fetch(input, init);
       if (!response.ok) {
-        await ingestHostedRpcLogsFromResponse(response);
+        await notifyGuestLimitErrorFromResponse(response);
+        if (HOSTED_MODE) {
+          await ingestHostedRpcLogsFromResponse(response);
+        }
       }
       return response;
     },
@@ -1277,7 +1283,7 @@ export function useChatSession({
 
     return new DefaultChatTransport({
       api: chatApi,
-      fetch: HOSTED_MODE ? hostedChatFetch : undefined,
+      fetch: chatFetch,
       body: () => ({
         model: selectedModel,
         ...(HOSTED_MODE ? {} : { apiKey }),
@@ -1320,7 +1326,7 @@ export function useChatSession({
     hostedShareToken,
     hostedChatboxToken,
     hostedChatboxSurface,
-    hostedChatFetch,
+    chatFetch,
     // requireToolApproval read from ref at request time
   ]);
   // `@ai-sdk/react` only recreates its internal Chat when the chat id changes.
