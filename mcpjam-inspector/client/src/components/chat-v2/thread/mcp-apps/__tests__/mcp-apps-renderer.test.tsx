@@ -381,7 +381,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     });
   });
 
-  it("keeps explicit host context theme inside the playground", async () => {
+  it("resolves theme from host context provider, ignoring draftHostContext.theme", async () => {
     Object.assign(mockPlaygroundStoreState, {
       isPlaygroundActive: true,
     });
@@ -396,7 +396,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
       expect(mockBridge.connect).toHaveBeenCalled();
     });
 
-    expect(appBridgeArgsRef.current?.options?.hostContext?.theme).toBe("light");
+    expect(appBridgeArgsRef.current?.options?.hostContext?.theme).toBe("dark");
 
     await act(async () => {
       triggerReady();
@@ -406,7 +406,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     await vi.waitFor(() => {
       expect(mockBridge.setHostContext).toHaveBeenLastCalledWith(
         expect.objectContaining({
-          theme: "light",
+          theme: "dark",
         }),
       );
     });

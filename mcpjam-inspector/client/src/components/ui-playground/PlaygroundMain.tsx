@@ -448,7 +448,9 @@ export function PlaygroundMain({
     (s) => s.themeMode
   ) as ThreadThemeMode;
   const themePreset = usePreferencesStore((s) => s.themePreset);
-  const effectiveThreadTheme = extractHostTheme(hostContext) ?? globalThemeMode;
+  const effectiveThreadTheme =
+    (extractHostTheme(hostContext) as ThreadThemeMode | undefined) ??
+    globalThemeMode;
   const hostStyleFamily = getChatboxHostFamily(hostStyle) ?? "claude";
   const hostBackgroundColor =
     getChatboxChatBackground(hostStyle, effectiveThreadTheme) ??

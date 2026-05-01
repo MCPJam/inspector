@@ -40,11 +40,11 @@ import type { WorkspaceHostContextDraft } from "@/lib/client-config";
 import {
   extractHostDeviceCapabilities,
   extractHostLocale,
+  extractHostTheme,
   extractHostTimeZone,
 } from "@/lib/client-config";
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import { listHostStyles } from "@/lib/host-styles";
-import { updateThemeMode } from "@/lib/theme-utils";
 import { cn } from "@/lib/utils";
 import { useHostContextStore } from "@/stores/host-context-store";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
@@ -116,7 +116,6 @@ export function HostContextHeader({
   const hostContextDirty = useHostContextStore((state) => state.isDirty);
 
   const themeMode = usePreferencesStore((state) => state.themeMode);
-  const setThemeMode = usePreferencesStore((state) => state.setThemeMode);
   const hostStyle = usePreferencesStore((state) => state.hostStyle);
   const setHostStyle = usePreferencesStore((state) => state.setHostStyle);
 
@@ -162,7 +161,7 @@ export function HostContextHeader({
   const locale = extractHostLocale(draftHostContext, fallbackLocale);
   const timeZone = extractHostTimeZone(draftHostContext, fallbackTimeZone);
   const capabilities = extractHostDeviceCapabilities(draftHostContext);
-  const effectiveThemeMode = themeMode;
+  const effectiveThemeMode = extractHostTheme(draftHostContext) ?? themeMode;
 
   const handleCapabilityToggle = useCallback(
     (key: "hover" | "touch") => {
@@ -176,10 +175,9 @@ export function HostContextHeader({
   );
 
   const handleThemeChange = useCallback(() => {
-    const newTheme = themeMode === "dark" ? "light" : "dark";
-    updateThemeMode(newTheme);
-    setThemeMode(newTheme);
-  }, [themeMode, setThemeMode]);
+    const newTheme = effectiveThemeMode === "dark" ? "light" : "dark";
+    patchHostContext({ theme: newTheme });
+  }, [effectiveThemeMode, patchHostContext]);
 
   return (
     <div className={cn("min-w-0 max-w-full", className)}>

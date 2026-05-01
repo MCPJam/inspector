@@ -72,7 +72,6 @@ import {
   clampDisplayModeToAvailableModes,
   extractHostDisplayMode,
   extractHostDisplayModes,
-  extractHostTheme,
 } from "@/lib/client-config";
 
 // Injected by Vite at build time from package.json
@@ -226,10 +225,7 @@ export function MCPAppsRenderer({
 
   // Get CSP mode and host style from playground store when in playground
   const isPlaygroundActive = useUIPlaygroundStore((s) => s.isPlaygroundActive);
-  const configuredHostTheme = extractHostTheme(baseHostContext);
-  const resolvedTheme = isPlaygroundActive
-    ? configuredHostTheme ?? chatboxHostTheme ?? themeMode
-    : chatboxHostTheme ?? themeMode;
+  const resolvedTheme = chatboxHostTheme ?? themeMode;
   const playgroundCspMode = useUIPlaygroundStore((s) => s.mcpAppsCspMode);
   const cspMode: CspMode = isPlaygroundActive
     ? playgroundCspMode

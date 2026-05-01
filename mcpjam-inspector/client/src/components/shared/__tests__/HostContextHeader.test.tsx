@@ -193,7 +193,7 @@ describe("HostContextHeader", () => {
     mockHostContextState.isDirty = false;
   });
 
-  it("writes theme changes through global preferences", () => {
+  it("writes theme changes to draftHostContext, not global preferences", () => {
     render(
       <HostContextHeader
         activeWorkspaceId="workspace-1"
@@ -204,8 +204,8 @@ describe("HostContextHeader", () => {
 
     fireEvent.click(screen.getByTestId("host-context-theme-toggle"));
 
-    expect(mockPreferencesState.setThemeMode).toHaveBeenCalledWith("dark");
-    expect(mockPatchHostContext).not.toHaveBeenCalled();
+    expect(mockPatchHostContext).toHaveBeenCalledWith({ theme: "light" });
+    expect(mockPreferencesState.setThemeMode).not.toHaveBeenCalled();
   });
 
   it("writes Claude and ChatGPT host-style selections through shared preferences", () => {
