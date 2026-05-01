@@ -170,15 +170,23 @@ export interface FormattedError {
   statusCode?: number;
   isRetryable?: boolean;
   isMCPJamPlatformError?: boolean;
+  canTopUp?: boolean;
+  currentBalanceCents?: number;
 }
 
+const USER_RATE_LIMIT_CODE = "user_rate_limit";
+const MCPJAM_RATE_LIMIT_CODE = "mcpjam_rate_limit";
+const RATE_LIMIT_CODES = new Set<string>([
+  USER_RATE_LIMIT_CODE,
+  MCPJAM_RATE_LIMIT_CODE,
+]);
+
 const MCPJAM_PLATFORM_CODES = [
-  "mcpjam_rate_limit",
+  USER_RATE_LIMIT_CODE,
+  MCPJAM_RATE_LIMIT_CODE,
   "mcpjam_api_error",
   "mcpjam_config_error",
 ];
-
-const MCPJAM_RATE_LIMIT_CODE = "mcpjam_rate_limit";
 const MCPJAM_MODEL_LIMIT_PATTERN = /mcpjam[\w\s-]*model limit/i;
 const MINUTES_PER_HOUR = 60;
 const MINUTES_PER_DAY = 24 * MINUTES_PER_HOUR;
@@ -330,7 +338,7 @@ const isMCPJamModelLimit = (
   message: unknown,
   details?: unknown,
 ) => {
-  if (code === MCPJAM_RATE_LIMIT_CODE) return true;
+  if (typeof code === "string" && RATE_LIMIT_CODES.has(code)) return true;
   if (typeof message === "string" && MCPJAM_MODEL_LIMIT_PATTERN.test(message)) {
     return true;
   }
@@ -343,13 +351,22 @@ const isMCPJamModelLimit = (
 
 const formatMCPJamModelLimit = (
   retryPhrase: string | null,
+  extras?: {
+    code?: string;
+    canTopUp?: boolean;
+    currentBalanceCents?: number;
+  },
 ): FormattedError => ({
-  code: MCPJAM_RATE_LIMIT_CODE,
+  code: extras?.code ?? MCPJAM_RATE_LIMIT_CODE,
   message: retryPhrase
     ? `Add your own API key in Settings > LLM Providers to keep chatting now, or ${retryPhrase}.`
     : "Add your own API key in Settings > LLM Providers to keep chatting now, or wait until your daily limit resets.",
   isRetryable: false,
   isMCPJamPlatformError: true,
+  ...(extras?.canTopUp !== undefined ? { canTopUp: extras.canTopUp } : {}),
+  ...(extras?.currentBalanceCents !== undefined
+    ? { currentBalanceCents: extras.currentBalanceCents }
+    : {}),
 });
 
 export function formatErrorMessage(error: unknown): FormattedError | null {
@@ -376,11 +393,22 @@ export function formatErrorMessage(error: unknown): FormattedError | null {
       const code = parsed.code;
       const message = parsed.error || parsed.message || "An error occurred";
       const details = normalizeDetails(parsed.details);
+      const canTopUp =
+        typeof parsed.canTopUp === "boolean" ? parsed.canTopUp : undefined;
+      const currentBalanceCents =
+        typeof parsed.currentBalanceCents === "number"
+          ? parsed.currentBalanceCents
+          : undefined;
 
       if (isMCPJamModelLimit(code, message, details)) {
         return formatMCPJamModelLimit(
           formatRetryAfter(parsed.retryAfter) ??
             extractRetryPhrase(parsed.details, message),
+          {
+            code: typeof code === "string" ? code : undefined,
+            canTopUp,
+            currentBalanceCents,
+          },
         );
       }
 
@@ -393,6 +421,8 @@ export function formatErrorMessage(error: unknown): FormattedError | null {
         isMCPJamPlatformError: code
           ? MCPJAM_PLATFORM_CODES.includes(code)
           : false,
+        ...(canTopUp !== undefined ? { canTopUp } : {}),
+        ...(currentBalanceCents !== undefined ? { currentBalanceCents } : {}),
       };
     }
   } catch {

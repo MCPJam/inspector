@@ -33,12 +33,88 @@ describe("formatErrorMessage", () => {
     );
 
     expect(result).toEqual({
-      code: "mcpjam_rate_limit",
+      code: "user_rate_limit",
       message:
         "Add your own API key in Settings > LLM Providers to keep chatting now, or try again in 1 hour 15 minutes.",
       isRetryable: false,
       isMCPJamPlatformError: true,
     });
+  });
+
+  it("surfaces canTopUp and currentBalanceCents when present", () => {
+    const result = formatErrorMessage(
+      JSON.stringify({
+        ok: false,
+        code: "user_rate_limit",
+        limitKind: "total",
+        error:
+          "Daily MCPJam model limit reached. Use BYOK or try again tomorrow.",
+        isRetryable: true,
+        retryAfter: 4500000,
+        details: "Try again in 75 minutes.",
+        canTopUp: true,
+        currentBalanceCents: 0,
+      }),
+    );
+
+    expect(result).toEqual({
+      code: "user_rate_limit",
+      message:
+        "Add your own API key in Settings > LLM Providers to keep chatting now, or try again in 1 hour 15 minutes.",
+      isRetryable: false,
+      isMCPJamPlatformError: true,
+      canTopUp: true,
+      currentBalanceCents: 0,
+    });
+  });
+
+  it("surfaces canTopUp:false for guests without a balance field", () => {
+    const result = formatErrorMessage(
+      JSON.stringify({
+        code: "user_rate_limit",
+        error: "Daily MCPJam model limit reached.",
+        retryAfter: 4500000,
+        canTopUp: false,
+      }),
+    );
+
+    expect(result).toEqual({
+      code: "user_rate_limit",
+      message:
+        "Add your own API key in Settings > LLM Providers to keep chatting now, or try again in 1 hour 15 minutes.",
+      isRetryable: false,
+      isMCPJamPlatformError: true,
+      canTopUp: false,
+    });
+    expect(result).not.toHaveProperty("currentBalanceCents");
+  });
+
+  it("omits canTopUp and currentBalanceCents when the server does not send them", () => {
+    const result = formatErrorMessage(
+      JSON.stringify({
+        code: "user_rate_limit",
+        error: "Daily MCPJam model limit reached.",
+        retryAfter: 4500000,
+      }),
+    );
+
+    expect(result).not.toHaveProperty("canTopUp");
+    expect(result).not.toHaveProperty("currentBalanceCents");
+  });
+
+  it("surfaces a non-zero currentBalanceCents as a number", () => {
+    const result = formatErrorMessage(
+      JSON.stringify({
+        code: "user_rate_limit",
+        error: "Daily MCPJam model limit reached.",
+        retryAfter: 4500000,
+        canTopUp: true,
+        currentBalanceCents: 250,
+      }),
+    );
+
+    expect(result?.currentBalanceCents).toBe(250);
+    expect(result?.canTopUp).toBe(true);
   });
 
   it("does not leak JSON delimiters from structured retry details", () => {

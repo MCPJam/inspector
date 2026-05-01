@@ -50,7 +50,9 @@ export function ErrorBox({
   const errorDetailsJson = parseErrorDetails(errorDetails);
 
   const isMCPJamModelLimit =
-    code === "mcpjam_rate_limit" || /mcpjam[\w\s-]*model limit/i.test(message);
+    code === "mcpjam_rate_limit" ||
+    code === "user_rate_limit" ||
+    /mcpjam[\w\s-]*model limit/i.test(message);
 
   // Platform and quota errors use warning styling to indicate recoverable state.
   const isPlatformError = isMCPJamPlatformError === true || isMCPJamModelLimit;
