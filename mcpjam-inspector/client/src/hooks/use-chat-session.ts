@@ -44,7 +44,9 @@ import { useCustomProviders } from "@/hooks/use-custom-providers";
 import { usePersistedModel } from "@/hooks/use-persisted-model";
 import {
   buildAvailableModels,
+  buildAvailableModelsFromOrgConfig,
   getDefaultModel,
+  type OrgVisibleConfig,
 } from "@/components/chat-v2/shared/model-helpers";
 import {
   isMCPJamGuestAllowedModel,
@@ -102,6 +104,8 @@ export interface UseChatSessionOptions {
   selectedServers: string[];
   /** Visibility to apply when persisting a new direct chat */
   directVisibility?: "private" | "workspace";
+  /** Sanitized organization provider config for hosted org-backed workspaces */
+  hostedOrgModelConfig?: OrgVisibleConfig;
   /** Hosted runtime context (workspace, server IDs, OAuth tokens, share/chatbox scope) */
   hostedContext?: HostedRuntimeContext;
   /** Minimal UI mode for shared chat (hides diagnostics surfaces only) */
@@ -924,6 +928,7 @@ function isAuthDeniedError(error: unknown): boolean {
 export function useChatSession({
   selectedServers,
   directVisibility = "private",
+  hostedOrgModelConfig,
   hostedContext,
   minimalMode: _minimalMode = false,
   executionConfig,
@@ -1120,6 +1125,27 @@ export function useChatSession({
         })
       : models;
     if (HOSTED_MODE) {
+      if (hostedOrgModelConfig) {
+        const orgModels =
+          buildAvailableModelsFromOrgConfig(hostedOrgModelConfig);
+        return !isAuthenticated
+          ? orgModels.map((model) => {
+              const modelId = String(model.id);
+              if (
+                !isMCPJamProvidedModel(modelId) ||
+                isMCPJamGuestAllowedModel(modelId)
+              ) {
+                return model;
+              }
+
+              return {
+                ...model,
+                disabled: true,
+                disabledReason: GUEST_LOCKED_MODEL_REASON,
+              };
+            })
+          : orgModels;
+      }
       return visibleModels.filter((model) =>
         isMCPJamProvidedModel(String(model.id))
       );
@@ -1133,6 +1159,7 @@ export function useChatSession({
     getAzureBaseUrl,
     isAuthenticated,
     customProviders,
+    hostedOrgModelConfig,
   ]);
 
   // Model selection with persistence

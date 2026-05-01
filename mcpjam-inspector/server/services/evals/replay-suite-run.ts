@@ -10,12 +10,17 @@ import {
   storeReplayConfig,
 } from "./route-helpers.js";
 import { logger } from "../../utils/logger.js";
+import {
+  resolveOrgModelConfig,
+  type ResolvedOrgModelConfig,
+} from "../../utils/org-model-config.js";
 
 export type ExecuteSuiteReplayFromRunParams = {
   convexClient: ConvexHttpClient;
   convexAuthToken: string;
   sourceRunId: string;
   modelApiKeys?: Record<string, string>;
+  orgModelConfig?: ResolvedOrgModelConfig;
   notes?: string;
   passCriteria?: { minimumPassRate: number };
   useCurrentSuiteConfig?: boolean;
@@ -40,6 +45,7 @@ export async function executeSuiteReplayFromRun(
     convexAuthToken,
     sourceRunId,
     modelApiKeys,
+    orgModelConfig,
     notes,
     passCriteria,
     useCurrentSuiteConfig,
@@ -97,11 +103,40 @@ export async function executeSuiteReplayFromRun(
       }
     }
 
+    // Resolve org model config: prefer client-sent keys, fall back to org config.
+    const hasClientKeys =
+      !!modelApiKeys && Object.keys(modelApiKeys).length > 0;
+    const resolvedModelApiKeys = hasClientKeys ? modelApiKeys : undefined;
+    let resolvedOrgModelConfig = orgModelConfig;
+    if (
+      !resolvedModelApiKeys &&
+      !resolvedOrgModelConfig &&
+      replayMetadata.workspaceId
+    ) {
+      try {
+        resolvedOrgModelConfig = await resolveOrgModelConfig(
+          {
+            workspaceId: replayMetadata.workspaceId,
+          },
+          {
+            bearerToken: convexAuthToken,
+            serverIds: replayServerIds,
+          },
+        );
+      } catch (error) {
+        logger.warn("[evals] Failed to resolve org model config for replay", {
+          sourceRunId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
     await runEvalSuiteWithAiSdk({
       suiteId: replayMetadata.suiteId,
       runId,
       config,
-      modelApiKeys: modelApiKeys ?? undefined,
+      modelApiKeys: resolvedModelApiKeys ?? undefined,
+      orgModelConfig: resolvedOrgModelConfig,
       convexClient,
       convexHttpUrl,
       convexAuthToken,

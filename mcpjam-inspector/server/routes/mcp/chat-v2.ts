@@ -17,6 +17,9 @@ import type { ModelProvider } from "@/shared/types";
 import { getProductionGuestAuthHeader } from "../../utils/guest-auth.js";
 import { logger } from "../../utils/logger";
 import { handleMCPJamFreeChatModel } from "../../utils/mcpjam-stream-handler";
+import { handleHostedOrgChatModel } from "../../utils/org-model-stream-handler.js";
+import { deriveOrgProviderKey } from "../../utils/org-model-config.js";
+import { HOSTED_MODE } from "../../config";
 import {
   persistChatSessionToConvex,
   pickEnrichmentHeaders,
@@ -570,6 +573,72 @@ chatV2.post("/", async (c) => {
                 startedAt: sessionStartedAt,
                 lastActivityAt: Date.now(),
                 ...(body.workspaceId ? { workspaceId: body.workspaceId } : {}),
+                resumeConfig: {
+                  systemPrompt,
+                  temperature,
+                  requireToolApproval,
+                  selectedServers,
+                },
+                expectedVersion: body.expectedVersion,
+                turnTrace,
+                forwardHeaders: pickEnrichmentHeaders(c.req.raw.headers),
+              });
+            }
+          : undefined,
+      });
+    }
+
+    // Hosted org BYOK: only in hosted mode, only when Convex is reachable,
+    // only when the request carries a workspaceId, and only when the caller
+    // hasn't supplied a client-side apiKey. A client-supplied apiKey is the
+    // strongest signal that the caller wants direct BYOK, so it wins —
+    // matches the precedence used in the eval flows (modelApiKeys ?? org).
+    // Otherwise we route the LLM call through Convex (/stream/org) so the
+    // org's vault-resolved provider keys never leave Convex. Local-mode BYOK
+    // (CLI / no Convex) falls through to createLlmModel + streamText below.
+    if (
+      HOSTED_MODE &&
+      process.env.CONVEX_HTTP_URL &&
+      process.env.INSPECTOR_SERVICE_TOKEN &&
+      typeof body.workspaceId === "string" &&
+      body.workspaceId &&
+      !apiKey
+    ) {
+      const providerKeyResult = deriveOrgProviderKey(modelDefinition);
+      if (!providerKeyResult.ok) {
+        return c.json({ error: providerKeyResult.error }, 400);
+      }
+      const providerKey = providerKeyResult.key;
+      const modelMessages = scrubMessages(
+        (await convertToModelMessages(messages)) as ModelMessage[],
+      );
+      const sessionStartedAt = Date.now();
+      const chatSessionId = body.chatSessionId;
+      return handleHostedOrgChatModel({
+        workspaceId: body.workspaceId,
+        providerKey,
+        modelId: String(modelDefinition.id),
+        messages: modelMessages,
+        systemPrompt: enhancedSystemPrompt,
+        temperature: resolvedTemperature,
+        tools: allTools as ToolSet,
+        authHeader: c.req.header("authorization"),
+        mcpClientManager,
+        selectedServers,
+        requireToolApproval,
+        onConversationComplete: chatSessionId
+          ? async (fullHistory, turnTrace) => {
+              await persistChatSessionToConvex({
+                chatSessionId,
+                modelId: String(modelDefinition.id),
+                modelSource: "byok",
+                sourceType: "direct",
+                directVisibility: body.directVisibility,
+                authHeader: c.req.header("authorization"),
+                sessionMessages: fullHistory,
+                startedAt: sessionStartedAt,
+                lastActivityAt: Date.now(),
+                workspaceId: body.workspaceId,
                 resumeConfig: {
                   systemPrompt,
                   temperature,

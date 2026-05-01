@@ -2224,7 +2224,12 @@ export default function App() {
               onNavigateAway={() => handleNavigate("servers")}
             />
           )}
-          {activeTab === "settings" && <SettingsTab />}
+          {activeTab === "settings" && (
+              <SettingsTab
+                activeOrganizationId={activeOrganizationId}
+                onNavigate={handleNavigate}
+              />
+            )}
           {activeTab === "support" && <SupportTab />}
           {activeTab === "profile" && <ProfileTab />}
           {activeTab === "organizations" && (
