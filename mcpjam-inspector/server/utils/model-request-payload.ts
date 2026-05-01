@@ -36,13 +36,17 @@ function serializeOptionalJsonSchema(
     return (schema as { jsonSchema: Record<string, unknown> }).jsonSchema;
   }
 
-  if (typeof schema === "object" && schema !== null && !Array.isArray(schema)) {
-    return schema as Record<string, unknown>;
-  }
-
   try {
     return z.toJSONSchema(schema as z.ZodType) as Record<string, unknown>;
   } catch {
+    if (
+      typeof schema === "object" &&
+      schema !== null &&
+      !Array.isArray(schema)
+    ) {
+      return schema as Record<string, unknown>;
+    }
+
     return undefined;
   }
 }
