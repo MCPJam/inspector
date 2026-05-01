@@ -25,6 +25,17 @@ export type ResolvedOrgModelConfig = {
 const INSPECTOR_SERVICE_TOKEN_HEADER = "X-Inspector-Service-Token";
 const RESOLVE_TIMEOUT_MS = 15_000;
 
+// ---------------------------------------------------------------------------
+// In-process cache — avoids one 15 s HTTP call per eval test case.
+// TTL is intentionally short so key rotations propagate within a minute.
+// ---------------------------------------------------------------------------
+
+const CACHE_TTL_MS = 60_000;
+const resolveCache = new Map<
+  string,
+  { result: ResolvedOrgModelConfig; expiresAt: number }
+>();
+
 export async function resolveOrgModelConfig(
   params: { workspaceId: string } | { organizationId: string },
 ): Promise<ResolvedOrgModelConfig> {
@@ -36,6 +47,13 @@ export async function resolveOrgModelConfig(
   const inspectorServiceToken = process.env.INSPECTOR_SERVICE_TOKEN;
   if (!inspectorServiceToken) {
     throw new Error("INSPECTOR_SERVICE_TOKEN is not set");
+  }
+
+  const cacheKey =
+    "workspaceId" in params ? `ws:${params.workspaceId}` : `org:${params.organizationId}`;
+  const cached = resolveCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.result;
   }
 
   const url = `${convexHttpUrl.replace(/\/$/, "")}/internal/v1/org-model-config/resolve`;
@@ -70,7 +88,9 @@ export async function resolveOrgModelConfig(
       throw new Error(data?.error ?? "Failed to resolve org model config");
     }
 
-    return { providers: data.providers ?? [] };
+    const result: ResolvedOrgModelConfig = { providers: data.providers ?? [] };
+    resolveCache.set(cacheKey, { result, expiresAt: Date.now() + CACHE_TTL_MS });
+    return result;
   } finally {
     clearTimeout(timeout);
   }

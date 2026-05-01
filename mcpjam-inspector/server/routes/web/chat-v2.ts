@@ -361,6 +361,13 @@ chatV2.post("/", async (c) => {
             "Server missing CONVEX_HTTP_URL configuration",
           );
         }
+        if (!process.env.INSPECTOR_SERVICE_TOKEN) {
+          throw new WebRouteError(
+            500,
+            ErrorCode.INTERNAL_ERROR,
+            "Server missing INSPECTOR_SERVICE_TOKEN configuration",
+          );
+        }
         // Hosted org BYOK: vault-resolved provider keys live in Convex; the
         // inspector forwards messages and tool definitions to /stream/org and
         // drives the agentic loop locally. Scrub messages for parity with

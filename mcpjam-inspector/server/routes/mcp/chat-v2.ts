@@ -599,6 +599,7 @@ chatV2.post("/", async (c) => {
     if (
       HOSTED_MODE &&
       process.env.CONVEX_HTTP_URL &&
+      process.env.INSPECTOR_SERVICE_TOKEN &&
       typeof body.workspaceId === "string" &&
       body.workspaceId &&
       !apiKey
