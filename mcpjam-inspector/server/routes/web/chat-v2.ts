@@ -428,6 +428,16 @@ chatV2.post("/", async (c) => {
         });
       }
 
+      // MCPJam-provided path also targets Convex (POST $CONVEX_HTTP_URL/stream),
+      // so it needs the same env guard as the org BYOK branch.
+      if (!process.env.CONVEX_HTTP_URL) {
+        throw new WebRouteError(
+          500,
+          ErrorCode.INTERNAL_ERROR,
+          "Server missing CONVEX_HTTP_URL configuration",
+        );
+      }
+
       return handleMCPJamFreeChatModel({
         messages: modelMessages as ModelMessage[],
         modelId: String(modelDefinition.id),
