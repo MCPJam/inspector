@@ -1630,6 +1630,20 @@ export function ChatTabV2({
     }
   }, []);
 
+  // Concurrency-throttle retry: re-submit the user's last typed message via
+  // the same source-tracking ref the topup CTA uses. The retry button only
+  // ever surfaces on the concurrency banner (see `onRetry` gate below), so
+  // we don't risk firing this on unrelated retryable errors.
+  const handleRetryConcurrencyMessage = useCallback(() => {
+    const text = lastSentUserMessageRef.current;
+    if (!text) return;
+    sendMessage({ text });
+  }, [sendMessage]);
+
+  const isConcurrencyThrottle =
+    errorMessage?.code === "user_rate_limit" &&
+    errorMessage?.limitKind === "concurrency";
+
   useCreditTopupReturnFlow({ chatSessionId, sendMessage });
 
   const traceViewerTrace = liveTraceEnvelope ?? {
@@ -2096,6 +2110,14 @@ export function ChatTabV2({
                             }
                             canTopUp={canShowTopupCta}
                             onTopUp={handleOpenTopupDialog}
+                            walletLocked={errorMessage.walletLocked}
+                            limitKind={errorMessage.limitKind}
+                            retryAfterMs={errorMessage.retryAfterMs}
+                            onRetry={
+                              isConcurrencyThrottle
+                                ? handleRetryConcurrencyMessage
+                                : undefined
+                            }
                             onResetChat={handleResetAllChats}
                           />
                         </div>
@@ -2326,6 +2348,14 @@ export function ChatTabV2({
                               }
                               canTopUp={canShowTopupCta}
                               onTopUp={handleOpenTopupDialog}
+                              walletLocked={errorMessage.walletLocked}
+                              limitKind={errorMessage.limitKind}
+                              retryAfterMs={errorMessage.retryAfterMs}
+                              onRetry={
+                                isConcurrencyThrottle
+                                  ? handleRetryConcurrencyMessage
+                                  : undefined
+                              }
                               onResetChat={baseResetChat}
                             />
                           </div>
@@ -2395,6 +2425,14 @@ export function ChatTabV2({
                             }
                             canTopUp={canShowTopupCta}
                             onTopUp={handleOpenTopupDialog}
+                            walletLocked={errorMessage.walletLocked}
+                            limitKind={errorMessage.limitKind}
+                            retryAfterMs={errorMessage.retryAfterMs}
+                            onRetry={
+                              isConcurrencyThrottle
+                                ? handleRetryConcurrencyMessage
+                                : undefined
+                            }
                             onResetChat={baseResetChat}
                           />
                         </div>

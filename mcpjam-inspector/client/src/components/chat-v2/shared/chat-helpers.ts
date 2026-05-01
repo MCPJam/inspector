@@ -172,6 +172,27 @@ export interface FormattedError {
   isMCPJamPlatformError?: boolean;
   canTopUp?: boolean;
   currentBalanceCents?: number;
+  /**
+   * `true` when the server has paused this account from spending credits or
+   * starting a new top-up. The user cannot self-serve out of this state —
+   * the UI should render a contact-support message rather than any retry or
+   * top-up affordance.
+   */
+  walletLocked?: boolean;
+  /**
+   * Sub-classification of a rate-limit error.
+   *  - `"total"`: the user's daily credit budget is exhausted (the existing
+   *    happy-path rate-limit error; pairs with `canTopUp` to drive the CTA).
+   *  - `"concurrency"`: another credit-funded chat is still in flight; the
+   *    user just needs to wait a few seconds and retry. No top-up CTA.
+   */
+  limitKind?: "total" | "concurrency";
+  /**
+   * Raw `retryAfter` in milliseconds, surfaced for UIs that need
+   * second-level granularity (the existing `formatRetryAfter` rounds up to
+   * minutes). Used by the concurrency-throttle banner.
+   */
+  retryAfterMs?: number;
 }
 
 const USER_RATE_LIMIT_CODE = "user_rate_limit";
@@ -355,6 +376,8 @@ const formatMCPJamModelLimit = (
     code?: string;
     canTopUp?: boolean;
     currentBalanceCents?: number;
+    limitKind?: "total" | "concurrency";
+    retryAfterMs?: number;
   },
 ): FormattedError => ({
   code: extras?.code ?? MCPJAM_RATE_LIMIT_CODE,
@@ -366,6 +389,10 @@ const formatMCPJamModelLimit = (
   ...(extras?.canTopUp !== undefined ? { canTopUp: extras.canTopUp } : {}),
   ...(extras?.currentBalanceCents !== undefined
     ? { currentBalanceCents: extras.currentBalanceCents }
+    : {}),
+  ...(extras?.limitKind !== undefined ? { limitKind: extras.limitKind } : {}),
+  ...(extras?.retryAfterMs !== undefined
+    ? { retryAfterMs: extras.retryAfterMs }
     : {}),
 });
 
@@ -399,6 +426,26 @@ export function formatErrorMessage(error: unknown): FormattedError | null {
         typeof parsed.currentBalanceCents === "number"
           ? parsed.currentBalanceCents
           : undefined;
+      const walletLocked =
+        typeof parsed.walletLocked === "boolean"
+          ? parsed.walletLocked
+          : undefined;
+      const limitKind =
+        parsed.limitKind === "total" || parsed.limitKind === "concurrency"
+          ? parsed.limitKind
+          : undefined;
+      // `retryAfterMs` is only meaningful for the concurrency banner (which
+      // needs second-level granularity). The existing rate-limit copy
+      // already embeds a humanized retry phrase in `message`, so emitting
+      // raw ms there would duplicate information AND retroactively widen
+      // the FormattedError shape that legacy callers / tests assert via
+      // `toEqual`. Gate strictly on `limitKind === "concurrency"`.
+      const retryAfterMs =
+        limitKind === "concurrency" &&
+        typeof parsed.retryAfter === "number" &&
+        Number.isFinite(parsed.retryAfter)
+          ? parsed.retryAfter
+          : undefined;
 
       if (isMCPJamModelLimit(code, message, details)) {
         return formatMCPJamModelLimit(
@@ -408,6 +455,8 @@ export function formatErrorMessage(error: unknown): FormattedError | null {
             code: typeof code === "string" ? code : undefined,
             canTopUp,
             currentBalanceCents,
+            limitKind,
+            retryAfterMs,
           },
         );
       }
@@ -423,6 +472,9 @@ export function formatErrorMessage(error: unknown): FormattedError | null {
           : false,
         ...(canTopUp !== undefined ? { canTopUp } : {}),
         ...(currentBalanceCents !== undefined ? { currentBalanceCents } : {}),
+        ...(walletLocked !== undefined ? { walletLocked } : {}),
+        ...(limitKind !== undefined ? { limitKind } : {}),
+        ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
       };
     }
   } catch {
