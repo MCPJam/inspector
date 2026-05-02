@@ -32,7 +32,7 @@ import { AuthTab } from "./components/AuthTab";
 import { OAuthFlowTab } from "./components/OAuthFlowTab";
 import { ConformanceTab } from "./components/conformance/ConformancePanel";
 import { XAAFlowTab } from "./components/xaa/XAAFlowTab";
-import { ErrorBoundary } from "./components/evals/ErrorBoundary";
+import { ErrorBoundary } from "./components/ui/error-boundary";
 import { AppBuilderTab } from "./components/ui-playground/AppBuilderTab";
 import { EmptyState } from "./components/ui/empty-state";
 import { isFirstRunEligible } from "./lib/onboarding-state";
