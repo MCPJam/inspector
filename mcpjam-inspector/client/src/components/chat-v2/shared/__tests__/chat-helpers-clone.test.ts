@@ -63,6 +63,7 @@ describe("formatErrorMessage", () => {
       isRetryable: false,
       isMCPJamPlatformError: true,
       canTopUp: true,
+      limitKind: "total",
     });
   });
 
@@ -145,5 +146,64 @@ describe("formatErrorMessage", () => {
       isRetryable: false,
       isMCPJamPlatformError: true,
     });
+  });
+
+  it("surfaces walletLocked: true on the formatted error", () => {
+    const result = formatErrorMessage(
+      JSON.stringify({
+        ok: false,
+        code: "wallet_locked",
+        limitKind: "total",
+        error: "Top-up is unavailable on this account. Contact support to resolve.",
+        isRetryable: false,
+        retryAfter: 0,
+        details:
+          "A recent payment was disputed. Wallet spend is paused pending review.",
+        canTopUp: false,
+        walletLocked: true,
+      }),
+    );
+
+    expect(result?.walletLocked).toBe(true);
+    expect(result?.code).toBe("wallet_locked");
+    expect(result?.canTopUp).toBe(false);
+    expect(result?.limitKind).toBe("total");
+  });
+
+  it("surfaces limitKind: \"concurrency\" with retryAfterMs for the throttle case", () => {
+    const result = formatErrorMessage(
+      JSON.stringify({
+        ok: false,
+        code: "user_rate_limit",
+        limitKind: "concurrency",
+        error: "Another credit-funded chat is still in flight.",
+        isRetryable: true,
+        retryAfter: 8000,
+        details: "Try again in 8 seconds.",
+        canTopUp: false,
+      }),
+    );
+
+    expect(result?.code).toBe("user_rate_limit");
+    expect(result?.limitKind).toBe("concurrency");
+    expect(result?.retryAfterMs).toBe(8000);
+    expect(result?.canTopUp).toBe(false);
+    expect(result).not.toHaveProperty("walletLocked");
+  });
+
+  it("does not crash on a legacy 429 without walletLocked or limitKind", () => {
+    const result = formatErrorMessage(
+      JSON.stringify({
+        code: "user_rate_limit",
+        error: "Daily MCPJam model limit reached.",
+        retryAfter: 4500000,
+        canTopUp: true,
+      }),
+    );
+
+    expect(result?.code).toBe("user_rate_limit");
+    expect(result?.canTopUp).toBe(true);
+    expect(result).not.toHaveProperty("walletLocked");
+    expect(result).not.toHaveProperty("limitKind");
   });
 });
