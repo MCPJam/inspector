@@ -2,6 +2,7 @@ import { DEFAULT_MCPJAM_CLIENT_ID_METADATA_URL } from "./client-identity.js";
 import {
   canonicalizeResourceUrl,
 } from "./state-machines/shared/urls.js";
+import { resolvePreregisteredClientAuthMethod } from "./state-machines/shared/client-auth.js";
 import type {
   OAuthAuthMode,
   OAuthProtocolVersion,
@@ -35,6 +36,7 @@ export interface AuthorizationPlanInput {
   registrationStrategy?: OAuthRegistrationStrategy;
   clientId?: string;
   clientSecret?: string;
+  hasClientSecret?: boolean;
   clientIdMetadataUrl?: string;
   useRegistryOAuthProxy?: boolean;
   authMode?: OAuthAuthMode;
@@ -218,13 +220,17 @@ export function resolveAuthorizationPlan(
   const authMode = input.authMode ?? "interactive";
   const trimmedClientId = input.clientId?.trim();
   const trimmedClientSecret = input.clientSecret?.trim();
+  const hasClientSecret = Boolean(trimmedClientSecret || input.hasClientSecret);
   const hasAnyPreregisteredCredentialInput = Boolean(
-    input.useRegistryOAuthProxy || trimmedClientId || trimmedClientSecret,
+    input.useRegistryOAuthProxy ||
+      trimmedClientId ||
+      trimmedClientSecret ||
+      input.hasClientSecret,
   );
   const hasCompletePreregisteredCredentials = Boolean(
     input.useRegistryOAuthProxy ||
       (authMode === "client_credentials"
-        ? trimmedClientId && trimmedClientSecret
+        ? trimmedClientId && hasClientSecret
         : trimmedClientId),
   );
   const hasIncompletePreregisteredCredentials =
@@ -259,7 +265,7 @@ export function resolveAuthorizationPlan(
         "Pre-registered OAuth requires a client ID before the flow can start.",
       );
     }
-    if (authMode === "client_credentials" && !trimmedClientSecret) {
+    if (authMode === "client_credentials" && !hasClientSecret) {
       pushBlocker(
         "PREREGISTERED_MISSING_CLIENT_SECRET",
         "Client credentials mode requires a client secret for pre-registered OAuth.",
@@ -319,6 +325,22 @@ export function resolveAuthorizationPlan(
 
   if (blockers.length > 0) {
     status = "blocked";
+  }
+
+  if (
+    status !== "blocked" &&
+    registrationStrategy === "preregistered" &&
+    hasDiscovery &&
+    !input.useRegistryOAuthProxy
+  ) {
+    const clientAuthMethod = resolvePreregisteredClientAuthMethod({
+      authorizationServerMetadata: input.discovery?.authorizationServerMetadata,
+      hasClientSecret,
+    });
+    if (!clientAuthMethod.ok) {
+      pushBlocker("PREREGISTERED_MISSING_CLIENT_SECRET", clientAuthMethod.message);
+      status = "blocked";
+    }
   }
 
   const plan: ResolvedAuthorizationPlan = {

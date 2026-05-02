@@ -189,6 +189,14 @@ oauthWeb.post("/tokens", async (c) => {
   }
 });
 
+oauthWeb.post("/client-secret", async (c) => {
+  try {
+    return await proxyConvexOAuthPost(c, "/web/oauth/client-secret");
+  } catch (error) {
+    return webErrorCompat(c, toRouteError(error));
+  }
+});
+
 /**
  * Debug proxy for OAuth flow visualization (hosted mode).
  * POST /api/web/oauth/debug/proxy

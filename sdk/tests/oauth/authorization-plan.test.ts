@@ -24,6 +24,82 @@ describe("resolveAuthorizationPlan", () => {
     expect(plan.registrationStrategy).toBe("preregistered");
   });
 
+  it("does not pre-block preregistered public clients when the AS omits token auth methods", () => {
+    // CLI flows (--client-id only against ASes that don't advertise "none")
+    // must keep working; the AS itself rejects unauthenticated public-client
+    // requests, so a pre-flight block here just breaks otherwise-valid setups.
+    const plan = resolveAuthorizationPlan({
+      serverUrl: "https://example.com/mcp",
+      authMode: "interactive",
+      registrationMode: "preregistered",
+      clientId: "client-id",
+      discovery: {
+        authorizationServerMetadata: {},
+      },
+    });
+
+    expect(plan.status).toBe("ready");
+    expect(plan.registrationStrategy).toBe("preregistered");
+    expect(
+      plan.blockerDetails.some(
+        (b) => b.code === "PREREGISTERED_MISSING_CLIENT_SECRET",
+      ),
+    ).toBe(false);
+  });
+
+  it("allows preregistered public clients when the token endpoint supports none", () => {
+    const plan = resolveAuthorizationPlan({
+      serverUrl: "https://example.com/mcp",
+      authMode: "interactive",
+      registrationMode: "preregistered",
+      clientId: "client-id",
+      discovery: {
+        authorizationServerMetadata: {
+          token_endpoint_auth_methods_supported: ["none"],
+        },
+      },
+    });
+
+    expect(plan.status).toBe("ready");
+    expect(plan.registrationStrategy).toBe("preregistered");
+  });
+
+  it("accepts a stored preregistered secret without exposing the value", () => {
+    const plan = resolveAuthorizationPlan({
+      serverUrl: "https://example.com/mcp",
+      authMode: "interactive",
+      registrationMode: "preregistered",
+      clientId: "client-id",
+      hasClientSecret: true,
+      discovery: {
+        authorizationServerMetadata: {},
+      },
+    });
+
+    expect(plan.status).toBe("ready");
+    expect(plan.registrationStrategy).toBe("preregistered");
+  });
+
+  it("blocks unsupported confidential token endpoint auth methods", () => {
+    const plan = resolveAuthorizationPlan({
+      serverUrl: "https://example.com/mcp",
+      authMode: "interactive",
+      registrationMode: "preregistered",
+      clientId: "client-id",
+      clientSecret: "client-secret",
+      discovery: {
+        authorizationServerMetadata: {
+          token_endpoint_auth_methods_supported: ["private_key_jwt"],
+        },
+      },
+    });
+
+    expect(plan.status).toBe("blocked");
+    expect(plan.blockers[0]).toContain(
+      "Unsupported OAuth client authentication method",
+    );
+  });
+
   it("blocks automatic preregistered selection when client_credentials inputs are incomplete", () => {
     const plan = resolveAuthorizationPlan({
       serverUrl: "https://example.com/mcp",

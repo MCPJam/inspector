@@ -231,6 +231,48 @@ function clearHostedCallbackRetryState() {
   }
 }
 
+const OAUTH_DEBUGGER_SECRET_PATTERNS = [
+  /\b(access_token|refresh_token|id_token|client_secret|clientSecret|code_verifier|code|state)\b(\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s&,;]+)/gi,
+  /\bBearer\s+[A-Za-z0-9._~+/=-]+\b/gi,
+  /\bBasic\s+[A-Za-z0-9+/=._~-]+\b/gi,
+];
+
+function sanitizeOAuthDebuggerText(value: string | null | undefined): string {
+  if (!value) {
+    return "";
+  }
+
+  return OAUTH_DEBUGGER_SECRET_PATTERNS.reduce(
+    (sanitized, pattern) =>
+      sanitized.replace(pattern, (...args) => {
+        const key = typeof args[1] === "string" ? args[1] : undefined;
+        const separator = typeof args[2] === "string" ? args[2] : undefined;
+        return key && separator ? `${key}${separator}[redacted]` : "[redacted]";
+      }),
+    value,
+  );
+}
+
+function sanitizeOAuthDebuggerError(error: Error | null) {
+  return {
+    name: sanitizeOAuthDebuggerText(error?.name ?? "Error"),
+    message: sanitizeOAuthDebuggerText(error?.message ?? "Unknown error"),
+    stack: sanitizeOAuthDebuggerText(error?.stack),
+  };
+}
+
+function formatOAuthDebuggerErrorDetails(error: Error | null): string {
+  const sanitized = sanitizeOAuthDebuggerError(error);
+  return [
+    "OAuth Debugger error",
+    `Name: ${sanitized.name}`,
+    `Message: ${sanitized.message}`,
+    sanitized.stack ? `Stack:\n${sanitized.stack}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+}
+
 function BillingHandoffLoading({ overlay = false }: { overlay?: boolean }) {
   return (
     <div
@@ -2139,12 +2181,52 @@ export default function App() {
 
           {activeTab === "oauth-flow" && (
             <ErrorBoundary
-              fallback={
-                <div className="flex items-center justify-center h-full text-muted-foreground">
-                  Something went wrong in the OAuth Debugger. Try refreshing the
-                  page.
-                </div>
-              }
+              fallback={({ error, reset }) => {
+                const copyDetails = () => {
+                  const details = formatOAuthDebuggerErrorDetails(error);
+                  void navigator.clipboard
+                    ?.writeText(details)
+                    .then(() => toast.success("Copied OAuth debugger error"))
+                    .catch(() =>
+                      toast.error("Could not copy OAuth debugger error"),
+                    );
+                };
+
+                return (
+                  <div className="flex h-full items-center justify-center p-6">
+                    <div className="max-w-md space-y-4 text-center">
+                      <AlertTriangle className="mx-auto size-10 text-destructive" />
+                      <div className="space-y-2">
+                        <h2 className="text-lg font-semibold">
+                          OAuth Debugger crashed
+                        </h2>
+                        <p className="text-sm text-muted-foreground">
+                          {sanitizeOAuthDebuggerError(error).message}
+                        </p>
+                      </div>
+                      <div className="flex justify-center gap-2">
+                        <Button variant="outline" onClick={reset}>
+                          Try again
+                        </Button>
+                        <Button variant="outline" onClick={copyDetails}>
+                          Copy details
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              }}
+              onError={(error, errorInfo) => {
+                const sanitizedError = sanitizeOAuthDebuggerError(error);
+                posthog.capture("oauth_debugger_error_boundary", {
+                  name: sanitizedError.name,
+                  message: sanitizedError.message,
+                  stack: sanitizedError.stack,
+                  componentStack: sanitizeOAuthDebuggerText(
+                    errorInfo.componentStack,
+                  ),
+                });
+              }}
             >
               <OAuthFlowTab
                 serverConfigs={appState.servers}

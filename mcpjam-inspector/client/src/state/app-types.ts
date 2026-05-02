@@ -46,6 +46,7 @@ export interface ServerWithName {
   enabled?: boolean;
   /** Whether OAuth is explicitly enabled for this server. When false, reconnect skips OAuth flow. */
   useOAuth?: boolean;
+  hasClientSecret?: boolean;
 }
 
 export interface Project {

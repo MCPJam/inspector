@@ -366,6 +366,8 @@ export function ServerDetailModal({
                   <EditServerFormContent
                     formState={formState}
                     isDuplicateServerName={isDuplicateServerName}
+                    projectId={projectId}
+                    hostedServerId={hostedServerId}
                   />
                 </div>
               </TabsContent>
