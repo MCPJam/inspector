@@ -2571,9 +2571,9 @@ export function useServerState({
             server.oauthFlowProfile?.clientSecret ??
             storedClientCredentials.clientSecret,
           hasClientSecret: Boolean(
-            server.oauthTokens?.client_secret ??
-              server.oauthFlowProfile?.clientSecret ??
-              storedClientCredentials.clientSecret ??
+            server.oauthTokens?.client_secret ||
+              server.oauthFlowProfile?.clientSecret ||
+              storedClientCredentials.clientSecret ||
               server.hasClientSecret,
           ),
           customHeaders: mergeWithWorkspaceHeaders(
