@@ -27,6 +27,22 @@ The OAuth Debugger provides comprehensive tooling for testing OAuth implementati
 - **Sequence Diagram** - Visual representation of the OAuth flow synchronized with your progress
 - **Export Capabilities** - Copy logs in guide or raw format for debugging and documentation
 
+## Pre-registered client secrets
+
+When you configure a pre-registered OAuth client with a client secret, the secret is stored securely and never exposed in the UI after saving. The client secret field shows the following controls:
+
+- **Reveal** (hosted mode only) — Fetches and temporarily displays the stored secret so you can copy it. The value is hidden again when you close the panel or navigate away.
+- **Clear** — Marks the secret for removal. The secret is deleted from storage when you save. Click **Undo** to cancel before saving.
+- **Replace** — Type a new value into the client secret field to replace the stored secret on the next save. Entering a new value automatically cancels any pending clear.
+
+<Note>
+In hosted mode, client secrets are stored in a secure vault and are never written to your browser's local storage. In local mode, the secret is stored in your browser's local storage alongside the rest of your server configuration.
+</Note>
+
+### Authorization header conflict warning
+
+If you enable OAuth and also add a custom `Authorization` header under **Advanced settings**, a warning appears. OAuth automatically sets the `Authorization` header when exchanging tokens, which may override or conflict with your custom value. Remove the custom header or switch to a different authentication method to avoid unexpected behavior.
+
 ## Getting Started
 
 To begin debugging OAuth flows:
