@@ -72,7 +72,7 @@ function createPlanCatalog() {
       },
       starter: {
         plan: "starter",
-        displayName: "Solo",
+        displayName: "Starter",
         billingModel: "flat",
         isSelfServe: true,
         prices: { monthly: 6100, annual: 58800 },
@@ -517,7 +517,7 @@ describe("OrganizationsTab billing", () => {
       screen.queryByRole("button", { name: "Change to monthly" }),
     ).not.toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Keep Solo annual plan" }),
+      screen.getByRole("button", { name: "Keep Starter annual plan" }),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Manage plan" }),
@@ -628,7 +628,7 @@ describe("OrganizationsTab billing", () => {
     expect(
       screen.getByTestId("current-plan-scheduled-change"),
     ).toHaveTextContent(
-      "Solo monthly starts Apr 1, 2027. Team annual remains active until then.",
+      "Starter monthly starts Apr 1, 2027. Team annual remains active until then.",
     );
     expect(
       screen.getByRole("button", { name: "Keep Team annual plan" }),
@@ -640,7 +640,7 @@ describe("OrganizationsTab billing", () => {
     await waitFor(() => {
       expect(
         screen.getByText(
-          "This cancels the pending change to Solo monthly on Apr 1, 2027. Team annual remains active.",
+          "This cancels the pending change to Starter monthly on Apr 1, 2027. Team annual remains active.",
         ),
       ).toBeInTheDocument();
     });
@@ -670,7 +670,7 @@ describe("OrganizationsTab billing", () => {
     expect(
       screen.getByTestId("current-plan-scheduled-change"),
     ).toHaveTextContent(
-      "Solo monthly starts Apr 1, 2027. Team annual remains active until then.",
+      "Starter monthly starts Apr 1, 2027. Team annual remains active until then.",
     );
     expect(
       screen.queryByRole("button", { name: "Keep Team annual plan" }),
@@ -696,7 +696,7 @@ describe("OrganizationsTab billing", () => {
 
     render(<OrganizationsTab organizationId="org-1" />);
 
-    expect(screen.getByText("Solo Trial")).toBeInTheDocument();
+    expect(screen.getByText("Starter Trial")).toBeInTheDocument();
     expect(
       screen.getByText("7-day trial · no active subscription yet"),
     ).toBeInTheDocument();
@@ -721,10 +721,10 @@ describe("OrganizationsTab billing", () => {
 
     render(<OrganizationsTab organizationId="org-1" />);
 
-    expect(screen.getByText("Solo")).toBeInTheDocument();
+    expect(screen.getByText("Starter")).toBeInTheDocument();
     expect(
       screen.getByText(
-        "Simulation active. Limits and access use Solo, while billing remains on Free.",
+        "Simulation active. Limits and access use Starter, while billing remains on Free.",
       ),
     ).toBeInTheDocument();
     expect(
@@ -784,7 +784,7 @@ describe("OrganizationsTab billing", () => {
 
     expect(screen.getByText("Plans & Billing")).toBeInTheDocument();
     expect(screen.getAllByText("Current plan").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("Solo").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Starter").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Team").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Enterprise").length).toBeGreaterThan(0);
   });
@@ -974,11 +974,11 @@ describe("OrganizationsTab billing", () => {
     ).toBeInTheDocument();
     expect(
       screen.getByText(
-        "Solo includes up to 3 members and 2 workspaces for $61/mo flat.",
+        "Starter includes up to 3 members and 2 workspaces for $61/mo flat.",
       ),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Upgrade to Solo" }),
+      screen.getByRole("button", { name: "Upgrade to Starter" }),
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Add member" })).toBeDisabled();
   });
@@ -1061,7 +1061,7 @@ describe("OrganizationsTab billing", () => {
       screen.getByText("Ask an organization owner to review billing options."),
     ).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Upgrade to Solo" }),
+      screen.queryByRole("button", { name: "Upgrade to Starter" }),
     ).not.toBeInTheDocument();
   });
 
@@ -1150,7 +1150,7 @@ describe("OrganizationsTab billing", () => {
     render(<OrganizationsTab organizationId="org-1" section="billing" />);
 
     expect(
-      within(getPlanColumn("Solo")).getByRole("button", {
+      within(getPlanColumn("Starter")).getByRole("button", {
         name: "Upgrade",
       }),
     ).toBeDisabled();
@@ -1184,7 +1184,7 @@ describe("OrganizationsTab billing", () => {
     expect(screen.getByText("Upgrade to Team?")).toBeInTheDocument();
     expect(
       screen.getByText(
-        "This upgrade takes effect immediately and updates your existing Solo subscription in place.",
+        "This upgrade takes effect immediately and updates your existing Starter subscription in place.",
       ),
     ).toBeInTheDocument();
     expect(
@@ -1192,7 +1192,7 @@ describe("OrganizationsTab billing", () => {
     ).toBeInTheDocument();
     expect(
       screen.getByText(
-        "Stripe prorates the rest of your current billing period instead of waiting until renewal, so unused Solo time is factored into the Team change.",
+        "Stripe prorates the rest of your current billing period instead of waiting until renewal, so unused Starter time is factored into the Team change.",
       ),
     ).toBeInTheDocument();
     expect(
@@ -1354,12 +1354,12 @@ describe("OrganizationsTab billing", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /^Monthly$/ }));
     fireEvent.click(
-      within(getPlanColumn("Solo")).getByRole("button", {
+      within(getPlanColumn("Starter")).getByRole("button", {
         name: "Downgrade",
       }),
     );
 
-    expect(screen.getByText("Downgrade to Solo?")).toBeInTheDocument();
+    expect(screen.getByText("Downgrade to Starter?")).toBeInTheDocument();
     expect(
       screen.getByText("This downgrade takes effect at renewal, not now."),
     ).toBeInTheDocument();
@@ -1379,7 +1379,7 @@ describe("OrganizationsTab billing", () => {
     });
     expect(openSpy).not.toHaveBeenCalled();
     expect(toast.success).toHaveBeenCalledWith(
-      "Downgrade to Solo monthly scheduled for renewal.",
+      "Downgrade to Starter monthly scheduled for renewal.",
     );
 
     view.rerender(<OrganizationsTab organizationId="org-1" />);
@@ -1387,7 +1387,7 @@ describe("OrganizationsTab billing", () => {
     expect(
       screen.getByTestId("current-plan-scheduled-change"),
     ).toHaveTextContent(
-      "Solo monthly starts Apr 1, 2027. Team annual remains active until then.",
+      "Starter monthly starts Apr 1, 2027. Team annual remains active until then.",
     );
     expect(
       screen.getByRole("button", { name: "Keep Team annual plan" }),
@@ -1434,7 +1434,7 @@ describe("OrganizationsTab billing", () => {
       screen.getByText("This cancellation takes effect at renewal, not now."),
     ).toBeInTheDocument();
     expect(
-      screen.getByText("Solo annual remains active until Apr 1, 2027."),
+      screen.getByText("Starter annual remains active until Apr 1, 2027."),
     ).toBeInTheDocument();
     expect(
       screen.getByText("After that, the organization returns to Free."),

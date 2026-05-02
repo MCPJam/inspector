@@ -59,9 +59,7 @@ const LLM_USAGE_SECTION_TOOLTIP =
   "LLM usage billing isn’t live yet, so models are currently free. For paid plans, the table reflects the intended $5 per user per day rate limit and may change before billing launches.";
 
 function getPlanRank(plan: OrganizationPlan): number {
-  // "solo" is the canonical rename of "starter" — treat them as the same tier.
-  const normalized = plan === "solo" ? "starter" : plan;
-  return PLAN_ORDER.indexOf(normalized);
+  return PLAN_ORDER.indexOf(plan);
 }
 
 function getPlanColumnCta(params: {
@@ -76,7 +74,7 @@ function getPlanColumnCta(params: {
     billingInterval: BillingInterval,
   ) => void;
   onStartPlanChange: (
-    plan: "starter" | "solo" | "team",
+    plan: "starter" | "team",
     billingInterval: BillingInterval,
   ) => Promise<void>;
   billingInterval: BillingInterval;
@@ -98,9 +96,7 @@ function getPlanColumnCta(params: {
     billingInterval,
   } = params;
 
-  const isSoloPlan = (p: OrganizationPlan) => p === "starter" || p === "solo";
-  const isCurrentPlan =
-    currentPlan === plan || (isSoloPlan(currentPlan) && isSoloPlan(plan));
+  const isCurrentPlan = currentPlan === plan;
   const isHigherTier = getPlanRank(plan) > getPlanRank(currentPlan);
   const isDowngrade = getPlanRank(plan) < getPlanRank(currentPlan);
   const isEnterprisePlan = plan === "enterprise";
@@ -132,7 +128,7 @@ function getPlanColumnCta(params: {
   }
 
   if (isHigherTier && entry.isSelfServe) {
-    if (plan !== "starter" && plan !== "solo" && plan !== "team") {
+    if (plan !== "starter" && plan !== "team") {
       return { label: "Unavailable", disabled: true, variant: "outline" };
     }
     return {
@@ -160,7 +156,7 @@ function formatCurrency(
   }).format(amount);
 }
 
-/** Price line for the compare table; Solo uses flat `/mo` (3-seat cap), Team uses `/seat/mo`. */
+/** Price line for the compare table; Starter uses flat `/mo` (3-seat cap), Team uses `/seat/mo`. */
 function formatPlanPriceLabel(
   plan: OrganizationPlan,
   amountInCents: number | null,
@@ -171,7 +167,7 @@ function formatPlanPriceLabel(
     return interval === "annual" ? "Custom annual" : "Custom pricing";
   }
 
-  if (plan === "starter" || plan === "solo") {
+  if (plan === "starter") {
     if (interval === "monthly") {
       return `${formatCurrency(amountInCents / 100, currency, 0)}/mo`;
     }
@@ -433,7 +429,7 @@ function BillingIntervalToggle({
         Annual
         <span
           className="shrink-0 rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary sm:px-2 sm:text-xs"
-          title="Solo: savings vs paying the monthly rate for 12 months."
+          title="Starter: savings vs paying the monthly rate for 12 months (e.g. $61×12 vs $588/year)."
         >
           -{annualDiscountPct}%
         </span>
@@ -461,18 +457,18 @@ interface OrganizationBillingSectionProps {
   isLoadingBilling: boolean;
   isLoadingPlanCatalog: boolean;
   isStartingPlanChange: boolean;
-  pendingPlanChangeTarget: "starter" | "solo" | "team" | null;
+  pendingPlanChangeTarget: "starter" | "team" | null;
   isOpeningPortal: boolean;
   onDowngradePlan: (
     plan: OrganizationPlan,
     billingInterval: BillingInterval,
   ) => Promise<void>;
   onStartPlanChange: (
-    plan: "starter" | "solo" | "team",
+    plan: "starter" | "team",
     billingInterval: BillingInterval,
   ) => Promise<void>;
   onStartAutoPlanChange?: (
-    plan: "starter" | "solo" | "team",
+    plan: "starter" | "team",
     billingInterval: BillingInterval,
   ) => Promise<void>;
   checkoutIntent?: CheckoutIntentWithOrganization | null;
@@ -854,7 +850,7 @@ export function OrganizationBillingSection({
                           pendingPlanChangeTarget === plan &&
                           (cta.label === "Upgrade" ||
                             cta.label === "Downgrade") &&
-                          (plan === "starter" || plan === "solo" || plan === "team");
+                          (plan === "starter" || plan === "team");
                         const showCtaSpinner = showPlanChangeSpinner;
                         const isPopular = plan === POPULAR_PLAN;
                         return (

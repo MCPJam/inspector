@@ -1,7 +1,7 @@
 import { useAction, useMutation, useQuery } from "convex/react";
 import { useCallback, useState } from "react";
 
-export type OrganizationPlan = "free" | "starter" | "solo" | "team" | "enterprise";
+export type OrganizationPlan = "free" | "starter" | "team" | "enterprise";
 export type BillingInterval = "monthly" | "annual";
 export type BillingModel = "free" | "flat" | "per_seat" | "contact";
 export type BillingFeatureName =
@@ -110,7 +110,7 @@ export interface PlanCatalogEntry {
   includedSeats: number | null;
   seatMinimum: number | null;
   checkout: {
-    plan: "starter" | "solo" | "team";
+    plan: "starter" | "team";
     supportedIntervals: BillingInterval[];
   } | null;
 }
@@ -129,7 +129,7 @@ export interface OrganizationPlanChangeSnapshot {
   stripeSubscriptionItemId?: string;
   stripePriceId?: string;
   stripeSeatQuantity?: number;
-  stripeScheduledPlan?: "starter" | "solo" | "team" | null;
+  stripeScheduledPlan?: "starter" | "team" | null;
   stripeScheduledBillingInterval?: BillingInterval | null;
   stripeScheduledPriceId?: string | null;
   stripeScheduledEffectiveAt?: number | null;
@@ -243,7 +243,7 @@ export function useOrganizationBilling(
 
   const [isStartingPlanChange, setIsStartingPlanChange] = useState(false);
   const [pendingPlanChangeTarget, setPendingPlanChangeTarget] = useState<
-    "starter" | "solo" | "team" | null
+    "starter" | "team" | null
   >(null);
   const [isOpeningPortal, setIsOpeningPortal] = useState(false);
   const [
@@ -257,7 +257,7 @@ export function useOrganizationBilling(
   const startPlanChange = useCallback(
     async (
       returnUrl: string,
-      tier: "starter" | "solo" | "team" = "solo",
+      tier: "starter" | "team" = "starter",
       billingInterval: BillingInterval = "monthly",
       options: StartOrganizationPlanChangeOptions = {},
     ): Promise<OrganizationPlanChangeResult> => {
