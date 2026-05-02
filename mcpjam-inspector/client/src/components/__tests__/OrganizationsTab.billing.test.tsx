@@ -1372,7 +1372,7 @@ describe("OrganizationsTab billing", () => {
     await waitFor(() => {
       expect(startPlanChange).toHaveBeenCalledWith(
         expect.stringContaining("#organizations/org-1/billing"),
-        "solo",
+        "starter",
         "monthly",
         { confirmPaidPlanChange: false },
       );

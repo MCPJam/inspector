@@ -91,7 +91,7 @@ interface PendingPaidUpgradeConfirmation {
 }
 
 interface PendingDowngradeConfirmation {
-  targetPlan: "free" | "starter" | "solo";
+  targetPlan: "free" | "starter";
   targetBillingInterval: BillingInterval | null;
   currentPlan: OrganizationPlan;
   currentBillingInterval: BillingInterval | null;
@@ -800,7 +800,7 @@ function OrganizationPage({
       billingStatus?.billingInterval != null
     ) {
       setPendingDowngradeConfirmation({
-        targetPlan: "solo",
+        targetPlan: "starter",
         targetBillingInterval,
         currentPlan,
         currentBillingInterval: billingStatus.billingInterval,
@@ -858,7 +858,7 @@ function OrganizationPage({
 
       const result = await startPlanChange(
         getBillingReturnUrl(),
-        pendingDowngradeConfirmation.targetPlan as "solo",
+        pendingDowngradeConfirmation.targetPlan as "starter",
         pendingDowngradeConfirmation.targetBillingInterval ?? "monthly",
         { confirmPaidPlanChange: false },
       );

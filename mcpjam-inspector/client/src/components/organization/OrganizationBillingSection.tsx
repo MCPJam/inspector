@@ -59,7 +59,9 @@ const LLM_USAGE_SECTION_TOOLTIP =
   "LLM usage billing isn’t live yet, so models are currently free. For paid plans, the table reflects the intended $5 per user per day rate limit and may change before billing launches.";
 
 function getPlanRank(plan: OrganizationPlan): number {
-  return PLAN_ORDER.indexOf(plan);
+  // "solo" is the canonical rename of "starter" — treat them as the same tier.
+  const normalized = plan === "solo" ? "starter" : plan;
+  return PLAN_ORDER.indexOf(normalized);
 }
 
 function getPlanColumnCta(params: {
@@ -96,7 +98,9 @@ function getPlanColumnCta(params: {
     billingInterval,
   } = params;
 
-  const isCurrentPlan = currentPlan === plan;
+  const isSoloPlan = (p: OrganizationPlan) => p === "starter" || p === "solo";
+  const isCurrentPlan =
+    currentPlan === plan || (isSoloPlan(currentPlan) && isSoloPlan(plan));
   const isHigherTier = getPlanRank(plan) > getPlanRank(currentPlan);
   const isDowngrade = getPlanRank(plan) < getPlanRank(currentPlan);
   const isEnterprisePlan = plan === "enterprise";
