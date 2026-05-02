@@ -1,0 +1,59 @@
+---
+title: "Credits"
+description: "Understand your daily model quota and how to top up with paid credits"
+icon: "coins"
+---
+
+MCPJam provides free frontier model access with a daily quota. When you reach the limit you can either add your own API key or purchase paid credits to keep chatting without waiting for the quota to reset.
+
+## How the daily limit works
+
+Every signed-in user gets a free daily quota of model usage. The quota resets every 24 hours. The exact reset time is shown on the **Organizations > Billing** page next to the daily usage bar.
+
+When you hit the limit, the chat error banner shows:
+
+> "Add your own API key in Settings > LLM Providers to keep chatting now, or try again in X hours."
+
+You have two ways to continue:
+
+- **Add your own API key** — Go to **Settings > LLM Providers** and enter a key for any supported provider (OpenAI, Anthropic, Google, etc.). Your own key bypasses the MCPJam quota entirely and is never counted against it.
+- **Top up with paid credits** — Purchase a credit bundle to extend your usage beyond the daily free quota.
+
+## Topping up from the chat banner
+
+When the daily limit error appears in chat, a **Top up to keep chatting** button is shown alongside the error message (only when top-up is available for your account).
+
+1. Click **Top up to keep chatting** in the error banner.
+2. Select a preset amount in the dialog (for example $5, $10, or $20).
+3. Click **Continue with $X** to proceed to checkout.
+4. After payment, MCPJam redirects you back to the same chat session and automatically resends your last message.
+
+If you close the dialog or cancel at checkout, your pending message is preserved for a short window so you can retry without retyping it.
+
+## Topping up from the billing page
+
+You can also top up proactively from **Organizations > Billing**:
+
+1. Open the **Organizations** tab and select **Billing**.
+2. The **Credit usage** card shows your daily limit bar and, if you have previously topped up, a paid credits bar.
+3. Click **Top up** in the card header.
+4. Select an amount and complete checkout.
+
+## Credit usage card
+
+The **Credit usage** card on the billing page shows two progress bars:
+
+| Bar | What it shows |
+|-----|---------------|
+| **Daily limit** | Percentage of today's free quota used, plus the time until it resets |
+| **Paid credits** | Percentage of your purchased credit pool used. Only visible after your first top-up |
+
+Both bars show percentages only — no dollar amounts are displayed. The daily bar resets automatically; paid credits carry over until they are consumed.
+
+## Credits are user-scoped
+
+Credits are linked to your **user account**, not your organization. Each team member has their own daily quota and their own paid credit balance. Topping up only affects your own account.
+
+## Using your own API key instead
+
+If you prefer not to purchase credits, add a provider API key in **Settings > LLM Providers**. MCPJam will use your key for all model calls in that session and will not draw from your daily quota or paid credits.
