@@ -58,7 +58,7 @@ describe("guest-session-source", () => {
     global.fetch = originalFetch;
   });
 
-  it("fetches hosted guest sessions without the shared secret", async () => {
+  it("fetches hosted guest sessions and returns parsed session", async () => {
     vi.mocked(global.fetch).mockResolvedValue(
       new Response(
         JSON.stringify({
@@ -73,19 +73,19 @@ describe("guest-session-source", () => {
       ),
     );
 
-    const { fetchRemoteGuestSession } =
-      await import("../guest-session-source.js");
-    const session = await fetchRemoteGuestSession();
+    const { fetchRemoteGuestSession } = await import(
+      "../guest-session-source.js"
+    );
+    const result = await fetchRemoteGuestSession();
 
-    expect(session?.token).toBe("remote-token");
+    expect(result.kind).toBe("session");
+    if (result.kind !== "session") return;
+    expect(result.session.token).toBe("remote-token");
     expect(mockProvisionGuestAuthConfigToConvex).not.toHaveBeenCalled();
     expect(global.fetch).toHaveBeenCalledWith(
       "https://app.mcpjam.com/api/web/guest-session",
       expect.objectContaining({
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
         signal: expect.anything(),
       }),
     );
@@ -106,22 +106,92 @@ describe("guest-session-source", () => {
       ),
     );
 
-    const { fetchConvexGuestSession } =
-      await import("../guest-session-source.js");
-    const session = await fetchConvexGuestSession();
+    const { fetchConvexGuestSession } = await import(
+      "../guest-session-source.js"
+    );
+    const result = await fetchConvexGuestSession();
 
-    expect(session?.token).toBe("convex-token");
+    expect(result.kind).toBe("session");
+    if (result.kind !== "session") return;
+    expect(result.session.token).toBe("convex-token");
     expect(mockProvisionGuestAuthConfigToConvex).toHaveBeenCalledTimes(1);
     expect(global.fetch).toHaveBeenCalledWith(
       "https://test-deployment.convex.site/guest/session",
       expect.objectContaining({
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-mcpjam-guest-session-secret": "test-guest-session-secret",
-        },
         signal: expect.anything(),
       }),
+    );
+  });
+
+  it("returns kind:miss for upstream 204 (lookup_only)", async () => {
+    vi.mocked(global.fetch).mockResolvedValue(
+      new Response(null, { status: 204 }),
+    );
+    const { fetchConvexGuestSession } = await import(
+      "../guest-session-source.js"
+    );
+    const result = await fetchConvexGuestSession({
+      body: { mode: "lookup_only" },
+    });
+    expect(result.kind).toBe("miss");
+  });
+
+  it("captures upstream Set-Cookie headers and forwards them in the result", async () => {
+    vi.mocked(global.fetch).mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          guestId: "g",
+          token: "t",
+          expiresAt: Date.now() + 60_000,
+        }),
+        {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json",
+            "Set-Cookie": "__Host-mcpjam_guest_session=opaque; Path=/",
+          },
+        },
+      ),
+    );
+    const { fetchConvexGuestSession } = await import(
+      "../guest-session-source.js"
+    );
+    const result = await fetchConvexGuestSession();
+    expect(result.setCookies.length).toBeGreaterThan(0);
+    expect(result.setCookies[0]).toContain("__Host-mcpjam_guest_session=opaque");
+  });
+
+  it("forwards browser cookie/UA/IP headers to upstream when context provided", async () => {
+    vi.mocked(global.fetch).mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          guestId: "g",
+          token: "t",
+          expiresAt: Date.now() + 60_000,
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+    const { fetchConvexGuestSession } = await import(
+      "../guest-session-source.js"
+    );
+    await fetchConvexGuestSession({
+      cookie: "__Host-mcpjam_guest_session=raw",
+      userAgent: "UA/1.0",
+      forwardedFor: "1.2.3.4",
+      realIp: "1.2.3.4",
+      body: { mode: "lookup_or_create", legacyToken: "legacy" },
+    });
+
+    const init = vi.mocked(global.fetch).mock.calls[0]![1] as RequestInit;
+    const headers = init.headers as Record<string, string>;
+    expect(headers["Cookie"]).toBe("__Host-mcpjam_guest_session=raw");
+    expect(headers["User-Agent"]).toBe("UA/1.0");
+    expect(headers["X-Forwarded-For"]).toBe("1.2.3.4");
+    expect(headers["X-Real-IP"]).toBe("1.2.3.4");
+    expect(init.body).toBe(
+      JSON.stringify({ mode: "lookup_or_create", legacyToken: "legacy" }),
     );
   });
 

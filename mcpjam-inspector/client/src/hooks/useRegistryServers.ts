@@ -11,7 +11,10 @@ import {
 } from "@/lib/apis/registry-http";
 import { WebApiError } from "@/lib/apis/web/base";
 import { HOSTED_MODE } from "@/lib/config";
-import { peekStoredGuestToken, clearGuestSession } from "@/lib/guest-session";
+import {
+  clearGuestSession,
+  getExistingGuestBearerToken,
+} from "@/lib/guest-session";
 import { resetTokenCache } from "@/lib/apis/web/context";
 import { toast } from "sonner";
 
@@ -412,11 +415,14 @@ export function useRegistryServers({
   useEffect(() => {
     if (!enabled) return;
     if (!HOSTED_MODE || !isAuthenticated || DEV_MOCK_REGISTRY) return;
-    const guestToken = peekStoredGuestToken();
-    if (!guestToken || mergeRanRef.current) return;
+    if (mergeRanRef.current) return;
     mergeRanRef.current = true;
     void (async () => {
       try {
+        const guestToken = await getExistingGuestBearerToken();
+        if (!guestToken) {
+          return;
+        }
         await mergeGuestRegistryStars(guestToken);
         clearGuestSession();
         resetTokenCache();
