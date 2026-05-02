@@ -62,9 +62,15 @@ function loadPersistedLocalSecret(spec: LocalSecretSpec): string | null {
 /**
  * Resolve a server-side secret with this precedence:
  *   1. Trimmed value of `spec.envVar` if set.
- *   2. In production/test: throw `spec.productionErrorMessage`.
- *   3. In dev: load the persisted file at `~/.mcpjam/<fileName>`, or
- *      generate, persist, and return a fresh 32-byte hex value.
+ *   2. Only when `NODE_ENV === "development"`: load the persisted file at
+ *      `~/.mcpjam/<fileName>`, or generate, persist, and return a fresh
+ *      32-byte hex value.
+ *   3. Otherwise (production, test, staging, preview, ci, unset, …):
+ *      throw `spec.productionErrorMessage`.
+ *
+ * The allowlist is deliberate: a containerized staging deployment with an
+ * ephemeral filesystem would otherwise generate a fresh random secret on
+ * every restart, silently invalidating every existing guest-session hash.
  */
 export function getOrCreateLocalSecret(spec: LocalSecretSpec): string {
   const envValue = process.env[spec.envVar]?.trim();
@@ -72,10 +78,7 @@ export function getOrCreateLocalSecret(spec: LocalSecretSpec): string {
     return envValue;
   }
 
-  if (
-    process.env.NODE_ENV === "production" ||
-    process.env.NODE_ENV === "test"
-  ) {
+  if (process.env.NODE_ENV !== "development") {
     throw new Error(spec.productionErrorMessage);
   }
 

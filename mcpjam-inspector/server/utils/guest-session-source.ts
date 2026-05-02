@@ -40,7 +40,6 @@ export type GuestSessionFetchResult =
   | {
       kind: "error";
       status: number;
-      message?: string;
       setCookies: string[];
     };
 

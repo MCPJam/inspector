@@ -158,7 +158,7 @@ guestSession.post("/", async (c) => {
     return c.json(
       {
         code: ErrorCode.FORBIDDEN,
-        message: result.message ?? "Guest session revoked.",
+        message: "Guest session revoked.",
       },
       403,
     );

@@ -91,7 +91,11 @@ async function requestGuestSession(
     );
   }
 
-  if (response.status === 204 || response.status === 404) {
+  // 204 is the server's explicit "no guest exists" signal — definitive miss.
+  // 404 is ambiguous (route missing/misrouted in a deployment) and may be
+  // transient, so treat it as an error rather than discarding the legacy
+  // migration token.
+  if (response.status === 204) {
     if (legacyToken) deleteLegacyToken();
     return null;
   }
