@@ -33,7 +33,7 @@ function formatSeatLimit(
     return t("1 (just you)");
   }
   const value =
-    plan === "starter" || plan === "solo"
+    plan === "starter"
       ? (entry.includedSeats ?? entry.limits.maxMembers)
       : entry.limits.maxMembers;
   if (value == null) {

@@ -19,7 +19,7 @@ describe("BillingUpsellGate", () => {
 
     expect(screen.getByText("Generate Evals")).toBeInTheDocument();
     expect(
-      screen.getByText(/Included in Solo and above/i),
+      screen.getByText(/Included in Starter and above/i),
     ).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /upgrade/i }));
     expect(onNavigate).toHaveBeenCalledTimes(1);

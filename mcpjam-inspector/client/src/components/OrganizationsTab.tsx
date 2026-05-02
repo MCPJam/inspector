@@ -107,11 +107,11 @@ interface ScheduledBillingChangeCancellationState {
 
 function shouldConfirmPaidUpgrade(
   billingStatus: OrganizationBillingStatus | undefined,
-  tier: "starter" | "solo" | "team",
+  tier: "starter" | "team",
 ): boolean {
   return (
     tier === "team" &&
-    (billingStatus?.plan === "starter" || billingStatus?.plan === "solo") &&
+    billingStatus?.plan === "starter" &&
     (billingStatus.subscriptionStatus === "active" ||
       billingStatus.subscriptionStatus === "trialing")
   );
@@ -170,7 +170,7 @@ function getScheduledBillingChangeCancellationState(
   const scheduledBillingInterval = billingStatus.stripeScheduledBillingInterval;
 
   if (
-    (currentPlan !== "starter" && currentPlan !== "solo" && currentPlan !== "team") ||
+    (currentPlan !== "starter" && currentPlan !== "team") ||
     currentBillingInterval == null ||
     scheduledPlan == null ||
     scheduledBillingInterval == null
@@ -796,7 +796,7 @@ function OrganizationPage({
 
     if (
       currentPlan === "team" &&
-      (targetPlan === "starter" || targetPlan === "solo") &&
+      targetPlan === "starter" &&
       billingStatus?.billingInterval != null
     ) {
       setPendingDowngradeConfirmation({
@@ -809,7 +809,7 @@ function OrganizationPage({
     }
 
     if (
-      (currentPlan === "starter" || currentPlan === "solo" || currentPlan === "team") &&
+      (currentPlan === "starter" || currentPlan === "team") &&
       targetPlan === "free"
     ) {
       setPendingDowngradeConfirmation({
@@ -858,7 +858,7 @@ function OrganizationPage({
 
       const result = await startPlanChange(
         getBillingReturnUrl(),
-        pendingDowngradeConfirmation.targetPlan as "starter",
+        "starter",
         pendingDowngradeConfirmation.targetBillingInterval ?? "monthly",
         { confirmPaidPlanChange: false },
       );
@@ -895,7 +895,7 @@ function OrganizationPage({
   };
 
   const executeManualPlanChange = async (
-    tier: "starter" | "solo" | "team",
+    tier: "starter" | "team",
     billingInterval: "monthly" | "annual",
     options: CheckoutNavigationOptions = {},
   ) => {
@@ -931,7 +931,7 @@ function OrganizationPage({
   };
 
   const handlePlanChange = async (
-    tier: "starter" | "solo" | "team",
+    tier: "starter" | "team",
     billingInterval: "monthly" | "annual",
     options: CheckoutNavigationOptions = {},
   ) => {
@@ -1550,7 +1550,7 @@ function OrganizationPage({
             <AlertDialogTitle>
               {pendingDowngradeConfirmation?.targetPlan === "free"
                 ? "Return to Free at renewal?"
-                : `Downgrade to ${formatPlanName(pendingDowngradeConfirmation?.targetPlan)}?`}
+                : "Downgrade to Starter?"}
             </AlertDialogTitle>
             <AlertDialogDescription className="space-y-2">
               {pendingDowngradeConfirmation?.targetPlan === "free" ? (
@@ -1575,7 +1575,7 @@ function OrganizationPage({
                     This downgrade takes effect at renewal, not now.
                   </span>
                   <span className="block">
-                    {pendingDowngradeTargetLabel ?? "Solo"} begins{" "}
+                    {pendingDowngradeTargetLabel ?? "Starter"} begins{" "}
                     {pendingDowngradeEffectiveDate ??
                       "at the end of the current billing period"}
                     .
@@ -1592,7 +1592,7 @@ function OrganizationPage({
             <span className="font-medium text-foreground">
               {pendingDowngradeConfirmation?.targetPlan === "free"
                 ? "Stripe will open a cancellation flow that keeps paid access active until renewal."
-                : `${pendingDowngradeTargetLabel ?? "Solo"} will replace ${
+                : `${pendingDowngradeTargetLabel ?? "Starter"} will replace ${
                     pendingDowngradeCurrentLabel ?? "the current plan"
                   } at renewal.`}
             </span>
@@ -1634,14 +1634,14 @@ function OrganizationPage({
             <AlertDialogDescription className="space-y-2">
               <span className="block">
                 This upgrade takes effect immediately and updates your existing
-                Solo subscription in place.
+                Starter subscription in place.
               </span>
               <span className="block">
                 We do not send you through Stripe Checkout.
               </span>
               <span className="block">
                 Stripe prorates the rest of your current billing period instead
-                of waiting until renewal, so unused Solo time is factored
+                of waiting until renewal, so unused Starter time is factored
                 into the Team change.
               </span>
             </AlertDialogDescription>
