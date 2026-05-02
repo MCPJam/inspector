@@ -1,6 +1,9 @@
 /**
  * Model factory for creating AI SDK language models from provider/model strings.
  * Supports both built-in providers and user-defined custom providers.
+ *
+ * Also exports buildOrgModelFromResolvedConfig / assertOrgModelAllowed for
+ * building models from org-resolved provider configs (local BYOK runtime).
  */
 
 import { createAnthropic } from "@ai-sdk/anthropic";
@@ -12,6 +15,7 @@ import { createOpenAI } from "@ai-sdk/openai";
 import { createXai } from "@ai-sdk/xai";
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { createOllama } from "ollama-ai-provider-v2";
+import type { LanguageModel } from "ai";
 import type { LLMProvider, CustomProvider } from "./types.js";
 
 /**
@@ -330,3 +334,200 @@ export const PROVIDER_PRESETS = {
     useChatCompletions: true,
   }),
 } as const;
+
+// =============================================================================
+// Org-resolved provider config builder
+//
+// Used by the inspector's local BYOK runtime: after calling /stream/org/resolve
+// and receiving a local-runtime response, the inspector builds the AI SDK model
+// here rather than forwarding the request to Convex.
+// =============================================================================
+
+/**
+ * Resolved provider config as returned by /stream/org/resolve for local providers.
+ * Cloud providers do not send apiKey — only local providers include credentials.
+ */
+export interface OrgProviderResolvedConfig {
+  providerKey: string;
+  /** Present only for local-runtime providers. */
+  apiKey?: string;
+  baseUrl?: string;
+  protocol?: string;
+  modelIds?: string[];
+  displayName?: string;
+  selectedModels?: string[];
+}
+
+export class OrgProviderConfigError extends Error {
+  readonly code: string;
+  constructor(code: string, message: string) {
+    super(message);
+    this.code = code;
+    this.name = "OrgProviderConfigError";
+  }
+}
+
+function requireOrgSecret(
+  config: OrgProviderResolvedConfig,
+  label: string
+): string {
+  if (!config.apiKey) {
+    throw new OrgProviderConfigError(
+      "provider_not_configured",
+      `${label} provider has no API key configured for this organization`
+    );
+  }
+  return config.apiKey;
+}
+
+function requireOrgBaseUrl(
+  config: OrgProviderResolvedConfig,
+  label: string
+): string {
+  if (!config.baseUrl) {
+    throw new OrgProviderConfigError(
+      "provider_not_configured",
+      `${label} provider has no base URL configured for this organization`
+    );
+  }
+  return config.baseUrl;
+}
+
+function resolveOrgModelId(
+  config: OrgProviderResolvedConfig,
+  modelId: string
+): string {
+  if (!config.providerKey.startsWith("custom:")) return modelId;
+  const prefix = `${config.providerKey}:`;
+  return modelId.startsWith(prefix) ? modelId.slice(prefix.length) : modelId;
+}
+
+/**
+ * Build an AI SDK LanguageModel from an org-resolved provider config.
+ *
+ * Mirrors convex/stream/buildOrgModel.ts — kept in sync so local and cloud
+ * execution use the same provider dispatch logic.
+ *
+ * Throws OrgProviderConfigError('provider_not_configured', ...) when a
+ * required apiKey or baseUrl is missing.
+ */
+export function buildOrgModelFromResolvedConfig(
+  config: OrgProviderResolvedConfig,
+  modelId: string
+): LanguageModel {
+  const { providerKey } = config;
+
+  if (providerKey === "openai") {
+    return createOpenAI({ apiKey: requireOrgSecret(config, "OpenAI") })(
+      modelId
+    );
+  }
+  if (providerKey === "anthropic") {
+    return createAnthropic({
+      apiKey: requireOrgSecret(config, "Anthropic"),
+    })(modelId) as unknown as LanguageModel;
+  }
+  if (providerKey === "google") {
+    return createGoogleGenerativeAI({
+      apiKey: requireOrgSecret(config, "Google"),
+    })(modelId) as unknown as LanguageModel;
+  }
+  if (providerKey === "deepseek") {
+    return createDeepSeek({
+      apiKey: requireOrgSecret(config, "DeepSeek"),
+    })(modelId) as unknown as LanguageModel;
+  }
+  if (providerKey === "mistral") {
+    return createMistral({
+      apiKey: requireOrgSecret(config, "Mistral"),
+    })(modelId) as unknown as LanguageModel;
+  }
+  if (providerKey === "xai") {
+    return createXai({ apiKey: requireOrgSecret(config, "xAI") })(
+      modelId
+    ) as unknown as LanguageModel;
+  }
+  if (providerKey === "azure") {
+    const apiKey = requireOrgSecret(config, "Azure OpenAI");
+    const baseUrl = requireOrgBaseUrl(config, "Azure OpenAI");
+    const resourceMatch = baseUrl.match(
+      /https?:\/\/([^.]+)\.(openai|cognitiveservices)\.azure\.com/i
+    );
+    const resourceName = resourceMatch?.[1];
+    return createAzure({
+      apiKey,
+      ...(resourceName ? { resourceName } : { baseURL: baseUrl }),
+    })(modelId) as unknown as LanguageModel;
+  }
+  if (providerKey === "openrouter") {
+    return createOpenRouter({
+      apiKey: requireOrgSecret(config, "OpenRouter"),
+      headers: {
+        "HTTP-Referer": "https://www.mcpjam.com/",
+        "X-Title": "MCPJam",
+      },
+    })(modelId) as unknown as LanguageModel;
+  }
+  if (providerKey === "ollama") {
+    const raw = requireOrgBaseUrl(config, "Ollama");
+    const normalized = /\/api\/?$/.test(raw)
+      ? raw
+      : `${raw.replace(/\/+$/, "")}/api`;
+    return createOllama({
+      baseURL: normalized,
+    })(modelId) as unknown as LanguageModel;
+  }
+  if (providerKey.startsWith("custom:")) {
+    const baseUrl = requireOrgBaseUrl(config, providerKey);
+    const apiKey = config.apiKey ?? "";
+    const resolvedModelId = resolveOrgModelId(config, modelId);
+    if (config.protocol === "anthropic-compatible") {
+      return createAnthropic({
+        apiKey,
+        baseURL: baseUrl,
+      })(resolvedModelId) as unknown as LanguageModel;
+    }
+    const openai = createOpenAI({ apiKey, baseURL: baseUrl });
+    return openai(resolvedModelId);
+  }
+
+  throw new OrgProviderConfigError(
+    "provider_not_supported",
+    `Provider ${providerKey} is not supported`
+  );
+}
+
+/**
+ * Validate that the requested model is in the org's allowlist for the provider.
+ * For OpenRouter this is selectedModels; for custom providers it is modelIds.
+ * Built-in providers are pass-through (the upstream provider rejects unknown ids).
+ *
+ * Throws OrgProviderConfigError('model_not_allowed', ...) on rejection.
+ */
+export function assertOrgModelAllowed(
+  config: OrgProviderResolvedConfig,
+  modelId: string
+): void {
+  if (config.providerKey === "openrouter") {
+    if (config.selectedModels && config.selectedModels.length > 0) {
+      if (!config.selectedModels.includes(modelId)) {
+        throw new OrgProviderConfigError(
+          "model_not_allowed",
+          `Model ${modelId} is not in this organization's OpenRouter allowlist`
+        );
+      }
+    }
+    return;
+  }
+  if (config.providerKey.startsWith("custom:")) {
+    const resolvedModelId = resolveOrgModelId(config, modelId);
+    if (config.modelIds && config.modelIds.length > 0) {
+      if (!config.modelIds.includes(resolvedModelId)) {
+        throw new OrgProviderConfigError(
+          "model_not_allowed",
+          `Model ${resolvedModelId} is not configured for custom provider ${config.providerKey}`
+        );
+      }
+    }
+  }
+}

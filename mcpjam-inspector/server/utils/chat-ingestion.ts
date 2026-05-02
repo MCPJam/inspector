@@ -61,7 +61,7 @@ export interface PersistedTurnTrace {
 interface PersistChatSessionOptions {
   chatSessionId: string;
   modelId: string;
-  modelSource: "mcpjam" | "byok";
+  modelSource: "mcpjam" | "byok" | "local_byok";
   authHeader?: string;
   workspaceId?: string;
   sourceType?: "serverShare" | "chatbox" | "direct";

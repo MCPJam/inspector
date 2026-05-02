@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { ModelDefinition } from "@/shared/types";
+import type { OrgProviderResolvedConfig } from "@mcpjam/sdk/model-factory";
 import type { BaseUrls, CustomProviderConfig } from "./chat-helpers";
 
 // ---------------------------------------------------------------------------
@@ -261,4 +262,141 @@ export function buildLlmRuntimeConfigFromOrgConfig(
   }
 
   return runtime;
+}
+
+// ---------------------------------------------------------------------------
+// Runtime resolver — calls /stream/org/resolve to determine whether the
+// provider should execute in Convex (cloud) or directly in the inspector (local).
+// ---------------------------------------------------------------------------
+
+export type OrgProviderRuntimeCloud = {
+  runtimeLocation: "cloud";
+  providerKey: string;
+};
+
+export type OrgProviderRuntimeLocal = {
+  runtimeLocation: "local";
+  provider: OrgProviderResolvedConfig;
+};
+
+export type OrgProviderRuntime = OrgProviderRuntimeCloud | OrgProviderRuntimeLocal;
+
+const RUNTIME_CACHE_TTL_MS = 60_000;
+const runtimeResolveCache = new Map<
+  string,
+  { result: OrgProviderRuntime; expiresAt: number }
+>();
+
+function buildRuntimeCacheKey(
+  workspaceId: string,
+  providerKey: string,
+  model: string,
+  auth: ResolveOrgModelConfigAuth | undefined,
+): string {
+  const authHash = createHash("sha256")
+    .update(
+      JSON.stringify({
+        authorization: normalizeAuthHeader(auth) ?? "",
+        shareToken: auth?.shareToken?.trim() ?? "",
+        chatboxToken: auth?.chatboxToken?.trim() ?? "",
+        serverIds: normalizeServerIds(auth?.serverIds),
+      }),
+    )
+    .digest("hex");
+  return `runtime:ws:${workspaceId}:${providerKey}:${model}:auth:${authHash}`;
+}
+
+/**
+ * Resolve the runtime location for a provider by calling /stream/org/resolve.
+ *
+ * Cloud: LLM executes in Convex — return the providerKey so the caller can
+ *   route to handleHostedOrgChatModel as before.
+ * Local: LLM executes in the inspector — return the full provider config
+ *   (including apiKey) so the caller can build the model directly.
+ *
+ * Results are cached for 60 s so key rotations propagate within a minute
+ * while repeated agentic-loop steps don't each pay the round-trip cost.
+ */
+export async function resolveOrgProviderRuntime(
+  workspaceId: string,
+  providerKey: string,
+  model: string,
+  auth?: ResolveOrgModelConfigAuth,
+): Promise<OrgProviderRuntime> {
+  const convexHttpUrl = process.env.CONVEX_HTTP_URL;
+  if (!convexHttpUrl) throw new Error("CONVEX_HTTP_URL is not set");
+
+  const inspectorServiceToken = process.env.INSPECTOR_SERVICE_TOKEN;
+  if (!inspectorServiceToken) throw new Error("INSPECTOR_SERVICE_TOKEN is not set");
+
+  const cacheKey = buildRuntimeCacheKey(workspaceId, providerKey, model, auth);
+  const cached = runtimeResolveCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.result;
+  }
+
+  const authHeader = normalizeAuthHeader(auth);
+  const serverIds = normalizeServerIds(auth?.serverIds);
+
+  const url = `${convexHttpUrl.replace(/\/$/, "")}/stream/org/resolve`;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), RESOLVE_TIMEOUT_MS);
+
+  let result: OrgProviderRuntime;
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        [INSPECTOR_SERVICE_TOKEN_HEADER]: inspectorServiceToken,
+        ...(authHeader ? { Authorization: authHeader } : {}),
+      },
+      body: JSON.stringify({
+        workspaceId,
+        providerKey,
+        model,
+        ...(auth?.shareToken?.trim() ? { shareToken: auth.shareToken.trim() } : {}),
+        ...(auth?.chatboxToken?.trim() ? { chatboxToken: auth.chatboxToken.trim() } : {}),
+        ...(serverIds.length > 0 ? { serverIds } : {}),
+      }),
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      const body = await response.text().catch(() => "");
+      let message = `Org runtime resolution failed (${response.status})`;
+      try {
+        const parsed = JSON.parse(body);
+        if (parsed?.error) message = parsed.error;
+      } catch {
+        // ignore
+      }
+      throw new Error(message);
+    }
+
+    const data = await response.json();
+    if (!data?.ok) {
+      throw new Error(data?.error ?? "Failed to resolve org provider runtime");
+    }
+
+    if (data.runtimeLocation === "local") {
+      result = {
+        runtimeLocation: "local",
+        provider: data.provider as OrgProviderResolvedConfig,
+      };
+    } else {
+      result = {
+        runtimeLocation: "cloud",
+        providerKey: data.providerKey ?? providerKey,
+      };
+    }
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  runtimeResolveCache.set(cacheKey, {
+    result,
+    expiresAt: Date.now() + RUNTIME_CACHE_TTL_MS,
+  });
+  return result;
 }
