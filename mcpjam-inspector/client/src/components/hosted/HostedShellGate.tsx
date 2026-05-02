@@ -5,7 +5,7 @@ import { Button } from "@mcpjam/design-system/button";
 export type HostedShellGateState =
   | "ready"
   | "auth-loading"
-  | "workspace-loading"
+  | "project-loading"
   | "logged-out"
   | "restricted";
 
@@ -21,8 +21,8 @@ function getGateCopy(state: HostedShellGateState): string {
   if (state === "auth-loading") {
     return "Checking authentication...";
   }
-  if (state === "workspace-loading") {
-    return "Preparing workspace...";
+  if (state === "project-loading") {
+    return "Preparing project...";
   }
   if (state === "restricted") {
     return "This environment is limited to MCPJam employees.";
@@ -39,7 +39,7 @@ export function HostedShellGate({
 }: HostedShellGateProps) {
   const isBlocked = state !== "ready" && state !== "auth-loading";
   const copy =
-    loadingMessage && state === "workspace-loading"
+    loadingMessage && state === "project-loading"
       ? loadingMessage
       : getGateCopy(state);
 

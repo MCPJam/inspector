@@ -6,44 +6,44 @@ import { writePendingQuickConnect } from "@/lib/quick-connect-pending";
 const {
   loadAppStateMock,
   saveAppStateMock,
-  useWorkspaceStateMock,
+  useProjectStateMock,
   useServerStateMock,
-  workspaceStateValue,
+  projectStateValue,
   serverStateValue,
 } = vi.hoisted(() => ({
   loadAppStateMock: vi.fn(),
   saveAppStateMock: vi.fn(),
-  useWorkspaceStateMock: vi.fn(),
+  useProjectStateMock: vi.fn(),
   useServerStateMock: vi.fn(),
-  workspaceStateValue: {
-    effectiveWorkspaces: {},
-    setConvexActiveWorkspaceId: vi.fn(),
-    clearConvexActiveWorkspaceSelection: vi.fn(),
+  projectStateValue: {
+    effectiveProjects: {},
+    setConvexActiveProjectId: vi.fn(),
+    clearConvexActiveProjectSelection: vi.fn(),
     useLocalFallback: false,
-    remoteWorkspaces: [],
-    isLoadingRemoteWorkspaces: false,
-    effectiveActiveWorkspaceId: "none",
-    isLoadingWorkspaces: false,
-    activeWorkspaceServersFlat: undefined,
-    handleCreateWorkspace: vi.fn(),
-    handleUpdateWorkspace: vi.fn(),
+    remoteProjects: [],
+    isLoadingRemoteProjects: false,
+    effectiveActiveProjectId: "none",
+    isLoadingProjects: false,
+    activeProjectServersFlat: undefined,
+    handleCreateProject: vi.fn(),
+    handleUpdateProject: vi.fn(),
     handleUpdateClientConfig: vi.fn(),
-    handleDeleteWorkspace: vi.fn(),
-    handleDuplicateWorkspace: vi.fn(),
-    handleSetDefaultWorkspace: vi.fn(),
-    handleWorkspaceShared: vi.fn(),
-    handleExportWorkspace: vi.fn(),
-    handleImportWorkspace: vi.fn(),
+    handleDeleteProject: vi.fn(),
+    handleDuplicateProject: vi.fn(),
+    handleSetDefaultProject: vi.fn(),
+    handleProjectShared: vi.fn(),
+    handleExportProject: vi.fn(),
+    handleImportProject: vi.fn(),
   },
   serverStateValue: {
-    workspaceServers: {},
+    projectServers: {},
     connectedOrConnectingServerConfigs: {},
     selectedServerEntry: undefined,
     selectedMCPConfig: undefined,
     selectedMCPConfigs: [],
     selectedMCPConfigsMap: {},
     isMultiSelectMode: false,
-    activeWorkspace: undefined,
+    activeProject: undefined,
     handleConnect: vi.fn(),
     handleDisconnect: vi.fn(),
     handleReconnect: vi.fn(),
@@ -85,8 +85,8 @@ vi.mock("@/state/storage", () => ({
   saveAppState: (...args: unknown[]) => saveAppStateMock(...args),
 }));
 
-vi.mock("../use-workspace-state", () => ({
-  useWorkspaceState: (...args: unknown[]) => useWorkspaceStateMock(...args),
+vi.mock("../use-project-state", () => ({
+  useProjectState: (...args: unknown[]) => useProjectStateMock(...args),
 }));
 
 vi.mock("../use-server-state", () => ({
@@ -96,8 +96,8 @@ vi.mock("../use-server-state", () => ({
 import { useAppState } from "../use-app-state";
 
 function createLoadedAppState() {
-  const baseWorkspace = {
-    ...initialAppState.workspaces.default,
+  const baseProject = {
+    ...initialAppState.projects.default,
     servers: {
       "demo-server": {
         name: "demo-server",
@@ -118,11 +118,11 @@ function createLoadedAppState() {
 
   return {
     ...initialAppState,
-    workspaces: {
-      default: baseWorkspace,
+    projects: {
+      default: baseProject,
     },
-    activeWorkspaceId: "default",
-    servers: baseWorkspace.servers,
+    activeProjectId: "default",
+    servers: baseProject.servers,
     selectedServer: "demo-server",
   };
 }
@@ -134,14 +134,14 @@ describe("useAppState hosted OAuth browser back", () => {
     window.history.replaceState({}, "", "/");
     loadAppStateMock.mockReturnValue(createLoadedAppState());
     saveAppStateMock.mockResolvedValue(undefined);
-    useWorkspaceStateMock.mockImplementation(({ appState }) => ({
-      ...workspaceStateValue,
-      effectiveWorkspaces: appState.workspaces,
-      effectiveActiveWorkspaceId: appState.activeWorkspaceId,
+    useProjectStateMock.mockImplementation(({ appState }) => ({
+      ...projectStateValue,
+      effectiveProjects: appState.projects,
+      effectiveActiveProjectId: appState.activeProjectId,
     }));
     useServerStateMock.mockImplementation(({ appState }) => ({
       ...serverStateValue,
-      workspaceServers: appState.servers,
+      projectServers: appState.servers,
     }));
   });
 
@@ -149,7 +149,7 @@ describe("useAppState hosted OAuth browser back", () => {
     localStorage.setItem(
       "mcp-hosted-oauth-pending",
       JSON.stringify({
-        surface: "workspace",
+        surface: "project",
         serverName: "demo-server",
         serverUrl: "https://example.com/mcp",
         returnHash: "#servers",
@@ -176,7 +176,7 @@ describe("useAppState hosted OAuth browser back", () => {
     );
 
     await waitFor(() => {
-      expect(useWorkspaceStateMock).toHaveBeenCalled();
+      expect(useProjectStateMock).toHaveBeenCalled();
     });
 
     const pageShow = new Event("pageshow") as PageTransitionEvent;
@@ -187,9 +187,9 @@ describe("useAppState hosted OAuth browser back", () => {
     });
 
     await waitFor(() => {
-      const lastWorkspaceArgs = useWorkspaceStateMock.mock.calls.at(-1)?.[0];
+      const lastProjectArgs = useProjectStateMock.mock.calls.at(-1)?.[0];
       expect(
-        lastWorkspaceArgs?.appState.servers["demo-server"]?.connectionStatus,
+        lastProjectArgs?.appState.servers["demo-server"]?.connectionStatus,
       ).toBe("failed");
     });
     expect(localStorage.getItem("mcp-hosted-oauth-pending")).toBeNull();

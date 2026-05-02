@@ -24,14 +24,14 @@ export interface ChatboxWelcomeDialogPayload {
 }
 
 export interface ChatboxBootstrapPayload {
-  workspaceId: string;
+  projectId: string;
   chatboxId: string;
   name: string;
   description?: string;
   hostStyle: ChatboxHostStyle;
   mode: ChatboxShareMode;
   allowGuestAccess: boolean;
-  viewerIsWorkspaceMember: boolean;
+  viewerIsProjectMember: boolean;
   systemPrompt: string;
   modelId: string;
   temperature: number;
@@ -76,7 +76,7 @@ export interface ChatboxPlaygroundSession extends ChatboxSession {
 function normalizeChatboxShareMode(mode: unknown): ChatboxShareMode {
   if (
     mode === "any_signed_in_with_link" ||
-    mode === "workspace_with_link" ||
+    mode === "project_with_link" ||
     mode === "anyone_with_link"
   ) {
     return "any_signed_in_with_link";
@@ -115,7 +115,7 @@ function normalizeChatboxSession(
   if (
     !token ||
     !payload ||
-    typeof payload.workspaceId !== "string" ||
+    typeof payload.projectId !== "string" ||
     typeof payload.chatboxId !== "string" ||
     typeof payload.name !== "string" ||
     hostStyle === null ||
@@ -124,7 +124,7 @@ function normalizeChatboxSession(
     typeof payload.temperature !== "number" ||
     typeof payload.requireToolApproval !== "boolean" ||
     typeof payload.allowGuestAccess !== "boolean" ||
-    typeof payload.viewerIsWorkspaceMember !== "boolean" ||
+    typeof payload.viewerIsProjectMember !== "boolean" ||
     !Array.isArray(payload.servers)
   ) {
     return null;
@@ -133,7 +133,7 @@ function normalizeChatboxSession(
   return {
     token,
     payload: {
-      workspaceId: payload.workspaceId,
+      projectId: payload.projectId,
       chatboxId: payload.chatboxId,
       name: payload.name,
       description:
@@ -143,7 +143,7 @@ function normalizeChatboxSession(
       hostStyle,
       mode: normalizeChatboxShareMode(payload.mode),
       allowGuestAccess: payload.allowGuestAccess,
-      viewerIsWorkspaceMember: payload.viewerIsWorkspaceMember,
+      viewerIsProjectMember: payload.viewerIsProjectMember,
       systemPrompt: payload.systemPrompt,
       modelId: payload.modelId,
       temperature: payload.temperature,
@@ -382,20 +382,20 @@ export function buildPlaygroundChatboxLink(
 const BUILDER_SESSION_KEY = "mcpjam_chatbox_builder_session_v1";
 
 export interface ChatboxBuilderSession {
-  workspaceId: string;
+  projectId: string;
   chatboxId: string | null;
   draft: Record<string, unknown> | null;
   viewMode: string;
 }
 
 export function readBuilderSession(
-  workspaceId: string,
+  projectId: string,
 ): ChatboxBuilderSession | null {
   try {
     const raw = sessionStorage.getItem(BUILDER_SESSION_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as ChatboxBuilderSession;
-    if (parsed.workspaceId !== workspaceId) return null;
+    if (parsed.projectId !== projectId) return null;
     return parsed;
   } catch {
     return null;

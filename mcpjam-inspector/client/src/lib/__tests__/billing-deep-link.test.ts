@@ -135,7 +135,7 @@ describe("resolveCheckoutOrganizationId", () => {
     expect(resolveCheckoutOrganizationId(orgs, "b", "a")).toBe("b");
   });
 
-  it("falls back to workspace org", () => {
+  it("falls back to project org", () => {
     expect(resolveCheckoutOrganizationId(orgs, undefined, "a")).toBe("a");
   });
 

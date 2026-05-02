@@ -52,7 +52,7 @@ describe("evals-api hosted mode", () => {
         );
 
         return {
-          workspaceId: "workspace-1",
+          projectId: "project-1",
           serverIds,
           oauthTokens: serverIds.includes("srv_a")
             ? { srv_a: "oauth-token-a" }
@@ -78,7 +78,7 @@ describe("evals-api hosted mode", () => {
 
   it("uses /api/web/evals/run and preserves original suite server names", async () => {
     await runEvals({
-      workspaceId: "workspace-1",
+      projectId: "project-1",
       suiteName: "Hosted Suite",
       tests: [{ title: "Test", query: "Hello", runs: 1 }],
       serverIds: ["Server A", "Server B"],
@@ -98,19 +98,19 @@ describe("evals-api hosted mode", () => {
 
     const body = JSON.parse(authFetchMock.mock.calls[0][1].body);
     expect(body).toMatchObject({
-      workspaceId: "workspace-1",
+      projectId: "project-1",
       serverIds: ["srv_a", "srv_b"],
       storageServerIds: ["Server A", "Server B"],
     });
     expect(body).not.toHaveProperty("convexAuthToken");
   });
 
-  it("rejects direct guest full-suite runs before workspace lookup", async () => {
+  it("rejects direct guest full-suite runs before project lookup", async () => {
     isGuestModeMock.mockReturnValue(true);
 
     await expect(
       runEvals({
-        workspaceId: null,
+        projectId: null,
         suiteName: "Guest Suite",
         tests: [],
         serverIds: ["Guest Server"],
@@ -124,7 +124,7 @@ describe("evals-api hosted mode", () => {
 
   it("uses /api/web/evals/generate-tests for hosted test generation", async () => {
     await generateEvalTests({
-      workspaceId: "workspace-1",
+      projectId: "project-1",
       serverIds: ["Server A"],
       convexAuthToken: "convex-token",
     });
@@ -138,7 +138,7 @@ describe("evals-api hosted mode", () => {
 
     const body = JSON.parse(authFetchMock.mock.calls[0][1].body);
     expect(body).toMatchObject({
-      workspaceId: "workspace-1",
+      projectId: "project-1",
       serverIds: ["srv_a"],
     });
     expect(body).not.toHaveProperty("convexAuthToken");
@@ -146,7 +146,7 @@ describe("evals-api hosted mode", () => {
 
   it("uses /api/web/evals/generate-negative-tests for hosted negative generation", async () => {
     await generateNegativeEvalTests({
-      workspaceId: "workspace-1",
+      projectId: "project-1",
       serverIds: ["Server A"],
       convexAuthToken: "convex-token",
     });
@@ -160,7 +160,7 @@ describe("evals-api hosted mode", () => {
 
     const body = JSON.parse(authFetchMock.mock.calls[0][1].body);
     expect(body).toMatchObject({
-      workspaceId: "workspace-1",
+      projectId: "project-1",
       serverIds: ["srv_a"],
     });
     expect(body).not.toHaveProperty("convexAuthToken");
@@ -168,7 +168,7 @@ describe("evals-api hosted mode", () => {
 
   it("uses /api/web/evals/run-test-case for hosted quick runs", async () => {
     await runEvalTestCase({
-      workspaceId: "workspace-1",
+      projectId: "project-1",
       testCaseId: "test-case-1",
       model: "openai/gpt-5-mini",
       provider: "openai",
@@ -185,7 +185,7 @@ describe("evals-api hosted mode", () => {
 
     const body = JSON.parse(authFetchMock.mock.calls[0][1].body);
     expect(body).toMatchObject({
-      workspaceId: "workspace-1",
+      projectId: "project-1",
       serverIds: ["srv_a"],
       testCaseId: "test-case-1",
       model: "openai/gpt-5-mini",
@@ -223,7 +223,7 @@ describe("evals-api hosted mode", () => {
     isGuestModeMock.mockReturnValue(true);
 
     await runEvalTestCase({
-      workspaceId: null,
+      projectId: null,
       testCaseId: "guest-case-1",
       model: "openai/gpt-5-mini",
       provider: "openai",
@@ -245,7 +245,7 @@ describe("evals-api hosted mode", () => {
       model: "openai/gpt-5-mini",
       provider: "openai",
     });
-    expect(body).not.toHaveProperty("workspaceId");
+    expect(body).not.toHaveProperty("projectId");
     expect(body).not.toHaveProperty("serverIds");
     expect(body).not.toHaveProperty("convexAuthToken");
   });
@@ -254,7 +254,7 @@ describe("evals-api hosted mode", () => {
     isGuestModeMock.mockReturnValue(true);
 
     await generateEvalTests({
-      workspaceId: null,
+      projectId: null,
       serverIds: ["Guest Server"],
       convexAuthToken: "guest-convex-token",
     });
@@ -274,7 +274,7 @@ describe("evals-api hosted mode", () => {
       oauthAccessToken: "guest-oauth-token",
       clientCapabilities: { sampling: true },
     });
-    expect(body).not.toHaveProperty("workspaceId");
+    expect(body).not.toHaveProperty("projectId");
     expect(body).not.toHaveProperty("serverIds");
     expect(body).not.toHaveProperty("convexAuthToken");
   });
@@ -283,7 +283,7 @@ describe("evals-api hosted mode", () => {
     isGuestModeMock.mockReturnValue(true);
 
     await generateNegativeEvalTests({
-      workspaceId: null,
+      projectId: null,
       serverIds: ["Guest Server"],
       convexAuthToken: "guest-convex-token",
     });
@@ -300,7 +300,7 @@ describe("evals-api hosted mode", () => {
       serverUrl: "https://guest.example.com/mcp",
       serverName: "Guest Server",
     });
-    expect(body).not.toHaveProperty("workspaceId");
+    expect(body).not.toHaveProperty("projectId");
     expect(body).not.toHaveProperty("serverIds");
     expect(body).not.toHaveProperty("convexAuthToken");
   });
@@ -334,7 +334,7 @@ describe("evals-api hosted mode", () => {
     const events: unknown[] = [];
     await streamEvalTestCase(
       {
-        workspaceId: "workspace-1",
+        projectId: "project-1",
         testCaseId: "test-case-1",
         model: "openai/gpt-5-mini",
         provider: "openai",
@@ -355,7 +355,7 @@ describe("evals-api hosted mode", () => {
 
     const body = JSON.parse(authFetchMock.mock.calls[0][1].body);
     expect(body).toMatchObject({
-      workspaceId: "workspace-1",
+      projectId: "project-1",
       serverIds: ["srv_a"],
       testCaseId: "test-case-1",
       model: "openai/gpt-5-mini",
@@ -400,7 +400,7 @@ describe("evals-api hosted mode", () => {
 
     await streamEvalTestCase(
       {
-        workspaceId: null,
+        projectId: null,
         testCaseId: "guest-case-1",
         model: "openai/gpt-5-mini",
         provider: "openai",
@@ -427,7 +427,7 @@ describe("evals-api hosted mode", () => {
       provider: "openai",
       compareRunId: "cmp_guest",
     });
-    expect(body).not.toHaveProperty("workspaceId");
+    expect(body).not.toHaveProperty("projectId");
     expect(body).not.toHaveProperty("serverIds");
     expect(body).not.toHaveProperty("convexAuthToken");
   });
@@ -519,7 +519,7 @@ describe("evals-api hosted mode", () => {
       });
 
     const result = await listEvalTools({
-      workspaceId: "workspace-1",
+      projectId: "project-1",
       serverIds: ["Server A", "Server B"],
     });
 

@@ -8,7 +8,7 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * Merges MCP `extensions` maps by extension id so workspace/server partial
+ * Merges MCP `extensions` maps by extension id so project/server partial
  * configs do not replace the entire `extensions` object (which would drop
  * unrelated extension entries).
  */

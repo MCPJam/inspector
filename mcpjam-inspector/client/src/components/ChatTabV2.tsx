@@ -44,7 +44,9 @@ import {
   detectPlatform,
   standardEventProps,
 } from "@/lib/PosthogUtils";
-import { ErrorBox } from "@/components/chat-v2/error";
+import { CreditTopupDialog } from "@/components/billing/CreditTopupDialog";
+import { TopupGatedErrorBox } from "@/components/billing/TopupGatedErrorBox";
+import { useCreditTopupReturnFlow } from "@/hooks/useCreditTopupReturnFlow";
 import { StickToBottom } from "use-stick-to-bottom";
 import { type MCPPromptResult } from "@/components/chat-v2/chat-input/prompts/mcp-prompts-popover";
 import type { SkillResult } from "@/components/chat-v2/chat-input/skills/skill-types";
@@ -82,7 +84,7 @@ import {
   type ChatHistoryTurnTrace,
   type ChatHistoryWidgetSnapshot,
 } from "@/lib/apis/web/chat-history-api";
-import { useWorkspaceServers } from "@/hooks/useViews";
+import { useProjectServers } from "@/hooks/useViews";
 import { HOSTED_MODE } from "@/lib/config";
 import { buildOAuthTokensByServerId } from "@/lib/oauth/oauth-tokens";
 import type { OrgModelProvider } from "@/hooks/use-org-model-config";
@@ -112,7 +114,7 @@ import type { ChatboxHostStyle } from "@/lib/chatbox-host-style";
 interface ChatTabProps {
   connectedOrConnectingServerConfigs: Record<string, ServerWithName>;
   selectedServerNames: string[];
-  /** All workspace servers (for the "+" dropdown server toggles). */
+  /** All project servers (for the "+" dropdown server toggles). */
   allServerConfigs?: Record<string, ServerWithName>;
   /** Toggle a server on/off for multi-select. */
   onServerToggle?: (serverName: string) => void;
@@ -124,7 +126,7 @@ interface ChatTabProps {
   onHasMessagesChange?: (hasMessages: boolean) => void;
   enableMultiModelChat?: boolean;
   minimalMode?: boolean;
-  hostedWorkspaceIdOverride?: string;
+  hostedProjectIdOverride?: string;
   hostedSelectedServerIdsOverride?: string[];
   hostedOAuthTokensOverride?: Record<string, string>;
   hostedContext?: HostedRuntimeContext;
@@ -163,7 +165,7 @@ export function ChatTabV2({
   onHasMessagesChange,
   enableMultiModelChat = false,
   minimalMode = false,
-  hostedWorkspaceIdOverride,
+  hostedProjectIdOverride,
   hostedSelectedServerIdsOverride,
   hostedOAuthTokensOverride,
   hostedContext,
@@ -245,7 +247,7 @@ export function ChatTabV2({
     string | null
   >(null);
   const [pendingDirectVisibility, setPendingDirectVisibility] = useState<
-    "private" | "workspace"
+    "private" | "project"
   >("private");
   const historyRefreshSignal = 0;
 
@@ -290,18 +292,18 @@ export function ChatTabV2({
       ),
     [selectedServerNames, connectedOrConnectingServerConfigs]
   );
-  const activeWorkspace = appState.workspaces[appState.activeWorkspaceId];
-  const convexWorkspaceId = activeWorkspace?.sharedWorkspaceId ?? null;
-  const organizationId = activeWorkspace?.organizationId ?? null;
+  const activeProject = appState.projects[appState.activeProjectId];
+  const convexProjectId = activeProject?.sharedProjectId ?? null;
+  const organizationId = activeProject?.organizationId ?? null;
   const hostedOrgModelConfig = useQuery(
     "organizationModelProviders:getVisibleConfig" as any,
     HOSTED_MODE && isConvexAuthenticated && organizationId
       ? ({ organizationId } as any)
       : "skip",
   ) as { providers: OrgModelProvider[] } | undefined;
-  const { serversById, serversByName } = useWorkspaceServers({
+  const { serversById, serversByName } = useProjectServers({
     isAuthenticated: isConvexAuthenticated,
-    workspaceId: convexWorkspaceId,
+    projectId: convexProjectId,
   });
   const hostedSelectedServerIds = useMemo(
     () =>
@@ -322,8 +324,8 @@ export function ChatTabV2({
   const hostedShareToken = hostedContext?.shareToken;
   const hostedChatboxToken = hostedContext?.chatboxToken;
   const hostedChatboxSurface = hostedContext?.chatboxSurface;
-  const effectiveHostedWorkspaceId =
-    hostedWorkspaceIdOverride ?? convexWorkspaceId;
+  const effectiveHostedProjectId =
+    hostedProjectIdOverride ?? convexProjectId;
   const effectiveHostedSelectedServerIds =
     hostedSelectedServerIdsOverride ?? hostedSelectedServerIds;
   const effectiveHostedOAuthTokens = hostedChatboxToken
@@ -332,7 +334,7 @@ export function ChatTabV2({
   const isHostedDirectGuest =
     HOSTED_MODE &&
     !isConvexAuthenticated &&
-    !effectiveHostedWorkspaceId &&
+    !effectiveHostedProjectId &&
     !hostedShareToken &&
     !hostedChatboxToken;
 
@@ -388,7 +390,7 @@ export function ChatTabV2({
     hostedOrgModelConfig,
     hostedContext: {
       ...hostedContext,
-      workspaceId: effectiveHostedWorkspaceId,
+      projectId: effectiveHostedProjectId,
       selectedServerIds: effectiveHostedSelectedServerIds,
       oauthTokens: effectiveHostedOAuthTokens,
     },
@@ -424,7 +426,7 @@ export function ChatTabV2({
     widgetSnapshots: reactiveHistoryWidgetSnapshots,
   } = useDirectChatSessionSubscription({
     sessionId: activeHistorySessionId,
-    workspaceId: effectiveHostedWorkspaceId,
+    projectId: effectiveHostedProjectId,
     enabled:
       showHistoryRail &&
       isConvexAuthenticated &&
@@ -644,7 +646,7 @@ export function ChatTabV2({
           const detail = await getChatHistoryDetail({
             sessionId: activeHistorySessionId ?? undefined,
             chatSessionId,
-            workspaceId: effectiveHostedWorkspaceId ?? undefined,
+            projectId: effectiveHostedProjectId ?? undefined,
           });
           setActiveHistorySessionId(detail.session._id);
           syncResumedVersion(detail.session.version);
@@ -672,7 +674,7 @@ export function ChatTabV2({
     [
       activeHistorySessionId,
       chatSessionId,
-      effectiveHostedWorkspaceId,
+      effectiveHostedProjectId,
       hasConversationMessages,
       markHistorySessionRead,
       showHistoryRail,
@@ -830,7 +832,7 @@ export function ChatTabV2({
         const detail = await getChatHistoryDetail({
           sessionId: session._id,
           chatSessionId: session.chatSessionId,
-          workspaceId: effectiveHostedWorkspaceId ?? undefined,
+          projectId: effectiveHostedProjectId ?? undefined,
         });
 
         if (historySelectionRequestIdRef.current !== selectionRequestId) {
@@ -887,7 +889,7 @@ export function ChatTabV2({
       appState.servers,
       clearComposerDraft,
       ensureDiscardDraftConfirmed,
-      effectiveHostedWorkspaceId,
+      effectiveHostedProjectId,
       hasUnsavedDraft,
       isHostedDirectGuest,
       isStreaming,
@@ -912,7 +914,7 @@ export function ChatTabV2({
       cancelPendingHistorySelection();
       syncResumedVersion(null);
       baseResetChat();
-      setPendingDirectVisibility(options?.shared ? "workspace" : "private");
+      setPendingDirectVisibility(options?.shared ? "project" : "private");
     },
     [
       baseResetChat,
@@ -1591,6 +1593,59 @@ export function ChatTabV2({
   const showDisabledCallout = !effectiveHasMessages && shouldShowUpsell;
 
   const errorMessage = formatErrorMessage(error);
+
+  const [isTopupDialogOpen, setIsTopupDialogOpen] = useState(false);
+  const [pendingResendMessage, setPendingResendMessage] = useState("");
+
+  // Capture the most-recent user-typed message text at the moment it's
+  // sent, not by walking `messages` later. This avoids any per-render
+  // work in the chat hot path — the value is only updated in event
+  // handlers (which run after commit), so it's safe to read in the
+  // click handler below.
+  const lastSentUserMessageRef = useRef("");
+
+  const canShowTopupCta =
+    isConvexAuthenticated &&
+    errorMessage?.canTopUp === true &&
+    errorMessage?.code === "user_rate_limit";
+
+  const handleOpenTopupDialog = useCallback(() => {
+    const text = lastSentUserMessageRef.current;
+    if (!text) {
+      // Nothing to resend — no-op rather than opening a dialog that
+      // would carry an empty message into checkout.
+      return;
+    }
+    posthog.capture("credit_topup_cta_clicked", { source: "chat_banner" });
+    setPendingResendMessage(text);
+    setIsTopupDialogOpen(true);
+  }, [posthog]);
+
+  const handleTopupDialogOpenChange = useCallback((open: boolean) => {
+    setIsTopupDialogOpen(open);
+    if (!open) {
+      // Clear the snapshot when the dialog closes so we don't keep a
+      // stale message lingering in state until the next click.
+      setPendingResendMessage("");
+    }
+  }, []);
+
+  // Concurrency-throttle retry: re-submit the user's last typed message via
+  // the same source-tracking ref the topup CTA uses. The retry button only
+  // ever surfaces on the concurrency banner (see `onRetry` gate below), so
+  // we don't risk firing this on unrelated retryable errors.
+  const handleRetryConcurrencyMessage = useCallback(() => {
+    const text = lastSentUserMessageRef.current;
+    if (!text) return;
+    sendMessage({ text });
+  }, [sendMessage]);
+
+  const isConcurrencyThrottle =
+    errorMessage?.code === "user_rate_limit" &&
+    errorMessage?.limitKind === "concurrency";
+
+  useCreditTopupReturnFlow({ chatSessionId, sendMessage });
+
   const traceViewerTrace = liveTraceEnvelope ?? {
     traceVersion: 1 as const,
     messages: [],
@@ -1823,6 +1878,7 @@ export function ChatTabV2({
           multi_model_count: 1,
           single_model_send: true,
         });
+        lastSentUserMessageRef.current = input;
         sendMessage({ text: input, files });
         setModelContextQueue([]);
       }
@@ -1865,6 +1921,7 @@ export function ChatTabV2({
         multi_model_count: 1,
         single_model_send: true,
       });
+      lastSentUserMessageRef.current = prompt;
       sendMessage({ text: prompt });
     }
     setInput("");
@@ -1953,7 +2010,7 @@ export function ChatTabV2({
                 isAuthenticated={isConvexAuthenticated}
                 isStreaming={historyRailStreaming}
                 sharedThreadsEnabled={sharedThreadsEnabled}
-                workspaceId={effectiveHostedWorkspaceId}
+                projectId={effectiveHostedProjectId}
                 enabled={isSessionBootstrapComplete}
                 refreshSignal={historyRefreshSignal}
                 onSelectThread={handleSelectThread}
@@ -2042,7 +2099,7 @@ export function ChatTabV2({
                     errorFooterSlot={
                       errorMessage ? (
                         <div className="max-w-4xl mx-auto px-4 pt-4">
-                          <ErrorBox
+                          <TopupGatedErrorBox
                             message={errorMessage.message}
                             errorDetails={errorMessage.details}
                             code={errorMessage.code}
@@ -2050,6 +2107,16 @@ export function ChatTabV2({
                             isRetryable={errorMessage.isRetryable}
                             isMCPJamPlatformError={
                               errorMessage.isMCPJamPlatformError
+                            }
+                            canTopUp={canShowTopupCta}
+                            onTopUp={handleOpenTopupDialog}
+                            walletLocked={errorMessage.walletLocked}
+                            limitKind={errorMessage.limitKind}
+                            retryAfterMs={errorMessage.retryAfterMs}
+                            onRetry={
+                              isConcurrencyThrottle
+                                ? handleRetryConcurrencyMessage
+                                : undefined
                             }
                             onResetChat={handleResetAllChats}
                           />
@@ -2179,7 +2246,7 @@ export function ChatTabV2({
                           }}
                           hostedContext={{
                             ...hostedContext,
-                            workspaceId: effectiveHostedWorkspaceId,
+                            projectId: effectiveHostedProjectId,
                             selectedServerIds: effectiveHostedSelectedServerIds,
                             oauthTokens: effectiveHostedOAuthTokens,
                           }}
@@ -2270,7 +2337,7 @@ export function ChatTabV2({
                       <div className="bg-background/80 backdrop-blur-sm border-t border-border flex-shrink-0">
                         {errorMessage && (
                           <div className="max-w-4xl mx-auto px-4 pt-4">
-                            <ErrorBox
+                            <TopupGatedErrorBox
                               message={errorMessage.message}
                               errorDetails={errorMessage.details}
                               code={errorMessage.code}
@@ -2278,6 +2345,16 @@ export function ChatTabV2({
                               isRetryable={errorMessage.isRetryable}
                               isMCPJamPlatformError={
                                 errorMessage.isMCPJamPlatformError
+                              }
+                              canTopUp={canShowTopupCta}
+                              onTopUp={handleOpenTopupDialog}
+                              walletLocked={errorMessage.walletLocked}
+                              limitKind={errorMessage.limitKind}
+                              retryAfterMs={errorMessage.retryAfterMs}
+                              onRetry={
+                                isConcurrencyThrottle
+                                  ? handleRetryConcurrencyMessage
+                                  : undefined
                               }
                               onResetChat={baseResetChat}
                             />
@@ -2308,9 +2385,10 @@ export function ChatTabV2({
                       <StickToBottom.Content className="flex flex-col min-h-0">
                         <Thread
                           messages={messages}
-                          sendFollowUpMessage={(text: string) =>
-                            sendMessage({ text })
-                          }
+                          sendFollowUpMessage={(text: string) => {
+                            lastSentUserMessageRef.current = text;
+                            sendMessage({ text });
+                          }}
                           model={selectedModel}
                           isLoading={isStreaming}
                           toolsMetadata={toolsMetadata}
@@ -2336,7 +2414,7 @@ export function ChatTabV2({
                     <div className="bg-background/80 backdrop-blur-sm border-t border-border flex-shrink-0">
                       {errorMessage && (
                         <div className="max-w-4xl mx-auto px-4 pt-4">
-                          <ErrorBox
+                          <TopupGatedErrorBox
                             message={errorMessage.message}
                             errorDetails={errorMessage.details}
                             code={errorMessage.code}
@@ -2344,6 +2422,16 @@ export function ChatTabV2({
                             isRetryable={errorMessage.isRetryable}
                             isMCPJamPlatformError={
                               errorMessage.isMCPJamPlatformError
+                            }
+                            canTopUp={canShowTopupCta}
+                            onTopUp={handleOpenTopupDialog}
+                            walletLocked={errorMessage.walletLocked}
+                            limitKind={errorMessage.limitKind}
+                            retryAfterMs={errorMessage.retryAfterMs}
+                            onRetry={
+                              isConcurrencyThrottle
+                                ? handleRetryConcurrencyMessage
+                                : undefined
                             }
                             onResetChat={baseResetChat}
                           />
@@ -2559,6 +2647,15 @@ export function ChatTabV2({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      {isTopupDialogOpen && (
+        <CreditTopupDialog
+          open
+          onOpenChange={handleTopupDialogOpenChange}
+          chatSessionId={chatSessionId}
+          lastUserMessage={pendingResendMessage}
+          source="chat_banner"
+        />
+      )}
     </div>
   );
 }

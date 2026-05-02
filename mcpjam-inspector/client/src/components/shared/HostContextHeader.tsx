@@ -36,7 +36,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@mcpjam/design-system/tooltip";
-import type { WorkspaceHostContextDraft } from "@/lib/client-config";
+import type { ProjectHostContextDraft } from "@/lib/client-config";
 import {
   extractHostDeviceCapabilities,
   extractHostLocale,
@@ -70,10 +70,10 @@ const CUSTOM_DEVICE_BASE = {
 };
 
 export interface HostContextHeaderProps {
-  activeWorkspaceId: string | null;
+  activeProjectId: string | null;
   onSaveHostContext?: (
-    workspaceId: string,
-    hostContext: WorkspaceHostContextDraft,
+    projectId: string,
+    hostContext: ProjectHostContextDraft,
   ) => Promise<void>;
   protocol: UIType | null;
   showThemeToggle?: boolean;
@@ -81,7 +81,7 @@ export interface HostContextHeaderProps {
 }
 
 export function HostContextHeader({
-  activeWorkspaceId,
+  activeProjectId,
   onSaveHostContext,
   protocol,
   showThemeToggle = false,
@@ -441,7 +441,7 @@ export function HostContextHeader({
       </div>
 
       <HostContextDialog
-        activeWorkspaceId={activeWorkspaceId}
+        activeProjectId={activeProjectId}
         open={hostContextDialogOpen}
         onOpenChange={setHostContextDialogOpen}
         onSaveHostContext={onSaveHostContext}

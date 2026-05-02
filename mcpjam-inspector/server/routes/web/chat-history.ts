@@ -124,13 +124,13 @@ async function proxyPost(
   }
 }
 
-// GET /chat-history/list?workspaceId=...&status=active|archived&limit=50&before=...
+// GET /chat-history/list?projectId=...&status=active|archived&limit=50&before=...
 chatHistory.get("/list", async (c) =>
   handleRoute(c, async () => {
     const bearerToken = assertBearerToken(c);
-    const { workspaceId, status, limit, before } = c.req.query();
+    const { projectId, status, limit, before } = c.req.query();
     return await proxyGet(bearerToken, "/direct-chat/list", {
-      workspaceId,
+      projectId,
       status,
       limit,
       before,
@@ -138,11 +138,11 @@ chatHistory.get("/list", async (c) =>
   }),
 );
 
-// GET /chat-history/detail?sessionId=...&chatSessionId=...&workspaceId=...
+// GET /chat-history/detail?sessionId=...&chatSessionId=...&projectId=...
 chatHistory.get("/detail", async (c) =>
   handleRoute(c, async () => {
     const bearerToken = assertBearerToken(c);
-    const { sessionId, chatSessionId, workspaceId } = c.req.query();
+    const { sessionId, chatSessionId, projectId } = c.req.query();
     if (!sessionId && !chatSessionId) {
       throw new WebRouteError(
         400,
@@ -153,7 +153,7 @@ chatHistory.get("/detail", async (c) =>
     return await proxyGet(bearerToken, "/direct-chat/detail", {
       sessionId,
       chatSessionId,
-      workspaceId,
+      projectId,
     });
   }),
 );

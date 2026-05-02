@@ -142,4 +142,53 @@ describe("AuthenticationSection", () => {
       screen.getByText("Client ID Metadata Documents (CIMD)"),
     ).toBeInTheDocument();
   });
+
+  it("shows stored client secret metadata with clear and undo actions", () => {
+    const onClearClientSecret = vi.fn();
+    const onUndoClearClientSecret = vi.fn();
+    const props = {
+      serverUrl: "https://example.com/mcp",
+      authType: "oauth" as const,
+      onAuthTypeChange: vi.fn(),
+      showAuthSettings: true,
+      bearerToken: "",
+      onBearerTokenChange: vi.fn(),
+      oauthScopesInput: "",
+      onOauthScopesChange: vi.fn(),
+      oauthProtocolMode: "2025-11-25" as const,
+      onOauthProtocolModeChange: vi.fn(),
+      oauthRegistrationMode: "preregistered" as const,
+      onOauthRegistrationModeChange: vi.fn(),
+      useCustomClientId: true,
+      onUseCustomClientIdChange: vi.fn(),
+      clientId: "client-id",
+      onClientIdChange: vi.fn(),
+      clientSecret: "",
+      onClientSecretChange: vi.fn(),
+      hasStoredClientSecret: true,
+      clientIdError: null,
+      clientSecretError: null,
+      onClearClientSecret,
+      onUndoClearClientSecret,
+    };
+
+    const { rerender } = render(<AuthenticationSection {...props} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /advanced settings/i }));
+
+    expect(
+      screen.getByPlaceholderText("Enter a new value to replace."),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Clear" }));
+    expect(onClearClientSecret).toHaveBeenCalledTimes(1);
+
+    rerender(<AuthenticationSection {...props} clearClientSecret={true} />);
+
+    expect(
+      screen.getByText("Saved client secret will be removed when you save."),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+    expect(onUndoClearClientSecret).toHaveBeenCalledTimes(1);
+  });
 });

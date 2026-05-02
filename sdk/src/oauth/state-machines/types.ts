@@ -214,6 +214,7 @@ export interface BaseOAuthStateMachineConfig {
   requestExecutor: OAuthRequestExecutor;
   scheduleAutoAdvance?: OAuthAutoAdvanceScheduler;
   loadPreregisteredCredentials?: LoadPreregisteredCredentials;
+  hasClientSecret?: boolean;
   dynamicRegistration?: Partial<OAuthDynamicRegistrationMetadata>;
   clientIdMetadataUrl?: string;
   customScopes?: string;

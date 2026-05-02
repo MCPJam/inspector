@@ -311,7 +311,7 @@ export const startSuiteRunWithRecorder = async ({
     servers: string[];
     serverBindings?: Array<{
       serverName: string;
-      workspaceServerId?: string;
+      projectServerId?: string;
     }>;
   };
   toolSnapshot?: ServerToolSnapshot;

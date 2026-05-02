@@ -17,14 +17,14 @@ export interface HostedNavigationResolution {
   shouldClearChatMessages: boolean;
 }
 
-export function getWorkspaceSwitchNavigationTarget({
+export function getProjectSwitchNavigationTarget({
   activeTab,
   activeOrganizationId,
-  nextWorkspaceOrganizationId,
+  nextProjectOrganizationId,
 }: {
   activeTab: string;
   activeOrganizationId?: string;
-  nextWorkspaceOrganizationId?: string;
+  nextProjectOrganizationId?: string;
 }): string | null {
   if (activeTab !== "organizations") {
     return null;
@@ -32,8 +32,8 @@ export function getWorkspaceSwitchNavigationTarget({
 
   if (
     !activeOrganizationId ||
-    !nextWorkspaceOrganizationId ||
-    nextWorkspaceOrganizationId !== activeOrganizationId
+    !nextProjectOrganizationId ||
+    nextProjectOrganizationId !== activeOrganizationId
   ) {
     return "servers";
   }

@@ -236,4 +236,82 @@ describe("useServerForm", () => {
 
     expect(result.current.preregisteredOauthBlocksSubmit).toBe(false);
   });
+
+  it("represents a stored client secret without exposing the value", async () => {
+    const server = {
+      name: "Stored secret server",
+      config: {
+        url: "https://example.com/mcp",
+      },
+      useOAuth: true,
+      hasClientSecret: true,
+      oauthFlowProfile: {
+        serverUrl: "https://example.com/mcp",
+        clientId: "client-id",
+        clientSecret: "",
+        scopes: "",
+        customHeaders: [],
+        protocolVersion: "2025-11-25",
+        registrationStrategy: "preregistered",
+      },
+      lastConnectionTime: new Date(),
+      connectionStatus: "disconnected",
+      retryCount: 0,
+      enabled: true,
+    } as any;
+
+    const { result } = renderHook(() => useServerForm(server));
+
+    await waitFor(() => {
+      expect(result.current.hasStoredClientSecret).toBe(true);
+    });
+
+    expect(result.current.clientSecret).toBe("");
+    expect(result.current.buildFormData()).toMatchObject({
+      clientId: "client-id",
+      hasClientSecret: true,
+      clearClientSecret: false,
+    });
+    expect(result.current.buildFormData().clientSecret).toBeUndefined();
+  });
+
+  it("marks a stored client secret for clearing without sending a secret", async () => {
+    const server = {
+      name: "Stored secret server",
+      config: {
+        url: "https://example.com/mcp",
+      },
+      useOAuth: true,
+      hasClientSecret: true,
+      oauthFlowProfile: {
+        serverUrl: "https://example.com/mcp",
+        clientId: "client-id",
+        clientSecret: "",
+        scopes: "",
+        customHeaders: [],
+        protocolVersion: "2025-11-25",
+        registrationStrategy: "preregistered",
+      },
+      lastConnectionTime: new Date(),
+      connectionStatus: "disconnected",
+      retryCount: 0,
+      enabled: true,
+    } as any;
+
+    const { result } = renderHook(() => useServerForm(server));
+
+    await waitFor(() => {
+      expect(result.current.hasStoredClientSecret).toBe(true);
+    });
+
+    act(() => {
+      result.current.setClearClientSecret(true);
+    });
+
+    expect(result.current.buildFormData()).toMatchObject({
+      hasClientSecret: false,
+      clearClientSecret: true,
+    });
+    expect(result.current.buildFormData().clientSecret).toBeUndefined();
+  });
 });

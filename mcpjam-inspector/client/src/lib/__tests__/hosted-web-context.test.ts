@@ -26,14 +26,14 @@ describe("hosted web context", () => {
 
   it("includes share token and chat_v2 scope for shared-chat requests", () => {
     setHostedApiContext({
-      workspaceId: "ws_shared",
+      projectId: "ws_shared",
       serverIdsByName: { bench: "srv_bench" },
       getAccessToken: async () => null,
       shareToken: "share_tok_123",
     });
 
     expect(buildHostedServerRequest("bench")).toEqual({
-      workspaceId: "ws_shared",
+      projectId: "ws_shared",
       serverId: "srv_bench",
       serverName: "bench",
       clientCapabilities: defaultClientCapabilities,
@@ -42,7 +42,7 @@ describe("hosted web context", () => {
     });
 
     expect(buildHostedServerBatchRequest(["bench"])).toEqual({
-      workspaceId: "ws_shared",
+      projectId: "ws_shared",
       serverIds: ["srv_bench"],
       serverNames: ["bench"],
       clientCapabilities: defaultClientCapabilities,
@@ -51,7 +51,7 @@ describe("hosted web context", () => {
     });
 
     expect(buildHostedEvalServerBatchRequest(["bench"])).toEqual({
-      workspaceId: "ws_shared",
+      projectId: "ws_shared",
       serverIds: ["srv_bench"],
       serverNames: ["bench"],
       clientCapabilities: defaultClientCapabilities,
@@ -62,13 +62,13 @@ describe("hosted web context", () => {
 
   it("omits share scope fields when no share token is present", () => {
     setHostedApiContext({
-      workspaceId: "ws_regular",
+      projectId: "ws_regular",
       serverIdsByName: { bench: "srv_bench" },
       getAccessToken: async () => null,
     });
 
     expect(buildHostedServerRequest("bench")).toEqual({
-      workspaceId: "ws_regular",
+      projectId: "ws_regular",
       serverId: "srv_bench",
       serverName: "bench",
       clientCapabilities: defaultClientCapabilities,
@@ -77,7 +77,7 @@ describe("hosted web context", () => {
 
   it("builds guest request from serverConfigs when in guest mode", () => {
     setHostedApiContext({
-      workspaceId: null,
+      projectId: null,
       isAuthenticated: false,
       serverIdsByName: {},
       serverConfigs: {
@@ -98,7 +98,7 @@ describe("hosted web context", () => {
 
   it("keeps using direct guest requests when AuthKit still reports a session", () => {
     setHostedApiContext({
-      workspaceId: null,
+      projectId: null,
       hasSession: true,
       isAuthenticated: false,
       serverIdsByName: {},
@@ -120,7 +120,7 @@ describe("hosted web context", () => {
 
   it("includes the latest guest OAuth token separately from server headers", () => {
     setHostedApiContext({
-      workspaceId: null,
+      projectId: null,
       isAuthenticated: false,
       serverIdsByName: {},
       guestOauthTokensByServerName: {
@@ -160,7 +160,7 @@ describe("hosted web context", () => {
     );
 
     setHostedApiContext({
-      workspaceId: null,
+      projectId: null,
       isAuthenticated: false,
       serverIdsByName: {},
       guestOauthTokensByServerName: {
@@ -191,7 +191,7 @@ describe("hosted web context", () => {
 
   it("handles URL objects in guest server configs", () => {
     setHostedApiContext({
-      workspaceId: null,
+      projectId: null,
       isAuthenticated: false,
       serverIdsByName: {},
       serverConfigs: {
@@ -216,23 +216,23 @@ describe("hosted web context", () => {
     } as Record<string, unknown>;
 
     setHostedApiContext({
-      workspaceId: "ws_override",
+      projectId: "ws_override",
       serverIdsByName: { bench: "srv_bench" },
       clientCapabilities,
       getAccessToken: async () => null,
     });
 
     expect(buildHostedServerRequest("bench")).toEqual({
-      workspaceId: "ws_override",
+      projectId: "ws_override",
       serverId: "srv_bench",
       serverName: "bench",
       clientCapabilities,
     });
   });
 
-  it("blocks hosted workspace requests while client config sync is pending", () => {
+  it("blocks hosted project requests while client config sync is pending", () => {
     setHostedApiContext({
-      workspaceId: "ws_pending",
+      projectId: "ws_pending",
       serverIdsByName: { bench: "srv_bench" },
       clientConfigSyncPending: true,
       getAccessToken: async () => null,
@@ -251,7 +251,7 @@ describe("hosted web context", () => {
 
   it("keeps direct guest requests working while sync-pending gating is enabled elsewhere", () => {
     setHostedApiContext({
-      workspaceId: null,
+      projectId: null,
       isAuthenticated: false,
       clientConfigSyncPending: true,
       serverIdsByName: {},
@@ -271,7 +271,7 @@ describe("hosted web context", () => {
 
   it("throws when guest server config is not found", () => {
     setHostedApiContext({
-      workspaceId: null,
+      projectId: null,
       isAuthenticated: false,
       serverIdsByName: {},
       serverConfigs: {},
@@ -284,7 +284,7 @@ describe("hosted web context", () => {
 
   it("keeps hosted eval server names aligned with deduped server ids", () => {
     setHostedApiContext({
-      workspaceId: "ws_eval",
+      projectId: "ws_eval",
       isAuthenticated: true,
       serverIdsByName: {
         asana: "srv_asana",
@@ -296,7 +296,7 @@ describe("hosted web context", () => {
     expect(
       buildHostedEvalServerBatchRequest(["asana", "srv_asana", "github"]),
     ).toEqual({
-      workspaceId: "ws_eval",
+      projectId: "ws_eval",
       serverIds: ["srv_asana", "srv_github"],
       serverNames: ["asana", "github"],
       clientCapabilities: defaultClientCapabilities,

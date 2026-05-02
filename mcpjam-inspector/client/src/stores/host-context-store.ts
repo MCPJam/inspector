@@ -1,37 +1,37 @@
 import { create } from "zustand";
 import {
-  pickWorkspaceHostContext,
+  pickProjectHostContext,
   stableStringifyJson,
-  type WorkspaceHostContextDraft,
+  type ProjectHostContextDraft,
 } from "@/lib/client-config";
 
 interface HostContextStoreState {
-  activeWorkspaceId: string | null;
-  defaultHostContext: WorkspaceHostContextDraft;
-  savedHostContext: WorkspaceHostContextDraft | undefined;
-  draftHostContext: WorkspaceHostContextDraft;
+  activeProjectId: string | null;
+  defaultHostContext: ProjectHostContextDraft;
+  savedHostContext: ProjectHostContextDraft | undefined;
+  draftHostContext: ProjectHostContextDraft;
   hostContextText: string;
   hostContextError: string | null;
   isSaving: boolean;
   isDirty: boolean;
-  pendingWorkspaceId: string | null;
-  pendingSavedHostContext: WorkspaceHostContextDraft | undefined;
+  pendingProjectId: string | null;
+  pendingSavedHostContext: ProjectHostContextDraft | undefined;
   isAwaitingRemoteEcho: boolean;
-  loadWorkspaceHostContext: (input: {
-    workspaceId: string | null;
-    defaultHostContext: WorkspaceHostContextDraft;
-    savedHostContext?: WorkspaceHostContextDraft;
+  loadProjectHostContext: (input: {
+    projectId: string | null;
+    defaultHostContext: ProjectHostContextDraft;
+    savedHostContext?: ProjectHostContextDraft;
   }) => void;
   setHostContextText: (text: string) => void;
   patchHostContext: (patch: Record<string, unknown>) => void;
   resetToBaseline: () => void;
   beginSave: (input: {
-    workspaceId: string;
-    savedHostContext: WorkspaceHostContextDraft | undefined;
+    projectId: string;
+    savedHostContext: ProjectHostContextDraft | undefined;
     awaitRemoteEcho: boolean;
   }) => void;
   markSaved: (
-    savedHostContext: WorkspaceHostContextDraft | undefined,
+    savedHostContext: ProjectHostContextDraft | undefined,
   ) => void;
   failSave: () => void;
 }
@@ -42,7 +42,7 @@ function stringifyJson(value: unknown): string {
 
 function createInitialState(): Omit<
   HostContextStoreState,
-  | "loadWorkspaceHostContext"
+  | "loadProjectHostContext"
   | "setHostContextText"
   | "patchHostContext"
   | "resetToBaseline"
@@ -51,7 +51,7 @@ function createInitialState(): Omit<
   | "failSave"
 > {
   return {
-    activeWorkspaceId: null,
+    activeProjectId: null,
     defaultHostContext: {},
     savedHostContext: undefined,
     draftHostContext: {},
@@ -59,7 +59,7 @@ function createInitialState(): Omit<
     hostContextError: null,
     isSaving: false,
     isDirty: false,
-    pendingWorkspaceId: null,
+    pendingProjectId: null,
     pendingSavedHostContext: undefined,
     isAwaitingRemoteEcho: false,
   };
@@ -84,31 +84,31 @@ function computeDirtyState(
 }
 
 function resetFromHostContext(
-  workspaceId: string | null,
-  defaultHostContext: WorkspaceHostContextDraft,
-  savedHostContext?: WorkspaceHostContextDraft,
+  projectId: string | null,
+  defaultHostContext: ProjectHostContextDraft,
+  savedHostContext?: ProjectHostContextDraft,
 ) {
-  const normalizedDefaultHostContext = pickWorkspaceHostContext(
+  const normalizedDefaultHostContext = pickProjectHostContext(
     { version: 1, clientCapabilities: {}, hostContext: defaultHostContext },
     {},
   );
   const normalizedSavedHostContext =
     savedHostContext === undefined
       ? undefined
-      : pickWorkspaceHostContext(
+      : pickProjectHostContext(
           { version: 1, clientCapabilities: {}, hostContext: savedHostContext },
           {},
         );
   const baseline = normalizedSavedHostContext ?? normalizedDefaultHostContext;
 
   return {
-    activeWorkspaceId: workspaceId,
+    activeProjectId: projectId,
     defaultHostContext: normalizedDefaultHostContext,
     savedHostContext: normalizedSavedHostContext,
     draftHostContext: baseline,
     hostContextText: stringifyJson(baseline),
     hostContextError: null,
-    pendingWorkspaceId: null,
+    pendingProjectId: null,
     pendingSavedHostContext: undefined,
     isAwaitingRemoteEcho: false,
     isSaving: false,
@@ -119,62 +119,62 @@ function resetFromHostContext(
 function isPendingRemoteEchoMatch(
   state: Pick<
     HostContextStoreState,
-    "isAwaitingRemoteEcho" | "pendingWorkspaceId" | "pendingSavedHostContext"
+    "isAwaitingRemoteEcho" | "pendingProjectId" | "pendingSavedHostContext"
   >,
-  workspaceId: string | null,
-  savedHostContext?: WorkspaceHostContextDraft,
+  projectId: string | null,
+  savedHostContext?: ProjectHostContextDraft,
 ) {
   return (
     state.isAwaitingRemoteEcho &&
-    state.pendingWorkspaceId === workspaceId &&
+    state.pendingProjectId === projectId &&
     stableStringifyJson(state.pendingSavedHostContext) ===
       stableStringifyJson(savedHostContext)
   );
 }
 
-function parseRecordJson(text: string): WorkspaceHostContextDraft {
+function parseRecordJson(text: string): ProjectHostContextDraft {
   const parsed = JSON.parse(text) as unknown;
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
     throw new Error("Value must be a JSON object");
   }
-  return parsed as WorkspaceHostContextDraft;
+  return parsed as ProjectHostContextDraft;
 }
 
 export const useHostContextStore = create<HostContextStoreState>((set, get) => ({
   ...createInitialState(),
 
-  loadWorkspaceHostContext: ({
-    workspaceId,
+  loadProjectHostContext: ({
+    projectId,
     defaultHostContext,
     savedHostContext,
   }) => {
     const state = get();
-    const normalizedDefaultHostContext = pickWorkspaceHostContext(
+    const normalizedDefaultHostContext = pickProjectHostContext(
       { version: 1, clientCapabilities: {}, hostContext: defaultHostContext },
       {},
     );
     const normalizedSavedHostContext =
       savedHostContext === undefined
         ? undefined
-        : pickWorkspaceHostContext(
+        : pickProjectHostContext(
             { version: 1, clientCapabilities: {}, hostContext: savedHostContext },
             {},
           );
     const shouldApplyPendingRemoteEcho = isPendingRemoteEchoMatch(
       state,
-      workspaceId,
+      projectId,
       normalizedSavedHostContext,
     );
 
     if (
       state.isDirty &&
-      state.activeWorkspaceId === workspaceId &&
+      state.activeProjectId === projectId &&
       !shouldApplyPendingRemoteEcho
     ) {
       return;
     }
 
-    const sameWorkspace = state.activeWorkspaceId === workspaceId;
+    const sameProject = state.activeProjectId === projectId;
     const sameDefault =
       stableStringifyJson(state.defaultHostContext) ===
       stableStringifyJson(normalizedDefaultHostContext);
@@ -183,7 +183,7 @@ export const useHostContextStore = create<HostContextStoreState>((set, get) => (
       stableStringifyJson(normalizedSavedHostContext);
 
     if (
-      sameWorkspace &&
+      sameProject &&
       sameDefault &&
       sameSaved &&
       !shouldApplyPendingRemoteEcho
@@ -193,7 +193,7 @@ export const useHostContextStore = create<HostContextStoreState>((set, get) => (
 
     set(
       resetFromHostContext(
-        workspaceId,
+        projectId,
         normalizedDefaultHostContext,
         normalizedSavedHostContext,
       ),
@@ -246,17 +246,17 @@ export const useHostContextStore = create<HostContextStoreState>((set, get) => (
   resetToBaseline: () => {
     set((state) =>
       resetFromHostContext(
-        state.activeWorkspaceId,
+        state.activeProjectId,
         state.defaultHostContext,
         state.savedHostContext,
       ),
     );
   },
 
-  beginSave: ({ workspaceId, savedHostContext, awaitRemoteEcho }) =>
+  beginSave: ({ projectId, savedHostContext, awaitRemoteEcho }) =>
     set({
       isSaving: true,
-      pendingWorkspaceId: awaitRemoteEcho ? workspaceId : null,
+      pendingProjectId: awaitRemoteEcho ? projectId : null,
       pendingSavedHostContext: awaitRemoteEcho ? savedHostContext : undefined,
       isAwaitingRemoteEcho: awaitRemoteEcho,
     }),
@@ -265,7 +265,7 @@ export const useHostContextStore = create<HostContextStoreState>((set, get) => (
     set((state) => ({
       savedHostContext,
       isSaving: false,
-      pendingWorkspaceId: null,
+      pendingProjectId: null,
       pendingSavedHostContext: undefined,
       isAwaitingRemoteEcho: false,
       isDirty: computeDirtyState({
@@ -278,7 +278,7 @@ export const useHostContextStore = create<HostContextStoreState>((set, get) => (
   failSave: () =>
     set({
       isSaving: false,
-      pendingWorkspaceId: null,
+      pendingProjectId: null,
       pendingSavedHostContext: undefined,
       isAwaitingRemoteEcho: false,
     }),

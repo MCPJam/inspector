@@ -26,14 +26,14 @@ import { CiEvalsTab } from "./components/CiEvalsTab";
 import { ViewsTab } from "./components/ViewsTab";
 import { ChatboxesTab } from "./components/ChatboxesTab";
 import { SettingsTab } from "./components/SettingsTab";
-import { WorkspaceSettingsTab } from "./components/WorkspaceSettingsTab";
-import { WorkspaceClientConfigSync } from "./components/client-config/WorkspaceClientConfigSync";
+import { ProjectSettingsTab } from "./components/ProjectSettingsTab";
+import { ProjectClientConfigSync } from "./components/client-config/ProjectClientConfigSync";
 import { TracingTab } from "./components/TracingTab";
 import { AuthTab } from "./components/AuthTab";
 import { OAuthFlowTab } from "./components/OAuthFlowTab";
 import { ConformanceTab } from "./components/conformance/ConformancePanel";
 import { XAAFlowTab } from "./components/xaa/XAAFlowTab";
-import { ErrorBoundary } from "./components/evals/ErrorBoundary";
+import { ErrorBoundary } from "./components/ui/error-boundary";
 import { AppBuilderTab } from "./components/ui-playground/AppBuilderTab";
 import { EmptyState } from "./components/ui/empty-state";
 import { isFirstRunEligible } from "./lib/onboarding-state";
@@ -89,7 +89,7 @@ import type {
   ActiveServerSelectorProps,
   PlaygroundServerSelectorProps,
 } from "./components/ActiveServerSelector";
-import { useViewQueries, useWorkspaceServers } from "./hooks/useViews";
+import { useViewQueries, useProjectServers } from "./hooks/useViews";
 import { HostedShellGate } from "./components/hosted/HostedShellGate";
 import { resolveHostedShellGateState } from "./components/hosted/hosted-shell-gate-state";
 import {
@@ -128,7 +128,7 @@ import {
 } from "./lib/billing-deep-link";
 import {
   getInvalidOrganizationRouteNavigationTarget,
-  getWorkspaceSwitchNavigationTarget,
+  getProjectSwitchNavigationTarget,
   resolveHostedNavigation,
   type OrganizationRouteSection,
 } from "./lib/hosted-navigation";
@@ -175,10 +175,10 @@ import {
   completeHostedOAuthCallback,
   handleOAuthCallback,
 } from "./lib/oauth/mcp-oauth";
-import { getEffectiveWorkspaceClientCapabilities } from "./lib/client-config";
+import { getEffectiveProjectClientCapabilities } from "./lib/client-config";
 import { buildEvalsHash } from "./lib/evals-router";
 import { withTestingSurface } from "./lib/testing-surface";
-import { useWorkspaceClientConfigSyncPending } from "./hooks/use-workspace-client-config-sync-pending";
+import { useProjectClientConfigSyncPending } from "./hooks/use-project-client-config-sync-pending";
 import { ingestOAuthTraceLogs } from "./stores/traffic-log-store";
 import { clearGuestSession, getGuestBearerToken } from "./lib/guest-session";
 import type {
@@ -200,7 +200,7 @@ function getHostedOAuthCallbackErrorMessage(): string {
 
   return sanitizeHostedOAuthErrorMessage(
     description || error,
-    "Authorization could not be completed. Try again.",
+    "Authorization could not be completed. Try again."
   );
 }
 
@@ -230,6 +230,48 @@ function clearHostedCallbackRetryState() {
       storage.removeItem(key);
     }
   }
+}
+
+const OAUTH_DEBUGGER_SECRET_PATTERNS = [
+  /\b(access_token|refresh_token|id_token|client_secret|clientSecret|code_verifier|code|state)\b(\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s&,;]+)/gi,
+  /\bBearer\s+[A-Za-z0-9._~+/=-]+\b/gi,
+  /\bBasic\s+[A-Za-z0-9+/=._~-]+\b/gi,
+];
+
+function sanitizeOAuthDebuggerText(value: string | null | undefined): string {
+  if (!value) {
+    return "";
+  }
+
+  return OAUTH_DEBUGGER_SECRET_PATTERNS.reduce(
+    (sanitized, pattern) =>
+      sanitized.replace(pattern, (...args) => {
+        const key = typeof args[1] === "string" ? args[1] : undefined;
+        const separator = typeof args[2] === "string" ? args[2] : undefined;
+        return key && separator ? `${key}${separator}[redacted]` : "[redacted]";
+      }),
+    value,
+  );
+}
+
+function sanitizeOAuthDebuggerError(error: Error | null) {
+  return {
+    name: sanitizeOAuthDebuggerText(error?.name ?? "Error"),
+    message: sanitizeOAuthDebuggerText(error?.message ?? "Unknown error"),
+    stack: sanitizeOAuthDebuggerText(error?.stack),
+  };
+}
+
+function formatOAuthDebuggerErrorDetails(error: Error | null): string {
+  const sanitized = sanitizeOAuthDebuggerError(error);
+  return [
+    "OAuth Debugger error",
+    `Name: ${sanitized.name}`,
+    `Message: ${sanitized.message}`,
+    sanitized.stack ? `Stack:\n${sanitized.stack}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
 }
 
 function BillingHandoffLoading({ overlay = false }: { overlay?: boolean }) {
@@ -276,10 +318,10 @@ function UserSetupError() {
 }
 
 function resolveDeletedOrganizationFallbackId(
-  organizations: ReadonlyArray<{ _id: string; myRole?: string }>,
+  organizations: ReadonlyArray<{ _id: string; myRole?: string }>
 ): string | undefined {
   const firstOwnedOrganization = organizations.find(
-    (organization) => organization.myRole === "owner",
+    (organization) => organization.myRole === "owner"
   );
   return firstOwnedOrganization?._id ?? organizations[0]?._id;
 }
@@ -352,10 +394,10 @@ export default function App() {
   const [billingPathSync, setBillingPathSync] = useState(0);
   const posthog = usePostHog();
   const [evaluateRunsFlagsLoaded, setEvaluateRunsFlagsLoaded] = useState(
-    () => posthog.featureFlags?.hasLoadedFlags === true,
+    () => posthog.featureFlags?.hasLoadedFlags === true
   );
   const billingEntitlementsUiEnabled = useFeatureFlagEnabled(
-    "billing-entitlements-ui",
+    "billing-entitlements-ui"
   );
   const learningEnabled = useFeatureFlagEnabled("mcpjam-learning");
   const registryEnabled = useFeatureFlagEnabled("registry-enabled");
@@ -373,7 +415,7 @@ export default function App() {
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
   const currentUser = useQuery(
     "users:getCurrentUser" as any,
-    isAuthenticated ? ({} as any) : "skip",
+    isAuthenticated ? ({} as any) : "skip"
   );
   const [hostedOAuthHandling, setHostedOAuthHandling] = useState(() => {
     if (!HOSTED_MODE) {
@@ -381,7 +423,7 @@ export default function App() {
     }
 
     const callbackContext = getHostedOAuthCallbackContext();
-    return callbackContext != null && callbackContext.surface !== "workspace";
+    return callbackContext != null && callbackContext.surface !== "project";
   });
   const [exitedSharedChat, setExitedSharedChat] = useState(false);
   const [exitedChatboxChat, setExitedChatboxChat] = useState(false);
@@ -448,7 +490,7 @@ export default function App() {
   const currentHash = window.location.hash || "#servers";
   const currentHashRoute = useMemo(
     () => resolveHostedNavigation(currentHash, HOSTED_MODE),
-    [currentHash],
+    [currentHash]
   );
   const { sortedOrganizations, isLoading: isLoadingOrganizations } =
     useOrganizationQueries({ isAuthenticated });
@@ -459,11 +501,11 @@ export default function App() {
 
     setOptimisticallyDeletedOrganizationIds((currentIds) => {
       const nextIds = currentIds.filter((organizationId) =>
-        sortedOrganizations.some((org) => org._id === organizationId),
+        sortedOrganizations.some((org) => org._id === organizationId)
       );
       return nextIds.length === currentIds.length &&
         nextIds.every(
-          (organizationId, index) => organizationId === currentIds[index],
+          (organizationId, index) => organizationId === currentIds[index]
         )
         ? currentIds
         : nextIds;
@@ -473,20 +515,20 @@ export default function App() {
     () =>
       sortedOrganizations.filter(
         (organization) =>
-          !optimisticallyDeletedOrganizationIds.includes(organization._id),
+          !optimisticallyDeletedOrganizationIds.includes(organization._id)
       ),
-    [optimisticallyDeletedOrganizationIds, sortedOrganizations],
+    [optimisticallyDeletedOrganizationIds, sortedOrganizations]
   );
   const hasRouteOrganization = !!currentHashRoute.organizationId
     ? effectiveOrganizations.some(
-        (org) => org._id === currentHashRoute.organizationId,
+        (org) => org._id === currentHashRoute.organizationId
       )
     : false;
 
   // Handle hosted OAuth callback: claim the callback before any hosted page renders.
   useEffect(() => {
     const callbackContext = getHostedOAuthCallbackContext();
-    if (!callbackContext || callbackContext.surface === "workspace") {
+    if (!callbackContext || callbackContext.surface === "project") {
       setHostedOAuthHandling(false);
       return;
     }
@@ -538,7 +580,7 @@ export default function App() {
     };
 
     const hasHostedServerContext =
-      !!callbackContext.workspaceId && !!callbackContext.serverId;
+      !!callbackContext.projectId && !!callbackContext.serverId;
     const isGuestChatboxSessionCallback =
       !isAuthenticated &&
       !!callbackContext.chatboxToken &&
@@ -582,16 +624,16 @@ export default function App() {
         finalizeHostedOAuth(
           sanitizeHostedOAuthErrorMessage(
             result.error,
-            "Authorization could not be completed. Try again.",
-          ),
+            "Authorization could not be completed. Try again."
+          )
         );
       })
       .catch((callbackError) => {
         finalizeHostedOAuth(
           sanitizeHostedOAuthErrorMessage(
             callbackError,
-            "Authorization could not be completed. Try again.",
-          ),
+            "Authorization could not be completed. Try again."
+          )
         );
       })
       .finally(() => {
@@ -630,7 +672,7 @@ export default function App() {
   const { isEnsuringUser } = useEnsureDbUser();
 
   const isDebugCallback = window.location.pathname.startsWith(
-    "/oauth/callback/debug",
+    "/oauth/callback/debug"
   );
   const isOAuthCallback = window.location.pathname === "/callback";
 
@@ -672,7 +714,7 @@ export default function App() {
       window.history.replaceState(
         {},
         "",
-        chatboxReturnPath ?? sharedReturnPath ?? billingReturnPath ?? "/",
+        chatboxReturnPath ?? sharedReturnPath ?? billingReturnPath ?? "/"
       );
       setCallbackCompleted(true);
       setCallbackRecoveryExpired(false);
@@ -710,8 +752,8 @@ export default function App() {
   const {
     appState,
     isLoading,
-    isLoadingRemoteWorkspaces,
-    workspaceServers,
+    isLoadingRemoteProjects,
+    projectServers,
     connectedOrConnectingServerConfigs,
     selectedMCPConfig,
     selectedServerEntry,
@@ -727,26 +769,26 @@ export default function App() {
     setSelectedMCPConfigs,
     toggleServerSelection,
     setSelectedMultipleServersToAllServers,
-    workspaces,
-    activeWorkspaceId,
-    handleSwitchWorkspace,
-    handleCreateWorkspace,
-    handleLeaveWorkspace,
-    handleUpdateWorkspace,
+    projects,
+    activeProjectId,
+    handleSwitchProject,
+    handleCreateProject,
+    handleLeaveProject,
+    handleUpdateProject,
     handleUpdateClientConfig,
     handleUpdateHostContext,
-    handleDeleteWorkspace,
-    handleWorkspaceShared,
+    handleDeleteProject,
+    handleProjectShared,
     saveServerConfigWithoutConnecting,
     handleConnectWithTokensFromOAuthFlow,
     handleRefreshTokensFromOAuthFlow,
     activeOrganizationId,
     setActiveOrganizationId,
-    clearConvexActiveWorkspaceSelection,
-    clearLocalFallbackWorkspaceSelection,
+    clearConvexActiveProjectSelection,
+    clearLocalFallbackProjectSelection,
     pendingDashboardOAuth,
     isCloudSyncActive,
-    persistRuntimeServerToWorkspaceIfNeeded,
+    persistRuntimeServerToProjectIfNeeded,
   } = useAppState({
     currentUserId: workOsUser?.id ?? null,
     hasOrganizations: effectiveOrganizations.length > 0,
@@ -759,27 +801,27 @@ export default function App() {
   useInspectorCommandBus();
   const oauthDebuggerServersRef = useRef(appState.servers);
   oauthDebuggerServersRef.current = appState.servers;
-  const workspaceServersRef = useRef(workspaceServers);
-  workspaceServersRef.current = workspaceServers;
+  const projectServersRef = useRef(projectServers);
+  projectServersRef.current = projectServers;
   const selectedServerRef = useRef(appState.selectedServer);
   selectedServerRef.current = appState.selectedServer;
-  const persistRuntimeServerToWorkspaceRef = useRef(
-    persistRuntimeServerToWorkspaceIfNeeded,
+  const persistRuntimeServerToProjectRef = useRef(
+    persistRuntimeServerToProjectIfNeeded
   );
-  persistRuntimeServerToWorkspaceRef.current =
-    persistRuntimeServerToWorkspaceIfNeeded;
+  persistRuntimeServerToProjectRef.current =
+    persistRuntimeServerToProjectIfNeeded;
   const getInspectorServerState = useCallback((serverName: string) => {
     const runtimeServer = oauthDebuggerServersRef.current[serverName];
-    const workspaceServer = workspaceServersRef.current[serverName];
-    const server = runtimeServer ?? workspaceServer;
-    return server ? { runtimeServer, workspaceServer, server } : null;
+    const projectServer = projectServersRef.current[serverName];
+    const server = runtimeServer ?? projectServer;
+    return server ? { runtimeServer, projectServer, server } : null;
   }, []);
   useEffect(() => {
     return subscribeToOAuthDebuggerRequests(({ serverName }) => {
       const matchedServerName = Object.entries(
-        oauthDebuggerServersRef.current,
+        oauthDebuggerServersRef.current
       ).find(
-        ([name, server]) => name === serverName || server.name === serverName,
+        ([name, server]) => name === serverName || server.name === serverName
       )?.[0];
 
       if (
@@ -791,9 +833,9 @@ export default function App() {
     });
   }, [setSelectedServer]);
   const activeOrganizationName = effectiveOrganizations.find(
-    (org) => org._id === activeOrganizationId,
+    (org) => org._id === activeOrganizationId
   )?.name;
-  const hasAnyWorkspaceServers = Object.keys(workspaceServers).length > 0;
+  const hasAnyProjectServers = Object.keys(projectServers).length > 0;
   const hostedShellGateState = resolveHostedShellGateState({
     hostedMode: HOSTED_MODE,
     nonProdLockdown: NON_PROD_LOCKDOWN,
@@ -802,7 +844,7 @@ export default function App() {
     isWorkOsLoading,
     hasWorkOsUser: !!workOsUser,
     workOsUserEmail: workOsUser?.email ?? null,
-    isLoadingRemoteWorkspaces,
+    isLoadingRemoteProjects,
   });
   const hostedChatShellGateState = resolveHostedShellGateState({
     hostedMode: HOSTED_MODE,
@@ -812,13 +854,13 @@ export default function App() {
     isWorkOsLoading,
     hasWorkOsUser: !!workOsUser,
     workOsUserEmail: workOsUser?.email ?? null,
-    isLoadingRemoteWorkspaces: false,
+    isLoadingRemoteProjects: false,
   });
   const baseHostedShellGateState = isHostedChatRoute
     ? hostedChatShellGateState
     : hostedShellGateState;
   const pendingDashboardOAuthServer = pendingDashboardOAuth
-    ? workspaceServers[pendingDashboardOAuth.serverName]
+    ? projectServers[pendingDashboardOAuth.serverName]
     : null;
   const shouldShowPendingDashboardOAuthGate =
     !!pendingDashboardOAuth &&
@@ -826,7 +868,7 @@ export default function App() {
     baseHostedShellGateState !== "logged-out" &&
     baseHostedShellGateState !== "restricted";
   const effectiveHostedShellGateState = shouldShowPendingDashboardOAuthGate
-    ? "workspace-loading"
+    ? "project-loading"
     : baseHostedShellGateState;
   const pendingDashboardOAuthMessage = pendingDashboardOAuth
     ? `Finishing OAuth sign-in for ${pendingDashboardOAuth.serverName}...`
@@ -842,14 +884,14 @@ export default function App() {
   // Auto-add a shared server when returning from SharedServerChatPage via "Open MCPJam"
   useEffect(() => {
     if (isHostedChatRoute) return;
-    if (isLoadingRemoteWorkspaces) return;
+    if (isLoadingRemoteProjects) return;
     if (isAuthLoading) return;
 
     const pending = readPendingServerAdd();
     if (!pending) return;
     clearPendingServerAdd();
 
-    if (workspaceServers[pending.serverName] !== undefined) {
+    if (projectServers[pending.serverName] !== undefined) {
       return; // Server already exists
     }
 
@@ -863,9 +905,9 @@ export default function App() {
     });
   }, [
     isHostedChatRoute,
-    isLoadingRemoteWorkspaces,
+    isLoadingRemoteProjects,
     isAuthLoading,
-    workspaceServers,
+    projectServers,
     handleConnect,
   ]);
 
@@ -874,13 +916,13 @@ export default function App() {
     const connectedServers = new Set(
       Object.entries<ServerWithName>(appState.servers)
         .filter(([, server]) => server.connectionStatus === "connected")
-        .map(([name]) => name),
+        .map(([name]) => name)
     );
 
     const previousConnectedServers = previousConnectedServersRef.current;
     const newlyConnectedServers = getNewlyConnectedServers(
       previousConnectedServers,
-      connectedServers,
+      connectedServers
     );
 
     if (activeTab === "servers") {
@@ -898,7 +940,7 @@ export default function App() {
         try {
           localStorage.setItem(
             `testing-auto-opened:${firstVisitServer}`,
-            "true",
+            "true"
           );
         } catch {
           // Ignore localStorage failures and still select the server.
@@ -922,39 +964,39 @@ export default function App() {
       activeTab === "auth";
     if (!needsServer || selectedMCPConfig) return;
 
-    const firstConnected = Object.entries(workspaceServers).find(
-      ([, server]) => (server as any).connectionStatus === "connected",
+    const firstConnected = Object.entries(projectServers).find(
+      ([, server]) => (server as any).connectionStatus === "connected"
     );
     if (firstConnected) {
       setSelectedServer(firstConnected[0]);
     }
-  }, [activeTab, selectedMCPConfig, workspaceServers, setSelectedServer]);
+  }, [activeTab, selectedMCPConfig, projectServers, setSelectedServer]);
 
-  // Create effective app state that uses the correct workspaces (Convex when authenticated)
+  // Create effective app state that uses the correct projects (Convex when authenticated)
   const effectiveAppState = useMemo(
     () => ({
       ...appState,
-      workspaces,
-      activeWorkspaceId,
+      projects,
+      activeProjectId,
     }),
-    [appState, workspaces, activeWorkspaceId],
+    [appState, projects, activeProjectId]
   );
 
-  // Get the Convex workspace ID from the active workspace
-  const activeWorkspace = workspaces[activeWorkspaceId];
+  // Get the Convex project ID from the active project
+  const activeProject = projects[activeProjectId];
   const isClientConfigSyncPending =
-    useWorkspaceClientConfigSyncPending(activeWorkspaceId);
-  const hostedClientCapabilities = getEffectiveWorkspaceClientCapabilities(
-    activeWorkspace?.clientConfig,
+    useProjectClientConfigSyncPending(activeProjectId);
+  const hostedClientCapabilities = getEffectiveProjectClientCapabilities(
+    activeProject?.clientConfig
   ) as Record<string, unknown>;
-  const convexWorkspaceId = activeWorkspace?.sharedWorkspaceId ?? null;
+  const convexProjectId = activeProject?.sharedProjectId ?? null;
   const routeScopedOrganizationId = hasRouteOrganization
     ? currentHashRoute.organizationId ?? null
     : null;
   const rawBillingOrganizationId =
     routeScopedOrganizationId ??
     activeOrganizationId ??
-    activeWorkspace?.organizationId ??
+    activeProject?.organizationId ??
     null;
   const billingOrganizationId =
     !isLoadingOrganizations &&
@@ -962,10 +1004,10 @@ export default function App() {
     effectiveOrganizations.some((org) => org._id === rawBillingOrganizationId)
       ? rawBillingOrganizationId
       : null;
-  const activeWorkspaceBillingOrganizationId =
-    activeWorkspace?.organizationId &&
+  const activeProjectBillingOrganizationId =
+    activeProject?.organizationId &&
     billingOrganizationId &&
-    activeWorkspace.organizationId === billingOrganizationId
+    activeProject.organizationId === billingOrganizationId
       ? billingOrganizationId
       : null;
   const isBillingContextPending =
@@ -974,50 +1016,50 @@ export default function App() {
     !!(
       currentHashRoute.organizationId ||
       activeOrganizationId ||
-      activeWorkspace?.organizationId ||
-      convexWorkspaceId
+      activeProject?.organizationId ||
+      convexProjectId
     );
-  const billingWorkspaceId =
+  const billingProjectId =
     isCloudSyncActive &&
     !isBillingContextPending &&
-    activeWorkspace &&
-    convexWorkspaceId &&
-    activeWorkspaceBillingOrganizationId
-      ? convexWorkspaceId
+    activeProject &&
+    convexProjectId &&
+    activeProjectBillingOrganizationId
+      ? convexProjectId
       : null;
   const {
     billingStatus: shellBillingStatus,
     organizationPremiumness,
-    workspacePremiumness,
+    projectPremiumness,
     selectFreeAfterTrial,
     isSelectingFreeAfterTrial,
   } = useOrganizationBilling(isAuthenticated ? billingOrganizationId : null, {
-    workspaceId: billingWorkspaceId,
+    projectId: billingProjectId,
   });
   const billingUiEnabled = billingEntitlementsUiEnabled === true;
   const navPremiumness =
-    billingWorkspaceId && workspacePremiumness
-      ? workspacePremiumness
+    billingProjectId && projectPremiumness
+      ? projectPremiumness
       : organizationPremiumness;
   const activeTabGate = getPremiumnessGateForTab(activeTab);
   const activeTabBillingLocked = isPremiumnessGateDeniedForShell({
     billingUiEnabled,
-    workspacePremiumness,
+    projectPremiumness,
     organizationPremiumness,
-    hasWorkspace: !!billingWorkspaceId,
+    hasProject: !!billingProjectId,
     gateKey: activeTabGate,
   });
   const activeTabBillingFeature = getRequiredBillingFeatureForTab(activeTab);
   const upgradePlanForActiveTab = getUpgradePlanForDeniedGate(
     navPremiumness,
-    activeTabGate,
+    activeTabGate
   );
-  const workspaceCreationGate = resolveBillingGateState({
+  const projectCreationGate = resolveBillingGateState({
     billingUiEnabled,
     organizationId: billingOrganizationId,
     billingStatus: shellBillingStatus,
     premiumness: organizationPremiumness,
-    gate: BILLING_GATES.workspaceCreation,
+    gate: BILLING_GATES.projectCreation,
   });
   const sidebarGateDenied = useMemo(() => {
     const denied: Partial<Record<BillingFeatureName, boolean>> = {};
@@ -1028,21 +1070,21 @@ export default function App() {
   }, [navPremiumness]);
   const billingGateEnforcementActive =
     billingUiEnabled && isBillingEnforcementActive(navPremiumness);
-  const guestWorkspaceLimitReached =
-    !isAuthenticated && Object.keys(workspaces).length >= 1;
+  const guestProjectLimitReached =
+    !isAuthenticated && Object.keys(projects).length >= 1;
   const noOrganizationsAvailable =
     isAuthenticated &&
     !isLoadingOrganizations &&
     effectiveOrganizations.length === 0;
-  const isCreateWorkspaceDisabled =
-    workspaceCreationGate.isDenied ||
-    guestWorkspaceLimitReached ||
+  const isCreateProjectDisabled =
+    projectCreationGate.isDenied ||
+    guestProjectLimitReached ||
     noOrganizationsAvailable;
-  const createWorkspaceDisabledReason = guestWorkspaceLimitReached
-    ? "Sign in to create more workspaces"
+  const createProjectDisabledReason = guestProjectLimitReached
+    ? "Sign in to create more projects"
     : noOrganizationsAvailable
-    ? "Create or join an organization to create workspaces"
-    : workspaceCreationGate.denialMessage ?? undefined;
+    ? "Create or join an organization to create projects"
+    : projectCreationGate.denialMessage ?? undefined;
   const [trialModalDismissedForOrg, setTrialModalDismissedForOrg] = useState<
     string | null
   >(null);
@@ -1059,79 +1101,79 @@ export default function App() {
     shellBillingStatus?.isOwner === false;
 
   useEffect(() => {
-    const hasStaleCloudWorkspaceSelection =
+    const hasStaleCloudProjectSelection =
       isCloudSyncActive &&
       !isLoadingOrganizations &&
-      !isLoadingRemoteWorkspaces &&
-      activeWorkspaceId !== "none" &&
-      (!!convexWorkspaceId || !activeWorkspace) &&
-      !billingWorkspaceId;
+      !isLoadingRemoteProjects &&
+      activeProjectId !== "none" &&
+      (!!convexProjectId || !activeProject) &&
+      !billingProjectId;
 
-    if (!hasStaleCloudWorkspaceSelection) {
+    if (!hasStaleCloudProjectSelection) {
       return;
     }
 
-    clearConvexActiveWorkspaceSelection();
+    clearConvexActiveProjectSelection();
   }, [
-    activeWorkspace,
-    activeWorkspaceId,
-    billingWorkspaceId,
-    clearConvexActiveWorkspaceSelection,
-    convexWorkspaceId,
+    activeProject,
+    activeProjectId,
+    billingProjectId,
+    clearConvexActiveProjectSelection,
+    convexProjectId,
     isCloudSyncActive,
     isLoadingOrganizations,
-    isLoadingRemoteWorkspaces,
+    isLoadingRemoteProjects,
   ]);
 
-  // Fetch views for the workspace to determine which servers have saved views
+  // Fetch views for the project to determine which servers have saved views
   const { viewsByServer } = useViewQueries({
     isAuthenticated,
-    workspaceId: convexWorkspaceId,
+    projectId: convexProjectId,
   });
 
-  // Fetch workspace servers to map server IDs to names
-  const { serversById } = useWorkspaceServers({
+  // Fetch project servers to map server IDs to names
+  const { serversById } = useProjectServers({
     isAuthenticated,
-    workspaceId: convexWorkspaceId,
+    projectId: convexProjectId,
   });
   const hostedServerIdsByName = useMemo(
     () =>
       Object.fromEntries(
-        Array.from(serversById.entries()).map(([id, name]) => [name, id]),
+        Array.from(serversById.entries()).map(([id, name]) => [name, id])
       ),
-    [serversById],
+    [serversById]
   );
   const oauthTokensByServerId = useMemo(
     () =>
       buildOAuthTokensByServerId(
         Object.keys(hostedServerIdsByName),
         (name) => hostedServerIdsByName[name],
-        (name) => appState.servers[name]?.oauthTokens?.access_token,
+        (name) => appState.servers[name]?.oauthTokens?.access_token
       ),
-    [hostedServerIdsByName, appState.servers],
+    [hostedServerIdsByName, appState.servers]
   );
   // Extract MCPServerConfig objects for guest mode (keyed by server name)
   const guestServerConfigs = useMemo(
     () =>
       Object.fromEntries(
         Object.entries<ServerWithName>(appState.servers).map(
-          ([name, server]) => [name, server.config],
-        ),
+          ([name, server]) => [name, server.config]
+        )
       ),
-    [appState.servers],
+    [appState.servers]
   );
   const guestOauthTokensByServerName = useMemo(
     () =>
       Object.fromEntries(
         Object.entries<ServerWithName>(appState.servers)
           .filter(([, server]) => !!server.oauthTokens?.access_token)
-          .map(([name, server]) => [name, server.oauthTokens!.access_token]),
+          .map(([name, server]) => [name, server.oauthTokens!.access_token])
       ),
-    [appState.servers],
+    [appState.servers]
   );
 
   useHostedApiContext({
-    workspaceId: convexWorkspaceId,
+    projectId: convexProjectId,
     serverIdsByName: hostedServerIdsByName,
     clientCapabilities: hostedClientCapabilities,
     clientConfigSyncPending: isClientConfigSyncPending,
@@ -1162,7 +1204,7 @@ export default function App() {
         updateHash?: boolean;
         enforceCanonicalHash?: boolean;
         preserveCurrentOrganizationOnNonOrgTarget?: boolean;
-      },
+      }
     ) => {
       if (isSharedChatRoute) {
         const storedSession = readSharedServerSession();
@@ -1189,14 +1231,14 @@ export default function App() {
       const resolved = resolveHostedNavigation(target, HOSTED_MODE);
       const currentResolved = resolveHostedNavigation(
         window.location.hash || "#servers",
-        HOSTED_MODE,
+        HOSTED_MODE
       );
       const shouldPreserveCurrentRouteOrganization =
         options?.preserveCurrentOrganizationOnNonOrgTarget !== false &&
         !resolved.organizationId &&
         !!currentResolved.organizationId &&
         effectiveOrganizations.some(
-          (organization) => organization._id === currentResolved.organizationId,
+          (organization) => organization._id === currentResolved.organizationId
         );
 
       if (
@@ -1211,7 +1253,7 @@ export default function App() {
 
       if (resolved.isBlocked) {
         toast.error(
-          `${resolved.normalizedTab} is not available in hosted mode.`,
+          `${resolved.normalizedTab} is not available in hosted mode.`
         );
         setActiveOrganizationId(undefined);
         setActiveTab("servers");
@@ -1244,7 +1286,7 @@ export default function App() {
       isChatboxChatRoute,
       isSharedChatRoute,
       setSelectedMultipleServersToAllServers,
-    ],
+    ]
   );
 
   useLayoutEffect(() => {
@@ -1262,7 +1304,7 @@ export default function App() {
         await waitForUiCommit();
 
         return { activeTab: resolved.normalizedTab };
-      },
+      }
     );
 
     const unregisterSelectServer = registerInspectorCommandHandler(
@@ -1279,18 +1321,18 @@ export default function App() {
         if (!serverState) {
           throw createInspectorCommandClientError(
             "unknown_server",
-            `Unknown server "${command.payload.serverName}".`,
+            `Unknown server "${command.payload.serverName}".`
           );
         }
 
         const connectionStatus =
           serverState.runtimeServer?.connectionStatus ??
-          serverState.workspaceServer?.connectionStatus ??
+          serverState.projectServer?.connectionStatus ??
           "disconnected";
         if (connectionStatus !== "connected") {
           throw createInspectorCommandClientError(
             "disconnected_server",
-            `Server "${command.payload.serverName}" is ${connectionStatus}.`,
+            `Server "${command.payload.serverName}" is ${connectionStatus}.`
           );
         }
 
@@ -1301,7 +1343,7 @@ export default function App() {
           selectedServer: command.payload.serverName,
           connectionStatus,
         };
-      },
+      }
     );
 
     const unregisterOpenAppBuilder = registerInspectorCommandHandler(
@@ -1320,16 +1362,16 @@ export default function App() {
           if (!serverState) {
             throw createInspectorCommandClientError(
               "unknown_server",
-              `Unknown server "${command.payload.serverName}".`,
+              `Unknown server "${command.payload.serverName}".`
             );
           }
 
           setSelectedServer(command.payload.serverName);
           const runtimeForPersist = serverState.runtimeServer;
           if (runtimeForPersist?.connectionStatus === "connected") {
-            void persistRuntimeServerToWorkspaceRef.current(
+            void persistRuntimeServerToProjectRef.current(
               command.payload.serverName,
-              runtimeForPersist,
+              runtimeForPersist
             );
           }
         }
@@ -1342,7 +1384,7 @@ export default function App() {
           selectedServer:
             command.payload.serverName || selectedServerRef.current || "none",
         };
-      },
+      }
     );
 
     return () => {
@@ -1383,16 +1425,16 @@ export default function App() {
 
     if (
       isFirstRunEligible(
-        hasAnyWorkspaceServers,
+        hasAnyProjectServers,
         window.location.hash,
-        isAuthenticated,
+        isAuthenticated
       )
     ) {
       applyNavigation("app-builder", { updateHash: true });
     }
   }, [
     applyNavigation,
-    hasAnyWorkspaceServers,
+    hasAnyProjectServers,
     isAuthenticated,
     isOnboardingDecisionReady,
     isHostedChatRoute,
@@ -1475,7 +1517,7 @@ export default function App() {
         window.history.replaceState(
           {},
           "",
-          `${window.location.origin}/${window.location.hash}`,
+          `${window.location.origin}/${window.location.hash}`
         );
         setBillingPathSync((n) => n + 1);
       }
@@ -1493,11 +1535,11 @@ export default function App() {
       return;
     }
 
-    const workspaceOrgId = activeWorkspace?.organizationId;
+    const projectOrgId = activeProject?.organizationId;
     const orgId = resolveCheckoutOrganizationId(
       effectiveOrganizations,
       activeOrganizationId,
-      workspaceOrgId,
+      projectOrgId
     );
 
     if (!orgId) {
@@ -1519,7 +1561,7 @@ export default function App() {
     billingDeepLinkNavRef.current = true;
   }, [
     activeOrganizationId,
-    activeWorkspace?.organizationId,
+    activeProject?.organizationId,
     applyNavigation,
     billingEntitlementsUiEnabled,
     billingPathSync,
@@ -1550,10 +1592,10 @@ export default function App() {
     if (activeTabBillingLocked && activeTabBillingFeature) {
       toast.error(
         `${formatBillingFeatureName(
-          activeTabBillingFeature,
+          activeTabBillingFeature
         )} is not included in the ${formatPlanName(
-          shellBillingStatus?.plan,
-        )} plan. Upgrade the organization to continue.`,
+          shellBillingStatus?.plan
+        )} plan. Upgrade the organization to continue.`
       );
       applyNavigation("servers", { updateHash: true });
     } else if (activeTab === "registry" && registryEnabled !== true) {
@@ -1589,7 +1631,7 @@ export default function App() {
   const handleSidebarSwitchOrganization = useCallback(
     (
       organizationId: string,
-      section: OrganizationRouteSection = "overview",
+      section: OrganizationRouteSection = "overview"
     ) => {
       setActiveOrganizationId(organizationId);
       setActiveOrganizationSection(section);
@@ -1597,10 +1639,10 @@ export default function App() {
         section === "billing"
           ? `organizations/${organizationId}/billing`
           : `organizations/${organizationId}`,
-        { updateHash: true },
+        { updateHash: true }
       );
     },
-    [applyNavigation, setActiveOrganizationId],
+    [applyNavigation, setActiveOrganizationId]
   );
 
   const handleContinueEvalInChat = useCallback(
@@ -1612,7 +1654,7 @@ export default function App() {
       });
       applyNavigation("chat-v2", { updateHash: true });
     },
-    [applyNavigation, setSelectedMCPConfigs],
+    [applyNavigation, setSelectedMCPConfigs]
   );
 
   useEffect(() => {
@@ -1648,31 +1690,31 @@ export default function App() {
       setOptimisticallyDeletedOrganizationIds((currentIds) =>
         currentIds.includes(deletedOrganizationId)
           ? currentIds
-          : [...currentIds, deletedOrganizationId],
+          : [...currentIds, deletedOrganizationId]
       );
 
       const remainingOrganizations = effectiveOrganizations.filter(
-        (organization) => organization._id !== deletedOrganizationId,
+        (organization) => organization._id !== deletedOrganizationId
       );
       const fallbackOrganizationId = resolveDeletedOrganizationFallbackId(
-        remainingOrganizations,
+        remainingOrganizations
       );
       const isDeletedCurrentOrganization =
         activeOrganizationId === deletedOrganizationId ||
         currentHashRoute.organizationId === deletedOrganizationId ||
-        activeWorkspace?.organizationId === deletedOrganizationId;
+        activeProject?.organizationId === deletedOrganizationId;
 
-      clearLocalFallbackWorkspaceSelection(
+      clearLocalFallbackProjectSelection(
         deletedOrganizationId,
-        fallbackOrganizationId,
+        fallbackOrganizationId
       );
 
       if (
         isDeletedCurrentOrganization &&
-        (activeWorkspace?.organizationId === deletedOrganizationId ||
+        (activeProject?.organizationId === deletedOrganizationId ||
           !fallbackOrganizationId)
       ) {
-        clearConvexActiveWorkspaceSelection();
+        clearConvexActiveProjectSelection();
       }
 
       if (!isDeletedCurrentOrganization) {
@@ -1688,25 +1730,25 @@ export default function App() {
     },
     [
       activeOrganizationId,
-      activeWorkspace?.organizationId,
+      activeProject?.organizationId,
       applyNavigation,
-      clearLocalFallbackWorkspaceSelection,
-      clearConvexActiveWorkspaceSelection,
+      clearLocalFallbackProjectSelection,
+      clearConvexActiveProjectSelection,
       currentHashRoute.organizationId,
       effectiveOrganizations,
       setActiveOrganizationId,
-    ],
+    ]
   );
 
-  const handleSidebarSwitchWorkspace = useCallback(
-    async (workspaceId: string) => {
-      const nextWorkspace = workspaces[workspaceId];
-      await handleSwitchWorkspace(workspaceId);
+  const handleSidebarSwitchProject = useCallback(
+    async (projectId: string) => {
+      const nextProject = projects[projectId];
+      await handleSwitchProject(projectId);
 
-      const navigationTarget = getWorkspaceSwitchNavigationTarget({
+      const navigationTarget = getProjectSwitchNavigationTarget({
         activeTab,
         activeOrganizationId,
-        nextWorkspaceOrganizationId: nextWorkspace?.organizationId,
+        nextProjectOrganizationId: nextProject?.organizationId,
       });
       if (navigationTarget) {
         applyNavigation(navigationTarget, { updateHash: true });
@@ -1716,9 +1758,9 @@ export default function App() {
       activeOrganizationId,
       activeTab,
       applyNavigation,
-      handleSwitchWorkspace,
-      workspaces,
-    ],
+      handleSwitchProject,
+      projects,
+    ]
   );
 
   const isBillingEntryHandoff =
@@ -1755,7 +1797,7 @@ export default function App() {
     | undefined => {
     if (activeTab !== "app-builder") return undefined;
     return {
-      serverConfigs: workspaceServers,
+      serverConfigs: projectServers,
       selectedServer: appState.selectedServer,
       selectedMultipleServers: appState.selectedMultipleServers,
       isMultiSelectEnabled: false,
@@ -1768,7 +1810,7 @@ export default function App() {
     };
   }, [
     activeTab,
-    workspaceServers,
+    projectServers,
     appState.selectedServer,
     appState.selectedMultipleServers,
     setSelectedServer,
@@ -1877,7 +1919,7 @@ export default function App() {
   const activeServerSelectorProps: ActiveServerSelectorProps | undefined =
     shouldShowActiveServerSelector
       ? {
-          serverConfigs: workspaceServers,
+          serverConfigs: projectServers,
           selectedServer: appState.selectedServer,
           onServerChange: setSelectedServer,
           onConnect: handleConnect,
@@ -1903,21 +1945,21 @@ export default function App() {
         hidden={appBuilderOnboarding}
         onNavigate={handleNavigate}
         activeTab={activeTab}
-        workspaces={workspaces}
-        activeWorkspaceId={activeWorkspaceId}
-        onSwitchWorkspace={handleSidebarSwitchWorkspace}
-        onCreateWorkspace={handleCreateWorkspace}
-        onDeleteWorkspace={handleDeleteWorkspace}
-        isLoadingWorkspaces={isLoadingRemoteWorkspaces}
+        projects={projects}
+        activeProjectId={activeProjectId}
+        onSwitchProject={handleSidebarSwitchProject}
+        onCreateProject={handleCreateProject}
+        onDeleteProject={handleDeleteProject}
+        isLoadingProjects={isLoadingRemoteProjects}
         activeOrganizationId={activeOrganizationId}
         activeOrganizationName={activeOrganizationName}
         onSwitchOrganization={handleSidebarSwitchOrganization}
-        onWorkspaceShared={handleWorkspaceShared}
+        onProjectShared={handleProjectShared}
         billingUiEnabled={billingUiEnabled}
         billingGateDenied={sidebarGateDenied}
         billingGateEnforcementActive={billingGateEnforcementActive}
-        isCreateWorkspaceDisabled={isCreateWorkspaceDisabled}
-        createWorkspaceDisabledReason={createWorkspaceDisabledReason}
+        isCreateProjectDisabled={isCreateProjectDisabled}
+        createProjectDisabledReason={createProjectDisabledReason}
       />
       <SidebarInset className="flex flex-col min-h-0">
         <AppChromeHeader
@@ -1940,20 +1982,20 @@ export default function App() {
           {/* Content Areas */}
           {activeTab === "servers" && (
             <ServersTab
-              workspaceServers={workspaceServers}
+              projectServers={projectServers}
               onConnect={handleConnect}
               onDisconnect={handleDisconnect}
               onReconnect={handleReconnect}
               onUpdate={handleUpdate}
               onRemove={handleRemoveServer}
-              workspaces={workspaces}
-              activeWorkspaceId={activeWorkspaceId}
-              organizationId={activeWorkspaceBillingOrganizationId}
+              projects={projects}
+              activeProjectId={activeProjectId}
+              organizationId={activeProjectBillingOrganizationId}
               pendingDashboardOAuth={pendingDashboardOAuth}
               isBillingContextPending={isBillingContextPending}
-              isLoadingWorkspaces={isLoadingRemoteWorkspaces}
-              onWorkspaceShared={handleWorkspaceShared}
-              onLeaveWorkspace={() => handleLeaveWorkspace(activeWorkspaceId)}
+              isLoadingProjects={isLoadingRemoteProjects}
+              onProjectShared={handleProjectShared}
+              onLeaveProject={() => handleLeaveProject(activeProjectId)}
               isRegistryEnabled={registryEnabled === true}
               onNavigateToRegistry={
                 registryEnabled === true
@@ -1965,12 +2007,12 @@ export default function App() {
           )}
           {activeTab === "registry" && registryEnabled === true && (
             <RegistryTab
-              workspaceId={convexWorkspaceId}
+              projectId={convexProjectId}
               isAuthenticated={isAuthenticated}
               onConnect={handleConnect}
               onDisconnect={handleDisconnect}
               onNavigate={handleNavigate}
-              servers={workspaceServers}
+              servers={projectServers}
             />
           )}
           {activeTab === "tools" && (
@@ -2004,14 +2046,14 @@ export default function App() {
                   if (billingOrganizationId) {
                     applyNavigation(
                       `organizations/${billingOrganizationId}/billing`,
-                      { updateHash: true },
+                      { updateHash: true }
                     );
                   }
                 }}
               />
             ) : (
               <EvalsTab
-                workspaceId={convexWorkspaceId}
+                projectId={convexProjectId}
                 ensureServersReady={ensureServersReady}
                 onContinueInChat={handleContinueEvalInChat}
               />
@@ -2045,14 +2087,14 @@ export default function App() {
                     if (billingOrganizationId) {
                       applyNavigation(
                         `organizations/${billingOrganizationId}/billing`,
-                        { updateHash: true },
+                        { updateHash: true }
                       );
                     }
                   }}
                 />
               ) : (
                 <CiEvalsTab
-                  convexWorkspaceId={convexWorkspaceId}
+                  convexProjectId={convexProjectId}
                   ensureServersReady={ensureServersReady}
                 />
               )
@@ -2060,7 +2102,7 @@ export default function App() {
           {activeTab === "views" && (
             <ViewsTab
               selectedServer={appState.selectedServer}
-              activeWorkspaceId={activeWorkspaceId}
+              activeProjectId={activeProjectId}
               onSaveHostContext={handleUpdateHostContext}
             />
           )}
@@ -2084,15 +2126,15 @@ export default function App() {
                   if (billingOrganizationId) {
                     applyNavigation(
                       `organizations/${billingOrganizationId}/billing`,
-                      { updateHash: true },
+                      { updateHash: true }
                     );
                   }
                 }}
               />
             ) : (
               <ChatboxesTab
-                workspaceId={billingWorkspaceId}
-                organizationId={activeWorkspaceBillingOrganizationId}
+                projectId={billingProjectId}
+                organizationId={activeProjectBillingOrganizationId}
                 isBillingContextPending={isBillingContextPending}
               />
             ))}
@@ -2140,12 +2182,52 @@ export default function App() {
 
           {activeTab === "oauth-flow" && (
             <ErrorBoundary
-              fallback={
-                <div className="flex items-center justify-center h-full text-muted-foreground">
-                  Something went wrong in the OAuth Debugger. Try refreshing the
-                  page.
-                </div>
-              }
+              fallback={({ error, reset }) => {
+                const copyDetails = () => {
+                  const details = formatOAuthDebuggerErrorDetails(error);
+                  void navigator.clipboard
+                    ?.writeText(details)
+                    .then(() => toast.success("Copied OAuth debugger error"))
+                    .catch(() =>
+                      toast.error("Could not copy OAuth debugger error"),
+                    );
+                };
+
+                return (
+                  <div className="flex h-full items-center justify-center p-6">
+                    <div className="max-w-md space-y-4 text-center">
+                      <AlertTriangle className="mx-auto size-10 text-destructive" />
+                      <div className="space-y-2">
+                        <h2 className="text-lg font-semibold">
+                          OAuth Debugger crashed
+                        </h2>
+                        <p className="text-sm text-muted-foreground">
+                          {sanitizeOAuthDebuggerError(error).message}
+                        </p>
+                      </div>
+                      <div className="flex justify-center gap-2">
+                        <Button variant="outline" onClick={reset}>
+                          Try again
+                        </Button>
+                        <Button variant="outline" onClick={copyDetails}>
+                          Copy details
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              }}
+              onError={(error, errorInfo) => {
+                const sanitizedError = sanitizeOAuthDebuggerError(error);
+                posthog.capture("oauth_debugger_error_boundary", {
+                  name: sanitizedError.name,
+                  message: sanitizedError.message,
+                  stack: sanitizedError.stack,
+                  componentStack: sanitizeOAuthDebuggerText(
+                    errorInfo.componentStack,
+                  ),
+                });
+              }}
             >
               <OAuthFlowTab
                 serverConfigs={appState.servers}
@@ -2178,7 +2260,7 @@ export default function App() {
                 connectedOrConnectingServerConfigs
               }
               selectedServerNames={appState.selectedMultipleServers}
-              allServerConfigs={workspaceServers}
+              allServerConfigs={projectServers}
               onServerToggle={toggleServerSelection}
               onReconnectServer={handleReconnect}
               onAddServer={handleConnect}
@@ -2188,7 +2270,7 @@ export default function App() {
               evalChatHandoff={evalChatHandoff}
               onEvalChatHandoffConsumed={(id) =>
                 setEvalChatHandoff((current) =>
-                  current?.id === id ? null : current,
+                  current?.id === id ? null : current
                 )
               }
             />
@@ -2198,8 +2280,8 @@ export default function App() {
             <AppBuilderTab
               serverConfig={selectedMCPConfig}
               serverName={appState.selectedServer}
-              servers={workspaceServers}
-              activeWorkspaceId={activeWorkspaceId}
+              servers={projectServers}
+              activeProjectId={activeProjectId}
               isAuthenticated={isAuthenticated}
               isAuthLoading={isAuthLoading}
               isServerSyncing={isSelectedServerSyncing}
@@ -2211,16 +2293,16 @@ export default function App() {
               enableMultiModelChat
             />
           )}
-          {activeTab === "workspace-settings" && (
-            <WorkspaceSettingsTab
-              activeWorkspaceId={activeWorkspaceId}
-              workspace={activeWorkspace}
-              convexWorkspaceId={convexWorkspaceId}
-              workspaceServers={workspaceServers}
+          {activeTab === "project-settings" && (
+            <ProjectSettingsTab
+              activeProjectId={activeProjectId}
+              project={activeProject}
+              convexProjectId={convexProjectId}
+              projectServers={projectServers}
               organizationName={activeOrganizationName}
-              onUpdateWorkspace={handleUpdateWorkspace}
-              onDeleteWorkspace={handleDeleteWorkspace}
-              onWorkspaceShared={handleWorkspaceShared}
+              onUpdateProject={handleUpdateProject}
+              onDeleteProject={handleDeleteProject}
+              onProjectShared={handleProjectShared}
               onNavigateAway={() => handleNavigate("servers")}
             />
           )}
@@ -2293,7 +2375,7 @@ export default function App() {
                 if (billingOrganizationId) {
                   applyNavigation(
                     `organizations/${billingOrganizationId}/billing`,
-                    { updateHash: true },
+                    { updateHash: true }
                   );
                 }
               }}
@@ -2311,9 +2393,9 @@ export default function App() {
       themeMode={initialThemeMode}
       themePreset={initialThemePreset}
     >
-      <WorkspaceClientConfigSync
-        activeWorkspaceId={activeWorkspaceId}
-        savedClientConfig={activeWorkspace?.clientConfig}
+      <ProjectClientConfigSync
+        activeProjectId={activeProjectId}
+        savedClientConfig={activeProject?.clientConfig}
       />
       <AppStateProvider appState={effectiveAppState}>
         <Toaster />

@@ -152,7 +152,7 @@ describe("web routes — chat-v2 hosted mode", () => {
       app,
       "/api/web/chat-v2",
       {
-        workspaceId: "workspace-1",
+        projectId: "project-1",
         selectedServerIds: ["server-1"],
         chatboxToken: "chatbox-token",
         surface: "preview",
@@ -177,7 +177,7 @@ describe("web routes — chat-v2 hosted mode", () => {
     expect(persistChatSessionToConvexMock).toHaveBeenCalledWith(
       expect.objectContaining({
         chatSessionId: "chat-session-1",
-        workspaceId: "workspace-1",
+        projectId: "project-1",
         sourceType: "chatbox",
         chatboxToken: "chatbox-token",
         surface: "preview",
@@ -194,7 +194,7 @@ describe("web routes — chat-v2 hosted mode", () => {
       app,
       "/api/web/chat-v2",
       {
-        workspaceId: "workspace-1",
+        projectId: "project-1",
         selectedServerIds: ["server-1"],
         chatboxToken: "chatbox-shared-token",
         surface: "share_link",
@@ -213,7 +213,7 @@ describe("web routes — chat-v2 hosted mode", () => {
     expect(handleMCPJamFreeChatModelMock).toHaveBeenCalledWith(
       expect.objectContaining({
         chatboxToken: "chatbox-shared-token",
-        workspaceId: "workspace-1",
+        projectId: "project-1",
       })
     );
   });
@@ -225,7 +225,7 @@ describe("web routes — chat-v2 hosted mode", () => {
       app,
       "/api/web/chat-v2",
       {
-        workspaceId: "workspace-1",
+        projectId: "project-1",
         selectedServerIds: ["server-1", "server-2", "server-1"],
         chatSessionId: "chat-session-batch",
         messages: [{ role: "user", content: "hello" }],
@@ -245,7 +245,7 @@ describe("web routes — chat-v2 hosted mode", () => {
       expect.objectContaining({
         method: "POST",
         body: JSON.stringify({
-          workspaceId: "workspace-1",
+          projectId: "project-1",
           serverIds: ["server-1", "server-2"],
           accessScope: "chat_v2",
         }),
@@ -260,11 +260,11 @@ describe("web routes — chat-v2 hosted mode", () => {
       app,
       "/api/web/chat-v2",
       {
-        workspaceId: "workspace-1",
+        projectId: "project-1",
         selectedServerIds: ["server-1"],
         selectedServerNames: ["Asana"],
         chatSessionId: "chat-session-direct",
-        directVisibility: "workspace",
+        directVisibility: "project",
         messages: [{ role: "user", content: "hello" }],
         model: {
           id: "openai/gpt-5-mini",
@@ -280,9 +280,9 @@ describe("web routes — chat-v2 hosted mode", () => {
     expect(persistChatSessionToConvexMock).toHaveBeenCalledWith(
       expect.objectContaining({
         chatSessionId: "chat-session-direct",
-        workspaceId: "workspace-1",
+        projectId: "project-1",
         sourceType: "direct",
-        directVisibility: "workspace",
+        directVisibility: "project",
         resumeConfig: expect.objectContaining({
           selectedServers: ["Asana"],
         }),
@@ -333,7 +333,7 @@ describe("web routes — chat-v2 hosted mode", () => {
       app,
       "/api/web/chat-v2",
       {
-        workspaceId: "workspace-1",
+        projectId: "project-1",
         selectedServerIds: ["server-1"],
         selectedServerNames: ["Asana"],
         messages: [{ role: "user", content: "hello" }],
@@ -382,7 +382,7 @@ describe("web routes — chat-v2 hosted mode", () => {
       app,
       "/api/web/chat-v2",
       {
-        workspaceId: "workspace-1",
+        projectId: "project-1",
         selectedServerIds: ["server-1"],
         selectedServerNames: ["Notion"],
         messages: [{ role: "user", content: "hello" }],

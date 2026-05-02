@@ -84,13 +84,13 @@ import { Settings2 } from "lucide-react";
 import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-overrides";
 import type { LoadingIndicatorVariant } from "@/components/chat-v2/shared/loading-indicator-content";
 import { useConvexAuth } from "convex/react";
-import { useWorkspaceServers } from "@/hooks/useViews";
+import { useProjectServers } from "@/hooks/useViews";
 import { buildOAuthTokensByServerId } from "@/lib/oauth/oauth-tokens";
 import { useHostContextStore } from "@/stores/host-context-store";
 import {
   extractEffectiveHostDisplayMode,
   extractHostTheme,
-  type WorkspaceHostContextDraft,
+  type ProjectHostContextDraft,
 } from "@/lib/client-config";
 import { PostConnectGuide } from "@/components/app-builder/PostConnectGuide";
 import {
@@ -129,14 +129,14 @@ const CUSTOM_DEVICE_BASE = {
 type ThreadThemeMode = "light" | "dark";
 
 interface PlaygroundMainProps {
-  activeWorkspaceId?: string | null;
+  activeProjectId?: string | null;
   serverName: string;
   ensureServersReady?: (
     serverNames: string[]
   ) => Promise<EnsureServersReadyResult>;
   onSaveHostContext?: (
-    workspaceId: string,
-    hostContext: WorkspaceHostContextDraft
+    projectId: string,
+    hostContext: ProjectHostContextDraft
   ) => Promise<void>;
   enableMultiModelChat?: boolean;
   onWidgetStateChange?: (toolCallId: string, state: unknown) => void;
@@ -215,7 +215,7 @@ function InvokingIndicator({
 }
 
 export function PlaygroundMain({
-  activeWorkspaceId = null,
+  activeProjectId = null,
   serverName,
   ensureServersReady,
   onSaveHostContext,
@@ -349,12 +349,12 @@ export function PlaygroundMain({
     [serverName, playgroundServerSelectorProps]
   );
 
-  // Hosted mode context (workspaceId, serverIds, OAuth tokens)
-  const activeWorkspace = appState.workspaces[appState.activeWorkspaceId];
-  const convexWorkspaceId = activeWorkspace?.sharedWorkspaceId ?? null;
-  const { serversByName } = useWorkspaceServers({
+  // Hosted mode context (projectId, serverIds, OAuth tokens)
+  const activeProject = appState.projects[appState.activeProjectId];
+  const convexProjectId = activeProject?.sharedProjectId ?? null;
+  const { serversByName } = useProjectServers({
     isAuthenticated: isConvexAuthenticated,
-    workspaceId: convexWorkspaceId,
+    projectId: convexProjectId,
   });
   const hostedSelectedServerIds = useMemo(
     () =>
@@ -414,7 +414,7 @@ export function PlaygroundMain({
   } = useChatSession({
     selectedServers,
     hostedContext: {
-      workspaceId: convexWorkspaceId,
+      projectId: convexProjectId,
       selectedServerIds: hostedSelectedServerIds,
       oauthTokens: hostedOAuthTokens,
     },
@@ -845,7 +845,7 @@ export function PlaygroundMain({
       }
 
       const errorMessage = result.missingServerNames.includes(serverName)
-        ? `${serverName} is no longer available in this workspace.`
+        ? `${serverName} is no longer available in this project.`
         : result.reauthServerNames.includes(serverName)
         ? `Reauthenticate ${serverName} before sending.`
         : `Couldn't connect to ${serverName}.`;
@@ -1503,7 +1503,7 @@ export function PlaygroundMain({
           >
             <div className="flex min-w-0 flex-1 justify-center overflow-hidden">
               <HostContextHeader
-                activeWorkspaceId={activeWorkspaceId}
+                activeProjectId={activeProjectId}
                 onSaveHostContext={onSaveHostContext}
                 protocol={selectedProtocol}
                 showThemeToggle
@@ -1662,7 +1662,7 @@ export function PlaygroundMain({
                         requireToolApproval,
                       }}
                       hostedContext={{
-                        workspaceId: convexWorkspaceId,
+                        projectId: convexProjectId,
                         selectedServerIds: hostedSelectedServerIds,
                         oauthTokens: hostedOAuthTokens,
                       }}

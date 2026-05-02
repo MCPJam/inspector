@@ -59,21 +59,21 @@ export type ServerEntry = {
   primitives?: ServerPrimitives;
 };
 
-export type WorkspaceInfo = {
+export type ProjectInfo = {
   id: string;
   name: string;
 };
 
-export type SelectedWorkspaceInfo = WorkspaceInfo & {
+export type SelectedProjectInfo = ProjectInfo & {
   organizationId: string;
 };
 
 export type ShowServersSummary = Record<ServerStatus, number>;
 
 export type ShowServersPayload = {
-  workspace: SelectedWorkspaceInfo;
+  project: SelectedProjectInfo;
   servers: ServerEntry[];
-  otherWorkspaces: WorkspaceInfo[];
+  otherProjects: ProjectInfo[];
   summary: ShowServersSummary;
   generatedAt: string;
 };

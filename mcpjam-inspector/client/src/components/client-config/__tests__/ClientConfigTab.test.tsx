@@ -3,8 +3,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getDefaultClientCapabilities } from "@mcpjam/sdk/browser";
 import { ClientConfigTab } from "../ClientConfigTab";
 import {
-  mergeWorkspaceClientCapabilities,
-  type WorkspaceConnectionConfigDraft,
+  mergeProjectClientCapabilities,
+  type ProjectConnectionConfigDraft,
 } from "@/lib/client-config";
 import { useClientConfigStore } from "@/stores/client-config-store";
 import { useHostContextStore } from "@/stores/host-context-store";
@@ -13,9 +13,9 @@ vi.mock("@/components/ui/json-editor", () => ({
   JsonEditor: () => <div data-testid="json-editor" />,
 }));
 
-function resetClientConfigStore(defaultConfig: WorkspaceConnectionConfigDraft) {
+function resetClientConfigStore(defaultConfig: ProjectConnectionConfigDraft) {
   useClientConfigStore.setState({
-    activeWorkspaceId: "workspace-1",
+    activeProjectId: "project-1",
     defaultConfig,
     savedConfig: undefined,
     draftConfig: defaultConfig,
@@ -33,7 +33,7 @@ function resetClientConfigStore(defaultConfig: WorkspaceConnectionConfigDraft) {
     clientCapabilitiesError: null,
     isSaving: false,
     isDirty: false,
-    pendingWorkspaceId: null,
+    pendingProjectId: null,
     pendingSavedConfig: undefined,
     isAwaitingRemoteEcho: false,
   });
@@ -41,7 +41,7 @@ function resetClientConfigStore(defaultConfig: WorkspaceConnectionConfigDraft) {
 
 describe("ClientConfigTab connection settings warnings", () => {
   beforeEach(() => {
-    const defaultConfig: WorkspaceConnectionConfigDraft = {
+    const defaultConfig: ProjectConnectionConfigDraft = {
       version: 1,
       connectionDefaults: {
         headers: {},
@@ -55,7 +55,7 @@ describe("ClientConfigTab connection settings warnings", () => {
 
     resetClientConfigStore(defaultConfig);
     useHostContextStore.setState({
-      pendingWorkspaceId: null,
+      pendingProjectId: null,
       isAwaitingRemoteEcho: false,
       isSaving: false,
     });
@@ -64,8 +64,8 @@ describe("ClientConfigTab connection settings warnings", () => {
   it("renders only connection-level JSON editors", () => {
     render(
       <ClientConfigTab
-        activeWorkspaceId="workspace-1"
-        workspace={undefined}
+        activeProjectId="project-1"
+        project={undefined}
         onSaveClientConfig={vi.fn()}
       />,
     );
@@ -82,17 +82,17 @@ describe("ClientConfigTab connection settings warnings", () => {
         serverOverride: { enabled: true },
       },
     };
-    const initializedCapabilities = mergeWorkspaceClientCapabilities(
+    const initializedCapabilities = mergeProjectClientCapabilities(
       getDefaultClientCapabilities() as Record<string, unknown>,
       serverCapabilities,
     );
 
     render(
       <ClientConfigTab
-        activeWorkspaceId="workspace-1"
-        workspace={{
-          id: "workspace-1",
-          name: "Workspace 1",
+        activeProjectId="project-1"
+        project={{
+          id: "project-1",
+          name: "Project 1",
           servers: {
             "test-server": {
               name: "test-server",
@@ -129,10 +129,10 @@ describe("ClientConfigTab connection settings warnings", () => {
 
     render(
       <ClientConfigTab
-        activeWorkspaceId="workspace-1"
-        workspace={{
-          id: "workspace-1",
-          name: "Workspace 1",
+        activeProjectId="project-1"
+        project={{
+          id: "project-1",
+          name: "Project 1",
           clientConfig: {
             version: 1,
             clientCapabilities: {

@@ -19,7 +19,7 @@ vi.mock("@/lib/session-token", () => ({
 // Mock web context
 vi.mock("@/lib/apis/web/context", () => ({
   buildHostedServerRequest: vi.fn(() => ({
-    workspaceId: "ws-1",
+    projectId: "ws-1",
     serverId: "srv-1",
   })),
   isGuestMode: vi.fn(() => false),

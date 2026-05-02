@@ -30,7 +30,7 @@ describe("getHostedAuthorizationHeader guest fallback", () => {
 
   it("returns WorkOS token when getAccessToken succeeds", async () => {
     setHostedApiContext({
-      workspaceId: "ws-1",
+      projectId: "ws-1",
       serverIdsByName: {},
       getAccessToken: () => Promise.resolve("workos-token-abc"),
       isAuthenticated: true,
@@ -47,7 +47,7 @@ describe("getHostedAuthorizationHeader guest fallback", () => {
       .fn()
       .mockResolvedValue("workos-token-should-skip");
     setHostedApiContext({
-      workspaceId: null,
+      projectId: null,
       isAuthenticated: false,
       serverIdsByName: {},
       getAccessToken,
@@ -66,7 +66,7 @@ describe("getHostedAuthorizationHeader guest fallback", () => {
       .fn()
       .mockResolvedValue("workos-token-should-skip");
     setHostedApiContext({
-      workspaceId: "ws-shared",
+      projectId: "ws-shared",
       isAuthenticated: false,
       serverIdsByName: { bench: "srv-1" },
       getAccessToken,
@@ -86,7 +86,7 @@ describe("getHostedAuthorizationHeader guest fallback", () => {
       .fn()
       .mockResolvedValue("workos-token-should-skip");
     setHostedApiContext({
-      workspaceId: "ws-chatbox",
+      projectId: "ws-chatbox",
       isAuthenticated: false,
       serverIdsByName: { bench: "srv-1" },
       getAccessToken,
@@ -101,12 +101,12 @@ describe("getHostedAuthorizationHeader guest fallback", () => {
     expect(getAccessToken).not.toHaveBeenCalled();
   });
 
-  it("still prefers guest token when no workspace is loaded but AuthKit session exists", async () => {
+  it("still prefers guest token when no project is loaded but AuthKit session exists", async () => {
     const getAccessToken = vi
       .fn()
       .mockResolvedValue("workos-token-should-skip");
     setHostedApiContext({
-      workspaceId: null,
+      projectId: null,
       isAuthenticated: false,
       hasSession: true,
       serverIdsByName: {},
@@ -121,12 +121,12 @@ describe("getHostedAuthorizationHeader guest fallback", () => {
     expect(getAccessToken).not.toHaveBeenCalled();
   });
 
-  it("returns null for hosted workspace requests that do not allow guest access", async () => {
+  it("returns null for hosted project requests that do not allow guest access", async () => {
     const getAccessToken = vi
       .fn()
       .mockRejectedValue(new Error("LoginRequired"));
     setHostedApiContext({
-      workspaceId: "ws-member",
+      projectId: "ws-member",
       isAuthenticated: false,
       serverIdsByName: { bench: "srv-1" },
       getAccessToken,
@@ -142,7 +142,7 @@ describe("getHostedAuthorizationHeader guest fallback", () => {
   it("caches WorkOS token and does not call guest on subsequent calls", async () => {
     const getAccessToken = vi.fn().mockResolvedValue("cached-workos");
     setHostedApiContext({
-      workspaceId: "ws-1",
+      projectId: "ws-1",
       serverIdsByName: {},
       getAccessToken,
       isAuthenticated: true,
@@ -161,7 +161,7 @@ describe("getHostedAuthorizationHeader guest fallback", () => {
     vi.useFakeTimers();
 
     setHostedApiContext({
-      workspaceId: null,
+      projectId: null,
       isAuthenticated: false,
       serverIdsByName: {},
     });
@@ -190,9 +190,9 @@ describe("isGuestMode and buildHostedServerRequest consistency", () => {
     setHostedApiContext(null);
   });
 
-  it("isGuestMode returns true for direct guests (no workspace, not authenticated)", () => {
+  it("isGuestMode returns true for direct guests (no project, not authenticated)", () => {
     setHostedApiContext({
-      workspaceId: null,
+      projectId: null,
       isAuthenticated: false,
       serverIdsByName: {},
     });
@@ -200,9 +200,9 @@ describe("isGuestMode and buildHostedServerRequest consistency", () => {
     expect(isGuestMode()).toBe(true);
   });
 
-  it("isGuestMode returns false for shared guests (has workspace + shareToken)", () => {
+  it("isGuestMode returns false for shared guests (has project + shareToken)", () => {
     setHostedApiContext({
-      workspaceId: "ws-shared",
+      projectId: "ws-shared",
       isAuthenticated: false,
       shareToken: "share_tok_123",
       serverIdsByName: { bench: "srv-1" },
@@ -213,7 +213,7 @@ describe("isGuestMode and buildHostedServerRequest consistency", () => {
 
   it("isGuestMode returns false for authenticated users", () => {
     setHostedApiContext({
-      workspaceId: "ws-1",
+      projectId: "ws-1",
       isAuthenticated: true,
       serverIdsByName: {},
     });
@@ -223,7 +223,7 @@ describe("isGuestMode and buildHostedServerRequest consistency", () => {
 
   it("buildHostedServerRequest uses guest path for direct guests with server config", () => {
     setHostedApiContext({
-      workspaceId: null,
+      projectId: null,
       isAuthenticated: false,
       serverIdsByName: {},
       serverConfigs: {
@@ -237,13 +237,13 @@ describe("isGuestMode and buildHostedServerRequest consistency", () => {
       serverUrl: "https://my-mcp.example.com/sse",
       serverName: "my-server",
     });
-    // Should NOT have workspaceId — this is a guest request
-    expect(result).not.toHaveProperty("workspaceId");
+    // Should NOT have projectId — this is a guest request
+    expect(result).not.toHaveProperty("projectId");
   });
 
-  it("buildHostedServerRequest uses workspace path for shared guests", () => {
+  it("buildHostedServerRequest uses project path for shared guests", () => {
     setHostedApiContext({
-      workspaceId: "ws-shared",
+      projectId: "ws-shared",
       isAuthenticated: false,
       shareToken: "share_tok_123",
       serverIdsByName: { "my-server": "srv-1" },
@@ -252,16 +252,16 @@ describe("isGuestMode and buildHostedServerRequest consistency", () => {
     const result = buildHostedServerRequest("my-server");
 
     expect(result).toMatchObject({
-      workspaceId: "ws-shared",
+      projectId: "ws-shared",
       serverId: "srv-1",
       serverName: "my-server",
       shareToken: "share_tok_123",
     });
   });
 
-  it("buildHostedServerRequest uses workspace path for chatbox guests", () => {
+  it("buildHostedServerRequest uses project path for chatbox guests", () => {
     setHostedApiContext({
-      workspaceId: "ws-chatbox",
+      projectId: "ws-chatbox",
       isAuthenticated: false,
       chatboxToken: "chatbox_tok_123",
       serverIdsByName: { "my-server": "srv-1" },
@@ -270,7 +270,7 @@ describe("isGuestMode and buildHostedServerRequest consistency", () => {
     const result = buildHostedServerRequest("my-server");
 
     expect(result).toMatchObject({
-      workspaceId: "ws-chatbox",
+      projectId: "ws-chatbox",
       serverId: "srv-1",
       serverName: "my-server",
       chatboxToken: "chatbox_tok_123",
@@ -279,7 +279,7 @@ describe("isGuestMode and buildHostedServerRequest consistency", () => {
 
   it("buildHostedServerRequest throws for direct guests without server config", () => {
     setHostedApiContext({
-      workspaceId: null,
+      projectId: null,
       isAuthenticated: false,
       serverIdsByName: {},
       serverConfigs: {},

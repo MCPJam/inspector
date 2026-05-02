@@ -28,7 +28,7 @@ import { Checkbox } from "@mcpjam/design-system/checkbox";
 import { Label } from "@mcpjam/design-system/label";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 
-interface WorkspaceServerOption {
+interface ProjectServerOption {
   _id: string;
   name: string;
   transportType: "stdio" | "http";
@@ -37,8 +37,8 @@ interface WorkspaceServerOption {
 interface CreateChatboxDialogProps {
   isOpen: boolean;
   onClose: () => void;
-  workspaceId: string;
-  workspaceServers: WorkspaceServerOption[];
+  projectId: string;
+  projectServers: ProjectServerOption[];
   chatbox?: ChatboxSettings | null;
   onSaved?: (chatbox: ChatboxSettings) => void;
 }
@@ -48,8 +48,8 @@ const DEFAULT_SYSTEM_PROMPT = "You are a helpful assistant.";
 export function CreateChatboxDialog({
   isOpen,
   onClose,
-  workspaceId,
-  workspaceServers,
+  projectId,
+  projectServers,
   chatbox,
   onSaved,
 }: CreateChatboxDialogProps) {
@@ -65,8 +65,8 @@ export function CreateChatboxDialog({
   const [isSaving, setIsSaving] = useState(false);
 
   const availableServers = useMemo(
-    () => workspaceServers.filter((server) => server.transportType === "http"),
-    [workspaceServers],
+    () => projectServers.filter((server) => server.transportType === "http"),
+    [projectServers],
   );
   const hostedModels = useMemo(
     () =>
@@ -148,7 +148,7 @@ export function CreateChatboxDialog({
               ...payload,
             })
           : await createChatbox({
-              workspaceId,
+              projectId,
               ...payload,
             })
       ) as ChatboxSettings;
@@ -280,7 +280,7 @@ export function CreateChatboxDialog({
             <div className="max-h-56 space-y-2 overflow-y-auto rounded-lg border p-3">
               {availableServers.length === 0 ? (
                 <p className="text-sm text-muted-foreground">
-                  No HTTP servers are available in this workspace yet.
+                  No HTTP servers are available in this project yet.
                 </p>
               ) : (
                 availableServers.map((server) => (

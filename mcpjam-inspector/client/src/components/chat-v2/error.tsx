@@ -3,6 +3,7 @@ import {
   ChevronDown,
   ChevronRight,
   RefreshCw,
+  ShieldAlert,
 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { useState } from "react";
@@ -26,6 +27,16 @@ interface ErrorBoxProps {
   isRetryable?: boolean;
   isMCPJamPlatformError?: boolean;
   onRetry?: () => void;
+  canTopUp?: boolean;
+  onTopUp?: () => void;
+  /** When true, render the locked-account banner instead of any other state. */
+  walletLocked?: boolean;
+  /** Sub-classification of a rate-limit error. `"concurrency"` triggers the
+   * transient retry banner. */
+  limitKind?: "total" | "concurrency";
+  /** Raw retry hint in milliseconds. Used by the concurrency banner to render
+   * second-level granularity ("Retry in N seconds"). */
+  retryAfterMs?: number;
 }
 
 const parseErrorDetails = (details: string | undefined) => {
@@ -47,19 +58,42 @@ export function ErrorBox({
   isRetryable,
   isMCPJamPlatformError,
   onRetry,
+  canTopUp,
+  onTopUp,
+  walletLocked,
+  limitKind,
+  retryAfterMs,
 }: ErrorBoxProps) {
   const [isErrorDetailsOpen, setIsErrorDetailsOpen] = useState(false);
   const errorDetailsJson = parseErrorDetails(errorDetails);
 
   const { user, isLoading } = useAuth();
 
-  const isMCPJamModelLimit = isMCPJamModelLimitError({
-    code,
-    details: errorDetails,
-    message,
-  });
-  const isGuest = !isLoading && !user;
+  // Three priority states for the rate-limit-adjacent variants. Order
+  // matters: walletLocked is the highest-priority terminal state (no
+  // self-serve recovery), then the concurrency throttle (transient,
+  // user-driven retry), then everything else falls back to the existing
+  // model-limit / generic error rendering.
+  const isWalletLocked = walletLocked === true;
+  const isConcurrencyThrottle =
+    !isWalletLocked &&
+    code === "user_rate_limit" &&
+    limitKind === "concurrency";
 
+  const isMCPJamModelLimit =
+    !isWalletLocked &&
+    !isConcurrencyThrottle &&
+    (code === "user_rate_limit" ||
+      isMCPJamModelLimitError({
+        code,
+        details: errorDetails,
+        message,
+      }));
+
+  // Guests hitting the daily model limit see the global GuestLimitDialog
+  // instead of an inline banner. Wallet/concurrency states fall through
+  // to their dedicated banners above; signed-in users keep the inline UI.
+  const isGuest = !isLoading && !user;
   if (isMCPJamModelLimit && isGuest) {
     return null;
   }
@@ -94,6 +128,78 @@ export function ErrorBox({
       : "An error occurred";
   const errorPrefix = isMCPJamModelLimit ? `${errorLabel}.` : `${errorLabel}:`;
 
+  if (isWalletLocked) {
+    // Server has paused this account from spending or topping up. The user
+    // cannot self-serve out of this; only support can clear it. Render a
+    // dedicated locked-state banner with a contact link — no top-up, no
+    // retry, just a way to reach out.
+    return (
+      <div className="flex flex-col gap-3 border rounded p-4 border-warning bg-warning/20 text-warning-foreground">
+        <div className="flex items-start gap-3">
+          <ShieldAlert className="h-6 w-6 flex-shrink-0 text-warning" />
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-medium leading-6">
+              Account under review
+            </p>
+            <p className="text-sm leading-6 opacity-90">
+              We&apos;ve paused this account while a recent payment is
+              reviewed.{" "}
+              <a
+                className="underline hover:no-underline"
+                href="mailto:founders@mcpjam.com?subject=MCPJam%20Account%20Review"
+              >
+                Reach out to support
+              </a>{" "}
+              to get back in.
+            </p>
+          </div>
+          <div className="ml-auto flex flex-shrink-0 flex-wrap items-center gap-2">
+            <Button type="button" variant="outline" onClick={onResetChat}>
+              Reset chat
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (isConcurrencyThrottle) {
+    // Another credit-funded chat is still in flight server-side. Short
+    // wait, then retry — render a transient-feeling banner with a retry
+    // button. Top-up doesn't help here; just wait it out.
+    const retrySeconds = Math.max(
+      1,
+      Math.ceil((retryAfterMs ?? 0) / 1000),
+    );
+    return (
+      <div className="flex flex-col gap-2 border rounded p-3 border-border bg-muted/40 text-foreground">
+        <div className="flex items-start gap-3">
+          <CircleAlert className="h-4 w-4 flex-shrink-0 text-muted-foreground mt-0.5" />
+          <div className="min-w-0 flex-1">
+            <p className="text-xs leading-5">
+              Another credit-funded chat is finishing. Retry in{" "}
+              {retrySeconds} second{retrySeconds === 1 ? "" : "s"}.
+            </p>
+          </div>
+          <div className="ml-auto flex flex-shrink-0 flex-wrap items-center gap-2">
+            {onRetry && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={onRetry}
+                className="gap-1.5"
+              >
+                <RefreshCw className="h-3.5 w-3.5" />
+                Retry
+              </Button>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div
       className={cn("flex flex-col gap-3 border rounded p-4", containerClasses)}
@@ -124,6 +230,11 @@ export function ErrorBox({
           )}
         </div>
         <div className="ml-auto flex flex-shrink-0 flex-wrap items-center gap-2">
+          {canTopUp && onTopUp && (
+            <Button type="button" onClick={onTopUp}>
+              Top up to keep chatting
+            </Button>
+          )}
           {isRetryable && onRetry && (
             <Button
               type="button"

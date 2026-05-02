@@ -24,7 +24,7 @@ describe("useEvalQueries", () => {
         user: null,
         selectedSuiteId: null,
         deletingSuiteId: null,
-        workspaceId: null,
+        projectId: null,
         organizationId: null,
       }),
     );
@@ -41,7 +41,7 @@ describe("useEvalQueries", () => {
         user: { id: "user-1" },
         selectedSuiteId: null,
         deletingSuiteId: null,
-        workspaceId: "ws-1",
+        projectId: "ws-1",
         organizationId: null,
       }),
     );

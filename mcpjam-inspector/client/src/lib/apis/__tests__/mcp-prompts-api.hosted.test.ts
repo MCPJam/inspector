@@ -57,7 +57,7 @@ describe("mcp-prompts-api hosted mode", () => {
     });
   });
 
-  it("keeps the batch hosted path for authenticated hosted workspaces", async () => {
+  it("keeps the batch hosted path for authenticated hosted projects", async () => {
     listHostedPromptsMultiMock.mockResolvedValueOnce({
       prompts: { "srv-excalidraw": [{ name: "draw" }] },
     });

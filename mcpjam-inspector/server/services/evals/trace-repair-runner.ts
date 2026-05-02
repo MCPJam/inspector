@@ -319,11 +319,20 @@ export async function runTraceRepairJob(
         "traceRepair:getTraceRepairJob" as any,
         { jobId },
       );
-      if (job?.workspaceId) {
+      const repairProjectId =
+        typeof job?.projectId === "string" ? job.projectId : undefined;
+      const repairLegacyWorkspaceId =
+        !repairProjectId && typeof job?.workspaceId === "string"
+          ? job.workspaceId
+          : undefined;
+      const repairOrgConfigTarget = repairProjectId
+        ? { projectId: repairProjectId }
+        : repairLegacyWorkspaceId
+        ? { workspaceId: repairLegacyWorkspaceId }
+        : undefined;
+      if (repairOrgConfigTarget) {
         const orgConfig = await resolveOrgModelConfig(
-          {
-            workspaceId: job.workspaceId,
-          },
+          repairOrgConfigTarget,
           {
             bearerToken: convexAuthToken,
           },

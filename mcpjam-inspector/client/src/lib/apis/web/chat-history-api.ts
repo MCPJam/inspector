@@ -6,11 +6,11 @@ import { WebApiError } from "./base";
 export interface ChatHistorySession {
   _id: string;
   chatSessionId: string;
-  workspaceId?: string;
+  projectId?: string;
   customTitle?: string;
   firstMessagePreview: string;
   status: "active" | "archived";
-  directVisibility: "private" | "workspace";
+  directVisibility: "private" | "project";
   modelId?: string;
   modelSource?: string;
   messageCount: number;
@@ -29,7 +29,7 @@ export interface ChatHistorySession {
 export interface ChatHistoryListResponse {
   ok: boolean;
   personal: ChatHistorySession[];
-  workspace: ChatHistorySession[];
+  project: ChatHistorySession[];
 }
 
 export interface ResumeConfig {
@@ -201,7 +201,7 @@ async function webPost<TRequest, TResponse>(
 
 export async function listChatHistory(
   params: {
-    workspaceId?: string;
+    projectId?: string;
     status: "active" | "archived";
     limit?: number;
     before?: number;
@@ -209,7 +209,7 @@ export async function listChatHistory(
   requestOptions?: ChatHistoryRequestOptions,
 ): Promise<ChatHistoryListResponse> {
   const searchParams = new URLSearchParams();
-  if (params.workspaceId) searchParams.set("workspaceId", params.workspaceId);
+  if (params.projectId) searchParams.set("projectId", params.projectId);
   searchParams.set("status", params.status);
   if (params.limit) searchParams.set("limit", String(params.limit));
   if (params.before) searchParams.set("before", String(params.before));
@@ -224,14 +224,14 @@ export async function getChatHistoryDetail(
   params: {
     sessionId?: string;
     chatSessionId: string;
-    workspaceId?: string;
+    projectId?: string;
   },
   requestOptions?: ChatHistoryRequestOptions,
 ): Promise<ChatHistoryDetailResponse> {
   const searchParams = new URLSearchParams();
   if (params.sessionId) searchParams.set("sessionId", params.sessionId);
   searchParams.set("chatSessionId", params.chatSessionId);
-  if (params.workspaceId) searchParams.set("workspaceId", params.workspaceId);
+  if (params.projectId) searchParams.set("projectId", params.projectId);
 
   return webGet<ChatHistoryDetailResponse>(
     `/api/web/chat-history/detail?${searchParams.toString()}`,

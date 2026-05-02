@@ -88,7 +88,7 @@ describe("single-test-case-runner", () => {
 
   it("prepares a one-off case run request", async () => {
     const prepared = await prepareSingleTestCaseRun({
-      workspaceId: "workspace-1",
+      projectId: "project-1",
       suite,
       testCase,
       getAccessToken: vi.fn().mockResolvedValue("token-123"),
@@ -99,7 +99,7 @@ describe("single-test-case-runner", () => {
     expect(prepared).toEqual({
       modelValue: "openai/gpt-4o",
       request: {
-        workspaceId: "workspace-1",
+        projectId: "project-1",
         testCaseId: "case-1",
         model: "gpt-4o",
         provider: "openai",
@@ -115,7 +115,7 @@ describe("single-test-case-runner", () => {
 
   it("uses the explicitly selected model when provided", async () => {
     const prepared = await prepareSingleTestCaseRun({
-      workspaceId: "workspace-1",
+      projectId: "project-1",
       suite,
       testCase,
       selectedModel: "anthropic/anthropic/claude-haiku-4.5",
@@ -127,7 +127,7 @@ describe("single-test-case-runner", () => {
     expect(prepared).toEqual({
       modelValue: "anthropic/anthropic/claude-haiku-4.5",
       request: {
-        workspaceId: "workspace-1",
+        projectId: "project-1",
         testCaseId: "case-1",
         model: "anthropic/claude-haiku-4.5",
         provider: "anthropic",
@@ -141,7 +141,7 @@ describe("single-test-case-runner", () => {
 
   it("does not require a user API key for MCPJam-provided models stored without the provider prefix", async () => {
     const prepared = await prepareSingleTestCaseRun({
-      workspaceId: "workspace-1",
+      projectId: "project-1",
       suite,
       testCase: {
         _id: "case-1",
@@ -155,7 +155,7 @@ describe("single-test-case-runner", () => {
     expect(prepared).toEqual({
       modelValue: "anthropic/claude-haiku-4.5",
       request: {
-        workspaceId: "workspace-1",
+        projectId: "project-1",
         testCaseId: "case-1",
         model: "claude-haiku-4.5",
         provider: "anthropic",
@@ -170,7 +170,7 @@ describe("single-test-case-runner", () => {
   it("throws when a case has no configured model", async () => {
     await expect(
       prepareSingleTestCaseRun({
-        workspaceId: "workspace-1",
+        projectId: "project-1",
         suite,
         testCase: {
           _id: "case-1",

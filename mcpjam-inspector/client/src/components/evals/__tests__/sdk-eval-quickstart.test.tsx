@@ -51,7 +51,7 @@ describe("SdkEvalQuickstart", () => {
   });
 
   it("renders all four step cards with content visible", () => {
-    renderWithProviders(<SdkEvalQuickstart workspaceId="ws-1" />);
+    renderWithProviders(<SdkEvalQuickstart projectId="ws-1" />);
 
     expect(
       screen.getByText("Create a project and install the SDK"),
@@ -64,7 +64,7 @@ describe("SdkEvalQuickstart", () => {
 
     // All content visible without expansion
     expect(document.body.textContent).toContain("npm install @mcpjam/sdk");
-    expect(document.body.textContent).toContain("workspace-api-key");
+    expect(document.body.textContent).toContain("project-api-key");
     expect(document.body.textContent).toContain("learn.mcpjam.com");
     expect(document.body.textContent).toContain("openai");
     expect(
@@ -78,7 +78,7 @@ describe("SdkEvalQuickstart", () => {
   });
 
   it("shows the SDK docs link", () => {
-    renderWithProviders(<SdkEvalQuickstart workspaceId="ws-1" />);
+    renderWithProviders(<SdkEvalQuickstart projectId="ws-1" />);
 
     const docsLink = screen.getByRole("link", {
       name: "Learn more and see all providers in the SDK docs",
@@ -123,7 +123,7 @@ describe("SdkEvalQuickstart", () => {
     const { copyToClipboard } = await import("@/lib/clipboard");
     vi.mocked(copyToClipboard).mockResolvedValue(true);
 
-    renderWithProviders(<SdkEvalQuickstart workspaceId="ws-1" />);
+    renderWithProviders(<SdkEvalQuickstart projectId="ws-1" />);
 
     await user.click(screen.getByRole("button", { name: "Copy .env" }));
 
@@ -148,11 +148,11 @@ describe("SdkEvalQuickstart", () => {
       },
     });
 
-    renderWithProviders(<SdkEvalQuickstart workspaceId="ws-1" />);
+    renderWithProviders(<SdkEvalQuickstart projectId="ws-1" />);
 
     await user.click(screen.getByRole("button", { name: "Generate API key" }));
 
-    expect(mockRegenerate).toHaveBeenCalledWith({ workspaceId: "ws-1" });
+    expect(mockRegenerate).toHaveBeenCalledWith({ projectId: "ws-1" });
     expect(
       await screen.findByDisplayValue("mcpjam_inline_secret_xyz"),
     ).toBeTruthy();
@@ -170,9 +170,9 @@ describe("SdkEvalQuickstart", () => {
     expect(dotenv).toContain("EVAL_MODEL");
 
     const shellNoKey = buildShellEnvSnippet(null);
-    expect(shellNoKey).toContain("workspace-api-key");
+    expect(shellNoKey).toContain("project-api-key");
 
     const dotenvNoKey = buildDotEnvSnippet(null);
-    expect(dotenvNoKey).toContain("workspace-api-key");
+    expect(dotenvNoKey).toContain("project-api-key");
   });
 });

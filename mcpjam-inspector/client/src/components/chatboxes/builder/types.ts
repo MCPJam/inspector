@@ -1,5 +1,5 @@
 import type { Edge, Node } from "@xyflow/react";
-import type { RemoteServer } from "@/hooks/useWorkspaces";
+import type { RemoteServer } from "@/hooks/useProjects";
 import type { ChatboxMode, ChatboxSettings } from "@/hooks/useChatboxes";
 import type { ChatboxHostStyle } from "@/lib/chatbox-host-style";
 
@@ -47,7 +47,7 @@ export interface ChatboxDraftConfig {
 export interface ChatboxBuilderContext {
   chatbox: ChatboxSettings | null;
   draft: ChatboxDraftConfig | null;
-  workspaceServers: RemoteServer[];
+  projectServers: RemoteServer[];
 }
 
 export interface ChatboxBuilderChip {

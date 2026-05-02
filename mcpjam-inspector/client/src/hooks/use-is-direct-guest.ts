@@ -2,20 +2,20 @@ import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
 
 /**
- * True when the current session has no WorkOS/Convex identity and no workspace.
+ * True when the current session has no WorkOS/Convex identity and no project.
  * "Direct guest" covers both hosted (mcpjam.com, no sign-in) and local (npx /
  * electron without sign-in) surfaces. In both cases, eval playground data is
- * treated as guest-owned personal data rather than workspace data.
+ * treated as guest-owned personal data rather than project data.
  *
- * Shared/sandbox guests (have workspaceId + share/sandbox token) are NOT direct
+ * Shared/sandbox guests (have projectId + share/sandbox token) are NOT direct
  * guests; they still use Convex-backed flows via the share/sandbox token.
  */
 export function useIsDirectGuest({
-  workspaceId,
+  projectId,
   shareToken,
   sandboxToken,
 }: {
-  workspaceId?: string | null;
+  projectId?: string | null;
   shareToken?: string | null;
   sandboxToken?: string | null;
 } = {}): boolean {
@@ -24,7 +24,7 @@ export function useIsDirectGuest({
 
   if (isLoading) return false;
   if (isAuthenticated || user) return false;
-  if (workspaceId) return false;
+  if (projectId) return false;
   if (shareToken || sandboxToken) return false;
   return true;
 }

@@ -1,8 +1,8 @@
 import { useQuery, useMutation } from "convex/react";
 
 export type NotificationType =
-  | "workspace_added"
-  | "workspace_removed"
+  | "project_added"
+  | "project_removed"
   | "organization_added"
   | "organization_removed";
 

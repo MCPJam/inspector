@@ -5,7 +5,7 @@ import { MCPSidebar } from "@/components/mcp-sidebar";
 
 const mockUseConvexAuth = vi.fn();
 const mockUseAuth = vi.fn();
-const mockShareWorkspaceDialog = vi.fn();
+const mockShareProjectDialog = vi.fn();
 const mockFeatureFlags: Record<string, boolean | undefined> = {};
 
 vi.mock("convex/react", () => ({
@@ -56,12 +56,12 @@ vi.mock("@/components/sidebar/sidebar-user", () => ({
   SidebarUser: () => <div data-testid="sidebar-user" />,
 }));
 
-vi.mock("@/components/sidebar/sidebar-workspace-selector", () => ({
-  SidebarWorkspaceSelector: () => <div data-testid="workspace-selector" />,
+vi.mock("@/components/sidebar/sidebar-project-selector", () => ({
+  SidebarProjectSelector: () => <div data-testid="project-selector" />,
 }));
 
-vi.mock("@/components/workspace/ShareWorkspaceDialog", () => ({
-  ShareWorkspaceDialog: (props: unknown) => mockShareWorkspaceDialog(props),
+vi.mock("@/components/project/ShareProjectDialog", () => ({
+  ShareProjectDialog: (props: unknown) => mockShareProjectDialog(props),
 }));
 
 vi.mock("@/components/ui/sidebar", () => ({
@@ -126,14 +126,14 @@ vi.mock("@mcpjam/design-system/tooltip", () => ({
   ),
 }));
 
-function makeWorkspace(id: string, name: string) {
+function makeProject(id: string, name: string) {
   return {
     id,
     name,
     servers: {},
     createdAt: new Date(),
     updatedAt: new Date(),
-    sharedWorkspaceId: id,
+    sharedProjectId: id,
     organizationId: "org-1",
     visibility: "public" as const,
   };
@@ -142,15 +142,15 @@ function makeWorkspace(id: string, name: string) {
 function renderSidebar(overrides: Partial<React.ComponentProps<typeof MCPSidebar>> = {}) {
   return render(
     <MCPSidebar
-      workspaces={{
-        "workspace-a": makeWorkspace("workspace-a", "Acme"),
-        "workspace-b": makeWorkspace("workspace-b", "Beta"),
+      projects={{
+        "project-a": makeProject("project-a", "Acme"),
+        "project-b": makeProject("project-b", "Beta"),
       }}
-      activeWorkspaceId="workspace-a"
-      onSwitchWorkspace={vi.fn()}
-      onCreateWorkspace={vi.fn(async () => "workspace-created")}
-      onDeleteWorkspace={vi.fn()}
-      onWorkspaceShared={vi.fn()}
+      activeProjectId="project-a"
+      onSwitchProject={vi.fn()}
+      onCreateProject={vi.fn(async () => "project-created")}
+      onDeleteProject={vi.fn()}
+      onProjectShared={vi.fn()}
       {...overrides}
     />,
   );
@@ -173,11 +173,11 @@ describe("sidebar invite CTA", () => {
         lastName: "Example",
       },
     });
-    mockShareWorkspaceDialog.mockImplementation(
-      ({ isOpen, workspaceName }: { isOpen: boolean; workspaceName: string }) =>
+    mockShareProjectDialog.mockImplementation(
+      ({ isOpen, projectName }: { isOpen: boolean; projectName: string }) =>
         isOpen ? (
-          <div data-testid="share-workspace-dialog">
-            Share dialog for {workspaceName}
+          <div data-testid="share-project-dialog">
+            Share dialog for {projectName}
           </div>
         ) : null,
     );
@@ -210,30 +210,30 @@ describe("sidebar invite CTA", () => {
     );
   });
 
-  it("opens the share dialog for the active workspace", () => {
+  it("opens the share dialog for the active project", () => {
     renderSidebar();
 
     fireEvent.click(screen.getByRole("button", { name: "Invite team members" }));
 
-    expect(screen.getByTestId("share-workspace-dialog")).toHaveTextContent(
+    expect(screen.getByTestId("share-project-dialog")).toHaveTextContent(
       "Share dialog for Acme",
     );
   });
 
-  it("keeps the CTA visible when the active workspace changes", () => {
+  it("keeps the CTA visible when the active project changes", () => {
     const { rerender } = renderSidebar();
 
     rerender(
       <MCPSidebar
-        workspaces={{
-          "workspace-a": makeWorkspace("workspace-a", "Acme"),
-          "workspace-b": makeWorkspace("workspace-b", "Beta"),
+        projects={{
+          "project-a": makeProject("project-a", "Acme"),
+          "project-b": makeProject("project-b", "Beta"),
         }}
-        activeWorkspaceId="workspace-b"
-        onSwitchWorkspace={vi.fn()}
-        onCreateWorkspace={vi.fn(async () => "workspace-created")}
-        onDeleteWorkspace={vi.fn()}
-        onWorkspaceShared={vi.fn()}
+        activeProjectId="project-b"
+        onSwitchProject={vi.fn()}
+        onCreateProject={vi.fn(async () => "project-created")}
+        onDeleteProject={vi.fn()}
+        onProjectShared={vi.fn()}
       />,
     );
 

@@ -117,9 +117,9 @@ export function PartSwitch({
   const appState = useSharedAppState();
   const savingEnabled = isAuthenticated && !minimalMode && interactive;
 
-  // Get the Convex workspace ID (sharedWorkspaceId) from the active workspace
-  const activeWorkspace = appState.workspaces[appState.activeWorkspaceId];
-  const convexWorkspaceId = activeWorkspace?.sharedWorkspaceId ?? null;
+  // Get the Convex project ID (sharedProjectId) from the active project
+  const activeProject = appState.projects[appState.activeProjectId];
+  const convexProjectId = activeProject?.sharedProjectId ?? null;
 
   const toolInfoFromPart =
     isToolPart(part) || isDynamicTool(part)
@@ -137,7 +137,7 @@ export function PartSwitch({
   // Get existing view names for duplicate handling
   const { sortedViews } = useViewQueries({
     isAuthenticated: savingEnabled,
-    workspaceId: convexWorkspaceId,
+    projectId: convexProjectId,
   });
   const existingViewNames = useMemo(
     () => new Set(sortedViews.map((v) => v.name)),
@@ -147,7 +147,7 @@ export function PartSwitch({
   // Instant save hook
   const { saveViewInstant, isSaving } = useSaveView({
     isAuthenticated: savingEnabled,
-    workspaceId: convexWorkspaceId,
+    projectId: convexProjectId,
     serverName: currentServerName,
     existingViewNames,
   });
@@ -259,7 +259,7 @@ export function PartSwitch({
       interactive &&
       !minimalMode &&
       isAuthenticated &&
-      !!convexWorkspaceId &&
+      !!convexProjectId &&
       hasOutput;
     const allowSaveView = interactive && showSaveViewButton && !minimalMode;
 
@@ -267,8 +267,8 @@ export function PartSwitch({
     let saveDisabledReason: string | undefined;
     if (!isAuthenticated) {
       saveDisabledReason = "Sign in to save views";
-    } else if (!convexWorkspaceId) {
-      saveDisabledReason = "Select a shared workspace to save views";
+    } else if (!convexProjectId) {
+      saveDisabledReason = "Select a shared project to save views";
     } else if (!hasOutput) {
       saveDisabledReason = "No output to save";
     }

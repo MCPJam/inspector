@@ -35,7 +35,7 @@ import {
   generateFormFieldsFromSchema,
 } from "@/lib/tool-form";
 import type { MCPServerConfig } from "@mcpjam/sdk/browser";
-import type { WorkspaceHostContextDraft } from "@/lib/client-config";
+import type { ProjectHostContextDraft } from "@/lib/client-config";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { waitForUiCommit } from "@/lib/wait-for-ui-commit";
 import { usePostHog } from "posthog-js/react";
@@ -72,7 +72,7 @@ import type {
 } from "@/shared/inspector-command.js";
 
 interface AppBuilderTabProps {
-  activeWorkspaceId?: string | null;
+  activeProjectId?: string | null;
   serverConfig?: MCPServerConfig;
   serverName?: string;
   servers?: Record<string, ServerWithName>;
@@ -80,15 +80,15 @@ interface AppBuilderTabProps {
   isAuthLoading?: boolean;
   /**
    * True while the currently selected server exists in runtime state but has
-   * not yet appeared in the persisted workspace servers (Convex round-trip
+   * not yet appeared in the persisted project servers (Convex round-trip
    * pending). Used to show a loading skeleton instead of the "No Server
    * Selected" empty state during the sync window.
    */
   isServerSyncing?: boolean;
   onConnect?: (formData: ServerFormData) => void;
   onSaveHostContext?: (
-    workspaceId: string,
-    hostContext: WorkspaceHostContextDraft,
+    projectId: string,
+    hostContext: ProjectHostContextDraft,
   ) => Promise<void>;
   ensureServersReady?: (
     serverNames: string[],
@@ -100,7 +100,7 @@ interface AppBuilderTabProps {
 
 /**
  * Match the sync echo timeout used elsewhere (see
- * `use-workspace-state.ts`'s CLIENT_CONFIG_SYNC_ECHO_TIMEOUT_MS). If the
+ * `use-project-state.ts`'s CLIENT_CONFIG_SYNC_ECHO_TIMEOUT_MS). If the
  * Convex round-trip doesn't land within this window, fall through to an
  * explanatory empty state rather than spinning forever.
  */
@@ -119,7 +119,7 @@ type ExecutionInjectionWaiter = {
 };
 
 export function AppBuilderTab({
-  activeWorkspaceId = null,
+  activeProjectId = null,
   serverConfig,
   serverName,
   servers = {},
@@ -841,7 +841,7 @@ export function AppBuilderTab({
   }
 
   // Server is in runtime state but not yet reflected in the persisted
-  // workspace (Convex round-trip pending). Show a skeleton instead of the
+  // project (Convex round-trip pending). Show a skeleton instead of the
   // misleading "No Server Selected" empty state during the sync window.
   if (!serverConfig && isServerSyncing && !syncTimedOut) {
     return (
@@ -949,7 +949,7 @@ export function AppBuilderTab({
           className="min-h-0 min-w-0 overflow-hidden"
         >
           <PlaygroundMain
-            activeWorkspaceId={activeWorkspaceId}
+            activeProjectId={activeProjectId}
             serverName={serverName || ""}
             onSaveHostContext={onSaveHostContext}
             enableMultiModelChat={enableMultiModelChat}

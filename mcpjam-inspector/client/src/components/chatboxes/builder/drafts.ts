@@ -14,7 +14,7 @@ const TEMPLATE_TEMPERATURE = 0.7;
 const WELCOME_BODY_INTERNAL_QA = [
   "Welcome to Internal QA.",
   "",
-  "This chatbox uses invite-only access: only people invited by email can open it (workspace membership alone does not grant access). Use it to test tool behavior, regressions, and realistic flows with your MCP servers.",
+  "This chatbox uses invite-only access: only people invited by email can open it (project membership alone does not grant access). Use it to test tool behavior, regressions, and realistic flows with your MCP servers.",
   "",
   "What to expect:",
   "• Messages and tool usage may be reviewed by your team.",

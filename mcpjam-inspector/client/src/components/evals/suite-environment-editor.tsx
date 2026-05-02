@@ -7,19 +7,19 @@ import {
   buildSuiteEnvironmentOptions,
   filterServerBindings,
   normalizeServerNames,
-  type WorkspaceServerRecord,
+  type ProjectServerRecord,
 } from "./suite-environment-utils";
 
 type SuiteEnvironmentEditorProps = {
   suite: Pick<EvalSuite, "_id" | "environment">;
-  workspaceServers: WorkspaceServerRecord[];
+  projectServers: ProjectServerRecord[];
   connectedServerNames: ReadonlySet<string>;
   onSave: (environment: EvalSuite["environment"]) => Promise<void>;
 };
 
 export function SuiteEnvironmentEditor({
   suite,
-  workspaceServers,
+  projectServers,
   connectedServerNames,
   onSave,
 }: SuiteEnvironmentEditorProps) {
@@ -39,10 +39,10 @@ export function SuiteEnvironmentEditor({
     () =>
       buildSuiteEnvironmentOptions({
         configuredServers,
-        workspaceServers,
+        projectServers,
         connectedServerNames,
       }),
-    [configuredServers, workspaceServers, connectedServerNames],
+    [configuredServers, projectServers, connectedServerNames],
   );
 
   const isDirty =
@@ -88,14 +88,14 @@ export function SuiteEnvironmentEditor({
 
       {options.length === 0 ? (
         <div className="rounded-lg border border-dashed px-4 py-6 text-sm text-muted-foreground">
-          No workspace servers are available yet. Add servers in the workspace
+          No project servers are available yet. Add servers in the project
           first, then return here to attach them to this suite.
         </div>
       ) : (
         <div className="space-y-2 rounded-xl border bg-card/60 p-3">
           {options.map((option) => {
             const isSelected = selectedServers.includes(option.name);
-            const isUnavailable = !option.isInWorkspace;
+            const isUnavailable = !option.isInProject;
 
             return (
               <label
@@ -119,7 +119,7 @@ export function SuiteEnvironmentEditor({
                         <CheckCircle2 className="h-3 w-3" />
                         Connected
                       </span>
-                    ) : option.isInWorkspace ? (
+                    ) : option.isInProject ? (
                       <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
                         <Unplug className="h-3 w-3" />
                         Disconnected
@@ -127,7 +127,7 @@ export function SuiteEnvironmentEditor({
                     ) : (
                       <span className="inline-flex items-center gap-1 rounded-full bg-warning/10 px-2 py-0.5 text-[11px] font-medium text-warning">
                         <PlugZap className="h-3 w-3" />
-                        Not in workspace
+                        Not in project
                       </span>
                     )}
                     {option.isConfigured && !isSelected ? (
@@ -138,7 +138,7 @@ export function SuiteEnvironmentEditor({
                   </div>
                   <p className="mt-1 text-xs text-muted-foreground">
                     {isUnavailable
-                      ? "This server is still referenced by the suite but no longer exists in the workspace server list."
+                      ? "This server is still referenced by the suite but no longer exists in the project server list."
                       : option.isConnected
                         ? "Ready to use right now."
                         : "Saved on the suite, but not currently connected in the playground."}

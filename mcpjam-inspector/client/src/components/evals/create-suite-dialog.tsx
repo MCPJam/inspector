@@ -8,13 +8,13 @@ import { Checkbox } from "@mcpjam/design-system/checkbox";
 import {
   buildSuiteEnvironmentOptions,
   normalizeServerNames,
-  type WorkspaceServerRecord,
+  type ProjectServerRecord,
 } from "./suite-environment-utils";
 
 type CreateSuiteDialogProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  workspaceServers: WorkspaceServerRecord[];
+  projectServers: ProjectServerRecord[];
   connectedServerNames: ReadonlySet<string>;
   onSubmit: (payload: {
     name: string;
@@ -26,7 +26,7 @@ type CreateSuiteDialogProps = {
 export function CreateSuiteDialog({
   open,
   onOpenChange,
-  workspaceServers,
+  projectServers,
   connectedServerNames,
   onSubmit,
 }: CreateSuiteDialogProps) {
@@ -48,10 +48,10 @@ export function CreateSuiteDialog({
     () =>
       buildSuiteEnvironmentOptions({
         configuredServers: [],
-        workspaceServers,
+        projectServers,
         connectedServerNames,
       }),
-    [workspaceServers, connectedServerNames],
+    [projectServers, connectedServerNames],
   );
 
   const canSubmit = name.trim().length > 0 && !isSaving;
@@ -130,7 +130,7 @@ export function CreateSuiteDialog({
 
             {options.length === 0 ? (
               <div className="rounded-lg border border-dashed px-4 py-5 text-sm text-muted-foreground">
-                No workspace servers are available yet. You can still create the
+                No project servers are available yet. You can still create the
                 suite now and configure servers later.
               </div>
             ) : (

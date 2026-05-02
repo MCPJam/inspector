@@ -17,7 +17,7 @@ import type {
   ServerToolInfo,
   ShowServersPayload,
   ShowServersSummary,
-  WorkspaceInfo,
+  ProjectInfo,
 } from "../shared/show-servers.js";
 
 export const SHOW_SERVERS_PROBE_TIMEOUT_MS = 7_000;
@@ -30,7 +30,7 @@ const MISSING_URL_SKIP_REASON = "HTTP server is missing a URL.";
 const HOSTED_HTTP_SKIP_REASON =
   "Hosted MCPJam MCP only probes HTTPS HTTP servers.";
 
-export type RemoteWorkspace = {
+export type RemoteProject = {
   _id: string;
   organizationId: string;
   name: string;
@@ -77,16 +77,16 @@ export type AuthorizeBatchResult =
 export type AuthorizeBatchInput = {
   bearerToken: string;
   convexHttpUrl: string;
-  workspaceId: string;
+  projectId: string;
   serverIds: string[];
   fetchFn?: typeof fetch;
 };
 
-export type WorkspaceResolution =
+export type ProjectResolution =
   | {
       ok: true;
-      workspace: RemoteWorkspace;
-      sortedWorkspaces: RemoteWorkspace[];
+      project: RemoteProject;
+      sortedProjects: RemoteProject[];
     }
   | {
       ok: false;
@@ -96,8 +96,8 @@ export type WorkspaceResolution =
 export type BuildShowServersPayloadInput = {
   bearerToken: string;
   convexHttpUrl?: string;
-  workspace: RemoteWorkspace;
-  workspaces: RemoteWorkspace[];
+  project: RemoteProject;
+  projects: RemoteProject[];
   servers: RemoteServer[];
   generatedAt: string;
   authorizeBatch?: (
@@ -129,15 +129,15 @@ export type InspectMcpServerResult = {
   };
 };
 
-export function resolveWorkspace(
-  workspaces: RemoteWorkspace[],
+export function resolveProject(
+  projects: RemoteProject[],
   selector?: string
-): WorkspaceResolution {
-  const sortedWorkspaces = sortWorkspaces(workspaces);
-  if (sortedWorkspaces.length === 0) {
+): ProjectResolution {
+  const sortedProjects = sortProjects(projects);
+  if (sortedProjects.length === 0) {
     return {
       ok: false,
-      message: "No accessible MCPJam workspaces were found.",
+      message: "No accessible MCPJam projects were found.",
     };
   }
 
@@ -145,39 +145,39 @@ export function resolveWorkspace(
   if (!trimmedSelector) {
     return {
       ok: true,
-      workspace: sortedWorkspaces[0]!,
-      sortedWorkspaces,
+      project: sortedProjects[0]!,
+      sortedProjects,
     };
   }
 
-  const idMatch = sortedWorkspaces.find(
-    (workspace) => workspace._id === trimmedSelector
+  const idMatch = sortedProjects.find(
+    (project) => project._id === trimmedSelector
   );
   if (idMatch) {
     return {
       ok: true,
-      workspace: idMatch,
-      sortedWorkspaces,
+      project: idMatch,
+      sortedProjects,
     };
   }
 
   const normalizedSelector = trimmedSelector.toLocaleLowerCase();
-  const nameMatches = sortedWorkspaces.filter(
-    (workspace) => workspace.name.toLocaleLowerCase() === normalizedSelector
+  const nameMatches = sortedProjects.filter(
+    (project) => project.name.toLocaleLowerCase() === normalizedSelector
   );
 
   if (nameMatches.length === 1) {
     return {
       ok: true,
-      workspace: nameMatches[0]!,
-      sortedWorkspaces,
+      project: nameMatches[0]!,
+      sortedProjects,
     };
   }
 
   if (nameMatches.length > 1) {
     return {
       ok: false,
-      message: `Workspace name "${trimmedSelector}" is ambiguous. Use one of these workspace IDs: ${formatWorkspaceList(
+      message: `Project name "${trimmedSelector}" is ambiguous. Use one of these project IDs: ${formatProjectList(
         nameMatches
       )}.`,
     };
@@ -185,8 +185,8 @@ export function resolveWorkspace(
 
   return {
     ok: false,
-    message: `Workspace "${trimmedSelector}" was not found. Available workspaces: ${formatWorkspaceList(
-      sortedWorkspaces
+    message: `Project "${trimmedSelector}" was not found. Available projects: ${formatProjectList(
+      sortedProjects
     )}.`,
   };
 }
@@ -194,8 +194,8 @@ export function resolveWorkspace(
 export async function buildShowServersPayload({
   bearerToken,
   convexHttpUrl,
-  workspace,
-  workspaces,
+  project,
+  projects,
   servers,
   generatedAt,
   authorizeBatch = authorizeServersForShowServers,
@@ -244,7 +244,7 @@ export async function buildShowServersPayload({
       const authorization = await authorizeBatch({
         bearerToken,
         convexHttpUrl,
-        workspaceId: workspace._id,
+        projectId: project._id,
         serverIds: probeTargets.map((target) => target.server._id),
       });
 
@@ -282,15 +282,15 @@ export async function buildShowServersPayload({
   );
 
   return {
-    workspace: {
-      id: workspace._id,
-      name: workspace.name,
-      organizationId: workspace.organizationId,
+    project: {
+      id: project._id,
+      name: project.name,
+      organizationId: project.organizationId,
     },
     servers: completedEntries,
-    otherWorkspaces: sortWorkspaces(workspaces)
-      .filter((candidate) => candidate._id !== workspace._id)
-      .map(toWorkspaceInfo),
+    otherProjects: sortProjects(projects)
+      .filter((candidate) => candidate._id !== project._id)
+      .map(toProjectInfo),
     summary: summarizeServers(completedEntries),
     generatedAt,
   };
@@ -299,7 +299,7 @@ export async function buildShowServersPayload({
 export async function authorizeServersForShowServers({
   bearerToken,
   convexHttpUrl,
-  workspaceId,
+  projectId,
   serverIds,
   fetchFn = fetch,
 }: AuthorizeBatchInput): Promise<AuthorizeBatchResult> {
@@ -315,7 +315,7 @@ export async function authorizeServersForShowServers({
           Authorization: `Bearer ${bearerToken}`,
         },
         body: JSON.stringify({
-          workspaceId,
+          projectId,
           serverIds,
         }),
       }
@@ -374,8 +374,8 @@ export async function authorizeServersForShowServers({
   return { ok: true, body };
 }
 
-function sortWorkspaces(workspaces: RemoteWorkspace[]): RemoteWorkspace[] {
-  return [...workspaces].sort((left, right) => {
+function sortProjects(projects: RemoteProject[]): RemoteProject[] {
+  return [...projects].sort((left, right) => {
     const updatedDelta = (right.updatedAt ?? 0) - (left.updatedAt ?? 0);
     if (updatedDelta !== 0) {
       return updatedDelta;
@@ -390,16 +390,16 @@ function sortWorkspaces(workspaces: RemoteWorkspace[]): RemoteWorkspace[] {
   });
 }
 
-function formatWorkspaceList(workspaces: RemoteWorkspace[]): string {
-  return workspaces
-    .map((workspace) => `${workspace.name} (id: ${workspace._id})`)
+function formatProjectList(projects: RemoteProject[]): string {
+  return projects
+    .map((project) => `${project.name} (id: ${project._id})`)
     .join(", ");
 }
 
-function toWorkspaceInfo(workspace: RemoteWorkspace): WorkspaceInfo {
+function toProjectInfo(project: RemoteProject): ProjectInfo {
   return {
-    id: workspace._id,
-    name: workspace.name,
+    id: project._id,
+    name: project.name,
   };
 }
 

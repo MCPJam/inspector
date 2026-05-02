@@ -37,7 +37,7 @@ import {
   settingsFromChatboxAccessPreset,
   type ChatboxAccessPreset,
 } from "@/lib/chatbox-access-presets";
-import type { RemoteServer } from "@/hooks/useWorkspaces";
+import type { RemoteServer } from "@/hooks/useProjects";
 import { listHostStyles } from "@/lib/host-styles";
 import { isMCPJamProvidedModel, SUPPORTED_MODELS } from "@/shared/types";
 import { cn } from "@/lib/utils";
@@ -154,17 +154,17 @@ function updateSelectedServerIds(
     : currentServerIds;
 }
 
-/** Shared checklist of workspace HTTP(S) servers; used in Setup and on the canvas + control. */
-export function WorkspaceServerPickerList({
-  workspaceServers,
+/** Shared checklist of project HTTP(S) servers; used in Setup and on the canvas + control. */
+export function ProjectServerPickerList({
+  projectServers,
   selectedServerIds,
   onToggleSelection,
 }: {
-  workspaceServers: RemoteServer[];
+  projectServers: RemoteServer[];
   selectedServerIds: string[];
   onToggleSelection: (serverId: string, checked: boolean) => void;
 }) {
-  const availableServers = workspaceServers.filter(
+  const availableServers = projectServers.filter(
     (server) => server.transportType === "http",
   );
   const selectedServerSet = new Set(selectedServerIds);
@@ -172,7 +172,7 @@ export function WorkspaceServerPickerList({
   if (availableServers.length === 0) {
     return (
       <p className="px-2 py-1.5 text-sm text-muted-foreground">
-        No HTTP servers in this workspace. Use Add to create one.
+        No HTTP servers in this project. Use Add to create one.
       </p>
     );
   }
@@ -208,17 +208,17 @@ export function WorkspaceServerPickerList({
 }
 
 export function ServerSelectionEditor({
-  workspaceServers,
+  projectServers,
   selectedServerIds,
   onToggleSelection,
   onOpenAdd,
 }: {
-  workspaceServers: RemoteServer[];
+  projectServers: RemoteServer[];
   selectedServerIds: string[];
   onToggleSelection: (serverId: string, checked: boolean) => void;
   onOpenAdd: () => void;
 }) {
-  const availableServers = workspaceServers.filter(
+  const availableServers = projectServers.filter(
     (server) => server.transportType === "http",
   );
   const selectedServerSet = new Set(selectedServerIds);
@@ -228,7 +228,7 @@ export function ServerSelectionEditor({
 
   const selectionSummary =
     selectedServers.length === 0
-      ? "Choose workspace servers…"
+      ? "Choose project servers…"
       : selectedServers.length === 1
         ? "1 server selected"
         : `${selectedServers.length} servers selected`;
@@ -261,8 +261,8 @@ export function ServerSelectionEditor({
             className="w-[var(--radix-popover-trigger-width)] p-1"
             align="start"
           >
-            <WorkspaceServerPickerList
-              workspaceServers={workspaceServers}
+            <ProjectServerPickerList
+              projectServers={projectServers}
               selectedServerIds={selectedServerIds}
               onToggleSelection={onToggleSelection}
             />
@@ -274,7 +274,7 @@ export function ServerSelectionEditor({
           size="sm"
           className="shrink-0 gap-1.5"
           onClick={onOpenAdd}
-          aria-label="Add MCP server to workspace"
+          aria-label="Add MCP server to project"
         >
           <Plus className="size-4" />
           Add server
@@ -298,7 +298,7 @@ export function ServerSelectionEditor({
                 <div className="min-w-0">
                   <p className="font-medium leading-tight">{server.name}</p>
                   <p className="mt-0.5 font-mono text-xs leading-snug text-muted-foreground">
-                    {server.url ?? "Workspace server"}
+                    {server.url ?? "Project server"}
                   </p>
                 </div>
                 <Button
@@ -320,7 +320,7 @@ export function ServerSelectionEditor({
 
 export function computeSectionStatuses(
   draft: ChatboxDraftConfig,
-  workspaceServers: RemoteServer[],
+  projectServers: RemoteServer[],
 ): Record<SetupSectionId, SectionStatusKind> {
   const nameOk = draft.name.trim().length > 0;
   const modelOk = Boolean(draft.modelId);
@@ -330,7 +330,7 @@ export function computeSectionStatuses(
   const optionalServerSet = new Set(draft.optionalServerIds);
   const validServerCount = draft.selectedServerIds.filter((id) => {
     if (optionalServerSet.has(id)) return false;
-    const s = workspaceServers.find((w) => w._id === id);
+    const s = projectServers.find((w) => w._id === id);
     return s && !isInsecureUrl(s.url);
   }).length;
   const servers: SectionStatusKind =
@@ -363,7 +363,7 @@ export function computeSectionStatuses(
 export function SetupChecklistPanel({
   chatboxDraft,
   savedChatbox,
-  workspaceServers,
+  projectServers,
   focusedSection,
   /** True when creating a chatbox that has never been saved (no chatbox id yet). */
   isUnsavedNewDraft,
@@ -373,12 +373,12 @@ export function SetupChecklistPanel({
   onCloseMobile,
   /** When the chatbox is saved, invite by email from the Access section (invite-only draft). */
   inviteChatboxMember,
-  workspaceName,
+  projectName,
 }: {
   chatboxDraft: ChatboxDraftConfig;
   savedChatbox: ChatboxSettings | null;
-  workspaceServers: RemoteServer[];
-  workspaceName?: string | null;
+  projectServers: RemoteServer[];
+  projectName?: string | null;
   focusedSection: SetupSectionId | null;
   isUnsavedNewDraft: boolean;
   onDraftChange: (
@@ -390,8 +390,8 @@ export function SetupChecklistPanel({
   inviteChatboxMember?: (email: string) => Promise<void>;
 }) {
   const statuses = useMemo(
-    () => computeSectionStatuses(chatboxDraft, workspaceServers),
-    [chatboxDraft, workspaceServers],
+    () => computeSectionStatuses(chatboxDraft, projectServers),
+    [chatboxDraft, projectServers],
   );
 
   const sectionRefs = useRef<
@@ -592,7 +592,7 @@ export function SetupChecklistPanel({
               <CollapsibleContent className="pt-3 pb-1">
                 <div className="rounded-xl border border-border/50 bg-card/40 p-4">
                   <ServerSelectionEditor
-                    workspaceServers={workspaceServers}
+                    projectServers={projectServers}
                     selectedServerIds={chatboxDraft.selectedServerIds}
                     onToggleSelection={onToggleServer}
                     onOpenAdd={onOpenAddServer}
@@ -622,7 +622,7 @@ export function SetupChecklistPanel({
                   {savedChatbox ? (
                     <ChatboxShareSection
                       chatbox={savedChatbox}
-                      workspaceName={workspaceName}
+                      projectName={projectName}
                     />
                   ) : (
                     <>
@@ -643,20 +643,20 @@ export function SetupChecklistPanel({
                           className="grid gap-2"
                         >
                           <label
-                            htmlFor="access-preset-workspace"
+                            htmlFor="access-preset-project"
                             className="flex cursor-pointer items-start gap-3 rounded-xl border border-border/70 bg-card/50 p-3 has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring/50"
                           >
                             <RadioGroupItem
-                              value="workspace"
-                              id="access-preset-workspace"
+                              value="project"
+                              id="access-preset-project"
                               className="mt-0.5"
                             />
                             <span className="min-w-0">
                               <span className="block text-sm font-medium">
-                                {workspaceName?.trim() || "Workspace"}
+                                {projectName?.trim() || "Project"}
                               </span>
                               <span className="mt-0.5 block text-xs text-muted-foreground">
-                                Signed-in members of this workspace can open the
+                                Signed-in members of this project can open the
                                 chatbox with the link. Guests cannot.
                               </span>
                             </span>
@@ -704,7 +704,7 @@ export function SetupChecklistPanel({
                         {chatboxDraft.mode === "invited_only" ? (
                           <div className="space-y-3 rounded-xl border border-border/70 bg-card/50 p-4">
                             <p className="text-xs text-muted-foreground">
-                              Invite-only is email-based. Workspace membership
+                              Invite-only is email-based. Project membership
                               does not auto-include everyone—you invite each
                               address (or use the section below once the chatbox
                               is saved).

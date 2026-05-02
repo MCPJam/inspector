@@ -15,7 +15,7 @@ export function useEvalQueries({
   user,
   selectedSuiteId,
   deletingSuiteId,
-  workspaceId,
+  projectId,
   organizationId,
   isDirectGuest = false,
 }: {
@@ -23,21 +23,21 @@ export function useEvalQueries({
   user: any;
   selectedSuiteId: string | null;
   deletingSuiteId: string | null;
-  workspaceId: string | null;
+  projectId: string | null;
   organizationId: string | null;
   isDirectGuest?: boolean;
 }) {
   const hasActorAccess = isDirectGuest || (isAuthenticated && !!user);
 
   const suiteOverviewArgs = useMemo(() => {
-    if (workspaceId) {
-      return { workspaceId } as const;
+    if (projectId) {
+      return { projectId } as const;
     }
     if (organizationId && !isDirectGuest) {
       return { organizationId } as const;
     }
     return {} as const;
-  }, [isDirectGuest, organizationId, workspaceId]);
+  }, [isDirectGuest, organizationId, projectId]);
 
   const enableOverviewQuery = hasActorAccess;
   const suiteOverview = useQuery(

@@ -1,6 +1,15 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
-import { ChevronDown, ChevronRight } from "lucide-react";
+import {
+  Check,
+  ChevronDown,
+  ChevronRight,
+  Copy,
+  Eye,
+  EyeOff,
+  Loader2,
+} from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -13,6 +22,7 @@ import type {
   ServerFormOAuthProtocolMode,
   ServerFormOAuthRegistrationMode,
 } from "@/shared/types.js";
+import { fetchHostedOAuthClientSecret } from "@/lib/apis/hosted-oauth-client-secret-api";
 
 interface AuthenticationSectionProps {
   serverUrl?: string;
@@ -35,8 +45,15 @@ interface AuthenticationSectionProps {
   onClientIdChange: (value: string) => void;
   clientSecret: string;
   onClientSecretChange: (value: string) => void;
+  hasStoredClientSecret?: boolean;
+  clearClientSecret?: boolean;
+  onClearClientSecret?: () => void;
+  onUndoClearClientSecret?: () => void;
   clientIdError: string | null;
   clientSecretError: string | null;
+  /** Hosted-mode reveal context. Both must be provided to enable the Reveal button. */
+  projectId?: string | null;
+  hostedServerId?: string | null;
 }
 
 const PROTOCOL_OPTIONS: Array<{
@@ -77,10 +94,82 @@ export function AuthenticationSection({
   onClientIdChange,
   clientSecret,
   onClientSecretChange,
+  hasStoredClientSecret = false,
+  clearClientSecret = false,
+  onClearClientSecret,
+  onUndoClearClientSecret,
   clientIdError,
   clientSecretError,
+  projectId = null,
+  hostedServerId = null,
 }: AuthenticationSectionProps) {
   const [showAdvancedOAuth, setShowAdvancedOAuth] = useState(false);
+  const [revealedClientSecret, setRevealedClientSecret] = useState<
+    string | null
+  >(null);
+  const [isRevealedSecretVisible, setIsRevealedSecretVisible] = useState(false);
+  const [isRevealingClientSecret, setIsRevealingClientSecret] = useState(false);
+  const [revealError, setRevealError] = useState<string | null>(null);
+  const [didCopyRevealedSecret, setDidCopyRevealedSecret] = useState(false);
+
+  const canRevealClientSecret =
+    hasStoredClientSecret &&
+    !clearClientSecret &&
+    !!projectId &&
+    !!hostedServerId;
+
+  // Drop any revealed value if the saved-secret context disappears (e.g.
+  // user pasted a replacement, toggled Clear, or switched servers).
+  useEffect(() => {
+    if (!canRevealClientSecret) {
+      setRevealedClientSecret(null);
+      setIsRevealedSecretVisible(false);
+      setRevealError(null);
+      setDidCopyRevealedSecret(false);
+    }
+  }, [canRevealClientSecret, projectId, hostedServerId]);
+
+  const handleRevealClientSecret = async () => {
+    if (!projectId || !hostedServerId || isRevealingClientSecret) return;
+    setIsRevealingClientSecret(true);
+    setRevealError(null);
+    try {
+      const result = await fetchHostedOAuthClientSecret({
+        projectId,
+        serverId: hostedServerId,
+      });
+      setRevealedClientSecret(result.clientSecret);
+      setIsRevealedSecretVisible(true);
+    } catch (error) {
+      setRevealedClientSecret(null);
+      setIsRevealedSecretVisible(false);
+      setRevealError(
+        error instanceof Error
+          ? error.message
+          : "Failed to reveal client secret",
+      );
+    } finally {
+      setIsRevealingClientSecret(false);
+    }
+  };
+
+  const handleHideRevealedSecret = () => {
+    setRevealedClientSecret(null);
+    setIsRevealedSecretVisible(false);
+    setRevealError(null);
+    setDidCopyRevealedSecret(false);
+  };
+
+  const handleCopyRevealedSecret = async () => {
+    if (!revealedClientSecret) return;
+    try {
+      await navigator.clipboard.writeText(revealedClientSecret);
+      setDidCopyRevealedSecret(true);
+      setTimeout(() => setDidCopyRevealedSecret(false), 2000);
+    } catch {
+      // Clipboard failures are non-fatal; surface nothing rather than overwrite reveal state.
+    }
+  };
   const showClientCredentials =
     oauthRegistrationMode === "preregistered" || useCustomClientId;
   const effectiveOauthProtocolMode =
@@ -93,6 +182,9 @@ export function AuthenticationSection({
           registrationMode: oauthRegistrationMode,
           clientId: showClientCredentials ? clientId : undefined,
           clientSecret: showClientCredentials ? clientSecret : undefined,
+          hasClientSecret: showClientCredentials
+            ? hasStoredClientSecret && !clearClientSecret
+            : undefined,
           authMode: "interactive",
         })
       : null;
@@ -290,14 +382,71 @@ export function AuthenticationSection({
                     </div>
 
                     <div className="space-y-2">
-                      <label className="block text-sm font-medium text-foreground">
-                        Client Secret (Optional)
-                      </label>
+                      <div className="flex items-center justify-between gap-3">
+                        <label className="block text-sm font-medium text-foreground">
+                          Client Secret (Optional)
+                        </label>
+                        <div className="flex items-center gap-1">
+                          {canRevealClientSecret && !revealedClientSecret && (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="h-8 px-2 text-xs"
+                              onClick={() => void handleRevealClientSecret()}
+                              disabled={isRevealingClientSecret}
+                            >
+                              {isRevealingClientSecret ? (
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                              ) : (
+                                "Reveal"
+                              )}
+                            </Button>
+                          )}
+                          {revealedClientSecret && (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="h-8 px-2 text-xs"
+                              onClick={handleHideRevealedSecret}
+                            >
+                              Hide
+                            </Button>
+                          )}
+                          {hasStoredClientSecret && !clearClientSecret && (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="h-8 px-2 text-xs"
+                              onClick={onClearClientSecret}
+                            >
+                              Clear
+                            </Button>
+                          )}
+                          {hasStoredClientSecret && clearClientSecret && (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="h-8 px-2 text-xs"
+                              onClick={onUndoClearClientSecret}
+                            >
+                              Undo
+                            </Button>
+                          )}
+                        </div>
+                      </div>
                       <Input
                         type="password"
                         value={clientSecret}
                         onChange={(e) => onClientSecretChange(e.target.value)}
-                        placeholder="Your OAuth Client Secret"
+                        placeholder={
+                          hasStoredClientSecret
+                            ? "Enter a new value to replace."
+                            : "Your OAuth Client Secret"
+                        }
                         className={`h-10 ${clientSecretError ? "border-red-500" : ""}`}
                       />
                       {clientSecretError && (
@@ -305,9 +454,64 @@ export function AuthenticationSection({
                           {clientSecretError}
                         </p>
                       )}
-                      <p className="text-xs text-muted-foreground">
-                        Optional for public clients using PKCE
-                      </p>
+                      {revealError && (
+                        <p className="text-xs text-red-500">{revealError}</p>
+                      )}
+                      {revealedClientSecret && (
+                        <div className="rounded-md border border-border bg-muted/40 p-2 text-xs">
+                          <div className="flex items-start gap-2">
+                            <div
+                              className="min-w-0 flex-1 break-all font-mono"
+                              data-testid="revealed-client-secret"
+                            >
+                              {isRevealedSecretVisible
+                                ? revealedClientSecret
+                                : "****************"}
+                            </div>
+                            <button
+                              type="button"
+                              aria-label={
+                                isRevealedSecretVisible
+                                  ? "Hide client secret"
+                                  : "Show client secret"
+                              }
+                              title={
+                                isRevealedSecretVisible
+                                  ? "Hide client secret"
+                                  : "Show client secret"
+                              }
+                              onClick={() =>
+                                setIsRevealedSecretVisible((prev) => !prev)
+                              }
+                              className="mt-0.5 flex-shrink-0 p-1 text-muted-foreground/60 transition-colors hover:text-foreground cursor-pointer"
+                            >
+                              {isRevealedSecretVisible ? (
+                                <EyeOff className="h-3 w-3" />
+                              ) : (
+                                <Eye className="h-3 w-3" />
+                              )}
+                            </button>
+                            <button
+                              type="button"
+                              aria-label="Copy client secret"
+                              title="Copy client secret"
+                              onClick={() => void handleCopyRevealedSecret()}
+                              className="mt-0.5 flex-shrink-0 p-1 text-muted-foreground/50 transition-colors hover:text-foreground cursor-pointer"
+                            >
+                              {didCopyRevealedSecret ? (
+                                <Check className="h-3 w-3 text-green-500" />
+                              ) : (
+                                <Copy className="h-3 w-3" />
+                              )}
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                      {hasStoredClientSecret && clearClientSecret && (
+                        <p className="text-xs text-muted-foreground">
+                          Saved client secret will be removed when you save.
+                        </p>
+                      )}
                     </div>
                   </div>
                 )}

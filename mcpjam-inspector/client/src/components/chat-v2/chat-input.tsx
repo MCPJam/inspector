@@ -137,7 +137,7 @@ interface ChatInputProps {
   pulseSubmit?: boolean;
   /** Move the textarea caret to the end when this trigger changes */
   moveCaretToEndTrigger?: number;
-  /** All workspace servers for the "+" dropdown server toggles. */
+  /** All project servers for the "+" dropdown server toggles. */
   allServerConfigs?: Record<string, ServerWithName>;
   /** Toggle a server on/off for the current chat session. */
   onServerToggle?: (serverName: string) => void;

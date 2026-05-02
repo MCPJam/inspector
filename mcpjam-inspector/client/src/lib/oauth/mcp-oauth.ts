@@ -485,6 +485,7 @@ function resolveOAuthRegistrationMode(
     | "registrationStrategy"
     | "clientId"
     | "clientSecret"
+    | "hasClientSecret"
     | "useRegistryOAuthProxy"
   >
 ): OAuthRegistrationMode {
@@ -499,7 +500,8 @@ function resolveOAuthRegistrationMode(
   if (
     options.useRegistryOAuthProxy ||
     options.clientId ||
-    options.clientSecret
+    options.clientSecret ||
+    options.hasClientSecret
   ) {
     return "preregistered";
   }
@@ -568,6 +570,7 @@ async function resolveOAuthExecutionPlan(
     | "registrationStrategy"
     | "clientId"
     | "clientSecret"
+    | "hasClientSecret"
     | "useRegistryOAuthProxy"
     | "customHeaders"
   >
@@ -580,11 +583,15 @@ async function resolveOAuthExecutionPlan(
     registrationStrategy: options.registrationStrategy,
     clientId: options.clientId,
     clientSecret: options.clientSecret,
+    hasClientSecret: options.hasClientSecret,
     useRegistryOAuthProxy: options.useRegistryOAuthProxy,
     authMode: "interactive",
   });
 
-  if (basePlan.status !== "discovery_required") {
+  if (
+    basePlan.status !== "discovery_required" &&
+    basePlan.registrationStrategy !== "preregistered"
+  ) {
     return basePlan;
   }
 
@@ -603,6 +610,7 @@ async function resolveOAuthExecutionPlan(
     registrationStrategy: options.registrationStrategy,
     clientId: options.clientId,
     clientSecret: options.clientSecret,
+    hasClientSecret: options.hasClientSecret,
     useRegistryOAuthProxy: options.useRegistryOAuthProxy,
     authMode: "interactive",
     discovery: toAuthorizationDiscoverySnapshot(discoveryState),
@@ -1444,6 +1452,7 @@ export interface MCPOAuthOptions {
   resourceUrl?: string;
   clientId?: string;
   clientSecret?: string;
+  hasClientSecret?: boolean;
   /** Registry record identifier for bookkeeping and optional Convex token exchange */
   registryServerId?: string;
   /** True only for registry servers with backend-managed preregistered OAuth credentials */
@@ -1588,7 +1597,7 @@ async function createHostedOAuthSessionIfNeeded(input: {
 
   const pendingMarker = readHostedOAuthPendingMarker();
   if (
-    !pendingMarker?.workspaceId ||
+    !pendingMarker?.projectId ||
     !pendingMarker.serverId ||
     !matchesHostedOAuthServerIdentity(
       {
@@ -1626,7 +1635,7 @@ async function createHostedOAuthSessionIfNeeded(input: {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      workspaceId: pendingMarker.workspaceId,
+      projectId: pendingMarker.projectId,
       serverId: pendingMarker.serverId,
       codeVerifier,
       redirectUri: input.redirectUrl,
@@ -1681,7 +1690,7 @@ async function readHostedOAuthSessionProgress(input: {
   authorizationHeader?: string | null;
 }): Promise<HostedOAuthSessionProgressResponse | null> {
   if (
-    !input.context.workspaceId ||
+    !input.context.projectId ||
     !input.context.serverId ||
     !input.context.sessionId
   ) {
@@ -1699,7 +1708,7 @@ async function readHostedOAuthSessionProgress(input: {
           : {}),
       },
       body: JSON.stringify({
-        workspaceId: input.context.workspaceId,
+        projectId: input.context.projectId,
         serverId: input.context.serverId,
         sessionId: input.context.sessionId,
         ...(input.context.accessScope
@@ -1770,13 +1779,21 @@ export class MCPOAuthProvider implements OAuthClientProvider {
   clientInformation() {
     const stored = localStorage.getItem(`mcp-client-${this.serverName}`);
     const storedJson = stored ? JSON.parse(stored) : undefined;
+    const storedClientInformation =
+      HOSTED_MODE && storedJson
+        ? Object.fromEntries(
+            Object.entries(storedJson).filter(
+              ([key]) => key !== "client_secret"
+            )
+          )
+        : storedJson;
 
     // If custom client ID is provided, use it
     if (this.customClientId) {
-      if (storedJson) {
+      if (storedClientInformation) {
         // If there's stored information, merge with custom client credentials
         const result = {
-          ...storedJson,
+          ...storedClientInformation,
           client_id: this.customClientId,
         };
         // Add client secret if provided
@@ -1795,13 +1812,21 @@ export class MCPOAuthProvider implements OAuthClientProvider {
         return result;
       }
     }
-    return storedJson;
+    return storedClientInformation;
   }
 
   async saveClientInformation(clientInformation: any) {
+    const clientInformationToStore =
+      HOSTED_MODE && clientInformation
+        ? Object.fromEntries(
+            Object.entries(clientInformation).filter(
+              ([key]) => key !== "client_secret"
+            )
+          )
+        : clientInformation;
     localStorage.setItem(
       `mcp-client-${this.serverName}`,
-      JSON.stringify(clientInformation)
+      JSON.stringify(clientInformationToStore)
     );
   }
 
@@ -1927,6 +1952,7 @@ function readStoredClientInformation(
       client_id:
         typeof parsed.client_id === "string" ? parsed.client_id : undefined,
       client_secret:
+        !HOSTED_MODE &&
         typeof parsed.client_secret === "string"
           ? parsed.client_secret
           : undefined,
@@ -2038,19 +2064,32 @@ export async function initiateOAuth(
     );
 
     // Store custom client credentials if provided, so they can be retrieved during callback
-    if (options.clientId || options.clientSecret) {
+    if (options.clientId || (!HOSTED_MODE && options.clientSecret)) {
       const existingClientInfo = localStorage.getItem(
         `mcp-client-${options.serverName}`
       );
-      const existingJson = existingClientInfo
-        ? JSON.parse(existingClientInfo)
-        : {};
+      let existingJsonRaw: any = {};
+      if (existingClientInfo) {
+        try {
+          existingJsonRaw = JSON.parse(existingClientInfo);
+        } catch {
+          existingJsonRaw = {};
+        }
+      }
+      const existingJson =
+        HOSTED_MODE && existingJsonRaw
+          ? Object.fromEntries(
+              Object.entries(existingJsonRaw).filter(
+                ([key]) => key !== "client_secret"
+              )
+            )
+          : existingJsonRaw;
 
       const updatedClientInfo: any = { ...existingJson };
       if (options.clientId) {
         updatedClientInfo.client_id = options.clientId;
       }
-      if (options.clientSecret) {
+      if (!HOSTED_MODE && options.clientSecret) {
         updatedClientInfo.client_secret = options.clientSecret;
       }
 
@@ -2073,6 +2112,7 @@ export async function initiateOAuth(
       serverUrl: options.serverUrl,
       serverName: options.serverName,
       redirectUrl: provider.redirectUrl,
+      hasClientSecret: Boolean(options.clientSecret || options.hasClientSecret),
       sanitizeTrace: SANITIZE_OAUTH_TRACES,
       requestExecutor,
       loadPreregisteredCredentials: async () => {
@@ -2266,7 +2306,7 @@ export async function completeHostedOAuthCallback(
     if (!serverName) {
       throw new Error("No pending OAuth flow found");
     }
-    if (!context.workspaceId || !context.serverId) {
+    if (!context.projectId || !context.serverId) {
       throw new Error("OAuth callback is missing server context");
     }
 
@@ -2392,7 +2432,7 @@ export async function completeHostedOAuthCallback(
             : {}),
         },
         body: JSON.stringify({
-          workspaceId: context.workspaceId,
+          projectId: context.projectId,
           serverId: context.serverId,
           code: authorizationCode,
           oauthResourceUrl,

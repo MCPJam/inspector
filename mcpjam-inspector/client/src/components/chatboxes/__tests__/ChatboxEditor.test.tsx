@@ -51,7 +51,7 @@ vi.mock("@/hooks/useChatboxes", () => ({
   }),
 }));
 
-vi.mock("@/hooks/useWorkspaces", () => ({
+vi.mock("@/hooks/useProjects", () => ({
   useServerMutations: () => ({
     createServer: mockCreateServer,
   }),
@@ -130,7 +130,7 @@ vi.mock("@/components/ChatTabV2", async () => {
 
 const chatbox = {
   chatboxId: "sbx_1",
-  workspaceId: "ws_1",
+  projectId: "ws_1",
   name: "Demo Chatbox",
   description: "Initial description",
   hostStyle: "claude" as const,
@@ -160,7 +160,7 @@ const chatbox = {
   members: [],
 };
 
-const workspaceServers = [
+const projectServers = [
   {
     _id: "srv_1",
     name: "Alpha",
@@ -196,8 +196,8 @@ describe("ChatboxEditor preview", () => {
   it("keeps preview disabled until the chatbox has a saved link", () => {
     render(
       <ChatboxEditor
-        workspaceId="ws_1"
-        workspaceServers={workspaceServers}
+        projectId="ws_1"
+        projectServers={projectServers}
         onBack={() => {}}
       />
     );
@@ -209,8 +209,8 @@ describe("ChatboxEditor preview", () => {
     render(
       <ChatboxEditor
         chatbox={chatbox}
-        workspaceId="ws_1"
-        workspaceServers={workspaceServers}
+        projectId="ws_1"
+        projectServers={projectServers}
         onBack={() => {}}
       />
     );
@@ -253,8 +253,8 @@ describe("ChatboxEditor preview", () => {
     render(
       <ChatboxEditor
         chatbox={chatbox}
-        workspaceId="ws_1"
-        workspaceServers={workspaceServers}
+        projectId="ws_1"
+        projectServers={projectServers}
         onBack={() => {}}
       />
     );

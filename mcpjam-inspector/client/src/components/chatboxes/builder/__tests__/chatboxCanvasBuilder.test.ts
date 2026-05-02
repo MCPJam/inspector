@@ -19,10 +19,10 @@ const baseDraft = (): ChatboxDraftConfig => ({
   feedbackDialog: { enabled: true, everyNToolCalls: 1, promptHint: "" },
 });
 
-const workspaceServers = [
+const projectServers = [
   {
     _id: "srv-saved",
-    workspaceId: "ws",
+    projectId: "ws",
     name: "Saved only",
     enabled: true,
     transportType: "http" as const,
@@ -33,7 +33,7 @@ const workspaceServers = [
   },
   {
     _id: "srv-draft",
-    workspaceId: "ws",
+    projectId: "ws",
     name: "Draft pick",
     enabled: true,
     transportType: "http" as const,
@@ -49,7 +49,7 @@ function minimalChatbox(
 ): ChatboxSettings {
   return {
     chatboxId: "sb1",
-    workspaceId: "ws",
+    projectId: "ws",
     name: "Saved chatbox",
     description: "",
     hostStyle: "claude",
@@ -83,7 +83,7 @@ describe("buildChatboxCanvas", () => {
     const context: ChatboxBuilderContext = {
       chatbox,
       draft,
-      workspaceServers,
+      projectServers,
     };
 
     const vm = buildChatboxCanvas(context);
@@ -105,7 +105,7 @@ describe("buildChatboxCanvas", () => {
     const context: ChatboxBuilderContext = {
       chatbox,
       draft: null,
-      workspaceServers,
+      projectServers,
     };
 
     const vm = buildChatboxCanvas(context);

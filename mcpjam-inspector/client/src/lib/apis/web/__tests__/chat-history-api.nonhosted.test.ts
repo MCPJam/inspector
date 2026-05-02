@@ -31,17 +31,17 @@ describe("chat history API in non-hosted mode", () => {
 
   it("attaches the guest bearer when listing history", async () => {
     mockAuthFetch.mockResolvedValue(
-      new Response(JSON.stringify({ ok: true, personal: [], workspace: [] }), {
+      new Response(JSON.stringify({ ok: true, personal: [], project: [] }), {
         status: 200,
         headers: { "Content-Type": "application/json" },
       }),
     );
 
-    await listChatHistory({ status: "active", workspaceId: "ws-1" });
+    await listChatHistory({ status: "active", projectId: "ws-1" });
 
     expect(mockGetGuestBearerToken).toHaveBeenCalledTimes(1);
     expect(mockAuthFetch).toHaveBeenCalledWith(
-      "/api/web/chat-history/list?workspaceId=ws-1&status=active",
+      "/api/web/chat-history/list?projectId=ws-1&status=active",
       expect.objectContaining({
         method: "GET",
         headers: expect.any(Headers),
@@ -78,7 +78,7 @@ describe("chat history API in non-hosted mode", () => {
 
   it("preserves an explicit authorization header", async () => {
     mockAuthFetch.mockResolvedValue(
-      new Response(JSON.stringify({ ok: true, personal: [], workspace: [] }), {
+      new Response(JSON.stringify({ ok: true, personal: [], project: [] }), {
         status: 200,
         headers: { "Content-Type": "application/json" },
       }),
