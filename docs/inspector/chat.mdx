@@ -110,3 +110,14 @@ There are two ways a skill ends up in a conversation:
 ## Prompts
 
 Prompts are MCP prompt templates exposed by your servers via `prompts/list`. Type `/` in the input to open the picker (the same one used for skills) and pick one from the **PROMPTS** section. Selected prompts appear as expandable cards above the input — showing the source server ID, the prompt description, its arguments (required ones marked with `*`), and a preview of the first message — so you can review or remove them before sending.
+
+## Daily limit and credits
+
+MCPJam provides a free daily quota of model usage. When you reach the limit, an error banner appears in the chat with two options:
+
+- **Add your own API key** — Go to **Settings > LLM Providers** and enter a key for any supported provider. Your own key bypasses the MCPJam quota entirely.
+- **Top up to keep chatting** — Click the button in the error banner to purchase paid credits. A dialog lets you pick a preset amount ($5, $10, $20, or similar). After checkout, MCPJam automatically resumes your last message in the same chat session.
+
+Credits are linked to your user account, not your organization. You can view your daily usage and paid credit balance on the **Organizations > Billing** page. The daily quota resets every 24 hours.
+
+See [Credits](/inspector/credits) for more detail on how the credit system works.
