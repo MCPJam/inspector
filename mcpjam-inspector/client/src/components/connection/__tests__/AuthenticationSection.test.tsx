@@ -177,12 +177,7 @@ describe("AuthenticationSection", () => {
     fireEvent.click(screen.getByRole("button", { name: /advanced settings/i }));
 
     expect(
-      screen.getByPlaceholderText(
-        "Saved in workspace Vault. Enter a new value to replace.",
-      ),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText("Saved in workspace Vault. Enter a new value to replace it."),
+      screen.getByPlaceholderText("Enter a new value to replace."),
     ).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Clear" }));

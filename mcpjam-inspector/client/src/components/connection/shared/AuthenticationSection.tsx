@@ -444,7 +444,7 @@ export function AuthenticationSection({
                         onChange={(e) => onClientSecretChange(e.target.value)}
                         placeholder={
                           hasStoredClientSecret
-                            ? "Saved in workspace Vault. Enter a new value to replace."
+                            ? "Enter a new value to replace."
                             : "Your OAuth Client Secret"
                         }
                         className={`h-10 ${clientSecretError ? "border-red-500" : ""}`}
@@ -507,13 +507,11 @@ export function AuthenticationSection({
                           </div>
                         </div>
                       )}
-                      <p className="text-xs text-muted-foreground">
-                        {hasStoredClientSecret && clearClientSecret
-                          ? "Saved client secret will be removed when you save."
-                          : hasStoredClientSecret
-                            ? "Saved in workspace Vault. Enter a new value to replace it."
-                            : "Optional for public clients using PKCE"}
-                      </p>
+                      {hasStoredClientSecret && clearClientSecret && (
+                        <p className="text-xs text-muted-foreground">
+                          Saved client secret will be removed when you save.
+                        </p>
+                      )}
                     </div>
                   </div>
                 )}
