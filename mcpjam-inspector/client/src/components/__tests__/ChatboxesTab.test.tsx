@@ -70,7 +70,7 @@ function createPlanCatalog() {
       },
       starter: {
         plan: "starter",
-        displayName: "Starter",
+        displayName: "Solo",
         billingModel: "flat",
         isSelfServe: true,
         prices: { monthly: 6100, annual: 58800 },
