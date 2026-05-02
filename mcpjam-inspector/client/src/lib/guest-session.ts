@@ -8,8 +8,8 @@
  *
  * The legacy `mcpjam_guest_session_v1` localStorage entry is read once and
  * forwarded to the server as `legacyToken` so existing guests can be
- * migrated, and is deleted as soon as the server has had a chance to
- * accept it.
+ * migrated. It is deleted only after a definitive server response so
+ * transient failures do not strand old guests on a new identity.
  */
 
 const LEGACY_STORAGE_KEY = "mcpjam_guest_session_v1";
@@ -28,10 +28,14 @@ let inFlightRequest: Promise<GuestSession | null> | null = null;
 let inFlightLookupOnly: Promise<GuestSession | null> | null = null;
 let forceRefreshInFlight: Promise<GuestSession | null> | null = null;
 let legacyMigrationConsumed = false;
+// Bumped whenever the cache is invalidated externally (clearGuestSession,
+// forceRefreshGuestSession). Captured before each fetch so a late response
+// from a request that was started before the bump cannot resurrect a stale
+// token by overwriting cachedSession.
+let sessionGeneration = 0;
 
 function consumeLegacyToken(): string | null {
   if (legacyMigrationConsumed) return null;
-  legacyMigrationConsumed = true;
   try {
     const raw = localStorage.getItem(LEGACY_STORAGE_KEY);
     if (!raw) return null;
@@ -50,8 +54,22 @@ function deleteLegacyToken(): void {
   } catch {
     // ignore
   }
+  legacyMigrationConsumed = true;
 }
 
+class GuestSessionRequestError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "GuestSessionRequestError";
+  }
+}
+
+/**
+ * Returns the parsed session on success, `null` on a definitive "no guest"
+ * miss (HTTP 204/404), and throws `GuestSessionRequestError` on transient
+ * failures (network error, non-ok response, malformed body) so callers can
+ * distinguish "no guest exists" from "couldn't reach the server."
+ */
 async function requestGuestSession(
   mode: GuestSessionMode,
   legacyToken: string | null,
@@ -68,38 +86,42 @@ async function requestGuestSession(
       body: JSON.stringify(body),
     });
   } catch (error) {
-    console.error("Failed to create guest session:", error);
+    throw new GuestSessionRequestError(
+      error instanceof Error ? error.message : "network error",
+    );
+  }
+
+  if (response.status === 204 || response.status === 404) {
     if (legacyToken) deleteLegacyToken();
     return null;
   }
 
-  if (legacyToken) deleteLegacyToken();
-
-  if (response.status === 204 || response.status === 404) {
-    return null;
-  }
-
   if (!response.ok) {
-    console.error(
-      "Failed to create guest session:",
-      response.status,
-      response.statusText,
+    throw new GuestSessionRequestError(
+      `guest-session request failed: ${response.status} ${response.statusText}`,
     );
-    return null;
   }
 
+  let session: GuestSession;
   try {
-    const session = (await response.json()) as GuestSession;
-    if (
-      typeof session?.token !== "string" ||
-      typeof session?.expiresAt !== "number"
-    ) {
-      return null;
-    }
-    return session;
-  } catch {
-    return null;
+    session = (await response.json()) as GuestSession;
+  } catch (error) {
+    throw new GuestSessionRequestError(
+      `guest-session response was not valid JSON: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
+
+  if (
+    typeof session?.token !== "string" ||
+    typeof session?.expiresAt !== "number"
+  ) {
+    throw new GuestSessionRequestError(
+      "guest-session response missing token or expiresAt",
+    );
+  }
+
+  if (legacyToken) deleteLegacyToken();
+  return session;
 }
 
 /**
@@ -117,19 +139,32 @@ export async function getOrCreateGuestSession(): Promise<GuestSession | null> {
   }
 
   const legacyToken = consumeLegacyToken();
+  const generation = sessionGeneration;
+  // Initialized to a placeholder so TS sees a definite assignment; the
+  // real value is assigned synchronously below before the IIFE's finally
+  // (which references currentInFlight via closure) can run.
+  let currentInFlight: Promise<GuestSession | null> = Promise.resolve(null);
 
-  inFlightRequest = (async () => {
+  currentInFlight = (async () => {
     try {
       const session = await requestGuestSession(
         "lookup_or_create",
         legacyToken,
       );
-      if (session) cachedSession = session;
+      if (session && generation === sessionGeneration) {
+        cachedSession = session;
+      }
       return session;
+    } catch (error) {
+      console.error("Failed to create guest session:", error);
+      return null;
     } finally {
-      inFlightRequest = null;
+      if (inFlightRequest === currentInFlight) {
+        inFlightRequest = null;
+      }
     }
   })();
+  inFlightRequest = currentInFlight;
 
   return inFlightRequest;
 }
@@ -146,6 +181,10 @@ export async function getGuestBearerToken(): Promise<string | null> {
  * Look up an existing guest bearer token without creating a new guest.
  * Used by post-login flows (e.g. registry-star merge) so signing in does
  * not accidentally mint a brand-new guest just to merge nothing.
+ *
+ * Returns `null` only when the server confirms there is no existing guest
+ * (HTTP 204/404). Throws `GuestSessionRequestError` on transient failures
+ * so callers can retry rather than treating a network blip as "no guest."
  */
 export async function getExistingGuestBearerToken(): Promise<string | null> {
   if (cachedSession && cachedSession.expiresAt - EXPIRY_BUFFER_MS > Date.now()) {
@@ -158,16 +197,23 @@ export async function getExistingGuestBearerToken(): Promise<string | null> {
   }
 
   const legacyToken = consumeLegacyToken();
+  const generation = sessionGeneration;
+  let currentLookup: Promise<GuestSession | null> = Promise.resolve(null);
 
-  inFlightLookupOnly = (async () => {
+  currentLookup = (async () => {
     try {
       const session = await requestGuestSession("lookup_only", legacyToken);
-      if (session) cachedSession = session;
+      if (session && generation === sessionGeneration) {
+        cachedSession = session;
+      }
       return session;
     } finally {
-      inFlightLookupOnly = null;
+      if (inFlightLookupOnly === currentLookup) {
+        inFlightLookupOnly = null;
+      }
     }
   })();
+  inFlightLookupOnly = currentLookup;
 
   const session = await inFlightLookupOnly;
   return session?.token ?? null;
@@ -177,9 +223,17 @@ export async function getExistingGuestBearerToken(): Promise<string | null> {
  * Drop the in-memory guest session cache. The HttpOnly cookie remains set
  * on the browser, so the next call to `getOrCreateGuestSession` continues
  * to resolve the same guest identity.
+ *
+ * Bumps the session generation so any in-flight request that was started
+ * before the clear cannot resurrect a stale token by writing into
+ * `cachedSession` after it resolves.
  */
 export function clearGuestSession(): void {
+  sessionGeneration += 1;
   cachedSession = null;
+  inFlightRequest = null;
+  inFlightLookupOnly = null;
+  forceRefreshInFlight = null;
 }
 
 /**
@@ -193,17 +247,27 @@ export async function forceRefreshGuestSession(): Promise<string | null> {
     return session?.token ?? null;
   }
 
+  sessionGeneration += 1;
+  const generation = sessionGeneration;
   cachedSession = null;
   inFlightRequest = null;
+  inFlightLookupOnly = null;
 
   forceRefreshInFlight = (async () => {
-    const legacyToken = consumeLegacyToken();
-    const session = await requestGuestSession(
-      "lookup_or_create",
-      legacyToken,
-    );
-    if (session) cachedSession = session;
-    return session;
+    try {
+      const legacyToken = consumeLegacyToken();
+      const session = await requestGuestSession(
+        "lookup_or_create",
+        legacyToken,
+      );
+      if (session && generation === sessionGeneration) {
+        cachedSession = session;
+      }
+      return session;
+    } catch (error) {
+      console.error("Failed to refresh guest session:", error);
+      return null;
+    }
   })();
 
   try {

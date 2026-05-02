@@ -383,6 +383,7 @@ export function useRegistryServers({
   );
 
   const mergeRanRef = useRef(false);
+  const mergeInFlightRef = useRef(false);
 
   useEffect(() => {
     if (!isAuthenticated) mergeRanRef.current = false;
@@ -415,25 +416,31 @@ export function useRegistryServers({
   useEffect(() => {
     if (!enabled) return;
     if (!HOSTED_MODE || !isAuthenticated || DEV_MOCK_REGISTRY) return;
-    if (mergeRanRef.current) return;
-    mergeRanRef.current = true;
+    if (mergeRanRef.current || mergeInFlightRef.current) return;
+    mergeInFlightRef.current = true;
     void (async () => {
       try {
         const guestToken = await getExistingGuestBearerToken();
+        // null here is a definitive "no guest exists" miss (HTTP 204/404
+        // from upstream); transient errors throw and are handled below so
+        // we don't permanently latch the merge as done after a network blip.
         if (!guestToken) {
+          mergeRanRef.current = true;
           return;
         }
         await mergeGuestRegistryStars(guestToken);
         clearGuestSession();
         resetTokenCache();
         await loadCatalog();
+        mergeRanRef.current = true;
       } catch (error) {
-        mergeRanRef.current = false;
         const message =
           error instanceof WebApiError
             ? error.message
             : "Could not merge guest stars";
         toast.error(message);
+      } finally {
+        mergeInFlightRef.current = false;
       }
     })();
   }, [enabled, isAuthenticated, loadCatalog]);

@@ -137,6 +137,34 @@ describe("guest-session-source", () => {
     expect(result.kind).toBe("miss");
   });
 
+  it("returns kind:miss for upstream 404 in lookup_only mode", async () => {
+    vi.mocked(global.fetch).mockResolvedValue(
+      new Response(null, { status: 404 }),
+    );
+    const { fetchConvexGuestSession } = await import(
+      "../guest-session-source.js"
+    );
+    const result = await fetchConvexGuestSession({
+      body: { mode: "lookup_only" },
+    });
+    expect(result.kind).toBe("miss");
+  });
+
+  it("returns kind:error for upstream 404 in lookup_or_create mode (not silent miss)", async () => {
+    vi.mocked(global.fetch).mockResolvedValue(
+      new Response(null, { status: 404 }),
+    );
+    const { fetchConvexGuestSession } = await import(
+      "../guest-session-source.js"
+    );
+    const result = await fetchConvexGuestSession({
+      body: { mode: "lookup_or_create" },
+    });
+    expect(result.kind).toBe("error");
+    if (result.kind !== "error") return;
+    expect(result.status).toBe(404);
+  });
+
   it("captures upstream Set-Cookie headers and forwards them in the result", async () => {
     vi.mocked(global.fetch).mockResolvedValue(
       new Response(

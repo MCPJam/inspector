@@ -147,6 +147,40 @@ describe("POST /guest-session", () => {
     expect(headers["X-Real-IP"]).toBe("203.0.113.7");
   });
 
+  it("forwards only the guest-session cookie upstream, not other origin cookies", async () => {
+    await app.request("/guest-session", {
+      method: "POST",
+      headers: {
+        "x-forwarded-for": "10.0.99.1",
+        cookie:
+          "session=secret-app-session; csrf=abc123; __Host-mcpjam_guest_session=raw-cookie-id; other=keep",
+      },
+    });
+
+    const upstreamCall = vi.mocked(global.fetch).mock.calls[0]!;
+    const init = upstreamCall[1] as RequestInit;
+    const headers = init.headers as Record<string, string>;
+    expect(headers["Cookie"]).toBe("__Host-mcpjam_guest_session=raw-cookie-id");
+    expect(headers["Cookie"]).not.toContain("session=secret-app-session");
+    expect(headers["Cookie"]).not.toContain("csrf=abc123");
+    expect(headers["Cookie"]).not.toContain("other=keep");
+  });
+
+  it("omits Cookie header upstream when guest-session cookie is absent", async () => {
+    await app.request("/guest-session", {
+      method: "POST",
+      headers: {
+        "x-forwarded-for": "10.0.99.2",
+        cookie: "session=secret-app-session; csrf=abc123",
+      },
+    });
+
+    const upstreamCall = vi.mocked(global.fetch).mock.calls[0]!;
+    const init = upstreamCall[1] as RequestInit;
+    const headers = init.headers as Record<string, string>;
+    expect(headers["Cookie"]).toBeUndefined();
+  });
+
   it("forwards mode and legacyToken from request body to upstream", async () => {
     await app.request("/guest-session", {
       method: "POST",

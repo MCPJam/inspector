@@ -32,6 +32,24 @@ function getClientIp(c: any): string {
   );
 }
 
+const GUEST_SESSION_COOKIE_NAME = "__Host-mcpjam_guest_session";
+
+// Forward only the guest-session cookie to the upstream guest service.
+// Passing the entire Cookie header would leak unrelated auth/CSRF cookies
+// from the Inspector origin to Convex / hosted MCPJam.
+function extractGuestSessionCookie(
+  cookieHeader: string | null | undefined,
+): string | null {
+  if (!cookieHeader) return null;
+  const prefix = `${GUEST_SESSION_COOKIE_NAME}=`;
+  for (const part of cookieHeader.split(/;\s*/)) {
+    if (part.startsWith(prefix)) {
+      return part;
+    }
+  }
+  return null;
+}
+
 function shouldFetchGuestSessionFromConvex(): boolean {
   if (process.env.VITE_MCPJAM_HOSTED_MODE === "true") {
     return true;
@@ -113,7 +131,7 @@ guestSession.post("/", async (c) => {
   }
 
   const context: GuestSessionFetchContext = {
-    cookie: c.req.header("cookie") ?? null,
+    cookie: extractGuestSessionCookie(c.req.header("cookie")),
     userAgent: c.req.header("user-agent") ?? null,
     forwardedFor: c.req.header("x-forwarded-for") ?? null,
     realIp: c.req.header("x-real-ip") ?? null,

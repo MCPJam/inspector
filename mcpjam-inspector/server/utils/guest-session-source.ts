@@ -136,12 +136,21 @@ async function performGuestSessionFetch(
   url: string,
   init: RequestInit,
   source: "Convex" | "MCPJam",
+  mode: "lookup_or_create" | "lookup_only" | undefined,
 ): Promise<GuestSessionFetchResult> {
   try {
     const response = await fetch(url, init);
     const setCookies = readSetCookies(response.headers);
 
-    if (response.status === 204 || response.status === 404) {
+    // 204 is the upstream's explicit "no guest exists" signal and is always
+    // a miss. 404 is ambiguous: in lookup_only it's a reasonable miss, but
+    // in lookup_or_create (the default) it almost certainly means the
+    // upstream endpoint is missing/misconfigured and should surface as an
+    // error rather than silently disabling guest auth.
+    if (response.status === 204) {
+      return { kind: "miss", setCookies };
+    }
+    if (response.status === 404 && mode === "lookup_only") {
       return { kind: "miss", setCookies };
     }
 
@@ -188,6 +197,7 @@ export async function fetchRemoteGuestSession(
       signal: AbortSignal.timeout(10_000),
     },
     "MCPJam",
+    context?.body?.mode,
   );
 }
 
@@ -215,6 +225,7 @@ export async function fetchConvexGuestSession(
       signal: AbortSignal.timeout(10_000),
     },
     "Convex",
+    context?.body?.mode,
   );
 }
 
