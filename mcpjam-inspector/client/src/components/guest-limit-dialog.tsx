@@ -17,8 +17,9 @@ export function GuestLimitDialog() {
   const { user, isLoading, signIn } = useAuth();
 
   useEffect(() => {
+    if (user) close();
     setAuthStatus(isLoading ? "loading" : user ? "signedIn" : "guest");
-  }, [isLoading, setAuthStatus, user]);
+  }, [close, isLoading, setAuthStatus, user]);
 
   if (isLoading || user) return null;
 
