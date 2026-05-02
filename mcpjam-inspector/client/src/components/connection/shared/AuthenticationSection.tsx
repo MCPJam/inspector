@@ -52,7 +52,7 @@ interface AuthenticationSectionProps {
   clientIdError: string | null;
   clientSecretError: string | null;
   /** Hosted-mode reveal context. Both must be provided to enable the Reveal button. */
-  workspaceId?: string | null;
+  projectId?: string | null;
   hostedServerId?: string | null;
 }
 
@@ -100,7 +100,7 @@ export function AuthenticationSection({
   onUndoClearClientSecret,
   clientIdError,
   clientSecretError,
-  workspaceId = null,
+  projectId = null,
   hostedServerId = null,
 }: AuthenticationSectionProps) {
   const [showAdvancedOAuth, setShowAdvancedOAuth] = useState(false);
@@ -115,7 +115,7 @@ export function AuthenticationSection({
   const canRevealClientSecret =
     hasStoredClientSecret &&
     !clearClientSecret &&
-    !!workspaceId &&
+    !!projectId &&
     !!hostedServerId;
 
   // Drop any revealed value if the saved-secret context disappears (e.g.
@@ -127,15 +127,15 @@ export function AuthenticationSection({
       setRevealError(null);
       setDidCopyRevealedSecret(false);
     }
-  }, [canRevealClientSecret, workspaceId, hostedServerId]);
+  }, [canRevealClientSecret, projectId, hostedServerId]);
 
   const handleRevealClientSecret = async () => {
-    if (!workspaceId || !hostedServerId || isRevealingClientSecret) return;
+    if (!projectId || !hostedServerId || isRevealingClientSecret) return;
     setIsRevealingClientSecret(true);
     setRevealError(null);
     try {
       const result = await fetchHostedOAuthClientSecret({
-        workspaceId,
+        projectId,
         serverId: hostedServerId,
       });
       setRevealedClientSecret(result.clientSecret);

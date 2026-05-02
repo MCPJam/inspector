@@ -1,7 +1,7 @@
 import { webPost, WebApiError } from "@/lib/apis/web/base";
 
 export interface FetchHostedOAuthClientSecretRequest {
-  workspaceId: string;
+  projectId: string;
   serverId: string;
 }
 
