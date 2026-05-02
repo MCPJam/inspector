@@ -211,7 +211,7 @@ describe("useChatSession fork preservation", () => {
       useChatSession({
         selectedServers,
         hostedContext: {
-          workspaceId: "workspace-1",
+          projectId: "project-1",
           selectedServerIds: hostedSelectedServerIds,
         },
       }),
@@ -246,7 +246,7 @@ describe("useChatSession fork preservation", () => {
     const forkedChatSessionId = result.current.chatSessionId;
     expect(result.current.messages).toEqual([firstMessage]);
     expect(mockState.lastTransportOptions.body()).toMatchObject({
-      workspaceId: "workspace-1",
+      projectId: "project-1",
       chatSessionId: forkedChatSessionId,
       selectedServerIds: [],
       accessScope: "chat_v2",
@@ -260,7 +260,7 @@ describe("useChatSession fork preservation", () => {
       useChatSession({
         selectedServers,
         hostedContext: {
-          workspaceId: "workspace-1",
+          projectId: "project-1",
           selectedServerIds: hostedSelectedServerIds,
         },
       }),
@@ -297,7 +297,7 @@ describe("useChatSession fork preservation", () => {
       useChatSession({
         selectedServers,
         hostedContext: {
-          workspaceId: "workspace-1",
+          projectId: "project-1",
           selectedServerIds: hostedSelectedServerIds,
         },
       }),
@@ -331,7 +331,7 @@ describe("useChatSession fork preservation", () => {
       useChatSession({
         selectedServers: [],
         hostedContext: {
-          workspaceId: "workspace-1",
+          projectId: "project-1",
           selectedServerIds: [],
         },
       }),
@@ -405,7 +405,7 @@ describe("useChatSession fork preservation", () => {
       useChatSession({
         selectedServers: [],
         hostedContext: {
-          workspaceId: "workspace-1",
+          projectId: "project-1",
           selectedServerIds: [],
         },
       }),
@@ -479,7 +479,7 @@ describe("useChatSession fork preservation", () => {
         useChatSession({
           selectedServers,
           hostedContext: {
-            workspaceId: "workspace-1",
+            projectId: "project-1",
             selectedServerIds: [],
           },
         }),
@@ -528,7 +528,7 @@ describe("useChatSession fork preservation", () => {
         useChatSession({
           selectedServers,
           hostedContext: {
-            workspaceId: "workspace-1",
+            projectId: "project-1",
             selectedServerIds: [],
           },
           onReset,
@@ -572,7 +572,7 @@ describe("useChatSession fork preservation", () => {
       useChatSession({
         selectedServers: [],
         hostedContext: {
-          workspaceId: "workspace-1",
+          projectId: "project-1",
           selectedServerIds: [],
         },
       }),

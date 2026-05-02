@@ -31,18 +31,18 @@ const GUEST_UNSUPPORTED_MESSAGE =
   "Not available for guests yet. Sign in to use this.";
 
 const hostedBatchSchema = z.object({
-  workspaceId: z.string().min(1),
+  projectId: z.string().min(1),
   serverIds: z.array(z.string().min(1)).min(1),
   serverNames: z.array(z.string().min(1)).min(1).optional(),
   clientCapabilities: z.record(z.string(), z.unknown()).optional(),
   oauthTokens: z.record(z.string(), z.string()).optional(),
-  accessScope: z.enum(["workspace_member", "chat_v2"]).optional(),
+  accessScope: z.enum(["project_member", "chat_v2"]).optional(),
   shareToken: z.string().min(1).optional(),
   chatboxToken: z.string().min(1).optional(),
 });
 
 const hostedRunEvalsSchema = RunEvalsRequestSchema.omit({
-  workspaceId: true,
+  projectId: true,
   serverIds: true,
   convexAuthToken: true,
 }).extend(hostedBatchSchema.shape);
@@ -177,14 +177,14 @@ evals.post("/stream-test-case", async (c) => {
   const { manager } = await createAuthorizedManager(
     c,
     bearerToken,
-    body.workspaceId,
+    body.projectId,
     serverIds,
     WEB_CALL_TIMEOUT_MS,
     oauthTokens,
     body.clientCapabilities as Record<string, unknown> | undefined,
     {
       accessScope: body.accessScope as
-        | "workspace_member"
+        | "project_member"
         | "chat_v2"
         | undefined,
       shareToken: body.shareToken as string | undefined,

@@ -196,7 +196,7 @@ describe("HostContextHeader", () => {
   it("writes theme changes through hostContext instead of global preferences", () => {
     render(
       <HostContextHeader
-        activeWorkspaceId="workspace-1"
+        activeProjectId="project-1"
         protocol={null}
         showThemeToggle
       />,
@@ -212,7 +212,7 @@ describe("HostContextHeader", () => {
 
   it("writes Claude and ChatGPT host-style selections through shared preferences", () => {
     render(
-      <HostContextHeader activeWorkspaceId="workspace-1" protocol={null} />,
+      <HostContextHeader activeProjectId="project-1" protocol={null} />,
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Claude" }));
@@ -232,7 +232,7 @@ describe("HostContextHeader", () => {
     mockHostContextState.isDirty = true;
 
     render(
-      <HostContextHeader activeWorkspaceId="workspace-1" protocol={null} />,
+      <HostContextHeader activeProjectId="project-1" protocol={null} />,
     );
 
     expect(screen.getByTestId("host-context-trigger")).toHaveTextContent(
@@ -246,7 +246,7 @@ describe("HostContextHeader", () => {
 
   it("does not render the display-mode badge in the toolbar", () => {
     render(
-      <HostContextHeader activeWorkspaceId="workspace-1" protocol={null} />,
+      <HostContextHeader activeProjectId="project-1" protocol={null} />,
     );
 
     expect(screen.queryByText("Display")).not.toBeInTheDocument();

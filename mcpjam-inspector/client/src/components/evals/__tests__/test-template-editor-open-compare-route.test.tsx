@@ -44,7 +44,7 @@ const useConvexAuthMock = vi.hoisted(() => ({
   isAuthenticated: false,
   isLoading: false,
 }));
-const workspaceServersMock = vi.hoisted(() => ({
+const projectServersMock = vi.hoisted(() => ({
   serversByName: new Map<string, string>(),
   isLoading: false,
 }));
@@ -55,12 +55,12 @@ vi.mock("@workos-inc/authkit-react", () => ({
 
 vi.mock("@/state/app-state-context", () => ({
   useSharedAppState: () => ({
-    activeWorkspaceId: "workspace-1",
-    workspaces: {
-      "workspace-1": {
-        id: "workspace-1",
-        name: "Workspace",
-        sharedWorkspaceId: null,
+    activeProjectId: "project-1",
+    projects: {
+      "project-1": {
+        id: "project-1",
+        name: "Project",
+        sharedProjectId: null,
         servers: {},
       },
     },
@@ -72,7 +72,7 @@ vi.mock("@/hooks/useViews", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/hooks/useViews")>();
   return {
     ...actual,
-    useWorkspaceServers: () => workspaceServersMock,
+    useProjectServers: () => projectServersMock,
   };
 });
 
@@ -80,7 +80,7 @@ vi.mock("@/stores/client-config-store", () => ({
   useClientConfigStore: (selector: (state: any) => unknown) =>
     selector({
       isAwaitingRemoteEcho: false,
-      pendingWorkspaceId: null,
+      pendingProjectId: null,
     }),
 }));
 
@@ -347,7 +347,7 @@ describe("TestTemplateEditor run view from route", () => {
         suiteId="suite-1"
         selectedTestCaseId="case-1"
         connectedServerNames={new Set(["srv"])}
-        workspaceId={null}
+        projectId={null}
         availableModels={[
           {
             provider: "openai",
@@ -416,7 +416,7 @@ describe("TestTemplateEditor run view from route", () => {
         suiteId="suite-1"
         selectedTestCaseId="case-1"
         connectedServerNames={new Set(["srv"])}
-        workspaceId={null}
+        projectId={null}
         availableModels={[
           {
             provider: "openai",
@@ -438,7 +438,7 @@ describe("TestTemplateEditor run view from route", () => {
           suiteId="suite-1"
           selectedTestCaseId="case-1"
           connectedServerNames={new Set(["srv"])}
-          workspaceId={null}
+          projectId={null}
           availableModels={[
             {
               provider: "openai",
@@ -505,7 +505,7 @@ describe("TestTemplateEditor run view from route", () => {
         suiteId="suite-1"
         selectedTestCaseId="case-1"
         connectedServerNames={new Set(["srv"])}
-        workspaceId={null}
+        projectId={null}
         availableModels={[
           {
             provider: "openai",
@@ -531,7 +531,7 @@ describe("TestTemplateEditor run view from route", () => {
         suiteId="suite-1"
         selectedTestCaseId="case-1"
         connectedServerNames={new Set(["srv"])}
-        workspaceId={null}
+        projectId={null}
         availableModels={[
           {
             provider: "openai",
@@ -559,7 +559,7 @@ describe("TestTemplateEditor run view from route", () => {
         suiteId="suite-1"
         selectedTestCaseId="case-1"
         connectedServerNames={new Set(["srv"])}
-        workspaceId={null}
+        projectId={null}
         availableModels={[
           {
             provider: "openai",
@@ -665,7 +665,7 @@ describe("TestTemplateEditor run view from route", () => {
         suiteId="suite-1"
         selectedTestCaseId="case-1"
         connectedServerNames={new Set(["srv"])}
-        workspaceId={null}
+        projectId={null}
         availableModels={[
           {
             provider: "openai",
@@ -730,7 +730,7 @@ describe("TestTemplateEditor run view from route", () => {
         suiteId="suite-1"
         selectedTestCaseId="case-1"
         connectedServerNames={new Set(["srv"])}
-        workspaceId={null}
+        projectId={null}
         availableModels={[
           {
             provider: "openai",
@@ -811,7 +811,7 @@ describe("TestTemplateEditor run view from route", () => {
         suiteId="suite-1"
         selectedTestCaseId="case-1"
         connectedServerNames={new Set(["srv"])}
-        workspaceId={null}
+        projectId={null}
         availableModels={[
           {
             provider: "openai",
@@ -882,7 +882,7 @@ describe("TestTemplateEditor run view from route", () => {
         suiteId="suite-1"
         selectedTestCaseId="case-1"
         connectedServerNames={new Set(["srv"])}
-        workspaceId={null}
+        projectId={null}
         availableModels={[
           {
             provider: "openai",
@@ -931,7 +931,7 @@ describe("TestTemplateEditor run view from route", () => {
         suiteId="suite-1"
         selectedTestCaseId="case-1"
         connectedServerNames={new Set(["srv"])}
-        workspaceId={null}
+        projectId={null}
         availableModels={[
           {
             provider: "openai",
@@ -978,7 +978,7 @@ describe("TestTemplateEditor run view from route", () => {
         suiteId="suite-1"
         selectedTestCaseId="case-1"
         connectedServerNames={new Set(["srv"])}
-        workspaceId={null}
+        projectId={null}
         availableModels={[
           {
             provider: "openai",
@@ -1087,7 +1087,7 @@ describe("TestTemplateEditor run view from route", () => {
         suiteId="suite-1"
         selectedTestCaseId="case-1"
         connectedServerNames={new Set(["srv"])}
-        workspaceId={null}
+        projectId={null}
         availableModels={[
           {
             provider: "openai",
@@ -1167,7 +1167,7 @@ describe("TestTemplateEditor run view from route", () => {
         suiteId="suite-1"
         selectedTestCaseId="case-1"
         connectedServerNames={new Set(["srv"])}
-        workspaceId={null}
+        projectId={null}
         availableModels={[
           {
             provider: "openai",
@@ -1293,7 +1293,7 @@ describe("TestTemplateEditor run view from route", () => {
         suiteId="suite-1"
         selectedTestCaseId="case-1"
         connectedServerNames={new Set(["srv"])}
-        workspaceId={null}
+        projectId={null}
         availableModels={[
           {
             provider: "openai",
@@ -1422,7 +1422,7 @@ describe("TestTemplateEditor run view from route", () => {
         suiteId="suite-1"
         selectedTestCaseId="case-1"
         connectedServerNames={new Set(["srv"])}
-        workspaceId={null}
+        projectId={null}
         availableModels={[
           {
             provider: "openai",
@@ -1554,7 +1554,7 @@ describe("TestTemplateEditor run view from route", () => {
         suiteId="suite-1"
         selectedTestCaseId="case-1"
         connectedServerNames={new Set(["srv"])}
-        workspaceId={null}
+        projectId={null}
         availableModels={[
           {
             provider: "openai",
@@ -1692,7 +1692,7 @@ describe("TestTemplateEditor run view from route", () => {
         suiteId="suite-1"
         selectedTestCaseId="case-1"
         connectedServerNames={new Set(["srv"])}
-        workspaceId={null}
+        projectId={null}
         availableModels={[
           {
             provider: "openai",

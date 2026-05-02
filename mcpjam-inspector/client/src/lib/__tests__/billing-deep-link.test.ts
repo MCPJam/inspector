@@ -15,10 +15,10 @@ import {
 } from "../billing-deep-link";
 
 describe("readCheckoutIntentFromSearch", () => {
-  it("parses starter + annual", () => {
+  it("parses solo + annual", () => {
     expect(
-      readCheckoutIntentFromSearch("?plan=starter&interval=annual"),
-    ).toEqual({ plan: "starter", interval: "annual" });
+      readCheckoutIntentFromSearch("?plan=solo&interval=annual"),
+    ).toEqual({ plan: "solo", interval: "annual" });
   });
 
   it("defaults interval to monthly when omitted", () => {
@@ -34,7 +34,7 @@ describe("readCheckoutIntentFromSearch", () => {
 
   it("returns null when interval is present but invalid", () => {
     expect(
-      readCheckoutIntentFromSearch("?plan=starter&interval=weekly"),
+      readCheckoutIntentFromSearch("?plan=solo&interval=weekly"),
     ).toBeNull();
   });
 });
@@ -51,7 +51,7 @@ describe("hasInvalidCheckoutQueryParams", () => {
 
 describe("hasInvalidCheckoutIntervalParam", () => {
   it("is false when interval absent", () => {
-    expect(hasInvalidCheckoutIntervalParam("?plan=starter")).toBe(false);
+    expect(hasInvalidCheckoutIntervalParam("?plan=solo")).toBe(false);
   });
 
   it("is true when interval invalid", () => {
@@ -66,9 +66,9 @@ describe("sessionStorage persistence", () => {
   });
 
   it("round-trips plan and interval", () => {
-    persistCheckoutIntent({ plan: "starter", interval: "annual" });
+    persistCheckoutIntent({ plan: "solo", interval: "annual" });
     expect(readPersistedCheckoutIntent()).toEqual({
-      plan: "starter",
+      plan: "solo",
       interval: "annual",
     });
   });
@@ -135,7 +135,7 @@ describe("resolveCheckoutOrganizationId", () => {
     expect(resolveCheckoutOrganizationId(orgs, "b", "a")).toBe("b");
   });
 
-  it("falls back to workspace org", () => {
+  it("falls back to project org", () => {
     expect(resolveCheckoutOrganizationId(orgs, undefined, "a")).toBe("a");
   });
 

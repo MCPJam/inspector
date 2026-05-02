@@ -4,14 +4,14 @@ import { ViewsTab } from "../ViewsTab";
 
 const {
   mockUseViewQueries,
-  mockUseWorkspaceServers,
+  mockUseProjectServers,
   mockCapture,
   mockCurrentDisplayContext,
   mockPlaygroundStoreState,
   mockViewMutations,
 } = vi.hoisted(() => ({
   mockUseViewQueries: vi.fn(),
-  mockUseWorkspaceServers: vi.fn(),
+  mockUseProjectServers: vi.fn(),
   mockCapture: vi.fn(),
   mockCurrentDisplayContext: vi.fn(() => ({
     theme: "dark",
@@ -62,18 +62,18 @@ vi.mock("@/lib/PosthogUtils", () => ({
 
 vi.mock("@/hooks/useViews", () => ({
   useViewQueries: (...args: unknown[]) => mockUseViewQueries(...args),
-  useWorkspaceServers: (...args: unknown[]) => mockUseWorkspaceServers(...args),
+  useProjectServers: (...args: unknown[]) => mockUseProjectServers(...args),
   useViewMutations: () => mockViewMutations,
 }));
 
 vi.mock("@/state/app-state-context", () => ({
   useSharedAppState: () => ({
-    workspaces: {
-      "workspace-1": {
-        sharedWorkspaceId: "workspace-1",
+    projects: {
+      "project-1": {
+        sharedProjectId: "project-1",
       },
     },
-    activeWorkspaceId: "workspace-1",
+    activeProjectId: "project-1",
     servers: {
       "selected-server": {
         connectionStatus: "connected",
@@ -111,7 +111,7 @@ vi.mock("../views/ViewEditorPanel", () => ({
 const INVALID_LAYOUT_TOTAL_MESSAGE = "Invalid layout total size";
 const DEFAULT_VIEW = {
   _id: "view-1",
-  workspaceId: "workspace-1",
+  projectId: "project-1",
   serverId: "server-1",
   name: "Example view",
   toolName: "search",
@@ -129,7 +129,7 @@ describe("ViewsTab layout", () => {
   beforeEach(() => {
     localStorage.clear();
     mockUseViewQueries.mockReset();
-    mockUseWorkspaceServers.mockReset();
+    mockUseProjectServers.mockReset();
     mockCapture.mockReset();
     mockCurrentDisplayContext.mockClear();
     Object.values(mockPlaygroundStoreState).forEach((value) => {
@@ -143,7 +143,7 @@ describe("ViewsTab layout", () => {
       sortedViews: [DEFAULT_VIEW],
       isLoading: false,
     });
-    mockUseWorkspaceServers.mockReturnValue({
+    mockUseProjectServers.mockReturnValue({
       serversById: new Map(),
       serversByName: new Map([["selected-server", "server-1"]]),
     });
@@ -171,7 +171,7 @@ describe("ViewsTab layout", () => {
     }
   });
 
-  it("shows an empty state when the workspace has no saved views", () => {
+  it("shows an empty state when the project has no saved views", () => {
     mockUseViewQueries.mockReturnValue({
       sortedViews: [],
       isLoading: false,

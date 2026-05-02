@@ -10,7 +10,7 @@ const mockUseOrganizationBilling = vi.fn();
 const chatboxList = [
   {
     chatboxId: "sbx-1",
-    workspaceId: "ws-1",
+    projectId: "ws-1",
     name: "Alpha",
     description: "Alpha description",
     hostStyle: "claude" as const,
@@ -23,7 +23,7 @@ const chatboxList = [
   },
   {
     chatboxId: "sbx-2",
-    workspaceId: "ws-1",
+    projectId: "ws-1",
     name: "Beta",
     description: "Beta description",
     hostStyle: "chatgpt" as const,
@@ -59,21 +59,21 @@ function createPlanCatalog() {
         },
         limits: {
           maxMembers: 1,
-          maxWorkspaces: 1,
-          maxServersPerWorkspace: 3,
-          maxChatboxesPerWorkspace: 0,
+          maxProjects: 1,
+          maxServersPerProject: 3,
+          maxChatboxesPerProject: 0,
           maxEvalRunsPerMonth: 5,
         },
         includedSeats: null,
         seatMinimum: null,
         checkout: null,
       },
-      starter: {
-        plan: "starter",
-        displayName: "Starter",
+      solo: {
+        plan: "solo",
+        displayName: "Solo",
         billingModel: "flat",
         isSelfServe: true,
-        prices: { monthly: 6100, annual: 58800 },
+        prices: { monthly: 2500, annual: 24000 },
         features: {
           evals: true,
           chatboxes: true,
@@ -85,15 +85,15 @@ function createPlanCatalog() {
         },
         limits: {
           maxMembers: 3,
-          maxWorkspaces: 2,
-          maxServersPerWorkspace: 10,
-          maxChatboxesPerWorkspace: 1,
+          maxProjects: 2,
+          maxServersPerProject: 10,
+          maxChatboxesPerProject: 1,
           maxEvalRunsPerMonth: 500,
         },
         includedSeats: 3,
         seatMinimum: null,
         checkout: {
-          plan: "starter",
+          plan: "solo",
           supportedIntervals: ["monthly", "annual"],
         },
       },
@@ -114,9 +114,9 @@ function createPlanCatalog() {
         },
         limits: {
           maxMembers: 100,
-          maxWorkspaces: 10,
-          maxServersPerWorkspace: null,
-          maxChatboxesPerWorkspace: 3,
+          maxProjects: 10,
+          maxServersPerProject: null,
+          maxChatboxesPerProject: 3,
           maxEvalRunsPerMonth: 5000,
         },
         includedSeats: null,
@@ -143,9 +143,9 @@ function createPlanCatalog() {
         },
         limits: {
           maxMembers: null,
-          maxWorkspaces: null,
-          maxServersPerWorkspace: null,
-          maxChatboxesPerWorkspace: null,
+          maxProjects: null,
+          maxServersPerProject: null,
+          maxChatboxesPerProject: null,
           maxEvalRunsPerMonth: null,
         },
         includedSeats: null,
@@ -189,18 +189,18 @@ vi.mock("@/hooks/useChatboxes", () => ({
   }),
 }));
 
-vi.mock("@/hooks/useWorkspaces", () => ({
-  useWorkspaceQueries: () => ({
-    workspaces: [
+vi.mock("@/hooks/useProjects", () => ({
+  useProjectQueries: () => ({
+    projects: [
       {
         _id: "ws-1",
-        name: "Workspace One",
+        name: "Project One",
         organizationId: "org-1",
       },
     ],
     isLoading: false,
   }),
-  useWorkspaceServers: () => ({
+  useProjectServers: () => ({
     servers: [],
   }),
 }));
@@ -214,7 +214,7 @@ vi.mock("../chatboxes/builder/ChatboxBuilderView", () => ({
         <h2>Builder view</h2>
         <p>Chatbox: {props.chatboxId ?? "new"}</p>
         <p>Draft: {props.draft?.name ?? "none"}</p>
-        <p>Workspace: {props.workspaceId ?? "unknown"}</p>
+        <p>Project: {props.projectId ?? "unknown"}</p>
         <p>View mode: {props.initialViewMode ?? "none"}</p>
         <button type="button" onClick={props.onBack}>
           Back to index
@@ -231,15 +231,15 @@ describe("ChatboxesTab", () => {
     mockUseFeatureFlagEnabled.mockReturnValue(true);
     mockUseOrganizationBilling.mockReturnValue({
       billingStatus: {
-        plan: "starter",
-        effectivePlan: "starter",
+        plan: "solo",
+        effectivePlan: "solo",
         canManageBilling: true,
       },
       planCatalog: createPlanCatalog(),
-      workspacePremiumness: {
-        plan: "starter",
+      projectPremiumness: {
+        plan: "solo",
         enforcementState: "active",
-        effectivePlan: "starter",
+        effectivePlan: "solo",
         billingInterval: "monthly",
         source: "subscription",
         decisionRequired: false,
@@ -256,22 +256,22 @@ describe("ChatboxesTab", () => {
         ],
       },
       isLoadingBilling: false,
-      isLoadingWorkspacePremiumness: false,
+      isLoadingProjectPremiumness: false,
     });
   });
 
-  it("shows a workspace prompt when no workspace is selected", () => {
-    render(<ChatboxesTab workspaceId={null} organizationId={null} />);
+  it("shows a project prompt when no project is selected", () => {
+    render(<ChatboxesTab projectId={null} organizationId={null} />);
 
     expect(
-      screen.getByText("Select a workspace to manage chatboxes."),
+      screen.getByText("Select a project to manage chatboxes."),
     ).toBeInTheDocument();
   });
 
   it("shows a full-tab loading state while billing context is pending", () => {
     render(
       <ChatboxesTab
-        workspaceId="ws-1"
+        projectId="ws-1"
         organizationId="org-1"
         isBillingContextPending={true}
       />,
@@ -282,14 +282,14 @@ describe("ChatboxesTab", () => {
     ).toBeInTheDocument();
     expect(screen.queryByText("Chatboxes")).not.toBeInTheDocument();
     expect(mockUseOrganizationBilling.mock.calls).toEqual([
-      [null, { workspaceId: null }],
-      [null, { workspaceId: null }],
-      [null, { workspaceId: null }],
+      [null, { projectId: null }],
+      [null, { projectId: null }],
+      [null, { projectId: null }],
     ]);
   });
 
   it("renders the chatbox index once the builder experience loads", async () => {
-    render(<ChatboxesTab workspaceId="ws-1" organizationId="org-1" />);
+    render(<ChatboxesTab projectId="ws-1" organizationId="org-1" />);
 
     expect(
       await screen.findByRole(
@@ -303,17 +303,17 @@ describe("ChatboxesTab", () => {
   });
 
   it("opens the clicked chatbox in the builder view", async () => {
-    render(<ChatboxesTab workspaceId="ws-1" organizationId="org-1" />);
+    render(<ChatboxesTab projectId="ws-1" organizationId="org-1" />);
 
     fireEvent.click(await screen.findByText("Beta", {}, { timeout: 3000 }));
 
     expect(await screen.findByText("Builder view")).toBeInTheDocument();
     expect(screen.getByText("Chatbox: sbx-2")).toBeInTheDocument();
-    expect(screen.getByText("Workspace: ws-1")).toBeInTheDocument();
+    expect(screen.getByText("Project: ws-1")).toBeInTheDocument();
   });
 
   it("opens the starter launcher from the new chatbox action", async () => {
-    render(<ChatboxesTab workspaceId="ws-1" organizationId="org-1" />);
+    render(<ChatboxesTab projectId="ws-1" organizationId="org-1" />);
 
     fireEvent.click(await screen.findByRole("button", { name: "New chatbox" }));
 
@@ -323,7 +323,7 @@ describe("ChatboxesTab", () => {
   });
 
   it("starts a blank chatbox draft after choosing blank from the launcher", async () => {
-    render(<ChatboxesTab workspaceId="ws-1" organizationId="org-1" />);
+    render(<ChatboxesTab projectId="ws-1" organizationId="org-1" />);
 
     fireEvent.click(await screen.findByRole("button", { name: "New chatbox" }));
     fireEvent.click(await screen.findByText("Blank chatbox"));
@@ -333,15 +333,15 @@ describe("ChatboxesTab", () => {
     expect(screen.getByText("Draft: New Chatbox")).toBeInTheDocument();
   });
 
-  it("restores the saved builder session for the active workspace", async () => {
+  it("restores the saved builder session for the active project", async () => {
     writeBuilderSession({
-      workspaceId: "ws-1",
+      projectId: "ws-1",
       chatboxId: "sbx-2",
       draft: null,
       viewMode: "preview",
     });
 
-    render(<ChatboxesTab workspaceId="ws-1" organizationId="org-1" />);
+    render(<ChatboxesTab projectId="ws-1" organizationId="org-1" />);
 
     expect(await screen.findByText("Builder view")).toBeInTheDocument();
     expect(screen.getByText("Chatbox: sbx-2")).toBeInTheDocument();
@@ -349,7 +349,7 @@ describe("ChatboxesTab", () => {
   });
 
   it("returns to the chatbox index after leaving the builder", async () => {
-    render(<ChatboxesTab workspaceId="ws-1" organizationId="org-1" />);
+    render(<ChatboxesTab projectId="ws-1" organizationId="org-1" />);
 
     fireEvent.click(await screen.findByRole("button", { name: "New chatbox" }));
     fireEvent.click(await screen.findByText("Blank chatbox"));
@@ -368,7 +368,7 @@ describe("ChatboxesTab", () => {
         canManageBilling: true,
       },
       planCatalog: createPlanCatalog(),
-      workspacePremiumness: {
+      projectPremiumness: {
         plan: "free",
         enforcementState: "active",
         effectivePlan: "free",
@@ -382,16 +382,16 @@ describe("ChatboxesTab", () => {
             scope: "organization",
             canAccess: false,
             shouldShowUpsell: true,
-            upgradePlan: "starter",
+            upgradePlan: "solo",
             reason: "feature_not_included",
           },
         ],
       },
       isLoadingBilling: false,
-      isLoadingWorkspacePremiumness: false,
+      isLoadingProjectPremiumness: false,
     });
 
-    render(<ChatboxesTab workspaceId="ws-1" organizationId="org-1" />);
+    render(<ChatboxesTab projectId="ws-1" organizationId="org-1" />);
 
     expect(
       await screen.findByTestId("billing-upsell-gate"),
@@ -404,7 +404,7 @@ describe("ChatboxesTab", () => {
 
   it("clears restored builder sessions when chatboxes are denied", async () => {
     writeBuilderSession({
-      workspaceId: "ws-1",
+      projectId: "ws-1",
       chatboxId: "sbx-2",
       draft: null,
       viewMode: "preview",
@@ -416,7 +416,7 @@ describe("ChatboxesTab", () => {
         canManageBilling: true,
       },
       planCatalog: createPlanCatalog(),
-      workspacePremiumness: {
+      projectPremiumness: {
         plan: "free",
         enforcementState: "active",
         effectivePlan: "free",
@@ -430,16 +430,16 @@ describe("ChatboxesTab", () => {
             scope: "organization",
             canAccess: false,
             shouldShowUpsell: true,
-            upgradePlan: "starter",
+            upgradePlan: "solo",
             reason: "feature_not_included",
           },
         ],
       },
       isLoadingBilling: false,
-      isLoadingWorkspacePremiumness: false,
+      isLoadingProjectPremiumness: false,
     });
 
-    render(<ChatboxesTab workspaceId="ws-1" organizationId="org-1" />);
+    render(<ChatboxesTab projectId="ws-1" organizationId="org-1" />);
 
     expect(
       await screen.findByTestId("billing-upsell-gate"),
@@ -450,18 +450,18 @@ describe("ChatboxesTab", () => {
     expect(screen.queryByText("Builder view")).not.toBeInTheDocument();
   });
 
-  it("shows an inline upgrade upsell when the workspace chatbox limit is reached", async () => {
+  it("shows an inline upgrade upsell when the project chatbox limit is reached", async () => {
     mockUseOrganizationBilling.mockReturnValue({
       billingStatus: {
-        plan: "starter",
-        effectivePlan: "starter",
+        plan: "solo",
+        effectivePlan: "solo",
         canManageBilling: true,
       },
       planCatalog: createPlanCatalog(),
-      workspacePremiumness: {
-        plan: "starter",
+      projectPremiumness: {
+        plan: "solo",
         enforcementState: "active",
-        effectivePlan: "starter",
+        effectivePlan: "solo",
         billingInterval: "monthly",
         source: "subscription",
         decisionRequired: false,
@@ -476,9 +476,9 @@ describe("ChatboxesTab", () => {
             reason: "feature_included",
           },
           {
-            gateKey: "maxChatboxesPerWorkspace",
+            gateKey: "maxChatboxesPerProject",
             kind: "limit",
-            scope: "workspace",
+            scope: "project",
             canAccess: false,
             shouldShowUpsell: true,
             upgradePlan: "team",
@@ -489,22 +489,22 @@ describe("ChatboxesTab", () => {
         ],
       },
       isLoadingBilling: false,
-      isLoadingWorkspacePremiumness: false,
+      isLoadingProjectPremiumness: false,
     });
 
-    render(<ChatboxesTab workspaceId="ws-1" organizationId="org-1" />);
+    render(<ChatboxesTab projectId="ws-1" organizationId="org-1" />);
 
     expect(
       await screen.findByTestId("chatbox-limit-upsell"),
     ).toBeInTheDocument();
     expect(
       screen.getByText(
-        "This workspace has reached its chatbox limit (1). Upgrade to continue.",
+        "This project has reached its chatbox limit (1). Upgrade to continue.",
       ),
     ).toBeInTheDocument();
     expect(
       screen.getByText(
-        "Team includes 3 chatboxes per workspace and 100 members, from $296/mo (4-seat minimum).",
+        "Team includes 3 chatboxes per project and 100 members, from $296/mo (4-seat minimum).",
       ),
     ).toBeInTheDocument();
     expect(
@@ -517,15 +517,15 @@ describe("ChatboxesTab", () => {
   it("shows owner-directed chatbox upsell copy for non-billing-managers", async () => {
     mockUseOrganizationBilling.mockReturnValue({
       billingStatus: {
-        plan: "starter",
-        effectivePlan: "starter",
+        plan: "solo",
+        effectivePlan: "solo",
         canManageBilling: false,
       },
       planCatalog: createPlanCatalog(),
-      workspacePremiumness: {
-        plan: "starter",
+      projectPremiumness: {
+        plan: "solo",
         enforcementState: "active",
-        effectivePlan: "starter",
+        effectivePlan: "solo",
         billingInterval: "monthly",
         source: "subscription",
         decisionRequired: false,
@@ -540,9 +540,9 @@ describe("ChatboxesTab", () => {
             reason: "feature_included",
           },
           {
-            gateKey: "maxChatboxesPerWorkspace",
+            gateKey: "maxChatboxesPerProject",
             kind: "limit",
-            scope: "workspace",
+            scope: "project",
             canAccess: false,
             shouldShowUpsell: true,
             upgradePlan: "team",
@@ -553,10 +553,10 @@ describe("ChatboxesTab", () => {
         ],
       },
       isLoadingBilling: false,
-      isLoadingWorkspacePremiumness: false,
+      isLoadingProjectPremiumness: false,
     });
 
-    render(<ChatboxesTab workspaceId="ws-1" organizationId="org-1" />);
+    render(<ChatboxesTab projectId="ws-1" organizationId="org-1" />);
 
     expect(
       await screen.findByTestId("chatbox-limit-upsell"),

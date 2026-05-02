@@ -9,6 +9,7 @@ import {
 } from "@/lib/apis/web/context";
 import { listHostedTools } from "@/lib/apis/web/tools-api";
 import { authFetch } from "@/lib/session-token";
+import { notifyGuestLimitError } from "@/lib/guest-limit";
 import type { EvalStreamEvent } from "@/shared/eval-stream-events";
 import type { PromptTurn } from "@/shared/prompt-turns";
 
@@ -40,7 +41,7 @@ const GUEST_UNSUPPORTED_MESSAGE =
   "Not available for guests yet. Sign in to use this.";
 
 type EvalRequestWithServers = {
-  workspaceId?: string | null;
+  projectId?: string | null;
   serverIds: string[];
 };
 
@@ -155,7 +156,7 @@ function mergeHostedServerBatch<
   return {
     ...requestWithoutConvexAuthToken,
     ...hostedBatch,
-    workspaceId: request.workspaceId ?? hostedBatch.workspaceId,
+    projectId: request.projectId ?? hostedBatch.projectId,
   };
 }
 
@@ -169,7 +170,7 @@ function mergeHostedEvalServerRequest<
   const {
     convexAuthToken: _convexAuthToken,
     serverIds,
-    workspaceId: _workspaceId,
+    projectId: _projectId,
     ...requestWithoutHostedAuth
   } = request;
 
@@ -215,6 +216,11 @@ async function postEvalRequest<TResponse>(
         : typeof errorBody?.error === "string"
           ? errorBody.error
           : `Request failed (${response.status})`;
+    notifyGuestLimitError({
+      code: typeof errorBody?.code === "string" ? errorBody.code : undefined,
+      details: body,
+      message,
+    });
     throw new Error(message);
   }
 
@@ -387,13 +393,39 @@ export async function streamEvalTestCase(
 
   if (!response.ok) {
     let errorMessage = `Request failed (${response.status})`;
+    let errorBody: unknown = null;
+    let errorText = "";
     try {
-      const body = await response.json();
-      if (typeof body?.error === "string") errorMessage = body.error;
-      else if (typeof body?.message === "string") errorMessage = body.message;
+      errorText = await response.text();
+      errorBody = errorText ? JSON.parse(errorText) : null;
+      if (
+        errorBody &&
+        typeof errorBody === "object" &&
+        typeof (errorBody as { error?: unknown }).error === "string"
+      ) {
+        errorMessage = (errorBody as { error: string }).error;
+      } else if (
+        errorBody &&
+        typeof errorBody === "object" &&
+        typeof (errorBody as { message?: unknown }).message === "string"
+      ) {
+        errorMessage = (errorBody as { message: string }).message;
+      }
     } catch {
-      // ignore parse errors
+      if (errorText) {
+        errorBody = errorText;
+      }
     }
+    notifyGuestLimitError({
+      code:
+        errorBody &&
+        typeof errorBody === "object" &&
+        typeof (errorBody as { code?: unknown }).code === "string"
+          ? (errorBody as { code: string }).code
+          : undefined,
+      details: errorBody ?? errorText,
+      message: errorMessage,
+    });
     throw new Error(errorMessage);
   }
 
@@ -415,6 +447,12 @@ export async function streamEvalTestCase(
     }
     try {
       const event = JSON.parse(data) as EvalStreamEvent;
+      if (event.type === "error") {
+        notifyGuestLimitError({
+          details: event.details,
+          message: event.message,
+        });
+      }
       onEvent(event);
     } catch {
       // ignore malformed lines

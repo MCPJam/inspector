@@ -12,7 +12,7 @@ export const DEFAULT_HOST_STYLE: HostStyleDefinition = CLAUDE_HOST_STYLE;
 
 /**
  * Register an additional app-provided host style. Built-ins are registered
- * eagerly; workspace-scoped custom hosts will need a scoped layer instead of
+ * eagerly; project-scoped custom hosts will need a scoped layer instead of
  * mutating this process-wide registry.
  */
 export function registerHostStyle(definition: HostStyleDefinition): void {

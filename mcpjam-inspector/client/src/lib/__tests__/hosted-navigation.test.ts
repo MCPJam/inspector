@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   getInvalidOrganizationRouteNavigationTarget,
-  getWorkspaceSwitchNavigationTarget,
+  getProjectSwitchNavigationTarget,
   getNormalizedHashParts,
   resolveHostedNavigation,
 } from "../hosted-navigation";
@@ -105,36 +105,36 @@ describe("hosted-navigation", () => {
     expect(resolved.shouldClearChatMessages).toBe(true);
   });
 
-  it("exits stale organization routes when switching to a workspace in another org", () => {
+  it("exits stale organization routes when switching to a project in another org", () => {
     expect(
-      getWorkspaceSwitchNavigationTarget({
+      getProjectSwitchNavigationTarget({
         activeTab: "organizations",
         activeOrganizationId: "org-a",
-        nextWorkspaceOrganizationId: "org-b",
+        nextProjectOrganizationId: "org-b",
       }),
     ).toBe("servers");
     expect(
-      getWorkspaceSwitchNavigationTarget({
+      getProjectSwitchNavigationTarget({
         activeTab: "organizations",
         activeOrganizationId: "org-a",
-        nextWorkspaceOrganizationId: undefined,
+        nextProjectOrganizationId: undefined,
       }),
     ).toBe("servers");
   });
 
   it("keeps the organization route when switching within the same org", () => {
     expect(
-      getWorkspaceSwitchNavigationTarget({
+      getProjectSwitchNavigationTarget({
         activeTab: "organizations",
         activeOrganizationId: "org-a",
-        nextWorkspaceOrganizationId: "org-a",
+        nextProjectOrganizationId: "org-a",
       }),
     ).toBeNull();
     expect(
-      getWorkspaceSwitchNavigationTarget({
+      getProjectSwitchNavigationTarget({
         activeTab: "servers",
         activeOrganizationId: "org-a",
-        nextWorkspaceOrganizationId: "org-b",
+        nextProjectOrganizationId: "org-b",
       }),
     ).toBeNull();
   });

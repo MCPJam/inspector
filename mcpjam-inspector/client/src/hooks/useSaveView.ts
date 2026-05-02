@@ -2,7 +2,7 @@ import { useState, useCallback } from "react";
 import { toast } from "sonner";
 import {
   useViewMutations,
-  useWorkspaceServers,
+  useProjectServers,
   useServerMutations,
   type DisplayContext,
   type WidgetCsp,
@@ -51,7 +51,7 @@ export interface SaveViewFormData {
 
 interface UseSaveViewOptions {
   isAuthenticated: boolean;
-  workspaceId: string | null;
+  projectId: string | null;
   serverName: string;
   existingViewNames?: Set<string>;
 }
@@ -69,7 +69,7 @@ function generateUniqueViewName(
 
 export function useSaveView({
   isAuthenticated,
-  workspaceId,
+  projectId,
   serverName,
   existingViewNames = new Set(),
 }: UseSaveViewOptions) {
@@ -85,9 +85,9 @@ export function useSaveView({
     generateOpenaiUploadUrl,
   } = useViewMutations();
 
-  const { serversByName } = useWorkspaceServers({
+  const { serversByName } = useProjectServers({
     isAuthenticated,
-    workspaceId,
+    projectId,
   });
 
   const { createServer } = useServerMutations();
@@ -102,12 +102,12 @@ export function useSaveView({
       }
 
       // Create new server
-      if (!workspaceId) {
-        throw new Error("No workspace selected");
+      if (!projectId) {
+        throw new Error("No project selected");
       }
 
       const serverId = await createServer({
-        workspaceId,
+        projectId,
         name,
         enabled: true,
         transportType: "http", // Default to HTTP for views
@@ -115,7 +115,7 @@ export function useSaveView({
 
       return serverId;
     },
-    [serversByName, workspaceId, createServer],
+    [serversByName, projectId, createServer],
   );
 
   // Upload output blob to Convex storage
@@ -187,8 +187,8 @@ export function useSaveView({
   // Save view
   const saveView = useCallback(
     async (toolData: ToolDataForSave, formData: SaveViewFormData) => {
-      if (!workspaceId) {
-        toast.error("No workspace selected");
+      if (!projectId) {
+        toast.error("No project selected");
         return null;
       }
 
@@ -224,7 +224,7 @@ export function useSaveView({
 
         // Prepare base args
         const baseArgs = {
-          workspaceId,
+          projectId,
           serverId,
           name: formData.name.trim(),
           description: formData.description,
@@ -290,7 +290,7 @@ export function useSaveView({
       }
     },
     [
-      workspaceId,
+      projectId,
       serverName,
       getOrCreateServerId,
       uploadOutputBlob,

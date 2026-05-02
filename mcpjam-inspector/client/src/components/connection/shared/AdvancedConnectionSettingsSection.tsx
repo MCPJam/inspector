@@ -28,6 +28,7 @@ interface AdvancedConnectionSettingsSectionProps {
   clientCapabilitiesOverrideText?: string;
   onClientCapabilitiesOverrideTextChange?: (value: string) => void;
   clientCapabilitiesOverrideError?: string | null;
+  headersWarning?: string;
 }
 
 export function AdvancedConnectionSettingsSection({
@@ -45,6 +46,7 @@ export function AdvancedConnectionSettingsSection({
   clientCapabilitiesOverrideText = "{}",
   onClientCapabilitiesOverrideTextChange,
   clientCapabilitiesOverrideError,
+  headersWarning,
 }: AdvancedConnectionSettingsSectionProps) {
   const showHeaderControls =
     customHeaders !== undefined &&
@@ -139,6 +141,11 @@ export function AdvancedConnectionSettingsSection({
                     </div>
                   ))}
                 </div>
+              )}
+              {headersWarning && (
+                <p role="alert" className="text-xs text-amber-700">
+                  {headersWarning}
+                </p>
               )}
             </div>
           )}

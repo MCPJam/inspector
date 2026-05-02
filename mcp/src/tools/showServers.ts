@@ -6,9 +6,9 @@ import type { McpJamMcpServer } from "../server.js";
 import type { SessionToolRegistrar } from "./sessionToolRegistrar.js";
 import {
   buildShowServersPayload,
-  resolveWorkspace,
+  resolveProject,
   type RemoteServer,
-  type RemoteWorkspace,
+  type RemoteProject,
 } from "./showServersCore.js";
 
 export const SHOW_SERVERS_RESOURCE_URI = "ui://mcpjam/show-servers.html";
@@ -22,12 +22,12 @@ export function registerShowServersTool(
     {
       title: "Show MCPJam servers",
       description:
-        "Show all MCP servers in a workspace with their health status. If no workspace is specified, shows the most recently updated accessible workspace and returns other workspace names for switching.",
+        "Show all MCP servers in a project with their health status. If no project is specified, shows the most recently updated accessible project and returns other project names for switching.",
       inputSchema: z.object({
-        workspace: z.string().min(1).optional(),
+        project: z.string().min(1).optional(),
       }),
     },
-    async ({ workspace }) => getShowServersToolResult(agent, workspace),
+    async ({ project }) => getShowServersToolResult(agent, project),
     {
       resourceUri: SHOW_SERVERS_RESOURCE_URI,
       html: SHOW_SERVERS_APP_HTML,
@@ -37,15 +37,15 @@ export function registerShowServersTool(
           prefersBorder: true,
         },
       },
-      callback: async ({ workspace }) =>
-        getShowServersToolResult(agent, workspace),
+      callback: async ({ project }) =>
+        getShowServersToolResult(agent, project),
     }
   );
 }
 
 export async function getShowServersToolResult(
   agent: McpJamMcpServer,
-  workspaceSelector?: string
+  projectSelector?: string
 ) {
   const token = agent.bearerToken;
   if (!token) {
@@ -55,25 +55,25 @@ export async function getShowServersToolResult(
   const convex = new ConvexHttpClient(agent.runtimeEnv.CONVEX_URL);
   convex.setAuth(token);
 
-  let workspaces: RemoteWorkspace[];
+  let projects: RemoteProject[];
   try {
-    workspaces = (await convex.query(
-      "workspaces:getMyWorkspaces" as any,
+    projects = (await convex.query(
+      "projects:getMyProjects" as any,
       {}
-    )) as RemoteWorkspace[];
+    )) as RemoteProject[];
   } catch (error) {
-    return toolError(`Failed to load workspaces: ${parseErrorMessage(error)}`);
+    return toolError(`Failed to load projects: ${parseErrorMessage(error)}`);
   }
 
-  const resolution = resolveWorkspace(workspaces, workspaceSelector);
+  const resolution = resolveProject(projects, projectSelector);
   if (!resolution.ok) {
     return toolError(resolution.message);
   }
 
   let servers: RemoteServer[];
   try {
-    servers = (await convex.query("servers:getWorkspaceServers" as any, {
-      workspaceId: resolution.workspace._id,
+    servers = (await convex.query("servers:getProjectServers" as any, {
+      projectId: resolution.project._id,
     })) as RemoteServer[];
   } catch (error) {
     return toolError(`Failed to load servers: ${parseErrorMessage(error)}`);
@@ -82,8 +82,8 @@ export async function getShowServersToolResult(
   const payload = await buildShowServersPayload({
     bearerToken: token,
     convexHttpUrl: agent.runtimeEnv.CONVEX_HTTP_URL,
-    workspace: resolution.workspace,
-    workspaces: resolution.sortedWorkspaces,
+    project: resolution.project,
+    projects: resolution.sortedProjects,
     servers,
     generatedAt: new Date().toISOString(),
   });

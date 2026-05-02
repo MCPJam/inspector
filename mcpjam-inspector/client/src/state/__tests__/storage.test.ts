@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import type { AppState, ServerWithName, Workspace } from "../app-types";
+import type { AppState, ServerWithName, Project } from "../app-types";
 import { loadAppState, saveAppState } from "../storage";
 
 function createServer(
@@ -18,7 +18,7 @@ function createServer(
 }
 
 function createState(server: ServerWithName): AppState {
-  const workspace: Workspace = {
+  const project: Project = {
     id: "default",
     name: "Default",
     servers: { [server.name]: server },
@@ -28,8 +28,8 @@ function createState(server: ServerWithName): AppState {
   };
 
   return {
-    workspaces: { default: workspace },
-    activeWorkspaceId: "default",
+    projects: { default: project },
+    activeProjectId: "default",
     servers: { [server.name]: server },
     selectedServer: server.name,
     selectedMultipleServers: [],
@@ -59,13 +59,13 @@ describe("storage", () => {
     const persistedState = JSON.parse(
       localStorage.getItem("mcp-inspector-state") ?? "{}",
     );
-    const persistedWorkspaces = JSON.parse(
-      localStorage.getItem("mcp-inspector-workspaces") ?? "{}",
+    const persistedProjects = JSON.parse(
+      localStorage.getItem("mcp-inspector-projects") ?? "{}",
     );
 
     expect(persistedState.servers.asana.lastOAuthTrace).toBeUndefined();
     expect(
-      persistedWorkspaces.workspaces.default.servers.asana.lastOAuthTrace,
+      persistedProjects.projects.default.servers.asana.lastOAuthTrace,
     ).toBeUndefined();
   });
 

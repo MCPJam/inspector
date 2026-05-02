@@ -60,7 +60,8 @@ import {
 } from "@/shared/live-chat-trace";
 
 export interface OrgModelHandlerOptions {
-  workspaceId: string;
+  projectId: string;
+  workspaceId?: string;
   providerKey: string;
   modelId: string;
   chatSessionId?: string;
@@ -82,14 +83,14 @@ export interface OrgModelHandlerOptions {
   }) => void;
   /**
    * The end user's Authorization header from the inbound request. Forwarded
-   * to /stream/org so Convex can re-authorize the user against the workspace.
+   * to /stream/org so Convex can re-authorize the user against the project.
    * Without this, /stream/org can only authenticate the inspector backend
    * (via the service token) and will reject the request as unauthenticated.
    */
   authHeader?: string;
   /**
    * Hosted share/chatbox tokens for guest chat sessions. Forwarded to
-   * /stream/org so Convex can authorize the guest against the workspace via
+   * /stream/org so Convex can authorize the guest against the project via
    * the existing authorizeGuestServerAccessBatch query.
    */
   shareToken?: string;
@@ -168,7 +169,8 @@ function formatLocalStreamError(error: unknown): string {
 export interface OrgLocalModelHandlerOptions {
   /** The resolved local provider config (from /stream/org/resolve). */
   provider: OrgProviderResolvedConfig;
-  workspaceId: string;
+  projectId: string;
+  workspaceId?: string;
   modelId: string;
   chatSessionId?: string;
   sourceType?: string;
@@ -198,6 +200,7 @@ export function handleLocalOrgChatModel(
 ): Response {
   const {
     provider,
+    projectId,
     workspaceId,
     modelId,
     chatSessionId,
@@ -417,6 +420,7 @@ export function handleLocalOrgChatModel(
 
           // Post usage to Convex (best-effort, non-blocking on failure).
           postLocalUsage({
+            projectId,
             workspaceId,
             providerKey: provider.providerKey,
             model: modelId,
@@ -478,7 +482,8 @@ export function handleLocalOrgChatModel(
 }
 
 async function postLocalUsage(params: {
-  workspaceId: string;
+  projectId: string;
+  workspaceId?: string;
   providerKey: string;
   model: string;
   usage?: LiveChatTraceUsage;
@@ -505,7 +510,8 @@ async function postLocalUsage(params: {
       ...(params.authHeader ? { Authorization: params.authHeader } : {}),
     },
     body: JSON.stringify({
-      workspaceId: params.workspaceId,
+      projectId: params.projectId,
+      ...(params.workspaceId ? { workspaceId: params.workspaceId } : {}),
       providerKey: params.providerKey,
       model: params.model,
       ...(params.usage ? { usage: params.usage } : {}),
@@ -548,7 +554,7 @@ export async function handleHostedOrgChatModel(
     systemPrompt: options.systemPrompt,
     temperature: options.temperature,
     tools: options.tools,
-    workspaceId: options.workspaceId,
+    projectId: options.workspaceId ? undefined : options.projectId,
     authHeader: options.authHeader,
     chatboxToken: options.chatboxToken,
     mcpClientManager: options.mcpClientManager,
@@ -563,6 +569,7 @@ export async function handleHostedOrgChatModel(
     },
     extraBodyFields: {
       providerKey: options.providerKey,
+      ...(options.workspaceId ? { workspaceId: options.workspaceId } : {}),
       ...(options.shareToken ? { shareToken: options.shareToken } : {}),
       // chatboxToken is set on the body by handleMCPJamFreeChatModel itself.
       ...(options.selectedServers && options.selectedServers.length > 0

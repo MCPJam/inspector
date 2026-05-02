@@ -27,14 +27,14 @@ function formatLimitLabel(
   return `${value} ${value === 1 ? singular : plural}`;
 }
 
-function formatChatboxesPerWorkspaceLabel(
+function formatChatboxesPerProjectLabel(
   value: number | null | undefined,
 ): string {
   if (value == null) {
-    return "unlimited chatboxes per workspace";
+    return "unlimited chatboxes per project";
   }
 
-  return `${value} ${value === 1 ? "chatbox" : "chatboxes"} per workspace`;
+  return `${value} ${value === 1 ? "chatbox" : "chatboxes"} per project`;
 }
 
 function formatPlanTeaserPrice(
@@ -86,12 +86,12 @@ export function getBillingUpsellTeaser(params: {
           "member",
           "members",
         )} and ${formatLimitLabel(
-          entry.limits.maxWorkspaces,
-          "workspace",
-          "workspaces",
+          entry.limits.maxProjects,
+          "project",
+          "projects",
         )}`
-      : `${formatPlanName(upgradePlan)} includes ${formatChatboxesPerWorkspaceLabel(
-          entry.limits.maxChatboxesPerWorkspace,
+      : `${formatPlanName(upgradePlan)} includes ${formatChatboxesPerProjectLabel(
+          entry.limits.maxChatboxesPerProject,
         )} and ${formatLimitLabel(
           entry.limits.maxMembers,
           "member",

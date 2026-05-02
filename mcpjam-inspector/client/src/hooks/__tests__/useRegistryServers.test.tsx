@@ -71,7 +71,7 @@ describe("useRegistryServers", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockUseQuery.mockImplementation((name: string) => {
-      if (name === "registryServers:getWorkspaceRegistryConnections") {
+      if (name === "registryServers:getProjectRegistryConnections") {
         return [];
       }
       return undefined;
@@ -93,7 +93,7 @@ describe("useRegistryServers", () => {
 
     const { result } = renderHook(() =>
       useRegistryServers({
-        workspaceId: "workspace-1",
+        projectId: "project-1",
         isAuthenticated: true,
         liveServers: {
           [getRegistryServerName(server)]: {
@@ -116,20 +116,20 @@ describe("useRegistryServers", () => {
     expect(onDisconnect).toHaveBeenCalledWith("Asana (App)");
     expect(mockDisconnectMutation).toHaveBeenCalledWith({
       registryServerId: "server-1",
-      workspaceId: "workspace-1",
+      projectId: "project-1",
     });
   });
 
-  it("still disconnects locally when the workspace connection is already missing", async () => {
+  it("still disconnects locally when the project connection is already missing", async () => {
     const onDisconnect = vi.fn();
     const server = createRegistryServer({ clientType: "app" });
     mockDisconnectMutation.mockRejectedValueOnce(
-      new Error("Registry server is not connected to this workspace"),
+      new Error("Registry server is not connected to this project"),
     );
 
     const { result } = renderHook(() =>
       useRegistryServers({
-        workspaceId: "workspace-1",
+        projectId: "project-1",
         isAuthenticated: true,
         liveServers: {
           [getRegistryServerName(server)]: {
@@ -152,16 +152,16 @@ describe("useRegistryServers", () => {
     expect(onDisconnect).toHaveBeenCalledWith("Asana (App)");
   });
 
-  it("does not create a duplicate workspace connection for an already connected registry server", async () => {
+  it("does not create a duplicate project connection for an already connected registry server", async () => {
     const server = createRegistryServer({ clientType: "app" });
 
     mockUseQuery.mockImplementation((name: string) => {
-      if (name === "registryServers:getWorkspaceRegistryConnections") {
+      if (name === "registryServers:getProjectRegistryConnections") {
         return [
           {
             _id: "connection-1",
             registryServerId: server._id,
-            workspaceId: "workspace-1",
+            projectId: "project-1",
             serverId: "runtime-server-1",
             connectedBy: "user-1",
             connectedAt: Date.now(),
@@ -174,7 +174,7 @@ describe("useRegistryServers", () => {
     const onConnect = vi.fn();
     const { result } = renderHook(() =>
       useRegistryServers({
-        workspaceId: "workspace-1",
+        projectId: "project-1",
         isAuthenticated: true,
         liveServers: {
           [getRegistryServerName(server)]: {

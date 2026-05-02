@@ -111,11 +111,11 @@ vi.mock("sonner", () => ({
 describe("SharedServerChatPage", () => {
   function createSharePayload(
     overrides: Partial<{
-      workspaceId: string;
+      projectId: string;
       serverId: string;
       serverName: string;
       mode: "any_signed_in_with_link" | "invited_only";
-      viewerIsWorkspaceMember: boolean;
+      viewerIsProjectMember: boolean;
       useOAuth: boolean;
       serverUrl: string | null;
       clientId: string | null;
@@ -123,11 +123,11 @@ describe("SharedServerChatPage", () => {
     }> = {},
   ) {
     return {
-      workspaceId: "ws_1",
+      projectId: "ws_1",
       serverId: "srv_1",
       serverName: "Server One",
       mode: "any_signed_in_with_link" as const,
-      viewerIsWorkspaceMember: false,
+      viewerIsProjectMember: false,
       useOAuth: false,
       serverUrl: null,
       clientId: null,

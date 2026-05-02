@@ -247,14 +247,14 @@ describe("CiEvalsTab first-run NUX", () => {
       }),
     );
 
-    render(<CiEvalsTab convexWorkspaceId="ws-1" />);
+    render(<CiEvalsTab convexProjectId="ws-1" />);
 
     expect(screen.getByText("Loading runs...")).toBeInTheDocument();
     expect(screen.queryByText("Run your first eval")).not.toBeInTheDocument();
   });
 
   it("shows the first-run NUX when there are no suites and no runs after loading", () => {
-    render(<CiEvalsTab convexWorkspaceId="ws-1" />);
+    render(<CiEvalsTab convexProjectId="ws-1" />);
 
     expect(screen.getByText("Run your first eval")).toBeInTheDocument();
     expect(screen.getByTestId("sdk-eval-quickstart")).toBeInTheDocument();
@@ -271,7 +271,7 @@ describe("CiEvalsTab first-run NUX", () => {
       }),
     );
 
-    render(<CiEvalsTab convexWorkspaceId="ws-1" />);
+    render(<CiEvalsTab convexProjectId="ws-1" />);
 
     expect(screen.queryByText("Run your first eval")).not.toBeInTheDocument();
     expect(screen.getByTestId("suite-iterations-view")).toBeInTheDocument();
@@ -286,7 +286,7 @@ describe("CiEvalsTab first-run NUX", () => {
       }),
     );
 
-    render(<CiEvalsTab convexWorkspaceId="ws-1" />);
+    render(<CiEvalsTab convexProjectId="ws-1" />);
 
     expect(screen.queryByText("Run your first eval")).not.toBeInTheDocument();
     expect(screen.getByTestId("suite-iterations-view")).toBeInTheDocument();

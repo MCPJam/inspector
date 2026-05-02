@@ -41,7 +41,7 @@ import {
   prepareSingleTestCaseRun,
 } from "./single-test-case-runner";
 import type { EnsureServersReadyResult } from "@/hooks/use-app-state";
-import type { RemoteServer } from "@/hooks/useWorkspaces";
+import type { RemoteServer } from "@/hooks/useProjects";
 import {
   formatMcpConnectServerPrompt,
   formatMcpServerRefsForError,
@@ -76,7 +76,7 @@ export function hasUnavailableServers(result: EnsureServersReadyResult) {
 export function formatEnsureServersReadyError(
   result: EnsureServersReadyResult,
   actionLabel: string,
-  workspaceServers: RemoteServer[] | undefined,
+  projectServers: RemoteServer[] | undefined,
 ) {
   if (result.missingServerNames.length > 0) {
     // Never list server names/ids in this toast: refs may be legacy Convex
@@ -85,17 +85,17 @@ export function formatEnsureServersReadyError(
     const isTest = actionLabel.includes("test case");
     if (n === 1) {
       return isTest
-        ? `Unable to ${actionLabel}. This test depends on an MCP server that is no longer in this workspace.`
-        : `Unable to ${actionLabel}. This suite depends on an MCP server that is no longer in this workspace.`;
+        ? `Unable to ${actionLabel}. This test depends on an MCP server that is no longer in this project.`
+        : `Unable to ${actionLabel}. This suite depends on an MCP server that is no longer in this project.`;
     }
     return isTest
-      ? `Unable to ${actionLabel}. This test depends on ${n} MCP servers that are no longer in this workspace.`
-      : `Unable to ${actionLabel}. This suite depends on ${n} MCP servers that are no longer in this workspace.`;
+      ? `Unable to ${actionLabel}. This test depends on ${n} MCP servers that are no longer in this project.`
+      : `Unable to ${actionLabel}. This suite depends on ${n} MCP servers that are no longer in this project.`;
   }
 
   if (result.reauthServerNames.length > 0) {
     const names = result.reauthServerNames;
-    const opts = { remoteServers: workspaceServers };
+    const opts = { remoteServers: projectServers };
     if (names.length > 0 && names.every((r) => isUnresolvableMcpServerRef(r, opts))) {
       return `Re-authenticate, then try to ${actionLabel}.`;
     }
@@ -104,7 +104,7 @@ export function formatEnsureServersReadyError(
 
   if (result.failedServerNames.length > 0) {
     const names = result.failedServerNames;
-    const opts = { remoteServers: workspaceServers };
+    const opts = { remoteServers: projectServers };
     if (names.length > 0 && names.every((r) => isUnresolvableMcpServerRef(r, opts))) {
       return `We couldn't connect to a required server. Try again to ${actionLabel}.`;
     }
@@ -154,7 +154,7 @@ interface UseEvalHandlersProps {
   selectedSuiteEntry: EvalSuiteOverviewEntry | null;
   selectedSuiteId: string | null;
   selectedTestId: string | null;
-  workspaceId?: string | null;
+  projectId?: string | null;
   connectedServerNames?: Set<string>;
   ensureServersReady?: (
     serverNames: string[],
@@ -166,7 +166,7 @@ interface UseEvalHandlersProps {
    */
   evalsNavigationContext?: "evals" | "ci-evals";
   /** For user-facing server labels (names instead of raw Convex ids). */
-  workspaceServers?: RemoteServer[];
+  projectServers?: RemoteServer[];
   /** When true, this uses the direct-guest eval playground flow. */
   isDirectGuest?: boolean;
 }
@@ -179,12 +179,12 @@ export function useEvalHandlers({
   selectedSuiteEntry,
   selectedSuiteId,
   selectedTestId,
-  workspaceId = null,
+  projectId = null,
   connectedServerNames,
   ensureServersReady,
   latestRunBySuiteId,
   evalsNavigationContext = "evals",
-  workspaceServers,
+  projectServers,
   isDirectGuest = false,
 }: UseEvalHandlersProps) {
   const convex = useConvex();
@@ -467,7 +467,7 @@ export function useEvalHandlers({
               formatEnsureServersReadyError(
                 readiness,
                 "run this suite",
-                workspaceServers,
+                projectServers,
               ),
             );
             return;
@@ -475,7 +475,7 @@ export function useEvalHandlers({
         } else {
           toast.error(
             formatMcpConnectServerPrompt(rerunEligibility.missingServers, {
-              remoteServers: workspaceServers,
+              remoteServers: projectServers,
               kind: "suite",
             }),
           );
@@ -503,7 +503,7 @@ export function useEvalHandlers({
         const criteriaNote = `Pass Criteria: Min ${minimumPassRate}% Accuracy`;
 
         await runEvals({
-          workspaceId,
+          projectId,
           suiteId: suite._id,
           suiteName: suite.name,
           suiteDescription: suite.description,
@@ -560,8 +560,8 @@ export function useEvalHandlers({
       connectedServerNames,
       ensureServersReady,
       getAccessToken,
-      workspaceId,
-      workspaceServers,
+      projectId,
+      projectServers,
       getSuiteExecutionContext,
       handleReplayRun,
     ]
@@ -613,7 +613,7 @@ export function useEvalHandlers({
               formatEnsureServersReadyError(
                 readiness,
                 "run this test case",
-                workspaceServers,
+                projectServers,
               ),
             );
             return null;
@@ -621,7 +621,7 @@ export function useEvalHandlers({
         } else {
           toast.error(
             formatMcpConnectServerPrompt(disconnectedSuiteServers, {
-              remoteServers: workspaceServers,
+              remoteServers: projectServers,
               kind: "test-case",
             }),
           );
@@ -635,7 +635,7 @@ export function useEvalHandlers({
         const preparedResults = await Promise.allSettled(
           modelValuesToRun.map((selectedModel) =>
             prepareSingleTestCaseRun({
-              workspaceId: isDirectGuest ? null : workspaceId,
+              projectId: isDirectGuest ? null : projectId,
               suite: {
                 environment: {
                   ...suite.environment,
@@ -823,13 +823,13 @@ export function useEvalHandlers({
       runningTestCaseId,
       rerunningSuiteId,
       replayingRunId,
-      workspaceId,
+      projectId,
       getAccessToken,
       getToken,
       hasToken,
       connectedServerNames,
       ensureServersReady,
-      workspaceServers,
+      projectServers,
       isDirectGuest,
     ],
   );
@@ -1183,7 +1183,7 @@ export function useEvalHandlers({
               formatEnsureServersReadyError(
                 readiness,
                 "generate test cases",
-                workspaceServers,
+                projectServers,
               ),
             );
             return;
@@ -1191,7 +1191,7 @@ export function useEvalHandlers({
         } else {
           toast.error(
             formatMcpConnectServerPrompt(disconnected, {
-              remoteServers: workspaceServers,
+              remoteServers: projectServers,
               kind: "suite",
             }),
           );
@@ -1205,7 +1205,7 @@ export function useEvalHandlers({
         const outcome = await generateAndPersistEvalTests({
           convex,
           getAccessToken,
-          workspaceId,
+          projectId,
           suiteId,
           serverIds,
           createTestCase: mutations.createTestCaseMutation as (
@@ -1296,10 +1296,10 @@ export function useEvalHandlers({
       getAccessToken,
       convex,
       mutations.createTestCaseMutation,
-      workspaceId,
+      projectId,
       connectedServerNames,
       ensureServersReady,
-      workspaceServers,
+      projectServers,
       isDirectGuest,
       getTestCasesForRerun,
       handleRunTestCase,

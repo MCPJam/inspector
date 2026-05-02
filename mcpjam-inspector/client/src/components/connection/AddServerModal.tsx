@@ -19,7 +19,7 @@ import { AdvancedConnectionSettingsSection } from "./shared/AdvancedConnectionSe
 import { AuthenticationSection } from "./shared/AuthenticationSection";
 import { EnvVarsSection } from "./shared/EnvVarsSection";
 import { HostedConnectionTypeControl } from "./shared/HostedConnectionTypeControl";
-import type { Workspace } from "@/state/app-types";
+import type { Project } from "@/state/app-types";
 
 interface AddServerModalProps {
   isOpen: boolean;
@@ -27,7 +27,7 @@ interface AddServerModalProps {
   onSubmit: (formData: ServerFormData) => void;
   initialData?: Partial<ServerFormData>;
   requireHttps?: boolean;
-  workspaceClientConfig?: Workspace["clientConfig"];
+  projectClientConfig?: Project["clientConfig"];
 }
 
 function normalizeOauthProtocolMode(
@@ -88,12 +88,12 @@ export function AddServerModal({
   onSubmit,
   initialData,
   requireHttps,
-  workspaceClientConfig,
+  projectClientConfig,
 }: AddServerModalProps) {
   const posthog = usePostHog();
   const formState = useServerForm(undefined, {
     requireHttps,
-    workspaceClientConfig,
+    projectClientConfig,
   });
   const hostedUrlPlaceholder = "https://example.com/mcp";
 
@@ -156,6 +156,9 @@ export function AddServerModal({
         }
         if (initialData.clientSecret) {
           formState.setClientSecret(initialData.clientSecret);
+        }
+        if (initialData.hasClientSecret) {
+          formState.setHasStoredClientSecret(true);
         }
       } else if (initialData.headers) {
         const authorizationHeader = getAuthorizationHeaderValue(
@@ -399,6 +402,9 @@ export function AddServerModal({
                 if (!checked) {
                   formState.setClientId("");
                   formState.setClientSecret("");
+                  if (formState.hasStoredClientSecret) {
+                    formState.setClearClientSecret(true);
+                  }
                   formState.setClientIdError(null);
                   formState.setClientSecretError(null);
                 }
@@ -412,9 +418,18 @@ export function AddServerModal({
               clientSecret={formState.clientSecret}
               onClientSecretChange={(value) => {
                 formState.setClientSecret(value);
+                if (value.trim()) {
+                  formState.setClearClientSecret(false);
+                }
                 const error = formState.validateClientSecret(value);
                 formState.setClientSecretError(error);
               }}
+              hasStoredClientSecret={formState.hasStoredClientSecret}
+              clearClientSecret={formState.clearClientSecret}
+              onClearClientSecret={() => formState.setClearClientSecret(true)}
+              onUndoClearClientSecret={() =>
+                formState.setClearClientSecret(false)
+              }
               clientIdError={formState.clientIdError}
               clientSecretError={formState.clientSecretError}
             />
@@ -452,6 +467,7 @@ export function AddServerModal({
                   onAddHeader: formState.addCustomHeader,
                   onRemoveHeader: formState.removeCustomHeader,
                   onUpdateHeader: formState.updateCustomHeader,
+                  headersWarning: formState.oauthAuthorizationHeaderWarning,
                 }
               : {})}
           />

@@ -108,16 +108,27 @@ export async function executeSuiteReplayFromRun(
       !!modelApiKeys && Object.keys(modelApiKeys).length > 0;
     const resolvedModelApiKeys = hasClientKeys ? modelApiKeys : undefined;
     let resolvedOrgModelConfig = orgModelConfig;
+    const replayProjectId =
+      typeof replayMetadata.projectId === "string"
+        ? replayMetadata.projectId
+        : undefined;
+    const replayLegacyWorkspaceId =
+      !replayProjectId && typeof replayMetadata.workspaceId === "string"
+        ? replayMetadata.workspaceId
+        : undefined;
+    const replayOrgConfigTarget = replayProjectId
+      ? { projectId: replayProjectId }
+      : replayLegacyWorkspaceId
+      ? { workspaceId: replayLegacyWorkspaceId }
+      : undefined;
     if (
       !resolvedModelApiKeys &&
       !resolvedOrgModelConfig &&
-      replayMetadata.workspaceId
+      replayOrgConfigTarget
     ) {
       try {
         resolvedOrgModelConfig = await resolveOrgModelConfig(
-          {
-            workspaceId: replayMetadata.workspaceId,
-          },
+          replayOrgConfigTarget,
           {
             bearerToken: convexAuthToken,
             serverIds: replayServerIds,

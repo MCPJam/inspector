@@ -22,6 +22,7 @@ export type ResolvedOrgModelConfig = {
 };
 
 export type ResolveOrgModelConfigTarget =
+  | { projectId: string }
   | { workspaceId: string }
   | { organizationId: string };
 
@@ -78,10 +79,11 @@ function buildCacheKey(
   params: ResolveOrgModelConfigTarget,
   auth: ResolveOrgModelConfigAuth | undefined,
 ): string {
-  const target =
-    "workspaceId" in params
-      ? `ws:${params.workspaceId}`
-      : `org:${params.organizationId}`;
+  const target = "projectId" in params
+    ? `project:${params.projectId}`
+    : "workspaceId" in params
+    ? `legacy-workspace:${params.workspaceId}`
+    : `org:${params.organizationId}`;
   const authHash = createHash("sha256")
     .update(
       JSON.stringify({
@@ -288,7 +290,7 @@ const runtimeResolveCache = new Map<
 >();
 
 function buildRuntimeCacheKey(
-  workspaceId: string,
+  projectId: string,
   providerKey: string,
   model: string,
   auth: ResolveOrgModelConfigAuth | undefined,
@@ -303,7 +305,7 @@ function buildRuntimeCacheKey(
       }),
     )
     .digest("hex");
-  return `runtime:ws:${workspaceId}:${providerKey}:${model}:auth:${authHash}`;
+  return `runtime:project:${projectId}:${providerKey}:${model}:auth:${authHash}`;
 }
 
 /**
@@ -318,7 +320,7 @@ function buildRuntimeCacheKey(
  * while repeated agentic-loop steps don't each pay the round-trip cost.
  */
 export async function resolveOrgProviderRuntime(
-  workspaceId: string,
+  projectId: string,
   providerKey: string,
   model: string,
   auth?: ResolveOrgModelConfigAuth,
@@ -329,7 +331,7 @@ export async function resolveOrgProviderRuntime(
   const inspectorServiceToken = process.env.INSPECTOR_SERVICE_TOKEN;
   if (!inspectorServiceToken) throw new Error("INSPECTOR_SERVICE_TOKEN is not set");
 
-  const cacheKey = buildRuntimeCacheKey(workspaceId, providerKey, model, auth);
+  const cacheKey = buildRuntimeCacheKey(projectId, providerKey, model, auth);
   const cached = runtimeResolveCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) {
     return cached.result;
@@ -352,7 +354,7 @@ export async function resolveOrgProviderRuntime(
         ...(authHeader ? { Authorization: authHeader } : {}),
       },
       body: JSON.stringify({
-        workspaceId,
+        projectId,
         providerKey,
         model,
         ...(auth?.shareToken?.trim() ? { shareToken: auth.shareToken.trim() } : {}),

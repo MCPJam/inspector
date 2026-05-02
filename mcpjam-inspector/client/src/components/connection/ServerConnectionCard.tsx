@@ -108,8 +108,8 @@ interface ServerConnectionCardProps {
     server: ServerWithName,
     defaultTab: ServerDetailTab,
   ) => void;
-  /** When set (e.g. active workspace on Servers tab), prefetches Explore AI test cases on MCP connect. */
-  workspaceId?: string | null;
+  /** When set (e.g. active project on Servers tab), prefetches Explore AI test cases on MCP connect. */
+  projectId?: string | null;
 }
 
 export function ServerConnectionCard({
@@ -121,9 +121,9 @@ export function ServerConnectionCard({
   serverTunnelUrl,
   hostedServerId,
   onOpenDetailModal,
-  workspaceId,
+  projectId,
 }: ServerConnectionCardProps) {
-  useExploreCasesPrefetchOnConnect(workspaceId ?? null, server, hostedServerId);
+  useExploreCasesPrefetchOnConnect(projectId ?? null, server, hostedServerId);
 
   const posthog = usePostHog();
   const { getAccessToken } = useAuth();

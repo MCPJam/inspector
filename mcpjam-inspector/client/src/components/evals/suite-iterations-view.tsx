@@ -86,7 +86,7 @@ export function SuiteIterationsView({
   availableModels,
   route,
   userMap,
-  workspaceId = null,
+  projectId = null,
   navigation,
   onSetupCi,
   onCreateTestCase,
@@ -110,7 +110,7 @@ export function SuiteIterationsView({
   onRunTestCase,
   runningTestCaseId = null,
   onContinueInChat,
-  workspaceServers,
+  projectServers,
   generateTestCasesDisabledReason,
   isDirectGuest = false,
   ensureServersReady,
@@ -137,7 +137,7 @@ export function SuiteIterationsView({
   availableModels: any[];
   route: EvalRoute;
   userMap?: Map<string, { name: string; imageUrl?: string }>;
-  workspaceId?: string | null;
+  projectId?: string | null;
   navigation: SuiteNavigation;
   onSetupCi?: () => void;
   onCreateTestCase?: () => void;
@@ -154,7 +154,7 @@ export function SuiteIterationsView({
   omitRunIterationList?: boolean;
   /** When true, show suite delete affordances. */
   canDeleteSuite: boolean;
-  /** Workspace admins only: run list batch delete and selection. */
+  /** Project admins only: run list batch delete and selection. */
   canDeleteRuns?: boolean;
   /** When true, hide suite editing and other destructive controls (e.g. desktop CI). */
   readOnlyConfig?: boolean;
@@ -174,7 +174,7 @@ export function SuiteIterationsView({
   onRunTestCase?: (testCase: EvalCase) => void;
   runningTestCaseId?: string | null;
   onContinueInChat?: (handoff: Omit<EvalChatHandoff, "id">) => void;
-  workspaceServers?: Array<{
+  projectServers?: Array<{
     _id: string;
     name: string;
     transportType?: "stdio" | "http";
@@ -526,11 +526,11 @@ export function SuiteIterationsView({
                   suiteId={suite._id}
                   selectedTestCaseId={selectedTestId}
                   connectedServerNames={connectedServerNames}
-                  workspaceId={workspaceId}
+                  projectId={projectId}
                   availableModels={availableModels}
                   isDirectGuest={isDirectGuest}
                   ensureServersReady={ensureServersReady}
-                  workspaceServers={workspaceServers}
+                  projectServers={projectServers}
                   onExportDraft={handleOpenDraftExport}
                   openCompareFromRoute={
                     route.type === "test-edit" && Boolean(route.openCompare)
@@ -827,10 +827,10 @@ export function SuiteIterationsView({
       {isEditMode && (
         <div className="flex-1 min-h-0 overflow-auto">
           <div className="p-6 max-w-5xl mx-auto space-y-8">
-            {workspaceServers ? (
+            {projectServers ? (
               <SuiteEnvironmentEditor
                 suite={suite}
-                workspaceServers={workspaceServers}
+                projectServers={projectServers}
                 connectedServerNames={connectedServerNames}
                 onSave={async (environment) => {
                   try {
@@ -947,7 +947,7 @@ export function SuiteIterationsView({
                   Danger zone
                 </h2>
                 <p className="text-xs text-muted-foreground">
-                  Deleting removes this suite from the workspace. Run history
+                  Deleting removes this suite from the project. Run history
                   and cases cannot be recovered.
                 </p>
                 <Button

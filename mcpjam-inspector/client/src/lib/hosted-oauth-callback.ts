@@ -11,12 +11,12 @@ import {
 
 export interface HostedOAuthPendingMarker {
   surface: HostedOAuthSurface;
-  workspaceId?: string | null;
+  projectId?: string | null;
   serverId?: string | null;
   serverName: string;
   serverUrl: string | null;
   sessionId?: string | null;
-  accessScope?: "workspace_member" | "chat_v2";
+  accessScope?: "project_member" | "chat_v2";
   shareToken?: string | null;
   chatboxToken?: string | null;
   returnHash: string | null;
@@ -73,7 +73,7 @@ export function writeHostedOAuthPendingMarker(
       HOSTED_OAUTH_PENDING_STORAGE_KEY,
       JSON.stringify({
         ...marker,
-        workspaceId: marker.workspaceId ?? null,
+        projectId: marker.projectId ?? null,
         serverId: marker.serverId ?? null,
         serverUrl: marker.serverUrl ?? null,
         sessionId: marker.sessionId ?? null,
@@ -100,7 +100,7 @@ export function readHostedOAuthPendingMarker(): HostedOAuthPendingMarker | null 
       typeof parsed !== "object" ||
       (parsed.surface !== "chatbox" &&
         parsed.surface !== "shared" &&
-        parsed.surface !== "workspace") ||
+        parsed.surface !== "project") ||
       typeof parsed.serverName !== "string" ||
       typeof parsed.startedAt !== "number"
     ) {
@@ -115,15 +115,15 @@ export function readHostedOAuthPendingMarker(): HostedOAuthPendingMarker | null 
 
       return {
         surface: parsed.surface,
-        workspaceId:
-          typeof parsed.workspaceId === "string" ? parsed.workspaceId : null,
+        projectId:
+          typeof parsed.projectId === "string" ? parsed.projectId : null,
         serverId: typeof parsed.serverId === "string" ? parsed.serverId : null,
         serverName: parsed.serverName,
         serverUrl: typeof parsed.serverUrl === "string" ? parsed.serverUrl : null,
         sessionId:
           typeof parsed.sessionId === "string" ? parsed.sessionId : null,
         accessScope:
-          parsed.accessScope === "workspace_member" ||
+          parsed.accessScope === "project_member" ||
           parsed.accessScope === "chat_v2"
           ? parsed.accessScope
           : undefined,
@@ -238,7 +238,7 @@ export function getHostedOAuthCallbackContext(): HostedOAuthCallbackContext | nu
 
   return {
     surface,
-    workspaceId: null,
+    projectId: null,
     serverId: null,
     serverName,
     serverUrl,
@@ -267,7 +267,7 @@ export function resolveHostedOAuthReturnHash(
       : "#chatbox";
   }
 
-  if (context.surface === "workspace") {
+  if (context.surface === "project") {
     return "#servers";
   }
 

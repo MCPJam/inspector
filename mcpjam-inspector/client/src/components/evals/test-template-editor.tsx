@@ -130,7 +130,7 @@ interface TestTemplateEditorProps {
   suiteId: string;
   selectedTestCaseId: string;
   connectedServerNames: Set<string>;
-  workspaceId: string | null;
+  projectId: string | null;
   availableModels: ModelDefinition[];
   onBackToList?: () => void;
   onOpenLastRun?: (iteration: EvalIteration) => void;
@@ -150,7 +150,7 @@ interface TestTemplateEditorProps {
   ensureServersReady?: (
     serverNames: string[],
   ) => Promise<EnsureServersReadyResult>;
-  workspaceServers?: Array<{
+  projectServers?: Array<{
     _id: string;
     name: string;
     transportType?: "stdio" | "http";
@@ -329,7 +329,7 @@ export function TestTemplateEditor({
   suiteId,
   selectedTestCaseId,
   connectedServerNames,
-  workspaceId,
+  projectId,
   availableModels,
   onBackToList,
   onOpenLastRun,
@@ -339,7 +339,7 @@ export function TestTemplateEditor({
   openCompareIterationId = null,
   isDirectGuest = false,
   ensureServersReady,
-  workspaceServers,
+  projectServers,
 }: TestTemplateEditorProps) {
   const { getAccessToken } = useAuth();
   const { getToken, hasToken } = useAiProviderKeys();
@@ -514,7 +514,7 @@ export function TestTemplateEditor({
 
       try {
         const data = await listEvalTools({
-          workspaceId,
+          projectId,
           serverIds,
         });
         if (!cancelled) {
@@ -533,7 +533,7 @@ export function TestTemplateEditor({
     return () => {
       cancelled = true;
     };
-  }, [suite, workspaceId]);
+  }, [suite, projectId]);
 
   const handleTitleClick = () => {
     setIsEditingTitle(true);
@@ -1201,7 +1201,7 @@ export function TestTemplateEditor({
             formatEnsureServersReadyError(
               readiness,
               "run this test case",
-              workspaceServers,
+              projectServers,
             ),
           );
           return;
@@ -1209,7 +1209,7 @@ export function TestTemplateEditor({
       } else {
         toast.error(
           formatMcpConnectServerPrompt(disconnectedSuiteServers, {
-            remoteServers: workspaceServers,
+            remoteServers: projectServers,
             kind: "test-case",
           }),
         );
@@ -1269,7 +1269,7 @@ export function TestTemplateEditor({
         });
 
         const preparedRun = await prepareSingleTestCaseRun({
-          workspaceId: isDirectGuest ? null : workspaceId,
+          projectId: isDirectGuest ? null : projectId,
           suite,
           testCase: currentTestCase,
           selectedModel: modelValue,
@@ -2450,7 +2450,7 @@ export function TestTemplateEditor({
                         allRecords={selectedCompareRecords}
                         testCase={currentTestCase}
                         serverNames={connectedServerList}
-                        workspaceId={workspaceId}
+                        projectId={projectId}
                         onContinueInChat={onContinueInChat}
                         onStreamingTraceLoaded={() =>
                           clearCompareStreamingState(record.modelValue)
@@ -2485,7 +2485,7 @@ function RunColumn({
   allRecords,
   testCase,
   serverNames,
-  workspaceId,
+  projectId,
   onContinueInChat,
   onStreamingTraceLoaded,
   activeTab,
@@ -2496,7 +2496,7 @@ function RunColumn({
   allRecords: CompareRunRecord[];
   testCase: any;
   serverNames: string[];
-  workspaceId: string | null;
+  projectId: string | null;
   onContinueInChat?: (handoff: Omit<EvalChatHandoff, "id">) => void;
   onStreamingTraceLoaded: () => void;
   activeTab: RunColumnTab;
@@ -2508,7 +2508,7 @@ function RunColumn({
   const { toolsMetadata, toolServerMap, connectedServerIds } =
     useEvalTraceToolContext({
       serverNames,
-      workspaceId,
+      projectId,
       retryKey:
         record.iteration?._id ??
         record.startedAt ??

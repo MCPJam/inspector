@@ -89,7 +89,7 @@ export function PromptsPopover({
   const skillsEnabled = Boolean(onSkillSelected);
 
   useEffect(() => {
-    // In shared/minimal mode, skip prompts fetch (workspace-member-only endpoint)
+    // In shared/minimal mode, skip prompts fetch (project-member-only endpoint)
     if (minimalMode) return;
 
     // Fetch prompts for selected servers

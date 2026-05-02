@@ -55,7 +55,7 @@ vi.mock("@/hooks/use-eval-tab-context", () => ({
 }));
 
 vi.mock("@/hooks/useViews", () => ({
-  useWorkspaceServers: () => ({
+  useProjectServers: () => ({
     servers: [
       { _id: "srv-a", name: "server-a", transportType: "http" },
       { _id: "srv-b", name: "server-b", transportType: "stdio" },
@@ -108,8 +108,8 @@ vi.mock("../evals/evals-suite-list-sidebar", () => ({
   EvalsSuiteListSidebar: () => <div data-testid="suite-sidebar" />,
 }));
 
-vi.mock("../evals/use-playground-workspace-executions", () => ({
-  usePlaygroundWorkspaceExecutions: () => ({
+vi.mock("../evals/use-playground-project-executions", () => ({
+  usePlaygroundProjectExecutions: () => ({
     status: "ready" as const,
     cases: [],
     iterations: [],
@@ -235,7 +235,7 @@ describe("EvalsTab", () => {
   });
 
   it("renders from suite-driven route state without depending on an active server", () => {
-    render(<EvalsTab workspaceId="ws-1" />);
+    render(<EvalsTab projectId="ws-1" />);
 
     expect(mocks.navigatePlaygroundEvalsRoute).not.toHaveBeenCalled();
     expect(screen.getByRole("tab", { name: "Suites" })).toHaveAttribute(
@@ -249,7 +249,7 @@ describe("EvalsTab", () => {
     expect(mocks.suiteIterationsView).toHaveBeenCalled();
     expect(mocks.suiteIterationsView.mock.calls.at(-1)?.[0]).toMatchObject({
       suite: expect.objectContaining({ _id: "suite-a" }),
-      workspaceServers: expect.arrayContaining([
+      projectServers: expect.arrayContaining([
         expect.objectContaining({ name: "server-a" }),
         expect.objectContaining({ name: "server-b" }),
       ]),
@@ -258,7 +258,7 @@ describe("EvalsTab", () => {
 
   it("shows the suite list on the Suites tab when the route is the eval list", () => {
     mocks.route.current = { type: "list" };
-    render(<EvalsTab workspaceId="ws-1" />);
+    render(<EvalsTab projectId="ws-1" />);
 
     expect(screen.getByTestId("suite-sidebar")).toBeInTheDocument();
     expect(screen.queryByTestId("suite-iterations-view")).toBeNull();
@@ -266,7 +266,7 @@ describe("EvalsTab", () => {
 
   it("navigates to the eval list when the Suites tab is activated while a suite is open", async () => {
     const user = userEvent.setup();
-    render(<EvalsTab workspaceId="ws-1" />);
+    render(<EvalsTab projectId="ws-1" />);
     expect(mocks.navigatePlaygroundEvalsRoute).not.toHaveBeenCalled();
 
     await user.click(screen.getByRole("tab", { name: "Suites" }));
@@ -280,7 +280,7 @@ describe("EvalsTab", () => {
   it("redirects invalid suite routes back to the eval list", async () => {
     mocks.route.current = { type: "suite-overview", suiteId: "missing-suite" };
 
-    render(<EvalsTab workspaceId="ws-1" />);
+    render(<EvalsTab projectId="ws-1" />);
 
     await waitFor(() => {
       expect(mocks.navigatePlaygroundEvalsRoute).toHaveBeenCalledWith(

@@ -190,7 +190,7 @@ export interface UseHostedOAuthGateOptions {
   surface: HostedOAuthSurface;
   pendingKey: string;
   servers: HostedOAuthServerDescriptor[];
-  workspaceId?: string | null;
+  projectId?: string | null;
   shareToken?: string;
   chatboxToken?: string;
   isAuthenticated?: boolean;
@@ -211,7 +211,7 @@ export function useHostedOAuthGate({
   surface,
   pendingKey,
   servers,
-  workspaceId,
+  projectId,
   shareToken,
   chatboxToken,
   isAuthenticated = false,
@@ -320,9 +320,9 @@ export function useHostedOAuthGate({
         const validation = await validateWithRetry(
           server.serverId,
           accessToken ?? undefined,
-          chatboxToken && workspaceId
+          chatboxToken && projectId
             ? {
-                workspaceId,
+                projectId,
                 serverId: server.serverId,
                 serverName: server.serverName,
                 accessScope: "chat_v2",
@@ -387,7 +387,7 @@ export function useHostedOAuthGate({
     surface,
     isVaultBacked,
     chatboxToken,
-    workspaceId,
+    projectId,
   ]);
 
   const authorizeServer = useCallback(
@@ -421,7 +421,7 @@ export function useHostedOAuthGate({
         window.location.hash || `#${slugify(server.serverName)}`;
       writeHostedOAuthPendingMarker({
         surface,
-        workspaceId,
+        projectId,
         serverId: server.serverId,
         serverName: server.serverName,
         serverUrl: server.serverUrl,
@@ -429,7 +429,7 @@ export function useHostedOAuthGate({
           shareToken || chatboxToken
             ? "chat_v2"
             : isAuthenticated
-            ? "workspace_member"
+            ? "project_member"
             : undefined,
         shareToken,
         chatboxToken,
@@ -503,7 +503,7 @@ export function useHostedOAuthGate({
       chatboxToken,
       shareToken,
       surface,
-      workspaceId,
+      projectId,
     ]
   );
 

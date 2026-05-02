@@ -1,7 +1,7 @@
 import { useAction, useMutation, useQuery } from "convex/react";
 import { useCallback, useState } from "react";
 
-export type OrganizationPlan = "free" | "starter" | "team" | "enterprise";
+export type OrganizationPlan = "free" | "solo" | "team" | "enterprise";
 export type BillingInterval = "monthly" | "annual";
 export type BillingModel = "free" | "flat" | "per_seat" | "contact";
 export type BillingFeatureName =
@@ -14,9 +14,9 @@ export type BillingFeatureName =
   | "prioritySupport";
 export type BillingLimitName =
   | "maxMembers"
-  | "maxWorkspaces"
-  | "maxServersPerWorkspace"
-  | "maxChatboxesPerWorkspace"
+  | "maxProjects"
+  | "maxServersPerProject"
+  | "maxChatboxesPerProject"
   | "maxEvalRunsPerMonth";
 
 /** Mirrors backend premiumness gate keys exactly. */
@@ -26,9 +26,9 @@ export type PremiumnessGateKey =
   | "cicd"
   | "auditLog"
   | "maxMembers"
-  | "maxWorkspaces"
-  | "maxServersPerWorkspace"
-  | "maxChatboxesPerWorkspace"
+  | "maxProjects"
+  | "maxServersPerProject"
+  | "maxChatboxesPerProject"
   | "maxEvalRunsPerMonth";
 
 export type BillingEnforcementState =
@@ -39,7 +39,7 @@ export type BillingEnforcementState =
 export interface GateDecision {
   gateKey: PremiumnessGateKey;
   kind: "feature" | "limit";
-  scope: "organization" | "workspace";
+  scope: "organization" | "project";
   canAccess: boolean;
   shouldShowUpsell: boolean;
   upgradePlan: OrganizationPlan | null;
@@ -110,7 +110,7 @@ export interface PlanCatalogEntry {
   includedSeats: number | null;
   seatMinimum: number | null;
   checkout: {
-    plan: "starter" | "team";
+    plan: "solo" | "team";
     supportedIntervals: BillingInterval[];
   } | null;
 }
@@ -129,7 +129,7 @@ export interface OrganizationPlanChangeSnapshot {
   stripeSubscriptionItemId?: string;
   stripePriceId?: string;
   stripeSeatQuantity?: number;
-  stripeScheduledPlan?: "starter" | "team" | null;
+  stripeScheduledPlan?: "solo" | "team" | null;
   stripeScheduledBillingInterval?: BillingInterval | null;
   stripeScheduledPriceId?: string | null;
   stripeScheduledEffectiveAt?: number | null;
@@ -165,7 +165,7 @@ export function isPaidPlan(plan: OrganizationPlan): boolean {
 }
 
 export interface UseOrganizationBillingOptions {
-  workspaceId?: string | null;
+  projectId?: string | null;
   enabled?: boolean;
 }
 
@@ -193,10 +193,10 @@ export function useOrganizationBilling(
   organizationId: string | null,
   options?: UseOrganizationBillingOptions,
 ) {
-  const workspaceId = options?.workspaceId ?? null;
+  const projectId = options?.projectId ?? null;
   const enabled = options?.enabled ?? true;
   const shouldQueryOrganization = enabled && !!organizationId;
-  const shouldQueryWorkspace = shouldQueryOrganization && !!workspaceId;
+  const shouldQueryProject = shouldQueryOrganization && !!projectId;
 
   const billingStatus = useOrganizationBillingStatus(organizationId, {
     enabled,
@@ -212,9 +212,9 @@ export function useOrganizationBilling(
     shouldQueryOrganization ? ({ organizationId } as any) : "skip",
   ) as PremiumnessState | undefined;
 
-  const workspacePremiumness = useQuery(
-    "billing:getWorkspacePremiumness" as any,
-    shouldQueryWorkspace ? ({ organizationId, workspaceId } as any) : "skip",
+  const projectPremiumness = useQuery(
+    "billing:getProjectPremiumness" as any,
+    shouldQueryProject ? ({ organizationId, projectId } as any) : "skip",
   ) as PremiumnessState | undefined;
 
   const planCatalog = useQuery(
@@ -243,7 +243,7 @@ export function useOrganizationBilling(
 
   const [isStartingPlanChange, setIsStartingPlanChange] = useState(false);
   const [pendingPlanChangeTarget, setPendingPlanChangeTarget] = useState<
-    "starter" | "team" | null
+    "solo" | "team" | null
   >(null);
   const [isOpeningPortal, setIsOpeningPortal] = useState(false);
   const [
@@ -257,7 +257,7 @@ export function useOrganizationBilling(
   const startPlanChange = useCallback(
     async (
       returnUrl: string,
-      tier: "starter" | "team" = "starter",
+      tier: "solo" | "team" = "solo",
       billingInterval: BillingInterval = "monthly",
       options: StartOrganizationPlanChangeOptions = {},
     ): Promise<OrganizationPlanChangeResult> => {
@@ -400,20 +400,20 @@ export function useOrganizationBilling(
 
   const isLoadingOrganizationPremiumness =
     shouldQueryOrganization && organizationPremiumness === undefined;
-  const isLoadingWorkspacePremiumness =
-    shouldQueryWorkspace && workspacePremiumness === undefined;
+  const isLoadingProjectPremiumness =
+    shouldQueryProject && projectPremiumness === undefined;
 
   return {
     billingStatus,
     organizationPremiumness,
-    workspacePremiumness,
+    projectPremiumness,
     entitlements,
     planCatalog,
     isLoadingBilling: shouldQueryOrganization && billingStatus === undefined,
     isLoadingEntitlements:
       shouldQueryOrganization && entitlements === undefined,
     isLoadingOrganizationPremiumness,
-    isLoadingWorkspacePremiumness,
+    isLoadingProjectPremiumness,
     isLoadingPlanCatalog: shouldQueryOrganization && planCatalog === undefined,
     isStartingPlanChange,
     pendingPlanChangeTarget,

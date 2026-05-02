@@ -3,7 +3,7 @@ import { HOSTED_MODE } from "@/lib/config";
 import { setHostedApiContext } from "@/lib/apis/web/context";
 
 interface UseHostedApiContextOptions {
-  workspaceId: string | null;
+  projectId: string | null;
   serverIdsByName: Record<string, string>;
   clientCapabilities?: Record<string, unknown>;
   clientConfigSyncPending?: boolean;
@@ -19,7 +19,7 @@ interface UseHostedApiContextOptions {
 }
 
 export function useHostedApiContext({
-  workspaceId,
+  projectId,
   serverIdsByName,
   clientCapabilities,
   clientConfigSyncPending,
@@ -48,7 +48,7 @@ export function useHostedApiContext({
     }
 
     setHostedApiContext({
-      workspaceId,
+      projectId,
       serverIdsByName,
       clientCapabilities,
       clientConfigSyncPending,
@@ -66,7 +66,7 @@ export function useHostedApiContext({
     };
   }, [
     enabled,
-    workspaceId,
+    projectId,
     serverIdsByName,
     clientCapabilities,
     clientConfigSyncPending,

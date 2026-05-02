@@ -1,5 +1,5 @@
 export type HostedRuntimeContext = {
-  workspaceId?: string | null;
+  projectId?: string | null;
   selectedServerIds?: string[];
   oauthTokens?: Record<string, string>;
   shareToken?: string;

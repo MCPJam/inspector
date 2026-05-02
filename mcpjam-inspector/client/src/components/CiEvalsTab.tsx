@@ -57,17 +57,17 @@ import { SdkEvalQuickstart } from "./evals/sdk-eval-quickstart";
 import { TraceViewer } from "./evals/trace-viewer";
 import { isExploreSuite } from "./evals/constants";
 import { HOSTED_MODE } from "@/lib/config";
-import { useWorkspaceServers } from "@/hooks/useViews";
+import { useProjectServers } from "@/hooks/useViews";
 import type { EnsureServersReadyResult } from "@/hooks/use-app-state";
 interface CiEvalsTabProps {
-  convexWorkspaceId: string | null;
+  convexProjectId: string | null;
   ensureServersReady?: (
     serverNames: string[],
   ) => Promise<EnsureServersReadyResult>;
 }
 
 export function CiEvalsTab({
-  convexWorkspaceId,
+  convexProjectId,
   ensureServersReady,
 }: CiEvalsTabProps) {
   const { isAuthenticated, isLoading } = useConvexAuth();
@@ -105,22 +105,22 @@ export function CiEvalsTab({
     availableModels,
   } = useEvalTabContext({
     isAuthenticated,
-    workspaceId: convexWorkspaceId,
+    projectId: convexProjectId,
   });
 
-  const { servers: ciWorkspaceServers = [] } = useWorkspaceServers({
+  const { servers: ciProjectServers = [] } = useProjectServers({
     isAuthenticated,
-    workspaceId: convexWorkspaceId,
+    projectId: convexProjectId,
   });
 
   const ciNavigation = useMemo(() => createCiSuiteNavigation(route), [route]);
 
   const queries = useEvalQueries({
-    isAuthenticated: isAuthenticated && Boolean(convexWorkspaceId),
-    user: convexWorkspaceId ? user : null,
+    isAuthenticated: isAuthenticated && Boolean(convexProjectId),
+    user: convexProjectId ? user : null,
     selectedSuiteId,
     deletingSuiteId,
-    workspaceId: convexWorkspaceId,
+    projectId: convexProjectId,
     organizationId: null,
   });
 
@@ -282,7 +282,7 @@ export function CiEvalsTab({
     ensureServersReady,
     latestRunBySuiteId,
     evalsNavigationContext: "ci-evals",
-    workspaceServers: ciWorkspaceServers,
+    projectServers: ciProjectServers,
   });
 
   const suiteAggregate = useMemo(() => {
@@ -438,7 +438,7 @@ export function CiEvalsTab({
       isLoading={isLoading}
       isAuthenticated={isAuthenticated}
       user={user}
-      workspaceId={convexWorkspaceId}
+      projectId={convexProjectId}
     >
       <>
         <div className="h-full flex flex-col overflow-hidden">
@@ -628,7 +628,7 @@ export function CiEvalsTab({
                         </div>
                       </div>
                     </div>
-                    <SdkEvalQuickstart workspaceId={convexWorkspaceId} />
+                    <SdkEvalQuickstart projectId={convexProjectId} />
                   </div>
                 </div>
               ) : route.type === "commit-detail" && selectedCommitGroup ? (

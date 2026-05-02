@@ -27,7 +27,7 @@ export const HOSTED_HASH_ALLOWED_TABS = [
   ...HOSTED_SIDEBAR_ALLOWED_TABS,
   "profile",
   "organizations",
-  "workspace-settings",
+  "project-settings",
 ] as const;
 
 export const HOSTED_HASH_BLOCKED_TABS = [

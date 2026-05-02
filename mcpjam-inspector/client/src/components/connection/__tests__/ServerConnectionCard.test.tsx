@@ -98,20 +98,20 @@ describe("ServerConnectionCard", () => {
   });
 
   describe("rendering", () => {
-    it("calls explore prefetch hook with workspaceId and server", () => {
+    it("calls explore prefetch hook with projectId and server", () => {
       const prefetch = vi.mocked(useExploreCasesPrefetchOnConnect);
       const server = createServer();
       render(
         <ServerConnectionCard
           server={server}
-          workspaceId="ws_abc"
+          projectId="ws_abc"
           {...defaultProps}
         />,
       );
       expect(prefetch).toHaveBeenCalledWith("ws_abc", server, undefined);
     });
 
-    it("calls explore prefetch hook with null workspace when prop omitted", () => {
+    it("calls explore prefetch hook with null project when prop omitted", () => {
       const prefetch = vi.mocked(useExploreCasesPrefetchOnConnect);
       const server = createServer();
       render(<ServerConnectionCard server={server} {...defaultProps} />);

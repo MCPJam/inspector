@@ -48,7 +48,7 @@ import type { PromptTurn } from "@/shared/prompt-turns";
 
 interface EvalRunnerProps {
   availableModels: ModelDefinition[];
-  workspaceId: string;
+  projectId: string;
   inline?: boolean;
   onSuccess?: (suiteId?: string) => void;
   preselectedServer?: string;
@@ -147,7 +147,7 @@ function mapGeneratedTemplate(
 
 export function EvalRunner({
   availableModels,
-  workspaceId,
+  projectId,
   inline = false,
   onSuccess,
   preselectedServer,
@@ -301,7 +301,7 @@ export function EvalRunner({
 
       try {
         const data = await listEvalTools({
-          workspaceId,
+          projectId,
           serverIds: selectedServers,
         });
         setAvailableTools(data.tools || []);
@@ -311,7 +311,7 @@ export function EvalRunner({
     }
 
     fetchTools();
-  }, [selectedServers, workspaceId]);
+  }, [selectedServers, projectId]);
 
   useEffect(() => {
     if (!inline && !open) {
@@ -477,7 +477,7 @@ export function EvalRunner({
     try {
       const accessToken = await getAccessToken();
       const result = await generateEvalTests({
-        workspaceId,
+        projectId,
         serverIds: selectedServers,
         convexAuthToken: accessToken,
       });
@@ -524,7 +524,7 @@ export function EvalRunner({
     try {
       const accessToken = await getAccessToken();
       const result = await generateNegativeEvalTests({
-        workspaceId,
+        projectId,
         serverIds: selectedServers,
         convexAuthToken: accessToken,
       });
@@ -651,7 +651,7 @@ export function EvalRunner({
       const criteriaNote = `Pass Criteria: Min ${minimumPassRate}% Accuracy`;
 
       const result = await runEvals({
-        workspaceId,
+        projectId,
         suiteName: suiteName.trim(),
         suiteDescription: suiteDescription.trim() || undefined,
         tests: expandedTests,

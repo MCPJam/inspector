@@ -1,27 +1,27 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   buildShowServersPayload,
-  resolveWorkspace,
+  resolveProject,
   type AuthorizeBatchInput,
   type AuthorizeBatchResult,
   type InspectMcpServerResult,
   type RemoteServer,
-  type RemoteWorkspace,
+  type RemoteProject,
 } from "../src/tools/showServersCore.js";
 import type {
   ProbeMcpServerConfig,
   ProbeMcpServerResult,
 } from "@mcpjam/sdk/worker";
 
-const WORKSPACES: RemoteWorkspace[] = [
+const PROJECTS: RemoteProject[] = [
   {
-    _id: "workspace-old",
+    _id: "project-old",
     organizationId: "org-a",
     name: "Old",
     updatedAt: 100,
   },
   {
-    _id: "workspace-new",
+    _id: "project-new",
     organizationId: "org-a",
     name: "New",
     updatedAt: 200,
@@ -52,20 +52,20 @@ function probeResult(
   };
 }
 
-describe("resolveWorkspace", () => {
-  it("selects the most recently updated workspace when omitted", () => {
-    const result = resolveWorkspace(WORKSPACES);
+describe("resolveProject", () => {
+  it("selects the most recently updated project when omitted", () => {
+    const result = resolveProject(PROJECTS);
 
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.workspace._id).toBe("workspace-new");
+      expect(result.project._id).toBe("project-new");
     }
   });
 
-  it("selects an exact workspace ID before considering names", () => {
-    const result = resolveWorkspace(
+  it("selects an exact project ID before considering names", () => {
+    const result = resolveProject(
       [
-        ...WORKSPACES,
+        ...PROJECTS,
         {
           _id: "New",
           organizationId: "org-b",
@@ -78,26 +78,26 @@ describe("resolveWorkspace", () => {
 
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.workspace._id).toBe("New");
-      expect(result.workspace.name).toBe("ID Wins");
+      expect(result.project._id).toBe("New");
+      expect(result.project.name).toBe("ID Wins");
     }
   });
 
-  it("selects a unique workspace name case-insensitively", () => {
-    const result = resolveWorkspace(WORKSPACES, "new");
+  it("selects a unique project name case-insensitively", () => {
+    const result = resolveProject(PROJECTS, "new");
 
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.workspace._id).toBe("workspace-new");
+      expect(result.project._id).toBe("project-new");
     }
   });
 
-  it("returns an actionable error for duplicate workspace names", () => {
-    const result = resolveWorkspace(
+  it("returns an actionable error for duplicate project names", () => {
+    const result = resolveProject(
       [
-        ...WORKSPACES,
+        ...PROJECTS,
         {
-          _id: "workspace-new-copy",
+          _id: "project-new-copy",
           organizationId: "org-b",
           name: "New",
           updatedAt: 150,
@@ -109,19 +109,19 @@ describe("resolveWorkspace", () => {
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.message).toContain("ambiguous");
-      expect(result.message).toContain("workspace-new");
-      expect(result.message).toContain("workspace-new-copy");
+      expect(result.message).toContain("project-new");
+      expect(result.message).toContain("project-new-copy");
     }
   });
 
-  it("returns available workspaces for a missing selector", () => {
-    const result = resolveWorkspace(WORKSPACES, "missing");
+  it("returns available projects for a missing selector", () => {
+    const result = resolveProject(PROJECTS, "missing");
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.message).toContain("Available workspaces");
-      expect(result.message).toContain("workspace-new");
-      expect(result.message).toContain("workspace-old");
+      expect(result.message).toContain("Available projects");
+      expect(result.message).toContain("project-new");
+      expect(result.message).toContain("project-old");
     }
   });
 });
@@ -252,8 +252,8 @@ describe("buildShowServersPayload", () => {
     const payload = await buildShowServersPayload({
       bearerToken: "token",
       convexHttpUrl: "https://convex.example.com",
-      workspace: WORKSPACES[0]!,
-      workspaces: WORKSPACES,
+      project: PROJECTS[0]!,
+      projects: PROJECTS,
       servers,
       generatedAt: "2026-04-26T00:00:00.000Z",
       authorizeBatch,
@@ -301,8 +301,8 @@ describe("buildShowServersPayload", () => {
     const payload = await buildShowServersPayload({
       bearerToken: "token",
       convexHttpUrl: "https://convex.example.com",
-      workspace: WORKSPACES[0]!,
-      workspaces: WORKSPACES,
+      project: PROJECTS[0]!,
+      projects: PROJECTS,
       servers: [
         {
           _id: "server-a",
@@ -377,8 +377,8 @@ describe("buildShowServersPayload", () => {
     const payload = await buildShowServersPayload({
       bearerToken: "token",
       convexHttpUrl: "https://convex.example.com",
-      workspace: WORKSPACES[0]!,
-      workspaces: WORKSPACES,
+      project: PROJECTS[0]!,
+      projects: PROJECTS,
       servers: [
         {
           _id: "ready",

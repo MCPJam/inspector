@@ -434,7 +434,9 @@ describe("mcp-oauth", () => {
     serverName: string = "asana",
     serverUrl: string = "https://mcp.asana.com/v2/mcp"
   ) {
-    mockDiscoverOAuthServerInfo.mockResolvedValueOnce(discoveryState);
+    mockDiscoverOAuthServerInfo
+      .mockResolvedValueOnce(discoveryState)
+      .mockResolvedValueOnce(discoveryState);
     mockRegisterClient.mockResolvedValueOnce({
       client_id: `${serverName}-client-id`,
     });
@@ -629,7 +631,7 @@ describe("mcp-oauth", () => {
         serverName: "test-server",
         serverUrl: "https://example.com/mcp",
         customHeaders: {
-          "X-Tenant": "workspace-123",
+          "X-Tenant": "project-123",
         },
       });
 
@@ -645,7 +647,7 @@ describe("mcp-oauth", () => {
       });
       expect(
         new Headers(metadataCall?.[1]?.headers as HeadersInit).get("X-Tenant"),
-      ).toBe("workspace-123");
+      ).toBe("project-123");
     });
 
     it("replays the initial MCP initialize through the proxy when browser transport fails", async () => {
@@ -699,12 +701,33 @@ describe("mcp-oauth", () => {
             authorization_endpoint: "https://learn.mcpjam.com/authorize",
             token_endpoint: "https://learn.mcpjam.com/token",
             response_types_supported: ["code"],
+            token_endpoint_auth_methods_supported: ["none"],
             code_challenge_methods_supported: ["S256"],
           });
         }
 
         throw new Error(`Unexpected authFetch call to ${url}`);
       });
+      const learnDiscoveryState = {
+        authorizationServerUrl: "https://learn.mcpjam.com",
+        resourceMetadataUrl:
+          "https://learn.mcpjam.com/.well-known/oauth-protected-resource",
+        resourceMetadata: {
+          resource: "https://learn.mcpjam.com/mcp",
+          authorization_servers: ["https://learn.mcpjam.com"],
+        },
+        authorizationServerMetadata: {
+          issuer: "https://learn.mcpjam.com",
+          authorization_endpoint: "https://learn.mcpjam.com/authorize",
+          token_endpoint: "https://learn.mcpjam.com/token",
+          response_types_supported: ["code"],
+          token_endpoint_auth_methods_supported: ["none"],
+          code_challenge_methods_supported: ["S256"],
+        },
+      };
+      mockDiscoverOAuthServerInfo
+        .mockResolvedValueOnce(learnDiscoveryState)
+        .mockResolvedValueOnce(learnDiscoveryState);
 
       const oauthModule = await import("../mcp-oauth");
       vi.spyOn(
@@ -762,6 +785,37 @@ describe("mcp-oauth", () => {
         },
         id: 1,
       });
+    });
+
+    it("does not persist hosted preregistered client secrets to localStorage", async () => {
+      vi.resetModules();
+      vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
+
+      const oauthModule = await import("../mcp-oauth");
+      vi.spyOn(
+        oauthModule.MCPOAuthProvider.prototype,
+        "redirectToAuthorization",
+      ).mockResolvedValue(undefined);
+
+      const result = await oauthModule.initiateOAuth({
+        serverName: "hosted",
+        serverUrl: "https://example.com/mcp",
+        clientId: "hosted-client-id",
+        clientSecret: "hosted-client-secret",
+      });
+
+      expect(result.success).toBe(true);
+      expect(localStorage.getItem("mcp-client-hosted")).toBe(
+        JSON.stringify({
+          client_id: "hosted-client-id",
+        }),
+      );
+      expect(localStorage.getItem("mcp-client-hosted")).not.toContain(
+        "client_secret",
+      );
+      expect(localStorage.getItem("mcp-client-hosted")).not.toContain(
+        "hosted-client-secret",
+      );
     });
 
     it("preserves JSON bodies for dynamic client registration requests", async () => {

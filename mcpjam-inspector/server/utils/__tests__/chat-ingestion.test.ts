@@ -356,7 +356,7 @@ describe("chat-ingestion", () => {
       modelSource: "mcpjam",
       authHeader: "Bearer bearer-token",
       sourceType: "direct",
-      directVisibility: "workspace",
+      directVisibility: "project",
       startedAt: 1,
     });
 
@@ -364,6 +364,6 @@ describe("chat-ingestion", () => {
     const body = JSON.parse((request?.body as string) ?? "{}");
 
     expect(body.sourceType).toBe("direct");
-    expect(body.directVisibility).toBe("workspace");
+    expect(body.directVisibility).toBe("project");
   });
 });

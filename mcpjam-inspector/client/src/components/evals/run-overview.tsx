@@ -66,7 +66,7 @@ interface RunOverviewProps {
   runsViewMode: "runs" | "test-cases";
   onViewModeChange: (value: "runs" | "test-cases") => void;
   userMap?: Map<string, { name: string; imageUrl?: string }>;
-  /** When false, hides run selection and batch delete (workspace members without admin). */
+  /** When false, hides run selection and batch delete (project members without admin). */
   canDeleteRuns?: boolean;
   /** Show suite delete using the same toolbar pattern as run batch delete. */
   canDeleteSuite?: boolean;

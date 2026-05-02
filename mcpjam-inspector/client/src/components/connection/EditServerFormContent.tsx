@@ -16,11 +16,15 @@ import { HOSTED_MODE } from "@/lib/config";
 interface EditServerFormContentProps {
   formState: ReturnType<typeof useServerForm>;
   isDuplicateServerName: boolean;
+  projectId?: string | null;
+  hostedServerId?: string | null;
 }
 
 export function EditServerFormContent({
   formState,
   isDuplicateServerName,
+  projectId = null,
+  hostedServerId = null,
 }: EditServerFormContentProps) {
   const hostedUrlPlaceholder = "https://example.com/mcp";
 
@@ -39,7 +43,7 @@ export function EditServerFormContent({
         />
         {isDuplicateServerName && (
           <p className="text-xs text-destructive">
-            A server with this name already exists in this workspace.
+            A server with this name already exists in this project.
           </p>
         )}
       </div>
@@ -155,6 +159,9 @@ export function EditServerFormContent({
               if (!checked) {
                 formState.setClientId("");
                 formState.setClientSecret("");
+                if (formState.hasStoredClientSecret) {
+                  formState.setClearClientSecret(true);
+                }
                 formState.setClientIdError(null);
                 formState.setClientSecretError(null);
               }
@@ -168,11 +175,22 @@ export function EditServerFormContent({
             clientSecret={formState.clientSecret}
             onClientSecretChange={(value) => {
               formState.setClientSecret(value);
+              if (value.trim()) {
+                formState.setClearClientSecret(false);
+              }
               const error = formState.validateClientSecret(value);
               formState.setClientSecretError(error);
             }}
+            hasStoredClientSecret={formState.hasStoredClientSecret}
+            clearClientSecret={formState.clearClientSecret}
+            onClearClientSecret={() => formState.setClearClientSecret(true)}
+            onUndoClearClientSecret={() =>
+              formState.setClearClientSecret(false)
+            }
             clientIdError={formState.clientIdError}
             clientSecretError={formState.clientSecretError}
+            projectId={projectId}
+            hostedServerId={hostedServerId}
           />
         </div>
       )}
@@ -220,6 +238,7 @@ export function EditServerFormContent({
               onAddHeader: formState.addCustomHeader,
               onRemoveHeader: formState.removeCustomHeader,
               onUpdateHeader: formState.updateCustomHeader,
+              headersWarning: formState.oauthAuthorizationHeaderWarning,
             }
           : {})}
       />

@@ -74,7 +74,7 @@ describe("web auth manager batching", () => {
       createAuthorizedManager(
         mockContext,
         "bearer-token",
-        "workspace-1",
+        "project-1",
         ["server-b", "server-a"],
         10_000
       )
@@ -95,7 +95,7 @@ describe("web auth manager batching", () => {
             "server-1": {
               ok: true,
               role: "member",
-              accessLevel: "workspace_member",
+              accessLevel: "project_member",
               permissions: { chatOnly: false },
               serverConfig: {
                 transportType: "http",
@@ -116,7 +116,7 @@ describe("web auth manager batching", () => {
     const result = await createAuthorizedManager(
       mockContext,
       "bearer-token",
-      "workspace-1",
+      "project-1",
       ["server-1"],
       10_000,
       {
@@ -151,7 +151,7 @@ describe("web auth manager batching", () => {
             "server-1": {
               ok: true,
               role: "member",
-              accessLevel: "workspace_member",
+              accessLevel: "project_member",
               permissions: { chatOnly: false },
               serverConfig: {
                 transportType: "http",
@@ -173,7 +173,7 @@ describe("web auth manager batching", () => {
       createAuthorizedManager(
         mockContext,
         "bearer-token",
-        "workspace-1",
+        "project-1",
         ["server-1"],
         10_000,
         undefined,

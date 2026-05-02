@@ -6,7 +6,7 @@ import {
   SetupChecklistPanel,
 } from "../setup-checklist-panel";
 import { CHATBOX_STARTERS } from "../drafts";
-import type { RemoteServer } from "@/hooks/useWorkspaces";
+import type { RemoteServer } from "@/hooks/useProjects";
 
 const baseDraft = CHATBOX_STARTERS.find((s) => s.id === "blank")!.createDraft(
   "openai/gpt-5-mini",
@@ -18,7 +18,7 @@ describe("SetupChecklistPanel", () => {
       <SetupChecklistPanel
         chatboxDraft={baseDraft}
         savedChatbox={null}
-        workspaceServers={[]}
+        projectServers={[]}
         focusedSection={null}
         isUnsavedNewDraft
         onDraftChange={() => {}}
@@ -38,7 +38,7 @@ describe("SetupChecklistPanel", () => {
       <SetupChecklistPanel
         chatboxDraft={baseDraft}
         savedChatbox={null}
-        workspaceServers={[]}
+        projectServers={[]}
         focusedSection={null}
         isUnsavedNewDraft
         onDraftChange={() => {}}
@@ -62,7 +62,7 @@ describe("SetupChecklistPanel", () => {
           welcomeDialog: { ...baseDraft.welcomeDialog, enabled: false },
         }}
         savedChatbox={null}
-        workspaceServers={[]}
+        projectServers={[]}
         focusedSection={null}
         isUnsavedNewDraft
         onDraftChange={() => {}}
@@ -93,7 +93,7 @@ describe("SetupChecklistPanel", () => {
       <SetupChecklistPanel
         chatboxDraft={baseDraft}
         savedChatbox={null}
-        workspaceServers={[]}
+        projectServers={[]}
         focusedSection={null}
         isUnsavedNewDraft
         onDraftChange={() => {}}
@@ -112,8 +112,8 @@ describe("SetupChecklistPanel", () => {
       <SetupChecklistPanel
         chatboxDraft={baseDraft}
         savedChatbox={null}
-        workspaceServers={[]}
-        workspaceName="Acme"
+        projectServers={[]}
+        projectName="Acme"
         focusedSection={null}
         isUnsavedNewDraft
         onDraftChange={() => {}}
@@ -140,7 +140,7 @@ describe("SetupChecklistPanel", () => {
       <SetupChecklistPanel
         chatboxDraft={internalDraft}
         savedChatbox={null}
-        workspaceServers={[]}
+        projectServers={[]}
         focusedSection={null}
         isUnsavedNewDraft
         onDraftChange={() => {}}
@@ -166,7 +166,7 @@ describe("SetupChecklistPanel", () => {
       <SetupChecklistPanel
         chatboxDraft={internalDraft}
         savedChatbox={null}
-        workspaceServers={[]}
+        projectServers={[]}
         focusedSection={null}
         isUnsavedNewDraft
         onDraftChange={() => {}}
@@ -187,7 +187,7 @@ describe("SetupChecklistPanel", () => {
 describe("ServerSelectionEditor", () => {
   const httpServer: RemoteServer = {
     _id: "srv-1",
-    workspaceId: "ws-1",
+    projectId: "ws-1",
     name: "Linear MCP",
     enabled: true,
     transportType: "http",
@@ -197,7 +197,7 @@ describe("ServerSelectionEditor", () => {
 
   const httpServerB: RemoteServer = {
     _id: "srv-2",
-    workspaceId: "ws-1",
+    projectId: "ws-1",
     name: "Other MCP",
     enabled: true,
     transportType: "http",
@@ -208,7 +208,7 @@ describe("ServerSelectionEditor", () => {
   it("lists selected servers with remove actions", () => {
     render(
       <ServerSelectionEditor
-        workspaceServers={[httpServer, httpServerB]}
+        projectServers={[httpServer, httpServerB]}
         selectedServerIds={[httpServer._id, httpServerB._id]}
         onToggleSelection={() => {}}
         onOpenAdd={() => {}}
@@ -224,7 +224,7 @@ describe("ServerSelectionEditor", () => {
 describe("computeSectionStatuses", () => {
   const httpsServer: RemoteServer = {
     _id: "srv-https",
-    workspaceId: "ws-1",
+    projectId: "ws-1",
     name: "HTTPS MCP",
     enabled: true,
     transportType: "http",

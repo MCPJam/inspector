@@ -13,7 +13,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@mcpjam/design-system/
 import { Switch } from "@mcpjam/design-system/switch";
 import { Loader2 } from "lucide-react";
 import { ServerWithName, type ServerUpdateResult } from "@/hooks/use-app-state";
-import type { Workspace } from "@/state/app-types";
+import type { Project } from "@/state/app-types";
 import {
   listTools,
   type ListToolsResultWithMetadata,
@@ -54,8 +54,8 @@ interface ServerDetailModalProps {
     },
   ) => Promise<void>;
   existingServerNames: string[];
-  workspaceClientConfig?: Workspace["clientConfig"];
-  workspaceId?: string | null;
+  projectClientConfig?: Project["clientConfig"];
+  projectId?: string | null;
   hostedServerId?: string | null;
 }
 
@@ -69,8 +69,8 @@ export function ServerDetailModal({
   onDisconnect,
   onReconnect,
   existingServerNames,
-  workspaceClientConfig,
-  workspaceId = null,
+  projectClientConfig,
+  projectId = null,
   hostedServerId = null,
 }: ServerDetailModalProps) {
   const posthog = usePostHog();
@@ -90,7 +90,7 @@ export function ServerDetailModal({
   const hasWidgetMetadata =
     isMCPAppServer || isOpenAIAppServer || isOpenAIAppAndMCPAppServer;
 
-  const formState = useServerForm(server, { workspaceClientConfig });
+  const formState = useServerForm(server, { projectClientConfig });
   const trimmedName = formState.name.trim();
   const isDuplicateServerName =
     trimmedName !== "" &&
@@ -366,6 +366,8 @@ export function ServerDetailModal({
                   <EditServerFormContent
                     formState={formState}
                     isDuplicateServerName={isDuplicateServerName}
+                    projectId={projectId}
+                    hostedServerId={hostedServerId}
                   />
                 </div>
               </TabsContent>
@@ -415,7 +417,7 @@ export function ServerDetailModal({
                     <ServerInfoContent
                       server={server}
                       needsReconnect={needsReconnect}
-                      workspaceId={workspaceId}
+                      projectId={projectId}
                       hostedServerId={hostedServerId}
                     />
                   )}

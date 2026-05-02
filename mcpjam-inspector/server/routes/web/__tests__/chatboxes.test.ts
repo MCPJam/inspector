@@ -89,13 +89,13 @@ describe("web routes — chatboxes bootstrap", () => {
           JSON.stringify({
             ok: true,
             payload: {
-              workspaceId: "ws_1",
+              projectId: "ws_1",
               chatboxId: "sbx_1",
               name: "Host Styled Chatbox",
               hostStyle: "chatgpt",
               mode: "invited_only",
               allowGuestAccess: false,
-              viewerIsWorkspaceMember: true,
+              viewerIsProjectMember: true,
               systemPrompt: "You are helpful.",
               modelId: "openai/gpt-5-mini",
               temperature: 0.4,
@@ -120,7 +120,7 @@ describe("web routes — chatboxes bootstrap", () => {
       token,
     );
     const { status, data } = await expectJson<{
-      workspaceId: string;
+      projectId: string;
       chatboxId: string;
       name: string;
       hostStyle: string;
@@ -128,7 +128,7 @@ describe("web routes — chatboxes bootstrap", () => {
 
     expect(status).toBe(200);
     expect(data).toMatchObject({
-      workspaceId: "ws_1",
+      projectId: "ws_1",
       chatboxId: "sbx_1",
       name: "Host Styled Chatbox",
       hostStyle: "chatgpt",
