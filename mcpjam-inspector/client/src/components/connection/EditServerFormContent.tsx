@@ -16,11 +16,15 @@ import { HOSTED_MODE } from "@/lib/config";
 interface EditServerFormContentProps {
   formState: ReturnType<typeof useServerForm>;
   isDuplicateServerName: boolean;
+  workspaceId?: string | null;
+  hostedServerId?: string | null;
 }
 
 export function EditServerFormContent({
   formState,
   isDuplicateServerName,
+  workspaceId = null,
+  hostedServerId = null,
 }: EditServerFormContentProps) {
   const hostedUrlPlaceholder = "https://example.com/mcp";
 
@@ -185,6 +189,8 @@ export function EditServerFormContent({
             }
             clientIdError={formState.clientIdError}
             clientSecretError={formState.clientSecretError}
+            workspaceId={workspaceId}
+            hostedServerId={hostedServerId}
           />
         </div>
       )}
