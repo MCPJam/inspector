@@ -109,7 +109,7 @@ export type RunEvalSuiteOptions = {
       servers: string[];
       serverBindings?: Array<{
         serverName: string;
-        workspaceServerId?: string;
+        projectServerId?: string;
       }>;
     };
   };
@@ -520,23 +520,23 @@ function resolveConfiguredServerIds(args: {
   const availableServerIdByLowercase = new Map(
     availableServerIds.map((serverId) => [serverId.toLowerCase(), serverId]),
   );
-  const workspaceServerIdByName = new Map<string, string>();
-  const serverNameByWorkspaceServerId = new Map<string, string>();
+  const projectServerIdByName = new Map<string, string>();
+  const serverNameByProjectServerId = new Map<string, string>();
 
   for (const binding of args.environment?.serverBindings ?? []) {
     if (typeof binding.serverName !== "string") {
       continue;
     }
     const serverName = binding.serverName.trim();
-    const workspaceServerId =
-      typeof binding.workspaceServerId === "string"
-        ? binding.workspaceServerId.trim()
+    const projectServerId =
+      typeof binding.projectServerId === "string"
+        ? binding.projectServerId.trim()
         : "";
-    if (!serverName || !workspaceServerId) {
+    if (!serverName || !projectServerId) {
       continue;
     }
-    workspaceServerIdByName.set(serverName.toLowerCase(), workspaceServerId);
-    serverNameByWorkspaceServerId.set(workspaceServerId.toLowerCase(), serverName);
+    projectServerIdByName.set(serverName.toLowerCase(), projectServerId);
+    serverNameByProjectServerId.set(projectServerId.toLowerCase(), serverName);
   }
 
   const resolvedServerIds: string[] = [];
@@ -556,19 +556,19 @@ function resolveConfiguredServerIds(args: {
         ? trimmedServerRef
         : availableServerIdByLowercase.get(trimmedServerRef.toLowerCase()) ??
           (() => {
-            const workspaceServerId = workspaceServerIdByName.get(
+            const projectServerId = projectServerIdByName.get(
               trimmedServerRef.toLowerCase(),
             );
-            if (workspaceServerId) {
+            if (projectServerId) {
               return (
-                (availableServerIdsSet.has(workspaceServerId)
-                  ? workspaceServerId
+                (availableServerIdsSet.has(projectServerId)
+                  ? projectServerId
                   : undefined) ??
-                availableServerIdByLowercase.get(workspaceServerId.toLowerCase())
+                availableServerIdByLowercase.get(projectServerId.toLowerCase())
               );
             }
 
-            const serverName = serverNameByWorkspaceServerId.get(
+            const serverName = serverNameByProjectServerId.get(
               trimmedServerRef.toLowerCase(),
             );
             if (serverName) {

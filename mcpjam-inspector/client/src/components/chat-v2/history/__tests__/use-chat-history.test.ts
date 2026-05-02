@@ -77,7 +77,7 @@ describe("useChatHistory archiveAllActive", () => {
     vi.mocked(chatHistoryApi.listChatHistory).mockResolvedValue({
       ok: true,
       personal: [sessionStub("p1")],
-      workspace: [sessionStub("w1")],
+      project: [sessionStub("w1")],
     });
     vi.mocked(chatHistoryApi.chatHistoryAction).mockResolvedValue({ ok: true });
   });
@@ -88,7 +88,7 @@ describe("useChatHistory archiveAllActive", () => {
 
   it("archives all listed sessions then refetches once", async () => {
     const { result } = renderHook(() =>
-      useChatHistory({ enabled: true, workspaceId: "ws-1" }),
+      useChatHistory({ enabled: true, projectId: "ws-1" }),
     );
 
     await waitFor(() => expect(result.current.loading).toBe(false));
@@ -119,11 +119,11 @@ describe("useChatHistory archiveAllActive", () => {
     vi.mocked(chatHistoryApi.listChatHistory).mockResolvedValue({
       ok: true,
       personal: [],
-      workspace: [],
+      project: [],
     });
 
     const { result } = renderHook(() =>
-      useChatHistory({ enabled: true, workspaceId: "ws-1" }),
+      useChatHistory({ enabled: true, projectId: "ws-1" }),
     );
 
     await waitFor(() => expect(result.current.loading).toBe(false));
@@ -159,7 +159,7 @@ describe("useChatHistory archiveManySessionIds", () => {
     vi.mocked(chatHistoryApi.listChatHistory).mockResolvedValue({
       ok: true,
       personal: [sessionStub("p1")],
-      workspace: [sessionStub("w1")],
+      project: [sessionStub("w1")],
     });
     vi.mocked(chatHistoryApi.chatHistoryAction).mockResolvedValue({ ok: true });
   });
@@ -170,7 +170,7 @@ describe("useChatHistory archiveManySessionIds", () => {
 
   it("archives only the given ids then refetches once", async () => {
     const { result } = renderHook(() =>
-      useChatHistory({ enabled: true, workspaceId: "ws-1" }),
+      useChatHistory({ enabled: true, projectId: "ws-1" }),
     );
 
     await waitFor(() => expect(result.current.loading).toBe(false));
@@ -191,7 +191,7 @@ describe("useChatHistory archiveManySessionIds", () => {
 
   it("dedupes duplicate session ids", async () => {
     const { result } = renderHook(() =>
-      useChatHistory({ enabled: true, workspaceId: "ws-1" }),
+      useChatHistory({ enabled: true, projectId: "ws-1" }),
     );
 
     await waitFor(() => expect(result.current.loading).toBe(false));
@@ -205,7 +205,7 @@ describe("useChatHistory archiveManySessionIds", () => {
 
   it("no-ops when id list is empty", async () => {
     const { result } = renderHook(() =>
-      useChatHistory({ enabled: true, workspaceId: "ws-1" }),
+      useChatHistory({ enabled: true, projectId: "ws-1" }),
     );
 
     await waitFor(() => expect(result.current.loading).toBe(false));
@@ -232,7 +232,7 @@ describe("useChatHistory reactive mode", () => {
     });
     useQueryMock.mockReturnValue({
       personal: [sessionStub("p1")],
-      workspace: [sessionStub("w1")],
+      project: [sessionStub("w1")],
     });
     reactiveArchiveMutationMock.mockResolvedValue(undefined);
   });
@@ -243,7 +243,7 @@ describe("useChatHistory reactive mode", () => {
 
   it("reads from Convex instead of the web list endpoint when authenticated", async () => {
     const { result } = renderHook(() =>
-      useChatHistory({ enabled: true, workspaceId: "ws-1" }),
+      useChatHistory({ enabled: true, projectId: "ws-1" }),
     );
 
     await waitFor(() => expect(result.current.loading).toBe(false));
@@ -252,14 +252,14 @@ describe("useChatHistory reactive mode", () => {
     expect(result.current.personal.map((session) => session._id)).toEqual([
       "p1",
     ]);
-    expect(result.current.workspace.map((session) => session._id)).toEqual([
+    expect(result.current.project.map((session) => session._id)).toEqual([
       "w1",
     ]);
     expect(chatHistoryApi.listChatHistory).not.toHaveBeenCalled();
     expect(useQueryMock).toHaveBeenCalledWith(
       "directChatHistory:listCurrentHistory",
       expect.objectContaining({
-        workspaceId: "ws-1",
+        projectId: "ws-1",
         status: "active",
       }),
     );
@@ -267,7 +267,7 @@ describe("useChatHistory reactive mode", () => {
 
   it("archives session ids through Convex mutations without a manual refetch", async () => {
     const { result } = renderHook(() =>
-      useChatHistory({ enabled: true, workspaceId: "ws-1" }),
+      useChatHistory({ enabled: true, projectId: "ws-1" }),
     );
 
     await waitFor(() => expect(result.current.loading).toBe(false));

@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { ChatHistorySession } from "@/lib/apis/web/chat-history-api";
-import type { WorkspaceMember } from "@/hooks/useWorkspaces";
+import type { ProjectMember } from "@/hooks/useProjects";
 import {
-  buildWorkspaceOwnerProfileByUserId,
-  resolveWorkspaceThreadOwnerAvatar,
-} from "../workspace-thread-owner-avatar";
+  buildProjectOwnerProfileByUserId,
+  resolveProjectThreadOwnerAvatar,
+} from "../project-thread-owner-avatar";
 
 function session(
   overrides: Partial<ChatHistorySession> = {},
@@ -14,7 +14,7 @@ function session(
     chatSessionId: "chat1",
     firstMessagePreview: "hi",
     status: "active",
-    directVisibility: "workspace",
+    directVisibility: "project",
     messageCount: 1,
     version: 1,
     startedAt: 0,
@@ -29,28 +29,28 @@ function session(
 function member(
   userId: string,
   user: { name: string; email: string; imageUrl: string } | null,
-): WorkspaceMember {
+): ProjectMember {
   return {
     _id: `m-${userId}`,
-    workspaceId: "ws",
+    projectId: "ws",
     userId,
     email: user?.email ?? "x@y.com",
-    workspaceRole: "editor",
+    projectRole: "editor",
     canChangeRole: false,
     addedBy: "a",
     addedAt: 0,
     isOwner: false,
     isPending: false,
     hasAccess: true,
-    accessSource: "workspace",
+    accessSource: "project",
     canRemove: false,
     user,
   };
 }
 
-describe("buildWorkspaceOwnerProfileByUserId", () => {
+describe("buildProjectOwnerProfileByUserId", () => {
   it("maps userId to profile from active member rows", () => {
-    const map = buildWorkspaceOwnerProfileByUserId([
+    const map = buildProjectOwnerProfileByUserId([
       member("u1", {
         name: "Alex",
         email: "a@b.com",
@@ -64,7 +64,7 @@ describe("buildWorkspaceOwnerProfileByUserId", () => {
   });
 
   it("skips members without userId or user payload", () => {
-    const map = buildWorkspaceOwnerProfileByUserId([
+    const map = buildProjectOwnerProfileByUserId([
       { ...member("u1", null), user: null },
       {
         ...member("", { name: "x", email: "e", imageUrl: "" }),
@@ -75,9 +75,9 @@ describe("buildWorkspaceOwnerProfileByUserId", () => {
   });
 });
 
-describe("resolveWorkspaceThreadOwnerAvatar", () => {
-  it("returns show when the viewer owns the thread (workspace list always shows owner)", () => {
-    const map = buildWorkspaceOwnerProfileByUserId([
+describe("resolveProjectThreadOwnerAvatar", () => {
+  it("returns show when the viewer owns the thread (project list always shows owner)", () => {
+    const map = buildProjectOwnerProfileByUserId([
       member("me", {
         name: "Me",
         email: "me@b.com",
@@ -85,7 +85,7 @@ describe("resolveWorkspaceThreadOwnerAvatar", () => {
       }),
     ]);
     expect(
-      resolveWorkspaceThreadOwnerAvatar(session({ userId: "me" }), map),
+      resolveProjectThreadOwnerAvatar(session({ userId: "me" }), map),
     ).toEqual({
       status: "show",
       displayName: "Me",
@@ -93,8 +93,8 @@ describe("resolveWorkspaceThreadOwnerAvatar", () => {
     });
   });
 
-  it("returns show when another workspace member owns the thread", () => {
-    const map = buildWorkspaceOwnerProfileByUserId([
+  it("returns show when another project member owns the thread", () => {
+    const map = buildProjectOwnerProfileByUserId([
       member("peer", {
         name: "Peer",
         email: "p@b.com",
@@ -102,7 +102,7 @@ describe("resolveWorkspaceThreadOwnerAvatar", () => {
       }),
     ]);
     expect(
-      resolveWorkspaceThreadOwnerAvatar(session({ userId: "peer" }), map),
+      resolveProjectThreadOwnerAvatar(session({ userId: "peer" }), map),
     ).toEqual({
       status: "show",
       displayName: "Peer",
@@ -111,14 +111,14 @@ describe("resolveWorkspaceThreadOwnerAvatar", () => {
   });
 
   it("returns generic when userId is missing", () => {
-    expect(resolveWorkspaceThreadOwnerAvatar(session({}), new Map())).toEqual({
+    expect(resolveProjectThreadOwnerAvatar(session({}), new Map())).toEqual({
       status: "generic",
     });
   });
 
   it("returns generic when owner is not in the member map", () => {
     expect(
-      resolveWorkspaceThreadOwnerAvatar(
+      resolveProjectThreadOwnerAvatar(
         session({ userId: "stranger" }),
         new Map(),
       ),

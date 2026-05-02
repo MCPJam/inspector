@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import posthog from "posthog-js";
 import { Button } from "@mcpjam/design-system/button";
 import { EmptyState } from "@/components/ui/empty-state";
-import { useWorkspaceServers } from "@/hooks/useViews";
+import { useProjectServers } from "@/hooks/useViews";
 import { useEvalsRoute } from "@/lib/evals-router";
 import { useEvalTabContext } from "@/hooks/use-eval-tab-context";
 import { useIsDirectGuest } from "@/hooks/use-is-direct-guest";
@@ -25,11 +25,11 @@ import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import { EvalsSuiteListSidebar } from "./evals/evals-suite-list-sidebar";
 import {
   PlaygroundSuitesExecutionsTabs,
-  type PlaygroundWorkspaceBrowse,
+  type PlaygroundProjectBrowse,
 } from "./evals/playground-suites-executions-tabs";
 import { CreateSuiteDialog } from "./evals/create-suite-dialog";
 import { SuiteExecutionsOverview } from "./evals/suite-executions-overview";
-import { usePlaygroundWorkspaceExecutions } from "./evals/use-playground-workspace-executions";
+import { usePlaygroundProjectExecutions } from "./evals/use-playground-project-executions";
 import type { EvalIteration } from "./evals/types";
 import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
 import type { EnsureServersReadyResult } from "@/hooks/use-app-state";
@@ -42,11 +42,11 @@ const FIRST_SUITE_EMPTY_DESCRIPTION =
 
 // Module-scoped so an in-flight explore-suite create still blocks duplicate
 // creates if the EvalsTab unmounts and remounts before the create finishes.
-// Keyed by `${workspaceId}::${serverName}` so different workspaces don't share.
+// Keyed by `${projectId}::${serverName}` so different projects don't share.
 const explorePrefetchInFlight = new Set<string>();
 
 interface EvalsTabProps {
-  workspaceId?: string | null;
+  projectId?: string | null;
   onContinueInChat?: (handoff: Omit<EvalChatHandoff, "id">) => void;
   ensureServersReady?: (
     serverNames: string[],
@@ -54,7 +54,7 @@ interface EvalsTabProps {
 }
 
 export function EvalsTab({
-  workspaceId,
+  projectId,
   onContinueInChat,
   ensureServersReady,
 }: EvalsTabProps) {
@@ -62,9 +62,9 @@ export function EvalsTab({
   const convex = useConvex();
   const { user, getAccessToken } = useAuth();
   const route = useEvalsRoute();
-  const [workspaceBrowse, setWorkspaceBrowse] =
-    useState<PlaygroundWorkspaceBrowse>("suites");
-  const isDirectGuest = useIsDirectGuest({ workspaceId });
+  const [projectBrowse, setProjectBrowse] =
+    useState<PlaygroundProjectBrowse>("suites");
+  const isDirectGuest = useIsDirectGuest({ projectId });
   const {
     connectedServerNames,
     userMap,
@@ -73,12 +73,12 @@ export function EvalsTab({
     availableModels,
   } = useEvalTabContext({
     isAuthenticated,
-    workspaceId: workspaceId ?? null,
+    projectId: projectId ?? null,
     isDirectGuest,
   });
-  const { servers: workspaceServers = [] } = useWorkspaceServers({
+  const { servers: projectServers = [] } = useProjectServers({
     isAuthenticated,
-    workspaceId: workspaceId ?? null,
+    projectId: projectId ?? null,
   });
   const mutations = useEvalMutations({ isDirectGuest });
 
@@ -103,16 +103,16 @@ export function EvalsTab({
       route.type === "test-edit" ||
       route.type === "suite-edit"
     ) {
-      setWorkspaceBrowse("suites");
+      setProjectBrowse("suites");
     }
   }, [route]);
 
   const overviewQueries = useEvalQueries({
-    isAuthenticated: isAuthenticated && Boolean(workspaceId),
-    user: workspaceId ? user : null,
+    isAuthenticated: isAuthenticated && Boolean(projectId),
+    user: projectId ? user : null,
     selectedSuiteId: null,
     deletingSuiteId: null,
-    workspaceId: workspaceId ?? null,
+    projectId: projectId ?? null,
     organizationId: null,
     isDirectGuest,
   });
@@ -145,11 +145,11 @@ export function EvalsTab({
     selectedSuiteEntry,
     selectedSuiteId,
     selectedTestId,
-    workspaceId: workspaceId ?? null,
+    projectId: projectId ?? null,
     connectedServerNames,
     ensureServersReady,
     latestRunBySuiteId,
-    workspaceServers,
+    projectServers,
     isDirectGuest,
   });
   const {
@@ -169,11 +169,11 @@ export function EvalsTab({
   } = handlers;
 
   const queries = useEvalQueries({
-    isAuthenticated: isAuthenticated && Boolean(workspaceId),
-    user: workspaceId ? user : null,
+    isAuthenticated: isAuthenticated && Boolean(projectId),
+    user: projectId ? user : null,
     selectedSuiteId,
     deletingSuiteId,
-    workspaceId: workspaceId ?? null,
+    projectId: projectId ?? null,
     organizationId: null,
     isDirectGuest,
   });
@@ -197,28 +197,28 @@ export function EvalsTab({
     []
   );
 
-  const playgroundWorkspaceSuiteIds = useMemo(
+  const playgroundProjectSuiteIds = useMemo(
     () => visibleSuites.map((entry) => entry.suite._id),
     [visibleSuites],
   );
 
-  const workspaceExecutions = usePlaygroundWorkspaceExecutions({
+  const projectExecutions = usePlaygroundProjectExecutions({
     enabled:
       isAuthenticated &&
-      Boolean(workspaceId) &&
+      Boolean(projectId) &&
       !overviewQueries.isOverviewLoading &&
       visibleSuites.length > 0 &&
-      workspaceBrowse === "executions" &&
+      projectBrowse === "executions" &&
       selectedSuiteId === null,
-    suiteIds: playgroundWorkspaceSuiteIds,
+    suiteIds: playgroundProjectSuiteIds,
   });
 
-  const handleWorkspaceExecutionOpen = useCallback(
+  const handleProjectExecutionOpen = useCallback(
     (iteration: EvalIteration) => {
       const suiteId =
-        workspaceExecutions.iterationToSuiteId.get(iteration._id) ??
+        projectExecutions.iterationToSuiteId.get(iteration._id) ??
         (iteration.testCaseId
-          ? workspaceExecutions.cases.find((c) => c._id === iteration.testCaseId)
+          ? projectExecutions.cases.find((c) => c._id === iteration.testCaseId)
               ?.testSuiteId
           : undefined);
       if (!suiteId) {
@@ -239,8 +239,8 @@ export function EvalsTab({
     },
     [
       playgroundNavigation,
-      workspaceExecutions.cases,
-      workspaceExecutions.iterationToSuiteId,
+      projectExecutions.cases,
+      projectExecutions.iterationToSuiteId,
     ],
   );
 
@@ -268,7 +268,7 @@ export function EvalsTab({
   useEffect(() => {
     if (
       !isAuthenticated ||
-      !workspaceId ||
+      !projectId ||
       overviewQueries.isOverviewLoading ||
       connectedServerNames.size === 0
     ) {
@@ -283,7 +283,7 @@ export function EvalsTab({
     );
 
     const inFlightKeyFor = (serverName: string) =>
-      `${workspaceId}::${serverName}`;
+      `${projectId}::${serverName}`;
 
     const serversNeedingSuite = [...connectedServerNames].filter(
       (name) =>
@@ -305,7 +305,7 @@ export function EvalsTab({
           // tag would risk an orphan untagged suite if it failed, which would
           // bypass `isExploreSuite` and let the next pass create a duplicate.
           const createdSuite = await createTestSuiteMutation({
-            workspaceId,
+            projectId,
             name: serverName,
             description: `Explore cases for ${serverName}`,
             environment: { servers: [serverName] },
@@ -317,7 +317,7 @@ export function EvalsTab({
           const outcome = await generateAndPersistEvalTests({
             convex,
             getAccessToken,
-            workspaceId,
+            projectId,
             suiteId: createdSuite._id,
             serverIds: [serverName],
             createTestCase: createTestCaseMutation,
@@ -329,7 +329,7 @@ export function EvalsTab({
               location: "playground_tab",
               platform: detectPlatform(),
               environment: detectEnvironment(),
-              workspace_id: workspaceId,
+              project_id: projectId,
               server_name: serverName,
               suite_id: createdSuite._id,
               generated_count: outcome.createdCount,
@@ -344,7 +344,7 @@ export function EvalsTab({
     }
   }, [
     isAuthenticated,
-    workspaceId,
+    projectId,
     connectedServerNames,
     visibleSuites,
     overviewQueries.isOverviewLoading,
@@ -373,13 +373,13 @@ export function EvalsTab({
       description?: string;
       selectedServers: string[];
     }) => {
-      if (!workspaceId) {
+      if (!projectId) {
         return;
       }
 
       try {
         const createdSuite = await mutations.createTestSuiteMutation({
-          workspaceId,
+          projectId,
           name: payload.name,
           description: payload.description,
           environment: {
@@ -401,24 +401,24 @@ export function EvalsTab({
         throw error;
       }
     },
-    [mutations.createTestSuiteMutation, workspaceId],
+    [mutations.createTestSuiteMutation, projectId],
   );
 
-  const handleWorkspaceBrowseChange = useCallback(
-    (value: PlaygroundWorkspaceBrowse) => {
+  const handleProjectBrowseChange = useCallback(
+    (value: PlaygroundProjectBrowse) => {
       if (
         selectedSuiteId &&
         (value === "executions" || value === "suites")
       ) {
         navigatePlaygroundEvalsRoute({ type: "list" }, { replace: true });
       }
-      setWorkspaceBrowse(value);
+      setProjectBrowse(value);
     },
     [selectedSuiteId],
   );
 
   const handleSelectSuite = useCallback((suiteId: string) => {
-    setWorkspaceBrowse("suites");
+    setProjectBrowse("suites");
     navigatePlaygroundEvalsRoute({ type: "suite-overview", suiteId });
   }, []);
 
@@ -674,7 +674,7 @@ export function EvalsTab({
           availableModels={availableModels}
           route={route}
           userMap={userMap}
-          workspaceId={workspaceId}
+          projectId={projectId}
           navigation={playgroundNavigation}
           onContinueInChat={onContinueInChat}
           canDeleteRuns={canDeleteRuns}
@@ -706,7 +706,7 @@ export function EvalsTab({
             })();
           }}
           runningTestCaseId={handlers.runningTestCaseId}
-          workspaceServers={workspaceServers}
+          projectServers={projectServers}
         />
       </div>
     );
@@ -747,8 +747,8 @@ export function EvalsTab({
 
     if (!selectedSuiteId) {
       if (
-        workspaceExecutions.status === "loading" ||
-        workspaceExecutions.status === "idle"
+        projectExecutions.status === "loading" ||
+        projectExecutions.status === "idle"
       ) {
         return (
           <div className="flex min-h-0 min-w-0 flex-1 flex-col px-5 pb-5 pt-3">
@@ -764,7 +764,7 @@ export function EvalsTab({
         );
       }
 
-      if (workspaceExecutions.status === "error") {
+      if (projectExecutions.status === "error") {
         return (
           <div className="flex min-h-0 flex-1 items-center justify-center px-6">
             <p className="text-center text-sm text-muted-foreground">
@@ -777,9 +777,9 @@ export function EvalsTab({
       return (
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden px-5 pb-5 pt-3">
           <SuiteExecutionsOverview
-            cases={workspaceExecutions.cases}
-            allIterations={workspaceExecutions.iterations}
-            onOpenIteration={handleWorkspaceExecutionOpen}
+            cases={projectExecutions.cases}
+            allIterations={projectExecutions.iterations}
+            onOpenIteration={handleProjectExecutionOpen}
             className="min-h-0 flex-1 max-h-none"
             listClassName="min-h-0 flex-1"
           />
@@ -790,22 +790,22 @@ export function EvalsTab({
     return null;
   };
 
-  const showWorkspaceBrowseTabs =
+  const showProjectBrowseTabs =
     !overviewQueries.isOverviewLoading && visibleSuites.length > 0;
 
   const renderPlaygroundBody = () => {
-    if (!showWorkspaceBrowseTabs) {
+    if (!showProjectBrowseTabs) {
       return renderSuitesBrowsePanel();
     }
 
     return (
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         <PlaygroundSuitesExecutionsTabs
-          value={workspaceBrowse}
-          onChange={handleWorkspaceBrowseChange}
+          value={projectBrowse}
+          onChange={handleProjectBrowseChange}
         />
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-          {workspaceBrowse === "suites"
+          {projectBrowse === "suites"
             ? renderSuitesBrowsePanel()
             : renderExecutionsBrowsePanel()}
         </div>
@@ -819,14 +819,14 @@ export function EvalsTab({
       isLoading={isLoading}
       isAuthenticated={isAuthenticated}
       user={user}
-      workspaceId={workspaceId}
+      projectId={projectId}
       isDirectGuest={isDirectGuest}
     >
       <>
         <CreateSuiteDialog
           open={route.type === "create"}
           onOpenChange={handleCreateDialogChange}
-          workspaceServers={workspaceServers}
+          projectServers={projectServers}
           connectedServerNames={connectedServerNames}
           onSubmit={handleCreateSuite}
         />

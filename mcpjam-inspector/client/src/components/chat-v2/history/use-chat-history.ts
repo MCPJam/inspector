@@ -16,14 +16,14 @@ import {
 const POLL_INTERVAL_MS = 120_000;
 
 interface UseChatHistoryOptions {
-  workspaceId?: string | null;
+  projectId?: string | null;
   enabled?: boolean;
   requestHeaders?: HeadersInit;
 }
 
 interface UseChatHistoryReturn {
   personal: ChatHistorySession[];
-  workspace: ChatHistorySession[];
+  project: ChatHistorySession[];
   loading: boolean;
   error: string | null;
   isReactive: boolean;
@@ -38,7 +38,7 @@ interface UseChatHistoryReturn {
     unpin: (sessionId: string) => Promise<void>;
     /** Archives the given session ids in parallel, then refetches once. */
     archiveManySessionIds: (sessionIds: string[]) => Promise<void>;
-    /** Archives every active thread in the current list (personal + workspace) in one refetch. */
+    /** Archives every active thread in the current list (personal + project) in one refetch. */
     archiveAllActive: () => Promise<void>;
   };
 }
@@ -53,7 +53,7 @@ type ChatHistoryActionName =
   | "unpin";
 
 export function useChatHistory({
-  workspaceId,
+  projectId,
   enabled = true,
   requestHeaders,
 }: UseChatHistoryOptions): UseChatHistoryReturn {
@@ -61,7 +61,7 @@ export function useChatHistory({
   const [personalFallback, setPersonalFallback] = useState<
     ChatHistorySession[]
   >([]);
-  const [workspaceFallback, setWorkspaceFallback] = useState<
+  const [projectFallback, setProjectFallback] = useState<
     ChatHistorySession[]
   >([]);
   const [fallbackLoading, setFallbackLoading] = useState(false);
@@ -73,11 +73,11 @@ export function useChatHistory({
     () =>
       isReactive
         ? ({
-            workspaceId: workspaceId ?? undefined,
+            projectId: projectId ?? undefined,
             status: "active",
           } as const)
         : "skip",
-    [isReactive, workspaceId],
+    [isReactive, projectId],
   );
 
   const reactiveResult = useQuery(
@@ -86,7 +86,7 @@ export function useChatHistory({
   ) as
     | {
         personal: ChatHistorySession[];
-        workspace: ChatHistorySession[];
+        project: ChatHistorySession[];
       }
     | undefined;
 
@@ -124,7 +124,7 @@ export function useChatHistory({
     try {
       const result = await listChatHistory(
         {
-          workspaceId: workspaceId ?? undefined,
+          projectId: projectId ?? undefined,
           status: "active",
         },
         {
@@ -134,7 +134,7 @@ export function useChatHistory({
       if (fetchId !== fetchCountRef.current) return;
       startTransition(() => {
         setPersonalFallback(result.personal);
-        setWorkspaceFallback(result.workspace);
+        setProjectFallback(result.project);
       });
     } catch (err) {
       if (fetchId !== fetchCountRef.current) return;
@@ -144,13 +144,13 @@ export function useChatHistory({
         setFallbackLoading(false);
       }
     }
-  }, [requestHeaders, shouldUseFallback, workspaceId]);
+  }, [requestHeaders, shouldUseFallback, projectId]);
 
   useEffect(() => {
     if (!shouldUseFallback) {
       startTransition(() => {
         setPersonalFallback([]);
-        setWorkspaceFallback([]);
+        setProjectFallback([]);
         setFallbackError(null);
         setFallbackLoading(false);
       });
@@ -252,14 +252,14 @@ export function useChatHistory({
   );
 
   const personal = reactiveResult?.personal ?? personalFallback;
-  const workspace = reactiveResult?.workspace ?? workspaceFallback;
+  const project = reactiveResult?.project ?? projectFallback;
 
   const archiveAllActive = useCallback(async () => {
     await archiveManySessionIds([
       ...personal.map((s) => s._id),
-      ...workspace.map((s) => s._id),
+      ...project.map((s) => s._id),
     ]);
-  }, [personal, workspace, archiveManySessionIds]);
+  }, [personal, project, archiveManySessionIds]);
 
   const actions = useMemo(
     () => ({
@@ -290,7 +290,7 @@ export function useChatHistory({
 
   return {
     personal,
-    workspace,
+    project,
     loading,
     error: isReactive ? null : fallbackError,
     isReactive,

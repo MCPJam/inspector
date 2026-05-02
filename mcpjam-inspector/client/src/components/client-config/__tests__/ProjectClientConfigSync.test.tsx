@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { act, render, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it } from "vitest";
-import { WorkspaceClientConfigSync } from "../WorkspaceClientConfigSync";
+import { ProjectClientConfigSync } from "../ProjectClientConfigSync";
 import { useClientConfigStore } from "@/stores/client-config-store";
 import { useHostContextStore } from "@/stores/host-context-store";
 import {
@@ -20,11 +20,11 @@ function ThemeModeUpdater({ themeMode }: { themeMode: "light" | "dark" }) {
   return null;
 }
 
-describe("WorkspaceClientConfigSync", () => {
+describe("ProjectClientConfigSync", () => {
   beforeEach(() => {
     localStorage.clear();
     useClientConfigStore.setState({
-      activeWorkspaceId: null,
+      activeProjectId: null,
       defaultConfig: null,
       savedConfig: undefined,
       draftConfig: null,
@@ -34,12 +34,12 @@ describe("WorkspaceClientConfigSync", () => {
       clientCapabilitiesError: null,
       isSaving: false,
       isDirty: false,
-      pendingWorkspaceId: null,
+      pendingProjectId: null,
       pendingSavedConfig: undefined,
       isAwaitingRemoteEcho: false,
     });
     useHostContextStore.setState({
-      activeWorkspaceId: null,
+      activeProjectId: null,
       defaultHostContext: {},
       savedHostContext: undefined,
       draftHostContext: {},
@@ -47,18 +47,18 @@ describe("WorkspaceClientConfigSync", () => {
       hostContextError: null,
       isSaving: false,
       isDirty: false,
-      pendingWorkspaceId: null,
+      pendingProjectId: null,
       pendingSavedHostContext: undefined,
       isAwaitingRemoteEcho: false,
     });
     useUIPlaygroundStore.getState().reset();
   });
 
-  it("refreshes unsaved workspace defaults when theme and playground context change", async () => {
+  it("refreshes unsaved project defaults when theme and playground context change", async () => {
     const view = render(
       <PreferencesStoreProvider themeMode="light" themePreset="default">
         <ThemeModeUpdater themeMode="light" />
-        <WorkspaceClientConfigSync activeWorkspaceId="ws-1" />
+        <ProjectClientConfigSync activeProjectId="ws-1" />
       </PreferencesStoreProvider>,
     );
 
@@ -97,7 +97,7 @@ describe("WorkspaceClientConfigSync", () => {
     view.rerender(
       <PreferencesStoreProvider themeMode="light" themePreset="default">
         <ThemeModeUpdater themeMode="dark" />
-        <WorkspaceClientConfigSync activeWorkspaceId="ws-1" />
+        <ProjectClientConfigSync activeProjectId="ws-1" />
       </PreferencesStoreProvider>,
     );
 

@@ -69,7 +69,7 @@ export function ChatboxDeleteConfirmDialog({
                 <span className="font-medium text-foreground">
                   {chatboxName || "This chatbox"}
                 </span>{" "}
-                will be removed from this workspace. The hosted link will stop
+                will be removed from this project. The hosted link will stop
                 working and saved usage history for this chatbox will be
                 cleared.
               </p>

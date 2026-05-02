@@ -3,7 +3,7 @@ import { Users } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
-import { ShareWorkspaceDialog } from "./ShareWorkspaceDialog";
+import { ShareProjectDialog } from "./ShareProjectDialog";
 import { usePostHog } from "posthog-js/react";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import {
@@ -11,30 +11,30 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@mcpjam/design-system/tooltip";
-import type { WorkspaceVisibility } from "@/state/app-types";
+import type { ProjectVisibility } from "@/state/app-types";
 
-interface WorkspaceShareButtonProps {
-  workspaceName: string;
-  workspaceServers: Record<string, any>;
-  sharedWorkspaceId?: string | null;
+interface ProjectShareButtonProps {
+  projectName: string;
+  projectServers: Record<string, any>;
+  sharedProjectId?: string | null;
   organizationId?: string;
-  visibility?: WorkspaceVisibility;
+  visibility?: ProjectVisibility;
   organizationName?: string;
-  onWorkspaceShared?: (
-    sharedWorkspaceId: string,
-    sourceWorkspaceId?: string,
+  onProjectShared?: (
+    sharedProjectId: string,
+    sourceProjectId?: string,
   ) => void;
 }
 
-export function WorkspaceShareButton({
-  workspaceName,
-  workspaceServers,
-  sharedWorkspaceId,
+export function ProjectShareButton({
+  projectName,
+  projectServers,
+  sharedProjectId,
   organizationId,
   visibility,
   organizationName,
-  onWorkspaceShared,
-}: WorkspaceShareButtonProps) {
+  onProjectShared,
+}: ProjectShareButtonProps) {
   const { user } = useAuth();
   const { isAuthenticated } = useConvexAuth();
   const posthog = usePostHog();
@@ -42,8 +42,8 @@ export function WorkspaceShareButton({
   const isShareEnabled = isAuthenticated && !!user;
 
   const handleClick = () => {
-    posthog.capture("workspace_share_button_clicked", {
-      workspace_name: workspaceName,
+    posthog.capture("project_share_button_clicked", {
+      project_name: projectName,
       platform: detectPlatform(),
       environment: detectEnvironment(),
     });
@@ -71,17 +71,17 @@ export function WorkspaceShareButton({
         </Tooltip>
       )}
       {isShareEnabled && user && (
-        <ShareWorkspaceDialog
+        <ShareProjectDialog
           isOpen={isShareDialogOpen}
           onClose={() => setIsShareDialogOpen(false)}
-          workspaceName={workspaceName}
-          workspaceServers={workspaceServers}
-          sharedWorkspaceId={sharedWorkspaceId}
+          projectName={projectName}
+          projectServers={projectServers}
+          sharedProjectId={sharedProjectId}
           organizationId={organizationId}
           visibility={visibility}
           organizationName={organizationName}
           currentUser={user}
-          onWorkspaceShared={onWorkspaceShared}
+          onProjectShared={onProjectShared}
         />
       )}
     </>

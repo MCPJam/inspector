@@ -70,7 +70,7 @@ describe("OrganizationModelsSection", () => {
               unknownCostRequests: 1,
             },
           ],
-          byWorkspace: [],
+          byProject: [],
           byUser: [],
           recentRecords: [],
         };

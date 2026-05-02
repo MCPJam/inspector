@@ -13,7 +13,7 @@ const duplicateChatbox = vi.fn();
 describe("ChatboxIndexPage", () => {
   const alphaItem = {
     chatboxId: "a",
-    workspaceId: "w",
+    projectId: "w",
     name: "Alpha",
     description: "d",
     hostStyle: "claude" as const,
@@ -125,7 +125,7 @@ describe("ChatboxIndexPage", () => {
         chatboxes={[
           {
             chatboxId: "a",
-            workspaceId: "w",
+            projectId: "w",
             name: "Alpha",
             description: "",
             hostStyle: "claude",
@@ -163,7 +163,7 @@ describe("ChatboxIndexPage", () => {
         chatboxes={[
           {
             chatboxId: "a",
-            workspaceId: "w",
+            projectId: "w",
             name: "Alpha",
             description: "d",
             hostStyle: "claude",

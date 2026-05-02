@@ -1,29 +1,29 @@
 import { Badge } from "@mcpjam/design-system/badge";
 import { cn } from "@/lib/utils";
-import type { WorkspaceVisibility } from "@/state/app-types";
+import type { ProjectVisibility } from "@/state/app-types";
 import { Globe, Lock } from "lucide-react";
 
-interface WorkspaceVisibilityBadgeProps {
-  visibility?: WorkspaceVisibility | null;
+interface ProjectVisibilityBadgeProps {
+  visibility?: ProjectVisibility | null;
   compact?: boolean;
   className?: string;
 }
 
-export function WorkspaceVisibilityBadge({
+export function ProjectVisibilityBadge({
   visibility,
   compact = false,
   className,
-}: WorkspaceVisibilityBadgeProps) {
-  const workspaceVisibility = visibility ?? "public";
-  const isPublic = workspaceVisibility === "public";
+}: ProjectVisibilityBadgeProps) {
+  const projectVisibility = visibility ?? "public";
+  const isPublic = projectVisibility === "public";
   const Icon = isPublic ? Globe : Lock;
   const label = compact
     ? isPublic
       ? "Public"
       : "Private"
     : isPublic
-      ? "Public workspace"
-      : "Private workspace";
+      ? "Public project"
+      : "Private project";
 
   return (
     <Badge

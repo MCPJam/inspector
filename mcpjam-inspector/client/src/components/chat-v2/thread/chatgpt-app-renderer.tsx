@@ -1540,7 +1540,7 @@ export function ChatGPTAppRenderer({
       </div>
     );
   if (storeError) {
-    // In shared/minimal mode, silently hide auth-denied widget errors (workspace-member-only endpoint)
+    // In shared/minimal mode, silently hide auth-denied widget errors (project-member-only endpoint)
     if (minimalMode && /oauth|unauthorized|401/i.test(storeError)) {
       return null;
     }

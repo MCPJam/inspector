@@ -39,7 +39,7 @@ describe("CreateOrganizationDialog", () => {
       new Error(
         JSON.stringify({
           code: "billing_limit_reached",
-          limit: "maxWorkspaces",
+          limit: "maxProjects",
           allowedValue: 1,
         }),
       ),
@@ -55,7 +55,7 @@ describe("CreateOrganizationDialog", () => {
       });
     });
     expect(toast.error).toHaveBeenCalledWith(
-      "This organization has reached its workspace limit (1). Upgrade to create more workspaces.",
+      "This organization has reached its project limit (1). Upgrade to create more projects.",
     );
   });
 });

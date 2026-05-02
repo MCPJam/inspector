@@ -384,7 +384,7 @@ export function ChatboxChatPage({
     surface: "chatbox",
     pendingKey: CHATBOX_OAUTH_PENDING_KEY,
     servers: oauthServers,
-    workspaceId: session?.payload.workspaceId ?? null,
+    projectId: session?.payload.projectId ?? null,
     chatboxToken: session?.token,
     isAuthenticated,
   });
@@ -421,7 +421,7 @@ export function ChatboxChatPage({
   }, [session, sessionServersActive]);
 
   useHostedApiContext({
-    workspaceId: session?.payload.workspaceId ?? null,
+    projectId: session?.payload.projectId ?? null,
     serverIdsByName: session ? hostedServerIdsByName : {},
     getAccessToken,
     chatboxToken: tokenFromPath ?? session?.token,
@@ -742,7 +742,7 @@ export function ChatboxChatPage({
           loadingIndicatorVariant={getLoadingIndicatorVariantForHostStyle(
             hostStyle
           )}
-          hostedWorkspaceIdOverride={session.payload.workspaceId}
+          hostedProjectIdOverride={session.payload.projectId}
           hostedSelectedServerIdsOverride={sessionServersActive.map(
             (server) => server.serverId
           )}

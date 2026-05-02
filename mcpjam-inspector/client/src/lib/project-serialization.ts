@@ -71,7 +71,7 @@ export function deserializeServersFromConvex(
 ): Record<string, ServerWithName> {
   const result: Record<string, ServerWithName> = {};
 
-  // Handle array (from servers table) or object (legacy workspace.servers)
+  // Handle array (from servers table) or object (legacy project.servers)
   const entries = Array.isArray(servers)
     ? servers.map((s) => [s.name, s] as [string, any])
     : Object.entries(servers);
@@ -100,7 +100,7 @@ export function deserializeServersFromConvex(
       config.requestInit = { headers: serverData.headers };
     }
 
-    // LEGACY: Also check nested config (backward compat with workspace.servers)
+    // LEGACY: Also check nested config (backward compat with project.servers)
     if (serverData.config) {
       if (serverData.config.url) {
         try {

@@ -47,8 +47,8 @@ import { useAuth } from "@workos-inc/authkit-react";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { MCPIcon } from "@/components/ui/mcp-icon";
 import { SidebarUser } from "@/components/sidebar/sidebar-user";
-import { SidebarWorkspaceSelector } from "@/components/sidebar/sidebar-workspace-selector";
-import { ShareWorkspaceDialog } from "@/components/workspace/ShareWorkspaceDialog";
+import { SidebarProjectSelector } from "@/components/sidebar/sidebar-project-selector";
+import { ShareProjectDialog } from "@/components/project/ShareProjectDialog";
 import { useUpdateNotification } from "@/hooks/useUpdateNotification";
 import { Badge } from "@mcpjam/design-system/badge";
 import { Button } from "@mcpjam/design-system/button";
@@ -69,7 +69,7 @@ import { HOSTED_LOCAL_ONLY_TOOLTIP } from "@/lib/hosted-ui";
 import { useLearnMore } from "@/hooks/use-learn-more";
 import { LearnMoreExpandedPanel } from "@/components/learn-more/LearnMoreExpandedPanel";
 import type { BillingFeatureName } from "@/hooks/useOrganizationBilling";
-import type { Workspace } from "@/state/app-types";
+import type { Project } from "@/state/app-types";
 import type { OrganizationRouteSection } from "@/lib/hosted-navigation";
 
 interface NavItem {
@@ -326,28 +326,28 @@ const hostedNavigationSections =
 interface MCPSidebarProps extends React.ComponentProps<typeof Sidebar> {
   onNavigate?: (section: string) => void;
   activeTab?: string;
-  /** Workspace state for the sidebar workspace picker */
-  workspaces: Record<string, Workspace>;
-  activeWorkspaceId: string;
-  onSwitchWorkspace: (workspaceId: string) => void;
-  onCreateWorkspace: (name: string, switchTo?: boolean) => Promise<string>;
-  onDeleteWorkspace: (workspaceId: string) => void;
-  isLoadingWorkspaces?: boolean;
+  /** Project state for the sidebar project picker */
+  projects: Record<string, Project>;
+  activeProjectId: string;
+  onSwitchProject: (projectId: string) => void;
+  onCreateProject: (name: string, switchTo?: boolean) => Promise<string>;
+  onDeleteProject: (projectId: string) => void;
+  isLoadingProjects?: boolean;
   activeOrganizationId?: string;
   activeOrganizationName?: string;
   onSwitchOrganization?: (
     organizationId: string,
     section?: OrganizationRouteSection,
   ) => void;
-  onWorkspaceShared?: (
-    sharedWorkspaceId: string,
-    sourceWorkspaceId?: string,
+  onProjectShared?: (
+    sharedProjectId: string,
+    sourceProjectId?: string,
   ) => void;
   billingGateDenied?: Partial<Record<BillingFeatureName, boolean>>;
   billingGateEnforcementActive?: boolean;
   billingUiEnabled?: boolean;
-  isCreateWorkspaceDisabled?: boolean;
-  createWorkspaceDisabledReason?: string;
+  isCreateProjectDisabled?: boolean;
+  createProjectDisabledReason?: string;
 }
 
 function navigateToEvalsExploreList() {
@@ -518,21 +518,21 @@ export function SidebarEvalsNavGroup({
 export function MCPSidebar({
   onNavigate,
   activeTab,
-  workspaces,
-  activeWorkspaceId,
-  onSwitchWorkspace,
-  onCreateWorkspace,
-  onDeleteWorkspace,
-  isLoadingWorkspaces,
+  projects,
+  activeProjectId,
+  onSwitchProject,
+  onCreateProject,
+  onDeleteProject,
+  isLoadingProjects,
   activeOrganizationId,
   activeOrganizationName,
   onSwitchOrganization,
-  onWorkspaceShared,
+  onProjectShared,
   billingGateDenied = {},
   billingGateEnforcementActive = false,
   billingUiEnabled = false,
-  isCreateWorkspaceDisabled = false,
-  createWorkspaceDisabledReason,
+  isCreateProjectDisabled = false,
+  createProjectDisabledReason,
   ...props
 }: MCPSidebarProps) {
   const posthog = usePostHog();
@@ -552,20 +552,20 @@ export function MCPSidebar({
   const [showInviteDialog, setShowInviteDialog] = useState(false);
   const learnMore = useLearnMore();
   const { state, isMobile } = useSidebar();
-  const activeWorkspace = workspaces[activeWorkspaceId];
-  const inviteableWorkspaces = useMemo(() => {
-    if (!activeWorkspace?.organizationId) {
-      return workspaces;
+  const activeProject = projects[activeProjectId];
+  const inviteableProjects = useMemo(() => {
+    if (!activeProject?.organizationId) {
+      return projects;
     }
 
     return Object.fromEntries(
-      Object.entries(workspaces).filter(
-        ([, workspace]) =>
-          workspace.organizationId === activeWorkspace.organizationId,
+      Object.entries(projects).filter(
+        ([, project]) =>
+          project.organizationId === activeProject.organizationId,
       ),
     );
-  }, [activeWorkspace?.organizationId, workspaces]);
-  const shouldShowInviteCta = isAuthenticated && !!user && !!activeWorkspace;
+  }, [activeProject?.organizationId, projects]);
+  const shouldShowInviteCta = isAuthenticated && !!user && !!activeProject;
 
   const handleNavClick = (url: string) => {
     if (onNavigate && url.startsWith("#")) {
@@ -681,16 +681,16 @@ export function MCPSidebar({
               </Button>
             </div>
           )}
-          <SidebarWorkspaceSelector
-            activeWorkspaceId={activeWorkspaceId}
-            workspaces={workspaces}
-            onSwitchWorkspace={onSwitchWorkspace}
-            onCreateWorkspace={onCreateWorkspace}
-            onDeleteWorkspace={onDeleteWorkspace}
-            isLoading={isLoadingWorkspaces}
-            onNavigateToSettings={() => handleNavClick("#workspace-settings")}
-            isCreateDisabled={isCreateWorkspaceDisabled}
-            createDisabledReason={createWorkspaceDisabledReason}
+          <SidebarProjectSelector
+            activeProjectId={activeProjectId}
+            projects={projects}
+            onSwitchProject={onSwitchProject}
+            onCreateProject={onCreateProject}
+            onDeleteProject={onDeleteProject}
+            isLoading={isLoadingProjects}
+            onNavigateToSettings={() => handleNavClick("#project-settings")}
+            isCreateDisabled={isCreateProjectDisabled}
+            createDisabledReason={createProjectDisabledReason}
             onLearnMoreExpand={
               learnMoreEnabled ? learnMore.openExpandedModal : undefined
             }
@@ -758,20 +758,20 @@ export function MCPSidebar({
           />
         </SidebarFooter>
       </Sidebar>
-      {shouldShowInviteCta && user && activeWorkspace ? (
-        <ShareWorkspaceDialog
+      {shouldShowInviteCta && user && activeProject ? (
+        <ShareProjectDialog
           isOpen={showInviteDialog}
           onClose={() => setShowInviteDialog(false)}
-          workspaceName={activeWorkspace.name}
-          workspaceServers={activeWorkspace.servers}
-          sharedWorkspaceId={activeWorkspace.sharedWorkspaceId}
-          organizationId={activeWorkspace.organizationId}
-          visibility={activeWorkspace.visibility}
+          projectName={activeProject.name}
+          projectServers={activeProject.servers}
+          sharedProjectId={activeProject.sharedProjectId}
+          organizationId={activeProject.organizationId}
+          visibility={activeProject.visibility}
           organizationName={activeOrganizationName}
           currentUser={user}
-          onWorkspaceShared={onWorkspaceShared}
-          availableWorkspaces={inviteableWorkspaces}
-          activeWorkspaceId={activeWorkspaceId}
+          onProjectShared={onProjectShared}
+          availableProjects={inviteableProjects}
+          activeProjectId={activeProjectId}
         />
       ) : null}
       {learnMoreEnabled && (

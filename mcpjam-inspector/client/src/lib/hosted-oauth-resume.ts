@@ -1,4 +1,4 @@
-export type HostedOAuthSurface = "chatbox" | "shared" | "workspace";
+export type HostedOAuthSurface = "chatbox" | "shared" | "project";
 
 export type HostedOAuthStatus =
   | "needs_auth"
@@ -57,7 +57,7 @@ export function readHostedOAuthResumeMarker(
       typeof parsed !== "object" ||
       (parsed.surface !== "chatbox" &&
         parsed.surface !== "shared" &&
-        parsed.surface !== "workspace") ||
+        parsed.surface !== "project") ||
       typeof parsed.serverName !== "string" ||
       typeof parsed.completedAt !== "number"
     ) {

@@ -4,7 +4,7 @@ import { COMPARE_PLAN_MARKETING_SECTIONS } from "../compare-plan-marketing";
 describe("COMPARE_PLAN_MARKETING_SECTIONS", () => {
   it("mirrors the marketing compare table sections and row coverage", () => {
     expect(COMPARE_PLAN_MARKETING_SECTIONS.map((s) => s.title)).toEqual([
-      "Organization & workspaces",
+      "Organization & projects",
       "Standard features",
       "Evaluations",
       "Chatboxes",
@@ -21,7 +21,7 @@ describe("COMPARE_PLAN_MARKETING_SECTIONS", () => {
     expect(rowCount).toBe(35);
   });
 
-  it("includes representative product and org/workspace cells", () => {
+  it("includes representative product and org/project cells", () => {
     const testing = COMPARE_PLAN_MARKETING_SECTIONS.find(
       (s) => s.title === "Evaluations",
     );
@@ -33,11 +33,11 @@ describe("COMPARE_PLAN_MARKETING_SECTIONS", () => {
     });
     expect(evalsRow?.free).toEqual({ kind: "text", text: "5 / mo" });
 
-    const orgWorkspaces = COMPARE_PLAN_MARKETING_SECTIONS.find(
-      (s) => s.title === "Organization & workspaces",
+    const orgProjects = COMPARE_PLAN_MARKETING_SECTIONS.find(
+      (s) => s.title === "Organization & projects",
     );
     expect(
-      orgWorkspaces?.rows.find((r) => r.label === "Seat limit")?.starter,
+      orgProjects?.rows.find((r) => r.label === "Seat limit")?.starter,
     ).toEqual({
       kind: "text",
       text: "3",

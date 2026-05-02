@@ -20,7 +20,7 @@ import {
   Trash2,
   Upload,
 } from "lucide-react";
-import { Workspace } from "@/state/app-types";
+import { Project } from "@/state/app-types";
 import { Badge } from "@mcpjam/design-system/badge";
 import { ScrollArea } from "@mcpjam/design-system/scroll-area";
 import {
@@ -34,89 +34,89 @@ import {
   AlertDialogTitle,
 } from "@mcpjam/design-system/alert-dialog";
 
-interface WorkspaceManagementDialogProps {
+interface ProjectManagementDialogProps {
   isOpen: boolean;
   onClose: () => void;
-  workspaces: Record<string, Workspace>;
-  activeWorkspaceId: string;
-  onCreateWorkspace: (name: string, description?: string) => void;
-  onUpdateWorkspace: (workspaceId: string, updates: Partial<Workspace>) => void;
-  onDeleteWorkspace: (workspaceId: string) => void;
-  onDuplicateWorkspace: (workspaceId: string, newName: string) => void;
-  onSetDefaultWorkspace: (workspaceId: string) => void;
-  onExportWorkspace: (workspaceId: string) => void;
-  onImportWorkspace: (workspaceData: Workspace) => void;
+  projects: Record<string, Project>;
+  activeProjectId: string;
+  onCreateProject: (name: string, description?: string) => void;
+  onUpdateProject: (projectId: string, updates: Partial<Project>) => void;
+  onDeleteProject: (projectId: string) => void;
+  onDuplicateProject: (projectId: string, newName: string) => void;
+  onSetDefaultProject: (projectId: string) => void;
+  onExportProject: (projectId: string) => void;
+  onImportProject: (projectData: Project) => void;
 }
 
-export function WorkspaceManagementDialog({
+export function ProjectManagementDialog({
   isOpen,
   onClose,
-  workspaces,
-  activeWorkspaceId,
-  onCreateWorkspace,
-  onUpdateWorkspace,
-  onDeleteWorkspace,
-  onDuplicateWorkspace,
-  onSetDefaultWorkspace,
-  onExportWorkspace,
-  onImportWorkspace,
-}: WorkspaceManagementDialogProps) {
+  projects,
+  activeProjectId,
+  onCreateProject,
+  onUpdateProject,
+  onDeleteProject,
+  onDuplicateProject,
+  onSetDefaultProject,
+  onExportProject,
+  onImportProject,
+}: ProjectManagementDialogProps) {
   const [view, setView] = useState<"list" | "create" | "edit">("list");
-  const [newWorkspaceName, setNewWorkspaceName] = useState("");
-  const [newWorkspaceDescription, setNewWorkspaceDescription] = useState("");
-  const [editingWorkspace, setEditingWorkspace] = useState<Workspace | null>(
+  const [newProjectName, setNewProjectName] = useState("");
+  const [newProjectDescription, setNewProjectDescription] = useState("");
+  const [editingProject, setEditingProject] = useState<Project | null>(
     null,
   );
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
 
-  const workspaceList = Object.values(workspaces).sort((a, b) => {
+  const projectList = Object.values(projects).sort((a, b) => {
     if (a.isDefault) return -1;
     if (b.isDefault) return 1;
     return a.name.localeCompare(b.name);
   });
 
-  const handleCreateWorkspace = () => {
-    if (newWorkspaceName.trim()) {
-      onCreateWorkspace(
-        newWorkspaceName.trim(),
-        newWorkspaceDescription.trim() || undefined,
+  const handleCreateProject = () => {
+    if (newProjectName.trim()) {
+      onCreateProject(
+        newProjectName.trim(),
+        newProjectDescription.trim() || undefined,
       );
-      setNewWorkspaceName("");
-      setNewWorkspaceDescription("");
+      setNewProjectName("");
+      setNewProjectDescription("");
       setView("list");
     }
   };
 
-  const handleUpdateWorkspace = () => {
-    if (editingWorkspace && editingWorkspace.name.trim()) {
-      onUpdateWorkspace(editingWorkspace.id, {
-        name: editingWorkspace.name.trim(),
-        description: editingWorkspace.description?.trim() || undefined,
+  const handleUpdateProject = () => {
+    if (editingProject && editingProject.name.trim()) {
+      onUpdateProject(editingProject.id, {
+        name: editingProject.name.trim(),
+        description: editingProject.description?.trim() || undefined,
       });
-      setEditingWorkspace(null);
+      setEditingProject(null);
       setView("list");
     }
   };
 
-  const handleStartEdit = (workspace: Workspace) => {
-    setEditingWorkspace({ ...workspace });
+  const handleStartEdit = (project: Project) => {
+    setEditingProject({ ...project });
     setView("edit");
   };
 
-  const handleDeleteClick = (workspaceId: string) => {
-    setDeleteConfirmId(workspaceId);
+  const handleDeleteClick = (projectId: string) => {
+    setDeleteConfirmId(projectId);
   };
 
   const handleConfirmDelete = () => {
     if (deleteConfirmId) {
-      onDeleteWorkspace(deleteConfirmId);
+      onDeleteProject(deleteConfirmId);
       setDeleteConfirmId(null);
     }
   };
 
-  const handleDuplicate = (workspace: Workspace) => {
-    const newName = `${workspace.name} (Copy)`;
-    onDuplicateWorkspace(workspace.id, newName);
+  const handleDuplicate = (project: Project) => {
+    const newName = `${project.name} (Copy)`;
+    onDuplicateProject(project.id, newName);
   };
 
   const handleImport = () => {
@@ -128,11 +128,11 @@ export function WorkspaceManagementDialog({
       if (file) {
         try {
           const text = await file.text();
-          const workspaceData = JSON.parse(text);
-          onImportWorkspace(workspaceData);
+          const projectData = JSON.parse(text);
+          onImportProject(projectData);
         } catch (error) {
-          console.error("Failed to import workspace:", error);
-          alert("Failed to import workspace. Please check the file format.");
+          console.error("Failed to import project:", error);
+          alert("Failed to import project. Please check the file format.");
         }
       }
     };
@@ -144,9 +144,9 @@ export function WorkspaceManagementDialog({
       <Dialog open={isOpen} onOpenChange={onClose}>
         <DialogContent className="max-w-2xl max-h-[80vh] flex flex-col">
           <DialogHeader>
-            <DialogTitle>Manage Workspaces</DialogTitle>
+            <DialogTitle>Manage Projects</DialogTitle>
             <DialogDescription>
-              Create, edit, and manage your MCP server workspaces
+              Create, edit, and manage your MCP server projects
             </DialogDescription>
           </DialogHeader>
 
@@ -159,7 +159,7 @@ export function WorkspaceManagementDialog({
                   variant="default"
                 >
                   <Plus className="h-4 w-4 mr-2" />
-                  Create Workspace
+                  Create Project
                 </Button>
                 <Button onClick={handleImport} variant="outline">
                   <Upload className="h-4 w-4 mr-2" />
@@ -169,35 +169,35 @@ export function WorkspaceManagementDialog({
 
               <ScrollArea className="flex-1">
                 <div className="space-y-2 pr-4">
-                  {workspaceList.map((workspace) => (
+                  {projectList.map((project) => (
                     <div
-                      key={workspace.id}
+                      key={project.id}
                       className="p-4 border rounded-lg hover:bg-accent/50 transition-colors"
                     >
                       <div className="flex items-start justify-between">
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2 mb-1">
                             <h3 className="font-semibold truncate">
-                              {workspace.name}
+                              {project.name}
                             </h3>
-                            {workspace.id === activeWorkspaceId && (
+                            {project.id === activeProjectId && (
                               <Badge variant="default" className="text-xs">
                                 Active
                               </Badge>
                             )}
-                            {workspace.isDefault && (
+                            {project.isDefault && (
                               <Badge variant="secondary" className="text-xs">
                                 Default
                               </Badge>
                             )}
                           </div>
-                          {workspace.description && (
+                          {project.description && (
                             <p className="text-sm text-muted-foreground truncate">
-                              {workspace.description}
+                              {project.description}
                             </p>
                           )}
                           <p className="text-xs text-muted-foreground mt-1">
-                            {Object.keys(workspace.servers).length} server(s)
+                            {Object.keys(project.servers).length} server(s)
                           </p>
                         </div>
 
@@ -205,14 +205,14 @@ export function WorkspaceManagementDialog({
                           <Button
                             variant="ghost"
                             size="icon"
-                            onClick={() => onSetDefaultWorkspace(workspace.id)}
+                            onClick={() => onSetDefaultProject(project.id)}
                             title={
-                              workspace.isDefault
+                              project.isDefault
                                 ? "Unset as default"
                                 : "Set as default"
                             }
                           >
-                            {workspace.isDefault ? (
+                            {project.isDefault ? (
                               <Star className="h-4 w-4 fill-current" />
                             ) : (
                               <StarOff className="h-4 w-4" />
@@ -221,33 +221,33 @@ export function WorkspaceManagementDialog({
                           <Button
                             variant="ghost"
                             size="icon"
-                            onClick={() => handleStartEdit(workspace)}
-                            title="Edit workspace"
+                            onClick={() => handleStartEdit(project)}
+                            title="Edit project"
                           >
                             <Edit2 className="h-4 w-4" />
                           </Button>
                           <Button
                             variant="ghost"
                             size="icon"
-                            onClick={() => handleDuplicate(workspace)}
-                            title="Duplicate workspace"
+                            onClick={() => handleDuplicate(project)}
+                            title="Duplicate project"
                           >
                             <Copy className="h-4 w-4" />
                           </Button>
                           <Button
                             variant="ghost"
                             size="icon"
-                            onClick={() => onExportWorkspace(workspace.id)}
-                            title="Export workspace"
+                            onClick={() => onExportProject(project.id)}
+                            title="Export project"
                           >
                             <Download className="h-4 w-4" />
                           </Button>
-                          {workspace.id !== activeWorkspaceId && (
+                          {project.id !== activeProjectId && (
                             <Button
                               variant="ghost"
                               size="icon"
-                              onClick={() => handleDeleteClick(workspace.id)}
-                              title="Delete workspace"
+                              onClick={() => handleDeleteClick(project.id)}
+                              title="Delete project"
                             >
                               <Trash2 className="h-4 w-4 text-destructive" />
                             </Button>
@@ -264,22 +264,22 @@ export function WorkspaceManagementDialog({
           {view === "create" && (
             <div className="space-y-4">
               <div className="space-y-2">
-                <Label htmlFor="workspace-name">Workspace Name *</Label>
+                <Label htmlFor="project-name">Project Name *</Label>
                 <Input
-                  id="workspace-name"
-                  value={newWorkspaceName}
-                  onChange={(e) => setNewWorkspaceName(e.target.value)}
+                  id="project-name"
+                  value={newProjectName}
+                  onChange={(e) => setNewProjectName(e.target.value)}
                   placeholder="e.g., Work, Personal, Development"
                   autoFocus
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="workspace-description">Description</Label>
+                <Label htmlFor="project-description">Description</Label>
                 <Textarea
-                  id="workspace-description"
-                  value={newWorkspaceDescription}
-                  onChange={(e) => setNewWorkspaceDescription(e.target.value)}
-                  placeholder="Optional description for this workspace"
+                  id="project-description"
+                  value={newProjectDescription}
+                  onChange={(e) => setNewProjectDescription(e.target.value)}
+                  placeholder="Optional description for this project"
                   rows={3}
                 />
               </div>
@@ -288,8 +288,8 @@ export function WorkspaceManagementDialog({
                   Cancel
                 </Button>
                 <Button
-                  onClick={handleCreateWorkspace}
-                  disabled={!newWorkspaceName.trim()}
+                  onClick={handleCreateProject}
+                  disabled={!newProjectName.trim()}
                 >
                   Create
                 </Button>
@@ -297,31 +297,31 @@ export function WorkspaceManagementDialog({
             </div>
           )}
 
-          {view === "edit" && editingWorkspace && (
+          {view === "edit" && editingProject && (
             <div className="space-y-4">
               <div className="space-y-2">
-                <Label htmlFor="edit-workspace-name">Workspace Name *</Label>
+                <Label htmlFor="edit-project-name">Project Name *</Label>
                 <Input
-                  id="edit-workspace-name"
-                  value={editingWorkspace.name}
+                  id="edit-project-name"
+                  value={editingProject.name}
                   onChange={(e) =>
-                    setEditingWorkspace({
-                      ...editingWorkspace,
+                    setEditingProject({
+                      ...editingProject,
                       name: e.target.value,
                     })
                   }
-                  placeholder="Workspace name"
+                  placeholder="Project name"
                   autoFocus
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="edit-workspace-description">Description</Label>
+                <Label htmlFor="edit-project-description">Description</Label>
                 <Textarea
-                  id="edit-workspace-description"
-                  value={editingWorkspace.description || ""}
+                  id="edit-project-description"
+                  value={editingProject.description || ""}
                   onChange={(e) =>
-                    setEditingWorkspace({
-                      ...editingWorkspace,
+                    setEditingProject({
+                      ...editingProject,
                       description: e.target.value,
                     })
                   }
@@ -333,15 +333,15 @@ export function WorkspaceManagementDialog({
                 <Button
                   variant="outline"
                   onClick={() => {
-                    setEditingWorkspace(null);
+                    setEditingProject(null);
                     setView("list");
                   }}
                 >
                   Cancel
                 </Button>
                 <Button
-                  onClick={handleUpdateWorkspace}
-                  disabled={!editingWorkspace.name.trim()}
+                  onClick={handleUpdateProject}
+                  disabled={!editingProject.name.trim()}
                 >
                   Save Changes
                 </Button>
@@ -357,9 +357,9 @@ export function WorkspaceManagementDialog({
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete Workspace?</AlertDialogTitle>
+            <AlertDialogTitle>Delete Project?</AlertDialogTitle>
             <AlertDialogDescription>
-              This will permanently delete the workspace and all its server
+              This will permanently delete the project and all its server
               configurations. This action cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>

@@ -41,16 +41,16 @@ describe("mcp-api hosted-mode reconnect hardening", () => {
     isGuestModeMock.mockReturnValue(false);
   });
 
-  it("normalizes hosted workspace timing errors for testConnection", async () => {
+  it("normalizes hosted project timing errors for testConnection", async () => {
     validateHostedServerMock.mockRejectedValueOnce(
-      new Error("Hosted workspace is not available yet"),
+      new Error("Hosted project is not available yet"),
     );
 
     const result = await testConnection({} as MCPServerConfig, "server-1");
 
     expect(result).toEqual({
       success: false,
-      error: "Hosted workspace is still loading. Please try again in a moment.",
+      error: "Hosted project is still loading. Please try again in a moment.",
     });
   });
 

@@ -14,9 +14,9 @@ import {
   type ChatboxSettings,
 } from "@/hooks/useChatboxes";
 import {
-  useWorkspaceQueries,
-  useWorkspaceServers,
-} from "@/hooks/useWorkspaces";
+  useProjectQueries,
+  useProjectServers,
+} from "@/hooks/useProjects";
 import { readBuilderSession, clearBuilderSession } from "@/lib/chatbox-session";
 import { ChatboxIndexPage, type ChatboxOpenOptions } from "./ChatboxIndexPage";
 import { ChatboxBuilderView } from "./ChatboxBuilderView";
@@ -25,7 +25,7 @@ import { getDefaultHostedModelId } from "./drafts";
 import type { ChatboxDraftConfig, ChatboxStarterDefinition } from "./types";
 
 interface ChatboxBuilderExperienceProps {
-  workspaceId: string | null;
+  projectId: string | null;
   isCreateChatboxDisabled?: boolean;
   isCreateChatboxLoading?: boolean;
   createChatboxUpsell?: {
@@ -39,7 +39,7 @@ interface ChatboxBuilderExperienceProps {
 }
 
 export default function ChatboxBuilderExperience({
-  workspaceId,
+  projectId,
   isCreateChatboxDisabled = false,
   isCreateChatboxLoading = false,
   createChatboxUpsell = null,
@@ -47,16 +47,16 @@ export default function ChatboxBuilderExperience({
   const { isAuthenticated } = useConvexAuth();
   const { chatboxes, isLoading } = useChatboxList({
     isAuthenticated,
-    workspaceId,
+    projectId,
   });
   const { deleteChatbox, duplicateChatbox } = useChatboxMutations();
-  const { workspaces = [] } = useWorkspaceQueries({ isAuthenticated });
-  const { servers = [] } = useWorkspaceServers({
+  const { projects = [] } = useProjectQueries({ isAuthenticated });
+  const { servers = [] } = useProjectServers({
     isAuthenticated,
-    workspaceId,
+    projectId,
   });
-  const workspaceName =
-    workspaces.find((w) => w._id === workspaceId)?.name ?? null;
+  const projectName =
+    projects.find((w) => w._id === projectId)?.name ?? null;
 
   const [selectedChatboxId, setSelectedChatboxId] = useState<string | null>(
     null,
@@ -73,18 +73,18 @@ export default function ChatboxBuilderExperience({
     string | null
   >(null);
 
-  // Restore builder session from sessionStorage when workspaceId becomes
+  // Restore builder session from sessionStorage when projectId becomes
   // available. After an OAuth redirect the page reloads and Convex needs to
-  // reconnect, so workspaceId is null on the first render — useState
+  // reconnect, so projectId is null on the first render — useState
   // initializers would miss the saved session.
-  const restoredForWorkspaceRef = useRef<string | null>(null);
+  const restoredForProjectRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!workspaceId) return;
+    if (!projectId) return;
     if (isCreateChatboxLoading) return;
-    if (restoredForWorkspaceRef.current === workspaceId) return;
-    restoredForWorkspaceRef.current = workspaceId;
+    if (restoredForProjectRef.current === projectId) return;
+    restoredForProjectRef.current = projectId;
 
-    const session = readBuilderSession(workspaceId);
+    const session = readBuilderSession(projectId);
     if (!session || (!session.chatboxId && !session.draft)) return;
     if (!session.chatboxId && isCreateChatboxDisabled) {
       clearBuilderSession();
@@ -105,7 +105,7 @@ export default function ChatboxBuilderExperience({
         );
       }
     });
-  }, [isCreateChatboxDisabled, isCreateChatboxLoading, workspaceId]);
+  }, [isCreateChatboxDisabled, isCreateChatboxLoading, projectId]);
 
   const applyStarterDraft = useCallback(
     (starter: ChatboxStarterDefinition) => {
@@ -193,11 +193,11 @@ export default function ChatboxBuilderExperience({
     [duplicateChatbox],
   );
 
-  if (!workspaceId) {
+  if (!projectId) {
     return (
       <div className="flex h-full items-center justify-center">
         <p className="text-sm text-muted-foreground">
-          Select a workspace to manage chatboxes.
+          Select a project to manage chatboxes.
         </p>
       </div>
     );
@@ -214,9 +214,9 @@ export default function ChatboxBuilderExperience({
       />
       {isBuilderOpen ? (
         <ChatboxBuilderView
-          workspaceId={workspaceId}
-          workspaceName={workspaceName}
-          workspaceServers={servers}
+          projectId={projectId}
+          projectName={projectName}
+          projectServers={servers}
           chatboxId={selectedChatboxId}
           draft={draft}
           initialViewMode={restoredViewMode}

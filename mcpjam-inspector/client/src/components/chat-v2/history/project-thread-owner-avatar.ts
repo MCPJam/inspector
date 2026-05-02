@@ -1,13 +1,13 @@
 import type { ChatHistorySession } from "@/lib/apis/web/chat-history-api";
-import type { WorkspaceMember } from "@/hooks/useWorkspaces";
+import type { ProjectMember } from "@/hooks/useProjects";
 
-/** Workspace-shared history rows: thread owner avatar (includes your own threads). */
-export type WorkspaceThreadOwnerAvatar =
+/** Project-shared history rows: thread owner avatar (includes your own threads). */
+export type ProjectThreadOwnerAvatar =
   | { status: "show"; displayName: string; imageUrl?: string }
   | { status: "generic" };
 
-export function buildWorkspaceOwnerProfileByUserId(
-  members: WorkspaceMember[],
+export function buildProjectOwnerProfileByUserId(
+  members: ProjectMember[],
 ): Map<string, { imageUrl: string; name: string }> {
   const map = new Map<string, { imageUrl: string; name: string }>();
   for (const member of members) {
@@ -20,10 +20,10 @@ export function buildWorkspaceOwnerProfileByUserId(
   return map;
 }
 
-export function resolveWorkspaceThreadOwnerAvatar(
+export function resolveProjectThreadOwnerAvatar(
   session: ChatHistorySession,
   ownerByUserId: Map<string, { imageUrl: string; name: string }>,
-): WorkspaceThreadOwnerAvatar {
+): ProjectThreadOwnerAvatar {
   if (!session.userId?.trim()) {
     return { status: "generic" };
   }

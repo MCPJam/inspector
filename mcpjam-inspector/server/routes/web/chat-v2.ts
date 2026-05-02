@@ -59,9 +59,9 @@ chatV2.post("/", async (c) => {
     const rawBody = await readJsonBody<Record<string, unknown>>(c);
     rpcCollector = createHostedRpcLogCollector(rawBody);
 
-    // Detect guest request by body shape: no workspaceId means guest-direct
+    // Detect guest request by body shape: no projectId or legacy workspaceId means guest-direct
     // (matching the pattern from withEphemeralConnection in auth.ts)
-    const isGuestRequest = !rawBody.workspaceId;
+    const isGuestRequest = !rawBody.projectId && !rawBody.workspaceId;
 
     if (isGuestRequest) {
       // ── Guest path: direct connection, no Convex authorization ──
@@ -262,13 +262,17 @@ chatV2.post("/", async (c) => {
 
     // ── Authenticated path: Convex authorization ──────────────────
     const hostedBody = parseWithSchema(hostedChatSchema, rawBody);
+    const legacyWorkspaceId =
+      typeof (hostedBody as any).workspaceId === "string"
+        ? ((hostedBody as any).workspaceId as string)
+        : undefined;
     const body = rawBody as unknown as ChatV2Request & {
-      workspaceId: string;
+      projectId: string;
       selectedServerIds: string[];
       selectedServerNames?: string[];
       shareToken?: string;
       chatboxToken?: string;
-      accessScope?: "workspace_member" | "chat_v2";
+      accessScope?: "project_member" | "chat_v2";
       surface?: "preview" | "share_link";
     };
 
@@ -305,7 +309,7 @@ chatV2.post("/", async (c) => {
     const { manager, oauthServerUrls: urls } = await createAuthorizedManager(
       c,
       bearerToken,
-      hostedBody.workspaceId,
+      hostedBody.projectId,
       selectedServerIds,
       WEB_STREAM_TIMEOUT_MS,
       hostedBody.oauthTokens,
@@ -375,7 +379,8 @@ chatV2.post("/", async (c) => {
         // the direct BYOK path in mcp/chat-v2.ts.
         const providerKey = deriveOrgProviderKey(modelDefinition);
         return handleHostedOrgChatModel({
-          workspaceId: hostedBody.workspaceId,
+          projectId: hostedBody.projectId,
+          workspaceId: legacyWorkspaceId,
           providerKey,
           modelId: String(modelDefinition.id),
           chatSessionId: hostedChatSessionId,
@@ -401,7 +406,8 @@ chatV2.post("/", async (c) => {
                   chatSessionId: hostedChatSessionId,
                   modelId: String(modelDefinition.id),
                   modelSource: "byok",
-                  workspaceId: hostedBody.workspaceId,
+                  projectId: hostedBody.projectId,
+                  workspaceId: legacyWorkspaceId,
                   sourceType: shareToken
                     ? "serverShare"
                     : chatboxToken
@@ -468,7 +474,7 @@ chatV2.post("/", async (c) => {
         tools: allTools as ToolSet,
         authHeader: c.req.header("authorization"),
         chatboxToken,
-        workspaceId: hostedBody.workspaceId,
+        projectId: hostedBody.projectId,
         mcpClientManager: manager,
         selectedServers: selectedServerIds,
         requireToolApproval,
@@ -479,7 +485,7 @@ chatV2.post("/", async (c) => {
                 chatSessionId: hostedChatSessionId,
                 modelId: String(modelDefinition.id),
                 modelSource: "mcpjam",
-                workspaceId: hostedBody.workspaceId,
+                projectId: hostedBody.projectId,
                 sourceType: shareToken
                   ? "serverShare"
                   : chatboxToken

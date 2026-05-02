@@ -45,7 +45,7 @@ describe("host-styles registry", () => {
     expect(ids.indexOf("claude")).toBeLessThan(ids.indexOf("chatgpt"));
   });
 
-  it("registers custom host styles for workspace-defined hosts", () => {
+  it("registers custom host styles for project-defined hosts", () => {
     const fakeStyle: HostStyleDefinition = {
       id: "test-host-registry",
       label: "Test Host",

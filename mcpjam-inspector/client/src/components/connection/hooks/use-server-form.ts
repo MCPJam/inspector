@@ -5,8 +5,8 @@ import {
   type ServerFormOAuthRegistrationMode,
 } from "@/shared/types.js";
 import { ServerWithName } from "@/hooks/use-app-state";
-import type { WorkspaceClientConfig } from "@/lib/client-config";
-import { getEffectiveWorkspaceConnectionDefaults } from "@/lib/client-config";
+import type { ProjectClientConfig } from "@/lib/client-config";
+import { getEffectiveProjectConnectionDefaults } from "@/lib/client-config";
 import { hasOAuthConfig, getStoredTokens } from "@/lib/oauth/mcp-oauth";
 import { HOSTED_MODE } from "@/lib/config";
 
@@ -101,7 +101,7 @@ export function useServerForm(
   server?: ServerWithName,
   options?: {
     requireHttps?: boolean;
-    workspaceClientConfig?: WorkspaceClientConfig;
+    projectClientConfig?: ProjectClientConfig;
   },
 ) {
   const [name, setName] = useState("");
@@ -142,8 +142,8 @@ export function useServerForm(
   const [showAuthSettings, setShowAuthSettings] = useState<boolean>(false);
 
   const initialValues = useRef<InitialFormValues | null>(null);
-  const workspaceConnectionDefaults = getEffectiveWorkspaceConnectionDefaults(
-    options?.workspaceClientConfig,
+  const projectConnectionDefaults = getEffectiveProjectConnectionDefaults(
+    options?.projectClientConfig,
   );
 
   const parseCapabilitiesOverride = (
@@ -671,7 +671,7 @@ export function useServerForm(
     setUseCustomClientId,
     requestTimeout,
     setRequestTimeout,
-    inheritedRequestTimeout: workspaceConnectionDefaults.requestTimeout,
+    inheritedRequestTimeout: projectConnectionDefaults.requestTimeout,
     clientCapabilitiesOverrideEnabled,
     setClientCapabilitiesOverrideEnabled,
     clientCapabilitiesOverrideText,

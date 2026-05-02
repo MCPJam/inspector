@@ -1,6 +1,6 @@
 import { renderHook, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { usePlaygroundWorkspaceExecutions } from "../use-playground-workspace-executions";
+import { usePlaygroundProjectExecutions } from "../use-playground-project-executions";
 import type { EvalCase, EvalIteration } from "../types";
 
 const queryMock = vi.fn();
@@ -11,7 +11,7 @@ vi.mock("convex/react", () => ({
   }),
 }));
 
-describe("usePlaygroundWorkspaceExecutions", () => {
+describe("usePlaygroundProjectExecutions", () => {
   beforeEach(() => {
     queryMock.mockReset();
   });
@@ -51,7 +51,7 @@ describe("usePlaygroundWorkspaceExecutions", () => {
     });
 
     const { result } = renderHook(() =>
-      usePlaygroundWorkspaceExecutions({
+      usePlaygroundProjectExecutions({
         enabled: true,
         suiteIds: ["suite-b", "suite-a"],
       }),
@@ -71,7 +71,7 @@ describe("usePlaygroundWorkspaceExecutions", () => {
     queryMock.mockResolvedValue({ testCases: [], iterations: [] });
 
     const { result } = renderHook(() =>
-      usePlaygroundWorkspaceExecutions({
+      usePlaygroundProjectExecutions({
         enabled: false,
         suiteIds: ["suite-a"],
       }),

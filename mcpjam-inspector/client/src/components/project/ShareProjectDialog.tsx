@@ -25,14 +25,14 @@ import {
   DropdownMenuTrigger,
 } from "@mcpjam/design-system/dropdown-menu";
 import {
-  type WorkspaceMember,
-  type WorkspaceRole,
-  useWorkspaceMutations,
-  useWorkspaceMembers,
-} from "@/hooks/useWorkspaces";
+  type ProjectMember,
+  type ProjectRole,
+  useProjectMutations,
+  useProjectMembers,
+} from "@/hooks/useProjects";
 import { useConvexAuth } from "convex/react";
 import { useProfilePicture } from "@/hooks/useProfilePicture";
-import { serializeServersForSharing } from "@/lib/workspace-serialization";
+import { serializeServersForSharing } from "@/lib/project-serialization";
 import { useOrganizationBilling } from "@/hooks/useOrganizationBilling";
 import { BILLING_GATES, resolveBillingGateState } from "@/lib/billing-gates";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
@@ -40,26 +40,26 @@ import {
   getBillingUpsellCtaLabel,
   getBillingUpsellTeaser,
 } from "@/lib/billing-upsell";
-import { resolveWorkspaceIcon } from "@/components/workspace/WorkspaceEmojiPicker";
-import type { Workspace, WorkspaceVisibility } from "@/state/app-types";
+import { resolveProjectIcon } from "@/components/project/ProjectEmojiPicker";
+import type { Project, ProjectVisibility } from "@/state/app-types";
 import type { User } from "@workos-inc/authkit-js";
 
-interface ShareWorkspaceDialogProps {
+interface ShareProjectDialogProps {
   isOpen: boolean;
   onClose: () => void;
-  workspaceName: string;
-  workspaceServers: Record<string, any>;
-  sharedWorkspaceId?: string | null;
+  projectName: string;
+  projectServers: Record<string, any>;
+  sharedProjectId?: string | null;
   organizationId?: string;
-  visibility?: WorkspaceVisibility;
+  visibility?: ProjectVisibility;
   organizationName?: string;
   currentUser: User;
-  onWorkspaceShared?: (
-    sharedWorkspaceId: string,
-    sourceWorkspaceId?: string,
+  onProjectShared?: (
+    sharedProjectId: string,
+    sourceProjectId?: string,
   ) => void;
-  availableWorkspaces?: Record<string, Workspace>;
-  activeWorkspaceId?: string;
+  availableProjects?: Record<string, Project>;
+  activeProjectId?: string;
 }
 
 const INVITE_EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -70,49 +70,49 @@ function buildInviteToastMessage(
 ): string {
   switch (result.kind) {
     case "organization_member_added":
-      return `${email} added to the organization. They now have access to this workspace.`;
+      return `${email} added to the organization. They now have access to this project.`;
     case "organization_invite_pending":
-      return `Invitation sent to ${email}. They'll get access to this workspace once they join the organization.`;
-    case "workspace_access_granted":
-      return `${email} has been added to the workspace.`;
-    case "workspace_invite_pending":
-      return `Invitation sent to ${email}. They'll get workspace access once they join the organization.`;
+      return `Invitation sent to ${email}. They'll get access to this project once they join the organization.`;
+    case "project_access_granted":
+      return `${email} has been added to the project.`;
+    case "project_invite_pending":
+      return `Invitation sent to ${email}. They'll get project access once they join the organization.`;
     case "already_pending":
       return `${email} already has a pending invite.`;
     case "already_has_access":
-      return `${email} already has access to this workspace.`;
+      return `${email} already has access to this project.`;
     default:
       return `${email} has been invited.`;
   }
 }
 
-function workspaceRoleLabel(role: WorkspaceRole): string {
+function projectRoleLabel(role: ProjectRole): string {
   return role === "admin" ? "Admin" : "Editor";
 }
 
-function workspaceRoleDescription(role: WorkspaceRole): string {
+function projectRoleDescription(role: ProjectRole): string {
   return role === "admin"
     ? "Can manage members and settings"
     : "Can edit servers";
 }
 
-function sortWorkspaces(workspaces: Record<string, Workspace>): Workspace[] {
-  return Object.values(workspaces).sort((a, b) => {
+function sortProjects(projects: Record<string, Project>): Project[] {
+  return Object.values(projects).sort((a, b) => {
     if (a.isDefault) return -1;
     if (b.isDefault) return 1;
     return a.name.localeCompare(b.name);
   });
 }
 
-function WorkspacePickerBadge({
+function ProjectPickerBadge({
   icon,
-  workspaceName,
+  projectName,
 }: {
   icon?: string;
-  workspaceName: string;
+  projectName: string;
 }) {
-  const IconComponent = icon ? resolveWorkspaceIcon(icon) : null;
-  const fallback = workspaceName.charAt(0).toUpperCase() || "W";
+  const IconComponent = icon ? resolveProjectIcon(icon) : null;
+  const fallback = projectName.charAt(0).toUpperCase() || "W";
 
   return (
     <div className="flex size-6 shrink-0 items-center justify-center rounded bg-primary/10 text-xs font-semibold text-primary">
@@ -125,83 +125,83 @@ function WorkspacePickerBadge({
   );
 }
 
-export function ShareWorkspaceDialog({
+export function ShareProjectDialog({
   isOpen,
   onClose,
-  workspaceName,
-  workspaceServers,
-  sharedWorkspaceId,
+  projectName,
+  projectServers,
+  sharedProjectId,
   organizationId,
   visibility,
   organizationName,
   currentUser,
-  onWorkspaceShared,
-  availableWorkspaces,
-  activeWorkspaceId,
-}: ShareWorkspaceDialogProps) {
+  onProjectShared,
+  availableProjects,
+  activeProjectId,
+}: ShareProjectDialogProps) {
   const posthog = usePostHog();
   const [email, setEmail] = useState("");
   const [isInviting, setIsInviting] = useState(false);
   const [currentVisibility, setCurrentVisibility] =
-    useState<WorkspaceVisibility>(visibility ?? "public");
+    useState<ProjectVisibility>(visibility ?? "public");
   const [isUpdatingVisibility, setIsUpdatingVisibility] = useState(false);
 
   const { isAuthenticated } = useConvexAuth();
   const { profilePictureUrl } = useProfilePicture();
-  const [inviteRole, setInviteRole] = useState<WorkspaceRole>("editor");
-  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<
+  const [inviteRole, setInviteRole] = useState<ProjectRole>("editor");
+  const [selectedProjectId, setSelectedProjectId] = useState<
     string | null
-  >(activeWorkspaceId ?? null);
+  >(activeProjectId ?? null);
   const previousIsOpenRef = useRef(isOpen);
-  const sortedAvailableWorkspaces = useMemo(
-    () => (availableWorkspaces ? sortWorkspaces(availableWorkspaces) : []),
-    [availableWorkspaces],
+  const sortedAvailableProjects = useMemo(
+    () => (availableProjects ? sortProjects(availableProjects) : []),
+    [availableProjects],
   );
-  const resolvedSelectedWorkspaceId = useMemo(() => {
-    if (!availableWorkspaces) {
-      return activeWorkspaceId ?? null;
+  const resolvedSelectedProjectId = useMemo(() => {
+    if (!availableProjects) {
+      return activeProjectId ?? null;
     }
 
-    if (selectedWorkspaceId && availableWorkspaces[selectedWorkspaceId]) {
-      return selectedWorkspaceId;
+    if (selectedProjectId && availableProjects[selectedProjectId]) {
+      return selectedProjectId;
     }
 
-    if (activeWorkspaceId && availableWorkspaces[activeWorkspaceId]) {
-      return activeWorkspaceId;
+    if (activeProjectId && availableProjects[activeProjectId]) {
+      return activeProjectId;
     }
 
-    return sortedAvailableWorkspaces[0]?.id ?? null;
+    return sortedAvailableProjects[0]?.id ?? null;
   }, [
-    activeWorkspaceId,
-    availableWorkspaces,
-    selectedWorkspaceId,
-    sortedAvailableWorkspaces,
+    activeProjectId,
+    availableProjects,
+    selectedProjectId,
+    sortedAvailableProjects,
   ]);
-  const selectedWorkspaceRecord =
-    availableWorkspaces && resolvedSelectedWorkspaceId
-      ? availableWorkspaces[resolvedSelectedWorkspaceId]
+  const selectedProjectRecord =
+    availableProjects && resolvedSelectedProjectId
+      ? availableProjects[resolvedSelectedProjectId]
       : null;
-  const selectedWorkspace = useMemo(
+  const selectedProject = useMemo(
     () => ({
-      localWorkspaceId:
-        selectedWorkspaceRecord?.id ?? activeWorkspaceId ?? undefined,
-      name: selectedWorkspaceRecord?.name ?? workspaceName,
-      servers: selectedWorkspaceRecord?.servers ?? workspaceServers,
-      sharedWorkspaceId: selectedWorkspaceRecord
-        ? selectedWorkspaceRecord.sharedWorkspaceId ?? null
-        : sharedWorkspaceId ?? null,
-      organizationId: selectedWorkspaceRecord?.organizationId ?? organizationId,
-      visibility: selectedWorkspaceRecord?.visibility ?? visibility,
-      icon: selectedWorkspaceRecord?.icon,
+      localProjectId:
+        selectedProjectRecord?.id ?? activeProjectId ?? undefined,
+      name: selectedProjectRecord?.name ?? projectName,
+      servers: selectedProjectRecord?.servers ?? projectServers,
+      sharedProjectId: selectedProjectRecord
+        ? selectedProjectRecord.sharedProjectId ?? null
+        : sharedProjectId ?? null,
+      organizationId: selectedProjectRecord?.organizationId ?? organizationId,
+      visibility: selectedProjectRecord?.visibility ?? visibility,
+      icon: selectedProjectRecord?.icon,
     }),
     [
-      activeWorkspaceId,
+      activeProjectId,
       organizationId,
-      selectedWorkspaceRecord,
-      sharedWorkspaceId,
+      selectedProjectRecord,
+      sharedProjectId,
       visibility,
-      workspaceName,
-      workspaceServers,
+      projectName,
+      projectServers,
     ],
   );
   const normalizedEmail = email.trim().toLowerCase();
@@ -209,24 +209,24 @@ export function ShareWorkspaceDialog({
     normalizedEmail && !INVITE_EMAIL_PATTERN.test(normalizedEmail)
       ? "Enter a valid email address."
       : null;
-  const showWorkspacePicker = sortedAvailableWorkspaces.length > 1;
+  const showProjectPicker = sortedAvailableProjects.length > 1;
 
   const {
-    createWorkspace,
-    updateWorkspace,
-    inviteWorkspaceMember,
-    removeWorkspaceMember,
-    updateWorkspaceMemberRole,
-    updateWorkspaceInviteRole,
-  } = useWorkspaceMutations();
+    createProject,
+    updateProject,
+    inviteProjectMember,
+    removeProjectMember,
+    updateProjectMemberRole,
+    updateProjectInviteRole,
+  } = useProjectMutations();
 
   const {
     activeMembers,
     pendingMembers,
     canManageMembers: membersCanManage,
-  } = useWorkspaceMembers({
+  } = useProjectMembers({
     isAuthenticated,
-    workspaceId: selectedWorkspace.sharedWorkspaceId || null,
+    projectId: selectedProject.sharedProjectId || null,
   });
 
   // Billing gate for member invites
@@ -238,10 +238,10 @@ export function ShareWorkspaceDialog({
     planCatalog,
     isLoadingBilling,
     isLoadingOrganizationPremiumness,
-  } = useOrganizationBilling(selectedWorkspace.organizationId ?? null);
+  } = useOrganizationBilling(selectedProject.organizationId ?? null);
   const memberInviteGate = resolveBillingGateState({
     billingUiEnabled,
-    organizationId: selectedWorkspace.organizationId ?? null,
+    organizationId: selectedProject.organizationId ?? null,
     billingStatus,
     premiumness: organizationPremiumness,
     gate: BILLING_GATES.memberInvites,
@@ -266,37 +266,37 @@ export function ShareWorkspaceDialog({
       return;
     }
 
-    if (availableWorkspaces) {
-      if (activeWorkspaceId && availableWorkspaces[activeWorkspaceId]) {
-        setSelectedWorkspaceId(activeWorkspaceId);
+    if (availableProjects) {
+      if (activeProjectId && availableProjects[activeProjectId]) {
+        setSelectedProjectId(activeProjectId);
       } else {
-        setSelectedWorkspaceId(sortedAvailableWorkspaces[0]?.id ?? null);
+        setSelectedProjectId(sortedAvailableProjects[0]?.id ?? null);
       }
     } else {
-      setSelectedWorkspaceId(activeWorkspaceId ?? null);
+      setSelectedProjectId(activeProjectId ?? null);
     }
   }, [
-    activeWorkspaceId,
-    availableWorkspaces,
+    activeProjectId,
+    availableProjects,
     isOpen,
-    sortedAvailableWorkspaces,
+    sortedAvailableProjects,
   ]);
 
   useEffect(() => {
-    setCurrentVisibility(selectedWorkspace.visibility ?? "public");
-  }, [selectedWorkspace.visibility]);
+    setCurrentVisibility(selectedProject.visibility ?? "public");
+  }, [selectedProject.visibility]);
 
-  const canManageMembers = !selectedWorkspace.sharedWorkspaceId
+  const canManageMembers = !selectedProject.sharedProjectId
     ? true
     : membersCanManage;
 
   useEffect(() => {
     if (isOpen) {
       posthog.capture("share_dialog_opened", {
-        workspace_name: selectedWorkspace.name,
-        is_already_shared: !!selectedWorkspace.sharedWorkspaceId,
+        project_name: selectedProject.name,
+        is_already_shared: !!selectedProject.sharedProjectId,
         member_count: activeMembers.length + pendingMembers.length,
-        workspace_visibility: currentVisibility,
+        project_visibility: currentVisibility,
         platform: detectPlatform(),
         environment: detectEnvironment(),
       });
@@ -307,28 +307,28 @@ export function ShareWorkspaceDialog({
 
   const handleVisibilityChange = async (newVisibility: string) => {
     const prev = currentVisibility;
-    setCurrentVisibility(newVisibility as WorkspaceVisibility);
+    setCurrentVisibility(newVisibility as ProjectVisibility);
 
-    if (!selectedWorkspace.sharedWorkspaceId) return;
+    if (!selectedProject.sharedProjectId) return;
 
     setIsUpdatingVisibility(true);
     try {
-      await updateWorkspace({
-        workspaceId: selectedWorkspace.sharedWorkspaceId,
+      await updateProject({
+        projectId: selectedProject.sharedProjectId,
         visibility: newVisibility,
       });
       toast.success(
-        `Workspace visibility changed to ${newVisibility === "public" ? "organization" : "private"}`,
+        `Project visibility changed to ${newVisibility === "public" ? "organization" : "private"}`,
       );
-      posthog.capture("workspace_visibility_changed", {
-        workspace_name: selectedWorkspace.name,
+      posthog.capture("project_visibility_changed", {
+        project_name: selectedProject.name,
         new_visibility: newVisibility,
         platform: detectPlatform(),
         environment: detectEnvironment(),
       });
     } catch {
       setCurrentVisibility(prev);
-      toast.error("Failed to update workspace visibility");
+      toast.error("Failed to update project visibility");
     } finally {
       setIsUpdatingVisibility(false);
     }
@@ -347,44 +347,44 @@ export function ShareWorkspaceDialog({
 
     setIsInviting(true);
     try {
-      let currentWorkspaceId = selectedWorkspace.sharedWorkspaceId;
+      let currentProjectId = selectedProject.sharedProjectId;
 
-      if (!currentWorkspaceId) {
+      if (!currentProjectId) {
         const serializedServers = serializeServersForSharing(
-          selectedWorkspace.servers,
+          selectedProject.servers,
         );
-        currentWorkspaceId = await createWorkspace({
-          organizationId: selectedWorkspace.organizationId,
-          name: selectedWorkspace.name,
+        currentProjectId = await createProject({
+          organizationId: selectedProject.organizationId,
+          name: selectedProject.name,
           servers: serializedServers,
           visibility: currentVisibility,
         });
 
-        if (currentWorkspaceId) {
-          if (selectedWorkspace.localWorkspaceId) {
-            onWorkspaceShared?.(
-              currentWorkspaceId,
-              selectedWorkspace.localWorkspaceId,
+        if (currentProjectId) {
+          if (selectedProject.localProjectId) {
+            onProjectShared?.(
+              currentProjectId,
+              selectedProject.localProjectId,
             );
           } else {
-            onWorkspaceShared?.(currentWorkspaceId);
+            onProjectShared?.(currentProjectId);
           }
         }
       }
 
-      const result = await inviteWorkspaceMember({
-        workspaceId: currentWorkspaceId!,
+      const result = await inviteProjectMember({
+        projectId: currentProjectId!,
         email: normalizedEmail,
         role: inviteRole,
       });
 
       toast.success(buildInviteToastMessage(result, normalizedEmail));
       setEmail("");
-      posthog.capture("workspace_invite_sent", {
-        workspace_name: selectedWorkspace.name,
-        is_new_share: !selectedWorkspace.sharedWorkspaceId,
+      posthog.capture("project_invite_sent", {
+        project_name: selectedProject.name,
+        is_new_share: !selectedProject.sharedProjectId,
         invite_kind: result.kind,
-        workspace_visibility: currentVisibility,
+        project_visibility: currentVisibility,
         platform: detectPlatform(),
         environment: detectEnvironment(),
       });
@@ -396,20 +396,20 @@ export function ShareWorkspaceDialog({
   };
 
   const handleRoleChange = async (
-    member: WorkspaceMember,
-    newRole: WorkspaceRole,
+    member: ProjectMember,
+    newRole: ProjectRole,
   ) => {
-    if (!selectedWorkspace.sharedWorkspaceId) return;
+    if (!selectedProject.sharedProjectId) return;
     try {
       if (member.isPending) {
-        await updateWorkspaceInviteRole({
-          workspaceId: selectedWorkspace.sharedWorkspaceId,
+        await updateProjectInviteRole({
+          projectId: selectedProject.sharedProjectId,
           email: member.email,
           role: newRole,
         });
       } else {
-        await updateWorkspaceMemberRole({
-          workspaceId: selectedWorkspace.sharedWorkspaceId,
+        await updateProjectMemberRole({
+          projectId: selectedProject.sharedProjectId,
           userId: member.userId!,
           role: newRole,
         });
@@ -423,28 +423,28 @@ export function ShareWorkspaceDialog({
   };
 
   const handleRemoveMember = async (memberEmail: string) => {
-    if (!selectedWorkspace.sharedWorkspaceId) return;
+    if (!selectedProject.sharedProjectId) return;
 
     try {
-      const result = await removeWorkspaceMember({
-        workspaceId: selectedWorkspace.sharedWorkspaceId,
+      const result = await removeProjectMember({
+        projectId: selectedProject.sharedProjectId,
         email: memberEmail,
       });
 
       if (!result.changed) {
-        toast.success("No workspace access to remove.");
+        toast.success("No project access to remove.");
         return;
       }
 
       toast.success(
         result.removed === "pending_invite"
           ? "Invite cancelled"
-          : "Workspace access removed",
+          : "Project access removed",
       );
-      posthog.capture("workspace_member_removed", {
-        workspace_name: selectedWorkspace.name,
+      posthog.capture("project_member_removed", {
+        project_name: selectedProject.name,
         removed_kind: result.removed,
-        workspace_visibility: currentVisibility,
+        project_visibility: currentVisibility,
         platform: detectPlatform(),
         environment: detectEnvironment(),
       });
@@ -462,29 +462,29 @@ export function ShareWorkspaceDialog({
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="sm:max-w-[520px]">
         <DialogHeader>
-          <DialogTitle>Share "{selectedWorkspace.name}" Workspace</DialogTitle>
+          <DialogTitle>Share "{selectedProject.name}" Project</DialogTitle>
           <DialogDescription className="sr-only">
-            Invite people and manage access for the selected workspace.
+            Invite people and manage access for the selected project.
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-6">
-          {showWorkspacePicker && (
+          {showProjectPicker && (
             <div className="space-y-2">
-              <label className="text-sm font-medium">Workspace</label>
+              <label className="text-sm font-medium">Project</label>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <button
                     type="button"
-                    aria-label="Select workspace"
+                    aria-label="Select project"
                     className="flex w-full items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-sm transition-colors hover:bg-accent hover:text-accent-foreground"
                   >
-                    <WorkspacePickerBadge
-                      icon={selectedWorkspace.icon}
-                      workspaceName={selectedWorkspace.name}
+                    <ProjectPickerBadge
+                      icon={selectedProject.icon}
+                      projectName={selectedProject.name}
                     />
                     <span className="flex-1 text-left">
-                      {selectedWorkspace.name}
+                      {selectedProject.name}
                     </span>
                     <ChevronDown className="size-4 shrink-0 text-muted-foreground" />
                   </button>
@@ -494,20 +494,20 @@ export function ShareWorkspaceDialog({
                   className="w-[--radix-dropdown-menu-trigger-width]"
                 >
                   <DropdownMenuRadioGroup
-                    value={resolvedSelectedWorkspaceId ?? ""}
-                    onValueChange={setSelectedWorkspaceId}
+                    value={resolvedSelectedProjectId ?? ""}
+                    onValueChange={setSelectedProjectId}
                   >
-                    {sortedAvailableWorkspaces.map((workspace) => (
+                    {sortedAvailableProjects.map((project) => (
                       <DropdownMenuRadioItem
-                        key={workspace.id}
-                        value={workspace.id}
+                        key={project.id}
+                        value={project.id}
                       >
                         <div className="flex items-center gap-2">
-                          <WorkspacePickerBadge
-                            icon={workspace.icon}
-                            workspaceName={workspace.name}
+                          <ProjectPickerBadge
+                            icon={project.icon}
+                            projectName={project.name}
                           />
-                          <span>{workspace.name}</span>
+                          <span>{project.name}</span>
                         </div>
                       </DropdownMenuRadioItem>
                     ))}
@@ -517,9 +517,9 @@ export function ShareWorkspaceDialog({
             </div>
           )}
 
-          {selectedWorkspace.sharedWorkspaceId && !canManageMembers && (
+          {selectedProject.sharedProjectId && !canManageMembers && (
             <p className="text-sm text-muted-foreground">
-              Only workspace admins can invite people.
+              Only project admins can invite people.
             </p>
           )}
 
@@ -544,14 +544,14 @@ export function ShareWorkspaceDialog({
                         size="sm"
                         className="shrink-0 gap-1 mr-1 text-muted-foreground"
                       >
-                        {workspaceRoleLabel(inviteRole)}
+                        {projectRoleLabel(inviteRole)}
                         <ChevronDown className="size-3" />
                       </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end">
                       <DropdownMenuRadioGroup
                         value={inviteRole}
-                        onValueChange={(v) => setInviteRole(v as WorkspaceRole)}
+                        onValueChange={(v) => setInviteRole(v as ProjectRole)}
                       >
                         <DropdownMenuRadioItem value="editor">
                           <div>
@@ -613,8 +613,8 @@ export function ShareWorkspaceDialog({
                         size="sm"
                         className="mt-1"
                         onClick={() => {
-                          if (selectedWorkspace.organizationId) {
-                            window.location.hash = `organizations/${selectedWorkspace.organizationId}/billing`;
+                          if (selectedProject.organizationId) {
+                            window.location.hash = `organizations/${selectedProject.organizationId}/billing`;
                           }
                         }}
                       >
@@ -673,7 +673,7 @@ export function ShareWorkspaceDialog({
                         </div>
                         <p className="text-xs text-muted-foreground font-normal">
                           Everyone in your organization can find and access this
-                          workspace.
+                          project.
                         </p>
                       </div>
                     </DropdownMenuRadioItem>
@@ -687,7 +687,7 @@ export function ShareWorkspaceDialog({
                         </div>
                         <p className="text-xs text-muted-foreground font-normal">
                           Only invited members can find and access this
-                          workspace.
+                          project.
                         </p>
                       </div>
                     </DropdownMenuRadioItem>
@@ -716,7 +716,7 @@ export function ShareWorkspaceDialog({
           <div className="space-y-2">
             <label className="text-sm font-medium">Has access</label>
             <div className="space-y-1 max-h-[300px] overflow-y-auto">
-              {!selectedWorkspace.sharedWorkspaceId && (
+              {!selectedProject.sharedProjectId && (
                 <div className="flex items-center gap-3 p-2 rounded-md">
                   <Avatar className="size-9">
                     <AvatarImage src={profilePictureUrl} alt={displayName} />
@@ -783,22 +783,22 @@ export function ShareWorkspaceDialog({
                             size="sm"
                             className="shrink-0 gap-1 text-sm"
                           >
-                            {workspaceRoleLabel(member.workspaceRole)}
+                            {projectRoleLabel(member.projectRole)}
                             <ChevronDown className="size-3" />
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
                           <DropdownMenuRadioGroup
-                            value={member.workspaceRole}
+                            value={member.projectRole}
                             onValueChange={(v) =>
-                              void handleRoleChange(member, v as WorkspaceRole)
+                              void handleRoleChange(member, v as ProjectRole)
                             }
                           >
                             <DropdownMenuRadioItem value="editor">
                               <div>
                                 <div className="font-medium">Editor</div>
                                 <p className="text-xs text-muted-foreground font-normal">
-                                  {workspaceRoleDescription("editor")}
+                                  {projectRoleDescription("editor")}
                                 </p>
                               </div>
                             </DropdownMenuRadioItem>
@@ -806,7 +806,7 @@ export function ShareWorkspaceDialog({
                               <div>
                                 <div className="font-medium">Admin</div>
                                 <p className="text-xs text-muted-foreground font-normal">
-                                  {workspaceRoleDescription("admin")}
+                                  {projectRoleDescription("admin")}
                                 </p>
                               </div>
                             </DropdownMenuRadioItem>
@@ -820,7 +820,7 @@ export function ShareWorkspaceDialog({
                                   void handleRemoveMember(memberEmail)
                                 }
                               >
-                                Remove from workspace
+                                Remove from project
                               </DropdownMenuItem>
                             </>
                           )}
@@ -828,7 +828,7 @@ export function ShareWorkspaceDialog({
                       </DropdownMenu>
                     ) : (
                       <span className="text-sm text-muted-foreground shrink-0">
-                        {workspaceRoleLabel(member.workspaceRole)}
+                        {projectRoleLabel(member.projectRole)}
                       </span>
                     )}
                   </div>
@@ -854,7 +854,7 @@ export function ShareWorkspaceDialog({
                         {member.email}
                       </p>
                       <p className="text-xs text-muted-foreground">
-                        Invited to the organization and workspace
+                        Invited to the organization and project
                       </p>
                     </div>
                     {member.canChangeRole ? (
@@ -865,22 +865,22 @@ export function ShareWorkspaceDialog({
                             size="sm"
                             className="shrink-0 gap-1 text-sm"
                           >
-                            {workspaceRoleLabel(member.workspaceRole)}
+                            {projectRoleLabel(member.projectRole)}
                             <ChevronDown className="size-3" />
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
                           <DropdownMenuRadioGroup
-                            value={member.workspaceRole}
+                            value={member.projectRole}
                             onValueChange={(v) =>
-                              void handleRoleChange(member, v as WorkspaceRole)
+                              void handleRoleChange(member, v as ProjectRole)
                             }
                           >
                             <DropdownMenuRadioItem value="editor">
                               <div>
                                 <div className="font-medium">Editor</div>
                                 <p className="text-xs text-muted-foreground font-normal">
-                                  {workspaceRoleDescription("editor")}
+                                  {projectRoleDescription("editor")}
                                 </p>
                               </div>
                             </DropdownMenuRadioItem>
@@ -888,7 +888,7 @@ export function ShareWorkspaceDialog({
                               <div>
                                 <div className="font-medium">Admin</div>
                                 <p className="text-xs text-muted-foreground font-normal">
-                                  {workspaceRoleDescription("admin")}
+                                  {projectRoleDescription("admin")}
                                 </p>
                               </div>
                             </DropdownMenuRadioItem>
@@ -910,7 +910,7 @@ export function ShareWorkspaceDialog({
                       </DropdownMenu>
                     ) : (
                       <span className="text-sm text-muted-foreground shrink-0">
-                        {workspaceRoleLabel(member.workspaceRole)}
+                        {projectRoleLabel(member.projectRole)}
                       </span>
                     )}
                   </div>

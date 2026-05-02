@@ -12,7 +12,7 @@ describe("resolveHostedShellGateState", () => {
         isWorkOsLoading: false,
         hasWorkOsUser: false,
         workOsUserEmail: null,
-        isLoadingRemoteWorkspaces: false,
+        isLoadingRemoteProjects: false,
       }),
     ).toBe("ready");
   });
@@ -27,7 +27,7 @@ describe("resolveHostedShellGateState", () => {
         isWorkOsLoading: true,
         hasWorkOsUser: false,
         workOsUserEmail: null,
-        isLoadingRemoteWorkspaces: false,
+        isLoadingRemoteProjects: false,
       }),
     ).toBe("auth-loading");
   });
@@ -42,7 +42,7 @@ describe("resolveHostedShellGateState", () => {
         isWorkOsLoading: false,
         hasWorkOsUser: true,
         workOsUserEmail: "employee@mcpjam.com",
-        isLoadingRemoteWorkspaces: false,
+        isLoadingRemoteProjects: false,
       }),
     ).toBe("auth-loading");
   });
@@ -57,12 +57,12 @@ describe("resolveHostedShellGateState", () => {
         isWorkOsLoading: false,
         hasWorkOsUser: false,
         workOsUserEmail: null,
-        isLoadingRemoteWorkspaces: false,
+        isLoadingRemoteProjects: false,
       }),
     ).toBe("ready");
   });
 
-  it("returns workspace-loading when auth is ready but workspace data is pending", () => {
+  it("returns project-loading when auth is ready but project data is pending", () => {
     expect(
       resolveHostedShellGateState({
         hostedMode: true,
@@ -72,12 +72,12 @@ describe("resolveHostedShellGateState", () => {
         isWorkOsLoading: false,
         hasWorkOsUser: true,
         workOsUserEmail: "employee@mcpjam.com",
-        isLoadingRemoteWorkspaces: true,
+        isLoadingRemoteProjects: true,
       }),
-    ).toBe("workspace-loading");
+    ).toBe("project-loading");
   });
 
-  it("returns ready when hosted auth and workspace are fully ready", () => {
+  it("returns ready when hosted auth and project are fully ready", () => {
     expect(
       resolveHostedShellGateState({
         hostedMode: true,
@@ -87,7 +87,7 @@ describe("resolveHostedShellGateState", () => {
         isWorkOsLoading: false,
         hasWorkOsUser: true,
         workOsUserEmail: "employee@mcpjam.com",
-        isLoadingRemoteWorkspaces: false,
+        isLoadingRemoteProjects: false,
       }),
     ).toBe("ready");
   });
@@ -102,7 +102,7 @@ describe("resolveHostedShellGateState", () => {
         isWorkOsLoading: false,
         hasWorkOsUser: false,
         workOsUserEmail: null,
-        isLoadingRemoteWorkspaces: false,
+        isLoadingRemoteProjects: false,
       }),
     ).toBe("logged-out");
   });
@@ -117,7 +117,7 @@ describe("resolveHostedShellGateState", () => {
         isWorkOsLoading: false,
         hasWorkOsUser: true,
         workOsUserEmail: "contractor@example.com",
-        isLoadingRemoteWorkspaces: false,
+        isLoadingRemoteProjects: false,
       }),
     ).toBe("restricted");
   });

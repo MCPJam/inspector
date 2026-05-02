@@ -47,12 +47,12 @@ function mockBatchResponse(body: unknown, status = 200) {
   } as Response;
 }
 
-const workspaceCtx = {
+const projectCtx = {
   authType: "signedIn" as const,
   userId: "user-1",
-  workspaceId: "ws-1",
-  workspaceRole: "member" as const,
-  accessLevel: "workspace_member" as const,
+  projectId: "ws-1",
+  projectRole: "member" as const,
+  accessLevel: "project_member" as const,
   orgId: "org-1",
   orgPlan: "team",
   emailDomain: "example.com",
@@ -77,11 +77,11 @@ describe("authorizeBatch — request log context attribution", () => {
             "srv-alpha": {
               ok: true,
               role: "member",
-              accessLevel: "workspace_member",
+              accessLevel: "project_member",
               permissions: { chatOnly: false },
               serverConfig: { transportType: "http", url: "https://a" },
               internalLogContext: {
-                ...workspaceCtx,
+                ...projectCtx,
                 serverId: "srv-alpha",
                 serverTransport: "http",
                 chatboxId: "cb-1",
@@ -99,12 +99,12 @@ describe("authorizeBatch — request log context attribution", () => {
     expect(merged.serverId).toBe("srv-alpha");
     expect(merged.serverTransport).toBe("http");
     expect(merged.chatboxId).toBe("cb-1");
-    expect(merged.workspaceId).toBe("ws-1");
+    expect(merged.projectId).toBe("ws-1");
     expect(merged.userId).toBe("user-1");
     expect(merged.authType).toBe("signedIn");
   });
 
-  it("nulls per-server fields but keeps workspace fields for multi-server batch", async () => {
+  it("nulls per-server fields but keeps project fields for multi-server batch", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue(
@@ -113,11 +113,11 @@ describe("authorizeBatch — request log context attribution", () => {
             "srv-alpha": {
               ok: true,
               role: "member",
-              accessLevel: "workspace_member",
+              accessLevel: "project_member",
               permissions: { chatOnly: false },
               serverConfig: { transportType: "http", url: "https://a" },
               internalLogContext: {
-                ...workspaceCtx,
+                ...projectCtx,
                 serverId: "srv-alpha",
                 serverTransport: "http",
                 chatboxId: "cb-alpha",
@@ -126,11 +126,11 @@ describe("authorizeBatch — request log context attribution", () => {
             "srv-beta": {
               ok: true,
               role: "member",
-              accessLevel: "workspace_member",
+              accessLevel: "project_member",
               permissions: { chatOnly: false },
               serverConfig: { transportType: "stdio" },
               internalLogContext: {
-                ...workspaceCtx,
+                ...projectCtx,
                 serverId: "srv-beta",
                 serverTransport: "stdio",
                 chatboxId: "cb-beta",
@@ -148,11 +148,11 @@ describe("authorizeBatch — request log context attribution", () => {
     expect(merged.serverId).toBeNull();
     expect(merged.serverTransport).toBeNull();
     expect(merged.chatboxId).toBeNull();
-    // Workspace-level fields still attributed.
-    expect(merged.workspaceId).toBe("ws-1");
+    // Project-level fields still attributed.
+    expect(merged.projectId).toBe("ws-1");
     expect(merged.userId).toBe("user-1");
     expect(merged.authType).toBe("signedIn");
-    expect(merged.accessLevel).toBe("workspace_member");
+    expect(merged.accessLevel).toBe("project_member");
   });
 
   it("does not call setRequestLogContext when all results are failures", async () => {
@@ -192,18 +192,18 @@ describe("authorizeBatch — request log context attribution", () => {
             "srv-alpha": {
               ok: true,
               role: "member",
-              accessLevel: "workspace_member",
+              accessLevel: "project_member",
               permissions: { chatOnly: false },
               serverConfig: { transportType: "http", url: "https://a" },
-              internalLogContext: { ...workspaceCtx, serverId: "srv-alpha" },
+              internalLogContext: { ...projectCtx, serverId: "srv-alpha" },
             },
             "srv-beta": {
               ok: true,
               role: "member",
-              accessLevel: "workspace_member",
+              accessLevel: "project_member",
               permissions: { chatOnly: false },
               serverConfig: { transportType: "http", url: "https://b" },
-              internalLogContext: { ...workspaceCtx, serverId: "srv-beta" },
+              internalLogContext: { ...projectCtx, serverId: "srv-beta" },
             },
           },
         }),

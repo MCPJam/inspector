@@ -53,7 +53,7 @@ const PLAN_ORDER: OrganizationPlan[] = [
 /** Column highlighted as the recommended tier (matches common pricing-page “Popular”). */
 const POPULAR_PLAN: OrganizationPlan = "team";
 
-/** Defines org as the billed scope for plans and limits (vs workspaces). */
+/** Defines org as the billed scope for plans and limits (vs projects). */
 const ORG_COMPARE_PLANS_NOTE = "Your organization is the billed unit.";
 
 function getPlanRank(plan: OrganizationPlan): number {
@@ -296,10 +296,10 @@ const COMPARE_PLAN_ROW_LABEL_TOOLTIPS: Record<
       "Custom branding (e.g. logo and colors) on shared chatbox experiences.",
     contentClassName: "max-w-[18rem]",
   },
-  Workspaces: {
-    ariaLabel: "What is a workspace?",
+  Projects: {
+    ariaLabel: "What is a project?",
     content:
-      "Workspaces are containers for your MCP servers and related objects.",
+      "Projects are containers for your MCP servers and related objects.",
     contentClassName: "max-w-[16rem]",
   },
   "Seat limit": {

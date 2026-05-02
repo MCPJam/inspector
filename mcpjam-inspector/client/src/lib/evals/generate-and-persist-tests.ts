@@ -97,7 +97,7 @@ function defaultEvalModels(): Array<{ model: string; provider: string }> {
 export type GenerateAndPersistEvalTestsOptions = {
   convex: ConvexReactClient;
   getAccessToken: () => Promise<string | undefined | null>;
-  workspaceId: string | null | undefined;
+  projectId: string | null | undefined;
   suiteId: string;
   serverIds: string[];
   createTestCase: (input: CreateEvalTestCaseInput) => Promise<unknown>;
@@ -143,7 +143,7 @@ export async function generateAndPersistEvalTests(
   const {
     convex,
     getAccessToken,
-    workspaceId,
+    projectId,
     suiteId,
     serverIds,
     createTestCase,
@@ -188,7 +188,7 @@ export async function generateAndPersistEvalTests(
   }
 
   const result = await generateEvalTests({
-    workspaceId: isDirectGuest ? null : workspaceId,
+    projectId: isDirectGuest ? null : projectId,
     serverIds,
     convexAuthToken: accessToken,
   });

@@ -111,7 +111,7 @@ export function isOrgProviderAvailable(
 
 /**
  * Build the list of available models from an organization's provider config.
- * Used in org-backed workspaces where the server resolves API keys.
+ * Used in org-backed projects where the server resolves API keys.
  */
 export function buildAvailableModelsFromOrgConfig(
   orgConfig: OrgVisibleConfig | undefined,

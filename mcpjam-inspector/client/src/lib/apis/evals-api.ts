@@ -40,7 +40,7 @@ const GUEST_UNSUPPORTED_MESSAGE =
   "Not available for guests yet. Sign in to use this.";
 
 type EvalRequestWithServers = {
-  workspaceId?: string | null;
+  projectId?: string | null;
   serverIds: string[];
 };
 
@@ -155,7 +155,7 @@ function mergeHostedServerBatch<
   return {
     ...requestWithoutConvexAuthToken,
     ...hostedBatch,
-    workspaceId: request.workspaceId ?? hostedBatch.workspaceId,
+    projectId: request.projectId ?? hostedBatch.projectId,
   };
 }
 
@@ -169,7 +169,7 @@ function mergeHostedEvalServerRequest<
   const {
     convexAuthToken: _convexAuthToken,
     serverIds,
-    workspaceId: _workspaceId,
+    projectId: _projectId,
     ...requestWithoutHostedAuth
   } = request;
 

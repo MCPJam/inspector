@@ -31,7 +31,7 @@ function formatTimeAgo(timestamp: number): string {
 }
 
 function getNotificationIcon(type: NotificationType) {
-  if (type.startsWith("workspace")) {
+  if (type.startsWith("project")) {
     return <FolderKanban className="h-4 w-4" />;
   }
   return <Building2 className="h-4 w-4" />;
@@ -42,10 +42,10 @@ function getNotificationMessage(notification: Notification): string {
   const actor = actorName || "Someone";
 
   switch (type) {
-    case "workspace_added":
-      return `${actor} added you to workspace "${entityName}"`;
-    case "workspace_removed":
-      return `${actor} removed you from workspace "${entityName}"`;
+    case "project_added":
+      return `${actor} added you to project "${entityName}"`;
+    case "project_removed":
+      return `${actor} removed you from project "${entityName}"`;
     case "organization_added":
       return `${actor} added you to organization "${entityName}"`;
     case "organization_removed":

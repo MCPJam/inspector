@@ -5,7 +5,7 @@ export type ServerShareMode = "any_signed_in_with_link" | "invited_only";
 export interface ServerShareMember {
   _id: string;
   shareId: string;
-  workspaceId: string;
+  projectId: string;
   email: string;
   userId?: string;
   role: "chat";
@@ -23,7 +23,7 @@ export interface ServerShareMember {
 
 export interface ServerShareSettings {
   shareId: string;
-  workspaceId: string;
+  projectId: string;
   serverId: string;
   serverName: string;
   mode: ServerShareMode;

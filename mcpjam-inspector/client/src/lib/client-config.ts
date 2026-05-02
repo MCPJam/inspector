@@ -5,22 +5,22 @@ import {
   normalizeClientCapabilities,
 } from "@mcpjam/sdk/browser";
 
-export type WorkspaceClientConfig = {
+export type ProjectClientConfig = {
   version: 1;
-  connectionDefaults?: WorkspaceConnectionDefaults;
+  connectionDefaults?: ProjectConnectionDefaults;
   clientCapabilities: Record<string, unknown>;
   hostContext: Record<string, unknown>;
 };
 
-export type WorkspaceConnectionConfigDraft = {
+export type ProjectConnectionConfigDraft = {
   version: 1;
-  connectionDefaults?: WorkspaceConnectionDefaults;
+  connectionDefaults?: ProjectConnectionDefaults;
   clientCapabilities: Record<string, unknown>;
 };
 
-export type WorkspaceHostContextDraft = Record<string, unknown>;
+export type ProjectHostContextDraft = Record<string, unknown>;
 
-export type WorkspaceConnectionDefaults = {
+export type ProjectConnectionDefaults = {
   headers: Record<string, string>;
   requestTimeout: number;
 };
@@ -40,7 +40,7 @@ export type HostSafeAreaInsets = {
 };
 
 export const CLIENT_CONFIG_SYNC_PENDING_ERROR_MESSAGE =
-  "Workspace connection defaults are still syncing. Try again in a moment.";
+  "Project connection defaults are still syncing. Try again in a moment.";
 
 export const DEFAULT_REQUEST_TIMEOUT_MS = 10000;
 
@@ -62,17 +62,17 @@ export const DEFAULT_HOST_DISPLAY_MODES: HostDisplayMode[] = [
   "fullscreen",
 ];
 
-export function buildDefaultWorkspaceConnectionDefaults(): WorkspaceConnectionDefaults {
+export function buildDefaultProjectConnectionDefaults(): ProjectConnectionDefaults {
   return {
     headers: {},
     requestTimeout: DEFAULT_REQUEST_TIMEOUT_MS,
   };
 }
 
-export function buildDefaultWorkspaceConnectionConfig(): WorkspaceConnectionConfigDraft {
+export function buildDefaultProjectConnectionConfig(): ProjectConnectionConfigDraft {
   return {
     version: 1,
-    connectionDefaults: buildDefaultWorkspaceConnectionDefaults(),
+    connectionDefaults: buildDefaultProjectConnectionDefaults(),
     clientCapabilities: getDefaultClientCapabilities() as Record<
       string,
       unknown
@@ -80,14 +80,14 @@ export function buildDefaultWorkspaceConnectionConfig(): WorkspaceConnectionConf
   };
 }
 
-export function buildDefaultWorkspaceHostContext(args: {
+export function buildDefaultProjectHostContext(args: {
   theme: "light" | "dark";
   displayMode: HostDisplayMode;
   locale: string;
   timeZone: string;
   deviceCapabilities: HostDeviceCapabilities;
   safeAreaInsets: HostSafeAreaInsets;
-}): WorkspaceHostContextDraft {
+}): ProjectHostContextDraft {
   return {
     theme: args.theme,
     displayMode: args.displayMode,
@@ -99,25 +99,25 @@ export function buildDefaultWorkspaceHostContext(args: {
   };
 }
 
-export const buildDefaultHostContext = buildDefaultWorkspaceHostContext;
+export const buildDefaultHostContext = buildDefaultProjectHostContext;
 
-export function buildDefaultWorkspaceClientConfig(args: {
+export function buildDefaultProjectClientConfig(args: {
   theme: "light" | "dark";
   displayMode: HostDisplayMode;
   locale: string;
   timeZone: string;
   deviceCapabilities: HostDeviceCapabilities;
   safeAreaInsets: HostSafeAreaInsets;
-}): WorkspaceClientConfig {
-  return composeWorkspaceClientConfig({
-    connectionConfig: buildDefaultWorkspaceConnectionConfig(),
-    hostContext: buildDefaultWorkspaceHostContext(args),
+}): ProjectClientConfig {
+  return composeProjectClientConfig({
+    connectionConfig: buildDefaultProjectConnectionConfig(),
+    hostContext: buildDefaultProjectHostContext(args),
   });
 }
 
-export function isWorkspaceClientConfig(
+export function isProjectClientConfig(
   value: unknown,
-): value is WorkspaceClientConfig {
+): value is ProjectClientConfig {
   if (!value || typeof value !== "object") {
     return false;
   }
@@ -126,37 +126,37 @@ export function isWorkspaceClientConfig(
   return (
     candidate.version === 1 &&
     (candidate.connectionDefaults === undefined ||
-      isWorkspaceConnectionDefaults(candidate.connectionDefaults)) &&
+      isProjectConnectionDefaults(candidate.connectionDefaults)) &&
     isRecord(candidate.clientCapabilities) &&
     isRecord(candidate.hostContext)
   );
 }
 
-export function sanitizeWorkspaceClientConfig(
+export function sanitizeProjectClientConfig(
   value: unknown,
-  fallback: WorkspaceClientConfig,
-): WorkspaceClientConfig {
-  if (!isWorkspaceClientConfig(value)) {
+  fallback: ProjectClientConfig,
+): ProjectClientConfig {
+  if (!isProjectClientConfig(value)) {
     return fallback;
   }
 
-  return composeWorkspaceClientConfig({
+  return composeProjectClientConfig({
     connectionConfig: {
       version: 1,
-      connectionDefaults: sanitizeWorkspaceConnectionDefaults(
+      connectionDefaults: sanitizeProjectConnectionDefaults(
         value.connectionDefaults,
         fallback.connectionDefaults,
       ),
-      clientCapabilities: sanitizeWorkspaceClientCapabilities(
+      clientCapabilities: sanitizeProjectClientCapabilities(
         value.clientCapabilities,
         fallback.clientCapabilities,
       ),
     },
-    hostContext: sanitizeWorkspaceHostContext(value.hostContext, fallback.hostContext),
+    hostContext: sanitizeProjectHostContext(value.hostContext, fallback.hostContext),
   });
 }
 
-export function sanitizeWorkspaceClientCapabilities(
+export function sanitizeProjectClientCapabilities(
   value: unknown,
   fallback: Record<string, unknown> = getDefaultClientCapabilities() as Record<
     string,
@@ -166,72 +166,72 @@ export function sanitizeWorkspaceClientCapabilities(
   return isRecord(value) ? value : fallback;
 }
 
-export function sanitizeWorkspaceHostContext(
+export function sanitizeProjectHostContext(
   value: unknown,
-  fallback: WorkspaceHostContextDraft = {},
-): WorkspaceHostContextDraft {
+  fallback: ProjectHostContextDraft = {},
+): ProjectHostContextDraft {
   return isRecord(value) ? value : fallback;
 }
 
-export function pickWorkspaceConnectionConfig(
-  workspaceClientConfig?: WorkspaceClientConfig | null,
-): WorkspaceConnectionConfigDraft {
+export function pickProjectConnectionConfig(
+  projectClientConfig?: ProjectClientConfig | null,
+): ProjectConnectionConfigDraft {
   return {
     version: 1,
-    connectionDefaults: sanitizeWorkspaceConnectionDefaults(
-      workspaceClientConfig?.connectionDefaults,
+    connectionDefaults: sanitizeProjectConnectionDefaults(
+      projectClientConfig?.connectionDefaults,
     ),
-    clientCapabilities: sanitizeWorkspaceClientCapabilities(
-      workspaceClientConfig?.clientCapabilities,
+    clientCapabilities: sanitizeProjectClientCapabilities(
+      projectClientConfig?.clientCapabilities,
     ),
   };
 }
 
-export function pickWorkspaceHostContext(
-  workspaceClientConfig?: WorkspaceClientConfig | null,
-  fallback: WorkspaceHostContextDraft = {},
-): WorkspaceHostContextDraft {
-  return sanitizeWorkspaceHostContext(workspaceClientConfig?.hostContext, fallback);
+export function pickProjectHostContext(
+  projectClientConfig?: ProjectClientConfig | null,
+  fallback: ProjectHostContextDraft = {},
+): ProjectHostContextDraft {
+  return sanitizeProjectHostContext(projectClientConfig?.hostContext, fallback);
 }
 
-export function composeWorkspaceClientConfig(args: {
-  connectionConfig?: WorkspaceConnectionConfigDraft | null;
-  hostContext?: WorkspaceHostContextDraft | null;
-  fallback?: WorkspaceClientConfig | null;
-}): WorkspaceClientConfig {
+export function composeProjectClientConfig(args: {
+  connectionConfig?: ProjectConnectionConfigDraft | null;
+  hostContext?: ProjectHostContextDraft | null;
+  fallback?: ProjectClientConfig | null;
+}): ProjectClientConfig {
   const fallback = args.fallback ?? null;
-  const fallbackConnectionConfig = pickWorkspaceConnectionConfig(fallback);
-  const fallbackHostContext = pickWorkspaceHostContext(fallback);
+  const fallbackConnectionConfig = pickProjectConnectionConfig(fallback);
+  const fallbackHostContext = pickProjectHostContext(fallback);
 
   const connectionConfig = args.connectionConfig ?? fallbackConnectionConfig;
   const hostContext = args.hostContext ?? fallbackHostContext;
 
   return {
     version: 1,
-    connectionDefaults: sanitizeWorkspaceConnectionDefaults(
+    connectionDefaults: sanitizeProjectConnectionDefaults(
       connectionConfig.connectionDefaults,
       fallbackConnectionConfig.connectionDefaults,
     ),
-    clientCapabilities: sanitizeWorkspaceClientCapabilities(
+    clientCapabilities: sanitizeProjectClientCapabilities(
       connectionConfig.clientCapabilities,
       fallbackConnectionConfig.clientCapabilities,
     ),
-    hostContext: sanitizeWorkspaceHostContext(hostContext, fallbackHostContext),
+    hostContext: sanitizeProjectHostContext(hostContext, fallbackHostContext),
   };
 }
 
-export function sanitizeWorkspaceConnectionDefaults(
+export function sanitizeProjectConnectionDefaults(
   value: unknown,
-  fallback: WorkspaceConnectionDefaults = buildDefaultWorkspaceConnectionDefaults(),
-): WorkspaceConnectionDefaults {
-  if (!isWorkspaceConnectionDefaults(value)) {
+  fallback: ProjectConnectionDefaults = buildDefaultProjectConnectionDefaults(),
+): ProjectConnectionDefaults {
+  if (!isProjectConnectionDefaults(value)) {
     return fallback;
   }
 
-  const headers = normalizeWorkspaceConnectionHeaders(
+  const headers = normalizeProjectConnectionHeaders(
     value.headers as Record<string, unknown>,
   );
-  const requestTimeout = normalizeWorkspaceRequestTimeout(
+  const requestTimeout = normalizeProjectRequestTimeout(
     value.requestTimeout,
     fallback.requestTimeout,
   );
@@ -242,24 +242,24 @@ export function sanitizeWorkspaceConnectionDefaults(
   };
 }
 
-export function getEffectiveWorkspaceConnectionDefaults(
-  workspaceClientConfig?: Pick<
-    WorkspaceClientConfig,
+export function getEffectiveProjectConnectionDefaults(
+  projectClientConfig?: Pick<
+    ProjectClientConfig,
     "connectionDefaults"
   > | null,
-): WorkspaceConnectionDefaults {
-  return sanitizeWorkspaceConnectionDefaults(
-    workspaceClientConfig?.connectionDefaults,
+): ProjectConnectionDefaults {
+  return sanitizeProjectConnectionDefaults(
+    projectClientConfig?.connectionDefaults,
   );
 }
 
-export function mergeWorkspaceConnectionHeaders(
-  workspaceHeaders?: Record<string, string>,
+export function mergeProjectConnectionHeaders(
+  projectHeaders?: Record<string, string>,
   serverHeaders?: Record<string, string>,
 ): Record<string, string> {
   return {
-    ...normalizeWorkspaceConnectionHeaders(
-      workspaceHeaders as Record<string, unknown> | undefined,
+    ...normalizeProjectConnectionHeaders(
+      projectHeaders as Record<string, unknown> | undefined,
     ),
     ...normalizeExplicitConnectionHeaders(
       serverHeaders as Record<string, unknown> | undefined,
@@ -267,24 +267,24 @@ export function mergeWorkspaceConnectionHeaders(
   };
 }
 
-export function mergeWorkspaceClientCapabilities(
-  workspaceCapabilities?: Record<string, unknown>,
+export function mergeProjectClientCapabilities(
+  projectCapabilities?: Record<string, unknown>,
   serverCapabilities?: Record<string, unknown>,
 ): ClientCapabilityOptions {
   return mergeClientCapabilities(
-    workspaceCapabilities as ClientCapabilityOptions | undefined,
+    projectCapabilities as ClientCapabilityOptions | undefined,
     serverCapabilities as ClientCapabilityOptions | undefined,
   );
 }
 
-export function getEffectiveWorkspaceClientCapabilities(
-  workspaceClientConfig?: Pick<
-    WorkspaceClientConfig,
+export function getEffectiveProjectClientCapabilities(
+  projectClientConfig?: Pick<
+    ProjectClientConfig,
     "clientCapabilities"
   > | null,
 ): ClientCapabilityOptions {
-  return normalizeWorkspaceClientCapabilities(
-    (workspaceClientConfig?.clientCapabilities as
+  return normalizeProjectClientCapabilities(
+    (projectClientConfig?.clientCapabilities as
       | Record<string, unknown>
       | undefined) ??
       (getDefaultClientCapabilities() as Record<string, unknown>),
@@ -292,26 +292,26 @@ export function getEffectiveWorkspaceClientCapabilities(
 }
 
 export function getEffectiveServerClientCapabilities(args: {
-  workspaceClientConfig?: Pick<
-    WorkspaceClientConfig,
+  projectClientConfig?: Pick<
+    ProjectClientConfig,
     "clientCapabilities"
   > | null;
-  workspaceCapabilities?: Record<string, unknown>;
+  projectCapabilities?: Record<string, unknown>;
   serverCapabilities?: Record<string, unknown>;
 }): ClientCapabilityOptions {
-  const workspaceCapabilities =
-    args.workspaceCapabilities ??
-    getEffectiveWorkspaceClientCapabilities(args.workspaceClientConfig);
+  const projectCapabilities =
+    args.projectCapabilities ??
+    getEffectiveProjectClientCapabilities(args.projectClientConfig);
 
-  return normalizeWorkspaceClientCapabilities(
-    mergeWorkspaceClientCapabilities(
-      workspaceCapabilities as Record<string, unknown>,
+  return normalizeProjectClientCapabilities(
+    mergeProjectClientCapabilities(
+      projectCapabilities as Record<string, unknown>,
       args.serverCapabilities,
     ) as Record<string, unknown>,
   );
 }
 
-export function normalizeWorkspaceClientCapabilities(
+export function normalizeProjectClientCapabilities(
   capabilities?: Record<string, unknown>,
 ): ClientCapabilityOptions {
   return normalizeClientCapabilities(
@@ -339,16 +339,16 @@ export function stableStringifyJson(value: unknown): string {
   return JSON.stringify(canonicalizeJsonValue(value));
 }
 
-export function workspaceClientCapabilitiesNeedReconnect(args: {
+export function projectClientCapabilitiesNeedReconnect(args: {
   desiredCapabilities?: Record<string, unknown>;
   initializedCapabilities?: Record<string, unknown>;
 }): boolean {
   return (
     stableStringifyJson(
-      normalizeWorkspaceClientCapabilities(args.desiredCapabilities),
+      normalizeProjectClientCapabilities(args.desiredCapabilities),
     ) !==
     stableStringifyJson(
-      normalizeWorkspaceClientCapabilities(args.initializedCapabilities),
+      normalizeProjectClientCapabilities(args.initializedCapabilities),
     )
   );
 }
@@ -465,9 +465,9 @@ function isHostDisplayMode(value: unknown): value is HostDisplayMode {
   return value === "inline" || value === "pip" || value === "fullscreen";
 }
 
-function isWorkspaceConnectionDefaults(
+function isProjectConnectionDefaults(
   value: unknown,
-): value is Partial<WorkspaceConnectionDefaults> {
+): value is Partial<ProjectConnectionDefaults> {
   if (!isRecord(value)) {
     return false;
   }
@@ -483,7 +483,7 @@ function isWorkspaceConnectionDefaults(
   );
 }
 
-function normalizeWorkspaceConnectionHeaders(
+function normalizeProjectConnectionHeaders(
   headers?: Record<string, unknown>,
 ): Record<string, string> {
   if (!headers) {
@@ -514,7 +514,7 @@ function normalizeExplicitConnectionHeaders(
   ) as Record<string, string>;
 }
 
-function normalizeWorkspaceRequestTimeout(
+function normalizeProjectRequestTimeout(
   value: unknown,
   fallback: number,
 ): number {

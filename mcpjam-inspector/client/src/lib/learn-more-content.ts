@@ -11,17 +11,17 @@ export interface LearnMoreEntry {
 }
 
 export const learnMoreContent: Record<string, LearnMoreEntry> = {
-  workspaces: {
-    title: "Workspaces",
+  projects: {
+    title: "Projects",
     videoUrl: "https://www.youtube.com/embed/i2IjxWj-zI4",
     videoThumbnail:
       "https://outstanding-fennec-304.convex.cloud/api/storage/364bd7dc-3757-4dda-ac2e-dea49143d61a",
     previewVideoUrl:
       "https://outstanding-fennec-304.convex.cloud/api/storage/f103041b-954b-49e3-83fb-bbeabdeaca03",
-    description: "Organize your MCP servers into workspaces.",
+    description: "Organize your MCP servers into projects.",
     expandedDescription:
-      "Each workspace saves its own set of MCP servers. Switch between workspaces with one click, connect multiple servers in each, and share any workspace with teammates so everyone works with the same configuration. Changes sync in real time, and credentials stay private — each member authenticates on their own.",
-    docsUrl: "https://docs.mcpjam.com/inspector/workspaces",
+      "Each project saves its own set of MCP servers. Switch between projects with one click, connect multiple servers in each, and share any project with teammates so everyone works with the same configuration. Changes sync in real time, and credentials stay private — each member authenticates on their own.",
+    docsUrl: "https://docs.mcpjam.com/inspector/projects",
   },
   servers: {
     title: "Servers",
@@ -32,7 +32,7 @@ export const learnMoreContent: Record<string, LearnMoreEntry> = {
       "https://outstanding-fennec-304.convex.cloud/api/storage/f0f85991-19aa-423e-bbd8-757b466cabae",
     description: "Connect and manage your MCP servers.",
     expandedDescription:
-      "Connect MCP servers to your workspace, authorize with OAuth when a server requires it, and inspect each connection: status, tools, and configuration at a glance.",
+      "Connect MCP servers to your project, authorize with OAuth when a server requires it, and inspect each connection: status, tools, and configuration at a glance.",
     docsUrl: "https://docs.mcpjam.com/inspector/connecting-servers",
   },
   "app-builder": {

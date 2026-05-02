@@ -8,7 +8,7 @@ export type Environment =
 
 export type AuthType = "signedIn" | "guest" | "system" | "unknown";
 
-export type WorkspaceRole =
+export type ProjectRole =
   | "owner"
   | "admin"
   | "member"
@@ -16,7 +16,7 @@ export type WorkspaceRole =
   | "editor"
   | "chat";
 
-export type AccessLevel = "workspace_member" | "shared_chat";
+export type AccessLevel = "project_member" | "shared_chat";
 export type Surface = "preview" | "share_link";
 export type ServerTransport = "stdio" | "http";
 
@@ -37,8 +37,8 @@ interface CommonLogContext {
   orgPlan?: string | null;
   orgSeatQuantity?: number | null;
   orgCreatedBy?: string | null;
-  workspaceId?: string | null;
-  workspaceRole?: WorkspaceRole | null;
+  projectId?: string | null;
+  projectRole?: ProjectRole | null;
   accessLevel?: AccessLevel | null;
   serverId?: string | null;
   sessionId?: string | null;

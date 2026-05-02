@@ -132,7 +132,7 @@ describe("ServerDetailModal hosted reconnect", () => {
           useOAuth: true,
         })}
         defaultTab="overview"
-        workspaceId="workspace_123"
+        projectId="project_123"
         hostedServerId="server_123"
       />,
     );
@@ -149,7 +149,7 @@ describe("ServerDetailModal hosted reconnect", () => {
 
     await waitFor(() => {
       expect(mockFetchHostedOAuthTokens).toHaveBeenCalledWith({
-        workspaceId: "workspace_123",
+        projectId: "project_123",
         serverId: "server_123",
       });
     });
@@ -185,7 +185,7 @@ describe("ServerDetailModal hosted reconnect", () => {
           useOAuth: true,
         })}
         defaultTab="overview"
-        workspaceId="workspace_123"
+        projectId="project_123"
         hostedServerId="server_123"
       />,
     );
