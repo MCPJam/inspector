@@ -279,6 +279,7 @@ vi.mock("@workos-inc/authkit-react", () => ({
 
 vi.mock("convex/react", () => ({
   useConvexAuth: (...args: unknown[]) => mockUseConvexAuth(...args),
+  useQuery: () => undefined,
 }));
 
 vi.mock("posthog-js/react", () => ({
