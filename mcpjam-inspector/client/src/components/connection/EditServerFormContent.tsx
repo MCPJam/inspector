@@ -43,7 +43,7 @@ export function EditServerFormContent({
         />
         {isDuplicateServerName && (
           <p className="text-xs text-destructive">
-            A server with this name already exists in this workspace.
+            A server with this name already exists in this project.
           </p>
         )}
       </div>

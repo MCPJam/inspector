@@ -290,7 +290,7 @@ function ServerInventory({
       <header className="flex items-center justify-between gap-4 pb-1">
         <div className="min-w-0 flex flex-wrap items-center gap-2">
           <h1 className="break-words text-xl font-semibold leading-tight sm:text-2xl">
-            {payload.workspace.name}
+            {payload.project.name}
           </h1>
           <Badge variant="secondary" className="shrink-0">
             {formatServerCount(payload.servers.length)}
@@ -312,7 +312,7 @@ function ServerInventory({
       ) : (
         <MessageBox
           label="No servers"
-          message="This workspace has no MCP servers."
+          message="This project has no MCP servers."
         />
       )}
     </>
@@ -694,7 +694,7 @@ function isShowServersPayload(value: unknown): value is ShowServersPayload {
   }
 
   return (
-    "workspace" in value &&
+    "project" in value &&
     "servers" in value &&
     Array.isArray((value as ShowServersPayload).servers)
   );

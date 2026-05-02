@@ -10,27 +10,27 @@ import {
 import { EditableText } from "@/components/ui/editable-text";
 import { Skeleton } from "@mcpjam/design-system/skeleton";
 import { cn } from "@/lib/utils";
-import { Workspace } from "@/state/app-types";
+import { Project } from "@/state/app-types";
 
-interface WorkspaceSelectorProps {
-  activeWorkspaceId: string;
-  workspaces: Record<string, Workspace>;
-  onSwitchWorkspace: (workspaceId: string) => void;
-  onCreateWorkspace: (name: string, switchTo?: boolean) => Promise<string>;
-  onUpdateWorkspace: (workspaceId: string, updates: Partial<Workspace>) => void;
-  onDeleteWorkspace: (workspaceId: string) => void;
+interface ProjectSelectorProps {
+  activeProjectId: string;
+  projects: Record<string, Project>;
+  onSwitchProject: (projectId: string) => void;
+  onCreateProject: (name: string, switchTo?: boolean) => Promise<string>;
+  onUpdateProject: (projectId: string, updates: Partial<Project>) => void;
+  onDeleteProject: (projectId: string) => void;
   isLoading?: boolean;
 }
 
-export function WorkspaceSelector({
-  activeWorkspaceId,
-  workspaces,
-  onSwitchWorkspace,
-  onCreateWorkspace,
-  onUpdateWorkspace,
-  onDeleteWorkspace,
+export function ProjectSelector({
+  activeProjectId,
+  projects,
+  onSwitchProject,
+  onCreateProject,
+  onUpdateProject,
+  onDeleteProject,
   isLoading,
-}: WorkspaceSelectorProps) {
+}: ProjectSelectorProps) {
   if (isLoading) {
     return (
       <div className="flex items-center gap-1">
@@ -39,47 +39,47 @@ export function WorkspaceSelector({
     );
   }
 
-  const activeWorkspace = workspaces[activeWorkspaceId];
+  const activeProject = projects[activeProjectId];
 
-  const workspaceList = Object.values(workspaces).sort((a, b) => {
-    // Default workspace first
+  const projectList = Object.values(projects).sort((a, b) => {
+    // Default project first
     if (a.isDefault) return -1;
     if (b.isDefault) return 1;
     // Then sort by name
     return a.name.localeCompare(b.name);
   });
 
-  const handleCreateWorkspace = () => {
-    // Find a unique name for "New workspace"
-    let baseName = "New workspace";
+  const handleCreateProject = () => {
+    // Find a unique name for "New project"
+    let baseName = "New project";
     let name = baseName;
     let counter = 1;
 
-    // Check if a workspace with this name already exists
-    const workspaceNames = Object.values(workspaces).map((w) =>
+    // Check if a project with this name already exists
+    const projectNames = Object.values(projects).map((w) =>
       w.name.toLowerCase(),
     );
-    while (workspaceNames.includes(name.toLowerCase())) {
+    while (projectNames.includes(name.toLowerCase())) {
       counter++;
       name = `${baseName} ${counter}`;
     }
 
-    // Create and switch to the new workspace
-    onCreateWorkspace(name, true);
+    // Create and switch to the new project
+    onCreateProject(name, true);
   };
 
   const handleSaveName = (name: string) => {
-    onUpdateWorkspace(activeWorkspaceId, { name });
+    onUpdateProject(activeProjectId, { name });
   };
 
   return (
     <div className="flex items-center gap-1">
-      {/* Editable workspace name */}
+      {/* Editable project name */}
       <EditableText
-        value={activeWorkspace?.name || "No Workspace"}
+        value={activeProject?.name || "No Project"}
         onSave={handleSaveName}
         className="px-3 py-2 text-2xl font-bold tracking-tight"
-        placeholder="Workspace name"
+        placeholder="Project name"
       />
 
       {/* Dropdown menu */}
@@ -90,21 +90,21 @@ export function WorkspaceSelector({
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="start" className="w-[240px]">
-          {workspaceList.map((workspace) => (
+          {projectList.map((project) => (
             <DropdownMenuItem
-              key={workspace.id}
+              key={project.id}
               className={cn(
                 "cursor-pointer group flex items-center justify-between",
-                workspace.id === activeWorkspaceId && "bg-accent",
+                project.id === activeProjectId && "bg-accent",
               )}
-              onClick={() => onSwitchWorkspace(workspace.id)}
+              onClick={() => onSwitchProject(project.id)}
             >
-              <span className="truncate flex-1">{workspace.name}</span>
+              <span className="truncate flex-1">{project.name}</span>
               <button
                 onClick={(e) => {
                   e.stopPropagation();
                   e.preventDefault();
-                  onDeleteWorkspace(workspace.id);
+                  onDeleteProject(project.id);
                 }}
                 className="opacity-0 group-hover:opacity-100 hover:text-destructive transition-opacity p-1"
               >
@@ -114,11 +114,11 @@ export function WorkspaceSelector({
           ))}
           <DropdownMenuSeparator />
           <DropdownMenuItem
-            onClick={handleCreateWorkspace}
+            onClick={handleCreateProject}
             className="cursor-pointer"
           >
             <Plus className="mr-2 h-4 w-4" />
-            Add Workspace
+            Add Project
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>

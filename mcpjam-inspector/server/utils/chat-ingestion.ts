@@ -63,9 +63,9 @@ interface PersistChatSessionOptions {
   modelId: string;
   modelSource: "mcpjam" | "byok";
   authHeader?: string;
-  workspaceId?: string;
+  projectId?: string;
   sourceType?: "serverShare" | "chatbox" | "direct";
-  directVisibility?: "private" | "workspace";
+  directVisibility?: "private" | "project";
   surface?: "preview" | "share_link";
   shareToken?: string;
   chatboxToken?: string;
@@ -150,7 +150,7 @@ export async function persistChatSessionToConvex(
         chatSessionId: options.chatSessionId,
         modelId: options.modelId,
         modelSource: options.modelSource,
-        ...(options.workspaceId ? { workspaceId: options.workspaceId } : {}),
+        ...(options.projectId ? { projectId: options.projectId } : {}),
         ...(options.sourceType ? { sourceType: options.sourceType } : {}),
         ...(options.directVisibility
           ? { directVisibility: options.directVisibility }

@@ -89,7 +89,7 @@ function resolveServerState(
     : [];
   const optionalIds = optionalServerIdsFromSource(source);
   const server =
-    context.workspaceServers.find((item) => item._id === serverId) ?? null;
+    context.projectServers.find((item) => item._id === serverId) ?? null;
   const insecure = server?.url?.startsWith("http://") ?? false;
 
   const chips: ChatboxBuilderNodeData["chips"] = [];
@@ -100,7 +100,7 @@ function resolveServerState(
   return {
     kind: "server",
     title: server?.name ?? "Server",
-    subtitle: server?.url ?? "Workspace server",
+    subtitle: server?.url ?? "Project server",
     chips,
     state: !selected.includes(serverId)
       ? "draft"

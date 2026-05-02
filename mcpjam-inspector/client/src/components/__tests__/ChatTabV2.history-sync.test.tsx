@@ -104,7 +104,7 @@ vi.mock("@/hooks/use-json-rpc-panel", () => ({
 }));
 
 vi.mock("@/hooks/useViews", () => ({
-  useWorkspaceServers: () => ({
+  useProjectServers: () => ({
     serversById: new Map([["server-1", "server-1"]]),
     serversByName: new Map([["server-1", "server-1"]]),
   }),
@@ -130,12 +130,12 @@ vi.mock("@/state/app-state-context", () => ({
         connectionStatus: "connected",
       },
     },
-    workspaces: {
-      "workspace-1": {
-        sharedWorkspaceId: "workspace-1",
+    projects: {
+      "project-1": {
+        sharedProjectId: "project-1",
       },
     },
-    activeWorkspaceId: "workspace-1",
+    activeProjectId: "project-1",
   }),
 }));
 
@@ -465,7 +465,7 @@ describe("ChatTabV2 history sync", () => {
     render(
       <ChatTabV2
         {...defaultProps}
-        hostedWorkspaceIdOverride="workspace-1"
+        hostedProjectIdOverride="project-1"
         hostedSelectedServerIdsOverride={["server-1"]}
         hostedContext={{ chatboxToken: "chatbox-token" }}
       />
@@ -479,7 +479,7 @@ describe("ChatTabV2 history sync", () => {
     ).toBeUndefined();
   });
 
-  it("does not auto-reconnect workspace chat when oauth is required", async () => {
+  it("does not auto-reconnect project chat when oauth is required", async () => {
     const onReconnectServer = vi.fn().mockResolvedValue(undefined);
     mockUseChatSession.error = new Error(
       JSON.stringify({
@@ -705,7 +705,7 @@ describe("ChatTabV2 history sync", () => {
     expect(mockToastError).not.toHaveBeenCalled();
   });
 
-  it("switches new shared threads to workspace visibility without persisting a draft", async () => {
+  it("switches new shared threads to project visibility without persisting a draft", async () => {
     render(<ChatTabV2 {...defaultProps} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Show sessions" }));
@@ -713,7 +713,7 @@ describe("ChatTabV2 history sync", () => {
     await flushMicrotasks();
 
     expect(lastUseChatSessionOptionsRef.current?.directVisibility).toBe(
-      "workspace"
+      "project"
     );
     expect(mockGetChatHistoryDetail).not.toHaveBeenCalled();
   });

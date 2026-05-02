@@ -23,14 +23,14 @@ import { ScrollableJsonView } from "@/components/ui/json-editor";
 interface ServerInfoContentProps {
   server: ServerWithName;
   needsReconnect?: boolean;
-  workspaceId?: string | null;
+  projectId?: string | null;
   hostedServerId?: string | null;
 }
 
 export function ServerInfoContent({
   server,
   needsReconnect = false,
-  workspaceId = null,
+  projectId = null,
   hostedServerId = null,
 }: ServerInfoContentProps) {
   const [copiedField, setCopiedField] = useState<string | null>(null);
@@ -54,7 +54,7 @@ export function ServerInfoContent({
     isHttpServer &&
     oauthTokens == null;
   const canRevealHostedOAuthTokens =
-    shouldShowHostedOAuthVaultSection && !!workspaceId && !!hostedServerId;
+    shouldShowHostedOAuthVaultSection && !!projectId && !!hostedServerId;
 
   const initializationInfo = server.initializationInfo;
 
@@ -85,7 +85,7 @@ export function ServerInfoContent({
       }
       return next;
     });
-  }, [server.name, workspaceId, hostedServerId]);
+  }, [server.name, projectId, hostedServerId]);
 
   // Build capabilities list
   const capabilities: string[] = [];
@@ -116,7 +116,7 @@ export function ServerInfoContent({
   };
 
   const revealHostedTokens = async () => {
-    if (!workspaceId || !hostedServerId || isLoadingHostedTokens) return;
+    if (!projectId || !hostedServerId || isLoadingHostedTokens) return;
 
     const requestId = ++hostedRevealRequestIdRef.current;
     setHostedTokenError(null);
@@ -124,7 +124,7 @@ export function ServerInfoContent({
 
     try {
       const result = await fetchHostedOAuthTokens({
-        workspaceId,
+        projectId,
         serverId: hostedServerId,
       });
       if (hostedRevealRequestIdRef.current === requestId) {
@@ -268,7 +268,7 @@ export function ServerInfoContent({
             ) : (
               <div className="rounded-md bg-background/60 p-2 text-sm text-muted-foreground">
                 Token reveal is unavailable until this server is synced to the
-                hosted workspace.
+                hosted project.
               </div>
             )
           ) : (

@@ -6,7 +6,7 @@ import { getDefaultClientCapabilities } from "@mcpjam/sdk/browser";
 type GetAccessTokenFn = () => Promise<string | undefined | null>;
 
 export interface HostedApiContext {
-  workspaceId: string | null;
+  projectId: string | null;
   serverIdsByName: Record<string, string>;
   clientCapabilities?: Record<string, unknown>;
   clientConfigSyncPending?: boolean;
@@ -22,10 +22,10 @@ export interface HostedApiContext {
   serverConfigs?: Record<string, unknown>;
 }
 
-type HostedAccessScope = "workspace_member" | "chat_v2";
+type HostedAccessScope = "project_member" | "chat_v2";
 
 const EMPTY_CONTEXT: HostedApiContext = {
-  workspaceId: null,
+  projectId: null,
   serverIdsByName: {},
 };
 
@@ -82,7 +82,7 @@ function assertHostedClientConfigSynced() {
  */
 export function isGuestMode(): boolean {
   if (!HOSTED_MODE) return false;
-  return !hostedApiContext.workspaceId && !hostedApiContext.isAuthenticated;
+  return !hostedApiContext.projectId && !hostedApiContext.isAuthenticated;
 }
 
 export function shouldRetryHostedAuth401(): boolean {
@@ -92,15 +92,15 @@ export function shouldRetryHostedAuth401(): boolean {
 
 /**
  * Hosted guest access comes in 2 shapes:
- * - direct guest: no workspace, direct serverUrl requests
- * - hosted shared/chatbox guest: workspace-scoped share or chatbox token,
+ * - direct guest: no project, direct serverUrl requests
+ * - hosted shared/chatbox guest: project-scoped share or chatbox token,
  *   Convex-backed requests
  */
 function hasHostedGuestAccess(): boolean {
   if (!HOSTED_MODE) return false;
   if (hostedApiContext.isAuthenticated) return false;
   return (
-    !hostedApiContext.workspaceId ||
+    !hostedApiContext.projectId ||
     !!hostedApiContext.shareToken ||
     !!hostedApiContext.chatboxToken
   );
@@ -178,15 +178,15 @@ export function injectHostedServerMapping(
   };
 }
 
-export function getHostedWorkspaceId(): string {
+export function getHostedProjectId(): string {
   assertHostedMode();
 
-  const workspaceId = hostedApiContext.workspaceId;
-  if (!workspaceId) {
-    throw new Error("Hosted workspace is not available yet");
+  const projectId = hostedApiContext.projectId;
+  if (!projectId) {
+    throw new Error("Hosted project is not available yet");
   }
 
-  return workspaceId;
+  return projectId;
 }
 
 /**
@@ -205,7 +205,7 @@ function shouldIncludeHostedRefInNotFoundError(serverNameOrId: string): boolean 
 }
 
 const HOSTED_SERVER_NOT_FOUND_OPAQUE_MESSAGE =
-  "Hosted server not found. The server is not in your hosted workspace, or the server list is still loading.";
+  "Hosted server not found. The server is not in your hosted project, or the server list is still loading.";
 
 export function resolveHostedServerId(serverNameOrId: string): string {
   assertHostedMode();
@@ -250,7 +250,7 @@ function findHostedServerName(serverId: string): string | undefined {
  * Resolves a hosted server display name or Convex server document ID to a
  * user-facing label when the server still exists in the current
  * `serverIdsByName` mapping. Returns undefined when the ref cannot be resolved
- * (for example, the server was removed from the workspace).
+ * (for example, the server was removed from the project).
  */
 export function tryGetHostedServerDisplayName(
   serverNameOrId: string,
@@ -380,7 +380,7 @@ export function buildHostedServerRequest(
   const chatboxToken = getHostedChatboxToken();
   const accessScope = getHostedAccessScope();
   return {
-    workspaceId: getHostedWorkspaceId(),
+    projectId: getHostedProjectId(),
     serverId,
     serverName:
       hostedApiContext.serverIdsByName[serverNameOrId] !== undefined
@@ -397,7 +397,7 @@ export function buildHostedServerRequest(
 }
 
 export function buildHostedServerBatchRequest(serverNamesOrIds: string[]): {
-  workspaceId: string;
+  projectId: string;
   serverIds: string[];
   serverNames: string[];
   clientCapabilities?: Record<string, unknown>;
@@ -415,7 +415,7 @@ export function buildHostedServerBatchRequest(serverNamesOrIds: string[]): {
   const chatboxToken = getHostedChatboxToken();
   const accessScope = getHostedAccessScope();
   return {
-    workspaceId: getHostedWorkspaceId(),
+    projectId: getHostedProjectId(),
     serverIds,
     serverNames,
     ...(hostedApiContext.clientCapabilities
@@ -429,7 +429,7 @@ export function buildHostedServerBatchRequest(serverNamesOrIds: string[]): {
 }
 
 export function buildHostedEvalServerBatchRequest(serverNamesOrIds: string[]): {
-  workspaceId: string;
+  projectId: string;
   serverIds: string[];
   serverNames: string[];
   clientCapabilities?: Record<string, unknown>;
@@ -448,7 +448,7 @@ export function buildHostedEvalServerBatchRequest(serverNamesOrIds: string[]): {
   const accessScope = getHostedAccessScope();
 
   return {
-    workspaceId: getHostedWorkspaceId(),
+    projectId: getHostedProjectId(),
     serverIds,
     serverNames,
     ...(hostedApiContext.clientCapabilities

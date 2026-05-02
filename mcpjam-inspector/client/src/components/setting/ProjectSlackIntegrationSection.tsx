@@ -15,11 +15,11 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@mcpjam/design-system/alert-dialog";
-import { useWorkspaceSlackIntegration } from "@/hooks/useWorkspaceSlackIntegration";
+import { useProjectSlackIntegration } from "@/hooks/useProjectSlackIntegration";
 
-interface WorkspaceSlackIntegrationSectionProps {
-  workspaceId: string | null;
-  workspaceName: string | null;
+interface ProjectSlackIntegrationSectionProps {
+  projectId: string | null;
+  projectName: string | null;
   organizationId?: string;
   canManageIntegration: boolean;
 }
@@ -35,19 +35,19 @@ function formatTimestamp(timestamp: number | null): string | null {
   }).format(timestamp);
 }
 
-export function WorkspaceSlackIntegrationSection({
-  workspaceId,
-  workspaceName,
+export function ProjectSlackIntegrationSection({
+  projectId,
+  projectName,
   organizationId,
   canManageIntegration,
-}: WorkspaceSlackIntegrationSectionProps) {
+}: ProjectSlackIntegrationSectionProps) {
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
   const { signIn } = useAuth();
   const [webhookInput, setWebhookInput] = useState("");
   const [isReplaceMode, setIsReplaceMode] = useState(false);
   const [disconnectConfirmOpen, setDisconnectConfirmOpen] = useState(false);
 
-  const isSyncedWorkspace = Boolean(workspaceId && organizationId);
+  const isSyncedProject = Boolean(projectId && organizationId);
   const {
     status,
     error,
@@ -58,10 +58,10 @@ export function WorkspaceSlackIntegrationSection({
     connectWebhook,
     sendTestMessage,
     disconnect,
-  } = useWorkspaceSlackIntegration({
+  } = useProjectSlackIntegration({
     isAuthenticated,
-    workspaceId: isSyncedWorkspace ? workspaceId : null,
-    canManageIntegration: isSyncedWorkspace && canManageIntegration,
+    projectId: isSyncedProject ? projectId : null,
+    canManageIntegration: isSyncedProject && canManageIntegration,
   });
 
   const isBusy = isConnecting || isSendingTest || isDisconnecting;
@@ -135,7 +135,7 @@ export function WorkspaceSlackIntegrationSection({
             <Badge variant="outline">Sign in required</Badge>
           </div>
           <p className="text-sm text-muted-foreground">
-            Sign in to connect this workspace to a Slack incoming webhook.
+            Sign in to connect this project to a Slack incoming webhook.
           </p>
         </div>
         <Button type="button" size="sm" onClick={() => signIn()}>
@@ -145,15 +145,15 @@ export function WorkspaceSlackIntegrationSection({
     );
   }
 
-  if (!isSyncedWorkspace) {
+  if (!isSyncedProject) {
     return (
       <div className="rounded-md border border-border/40 px-4 py-3">
         <div className="flex items-center gap-2">
           <span className="text-sm font-medium">Slack</span>
-          <Badge variant="outline">Synced workspaces only</Badge>
+          <Badge variant="outline">Synced projects only</Badge>
         </div>
         <p className="mt-1 text-sm text-muted-foreground">
-          Slack integrations are available after this workspace is synced to
+          Slack integrations are available after this project is synced to
           MCPJam.
         </p>
       </div>
@@ -168,7 +168,7 @@ export function WorkspaceSlackIntegrationSection({
           <Badge variant="outline">Read only</Badge>
         </div>
         <p className="mt-1 text-sm text-muted-foreground">
-          Only workspace admins can manage Slack integrations.
+          Only project admins can manage Slack integrations.
         </p>
       </div>
     );
@@ -188,7 +188,7 @@ export function WorkspaceSlackIntegrationSection({
               </Badge>
             </div>
             <p className="text-sm text-muted-foreground">
-              Send workspace notifications to a Slack channel with an incoming
+              Send project notifications to a Slack channel with an incoming
               webhook.
             </p>
           </div>
@@ -208,7 +208,7 @@ export function WorkspaceSlackIntegrationSection({
         {!isLoadingStatus && isConnected ? (
           <div className="rounded-md border border-border/40 bg-muted/20 px-3 py-3 space-y-1">
             <p className="text-sm font-medium">
-              {workspaceName || "This workspace"} is connected to Slack.
+              {projectName || "This project"} is connected to Slack.
             </p>
             <p className="text-xs text-muted-foreground">
               {lastTestedLabel
@@ -313,7 +313,7 @@ export function WorkspaceSlackIntegrationSection({
             <AlertDialogTitle>Disconnect Slack?</AlertDialogTitle>
             <AlertDialogDescription>
               This will remove the stored Slack webhook for{" "}
-              {workspaceName || "this workspace"}. You can reconnect it at any
+              {projectName || "this project"}. You can reconnect it at any
               time with a new webhook URL.
             </AlertDialogDescription>
           </AlertDialogHeader>

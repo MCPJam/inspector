@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { normalizeModelMessagesForConvex } from "../normalize-model-messages-for-convex";
 
 /** Shape observed when Convex rejects AI_InvalidPromptError (missing toolCallId). */
-const malformedWorkspaceTrace = [
+const malformedProjectTrace = [
   {
     role: "user",
     content: [{ type: "text", text: "atdraw a go" }],
@@ -71,7 +71,7 @@ const malformedWorkspaceTrace = [
 
 describe("normalizeModelMessagesForConvex", () => {
   it("assign paired toolCallIds to tool-call and tool-result parts missing ids", () => {
-    const out = normalizeModelMessagesForConvex(malformedWorkspaceTrace);
+    const out = normalizeModelMessagesForConvex(malformedProjectTrace);
 
     expect(out[0].role).toBe("user");
     expect((out[0] as { content: unknown }).content).toBe("atdraw a go");

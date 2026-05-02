@@ -6,7 +6,7 @@ import {
 } from "@/lib/billing-upsell";
 import { Loader2 } from "lucide-react";
 import { BillingGateSurface } from "@/components/billing/BillingGateSurface";
-import { BILLING_GATES, useWorkspaceBillingGate } from "@/lib/billing-gates";
+import { BILLING_GATES, useProjectBillingGate } from "@/lib/billing-gates";
 import { clearBuilderSession } from "@/lib/chatbox-session";
 
 const ChatboxBuilderExperience = lazy(
@@ -14,7 +14,7 @@ const ChatboxBuilderExperience = lazy(
 );
 
 interface ChatboxesTabProps {
-  workspaceId: string | null;
+  projectId: string | null;
   organizationId: string | null;
   isBillingContextPending?: boolean;
 }
@@ -44,26 +44,26 @@ function ChatboxesLoadingState({
  * in CreateChatboxDialog, ChatboxEditor, and ChatboxBuilderView.
  */
 export function ChatboxesTab({
-  workspaceId,
+  projectId,
   organizationId,
   isBillingContextPending = false,
 }: ChatboxesTabProps) {
   const resolvedOrganizationId = isBillingContextPending
     ? null
     : organizationId;
-  const resolvedWorkspaceId = isBillingContextPending ? null : workspaceId;
-  const chatboxGate = useWorkspaceBillingGate({
-    workspaceId: resolvedWorkspaceId,
+  const resolvedProjectId = isBillingContextPending ? null : projectId;
+  const chatboxGate = useProjectBillingGate({
+    projectId: resolvedProjectId,
     organizationId: resolvedOrganizationId,
     gate: BILLING_GATES.chatboxes,
   });
-  const chatboxCreationGate = useWorkspaceBillingGate({
-    workspaceId: resolvedWorkspaceId,
+  const chatboxCreationGate = useProjectBillingGate({
+    projectId: resolvedProjectId,
     organizationId: resolvedOrganizationId,
     gate: BILLING_GATES.chatboxCreation,
   });
   const { planCatalog } = useOrganizationBilling(resolvedOrganizationId, {
-    workspaceId: resolvedOrganizationId ? resolvedWorkspaceId : null,
+    projectId: resolvedOrganizationId ? resolvedProjectId : null,
   });
   const createChatboxUpsell =
     chatboxCreationGate.isDenied && chatboxCreationGate.denialMessage
@@ -100,11 +100,11 @@ export function ChatboxesTab({
     );
   }
 
-  if (!workspaceId) {
+  if (!projectId) {
     return (
       <div className="flex h-full items-center justify-center">
         <p className="text-sm text-muted-foreground">
-          Select a workspace to manage chatboxes.
+          Select a project to manage chatboxes.
         </p>
       </div>
     );
@@ -120,7 +120,7 @@ export function ChatboxesTab({
     >
       <Suspense fallback={<ChatboxesLoadingState />}>
         <ChatboxBuilderExperience
-          workspaceId={workspaceId}
+          projectId={projectId}
           isCreateChatboxDisabled={chatboxCreationGate.isDenied}
           isCreateChatboxLoading={chatboxCreationGate.isLoading}
           createChatboxUpsell={createChatboxUpsell}

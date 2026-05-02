@@ -768,7 +768,7 @@ describe("POST /api/mcp/chat-v2", () => {
           messages: [{ role: "user", content: "Hello" }],
           model: { id: "google/gemini-2.5-flash", provider: "google" },
           chatSessionId: "chat-session-1",
-          directVisibility: "workspace",
+          directVisibility: "project",
         });
 
         expect(res.status).toBe(200);
@@ -792,7 +792,7 @@ describe("POST /api/mcp/chat-v2", () => {
           modelId: "google/gemini-2.5-flash",
           modelSource: "mcpjam",
           sourceType: "direct",
-          directVisibility: "workspace",
+          directVisibility: "project",
         });
         expect(body.sessionMessages).toEqual([
           { role: "user", content: "Hello" },
@@ -1072,7 +1072,7 @@ describe("POST /api/mcp/chat-v2", () => {
                 {
                   type: "tool-call",
                   toolCallId: "orphaned-call-123",
-                  toolName: "asana_list_workspaces",
+                  toolName: "asana_list_projects",
                   input: {},
                 },
               ],

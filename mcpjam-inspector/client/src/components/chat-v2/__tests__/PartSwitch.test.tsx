@@ -104,12 +104,12 @@ vi.mock("convex/react", () => ({
 
 vi.mock("@/state/app-state-context", () => ({
   useSharedAppState: () => ({
-    workspaces: {
+    projects: {
       default: {
-        sharedWorkspaceId: "workspace-1",
+        sharedProjectId: "project-1",
       },
     },
-    activeWorkspaceId: "default",
+    activeProjectId: "default",
     selectedServer: "selected-server",
   }),
 }));

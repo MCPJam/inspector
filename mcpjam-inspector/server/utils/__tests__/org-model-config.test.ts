@@ -44,7 +44,7 @@ describe("resolveOrgModelConfig", () => {
       });
 
     await resolveOrgModelConfig(
-      { workspaceId: "ws_org_config_auth_scope" },
+      { projectId: "project_org_config_auth_scope" },
       {
         bearerToken: "user-a",
         shareToken: " share-1 ",
@@ -52,7 +52,7 @@ describe("resolveOrgModelConfig", () => {
       },
     );
     await resolveOrgModelConfig(
-      { workspaceId: "ws_org_config_auth_scope" },
+      { projectId: "project_org_config_auth_scope" },
       {
         bearerToken: "user-a",
         shareToken: "share-1",
@@ -60,7 +60,7 @@ describe("resolveOrgModelConfig", () => {
       },
     );
     await resolveOrgModelConfig(
-      { workspaceId: "ws_org_config_auth_scope" },
+      { projectId: "project_org_config_auth_scope" },
       {
         bearerToken: "user-b",
         shareToken: "share-1",
@@ -81,7 +81,7 @@ describe("resolveOrgModelConfig", () => {
       ),
     ).toBe("service-token");
     expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
-      workspaceId: "ws_org_config_auth_scope",
+      projectId: "project_org_config_auth_scope",
       shareToken: "share-1",
       serverIds: ["srv-a", "srv-b"],
     });

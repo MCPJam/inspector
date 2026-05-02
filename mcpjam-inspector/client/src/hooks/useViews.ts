@@ -35,7 +35,7 @@ export type ServerInfo = {
 // Base view type
 export interface ViewBase {
   _id: string;
-  workspaceId: string;
+  projectId: string;
   serverId: string;
   name: string;
   description?: string;
@@ -84,16 +84,16 @@ export type AnyView = McpAppView | OpenaiAppView;
 // Query hook for fetching views
 export function useViewQueries({
   isAuthenticated,
-  workspaceId,
+  projectId,
 }: {
   isAuthenticated: boolean;
-  workspaceId: string | null;
+  projectId: string | null;
 }) {
-  const enableQuery = isAuthenticated && !!workspaceId;
+  const enableQuery = isAuthenticated && !!projectId;
 
   const views = useQuery(
-    "views:listAllByWorkspace" as any,
-    enableQuery ? ({ workspaceId } as any) : "skip",
+    "views:listAllByProject" as any,
+    enableQuery ? ({ projectId } as any) : "skip",
   ) as AnyView[] | undefined;
 
   const isLoading = enableQuery && views === undefined;
@@ -182,24 +182,24 @@ export function useViewMutations() {
   };
 }
 
-// Hook to get servers for a workspace (for server ID resolution)
-export function useWorkspaceServers({
+// Hook to get servers for a project (for server ID resolution)
+export function useProjectServers({
   isAuthenticated,
-  workspaceId,
+  projectId,
 }: {
   isAuthenticated: boolean;
-  workspaceId: string | null;
+  projectId: string | null;
 }) {
-  const enableQuery = isAuthenticated && !!workspaceId;
+  const enableQuery = isAuthenticated && !!projectId;
 
   const servers = useQuery(
-    "servers:getWorkspaceServers" as any,
-    enableQuery ? ({ workspaceId } as any) : "skip",
+    "servers:getProjectServers" as any,
+    enableQuery ? ({ projectId } as any) : "skip",
   ) as
     | Array<{
         _id: string;
         name: string;
-        workspaceId: string;
+        projectId: string;
         transportType: "stdio" | "http";
         url?: string;
         useOAuth?: boolean;

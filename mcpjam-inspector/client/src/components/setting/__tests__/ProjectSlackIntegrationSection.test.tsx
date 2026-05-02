@@ -2,7 +2,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ComponentProps } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { WorkspaceSlackIntegrationSection } from "../WorkspaceSlackIntegrationSection";
+import { ProjectSlackIntegrationSection } from "../ProjectSlackIntegrationSection";
 
 const mockSignIn = vi.fn();
 const mockConnectWebhook = vi.fn();
@@ -11,7 +11,7 @@ const mockDisconnect = vi.fn();
 const mockToastSuccess = vi.fn();
 const mockToastError = vi.fn();
 const mockUseConvexAuth = vi.fn();
-const mockUseWorkspaceSlackIntegration = vi.fn();
+const mockUseProjectSlackIntegration = vi.fn();
 
 vi.mock("convex/react", () => ({
   useConvexAuth: () => mockUseConvexAuth(),
@@ -30,20 +30,20 @@ vi.mock("sonner", () => ({
   },
 }));
 
-vi.mock("@/hooks/useWorkspaceSlackIntegration", () => ({
-  useWorkspaceSlackIntegration: (...args: unknown[]) =>
-    mockUseWorkspaceSlackIntegration(...args),
+vi.mock("@/hooks/useProjectSlackIntegration", () => ({
+  useProjectSlackIntegration: (...args: unknown[]) =>
+    mockUseProjectSlackIntegration(...args),
 }));
 
 function renderSection(
   overrides: Partial<
-    ComponentProps<typeof WorkspaceSlackIntegrationSection>
+    ComponentProps<typeof ProjectSlackIntegrationSection>
   > = {},
 ) {
   render(
-    <WorkspaceSlackIntegrationSection
-      workspaceId="ws-1"
-      workspaceName="Acme"
+    <ProjectSlackIntegrationSection
+      projectId="ws-1"
+      projectName="Acme"
       organizationId="org-1"
       canManageIntegration
       {...overrides}
@@ -51,7 +51,7 @@ function renderSection(
   );
 }
 
-describe("WorkspaceSlackIntegrationSection", () => {
+describe("ProjectSlackIntegrationSection", () => {
   beforeEach(() => {
     vi.clearAllMocks();
 
@@ -61,15 +61,15 @@ describe("WorkspaceSlackIntegrationSection", () => {
     });
 
     mockConnectWebhook.mockResolvedValue({
-      workspaceId: "ws-1",
+      projectId: "ws-1",
       connected: true,
     });
     mockSendTestMessage.mockResolvedValue({
-      workspaceId: "ws-1",
+      projectId: "ws-1",
       connected: true,
     });
     mockDisconnect.mockResolvedValue({
-      workspaceId: "ws-1",
+      projectId: "ws-1",
       connected: false,
       lastTestedAt: null,
       lastTestStatus: null,
@@ -77,9 +77,9 @@ describe("WorkspaceSlackIntegrationSection", () => {
       updatedAt: null,
     });
 
-    mockUseWorkspaceSlackIntegration.mockReturnValue({
+    mockUseProjectSlackIntegration.mockReturnValue({
       status: {
-        workspaceId: "ws-1",
+        projectId: "ws-1",
         connected: false,
         lastTestedAt: null,
         lastTestStatus: null,
@@ -107,22 +107,22 @@ describe("WorkspaceSlackIntegrationSection", () => {
     renderSection();
 
     expect(
-      screen.getByText(/Sign in to connect this workspace/i),
+      screen.getByText(/Sign in to connect this project/i),
     ).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Sign in" }));
     expect(mockSignIn).toHaveBeenCalledTimes(1);
   });
 
-  it("shows a synced-workspace note when the workspace is not shared in MCPJam", () => {
+  it("shows a synced-project note when the project is not shared in MCPJam", () => {
     renderSection({
-      workspaceId: null,
+      projectId: null,
       organizationId: undefined,
     });
 
     expect(
       screen.getByText(
-        /Slack integrations are available after this workspace is synced/i,
+        /Slack integrations are available after this project is synced/i,
       ),
     ).toBeInTheDocument();
     expect(
@@ -136,7 +136,7 @@ describe("WorkspaceSlackIntegrationSection", () => {
     });
 
     expect(
-      screen.getByText(/Only workspace admins can manage Slack integrations/i),
+      screen.getByText(/Only project admins can manage Slack integrations/i),
     ).toBeInTheDocument();
   });
 
@@ -160,9 +160,9 @@ describe("WorkspaceSlackIntegrationSection", () => {
 
   it("renders connected actions and supports replace, test, and disconnect flows", async () => {
     const user = userEvent.setup();
-    mockUseWorkspaceSlackIntegration.mockReturnValue({
+    mockUseProjectSlackIntegration.mockReturnValue({
       status: {
-        workspaceId: "ws-1",
+        projectId: "ws-1",
         connected: true,
         lastTestedAt: 1_764_000_000_000,
         lastTestStatus: "failure",

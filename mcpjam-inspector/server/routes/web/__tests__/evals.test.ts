@@ -88,7 +88,7 @@ const endpointCases: EndpointCase[] = [
   {
     path: "/api/web/evals/run",
     body: {
-      workspaceId: "workspace-1",
+      projectId: "project-1",
       serverIds: ["server-1"],
       suiteName: "Hosted Suite",
       tests: [
@@ -114,7 +114,7 @@ const endpointCases: EndpointCase[] = [
   {
     path: "/api/web/evals/run-test-case",
     body: {
-      workspaceId: "workspace-1",
+      projectId: "project-1",
       serverIds: ["server-1"],
       testCaseId: "test-case-1",
       model: "openai/gpt-5-mini",
@@ -135,7 +135,7 @@ const endpointCases: EndpointCase[] = [
   {
     path: "/api/web/evals/generate-tests",
     body: {
-      workspaceId: "workspace-1",
+      projectId: "project-1",
       serverIds: ["server-1"],
     },
     successBody: { success: true, tests: [{ title: "Generated test" }] },
@@ -144,7 +144,7 @@ const endpointCases: EndpointCase[] = [
   {
     path: "/api/web/evals/generate-negative-tests",
     body: {
-      workspaceId: "workspace-1",
+      projectId: "project-1",
       serverIds: ["server-1"],
     },
     successBody: { success: true, tests: [{ title: "Negative test" }] },
@@ -235,7 +235,7 @@ function stubAuthorizeResponse(options?: { useOAuth?: boolean }) {
                 {
                   ok: true,
                   role: "member",
-                  accessLevel: "workspace_member",
+                  accessLevel: "project_member",
                   permissions: { chatOnly: false },
                   serverConfig,
                 },
@@ -253,7 +253,7 @@ function stubAuthorizeResponse(options?: { useOAuth?: boolean }) {
         JSON.stringify({
           authorized: true,
           role: "member",
-          accessLevel: "workspace_member",
+          accessLevel: "project_member",
           permissions: { chatOnly: false },
           serverConfig,
         }),
@@ -381,7 +381,7 @@ describe("web routes — evals", () => {
       app,
       "/api/web/evals/run",
       {
-        workspaceId: "workspace-1",
+        projectId: "project-1",
         serverIds: ["srv-1"],
         serverNames: ["server-1"],
         suiteName: "Hosted Suite",
@@ -402,7 +402,7 @@ describe("web routes — evals", () => {
     expect(response.status).toBe(200);
     expect(runEvalsWithManagerMock.mock.calls[0]?.[1]).toEqual(
       expect.objectContaining({
-        workspaceId: "workspace-1",
+        projectId: "project-1",
         serverIds: ["srv-1"],
         serverNames: ["server-1"],
         convexAuthToken: token,
@@ -430,7 +430,7 @@ describe("web routes — evals", () => {
       app,
       "/api/web/evals/stream-test-case",
       {
-        workspaceId: "workspace-1",
+        projectId: "project-1",
         serverIds: ["server-1"],
         testCaseId: "test-case-1",
         model: "openai/gpt-5-mini",
@@ -446,7 +446,7 @@ describe("web routes — evals", () => {
     expect(streamEvalTestCaseWithManagerMock).toHaveBeenCalledTimes(1);
     expect(streamEvalTestCaseWithManagerMock.mock.calls[0]?.[1]).toEqual(
       expect.objectContaining({
-        workspaceId: "workspace-1",
+        projectId: "project-1",
         serverIds: ["server-1"],
         testCaseId: "test-case-1",
         model: "openai/gpt-5-mini",
@@ -490,7 +490,7 @@ describe("web routes — evals", () => {
     expect(runEvalTestCaseWithManagerMock).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
-        workspaceId: "__guest__",
+        projectId: "__guest__",
         serverIds: ["__guest__"],
         testCaseId: "guest-case-1",
         convexAuthToken: token,
@@ -537,7 +537,7 @@ describe("web routes — evals", () => {
     expect(generateEvalTestsWithManagerMock).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
-        workspaceId: "__guest__",
+        projectId: "__guest__",
         serverIds: ["__guest__"],
         convexAuthToken: token,
       }),
@@ -577,7 +577,7 @@ describe("web routes — evals", () => {
     expect(streamEvalTestCaseWithManagerMock).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
-        workspaceId: "__guest__",
+        projectId: "__guest__",
         serverIds: ["__guest__"],
         testCaseId: "guest-case-1",
         compareRunId: "cmp_guest",

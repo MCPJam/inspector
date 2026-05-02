@@ -1,25 +1,25 @@
 import { useEffect } from "react";
-import type { Workspace } from "@/state/app-types";
+import type { Project } from "@/state/app-types";
 import {
-  buildDefaultWorkspaceConnectionConfig,
-  buildDefaultWorkspaceHostContext,
-  pickWorkspaceConnectionConfig,
-  pickWorkspaceHostContext,
+  buildDefaultProjectConnectionConfig,
+  buildDefaultProjectHostContext,
+  pickProjectConnectionConfig,
+  pickProjectHostContext,
 } from "@/lib/client-config";
 import { useClientConfigStore } from "@/stores/client-config-store";
 import { useHostContextStore } from "@/stores/host-context-store";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
 
-interface WorkspaceClientConfigSyncProps {
-  activeWorkspaceId: string;
-  savedClientConfig?: Workspace["clientConfig"];
+interface ProjectClientConfigSyncProps {
+  activeProjectId: string;
+  savedClientConfig?: Project["clientConfig"];
 }
 
-export function WorkspaceClientConfigSync({
-  activeWorkspaceId,
+export function ProjectClientConfigSync({
+  activeProjectId,
   savedClientConfig,
-}: WorkspaceClientConfigSyncProps) {
+}: ProjectClientConfigSyncProps) {
   const themeMode = usePreferencesStore((state) => state.themeMode);
   const displayMode = useUIPlaygroundStore(
     (state) => state.globals.displayMode,
@@ -40,8 +40,8 @@ export function WorkspaceClientConfigSync({
   );
 
   useEffect(() => {
-    const defaultConnectionConfig = buildDefaultWorkspaceConnectionConfig();
-    const defaultHostContext = buildDefaultWorkspaceHostContext({
+    const defaultConnectionConfig = buildDefaultProjectConnectionConfig();
+    const defaultHostContext = buildDefaultProjectHostContext({
       theme: themeMode,
       displayMode,
       locale,
@@ -55,22 +55,22 @@ export function WorkspaceClientConfigSync({
       },
     });
 
-    useClientConfigStore.getState().loadWorkspaceConfig({
-      workspaceId: activeWorkspaceId,
+    useClientConfigStore.getState().loadProjectConfig({
+      projectId: activeProjectId,
       defaultConfig: defaultConnectionConfig,
       savedConfig: savedClientConfig
-        ? pickWorkspaceConnectionConfig(savedClientConfig)
+        ? pickProjectConnectionConfig(savedClientConfig)
         : undefined,
     });
-    useHostContextStore.getState().loadWorkspaceHostContext({
-      workspaceId: activeWorkspaceId,
+    useHostContextStore.getState().loadProjectHostContext({
+      projectId: activeProjectId,
       defaultHostContext,
       savedHostContext: savedClientConfig
-        ? pickWorkspaceHostContext(savedClientConfig)
+        ? pickProjectHostContext(savedClientConfig)
         : undefined,
     });
   }, [
-    activeWorkspaceId,
+    activeProjectId,
     savedClientConfig,
     themeMode,
     displayMode,

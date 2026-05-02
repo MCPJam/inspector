@@ -6,11 +6,11 @@ import type {
 
 export function useDirectChatSessionSubscription({
   sessionId,
-  workspaceId,
+  projectId,
   enabled,
 }: {
   sessionId: string | null;
-  workspaceId: string | null;
+  projectId: string | null;
   enabled: boolean;
 }) {
   const session = useQuery(
@@ -18,7 +18,7 @@ export function useDirectChatSessionSubscription({
     enabled && sessionId
       ? ({
           sessionId,
-          workspaceId: workspaceId ?? undefined,
+          projectId: projectId ?? undefined,
         } as const)
       : "skip",
   ) as ChatHistoryDetailSession | null | undefined;

@@ -531,7 +531,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     expect(container?.className).toContain("inset-0");
   });
 
-  it("pushes updated host context when the workspace client profile changes", async () => {
+  it("pushes updated host context when the project client profile changes", async () => {
     const { rerender } = render(<MCPAppsRenderer {...baseProps} />);
 
     await vi.waitFor(() => {

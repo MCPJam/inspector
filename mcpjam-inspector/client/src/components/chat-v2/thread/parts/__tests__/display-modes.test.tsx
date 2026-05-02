@@ -92,7 +92,7 @@ describe("ToolPart display mode controls", () => {
     vi.clearAllMocks();
     onDisplayModeChange = vi.fn();
     useHostContextStore.setState({
-      activeWorkspaceId: null,
+      activeProjectId: null,
       defaultHostContext: {},
       savedHostContext: undefined,
       draftHostContext: {},
@@ -100,7 +100,7 @@ describe("ToolPart display mode controls", () => {
       hostContextError: null,
       isSaving: false,
       isDirty: false,
-      pendingWorkspaceId: null,
+      pendingProjectId: null,
       pendingSavedHostContext: undefined,
       isAwaitingRemoteEcho: false,
     });

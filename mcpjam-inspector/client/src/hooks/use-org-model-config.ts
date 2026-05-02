@@ -48,14 +48,14 @@ export interface OrgModelUsageSummary {
   byDate: OrgModelUsageAggregate[];
   byProvider: OrgModelUsageAggregate[];
   byModel: OrgModelUsageAggregate[];
-  byWorkspace: OrgModelUsageAggregate[];
+  byProject: OrgModelUsageAggregate[];
   byUser: OrgModelUsageAggregate[];
   recentRecords: Array<{
     id: string;
     createdAt: number;
     providerKey?: string;
     modelId: string;
-    workspaceId?: string;
+    projectId?: string;
     userId?: string;
     guestExternalId?: string;
     inputTokens?: number;

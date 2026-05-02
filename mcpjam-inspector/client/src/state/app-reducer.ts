@@ -11,7 +11,7 @@ const setStatus = (
   patch: Partial<ServerWithName> = {},
 ): ServerWithName => ({ ...server, connectionStatus: status, ...patch });
 
-const buildWorkspaceServerProjection = (
+const buildProjectServerProjection = (
   server: ServerWithName,
 ): ServerWithName => ({
   name: server.name,
@@ -63,11 +63,11 @@ export function appReducer(state: AppState, action: AppAction): AppState {
     }
 
     case "CONNECT_SUCCESS": {
-      // Check state.servers first, then fallback to workspace servers (for cloud-synced servers)
-      // If server doesn't exist anywhere, create it (for servers from Convex remote workspaces)
-      const activeWorkspace = state.workspaces[state.activeWorkspaceId];
+      // Check state.servers first, then fallback to project servers (for cloud-synced servers)
+      // If server doesn't exist anywhere, create it (for servers from Convex remote projects)
+      const activeProject = state.projects[state.activeProjectId];
       const existing =
-        state.servers[action.name] ?? activeWorkspace?.servers[action.name];
+        state.servers[action.name] ?? activeProject?.servers[action.name];
       // Create server entry if it doesn't exist (for Convex-synced servers)
       const baseServer: ServerWithName = existing ?? {
         name: action.name,
@@ -88,7 +88,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         lastOAuthTrace: action.oauthTrace,
         oauthTokens: action.tokens,
         enabled: true,
-        // Hosted workspace OAuth can succeed without browser-side tokens.
+        // Hosted project OAuth can succeed without browser-side tokens.
         // Preserve explicit auth mode when the dispatch provides it.
         useOAuth: shouldUseOAuth,
       });
@@ -98,12 +98,12 @@ export function appReducer(state: AppState, action: AppAction): AppState {
           ...state.servers,
           [action.name]: nextServer,
         },
-        workspaces: {
-          ...state.workspaces,
-          [state.activeWorkspaceId]: {
-            ...activeWorkspace,
+        projects: {
+          ...state.projects,
+          [state.activeProjectId]: {
+            ...activeProject,
             servers: {
-              ...activeWorkspace.servers,
+              ...activeProject.servers,
               [action.name]: nextServer,
             },
             updatedAt: new Date(),
@@ -113,10 +113,10 @@ export function appReducer(state: AppState, action: AppAction): AppState {
     }
 
     case "CONNECT_FAILURE": {
-      // Check state.servers first, then fallback to workspace servers (for cloud-synced servers)
-      const activeWorkspace = state.workspaces[state.activeWorkspaceId];
+      // Check state.servers first, then fallback to project servers (for cloud-synced servers)
+      const activeProject = state.projects[state.activeProjectId];
       const existing =
-        state.servers[action.name] ?? activeWorkspace?.servers[action.name];
+        state.servers[action.name] ?? activeProject?.servers[action.name];
       if (!existing) return state;
       return {
         ...state,
@@ -132,11 +132,11 @@ export function appReducer(state: AppState, action: AppAction): AppState {
     }
 
     case "RECONNECT_REQUEST": {
-      // Check state.servers first, then fallback to workspace servers (for cloud-synced servers)
-      // If server doesn't exist anywhere, create it (for servers from Convex remote workspaces)
-      const activeWorkspace = state.workspaces[state.activeWorkspaceId];
+      // Check state.servers first, then fallback to project servers (for cloud-synced servers)
+      // If server doesn't exist anywhere, create it (for servers from Convex remote projects)
+      const activeProject = state.projects[state.activeProjectId];
       const existing =
-        state.servers[action.name] ?? activeWorkspace?.servers[action.name];
+        state.servers[action.name] ?? activeProject?.servers[action.name];
       // Create server entry if it doesn't exist (for Convex-synced servers)
       const baseServer: ServerWithName = existing ?? {
         name: action.name,
@@ -161,10 +161,10 @@ export function appReducer(state: AppState, action: AppAction): AppState {
     }
 
     case "DISCONNECT": {
-      // Check state.servers first, then fallback to workspace servers (for cloud-synced servers)
-      const activeWorkspace = state.workspaces[state.activeWorkspaceId];
+      // Check state.servers first, then fallback to project servers (for cloud-synced servers)
+      const activeProject = state.projects[state.activeProjectId];
       const existing =
-        state.servers[action.name] ?? activeWorkspace?.servers[action.name];
+        state.servers[action.name] ?? activeProject?.servers[action.name];
       if (!existing) return state;
       const nextSelected =
         state.selectedServer === action.name ? "none" : state.selectedServer;
@@ -186,9 +186,9 @@ export function appReducer(state: AppState, action: AppAction): AppState {
 
     case "REMOVE_SERVER": {
       const { [action.name]: _, ...rest } = state.servers;
-      const activeWorkspace = state.workspaces[state.activeWorkspaceId];
-      const { [action.name]: __, ...restWorkspaceServers } =
-        activeWorkspace.servers;
+      const activeProject = state.projects[state.activeProjectId];
+      const { [action.name]: __, ...restProjectServers } =
+        activeProject.servers;
       return {
         ...state,
         servers: rest,
@@ -197,11 +197,11 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         selectedMultipleServers: state.selectedMultipleServers.filter(
           (n) => n !== action.name,
         ),
-        workspaces: {
-          ...state.workspaces,
-          [state.activeWorkspaceId]: {
-            ...activeWorkspace,
-            servers: restWorkspaceServers,
+        projects: {
+          ...state.projects,
+          [state.activeProjectId]: {
+            ...activeProject,
+            servers: restProjectServers,
             updatedAt: new Date(),
           },
         },
@@ -229,9 +229,9 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         }
       }
 
-      const activeWorkspace = state.workspaces[state.activeWorkspaceId];
-      const workspaceServers = { ...(activeWorkspace?.servers ?? {}) };
-      let shouldUpdateWorkspace = false;
+      const activeProject = state.projects[state.activeProjectId];
+      const projectServers = { ...(activeProject?.servers ?? {}) };
+      let shouldUpdateProject = false;
       for (const agentInfo of action.servers) {
         if (!agentInfo.config) {
           continue;
@@ -248,24 +248,24 @@ export function appReducer(state: AppState, action: AppAction): AppState {
           };
         }
 
-        if (!workspaceServers[agentInfo.id]) {
-          workspaceServers[agentInfo.id] = buildWorkspaceServerProjection(
+        if (!projectServers[agentInfo.id]) {
+          projectServers[agentInfo.id] = buildProjectServerProjection(
             updated[agentInfo.id],
           );
-          shouldUpdateWorkspace = true;
+          shouldUpdateProject = true;
         }
       }
 
       return {
         ...state,
         servers: updated,
-        ...(activeWorkspace && shouldUpdateWorkspace
+        ...(activeProject && shouldUpdateProject
           ? {
-              workspaces: {
-                ...state.workspaces,
-                [state.activeWorkspaceId]: {
-                  ...activeWorkspace,
-                  servers: workspaceServers,
+              projects: {
+                ...state.projects,
+                [state.activeProjectId]: {
+                  ...activeProject,
+                  servers: projectServers,
                   updatedAt: new Date(),
                 },
               },
@@ -296,19 +296,19 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         ...existing,
         initializationInfo: action.initInfo,
       };
-      const activeWorkspace = state.workspaces[state.activeWorkspaceId];
+      const activeProject = state.projects[state.activeProjectId];
       return {
         ...state,
         servers: {
           ...state.servers,
           [action.name]: nextServer,
         },
-        workspaces: {
-          ...state.workspaces,
-          [state.activeWorkspaceId]: {
-            ...activeWorkspace,
+        projects: {
+          ...state.projects,
+          [state.activeProjectId]: {
+            ...activeProject,
             servers: {
-              ...activeWorkspace.servers,
+              ...activeProject.servers,
               [action.name]: nextServer,
             },
             updatedAt: new Date(),
@@ -318,9 +318,9 @@ export function appReducer(state: AppState, action: AppAction): AppState {
     }
 
     case "SET_SERVER_OAUTH_TRACE": {
-      const activeWorkspace = state.workspaces[state.activeWorkspaceId];
+      const activeProject = state.projects[state.activeProjectId];
       const existing =
-        state.servers[action.name] ?? activeWorkspace?.servers[action.name];
+        state.servers[action.name] ?? activeProject?.servers[action.name];
       if (!existing) return state;
 
       const nextServer = {
@@ -334,12 +334,12 @@ export function appReducer(state: AppState, action: AppAction): AppState {
           ...state.servers,
           [action.name]: nextServer,
         },
-        workspaces: {
-          ...state.workspaces,
-          [state.activeWorkspaceId]: {
-            ...activeWorkspace,
+        projects: {
+          ...state.projects,
+          [state.activeProjectId]: {
+            ...activeProject,
             servers: {
-              ...activeWorkspace.servers,
+              ...activeProject.servers,
               [action.name]: nextServer,
             },
             updatedAt: new Date(),
@@ -348,25 +348,25 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       };
     }
 
-    case "CREATE_WORKSPACE": {
+    case "CREATE_PROJECT": {
       return {
         ...state,
-        workspaces: {
-          ...state.workspaces,
-          [action.workspace.id]: action.workspace,
+        projects: {
+          ...state.projects,
+          [action.project.id]: action.project,
         },
       };
     }
 
-    case "UPDATE_WORKSPACE": {
-      const workspace = state.workspaces[action.workspaceId];
-      if (!workspace) return state;
+    case "UPDATE_PROJECT": {
+      const project = state.projects[action.projectId];
+      if (!project) return state;
       return {
         ...state,
-        workspaces: {
-          ...state.workspaces,
-          [action.workspaceId]: {
-            ...workspace,
+        projects: {
+          ...state.projects,
+          [action.projectId]: {
+            ...project,
             ...action.updates,
             updatedAt: new Date(),
           },
@@ -374,23 +374,23 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       };
     }
 
-    case "DELETE_WORKSPACE": {
-      const { [action.workspaceId]: _, ...remainingWorkspaces } =
-        state.workspaces;
+    case "DELETE_PROJECT": {
+      const { [action.projectId]: _, ...remainingProjects } =
+        state.projects;
       return {
         ...state,
-        workspaces: remainingWorkspaces,
+        projects: remainingProjects,
       };
     }
 
-    case "SWITCH_WORKSPACE": {
-      const targetWorkspace = state.workspaces[action.workspaceId];
-      if (!targetWorkspace) return state;
+    case "SWITCH_PROJECT": {
+      const targetProject = state.projects[action.projectId];
+      if (!targetProject) return state;
 
-      // Mark all servers as disconnected when switching workspaces
+      // Mark all servers as disconnected when switching projects
       // since we disconnect them before switching
       const disconnectedServers = Object.fromEntries(
-        Object.entries(targetWorkspace.servers).map(([name, server]) => [
+        Object.entries(targetProject.servers).map(([name, server]) => [
           name,
           { ...server, connectionStatus: "disconnected" as ConnectionStatus },
         ]),
@@ -398,42 +398,42 @@ export function appReducer(state: AppState, action: AppAction): AppState {
 
       return {
         ...state,
-        activeWorkspaceId: action.workspaceId,
+        activeProjectId: action.projectId,
         servers: disconnectedServers,
         selectedServer: "none",
         selectedMultipleServers: [],
       };
     }
 
-    case "SET_DEFAULT_WORKSPACE": {
-      const updatedWorkspaces = Object.fromEntries(
-        Object.entries(state.workspaces).map(([id, workspace]) => [
+    case "SET_DEFAULT_PROJECT": {
+      const updatedProjects = Object.fromEntries(
+        Object.entries(state.projects).map(([id, project]) => [
           id,
-          { ...workspace, isDefault: id === action.workspaceId },
+          { ...project, isDefault: id === action.projectId },
         ]),
       );
       return {
         ...state,
-        workspaces: updatedWorkspaces,
+        projects: updatedProjects,
       };
     }
 
-    case "IMPORT_WORKSPACE": {
+    case "IMPORT_PROJECT": {
       return {
         ...state,
-        workspaces: {
-          ...state.workspaces,
-          [action.workspace.id]: action.workspace,
+        projects: {
+          ...state.projects,
+          [action.project.id]: action.project,
         },
       };
     }
 
-    case "DUPLICATE_WORKSPACE": {
-      const sourceWorkspace = state.workspaces[action.workspaceId];
-      if (!sourceWorkspace) return state;
-      const newWorkspace = {
-        ...sourceWorkspace,
-        id: `workspace_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
+    case "DUPLICATE_PROJECT": {
+      const sourceProject = state.projects[action.projectId];
+      if (!sourceProject) return state;
+      const newProject = {
+        ...sourceProject,
+        id: `project_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
         name: action.newName,
         createdAt: new Date(),
         updatedAt: new Date(),
@@ -441,9 +441,9 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       };
       return {
         ...state,
-        workspaces: {
-          ...state.workspaces,
-          [newWorkspace.id]: newWorkspace,
+        projects: {
+          ...state.projects,
+          [newProject.id]: newProject,
         },
       };
     }

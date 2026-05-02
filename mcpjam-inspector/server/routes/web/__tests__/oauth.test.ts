@@ -219,7 +219,7 @@ describe("web routes — oauth session forwarding", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const payload = {
-      workspaceId: "ws_1",
+      projectId: "ws_1",
       serverId: "srv_1",
       codeVerifier: "verifier",
       redirectUri: "http://localhost:5173/oauth/callback",
@@ -267,7 +267,7 @@ describe("web routes — oauth session forwarding", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const payload = {
-      workspaceId: "ws_1",
+      projectId: "ws_1",
       serverId: "srv_1",
     };
 

@@ -19,7 +19,7 @@ import { AdvancedConnectionSettingsSection } from "./shared/AdvancedConnectionSe
 import { AuthenticationSection } from "./shared/AuthenticationSection";
 import { EnvVarsSection } from "./shared/EnvVarsSection";
 import { HostedConnectionTypeControl } from "./shared/HostedConnectionTypeControl";
-import type { Workspace } from "@/state/app-types";
+import type { Project } from "@/state/app-types";
 
 interface AddServerModalProps {
   isOpen: boolean;
@@ -27,7 +27,7 @@ interface AddServerModalProps {
   onSubmit: (formData: ServerFormData) => void;
   initialData?: Partial<ServerFormData>;
   requireHttps?: boolean;
-  workspaceClientConfig?: Workspace["clientConfig"];
+  projectClientConfig?: Project["clientConfig"];
 }
 
 function normalizeOauthProtocolMode(
@@ -88,12 +88,12 @@ export function AddServerModal({
   onSubmit,
   initialData,
   requireHttps,
-  workspaceClientConfig,
+  projectClientConfig,
 }: AddServerModalProps) {
   const posthog = usePostHog();
   const formState = useServerForm(undefined, {
     requireHttps,
-    workspaceClientConfig,
+    projectClientConfig,
   });
   const hostedUrlPlaceholder = "https://example.com/mcp";
 

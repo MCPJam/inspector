@@ -6,7 +6,7 @@ export type ChatboxMode = "any_signed_in_with_link" | "invited_only";
 export interface ChatboxMember {
   _id: string;
   chatboxId: string;
-  workspaceId: string;
+  projectId: string;
   email: string;
   userId?: string;
   role: "chat";
@@ -47,7 +47,7 @@ export interface ChatboxFeedbackDialogSettings {
 
 export interface ChatboxSettings {
   chatboxId: string;
-  workspaceId: string;
+  projectId: string;
   name: string;
   description?: string;
   hostStyle: ChatboxHostStyle;
@@ -74,7 +74,7 @@ export interface ChatboxSettings {
 
 export interface ChatboxListItem {
   chatboxId: string;
-  workspaceId: string;
+  projectId: string;
   name: string;
   description?: string;
   hostStyle: ChatboxHostStyle;
@@ -88,19 +88,19 @@ export interface ChatboxListItem {
 
 export function useChatboxList({
   isAuthenticated,
-  workspaceId,
+  projectId,
 }: {
   isAuthenticated: boolean;
-  workspaceId: string | null;
+  projectId: string | null;
 }) {
   const chatboxes = useQuery(
     "chatboxes:listChatboxes" as any,
-    isAuthenticated && workspaceId ? ({ workspaceId } as any) : "skip",
+    isAuthenticated && projectId ? ({ projectId } as any) : "skip",
   ) as ChatboxListItem[] | undefined;
 
   return {
     chatboxes,
-    isLoading: isAuthenticated && !!workspaceId && chatboxes === undefined,
+    isLoading: isAuthenticated && !!projectId && chatboxes === undefined,
   };
 }
 

@@ -74,14 +74,14 @@ vi.mock("@/components/ui/json-editor", () => ({
   ),
 }));
 
-vi.mock("@/hooks/use-workspace-client-config-sync-pending", () => ({
-  useWorkspaceClientConfigSyncPending: () => false,
+vi.mock("@/hooks/use-project-client-config-sync-pending", () => ({
+  useProjectClientConfigSyncPending: () => false,
 }));
 
 describe("HostContextDialog", () => {
   beforeEach(() => {
-    useHostContextStore.getState().loadWorkspaceHostContext({
-      workspaceId: "workspace-1",
+    useHostContextStore.getState().loadProjectHostContext({
+      projectId: "project-1",
       defaultHostContext: { theme: "light" },
       savedHostContext: { theme: "light" },
     });
@@ -92,7 +92,7 @@ describe("HostContextDialog", () => {
 
     render(
       <HostContextDialog
-        activeWorkspaceId="workspace-1"
+        activeProjectId="project-1"
         open
         onOpenChange={onOpenChange}
         onSaveHostContext={vi.fn()}

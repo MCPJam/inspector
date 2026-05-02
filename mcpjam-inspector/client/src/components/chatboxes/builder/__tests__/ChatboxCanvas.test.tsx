@@ -141,10 +141,10 @@ describe("ChatboxCanvas", () => {
         welcomeDialog: { enabled: true, body: "" },
         feedbackDialog: { enabled: true, everyNToolCalls: 1, promptHint: "" },
       },
-      workspaceServers: [
+      projectServers: [
         {
           _id: "srv1",
-          workspaceId: "ws",
+          projectId: "ws",
           name: "Production MCP",
           enabled: true,
           transportType: "http",
@@ -193,7 +193,7 @@ describe("ChatboxCanvas", () => {
     );
   });
 
-  it("opens a workspace server picker from the host + control", () => {
+  it("opens a project server picker from the host + control", () => {
     const context: ChatboxBuilderContext = {
       chatbox: null,
       draft: {
@@ -211,10 +211,10 @@ describe("ChatboxCanvas", () => {
         welcomeDialog: { enabled: true, body: "" },
         feedbackDialog: { enabled: true, everyNToolCalls: 1, promptHint: "" },
       },
-      workspaceServers: [
+      projectServers: [
         {
           _id: "srv1",
-          workspaceId: "ws",
+          projectId: "ws",
           name: "HTTPS Server",
           enabled: true,
           transportType: "http",
@@ -244,30 +244,30 @@ describe("ChatboxCanvas", () => {
           onSelectNode={() => {}}
           onClearSelection={() => {}}
           canvasServerPicker={{
-            workspaceServers: context.workspaceServers,
+            projectServers: context.projectServers,
             selectedServerIds: [],
             onToggleServer: onToggle,
-            onOpenAddWorkspaceServer: onOpenAdd,
+            onOpenAddProjectServer: onOpenAdd,
           }}
         />
       </ReactFlowProvider>,
     );
 
     const addTrigger = document.querySelector<HTMLButtonElement>(
-      '[aria-label="Add workspace servers to chatbox"]',
+      '[aria-label="Add project servers to chatbox"]',
     );
     expect(addTrigger).not.toBeNull();
     fireEvent.click(addTrigger!);
 
     expect(
       screen.getByText(
-        "Pick HTTPS servers from your workspace for this chatbox.",
+        "Pick HTTPS servers from your project for this chatbox.",
       ),
     ).toBeInTheDocument();
     expect(screen.getByText("HTTPS Server")).toBeInTheDocument();
 
     fireEvent.click(
-      screen.getByRole("button", { name: /Add server to workspace/ }),
+      screen.getByRole("button", { name: /Add server to project/ }),
     );
     expect(onOpenAdd).toHaveBeenCalledTimes(1);
   });
@@ -297,10 +297,10 @@ describe("ChatboxCanvas", () => {
         welcomeDialog: { enabled: true, body: "" },
         feedbackDialog: { enabled: true, everyNToolCalls: 1, promptHint: "" },
       },
-      workspaceServers: [
+      projectServers: [
         {
           _id: "a",
-          workspaceId: "ws",
+          projectId: "ws",
           name: "A",
           enabled: true,
           transportType: "http",
@@ -310,7 +310,7 @@ describe("ChatboxCanvas", () => {
         },
         {
           _id: "b",
-          workspaceId: "ws",
+          projectId: "ws",
           name: "B",
           enabled: true,
           transportType: "http",
@@ -367,7 +367,7 @@ describe("ChatboxCanvas", () => {
 
     const server = {
       _id: "srv1",
-      workspaceId: "ws",
+      projectId: "ws",
       name: "S1",
       enabled: true,
       transportType: "http" as const,
@@ -383,7 +383,7 @@ describe("ChatboxCanvas", () => {
       minimalContext({
         ...baseDraft,
         selectedServerIds: ["srv1"],
-        workspaceServers: [server],
+        projectServers: [server],
       }),
     );
 
@@ -655,7 +655,7 @@ describe("ChatboxCanvas", () => {
 
 function minimalContext(
   overrides: Partial<ChatboxBuilderContext["draft"]> & {
-    workspaceServers?: ChatboxBuilderContext["workspaceServers"];
+    projectServers?: ChatboxBuilderContext["projectServers"];
   } = {},
 ): ChatboxBuilderContext {
   const draft = {
@@ -677,6 +677,6 @@ function minimalContext(
   return {
     chatbox: null,
     draft,
-    workspaceServers: overrides.workspaceServers ?? [],
+    projectServers: overrides.projectServers ?? [],
   };
 }

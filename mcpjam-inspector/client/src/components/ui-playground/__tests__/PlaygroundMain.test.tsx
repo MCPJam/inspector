@@ -145,9 +145,9 @@ vi.mock("convex/react", () => ({
   }),
 }));
 
-// Mock useViews (useWorkspaceServers)
+// Mock useViews (useProjectServers)
 vi.mock("@/hooks/useViews", () => ({
-  useWorkspaceServers: () => ({
+  useProjectServers: () => ({
     serversByName: new Map(),
   }),
 }));
@@ -487,8 +487,8 @@ const mockSharedAppState = {
   servers: {
     "test-server": { connectionStatus: "connected" },
   } as Record<string, { connectionStatus: string }>,
-  workspaces: {},
-  activeWorkspaceId: "default",
+  projects: {},
+  activeProjectId: "default",
 };
 
 vi.mock("@/state/app-state-context", () => ({
@@ -550,7 +550,7 @@ describe("PlaygroundMain", () => {
     mockPreferencesState.themePreset = "soft-pop";
     mockPreferencesState.hostStyle = "claude";
     useHostContextStore.setState({
-      activeWorkspaceId: null,
+      activeProjectId: null,
       defaultHostContext: {},
       savedHostContext: undefined,
       draftHostContext: {},
@@ -558,7 +558,7 @@ describe("PlaygroundMain", () => {
       hostContextError: null,
       isSaving: false,
       isDirty: false,
-      pendingWorkspaceId: null,
+      pendingProjectId: null,
       pendingSavedHostContext: undefined,
       isAwaitingRemoteEcho: false,
     });

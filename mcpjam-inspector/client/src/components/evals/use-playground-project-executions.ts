@@ -6,13 +6,13 @@ import type {
   SuiteDetailsQueryResponse,
 } from "./types";
 
-export type PlaygroundWorkspaceExecutionsStatus =
+export type PlaygroundProjectExecutionsStatus =
   | "idle"
   | "loading"
   | "ready"
   | "error";
 
-export function usePlaygroundWorkspaceExecutions({
+export function usePlaygroundProjectExecutions({
   enabled,
   suiteIds,
 }: {
@@ -22,7 +22,7 @@ export function usePlaygroundWorkspaceExecutions({
   const convex = useConvex();
   const suiteIdsFingerprint = [...suiteIds].sort().join("\0");
 
-  const [status, setStatus] = useState<PlaygroundWorkspaceExecutionsStatus>(
+  const [status, setStatus] = useState<PlaygroundProjectExecutionsStatus>(
     "idle",
   );
   const [cases, setCases] = useState<EvalCase[]>([]);

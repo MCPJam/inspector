@@ -11,7 +11,7 @@
 ## Why typed events?
 
 `logger.warn("something failed", { ... })` produces unstructured Axiom rows that are hard to query.
-`logger.event("tunnel.created", ...)` produces a row you can filter by `event`, `workspaceId`, `orgId`, `route`, etc. without grepping prose.
+`logger.event("tunnel.created", ...)` produces a row you can filter by `event`, `projectId`, `orgId`, `route`, etc. without grepping prose.
 
 ---
 
@@ -29,10 +29,10 @@ getRequestLogger(c, "routes.web.tools").event("mcp.tool.execution.failed", {
 });
 ```
 
-The request context (`workspaceId`, `orgId`, `workspaceRole`, etc.) is automatically
+The request context (`projectId`, `orgId`, `projectRole`, etc.) is automatically
 picked up from `c.var.requestLogContext`, which is populated by:
 1. `requestLogContextMiddleware` at request start (sets `requestId`, `route`, `method`)
-2. `authorizeServer` / `createAuthorizedManager` after Convex auth succeeds (sets workspace + user fields)
+2. `authorizeServer` / `createAuthorizedManager` after Convex auth succeeds (sets project + user fields)
 
 ---
 

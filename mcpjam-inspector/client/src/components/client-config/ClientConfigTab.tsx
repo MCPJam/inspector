@@ -3,13 +3,13 @@ import { toast } from "sonner";
 import { AlertTriangle, RotateCcw, Save } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { JsonEditor } from "@/components/ui/json-editor";
-import type { Workspace } from "@/state/app-types";
+import type { Project } from "@/state/app-types";
 import {
   getEffectiveServerClientCapabilities,
-  workspaceClientCapabilitiesNeedReconnect,
-  type WorkspaceConnectionConfigDraft,
+  projectClientCapabilitiesNeedReconnect,
+  type ProjectConnectionConfigDraft,
 } from "@/lib/client-config";
-import { useWorkspaceClientConfigSyncPending } from "@/hooks/use-workspace-client-config-sync-pending";
+import { useProjectClientConfigSyncPending } from "@/hooks/use-project-client-config-sync-pending";
 import { useClientConfigStore } from "@/stores/client-config-store";
 
 /** Toolbar + status bar chrome around the editable JSON body. */
@@ -53,17 +53,17 @@ function useContentSizedJsonHeight(
 }
 
 interface ClientConfigTabProps {
-  activeWorkspaceId: string;
-  workspace?: Workspace;
+  activeProjectId: string;
+  project?: Project;
   onSaveClientConfig: (
-    workspaceId: string,
-    clientConfig: WorkspaceConnectionConfigDraft | undefined,
+    projectId: string,
+    clientConfig: ProjectConnectionConfigDraft | undefined,
   ) => Promise<void>;
 }
 
 export function ClientConfigTab({
-  activeWorkspaceId,
-  workspace,
+  activeProjectId,
+  project,
   onSaveClientConfig,
 }: ClientConfigTabProps) {
   const draftConfig = useClientConfigStore((s) => s.draftConfig);
@@ -87,7 +87,7 @@ export function ClientConfigTab({
   );
   const resetToBaseline = useClientConfigStore((s) => s.resetToBaseline);
   const failSave = useClientConfigStore((s) => s.failSave);
-  const syncPending = useWorkspaceClientConfigSyncPending(activeWorkspaceId);
+  const syncPending = useProjectClientConfigSyncPending(activeProjectId);
 
   const connectionDefaultsHeight = useContentSizedJsonHeight(
     connectionDefaultsText,
@@ -103,18 +103,18 @@ export function ClientConfigTab({
   );
 
   const reconnectServers = useMemo(() => {
-    if (!workspace) {
+    if (!project) {
       return [];
     }
 
-    return Object.values(workspace.servers).filter((server) => {
+    return Object.values(project.servers).filter((server) => {
       if (server.connectionStatus !== "connected") {
         return false;
       }
 
-      return workspaceClientCapabilitiesNeedReconnect({
+      return projectClientCapabilitiesNeedReconnect({
         desiredCapabilities: getEffectiveServerClientCapabilities({
-          workspaceClientConfig: workspace.clientConfig,
+          projectClientConfig: project.clientConfig,
           serverCapabilities: server.config.capabilities as
             | Record<string, unknown>
             | undefined,
@@ -123,7 +123,7 @@ export function ClientConfigTab({
           ?.clientCapabilities as Record<string, unknown> | undefined,
       });
     });
-  }, [workspace]);
+  }, [project]);
 
   const handleSave = async () => {
     if (!draftConfig) {
@@ -135,8 +135,8 @@ export function ClientConfigTab({
     }
 
     try {
-      await onSaveClientConfig(activeWorkspaceId, draftConfig);
-      toast.success("Workspace connection settings saved.");
+      await onSaveClientConfig(activeProjectId, draftConfig);
+      toast.success("Project connection settings saved.");
     } catch {
       failSave();
     }

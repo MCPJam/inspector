@@ -1,40 +1,35 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { toast } from "sonner";
-import type { AppAction, AppState, Workspace } from "@/state/app-types";
-import { useWorkspaceState } from "../use-workspace-state";
+import type { AppAction, AppState, Project } from "@/state/app-types";
+import { useProjectState } from "../use-project-state";
 import { useClientConfigStore } from "@/stores/client-config-store";
 import { useHostContextStore } from "@/stores/host-context-store";
 import type {
-  WorkspaceClientConfig,
-  WorkspaceConnectionConfigDraft,
-  WorkspaceHostContextDraft,
+  ProjectClientConfig,
+  ProjectConnectionConfigDraft,
+  ProjectHostContextDraft,
 } from "@/lib/client-config";
 
 const {
-  createWorkspaceMock,
-  ensureDefaultWorkspaceMock,
+  createProjectMock,
+  ensureDefaultProjectMock,
   updateClientConfigMock,
-  updateWorkspaceMock,
-  deleteWorkspaceMock,
-  workspaceQueryState,
-  workspaceServersQueryState,
+  updateProjectMock,
+  deleteProjectMock,
+  projectQueryState,
   organizationBillingStatusState,
   useOrganizationBillingStatusMock,
   serializeServersForSharingMock,
 } = vi.hoisted(() => ({
-  createWorkspaceMock: vi.fn(),
-  ensureDefaultWorkspaceMock: vi.fn(),
+  createProjectMock: vi.fn(),
+  ensureDefaultProjectMock: vi.fn(),
   updateClientConfigMock: vi.fn(),
-  updateWorkspaceMock: vi.fn(),
-  deleteWorkspaceMock: vi.fn(),
-  workspaceQueryState: {
-    allWorkspaces: undefined as any,
-    workspaces: undefined as any,
-    isLoading: false,
-  },
-  workspaceServersQueryState: {
-    servers: undefined as any,
+  updateProjectMock: vi.fn(),
+  deleteProjectMock: vi.fn(),
+  projectQueryState: {
+    allProjects: undefined as any,
+    projects: undefined as any,
     isLoading: false,
   },
   organizationBillingStatusState: {
@@ -56,18 +51,18 @@ vi.mock("sonner", () => ({
   },
 }));
 
-vi.mock("../useWorkspaces", () => ({
-  useWorkspaceQueries: () => workspaceQueryState,
-  useWorkspaceMutations: () => ({
-    createWorkspace: createWorkspaceMock,
-    ensureDefaultWorkspace: ensureDefaultWorkspaceMock,
-    updateWorkspace: updateWorkspaceMock,
+vi.mock("../useProjects", () => ({
+  useProjectQueries: () => projectQueryState,
+  useProjectMutations: () => ({
+    createProject: createProjectMock,
+    ensureDefaultProject: ensureDefaultProjectMock,
+    updateProject: updateProjectMock,
     updateClientConfig: updateClientConfigMock,
-    deleteWorkspace: deleteWorkspaceMock,
+    deleteProject: deleteProjectMock,
   }),
-  useWorkspaceServers: () => ({
-    servers: workspaceServersQueryState.servers,
-    isLoading: workspaceServersQueryState.isLoading,
+  useProjectServers: () => ({
+    servers: undefined,
+    isLoading: false,
   }),
 }));
 
@@ -76,16 +71,16 @@ vi.mock("../useOrganizationBilling", () => ({
     useOrganizationBillingStatusMock(...args),
 }));
 
-vi.mock("@/lib/workspace-serialization", () => ({
+vi.mock("@/lib/project-serialization", () => ({
   deserializeServersFromConvex: vi.fn((servers) => servers ?? {}),
   serializeServersForSharing: serializeServersForSharingMock,
 }));
 
-function createSyntheticDefaultWorkspace(): Workspace {
+function createSyntheticDefaultProject(): Project {
   return {
     id: "default",
     name: "Default",
-    description: "Default workspace",
+    description: "Default project",
     servers: {},
     createdAt: new Date("2026-01-01T00:00:00.000Z"),
     updatedAt: new Date("2026-01-01T00:00:00.000Z"),
@@ -93,13 +88,13 @@ function createSyntheticDefaultWorkspace(): Workspace {
   };
 }
 
-function createLocalWorkspace(
+function createLocalProject(
   id: string,
-  overrides: Partial<Workspace> = {},
-): Workspace {
+  overrides: Partial<Project> = {},
+): Project {
   return {
     id,
-    name: `Workspace ${id}`,
+    name: `Project ${id}`,
     servers: {},
     createdAt: new Date("2026-01-01T00:00:00.000Z"),
     updatedAt: new Date("2026-01-01T00:00:00.000Z"),
@@ -107,11 +102,11 @@ function createLocalWorkspace(
   };
 }
 
-function createAppState(workspaces: Record<string, Workspace>): AppState {
-  const firstWorkspaceId = Object.keys(workspaces)[0] ?? "none";
+function createAppState(projects: Record<string, Project>): AppState {
+  const firstProjectId = Object.keys(projects)[0] ?? "none";
   return {
-    workspaces,
-    activeWorkspaceId: firstWorkspaceId,
+    projects,
+    activeProjectId: firstProjectId,
     servers: {},
     selectedServer: "none",
     selectedMultipleServers: [],
@@ -119,7 +114,7 @@ function createAppState(workspaces: Record<string, Workspace>): AppState {
   };
 }
 
-function renderUseWorkspaceState({
+function renderUseProjectState({
   appState,
   activeOrganizationId,
   routeOrganizationId,
@@ -157,7 +152,7 @@ function renderUseWorkspaceState({
       routeOrganizationIdOverride?: string;
       validOrganizationIdsOverride?: string[];
     }) =>
-      useWorkspaceState({
+      useProjectState({
         appState,
         dispatch,
         isAuthenticated,
@@ -196,7 +191,7 @@ function renderUseWorkspaceState({
   };
 }
 
-describe("useWorkspaceState automatic workspace creation", () => {
+describe("useProjectState automatic project creation", () => {
   afterEach(() => {
     vi.useRealTimers();
   });
@@ -205,22 +200,20 @@ describe("useWorkspaceState automatic workspace creation", () => {
     vi.clearAllMocks();
     vi.useRealTimers();
     localStorage.clear();
-    createWorkspaceMock.mockResolvedValue("remote-workspace-id");
-    ensureDefaultWorkspaceMock.mockResolvedValue("default-workspace-id");
+    createProjectMock.mockResolvedValue("remote-project-id");
+    ensureDefaultProjectMock.mockResolvedValue("default-project-id");
     updateClientConfigMock.mockResolvedValue(undefined);
-    updateWorkspaceMock.mockResolvedValue("remote-workspace-id");
-    deleteWorkspaceMock.mockResolvedValue(undefined);
-    workspaceQueryState.allWorkspaces = [];
-    workspaceQueryState.workspaces = [];
-    workspaceQueryState.isLoading = false;
-    workspaceServersQueryState.servers = undefined;
-    workspaceServersQueryState.isLoading = false;
+    updateProjectMock.mockResolvedValue("remote-project-id");
+    deleteProjectMock.mockResolvedValue(undefined);
+    projectQueryState.allProjects = [];
+    projectQueryState.projects = [];
+    projectQueryState.isLoading = false;
     organizationBillingStatusState.value = undefined;
     useOrganizationBillingStatusMock.mockImplementation(
       () => organizationBillingStatusState.value,
     );
     useClientConfigStore.setState({
-      activeWorkspaceId: null,
+      activeProjectId: null,
       defaultConfig: null,
       savedConfig: undefined,
       draftConfig: null,
@@ -230,12 +223,12 @@ describe("useWorkspaceState automatic workspace creation", () => {
       connectionDefaultsError: null,
       isSaving: false,
       isDirty: false,
-      pendingWorkspaceId: null,
+      pendingProjectId: null,
       pendingSavedConfig: undefined,
       isAwaitingRemoteEcho: false,
     });
     useHostContextStore.setState({
-      activeWorkspaceId: null,
+      activeProjectId: null,
       defaultHostContext: {},
       savedHostContext: undefined,
       draftHostContext: {},
@@ -243,17 +236,17 @@ describe("useWorkspaceState automatic workspace creation", () => {
       hostContextError: null,
       isSaving: false,
       isDirty: false,
-      pendingWorkspaceId: null,
+      pendingProjectId: null,
       pendingSavedHostContext: undefined,
       isAwaitingRemoteEcho: false,
     });
   });
 
-  it("ensures one initial workspace per empty organization and dedupes rerenders", async () => {
-    workspaceQueryState.allWorkspaces = [
+  it("ensures one initial project per empty organization and dedupes rerenders", async () => {
+    projectQueryState.allProjects = [
       {
         _id: "remote-1",
-        name: "Existing workspace",
+        name: "Existing project",
         servers: {},
         ownerId: "user-1",
         organizationId: "org-a",
@@ -261,46 +254,46 @@ describe("useWorkspaceState automatic workspace creation", () => {
         updatedAt: 1,
       },
     ];
-    workspaceQueryState.workspaces = [];
+    projectQueryState.projects = [];
 
     const appState = createAppState({
-      default: createSyntheticDefaultWorkspace(),
+      default: createSyntheticDefaultProject(),
     });
-    const { rerender } = renderUseWorkspaceState({
+    const { rerender } = renderUseProjectState({
       appState,
       activeOrganizationId: "org-b",
     });
 
     await waitFor(() => {
-      expect(ensureDefaultWorkspaceMock).toHaveBeenCalledTimes(1);
+      expect(ensureDefaultProjectMock).toHaveBeenCalledTimes(1);
     });
 
-    expect(ensureDefaultWorkspaceMock).toHaveBeenLastCalledWith({
+    expect(ensureDefaultProjectMock).toHaveBeenLastCalledWith({
       organizationId: "org-b",
     });
-    expect(createWorkspaceMock).not.toHaveBeenCalled();
+    expect(createProjectMock).not.toHaveBeenCalled();
 
     rerender({ organizationId: "org-b" });
     await waitFor(() => {
-      expect(ensureDefaultWorkspaceMock).toHaveBeenCalledTimes(1);
+      expect(ensureDefaultProjectMock).toHaveBeenCalledTimes(1);
     });
 
     rerender({ organizationId: "org-c" });
     await waitFor(() => {
-      expect(ensureDefaultWorkspaceMock).toHaveBeenCalledTimes(2);
+      expect(ensureDefaultProjectMock).toHaveBeenCalledTimes(2);
     });
 
-    expect(ensureDefaultWorkspaceMock).toHaveBeenLastCalledWith({
+    expect(ensureDefaultProjectMock).toHaveBeenLastCalledWith({
       organizationId: "org-c",
     });
   });
 
   it("skips organization billing status queries while Convex auth is unavailable", () => {
     const appState = createAppState({
-      default: createSyntheticDefaultWorkspace(),
+      default: createSyntheticDefaultProject(),
     });
 
-    renderUseWorkspaceState({
+    renderUseProjectState({
       appState,
       activeOrganizationId: "org-auth",
       isAuthenticated: false,
@@ -313,10 +306,10 @@ describe("useWorkspaceState automatic workspace creation", () => {
 
   it("skips organization billing status queries for a stale stored org", () => {
     const appState = createAppState({
-      default: createSyntheticDefaultWorkspace(),
+      default: createSyntheticDefaultProject(),
     });
 
-    renderUseWorkspaceState({
+    renderUseProjectState({
       appState,
       activeOrganizationId: "org-stale",
       validOrganizationIds: ["org-live"],
@@ -327,11 +320,11 @@ describe("useWorkspaceState automatic workspace creation", () => {
     });
   });
 
-  it("prefers the route organization for workspace actions while active org state catches up", async () => {
-    workspaceQueryState.allWorkspaces = [
+  it("prefers the route organization for project actions while active org state catches up", async () => {
+    projectQueryState.allProjects = [
       {
         _id: "remote-1",
-        name: "Existing workspace",
+        name: "Existing project",
         servers: {},
         ownerId: "user-1",
         organizationId: "org-stale",
@@ -339,43 +332,43 @@ describe("useWorkspaceState automatic workspace creation", () => {
         updatedAt: 1,
       },
     ];
-    workspaceQueryState.workspaces = [];
+    projectQueryState.projects = [];
 
     const appState = createAppState({
-      default: createSyntheticDefaultWorkspace(),
+      default: createSyntheticDefaultProject(),
     });
-    const { result } = renderUseWorkspaceState({
+    const { result } = renderUseProjectState({
       appState,
       activeOrganizationId: "org-stale",
       routeOrganizationId: "org-route",
     });
 
     await waitFor(() => {
-      expect(ensureDefaultWorkspaceMock).toHaveBeenCalledWith({
+      expect(ensureDefaultProjectMock).toHaveBeenCalledWith({
         organizationId: "org-route",
       });
     });
 
     await act(async () => {
-      await result.current.handleCreateWorkspace("Workspace Two");
+      await result.current.handleCreateProject("Project Two");
     });
 
-    expect(createWorkspaceMock).toHaveBeenCalledWith({
+    expect(createProjectMock).toHaveBeenCalledWith({
       organizationId: "org-route",
-      name: "Workspace Two",
+      name: "Project Two",
       clientConfig: undefined,
       servers: {},
     });
   });
 
-  it("does not ensure a default workspace until organization selection resolves", async () => {
-    workspaceQueryState.allWorkspaces = [];
-    workspaceQueryState.workspaces = [];
+  it("does not ensure a default project until organization selection resolves", async () => {
+    projectQueryState.allProjects = [];
+    projectQueryState.projects = [];
 
     const appState = createAppState({
-      default: createSyntheticDefaultWorkspace(),
+      default: createSyntheticDefaultProject(),
     });
-    const { rerender } = renderUseWorkspaceState({
+    const { rerender } = renderUseProjectState({
       appState,
       activeOrganizationId: undefined,
       hasOrganizations: true,
@@ -384,7 +377,7 @@ describe("useWorkspaceState automatic workspace creation", () => {
     });
 
     await act(async () => {});
-    expect(ensureDefaultWorkspaceMock).not.toHaveBeenCalled();
+    expect(ensureDefaultProjectMock).not.toHaveBeenCalled();
 
     rerender({
       organizationId: "org-live",
@@ -395,24 +388,24 @@ describe("useWorkspaceState automatic workspace creation", () => {
     });
 
     await waitFor(() => {
-      expect(ensureDefaultWorkspaceMock).toHaveBeenCalledWith({
+      expect(ensureDefaultProjectMock).toHaveBeenCalledWith({
         organizationId: "org-live",
       });
     });
   });
 
-  it("does not migrate local workspaces until organization selection resolves", async () => {
-    workspaceQueryState.allWorkspaces = [];
-    workspaceQueryState.workspaces = [];
+  it("does not migrate local projects until organization selection resolves", async () => {
+    projectQueryState.allProjects = [];
+    projectQueryState.projects = [];
 
     const appState = createAppState({
-      default: createSyntheticDefaultWorkspace(),
-      "local-1": createLocalWorkspace("local-1", {
-        name: "Imported workspace",
+      default: createSyntheticDefaultProject(),
+      "local-1": createLocalProject("local-1", {
+        name: "Imported project",
         organizationId: "org-live",
       }),
     });
-    const { rerender } = renderUseWorkspaceState({
+    const { rerender } = renderUseProjectState({
       appState,
       activeOrganizationId: undefined,
       hasOrganizations: true,
@@ -421,7 +414,7 @@ describe("useWorkspaceState automatic workspace creation", () => {
     });
 
     await act(async () => {});
-    expect(createWorkspaceMock).not.toHaveBeenCalled();
+    expect(createProjectMock).not.toHaveBeenCalled();
 
     rerender({
       organizationId: "org-live",
@@ -432,9 +425,9 @@ describe("useWorkspaceState automatic workspace creation", () => {
     });
 
     await waitFor(() => {
-      expect(createWorkspaceMock).toHaveBeenCalledWith({
+      expect(createProjectMock).toHaveBeenCalledWith({
         organizationId: "org-live",
-        name: "Imported workspace",
+        name: "Imported project",
         description: undefined,
         clientConfig: undefined,
         servers: {},
@@ -442,14 +435,14 @@ describe("useWorkspaceState automatic workspace creation", () => {
     });
   });
 
-  it("does not create a cloud workspace until organization selection resolves", async () => {
-    workspaceQueryState.allWorkspaces = [];
-    workspaceQueryState.workspaces = [];
+  it("does not create a cloud project until organization selection resolves", async () => {
+    projectQueryState.allProjects = [];
+    projectQueryState.projects = [];
 
     const appState = createAppState({
-      default: createSyntheticDefaultWorkspace(),
+      default: createSyntheticDefaultProject(),
     });
-    const { result } = renderUseWorkspaceState({
+    const { result } = renderUseProjectState({
       appState,
       activeOrganizationId: undefined,
       hasOrganizations: true,
@@ -458,20 +451,20 @@ describe("useWorkspaceState automatic workspace creation", () => {
     });
 
     await act(async () => {
-      await result.current.handleCreateWorkspace("Workspace Two");
+      await result.current.handleCreateProject("Project Two");
     });
 
-    expect(createWorkspaceMock).not.toHaveBeenCalled();
+    expect(createProjectMock).not.toHaveBeenCalled();
     expect(toast.error).toHaveBeenCalledWith(
-      "Create or join an organization to create workspaces.",
+      "Create or join an organization to create projects.",
     );
   });
 
-  it("does not duplicate a cloud workspace until organization selection resolves", async () => {
-    workspaceQueryState.allWorkspaces = [
+  it("does not duplicate a cloud project until organization selection resolves", async () => {
+    projectQueryState.allProjects = [
       {
         _id: "remote-1",
-        name: "Workspace One",
+        name: "Project One",
         servers: {},
         ownerId: "user-1",
         organizationId: "org-pending",
@@ -479,12 +472,12 @@ describe("useWorkspaceState automatic workspace creation", () => {
         updatedAt: 1,
       },
     ];
-    workspaceQueryState.workspaces = [...workspaceQueryState.allWorkspaces];
+    projectQueryState.projects = [...projectQueryState.allProjects];
 
     const appState = createAppState({
-      default: createSyntheticDefaultWorkspace(),
+      default: createSyntheticDefaultProject(),
     });
-    const { result } = renderUseWorkspaceState({
+    const { result } = renderUseProjectState({
       appState,
       activeOrganizationId: undefined,
       hasOrganizations: true,
@@ -493,26 +486,26 @@ describe("useWorkspaceState automatic workspace creation", () => {
     });
 
     await act(async () => {
-      await result.current.handleDuplicateWorkspace(
+      await result.current.handleDuplicateProject(
         "remote-1",
-        "Workspace Copy",
+        "Project Copy",
       );
     });
 
-    expect(createWorkspaceMock).not.toHaveBeenCalled();
+    expect(createProjectMock).not.toHaveBeenCalled();
     expect(toast.error).toHaveBeenCalledWith(
-      "Create or join an organization to create workspaces.",
+      "Create or join an organization to create projects.",
     );
   });
 
-  it("does not import a cloud workspace until organization selection resolves", async () => {
-    workspaceQueryState.allWorkspaces = [];
-    workspaceQueryState.workspaces = [];
+  it("does not import a cloud project until organization selection resolves", async () => {
+    projectQueryState.allProjects = [];
+    projectQueryState.projects = [];
 
     const appState = createAppState({
-      default: createSyntheticDefaultWorkspace(),
+      default: createSyntheticDefaultProject(),
     });
-    const { result } = renderUseWorkspaceState({
+    const { result } = renderUseProjectState({
       appState,
       activeOrganizationId: undefined,
       hasOrganizations: true,
@@ -521,24 +514,24 @@ describe("useWorkspaceState automatic workspace creation", () => {
     });
 
     await act(async () => {
-      await result.current.handleImportWorkspace(
-        createLocalWorkspace("import-1", {
-          name: "Imported Workspace",
+      await result.current.handleImportProject(
+        createLocalProject("import-1", {
+          name: "Imported Project",
         }),
       );
     });
 
-    expect(createWorkspaceMock).not.toHaveBeenCalled();
+    expect(createProjectMock).not.toHaveBeenCalled();
     expect(toast.error).toHaveBeenCalledWith(
-      "Create or join an organization to create workspaces.",
+      "Create or join an organization to create projects.",
     );
   });
 
-  it("migrates real local workspaces with createWorkspace and persists the shared workspace id", async () => {
+  it("migrates real local projects with createProject and persists the shared project id", async () => {
     const appState = createAppState({
-      default: createSyntheticDefaultWorkspace(),
-      "local-1": createLocalWorkspace("local-1", {
-        name: "Imported workspace",
+      default: createSyntheticDefaultProject(),
+      "local-1": createLocalProject("local-1", {
+        name: "Imported project",
         description: "Needs migration",
         organizationId: "org-migrate",
         servers: {
@@ -553,64 +546,64 @@ describe("useWorkspaceState automatic workspace creation", () => {
       }),
     });
 
-    const { dispatch } = renderUseWorkspaceState({
+    const { dispatch } = renderUseProjectState({
       appState,
       activeOrganizationId: "org-migrate",
     });
 
     await waitFor(() => {
-      expect(createWorkspaceMock).toHaveBeenCalledTimes(1);
+      expect(createProjectMock).toHaveBeenCalledTimes(1);
     });
 
     expect(serializeServersForSharingMock).toHaveBeenCalledWith(
-      appState.workspaces["local-1"].servers,
+      appState.projects["local-1"].servers,
     );
-    expect(createWorkspaceMock).toHaveBeenCalledWith({
+    expect(createProjectMock).toHaveBeenCalledWith({
       organizationId: "org-migrate",
-      name: "Imported workspace",
+      name: "Imported project",
       description: "Needs migration",
-      servers: appState.workspaces["local-1"].servers,
+      servers: appState.projects["local-1"].servers,
     });
     await waitFor(() => {
       expect(dispatch).toHaveBeenCalledWith({
-        type: "UPDATE_WORKSPACE",
-        workspaceId: "local-1",
+        type: "UPDATE_PROJECT",
+        projectId: "local-1",
         updates: {
-          sharedWorkspaceId: "remote-workspace-id",
+          sharedProjectId: "remote-project-id",
           organizationId: "org-migrate",
         },
       });
     });
-    expect(ensureDefaultWorkspaceMock).not.toHaveBeenCalled();
+    expect(ensureDefaultProjectMock).not.toHaveBeenCalled();
   });
 
   it("treats the empty synthetic default as ensure-default only, not a migration candidate", async () => {
     const appState = createAppState({
-      default: createSyntheticDefaultWorkspace(),
+      default: createSyntheticDefaultProject(),
     });
-    const { rerender } = renderUseWorkspaceState({
+    const { rerender } = renderUseProjectState({
       appState,
       activeOrganizationId: "org-empty",
     });
 
     await waitFor(() => {
-      expect(ensureDefaultWorkspaceMock).toHaveBeenCalledTimes(1);
+      expect(ensureDefaultProjectMock).toHaveBeenCalledTimes(1);
     });
 
-    expect(ensureDefaultWorkspaceMock).toHaveBeenCalledWith({
+    expect(ensureDefaultProjectMock).toHaveBeenCalledWith({
       organizationId: "org-empty",
     });
     expect(serializeServersForSharingMock).not.toHaveBeenCalled();
-    expect(createWorkspaceMock).not.toHaveBeenCalled();
+    expect(createProjectMock).not.toHaveBeenCalled();
 
     rerender({ organizationId: "org-empty" });
     await waitFor(() => {
-      expect(ensureDefaultWorkspaceMock).toHaveBeenCalledTimes(1);
+      expect(ensureDefaultProjectMock).toHaveBeenCalledTimes(1);
     });
   });
 
   it("keeps authenticated client-config saves pending until the remote echo arrives", async () => {
-    const savedConfig: WorkspaceConnectionConfigDraft = {
+    const savedConfig: ProjectConnectionConfigDraft = {
       version: 1,
       connectionDefaults: {
         headers: {},
@@ -622,7 +615,7 @@ describe("useWorkspaceState automatic workspace creation", () => {
         },
       },
     };
-    const expectedPersistedClientConfig: WorkspaceClientConfig = {
+    const expectedPersistedClientConfig: ProjectClientConfig = {
       version: 1,
       connectionDefaults: {
         headers: {},
@@ -632,10 +625,10 @@ describe("useWorkspaceState automatic workspace creation", () => {
       hostContext: {},
     };
 
-    workspaceQueryState.allWorkspaces = [
+    projectQueryState.allProjects = [
       {
         _id: "remote-1",
-        name: "Remote workspace",
+        name: "Remote project",
         servers: {},
         ownerId: "user-1",
         createdAt: 1,
@@ -643,13 +636,13 @@ describe("useWorkspaceState automatic workspace creation", () => {
         clientConfig: undefined,
       },
     ];
-    workspaceQueryState.workspaces = [...workspaceQueryState.allWorkspaces];
-    localStorage.setItem("convex-active-workspace-id", "remote-1");
+    projectQueryState.projects = [...projectQueryState.allProjects];
+    localStorage.setItem("convex-active-project-id", "remote-1");
 
     const appState = createAppState({
-      default: createSyntheticDefaultWorkspace(),
+      default: createSyntheticDefaultProject(),
     });
-    const { result, rerender } = renderUseWorkspaceState({ appState });
+    const { result, rerender } = renderUseProjectState({ appState });
 
     let resolved = false;
     const savePromise = result.current
@@ -660,7 +653,7 @@ describe("useWorkspaceState automatic workspace creation", () => {
 
     await waitFor(() => {
       expect(updateClientConfigMock).toHaveBeenCalledWith({
-        workspaceId: "remote-1",
+        projectId: "remote-1",
         clientConfig: expectedPersistedClientConfig,
       });
     });
@@ -668,13 +661,13 @@ describe("useWorkspaceState automatic workspace creation", () => {
     expect(useClientConfigStore.getState().isAwaitingRemoteEcho).toBe(true);
     expect(resolved).toBe(false);
 
-    workspaceQueryState.allWorkspaces = [
+    projectQueryState.allProjects = [
       {
-        ...workspaceQueryState.allWorkspaces[0],
+        ...projectQueryState.allProjects[0],
         clientConfig: expectedPersistedClientConfig,
       },
     ];
-    workspaceQueryState.workspaces = [...workspaceQueryState.allWorkspaces];
+    projectQueryState.projects = [...projectQueryState.allProjects];
     rerender({ organizationId: undefined });
 
     await waitFor(() => {
@@ -684,49 +677,49 @@ describe("useWorkspaceState automatic workspace creation", () => {
     await savePromise;
   });
 
-  it("composes host-context saves with the target workspace connection config", async () => {
-    const remoteOneClientConfig: WorkspaceClientConfig = {
+  it("composes host-context saves with the target project connection config", async () => {
+    const remoteOneClientConfig: ProjectClientConfig = {
       version: 1,
       connectionDefaults: {
-        headers: { "x-workspace": "one" },
+        headers: { "x-project": "one" },
         requestTimeout: 1111,
       },
       clientCapabilities: {
         experimental: {
-          workspaceOne: true,
+          projectOne: true,
         },
       },
       hostContext: {
         locale: "en-US",
       },
     };
-    const remoteTwoClientConfig: WorkspaceClientConfig = {
+    const remoteTwoClientConfig: ProjectClientConfig = {
       version: 1,
       connectionDefaults: {
-        headers: { "x-workspace": "two" },
+        headers: { "x-project": "two" },
         requestTimeout: 2222,
       },
       clientCapabilities: {
         experimental: {
-          workspaceTwo: true,
+          projectTwo: true,
         },
       },
       hostContext: {
         locale: "en-GB",
       },
     };
-    const savedHostContext: WorkspaceHostContextDraft = {
+    const savedHostContext: ProjectHostContextDraft = {
       theme: "dark",
     };
-    const expectedPersistedClientConfig: WorkspaceClientConfig = {
+    const expectedPersistedClientConfig: ProjectClientConfig = {
       ...remoteTwoClientConfig,
       hostContext: savedHostContext,
     };
 
-    workspaceQueryState.allWorkspaces = [
+    projectQueryState.allProjects = [
       {
         _id: "remote-1",
-        name: "Remote workspace 1",
+        name: "Remote project 1",
         servers: {},
         ownerId: "user-1",
         createdAt: 1,
@@ -735,7 +728,7 @@ describe("useWorkspaceState automatic workspace creation", () => {
       },
       {
         _id: "remote-2",
-        name: "Remote workspace 2",
+        name: "Remote project 2",
         servers: {},
         ownerId: "user-1",
         createdAt: 2,
@@ -743,14 +736,14 @@ describe("useWorkspaceState automatic workspace creation", () => {
         clientConfig: remoteTwoClientConfig,
       },
     ];
-    workspaceQueryState.workspaces = [...workspaceQueryState.allWorkspaces];
-    localStorage.setItem("convex-active-workspace-id", "remote-1");
+    projectQueryState.projects = [...projectQueryState.allProjects];
+    localStorage.setItem("convex-active-project-id", "remote-1");
     useClientConfigStore.setState({
-      activeWorkspaceId: "remote-1",
+      activeProjectId: "remote-1",
       savedConfig: {
         version: 1,
         connectionDefaults: {
-          headers: { "x-workspace": "stale" },
+          headers: { "x-project": "stale" },
           requestTimeout: 9999,
         },
         clientCapabilities: {
@@ -763,7 +756,7 @@ describe("useWorkspaceState automatic workspace creation", () => {
       draftConfig: {
         version: 1,
         connectionDefaults: {
-          headers: { "x-workspace": "draft" },
+          headers: { "x-project": "draft" },
           requestTimeout: 7777,
         },
         clientCapabilities: {
@@ -775,9 +768,9 @@ describe("useWorkspaceState automatic workspace creation", () => {
     });
 
     const appState = createAppState({
-      default: createSyntheticDefaultWorkspace(),
+      default: createSyntheticDefaultProject(),
     });
-    const { result, rerender } = renderUseWorkspaceState({ appState });
+    const { result, rerender } = renderUseProjectState({ appState });
 
     const savePromise = result.current.handleUpdateHostContext(
       "remote-2",
@@ -786,61 +779,61 @@ describe("useWorkspaceState automatic workspace creation", () => {
 
     await waitFor(() => {
       expect(updateClientConfigMock).toHaveBeenCalledWith({
-        workspaceId: "remote-2",
+        projectId: "remote-2",
         clientConfig: expectedPersistedClientConfig,
       });
     });
 
-    workspaceQueryState.allWorkspaces = [
-      workspaceQueryState.allWorkspaces[0],
+    projectQueryState.allProjects = [
+      projectQueryState.allProjects[0],
       {
-        ...workspaceQueryState.allWorkspaces[1],
+        ...projectQueryState.allProjects[1],
         clientConfig: expectedPersistedClientConfig,
       },
     ];
-    workspaceQueryState.workspaces = [...workspaceQueryState.allWorkspaces];
+    projectQueryState.projects = [...projectQueryState.allProjects];
     rerender({ organizationId: undefined });
 
     await savePromise;
   });
 
-  it("composes connection-config saves with the target workspace host context", async () => {
-    const remoteOneClientConfig: WorkspaceClientConfig = {
+  it("composes connection-config saves with the target project host context", async () => {
+    const remoteOneClientConfig: ProjectClientConfig = {
       version: 1,
       connectionDefaults: {
-        headers: { "x-workspace": "one" },
+        headers: { "x-project": "one" },
         requestTimeout: 1111,
       },
       clientCapabilities: {
         experimental: {
-          workspaceOne: true,
+          projectOne: true,
         },
       },
       hostContext: {
         locale: "en-US",
       },
     };
-    const remoteTwoHostContext: WorkspaceHostContextDraft = {
+    const remoteTwoHostContext: ProjectHostContextDraft = {
       locale: "en-GB",
       theme: "light",
     };
-    const remoteTwoClientConfig: WorkspaceClientConfig = {
+    const remoteTwoClientConfig: ProjectClientConfig = {
       version: 1,
       connectionDefaults: {
-        headers: { "x-workspace": "two" },
+        headers: { "x-project": "two" },
         requestTimeout: 2222,
       },
       clientCapabilities: {
         experimental: {
-          workspaceTwo: true,
+          projectTwo: true,
         },
       },
       hostContext: remoteTwoHostContext,
     };
-    const savedConnectionConfig: WorkspaceConnectionConfigDraft = {
+    const savedConnectionConfig: ProjectConnectionConfigDraft = {
       version: 1,
       connectionDefaults: {
-        headers: { "x-workspace": "updated" },
+        headers: { "x-project": "updated" },
         requestTimeout: 3333,
       },
       clientCapabilities: {
@@ -849,17 +842,17 @@ describe("useWorkspaceState automatic workspace creation", () => {
         },
       },
     };
-    const expectedPersistedClientConfig: WorkspaceClientConfig = {
+    const expectedPersistedClientConfig: ProjectClientConfig = {
       version: 1,
       connectionDefaults: savedConnectionConfig.connectionDefaults,
       clientCapabilities: savedConnectionConfig.clientCapabilities,
       hostContext: remoteTwoHostContext,
     };
 
-    workspaceQueryState.allWorkspaces = [
+    projectQueryState.allProjects = [
       {
         _id: "remote-1",
-        name: "Remote workspace 1",
+        name: "Remote project 1",
         servers: {},
         ownerId: "user-1",
         createdAt: 1,
@@ -868,7 +861,7 @@ describe("useWorkspaceState automatic workspace creation", () => {
       },
       {
         _id: "remote-2",
-        name: "Remote workspace 2",
+        name: "Remote project 2",
         servers: {},
         ownerId: "user-1",
         createdAt: 2,
@@ -876,10 +869,10 @@ describe("useWorkspaceState automatic workspace creation", () => {
         clientConfig: remoteTwoClientConfig,
       },
     ];
-    workspaceQueryState.workspaces = [...workspaceQueryState.allWorkspaces];
-    localStorage.setItem("convex-active-workspace-id", "remote-1");
+    projectQueryState.projects = [...projectQueryState.allProjects];
+    localStorage.setItem("convex-active-project-id", "remote-1");
     useHostContextStore.setState({
-      activeWorkspaceId: "remote-1",
+      activeProjectId: "remote-1",
       savedHostContext: {
         locale: "stale-locale",
         theme: "dark",
@@ -892,9 +885,9 @@ describe("useWorkspaceState automatic workspace creation", () => {
     });
 
     const appState = createAppState({
-      default: createSyntheticDefaultWorkspace(),
+      default: createSyntheticDefaultProject(),
     });
-    const { result, rerender } = renderUseWorkspaceState({ appState });
+    const { result, rerender } = renderUseProjectState({ appState });
 
     const savePromise = result.current.handleUpdateClientConfig(
       "remote-2",
@@ -903,62 +896,62 @@ describe("useWorkspaceState automatic workspace creation", () => {
 
     await waitFor(() => {
       expect(updateClientConfigMock).toHaveBeenCalledWith({
-        workspaceId: "remote-2",
+        projectId: "remote-2",
         clientConfig: expectedPersistedClientConfig,
       });
     });
 
-    workspaceQueryState.allWorkspaces = [
-      workspaceQueryState.allWorkspaces[0],
+    projectQueryState.allProjects = [
+      projectQueryState.allProjects[0],
       {
-        ...workspaceQueryState.allWorkspaces[1],
+        ...projectQueryState.allProjects[1],
         clientConfig: expectedPersistedClientConfig,
       },
     ];
-    workspaceQueryState.workspaces = [...workspaceQueryState.allWorkspaces];
+    projectQueryState.projects = [...projectQueryState.allProjects];
     rerender({ organizationId: undefined });
 
     await savePromise;
   });
 
-  it("keeps a newer workspace save pending when an older save times out", async () => {
+  it("keeps a newer project save pending when an older save times out", async () => {
     vi.useFakeTimers();
 
-    const firstSavedConfig: WorkspaceConnectionConfigDraft = {
+    const firstSavedConfig: ProjectConnectionConfigDraft = {
       version: 1,
       connectionDefaults: {
-        headers: { "x-workspace": "one" },
+        headers: { "x-project": "one" },
         requestTimeout: 1111,
       },
       clientCapabilities: {
         experimental: {
-          workspaceOne: true,
+          projectOne: true,
         },
       },
     };
-    const secondSavedConfig: WorkspaceConnectionConfigDraft = {
+    const secondSavedConfig: ProjectConnectionConfigDraft = {
       version: 1,
       connectionDefaults: {
-        headers: { "x-workspace": "two" },
+        headers: { "x-project": "two" },
         requestTimeout: 2222,
       },
       clientCapabilities: {
         experimental: {
-          workspaceTwo: true,
+          projectTwo: true,
         },
       },
     };
-    const secondPersistedClientConfig: WorkspaceClientConfig = {
+    const secondPersistedClientConfig: ProjectClientConfig = {
       version: 1,
       connectionDefaults: secondSavedConfig.connectionDefaults,
       clientCapabilities: secondSavedConfig.clientCapabilities,
       hostContext: {},
     };
 
-    workspaceQueryState.allWorkspaces = [
+    projectQueryState.allProjects = [
       {
         _id: "remote-1",
-        name: "Remote workspace 1",
+        name: "Remote project 1",
         servers: {},
         ownerId: "user-1",
         createdAt: 1,
@@ -967,7 +960,7 @@ describe("useWorkspaceState automatic workspace creation", () => {
       },
       {
         _id: "remote-2",
-        name: "Remote workspace 2",
+        name: "Remote project 2",
         servers: {},
         ownerId: "user-1",
         createdAt: 2,
@@ -975,12 +968,12 @@ describe("useWorkspaceState automatic workspace creation", () => {
         clientConfig: undefined,
       },
     ];
-    workspaceQueryState.workspaces = [...workspaceQueryState.allWorkspaces];
+    projectQueryState.projects = [...projectQueryState.allProjects];
 
     const appState = createAppState({
-      default: createSyntheticDefaultWorkspace(),
+      default: createSyntheticDefaultProject(),
     });
-    const { result, rerender } = renderUseWorkspaceState({ appState });
+    const { result, rerender } = renderUseProjectState({ appState });
 
     const firstSavePromise = result.current.handleUpdateClientConfig(
       "remote-1",
@@ -1002,7 +995,7 @@ describe("useWorkspaceState automatic workspace creation", () => {
 
     await Promise.resolve();
     expect(updateClientConfigMock).toHaveBeenCalledTimes(2);
-    expect(useClientConfigStore.getState().pendingWorkspaceId).toBe("remote-2");
+    expect(useClientConfigStore.getState().pendingProjectId).toBe("remote-2");
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(5000);
@@ -1010,29 +1003,29 @@ describe("useWorkspaceState automatic workspace creation", () => {
 
     await expect(firstSaveError).resolves.toBeInstanceOf(Error);
     await expect(firstSavePromise).rejects.toThrow(
-      "Timed out waiting for workspace client config to sync.",
+      "Timed out waiting for project client config to sync.",
     );
-    expect(useClientConfigStore.getState().pendingWorkspaceId).toBe("remote-2");
+    expect(useClientConfigStore.getState().pendingProjectId).toBe("remote-2");
     expect(useClientConfigStore.getState().isAwaitingRemoteEcho).toBe(true);
 
-    workspaceQueryState.allWorkspaces = [
-      workspaceQueryState.allWorkspaces[0],
+    projectQueryState.allProjects = [
+      projectQueryState.allProjects[0],
       {
-        ...workspaceQueryState.allWorkspaces[1],
+        ...projectQueryState.allProjects[1],
         clientConfig: secondPersistedClientConfig,
       },
     ];
-    workspaceQueryState.workspaces = [...workspaceQueryState.allWorkspaces];
+    projectQueryState.projects = [...projectQueryState.allProjects];
     rerender({ organizationId: undefined });
 
     await secondSavePromise;
   });
 
-  it("treats the authenticated zero-org state as empty remote workspaces and clears stale synced selection", async () => {
-    workspaceQueryState.allWorkspaces = [
+  it("treats the authenticated zero-org state as empty remote projects and clears stale synced selection", async () => {
+    projectQueryState.allProjects = [
       {
         _id: "remote-1",
-        name: "Deleted org workspace",
+        name: "Deleted org project",
         servers: {},
         ownerId: "user-1",
         organizationId: "deleted-org",
@@ -1040,13 +1033,13 @@ describe("useWorkspaceState automatic workspace creation", () => {
         updatedAt: 1,
       },
     ];
-    workspaceQueryState.workspaces = [...workspaceQueryState.allWorkspaces];
-    localStorage.setItem("convex-active-workspace-id", "remote-1");
+    projectQueryState.projects = [...projectQueryState.allProjects];
+    localStorage.setItem("convex-active-project-id", "remote-1");
 
     const appState = createAppState({
-      default: createSyntheticDefaultWorkspace(),
+      default: createSyntheticDefaultProject(),
     });
-    const { result } = renderUseWorkspaceState({
+    const { result } = renderUseProjectState({
       appState,
       activeOrganizationId: undefined,
       hasOrganizations: false,
@@ -1054,20 +1047,20 @@ describe("useWorkspaceState automatic workspace creation", () => {
     });
 
     await waitFor(() => {
-      expect(result.current.effectiveWorkspaces).toEqual({});
-      expect(result.current.effectiveActiveWorkspaceId).toBe("none");
+      expect(result.current.effectiveProjects).toEqual({});
+      expect(result.current.effectiveActiveProjectId).toBe("none");
     });
 
-    expect(localStorage.getItem("convex-active-workspace-id")).toBeNull();
-    expect(ensureDefaultWorkspaceMock).not.toHaveBeenCalled();
+    expect(localStorage.getItem("convex-active-project-id")).toBeNull();
+    expect(ensureDefaultProjectMock).not.toHaveBeenCalled();
   });
 
   it("keeps zero-org recovery empty even after local fallback activated while org loading was still pending", async () => {
     vi.useFakeTimers();
-    workspaceQueryState.allWorkspaces = [
+    projectQueryState.allProjects = [
       {
         _id: "remote-1",
-        name: "Deleted org workspace",
+        name: "Deleted org project",
         servers: {},
         ownerId: "user-1",
         organizationId: "deleted-org",
@@ -1075,15 +1068,15 @@ describe("useWorkspaceState automatic workspace creation", () => {
         updatedAt: 1,
       },
     ];
-    workspaceQueryState.workspaces = undefined;
-    localStorage.setItem("convex-active-workspace-id", "remote-1");
+    projectQueryState.projects = undefined;
+    localStorage.setItem("convex-active-project-id", "remote-1");
 
     const appState = createAppState({
-      "local-1": createLocalWorkspace("local-1", {
+      "local-1": createLocalProject("local-1", {
         organizationId: "org-live",
       }),
     });
-    const { result, rerender } = renderUseWorkspaceState({
+    const { result, rerender } = renderUseProjectState({
       appState,
       activeOrganizationId: undefined,
       hasOrganizations: false,
@@ -1096,7 +1089,7 @@ describe("useWorkspaceState automatic workspace creation", () => {
     });
 
     expect(result.current.useLocalFallback).toBe(true);
-    expect(result.current.effectiveWorkspaces).toEqual(appState.workspaces);
+    expect(result.current.effectiveProjects).toEqual(appState.projects);
 
     rerender({
       organizationId: undefined,
@@ -1106,25 +1099,25 @@ describe("useWorkspaceState automatic workspace creation", () => {
       validOrganizationIdsOverride: [],
     });
 
-    expect(result.current.effectiveWorkspaces).toEqual({});
-    expect(result.current.effectiveActiveWorkspaceId).toBe("none");
+    expect(result.current.effectiveProjects).toEqual({});
+    expect(result.current.effectiveActiveProjectId).toBe("none");
 
     await act(async () => {});
-    expect(localStorage.getItem("convex-active-workspace-id")).toBeNull();
-    expect(ensureDefaultWorkspaceMock).not.toHaveBeenCalled();
+    expect(localStorage.getItem("convex-active-project-id")).toBeNull();
+    expect(ensureDefaultProjectMock).not.toHaveBeenCalled();
   });
 
   it("still uses local fallback when a valid org exists and cloud sync times out", async () => {
     vi.useFakeTimers();
-    workspaceQueryState.allWorkspaces = undefined;
-    workspaceQueryState.workspaces = undefined;
+    projectQueryState.allProjects = undefined;
+    projectQueryState.projects = undefined;
 
     const appState = createAppState({
-      "local-1": createLocalWorkspace("local-1", {
+      "local-1": createLocalProject("local-1", {
         organizationId: "org-live",
       }),
     });
-    const { result } = renderUseWorkspaceState({
+    const { result } = renderUseProjectState({
       appState,
       activeOrganizationId: "org-live",
       hasOrganizations: true,
@@ -1137,30 +1130,30 @@ describe("useWorkspaceState automatic workspace creation", () => {
     });
 
     expect(result.current.useLocalFallback).toBe(true);
-    expect(result.current.effectiveWorkspaces).toEqual(appState.workspaces);
-    expect(result.current.effectiveActiveWorkspaceId).toBe(
-      appState.activeWorkspaceId,
+    expect(result.current.effectiveProjects).toEqual(appState.projects);
+    expect(result.current.effectiveActiveProjectId).toBe(
+      appState.activeProjectId,
     );
   });
 
-  it("scopes local fallback workspaces to the current org and ignores an active workspace from another org", async () => {
+  it("scopes local fallback projects to the current org and ignores an active project from another org", async () => {
     vi.useFakeTimers();
-    workspaceQueryState.allWorkspaces = undefined;
-    workspaceQueryState.workspaces = undefined;
+    projectQueryState.allProjects = undefined;
+    projectQueryState.projects = undefined;
 
     const appState = {
       ...createAppState({
-        "local-org-a": createLocalWorkspace("local-org-a", {
+        "local-org-a": createLocalProject("local-org-a", {
           organizationId: "org-a",
         }),
-        "local-org-b": createLocalWorkspace("local-org-b", {
+        "local-org-b": createLocalProject("local-org-b", {
           organizationId: "org-b",
         }),
       }),
-      activeWorkspaceId: "local-org-b",
+      activeProjectId: "local-org-b",
     };
 
-    const { result } = renderUseWorkspaceState({
+    const { result } = renderUseProjectState({
       appState,
       activeOrganizationId: "org-a",
       hasOrganizations: true,
@@ -1173,25 +1166,25 @@ describe("useWorkspaceState automatic workspace creation", () => {
     });
 
     expect(result.current.useLocalFallback).toBe(true);
-    expect(result.current.effectiveWorkspaces).toEqual({
-      "local-org-a": appState.workspaces["local-org-a"],
+    expect(result.current.effectiveProjects).toEqual({
+      "local-org-a": appState.projects["local-org-a"],
     });
-    expect(result.current.effectiveActiveWorkspaceId).toBe("local-org-a");
+    expect(result.current.effectiveActiveProjectId).toBe("local-org-a");
   });
 
-  it("hides unscoped and wrong-org local fallback workspaces when the current org has no local matches", async () => {
+  it("hides unscoped and wrong-org local fallback projects when the current org has no local matches", async () => {
     vi.useFakeTimers();
-    workspaceQueryState.allWorkspaces = undefined;
-    workspaceQueryState.workspaces = undefined;
+    projectQueryState.allProjects = undefined;
+    projectQueryState.projects = undefined;
 
     const appState = createAppState({
-      "local-unscoped": createLocalWorkspace("local-unscoped"),
-      "local-org-b": createLocalWorkspace("local-org-b", {
+      "local-unscoped": createLocalProject("local-unscoped"),
+      "local-org-b": createLocalProject("local-org-b", {
         organizationId: "org-b",
       }),
     });
 
-    const { result } = renderUseWorkspaceState({
+    const { result } = renderUseProjectState({
       appState,
       activeOrganizationId: "org-a",
       hasOrganizations: true,
@@ -1204,19 +1197,19 @@ describe("useWorkspaceState automatic workspace creation", () => {
     });
 
     expect(result.current.useLocalFallback).toBe(true);
-    expect(result.current.effectiveWorkspaces).toEqual({});
-    expect(result.current.effectiveActiveWorkspaceId).toBe("none");
+    expect(result.current.effectiveProjects).toEqual({});
+    expect(result.current.effectiveActiveProjectId).toBe("none");
   });
 
-  it("keeps unauthenticated local workspaces visible without org scoping", () => {
+  it("keeps unauthenticated local projects visible without org scoping", () => {
     const appState = createAppState({
-      "local-unscoped": createLocalWorkspace("local-unscoped"),
-      "local-org-b": createLocalWorkspace("local-org-b", {
+      "local-unscoped": createLocalProject("local-unscoped"),
+      "local-org-b": createLocalProject("local-org-b", {
         organizationId: "org-b",
       }),
     });
 
-    const { result } = renderUseWorkspaceState({
+    const { result } = renderUseProjectState({
       appState,
       isAuthenticated: false,
       activeOrganizationId: "org-a",
@@ -1225,25 +1218,25 @@ describe("useWorkspaceState automatic workspace creation", () => {
       validOrganizationIds: ["org-a"],
     });
 
-    expect(result.current.effectiveWorkspaces).toEqual(appState.workspaces);
-    expect(result.current.effectiveActiveWorkspaceId).toBe(
-      appState.activeWorkspaceId,
+    expect(result.current.effectiveProjects).toEqual(appState.projects);
+    expect(result.current.effectiveActiveProjectId).toBe(
+      appState.activeProjectId,
     );
   });
 
   it("stamps the current org id on local fallback create, duplicate, and import actions", async () => {
     vi.useFakeTimers();
-    workspaceQueryState.allWorkspaces = undefined;
-    workspaceQueryState.workspaces = undefined;
+    projectQueryState.allProjects = undefined;
+    projectQueryState.projects = undefined;
 
     const appState = createAppState({
-      "local-org-a": createLocalWorkspace("local-org-a", {
-        name: "Workspace A",
+      "local-org-a": createLocalProject("local-org-a", {
+        name: "Project A",
         organizationId: "org-a",
       }),
     });
 
-    const { result, dispatch } = renderUseWorkspaceState({
+    const { result, dispatch } = renderUseProjectState({
       appState,
       activeOrganizationId: "org-a",
       hasOrganizations: true,
@@ -1256,13 +1249,13 @@ describe("useWorkspaceState automatic workspace creation", () => {
     });
 
     await act(async () => {
-      await result.current.handleCreateWorkspace("Created locally");
+      await result.current.handleCreateProject("Created locally");
     });
 
-    expect(createWorkspaceMock).not.toHaveBeenCalled();
+    expect(createProjectMock).not.toHaveBeenCalled();
     expect(dispatch).toHaveBeenCalledWith({
-      type: "CREATE_WORKSPACE",
-      workspace: expect.objectContaining({
+      type: "CREATE_PROJECT",
+      project: expect.objectContaining({
         name: "Created locally",
         organizationId: "org-a",
       }),
@@ -1271,15 +1264,15 @@ describe("useWorkspaceState automatic workspace creation", () => {
     dispatch.mockClear();
 
     await act(async () => {
-      await result.current.handleDuplicateWorkspace(
+      await result.current.handleDuplicateProject(
         "local-org-a",
         "Duplicated locally",
       );
     });
 
     expect(dispatch).toHaveBeenCalledWith({
-      type: "CREATE_WORKSPACE",
-      workspace: expect.objectContaining({
+      type: "CREATE_PROJECT",
+      project: expect.objectContaining({
         name: "Duplicated locally",
         organizationId: "org-a",
       }),
@@ -1288,35 +1281,35 @@ describe("useWorkspaceState automatic workspace creation", () => {
     dispatch.mockClear();
 
     await act(async () => {
-      await result.current.handleImportWorkspace(
-        createLocalWorkspace("import-me", {
+      await result.current.handleImportProject(
+        createLocalProject("import-me", {
           name: "Imported locally",
         }),
       );
     });
 
     expect(dispatch).toHaveBeenCalledWith({
-      type: "IMPORT_WORKSPACE",
-      workspace: expect.objectContaining({
+      type: "IMPORT_PROJECT",
+      project: expect.objectContaining({
         name: "Imported locally",
         organizationId: "org-a",
       }),
     });
   });
 
-  it("updates workspaces locally in authenticated fallback mode", async () => {
+  it("updates projects locally in authenticated fallback mode", async () => {
     vi.useFakeTimers();
-    workspaceQueryState.allWorkspaces = undefined;
-    workspaceQueryState.workspaces = undefined;
+    projectQueryState.allProjects = undefined;
+    projectQueryState.projects = undefined;
 
     const appState = createAppState({
-      "local-org-a": createLocalWorkspace("local-org-a", {
-        name: "Workspace A",
+      "local-org-a": createLocalProject("local-org-a", {
+        name: "Project A",
         organizationId: "org-a",
       }),
     });
 
-    const { result, dispatch } = renderUseWorkspaceState({
+    const { result, dispatch } = renderUseProjectState({
       appState,
       activeOrganizationId: "org-a",
       hasOrganizations: true,
@@ -1331,41 +1324,41 @@ describe("useWorkspaceState automatic workspace creation", () => {
     dispatch.mockClear();
 
     await act(async () => {
-      await result.current.handleUpdateWorkspace("local-org-a", {
-        name: "Workspace A Renamed",
+      await result.current.handleUpdateProject("local-org-a", {
+        name: "Project A Renamed",
       });
     });
 
-    expect(updateWorkspaceMock).not.toHaveBeenCalled();
+    expect(updateProjectMock).not.toHaveBeenCalled();
     expect(dispatch).toHaveBeenCalledWith({
-      type: "UPDATE_WORKSPACE",
-      workspaceId: "local-org-a",
+      type: "UPDATE_PROJECT",
+      projectId: "local-org-a",
       updates: {
-        name: "Workspace A Renamed",
+        name: "Project A Renamed",
       },
     });
   });
 
-  it("deletes active workspaces locally in authenticated fallback mode", async () => {
+  it("deletes active projects locally in authenticated fallback mode", async () => {
     vi.useFakeTimers();
-    workspaceQueryState.allWorkspaces = undefined;
-    workspaceQueryState.workspaces = undefined;
+    projectQueryState.allProjects = undefined;
+    projectQueryState.projects = undefined;
 
     const appState = {
       ...createAppState({
-        "local-org-a-1": createLocalWorkspace("local-org-a-1", {
-          name: "Workspace A1",
+        "local-org-a-1": createLocalProject("local-org-a-1", {
+          name: "Project A1",
           organizationId: "org-a",
         }),
-        "local-org-a-2": createLocalWorkspace("local-org-a-2", {
-          name: "Workspace A2",
+        "local-org-a-2": createLocalProject("local-org-a-2", {
+          name: "Project A2",
           organizationId: "org-a",
         }),
       }),
-      activeWorkspaceId: "local-org-a-1",
+      activeProjectId: "local-org-a-1",
     };
 
-    const { result, dispatch } = renderUseWorkspaceState({
+    const { result, dispatch } = renderUseProjectState({
       appState,
       activeOrganizationId: "org-a",
       hasOrganizations: true,
@@ -1380,33 +1373,33 @@ describe("useWorkspaceState automatic workspace creation", () => {
     dispatch.mockClear();
 
     await act(async () => {
-      await result.current.handleDeleteWorkspace("local-org-a-1");
+      await result.current.handleDeleteProject("local-org-a-1");
     });
 
-    expect(deleteWorkspaceMock).not.toHaveBeenCalled();
+    expect(deleteProjectMock).not.toHaveBeenCalled();
     expect(dispatch).toHaveBeenNthCalledWith(1, {
-      type: "SWITCH_WORKSPACE",
-      workspaceId: "local-org-a-2",
+      type: "SWITCH_PROJECT",
+      projectId: "local-org-a-2",
     });
     expect(dispatch).toHaveBeenNthCalledWith(2, {
-      type: "DELETE_WORKSPACE",
-      workspaceId: "local-org-a-1",
+      type: "DELETE_PROJECT",
+      projectId: "local-org-a-1",
     });
   });
 
-  it("does not migrate local workspaces from another org into the current organization", async () => {
-    workspaceQueryState.allWorkspaces = [];
-    workspaceQueryState.workspaces = [];
+  it("does not migrate local projects from another org into the current organization", async () => {
+    projectQueryState.allProjects = [];
+    projectQueryState.projects = [];
 
     const appState = createAppState({
-      default: createSyntheticDefaultWorkspace(),
-      "local-org-b": createLocalWorkspace("local-org-b", {
-        name: "Org B workspace",
+      default: createSyntheticDefaultProject(),
+      "local-org-b": createLocalProject("local-org-b", {
+        name: "Org B project",
         organizationId: "org-b",
       }),
     });
 
-    renderUseWorkspaceState({
+    renderUseProjectState({
       appState,
       activeOrganizationId: "org-a",
       hasOrganizations: true,
@@ -1415,18 +1408,18 @@ describe("useWorkspaceState automatic workspace creation", () => {
     });
 
     await waitFor(() => {
-      expect(ensureDefaultWorkspaceMock).toHaveBeenCalledWith({
+      expect(ensureDefaultProjectMock).toHaveBeenCalledWith({
         organizationId: "org-a",
       });
     });
 
-    expect(createWorkspaceMock).not.toHaveBeenCalled();
+    expect(createProjectMock).not.toHaveBeenCalled();
   });
 
   it("fails authenticated client-config saves when the remote echo times out", async () => {
     vi.useFakeTimers();
 
-    const savedConfig: WorkspaceConnectionConfigDraft = {
+    const savedConfig: ProjectConnectionConfigDraft = {
       version: 1,
       connectionDefaults: {
         headers: {},
@@ -1439,10 +1432,10 @@ describe("useWorkspaceState automatic workspace creation", () => {
       },
     };
 
-    workspaceQueryState.allWorkspaces = [
+    projectQueryState.allProjects = [
       {
         _id: "remote-1",
-        name: "Remote workspace",
+        name: "Remote project",
         servers: {},
         ownerId: "user-1",
         createdAt: 1,
@@ -1450,13 +1443,13 @@ describe("useWorkspaceState automatic workspace creation", () => {
         clientConfig: undefined,
       },
     ];
-    workspaceQueryState.workspaces = [...workspaceQueryState.allWorkspaces];
-    localStorage.setItem("convex-active-workspace-id", "remote-1");
+    projectQueryState.projects = [...projectQueryState.allProjects];
+    localStorage.setItem("convex-active-project-id", "remote-1");
 
     const appState = createAppState({
-      default: createSyntheticDefaultWorkspace(),
+      default: createSyntheticDefaultProject(),
     });
-    const { result } = renderUseWorkspaceState({ appState });
+    const { result } = renderUseProjectState({ appState });
 
     const savePromise = result.current.handleUpdateClientConfig(
       "remote-1",
@@ -1473,17 +1466,17 @@ describe("useWorkspaceState automatic workspace creation", () => {
 
     await expect(saveError).resolves.toBeInstanceOf(Error);
     await expect(savePromise).rejects.toThrow(
-      "Timed out waiting for workspace client config to sync.",
+      "Timed out waiting for project client config to sync.",
     );
     expect(useClientConfigStore.getState().isAwaitingRemoteEcho).toBe(false);
     expect(useClientConfigStore.getState().isSaving).toBe(false);
   });
 
-  it("formats workspace create billing errors for organization owners", async () => {
-    workspaceQueryState.allWorkspaces = [
+  it("formats project create billing errors for organization owners", async () => {
+    projectQueryState.allProjects = [
       {
         _id: "remote-1",
-        name: "Existing workspace",
+        name: "Existing project",
         servers: {},
         ownerId: "user-1",
         organizationId: "org-owner",
@@ -1491,42 +1484,42 @@ describe("useWorkspaceState automatic workspace creation", () => {
         updatedAt: 1,
       },
     ];
-    workspaceQueryState.workspaces = [...workspaceQueryState.allWorkspaces];
+    projectQueryState.projects = [...projectQueryState.allProjects];
     organizationBillingStatusState.value = {
       canManageBilling: true,
     };
-    createWorkspaceMock.mockRejectedValue(
+    createProjectMock.mockRejectedValue(
       new Error(
         JSON.stringify({
           code: "billing_limit_reached",
-          limit: "maxWorkspaces",
+          limit: "maxProjects",
           allowedValue: 1,
         }),
       ),
     );
 
     const appState = createAppState({
-      default: createSyntheticDefaultWorkspace(),
+      default: createSyntheticDefaultProject(),
     });
-    const { result } = renderUseWorkspaceState({
+    const { result } = renderUseProjectState({
       appState,
       activeOrganizationId: "org-owner",
     });
 
     await act(async () => {
-      await result.current.handleCreateWorkspace("Workspace Two");
+      await result.current.handleCreateProject("Project Two");
     });
 
     expect(toast.error).toHaveBeenCalledWith(
-      "This organization has reached its workspace limit (1). Upgrade to create more workspaces.",
+      "This organization has reached its project limit (1). Upgrade to create more projects.",
     );
   });
 
-  it("formats workspace create billing errors for non-billing-admin members", async () => {
-    workspaceQueryState.allWorkspaces = [
+  it("formats project create billing errors for non-billing-admin members", async () => {
+    projectQueryState.allProjects = [
       {
         _id: "remote-1",
-        name: "Existing workspace",
+        name: "Existing project",
         servers: {},
         ownerId: "user-1",
         organizationId: "org-member",
@@ -1534,132 +1527,132 @@ describe("useWorkspaceState automatic workspace creation", () => {
         updatedAt: 1,
       },
     ];
-    workspaceQueryState.workspaces = [...workspaceQueryState.allWorkspaces];
+    projectQueryState.projects = [...projectQueryState.allProjects];
     organizationBillingStatusState.value = {
       canManageBilling: false,
     };
-    createWorkspaceMock.mockRejectedValue(
+    createProjectMock.mockRejectedValue(
       new Error(
         JSON.stringify({
           code: "billing_limit_reached",
-          limit: "maxWorkspaces",
+          limit: "maxProjects",
           allowedValue: 1,
         }),
       ),
     );
 
     const appState = createAppState({
-      default: createSyntheticDefaultWorkspace(),
+      default: createSyntheticDefaultProject(),
     });
-    const { result } = renderUseWorkspaceState({
+    const { result } = renderUseProjectState({
       appState,
       activeOrganizationId: "org-member",
     });
 
     await act(async () => {
-      await result.current.handleCreateWorkspace("Workspace Two");
+      await result.current.handleCreateProject("Project Two");
     });
 
     expect(toast.error).toHaveBeenCalledWith(
-      "This organization has reached its workspace limit (1). Ask an organization owner to upgrade.",
+      "This organization has reached its project limit (1). Ask an organization owner to upgrade.",
     );
   });
 
-  it("shows only one toast when multiple local workspace migrations fail in the same burst", async () => {
+  it("shows only one toast when multiple local project migrations fail in the same burst", async () => {
     organizationBillingStatusState.value = {
       canManageBilling: false,
     };
-    createWorkspaceMock.mockRejectedValue(
+    createProjectMock.mockRejectedValue(
       new Error(
         JSON.stringify({
           code: "billing_limit_reached",
-          limit: "maxWorkspaces",
+          limit: "maxProjects",
           allowedValue: 1,
         }),
       ),
     );
 
     const appState = createAppState({
-      default: createSyntheticDefaultWorkspace(),
-      "local-1": createLocalWorkspace("local-1", {
+      default: createSyntheticDefaultProject(),
+      "local-1": createLocalProject("local-1", {
         name: "Local One",
         organizationId: "org-member",
       }),
-      "local-2": createLocalWorkspace("local-2", {
+      "local-2": createLocalProject("local-2", {
         name: "Local Two",
         organizationId: "org-member",
       }),
     });
-    const { logger } = renderUseWorkspaceState({
+    const { logger } = renderUseProjectState({
       appState,
       activeOrganizationId: "org-member",
     });
 
     await waitFor(() => {
-      expect(createWorkspaceMock).toHaveBeenCalledTimes(2);
+      expect(createProjectMock).toHaveBeenCalledTimes(2);
     });
 
     expect(toast.error).toHaveBeenCalledTimes(1);
     expect(toast.error).toHaveBeenCalledWith(
-      "This organization has reached its workspace limit (1). Ask an organization owner to upgrade.",
+      "This organization has reached its project limit (1). Ask an organization owner to upgrade.",
     );
     expect(logger.error).toHaveBeenCalledTimes(2);
   });
 
-  it("keeps the active workspace unchanged when sharing a different local workspace", async () => {
+  it("keeps the active project unchanged when sharing a different local project", async () => {
     const appState = createAppState({
-      "workspace-a": createLocalWorkspace("workspace-a", {
-        name: "Workspace A",
+      "project-a": createLocalProject("project-a", {
+        name: "Project A",
         organizationId: "org-owner",
       }),
-      "workspace-b": createLocalWorkspace("workspace-b", {
-        name: "Workspace B",
+      "project-b": createLocalProject("project-b", {
+        name: "Project B",
         organizationId: "org-owner",
       }),
     });
-    const { result, dispatch, logger } = renderUseWorkspaceState({
+    const { result, dispatch, logger } = renderUseProjectState({
       appState,
       activeOrganizationId: "org-owner",
     });
 
     await act(async () => {
-      result.current.handleWorkspaceShared("convex-workspace-b", "workspace-b");
+      result.current.handleProjectShared("convex-project-b", "project-b");
     });
 
-    expect(localStorage.getItem("convex-active-workspace-id")).toBeNull();
+    expect(localStorage.getItem("convex-active-project-id")).toBeNull();
     expect(dispatch).toHaveBeenCalledWith({
-      type: "UPDATE_WORKSPACE",
-      workspaceId: "workspace-b",
-      updates: { sharedWorkspaceId: "convex-workspace-b" },
+      type: "UPDATE_PROJECT",
+      projectId: "project-b",
+      updates: { sharedProjectId: "convex-project-b" },
     });
-    expect(logger.info).toHaveBeenCalledWith("Workspace shared", {
-      convexWorkspaceId: "convex-workspace-b",
-      sourceWorkspaceId: "workspace-b",
-      switchedActiveWorkspace: false,
+    expect(logger.info).toHaveBeenCalledWith("Project shared", {
+      convexProjectId: "convex-project-b",
+      sourceProjectId: "project-b",
+      switchedActiveProject: false,
     });
   });
 
-  it("keeps a non-shared active local workspace selected after remote workspaces return", async () => {
+  it("keeps a non-shared active local project selected after remote projects return", async () => {
     vi.useFakeTimers();
-    workspaceQueryState.allWorkspaces = undefined;
-    workspaceQueryState.workspaces = undefined;
+    projectQueryState.allProjects = undefined;
+    projectQueryState.projects = undefined;
 
     const appState = {
       ...createAppState({
-        "workspace-a": createLocalWorkspace("workspace-a", {
-          name: "Workspace A",
+        "project-a": createLocalProject("project-a", {
+          name: "Project A",
           organizationId: "org-owner",
         }),
-        "workspace-b": createLocalWorkspace("workspace-b", {
-          name: "Workspace B",
+        "project-b": createLocalProject("project-b", {
+          name: "Project B",
           organizationId: "org-owner",
-          sharedWorkspaceId: "convex-workspace-b",
+          sharedProjectId: "convex-project-b",
         }),
       }),
-      activeWorkspaceId: "workspace-a",
+      activeProjectId: "project-a",
     };
 
-    const { result, rerender } = renderUseWorkspaceState({
+    const { result, rerender } = renderUseProjectState({
       appState,
       activeOrganizationId: "org-owner",
     });
@@ -1670,10 +1663,10 @@ describe("useWorkspaceState automatic workspace creation", () => {
 
     expect(result.current.useLocalFallback).toBe(true);
 
-    workspaceQueryState.allWorkspaces = [
+    projectQueryState.allProjects = [
       {
-        _id: "convex-workspace-b",
-        name: "Workspace B",
+        _id: "convex-project-b",
+        name: "Project B",
         servers: {},
         ownerId: "user-1",
         organizationId: "org-owner",
@@ -1681,7 +1674,7 @@ describe("useWorkspaceState automatic workspace creation", () => {
         updatedAt: 1,
       },
     ];
-    workspaceQueryState.workspaces = [...workspaceQueryState.allWorkspaces];
+    projectQueryState.projects = [...projectQueryState.allProjects];
 
     await act(async () => {
       rerender({
@@ -1694,48 +1687,48 @@ describe("useWorkspaceState automatic workspace creation", () => {
     });
 
     expect(result.current.useLocalFallback).toBe(false);
-    expect(result.current.effectiveActiveWorkspaceId).toBe("workspace-a");
-    expect(result.current.effectiveWorkspaces["workspace-a"]).toBeDefined();
-    expect(result.current.effectiveWorkspaces["convex-workspace-b"]).toBeDefined();
-    expect(result.current.effectiveWorkspaces["workspace-b"]).toBeUndefined();
+    expect(result.current.effectiveActiveProjectId).toBe("project-a");
+    expect(result.current.effectiveProjects["project-a"]).toBeDefined();
+    expect(result.current.effectiveProjects["convex-project-b"]).toBeDefined();
+    expect(result.current.effectiveProjects["project-b"]).toBeUndefined();
   });
 
-  it("uses the active workspace as the source when legacy share callers omit it", async () => {
+  it("uses the active project as the source when legacy share callers omit it", async () => {
     vi.useFakeTimers();
-    workspaceQueryState.allWorkspaces = undefined;
-    workspaceQueryState.workspaces = undefined;
+    projectQueryState.allProjects = undefined;
+    projectQueryState.projects = undefined;
 
     const appState = {
       ...createAppState({
-        "workspace-a": createLocalWorkspace("workspace-a", {
-          name: "Workspace A",
+        "project-a": createLocalProject("project-a", {
+          name: "Project A",
           organizationId: "org-owner",
-          sharedWorkspaceId: "convex-workspace-a",
+          sharedProjectId: "convex-project-a",
         }),
       }),
-      activeWorkspaceId: "workspace-a",
+      activeProjectId: "project-a",
     };
 
-    const { result, rerender, dispatch } = renderUseWorkspaceState({
+    const { result, rerender, dispatch } = renderUseProjectState({
       appState,
       activeOrganizationId: "org-owner",
     });
 
     await act(async () => {
-      result.current.handleWorkspaceShared("convex-workspace-a");
+      result.current.handleProjectShared("convex-project-a");
       await vi.advanceTimersByTimeAsync(10_000);
     });
 
     expect(dispatch).toHaveBeenCalledWith({
-      type: "UPDATE_WORKSPACE",
-      workspaceId: "workspace-a",
-      updates: { sharedWorkspaceId: "convex-workspace-a" },
+      type: "UPDATE_PROJECT",
+      projectId: "project-a",
+      updates: { sharedProjectId: "convex-project-a" },
     });
 
-    workspaceQueryState.allWorkspaces = [
+    projectQueryState.allProjects = [
       {
-        _id: "convex-workspace-a",
-        name: "Workspace A",
+        _id: "convex-project-a",
+        name: "Project A",
         servers: {},
         ownerId: "user-1",
         organizationId: "org-owner",
@@ -1743,7 +1736,7 @@ describe("useWorkspaceState automatic workspace creation", () => {
         updatedAt: 1,
       },
     ];
-    workspaceQueryState.workspaces = [...workspaceQueryState.allWorkspaces];
+    projectQueryState.projects = [...projectQueryState.allProjects];
 
     await act(async () => {
       rerender({
@@ -1756,69 +1749,13 @@ describe("useWorkspaceState automatic workspace creation", () => {
     });
 
     expect(result.current.useLocalFallback).toBe(false);
-    expect(result.current.effectiveActiveWorkspaceId).toBe("convex-workspace-a");
-    expect(result.current.effectiveWorkspaces["workspace-a"]).toBeUndefined();
-    expect(result.current.effectiveWorkspaces["convex-workspace-a"]).toBeDefined();
-  });
-
-  it("merges non-terminal runtime-only local server projections into the matched remote workspace", () => {
-    const runtimeOnlyServer = {
-      name: "excalidraw",
-      config: { url: "https://mcp.excalidraw.com/" } as any,
-      lastConnectionTime: new Date("2026-01-01T00:00:00.000Z"),
-      connectionStatus: "connected" as const,
-      retryCount: 0,
-      enabled: true,
-    };
-
-    workspaceQueryState.allWorkspaces = [
-      {
-        _id: "convex-workspace-a",
-        name: "Workspace A",
-        servers: {},
-        ownerId: "user-1",
-        organizationId: "org-owner",
-        createdAt: 1,
-        updatedAt: 1,
-      },
-    ];
-    workspaceQueryState.workspaces = [...workspaceQueryState.allWorkspaces];
-    workspaceServersQueryState.servers = [];
-
-    const appState = {
-      ...createAppState({
-        "workspace-a": createLocalWorkspace("workspace-a", {
-          name: "Workspace A",
-          organizationId: "org-owner",
-          sharedWorkspaceId: "convex-workspace-a",
-          servers: {
-            excalidraw: runtimeOnlyServer,
-          },
-        }),
-      }),
-      activeWorkspaceId: "workspace-a",
-      servers: {
-        excalidraw: runtimeOnlyServer,
-      },
-      selectedServer: "excalidraw",
-    };
-
-    const { result } = renderUseWorkspaceState({
-      appState,
-      activeOrganizationId: "org-owner",
-    });
-
-    expect(result.current.useLocalFallback).toBe(false);
-    expect(result.current.effectiveActiveWorkspaceId).toBe("convex-workspace-a");
-    expect(
-      result.current.effectiveWorkspaces["convex-workspace-a"]?.servers[
-        "excalidraw"
-      ],
-    ).toEqual(runtimeOnlyServer);
+    expect(result.current.effectiveActiveProjectId).toBe("convex-project-a");
+    expect(result.current.effectiveProjects["project-a"]).toBeUndefined();
+    expect(result.current.effectiveProjects["convex-project-a"]).toBeDefined();
   });
 
   it("rejects authenticated client-config saves when the hook unmounts mid-sync", async () => {
-    const savedConfig: WorkspaceConnectionConfigDraft = {
+    const savedConfig: ProjectConnectionConfigDraft = {
       version: 1,
       connectionDefaults: {
         headers: {},
@@ -1830,7 +1767,7 @@ describe("useWorkspaceState automatic workspace creation", () => {
         },
       },
     };
-    const expectedPersistedClientConfig: WorkspaceClientConfig = {
+    const expectedPersistedClientConfig: ProjectClientConfig = {
       version: 1,
       connectionDefaults: {
         headers: {},
@@ -1840,10 +1777,10 @@ describe("useWorkspaceState automatic workspace creation", () => {
       hostContext: {},
     };
 
-    workspaceQueryState.allWorkspaces = [
+    projectQueryState.allProjects = [
       {
         _id: "remote-1",
-        name: "Remote workspace",
+        name: "Remote project",
         servers: {},
         ownerId: "user-1",
         createdAt: 1,
@@ -1851,13 +1788,13 @@ describe("useWorkspaceState automatic workspace creation", () => {
         clientConfig: undefined,
       },
     ];
-    workspaceQueryState.workspaces = [...workspaceQueryState.allWorkspaces];
-    localStorage.setItem("convex-active-workspace-id", "remote-1");
+    projectQueryState.projects = [...projectQueryState.allProjects];
+    localStorage.setItem("convex-active-project-id", "remote-1");
 
     const appState = createAppState({
-      default: createSyntheticDefaultWorkspace(),
+      default: createSyntheticDefaultProject(),
     });
-    const { result, unmount } = renderUseWorkspaceState({ appState });
+    const { result, unmount } = renderUseProjectState({ appState });
 
     const savePromise = result.current.handleUpdateClientConfig(
       "remote-1",
@@ -1866,7 +1803,7 @@ describe("useWorkspaceState automatic workspace creation", () => {
 
     await waitFor(() => {
       expect(updateClientConfigMock).toHaveBeenCalledWith({
-        workspaceId: "remote-1",
+        projectId: "remote-1",
         clientConfig: expectedPersistedClientConfig,
       });
     });
@@ -1874,7 +1811,7 @@ describe("useWorkspaceState automatic workspace creation", () => {
     unmount();
 
     await expect(savePromise).rejects.toThrow(
-      "Workspace client config sync was interrupted.",
+      "Project client config sync was interrupted.",
     );
     await waitFor(() => {
       expect(useClientConfigStore.getState().isAwaitingRemoteEcho).toBe(false);

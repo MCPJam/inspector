@@ -29,9 +29,9 @@ function extractOAuthToken(serverConfig: MCPServerConfig): string | undefined {
 function normalizeHostedValidationError(error: unknown): string {
   if (
     error instanceof Error &&
-    error.message === "Hosted workspace is not available yet"
+    error.message === "Hosted project is not available yet"
   ) {
-    return "Hosted workspace is still loading. Please try again in a moment.";
+    return "Hosted project is still loading. Please try again in a moment.";
   }
 
   if (

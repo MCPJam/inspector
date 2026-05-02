@@ -5,13 +5,13 @@ describe("resolveFormattedArgumentValue", () => {
   it("renders object arguments as structured content", () => {
     expect(
       resolveFormattedArgumentValue({
-        workspace: "demo",
+        project: "demo",
         includeCompleted: false,
       }),
     ).toEqual({
       kind: "structured",
       value: {
-        workspace: "demo",
+        project: "demo",
         includeCompleted: false,
       },
     });

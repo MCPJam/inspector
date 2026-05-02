@@ -4,7 +4,7 @@ import { useEvalTabContext } from "../use-eval-tab-context";
 
 const mocks = vi.hoisted(() => ({
   useSharedAppState: vi.fn(),
-  useWorkspaceMembers: vi.fn(),
+  useProjectMembers: vi.fn(),
   useAvailableEvalModels: vi.fn(),
 }));
 
@@ -12,8 +12,8 @@ vi.mock("@/state/app-state-context", () => ({
   useSharedAppState: mocks.useSharedAppState,
 }));
 
-vi.mock("@/hooks/useWorkspaces", () => ({
-  useWorkspaceMembers: mocks.useWorkspaceMembers,
+vi.mock("@/hooks/useProjects", () => ({
+  useProjectMembers: mocks.useProjectMembers,
 }));
 
 vi.mock("@/hooks/use-available-eval-models", () => ({
@@ -33,7 +33,7 @@ describe("useEvalTabContext", () => {
   });
 
   it("always surfaces suite deletion while keeping run deletion on member-management rights", () => {
-    mocks.useWorkspaceMembers.mockReturnValue({
+    mocks.useProjectMembers.mockReturnValue({
       members: [],
       canManageMembers: false,
     });
@@ -41,7 +41,7 @@ describe("useEvalTabContext", () => {
     const { result } = renderHook(() =>
       useEvalTabContext({
         isAuthenticated: true,
-        workspaceId: "workspace-1",
+        projectId: "project-1",
       }),
     );
 
@@ -50,8 +50,8 @@ describe("useEvalTabContext", () => {
     expect(result.current.connectedServerNames).toEqual(new Set(["connected"]));
   });
 
-  it("allows suite deletion without a workspace id", () => {
-    mocks.useWorkspaceMembers.mockReturnValue({
+  it("allows suite deletion without a project id", () => {
+    mocks.useProjectMembers.mockReturnValue({
       members: [],
       canManageMembers: false,
     });
@@ -59,7 +59,7 @@ describe("useEvalTabContext", () => {
     const { result } = renderHook(() =>
       useEvalTabContext({
         isAuthenticated: false,
-        workspaceId: null,
+        projectId: null,
       }),
     );
 

@@ -1597,7 +1597,7 @@ async function createHostedOAuthSessionIfNeeded(input: {
 
   const pendingMarker = readHostedOAuthPendingMarker();
   if (
-    !pendingMarker?.workspaceId ||
+    !pendingMarker?.projectId ||
     !pendingMarker.serverId ||
     !matchesHostedOAuthServerIdentity(
       {
@@ -1635,7 +1635,7 @@ async function createHostedOAuthSessionIfNeeded(input: {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      workspaceId: pendingMarker.workspaceId,
+      projectId: pendingMarker.projectId,
       serverId: pendingMarker.serverId,
       codeVerifier,
       redirectUri: input.redirectUrl,
@@ -1690,7 +1690,7 @@ async function readHostedOAuthSessionProgress(input: {
   authorizationHeader?: string | null;
 }): Promise<HostedOAuthSessionProgressResponse | null> {
   if (
-    !input.context.workspaceId ||
+    !input.context.projectId ||
     !input.context.serverId ||
     !input.context.sessionId
   ) {
@@ -1708,7 +1708,7 @@ async function readHostedOAuthSessionProgress(input: {
           : {}),
       },
       body: JSON.stringify({
-        workspaceId: input.context.workspaceId,
+        projectId: input.context.projectId,
         serverId: input.context.serverId,
         sessionId: input.context.sessionId,
         ...(input.context.accessScope
@@ -2306,7 +2306,7 @@ export async function completeHostedOAuthCallback(
     if (!serverName) {
       throw new Error("No pending OAuth flow found");
     }
-    if (!context.workspaceId || !context.serverId) {
+    if (!context.projectId || !context.serverId) {
       throw new Error("OAuth callback is missing server context");
     }
 
@@ -2432,7 +2432,7 @@ export async function completeHostedOAuthCallback(
             : {}),
         },
         body: JSON.stringify({
-          workspaceId: context.workspaceId,
+          projectId: context.projectId,
           serverId: context.serverId,
           code: authorizationCode,
           oauthResourceUrl,

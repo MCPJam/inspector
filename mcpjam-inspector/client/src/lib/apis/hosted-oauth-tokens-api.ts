@@ -16,7 +16,7 @@ export interface HostedOAuthTokensResult {
 }
 
 export interface FetchHostedOAuthTokensRequest {
-  workspaceId: string;
+  projectId: string;
   serverId: string;
 }
 
