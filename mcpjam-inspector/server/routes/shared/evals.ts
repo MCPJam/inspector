@@ -550,47 +550,51 @@ export async function runEvalsWithManager(
 
   // Resolve org model config: prefer client-sent keys, fall back to org config.
   // Treat an empty client-provided map as "no keys" so org fallback still runs.
-  // For reruns, workspaceId may not be in the request — derive it from the
+  // For reruns, projectId may not be in the request — derive it from the
   // suite record so org BYOK keeps working.
   const hasClientKeys =
     !!modelApiKeys && Object.keys(modelApiKeys).length > 0;
   const resolvedModelApiKeys = hasClientKeys ? modelApiKeys : undefined;
   let resolvedOrgModelConfig = orgModelConfig;
   if (!resolvedModelApiKeys && !resolvedOrgModelConfig) {
-    let workspaceIdForOrgConfig: string | undefined = workspaceId;
-    if (!workspaceIdForOrgConfig && resolvedSuiteId) {
+    let projectIdForOrgConfig: string | undefined = projectId;
+    let legacyWorkspaceIdForOrgConfig: string | undefined;
+    if (!projectIdForOrgConfig && resolvedSuiteId) {
       try {
         const suite = await convexClient.query(
           "testSuites:getTestSuite" as any,
           { suiteId: resolvedSuiteId },
         );
-        if (suite?.workspaceId) {
-          workspaceIdForOrgConfig = String(suite.workspaceId);
+        if (suite?.projectId) {
+          projectIdForOrgConfig = String(suite.projectId);
+        } else if (suite?.workspaceId) {
+          legacyWorkspaceIdForOrgConfig = String(suite.workspaceId);
         }
       } catch (error) {
-        logger.warn("[evals] Failed to load suite for workspaceId fallback", {
+        logger.warn("[evals] Failed to load suite for projectId fallback", {
           suiteId: resolvedSuiteId,
           error: error instanceof Error ? error.message : String(error),
         });
       }
     }
-    if (workspaceIdForOrgConfig) {
+    const orgConfigTarget = projectIdForOrgConfig
+      ? { projectId: projectIdForOrgConfig }
+      : legacyWorkspaceIdForOrgConfig
+      ? { workspaceId: legacyWorkspaceIdForOrgConfig }
+      : undefined;
+    if (orgConfigTarget) {
       try {
-        const orgConfig = await resolveOrgModelConfig(
-          {
-            workspaceId: workspaceIdForOrgConfig,
-          },
-          {
-            bearerToken: convexAuthToken,
-            shareToken,
-            chatboxToken,
-            serverIds: resolvedServerIds,
-          },
-        );
+        const orgConfig = await resolveOrgModelConfig(orgConfigTarget, {
+          bearerToken: convexAuthToken,
+          shareToken,
+          chatboxToken,
+          serverIds: resolvedServerIds,
+        });
         resolvedOrgModelConfig = orgConfig;
       } catch (error) {
         logger.warn("[evals] Failed to resolve org model config", {
-          workspaceId: workspaceIdForOrgConfig,
+          projectId: projectIdForOrgConfig,
+          legacyWorkspaceId: legacyWorkspaceIdForOrgConfig,
           error: error instanceof Error ? error.message : String(error),
         });
       }
@@ -680,12 +684,25 @@ export async function runEvalTestCaseWithManager(
     !!modelApiKeys && Object.keys(modelApiKeys).length > 0;
   const resolvedModelApiKeys = hasClientKeysForCase ? modelApiKeys : undefined;
   let resolvedOrgModelConfig = orgModelConfig;
-  if (!resolvedModelApiKeys && !resolvedOrgModelConfig && testCase.workspaceId) {
+  const testCaseProjectId =
+    typeof testCase.projectId === "string" ? testCase.projectId : undefined;
+  const testCaseLegacyWorkspaceId =
+    !testCaseProjectId && typeof testCase.workspaceId === "string"
+      ? testCase.workspaceId
+      : undefined;
+  const testCaseOrgConfigTarget = testCaseProjectId
+    ? { projectId: testCaseProjectId }
+    : testCaseLegacyWorkspaceId
+    ? { workspaceId: testCaseLegacyWorkspaceId }
+    : undefined;
+  if (
+    !resolvedModelApiKeys &&
+    !resolvedOrgModelConfig &&
+    testCaseOrgConfigTarget
+  ) {
     try {
       resolvedOrgModelConfig = await resolveOrgModelConfig(
-        {
-          workspaceId: testCase.workspaceId,
-        },
+        testCaseOrgConfigTarget,
         {
           bearerToken: convexAuthToken,
           shareToken,
@@ -902,16 +919,25 @@ export async function streamEvalTestCaseWithManager(
     ? modelApiKeys
     : undefined;
   let resolvedStreamOrgModelConfig = orgModelConfig;
+  const streamTestCaseProjectId =
+    typeof testCase.projectId === "string" ? testCase.projectId : undefined;
+  const streamTestCaseLegacyWorkspaceId =
+    !streamTestCaseProjectId && typeof testCase.workspaceId === "string"
+      ? testCase.workspaceId
+      : undefined;
+  const streamTestCaseOrgConfigTarget = streamTestCaseProjectId
+    ? { projectId: streamTestCaseProjectId }
+    : streamTestCaseLegacyWorkspaceId
+    ? { workspaceId: streamTestCaseLegacyWorkspaceId }
+    : undefined;
   if (
     !resolvedStreamModelApiKeys &&
     !resolvedStreamOrgModelConfig &&
-    testCase.workspaceId
+    streamTestCaseOrgConfigTarget
   ) {
     try {
       resolvedStreamOrgModelConfig = await resolveOrgModelConfig(
-        {
-          workspaceId: testCase.workspaceId,
-        },
+        streamTestCaseOrgConfigTarget,
         {
           bearerToken: convexAuthToken,
           shareToken,

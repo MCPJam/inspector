@@ -124,17 +124,17 @@ export type AppAction =
       name: string;
       oauthTrace?: OAuthTrace;
     }
-  | { type: "CREATE_WORKSPACE"; project: Project }
+  | { type: "CREATE_PROJECT"; project: Project }
   | {
-      type: "UPDATE_WORKSPACE";
+      type: "UPDATE_PROJECT";
       projectId: string;
       updates: Partial<Project>;
     }
-  | { type: "DELETE_WORKSPACE"; projectId: string }
-  | { type: "SWITCH_WORKSPACE"; projectId: string }
-  | { type: "SET_DEFAULT_WORKSPACE"; projectId: string }
-  | { type: "IMPORT_WORKSPACE"; project: Project }
-  | { type: "DUPLICATE_WORKSPACE"; projectId: string; newName: string };
+  | { type: "DELETE_PROJECT"; projectId: string }
+  | { type: "SWITCH_PROJECT"; projectId: string }
+  | { type: "SET_DEFAULT_PROJECT"; projectId: string }
+  | { type: "IMPORT_PROJECT"; project: Project }
+  | { type: "DUPLICATE_PROJECT"; projectId: string; newName: string };
 
 export const initialAppState: AppState = {
   projects: {

@@ -1174,12 +1174,12 @@ describe("useServerState authenticated fallback persistence", () => {
     const updateProjectAction = dispatch.mock.calls
       .map(([action]) => action)
       .find(
-        (action): action is Extract<AppAction, { type: "UPDATE_WORKSPACE" }> =>
-          action.type === "UPDATE_WORKSPACE"
+        (action): action is Extract<AppAction, { type: "UPDATE_PROJECT" }> =>
+          action.type === "UPDATE_PROJECT"
       );
 
     expect(updateProjectAction).toMatchObject({
-      type: "UPDATE_WORKSPACE",
+      type: "UPDATE_PROJECT",
       projectId: "default",
     });
     expect(updateProjectAction?.updates.servers).toEqual(
@@ -1220,12 +1220,12 @@ describe("useServerState authenticated fallback persistence", () => {
     const updateProjectAction = dispatch.mock.calls
       .map(([action]) => action)
       .find(
-        (action): action is Extract<AppAction, { type: "UPDATE_WORKSPACE" }> =>
-          action.type === "UPDATE_WORKSPACE"
+        (action): action is Extract<AppAction, { type: "UPDATE_PROJECT" }> =>
+          action.type === "UPDATE_PROJECT"
       );
 
     expect(updateProjectAction).toMatchObject({
-      type: "UPDATE_WORKSPACE",
+      type: "UPDATE_PROJECT",
       projectId: "default",
     });
     expect(updateProjectAction?.updates.servers["demo-server"]).toBeUndefined();

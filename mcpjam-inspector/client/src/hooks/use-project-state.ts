@@ -52,11 +52,11 @@ interface PendingClientConfigSync {
   timeoutId: ReturnType<typeof setTimeout>;
 }
 
-const WORKSPACE_CLIENT_CONFIG_SYNC_INTERRUPTED_ERROR_MESSAGE =
+const PROJECT_CLIENT_CONFIG_SYNC_INTERRUPTED_ERROR_MESSAGE =
   "Project client config sync was interrupted.";
-const WORKSPACE_CLIENT_CONFIG_SYNC_TIMEOUT_ERROR_MESSAGE =
+const PROJECT_CLIENT_CONFIG_SYNC_TIMEOUT_ERROR_MESSAGE =
   "Timed out waiting for project client config to sync.";
-const WORKSPACE_CLIENT_CONFIG_SYNC_SUPERSEDED_ERROR_MESSAGE =
+const PROJECT_CLIENT_CONFIG_SYNC_SUPERSEDED_ERROR_MESSAGE =
   "Project client config sync was superseded by a newer save.";
 
 interface ClientConfigSaveController<T> {
@@ -112,7 +112,7 @@ function canApplyStoreSaveState(
 function isSupersededClientConfigSyncError(error: unknown) {
   return (
     error instanceof Error &&
-    error.message === WORKSPACE_CLIENT_CONFIG_SYNC_SUPERSEDED_ERROR_MESSAGE
+    error.message === PROJECT_CLIENT_CONFIG_SYNC_SUPERSEDED_ERROR_MESSAGE
   );
 }
 
@@ -323,7 +323,7 @@ export function useProjectState({
     }
 
     clearAllPendingClientConfigSyncs(
-      new Error(WORKSPACE_CLIENT_CONFIG_SYNC_INTERRUPTED_ERROR_MESSAGE),
+      new Error(PROJECT_CLIENT_CONFIG_SYNC_INTERRUPTED_ERROR_MESSAGE),
     );
   }, [
     clearAllPendingClientConfigSyncs,
@@ -335,7 +335,7 @@ export function useProjectState({
   useEffect(() => {
     return () => {
       clearAllPendingClientConfigSyncs(
-        new Error(WORKSPACE_CLIENT_CONFIG_SYNC_INTERRUPTED_ERROR_MESSAGE),
+        new Error(PROJECT_CLIENT_CONFIG_SYNC_INTERRUPTED_ERROR_MESSAGE),
       );
     };
   }, [clearAllPendingClientConfigSyncs]);
@@ -699,7 +699,7 @@ export function useProjectState({
           organizationId,
         });
         dispatch({
-          type: "UPDATE_WORKSPACE",
+          type: "UPDATE_PROJECT",
           projectId: project.id,
           updates: {
             sharedProjectId: projectId as string,
@@ -845,10 +845,10 @@ export function useProjectState({
         updatedAt: new Date(),
         organizationId: isAuthenticated ? projectOrganizationId : undefined,
       };
-      dispatch({ type: "CREATE_WORKSPACE", project: newProject });
+      dispatch({ type: "CREATE_PROJECT", project: newProject });
 
       if (switchTo) {
-        dispatch({ type: "SWITCH_WORKSPACE", projectId: newProject.id });
+        dispatch({ type: "SWITCH_PROJECT", projectId: newProject.id });
       }
 
       toast.success(`Project "${name}" created`);
@@ -895,7 +895,7 @@ export function useProjectState({
           throw error instanceof Error ? error : new Error(errorMessage);
         }
       } else {
-        dispatch({ type: "UPDATE_WORKSPACE", projectId, updates });
+        dispatch({ type: "UPDATE_PROJECT", projectId, updates });
       }
     },
     [
@@ -935,7 +935,7 @@ export function useProjectState({
           if (supersededPendingId) {
             clearPendingClientConfigSync(
               supersededPendingId,
-              new Error(WORKSPACE_CLIENT_CONFIG_SYNC_SUPERSEDED_ERROR_MESSAGE),
+              new Error(PROJECT_CLIENT_CONFIG_SYNC_SUPERSEDED_ERROR_MESSAGE),
             );
           }
 
@@ -947,7 +947,7 @@ export function useProjectState({
             ) {
               pendingClientConfigSyncByProjectRef.current.delete(projectId);
             }
-            reject(new Error(WORKSPACE_CLIENT_CONFIG_SYNC_TIMEOUT_ERROR_MESSAGE));
+            reject(new Error(PROJECT_CLIENT_CONFIG_SYNC_TIMEOUT_ERROR_MESSAGE));
           }, CLIENT_CONFIG_SYNC_ECHO_TIMEOUT_MS);
 
           pendingClientConfigSyncByProjectRef.current.set(
@@ -993,7 +993,7 @@ export function useProjectState({
       }
 
       dispatch({
-        type: "UPDATE_WORKSPACE",
+        type: "UPDATE_PROJECT",
         projectId,
         updates: { clientConfig },
       });
@@ -1248,7 +1248,7 @@ export function useProjectState({
           setConvexActiveProjectId(targetProjectId);
         } else {
           dispatch({
-            type: "SWITCH_WORKSPACE",
+            type: "SWITCH_PROJECT",
             projectId: targetProjectId,
           });
         }
@@ -1278,7 +1278,7 @@ export function useProjectState({
         }
         toast.success("Project deleted");
       } else {
-        dispatch({ type: "DELETE_WORKSPACE", projectId });
+        dispatch({ type: "DELETE_PROJECT", projectId });
         toast.success("Project deleted");
       }
       return true;
@@ -1355,7 +1355,7 @@ export function useProjectState({
             ? projectOrganizationId
             : sourceProject.organizationId,
         };
-        dispatch({ type: "CREATE_WORKSPACE", project: duplicatedProject });
+        dispatch({ type: "CREATE_PROJECT", project: duplicatedProject });
         toast.success(`Project duplicated as "${newName}"`);
       }
     },
@@ -1374,7 +1374,7 @@ export function useProjectState({
 
   const handleSetDefaultProject = useCallback(
     (projectId: string) => {
-      dispatch({ type: "SET_DEFAULT_WORKSPACE", projectId });
+      dispatch({ type: "SET_DEFAULT_PROJECT", projectId });
       toast.success("Default project updated");
     },
     [dispatch],
@@ -1390,7 +1390,7 @@ export function useProjectState({
       if (isAuthenticated) {
         if (appState.projects[resolvedSourceProjectId]) {
           dispatch({
-            type: "UPDATE_WORKSPACE",
+            type: "UPDATE_PROJECT",
             projectId: resolvedSourceProjectId,
             updates: { sharedProjectId: convexProjectId },
           });
@@ -1407,7 +1407,7 @@ export function useProjectState({
         });
       } else {
         dispatch({
-          type: "UPDATE_WORKSPACE",
+          type: "UPDATE_PROJECT",
           projectId: resolvedSourceProjectId,
           updates: { sharedProjectId: convexProjectId },
         });
@@ -1495,7 +1495,7 @@ export function useProjectState({
             ? projectOrganizationId
             : projectData.organizationId,
         };
-        dispatch({ type: "IMPORT_WORKSPACE", project: importedProject });
+        dispatch({ type: "IMPORT_PROJECT", project: importedProject });
         toast.success(`Project "${importedProject.name}" imported`);
       }
     },

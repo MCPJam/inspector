@@ -492,7 +492,7 @@ export function useAppState({
       if (isAuthenticated && !useLocalFallback) {
         setConvexActiveProjectId(projectId);
       } else {
-        dispatch({ type: "SWITCH_WORKSPACE", projectId });
+        dispatch({ type: "SWITCH_PROJECT", projectId });
       }
       toast.success(`Switched to project: ${newProject.name}`);
     },
@@ -540,8 +540,8 @@ export function useAppState({
       if (isAuthenticated && !useLocalFallback) {
         setConvexActiveProjectId(targetProjectId);
       } else {
-        dispatch({ type: "SWITCH_WORKSPACE", projectId: targetProjectId });
-        dispatch({ type: "DELETE_WORKSPACE", projectId });
+        dispatch({ type: "SWITCH_PROJECT", projectId: targetProjectId });
+        dispatch({ type: "DELETE_PROJECT", projectId });
       }
     },
     [

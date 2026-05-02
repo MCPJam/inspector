@@ -71,7 +71,7 @@ export async function handleHostedOrgChatModel(
     systemPrompt: options.systemPrompt,
     temperature: options.temperature,
     tools: options.tools,
-    projectId: options.projectId,
+    projectId: options.workspaceId ? undefined : options.projectId,
     authHeader: options.authHeader,
     chatboxToken: options.chatboxToken,
     mcpClientManager: options.mcpClientManager,

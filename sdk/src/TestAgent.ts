@@ -452,16 +452,16 @@ export class TestAgent implements EvalAgent {
    *
    * @example
    * // Single-turn (default)
-   * const result = await agent.prompt("Show me workspaces");
+   * const result = await agent.prompt("Show me projects");
    *
    * @example
    * // Multi-turn with context
-   * const r1 = await agent.prompt("Show me workspaces");
+   * const r1 = await agent.prompt("Show me projects");
    * const r2 = await agent.prompt("Now show tasks", { context: r1 });
    *
    * @example
    * // Multi-turn with multiple context results
-   * const r1 = await agent.prompt("Show workspaces");
+   * const r1 = await agent.prompt("Show projects");
    * const r2 = await agent.prompt("Pick the first", { context: r1 });
    * const r3 = await agent.prompt("Show tasks", { context: [r1, r2] });
    */

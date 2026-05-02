@@ -1125,7 +1125,7 @@ export function useServerState({
       nextServers[serverName] = serverEntry;
 
       dispatch({
-        type: "UPDATE_WORKSPACE",
+        type: "UPDATE_PROJECT",
         projectId: targetProjectId,
         updates: { servers: nextServers },
       });
@@ -1599,7 +1599,7 @@ export function useServerState({
         const project = appState.projects[appState.activeProjectId];
         if (project) {
           dispatch({
-            type: "UPDATE_WORKSPACE",
+            type: "UPDATE_PROJECT",
             projectId: appState.activeProjectId,
             updates: {
               servers: {

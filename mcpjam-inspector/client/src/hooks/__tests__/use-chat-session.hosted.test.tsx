@@ -374,7 +374,7 @@ describe("useChatSession hosted mode", () => {
           ],
         },
         hostedContext: {
-          workspaceId: "workspace-1",
+          projectId: "project-1",
           selectedServerIds: ["server-id-1"],
         },
       }),

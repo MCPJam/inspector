@@ -566,7 +566,7 @@ describe("useProjectState automatic project creation", () => {
     });
     await waitFor(() => {
       expect(dispatch).toHaveBeenCalledWith({
-        type: "UPDATE_WORKSPACE",
+        type: "UPDATE_PROJECT",
         projectId: "local-1",
         updates: {
           sharedProjectId: "remote-project-id",
@@ -1254,7 +1254,7 @@ describe("useProjectState automatic project creation", () => {
 
     expect(createProjectMock).not.toHaveBeenCalled();
     expect(dispatch).toHaveBeenCalledWith({
-      type: "CREATE_WORKSPACE",
+      type: "CREATE_PROJECT",
       project: expect.objectContaining({
         name: "Created locally",
         organizationId: "org-a",
@@ -1271,7 +1271,7 @@ describe("useProjectState automatic project creation", () => {
     });
 
     expect(dispatch).toHaveBeenCalledWith({
-      type: "CREATE_WORKSPACE",
+      type: "CREATE_PROJECT",
       project: expect.objectContaining({
         name: "Duplicated locally",
         organizationId: "org-a",
@@ -1289,7 +1289,7 @@ describe("useProjectState automatic project creation", () => {
     });
 
     expect(dispatch).toHaveBeenCalledWith({
-      type: "IMPORT_WORKSPACE",
+      type: "IMPORT_PROJECT",
       project: expect.objectContaining({
         name: "Imported locally",
         organizationId: "org-a",
@@ -1331,7 +1331,7 @@ describe("useProjectState automatic project creation", () => {
 
     expect(updateProjectMock).not.toHaveBeenCalled();
     expect(dispatch).toHaveBeenCalledWith({
-      type: "UPDATE_WORKSPACE",
+      type: "UPDATE_PROJECT",
       projectId: "local-org-a",
       updates: {
         name: "Project A Renamed",
@@ -1378,11 +1378,11 @@ describe("useProjectState automatic project creation", () => {
 
     expect(deleteProjectMock).not.toHaveBeenCalled();
     expect(dispatch).toHaveBeenNthCalledWith(1, {
-      type: "SWITCH_WORKSPACE",
+      type: "SWITCH_PROJECT",
       projectId: "local-org-a-2",
     });
     expect(dispatch).toHaveBeenNthCalledWith(2, {
-      type: "DELETE_WORKSPACE",
+      type: "DELETE_PROJECT",
       projectId: "local-org-a-1",
     });
   });
@@ -1621,7 +1621,7 @@ describe("useProjectState automatic project creation", () => {
 
     expect(localStorage.getItem("convex-active-project-id")).toBeNull();
     expect(dispatch).toHaveBeenCalledWith({
-      type: "UPDATE_WORKSPACE",
+      type: "UPDATE_PROJECT",
       projectId: "project-b",
       updates: { sharedProjectId: "convex-project-b" },
     });
@@ -1720,7 +1720,7 @@ describe("useProjectState automatic project creation", () => {
     });
 
     expect(dispatch).toHaveBeenCalledWith({
-      type: "UPDATE_WORKSPACE",
+      type: "UPDATE_PROJECT",
       projectId: "project-a",
       updates: { sharedProjectId: "convex-project-a" },
     });

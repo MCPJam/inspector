@@ -693,7 +693,7 @@ describe("appReducer", () => {
   });
 
   describe("Project actions", () => {
-    describe("CREATE_WORKSPACE", () => {
+    describe("CREATE_PROJECT", () => {
       it("adds new project to state", () => {
         const state = createInitialState();
         const newProject: Project = {
@@ -705,7 +705,7 @@ describe("appReducer", () => {
         };
 
         const result = appReducer(state, {
-          type: "CREATE_WORKSPACE",
+          type: "CREATE_PROJECT",
           project: newProject,
         });
 
@@ -713,12 +713,12 @@ describe("appReducer", () => {
       });
     });
 
-    describe("UPDATE_WORKSPACE", () => {
+    describe("UPDATE_PROJECT", () => {
       it("updates project with partial data", () => {
         const state = createInitialState();
 
         const result = appReducer(state, {
-          type: "UPDATE_WORKSPACE",
+          type: "UPDATE_PROJECT",
           projectId: "project-1",
           updates: { name: "Updated Name", description: "New description" },
         });
@@ -733,7 +733,7 @@ describe("appReducer", () => {
         const state = createInitialState();
 
         const result = appReducer(state, {
-          type: "UPDATE_WORKSPACE",
+          type: "UPDATE_PROJECT",
           projectId: "nonexistent",
           updates: { name: "Should not apply" },
         });
@@ -742,7 +742,7 @@ describe("appReducer", () => {
       });
     });
 
-    describe("DELETE_WORKSPACE", () => {
+    describe("DELETE_PROJECT", () => {
       it("removes project from state", () => {
         const extraProject: Project = {
           id: "extra",
@@ -759,7 +759,7 @@ describe("appReducer", () => {
         });
 
         const result = appReducer(state, {
-          type: "DELETE_WORKSPACE",
+          type: "DELETE_PROJECT",
           projectId: "extra",
         });
 
@@ -767,7 +767,7 @@ describe("appReducer", () => {
       });
     });
 
-    describe("SWITCH_WORKSPACE", () => {
+    describe("SWITCH_PROJECT", () => {
       it("switches to target project and resets servers", () => {
         const targetProject: Project = {
           id: "target",
@@ -787,7 +787,7 @@ describe("appReducer", () => {
         });
 
         const result = appReducer(state, {
-          type: "SWITCH_WORKSPACE",
+          type: "SWITCH_PROJECT",
           projectId: "target",
         });
 
@@ -804,7 +804,7 @@ describe("appReducer", () => {
         const state = createInitialState();
 
         const result = appReducer(state, {
-          type: "SWITCH_WORKSPACE",
+          type: "SWITCH_PROJECT",
           projectId: "nonexistent",
         });
 
@@ -812,7 +812,7 @@ describe("appReducer", () => {
       });
     });
 
-    describe("SET_DEFAULT_WORKSPACE", () => {
+    describe("SET_DEFAULT_PROJECT", () => {
       it("sets default flag on specified project", () => {
         const project2: Project = {
           id: "project-2",
@@ -830,7 +830,7 @@ describe("appReducer", () => {
         });
 
         const result = appReducer(state, {
-          type: "SET_DEFAULT_WORKSPACE",
+          type: "SET_DEFAULT_PROJECT",
           projectId: "project-2",
         });
 
@@ -839,7 +839,7 @@ describe("appReducer", () => {
       });
     });
 
-    describe("DUPLICATE_WORKSPACE", () => {
+    describe("DUPLICATE_PROJECT", () => {
       it("creates copy of project with new name", () => {
         const sourceProject: Project = {
           id: "source",
@@ -858,7 +858,7 @@ describe("appReducer", () => {
         });
 
         const result = appReducer(state, {
-          type: "DUPLICATE_WORKSPACE",
+          type: "DUPLICATE_PROJECT",
           projectId: "source",
           newName: "Source Copy",
         });
@@ -878,7 +878,7 @@ describe("appReducer", () => {
         const state = createInitialState();
 
         const result = appReducer(state, {
-          type: "DUPLICATE_WORKSPACE",
+          type: "DUPLICATE_PROJECT",
           projectId: "nonexistent",
           newName: "Copy",
         });
@@ -887,7 +887,7 @@ describe("appReducer", () => {
       });
     });
 
-    describe("IMPORT_WORKSPACE", () => {
+    describe("IMPORT_PROJECT", () => {
       it("adds imported project to state", () => {
         const state = createInitialState();
         const imported: Project = {
@@ -899,7 +899,7 @@ describe("appReducer", () => {
         };
 
         const result = appReducer(state, {
-          type: "IMPORT_WORKSPACE",
+          type: "IMPORT_PROJECT",
           project: imported,
         });
 

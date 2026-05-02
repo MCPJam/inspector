@@ -348,7 +348,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       };
     }
 
-    case "CREATE_WORKSPACE": {
+    case "CREATE_PROJECT": {
       return {
         ...state,
         projects: {
@@ -358,7 +358,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       };
     }
 
-    case "UPDATE_WORKSPACE": {
+    case "UPDATE_PROJECT": {
       const project = state.projects[action.projectId];
       if (!project) return state;
       return {
@@ -374,7 +374,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       };
     }
 
-    case "DELETE_WORKSPACE": {
+    case "DELETE_PROJECT": {
       const { [action.projectId]: _, ...remainingProjects } =
         state.projects;
       return {
@@ -383,7 +383,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       };
     }
 
-    case "SWITCH_WORKSPACE": {
+    case "SWITCH_PROJECT": {
       const targetProject = state.projects[action.projectId];
       if (!targetProject) return state;
 
@@ -405,7 +405,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       };
     }
 
-    case "SET_DEFAULT_WORKSPACE": {
+    case "SET_DEFAULT_PROJECT": {
       const updatedProjects = Object.fromEntries(
         Object.entries(state.projects).map(([id, project]) => [
           id,
@@ -418,7 +418,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       };
     }
 
-    case "IMPORT_WORKSPACE": {
+    case "IMPORT_PROJECT": {
       return {
         ...state,
         projects: {
@@ -428,7 +428,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       };
     }
 
-    case "DUPLICATE_WORKSPACE": {
+    case "DUPLICATE_PROJECT": {
       const sourceProject = state.projects[action.projectId];
       if (!sourceProject) return state;
       const newProject = {

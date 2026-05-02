@@ -21,6 +21,7 @@ export type ResolvedOrgModelConfig = {
 };
 
 export type ResolveOrgModelConfigTarget =
+  | { projectId: string }
   | { workspaceId: string }
   | { organizationId: string };
 
@@ -77,10 +78,11 @@ function buildCacheKey(
   params: ResolveOrgModelConfigTarget,
   auth: ResolveOrgModelConfigAuth | undefined,
 ): string {
-  const target =
-    "workspaceId" in params
-      ? `ws:${params.workspaceId}`
-      : `org:${params.organizationId}`;
+  const target = "projectId" in params
+    ? `project:${params.projectId}`
+    : "workspaceId" in params
+    ? `legacy-workspace:${params.workspaceId}`
+    : `org:${params.organizationId}`;
   const authHash = createHash("sha256")
     .update(
       JSON.stringify({
