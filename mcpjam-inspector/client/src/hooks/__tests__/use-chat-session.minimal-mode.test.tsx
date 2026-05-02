@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { useChatSession } from "../use-chat-session";
+import { useGuestLimitDialogStore } from "@/stores/guest-limit-dialog-store";
 
 const mockGetToolsMetadata = vi.fn();
 const mockCountTextTokens = vi.fn();
@@ -8,6 +9,7 @@ const mockSetMessages = vi.fn();
 const mockStop = vi.fn();
 const mockAddToolApprovalResponse = vi.fn();
 const mockAuthFetch = vi.fn();
+const mockWindowFetch = vi.fn();
 const mockGetSessionAuthHeaders = vi.fn(() => ({}));
 const mockGetAccessToken = vi.fn(async () => null);
 const mockGetGuestBearerToken = vi.fn(async () => "guest-token");
@@ -26,6 +28,7 @@ const mockTransportInstances: Array<{
   sendMessages: ReturnType<typeof vi.fn>;
   requests: any[];
 }> = [];
+const mockUseChatErrorHandlers: Array<(error: Error) => void> = [];
 
 const baseModel = {
   id: "gpt-4",
@@ -156,14 +159,20 @@ vi.mock("@ai-sdk/react", async () => {
       ({
         id,
         transport,
+        onError,
       }: {
         id: string;
         transport: {
           sendMessages: (options: any) => Promise<unknown>;
         };
+        onError?: (error: Error) => void;
       }) => {
         const latchedIdRef = React.useRef(id);
         const latchedTransportRef = React.useRef(transport);
+
+        if (onError) {
+          mockUseChatErrorHandlers.push(onError);
+        }
 
         if (latchedIdRef.current !== id) {
           latchedIdRef.current = id;
@@ -250,7 +259,16 @@ describe("useChatSession minimal mode parity", () => {
     mockGetGuestBearerToken.mockReset();
     mockGetGuestBearerToken.mockResolvedValue("guest-token");
     mockAuthFetch.mockResolvedValue(new Response(null, { status: 200 }));
+    mockWindowFetch.mockReset();
+    mockWindowFetch.mockResolvedValue(new Response(null, { status: 200 }));
+    vi.stubGlobal("fetch", mockWindowFetch);
+    useGuestLimitDialogStore.setState({
+      authStatus: "guest",
+      hasPendingLimit: false,
+      isOpen: false,
+    });
     mockTransportInstances.length = 0;
+    mockUseChatErrorHandlers.length = 0;
     mockGetToolsMetadata.mockResolvedValue({
       metadata: { create_view: { title: "Create view" } },
       toolServerMap: { create_view: "server-1" },
@@ -335,7 +353,7 @@ describe("useChatSession minimal mode parity", () => {
     warnSpy.mockRestore();
   });
 
-  it("keeps non-hosted chat off authFetch and includes a guest bearer header", async () => {
+  it("keeps non-hosted chat off authFetch while using modal-aware fetch", async () => {
     const selectedServers = ["server-1"];
     const { result } = renderHook(() =>
       useChatSession({
@@ -353,7 +371,7 @@ describe("useChatSession minimal mode parity", () => {
 
     const latestTransport = mockTransportInstances.at(-1)!;
     expect(latestTransport.options.api).toBe("/api/mcp/chat-v2");
-    expect(latestTransport.options.fetch).toBeUndefined();
+    expect(latestTransport.options.fetch).toEqual(expect.any(Function));
     expect(await resolveConfig(latestTransport.options.headers)).toEqual({
       Authorization: "Bearer guest-token",
     });
@@ -370,7 +388,83 @@ describe("useChatSession minimal mode parity", () => {
       ).toBe(true);
     });
     expect(getUsedTransport().options.api).toBe("/api/mcp/chat-v2");
+    expect(mockWindowFetch).toHaveBeenCalledWith(
+      "/api/mcp/chat-v2",
+      expect.objectContaining({
+        method: "POST",
+        headers: { Authorization: "Bearer guest-token" },
+      }),
+    );
     expect(mockAuthFetch).not.toHaveBeenCalled();
+  });
+
+  it("opens the guest-limit dialog for non-hosted chat-v2 limit responses", async () => {
+    mockWindowFetch.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          ok: false,
+          code: "user_rate_limit",
+          error:
+            "Daily MCPJam model limit reached. Use BYOK or try again tomorrow.",
+          isRetryable: true,
+          retryAfter: 86400000,
+          details: "Try again in 1440 minutes.",
+        }),
+        {
+          status: 429,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
+    );
+
+    const { result } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        minimalMode: true,
+        executionConfig: {
+          systemPrompt: "Prompt",
+        },
+      }),
+    );
+
+    await waitFor(() => {
+      expect(mockTransportInstances.length).toBeGreaterThan(0);
+    });
+
+    act(() => {
+      result.current.sendMessage({ text: "hello" });
+    });
+
+    await waitFor(() => {
+      expect(useGuestLimitDialogStore.getState().isOpen).toBe(true);
+    });
+    expect(mockAuthFetch).not.toHaveBeenCalled();
+  });
+
+  it("opens the guest-limit dialog for chat-v2 stream limit errors", async () => {
+    renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        minimalMode: true,
+        executionConfig: {
+          systemPrompt: "Prompt",
+        },
+      }),
+    );
+
+    await waitFor(() => {
+      expect(mockUseChatErrorHandlers.length).toBeGreaterThan(0);
+    });
+
+    act(() => {
+      mockUseChatErrorHandlers.at(-1)?.(
+        new Error(
+          "Daily MCPJam model limit reached. Use BYOK or try again tomorrow.",
+        ),
+      );
+    });
+
+    expect(useGuestLimitDialogStore.getState().isOpen).toBe(true);
   });
 
   it("keeps only the three premium MCPJam models gated on the unauthenticated non-hosted path", async () => {

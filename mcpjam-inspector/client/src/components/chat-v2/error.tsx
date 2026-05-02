@@ -12,7 +12,9 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@mcpjam/design-system/collapsible";
+import { useAuth } from "@workos-inc/authkit-react";
 import { JsonEditor } from "@/components/ui/json-editor";
+import { isMCPJamModelLimitError } from "@/lib/guest-limit";
 import { cn } from "@/lib/utils";
 
 interface ErrorBoxProps {
@@ -65,6 +67,8 @@ export function ErrorBox({
   const [isErrorDetailsOpen, setIsErrorDetailsOpen] = useState(false);
   const errorDetailsJson = parseErrorDetails(errorDetails);
 
+  const { user, isLoading } = useAuth();
+
   // Three priority states for the rate-limit-adjacent variants. Order
   // matters: walletLocked is the highest-priority terminal state (no
   // self-serve recovery), then the concurrency throttle (transient,
@@ -79,9 +83,20 @@ export function ErrorBox({
   const isMCPJamModelLimit =
     !isWalletLocked &&
     !isConcurrencyThrottle &&
-    (code === "mcpjam_rate_limit" ||
-      code === "user_rate_limit" ||
-      /mcpjam[\w\s-]*model limit/i.test(message));
+    (code === "user_rate_limit" ||
+      isMCPJamModelLimitError({
+        code,
+        details: errorDetails,
+        message,
+      }));
+
+  // Guests hitting the daily model limit see the global GuestLimitDialog
+  // instead of an inline banner. Wallet/concurrency states fall through
+  // to their dedicated banners above; signed-in users keep the inline UI.
+  const isGuest = !isLoading && !user;
+  if (isMCPJamModelLimit && isGuest) {
+    return null;
+  }
 
   // Platform and quota errors use warning styling to indicate recoverable state.
   const isPlatformError = isMCPJamPlatformError === true || isMCPJamModelLimit;
