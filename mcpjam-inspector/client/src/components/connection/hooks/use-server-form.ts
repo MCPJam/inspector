@@ -558,10 +558,17 @@ export function useServerForm(
     const shouldUsePreregisteredCredentials =
       authType === "oauth" && oauthRegistrationMode === "preregistered";
     const normalizedClientSecret = clientSecret.trim();
+    const hasReplacementClientSecret = normalizedClientSecret.length > 0;
+    // A typed replacement always wins over the clear toggle — the backend
+    // rejects payloads that try to do both at once.
+    const submittedClearClientSecret =
+      shouldUsePreregisteredCredentials &&
+      clearClientSecret &&
+      !hasReplacementClientSecret;
     const nextHasClientSecret =
       shouldUsePreregisteredCredentials &&
-      !clearClientSecret &&
-      (hasStoredClientSecret || normalizedClientSecret.length > 0);
+      !submittedClearClientSecret &&
+      (hasStoredClientSecret || hasReplacementClientSecret);
 
     // Handle authentication
     let useOAuth = false;
@@ -593,7 +600,7 @@ export function useServerForm(
         ? nextHasClientSecret
         : undefined,
       clearClientSecret: shouldUsePreregisteredCredentials
-        ? clearClientSecret
+        ? submittedClearClientSecret
         : undefined,
       requestTimeout: reqTimeout,
     };

@@ -103,7 +103,7 @@ export function AuthenticationSection({
           clientId: showClientCredentials ? clientId : undefined,
           clientSecret: showClientCredentials ? clientSecret : undefined,
           hasClientSecret: showClientCredentials
-            ? hasStoredClientSecret
+            ? hasStoredClientSecret && !clearClientSecret
             : undefined,
           authMode: "interactive",
         })

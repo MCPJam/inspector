@@ -143,7 +143,9 @@ export function AdvancedConnectionSettingsSection({
                 </div>
               )}
               {headersWarning && (
-                <p className="text-xs text-amber-700">{headersWarning}</p>
+                <p role="alert" className="text-xs text-amber-700">
+                  {headersWarning}
+                </p>
               )}
             </div>
           )}

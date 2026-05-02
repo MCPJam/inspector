@@ -23,7 +23,10 @@ export function normalizeTokenEndpointAuthMethods(
     return ["client_secret_basic"];
   }
 
-  return raw.filter((method): method is string => typeof method === "string");
+  const filtered = raw.filter(
+    (method): method is string => typeof method === "string",
+  );
+  return filtered.length > 0 ? filtered : ["client_secret_basic"];
 }
 
 export function resolvePreregisteredClientAuthMethod(input: {
@@ -53,14 +56,9 @@ export function resolvePreregisteredClientAuthMethod(input: {
     };
   }
 
-  if (supportedMethods.includes("none")) {
-    return { ok: true, method: "none", supportedMethods };
-  }
-
-  return {
-    ok: false,
-    message:
-      "This OAuth server requires a client secret for token exchange. Add the OAuth client secret in server settings before starting the flow.",
-    supportedMethods,
-  };
+  // Public preregistered client: send no client auth at the token endpoint and
+  // let the AS reject if it actually requires a secret. Pre-flight blocking
+  // breaks CLI flows (e.g. --client-id only) against ASes that don't advertise
+  // "none" but accept unauthenticated public-client requests.
+  return { ok: true, method: "none", supportedMethods };
 }

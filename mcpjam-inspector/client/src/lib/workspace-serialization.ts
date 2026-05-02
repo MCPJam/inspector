@@ -240,6 +240,12 @@ export function serversHaveChanged(
     )
       return true;
 
+    if (
+      Boolean(localServer.hasClientSecret) !==
+      Boolean(remoteServer.hasClientSecret)
+    )
+      return true;
+
     // Check OAuth profile (handle both flat and nested structures)
     // For flat structure, convert oauthScopes array to comma-separated string for comparison
     const remoteOAuthProfile =

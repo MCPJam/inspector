@@ -315,8 +315,11 @@ describe("OAuth state machine regressions", () => {
     "2025-06-18",
     "2025-11-25",
   ])(
-    "blocks preregistered %s before redirect when no secret is available",
+    "lets preregistered %s public clients proceed even when the AS omits 'none'",
     async (protocolVersion) => {
+      // CLI flows that worked pre-PR (e.g. --client-id only against an AS that
+      // only advertises confidential methods but actually accepts public-client
+      // requests) must keep working. Let the AS do the real rejection.
       let state = {
         ...EMPTY_OAUTH_FLOW_STATE,
         currentStep: "received_authorization_server_metadata" as const,
@@ -349,9 +352,11 @@ describe("OAuth state machine regressions", () => {
 
       await machine.proceedToNextStep();
 
-      expect(state.currentStep).toBe("received_authorization_server_metadata");
-      expect(state.authorizationUrl).toBeUndefined();
-      expect(state.error).toContain("requires a client secret");
+      expect(state.currentStep).toBe("received_client_credentials");
+      expect(state.clientId).toBe("configured-client-id");
+      expect(state.clientSecret).toBeUndefined();
+      expect(state.tokenEndpointAuthMethod).toBe("none");
+      expect(state.error).toBeUndefined();
     },
   );
 

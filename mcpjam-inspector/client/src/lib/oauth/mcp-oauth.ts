@@ -2068,9 +2068,14 @@ export async function initiateOAuth(
       const existingClientInfo = localStorage.getItem(
         `mcp-client-${options.serverName}`
       );
-      const existingJsonRaw = existingClientInfo
-        ? JSON.parse(existingClientInfo)
-        : {};
+      let existingJsonRaw: any = {};
+      if (existingClientInfo) {
+        try {
+          existingJsonRaw = JSON.parse(existingClientInfo);
+        } catch {
+          existingJsonRaw = {};
+        }
+      }
       const existingJson =
         HOSTED_MODE && existingJsonRaw
           ? Object.fromEntries(

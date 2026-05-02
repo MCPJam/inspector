@@ -24,7 +24,10 @@ describe("resolveAuthorizationPlan", () => {
     expect(plan.registrationStrategy).toBe("preregistered");
   });
 
-  it("treats omitted token auth methods as client_secret_basic for preregistered clients", () => {
+  it("does not pre-block preregistered public clients when the AS omits token auth methods", () => {
+    // CLI flows (--client-id only against ASes that don't advertise "none")
+    // must keep working; the AS itself rejects unauthenticated public-client
+    // requests, so a pre-flight block here just breaks otherwise-valid setups.
     const plan = resolveAuthorizationPlan({
       serverUrl: "https://example.com/mcp",
       authMode: "interactive",
@@ -35,11 +38,13 @@ describe("resolveAuthorizationPlan", () => {
       },
     });
 
-    expect(plan.status).toBe("blocked");
-    expect(plan.blockerDetails[0]?.code).toBe(
-      "PREREGISTERED_MISSING_CLIENT_SECRET",
-    );
-    expect(plan.blockers[0]).toContain("requires a client secret");
+    expect(plan.status).toBe("ready");
+    expect(plan.registrationStrategy).toBe("preregistered");
+    expect(
+      plan.blockerDetails.some(
+        (b) => b.code === "PREREGISTERED_MISSING_CLIENT_SECRET",
+      ),
+    ).toBe(false);
   });
 
   it("allows preregistered public clients when the token endpoint supports none", () => {
