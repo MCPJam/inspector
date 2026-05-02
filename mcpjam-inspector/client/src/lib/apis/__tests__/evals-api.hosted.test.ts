@@ -207,7 +207,7 @@ describe("evals-api hosted mode", () => {
 
     await expect(
       runEvalTestCase({
-        workspaceId: "workspace-1",
+        projectId: "workspace-1",
         testCaseId: "test-case-1",
         model: "openai/gpt-5-mini",
         provider: "openai",
@@ -449,7 +449,7 @@ describe("evals-api hosted mode", () => {
     await expect(
       streamEvalTestCase(
         {
-          workspaceId: "workspace-1",
+          projectId: "workspace-1",
           testCaseId: "test-case-1",
           model: "openai/gpt-5-mini",
           provider: "openai",
@@ -490,7 +490,7 @@ describe("evals-api hosted mode", () => {
     const events: unknown[] = [];
     await streamEvalTestCase(
       {
-        workspaceId: "workspace-1",
+        projectId: "workspace-1",
         testCaseId: "test-case-1",
         model: "openai/gpt-5-mini",
         provider: "openai",
