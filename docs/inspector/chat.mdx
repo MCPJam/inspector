@@ -110,3 +110,15 @@ There are two ways a skill ends up in a conversation:
 ## Prompts
 
 Prompts are MCP prompt templates exposed by your servers via `prompts/list`. Type `/` in the input to open the picker (the same one used for skills) and pick one from the **PROMPTS** section. Selected prompts appear as expandable cards above the input — showing the source server ID, the prompt description, its arguments (required ones marked with `*`), and a preview of the first message — so you can review or remove them before sending.
+
+## Error states
+
+When a credit-funded chat hits a limit or account issue, the chat surface renders one of three distinct banners:
+
+| Banner | When it appears | What to do |
+|---|---|---|
+| **Daily limit reached** | Your daily credit quota is exhausted | Top up your wallet using the **Top up to keep chatting** button, or wait for the quota to reset |
+| **Another chat is finishing** | A concurrent credit-funded chat is still in flight server-side | Wait a few seconds, then click **Retry** to resubmit your last message |
+| **Account under review** | Your account has been paused while a recent payment is reviewed | Click **Reach out to support** to contact the MCPJam team — you cannot self-serve out of this state |
+
+For all other errors, click **More details** to expand the JSON-formatted error response, then use **Reset chat** to start a fresh conversation.
