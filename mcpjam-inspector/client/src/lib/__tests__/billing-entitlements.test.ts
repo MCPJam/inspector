@@ -16,7 +16,7 @@ const minimalCatalogEntry = (
 ): PlanCatalogEntry =>
   ({
     plan: "starter",
-    displayName: "Starter",
+    displayName: "Solo",
     isSelfServe: true,
     prices,
     features: {} as PlanCatalogEntry["features"],
@@ -177,7 +177,7 @@ describe("getBillingErrorMessage", () => {
     );
 
     expect(message).toBe(
-      "Chatboxes is not included in the Free plan. Upgrade to Starter to continue.",
+      "Chatboxes is not included in the Free plan. Upgrade to Solo to continue.",
     );
   });
 
@@ -196,7 +196,7 @@ describe("getBillingErrorMessage", () => {
     );
 
     expect(message).toBe(
-      "Chatboxes is not included in the Free plan. Ask an organization owner to upgrade to Starter.",
+      "Chatboxes is not included in the Free plan. Ask an organization owner to upgrade to Solo.",
     );
   });
 

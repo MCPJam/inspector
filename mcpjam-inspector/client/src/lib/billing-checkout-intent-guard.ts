@@ -6,11 +6,12 @@ import type {
 const PLAN_RANK: Record<OrganizationPlan, number> = {
   free: 0,
   starter: 1,
+  solo: 1,
   team: 2,
   enterprise: 3,
 };
 
-export type CheckoutPlanTier = "starter" | "team";
+export type CheckoutPlanTier = "starter" | "solo" | "team";
 
 export type CheckoutIntentGuardResult =
   | { proceed: true }

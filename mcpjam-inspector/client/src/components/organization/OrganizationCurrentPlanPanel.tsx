@@ -247,7 +247,7 @@ export function OrganizationCurrentPlanPanel({
     billingConfigured &&
     canManageBilling &&
     !isTrial &&
-    (currentPlan === "starter" || currentPlan === "team") &&
+    (currentPlan === "starter" || currentPlan === "solo" || currentPlan === "team") &&
     billingStatus.billingInterval != null &&
     scheduledChangeDetailLine == null &&
     !billingStatus.stripeCancelAtPeriodEnd;

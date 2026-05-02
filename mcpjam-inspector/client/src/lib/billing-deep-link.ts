@@ -1,6 +1,6 @@
 import type { BillingInterval } from "@/hooks/useOrganizationBilling";
 
-export type CheckoutPlanTier = "starter" | "team";
+export type CheckoutPlanTier = "starter" | "solo" | "team";
 
 export interface CheckoutIntent {
   plan: CheckoutPlanTier;
@@ -15,7 +15,7 @@ export type CheckoutIntentWithOrganization = CheckoutIntent & {
 const STORAGE_KEY = "mcpjam:checkout-intent";
 const SIGN_IN_RETURN_PATH_STORAGE_KEY = "mcpjam:billing-signin-return-path";
 
-const VALID_PLANS = new Set<CheckoutPlanTier>(["starter", "team"]);
+const VALID_PLANS = new Set<CheckoutPlanTier>(["starter", "solo", "team"]);
 const VALID_INTERVALS = new Set<BillingInterval>(["monthly", "annual"]);
 
 function parseSearchParams(search: string): URLSearchParams {
