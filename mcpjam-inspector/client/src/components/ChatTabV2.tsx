@@ -44,7 +44,9 @@ import {
   detectPlatform,
   standardEventProps,
 } from "@/lib/PosthogUtils";
-import { ErrorBox } from "@/components/chat-v2/error";
+import { CreditTopupDialog } from "@/components/billing/CreditTopupDialog";
+import { TopupGatedErrorBox } from "@/components/billing/TopupGatedErrorBox";
+import { useCreditTopupReturnFlow } from "@/hooks/useCreditTopupReturnFlow";
 import { StickToBottom } from "use-stick-to-bottom";
 import { type MCPPromptResult } from "@/components/chat-v2/chat-input/prompts/mcp-prompts-popover";
 import type { SkillResult } from "@/components/chat-v2/chat-input/skills/skill-types";
@@ -1591,6 +1593,45 @@ export function ChatTabV2({
   const showDisabledCallout = !effectiveHasMessages && shouldShowUpsell;
 
   const errorMessage = formatErrorMessage(error);
+
+  const [isTopupDialogOpen, setIsTopupDialogOpen] = useState(false);
+  const [pendingResendMessage, setPendingResendMessage] = useState("");
+
+  // Capture the most-recent user-typed message text at the moment it's
+  // sent, not by walking `messages` later. This avoids any per-render
+  // work in the chat hot path — the value is only updated in event
+  // handlers (which run after commit), so it's safe to read in the
+  // click handler below.
+  const lastSentUserMessageRef = useRef("");
+
+  const canShowTopupCta =
+    isConvexAuthenticated &&
+    errorMessage?.canTopUp === true &&
+    errorMessage?.code === "user_rate_limit";
+
+  const handleOpenTopupDialog = useCallback(() => {
+    const text = lastSentUserMessageRef.current;
+    if (!text) {
+      // Nothing to resend — no-op rather than opening a dialog that
+      // would carry an empty message into checkout.
+      return;
+    }
+    posthog.capture("credit_topup_cta_clicked", { source: "chat_banner" });
+    setPendingResendMessage(text);
+    setIsTopupDialogOpen(true);
+  }, [posthog]);
+
+  const handleTopupDialogOpenChange = useCallback((open: boolean) => {
+    setIsTopupDialogOpen(open);
+    if (!open) {
+      // Clear the snapshot when the dialog closes so we don't keep a
+      // stale message lingering in state until the next click.
+      setPendingResendMessage("");
+    }
+  }, []);
+
+  useCreditTopupReturnFlow({ chatSessionId, sendMessage });
+
   const traceViewerTrace = liveTraceEnvelope ?? {
     traceVersion: 1 as const,
     messages: [],
@@ -1823,6 +1864,7 @@ export function ChatTabV2({
           multi_model_count: 1,
           single_model_send: true,
         });
+        lastSentUserMessageRef.current = input;
         sendMessage({ text: input, files });
         setModelContextQueue([]);
       }
@@ -1865,6 +1907,7 @@ export function ChatTabV2({
         multi_model_count: 1,
         single_model_send: true,
       });
+      lastSentUserMessageRef.current = prompt;
       sendMessage({ text: prompt });
     }
     setInput("");
@@ -2042,7 +2085,7 @@ export function ChatTabV2({
                     errorFooterSlot={
                       errorMessage ? (
                         <div className="max-w-4xl mx-auto px-4 pt-4">
-                          <ErrorBox
+                          <TopupGatedErrorBox
                             message={errorMessage.message}
                             errorDetails={errorMessage.details}
                             code={errorMessage.code}
@@ -2051,6 +2094,8 @@ export function ChatTabV2({
                             isMCPJamPlatformError={
                               errorMessage.isMCPJamPlatformError
                             }
+                            canTopUp={canShowTopupCta}
+                            onTopUp={handleOpenTopupDialog}
                             onResetChat={handleResetAllChats}
                           />
                         </div>
@@ -2270,7 +2315,7 @@ export function ChatTabV2({
                       <div className="bg-background/80 backdrop-blur-sm border-t border-border flex-shrink-0">
                         {errorMessage && (
                           <div className="max-w-4xl mx-auto px-4 pt-4">
-                            <ErrorBox
+                            <TopupGatedErrorBox
                               message={errorMessage.message}
                               errorDetails={errorMessage.details}
                               code={errorMessage.code}
@@ -2279,6 +2324,8 @@ export function ChatTabV2({
                               isMCPJamPlatformError={
                                 errorMessage.isMCPJamPlatformError
                               }
+                              canTopUp={canShowTopupCta}
+                              onTopUp={handleOpenTopupDialog}
                               onResetChat={baseResetChat}
                             />
                           </div>
@@ -2308,9 +2355,10 @@ export function ChatTabV2({
                       <StickToBottom.Content className="flex flex-col min-h-0">
                         <Thread
                           messages={messages}
-                          sendFollowUpMessage={(text: string) =>
-                            sendMessage({ text })
-                          }
+                          sendFollowUpMessage={(text: string) => {
+                            lastSentUserMessageRef.current = text;
+                            sendMessage({ text });
+                          }}
                           model={selectedModel}
                           isLoading={isStreaming}
                           toolsMetadata={toolsMetadata}
@@ -2336,7 +2384,7 @@ export function ChatTabV2({
                     <div className="bg-background/80 backdrop-blur-sm border-t border-border flex-shrink-0">
                       {errorMessage && (
                         <div className="max-w-4xl mx-auto px-4 pt-4">
-                          <ErrorBox
+                          <TopupGatedErrorBox
                             message={errorMessage.message}
                             errorDetails={errorMessage.details}
                             code={errorMessage.code}
@@ -2345,6 +2393,8 @@ export function ChatTabV2({
                             isMCPJamPlatformError={
                               errorMessage.isMCPJamPlatformError
                             }
+                            canTopUp={canShowTopupCta}
+                            onTopUp={handleOpenTopupDialog}
                             onResetChat={baseResetChat}
                           />
                         </div>
@@ -2559,6 +2609,15 @@ export function ChatTabV2({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      {isTopupDialogOpen && (
+        <CreditTopupDialog
+          open
+          onOpenChange={handleTopupDialogOpenChange}
+          chatSessionId={chatSessionId}
+          lastUserMessage={pendingResendMessage}
+          source="chat_banner"
+        />
+      )}
     </div>
   );
 }
