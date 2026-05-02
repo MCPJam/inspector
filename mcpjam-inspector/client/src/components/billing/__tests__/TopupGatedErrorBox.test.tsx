@@ -7,6 +7,14 @@ let presetsState: Array<{ amountCents: number; amountUsd: string }> | undefined;
 let presetsLoadingState: boolean;
 let presetQueryShouldThrow = false;
 
+vi.mock("@workos-inc/authkit-react", () => ({
+  useAuth: () => ({
+    isLoading: false,
+    user: { id: "user-1" },
+    signIn: vi.fn(),
+  }),
+}));
+
 vi.mock("@/hooks/useCreditTopup", () => ({
   useCreditTopupPresets: ({ skip }: { skip?: boolean } = {}) => {
     if (skip) {
