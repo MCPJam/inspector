@@ -228,7 +228,13 @@ export function useServerForm(
         // Keep runtime token metadata available for preregistered reconnects,
         // but only surface credential fields from saved client configuration.
         clientIdValue = storedTokens?.client_id || savedClientId;
-        clientSecretValue = hasStoredClientSecretValue ? "" : savedClientSecret;
+        // Only mask in hosted mode — there the secret lives in the Vault and
+        // never round-trips to the browser, so blanking the field protects it.
+        // In local mode the actual secret is in localStorage; blanking it would
+        // cause an unrelated edit + save to overwrite mcp-client-* without the
+        // secret, silently deleting it.
+        clientSecretValue =
+          HOSTED_MODE && hasStoredClientSecretValue ? "" : savedClientSecret;
 
         protocolModeValue = normalizeOauthProtocolMode(
           typeof oauthConfig.protocolMode === "string"
