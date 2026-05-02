@@ -1280,7 +1280,7 @@ describe("App hosted OAuth callback handling", () => {
               scope: "organization",
               canAccess: false,
               shouldShowUpsell: true,
-              upgradePlan: "starter",
+              upgradePlan: "solo",
               reason: "limit_reached",
               currentValue: 1,
               allowedValue: 1,
@@ -1313,7 +1313,7 @@ describe("App hosted OAuth callback handling", () => {
     window.history.replaceState(
       {},
       "",
-      "/billing?plan=starter&interval=annual"
+      "/billing?plan=solo&interval=annual"
     );
 
     const signIn = vi.fn();
@@ -1335,7 +1335,7 @@ describe("App hosted OAuth callback handling", () => {
       expect(signIn).toHaveBeenCalled();
     });
     expect(readPersistedCheckoutIntent()).toEqual({
-      plan: "starter",
+      plan: "solo",
       interval: "annual",
     });
     expect(readBillingSignInReturnPath()).toBe("/billing");
@@ -1346,7 +1346,7 @@ describe("App hosted OAuth callback handling", () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
     sessionStorage.clear();
-    persistCheckoutIntent({ plan: "starter", interval: "annual" });
+    persistCheckoutIntent({ plan: "solo", interval: "annual" });
     writeBillingSignInReturnPath("/billing");
     window.history.replaceState({}, "", "/callback?code=oauth-code");
 
@@ -1403,7 +1403,7 @@ describe("App hosted OAuth callback handling", () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
     sessionStorage.clear();
-    persistCheckoutIntent({ plan: "starter", interval: "annual" });
+    persistCheckoutIntent({ plan: "solo", interval: "annual" });
     window.history.replaceState({}, "", "/billing");
 
     mockUseFeatureFlagEnabled.mockImplementation(
@@ -1450,7 +1450,7 @@ describe("App hosted OAuth callback handling", () => {
           ).organizationId === "org-1" &&
           (props as { section?: string }).section === "billing" &&
           (props as { checkoutIntent?: { plan?: string } }).checkoutIntent
-            ?.plan === "starter" &&
+            ?.plan === "solo" &&
           (props as { checkoutIntent?: { interval?: string } }).checkoutIntent
             ?.interval === "annual"
       )
@@ -1461,7 +1461,7 @@ describe("App hosted OAuth callback handling", () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
     sessionStorage.clear();
-    persistCheckoutIntent({ plan: "starter", interval: "annual" });
+    persistCheckoutIntent({ plan: "solo", interval: "annual" });
     writeBillingSignInReturnPath("/billing");
     writeChatboxSignInReturnPath("/chatbox/demo/token-123");
     window.history.replaceState({}, "", "/callback?code=oauth-code");
@@ -1485,7 +1485,7 @@ describe("App hosted OAuth callback handling", () => {
     window.history.replaceState(
       {},
       "",
-      "/billing?plan=starter&interval=annual"
+      "/billing?plan=solo&interval=annual"
     );
 
     mockUseFeatureFlagEnabled.mockImplementation(
@@ -1534,7 +1534,7 @@ describe("App hosted OAuth callback handling", () => {
           ).organizationId === "org-1" &&
           (props as { section?: string }).section === "billing" &&
           (props as { checkoutIntent?: { plan?: string } }).checkoutIntent
-            ?.plan === "starter" &&
+            ?.plan === "solo" &&
           (props as { checkoutIntent?: { interval?: string } }).checkoutIntent
             ?.interval === "annual"
       )
@@ -1547,7 +1547,7 @@ describe("App hosted OAuth callback handling", () => {
     window.history.replaceState(
       {},
       "",
-      "/billing?plan=starter&interval=annual"
+      "/billing?plan=solo&interval=annual"
     );
 
     mockUseFeatureFlagEnabled.mockImplementation(
@@ -1603,7 +1603,7 @@ describe("App hosted OAuth callback handling", () => {
     window.history.replaceState(
       {},
       "",
-      "/billing?plan=starter&interval=annual"
+      "/billing?plan=solo&interval=annual"
     );
 
     mockUseFeatureFlagEnabled.mockImplementation(
@@ -1662,7 +1662,7 @@ describe("App hosted OAuth callback handling", () => {
     window.history.replaceState(
       {},
       "",
-      "/billing?plan=starter&interval=annual"
+      "/billing?plan=solo&interval=annual"
     );
 
     mockUseFeatureFlagEnabled.mockImplementation(
@@ -2112,7 +2112,7 @@ describe("App hosted OAuth callback handling", () => {
               scope: "organization",
               canAccess: false,
               shouldShowUpsell: true,
-              upgradePlan: "starter",
+              upgradePlan: "solo",
               reason: "feature_not_included",
             },
           ],
@@ -2638,7 +2638,7 @@ describe("App hosted OAuth callback handling", () => {
               scope: "organization",
               canAccess: false,
               shouldShowUpsell: true,
-              upgradePlan: "starter",
+              upgradePlan: "solo",
               reason: "feature_not_included",
             },
           ],

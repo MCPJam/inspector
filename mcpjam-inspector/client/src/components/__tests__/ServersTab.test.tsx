@@ -479,7 +479,7 @@ describe("ServersTab shared detail modal", () => {
         organizationId,
         gate,
         decision: null,
-        currentPlan: "starter",
+        currentPlan: "solo",
         upgradePlan: null,
         canManageBilling: true,
         isLoading: false,

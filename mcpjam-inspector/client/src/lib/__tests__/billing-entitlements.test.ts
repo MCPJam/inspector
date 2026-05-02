@@ -15,8 +15,8 @@ const minimalCatalogEntry = (
   prices: PlanCatalogEntry["prices"],
 ): PlanCatalogEntry =>
   ({
-    plan: "starter",
-    displayName: "Starter",
+    plan: "solo",
+    displayName: "Solo",
     isSelfServe: true,
     prices,
     features: {} as PlanCatalogEntry["features"],
@@ -170,14 +170,14 @@ describe("getBillingErrorMessage", () => {
           code: "billing_feature_not_included",
           feature: "chatboxes",
           plan: "free",
-          upgradePlan: "starter",
+          upgradePlan: "solo",
         }),
       ),
       "fallback",
     );
 
     expect(message).toBe(
-      "Chatboxes is not included in the Free plan. Upgrade to Starter to continue.",
+      "Chatboxes is not included in the Free plan. Upgrade to Solo to continue.",
     );
   });
 
@@ -188,7 +188,7 @@ describe("getBillingErrorMessage", () => {
           code: "billing_feature_not_included",
           feature: "chatboxes",
           plan: "free",
-          upgradePlan: "starter",
+          upgradePlan: "solo",
         }),
       ),
       "fallback",
@@ -196,7 +196,7 @@ describe("getBillingErrorMessage", () => {
     );
 
     expect(message).toBe(
-      "Chatboxes is not included in the Free plan. Ask an organization owner to upgrade to Starter.",
+      "Chatboxes is not included in the Free plan. Ask an organization owner to upgrade to Solo.",
     );
   });
 
@@ -226,7 +226,7 @@ describe("isGateAccessDenied", () => {
               scope: "project",
               canAccess: false,
               shouldShowUpsell: true,
-              upgradePlan: "starter",
+              upgradePlan: "solo",
               reason: "feature_not_included",
             },
           ],
@@ -247,7 +247,7 @@ describe("isGateAccessDenied", () => {
               scope: "project",
               canAccess: false,
               shouldShowUpsell: true,
-              upgradePlan: "starter",
+              upgradePlan: "solo",
               reason: "feature_not_included",
             },
           ],
@@ -268,7 +268,7 @@ describe("isGateAccessDenied", () => {
               scope: "organization",
               canAccess: false,
               shouldShowUpsell: true,
-              upgradePlan: "starter",
+              upgradePlan: "solo",
               reason: "limit_reached",
               currentValue: 1,
               allowedValue: 1,
@@ -282,12 +282,12 @@ describe("isGateAccessDenied", () => {
 });
 
 describe("getDisplayPriceCentsForPlan", () => {
-  it("returns catalog cents for Starter and Team", () => {
+  it("returns catalog cents for Solo and Team", () => {
     const drifted = minimalCatalogEntry({
       monthly: 6100,
       annual: 29000,
     });
-    expect(getDisplayPriceCentsForPlan("starter", "annual", drifted)).toBe(
+    expect(getDisplayPriceCentsForPlan("solo", "annual", drifted)).toBe(
       29000,
     );
     expect(getDisplayPriceCentsForPlan("team", "monthly", drifted)).toBe(6100);
@@ -313,7 +313,7 @@ describe("isPremiumnessGateDeniedForShell", () => {
             scope: "project",
             canAccess: false,
             shouldShowUpsell: true,
-            upgradePlan: "starter",
+            upgradePlan: "solo",
             reason: "feature_not_included",
           },
         ],

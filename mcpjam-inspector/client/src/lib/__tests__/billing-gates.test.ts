@@ -93,7 +93,7 @@ describe("resolveBillingGateState", () => {
             scope: "organization",
             canAccess: false,
             shouldShowUpsell: true,
-            upgradePlan: "starter",
+            upgradePlan: "solo",
             reason: "feature_not_included",
           },
         ],
@@ -103,7 +103,7 @@ describe("resolveBillingGateState", () => {
 
     expect(gate.isDenied).toBe(true);
     expect(gate.currentPlan).toBe("free");
-    expect(gate.upgradePlan).toBe("starter");
+    expect(gate.upgradePlan).toBe("solo");
     expect(gate.denialMessage).toBeNull();
   });
 
@@ -147,7 +147,7 @@ describe("resolveBillingGateState", () => {
             scope: "organization",
             canAccess: false,
             shouldShowUpsell: true,
-            upgradePlan: "starter",
+            upgradePlan: "solo",
             reason: "limit_reached",
             currentValue: 1,
             allowedValue: 1,
@@ -181,7 +181,7 @@ describe("resolveBillingGateState", () => {
             scope: "organization",
             canAccess: false,
             shouldShowUpsell: true,
-            upgradePlan: "starter",
+            upgradePlan: "solo",
             reason: "feature_not_included",
           },
         ],
@@ -190,7 +190,7 @@ describe("resolveBillingGateState", () => {
     });
 
     expect(gate.isDenied).toBe(false);
-    expect(gate.upgradePlan).toBe("starter");
+    expect(gate.upgradePlan).toBe("solo");
   });
 
   it("skips project billing queries when organization context is missing", () => {
