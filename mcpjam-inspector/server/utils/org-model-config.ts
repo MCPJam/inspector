@@ -408,9 +408,13 @@ export async function resolveOrgProviderRuntime(
         provider: rawProvider as OrgProviderResolvedConfig,
       };
     } else {
+      const resolvedKey =
+        typeof data.providerKey === "string" && data.providerKey.trim().length > 0
+          ? data.providerKey
+          : providerKey;
       result = {
         runtimeLocation: "cloud",
-        providerKey: data.providerKey ?? providerKey,
+        providerKey: resolvedKey,
       };
     }
   } finally {
