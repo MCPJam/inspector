@@ -171,6 +171,7 @@ function renderUseProjectState({
           ),
         activeOrganizationId: organizationId,
         routeOrganizationId: routeOrganizationIdOverride ?? routeOrganizationId,
+        currentActorKey: "test-actor",
         logger,
       }),
     {

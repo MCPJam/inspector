@@ -182,6 +182,19 @@ export async function getGuestBearerToken(): Promise<string | null> {
 }
 
 /**
+ * Synchronous read of the in-memory cached guest session. Returns null when no
+ * session has been resolved yet — callers that need to bootstrap actor-scoped
+ * storage should also `getOrCreateGuestSession()` to populate the cache so the
+ * next render returns the real id.
+ */
+export function getCachedGuestSession(): GuestSession | null {
+  if (cachedSession && cachedSession.expiresAt - EXPIRY_BUFFER_MS > Date.now()) {
+    return cachedSession;
+  }
+  return null;
+}
+
+/**
  * Look up an existing guest bearer token without creating a new guest.
  * Used by post-login flows (e.g. registry-star merge) so signing in does
  * not accidentally mint a brand-new guest just to merge nothing.

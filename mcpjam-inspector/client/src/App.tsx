@@ -60,6 +60,7 @@ import {
   DialogTitle,
 } from "@mcpjam/design-system/dialog";
 import { useAppState, type ServerWithName } from "./hooks/use-app-state";
+import { useActorKey } from "./hooks/use-actor-key";
 import { PreferencesStoreProvider } from "./stores/preferences/preferences-provider";
 import { Toaster } from "@mcpjam/design-system/sonner";
 import { useElectronOAuth } from "./hooks/useElectronOAuth";
@@ -413,6 +414,7 @@ export default function App() {
     isLoading: isWorkOsLoading,
   } = useAuth();
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
+  const actorKey = useActorKey();
   const currentUser = useQuery(
     "users:getCurrentUser" as any,
     isAuthenticated ? ({} as any) : "skip"
@@ -791,6 +793,7 @@ export default function App() {
     persistRuntimeServerToProjectIfNeeded,
   } = useAppState({
     currentUserId: workOsUser?.id ?? null,
+    currentActorKey: actorKey,
     hasOrganizations: effectiveOrganizations.length > 0,
     isLoadingOrganizations,
     validOrganizations: effectiveOrganizations,

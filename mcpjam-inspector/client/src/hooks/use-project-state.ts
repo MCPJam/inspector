@@ -30,6 +30,11 @@ import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import { useClientConfigStore } from "@/stores/client-config-store";
 import { useHostContextStore } from "@/stores/host-context-store";
 import { useOrganizationBillingStatus } from "./useOrganizationBilling";
+import {
+  clearLegacyActiveProjectStorage,
+  readStoredActiveProjectId,
+  writeStoredActiveProjectId,
+} from "@/lib/active-project-storage";
 
 const CLIENT_CONFIG_SYNC_ECHO_TIMEOUT_MS = 10000;
 
@@ -126,6 +131,13 @@ export interface UseProjectStateParams {
   validOrganizationIds: string[];
   activeOrganizationId?: string;
   routeOrganizationId?: string;
+  /**
+   * Stable identifier for the active actor (user id or guest id). Scopes the
+   * persisted active-project selection so a previous actor's choice doesn't
+   * drive Convex queries against a project the current actor doesn't own. May
+   * be null while the actor is still resolving.
+   */
+  currentActorKey: string | null;
   logger: LoggerLike;
 }
 
@@ -139,6 +151,7 @@ export function useProjectState({
   validOrganizationIds,
   activeOrganizationId,
   routeOrganizationId,
+  currentActorKey,
   logger,
 }: UseProjectStateParams) {
   const projectOrganizationId = routeOrganizationId ?? activeOrganizationId;
@@ -177,12 +190,11 @@ export function useProjectState({
 
   const [convexActiveProjectId, setConvexActiveProjectId] = useState<
     string | null
-  >(() => {
-    if (typeof window !== "undefined") {
-      return localStorage.getItem("convex-active-project-id");
-    }
-    return null;
-  });
+  >(() => readStoredActiveProjectId(currentActorKey));
+  const [hasHydratedActiveProject, setHasHydratedActiveProject] = useState(
+    () => currentActorKey != null,
+  );
+  const activeProjectActorKeyRef = useRef<string | null>(currentActorKey);
 
   const migrationInFlightRef = useRef(new Set<string>());
   const ensureDefaultInFlightRef = useRef(new Set<string>());
@@ -207,9 +219,7 @@ export function useProjectState({
 
   const clearConvexActiveProjectSelection = useCallback(() => {
     setConvexActiveProjectId(null);
-    if (typeof window !== "undefined") {
-      localStorage.removeItem("convex-active-project-id");
-    }
+    writeStoredActiveProjectId(activeProjectActorKeyRef.current, null);
   }, []);
 
   const { servers: activeProjectServersFlat, isLoading: isLoadingServers } =
@@ -624,16 +634,29 @@ export function useProjectState({
     shouldTreatRemoteProjectsAsEmpty,
   ]);
 
+  // Re-hydrate the persisted active project id whenever the actor changes
+  // (sign-in/sign-out, guest cookie resolves). Without this, a sign-in would
+  // keep a stale guest's project id in memory and drive useProjectServers to
+  // query a project the new actor doesn't own.
   useEffect(() => {
-    if (convexActiveProjectId) {
-      localStorage.setItem(
-        "convex-active-project-id",
-        convexActiveProjectId,
-      );
-    } else {
-      localStorage.removeItem("convex-active-project-id");
+    clearLegacyActiveProjectStorage();
+    if (currentActorKey === activeProjectActorKeyRef.current) {
+      return;
     }
-  }, [convexActiveProjectId]);
+    activeProjectActorKeyRef.current = currentActorKey;
+    setConvexActiveProjectId(readStoredActiveProjectId(currentActorKey));
+    setHasHydratedActiveProject(currentActorKey != null);
+  }, [currentActorKey]);
+
+  useEffect(() => {
+    if (!hasHydratedActiveProject) {
+      return;
+    }
+    if (activeProjectActorKeyRef.current !== currentActorKey) {
+      return;
+    }
+    writeStoredActiveProjectId(currentActorKey, convexActiveProjectId);
+  }, [convexActiveProjectId, currentActorKey, hasHydratedActiveProject]);
 
   useEffect(() => {
     if (!isAuthenticated || useLocalFallback) {

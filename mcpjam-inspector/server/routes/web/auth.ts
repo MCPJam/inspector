@@ -829,94 +829,62 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
       rpcCollector = createHostedRpcLogCollector(rawBody);
     }
 
-    // Detect guest requests by body shape: presence of serverUrl without project/project legacy IDs.
-    // This is more robust than relying solely on guestId from middleware, which
-    // may not be set when the guest token is expired/invalid but the client still
-    // sends a guest-shaped body.
-    const isGuestRequest = isGuestServerRequestBody(rawBody);
-
-    let result: T;
-
-    if (isGuestRequest) {
-      // ── Guest path: direct connection, no Convex ────────────────
-      const guestId = c.get("guestId") as string | undefined;
-      if (!guestId) {
-        throw new WebRouteError(
-          401,
-          ErrorCode.UNAUTHORIZED,
-          "Valid guest token required. Please refresh the page to obtain a new session."
-        );
-      }
-
-      if (options?.guestUnsupportedMessage) {
-        throw new WebRouteError(
-          403,
-          ErrorCode.FEATURE_NOT_SUPPORTED,
-          options.guestUnsupportedMessage
-        );
-      }
-
-      const { manager, augmentedBody } = await createGuestEphemeralManager(
-        c,
-        rawBody,
-        {
-          timeoutMs: options?.timeoutMs,
-          rpcLogger: rpcCollector?.rpcLogger,
-        }
-      );
-
-      try {
-        const body = parseWithSchema(schema, augmentedBody);
-        result = await fn(manager, body as z.infer<S>);
-      } finally {
-        await manager.disconnectAllServers();
-      }
-    } else {
-      // ── Authenticated path: Convex authorization ──────────────────
-      const bearerToken = assertBearerToken(c);
-      const body = parseWithSchema(schema, rawBody);
-      // Cast for internal plumbing — all web schemas include projectId + serverId(s).
-      // The strongly-typed `body` is passed through to `fn` unchanged.
-      const raw = body as Record<string, unknown>;
-      const { serverIds, oauthTokens, serverNames } =
-        resolveConnectionParams(raw);
-      const timeoutMs = options?.timeoutMs ?? WEB_CALL_TIMEOUT_MS;
-      const accessScope =
-        raw.accessScope === "project_member" || raw.accessScope === "chat_v2"
-          ? raw.accessScope
-          : undefined;
-      const shareToken =
-        typeof raw.shareToken === "string" && raw.shareToken.trim()
-          ? raw.shareToken
-          : undefined;
-      const chatboxToken =
-        typeof raw.chatboxToken === "string" && raw.chatboxToken.trim()
-          ? raw.chatboxToken
-          : undefined;
-
-      result = await withManager(
-        createAuthorizedManager(
-          c,
-          bearerToken,
-          raw.projectId as string,
-          serverIds,
-          timeoutMs,
-          oauthTokens,
-          (raw.clientCapabilities as Record<string, unknown> | undefined) ??
-            undefined,
-          {
-            accessScope,
-            workspaceId:
-              typeof raw.workspaceId === "string" ? raw.workspaceId : undefined,
-            shareToken,
-            chatboxToken,
-            rpcLogger: rpcCollector?.rpcLogger,
-            serverNames,
-          }
-        ),
-        (manager) => fn(manager, body as z.infer<S>)
+    // Both guest and signed-in actors flow through the same Convex
+    // authorization path: the bearer token (guest JWT or WorkOS bearer) is
+    // forwarded to /web/authorize-batch, which dispatches to the right
+    // authorize* query based on the JWT issuer. Routes that legitimately
+    // gate guests out (e.g. evals) opt in via `guestUnsupportedMessage`.
+    if (options?.guestUnsupportedMessage && c.get("guestId")) {
+      throw new WebRouteError(
+        403,
+        ErrorCode.FEATURE_NOT_SUPPORTED,
+        options.guestUnsupportedMessage
       );
     }
+
+    const bearerToken = assertBearerToken(c);
+    const body = parseWithSchema(schema, rawBody);
+    // Cast for internal plumbing — all web schemas include projectId + serverId(s).
+    // The strongly-typed `body` is passed through to `fn` unchanged.
+    const raw = body as Record<string, unknown>;
+    const { serverIds, oauthTokens, serverNames } =
+      resolveConnectionParams(raw);
+    const timeoutMs = options?.timeoutMs ?? WEB_CALL_TIMEOUT_MS;
+    const accessScope =
+      raw.accessScope === "project_member" || raw.accessScope === "chat_v2"
+        ? raw.accessScope
+        : undefined;
+    const shareToken =
+      typeof raw.shareToken === "string" && raw.shareToken.trim()
+        ? raw.shareToken
+        : undefined;
+    const chatboxToken =
+      typeof raw.chatboxToken === "string" && raw.chatboxToken.trim()
+        ? raw.chatboxToken
+        : undefined;
+
+    const result = await withManager(
+      createAuthorizedManager(
+        c,
+        bearerToken,
+        raw.projectId as string,
+        serverIds,
+        timeoutMs,
+        oauthTokens,
+        (raw.clientCapabilities as Record<string, unknown> | undefined) ??
+          undefined,
+        {
+          accessScope,
+          workspaceId:
+            typeof raw.workspaceId === "string" ? raw.workspaceId : undefined,
+          shareToken,
+          chatboxToken,
+          rpcLogger: rpcCollector?.rpcLogger,
+          serverNames,
+        }
+      ),
+      (manager) => fn(manager, body as z.infer<S>)
+    );
 
     return c.json(attachHostedRpcLogs(result, rpcCollector), 200);
   } catch (error) {
