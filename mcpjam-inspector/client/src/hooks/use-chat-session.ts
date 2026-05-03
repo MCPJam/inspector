@@ -1356,6 +1356,8 @@ export function useChatSession({
               // omitting it client-side keeps the body honest about the
               // session kind.
               ...(hostedChatboxId ? {} : { directVisibility }),
+              ollamaBaseUrl: getOllamaBaseUrl(),
+              azureBaseUrl: getAzureBaseUrl(),
               // Pass projectId for BYOK direct-chat history persistence
               ...(hostedProjectId ? { projectId: hostedProjectId } : {}),
               // Convex server Ids parallel to `selectedServers`. Only sent
@@ -1405,6 +1407,8 @@ export function useChatSession({
     systemPrompt,
     selectedServers,
     directVisibility,
+    getOllamaBaseUrl,
+    getAzureBaseUrl,
     hostedProjectId,
     chatSessionId,
     hostedSelectedServerIds,
