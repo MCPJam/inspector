@@ -403,67 +403,65 @@ export function handleLocalOrgChatModel(
           turnFinished = true;
         },
         onFinish: async (event) => {
-          try {
-            patchAiSdkRecordedSpansMessageRangesFromSteps(
-              traceContext.recordedSpans,
-              initialMessageHistoryLength,
-              event.steps,
-              traceTurn.promptIndex,
-            );
-            traceTurn.turnSpans = [...traceContext.recordedSpans];
-            traceTurn.turnUsage =
-              toLiveChatTraceUsageLocal(event.totalUsage) ?? traceTurn.turnUsage;
+          patchAiSdkRecordedSpansMessageRangesFromSteps(
+            traceContext.recordedSpans,
+            initialMessageHistoryLength,
+            event.steps,
+            traceTurn.promptIndex,
+          );
+          traceTurn.turnSpans = [...traceContext.recordedSpans];
+          traceTurn.turnUsage =
+            toLiveChatTraceUsageLocal(event.totalUsage) ?? traceTurn.turnUsage;
 
-            if (!turnFinished) {
-              writeTraceEvent(writer, {
-                type: "turn_finish",
-                turnId: traceTurn.turnId,
-                promptIndex: traceTurn.promptIndex,
-                finishReason: event.finishReason,
-                usage: traceTurn.turnUsage,
-              });
-              turnFinished = true;
-            }
-
-            // Post usage to Convex (best-effort, non-blocking on failure).
-            postLocalUsage({
-              projectId,
-              workspaceId,
-              providerKey: provider.providerKey,
-              model: modelId,
-              usage: traceTurn.turnUsage,
-              finishReason: event.finishReason,
-              chatSessionId,
-              sourceType,
+          if (!turnFinished) {
+            writeTraceEvent(writer, {
+              type: "turn_finish",
               turnId: traceTurn.turnId,
               promptIndex: traceTurn.promptIndex,
-              authHeader,
-              shareToken,
-              chatboxToken,
-              selectedServers: options.selectedServers,
-            }).catch((err) => {
-              logger.warn("[org/local] Failed to post local usage", {
+              finishReason: event.finishReason,
+              usage: traceTurn.turnUsage,
+            });
+            turnFinished = true;
+          }
+
+          // Post usage to Convex (best-effort, non-blocking on failure).
+          postLocalUsage({
+            projectId,
+            workspaceId,
+            providerKey: provider.providerKey,
+            model: modelId,
+            usage: traceTurn.turnUsage,
+            finishReason: event.finishReason,
+            chatSessionId,
+            sourceType,
+            turnId: traceTurn.turnId,
+            promptIndex: traceTurn.promptIndex,
+            authHeader,
+            shareToken,
+            chatboxToken,
+            selectedServers: options.selectedServers,
+          }).catch((err) => {
+            logger.warn("[org/local] Failed to post local usage", {
+              error: err instanceof Error ? err.message : String(err),
+            });
+          });
+
+          if (!streamErrored) {
+            try {
+              await onConversationComplete?.(traceHistory, {
+                turnId: traceTurn.turnId,
+                promptIndex: traceTurn.promptIndex,
+                startedAt: traceTurn.turnStartedAt,
+                endedAt: Date.now(),
+                spans: [...traceTurn.turnSpans],
+                usage: traceTurn.turnUsage,
+                finishReason: event.finishReason,
+                modelId,
+              });
+            } catch (err) {
+              logger.warn("[org/local] onFinish ingestion error", {
                 error: err instanceof Error ? err.message : String(err),
               });
-            });
-
-            if (!streamErrored) {
-              try {
-                await onConversationComplete?.(traceHistory, {
-                  turnId: traceTurn.turnId,
-                  promptIndex: traceTurn.promptIndex,
-                  startedAt: traceTurn.turnStartedAt,
-                  endedAt: Date.now(),
-                  spans: [...traceTurn.turnSpans],
-                  usage: traceTurn.turnUsage,
-                  finishReason: event.finishReason,
-                  modelId,
-                });
-              } catch (err) {
-                logger.warn("[org/local] onFinish ingestion error", {
-                  error: err instanceof Error ? err.message : String(err),
-                });
-              }
             }
           }
         },
