@@ -249,6 +249,7 @@ export function handleLocalOrgChatModel(
   const traceContext = createAiSdkEvalTraceContext(traceTurn.turnStartedAt);
   let currentStepIndex = 0;
   let turnFinished = false;
+  let streamErrored = false;
 
   const stream = createUIMessageStream({
     onError: (error) => {
@@ -396,6 +397,7 @@ export function handleLocalOrgChatModel(
             promptIndex: traceTurn.promptIndex,
             usage: traceTurn.turnUsage,
           });
+          streamErrored = true;
           turnFinished = true;
         },
         onFinish: async (event) => {
@@ -443,21 +445,23 @@ export function handleLocalOrgChatModel(
               });
             });
 
-            try {
-              await onConversationComplete?.(traceHistory, {
-                turnId: traceTurn.turnId,
-                promptIndex: traceTurn.promptIndex,
-                startedAt: traceTurn.turnStartedAt,
-                endedAt: Date.now(),
-                spans: [...traceTurn.turnSpans],
-                usage: traceTurn.turnUsage,
-                finishReason: event.finishReason,
-                modelId,
-              });
-            } catch (err) {
-              logger.warn("[org/local] onFinish ingestion error", {
-                error: err instanceof Error ? err.message : String(err),
-              });
+            if (!streamErrored) {
+              try {
+                await onConversationComplete?.(traceHistory, {
+                  turnId: traceTurn.turnId,
+                  promptIndex: traceTurn.promptIndex,
+                  startedAt: traceTurn.turnStartedAt,
+                  endedAt: Date.now(),
+                  spans: [...traceTurn.turnSpans],
+                  usage: traceTurn.turnUsage,
+                  finishReason: event.finishReason,
+                  modelId,
+                });
+              } catch (err) {
+                logger.warn("[org/local] onFinish ingestion error", {
+                  error: err instanceof Error ? err.message : String(err),
+                });
+              }
             }
           } finally {
             await onStreamComplete?.();

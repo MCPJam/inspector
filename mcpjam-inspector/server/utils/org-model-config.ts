@@ -291,10 +291,11 @@ const runtimeResolveCache = new Map<
 >();
 
 function pruneRuntimeResolveCache(now: number): void {
-  if (runtimeResolveCache.size <= RUNTIME_CACHE_MAX_ENTRIES) return;
+  // Always evict expired entries — they may hold decrypted API keys.
   for (const [key, entry] of runtimeResolveCache) {
     if (entry.expiresAt <= now) runtimeResolveCache.delete(key);
   }
+  // Then cap size by removing oldest entries if still over limit.
   if (runtimeResolveCache.size > RUNTIME_CACHE_MAX_ENTRIES) {
     const overflow = runtimeResolveCache.size - RUNTIME_CACHE_MAX_ENTRIES;
     let removed = 0;
