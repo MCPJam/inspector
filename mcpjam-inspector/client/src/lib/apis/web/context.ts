@@ -178,6 +178,24 @@ export function injectHostedServerMapping(
   };
 }
 
+/**
+ * Eagerly inject the active projectId into the hosted context so callers
+ * (validate, OAuth, MCP requests) see the just-provisioned guest project
+ * before React's reactive subscription propagates `convexProjectId` to
+ * `useHostedApiContext`. Without this, the brief window between
+ * `ensureDefaultGuestProject` succeeding and the next render produces
+ * `isGuestMode() === true` even though the actor is Convex-authed,
+ * causing requests to be built with the guest shape (no projectId/serverId)
+ * and rejected by `projectServerSchema`.
+ */
+export function injectHostedProjectId(projectId: string): void {
+  if (!HOSTED_MODE) return;
+  hostedApiContext = {
+    ...hostedApiContext,
+    projectId,
+  };
+}
+
 export function getHostedProjectId(): string {
   assertHostedMode();
 

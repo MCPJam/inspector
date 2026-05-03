@@ -30,6 +30,7 @@ import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import { useClientConfigStore } from "@/stores/client-config-store";
 import { useHostContextStore } from "@/stores/host-context-store";
 import { useOrganizationBillingStatus } from "./useOrganizationBilling";
+import { injectHostedProjectId } from "@/lib/apis/web/context";
 import {
   clearLegacyActiveProjectStorage,
   readStoredActiveProjectId,
@@ -864,6 +865,11 @@ export function useProjectState({
         // appState may have hydrated from storage.
         if (typeof projectId === "string") {
           setConvexActiveProjectId(projectId);
+          // Eagerly populate the hosted-api context so requests issued
+          // before React's next render (e.g. a fast Add Server click) see
+          // the resolved projectId and don't fall through to the guest-shape
+          // request builder.
+          injectHostedProjectId(projectId);
         }
       })
       .catch((error) => {
