@@ -138,6 +138,12 @@ export interface UseProjectStateParams {
    * be null while the actor is still resolving.
    */
   currentActorKey: string | null;
+  /**
+   * True when a WorkOS user is signed in. Guests are Convex-authenticated
+   * (`isAuthenticated`) but have no WorkOS session — this flag distinguishes
+   * the two so the project provisioning path can take the guest branch.
+   */
+  hasSignedInUser: boolean;
   logger: LoggerLike;
 }
 
@@ -152,6 +158,7 @@ export function useProjectState({
   activeOrganizationId,
   routeOrganizationId,
   currentActorKey,
+  hasSignedInUser,
   logger,
 }: UseProjectStateParams) {
   const projectOrganizationId = routeOrganizationId ?? activeOrganizationId;
@@ -210,12 +217,18 @@ export function useProjectState({
     new Map(),
   );
   const CONVEX_TIMEOUT_MS = 10000;
+  // "Authed but with no organization" is the empty-org-state for signed-in
+  // users. Guests are Convex-authenticated without a WorkOS user *and* have
+  // no orgs by design — they should not be coerced into the empty-state path
+  // because their projects live under `guestExternalId`, not an organization.
   const shouldTreatRemoteProjectsAsEmpty =
     isAuthenticated &&
+    hasSignedInUser &&
     !isLoadingOrganizations &&
     !hasOrganizations &&
     !routeOrganizationId &&
     !activeOrganizationId;
+  const isGuestActor = isAuthenticated && !hasSignedInUser;
 
   const clearConvexActiveProjectSelection = useCallback(() => {
     setConvexActiveProjectId(null);
@@ -813,6 +826,48 @@ export function useProjectState({
     hasResolvedProjectOrganizationSelection,
     logger,
     shouldTreatRemoteProjectsAsEmpty,
+  ]);
+
+  // Guest project provisioning. Guests have no organization, so the
+  // organization-keyed effect above never fires. Instead, when remoteProjects
+  // resolves to an empty list for a guest actor, lazily create a default
+  // guest-owned project so the rest of the app sees a normal projectId.
+  useEffect(() => {
+    if (!isGuestActor) return;
+    if (useLocalFallback) return;
+    if (remoteProjects === undefined) return;
+    if (remoteProjects.length > 0) return;
+    if (!currentActorKey) return;
+
+    const requestKey = `guest:${currentActorKey}`;
+    if (ensureDefaultInFlightRef.current.has(requestKey)) return;
+    if (ensureDefaultCompletedRef.current.has(requestKey)) return;
+
+    ensureDefaultInFlightRef.current.add(requestKey);
+    convexEnsureDefaultProject({})
+      .then((projectId) => {
+        ensureDefaultCompletedRef.current.add(requestKey);
+        // Stick the new project id as the active selection so the rest of
+        // the app picks it up over any synthetic local-fallback project that
+        // appState may have hydrated from storage.
+        if (typeof projectId === "string") {
+          setConvexActiveProjectId(projectId);
+        }
+      })
+      .catch((error) => {
+        ensureDefaultInFlightRef.current.delete(requestKey);
+        logger.error("Failed to ensure default guest project", {
+          actorKey: currentActorKey,
+          error: error instanceof Error ? error.message : "Unknown error",
+        });
+      });
+  }, [
+    isGuestActor,
+    useLocalFallback,
+    remoteProjects,
+    currentActorKey,
+    convexEnsureDefaultProject,
+    logger,
   ]);
 
   const handleCreateProject = useCallback(

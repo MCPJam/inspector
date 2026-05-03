@@ -445,6 +445,7 @@ export function useAppState({
     activeOrganizationId,
     routeOrganizationId,
     currentActorKey,
+    hasSignedInUser: currentUserId != null,
     logger,
   });
 

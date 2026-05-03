@@ -243,6 +243,8 @@ vi.mock("../lib/guest-session", () => ({
     localStorage.removeItem("mcpjam_guest_session_v1");
   }),
   getGuestBearerToken: mockGetGuestBearerToken,
+  getCachedGuestSession: vi.fn(() => null),
+  getOrCreateGuestSession: vi.fn(async () => null),
 }));
 
 vi.mock("../components/ServersTab", () => ({
