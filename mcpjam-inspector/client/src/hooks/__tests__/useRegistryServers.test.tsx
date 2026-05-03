@@ -76,7 +76,9 @@ function createRegistryServer(
   };
 }
 
-describe("useRegistryServers", () => {
+// Skipped while REGISTRY_FEATURE_ENABLED is false in useRegistryServers.ts
+// (the hook is forced inert until the registry feature ships).
+describe.skip("useRegistryServers", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockUseQuery.mockImplementation((name: string) => {

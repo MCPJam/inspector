@@ -25,6 +25,14 @@ import { toast } from "sonner";
 const DEV_MOCK_REGISTRY =
   import.meta.env.DEV && import.meta.env.VITE_DEV_MOCK_REGISTRY === "true";
 
+// Kill switch for the entire registry feature. The registry UI is gated
+// behind an internal feature flag and isn't shipped to prod users yet, but
+// the hook was still firing network requests (catalog fetch, guest-stars
+// merge) for internal users with the flag on and producing visible errors.
+// While `false`, the hook is fully inert: empty data, no fetches, no-op
+// mutations. Flip to true once the registry backend is ready for real use.
+const REGISTRY_FEATURE_ENABLED = false;
+
 const MOCK_REGISTRY_SERVERS: RegistryServer[] = [
   {
     _id: "mock_asana",
@@ -364,7 +372,7 @@ function isMissingProjectConnectionError(error: unknown): boolean {
  * Pattern follows useProjectMutations / useServerMutations in useProjects.ts.
  */
 export function useRegistryServers({
-  enabled = true,
+  enabled: callerEnabled = true,
   projectId,
   isAuthenticated,
   liveServers,
@@ -378,6 +386,9 @@ export function useRegistryServers({
   onConnect: (formData: ServerFormData) => void;
   onDisconnect?: (serverName: string) => void;
 }) {
+  // Force-disable the hook regardless of caller while the registry feature
+  // is gated. See REGISTRY_FEATURE_ENABLED above.
+  const enabled = REGISTRY_FEATURE_ENABLED && callerEnabled;
   const [rawCatalog, setRawCatalog] = useState<RegistryCatalogCard[] | null>(
     () => (DEV_MOCK_REGISTRY ? buildMockCatalogCards() : null),
   );

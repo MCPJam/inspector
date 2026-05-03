@@ -39,7 +39,9 @@ vi.mock("convex/react", () => ({
   useMutation: () => vi.fn(),
 }));
 
-describe("useRegistryServers (guest merge after sign-in)", () => {
+// Skipped while REGISTRY_FEATURE_ENABLED is false in useRegistryServers.ts
+// (the hook is forced inert until the registry feature ships).
+describe.skip("useRegistryServers (guest merge after sign-in)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
