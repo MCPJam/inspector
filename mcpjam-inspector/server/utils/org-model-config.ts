@@ -424,7 +424,6 @@ export async function resolveOrgProviderRuntime(
     clearTimeout(timeout);
   }
 
-  const now = Date.now();
   pruneRuntimeResolveCache(now);
   runtimeResolveCache.set(cacheKey, {
     result,
