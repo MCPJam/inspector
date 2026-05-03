@@ -19,7 +19,7 @@ import {
 import { SSEvent } from "@/shared/sse";
 import { parseSSEStream } from "@/lib/sse";
 import { authFetch } from "@/lib/session-token";
-import { notifyGuestLimitError } from "@/lib/guest-limit";
+import { notifyMCPJamLimitError } from "@/lib/mcpjam-limit";
 
 interface ElicitationRequest {
   requestId: string;
@@ -477,7 +477,7 @@ export function useChat(options: UseChatOptions = {}) {
           try {
             errorData = JSON.parse(errorText);
           } catch {
-            notifyGuestLimitError({ message: errorText });
+            notifyMCPJamLimitError({ message: errorText });
             throw new Error(`Chat request failed: ${response.status}`);
           }
           const errorRecord =
@@ -486,6 +486,7 @@ export function useChat(options: UseChatOptions = {}) {
                   code?: unknown;
                   error?: unknown;
                   message?: unknown;
+                  limitKind?: unknown;
                 })
               : null;
           const errorMessage =
@@ -494,13 +495,19 @@ export function useChat(options: UseChatOptions = {}) {
               : typeof errorRecord?.message === "string"
                 ? errorRecord.message
               : "Chat request failed";
-          notifyGuestLimitError({
+          const limitKind =
+            errorRecord?.limitKind === "total" ||
+            errorRecord?.limitKind === "concurrency"
+              ? errorRecord.limitKind
+              : undefined;
+          notifyMCPJamLimitError({
             code:
               typeof errorRecord?.code === "string"
                 ? errorRecord.code
                 : undefined,
             details: errorData,
             message: errorMessage,
+            limitKind,
           });
           throw new Error(errorMessage);
         }

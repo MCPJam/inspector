@@ -22,8 +22,10 @@ vi.mock("@/hooks/useCreditBalance", () => ({
 }));
 
 vi.mock("@/components/billing/CreditTopupDialog", () => ({
-  CreditTopupDialog: ({ open }: { open: boolean }) =>
-    open ? <div data-testid="topup-dialog" /> : null,
+  CreditTopupDialog: ({ open, source }: { open: boolean; source: string }) =>
+    open ? (
+      <div data-testid="topup-dialog" data-source={source} />
+    ) : null,
 }));
 
 // Stub the gated button so existing tests don't need to set up the preset
@@ -45,6 +47,7 @@ describe("CreditBalanceCard", () => {
       freeDailyResetAt: Date.now() + 11 * 60 * 60 * 1000,
     };
     isLoadingState = false;
+    window.location.hash = "";
   });
 
   it("renders a skeleton state while balance is loading", () => {
@@ -103,7 +106,27 @@ describe("CreditBalanceCard", () => {
 
     expect(screen.queryByTestId("topup-dialog")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /Top up/i }));
-    expect(screen.getByTestId("topup-dialog")).toBeInTheDocument();
+    const dialog = screen.getByTestId("topup-dialog");
+    expect(dialog).toBeInTheDocument();
+    expect(dialog.getAttribute("data-source")).toBe("billing_page");
+  });
+
+  it("auto-opens the top-up dialog with limit_modal source when the topup hash flag is present", () => {
+    window.location.hash = "organizations/org-1/billing?topup=open";
+    render(<CreditBalanceCard />);
+
+    const dialog = screen.getByTestId("topup-dialog");
+    expect(dialog).toBeInTheDocument();
+    expect(dialog.getAttribute("data-source")).toBe("limit_modal");
+    // The flag should be consumed so a reload doesn't reopen the dialog.
+    expect(window.location.hash).toBe("#organizations/org-1/billing");
+  });
+
+  it("does not auto-open when the topup hash flag is absent", () => {
+    window.location.hash = "organizations/org-1/billing";
+    render(<CreditBalanceCard />);
+
+    expect(screen.queryByTestId("topup-dialog")).not.toBeInTheDocument();
   });
 
   it("clarifies that credits are user-scoped, not org-scoped", () => {

@@ -1,13 +1,19 @@
-import { useGuestLimitDialogStore } from "@/stores/guest-limit-dialog-store";
+import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
 
 const MCPJAM_MODEL_LIMIT_PATTERN = /mcpjam[\w\s-]*model limit/i;
 const MCPJAM_RATE_LIMIT_CODE = "mcpjam_rate_limit";
+const MCPJAM_USER_RATE_LIMIT_CODE = "user_rate_limit";
 const MCPJAM_RATE_LIMIT_CODE_PATTERN = /\bmcpjam_rate_limit\b/;
 
-type GuestLimitErrorInput = {
+export type MCPJamLimitKind = "total" | "concurrency";
+
+type MCPJamLimitErrorInput = {
   code?: string;
   message?: string | null;
   details?: unknown;
+  /** Sub-classification of a rate-limit error. `"concurrency"` is a transient
+   * throttle whose UI lives inline (retry banner) — never opens the modal. */
+  limitKind?: MCPJamLimitKind;
 };
 
 const getStringProperty = (value: unknown, key: string): string | undefined => {
@@ -80,8 +86,14 @@ const isMCPJamLimitString = (value: string): boolean =>
   MCPJAM_MODEL_LIMIT_PATTERN.test(value) ||
   MCPJAM_RATE_LIMIT_CODE_PATTERN.test(value);
 
-export function isMCPJamModelLimitError(args: GuestLimitErrorInput): boolean {
+export function isMCPJamModelLimitError(args: MCPJamLimitErrorInput): boolean {
+  // Single source of truth for the concurrency carve-out: a transient
+  // throttle resolves in seconds and is owned by the inline retry banner,
+  // never the modal. Downstream consumers don't need to re-check.
+  if (args.limitKind === "concurrency") return false;
+
   if (args.code === MCPJAM_RATE_LIMIT_CODE) return true;
+  if (args.code === MCPJAM_USER_RATE_LIMIT_CODE) return true;
 
   const valuesToInspect = [args.message, args.details];
   for (const value of valuesToInspect) {
@@ -107,13 +119,15 @@ export function isMCPJamModelLimitError(args: GuestLimitErrorInput): boolean {
   return false;
 }
 
-export function notifyGuestLimitError(args: GuestLimitErrorInput): boolean {
+export function notifyMCPJamLimitError(args: MCPJamLimitErrorInput): boolean {
   if (!isMCPJamModelLimitError(args)) return false;
-  useGuestLimitDialogStore.getState().notifyLimitHit();
+  useMCPJamLimitDialogStore.getState().notifyLimitHit({
+    limitKind: args.limitKind,
+  });
   return true;
 }
 
-export async function notifyGuestLimitErrorFromResponse(
+export async function notifyMCPJamLimitErrorFromResponse(
   response: Response,
 ): Promise<boolean> {
   let details: unknown;
@@ -137,9 +151,15 @@ export async function notifyGuestLimitErrorFromResponse(
     message = `Request failed (${response.status})`;
   }
 
-  return notifyGuestLimitError({
+  const limitKind = getStringProperty(details, "limitKind");
+
+  return notifyMCPJamLimitError({
     code: getStringProperty(details, "code"),
     details,
     message,
+    limitKind:
+      limitKind === "total" || limitKind === "concurrency"
+        ? limitKind
+        : undefined,
   });
 }
