@@ -2,6 +2,8 @@ import { Hono } from "hono";
 import {
   fetchConvexGuestSession,
   fetchRemoteGuestSession,
+  type GuestSessionFetchContext,
+  type GuestSessionRequestBody,
 } from "../../utils/guest-session-source.js";
 import { ErrorCode } from "./errors.js";
 
@@ -30,6 +32,24 @@ function getClientIp(c: any): string {
   );
 }
 
+const GUEST_SESSION_COOKIE_NAME = "__Host-mcpjam_guest_session";
+
+// Forward only the guest-session cookie to the upstream guest service.
+// Passing the entire Cookie header would leak unrelated auth/CSRF cookies
+// from the Inspector origin to Convex / hosted MCPJam.
+function extractGuestSessionCookie(
+  cookieHeader: string | null | undefined,
+): string | null {
+  if (!cookieHeader) return null;
+  const prefix = `${GUEST_SESSION_COOKIE_NAME}=`;
+  for (const part of cookieHeader.split(/;\s*/)) {
+    if (part.startsWith(prefix)) {
+      return part;
+    }
+  }
+  return null;
+}
+
 function shouldFetchGuestSessionFromConvex(): boolean {
   if (process.env.VITE_MCPJAM_HOSTED_MODE === "true") {
     return true;
@@ -38,13 +58,41 @@ function shouldFetchGuestSessionFromConvex(): boolean {
   return process.env.NODE_ENV !== "production";
 }
 
+// Bound the size of the legacy migration token we will forward upstream.
+// Real guest JWTs are well under this limit; anything larger is either
+// malformed or an attempt to inflate the upstream request body.
+const MAX_LEGACY_TOKEN_LENGTH = 4096;
+
+function parseRequestBody(raw: unknown): GuestSessionRequestBody {
+  if (!raw || typeof raw !== "object") return {};
+  const body = raw as Record<string, unknown>;
+  const out: GuestSessionRequestBody = {};
+  if (body.mode === "lookup_only" || body.mode === "lookup_or_create") {
+    out.mode = body.mode;
+  }
+  if (
+    typeof body.legacyToken === "string" &&
+    body.legacyToken.length > 0 &&
+    body.legacyToken.length <= MAX_LEGACY_TOKEN_LENGTH
+  ) {
+    out.legacyToken = body.legacyToken;
+  }
+  return out;
+}
+
 /**
  * POST /api/web/guest-session
  *
- * Returns a guest bearer token for unauthenticated visitors.
- * Inspector rate-limits this endpoint locally, then either:
+ * Returns a guest bearer token for unauthenticated visitors. Inspector
+ * forwards browser cookie/UA context to the upstream guest service so the
+ * server can resolve a stable guest from the HttpOnly cookie. Spoofable
+ * client IP headers are intentionally not forwarded. Set-Cookie
+ * headers from upstream are passed through unchanged.
+ *
+ * Inspector rate-limits this endpoint locally and either:
  * - proxies to Convex in hosted web and local dev
  * - relays through hosted Inspector in local production runtimes
+ *
  * Rate limited to 10 requests per minute per IP.
  */
 guestSession.post("/", async (c) => {
@@ -84,21 +132,54 @@ guestSession.post("/", async (c) => {
     ipWindows.set(ip, { count: 1, windowStart: now });
   }
 
-  const session = shouldFetchGuestSessionFromConvex()
-    ? await fetchConvexGuestSession()
-    : await fetchRemoteGuestSession();
-  if (!session) {
+  let body: GuestSessionRequestBody = {};
+  try {
+    const raw = await c.req.json();
+    body = parseRequestBody(raw);
+  } catch {
+    body = {};
+  }
+
+  const context: GuestSessionFetchContext = {
+    cookie: extractGuestSessionCookie(c.req.header("cookie")),
+    userAgent: c.req.header("user-agent") ?? null,
+    body,
+  };
+
+  const result = shouldFetchGuestSessionFromConvex()
+    ? await fetchConvexGuestSession(context)
+    : await fetchRemoteGuestSession(context);
+
+  for (const cookie of result.setCookies) {
+    c.header("Set-Cookie", cookie, { append: true });
+  }
+
+  if (result.kind === "session") {
+    return c.json(result.session);
+  }
+
+  if (result.kind === "miss") {
+    return c.body(null, 204);
+  }
+
+  if (result.status === 403) {
     return c.json(
       {
-        code: ErrorCode.INTERNAL_ERROR,
-        message:
-          "Unable to obtain a guest session right now. Please try again.",
+        code: ErrorCode.FORBIDDEN,
+        message: "Guest session revoked.",
       },
-      503,
+      403,
     );
   }
 
-  return c.json(session);
+  return c.json(
+    {
+      code: ErrorCode.INTERNAL_ERROR,
+      message:
+        "Unable to obtain a guest session right now. Please try again.",
+    },
+    503,
+  );
 });
 
 export default guestSession;

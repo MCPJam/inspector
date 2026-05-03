@@ -11,7 +11,10 @@ import {
 } from "@/lib/apis/registry-http";
 import { WebApiError } from "@/lib/apis/web/base";
 import { HOSTED_MODE } from "@/lib/config";
-import { peekStoredGuestToken, clearGuestSession } from "@/lib/guest-session";
+import {
+  clearGuestSession,
+  getExistingGuestBearerToken,
+} from "@/lib/guest-session";
 import { resetTokenCache } from "@/lib/apis/web/context";
 import { toast } from "sonner";
 
@@ -380,9 +383,19 @@ export function useRegistryServers({
   );
 
   const mergeRanRef = useRef(false);
+  const mergeInFlightRef = useRef(false);
+  // Bumped after a transient merge failure to force the merge effect to
+  // re-run (refs alone don't participate in effect deps). Bounded so a
+  // persistent error doesn't loop forever.
+  const [mergeRetryNonce, setMergeRetryNonce] = useState(0);
+  const mergeAttemptCountRef = useRef(0);
+  const MAX_MERGE_ATTEMPTS = 3;
 
   useEffect(() => {
-    if (!isAuthenticated) mergeRanRef.current = false;
+    if (!isAuthenticated) {
+      mergeRanRef.current = false;
+      mergeAttemptCountRef.current = 0;
+    }
   }, [isAuthenticated]);
 
   const loadCatalog = useCallback(async () => {
@@ -412,25 +425,56 @@ export function useRegistryServers({
   useEffect(() => {
     if (!enabled) return;
     if (!HOSTED_MODE || !isAuthenticated || DEV_MOCK_REGISTRY) return;
-    const guestToken = peekStoredGuestToken();
-    if (!guestToken || mergeRanRef.current) return;
-    mergeRanRef.current = true;
+    if (mergeRanRef.current || mergeInFlightRef.current) return;
+    if (mergeAttemptCountRef.current >= MAX_MERGE_ATTEMPTS) return;
+    mergeInFlightRef.current = true;
+    mergeAttemptCountRef.current += 1;
+    let cancelled = false;
+    let retryTimeout: ReturnType<typeof setTimeout> | null = null;
     void (async () => {
       try {
+        const guestToken = await getExistingGuestBearerToken();
+        if (cancelled) return;
+        // null here is a definitive "no guest exists" miss (HTTP 204 from
+        // upstream); transient errors throw and are handled below so we
+        // don't permanently latch the merge as done after a network blip.
+        if (!guestToken) {
+          mergeRanRef.current = true;
+          return;
+        }
         await mergeGuestRegistryStars(guestToken);
+        if (cancelled) return;
         clearGuestSession();
         resetTokenCache();
         await loadCatalog();
+        if (cancelled) return;
+        mergeRanRef.current = true;
       } catch (error) {
-        mergeRanRef.current = false;
         const message =
           error instanceof WebApiError
             ? error.message
             : "Could not merge guest stars";
         toast.error(message);
+        // Schedule a retry by bumping the nonce, which is in this effect's
+        // deps. Backoff grows with attempt count; capped by MAX_MERGE_ATTEMPTS.
+        if (
+          !cancelled &&
+          mergeAttemptCountRef.current < MAX_MERGE_ATTEMPTS
+        ) {
+          const delayMs = 1_000 * 2 ** (mergeAttemptCountRef.current - 1);
+          retryTimeout = setTimeout(() => {
+            if (!cancelled) setMergeRetryNonce((n) => n + 1);
+          }, delayMs);
+        }
+      } finally {
+        mergeInFlightRef.current = false;
       }
     })();
-  }, [enabled, isAuthenticated, loadCatalog]);
+    return () => {
+      cancelled = true;
+      if (retryTimeout !== null) clearTimeout(retryTimeout);
+    };
+  }, [enabled, isAuthenticated, loadCatalog, mergeRetryNonce]);
 
   const connections = useQuery(
     "registryServers:getProjectRegistryConnections" as any,

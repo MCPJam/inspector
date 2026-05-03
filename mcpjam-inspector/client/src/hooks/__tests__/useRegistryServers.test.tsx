@@ -25,6 +25,15 @@ vi.mock("sonner", () => ({
   toast: { error: vi.fn() },
 }));
 
+vi.mock("@/lib/guest-session", () => ({
+  getExistingGuestBearerToken: vi.fn().mockResolvedValue(null),
+  clearGuestSession: vi.fn(),
+}));
+
+vi.mock("@/lib/apis/web/context", () => ({
+  resetTokenCache: vi.fn(),
+}));
+
 vi.mock("@/lib/config", () => ({
   HOSTED_MODE: false,
 }));
