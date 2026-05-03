@@ -58,6 +58,11 @@ function shouldFetchGuestSessionFromConvex(): boolean {
   return process.env.NODE_ENV !== "production";
 }
 
+// Bound the size of the legacy migration token we will forward upstream.
+// Real guest JWTs are well under this limit; anything larger is either
+// malformed or an attempt to inflate the upstream request body.
+const MAX_LEGACY_TOKEN_LENGTH = 4096;
+
 function parseRequestBody(raw: unknown): GuestSessionRequestBody {
   if (!raw || typeof raw !== "object") return {};
   const body = raw as Record<string, unknown>;
@@ -65,7 +70,11 @@ function parseRequestBody(raw: unknown): GuestSessionRequestBody {
   if (body.mode === "lookup_only" || body.mode === "lookup_or_create") {
     out.mode = body.mode;
   }
-  if (typeof body.legacyToken === "string" && body.legacyToken.length > 0) {
+  if (
+    typeof body.legacyToken === "string" &&
+    body.legacyToken.length > 0 &&
+    body.legacyToken.length <= MAX_LEGACY_TOKEN_LENGTH
+  ) {
     out.legacyToken = body.legacyToken;
   }
   return out;
