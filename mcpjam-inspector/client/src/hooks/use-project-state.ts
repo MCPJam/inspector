@@ -461,6 +461,13 @@ export function useProjectState({
   }, [useLocalFallback, appState.projects, scopedLocalProjects]);
 
   const authenticatedMergedProjects = useMemo((): Record<string, Project> => {
+    // Guests don't see local-fallback projects — Convex is the only source
+    // of truth for their data. Including the synthetic local "default" here
+    // would shadow the real Convex guest project in resolution.
+    if (isGuestActor) {
+      return convexProjects;
+    }
+
     const projectsWithoutRemoteMatch = Object.fromEntries(
       Object.entries(scopedLocalProjects).filter(([localProjectId, project]) => {
         if (convexProjects[localProjectId]) {
@@ -482,7 +489,7 @@ export function useProjectState({
       ...convexProjects,
       ...projectsWithoutRemoteMatch,
     };
-  }, [convexProjects, scopedLocalProjects]);
+  }, [convexProjects, scopedLocalProjects, isGuestActor]);
 
   const activeScopedLocalProject = useMemo(
     () => scopedLocalProjects[appState.activeProjectId],
@@ -492,8 +499,13 @@ export function useProjectState({
   const activeScopedRemoteProjectId =
     activeScopedLocalProject?.sharedProjectId ?? null;
 
+  // Guests never keep a synthetic local-fallback project: their canonical
+  // project lives in Convex (provisioned by ensureDefaultGuestProject) and
+  // any local "default" row hydrated from localStorage would otherwise
+  // shadow it, leaving syncServerToConvex calling Convex with a fake id.
   const shouldKeepLocalActiveProject = Boolean(
-    activeScopedLocalProject &&
+    !isGuestActor &&
+      activeScopedLocalProject &&
       (!activeScopedRemoteProjectId ||
         !convexProjects[activeScopedRemoteProjectId]),
   );
