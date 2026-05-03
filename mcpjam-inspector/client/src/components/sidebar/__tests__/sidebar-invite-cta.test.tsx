@@ -56,8 +56,8 @@ vi.mock("@/components/sidebar/sidebar-user", () => ({
   SidebarUser: () => <div data-testid="sidebar-user" />,
 }));
 
-vi.mock("@/components/sidebar/sidebar-project-selector", () => ({
-  SidebarProjectSelector: () => <div data-testid="project-selector" />,
+vi.mock("@/components/sidebar/sidebar-context-switcher", () => ({
+  SidebarContextSwitcher: () => <div data-testid="context-switcher" />,
 }));
 
 vi.mock("@/components/project/ShareProjectDialog", () => ({

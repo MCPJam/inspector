@@ -20,10 +20,6 @@ vi.mock("@/hooks/useProfilePicture", () => ({
   useProfilePicture: () => ({ profilePictureUrl: null }),
 }));
 
-vi.mock("@/hooks/useOrganizations", () => ({
-  useOrganizationQueries: () => ({ sortedOrganizations: [] }),
-}));
-
 vi.mock("@/components/ui/sidebar", () => ({
   SidebarMenu: ({ children }: any) => (
     <div data-testid="sidebar-menu">{children}</div>
@@ -33,10 +29,6 @@ vi.mock("@/components/ui/sidebar", () => ({
     <button {...props}>{children}</button>
   ),
   useSidebar: () => ({ isMobile: false }),
-}));
-
-vi.mock("@/components/organization/CreateOrganizationDialog", () => ({
-  CreateOrganizationDialog: () => null,
 }));
 
 import { SidebarUser } from "../sidebar-user";
