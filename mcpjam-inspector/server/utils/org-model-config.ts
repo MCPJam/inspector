@@ -424,10 +424,11 @@ export async function resolveOrgProviderRuntime(
     clearTimeout(timeout);
   }
 
-  pruneRuntimeResolveCache(now);
+  const writeNow = Date.now();
+  pruneRuntimeResolveCache(writeNow);
   runtimeResolveCache.set(cacheKey, {
     result,
-    expiresAt: now + RUNTIME_CACHE_TTL_MS,
+    expiresAt: writeNow + RUNTIME_CACHE_TTL_MS,
   });
   return result;
 }

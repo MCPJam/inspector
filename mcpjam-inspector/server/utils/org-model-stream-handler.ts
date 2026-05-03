@@ -255,6 +255,9 @@ export function handleLocalOrgChatModel(
       logger.error("[org/local] stream error", error);
       return formatLocalStreamError(error);
     },
+    onFinish: async () => {
+      await onStreamComplete?.();
+    },
     execute: async ({ writer }) => {
       onStreamWriterReady?.({ write: (chunk) => writer.write(chunk) });
 
@@ -462,8 +465,6 @@ export function handleLocalOrgChatModel(
                 });
               }
             }
-          } finally {
-            await onStreamComplete?.();
           }
         },
       });
