@@ -190,7 +190,7 @@ describe("guest-session-source", () => {
     expect(result.setCookies[0]).toContain("__Host-mcpjam_guest_session=opaque");
   });
 
-  it("forwards browser cookie/UA/IP headers to upstream when context provided", async () => {
+  it("forwards browser cookie/UA and omits spoofable IP headers upstream", async () => {
     vi.mocked(global.fetch).mockResolvedValue(
       new Response(
         JSON.stringify({
@@ -207,8 +207,6 @@ describe("guest-session-source", () => {
     await fetchConvexGuestSession({
       cookie: "__Host-mcpjam_guest_session=raw",
       userAgent: "UA/1.0",
-      forwardedFor: "1.2.3.4",
-      realIp: "1.2.3.4",
       body: { mode: "lookup_or_create", legacyToken: "legacy" },
     });
 
@@ -216,8 +214,8 @@ describe("guest-session-source", () => {
     const headers = init.headers as Record<string, string>;
     expect(headers["Cookie"]).toBe("__Host-mcpjam_guest_session=raw");
     expect(headers["User-Agent"]).toBe("UA/1.0");
-    expect(headers["X-Forwarded-For"]).toBe("1.2.3.4");
-    expect(headers["X-Real-IP"]).toBe("1.2.3.4");
+    expect(headers["X-Forwarded-For"]).toBeUndefined();
+    expect(headers["X-Real-IP"]).toBeUndefined();
     expect(init.body).toBe(
       JSON.stringify({ mode: "lookup_or_create", legacyToken: "legacy" }),
     );

@@ -124,7 +124,7 @@ describe("POST /guest-session", () => {
     );
   });
 
-  it("forwards browser Cookie/User-Agent/X-Forwarded-For/X-Real-IP to upstream", async () => {
+  it("forwards browser Cookie/User-Agent but not spoofable IP headers upstream", async () => {
     await app.request("/guest-session", {
       method: "POST",
       headers: {
@@ -143,8 +143,8 @@ describe("POST /guest-session", () => {
     const headers = init.headers as Record<string, string>;
     expect(headers["Cookie"]).toBe("__Host-mcpjam_guest_session=raw-cookie-id");
     expect(headers["User-Agent"]).toBe("BrowserAgent/1.0");
-    expect(headers["X-Forwarded-For"]).toBe("203.0.113.7");
-    expect(headers["X-Real-IP"]).toBe("203.0.113.7");
+    expect(headers["X-Forwarded-For"]).toBeUndefined();
+    expect(headers["X-Real-IP"]).toBeUndefined();
   });
 
   it("forwards only the guest-session cookie upstream, not other origin cookies", async () => {

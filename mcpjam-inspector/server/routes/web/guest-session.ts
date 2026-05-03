@@ -75,8 +75,9 @@ function parseRequestBody(raw: unknown): GuestSessionRequestBody {
  * POST /api/web/guest-session
  *
  * Returns a guest bearer token for unauthenticated visitors. Inspector
- * forwards browser cookie/UA/IP context to the upstream guest service so the
- * server can resolve a stable guest from the HttpOnly cookie. Set-Cookie
+ * forwards browser cookie/UA context to the upstream guest service so the
+ * server can resolve a stable guest from the HttpOnly cookie. Spoofable
+ * client IP headers are intentionally not forwarded. Set-Cookie
  * headers from upstream are passed through unchanged.
  *
  * Inspector rate-limits this endpoint locally and either:
@@ -133,8 +134,6 @@ guestSession.post("/", async (c) => {
   const context: GuestSessionFetchContext = {
     cookie: extractGuestSessionCookie(c.req.header("cookie")),
     userAgent: c.req.header("user-agent") ?? null,
-    forwardedFor: c.req.header("x-forwarded-for") ?? null,
-    realIp: c.req.header("x-real-ip") ?? null,
     body,
   };
 

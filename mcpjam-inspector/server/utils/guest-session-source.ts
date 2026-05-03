@@ -17,8 +17,6 @@ export type RemoteGuestSession = {
 export type GuestSessionFetchContext = {
   cookie?: string | null;
   userAgent?: string | null;
-  forwardedFor?: string | null;
-  realIp?: string | null;
   body?: GuestSessionRequestBody | null;
 };
 
@@ -95,12 +93,6 @@ function buildForwardedHeaders(
   }
   if (context?.userAgent) {
     headers["User-Agent"] = context.userAgent;
-  }
-  if (context?.forwardedFor) {
-    headers["X-Forwarded-For"] = context.forwardedFor;
-  }
-  if (context?.realIp) {
-    headers["X-Real-IP"] = context.realIp;
   }
   return headers;
 }
@@ -230,7 +222,7 @@ export async function fetchConvexGuestSession(
 
 /**
  * Server-only fetch helper used by inspector services that need a guest
- * bearer token without browser context (no cookie, no UA, no IP). Returns
+ * bearer token without browser context (no cookie, no UA). Returns
  * just the session JSON or null. Always uses lookup_or_create.
  */
 export async function fetchGuestSessionForServerSideAuth(): Promise<RemoteGuestSession | null> {
