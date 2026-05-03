@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { useChatSession } from "../use-chat-session";
-import { useGuestLimitDialogStore } from "@/stores/guest-limit-dialog-store";
+import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
 
 const mockGetToolsMetadata = vi.fn();
 const mockCountTextTokens = vi.fn();
@@ -262,10 +262,12 @@ describe("useChatSession minimal mode parity", () => {
     mockWindowFetch.mockReset();
     mockWindowFetch.mockResolvedValue(new Response(null, { status: 200 }));
     vi.stubGlobal("fetch", mockWindowFetch);
-    useGuestLimitDialogStore.setState({
+    useMCPJamLimitDialogStore.setState({
       authStatus: "guest",
       hasPendingLimit: false,
       isOpen: false,
+      intent: null,
+      pendingInput: null,
     });
     mockTransportInstances.length = 0;
     mockUseChatErrorHandlers.length = 0;
@@ -398,7 +400,7 @@ describe("useChatSession minimal mode parity", () => {
     expect(mockAuthFetch).not.toHaveBeenCalled();
   });
 
-  it("opens the guest-limit dialog for non-hosted chat-v2 limit responses", async () => {
+  it("opens the mcpjam-limit dialog for non-hosted chat-v2 limit responses", async () => {
     mockWindowFetch.mockResolvedValueOnce(
       new Response(
         JSON.stringify({
@@ -436,12 +438,12 @@ describe("useChatSession minimal mode parity", () => {
     });
 
     await waitFor(() => {
-      expect(useGuestLimitDialogStore.getState().isOpen).toBe(true);
+      expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(true);
     });
     expect(mockAuthFetch).not.toHaveBeenCalled();
   });
 
-  it("opens the guest-limit dialog for chat-v2 stream limit errors", async () => {
+  it("opens the mcpjam-limit dialog for chat-v2 stream limit errors", async () => {
     renderHook(() =>
       useChatSession({
         selectedServers: ["server-1"],
@@ -464,7 +466,102 @@ describe("useChatSession minimal mode parity", () => {
       );
     });
 
-    expect(useGuestLimitDialogStore.getState().isOpen).toBe(true);
+    expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(true);
+  });
+
+  it("opens the topup variant for signed-in user_rate_limit responses", async () => {
+    useMCPJamLimitDialogStore.setState({
+      authStatus: "signedIn",
+      hasPendingLimit: false,
+      isOpen: false,
+      intent: null,
+      pendingInput: null,
+    });
+    mockWindowFetch.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          ok: false,
+          code: "user_rate_limit",
+          error: "Daily credit limit reached.",
+          limitKind: "total",
+        }),
+        {
+          status: 429,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
+    );
+
+    const { result } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        minimalMode: true,
+        executionConfig: {
+          systemPrompt: "Prompt",
+        },
+      }),
+    );
+
+    await waitFor(() => {
+      expect(mockTransportInstances.length).toBeGreaterThan(0);
+    });
+
+    act(() => {
+      result.current.sendMessage({ text: "hello" });
+    });
+
+    await waitFor(() => {
+      expect(useMCPJamLimitDialogStore.getState().intent).toBe("topup");
+    });
+    expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(true);
+  });
+
+  it("does not open the modal for signed-in concurrency-throttle responses", async () => {
+    useMCPJamLimitDialogStore.setState({
+      authStatus: "signedIn",
+      hasPendingLimit: false,
+      isOpen: false,
+      intent: null,
+      pendingInput: null,
+    });
+    mockWindowFetch.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          ok: false,
+          code: "user_rate_limit",
+          error: "Another credit-funded chat is finishing.",
+          limitKind: "concurrency",
+        }),
+        {
+          status: 429,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
+    );
+
+    const { result } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        minimalMode: true,
+        executionConfig: {
+          systemPrompt: "Prompt",
+        },
+      }),
+    );
+
+    await waitFor(() => {
+      expect(mockTransportInstances.length).toBeGreaterThan(0);
+    });
+
+    act(() => {
+      result.current.sendMessage({ text: "hello" });
+    });
+
+    // Give the error path a chance to run.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(false);
+    expect(useMCPJamLimitDialogStore.getState().intent).toBeNull();
   });
 
   it("keeps only the three premium MCPJam models gated on the unauthenticated non-hosted path", async () => {

@@ -147,7 +147,10 @@ export function peekPendingTopup(): PendingTopupContext | null {
  * on `credit_topup_*` PostHog events so the funnel can be split between
  * the chat-banner CTA and the billing-page Top up button.
  */
-export type CreditTopupSource = "chat_banner" | "billing_page";
+export type CreditTopupSource =
+  | "chat_banner"
+  | "billing_page"
+  | "limit_modal";
 
 interface StartCheckoutInput {
   amountCents: number;

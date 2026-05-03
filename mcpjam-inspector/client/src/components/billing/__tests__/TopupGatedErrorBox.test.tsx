@@ -29,9 +29,13 @@ vi.mock("@/hooks/useCreditTopup", () => ({
   },
 }));
 
+// Note: rate-limit errors (`user_rate_limit` / `mcpjam_rate_limit`) are now
+// owned by the global MCPJamLimitDialog modal — the inline ErrorBox returns
+// null for them. We exercise TopupGatedErrorBox's CTA-gating logic against
+// a non-rate-limit platform error so the inline banner is still rendered.
 const RATE_LIMIT_PROPS = {
-  message: "Daily MCPJam model limit reached.",
-  code: "user_rate_limit",
+  message: "Provider unavailable. Try again later.",
+  code: "provider_error",
   isRetryable: false,
   isMCPJamPlatformError: true,
   onResetChat: () => {},
@@ -117,11 +121,10 @@ describe("TopupGatedErrorBox", () => {
     expect(
       screen.queryByRole("button", { name: /Top up to keep chatting/ }),
     ).not.toBeInTheDocument();
-    // The rate-limit copy is still rendered so the user understands what
-    // happened. ("Daily MCPJam model limit reached" appears in both the
-    // header label and the message body, so use getAllByText.)
+    // The error copy is still rendered so the user understands what
+    // happened, just without the gated Top-up CTA.
     expect(
-      screen.getAllByText(/Daily MCPJam model limit reached/).length,
+      screen.getAllByText(/Provider unavailable/).length,
     ).toBeGreaterThanOrEqual(1);
     errorSpy.mockRestore();
   });
