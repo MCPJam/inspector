@@ -176,7 +176,7 @@ describe("MCPJamLimitDialog", () => {
     );
   });
 
-  it("just closes the modal if the user has no resolvable org", async () => {
+  it("keeps the modal open when no org is resolvable yet (e.g. membership still loading)", async () => {
     const user = userEvent.setup();
     authState.user = { id: "user-1" };
     useMCPJamLimitDialogStore.setState({ isOpen: true, intent: "topup" });
@@ -186,7 +186,9 @@ describe("MCPJamLimitDialog", () => {
       screen.getByRole("button", { name: /^top up$/i }),
     );
 
-    expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(false);
+    // Modal stays open and no nav happens — once orgs load, the user can
+    // click again and be routed correctly.
+    expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(true);
     expect(window.location.hash).toBe("");
   });
 

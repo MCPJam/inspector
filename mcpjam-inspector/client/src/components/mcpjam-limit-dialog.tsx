@@ -55,8 +55,11 @@ export function MCPJamLimitDialog() {
 
   const handleTopUp = () => {
     const orgId = resolveBillingOrgId();
-    close();
+    // Don't dismiss the modal until we know we can route the user — on a
+    // fresh sign-in the membership query may still be in flight, in which
+    // case closing now would drop them out of the upsell silently.
     if (!orgId) return;
+    close();
     // The hash router strips ?... before resolving the route, so the
     // `topup=open` flag is invisible to navigation but visible to the
     // billing page on mount.
@@ -65,8 +68,8 @@ export function MCPJamLimitDialog() {
 
   const handleBYOK = () => {
     const orgId = resolveBillingOrgId();
-    close();
     if (!orgId) return;
+    close();
     window.location.hash = `organizations/${orgId}/models`;
   };
 
