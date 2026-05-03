@@ -399,9 +399,13 @@ export async function resolveOrgProviderRuntime(
     }
 
     if (data.runtimeLocation === "local") {
+      const rawProvider = data.provider;
+      if (!rawProvider || typeof rawProvider.providerKey !== "string" || rawProvider.providerKey.length === 0) {
+        throw new Error("Org runtime resolve returned invalid local provider config");
+      }
       result = {
         runtimeLocation: "local",
-        provider: data.provider as OrgProviderResolvedConfig,
+        provider: rawProvider as OrgProviderResolvedConfig,
       };
     } else {
       result = {
