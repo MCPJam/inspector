@@ -178,7 +178,6 @@ export interface OrgLocalModelHandlerOptions {
   systemPrompt: string;
   temperature?: number;
   tools: ToolSet;
-  mcpClientManager: MCPClientManager;
   selectedServers?: string[];
   requireToolApproval?: boolean;
   /** Forwarded to /stream/org/local-usage for identity resolution. */

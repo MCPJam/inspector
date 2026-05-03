@@ -459,7 +459,6 @@ chatV2.post("/", async (c) => {
             authHeader: c.req.header("authorization"),
             shareToken,
             chatboxToken,
-            mcpClientManager: manager,
             selectedServers: selectedServerIds,
             requireToolApproval,
             onConversationComplete,
