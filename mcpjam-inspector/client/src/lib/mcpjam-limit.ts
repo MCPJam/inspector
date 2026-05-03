@@ -3,7 +3,12 @@ import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
 const MCPJAM_MODEL_LIMIT_PATTERN = /mcpjam[\w\s-]*model limit/i;
 const MCPJAM_RATE_LIMIT_CODE = "mcpjam_rate_limit";
 const MCPJAM_USER_RATE_LIMIT_CODE = "user_rate_limit";
-const MCPJAM_RATE_LIMIT_CODE_PATTERN = /\bmcpjam_rate_limit\b/;
+const MCPJAM_LIMIT_CODES = new Set([
+  MCPJAM_RATE_LIMIT_CODE,
+  MCPJAM_USER_RATE_LIMIT_CODE,
+]);
+const MCPJAM_RATE_LIMIT_CODE_PATTERN =
+  /\b(?:mcpjam_rate_limit|user_rate_limit)\b/;
 
 export type MCPJamLimitKind = "total" | "concurrency";
 
@@ -28,6 +33,24 @@ const tryParseJson = (value: string): unknown => {
   } catch {
     return null;
   }
+};
+
+const collectJsonCandidates = (value: string): unknown[] => {
+  const candidates: unknown[] = [];
+  const parsed = tryParseJson(value);
+  if (parsed !== null) {
+    candidates.push(parsed);
+  }
+
+  const jsonStart = value.indexOf("{");
+  if (jsonStart > 0) {
+    const parsedSuffix = tryParseJson(value.slice(jsonStart));
+    if (parsedSuffix !== null) {
+      candidates.push(parsedSuffix);
+    }
+  }
+
+  return candidates;
 };
 
 const collectStringValues = (
@@ -63,23 +86,51 @@ const collectStringValues = (
   return strings;
 };
 
-const hasMCPJamRateLimitCode = (
+const findMCPJamRateLimitCode = (
   value: unknown,
   seen = new WeakSet<object>(),
-): boolean => {
-  if (!value || typeof value !== "object") return false;
-  if (seen.has(value)) return false;
+): string | undefined => {
+  if (!value || typeof value !== "object") return undefined;
+  if (seen.has(value)) return undefined;
   seen.add(value);
 
   if (
     "code" in value &&
-    (value as { code?: unknown }).code === MCPJAM_RATE_LIMIT_CODE
+    typeof (value as { code?: unknown }).code === "string" &&
+    MCPJAM_LIMIT_CODES.has((value as { code: string }).code)
   ) {
-    return true;
+    return (value as { code: string }).code;
   }
 
   const values = Array.isArray(value) ? value : Object.values(value);
-  return values.some((item) => hasMCPJamRateLimitCode(item, seen));
+  for (const item of values) {
+    const code = findMCPJamRateLimitCode(item, seen);
+    if (code) return code;
+  }
+
+  return undefined;
+};
+
+const findMCPJamLimitKind = (
+  value: unknown,
+  seen = new WeakSet<object>(),
+): MCPJamLimitKind | undefined => {
+  if (!value || typeof value !== "object") return undefined;
+  if (seen.has(value)) return undefined;
+  seen.add(value);
+
+  const limitKind = getStringProperty(value, "limitKind");
+  if (limitKind === "total" || limitKind === "concurrency") {
+    return limitKind;
+  }
+
+  const values = Array.isArray(value) ? value : Object.values(value);
+  for (const item of values) {
+    const nestedLimitKind = findMCPJamLimitKind(item, seen);
+    if (nestedLimitKind) return nestedLimitKind;
+  }
+
+  return undefined;
 };
 
 const isMCPJamLimitString = (value: string): boolean =>
@@ -98,22 +149,37 @@ export function isMCPJamModelLimitError(args: MCPJamLimitErrorInput): boolean {
   const valuesToInspect = [args.message, args.details];
   for (const value of valuesToInspect) {
     if (typeof value === "string") {
-      if (isMCPJamLimitString(value)) return true;
-
-      const parsed = tryParseJson(value);
-      if (hasMCPJamRateLimitCode(parsed)) return true;
-      if (
-        collectStringValues(parsed).some((item) => isMCPJamLimitString(item))
-      ) {
-        return true;
+      for (const parsed of collectJsonCandidates(value)) {
+        const code = findMCPJamRateLimitCode(parsed);
+        const limitKind = findMCPJamLimitKind(parsed);
+        const hasLimitString = collectStringValues(parsed).some((item) =>
+          isMCPJamLimitString(item),
+        );
+        if (
+          limitKind === "concurrency" &&
+          (code === MCPJAM_USER_RATE_LIMIT_CODE || hasLimitString)
+        ) {
+          return false;
+        }
+        if (code || hasLimitString) return true;
       }
+
+      if (isMCPJamLimitString(value)) return true;
       continue;
     }
 
-    if (hasMCPJamRateLimitCode(value)) return true;
-    if (collectStringValues(value).some((item) => isMCPJamLimitString(item))) {
-      return true;
+    const code = findMCPJamRateLimitCode(value);
+    const limitKind = findMCPJamLimitKind(value);
+    const hasLimitString = collectStringValues(value).some((item) =>
+      isMCPJamLimitString(item),
+    );
+    if (
+      limitKind === "concurrency" &&
+      (code === MCPJAM_USER_RATE_LIMIT_CODE || hasLimitString)
+    ) {
+      return false;
     }
+    if (code || hasLimitString) return true;
   }
 
   return false;

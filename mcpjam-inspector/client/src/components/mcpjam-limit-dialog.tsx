@@ -89,7 +89,7 @@ export function MCPJamLimitDialog() {
               <DialogTitle>You've used today's free guest limit</DialogTitle>
               <DialogDescription>
                 Sign in to get{" "}
-                <strong className="text-foreground font-medium">6× more</strong>{" "}
+                <strong className="text-foreground font-medium">10×</strong>{" "}
                 daily usage.
               </DialogDescription>
             </DialogHeader>

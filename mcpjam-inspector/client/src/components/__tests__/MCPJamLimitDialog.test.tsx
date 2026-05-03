@@ -76,7 +76,7 @@ describe("MCPJamLimitDialog", () => {
         name: /you've used today's free guest limit/i,
       }),
     ).toBeInTheDocument();
-    expect(screen.getByText(/6× more/i)).toBeInTheDocument();
+    expect(screen.getByText(/10×/i)).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: /^sign in$/i }),
     ).toBeInTheDocument();

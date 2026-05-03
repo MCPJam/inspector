@@ -64,6 +64,24 @@ describe("isMCPJamModelLimitError", () => {
     ).toBe(true);
   });
 
+  it("detects signed-in usage limits inside prefixed backend strings", () => {
+    expect(
+      isMCPJamModelLimitError({
+        message:
+          'Backend stream error: 429 {"code":"user_rate_limit","error":"Daily credit limit reached.","limitKind":"total"}',
+      }),
+    ).toBe(true);
+  });
+
+  it("does not match streamed concurrency throttles inside prefixed backend strings", () => {
+    expect(
+      isMCPJamModelLimitError({
+        message:
+          'Backend stream error: 429 {"code":"user_rate_limit","error":"Another credit-funded chat is finishing.","limitKind":"concurrency"}',
+      }),
+    ).toBe(false);
+  });
+
   it("detects model-limit text inside structured details", () => {
     expect(
       isMCPJamModelLimitError({
@@ -109,6 +127,25 @@ describe("isMCPJamModelLimitError", () => {
     });
 
     expect(notifyMCPJamLimitError({ code: "user_rate_limit" })).toBe(true);
+    expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(true);
+    expect(useMCPJamLimitDialogStore.getState().intent).toBe("topup");
+  });
+
+  it("opens with topup intent for wrapped signed-in usage limit hits", () => {
+    useMCPJamLimitDialogStore.setState({
+      authStatus: "signedIn",
+      hasPendingLimit: false,
+      isOpen: false,
+      intent: null,
+      pendingInput: null,
+    });
+
+    expect(
+      notifyMCPJamLimitError({
+        message:
+          'Backend stream error: 429 {"code":"user_rate_limit","error":"Daily credit limit reached.","limitKind":"total"}',
+      }),
+    ).toBe(true);
     expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(true);
     expect(useMCPJamLimitDialogStore.getState().intent).toBe("topup");
   });
