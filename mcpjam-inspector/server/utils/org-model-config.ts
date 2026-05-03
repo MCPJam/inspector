@@ -350,8 +350,10 @@ export async function resolveOrgProviderRuntime(
   if (!inspectorServiceToken) throw new Error("INSPECTOR_SERVICE_TOKEN is not set");
 
   const cacheKey = buildRuntimeCacheKey(projectId, providerKey, model, auth);
+  const now = Date.now();
+  pruneRuntimeResolveCache(now);
   const cached = runtimeResolveCache.get(cacheKey);
-  if (cached && cached.expiresAt > Date.now()) {
+  if (cached && cached.expiresAt > now) {
     return cached.result;
   }
 

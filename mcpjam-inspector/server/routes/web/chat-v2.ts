@@ -24,6 +24,7 @@ import { validateUrl, OAuthProxyError } from "../../utils/oauth-proxy.js";
 import {
   persistChatSessionToConvex,
   pickEnrichmentHeaders,
+  type PersistedTurnTrace,
 } from "../../utils/chat-ingestion.js";
 import {
   hostedChatSchema,
@@ -404,7 +405,7 @@ chatV2.post("/", async (c) => {
         );
 
         const onConversationComplete = hostedChatSessionId
-          ? async (fullHistory: ModelMessage[], turnTrace: any) => {
+          ? async (fullHistory: ModelMessage[], turnTrace: PersistedTurnTrace) => {
               const isDirectChat = !shareToken && !chatboxToken;
               await persistChatSessionToConvex({
                 chatSessionId: hostedChatSessionId,
