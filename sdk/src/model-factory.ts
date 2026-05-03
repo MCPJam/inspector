@@ -352,7 +352,7 @@ export interface OrgProviderResolvedConfig {
   /** Present only for local-runtime providers. */
   apiKey?: string;
   baseUrl?: string;
-  protocol?: string;
+  protocol?: "openai-compatible" | "anthropic-compatible";
   modelIds?: string[];
   displayName?: string;
   selectedModels?: string[];

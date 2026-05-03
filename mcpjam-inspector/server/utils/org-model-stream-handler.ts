@@ -209,6 +209,7 @@ export function handleLocalOrgChatModel(
     systemPrompt,
     temperature,
     tools,
+    requireToolApproval,
     authHeader,
     shareToken,
     chatboxToken,
@@ -221,6 +222,17 @@ export function handleLocalOrgChatModel(
   // OrgProviderConfigError / model_not_allowed is thrown synchronously.
   assertOrgModelAllowed(provider, modelId);
   const llmModel = buildOrgModelFromResolvedConfig(provider, modelId);
+
+  // Tool approval pause/resume is not supported for local-runtime providers.
+  // When required, suppress tools entirely so tools don't auto-execute without
+  // user consent. Follow-up: implement interactive approval via streaming protocol.
+  const effectiveTools: ToolSet =
+    requireToolApproval && Object.keys(tools).length > 0
+      ? ({} as ToolSet)
+      : tools;
+  if (requireToolApproval && Object.keys(tools).length > 0) {
+    logger.warn("[org/local] requireToolApproval=true is not supported for local runtime; tools suppressed");
+  }
 
   const traceHistory = [...messages];
   const initialMessageHistoryLength = messages.length;
@@ -259,13 +271,13 @@ export function handleLocalOrgChatModel(
         stepIndex: 0,
         payload: buildResolvedModelRequestPayload({
           systemPrompt,
-          tools,
+          tools: effectiveTools,
           messages,
         }),
       });
 
       const tracedTools = wrapToolSetForEvalTrace(
-        tools as Record<string, unknown>,
+        effectiveTools as Record<string, unknown>,
         traceContext,
         traceTurn.promptIndex,
       ) as ToolSet;
@@ -408,16 +420,6 @@ export function handleLocalOrgChatModel(
             turnFinished = true;
           }
 
-          const responseMessages: ModelMessage[] = [];
-          for (const step of event.steps) {
-            appendDedupedModelMessages(
-              responseMessages,
-              Array.isArray(step?.response?.messages)
-                ? (step.response.messages as ModelMessage[])
-                : [],
-            );
-          }
-
           // Post usage to Convex (best-effort, non-blocking on failure).
           postLocalUsage({
             projectId,
@@ -502,33 +504,47 @@ async function postLocalUsage(params: {
   if (!convexHttpUrl || !inspectorServiceToken) return;
 
   const url = `${convexHttpUrl.replace(/\/$/, "")}/stream/org/local-usage`;
-  await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Inspector-Service-Token": inspectorServiceToken,
-      ...(params.authHeader ? { Authorization: params.authHeader } : {}),
-    },
-    body: JSON.stringify({
-      projectId: params.projectId,
-      ...(params.workspaceId ? { workspaceId: params.workspaceId } : {}),
-      providerKey: params.providerKey,
-      model: params.model,
-      ...(params.usage ? { usage: params.usage } : {}),
-      ...(params.finishReason ? { finishReason: params.finishReason } : {}),
-      ...(params.chatSessionId ? { chatSessionId: params.chatSessionId } : {}),
-      ...(params.sourceType ? { sourceType: params.sourceType } : {}),
-      ...(params.turnId ? { turnId: params.turnId } : {}),
-      ...(typeof params.promptIndex === "number"
-        ? { promptIndex: params.promptIndex }
-        : {}),
-      ...(params.shareToken ? { shareToken: params.shareToken } : {}),
-      ...(params.chatboxToken ? { chatboxToken: params.chatboxToken } : {}),
-      ...(params.selectedServers && params.selectedServers.length > 0
-        ? { serverIds: params.selectedServers }
-        : {}),
-    }),
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 5_000);
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Inspector-Service-Token": inspectorServiceToken,
+        ...(params.authHeader ? { Authorization: params.authHeader } : {}),
+      },
+      body: JSON.stringify({
+        projectId: params.projectId,
+        ...(params.workspaceId ? { workspaceId: params.workspaceId } : {}),
+        providerKey: params.providerKey,
+        model: params.model,
+        ...(params.usage ? { usage: params.usage } : {}),
+        ...(params.finishReason ? { finishReason: params.finishReason } : {}),
+        ...(params.chatSessionId ? { chatSessionId: params.chatSessionId } : {}),
+        ...(params.sourceType ? { sourceType: params.sourceType } : {}),
+        ...(params.turnId ? { turnId: params.turnId } : {}),
+        ...(typeof params.promptIndex === "number"
+          ? { promptIndex: params.promptIndex }
+          : {}),
+        ...(params.shareToken ? { shareToken: params.shareToken } : {}),
+        ...(params.chatboxToken ? { chatboxToken: params.chatboxToken } : {}),
+        ...(params.selectedServers && params.selectedServers.length > 0
+          ? { serverIds: params.selectedServers }
+          : {}),
+      }),
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      const preview = await response.text().catch(() => "");
+      logger.warn("[org/local] local-usage writeback non-2xx", {
+        status: response.status,
+        preview: preview.slice(0, 200),
+      });
+    }
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 // ---------------------------------------------------------------------------

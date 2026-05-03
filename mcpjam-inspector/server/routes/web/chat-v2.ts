@@ -412,7 +412,6 @@ chatV2.post("/", async (c) => {
                 modelSource:
                   runtime.runtimeLocation === "local" ? "local_byok" : "byok",
                 projectId: hostedBody.projectId,
-                workspaceId: legacyWorkspaceId,
                 sourceType,
                 ...(chatboxToken && surface ? { surface } : {}),
                 shareToken,
@@ -473,7 +472,7 @@ chatV2.post("/", async (c) => {
         return handleHostedOrgChatModel({
           projectId: hostedBody.projectId,
           workspaceId: legacyWorkspaceId,
-          providerKey,
+          providerKey: runtime.providerKey,
           modelId,
           chatSessionId: hostedChatSessionId,
           sourceType,

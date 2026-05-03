@@ -284,10 +284,27 @@ export type OrgProviderRuntimeLocal = {
 export type OrgProviderRuntime = OrgProviderRuntimeCloud | OrgProviderRuntimeLocal;
 
 const RUNTIME_CACHE_TTL_MS = 60_000;
+const RUNTIME_CACHE_MAX_ENTRIES = 1_000;
 const runtimeResolveCache = new Map<
   string,
   { result: OrgProviderRuntime; expiresAt: number }
 >();
+
+function pruneRuntimeResolveCache(now: number): void {
+  if (runtimeResolveCache.size <= RUNTIME_CACHE_MAX_ENTRIES) return;
+  for (const [key, entry] of runtimeResolveCache) {
+    if (entry.expiresAt <= now) runtimeResolveCache.delete(key);
+  }
+  if (runtimeResolveCache.size > RUNTIME_CACHE_MAX_ENTRIES) {
+    const overflow = runtimeResolveCache.size - RUNTIME_CACHE_MAX_ENTRIES;
+    let removed = 0;
+    for (const key of runtimeResolveCache.keys()) {
+      if (removed >= overflow) break;
+      runtimeResolveCache.delete(key);
+      removed++;
+    }
+  }
+}
 
 function buildRuntimeCacheKey(
   projectId: string,
@@ -396,9 +413,11 @@ export async function resolveOrgProviderRuntime(
     clearTimeout(timeout);
   }
 
+  const now = Date.now();
+  pruneRuntimeResolveCache(now);
   runtimeResolveCache.set(cacheKey, {
     result,
-    expiresAt: Date.now() + RUNTIME_CACHE_TTL_MS,
+    expiresAt: now + RUNTIME_CACHE_TTL_MS,
   });
   return result;
 }
