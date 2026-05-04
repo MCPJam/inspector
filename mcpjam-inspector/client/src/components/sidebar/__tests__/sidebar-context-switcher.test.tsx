@@ -41,17 +41,62 @@ vi.mock("@/components/ui/sidebar", () => ({
   useSidebar: () => ({ isMobile: false }),
 }));
 
-vi.mock("@mcpjam/design-system/dropdown-menu", () => ({
-  DropdownMenu: ({ children }: { children: ReactNode }) => (
-    <div>{children}</div>
-  ),
-  DropdownMenuTrigger: ({ children }: { children: ReactNode }) => (
-    <div>{children}</div>
-  ),
-  DropdownMenuContent: ({ children }: { children: ReactNode }) => (
-    <div>{children}</div>
-  ),
-}));
+// Realistic dropdown mock: tracks open state via context so tests exercise
+// the real open/close behavior. DropdownMenuContent only renders when open.
+vi.mock("@mcpjam/design-system/dropdown-menu", async () => {
+  const React = await import("react");
+  const Ctx = React.createContext<{
+    open: boolean;
+    setOpen: (next: boolean) => void;
+  } | null>(null);
+  return {
+    DropdownMenu: ({
+      open,
+      onOpenChange,
+      children,
+    }: {
+      open?: boolean;
+      onOpenChange?: (next: boolean) => void;
+      children: ReactNode;
+    }) => {
+      const [internalOpen, setInternalOpen] = React.useState(false);
+      const isControlled = open !== undefined;
+      const isOpen = isControlled ? !!open : internalOpen;
+      const setOpen = (next: boolean) => {
+        if (!isControlled) setInternalOpen(next);
+        onOpenChange?.(next);
+      };
+      return (
+        <Ctx.Provider value={{ open: isOpen, setOpen }}>{children}</Ctx.Provider>
+      );
+    },
+    DropdownMenuTrigger: ({
+      children,
+      asChild,
+    }: {
+      children: ReactNode;
+      asChild?: boolean;
+    }) => {
+      const ctx = React.useContext(Ctx);
+      const handleClick = () => ctx?.setOpen(!ctx.open);
+      if (asChild && React.isValidElement(children)) {
+        return React.cloneElement(
+          children as React.ReactElement<{ onClick?: () => void }>,
+          { onClick: handleClick },
+        );
+      }
+      return (
+        <button type="button" onClick={handleClick}>
+          {children}
+        </button>
+      );
+    },
+    DropdownMenuContent: ({ children }: { children: ReactNode }) => {
+      const ctx = React.useContext(Ctx);
+      return ctx?.open ? <div>{children}</div> : null;
+    },
+  };
+});
 
 vi.mock("@mcpjam/design-system/tooltip", () => ({
   Tooltip: ({ children }: { children: ReactNode }) => <>{children}</>,
@@ -129,6 +174,11 @@ const projects = {
   },
 };
 
+function openMainDropdown() {
+  // Trigger button has aria-label "Switch context: …" or "Switch project: …".
+  fireEvent.click(screen.getByRole("button", { name: /^Switch (context|project):/ }));
+}
+
 function openChipPopover() {
   fireEvent.click(screen.getByTestId("org-chip-button"));
 }
@@ -148,6 +198,30 @@ describe("SidebarContextSwitcher", () => {
       sortedOrganizations: orgs,
       isLoading: false,
     });
+  });
+
+  it("dropdown content is hidden by default and renders only when the trigger is clicked", () => {
+    render(
+      <SidebarContextSwitcher
+        activeProjectId="p1"
+        activeOrganizationId="org_a"
+        projects={projects}
+        onSwitchProject={vi.fn()}
+        onCreateProject={vi.fn(async () => "")}
+        onDeleteProject={vi.fn()}
+      />
+    );
+    // Closed: menu content is absent.
+    expect(screen.queryByText("Organization")).not.toBeInTheDocument();
+    expect(screen.queryByText("Projects")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("org-chip-button")).not.toBeInTheDocument();
+    // Open: clicking the trigger reveals the menu.
+    openMainDropdown();
+    expect(screen.getByText("Organization")).toBeInTheDocument();
+    expect(screen.getByTestId("org-chip-button")).toBeInTheDocument();
+    // Close: clicking the trigger again hides it.
+    openMainDropdown();
+    expect(screen.queryByText("Organization")).not.toBeInTheDocument();
   });
 
   it("renders trigger with project name and active org name", () => {
@@ -177,6 +251,7 @@ describe("SidebarContextSwitcher", () => {
         onDeleteProject={vi.fn()}
       />
     );
+    openMainDropdown();
     // Chip header label
     expect(screen.getByText("Organization")).toBeInTheDocument();
     // Projects body label
@@ -200,6 +275,7 @@ describe("SidebarContextSwitcher", () => {
         onDeleteProject={vi.fn()}
       />
     );
+    openMainDropdown();
     openChipPopover();
     expect(screen.getByTestId("org-popover")).toBeInTheDocument();
     expect(screen.getByTestId("org-row-org_a")).toBeInTheDocument();
@@ -221,6 +297,7 @@ describe("SidebarContextSwitcher", () => {
         onSwitchActiveOrganization={onSwitchActiveOrganization}
       />
     );
+    openMainDropdown();
     openChipPopover();
     fireEvent.click(screen.getByTestId("org-row-org_b"));
     expect(onSwitchActiveOrganization).toHaveBeenCalledWith("org_b");
@@ -243,6 +320,7 @@ describe("SidebarContextSwitcher", () => {
         onSwitchActiveOrganization={onSwitchActiveOrganization}
       />
     );
+    openMainDropdown();
     openChipPopover();
     fireEvent.click(screen.getByTestId("org-row-org_a"));
     expect(onSwitchActiveOrganization).not.toHaveBeenCalled();
@@ -261,6 +339,7 @@ describe("SidebarContextSwitcher", () => {
         onSwitchOrganization={onSwitchOrganization}
       />
     );
+    openMainDropdown();
     openChipPopover();
     const popover = screen.getByTestId("org-popover");
     fireEvent.click(
@@ -281,6 +360,7 @@ describe("SidebarContextSwitcher", () => {
         onSwitchOrganization={vi.fn()}
       />
     );
+    openMainDropdown();
     openChipPopover();
     const popover = screen.getByTestId("org-popover");
     expect(
@@ -304,6 +384,7 @@ describe("SidebarContextSwitcher", () => {
         onSwitchOrganization={onSwitchOrganization}
       />
     );
+    openMainDropdown();
     // Chip-level gear is rendered without opening the popover
     const chipGear = screen.getByRole("button", { name: "Open Acme settings" });
     expect(chipGear).toBeInTheDocument();
@@ -341,6 +422,7 @@ describe("SidebarContextSwitcher", () => {
         onDeleteProject={vi.fn()}
       />
     );
+    openMainDropdown();
     fireEvent.click(screen.getByText("Sandbox"));
     expect(onSwitchProject).toHaveBeenCalledWith("p2");
   });
@@ -357,6 +439,7 @@ describe("SidebarContextSwitcher", () => {
         onNavigateToSettings={vi.fn()}
       />
     );
+    openMainDropdown();
     expect(
       screen.getByRole("button", { name: "Open Inspector settings" })
     ).toBeInTheDocument();
@@ -379,6 +462,7 @@ describe("SidebarContextSwitcher", () => {
         onNavigateToSettings={onNavigateToSettings}
       />
     );
+    openMainDropdown();
     fireEvent.click(
       screen.getByRole("button", { name: "Open Sandbox settings" })
     );
@@ -408,6 +492,7 @@ describe("SidebarContextSwitcher", () => {
         onNavigateToSettings={onNavigateToSettings}
       />
     );
+    openMainDropdown();
     fireEvent.click(
       screen.getByRole("button", { name: "Open Sandbox settings" })
     );
@@ -434,6 +519,7 @@ describe("SidebarContextSwitcher", () => {
         onNavigateToSettings={onNavigateToSettings}
       />
     );
+    openMainDropdown();
     fireEvent.click(
       screen.getByRole("button", { name: "Open Inspector settings" })
     );
@@ -484,6 +570,7 @@ describe("SidebarContextSwitcher", () => {
         onDeleteProject={vi.fn()}
       />
     );
+    openMainDropdown();
     // Both initials render somewhere in the menu
     expect(screen.getAllByTitle("Alice").length).toBeGreaterThan(0);
     expect(screen.getAllByTitle("Bob").length).toBeGreaterThan(0);
@@ -530,6 +617,7 @@ describe("SidebarContextSwitcher", () => {
         onDeleteProject={vi.fn()}
       />
     );
+    openMainDropdown();
     expect(screen.getByTitle("2 more")).toBeInTheDocument();
   });
 
@@ -544,6 +632,7 @@ describe("SidebarContextSwitcher", () => {
         onDeleteProject={vi.fn()}
       />
     );
+    openMainDropdown();
     fireEvent.click(screen.getByRole("button", { name: "New organization" }));
     expect(mockCreateOrgDialog).toHaveBeenCalled();
     const lastCall = mockCreateOrgDialog.mock.calls.at(-1)?.[0] as {
@@ -564,6 +653,7 @@ describe("SidebarContextSwitcher", () => {
         onDeleteProject={vi.fn()}
       />
     );
+    openMainDropdown();
     fireEvent.click(screen.getByRole("button", { name: "Add project" }));
     expect(onCreateProject).toHaveBeenCalledWith("New project", true);
   });
@@ -581,6 +671,7 @@ describe("SidebarContextSwitcher", () => {
         createDisabledReason="Project limit reached. Upgrade to add more."
       />
     );
+    openMainDropdown();
     const button = screen.getByRole("button", { name: "Add project" });
     expect(button).toBeDisabled();
     expect(button).toHaveAttribute(
@@ -645,6 +736,7 @@ describe("SidebarContextSwitcher", () => {
         onDeleteProject={vi.fn()}
       />
     );
+    openMainDropdown();
     expect(
       screen.getByRole("button", { name: "Delete project Sandbox" })
     ).toBeDisabled();
@@ -683,6 +775,7 @@ describe("SidebarContextSwitcher", () => {
         onDeleteProject={vi.fn()}
       />
     );
+    openMainDropdown();
     expect(screen.getAllByText("Inspector").length).toBeGreaterThanOrEqual(1);
     // Chip is rendered
     expect(screen.getByTestId("org-chip-button")).toBeInTheDocument();

@@ -424,7 +424,7 @@ export function SidebarContextSwitcher({
                                   onSwitchOrganization(org._id, "overview");
                                   setMenuOpen(false);
                                 }}
-                                className="opacity-0 group-hover/org:opacity-100 transition-opacity p-0.5 rounded hover:text-foreground text-muted-foreground"
+                                className="opacity-0 group-hover/org:opacity-100 focus:opacity-100 focus-visible:opacity-100 transition-opacity p-0.5 rounded hover:text-foreground text-muted-foreground"
                               >
                                 <Settings className="size-3.5" />
                               </button>
