@@ -758,7 +758,9 @@ export function MCPSidebar({
               </SidebarMenuItem>
             </SidebarMenu>
           ) : null}
-          <SidebarCreditUsage />
+          {!user ? (
+            <SidebarCreditUsage className="px-1" includeGuests />
+          ) : null}
           <SidebarUser />
         </SidebarFooter>
       </Sidebar>

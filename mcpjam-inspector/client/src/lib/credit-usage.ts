@@ -15,4 +15,3 @@ export const formatCreditResetText = (resetAt: number): string => {
   }
   return "resets tomorrow";
 };
-
