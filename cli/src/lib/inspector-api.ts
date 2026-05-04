@@ -338,9 +338,11 @@ async function resolveInspectorBrowserBaseUrlForHealth(
     skipDiscovery?: boolean;
   },
 ): Promise<string> {
+  const skipDiscovery =
+    options.skipDiscovery || (options.hasActiveClient && !options.openBrowser);
   try {
     return await resolveInspectorBrowserBaseUrl(baseUrl, frontendUrl, {
-      skipDiscovery: options.skipDiscovery,
+      skipDiscovery,
     });
   } catch (error) {
     if (options.hasActiveClient && !options.openBrowser) {
