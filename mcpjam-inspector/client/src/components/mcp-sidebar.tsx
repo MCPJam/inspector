@@ -46,12 +46,14 @@ import { useConvexAuth } from "convex/react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { MCPIcon } from "@/components/ui/mcp-icon";
-import { SidebarUser } from "@/components/sidebar/sidebar-user";
+import {
+  SidebarUser,
+  type SidebarSignOut,
+} from "@/components/sidebar/sidebar-user";
 import { SidebarContextSwitcher } from "@/components/sidebar/sidebar-context-switcher";
 import { SidebarCreditUsage } from "@/components/sidebar/sidebar-credit-usage";
 import { ShareProjectDialog } from "@/components/project/ShareProjectDialog";
 import { useUpdateNotification } from "@/hooks/useUpdateNotification";
-import { Badge } from "@mcpjam/design-system/badge";
 import { Button } from "@mcpjam/design-system/button";
 import {
   Tooltip,
@@ -101,7 +103,7 @@ interface NavSection {
  */
 export function filterByFeatureFlags(
   sections: NavSection[],
-  flags: Record<string, boolean>,
+  flags: Record<string, boolean>
 ): NavSection[] {
   return sections
     .map((section) => ({
@@ -129,7 +131,7 @@ export function applyBillingGateNavState(
     /** When true, feature is denied by premiumness (locked). */
     gateDenied: Partial<Record<BillingFeatureName, boolean>>;
     enforcementActive: boolean;
-  },
+  }
 ): NavSection[] {
   const { billingUiEnabled, gateDenied, enforcementActive } = options;
   if (!billingUiEnabled || !enforcementActive) {
@@ -290,14 +292,14 @@ const navigationSections: NavSection[] = [
 ];
 
 export function getHostedNavigationSections(
-  sections: NavSection[],
+  sections: NavSection[]
 ): NavSection[] {
   return sections
     .map((section) => ({
       ...section,
       items: section.items.flatMap((item) => {
         const normalizedTab = normalizeHostedHashTab(
-          item.url.startsWith("#") ? item.url.slice(1) : item.url,
+          item.url.startsWith("#") ? item.url.slice(1) : item.url
         );
 
         if (isHostedSidebarTabAllowed(normalizedTab)) {
@@ -338,13 +340,11 @@ interface MCPSidebarProps extends React.ComponentProps<typeof Sidebar> {
   activeOrganizationName?: string;
   onSwitchOrganization?: (
     organizationId: string,
-    section?: OrganizationRouteSection,
+    section?: OrganizationRouteSection
   ) => void;
   onSwitchActiveOrganization?: (organizationId: string) => void;
-  onProjectShared?: (
-    sharedProjectId: string,
-    sourceProjectId?: string,
-  ) => void;
+  onSignOut?: SidebarSignOut;
+  onProjectShared?: (sharedProjectId: string, sourceProjectId?: string) => void;
   billingGateDenied?: Partial<Record<BillingFeatureName, boolean>>;
   billingGateEnforcementActive?: boolean;
   billingUiEnabled?: boolean;
@@ -431,8 +431,8 @@ export function SidebarEvalsNavGroup({
         disabled || isPlaygroundLocked
           ? "cursor-not-allowed text-muted-foreground opacity-50 hover:bg-transparent hover:text-muted-foreground active:bg-transparent active:text-muted-foreground"
           : isEvalsFamily
-            ? "[&[data-active=true]]:bg-accent cursor-pointer"
-            : "cursor-pointer"
+          ? "[&[data-active=true]]:bg-accent cursor-pointer"
+          : "cursor-pointer"
       }
     >
       <Icon className="h-4 w-4" />
@@ -486,7 +486,7 @@ export function SidebarEvalsNavGroup({
                         "cursor-not-allowed text-muted-foreground opacity-50 hover:bg-transparent hover:text-muted-foreground active:bg-transparent active:text-muted-foreground",
                       isItemPlaygroundLocked &&
                         "aria-disabled:pointer-events-auto",
-                      disabled && "pointer-events-none",
+                      disabled && "pointer-events-none"
                     )}
                   >
                     <ItemIcon className="h-4 w-4" />
@@ -530,6 +530,7 @@ export function MCPSidebar({
   activeOrganizationName,
   onSwitchOrganization,
   onSwitchActiveOrganization,
+  onSignOut,
   onProjectShared,
   billingGateDenied = {},
   billingGateEnforcementActive = false,
@@ -563,9 +564,8 @@ export function MCPSidebar({
 
     return Object.fromEntries(
       Object.entries(projects).filter(
-        ([, project]) =>
-          project.organizationId === activeProject.organizationId,
-      ),
+        ([, project]) => project.organizationId === activeProject.organizationId
+      )
     );
   }, [activeProject?.organizationId, projects]);
   const shouldShowInviteCta = isAuthenticated && !!user && !!activeProject;
@@ -597,11 +597,11 @@ export function MCPSidebar({
       conformanceEnabled,
       xaaEnabled,
       isAuthenticated,
-    ],
+    ]
   );
   const visibleNavigationSections = filterByFeatureFlags(
     HOSTED_MODE ? hostedNavigationSections : navigationSections,
-    featureFlags,
+    featureFlags
   );
 
   return (
@@ -611,7 +611,7 @@ export function MCPSidebar({
           <div
             className={cn(
               "no-drag",
-              state === "collapsed" && !isMobile && "flex justify-center px-0",
+              state === "collapsed" && !isMobile && "flex justify-center px-0"
             )}
           >
             {isMobile ? (
@@ -639,7 +639,7 @@ export function MCPSidebar({
                     "relative z-0 flex w-full cursor-pointer items-center justify-center py-3 transition-opacity duration-200",
                     /* Reserve space for the collapse control so the logo stays visually centered and
                        clicks on the logo never compete with the invisible hit target. */
-                    "px-2 pr-10 hover:opacity-80",
+                    "px-2 pr-10 hover:opacity-80"
                   )}
                 >
                   <img
@@ -661,7 +661,7 @@ export function MCPSidebar({
                     "pointer-events-auto opacity-0 transition-opacity duration-200",
                     /* Named group avoids ambiguous group-hover when SidebarProvider also uses group/sidebar-wrapper */
                     "group-hover/sidebar-rail:opacity-100 focus-visible:opacity-100",
-                    "[@media(hover:none)]:opacity-100",
+                    "[@media(hover:none)]:opacity-100"
                   )}
                   aria-label="Collapse sidebar"
                 />
@@ -758,10 +758,8 @@ export function MCPSidebar({
               </SidebarMenuItem>
             </SidebarMenu>
           ) : null}
-          {!user ? (
-            <SidebarCreditUsage className="px-1" includeGuests />
-          ) : null}
-          <SidebarUser />
+          {!user ? <SidebarCreditUsage className="px-1" includeGuests /> : null}
+          <SidebarUser onSignOut={onSignOut} />
         </SidebarFooter>
       </Sidebar>
       {shouldShowInviteCta && user && activeProject ? (

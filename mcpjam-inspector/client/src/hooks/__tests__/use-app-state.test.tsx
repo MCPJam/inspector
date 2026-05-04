@@ -101,7 +101,7 @@ function createServer(
     | "connecting"
     | "oauth-flow"
     | "disconnected"
-    | "failed" = "connected",
+    | "failed" = "connected"
 ) {
   return {
     name,
@@ -146,11 +146,43 @@ function createLoadedAppState(selectedServerState?: {
     servers: {
       [selectedServerState.name]: createServer(
         selectedServerState.name,
-        selectedServerState.connectionStatus,
+        selectedServerState.connectionStatus
       ),
     },
     selectedServer: selectedServerState.name,
   };
+}
+
+function createProject(
+  id: string,
+  options: {
+    organizationId?: string;
+    servers?: Record<string, ReturnType<typeof createServer>>;
+    isDefault?: boolean;
+  } = {}
+) {
+  return {
+    ...initialAppState.projects.default,
+    id,
+    name: id,
+    organizationId: options.organizationId,
+    servers: options.servers ?? {},
+    createdAt: new Date("2026-01-01T00:00:00.000Z"),
+    updatedAt: new Date("2026-01-01T00:00:00.000Z"),
+    isDefault: options.isDefault ?? false,
+  };
+}
+
+function renderDefaultUseAppState() {
+  return renderHook(() =>
+    useAppState({
+      currentUserId: "user-1",
+      routeOrganizationId: undefined,
+      hasOrganizations: false,
+      isLoadingOrganizations: false,
+      validOrganizations: [],
+    })
+  );
 }
 
 describe("useAppState active organization recovery", () => {
@@ -184,7 +216,7 @@ describe("useAppState active organization recovery", () => {
           { _id: "org-member", myRole: "member" },
           { _id: "org-owned", myRole: "owner" },
         ],
-      }),
+      })
     );
 
     await waitFor(() => {
@@ -195,10 +227,10 @@ describe("useAppState active organization recovery", () => {
       expect.objectContaining({
         activeOrganizationId: "org-owned",
         validOrganizationIds: ["org-member", "org-owned"],
-      }),
+      })
     );
     expect(localStorage.getItem("active-organization-id:user-1")).toBe(
-      "org-owned",
+      "org-owned"
     );
   });
 
@@ -215,14 +247,14 @@ describe("useAppState active organization recovery", () => {
           { _id: "org-owned", myRole: "owner" },
           { _id: "org-stored", myRole: "member" },
         ],
-      }),
+      })
     );
 
     expect(useProjectStateMock).toHaveBeenCalled();
     expect(useProjectStateMock.mock.calls[0]?.[0]).toEqual(
       expect.objectContaining({
         activeOrganizationId: undefined,
-      }),
+      })
     );
 
     await waitFor(() => {
@@ -243,7 +275,7 @@ describe("useAppState active organization recovery", () => {
           { _id: "org-a", myRole: "owner" },
           { _id: "org-b", myRole: "member" },
         ],
-      }),
+      })
     );
 
     await waitFor(() => {
@@ -263,7 +295,7 @@ describe("useAppState active organization recovery", () => {
         hasOrganizations: false,
         isLoadingOrganizations: false,
         validOrganizations: [],
-      }),
+      })
     );
 
     await waitFor(() => {
@@ -274,7 +306,7 @@ describe("useAppState active organization recovery", () => {
       expect.objectContaining({
         activeOrganizationId: undefined,
         validOrganizationIds: [],
-      }),
+      })
     );
     expect(localStorage.getItem("active-organization-id:user-1")).toBeNull();
   });
@@ -284,7 +316,7 @@ describe("useAppState active organization recovery", () => {
       buildDisconnectedRuntimeServers({
         champions: createServer("champions"),
         linear: createServer("linear", "disconnected"),
-      }),
+      })
     ).toEqual({
       champions: expect.objectContaining({
         name: "champions",
@@ -297,12 +329,114 @@ describe("useAppState active organization recovery", () => {
     });
   });
 
+  it("disconnects previous runtime servers when the active project changes", async () => {
+    const zombieServer = createServer("zombie-server", "connected");
+    const nextServer = createServer("next-server", "disconnected");
+    const projectA = createProject("p1", {
+      organizationId: "org-a",
+      servers: { "zombie-server": zombieServer },
+      isDefault: true,
+    });
+    const projectB = createProject("p2", {
+      organizationId: "org-b",
+      servers: { "next-server": nextServer },
+    });
+
+    loadAppStateMock.mockReturnValue({
+      ...initialAppState,
+      projects: { p1: projectA, p2: projectB },
+      activeProjectId: "p1",
+      servers: { "zombie-server": zombieServer },
+      selectedServer: "zombie-server",
+    });
+    Object.assign(projectStateValue, {
+      effectiveProjects: { p1: projectA, p2: projectB },
+      effectiveActiveProjectId: "p1",
+      useLocalFallback: true,
+    });
+
+    const { result } = renderDefaultUseAppState();
+
+    expect(serverStateValue.handleDisconnect).not.toHaveBeenCalled();
+
+    act(() => {
+      Object.assign(projectStateValue, {
+        effectiveProjects: { p2: projectB },
+        effectiveActiveProjectId: "p2",
+      });
+      result.current.clearLocalFallbackProjectSelection("org-a", "org-b");
+    });
+
+    await waitFor(() => {
+      expect(serverStateValue.handleDisconnect).toHaveBeenCalledWith(
+        "zombie-server"
+      );
+    });
+  });
+
+  it("does not disconnect servers when the active project id is unchanged", () => {
+    const connectedServer = createServer("steady-server", "connected");
+    const project = createProject("p1", {
+      servers: { "steady-server": connectedServer },
+      isDefault: true,
+    });
+
+    loadAppStateMock.mockReturnValue({
+      ...initialAppState,
+      projects: { p1: project },
+      activeProjectId: "p1",
+      servers: { "steady-server": connectedServer },
+      selectedServer: "steady-server",
+    });
+    Object.assign(projectStateValue, {
+      effectiveProjects: { p1: project },
+      effectiveActiveProjectId: "p1",
+      useLocalFallback: true,
+    });
+
+    const { rerender } = renderDefaultUseAppState();
+    rerender();
+
+    expect(serverStateValue.handleDisconnect).not.toHaveBeenCalled();
+  });
+
+  it("does not disconnect when the initial empty project selection resolves", () => {
+    const connectedServer = createServer("loading-server", "connected");
+    const project = createProject("p1", {
+      servers: { "loading-server": connectedServer },
+      isDefault: true,
+    });
+
+    loadAppStateMock.mockReturnValue({
+      ...initialAppState,
+      projects: { p1: project },
+      activeProjectId: "p1",
+      servers: { "loading-server": connectedServer },
+      selectedServer: "loading-server",
+    });
+    Object.assign(projectStateValue, {
+      effectiveProjects: {},
+      effectiveActiveProjectId: "none",
+      useLocalFallback: true,
+    });
+
+    const { rerender } = renderDefaultUseAppState();
+
+    Object.assign(projectStateValue, {
+      effectiveProjects: { p1: project },
+      effectiveActiveProjectId: "p1",
+    });
+    rerender();
+
+    expect(serverStateValue.handleDisconnect).not.toHaveBeenCalled();
+  });
+
   it("keeps the syncing flag on while a runtime-only selected server is still awaiting cloud echo", async () => {
     loadAppStateMock.mockReturnValue(
       createLoadedAppState({
         name: "pending-server",
         connectionStatus: "connected",
-      }),
+      })
     );
     Object.assign(projectStateValue, {
       effectiveProjects: {
@@ -329,7 +463,7 @@ describe("useAppState active organization recovery", () => {
         hasOrganizations: false,
         isLoadingOrganizations: false,
         validOrganizations: [],
-      }),
+      })
     );
 
     await waitFor(() => {
@@ -384,7 +518,7 @@ describe("useAppState active organization recovery", () => {
         hasOrganizations: false,
         isLoadingOrganizations: false,
         validOrganizations: [],
-      }),
+      })
     );
 
     await waitFor(() => {
@@ -399,7 +533,7 @@ describe("useAppState active organization recovery", () => {
         createLoadedAppState({
           name: "demo-server",
           connectionStatus: "disconnected",
-        }),
+        })
       );
       localStorage.setItem(
         "mcp-hosted-oauth-pending",
@@ -409,7 +543,7 @@ describe("useAppState active organization recovery", () => {
           serverUrl: "https://example.com/mcp",
           returnHash: "#demo",
           startedAt: Date.now(),
-        }),
+        })
       );
       localStorage.setItem("mcp-oauth-pending", "demo-server");
       window.history.replaceState({}, "", "/oauth/callback?code=test-code");
@@ -421,18 +555,16 @@ describe("useAppState active organization recovery", () => {
           hasOrganizations: false,
           isLoadingOrganizations: false,
           validOrganizations: [],
-        }),
+        })
       );
 
       await waitFor(() => {
-        const lastProjectArgs =
-          useProjectStateMock.mock.calls.at(-1)?.[0];
+        const lastProjectArgs = useProjectStateMock.mock.calls.at(-1)?.[0];
         expect(
-          lastProjectArgs?.appState.servers["demo-server"]
-            ?.connectionStatus,
+          lastProjectArgs?.appState.servers["demo-server"]?.connectionStatus
         ).toBe("disconnected");
       });
-    },
+    }
   );
 
   it("tracks missing dashboard OAuth callbacks without seeding a temporary server", async () => {
@@ -449,7 +581,10 @@ describe("useAppState active organization recovery", () => {
       servers: {},
     });
     localStorage.setItem("mcp-oauth-pending", "demo-server");
-    localStorage.setItem("mcp-serverUrl-demo-server", "https://example.com/mcp");
+    localStorage.setItem(
+      "mcp-serverUrl-demo-server",
+      "https://example.com/mcp"
+    );
     window.history.replaceState({}, "", "/oauth/callback?code=test-code");
 
     const { result } = renderHook(() =>
@@ -459,7 +594,7 @@ describe("useAppState active organization recovery", () => {
         hasOrganizations: false,
         isLoadingOrganizations: false,
         validOrganizations: [],
-      }),
+      })
     );
 
     await waitFor(() => {
@@ -467,7 +602,7 @@ describe("useAppState active organization recovery", () => {
         expect.objectContaining({
           serverName: "demo-server",
           serverUrl: "https://example.com/mcp",
-        }),
+        })
       );
     });
 
@@ -494,7 +629,7 @@ describe("useAppState active organization recovery", () => {
       localStorage.setItem("mcp-oauth-pending", "demo-server");
       localStorage.setItem(
         "mcp-serverUrl-demo-server",
-        "https://example.com/mcp",
+        "https://example.com/mcp"
       );
       window.history.replaceState({}, "", "/oauth/callback?code=test-code");
 
@@ -505,14 +640,14 @@ describe("useAppState active organization recovery", () => {
           hasOrganizations: false,
           isLoadingOrganizations: false,
           validOrganizations: [],
-        }),
+        })
       );
 
       expect(result.current.pendingDashboardOAuth).toEqual(
         expect.objectContaining({
           serverName: "demo-server",
           serverUrl: "https://example.com/mcp",
-        }),
+        })
       );
 
       act(() => {
@@ -524,5 +659,4 @@ describe("useAppState active organization recovery", () => {
       vi.useRealTimers();
     }
   });
-
 });

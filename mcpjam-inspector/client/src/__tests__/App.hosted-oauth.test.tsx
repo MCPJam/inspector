@@ -522,7 +522,7 @@ describe("App hosted OAuth callback handling", () => {
     window.history.replaceState({}, "", "/#oauth-flow");
     mockOAuthFlowTabState.shouldThrow = true;
     mockOAuthFlowTabState.error = new Error(
-      "token exchange failed client_secret=super-secret Bearer access-token",
+      "token exchange failed client_secret=super-secret Bearer access-token"
     );
     const writeText = vi.fn().mockResolvedValue(undefined);
     vi.stubGlobal("navigator", {
@@ -532,22 +532,24 @@ describe("App hosted OAuth callback handling", () => {
 
     render(<App />);
 
-    expect(await screen.findByText("OAuth Debugger crashed")).toBeInTheDocument();
+    expect(
+      await screen.findByText("OAuth Debugger crashed")
+    ).toBeInTheDocument();
     expect(mockPosthogCapture).toHaveBeenCalledWith(
       "oauth_debugger_error_boundary",
       expect.objectContaining({
         message: expect.stringContaining("[redacted]"),
-      }),
+      })
     );
-    expect(
-      JSON.stringify(mockPosthogCapture.mock.calls),
-    ).not.toContain("super-secret");
+    expect(JSON.stringify(mockPosthogCapture.mock.calls)).not.toContain(
+      "super-secret"
+    );
 
     fireEvent.click(screen.getByRole("button", { name: /copy details/i }));
 
     await waitFor(() => {
       expect(writeText).toHaveBeenCalledWith(
-        expect.not.stringContaining("super-secret"),
+        expect.not.stringContaining("super-secret")
       );
     });
     expect(writeText.mock.calls[0]?.[0]).toContain("[redacted]");
@@ -1274,6 +1276,313 @@ describe("App hosted OAuth callback handling", () => {
     });
   });
 
+  it("redirects to servers when switching active organization changes the project", async () => {
+    clearHostedOAuthPendingState();
+    clearChatboxSession();
+    window.history.replaceState({}, "", "/#tools");
+
+    const setActiveOrganizationIdSpy = vi.fn();
+    mockUseAppState.mockImplementation(() => {
+      const [activeOrganizationId, setActiveOrganizationId] = useState<
+        string | undefined
+      >("org-a");
+      const [activeProjectId, setActiveProjectId] = useState("project-a");
+
+      return {
+        ...createAppStateMock(),
+        activeProjectId,
+        activeOrganizationId,
+        setActiveOrganizationId: (organizationId: string | undefined) => {
+          setActiveOrganizationIdSpy(organizationId);
+          setActiveOrganizationId(organizationId);
+          setActiveProjectId("project-b");
+        },
+      };
+    });
+    mockUseQuery.mockImplementation((name: string) => {
+      if (name === "organizations:getMyOrganizations") {
+        return [
+          {
+            _id: "org-a",
+            name: "Org A",
+            updatedAt: 1,
+            createdAt: 1,
+            createdBy: "user-1",
+            myRole: "owner",
+          },
+          {
+            _id: "org-b",
+            name: "Org B",
+            updatedAt: 2,
+            createdAt: 2,
+            createdBy: "user-1",
+            myRole: "owner",
+          },
+        ];
+      }
+
+      return undefined;
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(mockMCPSidebar).toHaveBeenCalled();
+    });
+
+    const getLastSidebarProps = () => {
+      const lastCall =
+        mockMCPSidebar.mock.calls[mockMCPSidebar.mock.calls.length - 1];
+      return lastCall?.[0] as unknown as {
+        activeOrganizationId?: string;
+        onSwitchActiveOrganization?: (organizationId: string) => void;
+      };
+    };
+
+    act(() => {
+      getLastSidebarProps().onSwitchActiveOrganization?.("org-b");
+    });
+
+    await waitFor(() => {
+      expect(setActiveOrganizationIdSpy).toHaveBeenCalledWith("org-b");
+      expect(getLastSidebarProps().activeOrganizationId).toBe("org-b");
+      expect(window.location.hash).toBe("#servers");
+    });
+  });
+
+  it("stays on servers when an organization-driven project change already starts there", async () => {
+    clearHostedOAuthPendingState();
+    clearChatboxSession();
+    window.history.replaceState({}, "", "/#servers");
+
+    const setActiveOrganizationIdSpy = vi.fn();
+    mockUseAppState.mockImplementation(() => {
+      const [activeOrganizationId, setActiveOrganizationId] = useState<
+        string | undefined
+      >("org-a");
+      const [activeProjectId, setActiveProjectId] = useState("project-a");
+
+      return {
+        ...createAppStateMock(),
+        activeProjectId,
+        activeOrganizationId,
+        setActiveOrganizationId: (organizationId: string | undefined) => {
+          setActiveOrganizationIdSpy(organizationId);
+          setActiveOrganizationId(organizationId);
+          setActiveProjectId("project-b");
+        },
+      };
+    });
+    mockUseQuery.mockImplementation((name: string) => {
+      if (name === "organizations:getMyOrganizations") {
+        return [
+          {
+            _id: "org-a",
+            name: "Org A",
+            updatedAt: 1,
+            createdAt: 1,
+            createdBy: "user-1",
+            myRole: "owner",
+          },
+          {
+            _id: "org-b",
+            name: "Org B",
+            updatedAt: 2,
+            createdAt: 2,
+            createdBy: "user-1",
+            myRole: "owner",
+          },
+        ];
+      }
+
+      return undefined;
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(mockMCPSidebar).toHaveBeenCalled();
+    });
+
+    const getLastSidebarProps = () => {
+      const lastCall =
+        mockMCPSidebar.mock.calls[mockMCPSidebar.mock.calls.length - 1];
+      return lastCall?.[0] as unknown as {
+        activeOrganizationId?: string;
+        onSwitchActiveOrganization?: (organizationId: string) => void;
+      };
+    };
+
+    act(() => {
+      getLastSidebarProps().onSwitchActiveOrganization?.("org-b");
+    });
+
+    await waitFor(() => {
+      expect(setActiveOrganizationIdSpy).toHaveBeenCalledWith("org-b");
+      expect(getLastSidebarProps().activeOrganizationId).toBe("org-b");
+      expect(window.location.hash).toBe("#servers");
+    });
+  });
+
+  it("redirects to servers after an explicit project switch", async () => {
+    clearHostedOAuthPendingState();
+    clearChatboxSession();
+    window.history.replaceState({}, "", "/#settings");
+
+    const handleSwitchProjectMock = vi.fn();
+    mockUseAppState.mockImplementation(() => {
+      const [activeProjectId, setActiveProjectId] = useState("project-a");
+
+      return {
+        ...createAppStateMock(),
+        activeProjectId,
+        handleSwitchProject: (projectId: string) => {
+          handleSwitchProjectMock(projectId);
+          setActiveProjectId(projectId);
+        },
+      };
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(mockMCPSidebar).toHaveBeenCalled();
+    });
+
+    const lastCall =
+      mockMCPSidebar.mock.calls[mockMCPSidebar.mock.calls.length - 1];
+    const sidebarProps = lastCall?.[0] as unknown as {
+      onSwitchProject?: (projectId: string) => void;
+    };
+
+    act(() => {
+      sidebarProps.onSwitchProject?.("project-b");
+    });
+
+    await waitFor(() => {
+      expect(handleSwitchProjectMock).toHaveBeenCalledWith("project-b");
+      expect(window.location.hash).toBe("#servers");
+    });
+  });
+
+  it("keeps the current tab when the initial empty project selection resolves", async () => {
+    clearHostedOAuthPendingState();
+    clearChatboxSession();
+    window.history.replaceState({}, "", "/#tools");
+
+    let resolveProject: ((projectId: string) => void) | undefined;
+    mockUseAppState.mockImplementation(() => {
+      const [activeProjectId, setActiveProjectId] = useState("none");
+      resolveProject = setActiveProjectId;
+
+      return {
+        ...createAppStateMock(),
+        activeProjectId,
+      };
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(mockMCPSidebar).toHaveBeenCalled();
+    });
+
+    act(() => {
+      resolveProject?.("project-a");
+    });
+
+    await waitFor(() => {
+      const lastCall =
+        mockMCPSidebar.mock.calls[mockMCPSidebar.mock.calls.length - 1];
+      expect(
+        (lastCall?.[0] as unknown as { activeProjectId?: string })
+          .activeProjectId
+      ).toBe("project-a");
+    });
+    expect(window.location.hash).toBe("#tools");
+  });
+
+  it("redirects to servers after deleting the active project", async () => {
+    clearHostedOAuthPendingState();
+    clearChatboxSession();
+    window.history.replaceState({}, "", "/#tools");
+
+    const handleDeleteProjectMock = vi.fn();
+    mockUseAppState.mockImplementation(() => {
+      const [activeProjectId, setActiveProjectId] = useState("project-active");
+
+      return {
+        ...createAppStateMock(),
+        activeProjectId,
+        handleDeleteProject: async (projectId: string) => {
+          handleDeleteProjectMock(projectId);
+          setActiveProjectId("project-fallback");
+          return true;
+        },
+      };
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(mockMCPSidebar).toHaveBeenCalled();
+    });
+
+    const lastCall =
+      mockMCPSidebar.mock.calls[mockMCPSidebar.mock.calls.length - 1];
+    const sidebarProps = lastCall?.[0] as unknown as {
+      onDeleteProject?: (projectId: string) => Promise<boolean>;
+    };
+
+    await act(async () => {
+      await sidebarProps.onDeleteProject?.("project-active");
+    });
+
+    await waitFor(() => {
+      expect(handleDeleteProjectMock).toHaveBeenCalledWith("project-active");
+      expect(window.location.hash).toBe("#servers");
+    });
+  });
+
+  it("keeps the current tab after deleting a non-active project", async () => {
+    clearHostedOAuthPendingState();
+    clearChatboxSession();
+    window.history.replaceState({}, "", "/#tools");
+
+    const handleDeleteProjectMock = vi.fn();
+    mockUseAppState.mockImplementation(() => {
+      const [activeProjectId] = useState("project-active");
+
+      return {
+        ...createAppStateMock(),
+        activeProjectId,
+        handleDeleteProject: async (projectId: string) => {
+          handleDeleteProjectMock(projectId);
+          return true;
+        },
+      };
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(mockMCPSidebar).toHaveBeenCalled();
+    });
+
+    const lastCall =
+      mockMCPSidebar.mock.calls[mockMCPSidebar.mock.calls.length - 1];
+    const sidebarProps = lastCall?.[0] as unknown as {
+      onDeleteProject?: (projectId: string) => Promise<boolean>;
+    };
+
+    await act(async () => {
+      await sidebarProps.onDeleteProject?.("project-other");
+    });
+
+    expect(handleDeleteProjectMock).toHaveBeenCalledWith("project-other");
+    expect(window.location.hash).toBe("#tools");
+  });
+
   it("disables sidebar project creation when the routed org is free and at cap", async () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
@@ -1381,11 +1690,7 @@ describe("App hosted OAuth callback handling", () => {
   it("shows billing handoff loading and triggers sign-in for guest billing entry", async () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
-    window.history.replaceState(
-      {},
-      "",
-      "/billing?plan=solo&interval=annual"
-    );
+    window.history.replaceState({}, "", "/billing?plan=solo&interval=annual");
 
     const signIn = vi.fn();
     mockUseAuth.mockReturnValue({
@@ -1553,11 +1858,7 @@ describe("App hosted OAuth callback handling", () => {
   it("keeps billing resume behind the checkout spinner for signed-in users", async () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
-    window.history.replaceState(
-      {},
-      "",
-      "/billing?plan=solo&interval=annual"
-    );
+    window.history.replaceState({}, "", "/billing?plan=solo&interval=annual");
 
     mockUseFeatureFlagEnabled.mockImplementation(
       (flag: string) => flag === "billing-entitlements-ui"
@@ -1615,11 +1916,7 @@ describe("App hosted OAuth callback handling", () => {
   it("drops the billing overlay when checkout intent is consumed", async () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
-    window.history.replaceState(
-      {},
-      "",
-      "/billing?plan=solo&interval=annual"
-    );
+    window.history.replaceState({}, "", "/billing?plan=solo&interval=annual");
 
     mockUseFeatureFlagEnabled.mockImplementation(
       (flag: string) => flag === "billing-entitlements-ui"
@@ -1671,11 +1968,7 @@ describe("App hosted OAuth callback handling", () => {
   it("drops the billing overlay when checkout navigation starts", async () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
-    window.history.replaceState(
-      {},
-      "",
-      "/billing?plan=solo&interval=annual"
-    );
+    window.history.replaceState({}, "", "/billing?plan=solo&interval=annual");
 
     mockUseFeatureFlagEnabled.mockImplementation(
       (flag: string) => flag === "billing-entitlements-ui"
@@ -1730,11 +2023,7 @@ describe("App hosted OAuth callback handling", () => {
   it("clears billing handoff state when no organization is available", async () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
-    window.history.replaceState(
-      {},
-      "",
-      "/billing?plan=solo&interval=annual"
-    );
+    window.history.replaceState({}, "", "/billing?plan=solo&interval=annual");
 
     mockUseFeatureFlagEnabled.mockImplementation(
       (flag: string) => flag === "billing-entitlements-ui"
