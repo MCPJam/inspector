@@ -106,10 +106,9 @@ export function AppReadyProvider({
     effectiveActiveProjectId,
   ]);
 
-  // Diagnostic: log the resolved state so a user stuck on "Finishing setup…"
-  // can tell whether auth or project provisioning is the blocker. Also
-  // expose the latest snapshot on `window.__mcpjamAppReady` for quick
-  // console inspection without React DevTools.
+  // Dev diagnostic: log/expose the resolved state so a user stuck on
+  // "Finishing setup..." can tell whether auth or project provisioning is
+  // the blocker without React DevTools.
   const lastLoggedRef = useRef<string | null>(null);
   useEffect(() => {
     const snapshot = {
@@ -125,12 +124,12 @@ export function AppReadyProvider({
       },
     };
     const key = JSON.stringify(snapshot);
-    if (key !== lastLoggedRef.current) {
+    if (import.meta.env.DEV && key !== lastLoggedRef.current) {
       lastLoggedRef.current = key;
       // eslint-disable-next-line no-console
       console.info("[AppReady]", snapshot);
     }
-    if (typeof window !== "undefined") {
+    if (import.meta.env.DEV && typeof window !== "undefined") {
       (window as unknown as { __mcpjamAppReady?: typeof snapshot })
         .__mcpjamAppReady = snapshot;
     }
@@ -147,14 +146,6 @@ export function AppReadyProvider({
 
 export function useAppReady(): AppReadyStatus {
   return useContext(AppReadyContext);
-}
-
-/**
- * True when the app is ready to dispatch hosted/local requests. Convenience
- * wrapper for surfaces that only need the boolean (e.g. disabling a button).
- */
-export function useIsAppReady(): boolean {
-  return useAppReady().status === "ready";
 }
 
 /**

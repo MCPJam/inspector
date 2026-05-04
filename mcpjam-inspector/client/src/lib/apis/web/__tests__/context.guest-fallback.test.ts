@@ -101,10 +101,8 @@ describe("getHostedAuthorizationHeader guest fallback", () => {
     expect(getAccessToken).not.toHaveBeenCalled();
   });
 
-  it("still prefers guest token when no project is loaded but AuthKit session exists", async () => {
-    const getAccessToken = vi
-      .fn()
-      .mockResolvedValue("workos-token-should-skip");
+  it("does not fall back to a guest token while an AuthKit session is resolving", async () => {
+    const getAccessToken = vi.fn().mockResolvedValue(null);
     setHostedApiContext({
       projectId: null,
       isAuthenticated: false,
@@ -117,8 +115,9 @@ describe("getHostedAuthorizationHeader guest fallback", () => {
 
     const result = await getHostedAuthorizationHeader();
 
-    expect(result).toBe("Bearer guest-despite-session");
-    expect(getAccessToken).not.toHaveBeenCalled();
+    expect(result).toBeNull();
+    expect(getAccessToken).toHaveBeenCalledTimes(1);
+    expect(getGuestBearerToken).not.toHaveBeenCalled();
   });
 
   it("prefers guest token for guest-owned projects (unauthed + projectId, no share/chatbox)", async () => {
@@ -229,6 +228,7 @@ describe("isGuestMode and buildHostedServerRequest consistency", () => {
     setHostedApiContext({
       projectId: null,
       isAuthenticated: false,
+      hasSession: true,
       serverIdsByName: {},
       serverConfigs: {
         "my-server": { url: "https://my-mcp.example.com/sse" },

@@ -31,14 +31,21 @@ export function useEnsureDbUser() {
   const lastEnsuredIdentityRef = useRef<string | null>(null);
   const [isEnsuringUser, setIsEnsuringUser] = useState(false);
 
-  // Reset cache on logout so we re-run for the next login in the same session
+  // Reset cache on Convex logout so we re-run for the next login in the same session.
   useEffect(() => {
     if (!isAuthenticated) {
       lastEnsuredIdentityRef.current = null;
       setIsEnsuringUser(false);
-      Sentry.setUser(null); // Clear Sentry user on logout
     }
   }, [isAuthenticated]);
+
+  // WorkOS signout now falls back to Convex guest auth, so Convex can remain
+  // authenticated while the Sentry user must be cleared.
+  useEffect(() => {
+    if (!user?.id) {
+      Sentry.setUser(null);
+    }
+  }, [user?.id]);
 
   useEffect(() => {
     if (isLoading) {

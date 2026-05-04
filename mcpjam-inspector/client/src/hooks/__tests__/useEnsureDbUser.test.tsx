@@ -76,4 +76,25 @@ describe("useEnsureDbUser", () => {
       expect(mockState.ensureUser).toHaveBeenCalledTimes(1);
     });
   });
+
+  it("clears Sentry when WorkOS signs out but Convex remains guest-authenticated", async () => {
+    mockState.auth.user = { id: "workos-user-1" };
+    mockState.actorKey = "workos-user-1";
+    const { rerender } = renderHook(() => useEnsureDbUser());
+
+    await waitFor(() => {
+      expect(mockState.sentrySetUser).toHaveBeenCalledWith({
+        id: "workos-user-1",
+      });
+    });
+
+    mockState.sentrySetUser.mockClear();
+    mockState.auth.user = null;
+    mockState.actorKey = "guest-1";
+    rerender();
+
+    await waitFor(() => {
+      expect(mockState.sentrySetUser).toHaveBeenCalledWith(null);
+    });
+  });
 });

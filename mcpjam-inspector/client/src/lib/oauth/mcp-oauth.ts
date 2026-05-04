@@ -1594,18 +1594,6 @@ function resolveOAuthResourceUrl(input: {
   configuredResourceUrl?: string;
   resourceMetadata?: { resource?: unknown } | null;
 }): string {
-  const requestedFromAuth = readOAuthResourceFromAuthorizationUrl(
-    input.authorizationUrl
-  );
-  if (requestedFromAuth) {
-    assertOAuthResourceIndicatorAllowed({
-      serverUrl: input.serverUrl,
-      resource: requestedFromAuth,
-      source: "authorization URL",
-    });
-    return canonicalizeOAuthResourceUrl(requestedFromAuth);
-  }
-
   // Prefer the resource indicator advertised by the MCP server's
   // protected-resource-metadata document — this is the canonical audience the
   // RS expects in `aud`. Fall back to caller-configured / serverUrl only when
@@ -1620,6 +1608,18 @@ function resolveOAuthResourceUrl(input: {
       source: "protected resource metadata",
     });
     return canonicalizeOAuthResourceUrl(advertisedResource);
+  }
+
+  const requestedFromAuth = readOAuthResourceFromAuthorizationUrl(
+    input.authorizationUrl
+  );
+  if (requestedFromAuth) {
+    assertOAuthResourceIndicatorAllowed({
+      serverUrl: input.serverUrl,
+      resource: requestedFromAuth,
+      source: "authorization URL",
+    });
+    return canonicalizeOAuthResourceUrl(requestedFromAuth);
   }
 
   const configured = input.configuredResourceUrl?.trim();

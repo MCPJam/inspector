@@ -92,7 +92,11 @@ export function SharedServerChatPage({
   pathToken,
   onExitSharedChat,
 }: SharedServerChatPageProps) {
-  const { getAccessToken } = useAuth();
+  const {
+    getAccessToken,
+    user: workOsUser,
+    isLoading: isWorkOsLoading,
+  } = useAuth();
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
   const resolveShareForViewer = useMutation(
     "serverShares:resolveShareForViewer" as any,
@@ -161,7 +165,8 @@ export function SharedServerChatPage({
     getAccessToken,
     oauthTokensByServerId: oauthTokensForChat,
     shareToken: session?.token,
-    isAuthenticated,
+    isAuthenticated: !!workOsUser,
+    hasSession: !!workOsUser || isWorkOsLoading,
   });
 
   const sharedServerConfigs = useMemo(() => {

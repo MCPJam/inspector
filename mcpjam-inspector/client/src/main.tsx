@@ -74,15 +74,17 @@ if (isInIframe) {
       "[main] VITE_CONVEX_URL is not set; Convex features may not work."
     );
   }
-  console.info("[main] Convex client config", {
-    convexUrl: convexUrl || "(empty)",
-    source: runtimeConvexUrl
-      ? "runtime"
-      : buildConvexUrl
-        ? "build (VITE_CONVEX_URL)"
-        : "none",
-    HOSTED_MODE,
-  });
+  if (import.meta.env.DEV) {
+    console.info("[main] Convex client config", {
+      convexUrl: convexUrl || "(empty)",
+      source: runtimeConvexUrl
+        ? "runtime"
+        : buildConvexUrl
+          ? "build (VITE_CONVEX_URL)"
+          : "none",
+      HOSTED_MODE,
+    });
+  }
   if (typeof window !== "undefined") {
     (window as unknown as { __mcpjamConvex?: unknown }).__mcpjamConvex = {
       convexUrl,

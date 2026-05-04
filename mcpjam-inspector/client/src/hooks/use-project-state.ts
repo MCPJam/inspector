@@ -219,12 +219,14 @@ export function useProjectState({
     () => currentActorKey != null,
   );
   const activeProjectActorKeyRef = useRef<string | null>(currentActorKey);
+  const activeProjectActorIsGuestRef = useRef(isGuestActor);
 
   const migrationInFlightRef = useRef(new Set<string>());
   const ensureDefaultInFlightRef = useRef(new Set<string>());
   const ensureDefaultCompletedRef = useRef(new Set<string>());
   const migrationErrorNotifiedRef = useRef(new Set<string>());
   const [useLocalFallback, setUseLocalFallback] = useState(false);
+  const shouldUseLocalFallback = useLocalFallback && !isGuestActor;
   const convexTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const pendingClientConfigSyncRef = useRef<
     Map<string, PendingClientConfigSync>
@@ -308,7 +310,7 @@ export function useProjectState({
       return;
     }
 
-    if (shouldTreatRemoteProjectsAsEmpty) {
+    if (isGuestActor || shouldTreatRemoteProjectsAsEmpty) {
       setUseLocalFallback(false);
       if (convexTimeoutRef.current) {
         clearTimeout(convexTimeoutRef.current);
@@ -326,7 +328,7 @@ export function useProjectState({
       return;
     }
 
-    if (!convexTimeoutRef.current && !useLocalFallback) {
+    if (!convexTimeoutRef.current && !shouldUseLocalFallback) {
       convexTimeoutRef.current = setTimeout(() => {
         logger.warn(
           "Convex connection timed out, falling back to local storage",
@@ -347,16 +349,17 @@ export function useProjectState({
     };
   }, [
     isAuthenticated,
+    isGuestActor,
     remoteProjects,
     shouldTreatRemoteProjectsAsEmpty,
-    useLocalFallback,
+    shouldUseLocalFallback,
     logger,
   ]);
 
   useEffect(() => {
     if (
       isAuthenticated &&
-      !useLocalFallback &&
+      !shouldUseLocalFallback &&
       !shouldTreatRemoteProjectsAsEmpty
     ) {
       return;
@@ -369,7 +372,7 @@ export function useProjectState({
     clearAllPendingClientConfigSyncs,
     isAuthenticated,
     shouldTreatRemoteProjectsAsEmpty,
-    useLocalFallback,
+    shouldUseLocalFallback,
   ]);
 
   useEffect(() => {
@@ -395,7 +398,7 @@ export function useProjectState({
   const isLoadingRemoteProjects =
     (!shouldTreatRemoteProjectsAsEmpty &&
       isAuthenticated &&
-      !useLocalFallback &&
+      !shouldUseLocalFallback &&
       (remoteProjects === undefined || isLoadingServers)) ||
     (isAuthLoading && !!convexActiveProjectId);
 
@@ -535,7 +538,7 @@ export function useProjectState({
     if (shouldTreatRemoteProjectsAsEmpty) {
       return {};
     }
-    if (useLocalFallback) {
+    if (shouldUseLocalFallback) {
       return localFallbackProjects;
     }
     if (isAuthenticated && remoteProjects !== undefined) {
@@ -549,7 +552,7 @@ export function useProjectState({
     }
     return appState.projects;
   }, [
-    useLocalFallback,
+    shouldUseLocalFallback,
     localFallbackProjects,
     isAuthenticated,
     remoteProjects,
@@ -563,7 +566,7 @@ export function useProjectState({
     if (shouldTreatRemoteProjectsAsEmpty) {
       return "none";
     }
-    if (useLocalFallback) {
+    if (shouldUseLocalFallback) {
       if (localFallbackProjects[appState.activeProjectId]) {
         return appState.activeProjectId;
       }
@@ -600,7 +603,7 @@ export function useProjectState({
     }
     return appState.activeProjectId;
   }, [
-    useLocalFallback,
+    shouldUseLocalFallback,
     appState.activeProjectId,
     localFallbackProjects,
     scopedLocalProjects,
@@ -680,10 +683,14 @@ export function useProjectState({
   // query a project the new actor doesn't own.
   useEffect(() => {
     clearLegacyActiveProjectStorage();
-    if (currentActorKey === activeProjectActorKeyRef.current) {
+    if (
+      currentActorKey === activeProjectActorKeyRef.current &&
+      isGuestActor === activeProjectActorIsGuestRef.current
+    ) {
       return;
     }
     activeProjectActorKeyRef.current = currentActorKey;
+    activeProjectActorIsGuestRef.current = isGuestActor;
     if (isGuestActor) {
       setConvexActiveProjectId(null);
     } else {
@@ -705,7 +712,10 @@ export function useProjectState({
     if (!hasHydratedActiveProject) {
       return;
     }
-    if (activeProjectActorKeyRef.current !== currentActorKey) {
+    if (
+      activeProjectActorKeyRef.current !== currentActorKey ||
+      activeProjectActorIsGuestRef.current !== isGuestActor
+    ) {
       return;
     }
     if (isGuestActor) return;
@@ -718,7 +728,7 @@ export function useProjectState({
   ]);
 
   useEffect(() => {
-    if (!isAuthenticated || useLocalFallback) {
+    if (!isAuthenticated || shouldUseLocalFallback) {
       migrationInFlightRef.current.clear();
       ensureDefaultInFlightRef.current.clear();
       // Intentionally NOT clearing ensureDefaultCompletedRef here — it must
@@ -727,12 +737,12 @@ export function useProjectState({
       // subscription briefly returns an empty result during reconnection.
       migrationErrorNotifiedRef.current.clear();
     }
-  }, [isAuthenticated, useLocalFallback]);
+  }, [isAuthenticated, shouldUseLocalFallback]);
 
   useEffect(() => {
     if (
       !isAuthenticated ||
-      useLocalFallback ||
+      shouldUseLocalFallback ||
       allRemoteProjects === undefined ||
       allRemoteProjects.length > 0 ||
       migratableLocalProjectCount === 0
@@ -741,7 +751,7 @@ export function useProjectState({
     }
   }, [
     isAuthenticated,
-    useLocalFallback,
+    shouldUseLocalFallback,
     allRemoteProjects,
     migratableLocalProjectCount,
   ]);
@@ -751,7 +761,7 @@ export function useProjectState({
       return;
     }
     if (shouldTreatRemoteProjectsAsEmpty) return;
-    if (useLocalFallback) return;
+    if (shouldUseLocalFallback) return;
     if (!hasResolvedProjectOrganizationSelection) return;
     if (allRemoteProjects === undefined) return;
     if (allRemoteProjects.length > 0) return;
@@ -812,7 +822,7 @@ export function useProjectState({
     Promise.all(migratableLocalProjects.map(migrateProject));
   }, [
     isAuthenticated,
-    useLocalFallback,
+    shouldUseLocalFallback,
     allRemoteProjects,
     migratableLocalProjects,
     migratableLocalProjectCount,
@@ -830,7 +840,7 @@ export function useProjectState({
       return;
     }
     if (shouldTreatRemoteProjectsAsEmpty) return;
-    if (useLocalFallback) return;
+    if (shouldUseLocalFallback) return;
     if (!hasResolvedProjectOrganizationSelection) return;
     if (remoteProjects === undefined) return;
     if (hasCurrentOrganizationProjects) return;
@@ -862,7 +872,7 @@ export function useProjectState({
       });
   }, [
     isAuthenticated,
-    useLocalFallback,
+    shouldUseLocalFallback,
     remoteProjects,
     hasCurrentOrganizationProjects,
     hasAnyRemoteProjects,
@@ -880,7 +890,7 @@ export function useProjectState({
   // guest-owned project so the rest of the app sees a normal projectId.
   useEffect(() => {
     if (!isGuestActor) return;
-    if (useLocalFallback) return;
+    if (shouldUseLocalFallback) return;
     if (remoteProjects === undefined) return;
     if (remoteProjects.length > 0) return;
     if (!currentActorKey) return;
@@ -912,7 +922,7 @@ export function useProjectState({
       });
   }, [
     isGuestActor,
-    useLocalFallback,
+    shouldUseLocalFallback,
     remoteProjects,
     currentActorKey,
     convexEnsureDefaultProject,
@@ -921,7 +931,7 @@ export function useProjectState({
 
   const handleCreateProject = useCallback(
     async (name: string, switchTo: boolean = false) => {
-      if (isAuthenticated && !useLocalFallback) {
+      if (isAuthenticated && !shouldUseLocalFallback) {
         const organizationId = projectOrganizationId;
         if (
           shouldTreatRemoteProjectsAsEmpty ||
@@ -983,7 +993,7 @@ export function useProjectState({
     },
     [
       isAuthenticated,
-      useLocalFallback,
+      shouldUseLocalFallback,
       shouldTreatRemoteProjectsAsEmpty,
       convexCreateProject,
       dispatch,
@@ -995,7 +1005,7 @@ export function useProjectState({
 
   const handleUpdateProject = useCallback(
     async (projectId: string, updates: Partial<Project>): Promise<void> => {
-      if (isAuthenticated && !useLocalFallback) {
+      if (isAuthenticated && !shouldUseLocalFallback) {
         try {
           const updateData: any = { projectId };
           if (updates.name !== undefined) updateData.name = updates.name;
@@ -1027,7 +1037,7 @@ export function useProjectState({
     },
     [
       isAuthenticated,
-      useLocalFallback,
+      shouldUseLocalFallback,
       convexUpdateProject,
       logger,
       dispatch,
@@ -1046,7 +1056,7 @@ export function useProjectState({
       savedSlice: T | undefined;
       controller: ClientConfigSaveController<T>;
     }): Promise<void> => {
-      const awaitRemoteEcho = isAuthenticated && !useLocalFallback;
+      const awaitRemoteEcho = isAuthenticated && !shouldUseLocalFallback;
 
       controller.beginSave({
         projectId,
@@ -1132,7 +1142,7 @@ export function useProjectState({
     },
     [
       isAuthenticated,
-      useLocalFallback,
+      shouldUseLocalFallback,
       clearPendingClientConfigSync,
       convexUpdateClientConfig,
       logger,
@@ -1371,7 +1381,7 @@ export function useProjectState({
           return false;
         }
 
-        if (isAuthenticated && !useLocalFallback) {
+        if (isAuthenticated && !shouldUseLocalFallback) {
           setConvexActiveProjectId(targetProjectId);
         } else {
           dispatch({
@@ -1381,7 +1391,7 @@ export function useProjectState({
         }
       }
 
-      if (isAuthenticated && !useLocalFallback) {
+      if (isAuthenticated && !shouldUseLocalFallback) {
         try {
           await convexDeleteProject({ projectId });
         } catch (error) {
@@ -1414,7 +1424,7 @@ export function useProjectState({
       effectiveActiveProjectId,
       effectiveProjects,
       isAuthenticated,
-      useLocalFallback,
+      shouldUseLocalFallback,
       convexDeleteProject,
       setConvexActiveProjectId,
       logger,
@@ -1430,7 +1440,7 @@ export function useProjectState({
         return;
       }
 
-      if (isAuthenticated && !useLocalFallback) {
+      if (isAuthenticated && !shouldUseLocalFallback) {
         const organizationId = projectOrganizationId;
         if (
           shouldTreatRemoteProjectsAsEmpty ||
@@ -1489,7 +1499,7 @@ export function useProjectState({
     [
       effectiveProjects,
       isAuthenticated,
-      useLocalFallback,
+      shouldUseLocalFallback,
       shouldTreatRemoteProjectsAsEmpty,
       convexCreateProject,
       dispatch,
@@ -1572,7 +1582,7 @@ export function useProjectState({
 
   const handleImportProject = useCallback(
     async (projectData: Project) => {
-      if (isAuthenticated && !useLocalFallback) {
+      if (isAuthenticated && !shouldUseLocalFallback) {
         const organizationId = projectOrganizationId;
         if (
           shouldTreatRemoteProjectsAsEmpty ||
@@ -1628,7 +1638,7 @@ export function useProjectState({
     },
     [
       isAuthenticated,
-      useLocalFallback,
+      shouldUseLocalFallback,
       shouldTreatRemoteProjectsAsEmpty,
       convexCreateProject,
       dispatch,
@@ -1642,7 +1652,7 @@ export function useProjectState({
     remoteProjects,
     isLoadingProjects,
     activeProjectServersFlat,
-    useLocalFallback,
+    useLocalFallback: shouldUseLocalFallback,
     setConvexActiveProjectId,
     clearConvexActiveProjectSelection,
     isLoadingRemoteProjects,

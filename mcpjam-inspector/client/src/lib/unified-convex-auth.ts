@@ -27,6 +27,12 @@ const GUEST_USER_PLACEHOLDER = {
   id: "__guest__",
 };
 
+const GUEST_SESSION_BOOTSTRAP_RETRY_DELAYS_MS = [500, 1500, 3000] as const;
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export function useUnifiedConvexAuth() {
   const workos = useWorkOSAuth();
   const [guestToken, setGuestToken] = useState<string | null>(
@@ -48,16 +54,37 @@ export function useUnifiedConvexAuth() {
 
     let cancelled = false;
     setGuestLoading(true);
-    getOrCreateGuestSession()
-      .then((session) => {
+
+    const resolveGuestSession = async () => {
+      for (
+        let attempt = 0;
+        attempt <= GUEST_SESSION_BOOTSTRAP_RETRY_DELAYS_MS.length;
+        attempt += 1
+      ) {
+        let session: Awaited<ReturnType<typeof getOrCreateGuestSession>> =
+          null;
+        try {
+          session = await getOrCreateGuestSession();
+        } catch {
+          session = null;
+        }
+
         if (cancelled) return;
-        setGuestToken(session?.token ?? null);
-        setGuestLoading(false);
-      })
-      .catch(() => {
+        if (
+          session ||
+          attempt === GUEST_SESSION_BOOTSTRAP_RETRY_DELAYS_MS.length
+        ) {
+          setGuestToken(session?.token ?? null);
+          setGuestLoading(false);
+          return;
+        }
+
+        await delay(GUEST_SESSION_BOOTSTRAP_RETRY_DELAYS_MS[attempt]);
         if (cancelled) return;
-        setGuestLoading(false);
-      });
+      }
+    };
+
+    void resolveGuestSession();
 
     return () => {
       cancelled = true;

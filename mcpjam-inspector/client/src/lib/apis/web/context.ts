@@ -60,12 +60,16 @@ function assertHostedClientConfigSynced() {
  */
 export function isGuestMode(): boolean {
   if (!HOSTED_MODE) return false;
-  return !hostedApiContext.projectId && !hostedApiContext.isAuthenticated;
+  return (
+    !hostedApiContext.projectId &&
+    !hostedApiContext.isAuthenticated &&
+    !hostedApiContext.hasSession
+  );
 }
 
 export function shouldRetryHostedAuth401(): boolean {
   if (!HOSTED_MODE) return false;
-  return !hostedApiContext.isAuthenticated;
+  return !hostedApiContext.isAuthenticated && !hostedApiContext.hasSession;
 }
 
 /**
@@ -78,13 +82,16 @@ export function shouldRetryHostedAuth401(): boolean {
  *   Requests carry `projectId` without share/chatbox tokens; the backend
  *   authorizes via the guest JWT in the Authorization header.
  *
- * The single gate is `!isAuthenticated`. The previous design treated a set
- * `projectId` as proof of an authenticated session; that assumption no longer
- * holds because guests can own projects.
+ * The gate is `!isAuthenticated && !hasSession`. The previous design treated a
+ * set `projectId` as proof of an authenticated session; that assumption no
+ * longer holds because guests can own projects. `hasSession` protects the
+ * WorkOS bootstrap window from reusing a stale guest bearer while a signed-in
+ * session is still resolving.
  */
 function hasHostedGuestAccess(): boolean {
   if (!HOSTED_MODE) return false;
   if (hostedApiContext.isAuthenticated) return false;
+  if (hostedApiContext.hasSession) return false;
   return true;
 }
 
@@ -124,6 +131,22 @@ export function buildGuestServerRequest(
     ...(oauthAccessToken ? { oauthAccessToken } : {}),
     ...(clientCapabilities ? { clientCapabilities } : {}),
   };
+}
+
+function getGuestOAuthToken(serverName: string): string | undefined {
+  try {
+    const raw = localStorage.getItem(`mcp-tokens-${serverName}`);
+    if (raw) {
+      const parsed = JSON.parse(raw) as { access_token?: unknown };
+      if (typeof parsed.access_token === "string" && parsed.access_token) {
+        return parsed.access_token;
+      }
+    }
+  } catch {
+    // Ignore malformed local tokens and fall back to context-provided tokens.
+  }
+
+  return hostedApiContext.guestOauthTokensByServerName?.[serverName];
 }
 
 export function setHostedApiContext(next: HostedApiContext | null): void {
@@ -334,6 +357,19 @@ function getHostedAccessScope(): HostedAccessScope | undefined {
 export function buildHostedServerRequest(
   serverNameOrId: string,
 ): Record<string, unknown> {
+  if (isGuestMode()) {
+    const config = hostedApiContext.serverConfigs?.[serverNameOrId];
+    if (!config) {
+      throw new Error(`No guest server config found for "${serverNameOrId}"`);
+    }
+    return buildGuestServerRequest(
+      config,
+      getGuestOAuthToken(serverNameOrId),
+      hostedApiContext.clientCapabilities,
+      serverNameOrId,
+    );
+  }
+
   // Single hosted path: every request — guest or authed — carries
   // {projectId, serverId}. UI surfaces gate on `useAppReady()` so this
   // builder is never invoked before bootstrap completes; if it is invoked

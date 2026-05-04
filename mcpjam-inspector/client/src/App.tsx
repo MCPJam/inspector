@@ -1075,8 +1075,7 @@ export default function App() {
   }, [navPremiumness]);
   const billingGateEnforcementActive =
     billingUiEnabled && isBillingEnforcementActive(navPremiumness);
-  const isGuestProjectActor =
-    currentUser?.isAnonymous === true || (!workOsUser && !isWorkOsLoading);
+  const isGuestProjectActor = currentUser?.isAnonymous === true;
   const guestProjectLimitReached =
     isGuestProjectActor && Object.keys(projects).length >= 1;
   const noOrganizationsAvailable =
@@ -1195,6 +1194,7 @@ export default function App() {
     // user is signed in and return null. The WorkOS user object is the
     // correct signal.
     isAuthenticated: !!workOsUser,
+    hasSession: !!workOsUser || isWorkOsLoading,
     serverConfigs: guestServerConfigs,
     enabled: !isHostedChatRoute,
   });

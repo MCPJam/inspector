@@ -946,7 +946,11 @@ export function useChatSession({
   const initialTemperature = executionConfig?.temperature ?? 0.7;
   const initialRequireToolApproval =
     executionConfig?.requireToolApproval ?? false;
-  const { getAccessToken, user: workOsUser } = useAuth();
+  const {
+    getAccessToken,
+    user: workOsUser,
+    isLoading: isWorkOsLoading,
+  } = useAuth();
 
   // Store onReset in a ref to avoid triggering effects when the callback changes identity
   const onResetRef = useRef(onReset);
@@ -1008,15 +1012,11 @@ export function useChatSession({
   );
   const requireToolApprovalRef = useRef(requireToolApproval);
   requireToolApprovalRef.current = requireToolApproval;
+  const isHostedGuest = HOSTED_MODE && !workOsUser && !isWorkOsLoading;
   const directGuestMode =
-    HOSTED_MODE &&
-    !isAuthenticated &&
-    !isAuthLoading &&
-    !hostedProjectId &&
-    !hostedShareToken;
+    isHostedGuest && !isAuthLoading && !hostedProjectId && !hostedShareToken;
   const sharedGuestMode =
-    HOSTED_MODE &&
-    !isAuthenticated &&
+    isHostedGuest &&
     !isAuthLoading &&
     !!hostedProjectId &&
     !!(hostedShareToken || hostedChatboxToken);
@@ -1819,13 +1819,7 @@ export function useChatSession({
         !resolved &&
         active &&
         HOSTED_MODE &&
-        // Real WorkOS users go through the WorkOS branch above; reaching here
-        // with no `workOsUser` means we're a guest. `useConvexAuth().isAuthenticated`
-        // can't be the gate because `useUnifiedConvexAuth` hands Convex a
-        // placeholder user for guests, making isAuthenticated true for them.
-        // The previous archetype filter (no projectId / share / chatbox) also
-        // excluded the new "guest owns a project" shape, so it's dropped.
-        !workOsUser
+        isHostedGuest
       ) {
         const guestToken = await getGuestBearerToken();
         if (!active) return;
@@ -1892,6 +1886,7 @@ export function useChatSession({
     hostedChatboxToken,
     hostedProjectId,
     isAuthenticated,
+    isHostedGuest,
     workOsUser,
     clearPendingSessionHydration,
     setMessages,
