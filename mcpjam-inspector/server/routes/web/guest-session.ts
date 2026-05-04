@@ -1,7 +1,9 @@
 import { Hono } from "hono";
 import {
+  fetchConvexGuestPromotionProof,
   fetchConvexGuestSession,
   fetchConvexGuestSessionRevoke,
+  fetchRemoteGuestPromotionProof,
   fetchRemoteGuestSession,
   fetchRemoteGuestSessionRevoke,
   type GuestSessionFetchContext,
@@ -275,6 +277,105 @@ guestSession.post("/revoke", async (c) => {
     {
       code: ErrorCode.INTERNAL_ERROR,
       message: "Unable to revoke guest session right now.",
+    },
+    503,
+  );
+});
+
+/**
+ * POST /api/web/guest-session/promotion-proof
+ *
+ * Mints a short-lived (5-minute) JWT scoped exclusively to the
+ * guest→WorkOS promotion path. Called immediately before the frontend
+ * invokes `users:ensureUser` with `guestProofJwt`. Decoupling this token
+ * from the session bearer (24h TTL, served on every guest API call) keeps
+ * the replay window for promotion to single-digit minutes regardless of
+ * how long the bearer lingers in caches.
+ *
+ * Rate-limited per IP using the same window/limits as the base session
+ * route so a stolen secret cannot be used to flood the upstream.
+ */
+guestSession.post("/promotion-proof", async (c) => {
+  if (process.env.MCPJAM_NONPROD_LOCKDOWN === "true") {
+    return c.json(
+      {
+        code: ErrorCode.FORBIDDEN,
+        message: "Guest access is disabled in this environment.",
+      },
+      403,
+    );
+  }
+
+  const ip = getClientIp(c);
+  if (!ip && process.env.NODE_ENV === "production") {
+    return c.json(
+      {
+        code: ErrorCode.RATE_LIMITED,
+        message:
+          "Unable to determine client IP for guest session rate limiting.",
+      },
+      429,
+    );
+  }
+  const rateLimitKey = ip ?? "local-dev";
+  const now = Date.now();
+
+  const entry = ipWindows.get(rateLimitKey);
+  if (entry) {
+    if (now - entry.windowStart < IP_WINDOW_MS) {
+      if (entry.count >= IP_RATE_LIMIT) {
+        return c.json(
+          {
+            code: ErrorCode.RATE_LIMITED,
+            message: "Too many guest session requests. Try again later.",
+          },
+          429,
+        );
+      }
+      entry.count++;
+    } else {
+      entry.count = 1;
+      entry.windowStart = now;
+    }
+  } else {
+    ipWindows.set(rateLimitKey, { count: 1, windowStart: now });
+  }
+
+  const context: GuestSessionFetchContext = {
+    cookie: extractGuestSessionCookie(c.req.header("cookie")),
+    userAgent: c.req.header("user-agent") ?? null,
+  };
+
+  const result = shouldFetchGuestSessionFromConvex()
+    ? await fetchConvexGuestPromotionProof(context)
+    : await fetchRemoteGuestPromotionProof(context);
+
+  if (result.kind === "proof") {
+    return c.json(result.proof);
+  }
+
+  if (result.kind === "miss") {
+    return c.body(null, 204);
+  }
+
+  if (result.kind === "revoked") {
+    for (const cookie of result.setCookies) {
+      c.header("Set-Cookie", cookie, { append: true });
+    }
+    return c.json(
+      {
+        code: ErrorCode.FORBIDDEN,
+        message: "Guest session revoked.",
+      },
+      403,
+    );
+  }
+
+  return c.json(
+    {
+      code: ErrorCode.INTERNAL_ERROR,
+      message:
+        "Unable to obtain a guest promotion proof right now. Please try again.",
     },
     503,
   );

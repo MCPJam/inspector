@@ -12,7 +12,7 @@ const mockState = vi.hoisted(() => ({
     isLoading: false,
   },
   ensureUser: vi.fn().mockResolvedValue(undefined),
-  getExistingGuestBearerToken: vi.fn().mockResolvedValue(null),
+  getGuestPromotionProof: vi.fn().mockResolvedValue(null),
   revokeGuestSessionAndCookie: vi.fn().mockResolvedValue(false),
   sentrySetUser: vi.fn(),
 }));
@@ -31,7 +31,7 @@ vi.mock("@/hooks/use-actor-key", () => ({
 }));
 
 vi.mock("@/lib/guest-session", () => ({
-  getExistingGuestBearerToken: mockState.getExistingGuestBearerToken,
+  getGuestPromotionProof: mockState.getGuestPromotionProof,
   revokeGuestSessionAndCookie: mockState.revokeGuestSessionAndCookie,
 }));
 

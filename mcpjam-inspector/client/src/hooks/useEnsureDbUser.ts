@@ -3,7 +3,7 @@ import { useMutation, useConvexAuth } from "convex/react";
 import { useAuth } from "@workos-inc/authkit-react";
 import * as Sentry from "@sentry/react";
 import {
-  getExistingGuestBearerToken,
+  getGuestPromotionProof,
   revokeGuestSessionAndCookie,
 } from "@/lib/guest-session";
 import { useActorKey } from "@/hooks/use-actor-key";
@@ -75,18 +75,19 @@ export function useEnsureDbUser() {
     let cancelled = false;
 
     const run = async () => {
-      // Only the WorkOS branch can promote a guest. Skip the guest-token
-      // lookup when the identity is itself a guest — there's nothing to
-      // promote and the lookup would just round-trip needlessly.
+      // Only the WorkOS branch can promote a guest. Skip the proof mint
+      // when the identity is itself a guest — there's nothing to promote
+      // and the lookup would just round-trip needlessly. The proof is a
+      // short-lived (5-min) JWT distinct from the session bearer so a
+      // stolen bearer cannot be used to absorb a victim's projects.
       const isWorkOsAuth = !!user?.id;
       let guestProofJwt: string | null = null;
       if (isWorkOsAuth) {
         try {
-          guestProofJwt = await getExistingGuestBearerToken();
+          guestProofJwt = await getGuestPromotionProof();
         } catch {
-          // Network/transient failure looking up an existing guest token is
-          // not fatal — the user can still create a fresh org-owned account.
-          // We intentionally don't fall through to creating a new guest.
+          // Network/transient failure minting the promotion proof is not
+          // fatal — the user can still create a fresh org-owned account.
           guestProofJwt = null;
         }
       }

@@ -311,6 +311,42 @@ export async function revokeGuestSessionAndCookie(): Promise<boolean> {
 }
 
 /**
+ * Fetch a short-lived (5-minute) JWT that authorizes a single guest→WorkOS
+ * promotion. The session bearer (`getExistingGuestBearerToken`) is the
+ * wrong token for this job — it's served on every guest API call and lives
+ * 24h, so a stolen bearer would give an attacker a long window to absorb
+ * a victim's guest projects by submitting it as `guestProofJwt`.
+ *
+ * Promotion proofs are minted on-demand right before sign-in, carry a
+ * distinct `purpose` claim, and are accepted only by `users:ensureUser`'s
+ * promotion path. Not cached: each promotion is a one-shot operation.
+ *
+ * Returns null if no guest cookie is present (nothing to promote) or on
+ * any transient failure — callers should treat null as "no promotion this
+ * sign-in" and let the user proceed as a fresh authed account.
+ */
+export async function getGuestPromotionProof(): Promise<string | null> {
+  try {
+    const response = await fetch("/api/web/guest-session/promotion-proof", {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+    });
+
+    if (response.status === 204) return null;
+    if (!response.ok) return null;
+
+    const body = (await response.json()) as { token?: unknown };
+    return typeof body.token === "string" && body.token.length > 0
+      ? body.token
+      : null;
+  } catch (error) {
+    console.error("Failed to fetch guest promotion proof:", error);
+    return null;
+  }
+}
+
+/**
  * Force-refresh the guest bearer token. Drops the in-memory cache and
  * fetches a new JWT bound to the cookie-backed guest. Deduplicates
  * concurrent force-refresh calls.
