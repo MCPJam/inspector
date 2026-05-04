@@ -1,7 +1,9 @@
 import { Hono } from "hono";
 import {
   fetchConvexGuestSession,
+  fetchConvexGuestSessionRevoke,
   fetchRemoteGuestSession,
+  fetchRemoteGuestSessionRevoke,
   type GuestSessionFetchContext,
   type GuestSessionRequestBody,
 } from "../../utils/guest-session-source.js";
@@ -177,6 +179,86 @@ guestSession.post("/", async (c) => {
       code: ErrorCode.INTERNAL_ERROR,
       message:
         "Unable to obtain a guest session right now. Please try again.",
+    },
+    503,
+  );
+});
+
+/**
+ * POST /api/web/guest-session/revoke
+ *
+ * Called by the inspector frontend after a successful WorkOS sign-in so
+ * the browser's guest cookie cannot resurrect a stale guest identity on
+ * sign-out. Forwards the guest cookie to the upstream guest service which
+ * marks the session row as revoked and issues a Set-Cookie that clears
+ * the cookie on the browser.
+ *
+ * No body, no auth required at this hop — the operation is bounded by
+ * the cookie itself, and is idempotent (no-op if no cookie is present).
+ */
+// HttpOnly cookie that mirrors `buildExpiredGuestSessionCookie` on the
+// upstream. Used as a fallback when the upstream is unreachable or has
+// not yet deployed the revoke route — the cookie still gets cleared on
+// the browser so a signed-in user cannot resurrect their guest identity
+// via cookie replay on sign-out.
+function buildExpiredGuestSessionCookie(): string {
+  return [
+    `${GUEST_SESSION_COOKIE_NAME}=`,
+    "HttpOnly",
+    "Secure",
+    "SameSite=Lax",
+    "Path=/",
+    "Max-Age=0",
+  ].join("; ");
+}
+
+guestSession.post("/revoke", async (c) => {
+  if (process.env.MCPJAM_NONPROD_LOCKDOWN === "true") {
+    return c.json(
+      {
+        code: ErrorCode.FORBIDDEN,
+        message: "Guest access is disabled in this environment.",
+      },
+      403,
+    );
+  }
+
+  const context: GuestSessionFetchContext = {
+    cookie: extractGuestSessionCookie(c.req.header("cookie")),
+    userAgent: c.req.header("user-agent") ?? null,
+  };
+
+  const result = shouldFetchGuestSessionFromConvex()
+    ? await fetchConvexGuestSessionRevoke(context)
+    : await fetchRemoteGuestSessionRevoke(context);
+
+  // Forward the upstream's Set-Cookie when we got one. If the upstream is
+  // missing the route (404) or returned a server error, fall back to
+  // emitting the expired cookie ourselves — the row revocation is a
+  // defense-in-depth nicety, but clearing the browser cookie is the
+  // load-bearing part of the contract.
+  if (result.setCookies.length > 0) {
+    for (const cookie of result.setCookies) {
+      c.header("Set-Cookie", cookie, { append: true });
+    }
+  } else {
+    c.header("Set-Cookie", buildExpiredGuestSessionCookie(), { append: true });
+  }
+
+  if (result.status >= 200 && result.status < 300) {
+    return c.json({ revoked: result.body?.revoked ?? false });
+  }
+
+  // Treat upstream 404 (route not deployed) as a soft success — we still
+  // cleared the cookie on the browser.
+  if (result.status === 404) {
+    return c.json({ revoked: false, upstream: "missing" });
+  }
+
+  return c.json(
+    {
+      code: ErrorCode.INTERNAL_ERROR,
+      message: "Unable to revoke guest session right now.",
     },
     503,
   );

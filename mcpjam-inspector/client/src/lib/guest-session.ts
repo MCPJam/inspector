@@ -254,6 +254,42 @@ export function clearGuestSession(): void {
 }
 
 /**
+ * Revoke the browser's guest session: tells the server to mark the
+ * cookie-backed session row as revoked and to clear the HttpOnly cookie
+ * via Set-Cookie. Used by the post-WorkOS-login flow so a signed-in user
+ * who later signs out cannot resurrect the previous guest identity by
+ * replaying the cookie.
+ *
+ * Idempotent: returns false if no cookie was present or revocation
+ * failed; returns true on success. Always also clears the in-memory
+ * cache so subsequent guest-token reads in this tab fall through to
+ * a fresh `lookup_or_create` call.
+ */
+export async function revokeGuestSessionAndCookie(): Promise<boolean> {
+  let revoked = false;
+  try {
+    const response = await fetch("/api/web/guest-session/revoke", {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+    });
+    if (response.ok) {
+      try {
+        const body = (await response.json()) as { revoked?: unknown };
+        revoked = body?.revoked === true;
+      } catch {
+        revoked = false;
+      }
+    }
+  } catch (error) {
+    console.error("Failed to revoke guest session:", error);
+  } finally {
+    clearGuestSession();
+  }
+  return revoked;
+}
+
+/**
  * Force-refresh the guest bearer token. Drops the in-memory cache and
  * fetches a new JWT bound to the cookie-backed guest. Deduplicates
  * concurrent force-refresh calls.
