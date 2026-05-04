@@ -4,21 +4,26 @@ import { useAuth } from "@workos-inc/authkit-react";
 import * as Sentry from "@sentry/react";
 
 /**
- * Ensure the authenticated WorkOS user has a row in Convex `users`.
- * - Runs only after Convex auth is established
- * - Idempotent and re-runs when the authenticated user changes
+ * Ensure the current Convex-authenticated identity has a row in `users`.
+ * Works for both signed-in WorkOS users and guest sessions — the backend
+ * `users:ensureUser` mutation dispatches on the JWT issuer and creates the
+ * appropriate row shape. Runs once per identity, idempotent.
  */
 export function useEnsureDbUser() {
   const { user } = useAuth();
   const { isAuthenticated, isLoading } = useConvexAuth();
   const ensureUser = useMutation("users:ensureUser" as any);
-  const lastEnsuredUserIdRef = useRef<string | null>(null);
+  // Tracks the identity (WorkOS id, or "__guest__" for guest sessions) we
+  // last ensured for. We don't have the guest's external id on the client,
+  // so a single sentinel is enough — guest identity rotation triggers a
+  // fresh app load anyway.
+  const lastEnsuredIdentityRef = useRef<string | null>(null);
   const [isEnsuringUser, setIsEnsuringUser] = useState(false);
 
   // Reset cache on logout so we re-run for the next login in the same session
   useEffect(() => {
     if (!isAuthenticated) {
-      lastEnsuredUserIdRef.current = null;
+      lastEnsuredIdentityRef.current = null;
       setIsEnsuringUser(false);
       Sentry.setUser(null); // Clear Sentry user on logout
     }
@@ -28,32 +33,30 @@ export function useEnsureDbUser() {
     if (isLoading) {
       return;
     }
-    // WorkOS user hydration can briefly lead Convex auth. This is expected
-    // during callback completion; wait for isAuthenticated instead of throwing.
-    if (!isAuthenticated || !user) {
+    if (!isAuthenticated) {
       setIsEnsuringUser(false);
       return;
     }
 
-    // Only (re)ensure when the authenticated WorkOS user changes.
-    if (lastEnsuredUserIdRef.current === user.id) {
+    const identityKey = user?.id ?? "__guest__";
+    if (lastEnsuredIdentityRef.current === identityKey) {
       setIsEnsuringUser(false);
       return;
     }
 
     setIsEnsuringUser(true);
     ensureUser()
-      .then((id: string | null) => {
-        // eslint-disable-next-line no-console
-        lastEnsuredUserIdRef.current = user.id;
-        // Set Sentry user context for error tracking
-        Sentry.setUser({ id: user.id });
+      .then(() => {
+        lastEnsuredIdentityRef.current = identityKey;
+        if (user?.id) {
+          Sentry.setUser({ id: user.id });
+        }
       })
       .catch((err: unknown) => {
         // eslint-disable-next-line no-console
         console.error("[auth] ensureUser failed", err);
         // allow retry next effect pass
-        lastEnsuredUserIdRef.current = null;
+        lastEnsuredIdentityRef.current = null;
       })
       .finally(() => {
         setIsEnsuringUser(false);

@@ -4,14 +4,14 @@ import App from "./App.jsx";
 import "./index.css";
 import { getPostHogKey, getPostHogOptions } from "./lib/PosthogUtils.js";
 import { PostHogProvider } from "posthog-js/react";
-import { AuthKitProvider, useAuth } from "@workos-inc/authkit-react";
+import { AuthKitProvider } from "@workos-inc/authkit-react";
 import { ConvexReactClient } from "convex/react";
 import { ConvexProviderWithAuthKit } from "@convex-dev/workos";
 import { initSentry } from "./lib/sentry.js";
 import { IframeRouterError } from "./components/IframeRouterError.jsx";
 import { initializeSessionToken } from "./lib/session-token.js";
 import { HOSTED_MODE } from "./lib/config";
-import { GuestConvexAuthBridge } from "./lib/guest-convex-auth";
+import { useUnifiedConvexAuth } from "./lib/unified-convex-auth";
 import { getRuntimeConvexUrl } from "./lib/runtime-config";
 
 // Initialize Sentry before React mounts
@@ -74,6 +74,22 @@ if (isInIframe) {
       "[main] VITE_CONVEX_URL is not set; Convex features may not work."
     );
   }
+  console.info("[main] Convex client config", {
+    convexUrl: convexUrl || "(empty)",
+    source: runtimeConvexUrl
+      ? "runtime"
+      : buildConvexUrl
+        ? "build (VITE_CONVEX_URL)"
+        : "none",
+    HOSTED_MODE,
+  });
+  if (typeof window !== "undefined") {
+    (window as unknown as { __mcpjamConvex?: unknown }).__mcpjamConvex = {
+      convexUrl,
+      buildConvexUrl,
+      runtimeConvexUrl,
+    };
+  }
   if (
     HOSTED_MODE &&
     runtimeConvexUrl &&
@@ -127,8 +143,7 @@ if (isInIframe) {
       devMode={workosDevMode}
       {...workosClientOptions}
     >
-      <ConvexProviderWithAuthKit client={convex} useAuth={useAuth}>
-        <GuestConvexAuthBridge client={convex} />
+      <ConvexProviderWithAuthKit client={convex} useAuth={useUnifiedConvexAuth}>
         <App />
       </ConvexProviderWithAuthKit>
     </AuthKitProvider>

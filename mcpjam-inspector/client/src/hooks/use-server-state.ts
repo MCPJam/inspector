@@ -37,7 +37,6 @@ import {
 } from "@/lib/hosted-oauth-callback";
 import { HOSTED_MODE } from "@/lib/config";
 import {
-  injectHostedProjectId,
   injectHostedServerMapping,
   tryGetHostedServerDisplayName,
 } from "@/lib/apis/web/context";
@@ -1676,18 +1675,6 @@ export function useServerState({
       };
       if (HOSTED_MODE) {
         try {
-          // Inject the resolved projectId synchronously so the validate /
-          // OAuth requests below see it even if React hasn't yet
-          // propagated convexProjectId into useHostedApiContext (race during
-          // guest bootstrap).
-          const projectIdForRequest = effectiveActiveProjectIdRef.current;
-          if (
-            typeof projectIdForRequest === "string" &&
-            projectIdForRequest &&
-            projectIdForRequest !== "none"
-          ) {
-            injectHostedProjectId(projectIdForRequest);
-          }
           const serverId = await syncServerToConvex(
             formData.name,
             serverEntryForSave,
@@ -2491,6 +2478,29 @@ export function useServerState({
           status: "failed",
           error: errorMessage,
         };
+      }
+
+      // Defer reconnects until bootstrap completes. Without this, the
+      // page-load auto-reconnect loop fires before the project + server
+      // mappings are loaded, hits validate without {projectId, serverId},
+      // and produces "Hosted server metadata is still syncing" toasts.
+      // Returning `failed` (not throwing) lets ensureServersReady move on
+      // and a later trigger (project resolves, user clicks reconnect)
+      // can retry against a ready app.
+      if (HOSTED_MODE) {
+        const projectIdForReconnect = effectiveActiveProjectIdRef.current;
+        if (
+          !projectIdForReconnect ||
+          projectIdForReconnect === "none"
+        ) {
+          logger.info("Deferring reconnect: app still bootstrapping", {
+            serverName,
+          });
+          return {
+            status: "failed",
+            error: "App is still loading. Reconnect will retry once ready.",
+          };
+        }
       }
 
       logger.info("Reconnecting to server", { serverName, options });

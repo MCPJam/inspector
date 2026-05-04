@@ -121,22 +121,26 @@ describe("getHostedAuthorizationHeader guest fallback", () => {
     expect(getAccessToken).not.toHaveBeenCalled();
   });
 
-  it("returns null for hosted project requests that do not allow guest access", async () => {
+  it("prefers guest token for guest-owned projects (unauthed + projectId, no share/chatbox)", async () => {
+    // Pre-"guests are users" this case returned null because a set projectId
+    // was treated as proof of an authed session. Guests can now own projects,
+    // so this path must surface a guest bearer.
     const getAccessToken = vi
       .fn()
-      .mockRejectedValue(new Error("LoginRequired"));
+      .mockResolvedValue("workos-token-should-skip");
     setHostedApiContext({
-      projectId: "ws-member",
+      projectId: "ws-guest-owned",
       isAuthenticated: false,
       serverIdsByName: { bench: "srv-1" },
       getAccessToken,
     });
 
+    vi.mocked(getGuestBearerToken).mockResolvedValue("guest-owns-project");
+
     const result = await getHostedAuthorizationHeader();
 
-    expect(result).toBeNull();
-    expect(getGuestBearerToken).not.toHaveBeenCalled();
-    expect(getAccessToken).toHaveBeenCalledTimes(1);
+    expect(result).toBe("Bearer guest-owns-project");
+    expect(getAccessToken).not.toHaveBeenCalled();
   });
 
   it("caches WorkOS token and does not call guest on subsequent calls", async () => {
@@ -221,7 +225,7 @@ describe("isGuestMode and buildHostedServerRequest consistency", () => {
     expect(isGuestMode()).toBe(false);
   });
 
-  it("buildHostedServerRequest uses guest path for direct guests with server config", () => {
+  it("buildHostedServerRequest throws BootstrapNotReadyError when projectId is missing", async () => {
     setHostedApiContext({
       projectId: null,
       isAuthenticated: false,
@@ -231,14 +235,10 @@ describe("isGuestMode and buildHostedServerRequest consistency", () => {
       },
     });
 
-    const result = buildHostedServerRequest("my-server");
-
-    expect(result).toMatchObject({
-      serverUrl: "https://my-mcp.example.com/sse",
-      serverName: "my-server",
-    });
-    // Should NOT have projectId — this is a guest request
-    expect(result).not.toHaveProperty("projectId");
+    const { BootstrapNotReadyError } = await import("@/lib/app-ready");
+    expect(() => buildHostedServerRequest("my-server")).toThrow(
+      BootstrapNotReadyError,
+    );
   });
 
   it("buildHostedServerRequest uses project path for shared guests", () => {
@@ -275,19 +275,6 @@ describe("isGuestMode and buildHostedServerRequest consistency", () => {
       serverName: "my-server",
       chatboxToken: "chatbox_tok_123",
     });
-  });
-
-  it("buildHostedServerRequest throws for direct guests without server config", () => {
-    setHostedApiContext({
-      projectId: null,
-      isAuthenticated: false,
-      serverIdsByName: {},
-      serverConfigs: {},
-    });
-
-    expect(() => buildHostedServerRequest("unknown-server")).toThrow(
-      /No guest server config found/,
-    );
   });
 
   it("buildGuestServerRequest forwards explicit clientCapabilities overrides", () => {

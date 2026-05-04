@@ -37,6 +37,10 @@ import {
 
 import { JsonImportModal } from "./connection/JsonImportModal";
 import { ServerFormData } from "@/shared/types.js";
+import {
+  useAppReady,
+  useAppReadyMessage,
+} from "@/hooks/use-app-ready";
 import { MCPIcon } from "./ui/mcp-icon";
 import { usePostHog } from "posthog-js/react";
 import {
@@ -539,6 +543,9 @@ export function ServersTab({
 }: ServersTabProps) {
   const posthog = usePostHog();
   const { isAuthenticated } = useConvexAuth();
+  const appReady = useAppReady();
+  const appReadyMessage = useAppReadyMessage();
+  const isAppBootstrapping = appReady.status !== "ready";
   const [pendingQuickConnect, setPendingQuickConnect] =
     useState<PendingQuickConnectState | null>(() => readPendingQuickConnect());
   const selectedProject = projects[activeProjectId];
@@ -954,6 +961,10 @@ export function ServersTab({
   ]);
 
   const handleJsonImport = (servers: ServerFormData[]) => {
+    if (isAppBootstrapping) {
+      toast.error(appReadyMessage ?? "App is still loading. Try again in a moment.");
+      return;
+    }
     servers.forEach((server) => {
       focusLoggerOnServer(server.name);
       onConnect(server);
@@ -962,10 +973,14 @@ export function ServersTab({
 
   const handleConnectServer = useCallback(
     (formData: ServerFormData) => {
+      if (isAppBootstrapping) {
+        toast.error(appReadyMessage ?? "App is still loading. Try again in a moment.");
+        return;
+      }
       focusLoggerOnServer(formData.name);
       onConnect(formData);
     },
-    [focusLoggerOnServer, onConnect]
+    [focusLoggerOnServer, onConnect, isAppBootstrapping, appReadyMessage]
   );
 
   const handleReconnectServer = useCallback(
@@ -976,10 +991,14 @@ export function ServersTab({
         allowInteractiveOAuthFlow?: boolean;
       },
     ) => {
+      if (isAppBootstrapping) {
+        toast.error(appReadyMessage ?? "App is still loading. Try again in a moment.");
+        return;
+      }
       focusLoggerOnServer(serverName);
       await onReconnect(serverName, options);
     },
-    [focusLoggerOnServer, onReconnect]
+    [focusLoggerOnServer, onReconnect, isAppBootstrapping, appReadyMessage]
   );
 
   const clearPendingQuickConnectIfMatches = useCallback(
@@ -994,6 +1013,10 @@ export function ServersTab({
   );
 
   const handleQuickConnect = async (server: EnrichedRegistryServer) => {
+    if (isAppBootstrapping) {
+      toast.error(appReadyMessage ?? "App is still loading. Try again in a moment.");
+      return;
+    }
     const serverName = getRegistryServerName(server);
     focusLoggerOnServer(serverName);
     const nextPendingQuickConnect: PendingQuickConnectState = {

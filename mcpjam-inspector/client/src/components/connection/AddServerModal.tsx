@@ -14,6 +14,7 @@ import { ServerFormData } from "@/shared/types.js";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { HOSTED_MODE } from "@/lib/config";
 import { usePostHog } from "posthog-js/react";
+import { useAppReady, useAppReadyMessage } from "@/hooks/use-app-ready";
 import { useServerForm } from "./hooks/use-server-form";
 import { AdvancedConnectionSettingsSection } from "./shared/AdvancedConnectionSettingsSection";
 import { AuthenticationSection } from "./shared/AuthenticationSection";
@@ -96,6 +97,9 @@ export function AddServerModal({
     projectClientConfig,
   });
   const hostedUrlPlaceholder = "https://example.com/mcp";
+  const appReady = useAppReady();
+  const appReadyMessage = useAppReadyMessage();
+  const isAppBootstrapping = appReady.status !== "ready";
 
   // Initialize form with initial data if provided
   useEffect(() => {
@@ -209,6 +213,11 @@ export function AddServerModal({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (isAppBootstrapping) {
+      toast.error(appReadyMessage ?? "App is still loading. Try again in a moment.");
+      return;
+    }
 
     // Validate Client ID if using custom configuration
     if (
@@ -491,7 +500,10 @@ export function AddServerModal({
             </Button>
             <Button
               type="submit"
-              disabled={formState.preregisteredOauthBlocksSubmit}
+              disabled={
+                formState.preregisteredOauthBlocksSubmit || isAppBootstrapping
+              }
+              title={isAppBootstrapping ? appReadyMessage ?? undefined : undefined}
               onClick={() => {
                 posthog.capture("add_server_button_clicked", {
                   location: "add_server_modal",
@@ -501,7 +513,7 @@ export function AddServerModal({
               }}
               className="px-4"
             >
-              Add Server
+              {isAppBootstrapping ? appReadyMessage ?? "Loading..." : "Add Server"}
             </Button>
           </div>
         </form>

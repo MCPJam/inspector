@@ -102,6 +102,7 @@ import {
   getChatboxPathTokenFromLocation,
 } from "./components/hosted/ChatboxChatPage";
 import { useHostedApiContext } from "./hooks/hosted/use-hosted-api-context";
+import { AppReadyProvider } from "./hooks/use-app-ready";
 import { useInspectorCommandBus } from "./hooks/use-inspector-command-bus";
 import { HOSTED_MODE, NON_PROD_LOCKDOWN } from "./lib/config";
 import {
@@ -889,6 +890,9 @@ export default function App() {
     if (isHostedChatRoute) return;
     if (isLoadingRemoteProjects) return;
     if (isAuthLoading) return;
+    // In hosted mode, also wait for the project to resolve. handleConnect
+    // would otherwise build a request with `projectId === "none"` and fail.
+    if (HOSTED_MODE && (!activeProjectId || activeProjectId === "none")) return;
 
     const pending = readPendingServerAdd();
     if (!pending) return;
@@ -910,6 +914,7 @@ export default function App() {
     isHostedChatRoute,
     isLoadingRemoteProjects,
     isAuthLoading,
+    activeProjectId,
     projectServers,
     handleConnect,
   ]);
@@ -1183,7 +1188,14 @@ export default function App() {
     getAccessToken,
     oauthTokensByServerId,
     guestOauthTokensByServerName,
-    isAuthenticated,
+    // `HostedApiContext.isAuthenticated` means "WorkOS user is signed in",
+    // not "Convex is authenticated". Convex reports authenticated for guest
+    // sessions too (because `useUnifiedConvexAuth` returns a placeholder user
+    // to satisfy the provider), so passing the Convex flag here makes the
+    // guest-bearer fallback in `getHostedAuthorizationHeader` think a real
+    // user is signed in and return null. The WorkOS user object is the
+    // correct signal.
+    isAuthenticated: !!workOsUser,
     serverConfigs: guestServerConfigs,
     enabled: !isHostedChatRoute,
   });
@@ -2401,6 +2413,12 @@ export default function App() {
         savedClientConfig={activeProject?.clientConfig}
       />
       <AppStateProvider appState={effectiveAppState}>
+      <AppReadyProvider
+        isLoadingAppState={isLoading}
+        isConvexAuthLoading={isAuthLoading}
+        isConvexAuthenticated={isAuthenticated}
+        effectiveActiveProjectId={activeProjectId}
+      >
         <Toaster />
         <GuestLimitDialog />
         <div
@@ -2450,6 +2468,7 @@ export default function App() {
         {shouldShowBillingHandoffOverlay ? (
           <BillingHandoffLoading overlay />
         ) : null}
+      </AppReadyProvider>
       </AppStateProvider>
     </PreferencesStoreProvider>
   );

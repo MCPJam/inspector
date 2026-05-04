@@ -30,7 +30,6 @@ import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import { useClientConfigStore } from "@/stores/client-config-store";
 import { useHostContextStore } from "@/stores/host-context-store";
 import { useOrganizationBillingStatus } from "./useOrganizationBilling";
-import { injectHostedProjectId } from "@/lib/apis/web/context";
 import {
   clearLegacyActiveProjectStorage,
   readStoredActiveProjectId,
@@ -862,14 +861,12 @@ export function useProjectState({
         ensureDefaultCompletedRef.current.add(requestKey);
         // Stick the new project id as the active selection so the rest of
         // the app picks it up over any synthetic local-fallback project that
-        // appState may have hydrated from storage.
+        // appState may have hydrated from storage. UI surfaces gate on
+        // useAppReady() — which goes ready once this projectId reaches
+        // useHostedApiContext via the normal React render — so no eager
+        // hostedApiContext inject is needed here.
         if (typeof projectId === "string") {
           setConvexActiveProjectId(projectId);
-          // Eagerly populate the hosted-api context so requests issued
-          // before React's next render (e.g. a fast Add Server click) see
-          // the resolved projectId and don't fall through to the guest-shape
-          // request builder.
-          injectHostedProjectId(projectId);
         }
       })
       .catch((error) => {

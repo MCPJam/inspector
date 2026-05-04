@@ -1,6 +1,7 @@
 import { HOSTED_MODE } from "@/lib/config";
 import { getGuestBearerToken } from "@/lib/guest-session";
 import { CLIENT_CONFIG_SYNC_PENDING_ERROR_MESSAGE } from "@/lib/client-config";
+import { BootstrapNotReadyError } from "@/lib/app-ready";
 import { getDefaultClientCapabilities } from "@mcpjam/sdk/browser";
 
 type GetAccessTokenFn = () => Promise<string | undefined | null>;
@@ -38,29 +39,6 @@ export function resetTokenCache() {
   cachedBearerToken = null;
 }
 
-function readStoredGuestOAuthAccessToken(
-  serverName: string,
-): string | undefined {
-  if (typeof window === "undefined") return undefined;
-
-  try {
-    const raw = localStorage.getItem(`mcp-tokens-${serverName}`);
-    if (!raw) return undefined;
-
-    const parsed = JSON.parse(raw) as { access_token?: unknown };
-    if (
-      typeof parsed.access_token === "string" &&
-      parsed.access_token.trim().length > 0
-    ) {
-      return parsed.access_token;
-    }
-  } catch {
-    // Ignore malformed localStorage data and fall back to in-memory context.
-  }
-
-  return undefined;
-}
-
 function assertHostedMode() {
   if (!HOSTED_MODE) {
     throw new Error("Hosted API context is only available in hosted mode");
@@ -91,19 +69,23 @@ export function shouldRetryHostedAuth401(): boolean {
 }
 
 /**
- * Hosted guest access comes in 2 shapes:
+ * Hosted guest access now comes in 3 shapes:
  * - direct guest: no project, direct serverUrl requests
  * - hosted shared/chatbox guest: project-scoped share or chatbox token,
  *   Convex-backed requests
+ * - guest-owned project: an unauthenticated visitor whose Convex project is
+ *   keyed by their guest external id (the "guests are users" model).
+ *   Requests carry `projectId` without share/chatbox tokens; the backend
+ *   authorizes via the guest JWT in the Authorization header.
+ *
+ * The single gate is `!isAuthenticated`. The previous design treated a set
+ * `projectId` as proof of an authenticated session; that assumption no longer
+ * holds because guests can own projects.
  */
 function hasHostedGuestAccess(): boolean {
   if (!HOSTED_MODE) return false;
   if (hostedApiContext.isAuthenticated) return false;
-  return (
-    !hostedApiContext.projectId ||
-    !!hostedApiContext.shareToken ||
-    !!hostedApiContext.chatboxToken
-  );
+  return true;
 }
 
 /**
@@ -178,30 +160,15 @@ export function injectHostedServerMapping(
   };
 }
 
-/**
- * Eagerly inject the active projectId into the hosted context so callers
- * (validate, OAuth, MCP requests) see the just-provisioned guest project
- * before React's reactive subscription propagates `convexProjectId` to
- * `useHostedApiContext`. Without this, the brief window between
- * `ensureDefaultGuestProject` succeeding and the next render produces
- * `isGuestMode() === true` even though the actor is Convex-authed,
- * causing requests to be built with the guest shape (no projectId/serverId)
- * and rejected by `projectServerSchema`.
- */
-export function injectHostedProjectId(projectId: string): void {
-  if (!HOSTED_MODE) return;
-  hostedApiContext = {
-    ...hostedApiContext,
-    projectId,
-  };
-}
-
 export function getHostedProjectId(): string {
   assertHostedMode();
 
   const projectId = hostedApiContext.projectId;
   if (!projectId) {
-    throw new Error("Hosted project is not available yet");
+    throw new BootstrapNotReadyError(
+      "provisioning-project",
+      "hosted projectId is not in the API context yet",
+    );
   }
 
   return projectId;
@@ -367,38 +334,24 @@ function getHostedAccessScope(): HostedAccessScope | undefined {
 export function buildHostedServerRequest(
   serverNameOrId: string,
 ): Record<string, unknown> {
-  // Guest path: use directly-provided server config (no Convex)
-  if (isGuestMode()) {
-    const config = hostedApiContext.serverConfigs?.[serverNameOrId];
-    if (!config) {
-      throw new Error(
-        `No guest server config found for "${serverNameOrId}". ` +
-          "The server may not be loaded yet.",
-      );
-    }
-    // Prefer persisted OAuth tokens so guest requests can keep working even if
-    // React state has not yet synchronized token updates.
-    const oauthToken =
-      readStoredGuestOAuthAccessToken(serverNameOrId) ??
-      hostedApiContext.guestOauthTokensByServerName?.[serverNameOrId];
-
-    return buildGuestServerRequest(
-      config,
-      oauthToken,
-      hostedApiContext.clientCapabilities,
-      serverNameOrId,
-    );
-  }
-
-  // Authenticated path: resolve via Convex server mappings
+  // Single hosted path: every request — guest or authed — carries
+  // {projectId, serverId}. UI surfaces gate on `useAppReady()` so this
+  // builder is never invoked before bootstrap completes; if it is invoked
+  // early, `getHostedProjectId()` throws BootstrapNotReadyError instead
+  // of emitting a guest-shape body that the server-side projectServerSchema
+  // would reject with a confusing Zod 400.
   assertHostedClientConfigSynced();
+  // Project id is checked FIRST so a not-yet-bootstrapped caller gets the
+  // typed BootstrapNotReadyError, not a "Hosted server not found" — which
+  // would just confuse the user about what's actually missing.
+  const projectId = getHostedProjectId();
   const serverId = resolveHostedServerId(serverNameOrId);
   const oauthToken = getHostedOAuthToken(serverId);
   const shareToken = getHostedShareToken();
   const chatboxToken = getHostedChatboxToken();
   const accessScope = getHostedAccessScope();
   return {
-    projectId: getHostedProjectId(),
+    projectId,
     serverId,
     serverName:
       hostedApiContext.serverIdsByName[serverNameOrId] !== undefined

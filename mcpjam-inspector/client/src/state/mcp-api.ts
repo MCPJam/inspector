@@ -6,8 +6,7 @@ import {
   validateHostedServer,
   type HostedServerValidateResponse,
 } from "@/lib/apis/web/servers-api";
-import { webPost } from "@/lib/apis/web/base";
-import { buildGuestServerRequest, isGuestMode } from "@/lib/apis/web/context";
+import { BootstrapNotReadyError } from "@/lib/app-ready";
 
 const HOSTED_VALIDATE_TIMEOUT_MS = 20_000;
 
@@ -27,10 +26,7 @@ function extractOAuthToken(serverConfig: MCPServerConfig): string | undefined {
 }
 
 function normalizeHostedValidationError(error: unknown): string {
-  if (
-    error instanceof Error &&
-    error.message === "Hosted project is not available yet"
-  ) {
+  if (error instanceof BootstrapNotReadyError) {
     return "Hosted project is still loading. Please try again in a moment.";
   }
 
@@ -53,23 +49,6 @@ async function safeValidateHostedServer(
   serverConfig: MCPServerConfig,
 ): Promise<HostedServerValidateResponse & { error?: string }> {
   try {
-    if (isGuestMode()) {
-      const request = buildGuestServerRequest(
-        serverConfig,
-        extractOAuthToken(serverConfig),
-        serverConfig.capabilities as Record<string, unknown> | undefined,
-        serverId,
-      );
-
-      return await withTimeout(
-        webPost<typeof request, HostedServerValidateResponse>(
-          "/api/web/servers/validate",
-          request,
-        ),
-        HOSTED_VALIDATE_TIMEOUT_MS,
-      );
-    }
-
     return await withTimeout(
       validateHostedServer(
         serverId,
