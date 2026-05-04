@@ -60,6 +60,10 @@ vi.mock("@/components/sidebar/sidebar-context-switcher", () => ({
   SidebarContextSwitcher: () => <div data-testid="context-switcher" />,
 }));
 
+vi.mock("@/components/sidebar/sidebar-credit-usage", () => ({
+  SidebarCreditUsage: () => <div data-testid="sidebar-credit-usage" />,
+}));
+
 vi.mock("@/components/project/ShareProjectDialog", () => ({
   ShareProjectDialog: (props: unknown) => mockShareProjectDialog(props),
 }));
@@ -208,6 +212,25 @@ describe("sidebar invite CTA", () => {
     expect(screen.getByText("Invite team members")).toHaveClass(
       "group-data-[collapsible=icon]:hidden",
     );
+  });
+
+  it("places credit usage between the invite CTA and the profile menu", () => {
+    renderSidebar();
+
+    const inviteButton = screen.getByRole("button", {
+      name: "Invite team members",
+    });
+    const creditUsage = screen.getByTestId("sidebar-credit-usage");
+    const sidebarUser = screen.getByTestId("sidebar-user");
+
+    expect(
+      inviteButton.compareDocumentPosition(creditUsage) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      creditUsage.compareDocumentPosition(sidebarUser) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
   });
 
   it("opens the share dialog for the active project", () => {

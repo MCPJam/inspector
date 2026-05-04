@@ -6,6 +6,7 @@ import { CreditTopupDialog } from "@/components/billing/CreditTopupDialog";
 import { TopupActionButton } from "@/components/billing/TopupActionButton";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { useCreditBalance } from "@/hooks/useCreditBalance";
+import { formatCreditResetText } from "@/lib/credit-usage";
 import type { CreditTopupSource } from "@/hooks/useCreditTopup";
 
 /** Pulls the limit-modal redirect flag out of the current hash and clears it
@@ -32,24 +33,6 @@ function consumeTopupFlagFromHash(): boolean {
   );
   return true;
 }
-
-const MS_PER_HOUR = 60 * 60 * 1000;
-const MS_PER_DAY = 24 * MS_PER_HOUR;
-
-const formatResetText = (resetAt: number): string => {
-  if (!resetAt || !Number.isFinite(resetAt)) return "resets daily";
-  const diffMs = resetAt - Date.now();
-  if (diffMs <= 0) return "resets shortly";
-  if (diffMs < MS_PER_HOUR) {
-    const minutes = Math.max(1, Math.round(diffMs / 60000));
-    return `resets in ${minutes}m`;
-  }
-  if (diffMs < MS_PER_DAY) {
-    const hours = Math.max(1, Math.round(diffMs / MS_PER_HOUR));
-    return `resets in ${hours}h`;
-  }
-  return "resets tomorrow";
-};
 
 interface CreditBalanceCardProps {
   /** Optional override for the chat session id used by the top-up flow. */
@@ -112,7 +95,7 @@ export function CreditBalanceCard({
           rightText={
             isLoading || !balance
               ? null
-              : `${Math.round(balance.freeDailyPercentUsed)}% used · ${formatResetText(balance.freeDailyResetAt)}`
+              : `${Math.round(balance.freeDailyPercentUsed)}% used · ${formatCreditResetText(balance.freeDailyResetAt)}`
           }
           fillPercent={
             isLoading || !balance ? 0 : balance.freeDailyPercentUsed
