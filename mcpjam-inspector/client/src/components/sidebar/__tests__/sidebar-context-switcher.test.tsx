@@ -197,6 +197,8 @@ describe("SidebarContextSwitcher", () => {
     mockUseOrganizationQueries.mockReturnValue({
       sortedOrganizations: orgs,
       isLoading: false,
+      createdCount: 0,
+      canCreateOrganization: true,
     });
   });
 
@@ -641,6 +643,33 @@ describe("SidebarContextSwitcher", () => {
     expect(lastCall.open).toBe(true);
   });
 
+  it("disables the 'New organization' button when the user has reached the creation limit", () => {
+    mockUseOrganizationQueries.mockReturnValue({
+      sortedOrganizations: orgs,
+      isLoading: false,
+      createdCount: 2,
+      canCreateOrganization: false,
+    });
+    render(
+      <SidebarContextSwitcher
+        activeProjectId="p1"
+        activeOrganizationId="org_a"
+        projects={projects}
+        onSwitchProject={vi.fn()}
+        onCreateProject={vi.fn(async () => "")}
+        onDeleteProject={vi.fn()}
+      />
+    );
+    openMainDropdown();
+    const button = screen.getByRole("button", { name: "New organization" });
+    expect(button).toBeDisabled();
+    fireEvent.click(button);
+    const lastCall = mockCreateOrgDialog.mock.calls.at(-1)?.[0] as
+      | { open: boolean }
+      | undefined;
+    expect(lastCall?.open ?? false).toBe(false);
+  });
+
   it("clicking the 'Add project' header button calls onCreateProject with a unique name", () => {
     const onCreateProject = vi.fn(async () => "");
     render(
@@ -684,6 +713,8 @@ describe("SidebarContextSwitcher", () => {
     mockUseOrganizationQueries.mockReturnValue({
       sortedOrganizations: [orgs[0]],
       isLoading: false,
+      createdCount: 0,
+      canCreateOrganization: true,
     });
     const { container } = render(
       <SidebarContextSwitcher
@@ -764,6 +795,8 @@ describe("SidebarContextSwitcher", () => {
     mockUseOrganizationQueries.mockReturnValue({
       sortedOrganizations: [orgs[0]],
       isLoading: false,
+      createdCount: 0,
+      canCreateOrganization: true,
     });
     render(
       <SidebarContextSwitcher
