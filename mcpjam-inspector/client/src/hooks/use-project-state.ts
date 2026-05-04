@@ -195,9 +195,26 @@ export function useProjectState({
     { enabled: isAuthenticated },
   );
 
+  // "Authed but with no organization" is the empty-org-state for signed-in
+  // users. Guests are Convex-authenticated without a WorkOS user *and* have
+  // no orgs by design — they should not be coerced into the empty-state path
+  // because their projects live under `guestExternalId`, not an organization.
+  const shouldTreatRemoteProjectsAsEmpty =
+    isAuthenticated &&
+    hasSignedInUser &&
+    !isLoadingOrganizations &&
+    !hasOrganizations &&
+    !routeOrganizationId &&
+    !activeOrganizationId;
+  const isGuestActor = isAuthenticated && !hasSignedInUser;
+
+  // Guests own exactly one project (provisioned by ensureDefaultGuestProject),
+  // so persisting an "active project" selection for them is dead weight that
+  // can only diverge from truth. Authed users keep the per-actor key as a
+  // first-paint hint; the server's project list is still the source of truth.
   const [convexActiveProjectId, setConvexActiveProjectId] = useState<
     string | null
-  >(() => readStoredActiveProjectId(currentActorKey));
+  >(() => (isGuestActor ? null : readStoredActiveProjectId(currentActorKey)));
   const [hasHydratedActiveProject, setHasHydratedActiveProject] = useState(
     () => currentActorKey != null,
   );
@@ -217,29 +234,29 @@ export function useProjectState({
     new Map(),
   );
   const CONVEX_TIMEOUT_MS = 10000;
-  // "Authed but with no organization" is the empty-org-state for signed-in
-  // users. Guests are Convex-authenticated without a WorkOS user *and* have
-  // no orgs by design — they should not be coerced into the empty-state path
-  // because their projects live under `guestExternalId`, not an organization.
-  const shouldTreatRemoteProjectsAsEmpty =
-    isAuthenticated &&
-    hasSignedInUser &&
-    !isLoadingOrganizations &&
-    !hasOrganizations &&
-    !routeOrganizationId &&
-    !activeOrganizationId;
-  const isGuestActor = isAuthenticated && !hasSignedInUser;
 
   const clearConvexActiveProjectSelection = useCallback(() => {
     setConvexActiveProjectId(null);
     writeStoredActiveProjectId(activeProjectActorKeyRef.current, null);
   }, []);
 
+  const clearGuestActiveProjectStorage = useCallback((actorKey: string | null) => {
+    writeStoredActiveProjectId(actorKey, null);
+  }, []);
+
+  // Project id that the flat-server query should target. We can't wait for
+  // the auto-set effect to copy convexActiveProjectId from remoteProjects[0]
+  // — the consumer renders one frame earlier with effectiveActiveProjectId
+  // resolving to the same fallback, so the flat query has to fire on that
+  // same frame or the project briefly renders as "no servers". Falling back
+  // to remoteProjects[0] mirrors what the auto-set effect would land on.
+  const resolvedActiveProjectIdForServers = shouldTreatRemoteProjectsAsEmpty
+    ? null
+    : (convexActiveProjectId ?? remoteProjects?.[0]?._id ?? null);
+
   const { servers: activeProjectServersFlat, isLoading: isLoadingServers } =
     useProjectServers({
-      projectId: shouldTreatRemoteProjectsAsEmpty
-        ? null
-        : convexActiveProjectId,
+      projectId: resolvedActiveProjectIdForServers,
       isAuthenticated,
     });
 
@@ -388,13 +405,17 @@ export function useProjectState({
       remoteProjects.map((rw) => {
         let deserializedServers: Project["servers"] = {};
 
-        if (
-          rw._id === convexActiveProjectId &&
-          activeProjectServersFlat !== undefined
-        ) {
-          deserializedServers = deserializeServersFromConvex(
-            activeProjectServersFlat,
-          );
+        if (rw._id === resolvedActiveProjectIdForServers) {
+          // Active project: flat servers table is authoritative. While the
+          // flat query is in flight, leave servers empty rather than falling
+          // through to rw.servers — the embedded map is vestigial and is
+          // {} for guest projects, which would render as "no servers" until
+          // the flat list arrives. Consumers gate on isLoadingRemoteProjects.
+          if (activeProjectServersFlat !== undefined) {
+            deserializedServers = deserializeServersFromConvex(
+              activeProjectServersFlat,
+            );
+          }
         } else if (rw.servers) {
           deserializedServers = deserializeServersFromConvex(rw.servers);
         }
@@ -418,7 +439,7 @@ export function useProjectState({
         ];
       }),
     );
-  }, [remoteProjects, convexActiveProjectId, activeProjectServersFlat]);
+  }, [remoteProjects, resolvedActiveProjectIdForServers, activeProjectServersFlat]);
 
   useEffect(() => {
     if (pendingClientConfigSyncRef.current.size === 0) {
@@ -639,12 +660,6 @@ export function useProjectState({
           return;
         }
 
-        const savedActiveId = localStorage.getItem("convex-active-project-id");
-        if (savedActiveId && convexProjects[savedActiveId]) {
-          setConvexActiveProjectId(savedActiveId);
-          return;
-        }
-
         setConvexActiveProjectId(remoteProjects[0]._id);
       }
     }
@@ -669,9 +684,22 @@ export function useProjectState({
       return;
     }
     activeProjectActorKeyRef.current = currentActorKey;
-    setConvexActiveProjectId(readStoredActiveProjectId(currentActorKey));
+    if (isGuestActor) {
+      setConvexActiveProjectId(null);
+    } else {
+      setConvexActiveProjectId(readStoredActiveProjectId(currentActorKey));
+    }
     setHasHydratedActiveProject(currentActorKey != null);
-  }, [currentActorKey]);
+  }, [currentActorKey, isGuestActor]);
+
+  // Guests never persist an active-project selection. Any per-actor entry
+  // sitting in localStorage (from older code paths) is dead weight that can
+  // only drive useProjectServers to query a project this actor doesn't own.
+  useEffect(() => {
+    if (!isGuestActor) return;
+    if (!currentActorKey) return;
+    clearGuestActiveProjectStorage(currentActorKey);
+  }, [isGuestActor, currentActorKey, clearGuestActiveProjectStorage]);
 
   useEffect(() => {
     if (!hasHydratedActiveProject) {
@@ -680,8 +708,14 @@ export function useProjectState({
     if (activeProjectActorKeyRef.current !== currentActorKey) {
       return;
     }
+    if (isGuestActor) return;
     writeStoredActiveProjectId(currentActorKey, convexActiveProjectId);
-  }, [convexActiveProjectId, currentActorKey, hasHydratedActiveProject]);
+  }, [
+    convexActiveProjectId,
+    currentActorKey,
+    hasHydratedActiveProject,
+    isGuestActor,
+  ]);
 
   useEffect(() => {
     if (!isAuthenticated || useLocalFallback) {
