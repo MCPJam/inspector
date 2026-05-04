@@ -36,7 +36,6 @@ import { XAAFlowTab } from "./components/xaa/XAAFlowTab";
 import { ErrorBoundary } from "./components/ui/error-boundary";
 import { AppBuilderTab } from "./components/ui-playground/AppBuilderTab";
 import { EmptyState } from "./components/ui/empty-state";
-import { isFirstRunEligible } from "./lib/onboarding-state";
 import { ProfileTab } from "./components/ProfileTab";
 import { BillingUpsellGate } from "./components/billing/BillingUpsellGate";
 import { OrganizationsTab } from "./components/OrganizationsTab";
@@ -839,7 +838,6 @@ export default function App() {
   const activeOrganizationName = effectiveOrganizations.find(
     (org) => org._id === activeOrganizationId
   )?.name;
-  const hasAnyProjectServers = Object.keys(projectServers).length > 0;
   const hostedShellGateState = resolveHostedShellGateState({
     hostedMode: HOSTED_MODE,
     nonProdLockdown: NON_PROD_LOCKDOWN,
@@ -877,7 +875,6 @@ export default function App() {
   const pendingDashboardOAuthMessage = pendingDashboardOAuth
     ? `Finishing OAuth sign-in for ${pendingDashboardOAuth.serverName}...`
     : undefined;
-  const isOnboardingDecisionReady = hostedShellGateState === "ready";
   const isHostedDefaultRoute = currentHashRoute.normalizedTab === "servers";
   const shouldHoldHostedDefaultRouteForAuth =
     HOSTED_MODE &&
@@ -1430,32 +1427,6 @@ export default function App() {
     window.addEventListener("hashchange", applyHash);
     return () => window.removeEventListener("hashchange", applyHash);
   }, [applyNavigation, isHostedChatRoute]);
-
-  useLayoutEffect(() => {
-    if (isHostedChatRoute) {
-      return;
-    }
-
-    if (!isOnboardingDecisionReady) {
-      return;
-    }
-
-    if (
-      isFirstRunEligible(
-        hasAnyProjectServers,
-        window.location.hash,
-        isAuthenticated
-      )
-    ) {
-      applyNavigation("app-builder", { updateHash: true });
-    }
-  }, [
-    applyNavigation,
-    hasAnyProjectServers,
-    isAuthenticated,
-    isOnboardingDecisionReady,
-    isHostedChatRoute,
-  ]);
 
   const consumeCheckoutIntent = useCallback(() => {
     clearPersistedCheckoutIntent();
