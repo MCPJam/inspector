@@ -383,8 +383,6 @@ export function SidebarContextSwitcher({
                     ) : (
                       sortedOrganizations.map((org) => {
                         const tint = getOrgTint(org._id);
-                        const isOrgAdmin =
-                          org.myRole === "owner" || org.myRole === "admin";
                         return (
                           <div
                             key={org._id}
@@ -427,7 +425,7 @@ export function SidebarContextSwitcher({
                             <span className="flex-1 truncate font-medium">
                               {org.name}
                             </span>
-                            {isOrgAdmin && onSwitchOrganization ? (
+                            {onSwitchOrganization ? (
                               <button
                                 type="button"
                                 aria-label={`Open ${org.name} settings`}
@@ -437,7 +435,7 @@ export function SidebarContextSwitcher({
                                   onSwitchOrganization(org._id, "overview");
                                   setMenuOpen(false);
                                 }}
-                                className="opacity-0 group-hover/org:opacity-100 focus:opacity-100 focus-visible:opacity-100 transition-opacity p-0.5 rounded hover:text-foreground text-muted-foreground"
+                                className="p-0.5 rounded text-muted-foreground/70 hover:text-foreground hover:bg-muted transition-colors"
                               >
                                 <Settings className="size-3.5" />
                               </button>
