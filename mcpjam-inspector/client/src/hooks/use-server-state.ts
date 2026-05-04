@@ -308,7 +308,7 @@ function buildResolvedOAuthProfile(input: {
 
 function buildOAuthProfileFromFormData(
   formData: ServerFormData,
-  existingProfile?: OAuthTestProfile,
+  existingProfile?: OAuthTestProfile
 ): OAuthTestProfile | undefined {
   if (formData.type !== "http" || !formData.useOAuth || !formData.url) {
     return undefined;
@@ -319,8 +319,7 @@ function buildOAuthProfileFromFormData(
       ? formData.oauthProtocolMode
       : existingProfile?.protocolVersion ?? "2025-11-25";
   const registrationStrategy =
-    formData.oauthRegistrationMode &&
-    formData.oauthRegistrationMode !== "auto"
+    formData.oauthRegistrationMode && formData.oauthRegistrationMode !== "auto"
       ? formData.oauthRegistrationMode
       : existingProfile?.registrationStrategy ??
         (formData.clientId || formData.clientSecret || formData.hasClientSecret
@@ -560,9 +559,12 @@ export function useServerState({
       }
 
       const returnHash = window.location.hash || "#servers";
+      const organizationId =
+        effectiveProjects[effectiveActiveProjectId]?.organizationId ?? null;
       clearHostedOAuthPendingState();
       writeHostedOAuthPendingMarker({
         surface: "project",
+        organizationId,
         projectId: effectiveActiveProjectId,
         serverId: params.serverId,
         serverName: params.serverName,
@@ -573,7 +575,7 @@ export function useServerState({
       localStorage.setItem("mcp-oauth-return-hash", returnHash);
       return true;
     },
-    [effectiveActiveProjectId, isAuthenticated]
+    [effectiveActiveProjectId, effectiveProjects, isAuthenticated]
   );
 
   const activeProject = useMemo(() => {
@@ -773,7 +775,7 @@ export function useServerState({
     async (
       serverName: string,
       serverEntry: ServerWithName,
-      secretOptions?: { clientSecret?: string; clearClientSecret?: boolean },
+      secretOptions?: { clientSecret?: string; clearClientSecret?: boolean }
     ): Promise<string | undefined> => {
       const latestUseLocalFallback = useLocalFallbackRef.current;
       const latestIsAuthenticated = isAuthenticatedRef.current;
@@ -794,7 +796,7 @@ export function useServerState({
       const clearClientSecret = secretOptions?.clearClientSecret === true;
       if (clientSecret && clearClientSecret) {
         throw new Error(
-          "Cannot replace and clear the OAuth client secret in the same save.",
+          "Cannot replace and clear the OAuth client secret in the same save."
         );
       }
       const hasSecretOperation = Boolean(clientSecret || clearClientSecret);
@@ -917,7 +919,7 @@ export function useServerState({
       convexUpdateServerWithClientSecret,
       convexCreateServerWithClientSecret,
       logger,
-    ],
+    ]
   );
 
   const persistRuntimeServerToProjectIfNeeded = useCallback(
@@ -1301,7 +1303,9 @@ export function useServerState({
       return {
         clientId,
         clientSecret: formData.clientSecret,
-        hasClientSecret: Boolean(formData.clientSecret || formData.hasClientSecret),
+        hasClientSecret: Boolean(
+          formData.clientSecret || formData.hasClientSecret
+        ),
         registryServerId: formData.registryServerId,
         scopes,
         useRegistryOAuthProxy: Boolean(clientId && formData.registryServerId),
@@ -1647,18 +1651,20 @@ export function useServerState({
       const existingServerForSave = appState.servers[formData.name];
       const formOAuthProfile = buildOAuthProfileFromFormData(
         formData,
-        existingServerForSave?.oauthFlowProfile,
+        existingServerForSave?.oauthFlowProfile
       );
       const nextHasClientSecret =
         formData.useOAuth && !formData.clearClientSecret
           ? Boolean(
               formData.clientSecret ||
                 formData.hasClientSecret ||
-                existingServerForSave?.hasClientSecret,
+                existingServerForSave?.hasClientSecret
             )
           : false;
       const clientSecretSyncOptions = {
-        ...(formData.clientSecret ? { clientSecret: formData.clientSecret } : {}),
+        ...(formData.clientSecret
+          ? { clientSecret: formData.clientSecret }
+          : {}),
         ...(formData.clearClientSecret ? { clearClientSecret: true } : {}),
       };
 
@@ -1678,7 +1684,7 @@ export function useServerState({
           const serverId = await syncServerToConvex(
             formData.name,
             serverEntryForSave,
-            clientSecretSyncOptions,
+            clientSecretSyncOptions
           );
           if (serverId) {
             hostedServerId = serverId;
@@ -1694,7 +1700,7 @@ export function useServerState({
         syncServerToConvex(
           formData.name,
           serverEntryForSave,
-          clientSecretSyncOptions,
+          clientSecretSyncOptions
         ).catch((err) =>
           logger.warn("Background sync to Convex failed (pre-connection)", {
             serverName: formData.name,
@@ -1986,7 +1992,7 @@ export function useServerState({
         ? options?.oauthProfile ??
           buildOAuthProfileFromFormData(
             formData,
-            existingServer?.oauthFlowProfile,
+            existingServer?.oauthFlowProfile
           ) ??
           existingServer?.oauthFlowProfile
         : undefined;
@@ -1995,7 +2001,7 @@ export function useServerState({
           ? Boolean(
               formData.clientSecret ||
                 formData.hasClientSecret ||
-                existingServer?.hasClientSecret,
+                existingServer?.hasClientSecret
             )
           : false;
 
@@ -2560,7 +2566,7 @@ export function useServerState({
             server.oauthTokens?.client_secret ||
               server.oauthFlowProfile?.clientSecret ||
               storedClientCredentials.clientSecret ||
-              server.hasClientSecret,
+              server.hasClientSecret
           ),
           customHeaders: mergeWithProjectHeaders(
             profileHeaders ??

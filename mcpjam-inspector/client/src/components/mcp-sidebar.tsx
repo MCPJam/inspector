@@ -47,7 +47,7 @@ import { useAuth } from "@workos-inc/authkit-react";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { MCPIcon } from "@/components/ui/mcp-icon";
 import { SidebarUser } from "@/components/sidebar/sidebar-user";
-import { SidebarProjectSelector } from "@/components/sidebar/sidebar-project-selector";
+import { SidebarContextSwitcher } from "@/components/sidebar/sidebar-context-switcher";
 import { ShareProjectDialog } from "@/components/project/ShareProjectDialog";
 import { useUpdateNotification } from "@/hooks/useUpdateNotification";
 import { Badge } from "@mcpjam/design-system/badge";
@@ -339,6 +339,7 @@ interface MCPSidebarProps extends React.ComponentProps<typeof Sidebar> {
     organizationId: string,
     section?: OrganizationRouteSection,
   ) => void;
+  onSwitchActiveOrganization?: (organizationId: string) => void;
   onProjectShared?: (
     sharedProjectId: string,
     sourceProjectId?: string,
@@ -527,6 +528,7 @@ export function MCPSidebar({
   activeOrganizationId,
   activeOrganizationName,
   onSwitchOrganization,
+  onSwitchActiveOrganization,
   onProjectShared,
   billingGateDenied = {},
   billingGateEnforcementActive = false,
@@ -681,7 +683,7 @@ export function MCPSidebar({
               </Button>
             </div>
           )}
-          <SidebarProjectSelector
+          <SidebarContextSwitcher
             activeProjectId={activeProjectId}
             projects={projects}
             onSwitchProject={onSwitchProject}
@@ -694,6 +696,9 @@ export function MCPSidebar({
             onLearnMoreExpand={
               learnMoreEnabled ? learnMore.openExpandedModal : undefined
             }
+            activeOrganizationId={activeOrganizationId}
+            onSwitchOrganization={onSwitchOrganization}
+            onSwitchActiveOrganization={onSwitchActiveOrganization}
           />
         </SidebarHeader>
         <SidebarContent>
@@ -752,10 +757,7 @@ export function MCPSidebar({
               </SidebarMenuItem>
             </SidebarMenu>
           ) : null}
-          <SidebarUser
-            activeOrganizationId={activeOrganizationId}
-            onSwitchOrganization={onSwitchOrganization}
-          />
+          <SidebarUser />
         </SidebarFooter>
       </Sidebar>
       {shouldShowInviteCta && user && activeProject ? (

@@ -1203,6 +1203,77 @@ describe("App hosted OAuth callback handling", () => {
     });
   });
 
+  it("preserves the org models section when switching active organization", async () => {
+    clearHostedOAuthPendingState();
+    clearChatboxSession();
+    window.history.replaceState({}, "", "/#organizations/org-a/models");
+
+    const setActiveOrganizationIdSpy = vi.fn();
+    (mockUseAppState as any).mockImplementation(() => {
+      const [activeOrganizationId, setActiveOrganizationId] = useState<
+        string | undefined
+      >("org-a");
+
+      return {
+        ...createAppStateMock(),
+        activeOrganizationId,
+        setActiveOrganizationId: (organizationId: string | undefined) => {
+          setActiveOrganizationIdSpy(organizationId);
+          setActiveOrganizationId(organizationId);
+        },
+      };
+    });
+    (mockUseQuery as any).mockImplementation((name: string) => {
+      if (name === "organizations:getMyOrganizations") {
+        return [
+          {
+            _id: "org-a",
+            name: "Org A",
+            updatedAt: 1,
+            createdAt: 1,
+            createdBy: "user-1",
+            myRole: "owner",
+          },
+          {
+            _id: "org-b",
+            name: "Org B",
+            updatedAt: 2,
+            createdAt: 2,
+            createdBy: "user-1",
+            myRole: "owner",
+          },
+        ];
+      }
+
+      return undefined;
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(mockMCPSidebar).toHaveBeenCalled();
+    });
+
+    const getLastSidebarProps = () => {
+      const lastCall =
+        mockMCPSidebar.mock.calls[mockMCPSidebar.mock.calls.length - 1];
+      return lastCall?.[0] as unknown as {
+        activeOrganizationId?: string;
+        onSwitchActiveOrganization?: (organizationId: string) => void;
+      };
+    };
+
+    act(() => {
+      getLastSidebarProps().onSwitchActiveOrganization?.("org-b");
+    });
+
+    await waitFor(() => {
+      expect(setActiveOrganizationIdSpy).toHaveBeenCalledWith("org-b");
+      expect(getLastSidebarProps().activeOrganizationId).toBe("org-b");
+      expect(window.location.hash).toBe("#organizations/org-b/models");
+    });
+  });
+
   it("disables sidebar project creation when the routed org is free and at cap", async () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
