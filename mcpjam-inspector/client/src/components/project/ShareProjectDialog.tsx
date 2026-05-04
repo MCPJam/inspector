@@ -615,6 +615,7 @@ export function ShareProjectDialog({
                         onClick={() => {
                           if (selectedProject.organizationId) {
                             window.location.hash = `organizations/${selectedProject.organizationId}/billing`;
+                            onClose();
                           }
                         }}
                       >

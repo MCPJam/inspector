@@ -348,7 +348,7 @@ describe("SidebarContextSwitcher", () => {
     expect(onSwitchOrganization).toHaveBeenCalledWith("org_a", "overview");
   });
 
-  it("only renders the gear icon (in the popover) for orgs where the user is admin or owner", () => {
+  it("renders the gear icon for every org in the popover regardless of role", () => {
     render(
       <SidebarContextSwitcher
         activeProjectId="p1"
@@ -367,8 +367,8 @@ describe("SidebarContextSwitcher", () => {
       within(popover).getByRole("button", { name: "Open Acme settings" })
     ).toBeInTheDocument();
     expect(
-      within(popover).queryByRole("button", { name: "Open Nimbus settings" })
-    ).not.toBeInTheDocument();
+      within(popover).getByRole("button", { name: "Open Nimbus settings" })
+    ).toBeInTheDocument();
   });
 
   it("renders an always-visible org settings gear next to the chevron when the user is admin/owner of the active org", () => {

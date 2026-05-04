@@ -504,7 +504,7 @@ describe("ChatboxesTab", () => {
     ).toBeInTheDocument();
     expect(
       screen.getByText(
-        "Team includes 3 chatboxes per project and 100 members, from $296/mo (4-seat minimum).",
+        "Team includes 3 chatboxes per project and 100 members, from $296/mo.",
       ),
     ).toBeInTheDocument();
     expect(
