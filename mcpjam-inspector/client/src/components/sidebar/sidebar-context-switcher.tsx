@@ -128,7 +128,8 @@ export function SidebarContextSwitcher({
 }: SidebarContextSwitcherProps) {
   const { isMobile } = useSidebar();
   const { isAuthenticated } = useConvexAuth();
-  const { sortedOrganizations } = useOrganizationQueries({ isAuthenticated });
+  const { sortedOrganizations, canCreateOrganization } =
+    useOrganizationQueries({ isAuthenticated });
 
   const [menuOpen, setMenuOpen] = useState(false);
   const [chipPopoverOpen, setChipPopoverOpen] = useState(false);
@@ -269,19 +270,31 @@ export function SidebarContextSwitcher({
               <div className="relative px-1.5 pt-2 pb-1">
                 <div className="flex items-center justify-between px-2 pb-1.5">
                   <span className={SECTION_LABEL_CLASS}>Organization</span>
-                  <button
-                    type="button"
-                    aria-label="New organization"
-                    title="New organization"
-                    onClick={() => {
-                      setShowCreateOrgDialog(true);
-                      setChipPopoverOpen(false);
-                      setMenuOpen(false);
-                    }}
-                    className="p-0.5 rounded text-muted-foreground/70 hover:text-foreground hover:bg-muted transition-colors"
-                  >
-                    <Plus className="size-3.5" />
-                  </button>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span className="inline-flex">
+                        <button
+                          type="button"
+                          aria-label="New organization"
+                          disabled={!canCreateOrganization}
+                          onClick={() => {
+                            if (!canCreateOrganization) return;
+                            setShowCreateOrgDialog(true);
+                            setChipPopoverOpen(false);
+                            setMenuOpen(false);
+                          }}
+                          className="p-0.5 rounded text-muted-foreground/70 hover:text-foreground hover:bg-muted transition-colors disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-muted-foreground/70 disabled:cursor-not-allowed"
+                        >
+                          <Plus className="size-3.5" />
+                        </button>
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent side="top" sideOffset={6}>
+                      {canCreateOrganization
+                        ? "New organization"
+                        : "You can only create up to 2 organizations."}
+                    </TooltipContent>
+                  </Tooltip>
                 </div>
                 <div
                   className="flex items-center gap-1 rounded-lg hover:bg-accent transition-colors"
