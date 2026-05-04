@@ -830,9 +830,7 @@ describe("mcp-oauth", () => {
           },
         })
       );
-      mockDiscoverOAuthServerInfo.mockResolvedValueOnce(
-        createLinearDiscoveryState()
-      );
+      mockDiscoverOAuthServerInfo.mockResolvedValue(createLinearDiscoveryState());
       mockRegisterClient.mockImplementationOnce(
         async (_authServerUrl, options) => {
           const registrationBody = JSON.stringify({
@@ -888,9 +886,7 @@ describe("mcp-oauth", () => {
 
   describe("persisted discovery state", () => {
     it("explains why automatic mode resolved to DCR when CIMD support was not advertised", async () => {
-      mockDiscoverOAuthServerInfo.mockResolvedValueOnce(
-        createAsanaDiscoveryState()
-      );
+      mockDiscoverOAuthServerInfo.mockResolvedValue(createAsanaDiscoveryState());
 
       const { initiateOAuth } = await import("../mcp-oauth");
       const result = await initiateOAuth({
@@ -971,6 +967,7 @@ describe("mcp-oauth", () => {
     });
 
     it("keeps live oauth traces in memory while preserving redirect resume state", async () => {
+      mockDiscoverOAuthServerInfo.mockResolvedValue(createAsanaDiscoveryState());
       const { initiateOAuth } = await import("../mcp-oauth");
 
       const result = await initiateOAuth({
@@ -1151,8 +1148,8 @@ describe("mcp-oauth", () => {
     });
 
     it("reuses cached discovery state after the callback reload", async () => {
-      const discoveryState = createDiscoveryState();
-      mockDiscoverOAuthServerInfo.mockResolvedValueOnce(discoveryState);
+      const discoveryState = createAsanaDiscoveryState();
+      mockDiscoverOAuthServerInfo.mockResolvedValue(discoveryState);
       mockStartAuthorization.mockResolvedValueOnce({
         authorizationUrl: new URL("https://auth.example.com/authorize"),
         codeVerifier: "code-verifier",
@@ -1316,9 +1313,7 @@ describe("mcp-oauth", () => {
         throw new Error(`Unexpected direct fetch to ${url}`);
       });
 
-      mockDiscoverOAuthServerInfo.mockResolvedValueOnce(
-        createAsanaDiscoveryState()
-      );
+      mockDiscoverOAuthServerInfo.mockResolvedValue(createAsanaDiscoveryState());
       mockFetchToken.mockImplementationOnce(
         async (_provider, authServerUrl, options) => {
           expect(authServerUrl).toBe("https://app.asana.com");
@@ -1397,9 +1392,7 @@ describe("mcp-oauth", () => {
         })
       );
 
-      mockDiscoverOAuthServerInfo.mockResolvedValueOnce(
-        createAsanaDiscoveryState()
-      );
+      mockDiscoverOAuthServerInfo.mockResolvedValue(createAsanaDiscoveryState());
       mockRegisterClient.mockResolvedValueOnce({
         client_id: "new-client-id",
       });
@@ -1539,6 +1532,42 @@ describe("mcp-oauth", () => {
           }),
         })
       );
+    });
+
+    it("rejects cross-origin resource metadata during callback completion", async () => {
+      const maliciousDiscoveryState = {
+        ...createAsanaDiscoveryState(),
+        resourceMetadata: {
+          ...createAsanaDiscoveryState().resourceMetadata,
+          resource: "https://evil.example/mcp",
+        },
+      };
+      localStorage.setItem("mcp-oauth-pending", "asana");
+      localStorage.setItem(
+        "mcp-serverUrl-asana",
+        "https://mcp.asana.com/v2/mcp"
+      );
+      localStorage.setItem(
+        "mcp-client-asana",
+        JSON.stringify({ client_id: "asana-client-id" })
+      );
+      localStorage.setItem("mcp-verifier-asana", "test-verifier");
+      localStorage.setItem(
+        "mcp-discovery-asana",
+        JSON.stringify({
+          serverUrl: "https://mcp.asana.com/v2/mcp",
+          discoveryState: maliciousDiscoveryState,
+        })
+      );
+
+      const { handleOAuthCallback } = await import("../mcp-oauth");
+      const callbackResult = await handleOAuthCallback("oauth-code");
+
+      expect(callbackResult.success).toBe(false);
+      expect(callbackResult.error).toContain(
+        "Rejected cross-origin OAuth resource indicator"
+      );
+      expect(mockExchangeAuthorization).not.toHaveBeenCalled();
     });
 
     it("uses the generic Inspector OAuth proxy for Asana when stored config is missing the preregistered flag", async () => {

@@ -1559,6 +1559,25 @@ function isOAuthResourceIndicatorAllowed(input: {
   }
 }
 
+function assertOAuthResourceIndicatorAllowed(input: {
+  serverUrl: string;
+  resource: string;
+  source: string;
+}): void {
+  if (
+    isOAuthResourceIndicatorAllowed({
+      serverUrl: input.serverUrl,
+      resource: input.resource,
+    })
+  ) {
+    return;
+  }
+
+  throw new Error(
+    `Rejected cross-origin OAuth resource indicator from ${input.source}.`
+  );
+}
+
 function readOAuthResourceFromMetadata(
   resourceMetadata?: { resource?: unknown } | null
 ): string | undefined {
@@ -1579,6 +1598,11 @@ function resolveOAuthResourceUrl(input: {
     input.authorizationUrl
   );
   if (requestedFromAuth) {
+    assertOAuthResourceIndicatorAllowed({
+      serverUrl: input.serverUrl,
+      resource: requestedFromAuth,
+      source: "authorization URL",
+    });
     return canonicalizeOAuthResourceUrl(requestedFromAuth);
   }
 
@@ -1589,13 +1613,12 @@ function resolveOAuthResourceUrl(input: {
   const advertisedResource = readOAuthResourceFromMetadata(
     input.resourceMetadata
   );
-  if (
-    advertisedResource &&
-    isOAuthResourceIndicatorAllowed({
+  if (advertisedResource) {
+    assertOAuthResourceIndicatorAllowed({
       serverUrl: input.serverUrl,
       resource: advertisedResource,
-    })
-  ) {
+      source: "protected resource metadata",
+    });
     return canonicalizeOAuthResourceUrl(advertisedResource);
   }
 

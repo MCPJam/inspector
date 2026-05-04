@@ -1078,8 +1078,10 @@ export default function App() {
   }, [navPremiumness]);
   const billingGateEnforcementActive =
     billingUiEnabled && isBillingEnforcementActive(navPremiumness);
+  const isGuestProjectActor =
+    currentUser?.isAnonymous === true || (!workOsUser && !isWorkOsLoading);
   const guestProjectLimitReached =
-    !isAuthenticated && Object.keys(projects).length >= 1;
+    isGuestProjectActor && Object.keys(projects).length >= 1;
   const noOrganizationsAvailable =
     isAuthenticated &&
     !isLoadingOrganizations &&
