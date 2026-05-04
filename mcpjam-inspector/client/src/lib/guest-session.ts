@@ -33,6 +33,27 @@ let legacyMigrationConsumed = false;
 // from a request that was started before the bump cannot resurrect a stale
 // token by overwriting cachedSession.
 let sessionGeneration = 0;
+const sessionListeners = new Set<() => void>();
+
+function setCachedSession(session: GuestSession | null): void {
+  const previousGuestId = cachedSession?.guestId ?? null;
+  cachedSession = session;
+  const nextGuestId = cachedSession?.guestId ?? null;
+  if (previousGuestId !== nextGuestId) {
+    for (const listener of sessionListeners) {
+      listener();
+    }
+  }
+}
+
+export function subscribeGuestSessionChanges(
+  listener: () => void,
+): () => void {
+  sessionListeners.add(listener);
+  return () => {
+    sessionListeners.delete(listener);
+  };
+}
 
 function consumeLegacyToken(): string | null {
   if (legacyMigrationConsumed) return null;
@@ -156,7 +177,7 @@ export async function getOrCreateGuestSession(): Promise<GuestSession | null> {
         legacyToken,
       );
       if (session && generation === sessionGeneration) {
-        cachedSession = session;
+        setCachedSession(session);
       }
       return session;
     } catch (error) {
@@ -221,7 +242,7 @@ export async function getExistingGuestBearerToken(): Promise<string | null> {
     try {
       const session = await requestGuestSession("lookup_only", legacyToken);
       if (session && generation === sessionGeneration) {
-        cachedSession = session;
+        setCachedSession(session);
       }
       return session;
     } finally {
@@ -247,7 +268,7 @@ export async function getExistingGuestBearerToken(): Promise<string | null> {
  */
 export function clearGuestSession(): void {
   sessionGeneration += 1;
-  cachedSession = null;
+  setCachedSession(null);
   inFlightRequest = null;
   inFlightLookupOnly = null;
   forceRefreshInFlight = null;
@@ -314,7 +335,7 @@ export async function forceRefreshGuestSession(): Promise<string | null> {
         legacyToken,
       );
       if (session && generation === sessionGeneration) {
-        cachedSession = session;
+        setCachedSession(session);
       }
       return session;
     } catch (error) {

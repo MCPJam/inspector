@@ -3,6 +3,7 @@ import { useAuth } from "@workos-inc/authkit-react";
 import {
   getCachedGuestSession,
   getOrCreateGuestSession,
+  subscribeGuestSessionChanges,
 } from "@/lib/guest-session";
 
 /**
@@ -22,7 +23,13 @@ export function useActorKey(): string | null {
   );
 
   useEffect(() => {
-    if (isLoading || user) return;
+    return subscribeGuestSessionChanges(() => {
+      setGuestId(getCachedGuestSession()?.guestId ?? null);
+    });
+  }, []);
+
+  useEffect(() => {
+    if (isLoading || user || guestId) return;
     let cancelled = false;
     void getOrCreateGuestSession().then((session) => {
       if (cancelled) return;
@@ -31,7 +38,7 @@ export function useActorKey(): string | null {
     return () => {
       cancelled = true;
     };
-  }, [isLoading, user]);
+  }, [guestId, isLoading, user]);
 
   if (user?.id) return user.id;
   if (isLoading) return null;

@@ -5,7 +5,8 @@ import * as Sentry from "@sentry/react";
 import {
   getExistingGuestBearerToken,
   revokeGuestSessionAndCookie,
-} from "../lib/guest-session";
+} from "@/lib/guest-session";
+import { useActorKey } from "@/hooks/use-actor-key";
 
 /**
  * Ensure the current Convex-authenticated identity has a row in `users`.
@@ -23,11 +24,10 @@ import {
 export function useEnsureDbUser() {
   const { user } = useAuth();
   const { isAuthenticated, isLoading } = useConvexAuth();
+  const actorKey = useActorKey();
   const ensureUser = useMutation("users:ensureUser" as any);
-  // Tracks the identity (WorkOS id, or "__guest__" for guest sessions) we
-  // last ensured for. We don't have the guest's external id on the client,
-  // so a single sentinel is enough — guest identity rotation triggers a
-  // fresh app load anyway.
+  // Tracks the identity we last ensured for. Guest rows are keyed by the
+  // cookie-backed guest id so in-tab guest rotation re-runs ensureUser.
   const lastEnsuredIdentityRef = useRef<string | null>(null);
   const [isEnsuringUser, setIsEnsuringUser] = useState(false);
 
@@ -49,7 +49,16 @@ export function useEnsureDbUser() {
       return;
     }
 
-    const identityKey = user?.id ?? "__guest__";
+    const identityKey = user?.id
+      ? `workos:${user.id}`
+      : actorKey
+        ? `guest:${actorKey}`
+        : null;
+    if (!identityKey) {
+      setIsEnsuringUser(false);
+      return;
+    }
+
     if (lastEnsuredIdentityRef.current === identityKey) {
       setIsEnsuringUser(false);
       return;
@@ -116,7 +125,7 @@ export function useEnsureDbUser() {
     return () => {
       cancelled = true;
     };
-  }, [isAuthenticated, isLoading, user, ensureUser]);
+  }, [actorKey, isAuthenticated, isLoading, user, ensureUser]);
 
   return { isEnsuringUser };
 }

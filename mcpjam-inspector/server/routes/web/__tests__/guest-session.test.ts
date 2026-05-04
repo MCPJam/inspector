@@ -85,7 +85,10 @@ describe("POST /guest-session", () => {
 
   describe("token issuance", () => {
     it("returns 200 with guestId, token, and expiresAt", async () => {
-      const res = await app.request("/guest-session", { method: "POST" });
+      const res = await app.request("/guest-session", {
+        method: "POST",
+        headers: { "x-forwarded-for": "203.0.113.10" },
+      });
 
       expect(res.status).toBe(200);
 
@@ -99,7 +102,10 @@ describe("POST /guest-session", () => {
     });
 
     it("returns a UUID guestId", async () => {
-      const res = await app.request("/guest-session", { method: "POST" });
+      const res = await app.request("/guest-session", {
+        method: "POST",
+        headers: { "x-forwarded-for": "203.0.113.10" },
+      });
       const data = await res.json();
 
       expect(data.guestId).toMatch(
@@ -281,7 +287,10 @@ describe("POST /guest-session", () => {
         ),
       ) as typeof fetch;
 
-      const res = await app.request("/guest-session", { method: "POST" });
+      const res = await app.request("/guest-session", {
+        method: "POST",
+        headers: { "x-forwarded-for": "203.0.113.10" },
+      });
       const data = await res.json();
 
       expect(res.status).toBe(200);
@@ -395,6 +404,17 @@ describe("POST /guest-session", () => {
         headers: { "x-real-ip": "10.0.0.8" },
       });
       expect(res.status).toBe(429);
+    });
+
+    it("fails closed in production when no client IP header is available", async () => {
+      process.env.NODE_ENV = "production";
+
+      const res = await app.request("/guest-session", { method: "POST" });
+
+      expect(res.status).toBe(429);
+      const data = await res.json();
+      expect(data.code).toBe("RATE_LIMITED");
+      expect(global.fetch).not.toHaveBeenCalled();
     });
   });
 });

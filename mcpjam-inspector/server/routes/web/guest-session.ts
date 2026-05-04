@@ -26,12 +26,17 @@ setInterval(() => {
   }
 }, 5 * 60_000).unref();
 
-function getClientIp(c: any): string {
-  return (
-    c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ||
-    c.req.header("x-real-ip") ||
-    "unknown"
-  );
+function getClientIp(c: any): string | null {
+  const forwardedFor = c.req.header("x-forwarded-for")?.split(",")[0]?.trim();
+  if (forwardedFor) return forwardedFor;
+
+  const realIp = c.req.header("x-real-ip")?.trim();
+  if (realIp) return realIp;
+
+  const cfConnectingIp = c.req.header("cf-connecting-ip")?.trim();
+  if (cfConnectingIp) return cfConnectingIp;
+
+  return null;
 }
 
 const GUEST_SESSION_COOKIE_NAME = "__Host-mcpjam_guest_session";
@@ -109,10 +114,21 @@ guestSession.post("/", async (c) => {
   }
 
   const ip = getClientIp(c);
+  if (!ip && process.env.NODE_ENV === "production") {
+    return c.json(
+      {
+        code: ErrorCode.RATE_LIMITED,
+        message:
+          "Unable to determine client IP for guest session rate limiting.",
+      },
+      429,
+    );
+  }
+  const rateLimitKey = ip ?? "local-dev";
   const now = Date.now();
 
   // Check rate limit
-  const entry = ipWindows.get(ip);
+  const entry = ipWindows.get(rateLimitKey);
   if (entry) {
     if (now - entry.windowStart < IP_WINDOW_MS) {
       if (entry.count >= IP_RATE_LIMIT) {
@@ -131,7 +147,7 @@ guestSession.post("/", async (c) => {
       entry.windowStart = now;
     }
   } else {
-    ipWindows.set(ip, { count: 1, windowStart: now });
+    ipWindows.set(rateLimitKey, { count: 1, windowStart: now });
   }
 
   let body: GuestSessionRequestBody = {};
