@@ -946,7 +946,7 @@ export function useChatSession({
   const initialTemperature = executionConfig?.temperature ?? 0.7;
   const initialRequireToolApproval =
     executionConfig?.requireToolApproval ?? false;
-  const { getAccessToken } = useAuth();
+  const { getAccessToken, user: workOsUser } = useAuth();
 
   // Store onReset in a ref to avoid triggering effects when the callback changes identity
   const onResetRef = useRef(onReset);
@@ -1818,9 +1818,14 @@ export function useChatSession({
       } else if (
         !resolved &&
         active &&
-        !isAuthenticated &&
         HOSTED_MODE &&
-        (!hostedProjectId || !!hostedShareToken || !!hostedChatboxToken)
+        // Real WorkOS users go through the WorkOS branch above; reaching here
+        // with no `workOsUser` means we're a guest. `useConvexAuth().isAuthenticated`
+        // can't be the gate because `useUnifiedConvexAuth` hands Convex a
+        // placeholder user for guests, making isAuthenticated true for them.
+        // The previous archetype filter (no projectId / share / chatbox) also
+        // excluded the new "guest owns a project" shape, so it's dropped.
+        !workOsUser
       ) {
         const guestToken = await getGuestBearerToken();
         if (!active) return;
@@ -1887,6 +1892,7 @@ export function useChatSession({
     hostedChatboxToken,
     hostedProjectId,
     isAuthenticated,
+    workOsUser,
     clearPendingSessionHydration,
     setMessages,
     syncResumedVersion,
