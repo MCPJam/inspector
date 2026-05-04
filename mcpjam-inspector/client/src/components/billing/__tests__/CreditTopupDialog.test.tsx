@@ -57,7 +57,7 @@ describe("CreditTopupDialog", () => {
     expect(screen.getByRole("radio", { name: "$20" })).toBeInTheDocument();
   });
 
-  it("auto-selects the first preset and shows the fee copy without dollar amounts", () => {
+  it("auto-selects the first preset without surfacing fee or credited dollar amounts", () => {
     render(
       <CreditTopupDialog
         open
@@ -72,11 +72,13 @@ describe("CreditTopupDialog", () => {
       "aria-checked",
       "true",
     );
+    // The processing-fee disclaimer was removed so users can't back-compute
+    // the take rate.
     expect(
-      screen.getByText(
+      screen.queryByText(
         /A portion of your payment covers payment processing and platform fees/,
       ),
-    ).toBeInTheDocument();
+    ).not.toBeInTheDocument();
     // Guard against regressions that surface a "credited" / "you'll receive
     // $X.XX" dollar value (which would leak the take rate).
     expect(screen.queryByText(/You'll receive \$/)).not.toBeInTheDocument();
