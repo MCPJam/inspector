@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 vi.mock("@/state/app-state-context", () => ({
@@ -235,6 +235,56 @@ describe("LoggerView hosted rpc logs", () => {
       serverName: "Learn",
     });
     unsubscribe();
+  });
+
+  it("exports logs as a JSON file when the download button is clicked", async () => {
+    const user = userEvent.setup();
+
+    // Stub URL.createObjectURL / revokeObjectURL
+    const createObjectURL = vi.fn(() => "blob:mock-url");
+    const revokeObjectURL = vi.fn();
+    vi.stubGlobal("URL", {
+      ...URL,
+      createObjectURL,
+      revokeObjectURL,
+    });
+
+    // Capture the anchor click
+    const anchorClick = vi.fn();
+    const origCreate = document.createElement.bind(document);
+    vi
+      .spyOn(document, "createElement")
+      .mockImplementation((tag: string, ...rest) => {
+        const el = origCreate(tag, ...rest);
+        if (tag === "a") {
+          vi.spyOn(el as HTMLAnchorElement, "click").mockImplementation(
+            anchorClick,
+          );
+        }
+        return el;
+      });
+
+    useTrafficLogStore.getState().addMcpServerLog({
+      serverId: "srv-1",
+      serverName: "Notion",
+      direction: "SEND",
+      method: "tools/list",
+      timestamp: "2026-04-10T12:00:00.000Z",
+      payload: { ok: true },
+    });
+
+    render(<LoggerView />);
+
+    await user.click(screen.getByTitle("Export logs as JSON file"));
+
+    expect(createObjectURL).toHaveBeenCalledTimes(1);
+    expect(anchorClick).toHaveBeenCalledTimes(1);
+    await waitFor(() =>
+      expect(revokeObjectURL).toHaveBeenCalledWith("blob:mock-url"),
+    );
+
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
   it("filters logs to the current session when sinceTimestamp is provided", () => {
