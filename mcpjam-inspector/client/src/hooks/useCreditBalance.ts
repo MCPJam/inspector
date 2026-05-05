@@ -1,6 +1,5 @@
 import { useConvexAuth, useQuery } from "convex/react";
 import { useMemo } from "react";
-import { HOSTED_MODE } from "@/lib/config";
 
 export interface CreditBalanceState {
   /**
@@ -70,7 +69,7 @@ export function useCreditBalance({
 }: UseCreditBalanceOptions = {}) {
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
   const shouldFetchBalance =
-    !isAuthLoading && (isAuthenticated || includeGuests || HOSTED_MODE);
+    !isAuthLoading && (isAuthenticated || includeGuests);
   const raw = useQuery(
     "billing:getCreditBalance" as any,
     shouldFetchBalance ? ({} as any) : "skip"
