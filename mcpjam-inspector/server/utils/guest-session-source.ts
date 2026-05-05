@@ -237,6 +237,234 @@ export async function fetchGuestSessionForServerSideAuth(): Promise<RemoteGuestS
   return result.kind === "session" ? result.session : null;
 }
 
+function getConvexGuestSessionRevokeUrl(): string {
+  return buildConvexGuestUrl("/guest/session/revoke");
+}
+
+function getConvexGuestPromotionProofUrl(): string {
+  return buildConvexGuestUrl("/guest/promotion-proof");
+}
+
+function getRemoteGuestPromotionProofUrl(): string {
+  const override = process.env.MCPJAM_GUEST_PROMOTION_PROOF_URL;
+  if (override) return override;
+  const baseUrl = getRemoteGuestSessionUrl();
+  if (baseUrl.endsWith("/guest-session")) {
+    return `${baseUrl}/promotion-proof`;
+  }
+  return `${baseUrl.replace(/\/$/, "")}/promotion-proof`;
+}
+
+function getRemoteGuestSessionRevokeUrl(): string {
+  const override = process.env.MCPJAM_GUEST_SESSION_REVOKE_URL;
+  if (override) return override;
+  // Derive from the lookup URL when only the lookup URL is overridden.
+  const baseUrl = getRemoteGuestSessionUrl();
+  if (baseUrl.endsWith("/guest-session")) {
+    return `${baseUrl}/revoke`;
+  }
+  return `${baseUrl.replace(/\/$/, "")}/revoke`;
+}
+
+export type GuestSessionRevokeResult = {
+  status: number;
+  setCookies: string[];
+  body: { revoked: boolean } | null;
+};
+
+async function performGuestSessionRevoke(
+  url: string,
+  init: RequestInit,
+  source: "Convex" | "MCPJam",
+): Promise<GuestSessionRevokeResult> {
+  try {
+    const response = await fetch(url, init);
+    const setCookies = readSetCookies(response.headers);
+    let body: { revoked: boolean } | null = null;
+    try {
+      const raw = (await response.json()) as { revoked?: unknown };
+      if (typeof raw.revoked === "boolean") {
+        body = { revoked: raw.revoked };
+      }
+    } catch {
+      body = null;
+    }
+    if (!response.ok) {
+      logger.warn(
+        `[guest-auth] ${source} guest session revoke returned ${response.status} ${response.statusText}`,
+      );
+    }
+    return { status: response.status, setCookies, body };
+  } catch (error) {
+    const errMsg = error instanceof Error ? error.message : String(error);
+    logger.warn(
+      `[guest-auth] Failed to revoke guest session via ${source}: ${errMsg}`,
+    );
+    return { status: 503, setCookies: [], body: null };
+  }
+}
+
+export async function fetchConvexGuestSessionRevoke(
+  context?: GuestSessionFetchContext,
+): Promise<GuestSessionRevokeResult> {
+  try {
+    await provisionGuestAuthConfigToConvex();
+  } catch (error) {
+    const errMsg = error instanceof Error ? error.message : String(error);
+    logger.warn(
+      `[guest-auth] Failed to provision Convex guest auth env: ${errMsg}`,
+    );
+    return { status: 503, setCookies: [], body: null };
+  }
+
+  return performGuestSessionRevoke(
+    getConvexGuestSessionRevokeUrl(),
+    {
+      method: "POST",
+      headers: buildForwardedHeaders(context, {
+        [GUEST_SESSION_SECRET_HEADER]: getGuestSessionSharedSecret(),
+      }),
+      signal: AbortSignal.timeout(10_000),
+    },
+    "Convex",
+  );
+}
+
+export async function fetchRemoteGuestSessionRevoke(
+  context?: GuestSessionFetchContext,
+): Promise<GuestSessionRevokeResult> {
+  return performGuestSessionRevoke(
+    getRemoteGuestSessionRevokeUrl(),
+    {
+      method: "POST",
+      headers: buildForwardedHeaders(context, {}),
+      signal: AbortSignal.timeout(10_000),
+    },
+    "MCPJam",
+  );
+}
+
+export type GuestPromotionProofResult =
+  | {
+      kind: "proof";
+      proof: { guestId?: string; token: string; expiresAt: number };
+    }
+  | { kind: "miss" }
+  | { kind: "revoked"; setCookies: string[] }
+  | { kind: "error"; status: number };
+
+async function performGuestPromotionProofFetch(
+  url: string,
+  init: RequestInit,
+  source: "Convex" | "MCPJam",
+): Promise<GuestPromotionProofResult> {
+  try {
+    const response = await fetch(url, init);
+    if (response.status === 204) {
+      return { kind: "miss" };
+    }
+    if (response.status === 403) {
+      const setCookies = readSetCookies(response.headers);
+      // Try to read the body so we can distinguish "session revoked" from
+      // generic forbidden, but don't fail if it's not JSON.
+      try {
+        const raw = (await response.json()) as { code?: unknown };
+        if (raw?.code === "FORBIDDEN") {
+          return { kind: "revoked", setCookies };
+        }
+      } catch {
+        // fall through
+      }
+      logger.warn(
+        `[guest-auth] ${source} guest promotion proof returned 403 ${response.statusText}`,
+      );
+      return { kind: "error", status: 403 };
+    }
+    if (!response.ok) {
+      logger.warn(
+        `[guest-auth] ${source} guest promotion proof returned ${response.status} ${response.statusText}`,
+      );
+      return { kind: "error", status: response.status };
+    }
+
+    let body: unknown;
+    try {
+      body = await response.json();
+    } catch {
+      return { kind: "error", status: 503 };
+    }
+
+    if (
+      !body ||
+      typeof body !== "object" ||
+      typeof (body as Record<string, unknown>).token !== "string" ||
+      typeof (body as Record<string, unknown>).expiresAt !== "number"
+    ) {
+      logger.warn(
+        `[guest-auth] ${source} guest promotion proof response was missing token or expiresAt`,
+      );
+      return { kind: "error", status: 503 };
+    }
+
+    const proof = body as { guestId?: string; token: string; expiresAt: number };
+    return {
+      kind: "proof",
+      proof: {
+        guestId:
+          typeof proof.guestId === "string" ? proof.guestId : undefined,
+        token: proof.token,
+        expiresAt: proof.expiresAt,
+      },
+    };
+  } catch (error) {
+    const errMsg = error instanceof Error ? error.message : String(error);
+    logger.warn(
+      `[guest-auth] Failed to fetch ${source} guest promotion proof: ${errMsg}`,
+    );
+    return { kind: "error", status: 503 };
+  }
+}
+
+export async function fetchConvexGuestPromotionProof(
+  context?: GuestSessionFetchContext,
+): Promise<GuestPromotionProofResult> {
+  try {
+    await provisionGuestAuthConfigToConvex();
+  } catch (error) {
+    const errMsg = error instanceof Error ? error.message : String(error);
+    logger.warn(
+      `[guest-auth] Failed to provision Convex guest auth env: ${errMsg}`,
+    );
+    return { kind: "error", status: 503 };
+  }
+
+  return performGuestPromotionProofFetch(
+    getConvexGuestPromotionProofUrl(),
+    {
+      method: "POST",
+      headers: buildForwardedHeaders(context, {
+        [GUEST_SESSION_SECRET_HEADER]: getGuestSessionSharedSecret(),
+      }),
+      signal: AbortSignal.timeout(10_000),
+    },
+    "Convex",
+  );
+}
+
+export async function fetchRemoteGuestPromotionProof(
+  context?: GuestSessionFetchContext,
+): Promise<GuestPromotionProofResult> {
+  return performGuestPromotionProofFetch(
+    getRemoteGuestPromotionProofUrl(),
+    {
+      method: "POST",
+      headers: buildForwardedHeaders(context, {}),
+      signal: AbortSignal.timeout(10_000),
+    },
+    "MCPJam",
+  );
+}
+
 export async function fetchRemoteGuestJwks(): Promise<Response | null> {
   try {
     if (!process.env.MCPJAM_GUEST_JWKS_URL) {

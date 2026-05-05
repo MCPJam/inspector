@@ -187,12 +187,20 @@ export function buildDisconnectedRuntimeServers(
 
 export function useAppState({
   currentUserId,
+  currentActorKey,
   routeOrganizationId,
   hasOrganizations,
   isLoadingOrganizations,
   validOrganizations,
 }: {
   currentUserId: string | null;
+  /**
+   * Stable identifier for the active actor — `currentUserId` for signed-in
+   * users, the guest cookie's `guestId` for guests. Used to scope per-actor
+   * local storage (e.g. active project id) so selections don't bleed across
+   * actors. May be `null` while the actor is still resolving.
+   */
+  currentActorKey: string | null;
   routeOrganizationId?: string;
   hasOrganizations: boolean;
   isLoadingOrganizations: boolean;
@@ -466,6 +474,8 @@ export function useAppState({
     ),
     activeOrganizationId,
     routeOrganizationId,
+    currentActorKey,
+    hasSignedInUser: currentUserId != null,
     logger,
   });
 

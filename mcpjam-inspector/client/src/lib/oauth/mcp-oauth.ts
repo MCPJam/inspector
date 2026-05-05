@@ -1539,24 +1539,114 @@ function readOAuthResourceFromAuthorizationUrl(
   }
 }
 
+/**
+ * Restrict acceptance of an MCP-server-advertised `resource` indicator (from
+ * the protected-resource-metadata document) to the same origin as the server
+ * URL. PRM is fetched from the server itself; honoring an arbitrary
+ * cross-origin resource value would let a compromised server steer tokens to
+ * a different audience than what the client is actually talking to.
+ */
+function isOAuthResourceIndicatorAllowed(input: {
+  serverUrl: string;
+  resource: string;
+}): boolean {
+  try {
+    const requested = new URL(input.serverUrl);
+    const resource = new URL(input.resource);
+    return requested.origin === resource.origin;
+  } catch {
+    return false;
+  }
+}
+
+function assertOAuthResourceIndicatorAllowed(input: {
+  serverUrl: string;
+  resource: string;
+  source: string;
+}): void {
+  if (
+    isOAuthResourceIndicatorAllowed({
+      serverUrl: input.serverUrl,
+      resource: input.resource,
+    })
+  ) {
+    return;
+  }
+
+  throw new Error(
+    `Rejected cross-origin OAuth resource indicator from ${input.source}.`
+  );
+}
+
+function readOAuthResourceFromMetadata(
+  resourceMetadata?: { resource?: unknown } | null
+): string | undefined {
+  const resource =
+    typeof resourceMetadata?.resource === "string"
+      ? resourceMetadata.resource.trim()
+      : "";
+  return resource || undefined;
+}
+
 function resolveOAuthResourceUrl(input: {
   serverUrl: string;
   authorizationUrl?: string;
   configuredResourceUrl?: string;
+  resourceMetadata?: { resource?: unknown } | null;
 }): string {
+  // Prefer the resource indicator advertised by the MCP server's
+  // protected-resource-metadata document — this is the canonical audience the
+  // RS expects in `aud`. Fall back to caller-configured / serverUrl only when
+  // PRM doesn't supply one.
+  const advertisedResource = readOAuthResourceFromMetadata(
+    input.resourceMetadata
+  );
+  if (advertisedResource) {
+    assertOAuthResourceIndicatorAllowed({
+      serverUrl: input.serverUrl,
+      resource: advertisedResource,
+      source: "protected resource metadata",
+    });
+    return canonicalizeOAuthResourceUrl(advertisedResource);
+  }
+
   const requestedFromAuth = readOAuthResourceFromAuthorizationUrl(
     input.authorizationUrl
   );
   if (requestedFromAuth) {
-    return requestedFromAuth;
+    assertOAuthResourceIndicatorAllowed({
+      serverUrl: input.serverUrl,
+      resource: requestedFromAuth,
+      source: "authorization URL",
+    });
+    return canonicalizeOAuthResourceUrl(requestedFromAuth);
   }
 
   const configured = input.configuredResourceUrl?.trim();
   if (configured) {
-    return configured;
+    return canonicalizeOAuthResourceUrl(configured);
   }
 
   return canonicalizeOAuthResourceUrl(input.serverUrl);
+}
+
+/**
+ * Stamp `?resource=<resourceUrl>` onto an authorization URL so the AS knows
+ * which audience to mint the token for (RFC 8707 / MCP OAuth profile).
+ * Without this, the AS issues tokens with a default `aud` that the resource
+ * server may reject.
+ */
+function withOAuthResourceParam(
+  authorizationUrl: string,
+  resourceUrl: string
+): string {
+  try {
+    const url = new URL(authorizationUrl);
+    url.searchParams.set("resource", resourceUrl);
+    return url.toString();
+  } catch {
+    return authorizationUrl;
+  }
 }
 
 function writeStoredOAuthConfig(
@@ -1627,6 +1717,9 @@ async function createHostedOAuthSessionIfNeeded(input: {
     serverUrl: input.serverUrl,
     authorizationUrl: input.authorizationUrl ?? input.state.authorizationUrl,
     configuredResourceUrl: input.configuredResourceUrl,
+    resourceMetadata: input.state.resourceMetadata as
+      | { resource?: unknown }
+      | undefined,
   });
 
   const response = await authFetch("/api/web/oauth/session", {
@@ -2134,11 +2227,24 @@ export async function initiateOAuth(
         emitTraceSnapshot(snapshot);
       },
       onAuthorizationRequest: async ({ authorizationUrl }) => {
+        const resourceMetadata = getState().resourceMetadata as
+          | { resource?: unknown }
+          | undefined;
         const oauthResourceUrl = resolveOAuthResourceUrl({
           serverUrl: options.serverUrl,
           authorizationUrl,
           configuredResourceUrl: options.resourceUrl,
+          resourceMetadata,
         });
+        // Stamp ?resource= onto the authorization URL so the AS mints a token
+        // whose `aud` matches what the MCP server expects. Stored
+        // authorization URL is updated to the redirected one so the callback
+        // path round-trips the same resource.
+        const redirectedAuthorizationUrl = withOAuthResourceParam(
+          authorizationUrl,
+          oauthResourceUrl
+        );
+        updateState({ authorizationUrl: redirectedAuthorizationUrl });
         writeStoredOAuthConfig(options.serverName, {
           resourceUrl: oauthResourceUrl,
         });
@@ -2147,7 +2253,7 @@ export async function initiateOAuth(
           serverUrl: options.serverUrl,
           redirectUrl: provider.redirectUrl,
           state: getState(),
-          authorizationUrl,
+          authorizationUrl: redirectedAuthorizationUrl,
           configuredResourceUrl: oauthResourceUrl,
         });
         await persistOAuthStateArtifacts(provider, getState());
@@ -2159,7 +2265,9 @@ export async function initiateOAuth(
         });
         const preRedirectTrace = emitTraceFromState(getState());
         saveOAuthTraceToSession(options.serverName, preRedirectTrace);
-        await provider.redirectToAuthorization(new URL(authorizationUrl));
+        await provider.redirectToAuthorization(
+          new URL(redirectedAuthorizationUrl)
+        );
         return { type: "redirect" };
       },
     });
@@ -2327,6 +2435,9 @@ export async function completeHostedOAuthCallback(
       serverUrl,
       authorizationUrl: storedSession?.state.authorizationUrl,
       configuredResourceUrl: storedOAuthConfig.resourceUrl,
+      resourceMetadata: storedSession?.state.resourceMetadata as
+        | { resource?: unknown }
+        | undefined,
     });
     previousTrace = loadOAuthTraceFromSession(serverName) ?? previousTrace;
     clearOAuthTraceSession(serverName);
@@ -2691,6 +2802,9 @@ export async function handleOAuthCallback(
         serverUrl,
         authorizationUrl: flowResult.state.authorizationUrl,
         configuredResourceUrl: oauthConfig.resourceUrl,
+        resourceMetadata: flowResult.state.resourceMetadata as
+          | { resource?: unknown }
+          | undefined,
       });
       const mergedTrace = mergeOAuthTraces(previousTrace, callbackTrace);
       publishOAuthTraceUpdate(serverName, mergedTrace, options.onTraceUpdate);
@@ -2774,6 +2888,9 @@ export async function handleOAuthCallback(
           : resource instanceof URL
           ? resource.toString()
           : oauthConfig.resourceUrl,
+      resourceMetadata: discoveryState.resourceMetadata as
+        | { resource?: unknown }
+        | undefined,
     });
     startOAuthTraceStep(callbackTrace, "token_request", {
       message: "Exchanging authorization code for OAuth tokens.",

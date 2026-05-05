@@ -425,7 +425,8 @@ export function ChatboxChatPage({
     serverIdsByName: session ? hostedServerIdsByName : {},
     getAccessToken,
     chatboxToken: tokenFromPath ?? session?.token,
-    isAuthenticated,
+    isAuthenticated: !!workOsUser,
+    hasSession: !!workOsUser || isWorkOsLoading,
   });
 
   useEffect(() => {

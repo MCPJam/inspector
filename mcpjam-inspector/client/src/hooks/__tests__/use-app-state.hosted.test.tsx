@@ -168,6 +168,7 @@ describe("useAppState hosted OAuth browser back", () => {
     renderHook(() =>
       useAppState({
         currentUserId: "user-1",
+        currentActorKey: "user-1",
         routeOrganizationId: undefined,
         hasOrganizations: false,
         isLoadingOrganizations: false,

@@ -36,7 +36,6 @@ import { XAAFlowTab } from "./components/xaa/XAAFlowTab";
 import { ErrorBoundary } from "./components/ui/error-boundary";
 import { AppBuilderTab } from "./components/ui-playground/AppBuilderTab";
 import { EmptyState } from "./components/ui/empty-state";
-import { isFirstRunEligible } from "./lib/onboarding-state";
 import { ProfileTab } from "./components/ProfileTab";
 import { BillingUpsellGate } from "./components/billing/BillingUpsellGate";
 import { OrganizationsTab } from "./components/OrganizationsTab";
@@ -60,6 +59,7 @@ import {
   DialogTitle,
 } from "@mcpjam/design-system/dialog";
 import { useAppState, type ServerWithName } from "./hooks/use-app-state";
+import { useActorKey } from "./hooks/use-actor-key";
 import { PreferencesStoreProvider } from "./stores/preferences/preferences-provider";
 import { Toaster } from "@mcpjam/design-system/sonner";
 import { useElectronOAuth } from "./hooks/useElectronOAuth";
@@ -101,6 +101,7 @@ import {
   getChatboxPathTokenFromLocation,
 } from "./components/hosted/ChatboxChatPage";
 import { useHostedApiContext } from "./hooks/hosted/use-hosted-api-context";
+import { AppReadyProvider } from "./hooks/use-app-ready";
 import { useInspectorCommandBus } from "./hooks/use-inspector-command-bus";
 import { HOSTED_MODE, NON_PROD_LOCKDOWN } from "./lib/config";
 import {
@@ -413,6 +414,7 @@ export default function App() {
     isLoading: isWorkOsLoading,
   } = useAuth();
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
+  const actorKey = useActorKey();
   const currentUser = useQuery(
     "users:getCurrentUser" as any,
     isAuthenticated ? ({} as any) : "skip"
@@ -791,6 +793,7 @@ export default function App() {
     persistRuntimeServerToProjectIfNeeded,
   } = useAppState({
     currentUserId: workOsUser?.id ?? null,
+    currentActorKey: actorKey,
     hasOrganizations: effectiveOrganizations.length > 0,
     isLoadingOrganizations,
     validOrganizations: effectiveOrganizations,
@@ -835,7 +838,6 @@ export default function App() {
   const activeOrganizationName = effectiveOrganizations.find(
     (org) => org._id === activeOrganizationId
   )?.name;
-  const hasAnyProjectServers = Object.keys(projectServers).length > 0;
   const hostedShellGateState = resolveHostedShellGateState({
     hostedMode: HOSTED_MODE,
     nonProdLockdown: NON_PROD_LOCKDOWN,
@@ -873,7 +875,6 @@ export default function App() {
   const pendingDashboardOAuthMessage = pendingDashboardOAuth
     ? `Finishing OAuth sign-in for ${pendingDashboardOAuth.serverName}...`
     : undefined;
-  const isOnboardingDecisionReady = hostedShellGateState === "ready";
   const isHostedDefaultRoute = currentHashRoute.normalizedTab === "servers";
   const shouldHoldHostedDefaultRouteForAuth =
     HOSTED_MODE &&
@@ -886,6 +887,9 @@ export default function App() {
     if (isHostedChatRoute) return;
     if (isLoadingRemoteProjects) return;
     if (isAuthLoading) return;
+    // In hosted mode, also wait for the project to resolve. handleConnect
+    // would otherwise build a request with `projectId === "none"` and fail.
+    if (HOSTED_MODE && (!activeProjectId || activeProjectId === "none")) return;
 
     const pending = readPendingServerAdd();
     if (!pending) return;
@@ -907,6 +911,7 @@ export default function App() {
     isHostedChatRoute,
     isLoadingRemoteProjects,
     isAuthLoading,
+    activeProjectId,
     projectServers,
     handleConnect,
   ]);
@@ -1070,8 +1075,9 @@ export default function App() {
   }, [navPremiumness]);
   const billingGateEnforcementActive =
     billingUiEnabled && isBillingEnforcementActive(navPremiumness);
+  const isGuestProjectActor = currentUser?.isAnonymous === true;
   const guestProjectLimitReached =
-    !isAuthenticated && Object.keys(projects).length >= 1;
+    isGuestProjectActor && Object.keys(projects).length >= 1;
   const noOrganizationsAvailable =
     isAuthenticated &&
     !isLoadingOrganizations &&
@@ -1180,7 +1186,15 @@ export default function App() {
     getAccessToken,
     oauthTokensByServerId,
     guestOauthTokensByServerName,
-    isAuthenticated,
+    // `HostedApiContext.isAuthenticated` means "WorkOS user is signed in",
+    // not "Convex is authenticated". Convex reports authenticated for guest
+    // sessions too (because `useUnifiedConvexAuth` returns a placeholder user
+    // to satisfy the provider), so passing the Convex flag here makes the
+    // guest-bearer fallback in `getHostedAuthorizationHeader` think a real
+    // user is signed in and return null. The WorkOS user object is the
+    // correct signal.
+    isAuthenticated: !!workOsUser,
+    hasSession: !!workOsUser || isWorkOsLoading,
     serverConfigs: guestServerConfigs,
     enabled: !isHostedChatRoute,
   });
@@ -1413,32 +1427,6 @@ export default function App() {
     window.addEventListener("hashchange", applyHash);
     return () => window.removeEventListener("hashchange", applyHash);
   }, [applyNavigation, isHostedChatRoute]);
-
-  useLayoutEffect(() => {
-    if (isHostedChatRoute) {
-      return;
-    }
-
-    if (!isOnboardingDecisionReady) {
-      return;
-    }
-
-    if (
-      isFirstRunEligible(
-        hasAnyProjectServers,
-        window.location.hash,
-        isAuthenticated
-      )
-    ) {
-      applyNavigation("app-builder", { updateHash: true });
-    }
-  }, [
-    applyNavigation,
-    hasAnyProjectServers,
-    isAuthenticated,
-    isOnboardingDecisionReady,
-    isHostedChatRoute,
-  ]);
 
   const consumeCheckoutIntent = useCallback(() => {
     clearPersistedCheckoutIntent();
@@ -2446,6 +2434,12 @@ export default function App() {
         savedClientConfig={activeProject?.clientConfig}
       />
       <AppStateProvider appState={effectiveAppState}>
+      <AppReadyProvider
+        isLoadingAppState={isLoading}
+        isConvexAuthLoading={isAuthLoading}
+        isConvexAuthenticated={isAuthenticated}
+        effectiveActiveProjectId={activeProjectId}
+      >
         <Toaster />
         <MCPJamLimitDialog />
         <div
@@ -2495,6 +2489,7 @@ export default function App() {
         {shouldShowBillingHandoffOverlay ? (
           <BillingHandoffLoading overlay />
         ) : null}
+      </AppReadyProvider>
       </AppStateProvider>
     </PreferencesStoreProvider>
   );

@@ -28,7 +28,16 @@ function getConvexDeploymentForProvisioning(): string {
   return `dev:${match[1]}`;
 }
 
-async function setConvexEnv(
+// Convex's env-var mutation can transiently fail with
+// `OptimisticConcurrencyControlFailure` when another writer (e.g., a parallel
+// `convex dev` cycle, or another inspector instance) touches the deployment
+// at the same time. The OCC error is safe to retry — the prior write didn't
+// take effect, and our `env set` is idempotent on identical values.
+function isOccFailureMessage(message: string): boolean {
+  return /OptimisticConcurrencyControlFailure/i.test(message);
+}
+
+async function execConvexEnvSet(
   convexEnv: NodeJS.ProcessEnv,
   name: string,
   value: string,
@@ -63,6 +72,40 @@ async function setConvexEnv(
       },
     );
   });
+}
+
+async function setConvexEnv(
+  convexEnv: NodeJS.ProcessEnv,
+  name: string,
+  value: string,
+): Promise<void> {
+  const maxAttempts = 4;
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      await execConvexEnvSet(convexEnv, name, value);
+      if (attempt > 1) {
+        logger.info(
+          `[guest-auth] convex env set ${name} succeeded after ${attempt} attempts`,
+        );
+      }
+      return;
+    } catch (error) {
+      lastError = error;
+      const message = error instanceof Error ? error.message : String(error);
+      if (!isOccFailureMessage(message) || attempt === maxAttempts) {
+        throw error;
+      }
+      // Exponential backoff with jitter: 100ms, 250ms, 500ms.
+      const baseDelay = 100 * Math.pow(2.2, attempt - 1);
+      const delay = Math.round(baseDelay + Math.random() * 100);
+      logger.warn(
+        `[guest-auth] convex env set ${name} hit OCC failure (attempt ${attempt}/${maxAttempts}); retrying in ${delay}ms`,
+      );
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+  throw lastError;
 }
 
 function shouldProvisionGuestAuthToConvex(): boolean {

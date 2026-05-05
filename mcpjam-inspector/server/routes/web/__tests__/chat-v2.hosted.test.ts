@@ -240,6 +240,9 @@ describe("web routes — chat-v2 hosted mode", () => {
 
     expect(response.status).toBe(200);
     expect(global.fetch).toHaveBeenCalledTimes(1);
+    // Membership chat (no share/chatbox token) sends no accessScope — the
+    // backend authorizes via project ownership for both guest and authed
+    // users uniformly. accessScope is only set when a token is in play.
     expect(global.fetch).toHaveBeenCalledWith(
       "https://example.convex.site/web/authorize-batch",
       expect.objectContaining({
@@ -247,7 +250,6 @@ describe("web routes — chat-v2 hosted mode", () => {
         body: JSON.stringify({
           projectId: "project-1",
           serverIds: ["server-1", "server-2"],
-          accessScope: "chat_v2",
         }),
       })
     );

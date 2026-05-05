@@ -136,6 +136,11 @@ vi.mock("posthog-js/react", () => ({
   useFeatureFlagEnabled: () => false,
 }));
 
+vi.mock("@/hooks/use-app-ready", () => ({
+  useAppReady: () => ({ status: "ready", projectId: "ws_local" }),
+  useAppReadyMessage: () => null,
+}));
+
 vi.mock("../client-config/ClientConfigTab", () => ({
   ClientConfigTab: ({ activeProjectId }: { activeProjectId: string }) => (
     <div data-testid="client-config-tab-stub">

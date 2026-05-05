@@ -96,7 +96,7 @@ describe("hosted web context", () => {
     });
   });
 
-  it("keeps using direct guest requests when AuthKit still reports a session", () => {
+  it("does not use direct guest requests while AuthKit still reports a session", () => {
     setHostedApiContext({
       projectId: null,
       hasSession: true,
@@ -110,12 +110,9 @@ describe("hosted web context", () => {
       },
     });
 
-    expect(buildHostedServerRequest("myServer")).toEqual({
-      serverUrl: "https://example.com/mcp",
-      serverName: "myServer",
-      serverHeaders: { "X-Api-Key": "key123" },
-      clientCapabilities: defaultClientCapabilities,
-    });
+    expect(() => buildHostedServerRequest("myServer")).toThrow(
+      "hosted projectId is not in the API context yet",
+    );
   });
 
   it("includes the latest guest OAuth token separately from server headers", () => {

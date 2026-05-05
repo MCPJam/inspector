@@ -13,6 +13,7 @@ interface UseHostedApiContextOptions {
   shareToken?: string;
   chatboxToken?: string;
   isAuthenticated?: boolean;
+  hasSession?: boolean;
   /** Maps server name → MCPServerConfig for guest mode (no Convex). */
   serverConfigs?: Record<string, unknown>;
   enabled?: boolean;
@@ -29,6 +30,7 @@ export function useHostedApiContext({
   shareToken,
   chatboxToken,
   isAuthenticated,
+  hasSession,
   serverConfigs,
   enabled = true,
 }: UseHostedApiContextOptions): void {
@@ -58,6 +60,7 @@ export function useHostedApiContext({
       shareToken,
       chatboxToken,
       isAuthenticated,
+      hasSession,
       serverConfigs,
     });
 
@@ -76,6 +79,7 @@ export function useHostedApiContext({
     shareToken,
     chatboxToken,
     isAuthenticated,
+    hasSession,
     serverConfigs,
   ]);
 }

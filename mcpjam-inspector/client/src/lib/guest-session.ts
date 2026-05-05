@@ -33,6 +33,27 @@ let legacyMigrationConsumed = false;
 // from a request that was started before the bump cannot resurrect a stale
 // token by overwriting cachedSession.
 let sessionGeneration = 0;
+const sessionListeners = new Set<() => void>();
+
+function setCachedSession(session: GuestSession | null): void {
+  const previousGuestId = cachedSession?.guestId ?? null;
+  cachedSession = session;
+  const nextGuestId = cachedSession?.guestId ?? null;
+  if (previousGuestId !== nextGuestId) {
+    for (const listener of sessionListeners) {
+      listener();
+    }
+  }
+}
+
+export function subscribeGuestSessionChanges(
+  listener: () => void,
+): () => void {
+  sessionListeners.add(listener);
+  return () => {
+    sessionListeners.delete(listener);
+  };
+}
 
 function consumeLegacyToken(): string | null {
   if (legacyMigrationConsumed) return null;
@@ -156,7 +177,7 @@ export async function getOrCreateGuestSession(): Promise<GuestSession | null> {
         legacyToken,
       );
       if (session && generation === sessionGeneration) {
-        cachedSession = session;
+        setCachedSession(session);
       }
       return session;
     } catch (error) {
@@ -179,6 +200,19 @@ export async function getOrCreateGuestSession(): Promise<GuestSession | null> {
 export async function getGuestBearerToken(): Promise<string | null> {
   const session = await getOrCreateGuestSession();
   return session?.token ?? null;
+}
+
+/**
+ * Synchronous read of the in-memory cached guest session. Returns null when no
+ * session has been resolved yet — callers that need to bootstrap actor-scoped
+ * storage should also `getOrCreateGuestSession()` to populate the cache so the
+ * next render returns the real id.
+ */
+export function getCachedGuestSession(): GuestSession | null {
+  if (cachedSession && cachedSession.expiresAt - EXPIRY_BUFFER_MS > Date.now()) {
+    return cachedSession;
+  }
+  return null;
 }
 
 /**
@@ -208,7 +242,7 @@ export async function getExistingGuestBearerToken(): Promise<string | null> {
     try {
       const session = await requestGuestSession("lookup_only", legacyToken);
       if (session && generation === sessionGeneration) {
-        cachedSession = session;
+        setCachedSession(session);
       }
       return session;
     } finally {
@@ -234,10 +268,82 @@ export async function getExistingGuestBearerToken(): Promise<string | null> {
  */
 export function clearGuestSession(): void {
   sessionGeneration += 1;
-  cachedSession = null;
+  setCachedSession(null);
   inFlightRequest = null;
   inFlightLookupOnly = null;
   forceRefreshInFlight = null;
+}
+
+/**
+ * Revoke the browser's guest session: tells the server to mark the
+ * cookie-backed session row as revoked and to clear the HttpOnly cookie
+ * via Set-Cookie. Used by the post-WorkOS-login flow so a signed-in user
+ * who later signs out cannot resurrect the previous guest identity by
+ * replaying the cookie.
+ *
+ * Idempotent: returns false if no cookie was present or revocation
+ * failed; returns true on success. Always also clears the in-memory
+ * cache so subsequent guest-token reads in this tab fall through to
+ * a fresh `lookup_or_create` call.
+ */
+export async function revokeGuestSessionAndCookie(): Promise<boolean> {
+  let revoked = false;
+  try {
+    const response = await fetch("/api/web/guest-session/revoke", {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+    });
+    if (response.ok) {
+      try {
+        const body = (await response.json()) as { revoked?: unknown };
+        revoked = body?.revoked === true;
+      } catch {
+        revoked = false;
+      }
+    }
+  } catch (error) {
+    console.error("Failed to revoke guest session:", error);
+  } finally {
+    clearGuestSession();
+  }
+  return revoked;
+}
+
+/**
+ * Fetch a short-lived (5-minute) JWT that authorizes a single guest→WorkOS
+ * promotion. The session bearer (`getExistingGuestBearerToken`) is the
+ * wrong token for this job — it's served on every guest API call and lives
+ * 24h, so a stolen bearer would give an attacker a long window to absorb
+ * a victim's guest projects by submitting it as `guestProofJwt`.
+ *
+ * Promotion proofs are minted on-demand right before sign-in, carry a
+ * distinct `purpose` claim, and are accepted only by `users:ensureUser`'s
+ * promotion path. Not cached: each promotion is a one-shot operation.
+ *
+ * Returns null if no guest cookie is present (nothing to promote) or on
+ * any transient failure — callers should treat null as "no promotion this
+ * sign-in" and let the user proceed as a fresh authed account.
+ */
+export async function getGuestPromotionProof(): Promise<string | null> {
+  try {
+    const response = await fetch("/api/web/guest-session/promotion-proof", {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+    });
+
+    if (response.status === 204) return null;
+    if (!response.ok) return null;
+
+    const body = (await response.json()) as { token?: unknown };
+    return typeof body.token === "string" && body.token.length > 0
+      ? body.token
+      : null;
+  } catch (error) {
+    console.error("Failed to fetch guest promotion proof:", error);
+    return null;
+  }
 }
 
 /**
@@ -265,7 +371,7 @@ export async function forceRefreshGuestSession(): Promise<string | null> {
         legacyToken,
       );
       if (session && generation === sessionGeneration) {
-        cachedSession = session;
+        setCachedSession(session);
       }
       return session;
     } catch (error) {

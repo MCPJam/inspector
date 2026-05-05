@@ -30,6 +30,11 @@ import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import { useClientConfigStore } from "@/stores/client-config-store";
 import { useHostContextStore } from "@/stores/host-context-store";
 import { useOrganizationBillingStatus } from "./useOrganizationBilling";
+import {
+  clearLegacyActiveProjectStorage,
+  readStoredActiveProjectId,
+  writeStoredActiveProjectId,
+} from "@/lib/active-project-storage";
 
 const CLIENT_CONFIG_SYNC_ECHO_TIMEOUT_MS = 10000;
 
@@ -126,6 +131,19 @@ export interface UseProjectStateParams {
   validOrganizationIds: string[];
   activeOrganizationId?: string;
   routeOrganizationId?: string;
+  /**
+   * Stable identifier for the active actor (user id or guest id). Scopes the
+   * persisted active-project selection so a previous actor's choice doesn't
+   * drive Convex queries against a project the current actor doesn't own. May
+   * be null while the actor is still resolving.
+   */
+  currentActorKey: string | null;
+  /**
+   * True when a WorkOS user is signed in. Guests are Convex-authenticated
+   * (`isAuthenticated`) but have no WorkOS session — this flag distinguishes
+   * the two so the project provisioning path can take the guest branch.
+   */
+  hasSignedInUser: boolean;
   logger: LoggerLike;
 }
 
@@ -139,6 +157,8 @@ export function useProjectState({
   validOrganizationIds,
   activeOrganizationId,
   routeOrganizationId,
+  currentActorKey,
+  hasSignedInUser,
   logger,
 }: UseProjectStateParams) {
   const projectOrganizationId = routeOrganizationId ?? activeOrganizationId;
@@ -175,20 +195,38 @@ export function useProjectState({
     { enabled: isAuthenticated },
   );
 
+  // "Authed but with no organization" is the empty-org-state for signed-in
+  // users. Guests are Convex-authenticated without a WorkOS user *and* have
+  // no orgs by design — they should not be coerced into the empty-state path
+  // because their projects live under `guestExternalId`, not an organization.
+  const shouldTreatRemoteProjectsAsEmpty =
+    isAuthenticated &&
+    hasSignedInUser &&
+    !isLoadingOrganizations &&
+    !hasOrganizations &&
+    !routeOrganizationId &&
+    !activeOrganizationId;
+  const isGuestActor = isAuthenticated && !hasSignedInUser;
+
+  // Guests own exactly one project (provisioned by ensureDefaultGuestProject),
+  // so persisting an "active project" selection for them is dead weight that
+  // can only diverge from truth. Authed users keep the per-actor key as a
+  // first-paint hint; the server's project list is still the source of truth.
   const [convexActiveProjectId, setConvexActiveProjectId] = useState<
     string | null
-  >(() => {
-    if (typeof window !== "undefined") {
-      return localStorage.getItem("convex-active-project-id");
-    }
-    return null;
-  });
+  >(() => (isGuestActor ? null : readStoredActiveProjectId(currentActorKey)));
+  const [hasHydratedActiveProject, setHasHydratedActiveProject] = useState(
+    () => currentActorKey != null,
+  );
+  const activeProjectActorKeyRef = useRef<string | null>(currentActorKey);
+  const activeProjectActorIsGuestRef = useRef(isGuestActor);
 
   const migrationInFlightRef = useRef(new Set<string>());
   const ensureDefaultInFlightRef = useRef(new Set<string>());
   const ensureDefaultCompletedRef = useRef(new Set<string>());
   const migrationErrorNotifiedRef = useRef(new Set<string>());
   const [useLocalFallback, setUseLocalFallback] = useState(false);
+  const shouldUseLocalFallback = useLocalFallback && !isGuestActor;
   const convexTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const pendingClientConfigSyncRef = useRef<
     Map<string, PendingClientConfigSync>
@@ -198,25 +236,29 @@ export function useProjectState({
     new Map(),
   );
   const CONVEX_TIMEOUT_MS = 10000;
-  const shouldTreatRemoteProjectsAsEmpty =
-    isAuthenticated &&
-    !isLoadingOrganizations &&
-    !hasOrganizations &&
-    !routeOrganizationId &&
-    !activeOrganizationId;
 
   const clearConvexActiveProjectSelection = useCallback(() => {
     setConvexActiveProjectId(null);
-    if (typeof window !== "undefined") {
-      localStorage.removeItem("convex-active-project-id");
-    }
+    writeStoredActiveProjectId(activeProjectActorKeyRef.current, null);
   }, []);
+
+  const clearGuestActiveProjectStorage = useCallback((actorKey: string | null) => {
+    writeStoredActiveProjectId(actorKey, null);
+  }, []);
+
+  // Project id that the flat-server query should target. We can't wait for
+  // the auto-set effect to copy convexActiveProjectId from remoteProjects[0]
+  // — the consumer renders one frame earlier with effectiveActiveProjectId
+  // resolving to the same fallback, so the flat query has to fire on that
+  // same frame or the project briefly renders as "no servers". Falling back
+  // to remoteProjects[0] mirrors what the auto-set effect would land on.
+  const resolvedActiveProjectIdForServers = shouldTreatRemoteProjectsAsEmpty
+    ? null
+    : (convexActiveProjectId ?? remoteProjects?.[0]?._id ?? null);
 
   const { servers: activeProjectServersFlat, isLoading: isLoadingServers } =
     useProjectServers({
-      projectId: shouldTreatRemoteProjectsAsEmpty
-        ? null
-        : convexActiveProjectId,
+      projectId: resolvedActiveProjectIdForServers,
       isAuthenticated,
     });
 
@@ -268,7 +310,7 @@ export function useProjectState({
       return;
     }
 
-    if (shouldTreatRemoteProjectsAsEmpty) {
+    if (isGuestActor || shouldTreatRemoteProjectsAsEmpty) {
       setUseLocalFallback(false);
       if (convexTimeoutRef.current) {
         clearTimeout(convexTimeoutRef.current);
@@ -286,7 +328,7 @@ export function useProjectState({
       return;
     }
 
-    if (!convexTimeoutRef.current && !useLocalFallback) {
+    if (!convexTimeoutRef.current && !shouldUseLocalFallback) {
       convexTimeoutRef.current = setTimeout(() => {
         logger.warn(
           "Convex connection timed out, falling back to local storage",
@@ -307,16 +349,17 @@ export function useProjectState({
     };
   }, [
     isAuthenticated,
+    isGuestActor,
     remoteProjects,
     shouldTreatRemoteProjectsAsEmpty,
-    useLocalFallback,
+    shouldUseLocalFallback,
     logger,
   ]);
 
   useEffect(() => {
     if (
       isAuthenticated &&
-      !useLocalFallback &&
+      !shouldUseLocalFallback &&
       !shouldTreatRemoteProjectsAsEmpty
     ) {
       return;
@@ -329,7 +372,7 @@ export function useProjectState({
     clearAllPendingClientConfigSyncs,
     isAuthenticated,
     shouldTreatRemoteProjectsAsEmpty,
-    useLocalFallback,
+    shouldUseLocalFallback,
   ]);
 
   useEffect(() => {
@@ -355,7 +398,7 @@ export function useProjectState({
   const isLoadingRemoteProjects =
     (!shouldTreatRemoteProjectsAsEmpty &&
       isAuthenticated &&
-      !useLocalFallback &&
+      !shouldUseLocalFallback &&
       (remoteProjects === undefined || isLoadingServers)) ||
     (isAuthLoading && !!convexActiveProjectId);
 
@@ -365,13 +408,17 @@ export function useProjectState({
       remoteProjects.map((rw) => {
         let deserializedServers: Project["servers"] = {};
 
-        if (
-          rw._id === convexActiveProjectId &&
-          activeProjectServersFlat !== undefined
-        ) {
-          deserializedServers = deserializeServersFromConvex(
-            activeProjectServersFlat,
-          );
+        if (rw._id === resolvedActiveProjectIdForServers) {
+          // Active project: flat servers table is authoritative. While the
+          // flat query is in flight, leave servers empty rather than falling
+          // through to rw.servers — the embedded map is vestigial and is
+          // {} for guest projects, which would render as "no servers" until
+          // the flat list arrives. Consumers gate on isLoadingRemoteProjects.
+          if (activeProjectServersFlat !== undefined) {
+            deserializedServers = deserializeServersFromConvex(
+              activeProjectServersFlat,
+            );
+          }
         } else if (rw.servers) {
           deserializedServers = deserializeServersFromConvex(rw.servers);
         }
@@ -395,7 +442,7 @@ export function useProjectState({
         ];
       }),
     );
-  }, [remoteProjects, convexActiveProjectId, activeProjectServersFlat]);
+  }, [remoteProjects, resolvedActiveProjectIdForServers, activeProjectServersFlat]);
 
   useEffect(() => {
     if (pendingClientConfigSyncRef.current.size === 0) {
@@ -438,6 +485,13 @@ export function useProjectState({
   }, [useLocalFallback, appState.projects, scopedLocalProjects]);
 
   const authenticatedMergedProjects = useMemo((): Record<string, Project> => {
+    // Guests don't see local-fallback projects — Convex is the only source
+    // of truth for their data. Including the synthetic local "default" here
+    // would shadow the real Convex guest project in resolution.
+    if (isGuestActor) {
+      return convexProjects;
+    }
+
     const projectsWithoutRemoteMatch = Object.fromEntries(
       Object.entries(scopedLocalProjects).filter(([localProjectId, project]) => {
         if (convexProjects[localProjectId]) {
@@ -459,7 +513,7 @@ export function useProjectState({
       ...convexProjects,
       ...projectsWithoutRemoteMatch,
     };
-  }, [convexProjects, scopedLocalProjects]);
+  }, [convexProjects, scopedLocalProjects, isGuestActor]);
 
   const activeScopedLocalProject = useMemo(
     () => scopedLocalProjects[appState.activeProjectId],
@@ -469,8 +523,13 @@ export function useProjectState({
   const activeScopedRemoteProjectId =
     activeScopedLocalProject?.sharedProjectId ?? null;
 
+  // Guests never keep a synthetic local-fallback project: their canonical
+  // project lives in Convex (provisioned by ensureDefaultGuestProject) and
+  // any local "default" row hydrated from localStorage would otherwise
+  // shadow it, leaving syncServerToConvex calling Convex with a fake id.
   const shouldKeepLocalActiveProject = Boolean(
-    activeScopedLocalProject &&
+    !isGuestActor &&
+      activeScopedLocalProject &&
       (!activeScopedRemoteProjectId ||
         !convexProjects[activeScopedRemoteProjectId]),
   );
@@ -479,7 +538,7 @@ export function useProjectState({
     if (shouldTreatRemoteProjectsAsEmpty) {
       return {};
     }
-    if (useLocalFallback) {
+    if (shouldUseLocalFallback) {
       return localFallbackProjects;
     }
     if (isAuthenticated && remoteProjects !== undefined) {
@@ -493,7 +552,7 @@ export function useProjectState({
     }
     return appState.projects;
   }, [
-    useLocalFallback,
+    shouldUseLocalFallback,
     localFallbackProjects,
     isAuthenticated,
     remoteProjects,
@@ -507,7 +566,7 @@ export function useProjectState({
     if (shouldTreatRemoteProjectsAsEmpty) {
       return "none";
     }
-    if (useLocalFallback) {
+    if (shouldUseLocalFallback) {
       if (localFallbackProjects[appState.activeProjectId]) {
         return appState.activeProjectId;
       }
@@ -544,7 +603,7 @@ export function useProjectState({
     }
     return appState.activeProjectId;
   }, [
-    useLocalFallback,
+    shouldUseLocalFallback,
     appState.activeProjectId,
     localFallbackProjects,
     scopedLocalProjects,
@@ -604,12 +663,6 @@ export function useProjectState({
           return;
         }
 
-        const savedActiveId = localStorage.getItem("convex-active-project-id");
-        if (savedActiveId && convexProjects[savedActiveId]) {
-          setConvexActiveProjectId(savedActiveId);
-          return;
-        }
-
         setConvexActiveProjectId(remoteProjects[0]._id);
       }
     }
@@ -624,19 +677,58 @@ export function useProjectState({
     shouldTreatRemoteProjectsAsEmpty,
   ]);
 
+  // Re-hydrate the persisted active project id whenever the actor changes
+  // (sign-in/sign-out, guest cookie resolves). Without this, a sign-in would
+  // keep a stale guest's project id in memory and drive useProjectServers to
+  // query a project the new actor doesn't own.
   useEffect(() => {
-    if (convexActiveProjectId) {
-      localStorage.setItem(
-        "convex-active-project-id",
-        convexActiveProjectId,
-      );
-    } else {
-      localStorage.removeItem("convex-active-project-id");
+    clearLegacyActiveProjectStorage();
+    if (
+      currentActorKey === activeProjectActorKeyRef.current &&
+      isGuestActor === activeProjectActorIsGuestRef.current
+    ) {
+      return;
     }
-  }, [convexActiveProjectId]);
+    activeProjectActorKeyRef.current = currentActorKey;
+    activeProjectActorIsGuestRef.current = isGuestActor;
+    if (isGuestActor) {
+      setConvexActiveProjectId(null);
+    } else {
+      setConvexActiveProjectId(readStoredActiveProjectId(currentActorKey));
+    }
+    setHasHydratedActiveProject(currentActorKey != null);
+  }, [currentActorKey, isGuestActor]);
+
+  // Guests never persist an active-project selection. Any per-actor entry
+  // sitting in localStorage (from older code paths) is dead weight that can
+  // only drive useProjectServers to query a project this actor doesn't own.
+  useEffect(() => {
+    if (!isGuestActor) return;
+    if (!currentActorKey) return;
+    clearGuestActiveProjectStorage(currentActorKey);
+  }, [isGuestActor, currentActorKey, clearGuestActiveProjectStorage]);
 
   useEffect(() => {
-    if (!isAuthenticated || useLocalFallback) {
+    if (!hasHydratedActiveProject) {
+      return;
+    }
+    if (
+      activeProjectActorKeyRef.current !== currentActorKey ||
+      activeProjectActorIsGuestRef.current !== isGuestActor
+    ) {
+      return;
+    }
+    if (isGuestActor) return;
+    writeStoredActiveProjectId(currentActorKey, convexActiveProjectId);
+  }, [
+    convexActiveProjectId,
+    currentActorKey,
+    hasHydratedActiveProject,
+    isGuestActor,
+  ]);
+
+  useEffect(() => {
+    if (!isAuthenticated || shouldUseLocalFallback) {
       migrationInFlightRef.current.clear();
       ensureDefaultInFlightRef.current.clear();
       // Intentionally NOT clearing ensureDefaultCompletedRef here — it must
@@ -645,12 +737,12 @@ export function useProjectState({
       // subscription briefly returns an empty result during reconnection.
       migrationErrorNotifiedRef.current.clear();
     }
-  }, [isAuthenticated, useLocalFallback]);
+  }, [isAuthenticated, shouldUseLocalFallback]);
 
   useEffect(() => {
     if (
       !isAuthenticated ||
-      useLocalFallback ||
+      shouldUseLocalFallback ||
       allRemoteProjects === undefined ||
       allRemoteProjects.length > 0 ||
       migratableLocalProjectCount === 0
@@ -659,7 +751,7 @@ export function useProjectState({
     }
   }, [
     isAuthenticated,
-    useLocalFallback,
+    shouldUseLocalFallback,
     allRemoteProjects,
     migratableLocalProjectCount,
   ]);
@@ -669,7 +761,7 @@ export function useProjectState({
       return;
     }
     if (shouldTreatRemoteProjectsAsEmpty) return;
-    if (useLocalFallback) return;
+    if (shouldUseLocalFallback) return;
     if (!hasResolvedProjectOrganizationSelection) return;
     if (allRemoteProjects === undefined) return;
     if (allRemoteProjects.length > 0) return;
@@ -730,7 +822,7 @@ export function useProjectState({
     Promise.all(migratableLocalProjects.map(migrateProject));
   }, [
     isAuthenticated,
-    useLocalFallback,
+    shouldUseLocalFallback,
     allRemoteProjects,
     migratableLocalProjects,
     migratableLocalProjectCount,
@@ -748,7 +840,7 @@ export function useProjectState({
       return;
     }
     if (shouldTreatRemoteProjectsAsEmpty) return;
-    if (useLocalFallback) return;
+    if (shouldUseLocalFallback) return;
     if (!hasResolvedProjectOrganizationSelection) return;
     if (remoteProjects === undefined) return;
     if (hasCurrentOrganizationProjects) return;
@@ -780,7 +872,7 @@ export function useProjectState({
       });
   }, [
     isAuthenticated,
-    useLocalFallback,
+    shouldUseLocalFallback,
     remoteProjects,
     hasCurrentOrganizationProjects,
     hasAnyRemoteProjects,
@@ -792,9 +884,54 @@ export function useProjectState({
     shouldTreatRemoteProjectsAsEmpty,
   ]);
 
+  // Guest project provisioning. Guests have no organization, so the
+  // organization-keyed effect above never fires. Instead, when remoteProjects
+  // resolves to an empty list for a guest actor, lazily create a default
+  // guest-owned project so the rest of the app sees a normal projectId.
+  useEffect(() => {
+    if (!isGuestActor) return;
+    if (shouldUseLocalFallback) return;
+    if (remoteProjects === undefined) return;
+    if (remoteProjects.length > 0) return;
+    if (!currentActorKey) return;
+
+    const requestKey = `guest:${currentActorKey}`;
+    if (ensureDefaultInFlightRef.current.has(requestKey)) return;
+    if (ensureDefaultCompletedRef.current.has(requestKey)) return;
+
+    ensureDefaultInFlightRef.current.add(requestKey);
+    convexEnsureDefaultProject({})
+      .then((projectId) => {
+        ensureDefaultCompletedRef.current.add(requestKey);
+        // Stick the new project id as the active selection so the rest of
+        // the app picks it up over any synthetic local-fallback project that
+        // appState may have hydrated from storage. UI surfaces gate on
+        // useAppReady() — which goes ready once this projectId reaches
+        // useHostedApiContext via the normal React render — so no eager
+        // hostedApiContext inject is needed here.
+        if (typeof projectId === "string") {
+          setConvexActiveProjectId(projectId);
+        }
+      })
+      .catch((error) => {
+        ensureDefaultInFlightRef.current.delete(requestKey);
+        logger.error("Failed to ensure default guest project", {
+          actorKey: currentActorKey,
+          error: error instanceof Error ? error.message : "Unknown error",
+        });
+      });
+  }, [
+    isGuestActor,
+    shouldUseLocalFallback,
+    remoteProjects,
+    currentActorKey,
+    convexEnsureDefaultProject,
+    logger,
+  ]);
+
   const handleCreateProject = useCallback(
     async (name: string, switchTo: boolean = false) => {
-      if (isAuthenticated && !useLocalFallback) {
+      if (isAuthenticated && !shouldUseLocalFallback) {
         const organizationId = projectOrganizationId;
         if (
           shouldTreatRemoteProjectsAsEmpty ||
@@ -856,7 +993,7 @@ export function useProjectState({
     },
     [
       isAuthenticated,
-      useLocalFallback,
+      shouldUseLocalFallback,
       shouldTreatRemoteProjectsAsEmpty,
       convexCreateProject,
       dispatch,
@@ -868,7 +1005,7 @@ export function useProjectState({
 
   const handleUpdateProject = useCallback(
     async (projectId: string, updates: Partial<Project>): Promise<void> => {
-      if (isAuthenticated && !useLocalFallback) {
+      if (isAuthenticated && !shouldUseLocalFallback) {
         try {
           const updateData: any = { projectId };
           if (updates.name !== undefined) updateData.name = updates.name;
@@ -900,7 +1037,7 @@ export function useProjectState({
     },
     [
       isAuthenticated,
-      useLocalFallback,
+      shouldUseLocalFallback,
       convexUpdateProject,
       logger,
       dispatch,
@@ -919,7 +1056,7 @@ export function useProjectState({
       savedSlice: T | undefined;
       controller: ClientConfigSaveController<T>;
     }): Promise<void> => {
-      const awaitRemoteEcho = isAuthenticated && !useLocalFallback;
+      const awaitRemoteEcho = isAuthenticated && !shouldUseLocalFallback;
 
       controller.beginSave({
         projectId,
@@ -1005,7 +1142,7 @@ export function useProjectState({
     },
     [
       isAuthenticated,
-      useLocalFallback,
+      shouldUseLocalFallback,
       clearPendingClientConfigSync,
       convexUpdateClientConfig,
       logger,
@@ -1244,7 +1381,7 @@ export function useProjectState({
           return false;
         }
 
-        if (isAuthenticated && !useLocalFallback) {
+        if (isAuthenticated && !shouldUseLocalFallback) {
           setConvexActiveProjectId(targetProjectId);
         } else {
           dispatch({
@@ -1254,7 +1391,7 @@ export function useProjectState({
         }
       }
 
-      if (isAuthenticated && !useLocalFallback) {
+      if (isAuthenticated && !shouldUseLocalFallback) {
         try {
           await convexDeleteProject({ projectId });
         } catch (error) {
@@ -1287,7 +1424,7 @@ export function useProjectState({
       effectiveActiveProjectId,
       effectiveProjects,
       isAuthenticated,
-      useLocalFallback,
+      shouldUseLocalFallback,
       convexDeleteProject,
       setConvexActiveProjectId,
       logger,
@@ -1303,7 +1440,7 @@ export function useProjectState({
         return;
       }
 
-      if (isAuthenticated && !useLocalFallback) {
+      if (isAuthenticated && !shouldUseLocalFallback) {
         const organizationId = projectOrganizationId;
         if (
           shouldTreatRemoteProjectsAsEmpty ||
@@ -1362,7 +1499,7 @@ export function useProjectState({
     [
       effectiveProjects,
       isAuthenticated,
-      useLocalFallback,
+      shouldUseLocalFallback,
       shouldTreatRemoteProjectsAsEmpty,
       convexCreateProject,
       dispatch,
@@ -1445,7 +1582,7 @@ export function useProjectState({
 
   const handleImportProject = useCallback(
     async (projectData: Project) => {
-      if (isAuthenticated && !useLocalFallback) {
+      if (isAuthenticated && !shouldUseLocalFallback) {
         const organizationId = projectOrganizationId;
         if (
           shouldTreatRemoteProjectsAsEmpty ||
@@ -1501,7 +1638,7 @@ export function useProjectState({
     },
     [
       isAuthenticated,
-      useLocalFallback,
+      shouldUseLocalFallback,
       shouldTreatRemoteProjectsAsEmpty,
       convexCreateProject,
       dispatch,
@@ -1515,7 +1652,7 @@ export function useProjectState({
     remoteProjects,
     isLoadingProjects,
     activeProjectServersFlat,
-    useLocalFallback,
+    useLocalFallback: shouldUseLocalFallback,
     setConvexActiveProjectId,
     clearConvexActiveProjectSelection,
     isLoadingRemoteProjects,
