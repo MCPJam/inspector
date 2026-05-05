@@ -690,6 +690,7 @@ describe("OrganizationsTab billing", () => {
           source: "trial",
           trialStatus: "active",
           trialPlan: "solo",
+          trialStartedAt: Date.parse("2026-04-01T00:00:00.000Z"),
           trialEndsAt: Date.parse("2026-04-08T00:00:00.000Z"),
         }),
       }),
