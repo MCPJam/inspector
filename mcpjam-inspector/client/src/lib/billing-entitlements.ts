@@ -24,8 +24,8 @@ export function getAnnualDiscountPercent(
   if (!planCatalog) {
     return 0;
   }
-  const monthly = planCatalog.plans.solo.prices.monthly;
-  const annual = planCatalog.plans.solo.prices.annual;
+  const monthly = planCatalog.plans.pro.prices.monthly;
+  const annual = planCatalog.plans.pro.prices.annual;
   if (monthly == null || annual == null || monthly <= 0) {
     return 0;
   }
@@ -174,10 +174,8 @@ export function formatPlanName(
   switch (plan) {
     case "free":
       return "Free";
-    case "solo":
-      return "Solo";
-    case "team":
-      return "Team";
+    case "pro":
+      return "Pro";
     case "enterprise":
       return "Enterprise";
     default:

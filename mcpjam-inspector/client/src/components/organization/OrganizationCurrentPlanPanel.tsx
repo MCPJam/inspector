@@ -144,7 +144,7 @@ function formatCurrentPlanBillingDetailLine(
   planCatalog: PlanCatalog,
 ): string | null {
   if (billingStatus.source === "trial") {
-    return "7-day trial · no active subscription yet";
+    return "14-day trial · no active subscription yet";
   }
   if (billingStatus.source === "simulation") {
     return "Simulation active · billing changes are not applied";
@@ -247,7 +247,7 @@ export function OrganizationCurrentPlanPanel({
     billingConfigured &&
     canManageBilling &&
     !isTrial &&
-    (currentPlan === "solo" || currentPlan === "team") &&
+    currentPlan === "pro" &&
     billingStatus.billingInterval != null &&
     scheduledChangeDetailLine == null &&
     !billingStatus.stripeCancelAtPeriodEnd;

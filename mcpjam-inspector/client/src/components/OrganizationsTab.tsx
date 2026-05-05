@@ -45,7 +45,7 @@ import {
   type BillingInterval,
   type OrganizationBillingStatus,
   type OrganizationPlan,
-  type PlanCatalog,
+  type SelfServePlan,
 } from "@/hooks/useOrganizationBilling";
 import {
   formatPlanName,
@@ -85,13 +85,8 @@ function getOrganizationRouteHash(
   return `organizations/${organizationId}`;
 }
 
-interface PendingPaidUpgradeConfirmation {
-  tier: "team";
-  billingInterval: BillingInterval;
-}
-
 interface PendingDowngradeConfirmation {
-  targetPlan: "free" | "solo";
+  targetPlan: "free";
   targetBillingInterval: BillingInterval | null;
   currentPlan: OrganizationPlan;
   currentBillingInterval: BillingInterval | null;
@@ -103,27 +98,6 @@ interface ScheduledBillingChangeCancellationState {
   dialogTitle: string;
   dialogDescription: string;
   successMessage: string;
-}
-
-function shouldConfirmPaidUpgrade(
-  billingStatus: OrganizationBillingStatus | undefined,
-  tier: "solo" | "team",
-): boolean {
-  return (
-    tier === "team" &&
-    billingStatus?.plan === "solo" &&
-    (billingStatus.subscriptionStatus === "active" ||
-      billingStatus.subscriptionStatus === "trialing")
-  );
-}
-
-function formatCurrencyAmount(amount: number, currency: string): string {
-  return new Intl.NumberFormat(undefined, {
-    style: "currency",
-    currency,
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
-  }).format(amount);
 }
 
 function formatBillingDate(timestampMs: number | null): string | null {
@@ -210,27 +184,6 @@ function getScheduledBillingChangeCancellationState(
     dialogDescription: `This cancels the pending ${changeNoun} to ${scheduledDescriptor}${effectiveDateSuffix}. ${currentPlanName} ${currentIntervalLabel} remains active.`,
     successMessage: `Scheduled billing change canceled. ${currentPlanName} ${currentIntervalLabel} remains active.`,
   };
-}
-
-function getPaidUpgradeConfirmationSummary(
-  planCatalog: PlanCatalog | undefined,
-  billingInterval: BillingInterval,
-): string {
-  const teamPlan = planCatalog?.plans.team;
-  const seatMinimum = teamPlan?.seatMinimum ?? 4;
-  const priceCents = teamPlan?.prices[billingInterval];
-
-  if (typeof priceCents !== "number") {
-    return billingInterval === "annual"
-      ? `Team with annual billing (${seatMinimum}-seat minimum)`
-      : `Team with monthly billing (${seatMinimum}-seat minimum)`;
-  }
-
-  const billedAmount = (priceCents * seatMinimum) / 100;
-  const cadence = billingInterval === "annual" ? "year" : "month";
-  const currency = planCatalog?.currency ?? "usd";
-
-  return `Team at ${formatCurrencyAmount(billedAmount, currency)}/${cadence} (${seatMinimum}-seat minimum)`;
 }
 
 export function OrganizationsTab({
@@ -497,8 +450,6 @@ function OrganizationPage({
     scheduledBillingChangeConfirmOpen,
     setScheduledBillingChangeConfirmOpen,
   ] = useState(false);
-  const [pendingPaidUpgradeConfirmation, setPendingPaidUpgradeConfirmation] =
-    useState<PendingPaidUpgradeConfirmation | null>(null);
   const [pendingDowngradeConfirmation, setPendingDowngradeConfirmation] =
     useState<PendingDowngradeConfirmation | null>(null);
   const scheduledBillingChangeCancellation =
@@ -790,33 +741,16 @@ function OrganizationPage({
 
   const handleDowngradePlan = async (
     targetPlan: OrganizationPlan,
-    targetBillingInterval: BillingInterval,
+    _targetBillingInterval: BillingInterval,
   ) => {
     const currentPlan = billingStatus?.plan;
 
-    if (
-      currentPlan === "team" &&
-      targetPlan === "solo" &&
-      billingStatus?.billingInterval != null
-    ) {
-      setPendingDowngradeConfirmation({
-        targetPlan: "solo",
-        targetBillingInterval,
-        currentPlan,
-        currentBillingInterval: billingStatus.billingInterval,
-      });
-      return;
-    }
-
-    if (
-      (currentPlan === "solo" || currentPlan === "team") &&
-      targetPlan === "free"
-    ) {
+    if (currentPlan === "pro" && targetPlan === "free") {
       setPendingDowngradeConfirmation({
         targetPlan: "free",
         targetBillingInterval: null,
         currentPlan,
-        currentBillingInterval: billingStatus.billingInterval,
+        currentBillingInterval: billingStatus?.billingInterval ?? null,
       });
       return;
     }
@@ -849,42 +783,7 @@ function OrganizationPage({
     if (!pendingDowngradeConfirmation) return;
 
     try {
-      if (pendingDowngradeConfirmation.targetPlan === "free") {
-        const billingUrl = await openCancellationPortal(getBillingReturnUrl());
-        openBillingUrl(billingUrl);
-        setPendingDowngradeConfirmation(null);
-        return;
-      }
-
-      const result = await startPlanChange(
-        getBillingReturnUrl(),
-        "solo",
-        pendingDowngradeConfirmation.targetBillingInterval ?? "monthly",
-        { confirmPaidPlanChange: false },
-      );
-
-      if (result.kind === "updated") {
-        toast.success(
-          `Plan updated to ${formatPlanName(
-            result.subscription.plan ?? pendingDowngradeConfirmation.targetPlan,
-          )}.`,
-        );
-        setPendingDowngradeConfirmation(null);
-        return;
-      }
-
-      if (result.kind === "scheduled") {
-        const targetLabel = formatPlanDescriptor(
-          pendingDowngradeConfirmation.targetPlan,
-          pendingDowngradeConfirmation.targetBillingInterval,
-        );
-        toast.success(`Downgrade to ${targetLabel} scheduled for renewal.`);
-        setPendingDowngradeConfirmation(null);
-        return;
-      }
-
-      const billingUrl =
-        result.kind === "checkout" ? result.checkoutUrl : result.portalUrl;
+      const billingUrl = await openCancellationPortal(getBillingReturnUrl());
       openBillingUrl(billingUrl);
       setPendingDowngradeConfirmation(null);
     } catch (error) {
@@ -894,8 +793,8 @@ function OrganizationPage({
     }
   };
 
-  const executeManualPlanChange = async (
-    tier: "solo" | "team",
+  const handlePlanChange = async (
+    tier: SelfServePlan,
     billingInterval: "monthly" | "annual",
     options: CheckoutNavigationOptions = {},
   ) => {
@@ -904,7 +803,6 @@ function OrganizationPage({
         getBillingReturnUrl(),
         tier,
         billingInterval,
-        { confirmPaidPlanChange: true },
       );
 
       if (result.kind === "updated") {
@@ -930,50 +828,9 @@ function OrganizationPage({
     }
   };
 
-  const handlePlanChange = async (
-    tier: "solo" | "team",
-    billingInterval: "monthly" | "annual",
-    options: CheckoutNavigationOptions = {},
-  ) => {
-    if (shouldConfirmPaidUpgrade(billingStatus, tier)) {
-      setPendingPaidUpgradeConfirmation({
-        tier,
-        billingInterval,
-      });
-      return;
-    }
-
-    await executeManualPlanChange(tier, billingInterval, options);
-  };
-
-  const handleConfirmPaidUpgrade = async () => {
-    if (!pendingPaidUpgradeConfirmation) return;
-
-    try {
-      await executeManualPlanChange(
-        pendingPaidUpgradeConfirmation.tier,
-        pendingPaidUpgradeConfirmation.billingInterval,
-      );
-    } finally {
-      setPendingPaidUpgradeConfirmation(null);
-    }
-  };
-
-  const paidUpgradeConfirmationSummary = pendingPaidUpgradeConfirmation
-    ? getPaidUpgradeConfirmationSummary(
-        planCatalog,
-        pendingPaidUpgradeConfirmation.billingInterval,
-      )
-    : null;
   const pendingDowngradeEffectiveDate = formatBillingDate(
     billingStatus?.stripeCurrentPeriodEnd ?? null,
   );
-  const pendingDowngradeTargetLabel = pendingDowngradeConfirmation
-    ? formatPlanDescriptor(
-        pendingDowngradeConfirmation.targetPlan,
-        pendingDowngradeConfirmation.targetBillingInterval,
-      )
-    : null;
   const pendingDowngradeCurrentLabel = pendingDowngradeConfirmation
     ? formatPlanDescriptor(
         pendingDowngradeConfirmation.currentPlan,
@@ -982,13 +839,12 @@ function OrganizationPage({
     : null;
 
   const handleAutoPlanChange = useCallback(
-    async (tier: "solo" | "team", billingInterval: "monthly" | "annual") => {
+    async (tier: SelfServePlan, billingInterval: "monthly" | "annual") => {
       try {
         const result = await startPlanChange(
           getBillingReturnUrl(),
           tier,
           billingInterval,
-          { confirmPaidPlanChange: false },
         );
 
         if (result.kind === "updated") {
@@ -1008,16 +864,9 @@ function OrganizationPage({
         onCheckoutIntentNavigationStarted?.();
         openBillingUrl(billingUrl, "same-tab");
       } catch (error) {
-        if (
-          !(
-            error instanceof Error &&
-            error.message === PAID_PLAN_CHANGE_CONFIRMATION_REQUIRED_MESSAGE
-          )
-        ) {
-          toast.error(
-            error instanceof Error ? error.message : "Failed to change plan",
-          );
-        }
+        toast.error(
+          error instanceof Error ? error.message : "Failed to change plan",
+        );
         throw error;
       }
     },
@@ -1547,54 +1396,27 @@ function OrganizationPage({
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>
-              {pendingDowngradeConfirmation?.targetPlan === "free"
-                ? "Return to Free at renewal?"
-                : "Downgrade to Solo?"}
-            </AlertDialogTitle>
+            <AlertDialogTitle>Return to Free at renewal?</AlertDialogTitle>
             <AlertDialogDescription className="space-y-2">
-              {pendingDowngradeConfirmation?.targetPlan === "free" ? (
-                <>
-                  <span className="block">
-                    This cancellation takes effect at renewal, not now.
-                  </span>
-                  <span className="block">
-                    {pendingDowngradeCurrentLabel ?? "Your paid plan"} remains
-                    active until{" "}
-                    {pendingDowngradeEffectiveDate ??
-                      "the end of the current billing period"}
-                    .
-                  </span>
-                  <span className="block">
-                    After that, the organization returns to Free.
-                  </span>
-                </>
-              ) : (
-                <>
-                  <span className="block">
-                    This downgrade takes effect at renewal, not now.
-                  </span>
-                  <span className="block">
-                    {pendingDowngradeTargetLabel ?? "Solo"} begins{" "}
-                    {pendingDowngradeEffectiveDate ??
-                      "at the end of the current billing period"}
-                    .
-                  </span>
-                  <span className="block">
-                    {pendingDowngradeCurrentLabel ?? "Your current plan"}{" "}
-                    remains active until then.
-                  </span>
-                </>
-              )}
+              <span className="block">
+                This cancellation takes effect at renewal, not now.
+              </span>
+              <span className="block">
+                {pendingDowngradeCurrentLabel ?? "Your paid plan"} remains
+                active until{" "}
+                {pendingDowngradeEffectiveDate ??
+                  "the end of the current billing period"}
+                .
+              </span>
+              <span className="block">
+                After that, the organization returns to Free.
+              </span>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <div className="rounded-md border border-border/60 bg-muted/30 px-4 py-3 text-sm">
             <span className="font-medium text-foreground">
-              {pendingDowngradeConfirmation?.targetPlan === "free"
-                ? "Stripe will open a cancellation flow that keeps paid access active until renewal."
-                : `${pendingDowngradeTargetLabel ?? "Solo"} will replace ${
-                    pendingDowngradeCurrentLabel ?? "the current plan"
-                  } at renewal.`}
+              Stripe will open a cancellation flow that keeps paid access active
+              until renewal.
             </span>
           </div>
           <AlertDialogFooter>
@@ -1612,58 +1434,7 @@ function OrganizationPage({
             >
               {isStartingPlanChange || isOpeningPortal
                 ? "Saving..."
-                : pendingDowngradeConfirmation?.targetPlan === "free"
-                  ? "Open cancellation flow"
-                  : "Schedule downgrade"}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-
-      <AlertDialog
-        open={pendingPaidUpgradeConfirmation !== null}
-        onOpenChange={(open) => {
-          if (!open && !isStartingPlanChange) {
-            setPendingPaidUpgradeConfirmation(null);
-          }
-        }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Upgrade to Team?</AlertDialogTitle>
-            <AlertDialogDescription className="space-y-2">
-              <span className="block">
-                This upgrade takes effect immediately and updates your existing
-                Solo subscription in place.
-              </span>
-              <span className="block">
-                We do not send you through Stripe Checkout.
-              </span>
-              <span className="block">
-                Stripe prorates the rest of your current billing period instead
-                of waiting until renewal, so unused Solo time is factored
-                into the Team change.
-              </span>
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <div className="rounded-md border border-border/60 bg-muted/30 px-4 py-3 text-sm">
-            <span className="font-medium text-foreground">
-              {paidUpgradeConfirmationSummary ??
-                "Team billing will apply with the 4-seat minimum."}
-            </span>
-          </div>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={isStartingPlanChange}>
-              Cancel
-            </AlertDialogCancel>
-            <AlertDialogAction
-              onClick={(event) => {
-                event.preventDefault();
-                void handleConfirmPaidUpgrade();
-              }}
-              disabled={isStartingPlanChange}
-            >
-              {isStartingPlanChange ? "Upgrading..." : "Upgrade now"}
+                : "Open cancellation flow"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -1717,5 +1488,3 @@ function OrganizationPage({
     </div>
   );
 }
-const PAID_PLAN_CHANGE_CONFIRMATION_REQUIRED_MESSAGE =
-  "Paid plan changes require an explicit confirmation.";

@@ -15,15 +15,16 @@ import {
 } from "../billing-deep-link";
 
 describe("readCheckoutIntentFromSearch", () => {
-  it("parses solo + annual", () => {
-    expect(
-      readCheckoutIntentFromSearch("?plan=solo&interval=annual"),
-    ).toEqual({ plan: "solo", interval: "annual" });
+  it("parses pro + annual", () => {
+    expect(readCheckoutIntentFromSearch("?plan=pro&interval=annual")).toEqual({
+      plan: "pro",
+      interval: "annual",
+    });
   });
 
   it("defaults interval to monthly when omitted", () => {
-    expect(readCheckoutIntentFromSearch("?plan=team")).toEqual({
-      plan: "team",
+    expect(readCheckoutIntentFromSearch("?plan=pro")).toEqual({
+      plan: "pro",
       interval: "monthly",
     });
   });
@@ -32,9 +33,15 @@ describe("readCheckoutIntentFromSearch", () => {
     expect(readCheckoutIntentFromSearch("?plan=enterprise")).toBeNull();
   });
 
+  it("returns null for legacy plan keys", () => {
+    expect(readCheckoutIntentFromSearch("?plan=solo")).toBeNull();
+    expect(readCheckoutIntentFromSearch("?plan=team")).toBeNull();
+    expect(readCheckoutIntentFromSearch("?plan=starter")).toBeNull();
+  });
+
   it("returns null when interval is present but invalid", () => {
     expect(
-      readCheckoutIntentFromSearch("?plan=solo&interval=weekly"),
+      readCheckoutIntentFromSearch("?plan=pro&interval=weekly"),
     ).toBeNull();
   });
 });
@@ -47,11 +54,16 @@ describe("hasInvalidCheckoutQueryParams", () => {
   it("is true when plan is bogus", () => {
     expect(hasInvalidCheckoutQueryParams("?plan=bogus")).toBe(true);
   });
+
+  it("is true for legacy plan keys", () => {
+    expect(hasInvalidCheckoutQueryParams("?plan=solo")).toBe(true);
+    expect(hasInvalidCheckoutQueryParams("?plan=team")).toBe(true);
+  });
 });
 
 describe("hasInvalidCheckoutIntervalParam", () => {
   it("is false when interval absent", () => {
-    expect(hasInvalidCheckoutIntervalParam("?plan=solo")).toBe(false);
+    expect(hasInvalidCheckoutIntervalParam("?plan=pro")).toBe(false);
   });
 
   it("is true when interval invalid", () => {
@@ -66,9 +78,9 @@ describe("sessionStorage persistence", () => {
   });
 
   it("round-trips plan and interval", () => {
-    persistCheckoutIntent({ plan: "solo", interval: "annual" });
+    persistCheckoutIntent({ plan: "pro", interval: "annual" });
     expect(readPersistedCheckoutIntent()).toEqual({
-      plan: "solo",
+      plan: "pro",
       interval: "annual",
     });
   });

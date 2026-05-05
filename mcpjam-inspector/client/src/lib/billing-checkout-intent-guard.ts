@@ -1,16 +1,16 @@
 import type {
   OrganizationBillingStatus,
   OrganizationPlan,
+  SelfServePlan,
 } from "@/hooks/useOrganizationBilling";
 
 const PLAN_RANK: Record<OrganizationPlan, number> = {
   free: 0,
-  solo: 1,
-  team: 2,
-  enterprise: 3,
+  pro: 1,
+  enterprise: 2,
 };
 
-export type CheckoutPlanTier = "solo" | "team";
+export type CheckoutPlanTier = SelfServePlan;
 
 export type CheckoutIntentGuardResult =
   | { proceed: true }
@@ -27,7 +27,7 @@ type BillingStatusForCheckoutGuard = Pick<
 
 /**
  * Compares billing status to a deep-link checkout tier.
- * Trial orgs may still purchase Solo or Team immediately.
+ * Trial orgs may still purchase Pro immediately.
  */
 export function guardCheckoutIntentAgainstBillingStatus(
   billingStatus: BillingStatusForCheckoutGuard,

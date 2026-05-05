@@ -29,17 +29,11 @@ function formatSeatLimit(
   if (plan === "enterprise") {
     return t("Custom", true);
   }
-  if (plan === "free") {
-    return t("1 (just you)");
-  }
-  const value =
-    plan === "solo"
-      ? (entry.includedSeats ?? entry.limits.maxMembers)
-      : entry.limits.maxMembers;
+  const value = entry.limits.maxMembers;
   if (value == null) {
-    return t("Unlimited", plan === "team");
+    return t("Unlimited", plan === "pro");
   }
-  return t(`${value}`, plan === "team");
+  return t(`${value}`, plan === "pro");
 }
 
 function formatLimitValue(
@@ -61,12 +55,12 @@ function formatEvalRuns(
   }
   const value = entry.limits.maxEvalRunsPerMonth;
   if (value == null) {
-    return t("Custom", plan === "team");
+    return t("Custom", plan === "pro");
   }
   if (plan === "free") {
     return t(`${value.toLocaleString()} / mo`);
   }
-  return t(`${value.toLocaleString()} included`, plan === "team");
+  return t(`${value.toLocaleString()} included`, plan === "pro");
 }
 
 function formatDeployments(
@@ -78,12 +72,12 @@ function formatDeployments(
   }
   const value = entry.limits.maxChatboxesPerProject;
   if (value == null) {
-    return t("Unlimited", plan === "team");
+    return t("Unlimited", plan === "pro");
   }
   if (value <= 0) {
     return x;
   }
-  return t(value.toLocaleString(), plan === "team");
+  return t(value.toLocaleString(), plan === "pro");
 }
 
 export function buildComparePlanSectionsFromCatalog(
@@ -97,11 +91,7 @@ export function buildComparePlanSectionsFromCatalog(
           return {
             ...row,
             free: formatSeatLimit("free", getEntry(planCatalog, "free")),
-            solo: formatSeatLimit(
-              "solo",
-              getEntry(planCatalog, "solo"),
-            ),
-            team: formatSeatLimit("team", getEntry(planCatalog, "team")),
+            pro: formatSeatLimit("pro", getEntry(planCatalog, "pro")),
             enterprise: formatSeatLimit(
               "enterprise",
               getEntry(planCatalog, "enterprise"),
@@ -113,11 +103,8 @@ export function buildComparePlanSectionsFromCatalog(
             free: formatLimitValue(
               getEntry(planCatalog, "free").limits.maxProjects,
             ),
-            solo: formatLimitValue(
-              getEntry(planCatalog, "solo").limits.maxProjects,
-            ),
-            team: formatLimitValue(
-              getEntry(planCatalog, "team").limits.maxProjects,
+            pro: formatLimitValue(
+              getEntry(planCatalog, "pro").limits.maxProjects,
               true,
             ),
             enterprise: t("Custom", true),
@@ -128,11 +115,8 @@ export function buildComparePlanSectionsFromCatalog(
             free: formatLimitValue(
               getEntry(planCatalog, "free").limits.maxServersPerProject,
             ),
-            solo: formatLimitValue(
-              getEntry(planCatalog, "solo").limits.maxServersPerProject,
-            ),
-            team: formatLimitValue(
-              getEntry(planCatalog, "team").limits.maxServersPerProject,
+            pro: formatLimitValue(
+              getEntry(planCatalog, "pro").limits.maxServersPerProject,
               true,
             ),
             enterprise: t("Unlimited", true),
@@ -141,22 +125,14 @@ export function buildComparePlanSectionsFromCatalog(
           return {
             ...row,
             free: formatEvalRuns("free", getEntry(planCatalog, "free")),
-            solo: formatEvalRuns(
-              "solo",
-              getEntry(planCatalog, "solo"),
-            ),
-            team: formatEvalRuns("team", getEntry(planCatalog, "team")),
+            pro: formatEvalRuns("pro", getEntry(planCatalog, "pro")),
             enterprise: t("Custom", true),
           };
         case "Deployments":
           return {
             ...row,
             free: formatDeployments("free", getEntry(planCatalog, "free")),
-            solo: formatDeployments(
-              "solo",
-              getEntry(planCatalog, "solo"),
-            ),
-            team: formatDeployments("team", getEntry(planCatalog, "team")),
+            pro: formatDeployments("pro", getEntry(planCatalog, "pro")),
             enterprise: t("Custom", true),
           };
         default:

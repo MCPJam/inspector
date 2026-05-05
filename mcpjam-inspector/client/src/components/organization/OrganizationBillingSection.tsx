@@ -30,6 +30,7 @@ import type {
   OrganizationBillingStatus,
   OrganizationPlan,
   PlanCatalog,
+  SelfServePlan,
 } from "@/hooks/useOrganizationBilling";
 import type { CheckoutIntentWithOrganization } from "@/lib/billing-deep-link";
 import { guardCheckoutIntentAgainstBillingStatus } from "@/lib/billing-checkout-intent-guard";
@@ -43,15 +44,10 @@ import { type ComparePlanCell } from "@/components/organization/compare-plan-mar
 import { CreditBalanceCard } from "@/components/billing/CreditBalanceCard";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 
-const PLAN_ORDER: OrganizationPlan[] = [
-  "free",
-  "solo",
-  "team",
-  "enterprise",
-];
+const PLAN_ORDER: OrganizationPlan[] = ["free", "pro", "enterprise"];
 
 /** Column highlighted as the recommended tier (matches common pricing-page “Popular”). */
-const POPULAR_PLAN: OrganizationPlan = "team";
+const POPULAR_PLAN: OrganizationPlan = "pro";
 
 /** Defines org as the billed scope for plans and limits (vs projects). */
 const ORG_COMPARE_PLANS_NOTE = "Your organization is the billed unit.";
@@ -72,7 +68,7 @@ function getPlanColumnCta(params: {
     billingInterval: BillingInterval,
   ) => void;
   onStartPlanChange: (
-    plan: "solo" | "team",
+    plan: SelfServePlan,
     billingInterval: BillingInterval,
   ) => Promise<void>;
   billingInterval: BillingInterval;
@@ -126,7 +122,7 @@ function getPlanColumnCta(params: {
   }
 
   if (isHigherTier && entry.isSelfServe) {
-    if (plan !== "solo" && plan !== "team") {
+    if (plan !== "pro") {
       return { label: "Unavailable", disabled: true, variant: "outline" };
     }
     return {
@@ -154,23 +150,15 @@ function formatCurrency(
   }).format(amount);
 }
 
-/** Price line for the compare table; Solo uses flat `/mo` (3-seat cap), Team uses `/seat/mo`. */
+/** Price line for the compare table; Pro is per-seat ("/seat/mo"). */
 function formatPlanPriceLabel(
-  plan: OrganizationPlan,
+  _plan: OrganizationPlan,
   amountInCents: number | null,
   currency: string,
   interval: BillingInterval,
 ): string {
   if (amountInCents == null) {
     return interval === "annual" ? "Custom annual" : "Custom pricing";
-  }
-
-  if (plan === "solo") {
-    if (interval === "monthly") {
-      return `${formatCurrency(amountInCents / 100, currency, 0)}/mo`;
-    }
-    const monthlyEquivalentDollars = amountInCents / 12 / 100;
-    return `${formatCurrency(Math.round(monthlyEquivalentDollars), currency, 0)}/mo`;
   }
 
   if (interval === "monthly") {
@@ -182,7 +170,7 @@ function formatPlanPriceLabel(
 
 function formatPerSeatCadence(
   plan: OrganizationPlan,
-  entry: PlanCatalog["plans"][OrganizationPlan],
+  _entry: PlanCatalog["plans"][OrganizationPlan],
   interval: BillingInterval,
 ): string {
   if (plan === "free") {
@@ -190,11 +178,6 @@ function formatPerSeatCadence(
   }
   if (plan === "enterprise") {
     return "Annual commitment";
-  }
-  if (entry.billingModel === "flat") {
-    return interval === "annual"
-      ? "Flat rate, billed annually"
-      : "Flat rate, billed monthly";
   }
   return interval === "annual"
     ? "Per seat, billed annually"
@@ -317,7 +300,7 @@ const COMPARE_PLAN_ROW_LABEL_TOOLTIPS: Record<
   "Role-based access control (RBAC)": {
     ariaLabel: "About RBAC",
     content:
-      "Basic Admin/Member-style access on Team; customizable roles and fine-grained permissions on Enterprise.",
+      "Basic Admin/Member-style access on Pro; customizable roles and fine-grained permissions on Enterprise.",
     contentClassName: "max-w-[22rem]",
   },
   "Data processing agreement (DPA)": {
@@ -427,7 +410,7 @@ function BillingIntervalToggle({
         Annual
         <span
           className="shrink-0 rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary sm:px-2 sm:text-xs"
-          title="Solo: savings vs paying the monthly rate for 12 months."
+          title="Annual savings vs paying the monthly rate for 12 months."
         >
           -{annualDiscountPct}%
         </span>
@@ -455,18 +438,18 @@ interface OrganizationBillingSectionProps {
   isLoadingBilling: boolean;
   isLoadingPlanCatalog: boolean;
   isStartingPlanChange: boolean;
-  pendingPlanChangeTarget: "solo" | "team" | null;
+  pendingPlanChangeTarget: SelfServePlan | null;
   isOpeningPortal: boolean;
   onDowngradePlan: (
     plan: OrganizationPlan,
     billingInterval: BillingInterval,
   ) => Promise<void>;
   onStartPlanChange: (
-    plan: "solo" | "team",
+    plan: SelfServePlan,
     billingInterval: BillingInterval,
   ) => Promise<void>;
   onStartAutoPlanChange?: (
-    plan: "solo" | "team",
+    plan: SelfServePlan,
     billingInterval: BillingInterval,
   ) => Promise<void>;
   checkoutIntent?: CheckoutIntentWithOrganization | null;
@@ -852,7 +835,7 @@ export function OrganizationBillingSection({
                           pendingPlanChangeTarget === plan &&
                           (cta.label === "Upgrade" ||
                             cta.label === "Downgrade") &&
-                          (plan === "solo" || plan === "team");
+                          plan === "pro";
                         const showCtaSpinner = showPlanChangeSpinner;
                         const isPopular = plan === POPULAR_PLAN;
                         return (
@@ -926,8 +909,7 @@ export function OrganizationBillingSection({
                         {section.rows.map((row, rowIndex) => {
                           const cells: ComparePlanCell[] = [
                             row.free,
-                            row.solo,
-                            row.team,
+                            row.pro,
                             row.enterprise,
                           ];
                           return (

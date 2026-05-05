@@ -11,7 +11,7 @@ describe("BillingUpsellGate", () => {
       <BillingUpsellGate
         feature="evals"
         currentPlan="free"
-        upgradePlan="solo"
+        upgradePlan="pro"
         canManageBilling
         onNavigateToBilling={onNavigate}
       />,
@@ -19,7 +19,7 @@ describe("BillingUpsellGate", () => {
 
     expect(screen.getByText("Generate Evals")).toBeInTheDocument();
     expect(
-      screen.getByText(/Included in Solo and above/i),
+      screen.getByText(/Included in Pro and above/i),
     ).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /upgrade/i }));
     expect(onNavigate).toHaveBeenCalledTimes(1);
@@ -30,7 +30,7 @@ describe("BillingUpsellGate", () => {
       <BillingUpsellGate
         feature="chatboxes"
         currentPlan="free"
-        upgradePlan="team"
+        upgradePlan="pro"
         canManageBilling={false}
         onNavigateToBilling={vi.fn()}
       />,

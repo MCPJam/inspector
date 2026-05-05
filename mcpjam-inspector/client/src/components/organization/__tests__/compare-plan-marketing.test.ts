@@ -13,35 +13,32 @@ describe("COMPARE_PLAN_MARKETING_SECTIONS", () => {
       "Platform & Infrastructure",
       "Support",
     ]);
-
-    const rowCount = COMPARE_PLAN_MARKETING_SECTIONS.reduce(
-      (n, s) => n + s.rows.length,
-      0,
-    );
-    expect(rowCount).toBe(35);
   });
 
   it("includes representative product and org/project cells", () => {
-    const testing = COMPARE_PLAN_MARKETING_SECTIONS.find(
+    const evaluations = COMPARE_PLAN_MARKETING_SECTIONS.find(
       (s) => s.title === "Evaluations",
     );
-    const evalsRow = testing?.rows.find((r) => r.label === "Evals CI/CD runs");
-    expect(evalsRow?.team).toEqual({
+    const evalsRow = evaluations?.rows.find(
+      (r) => r.label === "Evals CI/CD runs",
+    );
+    expect(evalsRow?.pro).toEqual({
       kind: "text",
-      text: "5,000 included",
+      text: "1,000 / seat / mo",
       emphasize: true,
     });
-    expect(evalsRow?.free).toEqual({ kind: "text", text: "5 / mo" });
+    expect(evalsRow?.free).toEqual({
+      kind: "text",
+      text: "5 / seat / mo (max 25 / org)",
+    });
 
     const orgProjects = COMPARE_PLAN_MARKETING_SECTIONS.find(
       (s) => s.title === "Organization & projects",
     );
     expect(
-      orgProjects?.rows.find((r) => r.label === "Seat limit")?.solo,
-    ).toEqual({
-      kind: "text",
-      text: "3",
-    });
+      orgProjects?.rows.find((r) => r.label === "Seat limit")?.free,
+    ).toEqual({ kind: "text", text: "5" });
+
     const security = COMPARE_PLAN_MARKETING_SECTIONS.find(
       (s) => s.title === "Security & Compliance",
     );
@@ -58,11 +55,8 @@ describe("COMPARE_PLAN_MARKETING_SECTIONS", () => {
       (r) => r.label === "Daily rate limit / user",
     );
 
-    expect(rateLimitRow?.solo).toEqual({
-      kind: "text",
-      text: "$5",
-    });
-    expect(rateLimitRow?.team).toEqual({
+    expect(rateLimitRow?.free).toEqual({ kind: "text", text: "$1" });
+    expect(rateLimitRow?.pro).toEqual({
       kind: "text",
       text: "$5",
       emphasize: true,
@@ -77,11 +71,7 @@ describe("COMPARE_PLAN_MARKETING_SECTIONS", () => {
       (r) => r.label === "Audit log retention",
     );
 
-    expect(auditLogRow?.team).toEqual({ kind: "x" });
-    expect(auditLogRow?.enterprise).toEqual({
-      kind: "text",
-      text: "Custom",
-      emphasize: true,
-    });
+    expect(auditLogRow?.pro).toEqual({ kind: "x" });
+    expect(auditLogRow?.enterprise).toEqual({ kind: "check" });
   });
 });

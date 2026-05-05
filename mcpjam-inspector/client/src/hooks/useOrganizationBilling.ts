@@ -1,7 +1,8 @@
 import { useAction, useMutation, useQuery } from "convex/react";
 import { useCallback, useState } from "react";
 
-export type OrganizationPlan = "free" | "solo" | "team" | "enterprise";
+export type OrganizationPlan = "free" | "pro" | "enterprise";
+export type SelfServePlan = Extract<OrganizationPlan, "pro">;
 export type BillingInterval = "monthly" | "annual";
 export type BillingModel = "free" | "flat" | "per_seat" | "contact";
 export type BillingFeatureName =
@@ -110,7 +111,7 @@ export interface PlanCatalogEntry {
   includedSeats: number | null;
   seatMinimum: number | null;
   checkout: {
-    plan: "solo" | "team";
+    plan: SelfServePlan;
     supportedIntervals: BillingInterval[];
   } | null;
 }
@@ -129,7 +130,7 @@ export interface OrganizationPlanChangeSnapshot {
   stripeSubscriptionItemId?: string;
   stripePriceId?: string;
   stripeSeatQuantity?: number;
-  stripeScheduledPlan?: "solo" | "team" | null;
+  stripeScheduledPlan?: SelfServePlan | null;
   stripeScheduledBillingInterval?: BillingInterval | null;
   stripeScheduledPriceId?: string | null;
   stripeScheduledEffectiveAt?: number | null;
@@ -171,10 +172,6 @@ export interface UseOrganizationBillingOptions {
 
 export interface UseOrganizationBillingStatusOptions {
   enabled?: boolean;
-}
-
-export interface StartOrganizationPlanChangeOptions {
-  confirmPaidPlanChange?: boolean;
 }
 
 export function useOrganizationBillingStatus(
@@ -243,7 +240,7 @@ export function useOrganizationBilling(
 
   const [isStartingPlanChange, setIsStartingPlanChange] = useState(false);
   const [pendingPlanChangeTarget, setPendingPlanChangeTarget] = useState<
-    "solo" | "team" | null
+    SelfServePlan | null
   >(null);
   const [isOpeningPortal, setIsOpeningPortal] = useState(false);
   const [
@@ -257,9 +254,8 @@ export function useOrganizationBilling(
   const startPlanChange = useCallback(
     async (
       returnUrl: string,
-      tier: "solo" | "team" = "solo",
+      tier: SelfServePlan = "pro",
       billingInterval: BillingInterval = "monthly",
-      options: StartOrganizationPlanChangeOptions = {},
     ): Promise<OrganizationPlanChangeResult> => {
       if (!organizationId) throw new Error("Organization is required");
       setIsStartingPlanChange(true);
@@ -271,7 +267,6 @@ export function useOrganizationBilling(
           returnUrl,
           tier,
           billingInterval,
-          confirmPaidPlanChange: options.confirmPaidPlanChange,
         });
         return result as OrganizationPlanChangeResult;
       } catch (err) {
