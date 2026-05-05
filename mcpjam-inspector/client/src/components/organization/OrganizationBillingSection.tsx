@@ -922,24 +922,23 @@ export function OrganizationBillingSection({
                               {cta.tooltip ? (
                                 <Tooltip>
                                   <TooltipTrigger asChild>
-                                    <span className="w-full shrink-0">
-                                      <Button
-                                        className="w-full rounded-lg"
-                                        size="sm"
-                                        variant={cta.variant}
-                                        disabled={cta.disabled}
-                                        onClick={cta.onClick}
-                                      >
-                                        {showCtaSpinner ? (
-                                          <>
-                                            <Loader2 className="size-4 animate-spin" />
-                                            Loading...
-                                          </>
-                                        ) : (
-                                          cta.label
-                                        )}
-                                      </Button>
-                                    </span>
+                                    <Button
+                                      className="w-full shrink-0 rounded-lg"
+                                      size="sm"
+                                      variant={cta.variant}
+                                      aria-disabled={true}
+                                      tabIndex={0}
+                                      onClick={undefined}
+                                    >
+                                      {showCtaSpinner ? (
+                                        <>
+                                          <Loader2 className="size-4 animate-spin" />
+                                          Loading...
+                                        </>
+                                      ) : (
+                                        cta.label
+                                      )}
+                                    </Button>
                                   </TooltipTrigger>
                                   <TooltipContent
                                     side="top"
