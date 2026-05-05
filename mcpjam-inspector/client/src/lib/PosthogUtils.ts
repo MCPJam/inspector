@@ -30,8 +30,11 @@ export const getPostHogOptions = () =>
         api_host: VITE_PUBLIC_POSTHOG_HOST,
         capture_pageview: false,
         person_profiles: "always" as const,
-        // Disable event capture but keep /decide enabled for feature flag evaluation
-        opt_out_capturing: true,
+        // Disable event capture but keep /decide enabled for feature flag evaluation.
+        // Must be `opt_out_capturing_by_default` — `opt_out_capturing` is a method,
+        // not a config field, so passing it here was silently ignored and dev
+        // events flowed into prod PostHog from 2026-03-12 until this fix.
+        opt_out_capturing_by_default: true,
       }
     : options;
 
