@@ -144,7 +144,18 @@ function formatCurrentPlanBillingDetailLine(
   planCatalog: PlanCatalog,
 ): string | null {
   if (billingStatus.source === "trial") {
-    return "7-day trial · no active subscription yet";
+    const rawDays =
+      billingStatus.trialStartedAt != null && billingStatus.trialEndsAt != null
+        ? Math.round(
+            (billingStatus.trialEndsAt - billingStatus.trialStartedAt) /
+              (24 * 60 * 60 * 1000),
+          )
+        : null;
+    const totalDays = rawDays != null && rawDays > 0 ? rawDays : null;
+    const durationLabel = totalDays != null ? `${totalDays}-day` : null;
+    return durationLabel
+      ? `${durationLabel} trial · no active subscription yet`
+      : "Trial · no active subscription yet";
   }
   if (billingStatus.source === "simulation") {
     return "Simulation active · billing changes are not applied";
