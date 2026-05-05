@@ -488,7 +488,7 @@ export function buildOrgModelFromResolvedConfig(
       })(resolvedModelId) as unknown as LanguageModel;
     }
     const openai = createOpenAI({ apiKey, baseURL: baseUrl });
-    return openai(resolvedModelId);
+    return openai.chat(resolvedModelId);
   }
 
   throw new OrgProviderConfigError(
