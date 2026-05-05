@@ -112,6 +112,10 @@ export function isOrgProviderAvailable(
 /**
  * Build the list of available models from an organization's provider config.
  * Used in org-backed projects where the server resolves API keys.
+ *
+ * Ollama is intentionally excluded: hosted mode always routes chat through
+ * Convex, and Convex can't reach a user's localhost. Ollama is only surfaced
+ * in local (HOSTED_MODE=false) mode, where buildAvailableModels handles it.
  */
 export function buildAvailableModelsFromOrgConfig(
   orgConfig: OrgVisibleConfig | undefined,
@@ -121,16 +125,13 @@ export function buildAvailableModelsFromOrgConfig(
     return SUPPORTED_MODELS.filter((m) => isMCPJamProvidedModel(String(m.id)));
   }
 
-  // Determine which provider keys are available
+  // Determine which provider keys are available. Ollama is skipped — it never
+  // belongs in the hosted model list.
   const availableProviderKeys = new Set<string>();
   for (const p of orgConfig.providers) {
     if (!p.enabled) continue;
-    // Ollama only needs baseUrl; all others need hasSecret
-    if (p.providerKey === "ollama") {
-      if (p.baseUrl) availableProviderKeys.add(p.providerKey);
-    } else {
-      if (p.hasSecret) availableProviderKeys.add(p.providerKey);
-    }
+    if (p.providerKey === "ollama") continue;
+    if (p.hasSecret) availableProviderKeys.add(p.providerKey);
   }
 
   // Always include MCPJam-provided models
