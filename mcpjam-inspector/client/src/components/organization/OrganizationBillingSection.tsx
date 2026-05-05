@@ -60,6 +60,9 @@ function getPlanRank(plan: OrganizationPlan): number {
   return PLAN_ORDER.indexOf(plan);
 }
 
+const SOLO_PLAN_MEMBER_LIMIT_TOOLTIP =
+  "Solo plan is only available to organizations with 1 member.";
+
 function getPlanColumnCta(params: {
   plan: OrganizationPlan;
   currentPlan: OrganizationPlan;
@@ -67,6 +70,7 @@ function getPlanColumnCta(params: {
   billingConfigured: boolean;
   canManageBilling: boolean;
   isBillingActionPending: boolean;
+  activeMemberCount: number;
   onDowngradePlan: (
     plan: OrganizationPlan,
     billingInterval: BillingInterval,
@@ -81,6 +85,7 @@ function getPlanColumnCta(params: {
   disabled: boolean;
   variant: "default" | "outline" | "secondary";
   onClick?: () => void;
+  tooltip?: string;
 } {
   const {
     plan,
@@ -89,6 +94,7 @@ function getPlanColumnCta(params: {
     billingConfigured,
     canManageBilling,
     isBillingActionPending,
+    activeMemberCount,
     onDowngradePlan,
     onStartPlanChange,
     billingInterval,
@@ -98,6 +104,8 @@ function getPlanColumnCta(params: {
   const isHigherTier = getPlanRank(plan) > getPlanRank(currentPlan);
   const isDowngrade = getPlanRank(plan) < getPlanRank(currentPlan);
   const isEnterprisePlan = plan === "enterprise";
+  const soloBlockedByMemberCount =
+    plan === "solo" && activeMemberCount > 1;
 
   if (isCurrentPlan) {
     return { label: "Current plan", disabled: true, variant: "outline" };
@@ -116,6 +124,14 @@ function getPlanColumnCta(params: {
   }
 
   if (isDowngrade) {
+    if (soloBlockedByMemberCount) {
+      return {
+        label: "Downgrade",
+        disabled: true,
+        variant: "outline",
+        tooltip: SOLO_PLAN_MEMBER_LIMIT_TOOLTIP,
+      };
+    }
     return {
       label: "Downgrade",
       disabled:
@@ -128,6 +144,14 @@ function getPlanColumnCta(params: {
   if (isHigherTier && entry.isSelfServe) {
     if (plan !== "solo" && plan !== "team") {
       return { label: "Unavailable", disabled: true, variant: "outline" };
+    }
+    if (soloBlockedByMemberCount) {
+      return {
+        label: "Upgrade",
+        disabled: true,
+        variant: "outline",
+        tooltip: SOLO_PLAN_MEMBER_LIMIT_TOOLTIP,
+      };
     }
     return {
       label: "Upgrade",
@@ -457,6 +481,7 @@ interface OrganizationBillingSectionProps {
   isStartingPlanChange: boolean;
   pendingPlanChangeTarget: "solo" | "team" | null;
   isOpeningPortal: boolean;
+  activeMemberCount: number;
   onDowngradePlan: (
     plan: OrganizationPlan,
     billingInterval: BillingInterval,
@@ -482,6 +507,7 @@ export function OrganizationBillingSection({
   isStartingPlanChange,
   pendingPlanChangeTarget,
   isOpeningPortal,
+  activeMemberCount,
   onDowngradePlan,
   onStartPlanChange,
   onStartAutoPlanChange,
@@ -837,6 +863,7 @@ export function OrganizationBillingSection({
                           billingConfigured,
                           canManageBilling,
                           isBillingActionPending,
+                          activeMemberCount,
                           onDowngradePlan: (
                             targetPlan,
                             targetBillingInterval,
@@ -888,22 +915,53 @@ export function OrganizationBillingSection({
                                   ) : null}
                                 </div>
                               </div>
-                              <Button
-                                className="w-full shrink-0 rounded-lg"
-                                size="sm"
-                                variant={cta.variant}
-                                disabled={cta.disabled}
-                                onClick={cta.onClick}
-                              >
-                                {showCtaSpinner ? (
-                                  <>
-                                    <Loader2 className="size-4 animate-spin" />
-                                    Loading...
-                                  </>
-                                ) : (
-                                  cta.label
-                                )}
-                              </Button>
+                              {cta.tooltip ? (
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <span className="w-full shrink-0">
+                                      <Button
+                                        className="w-full rounded-lg"
+                                        size="sm"
+                                        variant={cta.variant}
+                                        disabled={cta.disabled}
+                                        onClick={cta.onClick}
+                                      >
+                                        {showCtaSpinner ? (
+                                          <>
+                                            <Loader2 className="size-4 animate-spin" />
+                                            Loading...
+                                          </>
+                                        ) : (
+                                          cta.label
+                                        )}
+                                      </Button>
+                                    </span>
+                                  </TooltipTrigger>
+                                  <TooltipContent
+                                    side="top"
+                                    className="max-w-[14rem] text-center"
+                                  >
+                                    {cta.tooltip}
+                                  </TooltipContent>
+                                </Tooltip>
+                              ) : (
+                                <Button
+                                  className="w-full shrink-0 rounded-lg"
+                                  size="sm"
+                                  variant={cta.variant}
+                                  disabled={cta.disabled}
+                                  onClick={cta.onClick}
+                                >
+                                  {showCtaSpinner ? (
+                                    <>
+                                      <Loader2 className="size-4 animate-spin" />
+                                      Loading...
+                                    </>
+                                  ) : (
+                                    cta.label
+                                  )}
+                                </Button>
+                              )}
                             </div>
                           </TableHead>
                         );
